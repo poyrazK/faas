@@ -29,9 +29,14 @@ func (m *MemStore) ownedObjectVersioningLocked(account, app, bucket string) (Obj
 	}
 	return cloneObjectVersioning(j), nil
 }
-func (m *MemStore) RequestObjectBucketVersioning(_ context.Context, account, app, bucket, status string) (ObjectBucketVersioning, error) {
+func (m *MemStore) RequestObjectBucketVersioning(ctx context.Context, account, app, bucket, status string) (ObjectBucketVersioning, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketVersioning
+		return zero0, err
+	}
+
 	j, err := m.ownedObjectVersioningLocked(account, app, bucket)
 	if err != nil {
 		return j, err
@@ -52,12 +57,17 @@ func (m *MemStore) RequestObjectBucketVersioning(_ context.Context, account, app
 	}
 	return cloneObjectVersioning(j), err
 }
-func (m *MemStore) ObserveObjectBucketVersioning(_ context.Context, account, app, bucket, status string) (ObjectBucketVersioning, error) {
+func (m *MemStore) ObserveObjectBucketVersioning(ctx context.Context, account, app, bucket, status string) (ObjectBucketVersioning, error) {
 	if status != "" && !ValidObjectBucketVersioningStatus(status) {
 		return ObjectBucketVersioning{}, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketVersioning
+		return zero0, err
+	}
+
 	j, err := m.ownedObjectVersioningLocked(account, app, bucket)
 	if err != nil {
 		return j, err
@@ -66,9 +76,14 @@ func (m *MemStore) ObserveObjectBucketVersioning(_ context.Context, account, app
 	m.saveObjectVersioningLocked(j)
 	return cloneObjectVersioning(j), nil
 }
-func (m *MemStore) GetObjectBucketVersioning(_ context.Context, account, app, bucket string) (ObjectBucketVersioning, error) {
+func (m *MemStore) GetObjectBucketVersioning(ctx context.Context, account, app, bucket string) (ObjectBucketVersioning, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketVersioning
+		return zero0, err
+	}
+
 	return m.ownedObjectVersioningLocked(account, app, bucket)
 }
 func (m *MemStore) activeCapacityLocked(bucket string) bool {
@@ -79,12 +94,17 @@ func (m *MemStore) activeCapacityLocked(bucket string) bool {
 	}
 	return false
 }
-func (m *MemStore) DueObjectBucketVersioning(_ context.Context, limit int32) ([]ObjectBucketVersioning, error) {
+func (m *MemStore) DueObjectBucketVersioning(ctx context.Context, limit int32) ([]ObjectBucketVersioning, error) {
 	if limit < 1 || limit > api.ObjectBucketVersioningBatch {
 		return nil, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []ObjectBucketVersioning
+		return zero0, err
+	}
+
 	now := m.clock()
 	out := []ObjectBucketVersioning{}
 	for _, j := range m.objectBucketVersioning {
@@ -95,9 +115,14 @@ func (m *MemStore) DueObjectBucketVersioning(_ context.Context, limit int32) ([]
 	sort.Slice(out, func(i, j int) bool { return out[i].BucketID < out[j].BucketID })
 	return out[:min(int(limit), len(out))], nil
 }
-func (m *MemStore) ClaimObjectBucketVersioning(_ context.Context, bucket, token string) (ObjectBucketVersioning, error) {
+func (m *MemStore) ClaimObjectBucketVersioning(ctx context.Context, bucket, token string) (ObjectBucketVersioning, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketVersioning
+		return zero0, err
+	}
+
 	j, ok := m.objectBucketVersioning[bucket]
 	if !ok {
 		return j, ErrNotFound
@@ -127,9 +152,14 @@ func (m *MemStore) ClaimObjectBucketVersioning(_ context.Context, bucket, token 
 	}
 	return cloneObjectVersioning(j), err
 }
-func (m *MemStore) DispatchObjectBucketVersioning(_ context.Context, bucket, token string) (ObjectBucketVersioning, error) {
+func (m *MemStore) DispatchObjectBucketVersioning(ctx context.Context, bucket, token string) (ObjectBucketVersioning, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketVersioning
+		return zero0, err
+	}
+
 	j := m.objectBucketVersioning[bucket]
 	now := m.clock()
 	if !validVersioningLease(j, token, now) || j.State == "inventory" {
@@ -147,12 +177,17 @@ func (m *MemStore) DispatchObjectBucketVersioning(_ context.Context, bucket, tok
 	m.saveObjectVersioningLocked(j)
 	return cloneObjectVersioning(j), nil
 }
-func (m *MemStore) AdvanceObjectBucketVersioning(_ context.Context, bucket, token, status string) (ObjectBucketVersioning, error) {
+func (m *MemStore) AdvanceObjectBucketVersioning(ctx context.Context, bucket, token, status string) (ObjectBucketVersioning, error) {
 	if status != "" && !ValidObjectBucketVersioningStatus(status) {
 		return ObjectBucketVersioning{}, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketVersioning
+		return zero0, err
+	}
+
 	j := m.objectBucketVersioning[bucket]
 	now := m.clock()
 	if !validVersioningLease(j, token, now) {
@@ -169,7 +204,7 @@ func (m *MemStore) AdvanceObjectBucketVersioning(_ context.Context, bucket, toke
 		if pending > 0 || unsafe || multipart {
 			return cloneObjectVersioning(j), ErrConflict
 		}
-		bytes, keys := objectCapacityTotals(m.objectUsageLocked(j.AccountID, now), bucket)
+		bytes, keys := objectCapacityTotals(m.objectUsageLocked(m.objectBillingSubjectLocked(m.objectBuckets[j.BucketID]), now), bucket)
 		c = ObjectCapacityReconciliation{ObjectCapacityReconciliation: api.ObjectCapacityReconciliation{ID: uuid.NewString(), BucketID: bucket, State: "waiting", InventoryScope: ObjectInventoryAllVersions, BeforeBytes: bytes, BeforeKeys: keys, AfterBytes: bytes, AfterKeys: keys, CreatedAt: now, UpdatedAt: now}, AccountID: j.AccountID, AppID: j.AppID, RetryAt: now, DeadlineAt: now.Add(api.ObjectCapacityReconciliationTimeout)}
 		if m.objectCapacityJobs == nil {
 			m.objectCapacityJobs = map[string]ObjectCapacityReconciliation{}
@@ -180,9 +215,13 @@ func (m *MemStore) AdvanceObjectBucketVersioning(_ context.Context, bucket, toke
 	m.saveObjectVersioningLocked(j)
 	return cloneObjectVersioning(j), nil
 }
-func (m *MemStore) RetryObjectBucketVersioning(_ context.Context, bucket, token string) error {
+func (m *MemStore) RetryObjectBucketVersioning(ctx context.Context, bucket, token string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	j := m.objectBucketVersioning[bucket]
 	now := m.clock()
 	if !validVersioningLease(j, token, now) {

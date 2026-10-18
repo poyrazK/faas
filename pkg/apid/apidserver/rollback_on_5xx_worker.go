@@ -90,7 +90,7 @@ func (s *server) autoRollbackOn5xx(ctx context.Context, c state.RollbackOn5xxCan
 	if err != nil {
 		return fmt.Errorf("load app: %w", err)
 	}
-	acct, err := s.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, s.store, app)
 	if err != nil {
 		return fmt.Errorf("load account: %w", err)
 	}

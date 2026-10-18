@@ -59,10 +59,10 @@ If you change your mind, you can cancel the deletion any time before %s by runni
 
     gregale account restore
 
-After %s every row tied to your account — apps, deployments, builds,
-secrets, API keys, domains, crons, and usage history — will be
-permanently deleted from our database. There is no recovery option
-after that point.
+After %s your personal apps, deployments, builds, configuration,
+credentials and account profile will be permanently deleted. There is
+no recovery option after that point. Company applications remain owned
+by their organization. Financial records follow their retention policy.
 
 If this request was not made by you, change your password immediately
 and contact support@gregale.dev.
@@ -161,10 +161,10 @@ To keep your account, pay the outstanding balance before %s:
 Once your billing provider confirms the payment the deletion is
 cancelled and your account is active again.
 
-After %s every row tied to your account — apps, deployments, builds,
-secrets, API keys, domains, crons, and usage history — will be
-permanently deleted from our database. There is no recovery option
-after that point.
+After %s your personal apps, deployments, builds, configuration,
+credentials and account profile will be permanently deleted. There is
+no recovery option after that point. Company applications remain owned
+by their organization. Financial records follow their retention policy.
 
 If you believe this is a mistake, contact support@gregale.dev.
 

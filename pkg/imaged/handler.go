@@ -1815,7 +1815,7 @@ func (h *Handler) handleDeploymentLegacy(ctx context.Context, p deploymentChange
 	if err != nil {
 		return err
 	}
-	acct, err := h.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, h.store, app)
 	if err != nil {
 		return fmt.Errorf("imaged: load account: %w", err)
 	}
@@ -3980,7 +3980,7 @@ func (h *Handler) handleSnapshotBootLegacy(ctx context.Context, p snapshotBootPa
 	if err != nil {
 		return err
 	}
-	acct, err := h.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, h.store, app)
 	if err != nil {
 		return fmt.Errorf("imaged: load account: %w", err)
 	}

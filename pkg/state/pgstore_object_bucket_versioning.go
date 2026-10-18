@@ -61,7 +61,10 @@ func (s *PgStore) mutateObjectVersioning(ctx context.Context, account, app, buck
 	q := sqlc.New()
 	// Quota admission and account deletion lock the account before the bucket.
 	// Cutovers must follow that order even when discovering ownership above.
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(account)); err != nil {
+	if _, err = q.ObjectStorageLockScope(ctx, tx, sqlc.ObjectStorageLockScopeParams{BucketID: mustPgUUID(bucket), AccountID: mustPgUUID(account)}); err != nil {
+		return ObjectBucketVersioning{}, mapErr(err)
+	}
+	if _, err = lockObjectUsageScope(ctx, tx, mustPgUUID(account), mustPgUUID(bucket)); err != nil {
 		return ObjectBucketVersioning{}, mapErr(err)
 	}
 	b, err := q.ObjectCapacityLockBucket(ctx, tx, sqlc.ObjectCapacityLockBucketParams{ID: mustPgUUID(bucket), AccountID: mustPgUUID(account), AppID: mustPgUUID(app)})
@@ -252,7 +255,7 @@ func (s *PgStore) AdvanceObjectBucketVersioning(ctx context.Context, bucket, tok
 			if !errors.Is(err, pgx.ErrNoRows) {
 				return j, err
 			}
-			snap, err := readObjectUsage(ctx, tx, j.AccountID, now)
+			snap, err := readObjectBucketUsage(ctx, tx, j.AccountID, j.BucketID, now)
 			if err != nil {
 				return j, err
 			}

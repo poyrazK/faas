@@ -9,9 +9,13 @@ import (
 
 var _ ObjectMultipartPartURLStore = (*MemStore)(nil)
 
-func (m *MemStore) RecordObjectMultipartPartURL(_ context.Context, expected ObjectMultipartUpload, expires time.Time) error {
+func (m *MemStore) RecordObjectMultipartPartURL(ctx context.Context, expected ObjectMultipartUpload, expires time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	u, ok := m.objectMultipartUploads[expected.ID]
 	if !ok || u.AccountID != expected.AccountID || u.AppID != expected.AppID || u.BucketID != expected.BucketID {
 		return ErrNotFound

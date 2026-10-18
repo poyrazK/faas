@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar, cast
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -28,6 +29,7 @@ class ProjectResponse:
     updated_at: datetime.datetime
     workloads: list[ProjectWorkloadResponse]
     exclusions: list[str]
+    org_id: UUID | Unset = UNSET
     repo_full_name: str | Unset = UNSET
     production_branch: str | Unset = UNSET
     last_reconciliation_status: str | Unset = UNSET
@@ -54,6 +56,10 @@ class ProjectResponse:
 
         exclusions = self.exclusions
 
+        org_id: str | Unset = UNSET
+        if not isinstance(self.org_id, Unset):
+            org_id = str(self.org_id)
+
         repo_full_name = self.repo_full_name
 
         production_branch = self.production_branch
@@ -76,6 +82,8 @@ class ProjectResponse:
                 "exclusions": exclusions,
             }
         )
+        if org_id is not UNSET:
+            field_dict["org_id"] = org_id
         if repo_full_name is not UNSET:
             field_dict["repo_full_name"] = repo_full_name
         if production_branch is not UNSET:
@@ -113,6 +121,13 @@ class ProjectResponse:
 
         exclusions = cast(list[str], d.pop("exclusions"))
 
+        _org_id = d.pop("org_id", UNSET)
+        org_id: UUID | Unset
+        if isinstance(_org_id, Unset):
+            org_id = UNSET
+        else:
+            org_id = UUID(_org_id)
+
         repo_full_name = d.pop("repo_full_name", UNSET)
 
         production_branch = d.pop("production_branch", UNSET)
@@ -130,6 +145,7 @@ class ProjectResponse:
             updated_at=updated_at,
             workloads=workloads,
             exclusions=exclusions,
+            org_id=org_id,
             repo_full_name=repo_full_name,
             production_branch=production_branch,
             last_reconciliation_status=last_reconciliation_status,

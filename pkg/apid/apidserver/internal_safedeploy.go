@@ -104,7 +104,7 @@ func (s *server) internalAdvanceCanary(w http.ResponseWriter, r *http.Request) {
 		s.internalSafeDeployLookupError(w, r, err, "deployment")
 		return
 	}
-	acct, err := s.store.AccountByID(r.Context(), app.AccountID)
+	acct, err := state.AppResourceAccount(r.Context(), s.store, app)
 	if err != nil {
 		s.internalSafeDeployLookupError(w, r, err, "deployment")
 		return
@@ -123,7 +123,7 @@ func (s *server) internalRecoverDeploymentRollout(w http.ResponseWriter, r *http
 		s.internalSafeDeployLookupError(w, r, err, "deployment")
 		return
 	}
-	acct, err := s.store.AccountByID(r.Context(), app.AccountID)
+	acct, err := state.AppResourceAccount(r.Context(), s.store, app)
 	if err != nil {
 		s.internalSafeDeployLookupError(w, r, err, "deployment")
 		return
@@ -139,7 +139,7 @@ func (s *server) internalForApp(next accountHandler) http.HandlerFunc {
 			s.internalSafeDeployLookupError(w, r, err, "app")
 			return
 		}
-		acct, err := s.store.AccountByID(r.Context(), app.AccountID)
+		acct, err := state.AppResourceAccount(r.Context(), s.store, app)
 		if err != nil {
 			s.internalSafeDeployLookupError(w, r, err, "app")
 			return

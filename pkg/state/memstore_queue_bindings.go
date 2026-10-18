@@ -10,9 +10,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-func (m *MemStore) CreateQueueBinding(_ context.Context, in QueueBinding) (QueueBinding, error) {
+func (m *MemStore) CreateQueueBinding(ctx context.Context, in QueueBinding) (QueueBinding, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 QueueBinding
+		return zero0, err
+	}
+
 	if in.RetiredAt != nil {
 		return QueueBinding{}, ErrInvalidArgument
 	}
@@ -20,6 +25,10 @@ func (m *MemStore) CreateQueueBinding(_ context.Context, in QueueBinding) (Queue
 	if !ok || app.Status == AppDeleted || app.AccountID != in.AccountID {
 		return QueueBinding{}, ErrNotFound
 	}
+	if in.OrgID != "" && in.OrgID != app.OrgID {
+		return QueueBinding{}, ErrConflict
+	}
+	in.OrgID = app.OrgID
 	if err := m.captureQueueBindingScopeLocked(app, &in); err != nil {
 		return QueueBinding{}, err
 	}
@@ -59,9 +68,14 @@ func (m *MemStore) QueueBindingByID(ctx context.Context, accountID, appID, id st
 	return row, err
 }
 
-func (m *MemStore) QueueBindingHistoryByID(_ context.Context, accountID, appID, id string) (QueueBinding, error) {
+func (m *MemStore) QueueBindingHistoryByID(ctx context.Context, accountID, appID, id string) (QueueBinding, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 QueueBinding
+		return zero0, err
+	}
+
 	b, ok := m.queueBindings[id]
 	if !ok || b.AccountID != accountID || b.AppID != appID {
 		return QueueBinding{}, ErrNotFound
@@ -83,9 +97,14 @@ func (m *MemStore) ListQueueBindingsForApp(ctx context.Context, accountID, appID
 	return out, nil
 }
 
-func (m *MemStore) ListQueueBindingHistoryForApp(_ context.Context, accountID, appID string) ([]QueueBinding, error) {
+func (m *MemStore) ListQueueBindingHistoryForApp(ctx context.Context, accountID, appID string) ([]QueueBinding, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []QueueBinding
+		return zero0, err
+	}
+
 	var out []QueueBinding
 	for _, b := range m.queueBindings {
 		if b.AccountID == accountID && b.AppID == appID {
@@ -101,9 +120,14 @@ func (m *MemStore) ListQueueBindingHistoryForApp(_ context.Context, accountID, a
 	return out, nil
 }
 
-func (m *MemStore) UpdateQueueBinding(_ context.Context, accountID, appID, id string, p UpdateQueueBindingParams) (QueueBinding, error) {
+func (m *MemStore) UpdateQueueBinding(ctx context.Context, accountID, appID, id string, p UpdateQueueBindingParams) (QueueBinding, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 QueueBinding
+		return zero0, err
+	}
+
 	b, ok := m.queueBindings[id]
 	if !ok || b.AccountID != accountID || b.AppID != appID || b.RetiredAt != nil {
 		return QueueBinding{}, ErrNotFound

@@ -547,7 +547,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			FunctionRuntime:           functionRuntimeForApp(app),
 			LogSpool:                  spoolRoot(),
 			Log:                       s.log,
-			ActorUserID:               acct.ID,
+			ActorUserID:               actorAccount(r, acct).ID,
 			ActorVia:                  routeKindForRequest(r),
 			ActorFromIP:               middleware.ClientIP(r),
 			Workflows:                 marshalWorkflowDefinitions(workflows),
