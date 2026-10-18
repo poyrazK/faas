@@ -443,10 +443,12 @@ func TestOracleRandomWorkloads(t *testing.T) {
 		base = v
 	}
 	var total Stats
+	ran := 0
 	for i := range seeds {
 		seed := base + uint64(i)
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
 			stats := runOracle(t, seed, queries, writers, txns)
+			ran++
 			total.Rounds += stats.Rounds
 			total.Applied += stats.Applied
 			total.Held += stats.Held
@@ -460,6 +462,10 @@ func TestOracleRandomWorkloads(t *testing.T) {
 			total.Recompiles += stats.Recompiles
 			total.Skipped += stats.Skipped
 		})
+	}
+	if ran == 0 {
+		// Every seed skipped: no database with wal_level=logical.
+		t.Skip("no oracle seed ran")
 	}
 	t.Logf("oracle totals: %+v", total)
 	mixed := envInt("LIVEQUERY_ORACLE_WINDOW_PERCENT", 17) < 100
