@@ -2,7 +2,9 @@ package templates
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -53,12 +55,11 @@ func TestCustomerPlatformBillingFollowsMonetization(t *testing.T) {
 
 func tarFiles(t *testing.T, archive string) map[string]string {
 	t.Helper()
-	f, err := os.Open(archive)
+	data, err := os.ReadFile(archive)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = f.Close() }()
-	gz, err := gzip.NewReader(f)
+	gz, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +67,7 @@ func tarFiles(t *testing.T, archive string) map[string]string {
 	tr := tar.NewReader(gz)
 	for {
 		hdr, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return files
 		}
 		if err != nil {
