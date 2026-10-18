@@ -12509,7 +12509,7 @@ const CIExecutionCheckSummaryMaxBytes = 8 << 10
 // (ADR-1577, ADR-1586). Each delivery has its own lifetime budget.
 const CICheckRetryMaxGenerations = 3
 
-// Explicit recovery of a retained, never-admitted automatic source (ADR-1736).
+// Explicit recovery of a retained, never-admitted automatic source (ADR-1592).
 const CIAutomationRetryMaxGenerations = 3
 
 // Automatic runs serialize per account, binding and branch (ADR-1581).
