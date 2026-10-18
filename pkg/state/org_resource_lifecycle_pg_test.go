@@ -54,6 +54,56 @@ VALUES ($1,$2,'unreviewed','sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 	}
 }
 
+func TestPostgresOrgResourceUnreviewedObservabilityBlocksErasure(t *testing.T) {
+	cases := []struct {
+		name   string
+		insert string
+		exists string
+	}{
+		{"slo", `INSERT INTO app_slos(id,account_id,app_id,name,sli,objective_bp,window_days)
+VALUES ($1,$2,$3,'unreviewed','availability',9900,7)`, `SELECT EXISTS(SELECT 1 FROM app_slos WHERE id=$1)`},
+		{"synthetic", `INSERT INTO synthetic_checks(id,account_id,app_id,name,method,path,timeout_ms,interval_seconds)
+VALUES ($1,$2,$3,'unreviewed','GET','/',1000,300)`, `SELECT EXISTS(SELECT 1 FROM synthetic_checks WHERE id=$1)`},
+		{"channel", `INSERT INTO notification_channels(id,account_id,name,kind,email)
+VALUES ($1,$2,'unreviewed','email','unreviewed@example.com')`, `SELECT EXISTS(SELECT 1 FROM notification_channels WHERE id=$1)`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pool := pgtest.OpenMigrated(t)
+			store := state.NewPgStore(pool)
+			f := setupOffboarding(t, store)
+			ctx := t.Context()
+			if err := store.UpdateAccountProviderCustomerID(ctx, f.org.ID, "cus_observability_guard"); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.UpdateAccountStripeSubscriptionItem(ctx, f.org.ID, "si_observability_guard"); err != nil {
+				t.Fatal(err)
+			}
+			id := uuid.NewString()
+			args := []any{id, f.actor.ID, f.app.ID}
+			if tc.name == "channel" {
+				args = args[:2]
+			}
+			if _, err := pool.Exec(ctx, tc.insert, args...); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.RemoveOrgMember(ctx, f.org.ID, f.actor.ID); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.MarkAccountDeletionPending(ctx, f.actor.ID); !errors.Is(err, state.ErrOrgAppOwnershipPending) {
+				t.Fatalf("unreviewed observability record allowed erasure: %v", err)
+			}
+			if _, err := pool.Exec(ctx, `DELETE FROM accounts WHERE id=$1`, f.actor.ID); err == nil {
+				t.Fatal("raw account deletion bypassed observability ownership guard")
+			}
+			var exists bool
+			if err := pool.QueryRow(ctx, tc.exists, id).Scan(&exists); err != nil || !exists {
+				t.Fatalf("observability ownership guard discarded the record: %v", err)
+			}
+		})
+	}
+}
+
 func TestPostgresOrgResourceUnreviewedMCPBlocksErasure(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	store := state.NewPgStore(pool)

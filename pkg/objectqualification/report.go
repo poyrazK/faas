@@ -1,3 +1,5 @@
+//go:build linux
+
 // Package objectqualification exercises disposable local or SSH object-node processes
 // through the customer gateway. Its report is development evidence, not a
 // provider release gate or a claim about independent-host durability.

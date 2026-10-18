@@ -243,6 +243,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/webhooks/mcp-readiness/pagerduty/{id}":                         true, // Provider HMAC authentication, not Bearer HTTP.
 	"POST /v1/webhooks/mcp-readiness/pagerduty/{id}/{destination}":           true, // Destination-scoped provider HMAC ingress (ADR-20261017191529).
 	"POST /dashboard/mcp/apps/{slug}/alerts/{id}/pagerduty-acknowledgements": true, // Named-CSRF browser adapter.
+	"POST /v1/apps/{slug}/otlp/v1/metrics":                                   true, // ADR-745 OTLP/HTTP ingestion; called by OpenTelemetry exporters, not the SDK
 
 	// Issue #555 trace endpoint. Operator-only surface (X-Faas-Trace-Auth
 	// header), not a customer-Bearer-auth endpoint. The SDK does not
@@ -704,6 +705,10 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/entities/session-grants":           "MintDurableEntitySessionGrant",
 	"DELETE /v1/apps/{slug}/entities/session-grants/{grant}": "RevokeDurableEntitySessionGrant",
 
+	// ADR-751: the change timeline reads as one noun, not "apps slug changes".
+	"GET /v1/apps/{slug}/changes": "GetAppChangeTimeline",
+	// ADR-745: hyphenated custom-metrics segment.
+	"GET /v1/apps/{slug}/custom-metrics/{name}/series": "GetCustomMetricSeries",
 	// ADR-1131: the hyphenated path segment has no derivable Go identifier.
 	"GET /v1/service-map": "GetServiceMap",
 	// Profiling routes use domain-specific SDK names and hyphenated segments.
@@ -1451,11 +1456,28 @@ var methodRouteMap = map[string]string{
 	// The other 5 entries exist because the SDK names them after the
 	// resource noun (AlertRule) rather than the path placeholder
 	// concatenation (AppsSlugAlerts) — same convention as crons.
-	"GET /v1/apps/{slug}/alerts":                     "ListAlertRules",
-	"POST /v1/apps/{slug}/alerts":                    "CreateAlertRule",
-	"GET /v1/apps/{slug}/alerts/{id}":                "GetAlertRule",
-	"PATCH /v1/apps/{slug}/alerts/{id}":              "UpdateAlertRule",
-	"DELETE /v1/apps/{slug}/alerts/{id}":             "DeleteAlertRule",
+	"GET /v1/apps/{slug}/alerts":         "ListAlertRules",
+	"POST /v1/apps/{slug}/alerts":        "CreateAlertRule",
+	"GET /v1/apps/{slug}/alerts/{id}":    "GetAlertRule",
+	"PATCH /v1/apps/{slug}/alerts/{id}":  "UpdateAlertRule",
+	"DELETE /v1/apps/{slug}/alerts/{id}": "DeleteAlertRule",
+	// ADR-749 notification channels (hyphenated resource).
+	"GET /v1/notification-channels":            "ListNotificationChannels",
+	"POST /v1/notification-channels":           "CreateNotificationChannel",
+	"GET /v1/notification-channels/{id}":       "GetNotificationChannel",
+	"DELETE /v1/notification-channels/{id}":    "DeleteNotificationChannel",
+	"POST /v1/notification-channels/{id}/test": "TestNotificationChannel",
+	// ADR-747 customer SLOs are named after the resource noun.
+	"GET /v1/apps/{slug}/slos":         "ListSLOs",
+	"POST /v1/apps/{slug}/slos":        "CreateSLO",
+	"GET /v1/apps/{slug}/slos/{id}":    "GetSLO",
+	"DELETE /v1/apps/{slug}/slos/{id}": "DeleteSLO",
+	// ADR-748 synthetic checks are named after the resource noun.
+	"GET /v1/apps/{slug}/synthetics":                 "ListSyntheticChecks",
+	"POST /v1/apps/{slug}/synthetics":                "CreateSyntheticCheck",
+	"GET /v1/apps/{slug}/synthetics/{id}":            "GetSyntheticCheck",
+	"PATCH /v1/apps/{slug}/synthetics/{id}":          "UpdateSyntheticCheck",
+	"DELETE /v1/apps/{slug}/synthetics/{id}":         "DeleteSyntheticCheck",
 	"POST /v1/apps/{slug}/alerts/{id}/rotate-secret": "RotateAlertRuleSecret",
 	// ADR-123 PR-D — operator pane for one rule's recent
 	// alert_deliveries rows. ?include_test=true toggles the IsTest

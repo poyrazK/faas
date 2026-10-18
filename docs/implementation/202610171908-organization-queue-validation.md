@@ -326,3 +326,33 @@ against the previous helper. After the fix, these tests and the existing
 three-migrator regression pass with race detection (12.889s); the entire database
 package also passes with race detection (79.838s). The configured database-package
 linter reports zero issues.
+
+## Integration with observability and current main fixes
+
+Main through `2a4c0d1fc` is integrated, including ADR-743–752 observability,
+live-instance scheduler filtering, macOS build fixes and updated acceptance
+fixtures. The clone registry retains explicit policies for six new observability
+tables and their columns. Its 902 unique policies match the live PostgreSQL
+catalogue exactly. MCP configuration and customer-data records retain their
+existing isolation blockers when merging main's registry additions.
+
+All nine erasure-guard definitions retain account-linked SLO definitions,
+synthetic checks and notification channels. Three new PostgreSQL cases verify
+that both identity-erasure entry points preserve those records after offboarding,
+including notification channels that otherwise cascade with account deletion.
+Focused unreviewed-resource erasure and clone-schema checks pass (12.394s).
+
+The canonical schema is rebuilt from a fresh PostgreSQL 16 database. SQL
+generation/checks, migration lint, OpenAPI duplicate-key/parity checks and ADR
+uniqueness pass. Migration apply-and-walk, replay of all seven ownership migrations
+and ownership down/up recovery pass (25.775s). The full database package passes
+with race detection against this migration chain (84.588s), including concurrent
+migrators and both new advisory-lock regressions.
+
+Full Go SDK tests/vet, Node generation/build and complete Python generation with
+the pinned 0.29.0 generator pass; 61 Python Auth, organization and MCP client tests
+pass (5.54s). Local Go checks use 1.26.9 while the Go SDK module minimum remains
+1.23. State and migration reruns use reduced compiler debug output without race
+detection; database-package tests use race detection. Fresh GitHub PR checks must
+qualify this integrated source before merge. Production deployment and native KVM
+acceptance remain pending.

@@ -2105,6 +2105,11 @@ type Store interface {
 	// both want "instances I'm responsible for" rather than the
 	// fleet-wide ListAllInstances.
 	ListInstancesByNodeID(ctx context.Context, nodeID string) ([]Instance, error)
+	// ListLiveInstancesByNodeID is ListInstancesByNodeID limited to live
+	// instances (IsLive) at the database boundary. Callers that only act on
+	// resident VMs use it so terminal wake history does not travel on every
+	// tick (H10-145).
+	ListLiveInstancesByNodeID(ctx context.Context, nodeID string) ([]Instance, error)
 	// ListInstancesOnNodeID returns every instance whose physical
 	// instances.node_id matches nodeID, regardless of the owning app's
 	// scheduler owner. This is the safety/observability view for drains:
