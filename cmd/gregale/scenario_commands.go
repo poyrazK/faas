@@ -53,6 +53,9 @@ func validateTestCommandExecution(s testScenario, engine, profile string) error 
 	if s.CommandExecution == nil {
 		return nil
 	}
+	if s.ManagedWork != nil && s.ManagedWork.PostgresFault != nil && profile != "warm" {
+		return errors.New("postgres_fault requires the real-vm warm profile")
+	}
 	c := s.CommandExecution
 	if c.Version != rehearsalcommand.Version || c.Runtime != "contained" {
 		return errors.New("command_execution requires version 1 and runtime contained")
