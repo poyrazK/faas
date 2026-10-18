@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -13,12 +14,14 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
+	"github.com/onebox-faas/faas/pkg/gateway/egressgrpc"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/genslot"
 	"github.com/onebox-faas/faas/pkg/usageoutbox"
@@ -225,6 +228,47 @@ func TestGenerationStoresAcrossAHandoff(t *testing.T) {
 		t.Fatalf("root slot not free after both generations exited: %v %v", s, err)
 	}
 	_ = s.Release()
+}
+
+// The egress ledger's slot root is created before any listener binds, so a
+// gateway that cannot create it never serves. FAAS_GATEWAY_EGRESS_LEDGER_ROOT
+// moves it off /var/lib/faas, as the e2e harness does for every gateway; the
+// harness's gateways never bound their control listener while the ledger
+// root could not be moved.
+func TestRunWithDepsOpensTheEgressLedgerUnderItsConfiguredRoot(t *testing.T) {
+	t.Setenv("FAAS_CONSUMER_USAGE_OUTBOX_ROOT", t.TempDir())
+	root := filepath.Join(t.TempDir(), "egress-meter")
+	t.Setenv("FAAS_GATEWAY_EGRESS_LEDGER_ROOT", root)
+	deps := defaultDeps()
+	deps.capCheck = func() error { return nil }
+	// The first listener fails, so runWithDeps returns once start-up has
+	// reached the listeners, which it does only after opening the ledger.
+	deps.listen = func(_, _ string) (net.Listener, error) {
+		return nil, errors.New("addr in use")
+	}
+	err := runWithDeps(context.Background(), discardLogger(), deps)
+	if err == nil || !strings.Contains(err.Error(), "addr in use") {
+		t.Fatalf("runWithDeps = %v, want the listener error after the ledger opened", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".generation-0.lock")); err != nil {
+		t.Fatalf("egress ledger slot not claimed under %s: %v", root, err)
+	}
+}
+
+func TestEgressLedgerPath(t *testing.T) {
+	for _, tc := range []struct {
+		name, root, want string
+	}{
+		{name: "production default", want: egressgrpc.DefaultPendingPath},
+		{name: "configured root", root: "/srv/gw/egress-meter", want: "/srv/gw/egress-meter/pending.json"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("FAAS_GATEWAY_EGRESS_LEDGER_ROOT", tc.root)
+			if got := egressLedgerPath(); got != tc.want {
+				t.Fatalf("egressLedgerPath() = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }
 
 func egressLedgerRecords(path string) (int, error) {

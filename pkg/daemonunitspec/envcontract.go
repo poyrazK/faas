@@ -369,6 +369,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_GATEWAYD_ROLE", Owners: []string{"gatewayd-internal", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_GATEWAY_CIRCUIT_BREAKER", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDropin, Note: "ADR-201 §2; on (the drop-in default since H4-68) shares one instance-health breaker between the public path and the service proxy, tuned per app by kind=circuit_breaker rules; off installs the legacy fixed-TTL quarantine and leaves the public path unbroken"},
 	{Name: "FAAS_GATEWAY_CONTROL_LISTEN", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault},
+	{Name: "FAAS_GATEWAY_EGRESS_LEDGER_ROOT", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "ADR-1580 optional override for the root of the durable egress replay ledger's per-generation slots; defaults to /var/lib/faas/egress-meter, which the unit allows writing"},
 	{Name: "FAAS_GATEWAY_EGRESS_SOCKET", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_GATEWAY_LISTEN", Owners: []string{"gatewayd-internal", "shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_GATEWAY_METRICS_URL", Owners: []string{"schedd"}, Source: EnvSourceDropin},

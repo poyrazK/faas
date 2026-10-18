@@ -1054,10 +1054,9 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 		"FAAS_GATEWAY_SYNTH_SOCKET="+synthSock,
 		"FAAS_SCHEDD_SOCKET="+h.ScheddSock,
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+filepath.Join(h.SockDir, "request_telemetry.sock"),
-		"FAAS_CONSUMER_USAGE_OUTBOX_ROOT="+filepath.Join(h.TmpDir, "consumer-usage"),
-		"FAAS_GATEWAY_WAKE_AHEAD_STATE_DIR="+filepath.Join(h.TmpDir, "wake-ahead"),
 		"FAAS_APPS_DOMAIN="+testDomain,
 	)
+	env = append(env, gatewayStateEnv(h.TmpDir)...)
 	env = append(env, extraEnv...)
 	// Multi-gateway tests need a named gateway without making the legacy
 	// single-box schedd claim the synthetic default-local node. Keep this
@@ -1071,6 +1070,22 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 	h.GatewayURL = "http://" + addr
 	h.GatewayControlURL = "http://" + controlAddr
 	waitReadyz(t, controlAddr, 30*time.Second)
+}
+
+// gatewayStateEnv keeps a gatewayd-internal's node-local durable state under
+// dir. Their production defaults live under /var/lib/faas, which an
+// unprivileged CI runner cannot create, and gatewayd-internal creates the
+// egress ledger and usage outbox roots (their per-generation slots, ADR-1580)
+// before it binds a listener, so it never starts without them. A root shared
+// between gateways would also let one adopt another's records. Every
+// gatewayd-internal the harness starts takes this, so a new durable root is
+// added here once.
+func gatewayStateEnv(dir string) []string {
+	return []string{
+		"FAAS_CONSUMER_USAGE_OUTBOX_ROOT=" + filepath.Join(dir, "consumer-usage"),
+		"FAAS_GATEWAY_EGRESS_LEDGER_ROOT=" + filepath.Join(dir, "egress-meter"),
+		"FAAS_GATEWAY_WAKE_AHEAD_STATE_DIR=" + filepath.Join(dir, "wake-ahead"),
+	}
 }
 
 // StartAdditionalGateway runs a second named gatewayd-internal against this
@@ -1147,11 +1162,10 @@ func (h *Harness) startAdditionalGatewayWithControl(nodeName string, extraEnv ..
 		"FAAS_GATEWAY_SYNTH_SOCKET="+filepath.Join(dir, "gatewayd-internal.sock"),
 		"FAAS_SCHEDD_SOCKET="+h.ScheddSock,
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+filepath.Join(h.SockDir, "request_telemetry.sock"),
-		"FAAS_CONSUMER_USAGE_OUTBOX_ROOT="+filepath.Join(dir, "consumer-usage"),
-		"FAAS_GATEWAY_WAKE_AHEAD_STATE_DIR="+filepath.Join(dir, "wake-ahead"),
 		"FAAS_APPS_DOMAIN="+testDomain,
 		"FAAS_NODE_NAME="+nodeName,
 	)
+	env = append(env, gatewayStateEnv(dir)...)
 	env = append(env, extraEnv...)
 	h.procs = append(h.procs, startProc(t, h.BinDir, "gatewayd-internal", env))
 	waitReadyz(t, controlAddr, 30*time.Second)

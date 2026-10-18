@@ -28,6 +28,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"time"
 
 	"google.golang.org/grpc"
@@ -45,6 +46,17 @@ const (
 	// group, so the socket itself IS the auth.
 	egressGRPCSocketMode = 0o660
 )
+
+// egressLedgerPath is the durable egress replay ledger. Its directory is the
+// root of the ledger's per-generation slots (ADR-1580), which runWithDeps
+// creates before any listener binds: a gateway that cannot create it does
+// not start. FAAS_GATEWAY_EGRESS_LEDGER_ROOT moves that root off the
+// production default, as FAAS_CONSUMER_USAGE_OUTBOX_ROOT does for the usage
+// outbox, for an unprivileged gateway such as the e2e harness's.
+func egressLedgerPath() string {
+	root := envOrGateway("FAAS_GATEWAY_EGRESS_LEDGER_ROOT", filepath.Dir(egressgrpc.DefaultPendingPath))
+	return filepath.Join(root, filepath.Base(egressgrpc.DefaultPendingPath))
+}
 
 // egressGRPCSocketPath returns the socket path to bind, resolved
 // by egresssocket.ResolveFromOS which honours FAAS_EGRESS_SOCKET

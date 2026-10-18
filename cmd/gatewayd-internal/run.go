@@ -69,7 +69,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/gateway/activity"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
-	"github.com/onebox-faas/faas/pkg/gateway/egressgrpc"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/gateway/ingress"
 	"github.com/onebox-faas/faas/pkg/gateway/writegate"
@@ -1074,7 +1073,7 @@ type runDeps struct {
 	// both; the synth socket stays HTTP). nil in tests; production
 	// wires it after the Handler + EgressSink are constructed.
 	egressGRPC *egressGRPCListener
-	// Tests use a private ledger; an empty value retains the production path.
+	// Tests use a private ledger; an empty value takes egressLedgerPath.
 	egressPendingPath string
 	// onHandoff stops node-level work run() started before runWithDeps once
 	// a hand-off's successor serves (ADR-1580).
@@ -2990,7 +2989,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	egressPendingPath := deps.egressPendingPath
 	if egressPendingPath == "" {
-		egressPendingPath = egressgrpc.DefaultPendingPath
+		egressPendingPath = egressLedgerPath()
 	}
 	egressGRPCSrv, err := stores.openEgress(egressSink, egressPendingPath)
 	if err != nil {
