@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -208,9 +209,65 @@ func assertNativeLiveTableRepair(t *testing.T, ctx context.Context, store *Postg
 	always := func(context.Context) error { return nil }
 	wait(func(v Pipeline) bool { return v.SchemaChange.Recovery.Stage == "retiring" })
 	checkGate()
-	if err = recoveryPublication(ctx, approved, publisher, false, always); err != nil {
-		t.Fatal(err)
+	// A customer transaction can outlast the short source lock budget. Prove
+	// that both the direct operation and the worker leave retirement replayable
+	// without changing publication membership or exposing the quarantined table.
+	func() {
+		held, err := source.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = held.Rollback(ctx) }()
+		if _, err = held.Exec(ctx, `LOCK TABLE public.customers IN ROW EXCLUSIVE MODE`); err != nil {
+			t.Fatal(err)
+		}
+		checked := false
+		err = recoveryPublication(ctx, approved, publisher, false, func(context.Context) error {
+			checked = true
+			return nil
+		})
+		var lockErr *pgconn.PgError
+		if !errors.As(err, &lockErr) || lockErr.Code != "55P03" || checked {
+			t.Fatal("source lock contention did not abort before publication commit", err, checked)
+		}
+		p = tick()
+		v := get()
+		if p.State != "blocked" || p.Reason != "database_unavailable" || v.SchemaChange.Recovery.Stage != "retiring" {
+			t.Fatal("source lock contention lost the durable retirement stage", p, v.SchemaChange)
+		}
+		if err = ensurePublication(ctx, approved, publisher); err != nil {
+			t.Fatal("source lock contention changed publication membership", err)
+		}
+		checkGate()
+		if err = held.Rollback(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	// These direct calls inject lost acknowledgements between worker ticks.
+	// Like the worker, retry only transient source lock contention while mixed
+	// table writes continue. Keep both the SQL lock budget and journey deadline.
+	publish := func(include bool) {
+		t.Helper()
+		attempt, cancel := context.WithTimeout(ctx, time.Minute)
+		defer cancel()
+		for {
+			err := recoveryPublication(attempt, approved, publisher, include, always)
+			if err == nil {
+				return
+			}
+			var lockErr *pgconn.PgError
+			if !errors.As(err, &lockErr) || (lockErr.Code != "55P03" && lockErr.Code != "40P01") || attempt.Err() != nil {
+				t.Fatalf("publication change failed (include=%t): %v", include, err)
+			}
+			t.Logf("retrying publication lock contention (include=%t): %s", include, lockErr.Code)
+			select {
+			case <-attempt.Done():
+				t.Fatal("publication lock contention did not resolve", attempt.Err())
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
 	}
+	publish(false)
 	checks := 0
 	err = retireRecoveredRelation(ctx, approved, publisher, target, func(context.Context) error {
 		checks++
@@ -241,9 +298,7 @@ func assertNativeLiveTableRepair(t *testing.T, ctx context.Context, store *Postg
 	}
 	wait(func(v Pipeline) bool { return v.SchemaChange.Recovery.Stage == "cleared" })
 	restart()
-	if err = recoveryPublication(ctx, approved, publisher, true, always); err != nil {
-		t.Fatal(err)
-	}
+	publish(true)
 	wait(func(v Pipeline) bool { return v.SchemaChange.Recovery.Stage == "published" })
 	locker, err := pgx.Connect(ctx, targetURL)
 	if err != nil {
