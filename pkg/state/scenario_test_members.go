@@ -14,17 +14,28 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/chaos"
+	"github.com/onebox-faas/faas/pkg/rehearsalcold"
+	"github.com/onebox-faas/faas/pkg/rehearsalresume"
+	"github.com/onebox-faas/faas/pkg/rehearsalwork"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // ScenarioTestMember is one app's logical service name in a single test run.
 // Membership persists through soft deletion so no test app can fall back to
 // a production service while its VM is being drained.
 type ScenarioTestMember struct {
-	AccountID string
-	RunID     string
-	Workload  string
-	AppID     string
+	SuspendResumeJSON string
+	ColdStartJSON     string
+	ManagedWorkJSON   string
+	SimulationJSON    string
+	AccountID         string
+	RunID             string
+	Workload          string
+	AppID             string
+	NetworkMode       string
+	WebhookMode       string
 }
 
 // ScenarioTestDNSChaosPolicy is the verified caller identity and run lease
@@ -46,11 +57,70 @@ func validScenarioTestMembers(accountID, runID string, members []ScenarioTestMem
 	seenNames := make(map[string]bool, len(members))
 	seenApps := make(map[string]bool, len(members))
 	for _, member := range members {
-		if !scenarioTestWorkloadPattern.MatchString(member.Workload) || member.AppID == "" || seenNames[member.Workload] || seenApps[member.AppID] {
+		if !scenarioTestWorkloadPattern.MatchString(member.Workload) || member.AppID == "" || seenNames[member.Workload] || seenApps[member.AppID] ||
+			(member.WebhookMode != "" && member.WebhookMode != ScenarioWebhookCaptureMode) || member.WebhookMode != members[0].WebhookMode ||
+			(member.NetworkMode != "" && (member.NetworkMode != ScenarioNetworkContained || member.WebhookMode != ScenarioWebhookCaptureMode)) || member.NetworkMode != members[0].NetworkMode {
+			return ErrConflict
+		}
+		if member.SuspendResumeJSON != members[0].SuspendResumeJSON || member.ColdStartJSON != members[0].ColdStartJSON || member.SimulationJSON != members[0].SimulationJSON || member.ManagedWorkJSON != members[0].ManagedWorkJSON {
 			return ErrConflict
 		}
 		seenNames[member.Workload] = true
 		seenApps[member.AppID] = true
+	}
+	if members[0].SimulationJSON != "" {
+		if members[0].NetworkMode != ScenarioNetworkContained {
+			return ErrConflict
+		}
+		plan, err := api.DecodeScenarioSimulationPlan(members[0].SimulationJSON)
+		names := make([]string, 0, len(members))
+		for _, member := range members {
+			names = append(names, member.Workload)
+		}
+		body, _, err2 := api.NormalizeScenarioSimulationPlan(plan, names)
+		if err != nil || err2 != nil || string(body) != members[0].SimulationJSON {
+			return ErrConflict
+		}
+	}
+	if members[0].ManagedWorkJSON != "" {
+		names := make([]string, 0, len(members))
+		for _, m := range members {
+			names = append(names, m.Workload)
+		}
+		raw, _, err := rehearsalwork.Normalize(rehearsalwork.Decode(members[0].ManagedWorkJSON), names)
+		if err != nil || string(raw) != members[0].ManagedWorkJSON || members[0].SimulationJSON == "" {
+			return ErrConflict
+		}
+		simulation, decodeErr := api.DecodeScenarioSimulationPlan(members[0].SimulationJSON)
+		if decodeErr != nil || api.ValidateScenarioWorkerTermination(rehearsalwork.Decode(members[0].ManagedWorkJSON), &simulation) != nil {
+			return ErrConflict
+		}
+	}
+	if members[0].ColdStartJSON != "" {
+		names := make([]string, 0, len(members))
+		for _, m := range members {
+			names = append(names, m.Workload)
+		}
+		raw, _, err := rehearsalcold.Normalize(rehearsalcold.Decode(members[0].ColdStartJSON), names)
+		if err != nil || string(raw) != members[0].ColdStartJSON || members[0].SimulationJSON == "" || rehearsalwork.Decode(members[0].ManagedWorkJSON).WorkerTermination != nil {
+			return ErrConflict
+		}
+	}
+	if members[0].SuspendResumeJSON != "" {
+		names := make([]string, 0, len(members))
+		for _, m := range members {
+			names = append(names, m.Workload)
+		}
+		raw, _, err := rehearsalresume.Normalize(rehearsalresume.Decode(members[0].SuspendResumeJSON), names)
+		if err != nil || string(raw) != members[0].SuspendResumeJSON || members[0].SimulationJSON == "" || members[0].ColdStartJSON != "" || rehearsalwork.Decode(members[0].ManagedWorkJSON).WorkerTermination != nil {
+			return ErrConflict
+		}
+		var simulation api.ScenarioSimulationPlan
+		plan := rehearsalwork.Decode(members[0].ManagedWorkJSON)
+		if json.Unmarshal([]byte(members[0].SimulationJSON), &simulation) != nil || api.ValidateScenarioSuspendCheckpoint(rehearsalresume.Decode(members[0].SuspendResumeJSON), &plan, &simulation) != nil {
+			return ErrConflict
+		}
+
 	}
 	return nil
 }
@@ -70,19 +140,40 @@ func (s *PgStore) RegisterScenarioTestMembers(ctx context.Context, accountID, ru
 		return fmt.Errorf("begin scenario test registration: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	q := sqlc.New()
+	if err := q.LockScenarioActionRun(ctx, tx, sqlc.LockScenarioActionRunParams{AccountID: accountID, RunID: runID}); err != nil {
+		return fmt.Errorf("lock scenario run: %w", err)
+	}
+	allowed, err := q.ScenarioActionRunCanEnroll(ctx, tx, sqlc.ScenarioActionRunCanEnrollParams{AccountID: accountID, RunID: runID, Capture: members[0].WebhookMode == ScenarioWebhookCaptureMode})
+	if err != nil {
+		return fmt.Errorf("check scenario run enrollment: %w", err)
+	}
+	if !allowed.Valid || !allowed.Bool {
+		return ErrConflict
+	}
+	members = append([]ScenarioTestMember(nil), members...)
+	sort.Slice(members, func(i, j int) bool { return members[i].AppID < members[j].AppID })
 	for _, member := range members {
-		var eligible bool
-		err := tx.QueryRow(ctx, `select account_id = $2 and preview_of_slug is not null and preview_pr_number = 0
-			and status <> 'deleted' and preview_pr_state = 'open' and preview_expires_at > now()
-			from apps where id = $1`, member.AppID, accountID).Scan(&eligible)
-		if errors.Is(err, pgx.ErrNoRows) || (err == nil && !eligible) {
+		eligible, err := q.LockScenarioActionApp(ctx, tx, sqlc.LockScenarioActionAppParams{AppID: member.AppID, AccountID: accountID})
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && (!eligible.Valid || !eligible.Bool)) {
 			return ErrNotFound
 		}
 		if err != nil {
 			return fmt.Errorf("validate scenario test app: %w", err)
 		}
-		if _, err := tx.Exec(ctx, `insert into scenario_test_members (account_id, run_id, workload_name, app_id)
-			values ($1, $2, $3, $4)`, accountID, runID, member.Workload, member.AppID); err != nil {
+		if member.WebhookMode == ScenarioWebhookCaptureMode {
+			unstarted, err := q.ScenarioActionAppUnstarted(ctx, tx, member.AppID)
+			if err != nil {
+				return err
+			}
+			if !unstarted.Valid || !unstarted.Bool {
+				return ErrConflict
+			}
+			if err := q.InsertScenarioActionPolicy(ctx, tx, sqlc.InsertScenarioActionPolicyParams{AccountID: accountID, RunID: runID, AppID: member.AppID, Workload: member.Workload, NetworkMode: member.NetworkMode, SimulationPlan: scenarioSimulationJSON(member.SimulationJSON), ColdStartSpec: scenarioSimulationJSON(member.ColdStartJSON), SuspendResumeSpec: scenarioSimulationJSON(member.SuspendResumeJSON), ManagedWorkPlan: scenarioSimulationJSON(member.ManagedWorkJSON)}); err != nil {
+				return mapErr(err)
+			}
+		}
+		if err := q.InsertScenarioTestMember(ctx, tx, sqlc.InsertScenarioTestMemberParams{AccountID: accountID, RunID: runID, Workload: member.Workload, AppID: member.AppID}); err != nil {
 			return mapErr(err)
 		}
 	}
@@ -90,16 +181,14 @@ func (s *PgStore) RegisterScenarioTestMembers(ctx context.Context, accountID, ru
 }
 
 func (s *PgStore) ScenarioTestMemberByApp(ctx context.Context, appID string) (ScenarioTestMember, error) {
-	var member ScenarioTestMember
-	err := s.pool.QueryRow(ctx, `select account_id, run_id, workload_name, app_id
-		from scenario_test_members where app_id = $1`, appID).Scan(&member.AccountID, &member.RunID, &member.Workload, &member.AppID)
+	member, err := sqlc.New().ScenarioTestMemberWithPolicy(ctx, s.pool, appID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ScenarioTestMember{}, ErrNotFound
 	}
 	if err != nil {
 		return ScenarioTestMember{}, fmt.Errorf("load scenario test member: %w", err)
 	}
-	return member, nil
+	return ScenarioTestMember{AccountID: member.AccountID, RunID: member.RunID, Workload: member.WorkloadName, AppID: member.AppID, WebhookMode: member.WebhookMode, NetworkMode: member.NetworkMode, SimulationJSON: scenarioSimulationText(member.SimulationPlan), ColdStartJSON: scenarioSimulationText(member.ColdStartSpec), SuspendResumeJSON: scenarioSimulationText(member.SuspendResumeSpec), ManagedWorkJSON: scenarioManagedWorkText(member.ManagedWorkPlan)}, nil
 }
 
 func (s *PgStore) ScenarioTestAppByWorkload(ctx context.Context, accountID, runID, workload string) (App, error) {
@@ -117,12 +206,27 @@ func (m *MemStore) RegisterScenarioTestMembers(_ context.Context, accountID, run
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, policy := range m.scenarioActionPolicies {
+		if policy.Member.AccountID == accountID && policy.Member.RunID == runID {
+			return ErrConflict
+		}
+	}
+	if members[0].WebhookMode == ScenarioWebhookCaptureMode {
+		for _, member := range m.scenarioTestMembers {
+			if member.AccountID == accountID && member.RunID == runID {
+				return ErrConflict
+			}
+		}
+	}
 	for _, member := range members {
 		app, ok := m.apps[member.AppID]
 		if !ok || !eligibleScenarioTestApp(app, accountID) {
 			return ErrNotFound
 		}
 		if _, exists := m.scenarioTestMembers[member.AppID]; exists {
+			return ErrConflict
+		}
+		if member.WebhookMode == ScenarioWebhookCaptureMode && !m.scenarioActionAppUnstartedLocked(member.AppID) {
 			return ErrConflict
 		}
 		for _, existing := range m.scenarioTestMembers {
@@ -138,6 +242,12 @@ func (m *MemStore) RegisterScenarioTestMembers(_ context.Context, accountID, run
 		member.AccountID = accountID
 		member.RunID = runID
 		m.scenarioTestMembers[member.AppID] = member
+		if member.WebhookMode == ScenarioWebhookCaptureMode {
+			if m.scenarioActionPolicies == nil {
+				m.scenarioActionPolicies = make(map[string]scenarioActionPolicy)
+			}
+			m.scenarioActionPolicies[member.AppID] = scenarioActionPolicy{Member: member}
+		}
 	}
 	return nil
 }

@@ -39,10 +39,18 @@ func TestListTemplates_ReturnsAllNames(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
 		t.Fatalf("unmarshal: %v\nbody = %s", err, rec.Body.String())
 	}
-	if len(rows) != len(templates.Names) {
-		t.Fatalf("len(rows) = %d, want %d", len(rows), len(templates.Names))
+	// Unlisted templates (operator previews, dark launches such as auth)
+	// stay out of the customer catalog.
+	listed := templates.ListedNames()
+	if len(rows) != len(listed) {
+		t.Fatalf("len(rows) = %d, want %d", len(rows), len(listed))
 	}
-	for _, want := range templates.Names {
+	for _, r := range rows {
+		if r.Name == "auth" {
+			t.Fatal("the catalog lists the auth template")
+		}
+	}
+	for _, want := range listed {
 		var found bool
 		for _, r := range rows {
 			if r.Name == want {

@@ -15,18 +15,24 @@ T = TypeVar("T", bound="OperationEffectRecord")
 
 @_attrs_define
 class OperationEffectRecord:
-    """Immutable effect identity and current delivery status from the signed webhook ledger."""
+    """Immutable effect identity and current delivery status, or platform-captured intent for a rehearsal. Captured effects
+    have no outbound delivery.
+
+    """
 
     id: UUID
     name: str
     generation: int
     status: OperationEffectRecordStatus
-    """recorded is an opaque effect with no adapter; unavailable indicates deleted or pruned delivery history.
-    Completion of the operation does not imply delivery succeeded."""
+    """recorded is an opaque effect with no adapter; captured is retained rehearsal intent with no outbound
+    delivery; unavailable indicates deleted or pruned delivery history. Completion of the operation does not imply
+    delivery succeeded."""
     attempt: int
     webhook_id: UUID | Unset = UNSET
     delivery_id: UUID | Unset = UNSET
     """Stable across webhook retries; equals the effect ID."""
+    rehearsal_run_id: str | Unset = UNSET
+    """Present only for platform-captured rehearsal effects; no outbound delivery was queued."""
     type_: str | Unset = UNSET
     last_error: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -50,6 +56,8 @@ class OperationEffectRecord:
         if not isinstance(self.delivery_id, Unset):
             delivery_id = str(self.delivery_id)
 
+        rehearsal_run_id = self.rehearsal_run_id
+
         type_ = self.type_
 
         last_error = self.last_error
@@ -69,6 +77,8 @@ class OperationEffectRecord:
             field_dict["webhook_id"] = webhook_id
         if delivery_id is not UNSET:
             field_dict["delivery_id"] = delivery_id
+        if rehearsal_run_id is not UNSET:
+            field_dict["rehearsal_run_id"] = rehearsal_run_id
         if type_ is not UNSET:
             field_dict["type"] = type_
         if last_error is not UNSET:
@@ -103,6 +113,8 @@ class OperationEffectRecord:
         else:
             delivery_id = UUID(_delivery_id)
 
+        rehearsal_run_id = d.pop("rehearsal_run_id", UNSET)
+
         type_ = d.pop("type", UNSET)
 
         last_error = d.pop("last_error", UNSET)
@@ -115,6 +127,7 @@ class OperationEffectRecord:
             attempt=attempt,
             webhook_id=webhook_id,
             delivery_id=delivery_id,
+            rehearsal_run_id=rehearsal_run_id,
             type_=type_,
             last_error=last_error,
         )
