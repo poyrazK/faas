@@ -170,6 +170,10 @@ func (s *Service) ListBudgetAlerts(w http.ResponseWriter, r *http.Request, acct 
 				endUser := alert.EndUser
 				item.EndUser = &endUser
 			}
+			if alert.Tag != "" {
+				tag := alert.Tag
+				item.Tag = &tag
+			}
 			out.Items = append(out.Items, item)
 		}
 		w.Header().Set("Cache-Control", "no-store")
@@ -221,7 +225,7 @@ func requestLogResponse(entries []state.OutboundAIRequestLogEntry, limit int) ap
 			Outcome: entry.Outcome, InputTokens: entry.InputTokens, CachedInputTokens: entry.CachedInputTokens,
 			CacheWriteTokens: entry.CacheWriteTokens, OutputTokens: entry.OutputTokens, CostMillicents: entry.CostMillicents,
 			DurationMS: entry.DurationMS, TimeToFirstByteMS: copyInt64(entry.TTFBMS), Attempts: entry.Attempts,
-			ContentCaptured: entry.ContentCaptured,
+			ContentCaptured: entry.ContentCaptured, Tags: append([]string{}, entry.Tags...),
 		}
 		if entry.RouteID != "" {
 			routeID := entry.RouteID
