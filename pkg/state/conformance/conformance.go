@@ -95,6 +95,7 @@ func Run(t *testing.T, open Open) {
 		{"worker_recovery_discovers_captured_environments", testWorkerRecoveryCapturedEnvironment},
 		{"worker_recovery_discovers_unfinished_mode_cleanup", testWorkerRecoveryModeCleanup},
 		{"worker_recovery_clone_inventory_preserves_runtime_authority", testWorkerRecoveryCloneInventory},
+		{"mcp_readiness_clone_inventory_requires_isolation_and_resets_runtime", testMCPReadinessCloneInventory},
 		{"ownership_recovery_pages_are_scoped_exclusive_and_bounded", testOwnershipRecoveryPages},
 		{"ownership_recovery_transfer_fences_health_cooldown_and_peers", testOwnershipRecoveryTransfer},
 		{"usage_rollup_merges_minutes", testUsageRollup},

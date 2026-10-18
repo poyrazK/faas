@@ -8,6 +8,8 @@ import (
 
 func PromotionProblem(err error) *api.Problem {
 	switch {
+	case state.IsMCPReadinessRequired(err):
+		return api.NewProblem(409, api.CodeMCPReadinessRequired, "MCP readiness required", "Run server-side readiness probes for the current deployment and policy, or create an audited emergency override.")
 	case errors.Is(err, state.ErrMCPAdmissionPersistence):
 		return api.ErrMCPAdmissionEvidenceUnavailable()
 	case errors.Is(err, state.ErrMCPAccessPolicyChanged):

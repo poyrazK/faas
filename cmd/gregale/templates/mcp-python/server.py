@@ -13,6 +13,8 @@ import threading
 import time
 from urllib.parse import urlsplit
 
+from protocol_telemetry import ProtocolObservation, start_protocol_heartbeat
+
 from auth import AuthConfigurationError, AuthFailure, Authenticator
 from catalog import RuntimeCatalog
 from tasks import DurableTaskRuntime, TASK_ID_PATTERN, TaskNotFound, register_task_handler, resolve_task_role, task_id_from_uri, task_resource_template
@@ -757,6 +759,48 @@ class MCPHandler(BaseHTTPRequestHandler):
     sys_version = ""
     protocol_version = "HTTP/1.1"
 
+    def send_header(self, name, value):
+        observation = getattr(self, "_protocol_observation", None)
+        if observation and name.lower() == "content-type" and value.startswith("text/event-stream"):
+            observation.stream_start = time.monotonic()
+        super().send_header(name, value)
+
+    def end_headers(self):
+        headers = getattr(self, "headers", None)
+        origins = headers.get_all("Origin", []) if headers is not None else []
+        if len(origins) == 1 and origins[0] in self.server.app_config.get("allowed_origins", []):
+            self.send_header("Access-Control-Allow-Origin", origins[0])
+            self.send_header("Access-Control-Expose-Headers", "WWW-Authenticate, MCP-Protocol-Version, Streaming-Status")
+        self.send_header("Vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers")
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        if self.server.draining.is_set():
+            self.send_json(503, {"error": "mcp_server_draining"})
+            return
+        if self.reject_origin():
+            return
+        if urlsplit(self.path).path != self.server.app_config["endpoint"]:
+            self.send_text(404, "not found")
+            return
+        if not self.headers.get_all("Origin", []):
+            self.send_json(405, {"error": "origin_required"}, {"Allow": "POST, OPTIONS"})
+            return
+        methods = self.headers.get_all("Access-Control-Request-Method", [])
+        if len(methods) != 1 or methods[0] not in {"GET", "POST"}:
+            self.send_json(400, {"error": "method_not_allowed"})
+            return
+        headers = [h.strip().lower() for value in self.headers.get_all("Access-Control-Request-Headers", []) for h in value.split(",") if h.strip()]
+        standard = {"authorization", "content-type", "accept", "mcp-protocol-version", "mcp-method", "mcp-name"}
+        if any(h not in standard and not re.fullmatch(r"mcp-param-[!#$%&'*+.^_`|~0-9a-z-]+", h) for h in headers):
+            self.send_json(400, {"error": "header_not_allowed"})
+            return
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", ", ".join(headers))
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def setup(self):
         super().setup()
         self.connection.settimeout(15)
@@ -799,6 +843,22 @@ class MCPHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self):
+        self._protocol_observation = None
+        try:
+            self._handle_post()
+        except TimeoutError:
+            if self._protocol_observation:self._protocol_observation.failed("timeout")
+            raise
+        except OSError:
+            if self._protocol_observation:self._protocol_observation.failed("cancelled")
+            raise
+        except Exception:
+            if self._protocol_observation:self._protocol_observation.failed("internal_error")
+            raise
+        finally:
+            if self._protocol_observation:self._protocol_observation.finish()
+
+    def _handle_post(self):
         if self.server.draining.is_set():
             self.send_json(503, {"error": "mcp_server_draining"})
             return
@@ -851,6 +911,8 @@ class MCPHandler(BaseHTTPRequestHandler):
         if failure is not None:
             self.send_auth_failure(failure)
             return
+        if "id" in message:
+            self._protocol_observation = ProtocolObservation(message, self.headers, getattr(self.server, "protocol_telemetry_sink", None))
         if "id" in message and (
             isinstance(message["id"], bool)
             or not isinstance(message["id"], (str, int, float))
@@ -925,6 +987,7 @@ class MCPHandler(BaseHTTPRequestHandler):
                 try:
                     self.write_sse_message(notification)
                 except OSError:
+                    self.mark_protocol_failure("cancelled")
                     return
             if not self.wait_for_client(0.4):
                 return
@@ -938,6 +1001,7 @@ class MCPHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b"0\r\n\r\n")
                 self.wfile.flush()
             except OSError:
+                self.mark_protocol_failure("cancelled")
                 return
         else:
             self.send_rpc(200, result, protocol)
@@ -1350,15 +1414,24 @@ class MCPHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"0\r\n\r\n")
         self.wfile.flush()
 
+    def mark_protocol_failure(self, reason):
+        observation = getattr(self, "_protocol_observation", None)
+        if observation:observation.failed(reason)
+
     def client_disconnected(self):
         try:
             readable, _, _ = select.select([self.connection], [], [], 0)
             if not readable:
                 return False
-            return self.connection.recv(1, socket.MSG_PEEK) == b""
+            disconnected = self.connection.recv(1, socket.MSG_PEEK) == b""
+            if disconnected:
+                observation = getattr(self, "_protocol_observation", None)
+                if observation:observation.failed("cancelled")
+            return disconnected
         except (BlockingIOError, InterruptedError):
             return False
         except OSError:
+            self.mark_protocol_failure("cancelled")
             return True
 
     def wait_for_client(self, duration):
@@ -1367,6 +1440,8 @@ class MCPHandler(BaseHTTPRequestHandler):
         return not self.client_disconnected()
 
     def write_sse_message(self, message):
+        observation = getattr(self, "_protocol_observation", None)
+        if observation:observation.response(message)
         payload = b"event: message\ndata: " + json.dumps(
             message, separators=(",", ":"), allow_nan=False
         ).encode("utf-8") + b"\n\n"
@@ -1400,6 +1475,8 @@ class MCPHandler(BaseHTTPRequestHandler):
         self.send_json(failure.status, {"error": failure.code}, headers)
 
     def send_rpc(self, status, value, protocol=None):
+        observation = getattr(self, "_protocol_observation", None)
+        if observation:observation.response(value)
         headers = {}
         if protocol:
             headers["MCP-Protocol-Version"] = protocol
@@ -1498,7 +1575,9 @@ def main():
     server.task_runtime = task_runtime
     server.expected_catalog_sha256 = expected_catalog_sha256
     server.daemon_threads = True
+    stop_heartbeat = start_protocol_heartbeat()
     def begin_shutdown():
+        stop_heartbeat()
         server.draining.set()
         if task_runtime is not None:
             task_runtime.begin_drain()
@@ -1510,6 +1589,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        stop_heartbeat()
         server.draining.set()
         raw_timeout = os.environ.get("MCP_DRAIN_TIMEOUT_SECONDS", "10")
         timeout = int(raw_timeout) if raw_timeout.isdecimal() and 1 <= int(raw_timeout) <= 300 else 10

@@ -11225,6 +11225,31 @@ $$;
 
 
 --
+-- Name: guard_deployment_mcp_readiness(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_deployment_mcp_readiness() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE cfg jsonb; subject text; probe_role jsonb; candidate_override uuid;
+BEGIN
+ IF NEW.status<>'live' OR NEW.traffic_percent<=0 THEN RETURN NEW; END IF;
+ IF TG_OP='UPDATE' AND OLD.status='live' AND NEW.traffic_percent<=OLD.traffic_percent THEN RETURN NEW; END IF;
+ PERFORM pg_advisory_xact_lock_shared(hashtextextended('mcp-readiness-policy:'||NEW.app_id::text,0)); SELECT policy INTO cfg FROM app_mcp_readiness_policies WHERE app_id=NEW.app_id AND scope=COALESCE(NULLIF(NEW.scope,''),'default') FOR SHARE;
+ IF cfg IS NULL THEN IF COALESCE(NULLIF(NEW.scope,''),'default')<>'default' AND EXISTS(SELECT 1 FROM app_mcp_readiness_policies WHERE app_id=NEW.app_id) THEN RAISE EXCEPTION 'configure MCP readiness for this environment before increasing traffic' USING ERRCODE='23514',CONSTRAINT='deployment_mcp_readiness_required'; END IF; RETURN NEW; END IF; IF NOT (cfg->>'enabled')::boolean THEN RETURN NEW; END IF;
+ IF EXISTS(SELECT 1 FROM jsonb_array_elements(cfg->'roles') r WHERE r#>'{monitor,oauth_connection}' IS NOT NULL AND r#>'{monitor,oauth_connection}'<>'null'::jsonb) THEN PERFORM app_id FROM mcp_catalog_monitors WHERE app_id=NEW.app_id FOR SHARE; END IF; IF EXISTS(SELECT 1 FROM jsonb_array_elements(cfg->'roles') r WHERE COALESCE(r#>'{monitor,oauth_connections}','{}'::jsonb)<>'{}'::jsonb) THEN PERFORM app_id FROM mcp_catalog_monitors WHERE app_id=NEW.app_id FOR SHARE; END IF; subject:=mcp_readiness_subject(NEW);
+ SELECT id INTO candidate_override FROM deployment_mcp_readiness_overrides WHERE deployment_id=NEW.id AND policy_revision=(cfg->>'revision')::uuid AND artifact_sha256=subject AND used_at IS NULL AND expires_at>clock_timestamp() ORDER BY created_at DESC LIMIT 1 FOR UPDATE;
+ IF candidate_override IS NOT NULL THEN UPDATE deployment_mcp_readiness_overrides SET used_at=clock_timestamp() WHERE id=candidate_override;RETURN NEW; END IF;
+ FOR probe_role IN SELECT value FROM jsonb_array_elements(cfg->'roles') LOOP
+  IF NOT EXISTS(SELECT 1 FROM deployment_mcp_readiness_evidence e WHERE e.deployment_id=NEW.id AND e.role=probe_role->>'name' AND e.policy_revision=(cfg->>'revision')::uuid AND e.artifact_sha256=subject AND e.passed AND e.observed_at>=clock_timestamp()-make_interval(secs=>(cfg->>'max_age_seconds')::int) AND e.observed_at<=clock_timestamp()) THEN
+   RAISE EXCEPTION 'fresh MCP readiness evidence required' USING ERRCODE='23514',CONSTRAINT='deployment_mcp_readiness_required';
+  END IF;
+ END LOOP;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_durable_queue_consumer_deletion(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -13998,6 +14023,19 @@ END $$;
 
 
 --
+-- Name: guard_mcp_readiness_alert_scope(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_mcp_readiness_alert_scope() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+ BEGIN
+  IF NEW.mcp_readiness_scope IS DISTINCT FROM OLD.mcp_readiness_scope THEN RAISE EXCEPTION 'readiness alert environment cannot change; create a new rule' USING ERRCODE='23514',CONSTRAINT='alert_rules_mcp_readiness_scope_immutable'; END IF;
+  RETURN NEW;
+ END; $$;
+
+
+--
 -- Name: guard_migration_admission(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -16366,6 +16404,26 @@ CREATE FUNCTION public.mcp_admission_audit_kind_base() RETURNS text
 
 
 --
+-- Name: mcp_catalog_environment_scope_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_catalog_environment_scope_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE v record; previous jsonb; scope_name text; BEGIN
+ FOR v IN SELECT key,value FROM jsonb_each(jsonb_build_object('default',NEW.payload)||COALESCE(NEW.payload->'roles','{}'::jsonb)) LOOP
+  scope_name:=COALESCE(NULLIF(v.value#>>'{config,scope}',''),'default');
+  IF scope_name !~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' THEN RAISE EXCEPTION 'invalid MCP connection environment' USING ERRCODE='23514'; END IF;
+  IF TG_OP='UPDATE' THEN
+   previous:=CASE WHEN v.key='default' THEN OLD.payload ELSE OLD.payload->'roles'->v.key END;
+   IF COALESCE(previous#>>'{config,revision}','')<>'' AND scope_name<>COALESCE(NULLIF(previous#>>'{config,scope}',''),'default') THEN RAISE EXCEPTION 'MCP connection environment is immutable' USING ERRCODE='23514'; END IF;
+  END IF;
+ END LOOP;
+ RETURN NEW;
+END $_$;
+
+
+--
 -- Name: mcp_catalog_managed_observers_valid(jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -16617,6 +16675,15 @@ CREATE FUNCTION public.mcp_connection_alert_metric_base(kind text) RETURNS text
 
 
 --
+-- Name: mcp_environment_oauth_guard_base(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_environment_oauth_guard_base() RETURNS jsonb
+    LANGUAGE sql IMMUTABLE
+    AS $_$SELECT E'["CREATE OR REPLACE FUNCTION public.mcp_oauth_secret_credential_change()\\n RETURNS trigger\\n LANGUAGE plpgsql\\nAS $function$\\nDECLARE secret_row app_secrets; root jsonb; changed jsonb; view record; cfg jsonb; st jsonb; life jsonb; grant_data jsonb; phase jsonb; record_data jsonb; journal jsonb; job_id uuid; client_cipher bytea; captured_at timestamptz:=now(); count_jobs bigint; refresh_changed boolean; deleting boolean:=TG_OP=''DELETE''; history jsonb;\\nBEGIN\\n IF deleting THEN secret_row:=OLD; ELSE secret_row:=NEW; END IF;\\n IF secret_row.scope<>''default'' OR secret_row.managed_postgres_binding_id IS NOT NULL OR secret_row.managed_object_storage_credential_id IS NOT NULL OR secret_row.managed_credential_ref IS NOT NULL THEN IF deleting THEN RETURN OLD; ELSE RETURN NEW; END IF; END IF;\\n IF TG_OP=''UPDATE'' AND NEW.secret_version=OLD.secret_version THEN RETURN NEW; END IF;\\n IF TG_OP=''INSERT'' AND EXISTS(SELECT 1 FROM app_secrets WHERE app_id=NEW.app_id AND scope=NEW.scope AND key=NEW.key) THEN RETURN NEW; END IF;\\n SELECT payload INTO root FROM mcp_catalog_monitors WHERE app_id=secret_row.app_id AND account_id=secret_row.account_id FOR UPDATE;\\n IF root IS NULL THEN IF deleting THEN RETURN OLD; ELSE RETURN NEW; END IF; END IF;\\n PERFORM pg_advisory_xact_lock(hashtext(''mcp_oauth_retirement''),hashtext(secret_row.account_id::text));changed:=root;\\n FOR view IN SELECT key,value FROM jsonb_each(jsonb_build_object(''default'',root)||COALESCE(root->''roles'',''{}''::jsonb)) LOOP\\n  cfg:=view.value->''config''->''observer''->''oauth'';\\n  refresh_changed:=COALESCE(cfg->>''refresh_token_secret_ref'','''')=''secret:''||secret_row.key;\\n  IF NOT refresh_changed AND COALESCE(cfg->>''client_secret_ref'','''')<>''secret:''||secret_row.key THEN CONTINUE; END IF;\\n  st:=COALESCE(NULLIF(view.value->''observer_status'',''null''::jsonb),jsonb_build_object(''state'',''scheduled'',''consecutive_failures'',0));\\n  life:=COALESCE(NULLIF(view.value->''oauth_lifecycle'',''null''::jsonb),jsonb_build_object(''local_state'',''disconnected'',''history'',''[]''::jsonb));\\n  client_cipher:=NULL;\\n  IF cfg->>''client_secret_ref''=''secret:''||secret_row.key AND TG_OP<>''INSERT'' THEN client_cipher:=OLD.ciphertext;\\n  ELSE SELECT ciphertext INTO client_cipher FROM app_secrets WHERE account_id=secret_row.account_id AND app_id=secret_row.app_id AND scope=''default'' AND key=substring(cfg->>''client_secret_ref'' FROM 8) AND managed_postgres_binding_id IS NULL AND managed_object_storage_credential_id IS NULL AND managed_credential_ref IS NULL; END IF;\\n  journal:=st->''oauth_renewal'';\\n  -- Preserve unknown issuance before invalidating an in-flight exchange.\\n  IF journal->>''state'' IN (''pending'',''reauthorization_required'') AND COALESCE(journal->''private_result'',''null''::jsonb)=''null''::jsonb THEN\\n   job_id:=(journal->>''private_id'')::uuid;\\n   phase:=jsonb_build_object(''id'',job_id,''state'',''pending'',''attempts'',0,''next_attempt_at'',captured_at+interval ''5 minutes'',''refresh_acknowledged'',false,''access_acknowledged'',false,''private_config'',cfg);\\n   IF client_cipher IS NOT NULL THEN phase:=phase||jsonb_build_object(''private_client_ciphertext'',encode(client_cipher,''base64'')); END IF;\\n   record_data:=jsonb_build_object(''id'',job_id,''app_id'',secret_row.app_id,''app_slug'',(SELECT slug FROM apps WHERE id=secret_row.app_id),''role'',view.key,''reason'',''credential_changed'',''state'',''awaiting_issuance'',''created_at'',captured_at,''retain_until'',captured_at+interval ''7 days'',''revocation'',phase,''allow_active_grant_revocation'',false,''history'',jsonb_build_array(jsonb_build_object(''at'',captured_at,''action'',''queued'')));\\n   SELECT count(*) INTO count_jobs FROM mcp_oauth_retirements WHERE account_id=secret_row.account_id AND state IN (''awaiting_issuance'',''pending'',''held'',''manual_required'');\\n   IF count_jobs>=64 THEN RAISE EXCEPTION ''MCP OAuth retirement capacity exhausted'' USING ERRCODE=''23514''; END IF;\\n   INSERT INTO mcp_oauth_retirements(id,account_id,app_id,binding_sha256,created_at,retain_until,next_attempt_at,payload) VALUES(job_id,secret_row.account_id,secret_row.app_id,encode(sha256(convert_to((cfg->>''token_endpoint'')||chr(10)||(cfg->>''client_id''),''UTF8'')),''hex''),captured_at,captured_at+interval ''7 days'',captured_at+interval ''5 minutes'',record_data) ON CONFLICT(id) DO NOTHING;\\n  END IF;\\n  IF refresh_changed OR deleting THEN\\n   FOR grant_data IN SELECT value FROM jsonb_array_elements(jsonb_build_array(st->''oauth'',journal->''private_result'')) LOOP\\n    IF COALESCE(grant_data->>''ciphertext'','''')='''' THEN CONTINUE; END IF;\\n    SELECT count(*) INTO count_jobs FROM mcp_oauth_retirements WHERE account_id=secret_row.account_id AND state IN (''awaiting_issuance'',''pending'',''held'',''manual_required'');\\n    IF count_jobs>=64 THEN RAISE EXCEPTION ''MCP OAuth retirement capacity exhausted'' USING ERRCODE=''23514''; END IF;\\n    job_id:=gen_random_uuid();\\n    phase:=jsonb_build_object(''id'',job_id,''state'',CASE WHEN COALESCE(cfg->>''revocation_endpoint'','''')='''' THEN ''manual_required'' ELSE ''pending'' END,''attempts'',0,''next_attempt_at'',captured_at,''refresh_acknowledged'',false,''access_acknowledged'',false,''private_config'',cfg,''private_ciphertext'',grant_data->>''ciphertext'');\\n    IF client_cipher IS NOT NULL THEN phase:=phase||jsonb_build_object(''private_client_ciphertext'',encode(client_cipher,''base64'')); END IF;\\n    record_data:=jsonb_build_object(''id'',job_id,''app_id'',secret_row.app_id,''app_slug'',(SELECT slug FROM apps WHERE id=secret_row.app_id),''role'',view.key,''reason'',''credential_changed'',''state'',phase->>''state'',''created_at'',captured_at,''retain_until'',captured_at+interval ''7 days'',''revocation'',phase,''allow_active_grant_revocation'',false,''history'',jsonb_build_array(jsonb_build_object(''at'',captured_at,''action'',''queued'')));\\n    INSERT INTO mcp_oauth_retirements(id,account_id,app_id,binding_sha256,created_at,retain_until,next_attempt_at,payload) VALUES(job_id,secret_row.account_id,secret_row.app_id,encode(sha256(convert_to((cfg->>''token_endpoint'')||chr(10)||(cfg->>''client_id''),''UTF8'')),''hex''),captured_at,captured_at+interval ''7 days'',captured_at,record_data);\\n    life:=jsonb_set(life,ARRAY[''revocation''],mcp_oauth_public_phase(phase));\\n   END LOOP;\\n   st:=st-ARRAY[''oauth'',''oauth_renewal''];life:=jsonb_set(life,ARRAY[''local_state''],''\\"disconnected\\"'');\\n  ELSIF journal->>''state'' IN (''pending'',''reauthorization_required'') AND COALESCE(journal->''private_result'',''null''::jsonb)=''null''::jsonb THEN\\n   st:=st-''oauth_renewal'';IF st->''oauth'' IS NOT NULL THEN st:=jsonb_set(st,ARRAY[''oauth'',''state''],''\\"reauthorization_required\\"''); END IF;\\n  END IF;\\n  life:=jsonb_set(life,ARRAY[''credential_state''],to_jsonb(CASE WHEN deleting THEN ''reconnect_required''::text ELSE ''credential_changed''::text END));\\n  SELECT jsonb_agg(value ORDER BY ord) INTO history FROM jsonb_array_elements(COALESCE(life->''history'',''[]''::jsonb)||jsonb_build_array(jsonb_build_object(''id'',gen_random_uuid(),''at'',captured_at,''kind'',''credentials_discarded''))) WITH ORDINALITY x(value,ord) WHERE ord>greatest(0,jsonb_array_length(COALESCE(life->''history'',''[]''::jsonb))+1-64);\\n  life:=jsonb_set(life,ARRAY[''history''],history);\\n  st:=(st-ARRAY[''lease_id'',''lease_until'',''oauth_flow''])||jsonb_build_object(''state'',''scheduled'',''next_check_at'',captured_at);\\n  view.value:=jsonb_set(view.value-''roles'',ARRAY[''config'',''revision''],to_jsonb(gen_random_uuid()::text));\\n  view.value:=view.value||jsonb_build_object(''observer_status'',st,''oauth_lifecycle'',life);\\n  IF view.key=''default'' THEN changed:=view.value||jsonb_build_object(''roles'',COALESCE(changed->''roles'',''{}''::jsonb)); ELSE changed:=jsonb_set(changed,ARRAY[''roles'',view.key],view.value); END IF;\\n END LOOP;\\n UPDATE mcp_catalog_monitors SET payload=changed WHERE app_id=secret_row.app_id;\\n IF deleting THEN RETURN OLD; ELSE RETURN NEW; END IF;\\nEND $function$\\n", "CREATE OR REPLACE FUNCTION public.mcp_oauth_retire_deleted_app()\\n RETURNS trigger\\n LANGUAGE plpgsql\\nAS $function$\\nDECLARE root jsonb; changed jsonb; view record; cfg jsonb; grant_data jsonb; phase jsonb; record_data jsonb; job_id uuid; client_cipher bytea; path text[]; captured_at timestamptz:=now(); count_jobs bigint;\\nBEGIN\\n IF TG_OP=''UPDATE'' AND (NEW.status<>''deleted'' OR OLD.status=''deleted'') THEN RETURN NEW; END IF;\\n SELECT payload INTO root FROM mcp_catalog_monitors WHERE app_id=OLD.id AND account_id=OLD.account_id FOR UPDATE;\\n IF root IS NULL THEN IF TG_OP=''DELETE'' THEN RETURN OLD; ELSE RETURN NEW; END IF; END IF;\\n PERFORM pg_advisory_xact_lock(hashtext(''mcp_oauth_retirement''),hashtext(OLD.account_id::text));\\n changed:=root;\\n FOR view IN SELECT key,value FROM jsonb_each(jsonb_build_object(''default'',root)||COALESCE(root->''roles'',''{}''::jsonb)) LOOP\\n  cfg:=view.value->''config''->''observer''->''oauth'';grant_data:=view.value->''observer_status''->''oauth'';\\n  IF cfg IS NULL OR cfg=''null''::jsonb OR COALESCE(grant_data->>''ciphertext'','''')='''' THEN CONTINUE; END IF;\\n  SELECT count(*) INTO count_jobs FROM mcp_oauth_retirements WHERE account_id=OLD.account_id AND state IN (''awaiting_issuance'',''pending'',''held'',''manual_required'');\\n  IF count_jobs>=64 THEN RAISE EXCEPTION ''MCP OAuth retirement capacity exhausted'' USING ERRCODE=''23514''; END IF;\\n  job_id:=gen_random_uuid(); client_cipher:=NULL;\\n  SELECT ciphertext INTO client_cipher FROM app_secrets WHERE app_id=OLD.id AND account_id=OLD.account_id AND scope=''default'' AND key=substring(cfg->>''client_secret_ref'' FROM 8) AND managed_postgres_binding_id IS NULL AND managed_object_storage_credential_id IS NULL AND managed_credential_ref IS NULL;\\n  phase:=jsonb_build_object(''id'',job_id,''state'',CASE WHEN COALESCE(cfg->>''revocation_endpoint'','''')='''' THEN ''manual_required'' ELSE ''pending'' END,''attempts'',0,''next_attempt_at'',captured_at,''refresh_acknowledged'',false,''access_acknowledged'',false,''private_config'',cfg,''private_ciphertext'',grant_data->>''ciphertext'');\\n  IF client_cipher IS NOT NULL THEN phase:=phase||jsonb_build_object(''private_client_ciphertext'',encode(client_cipher,''base64'')); END IF;\\n  record_data:=jsonb_build_object(''id'',job_id,''app_id'',OLD.id,''app_slug'',OLD.slug,''role'',view.key,''reason'',''app_deleted'',''state'',phase->>''state'',''created_at'',captured_at,''retain_until'',captured_at+interval ''7 days'',''revocation'',phase,''allow_active_grant_revocation'',false,''history'',jsonb_build_array(jsonb_build_object(''at'',captured_at,''action'',''queued'')));\\n  INSERT INTO mcp_oauth_retirements(id,account_id,app_id,binding_sha256,created_at,retain_until,next_attempt_at,payload)\\n  VALUES(job_id,OLD.account_id,OLD.id,encode(sha256(convert_to((cfg->>''token_endpoint'')||chr(10)||(cfg->>''client_id''),''UTF8'')),''hex''),captured_at,captured_at+interval ''7 days'',captured_at,record_data);\\n  view.value:=view.value-''roles'';\\n  view.value:=jsonb_set(view.value,''{observer_status}'',(view.value->''observer_status'')-ARRAY[''oauth'',''oauth_flow'',''lease_id'',''lease_until'']);\\n  view.value:=jsonb_set(view.value,''{config,revision}'',to_jsonb(gen_random_uuid()::text));\\n  view.value:=jsonb_set(view.value,''{oauth_lifecycle}'',jsonb_build_object(''local_state'',''disconnected'',''revocation'',mcp_oauth_public_phase(phase),''history'',COALESCE(view.value->''oauth_lifecycle''->''history'',''[]''::jsonb)));\\n  IF view.key=''default'' THEN changed:=view.value||jsonb_build_object(''roles'',COALESCE(changed->''roles'',''{}''::jsonb));\\n  ELSE changed:=jsonb_set(changed,ARRAY[''roles'',view.key],view.value); END IF;\\n END LOOP;\\n UPDATE mcp_catalog_monitors SET payload=changed WHERE app_id=OLD.id AND account_id=OLD.account_id;\\n IF TG_OP=''DELETE'' THEN RETURN OLD; ELSE RETURN NEW; END IF;\\nEND $function$\\n", "CREATE OR REPLACE FUNCTION public.mcp_oauth_retire_deleted_renewal()\\n RETURNS trigger\\n LANGUAGE plpgsql\\nAS $function$\\nDECLARE root jsonb; changed jsonb; view record; cfg jsonb; grant_data jsonb; phase jsonb; record_data jsonb; job_id uuid; client_cipher bytea; path text[]; captured_at timestamptz:=now(); count_jobs bigint;\\nBEGIN\\n IF TG_OP=''UPDATE'' AND (NEW.status<>''deleted'' OR OLD.status=''deleted'') THEN RETURN NEW; END IF;\\n SELECT payload INTO root FROM mcp_catalog_monitors WHERE app_id=OLD.id AND account_id=OLD.account_id FOR UPDATE;\\n IF root IS NULL THEN IF TG_OP=''DELETE'' THEN RETURN OLD; ELSE RETURN NEW; END IF; END IF;\\n PERFORM pg_advisory_xact_lock(hashtext(''mcp_oauth_retirement''),hashtext(OLD.account_id::text));\\n changed:=root;\\n FOR view IN SELECT key,value FROM jsonb_each(jsonb_build_object(''default'',root)||COALESCE(root->''roles'',''{}''::jsonb)) LOOP\\n  cfg:=view.value->''config''->''observer''->''oauth'';grant_data:=view.value->''observer_status''->''oauth_renewal''->''private_result'';\\n  IF cfg IS NULL OR cfg=''null''::jsonb OR COALESCE(grant_data->>''ciphertext'','''')='''' THEN CONTINUE; END IF;\\n  SELECT count(*) INTO count_jobs FROM mcp_oauth_retirements WHERE account_id=OLD.account_id AND state IN (''awaiting_issuance'',''pending'',''held'',''manual_required'');\\n  IF count_jobs>=64 THEN RAISE EXCEPTION ''MCP OAuth retirement capacity exhausted'' USING ERRCODE=''23514''; END IF;\\n  job_id:=gen_random_uuid(); client_cipher:=NULL;\\n  SELECT ciphertext INTO client_cipher FROM app_secrets WHERE app_id=OLD.id AND account_id=OLD.account_id AND scope=''default'' AND key=substring(cfg->>''client_secret_ref'' FROM 8) AND managed_postgres_binding_id IS NULL AND managed_object_storage_credential_id IS NULL AND managed_credential_ref IS NULL;\\n  phase:=jsonb_build_object(''id'',job_id,''state'',CASE WHEN COALESCE(cfg->>''revocation_endpoint'','''')='''' THEN ''manual_required'' ELSE ''pending'' END,''attempts'',0,''next_attempt_at'',captured_at,''refresh_acknowledged'',false,''access_acknowledged'',false,''private_config'',cfg,''private_ciphertext'',grant_data->>''ciphertext'');\\n  IF client_cipher IS NOT NULL THEN phase:=phase||jsonb_build_object(''private_client_ciphertext'',encode(client_cipher,''base64'')); END IF;\\n  record_data:=jsonb_build_object(''id'',job_id,''app_id'',OLD.id,''app_slug'',OLD.slug,''role'',view.key,''reason'',''app_deleted'',''state'',phase->>''state'',''created_at'',captured_at,''retain_until'',captured_at+interval ''7 days'',''revocation'',phase,''allow_active_grant_revocation'',false,''history'',jsonb_build_array(jsonb_build_object(''at'',captured_at,''action'',''queued'')));\\n  INSERT INTO mcp_oauth_retirements(id,account_id,app_id,binding_sha256,created_at,retain_until,next_attempt_at,payload)\\n  VALUES(job_id,OLD.account_id,OLD.id,encode(sha256(convert_to((cfg->>''token_endpoint'')||chr(10)||(cfg->>''client_id''),''UTF8'')),''hex''),captured_at,captured_at+interval ''7 days'',captured_at,record_data);\\n  view.value:=view.value-''roles'';\\n  view.value:=jsonb_set(view.value,ARRAY[''observer_status''],(view.value->''observer_status'')-''oauth_renewal'');\\n  IF view.key=''default'' THEN changed:=view.value||jsonb_build_object(''roles'',COALESCE(changed->''roles'',''{}''::jsonb));\\n  ELSE changed:=jsonb_set(changed,ARRAY[''roles'',view.key],view.value); END IF;\\n END LOOP;\\n UPDATE mcp_catalog_monitors SET payload=changed WHERE app_id=OLD.id AND account_id=OLD.account_id;\\n IF TG_OP=''DELETE'' THEN RETURN OLD; ELSE RETURN NEW; END IF;\\nEND $function$\\n", "CREATE OR REPLACE FUNCTION public.mcp_readiness_subject(d deployments)\\n RETURNS text\\n LANGUAGE sql\\n STABLE\\nAS $function$\\n WITH bindings AS (\\n SELECT jsonb_agg(jsonb_build_array(role.value->>''name'',\\n   connection.view#>''{config,revision}'', connection.view#>''{config,enabled}'',\\n   connection.view#>''{config,observer,enabled}'',connection.view#>''{config,observer,paused}'',connection.view#>''{config,observer,endpoint}'',\\n   connection.view#>''{config,observer,oauth}'' IS NOT NULL AND connection.view#>''{config,observer,oauth}''<>''null''::jsonb,\\n   connection.view#>''{observer_status,oauth,state}'',connection.view#>''{observer_status,oauth,source_sha256}'',\\n   connection.view#>''{observer_status,oauth,retirement_id}'',connection.view#>''{observer_status,oauth,granted_scopes}'',\\n   connection.view#>''{observer_status,oauth_flow,state_sha256}'',connection.view#>''{observer_status,oauth_flow,consumed}'',\\n   connection.view#>''{oauth_lifecycle,credential_state}'',connection.view#>''{oauth_lifecycle,local_state}'') ORDER BY role.value->>''name'') AS value\\n FROM app_mcp_readiness_policies p CROSS JOIN LATERAL jsonb_array_elements(p.policy->''roles'') AS role(value)\\n LEFT JOIN mcp_catalog_monitors m ON m.app_id=p.app_id AND m.account_id=(SELECT account_id FROM apps WHERE id=p.app_id)\\n LEFT JOIN LATERAL (SELECT CASE WHEN role.value#>>''{monitor,oauth_connection,role}''=''default'' THEN m.payload ELSE m.payload->''roles''->(role.value#>>''{monitor,oauth_connection,role}'') END AS view) connection ON true\\n WHERE p.app_id=d.app_id AND role.value#>''{monitor,oauth_connection}'' IS NOT NULL AND role.value#>''{monitor,oauth_connection}''<>''null''::jsonb)\\n SELECT CASE WHEN bindings.value IS NULL THEN mcp_readiness_runtime_subject(d)\\n ELSE encode(sha256(convert_to(jsonb_build_array(mcp_readiness_runtime_subject(d),bindings.value)::text,''UTF8'')),''hex'') END FROM bindings\\n$function$\\n", "CREATE OR REPLACE FUNCTION public.guard_deployment_mcp_readiness()\\n RETURNS trigger\\n LANGUAGE plpgsql\\nAS $function$\\nDECLARE cfg jsonb; subject text; probe_role jsonb; candidate_override uuid;\\nBEGIN\\n IF NEW.status<>''live'' OR NEW.traffic_percent<=0 THEN RETURN NEW; END IF;\\n IF TG_OP=''UPDATE'' AND OLD.status=''live'' AND NEW.traffic_percent<=OLD.traffic_percent THEN RETURN NEW; END IF;\\n SELECT policy INTO cfg FROM app_mcp_readiness_policies WHERE app_id=NEW.app_id FOR SHARE;\\n IF cfg IS NULL OR NOT (cfg->>''enabled'')::boolean THEN RETURN NEW; END IF;\\n IF EXISTS(SELECT 1 FROM jsonb_array_elements(cfg->''roles'') r WHERE r#>''{monitor,oauth_connection}'' IS NOT NULL AND r#>''{monitor,oauth_connection}''<>''null''::jsonb) THEN PERFORM app_id FROM mcp_catalog_monitors WHERE app_id=NEW.app_id FOR SHARE; END IF; subject:=mcp_readiness_subject(NEW);\\n SELECT id INTO candidate_override FROM deployment_mcp_readiness_overrides WHERE deployment_id=NEW.id AND policy_revision=(cfg->>''revision'')::uuid AND artifact_sha256=subject AND used_at IS NULL AND expires_at>clock_timestamp() ORDER BY created_at DESC LIMIT 1 FOR UPDATE;\\n IF candidate_override IS NOT NULL THEN UPDATE deployment_mcp_readiness_overrides SET used_at=clock_timestamp() WHERE id=candidate_override;RETURN NEW; END IF;\\n FOR probe_role IN SELECT value FROM jsonb_array_elements(cfg->''roles'') LOOP\\n  IF NOT EXISTS(SELECT 1 FROM deployment_mcp_readiness_evidence e WHERE e.deployment_id=NEW.id AND e.role=probe_role->>''name'' AND e.policy_revision=(cfg->>''revision'')::uuid AND e.artifact_sha256=subject AND e.passed AND e.observed_at>=clock_timestamp()-make_interval(secs=>(cfg->>''max_age_seconds'')::int) AND e.observed_at<=clock_timestamp()) THEN\\n   RAISE EXCEPTION ''fresh MCP readiness evidence required'' USING ERRCODE=''23514'',CONSTRAINT=''deployment_mcp_readiness_required'';\\n  END IF;\\n END LOOP;\\n RETURN NEW;\\nEND $function$\\n"]'::jsonb$_$;
+
+
+--
 -- Name: mcp_oauth_public_phase(jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -16647,10 +16714,10 @@ BEGIN
   SELECT count(*) INTO count_jobs FROM mcp_oauth_retirements WHERE account_id=OLD.account_id AND state IN ('awaiting_issuance','pending','held','manual_required');
   IF count_jobs>=64 THEN RAISE EXCEPTION 'MCP OAuth retirement capacity exhausted' USING ERRCODE='23514'; END IF;
   job_id:=gen_random_uuid(); client_cipher:=NULL;
-  SELECT ciphertext INTO client_cipher FROM app_secrets WHERE app_id=OLD.id AND account_id=OLD.account_id AND scope='default' AND key=substring(cfg->>'client_secret_ref' FROM 8) AND managed_postgres_binding_id IS NULL AND managed_object_storage_credential_id IS NULL AND managed_credential_ref IS NULL;
+  SELECT ciphertext INTO client_cipher FROM app_secrets WHERE app_id=OLD.id AND account_id=OLD.account_id AND scope=COALESCE(NULLIF(view.value#>>'{config,scope}',''),'default') AND key=substring(cfg->>'client_secret_ref' FROM 8) AND managed_postgres_binding_id IS NULL AND managed_object_storage_credential_id IS NULL AND managed_credential_ref IS NULL;
   phase:=jsonb_build_object('id',job_id,'state',CASE WHEN COALESCE(cfg->>'revocation_endpoint','')='' THEN 'manual_required' ELSE 'pending' END,'attempts',0,'next_attempt_at',captured_at,'refresh_acknowledged',false,'access_acknowledged',false,'private_config',cfg,'private_ciphertext',grant_data->>'ciphertext');
   IF client_cipher IS NOT NULL THEN phase:=phase||jsonb_build_object('private_client_ciphertext',encode(client_cipher,'base64')); END IF;
-  record_data:=jsonb_build_object('id',job_id,'app_id',OLD.id,'app_slug',OLD.slug,'role',view.key,'reason','app_deleted','state',phase->>'state','created_at',captured_at,'retain_until',captured_at+interval '7 days','revocation',phase,'allow_active_grant_revocation',false,'history',jsonb_build_array(jsonb_build_object('at',captured_at,'action','queued')));
+  record_data:=jsonb_build_object('id',job_id,'app_id',OLD.id,'app_slug',OLD.slug,'role',view.key,'scope',COALESCE(NULLIF(view.value#>>'{config,scope}',''),'default'),'reason','app_deleted','state',phase->>'state','created_at',captured_at,'retain_until',captured_at+interval '7 days','revocation',phase,'allow_active_grant_revocation',false,'history',jsonb_build_array(jsonb_build_object('at',captured_at,'action','queued')));
   INSERT INTO mcp_oauth_retirements(id,account_id,app_id,binding_sha256,created_at,retain_until,next_attempt_at,payload)
   VALUES(job_id,OLD.account_id,OLD.id,encode(sha256(convert_to((cfg->>'token_endpoint')||chr(10)||(cfg->>'client_id'),'UTF8')),'hex'),captured_at,captured_at+interval '7 days',captured_at,record_data);
   view.value:=view.value-'roles';
@@ -16685,10 +16752,10 @@ BEGIN
   SELECT count(*) INTO count_jobs FROM mcp_oauth_retirements WHERE account_id=OLD.account_id AND state IN ('awaiting_issuance','pending','held','manual_required');
   IF count_jobs>=64 THEN RAISE EXCEPTION 'MCP OAuth retirement capacity exhausted' USING ERRCODE='23514'; END IF;
   job_id:=gen_random_uuid(); client_cipher:=NULL;
-  SELECT ciphertext INTO client_cipher FROM app_secrets WHERE app_id=OLD.id AND account_id=OLD.account_id AND scope='default' AND key=substring(cfg->>'client_secret_ref' FROM 8) AND managed_postgres_binding_id IS NULL AND managed_object_storage_credential_id IS NULL AND managed_credential_ref IS NULL;
+  SELECT ciphertext INTO client_cipher FROM app_secrets WHERE app_id=OLD.id AND account_id=OLD.account_id AND scope=COALESCE(NULLIF(view.value#>>'{config,scope}',''),'default') AND key=substring(cfg->>'client_secret_ref' FROM 8) AND managed_postgres_binding_id IS NULL AND managed_object_storage_credential_id IS NULL AND managed_credential_ref IS NULL;
   phase:=jsonb_build_object('id',job_id,'state',CASE WHEN COALESCE(cfg->>'revocation_endpoint','')='' THEN 'manual_required' ELSE 'pending' END,'attempts',0,'next_attempt_at',captured_at,'refresh_acknowledged',false,'access_acknowledged',false,'private_config',cfg,'private_ciphertext',grant_data->>'ciphertext');
   IF client_cipher IS NOT NULL THEN phase:=phase||jsonb_build_object('private_client_ciphertext',encode(client_cipher,'base64')); END IF;
-  record_data:=jsonb_build_object('id',job_id,'app_id',OLD.id,'app_slug',OLD.slug,'role',view.key,'reason','app_deleted','state',phase->>'state','created_at',captured_at,'retain_until',captured_at+interval '7 days','revocation',phase,'allow_active_grant_revocation',false,'history',jsonb_build_array(jsonb_build_object('at',captured_at,'action','queued')));
+  record_data:=jsonb_build_object('id',job_id,'app_id',OLD.id,'app_slug',OLD.slug,'role',view.key,'scope',COALESCE(NULLIF(view.value#>>'{config,scope}',''),'default'),'reason','app_deleted','state',phase->>'state','created_at',captured_at,'retain_until',captured_at+interval '7 days','revocation',phase,'allow_active_grant_revocation',false,'history',jsonb_build_array(jsonb_build_object('at',captured_at,'action','queued')));
   INSERT INTO mcp_oauth_retirements(id,account_id,app_id,binding_sha256,created_at,retain_until,next_attempt_at,payload)
   VALUES(job_id,OLD.account_id,OLD.id,encode(sha256(convert_to((cfg->>'token_endpoint')||chr(10)||(cfg->>'client_id'),'UTF8')),'hex'),captured_at,captured_at+interval '7 days',captured_at,record_data);
   view.value:=view.value-'roles';
@@ -16711,13 +16778,14 @@ CREATE FUNCTION public.mcp_oauth_secret_credential_change() RETURNS trigger
 DECLARE secret_row app_secrets; root jsonb; changed jsonb; view record; cfg jsonb; st jsonb; life jsonb; grant_data jsonb; phase jsonb; record_data jsonb; journal jsonb; job_id uuid; client_cipher bytea; captured_at timestamptz:=now(); count_jobs bigint; refresh_changed boolean; deleting boolean:=TG_OP='DELETE'; history jsonb;
 BEGIN
  IF deleting THEN secret_row:=OLD; ELSE secret_row:=NEW; END IF;
- IF secret_row.scope<>'default' OR secret_row.managed_postgres_binding_id IS NOT NULL OR secret_row.managed_object_storage_credential_id IS NOT NULL OR secret_row.managed_credential_ref IS NOT NULL THEN IF deleting THEN RETURN OLD; ELSE RETURN NEW; END IF; END IF;
+ IF secret_row.managed_postgres_binding_id IS NOT NULL OR secret_row.managed_object_storage_credential_id IS NOT NULL OR secret_row.managed_credential_ref IS NOT NULL THEN IF deleting THEN RETURN OLD; ELSE RETURN NEW; END IF; END IF;
  IF TG_OP='UPDATE' AND NEW.secret_version=OLD.secret_version THEN RETURN NEW; END IF;
  IF TG_OP='INSERT' AND EXISTS(SELECT 1 FROM app_secrets WHERE app_id=NEW.app_id AND scope=NEW.scope AND key=NEW.key) THEN RETURN NEW; END IF;
  SELECT payload INTO root FROM mcp_catalog_monitors WHERE app_id=secret_row.app_id AND account_id=secret_row.account_id FOR UPDATE;
  IF root IS NULL THEN IF deleting THEN RETURN OLD; ELSE RETURN NEW; END IF; END IF;
  PERFORM pg_advisory_xact_lock(hashtext('mcp_oauth_retirement'),hashtext(secret_row.account_id::text));changed:=root;
  FOR view IN SELECT key,value FROM jsonb_each(jsonb_build_object('default',root)||COALESCE(root->'roles','{}'::jsonb)) LOOP
+  IF COALESCE(NULLIF(view.value#>>'{config,scope}',''),'default')<>secret_row.scope THEN CONTINUE; END IF;
   cfg:=view.value->'config'->'observer'->'oauth';
   refresh_changed:=COALESCE(cfg->>'refresh_token_secret_ref','')='secret:'||secret_row.key;
   IF NOT refresh_changed AND COALESCE(cfg->>'client_secret_ref','')<>'secret:'||secret_row.key THEN CONTINUE; END IF;
@@ -16725,14 +16793,14 @@ BEGIN
   life:=COALESCE(NULLIF(view.value->'oauth_lifecycle','null'::jsonb),jsonb_build_object('local_state','disconnected','history','[]'::jsonb));
   client_cipher:=NULL;
   IF cfg->>'client_secret_ref'='secret:'||secret_row.key AND TG_OP<>'INSERT' THEN client_cipher:=OLD.ciphertext;
-  ELSE SELECT ciphertext INTO client_cipher FROM app_secrets WHERE account_id=secret_row.account_id AND app_id=secret_row.app_id AND scope='default' AND key=substring(cfg->>'client_secret_ref' FROM 8) AND managed_postgres_binding_id IS NULL AND managed_object_storage_credential_id IS NULL AND managed_credential_ref IS NULL; END IF;
+  ELSE SELECT ciphertext INTO client_cipher FROM app_secrets WHERE account_id=secret_row.account_id AND app_id=secret_row.app_id AND scope=secret_row.scope AND key=substring(cfg->>'client_secret_ref' FROM 8) AND managed_postgres_binding_id IS NULL AND managed_object_storage_credential_id IS NULL AND managed_credential_ref IS NULL; END IF;
   journal:=st->'oauth_renewal';
   -- Preserve unknown issuance before invalidating an in-flight exchange.
   IF journal->>'state' IN ('pending','reauthorization_required') AND COALESCE(journal->'private_result','null'::jsonb)='null'::jsonb THEN
    job_id:=(journal->>'private_id')::uuid;
    phase:=jsonb_build_object('id',job_id,'state','pending','attempts',0,'next_attempt_at',captured_at+interval '5 minutes','refresh_acknowledged',false,'access_acknowledged',false,'private_config',cfg);
    IF client_cipher IS NOT NULL THEN phase:=phase||jsonb_build_object('private_client_ciphertext',encode(client_cipher,'base64')); END IF;
-   record_data:=jsonb_build_object('id',job_id,'app_id',secret_row.app_id,'app_slug',(SELECT slug FROM apps WHERE id=secret_row.app_id),'role',view.key,'reason','credential_changed','state','awaiting_issuance','created_at',captured_at,'retain_until',captured_at+interval '7 days','revocation',phase,'allow_active_grant_revocation',false,'history',jsonb_build_array(jsonb_build_object('at',captured_at,'action','queued')));
+   record_data:=jsonb_build_object('id',job_id,'app_id',secret_row.app_id,'app_slug',(SELECT slug FROM apps WHERE id=secret_row.app_id),'role',view.key,'scope',COALESCE(NULLIF(view.value#>>'{config,scope}',''),'default'),'reason','credential_changed','state','awaiting_issuance','created_at',captured_at,'retain_until',captured_at+interval '7 days','revocation',phase,'allow_active_grant_revocation',false,'history',jsonb_build_array(jsonb_build_object('at',captured_at,'action','queued')));
    SELECT count(*) INTO count_jobs FROM mcp_oauth_retirements WHERE account_id=secret_row.account_id AND state IN ('awaiting_issuance','pending','held','manual_required');
    IF count_jobs>=64 THEN RAISE EXCEPTION 'MCP OAuth retirement capacity exhausted' USING ERRCODE='23514'; END IF;
    INSERT INTO mcp_oauth_retirements(id,account_id,app_id,binding_sha256,created_at,retain_until,next_attempt_at,payload) VALUES(job_id,secret_row.account_id,secret_row.app_id,encode(sha256(convert_to((cfg->>'token_endpoint')||chr(10)||(cfg->>'client_id'),'UTF8')),'hex'),captured_at,captured_at+interval '7 days',captured_at+interval '5 minutes',record_data) ON CONFLICT(id) DO NOTHING;
@@ -16745,7 +16813,7 @@ BEGIN
     job_id:=gen_random_uuid();
     phase:=jsonb_build_object('id',job_id,'state',CASE WHEN COALESCE(cfg->>'revocation_endpoint','')='' THEN 'manual_required' ELSE 'pending' END,'attempts',0,'next_attempt_at',captured_at,'refresh_acknowledged',false,'access_acknowledged',false,'private_config',cfg,'private_ciphertext',grant_data->>'ciphertext');
     IF client_cipher IS NOT NULL THEN phase:=phase||jsonb_build_object('private_client_ciphertext',encode(client_cipher,'base64')); END IF;
-    record_data:=jsonb_build_object('id',job_id,'app_id',secret_row.app_id,'app_slug',(SELECT slug FROM apps WHERE id=secret_row.app_id),'role',view.key,'reason','credential_changed','state',phase->>'state','created_at',captured_at,'retain_until',captured_at+interval '7 days','revocation',phase,'allow_active_grant_revocation',false,'history',jsonb_build_array(jsonb_build_object('at',captured_at,'action','queued')));
+    record_data:=jsonb_build_object('id',job_id,'app_id',secret_row.app_id,'app_slug',(SELECT slug FROM apps WHERE id=secret_row.app_id),'role',view.key,'scope',COALESCE(NULLIF(view.value#>>'{config,scope}',''),'default'),'reason','credential_changed','state',phase->>'state','created_at',captured_at,'retain_until',captured_at+interval '7 days','revocation',phase,'allow_active_grant_revocation',false,'history',jsonb_build_array(jsonb_build_object('at',captured_at,'action','queued')));
     INSERT INTO mcp_oauth_retirements(id,account_id,app_id,binding_sha256,created_at,retain_until,next_attempt_at,payload) VALUES(job_id,secret_row.account_id,secret_row.app_id,encode(sha256(convert_to((cfg->>'token_endpoint')||chr(10)||(cfg->>'client_id'),'UTF8')),'hex'),captured_at,captured_at+interval '7 days',captured_at,record_data);
     life:=jsonb_set(life,ARRAY['revocation'],mcp_oauth_public_phase(phase));
    END LOOP;
@@ -16784,6 +16852,139 @@ $$;
 CREATE FUNCTION public.mcp_policy_convergence_metric_base(kind text) RETURNS text
     LANGUAGE sql IMMUTABLE
     AS $_$SELECT CASE WHEN $1='rules' THEN 'CHECK ((metric = ANY (ARRAY[''error_rate_pct''::text, ''latency_p50_ms''::text, ''latency_p95_ms''::text, ''latency_p99_ms''::text, ''cold_start_pct''::text, ''request_count''::text, ''failed_invocations''::text, ''api_up''::text, ''account_spend_eur''::text, ''deployment_failed''::text, ''cert_expiry_seconds''::text, ''cert_issuance_failed''::text, ''queue_depth''::text, ''new_error_fingerprint''::text, ''cold_wake_rate_pct''::text, ''daily_cost_cents''::text, ''slo_burn_rate''::text, ''canary_stuck_step''::text, ''safedeploy_audit_emit_failing''::text, ''deployment_audit_gc_failing''::text, ''canary_fleet_in_flight_high''::text, ''pre_auth_target_threshold''::text, ''pre_auth_target_signal_gap_pct''::text, ''event_pending_recipients''::text, ''event_oldest_pending_seconds''::text, ''event_retry_rate_per_second''::text, ''event_terminal_failure_pct''::text, ''event_routing_latency_p95_seconds''::text, ''event_paused_seconds''::text, ''event_drain_rate_per_second''::text, ''event_execution_dead_letters''::text, ''event_execution_dead_letter_rate_per_second''::text, ''event_handler_failure_pct''::text, ''event_completion_latency_p95_seconds''::text, ''event_recovery_stalled_jobs''::text, ''event_recovery_expiring_jobs''::text, ''event_recovery_capacity_wait_jobs''::text, ''event_recovery_execution_waiting_jobs''::text, ''event_recovery_execution_prolonged_wait_jobs''::text, ''event_recovery_execution_unknown_jobs''::text, ''event_recovery_execution_retention_risk_jobs''::text, ''event_recovery_notification_admission_overdue_jobs''::text, ''event_recovery_notification_admission_dead_jobs''::text, ''event_recovery_notification_admission_unknown_jobs''::text, ''event_recovery_notification_admission_no_receivers_jobs''::text, ''event_recovery_notification_execution_overdue_jobs''::text, ''event_recovery_notification_execution_dead_jobs''::text, ''event_recovery_notification_execution_unknown_jobs''::text, ''event_recovery_notification_execution_no_receivers_jobs''::text, ''event_retention_expiring_receipts''::text, ''event_storage_utilization_pct''::text, ''workflow_failures''::text, ''workflow_schedule_quota_skips''::text, ''workflow_pending_age_seconds''::text, ''workflow_waiting_age_seconds''::text, ''workflow_due_age_seconds''::text, ''pre_auth_pressure''::text, ''edge_validation_failures''::text, ''edge_rejections''::text, ''edge_waf_detections''::text, ''mcp_tasks_oldest_age_seconds''::text, ''mcp_tasks_metrics_stale''::text, ''mcp_task_promotion_hold_age_seconds''::text, ''edge_rule_hits''::text, ''edge_rule_log_hits''::text])))' ELSE 'CHECK ((metric = ANY (ARRAY[''error_rate_pct''::text, ''latency_p95_ms''::text, ''cold_start_pct''::text, ''api_up''::text, ''account_spend_eur''::text, ''deployment_failed''::text, ''cert_expiry_seconds''::text, ''cert_issuance_failed''::text, ''queue_depth''::text, ''new_error_fingerprint''::text, ''daily_cost_cents''::text, ''slo_burn_rate''::text, ''canary_stuck_step''::text, ''safedeploy_audit_emit_failing''::text, ''deployment_audit_gc_failing''::text, ''canary_fleet_in_flight_high''::text, ''pre_auth_target_threshold''::text, ''pre_auth_target_signal_gap_pct''::text, ''workflow_due_age_seconds''::text, ''workflow_failures''::text, ''pre_auth_pressure''::text, ''edge_validation_failures''::text, ''edge_rejections''::text, ''edge_waf_detections''::text])))' END$_$;
+
+
+--
+-- Name: mcp_protocol_alert_metric_base(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_protocol_alert_metric_base() RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$SELECT 'CHECK (((metric = ANY (ARRAY[''error_rate_pct''::text, ''latency_p50_ms''::text, ''latency_p95_ms''::text, ''latency_p99_ms''::text, ''cold_start_pct''::text, ''request_count''::text, ''failed_invocations''::text, ''api_up''::text, ''account_spend_eur''::text, ''deployment_failed''::text, ''cert_expiry_seconds''::text, ''cert_issuance_failed''::text, ''queue_depth''::text, ''new_error_fingerprint''::text, ''cold_wake_rate_pct''::text, ''daily_cost_cents''::text, ''slo_burn_rate''::text, ''canary_stuck_step''::text, ''safedeploy_audit_emit_failing''::text, ''deployment_audit_gc_failing''::text, ''canary_fleet_in_flight_high''::text, ''pre_auth_target_threshold''::text, ''pre_auth_target_signal_gap_pct''::text, ''event_pending_recipients''::text, ''event_oldest_pending_seconds''::text, ''event_retry_rate_per_second''::text, ''event_terminal_failure_pct''::text, ''event_routing_latency_p95_seconds''::text, ''event_paused_seconds''::text, ''event_drain_rate_per_second''::text, ''event_execution_dead_letters''::text, ''event_execution_dead_letter_rate_per_second''::text, ''event_handler_failure_pct''::text, ''event_completion_latency_p95_seconds''::text, ''event_recovery_stalled_jobs''::text, ''event_recovery_expiring_jobs''::text, ''event_recovery_capacity_wait_jobs''::text, ''event_recovery_execution_waiting_jobs''::text, ''event_recovery_execution_prolonged_wait_jobs''::text, ''event_recovery_execution_unknown_jobs''::text, ''event_recovery_execution_retention_risk_jobs''::text, ''event_recovery_notification_admission_overdue_jobs''::text, ''event_recovery_notification_admission_dead_jobs''::text, ''event_recovery_notification_admission_unknown_jobs''::text, ''event_recovery_notification_admission_no_receivers_jobs''::text, ''event_recovery_notification_execution_overdue_jobs''::text, ''event_recovery_notification_execution_dead_jobs''::text, ''event_recovery_notification_execution_unknown_jobs''::text, ''event_recovery_notification_execution_no_receivers_jobs''::text, ''event_retention_expiring_receipts''::text, ''event_storage_utilization_pct''::text, ''workflow_failures''::text, ''workflow_schedule_quota_skips''::text, ''workflow_pending_age_seconds''::text, ''workflow_waiting_age_seconds''::text, ''workflow_due_age_seconds''::text, ''pre_auth_pressure''::text, ''edge_validation_failures''::text, ''edge_rejections''::text, ''edge_waf_detections''::text, ''mcp_tasks_oldest_age_seconds''::text, ''mcp_tasks_metrics_stale''::text, ''mcp_task_promotion_hold_age_seconds''::text, ''edge_rule_hits''::text, ''edge_rule_log_hits''::text])) OR (metric = ANY (ARRAY[''mcp_policy_unconverged_gateways''::text, ''mcp_policy_unverified''::text])) OR (metric = ANY (ARRAY[''mcp_catalog_drift''::text, ''mcp_catalog_monitor_unavailable''::text])) OR (metric = ANY (ARRAY[''mcp_oauth_reauthorization_required''::text, ''mcp_oauth_renewal_failed''::text, ''mcp_oauth_retirement_expiring''::text, ''mcp_oauth_issuance_unknown''::text]))))'::text$$;
+
+
+--
+-- Name: mcp_readiness_alert_metric_base(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_readiness_alert_metric_base(kind text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $_$SELECT CASE WHEN $1='rules' THEN 'CHECK (((metric = ANY (ARRAY[''error_rate_pct''::text, ''latency_p50_ms''::text, ''latency_p95_ms''::text, ''latency_p99_ms''::text, ''cold_start_pct''::text, ''request_count''::text, ''failed_invocations''::text, ''api_up''::text, ''account_spend_eur''::text, ''deployment_failed''::text, ''cert_expiry_seconds''::text, ''cert_issuance_failed''::text, ''queue_depth''::text, ''new_error_fingerprint''::text, ''cold_wake_rate_pct''::text, ''daily_cost_cents''::text, ''slo_burn_rate''::text, ''canary_stuck_step''::text, ''safedeploy_audit_emit_failing''::text, ''deployment_audit_gc_failing''::text, ''canary_fleet_in_flight_high''::text, ''pre_auth_target_threshold''::text, ''pre_auth_target_signal_gap_pct''::text, ''event_pending_recipients''::text, ''event_oldest_pending_seconds''::text, ''event_retry_rate_per_second''::text, ''event_terminal_failure_pct''::text, ''event_routing_latency_p95_seconds''::text, ''event_paused_seconds''::text, ''event_drain_rate_per_second''::text, ''event_execution_dead_letters''::text, ''event_execution_dead_letter_rate_per_second''::text, ''event_handler_failure_pct''::text, ''event_completion_latency_p95_seconds''::text, ''event_recovery_stalled_jobs''::text, ''event_recovery_expiring_jobs''::text, ''event_recovery_capacity_wait_jobs''::text, ''event_recovery_execution_waiting_jobs''::text, ''event_recovery_execution_prolonged_wait_jobs''::text, ''event_recovery_execution_unknown_jobs''::text, ''event_recovery_execution_retention_risk_jobs''::text, ''event_recovery_notification_admission_overdue_jobs''::text, ''event_recovery_notification_admission_dead_jobs''::text, ''event_recovery_notification_admission_unknown_jobs''::text, ''event_recovery_notification_admission_no_receivers_jobs''::text, ''event_recovery_notification_execution_overdue_jobs''::text, ''event_recovery_notification_execution_dead_jobs''::text, ''event_recovery_notification_execution_unknown_jobs''::text, ''event_recovery_notification_execution_no_receivers_jobs''::text, ''event_retention_expiring_receipts''::text, ''event_storage_utilization_pct''::text, ''workflow_failures''::text, ''workflow_schedule_quota_skips''::text, ''workflow_pending_age_seconds''::text, ''workflow_waiting_age_seconds''::text, ''workflow_due_age_seconds''::text, ''pre_auth_pressure''::text, ''edge_validation_failures''::text, ''edge_rejections''::text, ''edge_waf_detections''::text, ''mcp_tasks_oldest_age_seconds''::text, ''mcp_tasks_metrics_stale''::text, ''mcp_task_promotion_hold_age_seconds''::text, ''edge_rule_hits''::text, ''edge_rule_log_hits''::text])) OR (metric = ANY (ARRAY[''mcp_policy_unconverged_gateways''::text, ''mcp_policy_unverified''::text])) OR (metric = ANY (ARRAY[''mcp_catalog_drift''::text, ''mcp_catalog_monitor_unavailable''::text])) OR (metric = ANY (ARRAY[''mcp_oauth_reauthorization_required''::text, ''mcp_oauth_renewal_failed''::text, ''mcp_oauth_retirement_expiring''::text, ''mcp_oauth_issuance_unknown''::text])) OR (metric = ANY (ARRAY[''mcp_protocol_error_rate_pct''::text, ''mcp_protocol_execution_p95_ms''::text]))))' ELSE 'CHECK (((metric = ANY (ARRAY[''error_rate_pct''::text, ''latency_p95_ms''::text, ''cold_start_pct''::text, ''api_up''::text, ''account_spend_eur''::text, ''deployment_failed''::text, ''cert_expiry_seconds''::text, ''cert_issuance_failed''::text, ''queue_depth''::text, ''new_error_fingerprint''::text, ''daily_cost_cents''::text, ''slo_burn_rate''::text, ''canary_stuck_step''::text, ''safedeploy_audit_emit_failing''::text, ''deployment_audit_gc_failing''::text, ''canary_fleet_in_flight_high''::text, ''pre_auth_target_threshold''::text, ''pre_auth_target_signal_gap_pct''::text, ''workflow_due_age_seconds''::text, ''workflow_failures''::text, ''pre_auth_pressure''::text, ''edge_validation_failures''::text, ''edge_rejections''::text, ''edge_waf_detections''::text])) OR (metric = ANY (ARRAY[''mcp_policy_unconverged_gateways''::text, ''mcp_policy_unverified''::text])) OR (metric = ANY (ARRAY[''mcp_catalog_drift''::text, ''mcp_catalog_monitor_unavailable''::text])) OR (metric = ANY (ARRAY[''mcp_oauth_reauthorization_required''::text, ''mcp_oauth_renewal_failed''::text, ''mcp_oauth_retirement_expiring''::text, ''mcp_oauth_issuance_unknown''::text]))))' END$_$;
+
+
+--
+-- Name: mcp_readiness_oauth_guard_base(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_readiness_oauth_guard_base() RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $_$SELECT 'CREATE OR REPLACE FUNCTION public.guard_deployment_mcp_readiness()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+DECLARE cfg jsonb; subject text; probe_role jsonb; candidate_override uuid;
+BEGIN
+ IF NEW.status<>''live'' OR NEW.traffic_percent<=0 THEN RETURN NEW; END IF;
+ IF TG_OP=''UPDATE'' AND OLD.status=''live'' AND NEW.traffic_percent<=OLD.traffic_percent THEN RETURN NEW; END IF;
+ SELECT policy INTO cfg FROM app_mcp_readiness_policies WHERE app_id=NEW.app_id FOR SHARE;
+ IF cfg IS NULL OR NOT (cfg->>''enabled'')::boolean THEN RETURN NEW; END IF;
+ subject:=mcp_readiness_subject(NEW);
+ SELECT id INTO candidate_override FROM deployment_mcp_readiness_overrides WHERE deployment_id=NEW.id AND policy_revision=(cfg->>''revision'')::uuid AND artifact_sha256=subject AND used_at IS NULL AND expires_at>clock_timestamp() ORDER BY created_at DESC LIMIT 1 FOR UPDATE;
+ IF candidate_override IS NOT NULL THEN UPDATE deployment_mcp_readiness_overrides SET used_at=clock_timestamp() WHERE id=candidate_override;RETURN NEW; END IF;
+ FOR probe_role IN SELECT value FROM jsonb_array_elements(cfg->''roles'') LOOP
+  IF NOT EXISTS(SELECT 1 FROM deployment_mcp_readiness_evidence e WHERE e.deployment_id=NEW.id AND e.role=probe_role->>''name'' AND e.policy_revision=(cfg->>''revision'')::uuid AND e.artifact_sha256=subject AND e.passed AND e.observed_at>=clock_timestamp()-make_interval(secs=>(cfg->>''max_age_seconds'')::int) AND e.observed_at<=clock_timestamp()) THEN
+   RAISE EXCEPTION ''fresh MCP readiness evidence required'' USING ERRCODE=''23514'',CONSTRAINT=''deployment_mcp_readiness_required'';
+  END IF;
+ END LOOP;
+ RETURN NEW;
+END $function$
+'$_$;
+
+
+--
+-- Name: mcp_readiness_pagerduty_states_valid(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_readiness_pagerduty_states_valid(s jsonb) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $_$
+ SELECT
+ (NOT(s?'local_decision_at') OR jsonb_typeof(s->'local_decision_at')='string') AND
+ (NOT(s?'pagerduty_tracking') OR jsonb_typeof(s->'pagerduty_tracking')='boolean') AND
+ (NOT(s?'pagerduty_states') OR CASE WHEN jsonb_typeof(s->'pagerduty_states')='object' THEN
+  (s->>'pagerduty_tracking'='true') IS TRUE AND
+  (NOT EXISTS(SELECT 1 FROM jsonb_each(s->'pagerduty_states') d WHERE d.value->>'active'='true') OR (s->'acknowledgement'->>'source'='pagerduty') IS TRUE) AND NOT EXISTS(
+   SELECT 1 FROM jsonb_each(s->'pagerduty_states') d WHERE NOT coalesce(
+    d.key IN ('primary','fallback') AND jsonb_typeof(d.value)='object' AND
+    jsonb_typeof(d.value->'active')='boolean' AND
+    (NOT(d.value?'ambiguous') OR jsonb_typeof(d.value->'ambiguous')='boolean') AND
+    jsonb_typeof(d.value->'last_occurred_at')='string' AND d.value->>'fingerprint' ~ '^[a-f0-9]{64}$' AND
+    jsonb_typeof(d.value->'hold')='object' AND d.value->'hold'->>'destination'=d.key AND
+    d.value->'hold'->>'provider_incident_id' ~ '^[A-Za-z0-9_-]{1,128}$' AND
+    d.value->'hold'->>'provider_event_id' ~ '^[A-Za-z0-9_-]{1,128}$' AND
+    d.value->'hold'->>'service_id' ~ '^[A-Za-z0-9_-]{1,128}$' AND
+    d.value->'hold'->>'region' IN ('us','eu') AND
+    jsonb_typeof(d.value->'hold'->'occurred_at')='string' AND
+    jsonb_typeof(d.value->'hold'->'received_at')='string' AND
+    jsonb_typeof(d.value->'hold'->'policy_version')='number' AND
+    d.value->'hold'->>'policy_version' ~ '^[1-9][0-9]{0,18}$' AND
+    (d.value->'hold'->>'policy_version')::numeric<=9223372036854775807 AND
+    jsonb_typeof(d.value->'hold'->'release_sync_enabled')='boolean',false)
+  ) ELSE false END);
+$_$;
+
+
+--
+-- Name: mcp_readiness_policy_scope_guard_base(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_readiness_policy_scope_guard_base() RETURNS jsonb
+    LANGUAGE sql IMMUTABLE
+    AS $_$SELECT E'["CREATE OR REPLACE FUNCTION public.mcp_readiness_subject(d deployments)\\n RETURNS text\\n LANGUAGE sql\\n STABLE\\nAS $function$\\n WITH bindings AS (\\n SELECT jsonb_agg(jsonb_build_array(role.value->>''name'',\\n   connection.view#>''{config,revision}'', COALESCE(NULLIF(connection.view#>>''{config,scope}'',''''),''default''), connection.view#>''{config,enabled}'',\\n   connection.view#>''{config,observer,enabled}'',connection.view#>''{config,observer,paused}'',connection.view#>''{config,observer,endpoint}'',\\n   connection.view#>''{config,observer,oauth}'' IS NOT NULL AND connection.view#>''{config,observer,oauth}''<>''null''::jsonb,\\n   connection.view#>''{observer_status,oauth,state}'',connection.view#>''{observer_status,oauth,source_sha256}'',\\n   connection.view#>''{observer_status,oauth,retirement_id}'',connection.view#>''{observer_status,oauth,granted_scopes}'',\\n   connection.view#>''{observer_status,oauth_flow,state_sha256}'',connection.view#>''{observer_status,oauth_flow,consumed}'',\\n   connection.view#>''{oauth_lifecycle,credential_state}'',connection.view#>''{oauth_lifecycle,local_state}'') ORDER BY role.value->>''name'') AS value\\n FROM app_mcp_readiness_policies p CROSS JOIN LATERAL jsonb_array_elements(p.policy->''roles'') AS role(value)\\n LEFT JOIN mcp_catalog_monitors m ON m.app_id=p.app_id AND m.account_id=(SELECT account_id FROM apps WHERE id=p.app_id)\\n LEFT JOIN LATERAL (SELECT CASE WHEN role.value#>''{monitor,oauth_connections}'' IS NOT NULL THEN role.value#>''{monitor,oauth_connections}''->COALESCE(NULLIF(d.scope,''''),''default'')\\n ELSE CASE WHEN COALESCE(NULLIF(role.value#>>''{monitor,oauth_connection,scope}'',''''),''default'')=COALESCE(NULLIF(d.scope,''''),''default'') THEN role.value#>''{monitor,oauth_connection}'' END END AS ref) binding ON true\\n LEFT JOIN LATERAL (SELECT CASE WHEN binding.ref->>''role''=''default'' THEN m.payload ELSE m.payload->''roles''->(binding.ref->>''role'') END AS candidate) selected ON true\\n LEFT JOIN LATERAL (SELECT CASE WHEN COALESCE(NULLIF(selected.candidate#>>''{config,scope}'',''''),''default'')=COALESCE(NULLIF(d.scope,''''),''default'') THEN selected.candidate END AS view) connection ON true\\n WHERE p.app_id=d.app_id AND ((role.value#>''{monitor,oauth_connection}'' IS NOT NULL AND role.value#>''{monitor,oauth_connection}''<>''null''::jsonb) OR COALESCE(role.value#>''{monitor,oauth_connections}'',''{}''::jsonb)<>''{}''::jsonb))\\n SELECT CASE WHEN bindings.value IS NULL THEN mcp_readiness_runtime_subject(d)\\n ELSE encode(sha256(convert_to(jsonb_build_array(mcp_readiness_runtime_subject(d),bindings.value)::text,''UTF8'')),''hex'') END FROM bindings\\n$function$\\n", "CREATE OR REPLACE FUNCTION public.guard_deployment_mcp_readiness()\\n RETURNS trigger\\n LANGUAGE plpgsql\\nAS $function$\\nDECLARE cfg jsonb; subject text; probe_role jsonb; candidate_override uuid;\\nBEGIN\\n IF NEW.status<>''live'' OR NEW.traffic_percent<=0 THEN RETURN NEW; END IF;\\n IF TG_OP=''UPDATE'' AND OLD.status=''live'' AND NEW.traffic_percent<=OLD.traffic_percent THEN RETURN NEW; END IF;\\n SELECT policy INTO cfg FROM app_mcp_readiness_policies WHERE app_id=NEW.app_id FOR SHARE;\\n IF cfg IS NULL OR NOT (cfg->>''enabled'')::boolean THEN RETURN NEW; END IF;\\n IF EXISTS(SELECT 1 FROM jsonb_array_elements(cfg->''roles'') r WHERE r#>''{monitor,oauth_connection}'' IS NOT NULL AND r#>''{monitor,oauth_connection}''<>''null''::jsonb) THEN PERFORM app_id FROM mcp_catalog_monitors WHERE app_id=NEW.app_id FOR SHARE; END IF; IF EXISTS(SELECT 1 FROM jsonb_array_elements(cfg->''roles'') r WHERE COALESCE(r#>''{monitor,oauth_connections}'',''{}''::jsonb)<>''{}''::jsonb) THEN PERFORM app_id FROM mcp_catalog_monitors WHERE app_id=NEW.app_id FOR SHARE; END IF; subject:=mcp_readiness_subject(NEW);\\n SELECT id INTO candidate_override FROM deployment_mcp_readiness_overrides WHERE deployment_id=NEW.id AND policy_revision=(cfg->>''revision'')::uuid AND artifact_sha256=subject AND used_at IS NULL AND expires_at>clock_timestamp() ORDER BY created_at DESC LIMIT 1 FOR UPDATE;\\n IF candidate_override IS NOT NULL THEN UPDATE deployment_mcp_readiness_overrides SET used_at=clock_timestamp() WHERE id=candidate_override;RETURN NEW; END IF;\\n FOR probe_role IN SELECT value FROM jsonb_array_elements(cfg->''roles'') LOOP\\n  IF NOT EXISTS(SELECT 1 FROM deployment_mcp_readiness_evidence e WHERE e.deployment_id=NEW.id AND e.role=probe_role->>''name'' AND e.policy_revision=(cfg->>''revision'')::uuid AND e.artifact_sha256=subject AND e.passed AND e.observed_at>=clock_timestamp()-make_interval(secs=>(cfg->>''max_age_seconds'')::int) AND e.observed_at<=clock_timestamp()) THEN\\n   RAISE EXCEPTION ''fresh MCP readiness evidence required'' USING ERRCODE=''23514'',CONSTRAINT=''deployment_mcp_readiness_required'';\\n  END IF;\\n END LOOP;\\n RETURN NEW;\\nEND $function$\\n"]'::jsonb$_$;
+
+
+--
+-- Name: mcp_readiness_runtime_subject(public.deployments); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_readiness_runtime_subject(d public.deployments) RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT encode(sha256(convert_to(jsonb_build_array(
+ d.id,d.app_id,d.image_digest,d.build_id,d.rootfs_path,d.rootfs_key,d.source_sha256,d.commit_sha,d.scope,
+ d.override_entrypoint,d.override_cmd,d.override_env,d.override_env_secrets,d.override_port,d.override_healthcheck,d.override_liveness_probe,d.sidecars,
+ (SELECT jsonb_object_agg(k,v) FROM apps a,LATERAL jsonb_each(to_jsonb(a)) f(k,v) WHERE a.id=d.app_id AND k IN ('manifest','slug','start_command','app_protocol','visibility','consumer_auth_mode','only_declared_routes','declared_routes','public_auth_basic','public_auth_ip_allowlist','runtime','env','entrypoint','cmd','port','healthcheck','require_authn','public_auth','public_auth_mode','streaming_enabled','maintenance_mode')),
+ (SELECT jsonb_agg(jsonb_build_array(key,scope,delivery_version,value_hash) ORDER BY scope,key) FROM app_secrets WHERE app_id=d.app_id AND scope=d.scope)
+ )::text,'UTF8')),'hex')
+$$;
+
+
+--
+-- Name: mcp_readiness_subject(public.deployments); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_readiness_subject(d public.deployments) RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+ WITH bindings AS (
+ SELECT jsonb_agg(jsonb_build_array(role.value->>'name',
+   connection.view#>'{config,revision}', COALESCE(NULLIF(connection.view#>>'{config,scope}',''),'default'), connection.view#>'{config,enabled}',
+   connection.view#>'{config,observer,enabled}',connection.view#>'{config,observer,paused}',connection.view#>'{config,observer,endpoint}',
+   connection.view#>'{config,observer,oauth}' IS NOT NULL AND connection.view#>'{config,observer,oauth}'<>'null'::jsonb,
+   connection.view#>'{observer_status,oauth,state}',connection.view#>'{observer_status,oauth,source_sha256}',
+   connection.view#>'{observer_status,oauth,retirement_id}',connection.view#>'{observer_status,oauth,granted_scopes}',
+   connection.view#>'{observer_status,oauth_flow,state_sha256}',connection.view#>'{observer_status,oauth_flow,consumed}',
+   connection.view#>'{oauth_lifecycle,credential_state}',connection.view#>'{oauth_lifecycle,local_state}') ORDER BY role.value->>'name') AS value
+ FROM app_mcp_readiness_policies p CROSS JOIN LATERAL jsonb_array_elements(p.policy->'roles') AS role(value)
+ LEFT JOIN mcp_catalog_monitors m ON m.app_id=p.app_id AND m.account_id=(SELECT account_id FROM apps WHERE id=p.app_id)
+ LEFT JOIN LATERAL (SELECT CASE WHEN role.value#>'{monitor,oauth_connections}' IS NOT NULL THEN role.value#>'{monitor,oauth_connections}'->COALESCE(NULLIF(d.scope,''),'default')
+ ELSE CASE WHEN COALESCE(NULLIF(role.value#>>'{monitor,oauth_connection,scope}',''),'default')=COALESCE(NULLIF(d.scope,''),'default') THEN role.value#>'{monitor,oauth_connection}' END END AS ref) binding ON true
+ LEFT JOIN LATERAL (SELECT CASE WHEN binding.ref->>'role'='default' THEN m.payload ELSE m.payload->'roles'->(binding.ref->>'role') END AS candidate) selected ON true
+ LEFT JOIN LATERAL (SELECT CASE WHEN COALESCE(NULLIF(selected.candidate#>>'{config,scope}',''),'default')=COALESCE(NULLIF(d.scope,''),'default') THEN selected.candidate END AS view) connection ON true
+ WHERE p.app_id=d.app_id AND p.scope=COALESCE(NULLIF(d.scope,''),'default') AND ((role.value#>'{monitor,oauth_connection}' IS NOT NULL AND role.value#>'{monitor,oauth_connection}'<>'null'::jsonb) OR COALESCE(role.value#>'{monitor,oauth_connections}','{}'::jsonb)<>'{}'::jsonb))
+ SELECT CASE WHEN bindings.value IS NULL THEN mcp_readiness_runtime_subject(d)
+ ELSE encode(sha256(convert_to(jsonb_build_array(mcp_readiness_runtime_subject(d),bindings.value)::text,'UTF8')),'hex') END FROM bindings
+$$;
 
 
 --
@@ -22549,6 +22750,12 @@ CREATE TABLE public.alert_deliveries (
     fired_at timestamp with time zone DEFAULT now() NOT NULL,
     delivered_at timestamp with time zone,
     is_test boolean DEFAULT false NOT NULL,
+    readiness_event_id text DEFAULT ''::text NOT NULL,
+    readiness_destination text DEFAULT ''::text NOT NULL,
+    readiness_failover_reason text DEFAULT ''::text NOT NULL,
+    CONSTRAINT alert_deliveries_readiness_destination_check CHECK ((readiness_destination = ANY (ARRAY[''::text, 'primary'::text, 'fallback'::text]))),
+    CONSTRAINT alert_deliveries_readiness_event_id_check CHECK (((readiness_event_id = ''::text) OR (readiness_event_id ~ '^[0-9a-f-]{36}$'::text))),
+    CONSTRAINT alert_deliveries_readiness_failover_reason_check CHECK ((readiness_failover_reason = ANY (ARRAY[''::text, 'primary_failure_threshold'::text, 'incident_sticky_fallback'::text, 'recovery_to_primary'::text, 'primary_queue_blocked'::text]))),
     CONSTRAINT alert_deliveries_status_chk CHECK ((status = ANY (ARRAY['pending'::text, 'delivered'::text, 'failed'::text])))
 );
 
@@ -22587,7 +22794,7 @@ CREATE TABLE public.alert_presets (
     CONSTRAINT alert_presets_cooldown_chk CHECK (((default_cooldown_minutes >= 5) AND (default_cooldown_minutes <= 1440))),
     CONSTRAINT alert_presets_description_len_chk CHECK (((char_length(description) >= 1) AND (char_length(description) <= 512))),
     CONSTRAINT alert_presets_display_name_len_chk CHECK (((char_length(display_name) >= 1) AND (char_length(display_name) <= 128))),
-    CONSTRAINT alert_presets_metric_chk CHECK (((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p95_ms'::text, 'cold_start_pct'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'workflow_due_age_seconds'::text, 'workflow_failures'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text])) OR (metric = ANY (ARRAY['mcp_policy_unconverged_gateways'::text, 'mcp_policy_unverified'::text])) OR (metric = ANY (ARRAY['mcp_catalog_drift'::text, 'mcp_catalog_monitor_unavailable'::text])) OR (metric = ANY (ARRAY['mcp_oauth_reauthorization_required'::text, 'mcp_oauth_renewal_failed'::text, 'mcp_oauth_retirement_expiring'::text, 'mcp_oauth_issuance_unknown'::text])))),
+    CONSTRAINT alert_presets_metric_chk CHECK (((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p95_ms'::text, 'cold_start_pct'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'workflow_due_age_seconds'::text, 'workflow_failures'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text])) OR (metric = ANY (ARRAY['mcp_policy_unconverged_gateways'::text, 'mcp_policy_unverified'::text])) OR (metric = ANY (ARRAY['mcp_catalog_drift'::text, 'mcp_catalog_monitor_unavailable'::text])) OR (metric = ANY (ARRAY['mcp_oauth_reauthorization_required'::text, 'mcp_oauth_renewal_failed'::text, 'mcp_oauth_retirement_expiring'::text, 'mcp_oauth_issuance_unknown'::text])) OR (metric = 'mcp_readiness_unhealthy'::text))),
     CONSTRAINT alert_presets_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_presets_plan_chk CHECK ((minimum_plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
     CONSTRAINT alert_presets_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text])))
@@ -22638,6 +22845,9 @@ CREATE TABLE public.alert_rules (
     post_deploy_rollback_window_seconds integer DEFAULT 0 NOT NULL,
     event_subscription_id uuid,
     edge_rule_id uuid,
+    mcp_min_calls integer DEFAULT 0 NOT NULL,
+    mcp_for_minutes integer DEFAULT 0 NOT NULL,
+    mcp_readiness_scope text DEFAULT ''::text NOT NULL,
     CONSTRAINT alert_rules_action_chk CHECK ((action = ANY (ARRAY['webhook'::text, 'rollback'::text, 'demote'::text, 'promote'::text]))),
     CONSTRAINT alert_rules_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text]))),
     CONSTRAINT alert_rules_cooldown_chk CHECK (((cooldown_minutes >= 5) AND (cooldown_minutes <= 1440))),
@@ -22651,8 +22861,15 @@ CREATE TABLE public.alert_rules (
     CONSTRAINT alert_rules_mcp_catalog_chk CHECK (((metric <> ALL (ARRAY['mcp_catalog_drift'::text, 'mcp_catalog_monitor_unavailable'::text])) OR ((app_id IS NOT NULL) AND (action = 'webhook'::text)))),
     CONSTRAINT alert_rules_mcp_connection_health_action_chk CHECK (((metric <> ALL (ARRAY['mcp_oauth_reauthorization_required'::text, 'mcp_oauth_renewal_failed'::text, 'mcp_oauth_retirement_expiring'::text, 'mcp_oauth_issuance_unknown'::text])) OR (action = 'webhook'::text))),
     CONSTRAINT alert_rules_mcp_convergence_chk CHECK (((metric <> ALL (ARRAY['mcp_policy_unconverged_gateways'::text, 'mcp_policy_unverified'::text])) OR ((app_id IS NOT NULL) AND (action = 'webhook'::text)))),
+    CONSTRAINT alert_rules_mcp_protocol_chk CHECK ((((metric = ANY (ARRAY['mcp_protocol_error_rate_pct'::text, 'mcp_protocol_execution_p95_ms'::text])) AND (app_id IS NOT NULL) AND (action = 'webhook'::text) AND ((mcp_min_calls >= 20) AND (mcp_min_calls <= 1000000)) AND ((mcp_for_minutes >= 1) AND (mcp_for_minutes <= 60)) AND (comparison = ANY (ARRAY['gt'::text, 'gte'::text])) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text])) AND (threshold >= (0)::double precision) AND (threshold <= (
+CASE
+    WHEN (metric = 'mcp_protocol_error_rate_pct'::text) THEN 100
+    ELSE 300000
+END)::double precision)) OR ((metric <> ALL (ARRAY['mcp_protocol_error_rate_pct'::text, 'mcp_protocol_execution_p95_ms'::text])) AND (mcp_min_calls = 0) AND (mcp_for_minutes = 0)))),
+    CONSTRAINT alert_rules_mcp_readiness_action_chk CHECK (((metric <> 'mcp_readiness_unhealthy'::text) OR ((action = 'webhook'::text) AND (app_id IS NOT NULL)))),
+    CONSTRAINT alert_rules_mcp_readiness_scope_chk CHECK (((mcp_readiness_scope = ''::text) OR ((metric = 'mcp_readiness_unhealthy'::text) AND (app_id IS NOT NULL) AND (mcp_readiness_scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)))),
     CONSTRAINT alert_rules_mcp_tasks_notification_chk CHECK (((metric <> ALL (ARRAY['mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text])) OR (action = 'webhook'::text))),
-    CONSTRAINT alert_rules_metric_chk CHECK (((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text, 'event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text, 'mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text, 'edge_rule_hits'::text, 'edge_rule_log_hits'::text])) OR (metric = ANY (ARRAY['mcp_policy_unconverged_gateways'::text, 'mcp_policy_unverified'::text])) OR (metric = ANY (ARRAY['mcp_catalog_drift'::text, 'mcp_catalog_monitor_unavailable'::text])) OR (metric = ANY (ARRAY['mcp_oauth_reauthorization_required'::text, 'mcp_oauth_renewal_failed'::text, 'mcp_oauth_retirement_expiring'::text, 'mcp_oauth_issuance_unknown'::text])))),
+    CONSTRAINT alert_rules_metric_chk CHECK (((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text, 'event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text, 'mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text, 'edge_rule_hits'::text, 'edge_rule_log_hits'::text])) OR (metric = ANY (ARRAY['mcp_policy_unconverged_gateways'::text, 'mcp_policy_unverified'::text])) OR (metric = ANY (ARRAY['mcp_catalog_drift'::text, 'mcp_catalog_monitor_unavailable'::text])) OR (metric = ANY (ARRAY['mcp_oauth_reauthorization_required'::text, 'mcp_oauth_renewal_failed'::text, 'mcp_oauth_retirement_expiring'::text, 'mcp_oauth_issuance_unknown'::text])) OR (metric = ANY (ARRAY['mcp_protocol_error_rate_pct'::text, 'mcp_protocol_execution_p95_ms'::text])) OR (metric = 'mcp_readiness_unhealthy'::text))),
     CONSTRAINT alert_rules_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_rules_post_deploy_rollback_window_seconds_check CHECK (((post_deploy_rollback_window_seconds >= 0) AND (post_deploy_rollback_window_seconds <= 3600))),
     CONSTRAINT alert_rules_preauth_notification_chk CHECK (((metric <> ALL (ARRAY['pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text])) OR (action = 'webhook'::text))),
@@ -23792,6 +24009,34 @@ CREATE TABLE public.app_log_drain_health (
     CONSTRAINT app_log_drain_health_retries_total_check CHECK ((retries_total >= 0)),
     CONSTRAINT app_log_drain_health_status_check CHECK ((status = ANY (ARRAY['unknown'::text, 'healthy'::text, 'degraded'::text, 'inactive'::text]))),
     CONSTRAINT app_log_drain_health_stream_reconnects_total_check CHECK ((stream_reconnects_total >= 0))
+);
+
+
+--
+-- Name: app_mcp_readiness_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_mcp_readiness_policies (
+    app_id uuid NOT NULL,
+    policy jsonb NOT NULL,
+    scope text DEFAULT 'default'::text NOT NULL,
+    CONSTRAINT app_mcp_readiness_policies_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
+    CONSTRAINT mcp_readiness_policy_scope_matches CHECK ((COALESCE(NULLIF((policy ->> 'scope'::text), ''::text), 'default'::text) = scope))
+);
+
+
+--
+-- Name: app_mcp_readiness_policy_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_mcp_readiness_policy_history (
+    revision uuid NOT NULL,
+    app_id uuid NOT NULL,
+    policy jsonb NOT NULL,
+    scope text DEFAULT 'default'::text NOT NULL,
+    recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_mcp_readiness_policy_history_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
+    CONSTRAINT mcp_readiness_history_scope_matches CHECK ((COALESCE(NULLIF((policy ->> 'scope'::text), ''::text), 'default'::text) = scope))
 );
 
 
@@ -27507,6 +27752,53 @@ CREATE SEQUENCE public.deployment_logs_seq_seq
 --
 
 ALTER SEQUENCE public.deployment_logs_seq_seq OWNED BY public.deployment_logs.seq;
+
+
+--
+-- Name: deployment_mcp_readiness_evidence; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_mcp_readiness_evidence (
+    deployment_id uuid NOT NULL,
+    role text NOT NULL,
+    policy_revision uuid NOT NULL,
+    artifact_sha256 text NOT NULL,
+    passed boolean NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    evidence jsonb NOT NULL
+);
+
+
+--
+-- Name: deployment_mcp_readiness_monitors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_mcp_readiness_monitors (
+    deployment_id uuid NOT NULL,
+    role text NOT NULL,
+    status jsonb DEFAULT '{}'::jsonb NOT NULL,
+    next_probe_at timestamp with time zone DEFAULT now() NOT NULL,
+    lease_id uuid,
+    lease_until timestamp with time zone
+);
+
+
+--
+-- Name: deployment_mcp_readiness_overrides; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_mcp_readiness_overrides (
+    id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    policy_revision uuid NOT NULL,
+    artifact_sha256 text NOT NULL,
+    reason text NOT NULL,
+    created_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    used_at timestamp with time zone,
+    CONSTRAINT deployment_mcp_readiness_overrides_reason_check CHECK (((length(reason) >= 1) AND (length(reason) <= 512)))
+);
 
 
 --
@@ -35185,6 +35477,283 @@ CREATE TABLE public.mcp_oauth_retirements (
     payload jsonb NOT NULL,
     CONSTRAINT mcp_oauth_retirement_payload_chk CHECK (((jsonb_typeof((payload -> 'history'::text)) = 'array'::text) AND (jsonb_array_length((payload -> 'history'::text)) <= 32) AND ((payload ->> 'id'::text) = (id)::text) AND ((payload ->> 'app_id'::text) = (app_id)::text) AND (jsonb_typeof((payload -> 'revocation'::text)) = 'object'::text) AND (((((payload -> 'revocation'::text) ->> 'attempts'::text))::integer >= 0) AND ((((payload -> 'revocation'::text) ->> 'attempts'::text))::integer <= 8)) AND (retain_until > created_at) AND (retain_until <= (created_at + '7 days'::interval)) AND ((state <> ALL (ARRAY['installed'::text, 'provider_acknowledged'::text, 'manually_acknowledged'::text, 'expired'::text])) OR (NOT ((payload -> 'revocation'::text) ?| ARRAY['private_config'::text, 'private_ciphertext'::text, 'private_client_ciphertext'::text, 'private_lease_id'::text, 'private_lease_until'::text]))))),
     CONSTRAINT mcp_oauth_retirement_state_chk CHECK ((state = ANY (ARRAY['awaiting_issuance'::text, 'pending'::text, 'held'::text, 'installed'::text, 'manual_required'::text, 'provider_acknowledged'::text, 'manually_acknowledged'::text, 'expired'::text])))
+);
+
+
+--
+-- Name: mcp_readiness_attention_actions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_readiness_attention_actions (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    incident_id uuid NOT NULL,
+    request jsonb NOT NULL,
+    receipt jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT mcp_readiness_attention_actions_receipt_check CHECK ((jsonb_typeof(receipt) = 'object'::text)),
+    CONSTRAINT mcp_readiness_attention_actions_request_check CHECK ((jsonb_typeof(request) = 'object'::text))
+);
+
+
+--
+-- Name: mcp_readiness_fallback_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_readiness_fallback_policies (
+    rule_id uuid NOT NULL,
+    version bigint NOT NULL,
+    enabled boolean NOT NULL,
+    webhook_url text NOT NULL,
+    webhook_secret_sealed bytea NOT NULL,
+    after_failures integer NOT NULL,
+    provider text DEFAULT 'webhook'::text NOT NULL,
+    region text DEFAULT ''::text NOT NULL,
+    integration_key_sealed bytea DEFAULT '\x'::bytea NOT NULL,
+    fingerprint text DEFAULT ''::text NOT NULL,
+    CONSTRAINT mcp_readiness_fallback_policies_after_failures_check CHECK (((after_failures >= 0) AND (after_failures <= 10))),
+    CONSTRAINT mcp_readiness_fallback_policies_check CHECK ((((NOT enabled) AND (provider = 'webhook'::text) AND (webhook_url = ''::text) AND (octet_length(webhook_secret_sealed) = 0) AND (after_failures = 0) AND (region = ''::text) AND (octet_length(integration_key_sealed) = 0) AND (fingerprint = ''::text)) OR (enabled AND (after_failures > 0) AND (((provider = 'webhook'::text) AND (webhook_url <> ''::text) AND (octet_length(webhook_secret_sealed) > 0) AND (region = ''::text) AND (octet_length(integration_key_sealed) = 0) AND (fingerprint = ''::text)) OR ((provider = 'pagerduty'::text) AND (webhook_url = ''::text) AND (octet_length(webhook_secret_sealed) = 0) AND (region = ANY (ARRAY['us'::text, 'eu'::text])) AND (octet_length(integration_key_sealed) > 0) AND (fingerprint <> ''::text)))))),
+    CONSTRAINT mcp_readiness_fallback_policies_fingerprint_check CHECK (((fingerprint = ''::text) OR (fingerprint ~ '^[a-f0-9]{64}$'::text))),
+    CONSTRAINT mcp_readiness_fallback_policies_integration_key_sealed_check CHECK ((octet_length(integration_key_sealed) <= 4096)),
+    CONSTRAINT mcp_readiness_fallback_policies_provider_check CHECK ((provider = ANY (ARRAY['webhook'::text, 'pagerduty'::text]))),
+    CONSTRAINT mcp_readiness_fallback_policies_region_check CHECK ((region = ANY (ARRAY[''::text, 'us'::text, 'eu'::text]))),
+    CONSTRAINT mcp_readiness_fallback_policies_version_check CHECK ((version > 0)),
+    CONSTRAINT mcp_readiness_fallback_policies_webhook_url_check CHECK ((octet_length(webhook_url) <= 2048))
+);
+
+
+--
+-- Name: mcp_readiness_incident_attention; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_readiness_incident_attention (
+    incident_id uuid NOT NULL,
+    snapshot jsonb NOT NULL,
+    CONSTRAINT mcp_readiness_incident_attention_snapshot_check CHECK (((jsonb_typeof(snapshot) = 'object'::text) AND (COALESCE(((snapshot ->> 'version'::text))::bigint, (0)::bigint) >= 0) AND ((COALESCE(((snapshot ->> 'count'::text))::integer, 0) >= 0) AND (COALESCE(((snapshot ->> 'count'::text))::integer, 0) <= 10)))),
+    CONSTRAINT mcp_readiness_pagerduty_states_check CHECK (public.mcp_readiness_pagerduty_states_valid(snapshot)),
+    CONSTRAINT mcp_readiness_reminder_source_check CHECK ((((NOT (snapshot ? 'policy_source'::text)) OR (((snapshot ->> 'policy_source'::text) = ANY (ARRAY['rule_default'::text, 'incident_override'::text, 'legacy'::text])) IS TRUE)) AND ((NOT (snapshot ? 'defaults_version'::text)) OR ((((snapshot ->> 'defaults_version'::text))::bigint >= 0) IS TRUE)) AND ((COALESCE((snapshot ->> 'policy_source'::text), 'legacy'::text) <> 'rule_default'::text) OR (snapshot ? 'defaults_version'::text))))
+);
+
+
+--
+-- Name: mcp_readiness_incident_cursors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_readiness_incident_cursors (
+    rule_id uuid NOT NULL,
+    last_observed_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: mcp_readiness_incident_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_readiness_incident_events (
+    id uuid NOT NULL,
+    incident_id uuid NOT NULL,
+    rule_id uuid NOT NULL,
+    kind text NOT NULL,
+    sequence bigint NOT NULL,
+    occurred_at timestamp with time zone NOT NULL,
+    payload jsonb NOT NULL,
+    observed_value double precision NOT NULL,
+    delivery_status text DEFAULT 'pending'::text NOT NULL,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    available_at timestamp with time zone NOT NULL,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    last_delivery_id uuid,
+    last_attempt_at timestamp with time zone,
+    last_status_code integer,
+    imported boolean DEFAULT false NOT NULL,
+    maintenance_window_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
+    suppression_reason text DEFAULT ''::text NOT NULL,
+    notification_reason text DEFAULT ''::text NOT NULL,
+    delivery_version bigint DEFAULT 0 NOT NULL,
+    last_operator_action jsonb,
+    reminder_number integer DEFAULT 0 NOT NULL,
+    delivery_routing jsonb DEFAULT '{}'::jsonb NOT NULL,
+    destination_deliveries jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT mcp_readiness_incident_events_attempt_count_check CHECK ((attempt_count >= 0)),
+    CONSTRAINT mcp_readiness_incident_events_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT mcp_readiness_incident_events_delivery_routing_check CHECK ((jsonb_typeof(delivery_routing) = 'object'::text)),
+    CONSTRAINT mcp_readiness_incident_events_delivery_status_check CHECK ((delivery_status = ANY (ARRAY['pending'::text, 'failed'::text, 'delivered'::text, 'suppressed'::text, 'abandoned'::text]))),
+    CONSTRAINT mcp_readiness_incident_events_delivery_version_check CHECK ((delivery_version >= 0)),
+    CONSTRAINT mcp_readiness_incident_events_destination_deliveries_check CHECK (((jsonb_typeof(destination_deliveries) = 'object'::text) AND ((destination_deliveries - ARRAY['primary'::text, 'fallback'::text]) = '{}'::jsonb))),
+    CONSTRAINT mcp_readiness_incident_events_kind_check CHECK ((kind = ANY (ARRAY['alert.fired'::text, 'alert.resolved'::text]))),
+    CONSTRAINT mcp_readiness_incident_events_reminder_number_check CHECK (((reminder_number >= 0) AND (reminder_number <= 10))),
+    CONSTRAINT mcp_readiness_reminder_kind_check CHECK (((notification_reason = 'reminder'::text) = (reminder_number > 0)))
+);
+
+
+--
+-- Name: mcp_readiness_incident_events_sequence_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.mcp_readiness_incident_events ALTER COLUMN sequence ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.mcp_readiness_incident_events_sequence_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: mcp_readiness_incidents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_readiness_incidents (
+    id uuid NOT NULL,
+    rule_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text DEFAULT ''::text NOT NULL,
+    coverage text NOT NULL,
+    opened_at timestamp with time zone NOT NULL,
+    resolved_at timestamp with time zone,
+    maintenance_pending boolean DEFAULT false NOT NULL,
+    delivery_routing jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT mcp_readiness_incidents_check CHECK (((resolved_at IS NULL) OR (resolved_at >= opened_at))),
+    CONSTRAINT mcp_readiness_incidents_delivery_routing_check CHECK ((jsonb_typeof(delivery_routing) = 'object'::text)),
+    CONSTRAINT mcp_readiness_pagerduty_fallback_route_check CHECK (((NOT ((delivery_routing -> 'fallback'::text) ? 'provider'::text)) OR (((((delivery_routing -> 'fallback'::text) ->> 'provider'::text) = ANY (ARRAY['webhook'::text, 'pagerduty'::text])) IS TRUE) AND ((((delivery_routing -> 'fallback'::text) ->> 'provider'::text) <> 'pagerduty'::text) OR (((((delivery_routing -> 'fallback'::text) ->> 'url'::text) = ANY (ARRAY['https://events.pagerduty.com/v2/enqueue'::text, 'https://events.eu.pagerduty.com/v2/enqueue'::text])) AND (((delivery_routing -> 'fallback'::text) ->> 'receiver_id'::text) ~ '^[a-f0-9]{64}$'::text) AND (length(((delivery_routing -> 'fallback'::text) ->> 'secret'::text)) > 0)) IS TRUE))))),
+    CONSTRAINT mcp_readiness_pagerduty_route_check CHECK (((NOT ((delivery_routing -> 'primary'::text) ? 'provider'::text)) OR (((((delivery_routing -> 'primary'::text) ->> 'provider'::text) = ANY (ARRAY['webhook'::text, 'pagerduty'::text])) IS TRUE) AND ((((delivery_routing -> 'primary'::text) ->> 'provider'::text) <> 'pagerduty'::text) OR (((((delivery_routing -> 'primary'::text) ->> 'url'::text) = ANY (ARRAY['https://events.pagerduty.com/v2/enqueue'::text, 'https://events.eu.pagerduty.com/v2/enqueue'::text])) AND (((delivery_routing -> 'primary'::text) ->> 'receiver_id'::text) ~ '^[a-f0-9]{64}$'::text) AND (length(((delivery_routing -> 'primary'::text) ->> 'secret'::text)) > 0)) IS TRUE)))))
+);
+
+
+--
+-- Name: mcp_readiness_maintenance_windows; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_readiness_maintenance_windows (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    starts_at timestamp with time zone NOT NULL,
+    ends_at timestamp with time zone NOT NULL,
+    reason text NOT NULL,
+    created_by uuid NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    cancelled_at timestamp with time zone,
+    cancelled_by uuid,
+    cancel_reason text,
+    CONSTRAINT mcp_readiness_maintenance_windows_check CHECK (((ends_at > starts_at) AND (ends_at <= (starts_at + '720:00:00'::interval)))),
+    CONSTRAINT mcp_readiness_maintenance_windows_check1 CHECK (((cancelled_at IS NULL) = (cancelled_by IS NULL))),
+    CONSTRAINT mcp_readiness_maintenance_windows_check2 CHECK (((cancelled_at IS NULL) = (cancel_reason IS NULL))),
+    CONSTRAINT mcp_readiness_maintenance_windows_reason_check CHECK (((octet_length(reason) >= 1) AND (octet_length(reason) <= 500))),
+    CONSTRAINT mcp_readiness_maintenance_windows_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text))
+);
+
+
+--
+-- Name: mcp_readiness_notification_actions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_readiness_notification_actions (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    event_id uuid NOT NULL,
+    action text NOT NULL,
+    expected_version bigint NOT NULL,
+    reason text NOT NULL,
+    receipt jsonb NOT NULL,
+    destination text DEFAULT ''::text NOT NULL,
+    CONSTRAINT mcp_readiness_notification_actions_action_check CHECK ((action = ANY (ARRAY['retry'::text, 'abandon'::text]))),
+    CONSTRAINT mcp_readiness_notification_actions_destination_check CHECK ((destination = ANY (ARRAY[''::text, 'primary'::text, 'fallback'::text]))),
+    CONSTRAINT mcp_readiness_notification_actions_expected_version_check CHECK ((expected_version >= 0)),
+    CONSTRAINT mcp_readiness_notification_actions_reason_check CHECK (((octet_length(reason) >= 1) AND (octet_length(reason) <= 500)))
+);
+
+
+--
+-- Name: mcp_readiness_pagerduty_ack_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_readiness_pagerduty_ack_events (
+    rule_id uuid NOT NULL,
+    event_id text NOT NULL,
+    id uuid NOT NULL,
+    incident_id uuid NOT NULL,
+    digest text NOT NULL,
+    receipt jsonb NOT NULL,
+    received_at timestamp with time zone NOT NULL,
+    delivery_destination text DEFAULT ''::text NOT NULL,
+    CONSTRAINT mcp_readiness_pagerduty_ack_delivery_check CHECK ((((delivery_destination = ''::text) AND (COALESCE((receipt ->> 'action'::text), 'acknowledge'::text) = 'acknowledge'::text)) OR ((delivery_destination = ANY (ARRAY['primary'::text, 'fallback'::text])) AND ((((receipt ->> 'action'::text) = 'release'::text) AND ((receipt ->> 'destination'::text) = delivery_destination)) IS TRUE)))),
+    CONSTRAINT mcp_readiness_pagerduty_ack_events_delivery_destination_check CHECK ((delivery_destination = ANY (ARRAY[''::text, 'primary'::text, 'fallback'::text]))),
+    CONSTRAINT mcp_readiness_pagerduty_ack_events_digest_check CHECK ((digest ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT mcp_readiness_pagerduty_ack_events_event_id_check CHECK ((event_id ~ '^[A-Za-z0-9_-]{1,128}$'::text)),
+    CONSTRAINT mcp_readiness_pagerduty_ack_events_receipt_check CHECK (((jsonb_typeof(receipt) = 'object'::text) AND (((receipt ->> 'outcome'::text) = ANY (ARRAY['acknowledged'::text, 'already_acknowledged'::text, 'stale'::text, 'resolved'::text, 'released'::text, 'retained'::text, 'not_acknowledged'::text])) IS TRUE)))
+);
+
+
+--
+-- Name: mcp_readiness_pagerduty_acknowledgements; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_readiness_pagerduty_acknowledgements (
+    rule_id uuid NOT NULL,
+    version bigint NOT NULL,
+    enabled boolean NOT NULL,
+    signing_secret_sealed bytea NOT NULL,
+    pagerduty_version bigint NOT NULL,
+    region text NOT NULL,
+    fingerprint text NOT NULL,
+    service_id text NOT NULL,
+    destination text DEFAULT 'primary'::text NOT NULL,
+    fallback_version bigint DEFAULT 0 NOT NULL,
+    legacy_receiver boolean DEFAULT false NOT NULL,
+    sync_unacknowledgements boolean DEFAULT false NOT NULL,
+    CONSTRAINT mcp_readiness_pagerduty_acknowledge_signing_secret_sealed_check CHECK ((octet_length(signing_secret_sealed) <= 4096)),
+    CONSTRAINT mcp_readiness_pagerduty_acknowledgement_pagerduty_version_check CHECK ((pagerduty_version >= 0)),
+    CONSTRAINT mcp_readiness_pagerduty_acknowledgements_check CHECK (((enabled AND (octet_length(signing_secret_sealed) > 0) AND (region <> ''::text) AND (fingerprint <> ''::text) AND (service_id <> ''::text) AND (((destination = 'primary'::text) AND (pagerduty_version > 0) AND (fallback_version = 0)) OR ((destination = 'fallback'::text) AND (pagerduty_version = 0) AND (fallback_version > 0)))) OR ((NOT enabled) AND (octet_length(signing_secret_sealed) = 0) AND (pagerduty_version = 0) AND (fallback_version = 0) AND (region = ''::text) AND (fingerprint = ''::text) AND (service_id = ''::text)))),
+    CONSTRAINT mcp_readiness_pagerduty_acknowledgements_check1 CHECK ((enabled OR (NOT sync_unacknowledgements))),
+    CONSTRAINT mcp_readiness_pagerduty_acknowledgements_destination_check CHECK ((destination = ANY (ARRAY['primary'::text, 'fallback'::text]))),
+    CONSTRAINT mcp_readiness_pagerduty_acknowledgements_fallback_version_check CHECK ((fallback_version >= 0)),
+    CONSTRAINT mcp_readiness_pagerduty_acknowledgements_fingerprint_check CHECK (((fingerprint = ''::text) OR (fingerprint ~ '^[a-f0-9]{64}$'::text))),
+    CONSTRAINT mcp_readiness_pagerduty_acknowledgements_region_check CHECK ((region = ANY (ARRAY[''::text, 'us'::text, 'eu'::text]))),
+    CONSTRAINT mcp_readiness_pagerduty_acknowledgements_service_id_check CHECK (((service_id = ''::text) OR (service_id ~ '^[A-Za-z0-9_-]{1,128}$'::text))),
+    CONSTRAINT mcp_readiness_pagerduty_acknowledgements_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: mcp_readiness_pagerduty_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_readiness_pagerduty_policies (
+    rule_id uuid NOT NULL,
+    version bigint NOT NULL,
+    enabled boolean NOT NULL,
+    integration_key_sealed bytea NOT NULL,
+    fingerprint text NOT NULL,
+    region text DEFAULT 'us'::text NOT NULL,
+    CONSTRAINT mcp_readiness_pagerduty_disabled_region_check CHECK ((enabled OR (region = 'us'::text))),
+    CONSTRAINT mcp_readiness_pagerduty_policies_check CHECK (((enabled AND (octet_length(integration_key_sealed) > 0) AND (fingerprint <> ''::text)) OR ((NOT enabled) AND (octet_length(integration_key_sealed) = 0) AND (fingerprint = ''::text)))),
+    CONSTRAINT mcp_readiness_pagerduty_policies_fingerprint_check CHECK (((fingerprint = ''::text) OR (fingerprint ~ '^[a-f0-9]{64}$'::text))),
+    CONSTRAINT mcp_readiness_pagerduty_policies_integration_key_sealed_check CHECK ((octet_length(integration_key_sealed) <= 4096)),
+    CONSTRAINT mcp_readiness_pagerduty_policies_region_check CHECK ((region = ANY (ARRAY['us'::text, 'eu'::text]))),
+    CONSTRAINT mcp_readiness_pagerduty_policies_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: mcp_readiness_reminder_defaults; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_readiness_reminder_defaults (
+    rule_id uuid NOT NULL,
+    version bigint NOT NULL,
+    interval_seconds integer NOT NULL,
+    max_reminders integer NOT NULL,
+    CONSTRAINT mcp_readiness_reminder_defaults_check CHECK ((((interval_seconds = 0) AND (max_reminders = 0)) OR ((interval_seconds > 0) AND (max_reminders > 0)))),
+    CONSTRAINT mcp_readiness_reminder_defaults_interval_seconds_check CHECK (((interval_seconds = 0) OR ((interval_seconds >= 60) AND (interval_seconds <= 86400)))),
+    CONSTRAINT mcp_readiness_reminder_defaults_max_reminders_check CHECK (((max_reminders >= 0) AND (max_reminders <= 10))),
+    CONSTRAINT mcp_readiness_reminder_defaults_version_check CHECK ((version > 0))
 );
 
 
@@ -44701,6 +45270,22 @@ ALTER TABLE ONLY public.app_log_drains
 
 
 --
+-- Name: app_mcp_readiness_policies app_mcp_readiness_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_mcp_readiness_policies
+    ADD CONSTRAINT app_mcp_readiness_policies_pkey PRIMARY KEY (app_id, scope);
+
+
+--
+-- Name: app_mcp_readiness_policy_history app_mcp_readiness_policy_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_mcp_readiness_policy_history
+    ADD CONSTRAINT app_mcp_readiness_policy_history_pkey PRIMARY KEY (revision);
+
+
+--
 -- Name: app_mcp_task_compatibility app_mcp_task_compatibility_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -46514,6 +47099,30 @@ ALTER TABLE ONLY public.deployment_image_preparations
 
 ALTER TABLE ONLY public.deployment_logs
     ADD CONSTRAINT deployment_logs_pkey PRIMARY KEY (deployment_id, seq);
+
+
+--
+-- Name: deployment_mcp_readiness_evidence deployment_mcp_readiness_evidence_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_mcp_readiness_evidence
+    ADD CONSTRAINT deployment_mcp_readiness_evidence_pkey PRIMARY KEY (deployment_id, role);
+
+
+--
+-- Name: deployment_mcp_readiness_monitors deployment_mcp_readiness_monitors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_mcp_readiness_monitors
+    ADD CONSTRAINT deployment_mcp_readiness_monitors_pkey PRIMARY KEY (deployment_id, role);
+
+
+--
+-- Name: deployment_mcp_readiness_overrides deployment_mcp_readiness_overrides_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_mcp_readiness_overrides
+    ADD CONSTRAINT deployment_mcp_readiness_overrides_pkey PRIMARY KEY (id);
 
 
 --
@@ -49738,6 +50347,126 @@ ALTER TABLE ONLY public.mcp_catalog_monitors
 
 ALTER TABLE ONLY public.mcp_oauth_retirements
     ADD CONSTRAINT mcp_oauth_retirements_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: mcp_readiness_attention_actions mcp_readiness_attention_actions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_attention_actions
+    ADD CONSTRAINT mcp_readiness_attention_actions_pkey PRIMARY KEY (app_id, request_id);
+
+
+--
+-- Name: mcp_readiness_fallback_policies mcp_readiness_fallback_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_fallback_policies
+    ADD CONSTRAINT mcp_readiness_fallback_policies_pkey PRIMARY KEY (rule_id);
+
+
+--
+-- Name: mcp_readiness_incident_attention mcp_readiness_incident_attention_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_incident_attention
+    ADD CONSTRAINT mcp_readiness_incident_attention_pkey PRIMARY KEY (incident_id);
+
+
+--
+-- Name: mcp_readiness_incident_cursors mcp_readiness_incident_cursors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_incident_cursors
+    ADD CONSTRAINT mcp_readiness_incident_cursors_pkey PRIMARY KEY (rule_id);
+
+
+--
+-- Name: mcp_readiness_incident_events mcp_readiness_incident_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_incident_events
+    ADD CONSTRAINT mcp_readiness_incident_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: mcp_readiness_incident_events mcp_readiness_incident_events_sequence_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_incident_events
+    ADD CONSTRAINT mcp_readiness_incident_events_sequence_key UNIQUE (sequence);
+
+
+--
+-- Name: mcp_readiness_incidents mcp_readiness_incidents_id_rule_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_incidents
+    ADD CONSTRAINT mcp_readiness_incidents_id_rule_id_key UNIQUE (id, rule_id);
+
+
+--
+-- Name: mcp_readiness_incidents mcp_readiness_incidents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_incidents
+    ADD CONSTRAINT mcp_readiness_incidents_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: mcp_readiness_maintenance_windows mcp_readiness_maintenance_windows_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_maintenance_windows
+    ADD CONSTRAINT mcp_readiness_maintenance_windows_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: mcp_readiness_notification_actions mcp_readiness_notification_actions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_notification_actions
+    ADD CONSTRAINT mcp_readiness_notification_actions_pkey PRIMARY KEY (app_id, request_id);
+
+
+--
+-- Name: mcp_readiness_pagerduty_ack_events mcp_readiness_pagerduty_ack_events_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_pagerduty_ack_events
+    ADD CONSTRAINT mcp_readiness_pagerduty_ack_events_id_key UNIQUE (id);
+
+
+--
+-- Name: mcp_readiness_pagerduty_ack_events mcp_readiness_pagerduty_ack_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_pagerduty_ack_events
+    ADD CONSTRAINT mcp_readiness_pagerduty_ack_events_pkey PRIMARY KEY (rule_id, event_id, delivery_destination);
+
+
+--
+-- Name: mcp_readiness_pagerduty_acknowledgements mcp_readiness_pagerduty_acknowledgements_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_pagerduty_acknowledgements
+    ADD CONSTRAINT mcp_readiness_pagerduty_acknowledgements_pkey PRIMARY KEY (rule_id, destination);
+
+
+--
+-- Name: mcp_readiness_pagerduty_policies mcp_readiness_pagerduty_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_pagerduty_policies
+    ADD CONSTRAINT mcp_readiness_pagerduty_policies_pkey PRIMARY KEY (rule_id);
+
+
+--
+-- Name: mcp_readiness_reminder_defaults mcp_readiness_reminder_defaults_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_reminder_defaults
+    ADD CONSTRAINT mcp_readiness_reminder_defaults_pkey PRIMARY KEY (rule_id);
 
 
 --
@@ -53961,6 +54690,13 @@ CREATE UNIQUE INDEX alert_deliveries_idempotency_uniq ON public.alert_deliveries
 
 
 --
+-- Name: alert_deliveries_mcp_readiness_timeline_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_deliveries_mcp_readiness_timeline_idx ON public.alert_deliveries USING btree (account_id, app_id, fired_at DESC, id DESC) WHERE ((is_test = false) AND ((payload ->> 'metric'::text) = 'mcp_readiness_unhealthy'::text) AND ((payload ->> 'event'::text) = ANY (ARRAY['alert.fired'::text, 'alert.resolved'::text])) AND ((payload ->> 'incident_id'::text) IS NOT NULL) AND ((payload ->> 'event_id'::text) IS NOT NULL));
+
+
+--
 -- Name: alert_deliveries_rule_fired_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -54343,6 +55079,13 @@ CREATE UNIQUE INDEX app_log_drains_app_target_uniq ON public.app_log_drains USIN
 --
 
 CREATE INDEX app_log_drains_enabled_idx ON public.app_log_drains USING btree (enabled, app_id);
+
+
+--
+-- Name: app_mcp_readiness_policy_history_scope; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_mcp_readiness_policy_history_scope ON public.app_mcp_readiness_policy_history USING btree (app_id, scope);
 
 
 --
@@ -56044,6 +56787,20 @@ CREATE INDEX deployment_image_preparations_pending_idx ON public.deployment_imag
 --
 
 CREATE INDEX deployment_logs_seq_idx ON public.deployment_logs USING btree (deployment_id, seq DESC);
+
+
+--
+-- Name: deployment_mcp_readiness_monitors_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_mcp_readiness_monitors_due ON public.deployment_mcp_readiness_monitors USING btree (next_probe_at);
+
+
+--
+-- Name: deployment_mcp_readiness_overrides_target; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_mcp_readiness_overrides_target ON public.deployment_mcp_readiness_overrides USING btree (deployment_id, created_at DESC);
 
 
 --
@@ -58991,6 +59748,111 @@ CREATE INDEX mcp_oauth_retirements_binding ON public.mcp_oauth_retirements USING
 --
 
 CREATE INDEX mcp_oauth_retirements_due ON public.mcp_oauth_retirements USING btree (state, next_attempt_at);
+
+
+--
+-- Name: mcp_readiness_attention_actions_incident_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mcp_readiness_attention_actions_incident_idx ON public.mcp_readiness_attention_actions USING btree (incident_id, created_at DESC, request_id DESC);
+
+
+--
+-- Name: mcp_readiness_incident_events_queue_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mcp_readiness_incident_events_queue_idx ON public.mcp_readiness_incident_events USING btree (rule_id, sequence) WHERE (delivery_status <> ALL (ARRAY['delivered'::text, 'suppressed'::text, 'abandoned'::text]));
+
+
+--
+-- Name: mcp_readiness_incident_events_rule_timeline_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mcp_readiness_incident_events_rule_timeline_idx ON public.mcp_readiness_incident_events USING btree (rule_id, occurred_at DESC, id DESC);
+
+
+--
+-- Name: mcp_readiness_incident_events_timeline_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mcp_readiness_incident_events_timeline_idx ON public.mcp_readiness_incident_events USING btree (occurred_at DESC, id DESC);
+
+
+--
+-- Name: mcp_readiness_incident_reminder_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX mcp_readiness_incident_reminder_idx ON public.mcp_readiness_incident_events USING btree (incident_id, reminder_number) WHERE (reminder_number > 0);
+
+
+--
+-- Name: mcp_readiness_incident_transition_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX mcp_readiness_incident_transition_idx ON public.mcp_readiness_incident_events USING btree (incident_id, kind) WHERE (notification_reason = ''::text);
+
+
+--
+-- Name: mcp_readiness_incidents_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mcp_readiness_incidents_app_idx ON public.mcp_readiness_incidents USING btree (account_id, app_id);
+
+
+--
+-- Name: mcp_readiness_incidents_open_rule_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX mcp_readiness_incidents_open_rule_idx ON public.mcp_readiness_incidents USING btree (rule_id) WHERE (resolved_at IS NULL);
+
+
+--
+-- Name: mcp_readiness_maintenance_active_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mcp_readiness_maintenance_active_idx ON public.mcp_readiness_maintenance_windows USING btree (app_id, scope, ends_at) WHERE (cancelled_at IS NULL);
+
+
+--
+-- Name: mcp_readiness_maintenance_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mcp_readiness_maintenance_app_idx ON public.mcp_readiness_maintenance_windows USING btree (account_id, app_id, created_at DESC, id DESC);
+
+
+--
+-- Name: mcp_readiness_notification_actions_event_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mcp_readiness_notification_actions_event_idx ON public.mcp_readiness_notification_actions USING btree (event_id);
+
+
+--
+-- Name: mcp_readiness_pagerduty_ack_events_incident_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mcp_readiness_pagerduty_ack_events_incident_idx ON public.mcp_readiness_pagerduty_ack_events USING btree (incident_id);
+
+
+--
+-- Name: mcp_readiness_pagerduty_ack_events_page_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mcp_readiness_pagerduty_ack_events_page_idx ON public.mcp_readiness_pagerduty_ack_events USING btree (rule_id, received_at DESC, id DESC);
+
+
+--
+-- Name: mcp_readiness_pagerduty_ack_legacy_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX mcp_readiness_pagerduty_ack_legacy_idx ON public.mcp_readiness_pagerduty_acknowledgements USING btree (rule_id) WHERE legacy_receiver;
+
+
+--
+-- Name: mcp_readiness_policy_history_page; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mcp_readiness_policy_history_page ON public.app_mcp_readiness_policy_history USING btree (app_id, scope, recorded_at DESC, revision DESC);
 
 
 --
@@ -63992,6 +64854,13 @@ CREATE TRIGGER deployment_lifecycle_capture_changed AFTER INSERT OR DELETE OR UP
 
 
 --
+-- Name: deployments deployment_mcp_readiness_gate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployment_mcp_readiness_gate BEFORE INSERT OR UPDATE OF status, traffic_percent ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_deployment_mcp_readiness();
+
+
+--
 -- Name: deployment_openapi_docs deployment_openapi_docs_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -65469,6 +66338,13 @@ CREATE TRIGGER managed_realtime_push_timeline AFTER INSERT OR UPDATE ON public.m
 
 
 --
+-- Name: mcp_catalog_monitors mcp_catalog_environment_scope_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER mcp_catalog_environment_scope_guard BEFORE INSERT OR UPDATE ON public.mcp_catalog_monitors FOR EACH ROW EXECUTE FUNCTION public.mcp_catalog_environment_scope_guard();
+
+
+--
 -- Name: apps mcp_oauth_aa_renewal_retirement; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -65487,6 +66363,13 @@ CREATE TRIGGER mcp_oauth_app_retirement BEFORE DELETE OR UPDATE OF status ON pub
 --
 
 CREATE TRIGGER mcp_oauth_secret_credential_change BEFORE INSERT OR DELETE OR UPDATE ON public.app_secrets FOR EACH ROW EXECUTE FUNCTION public.mcp_oauth_secret_credential_change();
+
+
+--
+-- Name: alert_rules mcp_readiness_alert_scope_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER mcp_readiness_alert_scope_immutable BEFORE UPDATE OF mcp_readiness_scope ON public.alert_rules FOR EACH ROW EXECUTE FUNCTION public.guard_mcp_readiness_alert_scope();
 
 
 --
@@ -68530,6 +69413,22 @@ ALTER TABLE ONLY public.app_log_drains
 
 
 --
+-- Name: app_mcp_readiness_policies app_mcp_readiness_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_mcp_readiness_policies
+    ADD CONSTRAINT app_mcp_readiness_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_mcp_readiness_policy_history app_mcp_readiness_policy_history_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_mcp_readiness_policy_history
+    ADD CONSTRAINT app_mcp_readiness_policy_history_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: app_mcp_task_compatibility app_mcp_task_compatibility_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -70743,6 +71642,38 @@ ALTER TABLE ONLY public.deployment_image_preparations
 
 ALTER TABLE ONLY public.deployment_logs
     ADD CONSTRAINT deployment_logs_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_mcp_readiness_evidence deployment_mcp_readiness_evidence_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_mcp_readiness_evidence
+    ADD CONSTRAINT deployment_mcp_readiness_evidence_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_mcp_readiness_monitors deployment_mcp_readiness_monitors_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_mcp_readiness_monitors
+    ADD CONSTRAINT deployment_mcp_readiness_monitors_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_mcp_readiness_overrides deployment_mcp_readiness_overrides_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_mcp_readiness_overrides
+    ADD CONSTRAINT deployment_mcp_readiness_overrides_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.accounts(id);
+
+
+--
+-- Name: deployment_mcp_readiness_overrides deployment_mcp_readiness_overrides_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_mcp_readiness_overrides
+    ADD CONSTRAINT deployment_mcp_readiness_overrides_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --
@@ -74655,6 +75586,174 @@ ALTER TABLE ONLY public.mcp_catalog_monitors
 
 ALTER TABLE ONLY public.mcp_oauth_retirements
     ADD CONSTRAINT mcp_oauth_retirements_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_readiness_attention_actions mcp_readiness_attention_actions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_attention_actions
+    ADD CONSTRAINT mcp_readiness_attention_actions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_readiness_attention_actions mcp_readiness_attention_actions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_attention_actions
+    ADD CONSTRAINT mcp_readiness_attention_actions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_readiness_attention_actions mcp_readiness_attention_actions_incident_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_attention_actions
+    ADD CONSTRAINT mcp_readiness_attention_actions_incident_id_fkey FOREIGN KEY (incident_id) REFERENCES public.mcp_readiness_incidents(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_readiness_fallback_policies mcp_readiness_fallback_policies_rule_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_fallback_policies
+    ADD CONSTRAINT mcp_readiness_fallback_policies_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES public.alert_rules(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_readiness_incident_attention mcp_readiness_incident_attention_incident_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_incident_attention
+    ADD CONSTRAINT mcp_readiness_incident_attention_incident_id_fkey FOREIGN KEY (incident_id) REFERENCES public.mcp_readiness_incidents(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_readiness_incident_cursors mcp_readiness_incident_cursors_rule_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_incident_cursors
+    ADD CONSTRAINT mcp_readiness_incident_cursors_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES public.alert_rules(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_readiness_incident_events mcp_readiness_incident_events_incident_id_rule_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_incident_events
+    ADD CONSTRAINT mcp_readiness_incident_events_incident_id_rule_id_fkey FOREIGN KEY (incident_id, rule_id) REFERENCES public.mcp_readiness_incidents(id, rule_id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_readiness_incident_events mcp_readiness_incident_events_last_delivery_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_incident_events
+    ADD CONSTRAINT mcp_readiness_incident_events_last_delivery_id_fkey FOREIGN KEY (last_delivery_id) REFERENCES public.alert_deliveries(id) ON DELETE SET NULL;
+
+
+--
+-- Name: mcp_readiness_incidents mcp_readiness_incidents_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_incidents
+    ADD CONSTRAINT mcp_readiness_incidents_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_readiness_incidents mcp_readiness_incidents_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_incidents
+    ADD CONSTRAINT mcp_readiness_incidents_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_readiness_incidents mcp_readiness_incidents_rule_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_incidents
+    ADD CONSTRAINT mcp_readiness_incidents_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES public.alert_rules(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_readiness_maintenance_windows mcp_readiness_maintenance_windows_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_maintenance_windows
+    ADD CONSTRAINT mcp_readiness_maintenance_windows_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_readiness_maintenance_windows mcp_readiness_maintenance_windows_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_maintenance_windows
+    ADD CONSTRAINT mcp_readiness_maintenance_windows_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_readiness_notification_actions mcp_readiness_notification_actions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_notification_actions
+    ADD CONSTRAINT mcp_readiness_notification_actions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_readiness_notification_actions mcp_readiness_notification_actions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_notification_actions
+    ADD CONSTRAINT mcp_readiness_notification_actions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_readiness_notification_actions mcp_readiness_notification_actions_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_notification_actions
+    ADD CONSTRAINT mcp_readiness_notification_actions_event_id_fkey FOREIGN KEY (event_id) REFERENCES public.mcp_readiness_incident_events(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_readiness_pagerduty_ack_events mcp_readiness_pagerduty_ack_events_incident_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_pagerduty_ack_events
+    ADD CONSTRAINT mcp_readiness_pagerduty_ack_events_incident_id_fkey FOREIGN KEY (incident_id) REFERENCES public.mcp_readiness_incidents(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_readiness_pagerduty_ack_events mcp_readiness_pagerduty_ack_events_rule_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_pagerduty_ack_events
+    ADD CONSTRAINT mcp_readiness_pagerduty_ack_events_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES public.alert_rules(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_readiness_pagerduty_acknowledgements mcp_readiness_pagerduty_acknowledgements_rule_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_pagerduty_acknowledgements
+    ADD CONSTRAINT mcp_readiness_pagerduty_acknowledgements_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES public.alert_rules(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_readiness_pagerduty_policies mcp_readiness_pagerduty_policies_rule_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_pagerduty_policies
+    ADD CONSTRAINT mcp_readiness_pagerduty_policies_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES public.alert_rules(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_readiness_reminder_defaults mcp_readiness_reminder_defaults_rule_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_readiness_reminder_defaults
+    ADD CONSTRAINT mcp_readiness_reminder_defaults_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES public.alert_rules(id) ON DELETE CASCADE;
 
 
 --
