@@ -12,8 +12,10 @@
 #   RACE=1        add -race to the tests
 #   VET=importers vet the changed packages and their direct importers, as ci-light
 #   VET=0         skip the vet step
-#   GCFLAGS, LDFLAGS, GOMEMLIMIT  set by `make test-changed` (as `make test`)
+#   LDFLAGS, GOMEMLIMIT  set by `make test-changed` (as `make test`)
 #   DRY_RUN=1     print the selection without running anything
+# Arguments are build flags for both vet and test; `make test-changed` passes
+# its TEST_GCFLAGS (as `make test`).
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
@@ -48,8 +50,7 @@ echo "  vet  ($(wc -w <<<"$vet_pkgs" | tr -d ' ')): ${vet_pkgs:-<none>}"
 echo "  test ($(wc -w <<<"$test_pkgs" | tr -d ' ')): ${test_pkgs:-<none>}"
 [[ "${DRY_RUN:-}" == 1 ]] && exit 0
 
-build_flags=()
-[[ -n "${GCFLAGS:-}" ]] && build_flags+=("$GCFLAGS")
+build_flags=("$@")
 
 if [[ "${VET:-1}" != 0 && -n "$vet_pkgs" ]]; then
   # shellcheck disable=SC2086 # space-separated package list
