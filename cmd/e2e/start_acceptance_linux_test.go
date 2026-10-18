@@ -124,7 +124,8 @@ func (f *startAcceptanceFixture) start(t *testing.T) *startTerminal {
 
 func (f *startAcceptanceFixture) selectSource(s *startTerminal) {
 	s.t.Helper()
-	s.answer("Choose [1]: ", "1")
+	// A single detected source is selected without consuming terminal input.
+	s.expect("Using source " + f.source)
 	if f.environment == "" {
 		s.expect("already exists in this account.")
 		s.answer("Choose [1]: ", "2")

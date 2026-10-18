@@ -250,7 +250,7 @@ func scrubFileFingerprint(info os.FileInfo) scrubFingerprint {
 	if !ok {
 		return scrubFingerprint{}
 	}
-	return scrubFingerprint{Device: uint64(st.Dev), Inode: st.Ino, Size: info.Size(), Modified: info.ModTime().UnixNano(), Changed: st.Ctim.Sec*int64(time.Second) + st.Ctim.Nsec}
+	return scrubFingerprint{Device: uint64(st.Dev), Inode: st.Ino, Size: info.Size(), Modified: info.ModTime().UnixNano(), Changed: statChangedNanos(st)}
 }
 
 func (s *Store) openScrubTarget(t ScrubTarget) (*os.File, scrubFingerprint, bool, string, error) {
