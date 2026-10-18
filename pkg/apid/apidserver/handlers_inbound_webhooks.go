@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"filippo.io/age"
+	"fmt"
 	"io"
 	"net/http"
 	"regexp"
@@ -326,6 +327,10 @@ func (s *server) receiveInboundWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	providerEventID, eventType, problem := verifyInboundWebhook(r.Context(), endpoint, r.Header, body, time.Now().UTC())
+	if problem != nil && problem.Status >= http.StatusInternalServerError {
+		// The cause stays out of the customer's response; operators need it.
+		s.log.Warn("inbound webhook: verification unavailable", "endpoint_id", endpoint.ID, "detail", problem.Detail, "cause", inboundWebhookUnsealCause(r.Context(), endpoint))
+	}
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -386,6 +391,14 @@ func readInboundWebhookBody(w http.ResponseWriter, r *http.Request) ([]byte, *ap
 		return nil, inboundWebhookProblem(http.StatusBadRequest, "webhook body must be valid JSON")
 	}
 	return body, nil
+}
+
+// inboundWebhookUnsealCause describes why the endpoint's secret cannot be
+// unsealed: the identity count and the error, never secret material.
+func inboundWebhookUnsealCause(ctx context.Context, endpoint state.InboundWebhookEndpoint) string {
+	identities := hostIdentitiesForUnseal(ctx)
+	namespace, _, err := secretbox.OpenBytesMulti(identities, endpoint.SigningSecretSealed)
+	return fmt.Sprintf("identities=%d sealed_bytes=%d namespace=%q err=%v", len(identities), len(endpoint.SigningSecretSealed), namespace, err)
 }
 
 func verifyInboundWebhook(ctx context.Context, endpoint state.InboundWebhookEndpoint, headers http.Header, body []byte, now time.Time) (string, string, *api.Problem) {

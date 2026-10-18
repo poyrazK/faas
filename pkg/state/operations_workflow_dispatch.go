@@ -75,7 +75,7 @@ func resolveWorkflowOperationInvocationVersion(ctx context.Context, store invoca
 	}
 	revision, release, err := invocationPinHeaders(headers)
 	if err != nil || (op.ReleaseID != "" && (release != op.ReleaseID || revision != "")) || (op.ReleaseID == "" && (revision != op.DeploymentID || release != "")) {
-		return inv, InvocationVersion{}, true, fmt.Errorf("%w: workflow step version pin does not match the operation", ErrConflict)
+		return inv, InvocationVersion{}, true, fmt.Errorf("%w: workflow step version pin (revision %q, release %q, parse %v) does not match the operation (deployment %q, release %q)", ErrConflict, revision, release, err, op.DeploymentID, op.ReleaseID)
 	}
 	deployment, err := reader.DeploymentByID(ctx, op.DeploymentID)
 	if err != nil || deployment.AppID != app.ID || deployment.Scope != op.Scope || deployment.Status != DeployLive {
