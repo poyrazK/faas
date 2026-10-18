@@ -6,12 +6,13 @@ import (
 	"time"
 )
 
-// Both thresholds are opt-in counts; zero disables that condition. Sustain applies
+// Thresholds are opt-in counts; zero disables that condition. Sustain applies
 // to firing and recovery, with at least two distinct fresh database observations.
 type EventAcknowledgmentIntentWatchOptions struct {
 	Health           EventAcknowledgmentIntentHealthOptions
 	DueThreshold     int64
 	StalledThreshold int64
+	ParkedThreshold  int64 // Enable parked_intents alerts; checkpointed watches use version 2.
 	PollInterval     time.Duration
 	QueryTimeout     time.Duration
 	MaxAge           time.Duration
@@ -59,7 +60,7 @@ func eventIntentWatchOptions(o EventAcknowledgmentIntentWatchOptions) (EventAckn
 	if o.Sustain == 0 {
 		o.Sustain = max(30*time.Second, o.PollInterval)
 	}
-	if o.DueThreshold < 0 || o.StalledThreshold < 0 || o.DueThreshold == 0 && o.StalledThreshold == 0 || o.DueThreshold > int64(o.Health.ScanLimit) || o.StalledThreshold > int64(o.Health.ScanLimit) || o.PollInterval < 100*time.Millisecond || o.PollInterval > time.Minute || o.QueryTimeout < 10*time.Millisecond || o.QueryTimeout > 30*time.Second || o.MaxAge < 2*o.PollInterval || o.MaxAge < o.QueryTimeout || o.MaxAge > 5*time.Minute || o.Sustain < o.PollInterval || o.Sustain > 24*time.Hour {
+	if o.DueThreshold < 0 || o.StalledThreshold < 0 || o.ParkedThreshold < 0 || o.DueThreshold == 0 && o.StalledThreshold == 0 && o.ParkedThreshold == 0 || o.DueThreshold > int64(o.Health.ScanLimit) || o.StalledThreshold > int64(o.Health.ScanLimit) || o.ParkedThreshold > int64(o.Health.ScanLimit) || o.PollInterval < 100*time.Millisecond || o.PollInterval > time.Minute || o.QueryTimeout < 10*time.Millisecond || o.QueryTimeout > 30*time.Second || o.MaxAge < 2*o.PollInterval || o.MaxAge < o.QueryTimeout || o.MaxAge > 5*time.Minute || o.Sustain < o.PollInterval || o.Sustain > 24*time.Hour {
 		return o, ErrInvalidEventConsumerRequest
 	}
 	return o, nil
@@ -87,6 +88,9 @@ func WatchEventAcknowledgmentIntentHealth(ctx context.Context, db *sql.DB, accou
 	if options.StalledThreshold > 0 {
 		conditions = append(conditions, eventIntentWatchCondition{metric: "stalled_recovery", threshold: options.StalledThreshold, state: "unknown"})
 	}
+	if options.ParkedThreshold > 0 {
+		conditions = append(conditions, eventIntentWatchCondition{metric: "parked_intents", threshold: options.ParkedThreshold, state: "unknown"})
+	}
 	var previousObserved, previousPoll time.Time
 	timer := time.NewTimer(0)
 	defer timer.Stop()
@@ -111,6 +115,8 @@ func WatchEventAcknowledgmentIntentHealth(ctx context.Context, db *sql.DB, accou
 				value := health.Due
 				if conditions[i].metric == "stalled_recovery" {
 					value = health.Stalled
+				} else if conditions[i].metric == "parked_intents" {
+					value = health.Parked
 				}
 				var snapshot *EventAcknowledgmentIntentHealth
 				if readErr == nil {

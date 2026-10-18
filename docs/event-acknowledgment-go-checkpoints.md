@@ -14,7 +14,8 @@ result, err := faas.WatchEventAcknowledgmentIntentHealthWithCheckpoint(
     ctx, db, accountID, appID,
     faas.EventAcknowledgmentIntentCheckpointWatchOptions{
         EventAcknowledgmentIntentWatchOptions: faas.EventAcknowledgmentIntentWatchOptions{
-            DueThreshold: 100, StalledThreshold: 1, Sustain: 30 * time.Second,
+            DueThreshold: 100, StalledThreshold: 1, ParkedThreshold: 1,
+            Sustain: 30 * time.Second,
         },
         Resume: saved, // *EventAcknowledgmentIntentCheckpoint; nil starts a session.
         PollAcknowledgments: readOwnedAcknowledgments,
@@ -40,12 +41,30 @@ callbacks or health reads. Defaults/bounds follow the ordinary Go watch.
 
 ## Typed checkpoint format
 
-`EventAcknowledgmentIntentCheckpoint` version 1 uses kind
+`EventAcknowledgmentIntentCheckpoint` uses kind
 `gregale.go.event-acknowledgment-intent-watch`. It is distinct from Node/Python
 recovery checkpoints and the Go/CLI platform delivery-health/deadline formats.
 It contains normalized `account_id`/`app_id`, complete `policy`, a random canonical
-UUID `session`, `sequence`, optional `last_observed_at`, one or two ordered
+UUID `session`, `sequence`, optional `last_observed_at`, ordered
 `conditions`, `pending` lifecycle events and retained `acknowledged` receipts.
+
+| Format | Selection and conditions |
+| --- | --- |
+| Version 1 | `ParkedThreshold` is zero. The existing policy JSON omits `parked_threshold`, with one or two due/stalled conditions. |
+| Version 2 | `ParkedThreshold` is positive. Policy includes `parked_threshold`, with one through three enabled conditions in due, stalled, parked order. |
+
+Both versions retain the same kind, notification shape, sequence/incident identity
+and acknowledgment contract. A version/selection mismatch is invalid, including
+version 2 with parked alerts disabled. Version 1 remains readable by existing Go
+hosts when parked alerts are disabled; older validators reject version 2. Upgrade
+every host that can resume or acknowledge a version 2 checkpoint first. These
+versions describe monitoring metadata, independently of retry-policy versions.
+
+Changing enabled thresholds requires a new watch session. A saved version 1
+checkpoint cannot resume with `ParkedThreshold > 0`; changing only its version is
+invalid. Finish/reconcile the previous session and retain its checkpoint, unresolved
+incidents and pending notifications under the application's writer fence before
+starting the new selection. Do not discard old notifications or synthesize resolutions.
 
 `ValidateEventAcknowledgmentIntentCheckpoint(saved)` returns a detached canonical
 copy and error. Decode bounded trusted JSON into the concrete Go type first.
@@ -89,6 +108,30 @@ stale, out-of-order or gapped evidence resets proof and retains unresolved
 identity. Renewed breach reconfirms the same incident without another opening.
 Sustained clear resolves that incident, including after a restart or lost
 confirmation. Switching warning/recovery direction starts new proof.
+
+### Parked-intent alerts
+
+Set `ParkedThreshold` to a count from 1 through the effective health `ScanLimit`.
+Zero disables it; due and stalled thresholds may both be zero for a parked-only
+watch. Metric `parked_intents` uses the bounded health `Parked` count. Equality
+breaches the threshold. Parked rows remain outside due/stalled eligibility, so a
+zero due backlog does not clear a parked incident.
+
+Opening and recovery use the same complete, fresh, sustained evidence and outbox
+rules as other conditions. Failed, truncated, invalid, stale, repeated/regressing
+or gapped observations leave parked confirmation unknown and retain any unresolved
+incident. Even an incomplete lower bound above the threshold cannot open an alert.
+Resume replays pending parked notifications before health reads and requires fresh
+proof before reconfirming or resolving the retained incident. Capacity accounting
+reserves its resolution slot like every other metric.
+
+A parked-count resolution means only that retained parked work stayed below the
+threshold. Granting more claims or superseding an intent can reduce this count;
+resolution does not prove callback confirmation or business success. The watch
+reads metadata and never grants a budget, resumes recovery or sends callbacks.
+Node and Python provide equivalent parked alerts in their own
+[Node](event-acknowledgment-node-checkpoints.md#parked-intent-alerts) and
+[Python checkpoint formats](event-acknowledgment-python-checkpoints.md#parked-intent-alerts).
 
 Only `opened` and `resolved` enter the outbox. Evidence/confirmation loss appears
 in progress. Notifications contain sequence, incident ID, metric, transition,
@@ -184,4 +227,5 @@ Local validation covers SDK/example builds, vet, static format/lifecycle/copy an
 unchanged read/schema comparisons, plus schema/ADR/documentation checks. No
 tests/assertions are added or changed and no local tests run. Hosted restart,
 replay, storage fencing, capacity, timing and cancellation qualification remains
-pending before release.
+pending before release, including parked-only/mixed alerts, incomplete evidence,
+budget-resume/supersession recovery and version 1/version 2 compatibility.

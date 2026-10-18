@@ -128,7 +128,7 @@ func TestCmdStartRequiresTerminal(t *testing.T) {
 }
 
 func TestCmdStartRejectsOptionsBeforeNetwork(t *testing.T) {
-	for _, argument := range []string{"--path", "--template", "--name", "--secrets-file", "--timeout", "--resume", "./api"} {
+	for _, argument := range []string{"--path", "--template", "--name", "--secrets-file", "--timeout", "--resume"} {
 		t.Run(argument, func(t *testing.T) {
 			stdout, stderr := startTestEnvironment(t)
 			var requests atomic.Int32
@@ -136,7 +136,7 @@ func TestCmdStartRejectsOptionsBeforeNetwork(t *testing.T) {
 				requests.Add(1)
 				w.WriteHeader(http.StatusInternalServerError)
 			})
-			if code := run([]string{"start", argument}); code == 0 || requests.Load() != 0 || stdout.Len() != 0 || !strings.Contains(stderr(), "no flags or arguments") {
+			if code := run([]string{"start", argument}); code == 0 || requests.Load() != 0 || stdout.Len() != 0 || !strings.Contains(stderr(), argument) {
 				t.Fatalf("code=%d requests=%d stdout=%s stderr=%s", code, requests.Load(), stdout, stderr())
 			}
 		})
@@ -145,28 +145,32 @@ func TestCmdStartRejectsOptionsBeforeNetwork(t *testing.T) {
 
 func TestCmdStartHelpHasNoCommandFlags(t *testing.T) {
 	stdout, stderr := startTestEnvironment(t)
-	if code := run([]string{"start", "--help"}); code != 0 || !strings.Contains(stdout.String(), "gregale start") || strings.Contains(stdout.String(), "Flags:") || strings.Contains(stdout.String(), "[flags]") {
+	if code := run([]string{"start", "--help"}); code != 0 || !strings.Contains(stdout.String(), "gregale start [path]") || strings.Contains(stdout.String(), "Flags:") || strings.Contains(stdout.String(), "[flags]") {
 		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout, stderr())
 	}
 }
 
 func TestCmdStartDeclineDoesNotMutateAPI(t *testing.T) {
-	stdout, stderr := startTestEnvironment(t)
-	source := startTestSource(t)
-	withCwd(t, source)
-	var mutations atomic.Int32
-	startTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			mutations.Add(1)
-		}
-		api.WriteProblem(w, api.NewProblem(404, "not_found", "Not found", "No app"))
-	})
-	pipeStdin(t, "\nn\n")
-	if code := run([]string{"start"}); code != 0 {
-		t.Fatalf("code=%d stderr=%s stdout=%s", code, stderr(), stdout)
-	}
-	if mutations.Load() != 0 || !strings.Contains(stdout.String(), "Nothing deployed") {
-		t.Fatalf("mutations=%d stdout=%s", mutations.Load(), stdout)
+	for _, input := range []string{"n\n", "\n", ""} {
+		t.Run(fmt.Sprintf("input=%q", input), func(t *testing.T) {
+			stdout, stderr := startTestEnvironment(t)
+			source := startTestSource(t)
+			withCwd(t, source)
+			var mutations atomic.Int32
+			startTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					mutations.Add(1)
+				}
+				api.WriteProblem(w, api.NewProblem(404, "not_found", "Not found", "No app"))
+			})
+			pipeStdin(t, input)
+			if code := run([]string{"start"}); code != 0 {
+				t.Fatalf("code=%d stderr=%s stdout=%s", code, stderr(), stdout)
+			}
+			if mutations.Load() != 0 || (input != "" && !strings.Contains(stdout.String(), "Nothing deployed")) {
+				t.Fatalf("mutations=%d stdout=%s", mutations.Load(), stdout)
+			}
+		})
 	}
 }
 
@@ -174,7 +178,7 @@ func TestCmdStartLaunchAndPublicRequest(t *testing.T) {
 	stdout, stderr := startTestEnvironment(t)
 	nativePath := startTestNativeOutput(t)
 	source := startTestSource(t)
-	withCwd(t, source)
+	withCwd(t, filepath.Dir(source))
 	var requests, deployments atomic.Int32
 	public := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
@@ -219,9 +223,9 @@ func TestCmdStartLaunchAndPublicRequest(t *testing.T) {
 			api.WriteProblem(w, api.NewProblem(404, "not_found", "Not found", "No resource"))
 		}
 	})
-	// The healthy path needs only source selection and deployment confirmation.
-	pipeStdin(t, "\ny\n")
-	if code := run([]string{"start"}); code != 0 {
+	// An unambiguous app needs only deployment confirmation.
+	pipeStdin(t, "y\n")
+	if code := run([]string{"start", "./first-app"}); code != 0 {
 		t.Fatalf("code=%d stderr=%s stdout=%s", code, stderr(), stdout)
 	}
 	if deployments.Load() != 1 || requests.Load() != 1 {
@@ -239,7 +243,7 @@ func TestCmdStartLaunchAndPublicRequest(t *testing.T) {
 	if err != nil || strings.Contains(string(native), "raw compiler output") || strings.Contains(stdout.String(), "Deployed.") {
 		t.Fatalf("compact output bypassed: native=%q stdout=%s err=%v", native, stdout, err)
 	}
-	for _, unwanted := range []string{"App name [", "Who should be able", "GET request path", "What next?", "--resume", "Deployment plan:", "Detected:"} {
+	for _, unwanted := range []string{"What would you like to deploy?", "App name [", "Who should be able", "GET request path", "What next?", "--resume", "Deployment plan:", "Detected:"} {
 		if strings.Contains(stdout.String(), unwanted) {
 			t.Errorf("healthy path still contains %q", unwanted)
 		}
@@ -253,7 +257,7 @@ func TestCmdStartLaunchAndPublicRequest(t *testing.T) {
 func TestCmdStartResumeDoesNotDeploy(t *testing.T) {
 	stdout, stderr := startTestEnvironment(t)
 	scope := resolvedTempDir(t)
-	withCwd(t, scope)
+	withCwd(t, resolvedTempDir(t))
 	var mutations atomic.Int32
 	var reads atomic.Int32
 	public := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -290,8 +294,11 @@ func TestCmdStartResumeDoesNotDeploy(t *testing.T) {
 	if err := saveStartSession(path, session); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Remove(scope); err != nil {
+		t.Fatal(err)
+	}
 	pipeStdin(t, "\n")
-	if code := run([]string{"start"}); code != 0 {
+	if code := run([]string{"start", scope}); code != 0 {
 		t.Fatalf("code=%d stderr=%s stdout=%s", code, stderr(), stdout)
 	}
 	if mutations.Load() != 0 || reads.Load() < 2 || !strings.Contains(stdout.String(), "Resume · first-app") {
@@ -369,7 +376,7 @@ func TestStartAcceptanceSaveFailureStopsWaiting(t *testing.T) {
 		}
 		return 130
 	}
-	if code, _ := runner.reviewAndDeploy(); code == 0 || !strings.Contains(stderr(), "could not be saved") || !strings.Contains(stdout.String(), "deployment wait 'd-accepted'") {
+	if code, _ := runner.reviewAndDeploy(); code == 0 || !strings.Contains(stderr(), "could not be saved") || !strings.Contains(stdout.String(), "deployment wait d-accepted") {
 		t.Fatalf("code=%d stderr=%s stdout=%s", code, stderr(), stdout)
 	}
 }
@@ -495,7 +502,7 @@ func TestStartSelectsWorkspaceService(t *testing.T) {
 		}
 	}
 	withCwd(t, root)
-	runner := startTestRunner(t, root, "\n2\n")
+	runner := startTestRunner(t, root, "2\n")
 	if code := runner.selectSource(); code != 0 || runner.session.SourcePath != filepath.Join(root, "packages", "web") {
 		t.Fatalf("code=%d selected=%s stderr=%s stdout=%s", code, runner.session.SourcePath, stderr(), stdout)
 	}

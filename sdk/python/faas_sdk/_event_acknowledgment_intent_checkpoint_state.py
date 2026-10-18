@@ -122,7 +122,13 @@ def observe(
             condition["state"], proof.resume = "unknown", "incident_id" in condition
             confirmations.append(confirmation(condition, proof, local, checkpoint["policy"]["sustain_ms"], reason))
             continue
-        condition["value"] = health.due if condition["metric"] == "due_backlog" else health.stalled
+        condition["value"] = (
+            health.due
+            if condition["metric"] == "due_backlog"
+            else health.stalled
+            if condition["metric"] == "stalled_recovery"
+            else health.parked
+        )
         condition["observed_at"] = health.observed_at
         why, blocked, alert = _apply(checkpoint, condition, proof, local, at)
         if alert is not None:

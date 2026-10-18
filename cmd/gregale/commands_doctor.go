@@ -7,9 +7,7 @@
 // Sister to the operator `gregale doctor` (issue #952 / PR #921).
 // This one is for the customer-developer pre-deploy loop: runs
 // without auth, scans local source, prints one line per finding,
-// exits non-zero if any check is "error" (--strict) or "warn"
-// (default, so the deploy pipeline can pre-cache the prose via
-// `gregale doctor` in CI).
+// exits non-zero if any check is "error", or "warn" under --strict.
 //
 // Each check returns one of: ok | warn | error | skipped with the same
 // shape as the operator doctor (commands_inspect.go:99-103).
@@ -157,8 +155,7 @@ func renderDoctorDeployPreflight(rep doctorReport, jsonMode bool) {
 // Exit codes:
 //
 //	0  all checks ok, OR all warnings under --strict=false
-//	1  any check error (always), OR any check warn under --strict=true
-//	2  usage error (bad argv)
+//	1  invalid input, any check error, OR any check warn under --strict=true
 func cmdDoctor(args []string) int {
 	return cmdDoctorWithImageInspector(args, oci.NewRegistryClient(oci.WithHTTPClient(oci.NewEgressHTTPClient())))
 }
@@ -169,14 +166,12 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	strict := fs.Bool("strict", false, "exit 1 on warn (default: exit 0 on warn)")
 	jsonOut := fs.Bool("json", false, "machine output (default: human prose)")
 	imageFlags := registerDoctorImageFlags(fs)
-	if err := fs.Parse(args); err != nil {
-		PrintUsage(osStderr, doctorUsage, "doctor")
-		return 2
+	if err := parseInterspersed(fs, args); err != nil {
+		return 1
 	}
 	if err := imageFlags.validate(fs); err != nil {
-		_, _ = fmt.Fprintln(osStderr, err)
-		PrintUsage(osStderr, doctorUsage, "doctor")
-		return 2
+		PrintUsage(osStderr, err.Error()+"\n"+doctorUsage, "doctor")
+		return 1
 	}
 	if imageFlags.image != "" {
 		return runDoctorImageCommand(imageFlags, inspector, *strict, *jsonOut || jsonOutput)
@@ -188,6 +183,9 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return printErr("Bad path", err)
+	}
+	if _, err := os.ReadDir(abs); err != nil {
+		return printErr("Could not read source directory", err)
 	}
 	report := runDoctorChecks(abs)
 	// Honour --strict: a warn under strict promotes to exit 1.

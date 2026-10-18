@@ -11136,11 +11136,58 @@ const (
 	DataAPIConnectionBudgetControlHeadroom   = 1
 	DataAPIConnectionBudgetMigrationHeadroom = 1
 	DataAPIConnectionBudgetOverlapInstances  = 1
-	DataAPIMaxRows                           = 1000
-	DataAPIMaxRequestBytes                   = 1 << 20
-	DataAPIMaxResponseBytes                  = 16 << 20
-	DataAPIMaxOutputBytes                    = 1 << 20
-	DataAPIQueryTimeoutMS                    = 15000
+	// Authenticated runtime configuration reports; never SQL-session counts.
+	DataAPIRuntimeConnectionReportMaxBytes = 4096
+	DataAPIRuntimeConnectionReportTimeout  = 5 * time.Second
+	DataAPIRuntimeConnectionReportInterval = 15 * time.Second
+	// Operator capacity observations never run in customer request handling.
+	DataAPIConnectionCapacityTimeout     = 10 * time.Second
+	DataAPIConnectionCapacityLease       = 15 * time.Second
+	DataAPIConnectionCapacityInterval    = 15 * time.Second
+	DataAPIConnectionCapacityControlPool = 1
+	DataAPIConnectionAllocationMaxAge    = 5 * time.Minute
+	DataAPIConnectionAllocationMaxBytes  = 16 << 10
+	DataAPIMaxRows                       = 1000
+	DataAPIMaxRequestBytes               = 1 << 20
+	DataAPIMaxResponseBytes              = 16 << 20
+	DataAPIMaxOutputBytes                = 1 << 20
+	// Fixed v2 customer SQL contract (ADR-1670). Never extend this window in
+	// place: doing so could revive keys whose receipts have already been purged.
+	DataAPIReplayV2WindowMS     = 86400000
+	DataAPIReplayV2FutureSkewMS = 300000
+	// Fixed atomic note-batch contract (ADR-1672), mirrored in customer SQL
+	// and the paired starter client under a parity check.
+	DataAPIAtomicBatchV2MaxOperations  = 100
+	DataAPIAtomicBatchV2MaxResultBytes = 1048576
+	// Opt-in client mutation journal bounds (ADR-1674), mirrored in the Data SDK.
+	DataAPIMutationJournalMaxRecords    = 100
+	DataAPIMutationJournalMaxBytes      = 8388608
+	DataAPIMutationJournalMaxEntryBytes = 1048576
+	DataAPIMutationJournalMaxSlotBytes  = 256
+	DataAPIMutationJournalMaxDepth      = 64
+	// Owner-only v2 receipt diagnostics (ADR-1675), mirrored in the shared
+	// customer-package reporter under a parity check. Milliseconds.
+	DataAPIReceiptDiagnosticsConnectMS   = 5000
+	DataAPIReceiptDiagnosticsStatementMS = 5000
+	DataAPIReceiptDiagnosticsLockMS      = 1000
+	DataAPIReceiptDiagnosticsQueryMS     = 6000
+	// Subject-scoped note change feed (ADR-1676), mirrored in customer SQL
+	// and the typed starter helper under a parity check.
+	DataAPINoteChangeFeedMaxPageSize    = 100
+	DataAPINoteChangeFeedRetainedEvents = 10000
+	DataAPINoteChangeFeedMaxCursorBytes = 128
+	// Ranked note search (ADR-1677), mirrored in customer SQL/client helpers.
+	DataAPINoteSearchMaxQueryBytes  = 1024
+	DataAPINoteSearchMaxTerms       = 16
+	DataAPINoteSearchMaxPageSize    = 100
+	DataAPINoteSearchMaxCursorBytes = 128
+	// Local owner command/config bounds for read-only rotation diagnostics.
+	DataAPIRotationConfigMaxBytes = 64 << 10
+	DataAPIRotationReportMaxBytes = 16 << 10
+	DataAPIRotationCheckTimeout   = 2 * time.Minute
+	DataAPIRotationMaxTimeout     = time.Hour
+	DataAPIQueryTimeoutMS         = 15000
+	DataAPILockTimeoutMS          = 5000
 	// Per-runtime HTTP admission. Active work follows the engine pool size;
 	// coordinated refresh reserves one pool connection for its control reader.
 	DataAPIMaxQueuedRequests    = 8
@@ -11161,6 +11208,9 @@ const (
 	DataAPIRateLimitMaxBurst         = 1000
 	DataAPIRateLimitMaxSubjects      = 4096
 	DataAPIRateLimitSweepMS          = 1000
+	// Per-runtime user concurrency accounting, including uncertain dispatches.
+	DataAPIUserConcurrencyMaxSubjects = DataAPIRateLimitMaxSubjects
+	DataAPIUserConcurrencyCooldownMS  = DataAPIQueryTimeoutMS
 
 	// Data API diagnostics is a bounded CLI analysis of retained request logs,
 	// not a plan quota or a change to runtime log retention.

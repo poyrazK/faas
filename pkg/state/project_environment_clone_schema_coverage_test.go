@@ -165,6 +165,10 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"financial_funding_currency":         CloneSchemaPlatform,
 		"financial_preview_command_runtimes": CloneSchemaOperational,
 
+		// Capacity and runtime observations are source-bound, expiring evidence.
+		"managed_postgres_connection_capacity":     CloneSchemaOperational,
+		"data_api_runtime_connection_observations": CloneSchemaOperational,
+
 		"object_bucket_encryption":                           CloneSchemaConfiguration,
 		"object_bucket_lifecycle":                            CloneSchemaConfiguration,
 		"object_bucket_notifications":                        CloneSchemaConfiguration,

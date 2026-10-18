@@ -15,7 +15,7 @@ func TestReleaseManagementHelpPaths(t *testing.T) {
 		{
 			name:      "app scale leaf",
 			args:      []string{"app", "example", "scale", "--help"},
-			wantUsage: "usage: gregale app <slug> scale",
+			wantUsage: "gregale app <slug> scale [flags]",
 		},
 		{
 			name:      "rollouts parent",
