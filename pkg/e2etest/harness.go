@@ -51,8 +51,12 @@ package e2etest
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -208,6 +212,7 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *H
 	// imaged, schedd's signature verifier and vmmd must resolve the same
 	// app artifacts. Keep explicit caller overrides last, as for other env.
 	extraEnv = append([]string{"FAAS_APPS_ROOT=" + appsRoot}, extraEnv...)
+	extraEnv = append(internalSvcKeyEnv(t, tmp, extraEnv), extraEnv...)
 
 	// Socket dir lives outside t.TempDir() because macOS's t.TempDir() is
 	// under /var/folders/.../T/<random> and a test name + random suffix
@@ -745,6 +750,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	}
 	// Match Start: share imaged's app store with every harness daemon.
 	extraEnv = append([]string{"FAAS_APPS_ROOT=" + appsRoot}, extraEnv...)
+	extraEnv = append(internalSvcKeyEnv(t, tmp, extraEnv), extraEnv...)
 	// See Start for why sockDir lives outside t.TempDir() — macOS sun_path
 	// limit, and `/tmp/faas-e2e-sock-*` is short and stable everywhere.
 	sockDir := newHarnessSocketDir(t)
@@ -1504,6 +1510,42 @@ func newRecoveryHMACKeyHex(t *testing.T) string {
 // (crypto/rand) so two parallel tests don't share a key, and
 // so a leaked key from one test's debug output is useless for
 // the next test's value_hash discriminator.
+// internalSvcKeyEnv gives this harness its own internal-service signing key:
+// schedd mints workflow and exclusive-operation tokens with the private half
+// and gatewayd-internal verifies them with the public half. Without it
+// gatewayd-internal has no verifier and answers every workflow step with 500,
+// and schedd falls back to whatever key the host has at
+// /etc/faas/secrets/internal-svc. A caller that sets either variable keeps it.
+func internalSvcKeyEnv(t *testing.T, dir string, extraEnv []string) []string {
+	t.Helper()
+	for _, entry := range extraEnv {
+		if strings.HasPrefix(entry, "FAAS_INTERNAL_SVC_KEY_PATH=") || strings.HasPrefix(entry, "FAAS_INTERNAL_SVC_PUBKEYS=") {
+			return nil
+		}
+	}
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("e2etest: internal-svc key: %v", err)
+	}
+	privateDER, err := x509.MarshalPKCS8PrivateKey(private)
+	if err != nil {
+		t.Fatalf("e2etest: internal-svc key: %v", err)
+	}
+	publicDER, err := x509.MarshalPKIXPublicKey(public)
+	if err != nil {
+		t.Fatalf("e2etest: internal-svc key: %v", err)
+	}
+	keyPath := filepath.Join(dir, "internal-svc-schedd.ed25519")
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER}), 0o600); err != nil {
+		t.Fatalf("e2etest: write internal-svc key: %v", err)
+	}
+	pubkeys, err := json.Marshal(map[string]string{"schedd": string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: publicDER}))})
+	if err != nil {
+		t.Fatalf("e2etest: internal-svc pubkeys: %v", err)
+	}
+	return []string{"FAAS_INTERNAL_SVC_KEY_PATH=" + keyPath, "FAAS_INTERNAL_SVC_PUBKEYS=" + string(pubkeys)}
+}
+
 func newHostHMACKeyFile(t *testing.T, dir string) string {
 	t.Helper()
 	var b [32]byte

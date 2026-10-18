@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -59,9 +60,11 @@ func postNativeProviderEvent(t *testing.T, h *e2etest.Harness, endpointURL, secr
 	response, err := h.HTTPClient().Do(request)
 	mustCustomerHTTP(t, err)
 	defer func() { _ = response.Body.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+	mustCustomerHTTP(t, err)
 	var receipt api.InboundWebhookReceiptResponse
-	if err := json.NewDecoder(response.Body).Decode(&receipt); err != nil || response.StatusCode != http.StatusAccepted {
-		t.Fatalf("provider event answered HTTP %d: %+v %v", response.StatusCode, receipt, err)
+	if response.StatusCode != http.StatusAccepted || json.Unmarshal(raw, &receipt) != nil {
+		t.Fatalf("provider event answered HTTP %d: %s", response.StatusCode, raw)
 	}
 	return receipt
 }
