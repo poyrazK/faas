@@ -116,7 +116,7 @@ func workflowFixtureProof(r *http.Request) (string, api.OperationWorkflowRuntime
 			return "", p, fmt.Errorf("invalid native identity")
 		}
 	}
-	if r.Header.Get(api.OperationExecutionKindHeader) != "workflow" || r.Header.Get(api.InvocationIDHeader) != "" || p.StepName != strings.TrimPrefix(r.URL.Path, "/") || p.Generation < 1 || p.Attempt < 1 {
+	if r.Header.Get(api.OperationExecutionKindHeader) != "workflow" || isHTTPInvocationID(r.Header.Get(api.InvocationIDHeader)) || p.StepName != strings.TrimPrefix(r.URL.Path, "/") || p.Generation < 1 || p.Attempt < 1 {
 		return "", p, fmt.Errorf("invalid native proof")
 	}
 	return id, p, nil
@@ -261,4 +261,12 @@ func (f workflowFixtureServer) fixtureEvent(ctx context.Context, id string, proo
 		return response.StatusCode, fmt.Errorf("fixture barrier unavailable")
 	}
 	return response.StatusCode, nil
+}
+
+// isHTTPInvocationID reports an HTTP Operation claim's UUID invocation id.
+// gatewayd names every synthetic delivery (workflow-...), so a workflow step
+// carries one too; only a UUID means the wrong adapter delivered the request.
+func isHTTPInvocationID(value string) bool {
+	_, err := uuid.Parse(value)
+	return value != "" && err == nil
 }
