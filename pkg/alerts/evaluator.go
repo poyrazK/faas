@@ -43,6 +43,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/audit"
+	"github.com/onebox-faas/faas/pkg/pagerduty"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/webhookout"
@@ -158,6 +159,7 @@ type Ops interface {
 // intentionally small so a future PR can add per-rule filtering or
 // per-account parallelism without reshaping the public surface.
 type Evaluator struct {
+	pagerDuty  *pagerduty.Client
 	store      Store
 	promQL     appmetrics.PromQL // nil = Prometheus unreachable; degraded path
 	audit      *audit.Auditor
@@ -227,10 +229,11 @@ func (e *Evaluator) getActionExec() ActionExecutor {
 // EvaluatorOptions is the constructor input. Every field has a
 // non-zero default except store (the only required dependency).
 type EvaluatorOptions struct {
-	Store    Store
-	PromQL   appmetrics.PromQL
-	Audit    *audit.Auditor
-	Identity func() *age.X25519Identity
+	PagerDutyHTTPClient *http.Client
+	Store               Store
+	PromQL              appmetrics.PromQL
+	Audit               *audit.Auditor
+	Identity            func() *age.X25519Identity
 	// Identities is the rotation-overlap accessor (issue #316 /
 	// ADR-057): multi-identity slice from secretbox.LoadHostKeys(dir).
 	// Pre-rotation: length 1 (just the current). During the 30-day
@@ -285,6 +288,7 @@ func NewEvaluator(o EvaluatorOptions) *Evaluator {
 		promQL:     o.PromQL,
 		audit:      o.Audit,
 		identity:   o.Identity,
+		pagerDuty:  pagerduty.New(o.PagerDutyHTTPClient),
 		identities: o.Identities,
 		dispatch:   o.Dispatcher,
 		dispatchMu: &sync.Mutex{},
@@ -373,6 +377,16 @@ func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
 		}
 		e.evalRule(ctx, rule, now, &stats)
 	}
+	// Record every readiness observation before any readiness transport wait.
+	// Other evaluators can continue recording while this worker owns a lease.
+	for _, rule := range rules {
+		if string(rule.Metric) == api.MetricMCPReadinessUnhealthy {
+			if err := ctx.Err(); err != nil {
+				return stats, err
+			}
+			e.retryMCPReadinessIncident(ctx, rule, e.now(), &stats)
+		}
+	}
 	return stats, nil
 }
 
@@ -385,6 +399,10 @@ func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
 // cancellation — every other failure is observation, not load-
 // bearing for the next tick.
 func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time.Time, stats *Stats) {
+	var readiness []api.MCPReadinessMonitorStatus
+	if string(rule.Metric) == api.MetricMCPReadinessUnhealthy {
+		ctx, readiness = e.withMCPReadiness(ctx, rule)
+	}
 	var health *api.MCPConnectionHealthSnapshot
 	if api.IsMCPConnectionHealthMetric(string(rule.Metric)) {
 		ctx, health = e.withMCPConnectionHealth(ctx, rule)
@@ -427,6 +445,11 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 			e.log.Warn("alerts: stamp last_evaluated_at",
 				"rule", rule.ID, "err", err)
 		}
+		return
+	}
+
+	if string(rule.Metric) == api.MetricMCPReadinessUnhealthy {
+		e.evalMCPReadinessIncident(ctx, rule, readiness, observed, comparisonResult, now, stats)
 		return
 	}
 
@@ -520,6 +543,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	// dispatch hot path.
 	paths := e.investigationPaths(ctx, rule)
 	paths.mcpCatalog = catalog
+	paths.mcpReadiness = readiness
 	paths.mcpHealth = health
 	if convergence != nil {
 		paths.mcpConvergence = convergence
@@ -653,6 +677,12 @@ func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deli
 		RuleName:   rule.Name,
 		AppID:      rule.AppID, // "" for account-wide rules; customer keys off Payload.metric + threshold
 		Payload:    payloadMap,
+	}
+
+	if string(rule.Metric) == api.MetricMCPReadinessUnhealthy {
+		if eventID, ok := payloadMap["event_id"].(string); ok {
+			evt.ID = eventID
+		}
 	}
 
 	// Serialise Dispatch calls. pkg/webhookout.Dispatcher is
@@ -800,6 +830,12 @@ const (
 // threshold verdict, skipReason is a fail-closed "we can't even
 // fetch" signal.
 func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64, bool, string) {
+	if string(rule.Metric) == api.MetricMCPReadinessUnhealthy {
+		return e.observeMCPReadiness(ctx, rule)
+	}
+	if api.IsMCPProtocolMetric(string(rule.Metric)) {
+		return e.observeMCPProtocol(ctx, rule)
+	}
 	if api.IsAnomalyAlertComparison(string(rule.Comparison)) {
 		return e.observeAnomaly(ctx, rule)
 	}
@@ -1198,6 +1234,7 @@ func compareCents(observedCents int64, op state.AlertComparison, thresholdEUR fl
 // scrape and the customer's webhook see the same envelope — one
 // source of truth, one marshal per firing.
 type investigationPaths struct {
+	mcpReadiness     []api.MCPReadinessMonitorStatus
 	mcpHealth        *api.MCPConnectionHealthSnapshot
 	mcpCatalog       *api.MCPCatalogMonitorSignal
 	mcpConvergence   *api.MCPPolicyConvergenceSnapshot
@@ -1258,6 +1295,10 @@ func buildPayload(rule state.AlertRule, observed float64, paths investigationPat
 		"window":     string(rule.WindowSpec),
 		"fired_at":   time.Now().UTC().Format(time.RFC3339Nano),
 	}
+	if api.IsMCPProtocolMetric(string(rule.Metric)) {
+		m["app_id"] = rule.AppID
+		m["mcp_protocol"] = map[string]any{"min_calls": rule.MCPMinCalls, "for_minutes": rule.MCPForMinutes, "source": "starter_reported", "sample_interval_seconds": 30}
+	}
 	if rule.EventSubscriptionID != "" {
 		m["event_subscription_id"] = rule.EventSubscriptionID
 	}
@@ -1295,6 +1336,24 @@ func buildPayload(rule state.AlertRule, observed float64, paths investigationPat
 		m["mcp_connection_health"] = paths.mcpHealth
 		m["incident_id"] = paths.mcpHealth.Fingerprints[api.MCPConnectionHealthKind(string(rule.Metric))]
 		m["event"] = "alert.fired"
+	}
+	if string(rule.Metric) == api.MetricMCPReadinessUnhealthy {
+		m["app_id"] = rule.AppID
+	}
+	if rule.MCPReadinessScope != "" {
+		m["mcp_readiness_scope"] = rule.MCPReadinessScope
+	}
+	if paths.mcpReadiness != nil {
+		m["mcp_readiness_coverage_fingerprint"] = readinessCoverageFingerprint(paths.mcpReadiness)
+		m["mcp_readiness_scopes"] = readinessEventScopes(paths.mcpReadiness)
+		monitors := append([]api.MCPReadinessMonitorStatus{}, paths.mcpReadiness...)
+		if len(monitors) > 50 {
+			monitors = monitors[:50]
+		}
+		for i := range monitors {
+			monitors[i].History = nil
+		}
+		m["mcp_readiness"] = monitors
 	}
 	if paths.mcpCatalog != nil {
 		m["mcp_catalog"] = paths.mcpCatalog

@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-func TestJailerVMM_RegisterAppRingObservesAppLinesOnly(t *testing.T) {
+func TestJailerVMM_RegisterLeaseRingObservesAppLinesOnly(t *testing.T) {
 	t.Parallel()
 	v := NewJailerVMM("/srv/fc", 0)
 	seen := map[string]int{}
@@ -26,7 +26,7 @@ func TestJailerVMM_RegisterAppRingObservesAppLinesOnly(t *testing.T) {
 		{"no app id", context.Background(), Lease{Instance: "i-anon"}},
 	}
 	for _, tt := range tests {
-		r := v.registerAppRing(tt.ctx, tt.lease)
+		r := v.registerLeaseRing(tt.ctx, tt.lease)
 		if _, err := r.Write("stdout", []byte("[error] boom\n")); err != nil {
 			t.Fatalf("%s: write: %v", tt.name, err)
 		}

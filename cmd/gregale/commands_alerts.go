@@ -109,7 +109,7 @@ func cmdAlertList(args []string) int {
 		return 0
 	}
 	for _, r := range rules {
-		fmt.Printf("%-32s %-22s %-18s %-6s %-6s %s\n", r.ID, r.Metric, r.WindowSpec, formatThreshold(r.Threshold), r.Comparison, r.Name)
+		fmt.Printf("%-32s %-22s %-18s %-6s %-6s %s\n", r.ID, r.Metric, r.WindowSpec, formatThreshold(r.Threshold), r.Comparison, alertRuleDisplayName(r))
 	}
 	return 0
 }
@@ -122,6 +122,7 @@ func cmdAlertAdd(args []string) int {
 	slug := fs.String("app", "", "app slug (required)")
 	name := fs.String("name", "", "rule name (required, 3..120 chars)")
 	eventSubscription := fs.String("event-subscription-id", "", "subscription UUID for event consumer health alerts")
+	readinessScope := fs.String("mcp-readiness-scope", "", "readiness environment; omitted means all environments (immutable)")
 	edgeRule := fs.String("edge-rule-id", "", "edge rule id for edge_rule_hits / edge_rule_log_hits (empty = every rule of the app; ADR-1192)")
 	metric := fs.String("metric", "", "metric (closed set; includes MCP task, event retention, and event storage metrics)")
 	comparison := fs.String("comparison", "", "comparison (gt|gte|lt|lte)")
@@ -171,12 +172,15 @@ func cmdAlertAdd(args []string) int {
 	if !api.IsFiniteFloat(*threshold) {
 		return printErr("Invalid threshold", fmt.Errorf("--threshold must be a finite number; got %v", *threshold))
 	}
+	if p := api.ValidateMCPReadinessAlertScope(*metric, *readinessScope); p != nil {
+		return printErr("Invalid readiness environment", p)
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
 	resp, err := client.CreateAlertRule(context.Background(), *slug, api.CreateAlertRuleRequest{
-		Name:                            *name,
+		MCPReadinessScope: *readinessScope, Name: *name,
 		Enabled:                         enabled,
 		Metric:                          *metric,
 		Comparison:                      *comparison,
@@ -291,6 +295,13 @@ func cmdAlertInfo(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "name:         %s\n", resp.Name)
 	_, _ = fmt.Fprintf(osStdout, "enabled:      %t\n", resp.Enabled)
 	_, _ = fmt.Fprintf(osStdout, "metric:       %s\n", resp.Metric)
+	if resp.Metric == api.MetricMCPReadinessUnhealthy {
+		label := resp.MCPReadinessScope
+		if label == "" {
+			label = "all environments"
+		}
+		_, _ = fmt.Fprintf(osStdout, "readiness environment: %s\n", label)
+	}
 	_, _ = fmt.Fprintf(osStdout, "comparison:   %s\n", resp.Comparison)
 	_, _ = fmt.Fprintf(osStdout, "threshold:    %s\n", formatThreshold(resp.Threshold))
 	_, _ = fmt.Fprintf(osStdout, "window_spec:  %s\n", resp.WindowSpec)

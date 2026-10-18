@@ -115,3 +115,27 @@ func TestOAuthProfileIntent(t *testing.T) {
 		}
 	}
 }
+
+func TestBrowserOAuthRedirectValidation(t *testing.T) {
+	for _, tc := range []struct {
+		url   string
+		valid bool
+	}{
+		{"https://console.example/dashboard/mcp/oauth/callback", true},
+		{"http://console.example/dashboard/mcp/oauth/callback", false},
+		{"https://console.example:443/dashboard/mcp/oauth/callback", false},
+		{"https://user@console.example/dashboard/mcp/oauth/callback", false},
+		{"https://console.example/dashboard/mcp/oauth/callback?next=bad", false},
+		{"https://console.example/dashboard/mcp/oauth/callback#fragment", false},
+		{"https://console.example/dashboard/mcp/oauth/%63allback", false},
+		{"https://console.example/callback", false},
+	} {
+		if got := ValidMCPOAuthBrowserRedirect(tc.url); got != tc.valid {
+			t.Errorf("redirect %q: %v", tc.url, got)
+		}
+	}
+	cfg := MCPCatalogObserverOAuthConfig{TokenEndpoint: "https://provider.example/token", ClientID: "client", RefreshTokenSecretRef: "secret:REFRESH", BrowserRedirectURI: "https://console.example/dashboard/mcp/oauth/callback"}
+	if cfg.Validate() == nil {
+		t.Fatal("non-guided hosted callback accepted")
+	}
+}

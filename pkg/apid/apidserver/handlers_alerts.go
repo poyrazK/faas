@@ -212,7 +212,12 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
-	row, err := s.store.CreateAlertRuleIfUnderQuota(r.Context(), state.AlertRule{
+	minCalls, forMinutes := api.MCPProtocolAlertDefaults(req.Metric, req.MCPMinCalls, req.MCPForMinutes)
+	if api.IsMCPProtocolMetric(req.Metric) && app.ID == "" {
+		api.WriteProblem(w, api.ErrAlertRuleInvalid("MCP performance alerts require an app"))
+		return
+	}
+	row, err := s.store.CreateAlertRuleIfUnderQuota(r.Context(), state.AlertRule{MCPReadinessScope: req.MCPReadinessScope, MCPMinCalls: minCalls, MCPForMinutes: forMinutes,
 		AccountID:                       acct.ID,
 		AppID:                           app.ID,
 		Name:                            req.Name,
@@ -419,6 +424,10 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 			return
 		}
 	}
+	if req.MCPReadinessScope != nil && *req.MCPReadinessScope != row.MCPReadinessScope {
+		api.WriteProblem(w, api.ErrAlertRuleInvalid("readiness alert environment cannot change; create a new rule"))
+		return
+	}
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok || limits.AlertRuleLimitPerApp == 0 {
 		api.WriteProblem(w, api.ErrPlanAlertRulesNotAllowed(acct.Plan))
@@ -427,6 +436,10 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 	// Build the merged state row for body validation so the
 	// closed-set + threshold + cooldown checks see the post-patch
 	// shape, not just the partial request.
+	if req.Metric != nil && api.IsMCPProtocolMetric(*req.Metric) != api.IsMCPProtocolMetric(string(row.Metric)) {
+		api.WriteProblem(w, api.ErrAlertRuleInvalid("MCP metric family cannot change; delete and recreate"))
+		return
+	}
 	merged := alertRuleRowForValidation(row, req)
 	if prob := validateAlertRuleRowUpdate(merged); prob != nil {
 		api.WriteProblem(w, prob)
@@ -480,7 +493,7 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		}
 		sealedPtr = &sealed
 	}
-	updated, err := s.store.UpdateAlertRule(r.Context(), id, state.UpdateAlertRuleParams{
+	updated, err := s.store.UpdateAlertRule(r.Context(), id, state.UpdateAlertRuleParams{MCPMinCalls: req.MCPMinCalls, MCPForMinutes: req.MCPForMinutes,
 		Name:                            req.Name,
 		Enabled:                         req.Enabled,
 		Metric:                          ptrAlertMetric(req.Metric),
@@ -728,7 +741,7 @@ func (s *server) rotateAlertRuleSecret(w http.ResponseWriter, r *http.Request, a
 // here at the pkg/api ↔ pkg/state boundary so pkg/api/alerts.go
 // stays free of the import cycle.
 func alertRuleResponse(r state.AlertRule) api.AlertRuleResponse {
-	return api.AlertRuleResponseFromRow(api.AlertRuleRow{
+	return api.AlertRuleResponseFromRow(api.AlertRuleRow{MCPReadinessScope: r.MCPReadinessScope, MCPMinCalls: r.MCPMinCalls, MCPForMinutes: r.MCPForMinutes,
 		ID:                              r.ID,
 		AppID:                           r.AppID,
 		Name:                            r.Name,
@@ -765,6 +778,7 @@ func alertDeliveryResponse(d state.AlertDelivery) api.AlertDeliveryResponse {
 		lastErr = dashboard.FormatAlertError(lastErr)
 	}
 	return api.AlertDeliveryResponse{
+		ReadinessEventID: d.ReadinessEventID, ReadinessDestination: d.ReadinessDestination, ReadinessFailoverReason: d.ReadinessFailoverReason,
 		ID:             d.ID,
 		RuleID:         d.RuleID,
 		AccountID:      d.AccountID,
@@ -836,6 +850,14 @@ func (s *server) anomalyAlertsGate(comparison string) *api.Problem {
 }
 
 func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
+	if p := api.ValidateMCPReadinessAlertScope(req.Metric, req.MCPReadinessScope); p != nil {
+		return p
+	}
+	minCalls, forMinutes := api.MCPProtocolAlertDefaults(req.Metric, req.MCPMinCalls, req.MCPForMinutes)
+	if p := api.ValidateMCPProtocolAlert(req.Metric, req.Comparison, req.WindowSpec, req.Threshold, minCalls, forMinutes); p != nil {
+		return p
+	}
+
 	if p := appevents.ValidateEventConsumerAlert(req.Metric, req.EventSubscriptionID, req.WindowSpec); p != nil {
 		return p
 	}
@@ -913,6 +935,16 @@ func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
 // create path. Cooldown is optional on update so a nil merge is
 // fine. Secret is also optional: nil means "don't reseal".
 func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
+	if p := api.ValidateMCPReadinessAlertScope(string(merged.Metric), merged.MCPReadinessScope); p != nil {
+		return p
+	}
+	if p := api.ValidateMCPProtocolAlert(string(merged.Metric), string(merged.Comparison), string(merged.WindowSpec), merged.Threshold, merged.MCPMinCalls, merged.MCPForMinutes); p != nil {
+		return p
+	}
+	if api.IsMCPProtocolMetric(string(merged.Metric)) && merged.AppID == "" {
+		return api.ErrAlertRuleInvalid("MCP performance alerts require an app")
+	}
+
 	if p := appevents.ValidateEventConsumerAlert(string(merged.Metric), merged.EventSubscriptionID, string(merged.WindowSpec)); p != nil {
 		return p
 	}
@@ -987,6 +1019,12 @@ func alertMetricActionRestriction(metric string) string {
 // sees the post-patch shape, not just the partial request.
 func alertRuleRowForValidation(existing state.AlertRule, req api.UpdateAlertRuleRequest) state.AlertRule {
 	merged := existing
+	if req.MCPMinCalls != nil {
+		merged.MCPMinCalls = *req.MCPMinCalls
+	}
+	if req.MCPForMinutes != nil {
+		merged.MCPForMinutes = *req.MCPForMinutes
+	}
 	if req.PostDeployRollbackWindowSeconds != nil {
 		merged.PostDeployRollbackWindowSeconds = *req.PostDeployRollbackWindowSeconds
 	}

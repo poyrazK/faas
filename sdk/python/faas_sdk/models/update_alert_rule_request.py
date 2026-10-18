@@ -32,6 +32,18 @@ T = TypeVar("T", bound="UpdateAlertRuleRequest")
 class UpdateAlertRuleRequest:
     """Partial update — every field is optional. Omitted means leave alone."""
 
+    mcp_readiness_scope: str | Unset = UNSET
+    """Immutable environment selector. If supplied it must equal the current value; create a new rule to select
+    another environment."""
+    mcp_min_calls: int | Unset = UNSET
+    """Replacement observation minimum for the existing protocol alert. MCP protocol alerts only. Minimum
+    observations in every rolling window; defaults to 20 on create. Latency uses measured executions. Omit for other
+    metrics."""
+    mcp_for_minutes: int | Unset = UNSET
+    """Replacement sustained duration for the existing protocol alert. MCP protocol alerts only. Continuous breach
+    duration sampled every 30 seconds; defaults to 10 on create. Missing observations interrupt eligibility. Webhook
+    action, app scope, gt/gte and windows 5m/15m/1h are required. Error thresholds are percent (0..100), execution
+    p95 thresholds are milliseconds (0..300000)."""
     post_deploy_rollback_window_seconds: int | Unset = UNSET
     """Change the completed-release recovery window. Omission preserves it and explicit 0 disables it. Positive
     values require action=rollback; only error_rate_pct with gt or gte and sufficient exact deployment telemetry
@@ -57,6 +69,12 @@ class UpdateAlertRuleRequest:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        mcp_readiness_scope = self.mcp_readiness_scope
+
+        mcp_min_calls = self.mcp_min_calls
+
+        mcp_for_minutes = self.mcp_for_minutes
+
         post_deploy_rollback_window_seconds = self.post_deploy_rollback_window_seconds
 
         name = self.name
@@ -97,6 +115,12 @@ class UpdateAlertRuleRequest:
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if mcp_readiness_scope is not UNSET:
+            field_dict["mcp_readiness_scope"] = mcp_readiness_scope
+        if mcp_min_calls is not UNSET:
+            field_dict["mcp_min_calls"] = mcp_min_calls
+        if mcp_for_minutes is not UNSET:
+            field_dict["mcp_for_minutes"] = mcp_for_minutes
         if post_deploy_rollback_window_seconds is not UNSET:
             field_dict["post_deploy_rollback_window_seconds"] = post_deploy_rollback_window_seconds
         if name is not UNSET:
@@ -127,6 +151,12 @@ class UpdateAlertRuleRequest:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
+        mcp_readiness_scope = d.pop("mcp_readiness_scope", UNSET)
+
+        mcp_min_calls = d.pop("mcp_min_calls", UNSET)
+
+        mcp_for_minutes = d.pop("mcp_for_minutes", UNSET)
+
         post_deploy_rollback_window_seconds = d.pop("post_deploy_rollback_window_seconds", UNSET)
 
         name = d.pop("name", UNSET)
@@ -179,6 +209,9 @@ class UpdateAlertRuleRequest:
             action = check_update_alert_rule_request_action(_action)
 
         update_alert_rule_request = cls(
+            mcp_readiness_scope=mcp_readiness_scope,
+            mcp_min_calls=mcp_min_calls,
+            mcp_for_minutes=mcp_for_minutes,
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
             name=name,
             enabled=enabled,

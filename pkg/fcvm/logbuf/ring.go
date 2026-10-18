@@ -133,10 +133,7 @@ type Ring struct {
 	// Same callback indirection rationale as onSlowSubscriber:
 	// pkg/logarchive imports pkg/wire, not the other way
 	// around; the callback keeps logbuf a leaf.
-	onEvict func(Line)
-
-	// onCommit observes every accepted line (ADR-746 log line counts).
-	// It runs under r.mu, so it must be a non-blocking counter update.
+	onEvict  func(Line)
 	onCommit func(Line)
 
 	closed bool
@@ -177,6 +174,14 @@ func (r *Ring) SetSlowSubscriberCallback(cb func()) {
 	r.mu.Unlock()
 }
 
+// SetCommitCallback observes each accepted line exactly once at intake.
+// The callback runs under the ring lock and must perform bounded work with no I/O.
+func (r *Ring) SetCommitCallback(cb func(Line)) {
+	r.mu.Lock()
+	r.onCommit = cb
+	r.mu.Unlock()
+}
+
 // SetEvictCallback installs (or removes, when nil) the per-line
 // callback the commitLocked eviction loop invokes on every line
 // that crosses the byte budget (issue #562 / log archive to
@@ -204,17 +209,6 @@ func (r *Ring) SetSlowSubscriberCallback(cb func()) {
 func (r *Ring) SetEvictCallback(cb func(Line)) {
 	r.mu.Lock()
 	r.onEvict = cb
-	r.mu.Unlock()
-}
-
-// SetCommitCallback installs (or removes, when nil) the callback invoked
-// for every line the ring accepts, after it is stored and before it is
-// published. vmmd uses it to count lines per app and level (ADR-746). Like
-// the evict callback it runs while the ring lock is held, so it must not
-// block, perform I/O, or call back into the ring.
-func (r *Ring) SetCommitCallback(cb func(Line)) {
-	r.mu.Lock()
-	r.onCommit = cb
 	r.mu.Unlock()
 }
 
@@ -315,6 +309,9 @@ func (r *Ring) commitLocked(stream, line string, now time.Time) {
 		Level:     detectLevel(line),
 		WrittenAt: now,
 	}
+	if r.onCommit != nil {
+		r.onCommit(ln)
+	}
 	// Evict from head until totalBytes + len(line) <= maxBytes. We must
 	// evict BEFORE assigning to the slot because the slot overwrites the
 	// head slot on full ring; the per-line overhead in the slice is
@@ -364,9 +361,6 @@ func (r *Ring) commitLocked(stream, line string, now time.Time) {
 	r.lines[idx] = ln
 	r.size++
 	r.totalBytes += len(line)
-	if r.onCommit != nil {
-		r.onCommit(ln)
-	}
 	// Publish to every active subscriber. We snapshot subs under the lock
 	// to release it before sending so a slow subscriber cannot stall a
 	// producer that's still consuming firecracker stdout.

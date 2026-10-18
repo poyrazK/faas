@@ -54,6 +54,11 @@ type rpcResponse struct {
 }
 
 func main() {
+	// Host log intake supplies timestamps; protocol events must remain JSON.
+	log.SetFlags(0)
+	if len(os.Args) > 1 {
+		os.Exit(runTaskMigrationCommand(os.Args[1:]))
+	}
 	role, err := configuredMCPTaskRole()
 	if err != nil {
 		log.Fatal(err)
@@ -133,6 +138,10 @@ func main() {
 		}
 		<-taskDone
 	}()
+	heartbeatContext, stopHeartbeat := context.WithCancel(context.Background())
+	defer stopHeartbeat()
+	server.RegisterOnShutdown(stopHeartbeat)
+	go startProtocolHeartbeat(heartbeatContext)
 	log.Printf("MCP server listening on %s", server.Addr)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
@@ -141,6 +150,7 @@ func main() {
 }
 
 func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Vary", "Origin")
 	origins := r.Header.Values("Origin")
 	allowed := len(origins) == 0
 	if len(origins) == 1 {
@@ -149,12 +159,17 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 				allowed = true
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Vary", "Origin")
+				w.Header().Set("Access-Control-Expose-Headers", "WWW-Authenticate, MCP-Protocol-Version, Streaming-Status")
 				break
 			}
 		}
 	}
 	if !allowed {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "origin_not_allowed"})
+		return
+	}
+	if r.Method == http.MethodOptions {
+		handleCORSPreflight(config, w, r, len(origins) == 1)
 		return
 	}
 	if r.URL.Path == "/healthz" && r.Method == http.MethodGet {
@@ -208,6 +223,11 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 	if err := json.Unmarshal(body, &request); err != nil || request.JSONRPC != "2.0" || request.Method == "" {
 		writeRPCError(w, json.RawMessage("null"), -32600, "invalid JSON-RPC request", http.StatusBadRequest)
 		return
+	}
+	if len(request.ID) > 0 {
+		var observation *protocolObservation
+		w, observation = observeProtocolRequest(w, r, request)
+		defer observation.finish()
 	}
 	switch request.Method {
 	case "tools/call":
@@ -650,8 +670,10 @@ func waitForProgress(ctx context.Context, delay time.Duration) bool {
 }
 
 func writeSSEMessage(w io.Writer, message any) error {
+	noteProtocolResponse(w, message)
 	data, err := json.Marshal(message)
 	if err != nil {
+		noteProtocolEncodingFailure(w)
 		return err
 	}
 	_, err = fmt.Fprintf(w, "event: message\ndata: %s\n\n", data)
@@ -994,10 +1016,12 @@ func writeRPCError(w http.ResponseWriter, id json.RawMessage, code int, message 
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
+	noteProtocolResponse(w, value)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(value); err != nil {
+		noteProtocolEncodingFailure(w)
 		log.Printf("could not write JSON response: %v", err)
 	}
 }
