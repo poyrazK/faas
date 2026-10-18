@@ -1,3 +1,4 @@
+import { protocolContext, observeProtocolRequest, observeServerTransport, toolLabel } from './protocol-telemetry.js';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import express from 'express';
@@ -58,6 +59,7 @@ function isConfiguredResourceURI(uri, patterns) {
 }
 
 function writeSseMessage(response, message) {
+  response.protocolObservation?.response(message);
   if (!response.writableEnded && !response.destroyed) response.write(`event: message\ndata: ${JSON.stringify(message)}\n\n`);
 }
 
@@ -183,7 +185,7 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
       } finally {
         if (ctx.mcpReq.signal.aborted) outcome = 'cancelled';
         // Keep tool arguments, results, access tokens and customer identity out of logs.
-        log(JSON.stringify({ event: 'mcp_tool_call', tool: name, outcome, duration_ms: Math.round(performance.now() - start) }));
+        log(JSON.stringify({ event: 'mcp_tool_call', tool: toolLabel(name), outcome, duration_ms: Math.round(performance.now() - start) }));
       }
     };
   }
@@ -198,6 +200,7 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
         ...(taskRuntime ? { extensions: { [MCP_TASKS_EXTENSION_ID]: {} } } : {}),
       },
     });
+    observeServerTransport(server, protocolContext.getStore());
     if (taskRuntime) installMcpTaskHandlers(server, taskRuntime, authInfo, config.auth.mode, name => auth.toolPolicy.canAccess(name, authInfo));
     for (const entry of catalog.tools()) {
       const callback = async (args, ctx) => {
@@ -546,11 +549,15 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
   app.all(config.endpoint, (req, res, next) => {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Accel-Buffering', 'no');
-    if (isManagedSubscriptionRequest(req)) {
-      void serveTaskSubscription(req, res).catch(next);
-      return;
-    }
-    void nodeHandler(req, res, req.body).catch(next);
+    const observation = observeProtocolRequest(req, res, log);
+    res.protocolObservation = observation;
+    protocolContext.run(observation, () => {
+      if (isManagedSubscriptionRequest(req)) {
+        void serveTaskSubscription(req, res).catch(next);
+        return;
+      }
+      void nodeHandler(req, res, req.body).catch(next);
+    });
   });
   app.use((_error, _req, res, _next) => {
     // Error messages can contain submitted values; use a stable, redacted event.

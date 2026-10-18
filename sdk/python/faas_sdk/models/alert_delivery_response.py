@@ -8,6 +8,14 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.alert_delivery_response_readiness_destination import (
+    AlertDeliveryResponseReadinessDestination,
+    check_alert_delivery_response_readiness_destination,
+)
+from ..models.alert_delivery_response_readiness_failover_reason import (
+    AlertDeliveryResponseReadinessFailoverReason,
+    check_alert_delivery_response_readiness_failover_reason,
+)
 from ..models.alert_delivery_response_status import AlertDeliveryResponseStatus, check_alert_delivery_response_status
 from ..types import UNSET, Unset
 
@@ -36,6 +44,12 @@ class AlertDeliveryResponse:
     fired_at: datetime.datetime
     is_test: bool
     """true iff the row was written by Dispatcher.DispatchTest"""
+    readiness_event_id: UUID | Unset = UNSET
+    """Stable readiness logical event associated with this physical delivery."""
+    readiness_destination: AlertDeliveryResponseReadinessDestination | Unset = UNSET
+    """Selected receiver role for this physical readiness dispatch."""
+    readiness_failover_reason: AlertDeliveryResponseReadinessFailoverReason | Unset = UNSET
+    """Destination selection reason recorded on this physical readiness delivery."""
     app_id: UUID | Unset = UNSET
     """omitted on account-wide rules"""
     last_status_code: int | Unset = UNSET
@@ -65,6 +79,18 @@ class AlertDeliveryResponse:
 
         is_test = self.is_test
 
+        readiness_event_id: str | Unset = UNSET
+        if not isinstance(self.readiness_event_id, Unset):
+            readiness_event_id = str(self.readiness_event_id)
+
+        readiness_destination: str | Unset = UNSET
+        if not isinstance(self.readiness_destination, Unset):
+            readiness_destination = self.readiness_destination
+
+        readiness_failover_reason: str | Unset = UNSET
+        if not isinstance(self.readiness_failover_reason, Unset):
+            readiness_failover_reason = self.readiness_failover_reason
+
         app_id: str | Unset = UNSET
         if not isinstance(self.app_id, Unset):
             app_id = str(self.app_id)
@@ -92,6 +118,12 @@ class AlertDeliveryResponse:
                 "is_test": is_test,
             }
         )
+        if readiness_event_id is not UNSET:
+            field_dict["readiness_event_id"] = readiness_event_id
+        if readiness_destination is not UNSET:
+            field_dict["readiness_destination"] = readiness_destination
+        if readiness_failover_reason is not UNSET:
+            field_dict["readiness_failover_reason"] = readiness_failover_reason
         if app_id is not UNSET:
             field_dict["app_id"] = app_id
         if last_status_code is not UNSET:
@@ -124,6 +156,29 @@ class AlertDeliveryResponse:
 
         is_test = d.pop("is_test")
 
+        _readiness_event_id = d.pop("readiness_event_id", UNSET)
+        readiness_event_id: UUID | Unset
+        if isinstance(_readiness_event_id, Unset):
+            readiness_event_id = UNSET
+        else:
+            readiness_event_id = UUID(_readiness_event_id)
+
+        _readiness_destination = d.pop("readiness_destination", UNSET)
+        readiness_destination: AlertDeliveryResponseReadinessDestination | Unset
+        if isinstance(_readiness_destination, Unset):
+            readiness_destination = UNSET
+        else:
+            readiness_destination = check_alert_delivery_response_readiness_destination(_readiness_destination)
+
+        _readiness_failover_reason = d.pop("readiness_failover_reason", UNSET)
+        readiness_failover_reason: AlertDeliveryResponseReadinessFailoverReason | Unset
+        if isinstance(_readiness_failover_reason, Unset):
+            readiness_failover_reason = UNSET
+        else:
+            readiness_failover_reason = check_alert_delivery_response_readiness_failover_reason(
+                _readiness_failover_reason
+            )
+
         _app_id = d.pop("app_id", UNSET)
         app_id: UUID | Unset
         if isinstance(_app_id, Unset):
@@ -152,6 +207,9 @@ class AlertDeliveryResponse:
             observed_value=observed_value,
             fired_at=fired_at,
             is_test=is_test,
+            readiness_event_id=readiness_event_id,
+            readiness_destination=readiness_destination,
+            readiness_failover_reason=readiness_failover_reason,
             app_id=app_id,
             last_status_code=last_status_code,
             last_error=last_error,

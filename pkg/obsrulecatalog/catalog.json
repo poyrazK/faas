@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "a950353a2079b582deb1f53c0354c434db85c709a6850bb696f550f2f7cd675d",
+      "revision": "cea1fe6f4694ab1d2102313100f01bd89c7d26807ccba64afce583fda58ba37a",
       "files": [
         "faas.rules.yml"
       ],
@@ -1856,6 +1856,19 @@
           }
         },
         {
+          "id": "612649fdc011292b380495a73fb852db6d3ce40b539b2904757d37f743ba1714",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_mcp_protocol",
+          "rule_name": "FaasMCPProtocolSlowExecution",
+          "definition": {
+            "expression_hash": "caa8dee6daa1293109e77bcb332ecfaf303c3eb26256e86aaf5200176fa80656",
+            "labels_hash": "9b234559d5b3e6a4b862d2aa8d439cbb834eee117b460ab67b55b5e7a407b8d3",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "053d08c3e819ebdc1e362e3271d5a13438cdb2214f4e8375bd2a31d7fd419991"
+          }
+        },
+        {
           "id": "62ab6fcbef52ca3e2f349df6ca9a3d898ee56e295215a3ad9693b26341bcd0b2",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -2779,6 +2792,19 @@
           }
         },
         {
+          "id": "9c2d6f579eb108abcb02ebb0fa26433cacad8e4a2ed654275a5f80ccbd6f9fc7",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_mcp_protocol",
+          "rule_name": "FaasMCPProtocolAggregationCapacity",
+          "definition": {
+            "expression_hash": "a567b40323ea81f176636112e64938e995603b8a1b19ebea6f2e2f826b7655da",
+            "labels_hash": "9b234559d5b3e6a4b862d2aa8d439cbb834eee117b460ab67b55b5e7a407b8d3",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6b24291edb4f3a9bbfccb98386674781574f2592def1dd6eea18ca81bc5e8b9a"
+          }
+        },
+        {
           "id": "9cd2f7e0dd55fa3dab96033a7e22280a66ad7e4457daefc3bddd79be30f868c2",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -2815,6 +2841,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "2170b15d8f92fffd21d2779db3118ad8844e33e0bc7280b8dd8c8cdfad5a7ca3"
+          }
+        },
+        {
+          "id": "9ef03651cb1330e752a0e22f11660dc7c4354ef4addb1435f63750d71e6c2cca",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_mcp_protocol",
+          "rule_name": "FaasMCPProtocolHighErrorRate",
+          "definition": {
+            "expression_hash": "3ce639f980748b16a74efeeda5a06de624664548a5a6b8ccfe2e363ebaccc68b",
+            "labels_hash": "9b234559d5b3e6a4b862d2aa8d439cbb834eee117b460ab67b55b5e7a407b8d3",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "12b1ae6d42c9f48d92ff65e2ab6a5ac737218c9d1711919f7a8d6ee59dfa783d"
           }
         },
         {
@@ -3010,6 +3049,19 @@
             "for_seconds": 60,
             "keep_firing_for_seconds": 0,
             "fingerprint": "91a144a1bb594c3c6d879e4b26bad47fe31d4609ab7b0091e4f3ada5f951f010"
+          }
+        },
+        {
+          "id": "af2a792029c0e160cd7e34cfb2fb8749d1316bad5f789854bd18c3e5c41dab12",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_mcp_protocol",
+          "rule_name": "FaasMCPTelemetryHeartbeatLost",
+          "definition": {
+            "expression_hash": "9329807f1a66047c236faf0df4c21d9199065d55fd355380c5a8580c0bb69ac2",
+            "labels_hash": "9b234559d5b3e6a4b862d2aa8d439cbb834eee117b460ab67b55b5e7a407b8d3",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "4a21e703f8a40b3b5f4f613bcd36e3f3c3b2e509adb2e7fcf70065f94adfcf47"
           }
         },
         {
@@ -4472,7 +4524,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "958232058b0dfca5901fc136d9595a70a59f58639ed6de4e3644e88675abc1d6",
+      "revision": "cae7fea7f36b67f16be5a1acebddba865471fe53597e332af50be2426cedbd09",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -6405,6 +6457,19 @@
           }
         },
         {
+          "id": "612649fdc011292b380495a73fb852db6d3ce40b539b2904757d37f743ba1714",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_mcp_protocol",
+          "rule_name": "FaasMCPProtocolSlowExecution",
+          "definition": {
+            "expression_hash": "caa8dee6daa1293109e77bcb332ecfaf303c3eb26256e86aaf5200176fa80656",
+            "labels_hash": "9b234559d5b3e6a4b862d2aa8d439cbb834eee117b460ab67b55b5e7a407b8d3",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "053d08c3e819ebdc1e362e3271d5a13438cdb2214f4e8375bd2a31d7fd419991"
+          }
+        },
+        {
           "id": "62ab6fcbef52ca3e2f349df6ca9a3d898ee56e295215a3ad9693b26341bcd0b2",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -7367,6 +7432,19 @@
           }
         },
         {
+          "id": "9c2d6f579eb108abcb02ebb0fa26433cacad8e4a2ed654275a5f80ccbd6f9fc7",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_mcp_protocol",
+          "rule_name": "FaasMCPProtocolAggregationCapacity",
+          "definition": {
+            "expression_hash": "a567b40323ea81f176636112e64938e995603b8a1b19ebea6f2e2f826b7655da",
+            "labels_hash": "9b234559d5b3e6a4b862d2aa8d439cbb834eee117b460ab67b55b5e7a407b8d3",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6b24291edb4f3a9bbfccb98386674781574f2592def1dd6eea18ca81bc5e8b9a"
+          }
+        },
+        {
           "id": "9cd2f7e0dd55fa3dab96033a7e22280a66ad7e4457daefc3bddd79be30f868c2",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -7403,6 +7481,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "2170b15d8f92fffd21d2779db3118ad8844e33e0bc7280b8dd8c8cdfad5a7ca3"
+          }
+        },
+        {
+          "id": "9ef03651cb1330e752a0e22f11660dc7c4354ef4addb1435f63750d71e6c2cca",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_mcp_protocol",
+          "rule_name": "FaasMCPProtocolHighErrorRate",
+          "definition": {
+            "expression_hash": "3ce639f980748b16a74efeeda5a06de624664548a5a6b8ccfe2e363ebaccc68b",
+            "labels_hash": "9b234559d5b3e6a4b862d2aa8d439cbb834eee117b460ab67b55b5e7a407b8d3",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "12b1ae6d42c9f48d92ff65e2ab6a5ac737218c9d1711919f7a8d6ee59dfa783d"
           }
         },
         {
@@ -7598,6 +7689,19 @@
             "for_seconds": 60,
             "keep_firing_for_seconds": 0,
             "fingerprint": "91a144a1bb594c3c6d879e4b26bad47fe31d4609ab7b0091e4f3ada5f951f010"
+          }
+        },
+        {
+          "id": "af2a792029c0e160cd7e34cfb2fb8749d1316bad5f789854bd18c3e5c41dab12",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_mcp_protocol",
+          "rule_name": "FaasMCPTelemetryHeartbeatLost",
+          "definition": {
+            "expression_hash": "9329807f1a66047c236faf0df4c21d9199065d55fd355380c5a8580c0bb69ac2",
+            "labels_hash": "9b234559d5b3e6a4b862d2aa8d439cbb834eee117b460ab67b55b5e7a407b8d3",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "4a21e703f8a40b3b5f4f613bcd36e3f3c3b2e509adb2e7fcf70065f94adfcf47"
           }
         },
         {

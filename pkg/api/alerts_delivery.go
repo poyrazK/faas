@@ -18,17 +18,20 @@ import "time"
 // log-injection-safe — the dashboard helper rejects CR/LF and
 // clamps to a fixed length.
 type AlertDeliveryResponse struct {
-	ID             string    `json:"id"`
-	RuleID         string    `json:"rule_id"`
-	AccountID      string    `json:"account_id"`
-	AppID          string    `json:"app_id,omitempty"`
-	IdempotencyKey string    `json:"idempotency_key"`
-	Status         string    `json:"status"`
-	AttemptCount   int       `json:"attempt_count"`
-	LastStatusCode int       `json:"last_status_code,omitempty"`
-	LastError      string    `json:"last_error,omitempty"`
-	ObservedValue  float64   `json:"observed_value"`
-	FiredAt        time.Time `json:"fired_at"`
-	DeliveredAt    time.Time `json:"delivered_at,omitempty"`
-	IsTest         bool      `json:"is_test"`
+	ReadinessEventID        string    `json:"readiness_event_id,omitempty"`
+	ReadinessDestination    string    `json:"readiness_destination,omitempty"`
+	ReadinessFailoverReason string    `json:"readiness_failover_reason,omitempty"`
+	ID                      string    `json:"id"`
+	RuleID                  string    `json:"rule_id"`
+	AccountID               string    `json:"account_id"`
+	AppID                   string    `json:"app_id,omitempty"`
+	IdempotencyKey          string    `json:"idempotency_key"`
+	Status                  string    `json:"status"`
+	AttemptCount            int       `json:"attempt_count"`
+	LastStatusCode          int       `json:"last_status_code,omitempty"`
+	LastError               string    `json:"last_error,omitempty"`
+	ObservedValue           float64   `json:"observed_value"`
+	FiredAt                 time.Time `json:"fired_at"`
+	DeliveredAt             time.Time `json:"delivered_at,omitempty"`
+	IsTest                  bool      `json:"is_test"`
 }

@@ -49,6 +49,17 @@ class CreateAlertRuleRequest:
     webhook_url: str
     webhook_secret: str
     """Plaintext HMAC secret (max 256 bytes). Sealed at rest; never echoed."""
+    mcp_readiness_scope: str | Unset = UNSET
+    """Readiness environment requested when creating this alert. Immutable readiness environment selector. Omitted
+    or empty means every environment; default selects only default. Valid only for mcp_readiness_unhealthy."""
+    mcp_min_calls: int | Unset = UNSET
+    """Observation minimum requested for the new protocol alert. MCP protocol alerts only. Minimum observations in
+    every rolling window; defaults to 20 on create. Latency uses measured executions. Omit for other metrics."""
+    mcp_for_minutes: int | Unset = UNSET
+    """Sustained duration requested for the new protocol alert. MCP protocol alerts only. Continuous breach
+    duration sampled every 30 seconds; defaults to 10 on create. Missing observations interrupt eligibility. Webhook
+    action, app scope, gt/gte and windows 5m/15m/1h are required. Error thresholds are percent (0..100), execution
+    p95 thresholds are milliseconds (0..300000)."""
     event_subscription_id: UUID | Unset = UNSET
     """Event subscription id in the create alert rule request: immutable subscription selector. Required only for
     event consumer metrics; webhook action and windows up to 24h are required."""
@@ -82,6 +93,12 @@ class CreateAlertRuleRequest:
         webhook_url = self.webhook_url
 
         webhook_secret = self.webhook_secret
+
+        mcp_readiness_scope = self.mcp_readiness_scope
+
+        mcp_min_calls = self.mcp_min_calls
+
+        mcp_for_minutes = self.mcp_for_minutes
 
         event_subscription_id: str | Unset = UNSET
         if not isinstance(self.event_subscription_id, Unset):
@@ -118,6 +135,12 @@ class CreateAlertRuleRequest:
                 "webhook_secret": webhook_secret,
             }
         )
+        if mcp_readiness_scope is not UNSET:
+            field_dict["mcp_readiness_scope"] = mcp_readiness_scope
+        if mcp_min_calls is not UNSET:
+            field_dict["mcp_min_calls"] = mcp_min_calls
+        if mcp_for_minutes is not UNSET:
+            field_dict["mcp_for_minutes"] = mcp_for_minutes
         if event_subscription_id is not UNSET:
             field_dict["event_subscription_id"] = event_subscription_id
         if edge_rule_id is not UNSET:
@@ -151,6 +174,12 @@ class CreateAlertRuleRequest:
         webhook_url = d.pop("webhook_url")
 
         webhook_secret = d.pop("webhook_secret")
+
+        mcp_readiness_scope = d.pop("mcp_readiness_scope", UNSET)
+
+        mcp_min_calls = d.pop("mcp_min_calls", UNSET)
+
+        mcp_for_minutes = d.pop("mcp_for_minutes", UNSET)
 
         _event_subscription_id = d.pop("event_subscription_id", UNSET)
         event_subscription_id: UUID | Unset
@@ -194,6 +223,9 @@ class CreateAlertRuleRequest:
             window_spec=window_spec,
             webhook_url=webhook_url,
             webhook_secret=webhook_secret,
+            mcp_readiness_scope=mcp_readiness_scope,
+            mcp_min_calls=mcp_min_calls,
+            mcp_for_minutes=mcp_for_minutes,
             event_subscription_id=event_subscription_id,
             edge_rule_id=edge_rule_id,
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,

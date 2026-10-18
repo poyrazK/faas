@@ -2054,8 +2054,8 @@ to four harmless tools, a welcome resource, a customer-record URI template and a
 summarize prompt. The Go and Python starters allow public access to four tools,
 the welcome and customer-record resources, and the summarize prompt.
 All three reject browser origins by default and accept explicitly allowlisted
-origins. Node implements CORS preflight and exposes protocol response headers;
-Go and Python do not provide the same complete browser CORS integration.
+origins. All three starters implement CORS preflight and expose protocol response headers.
+Allowlisting an origin does not bypass bearer authorization.
 
 `mcp deploy` stages the current worktree with zero production traffic and waits
 for readiness. When the candidate exposes the catalog-health contract, the CLI
@@ -2214,14 +2214,16 @@ by older starters and version `2` `build_report` rows created by current
 starters.
 
 Tasks are disabled by default. Enable them in `gregale-mcp.json` and bind a
-PostgreSQL URL whose database role can create and alter the namespaced task
-table, indexes, notification function, and trigger for status subscriptions.
-Keep a stable 32-byte-or-longer secret in
-`MCP_TASK_OWNER_KEY`:
-
 PostgreSQL runtime binding. Use a separate migration account to create and alter
 the task and owner-cursor tables, indexes, claim-order sequence, functions and
-triggers with `npm run tasks:migrate -- apply` before starting the runtime. Keep a stable
+triggers with `npm run tasks:migrate -- apply` before starting the Node runtime.
+Go and Python use
+`go run . tasks-migrate apply` and `python task_schema.py apply`, respectively,
+with `MCP_TASK_MIGRATION_DATABASE_URL` bound only to the operator process.
+Run this once before upgrading existing Go/Python queues; runtime startup now
+validates the installed schema without DDL. Grant service roles SELECT on
+`gregale_mcp_task_starter_schema` alongside their existing Task data grants.
+Keep a stable
 32-byte-or-longer secret in `MCP_TASK_OWNER_KEY`:
 
 ```json
@@ -4532,7 +4534,7 @@ role view, not an attestation of every replica or a live authorization lease.
 ### OAuth renewal for managed observers
 
 A managed role can use an OAuth refresh grant instead of `--secret-ref`. Obtain
-an initial refresh grant from your provider and store it as an app default-scope
+an initial refresh grant from your provider and store it as an app environment-scoped
 secret. Give each role its own grant and refresh secret; a rotating grant must
 not be shared between independently scheduled roles. Gregale rejects reuse of a
 refresh-secret reference by another role in the same app. Distinct references
@@ -4788,7 +4790,7 @@ deletion, can still require provider-side investigation and reauthorization.
 
 ### OAuth credential changes
 
-Replacing a default-scope refresh secret now atomically retires the old retained
+Replacing a refresh secret now atomically retires the old retained
 grant and any saved renewal result. Old worker leases and callbacks are fenced by
 a new role revision. The next observer uses the replacement secret; it waits for
 pending retirement to become held before beginning another exchange. Retirement
@@ -4960,3 +4962,1216 @@ HTTP 200 can still contain a JSON-RPC or tool error. These metrics do not parse
 response bodies. Retained CLI diagnostics classify HTTP status and do not expose
 method hints or all post-header stream failures; correlate operator metrics/logs
 with retained request evidence when investigating those cases.
+
+### Starter protocol telemetry
+
+Node, Go and Python starters emit one structured `mcp_protocol_request` log event
+for each observed RPC request. These events classify protocol results rather than
+HTTP status: a tool returning `isError: true` produces `tool_error`, even when
+HTTP returns 200. RPC error objects produce `rpc_error`; normal results produce
+`success`, and Task creation results produce `task_created` (queue admission, not
+completion of background work). Observed interruption or deadline expiry before
+a response produces `cancelled` or `timeout`. Go also identifies post-parse
+entry authorization rejection as `authorization_error`. A request with no
+observed RPC result or explicit termination remains `unobserved`.
+
+`method` uses a fixed vocabulary for supported MCP methods, plus `other`.
+`tool` uses the four built-in tool names, `other` for application-added/unknown
+tools, and `none` for non-tool requests. Arguments, result contents, resource
+URIs, prompt names, error messages, customer identity and JSON-RPC IDs are never
+included. Do not use request/trace IDs as counter or histogram labels.
+
+`execution_duration_ms` measures parsed request dispatch through construction of
+its RPC response. For subscriptions it ends at the subscription acknowledgment,
+so a long-lived subscription does not inflate setup latency. It is omitted when
+that completion was not observed. `stream_duration_ms` measures an SSE response
+from response headers through completion or interruption and is omitted for
+non-SSE responses. These durations can overlap; do not add them together.
+`stream_outcome` reports completion, observed interruption or internal delivery
+failure independently of
+an already constructed RPC outcome, preserving a tool error or successful result
+when delivery later fails. Typed context/transport timeouts are distinguished;
+telemetry does not impose a new tool execution deadline.
+
+Validated `X-Faas-Request-Id` UUIDs and nonzero version-00 W3C `traceparent` IDs
+appear as `request_id` and `trace_id`. Duplicate or malformed headers are omitted.
+These correlation values are not authorization evidence and may originate from
+the caller. Use them with `gregale debug requests inspect APP REQUEST_ID`, or
+correlate the trace with existing request evidence and guest logs.
+
+Aggregate only `mcp_protocol_request` events into counters and duration
+histograms. Node's existing `mcp_tool_call` events remain callback diagnostics;
+counting both event families would double-count tool calls. Pre-parse failures,
+authentication rejected before dispatch, notifications without an RPC ID and
+worker-side Task execution are outside this event's coverage. Telemetry is
+process-local structured logging, not a public metrics endpoint or a retained
+protocol-outcome database. Existing request retention and log access policies
+still apply; `mcp diagnostics` continues to report transport evidence.
+
+### MCP operations dashboard
+
+Open `/dashboard/mcp` in an authenticated dashboard session. The page combines
+connection-health inventory, per-role catalog freshness, gateway policy replay
+and admission receipts. Use the application filter to narrow the view. Current
+dashboard session and MFA checks apply. Recovery forms also require an account-bound CSRF token.
+
+Connection health shows observation time, issue counts, incomplete-inventory
+warnings and next-page navigation independently from the application inventory.
+Deleted applications with retained OAuth retirement issues remain visible.
+Unavailable sources are labeled unavailable and do not become zero/healthy
+results. Catalog state uses the existing role-aware freshness evaluation;
+disabled or unconfigured monitoring is distinct from a healthy observation.
+
+Application pages contain at most 25 rows. Each application's newest deployment
+shows its latest retained accepted and rejected admission separately. These are
+not an account-wide admission history or proof of current fleet health. Follow
+an admission link for its outcome, captured time, traffic percentage and rejection
+reason. Older deployments remain accessible through application deployment
+history. Receipt reads enforce account ownership, including direct links.
+
+Request investigation, application logs and access-rule links lead to the existing
+protected dashboard pages. Browser reauthorization and guarded renewal recovery are described below; roles
+without browser configuration can still use CLI recovery.
+The account-wide grant retirement ledger offers a queued revocation retry and
+manual resolution after explicit provider confirmation. These actions reuse the
+API ownership, retention, terminal-state and live-lease checks. Active-grant
+revocation is never enabled by the dashboard. Unknown issuance without retained
+tokens cannot be retried; provider confirmation must precede manual resolution.
+A successful submission redirects to the ledger showing the resulting state.
+The page does not retry consumed token exchanges, promote traffic or execute tools.
+Stored OAuth material, catalog bodies/diffs and raw source errors are excluded
+from the dashboard view models. Responses use `Cache-Control: no-store`.
+
+### Browser reauthorization and renewal recovery
+
+For a guided OAuth observer role, register this exact redirect with the provider:
+`https://<configured-console-origin>/dashboard/mcp/oauth/callback`. Configure it
+with `mcp monitor setup --oauth-browser-redirect-uri <URL>` alongside the existing
+reviewed baseline, observer settings and guided OAuth client configuration. The
+URL must match Gregale's configured public console URL, use HTTPS, and have no
+port, query, fragment or encoded path. Existing CLI loopback callbacks remain
+supported and retain their separate validation.
+
+Open `/dashboard/mcp`, expand **Recover OAuth** for the role and select
+**Reauthorize**. The flow uses PKCE, expires after five minutes and is bound to
+that account, browser session, app, role and configuration revision. Starting
+another flow replaces the browser's pending callback cookie. Active browser
+flows pause observer claims for that role until completion or expiry. A denied
+request exchanges no code; successful, denied, expired, failed and uncertain
+outcomes return to the dashboard without provider error details or code values.
+
+If issuance is uncertain, resolve the grant at the provider and record manual
+resolution in the retirement ledger before reconnecting. Confirm provider
+resolution for an uncertain renewal before starting new authorization. An
+in-flight or consumed flow can refuse a new attempt until its five-minute expiry.
+If an uncertain grant record has already expired, its sealed credentials cannot
+be recovered; resolve it at the provider and check the confirmation before
+starting fresh authorization. The expired record remains visible as historical
+evidence. Authorization code exchanges are single use and are never automatically retried.
+
+After correcting provider credentials, **Queue renewal recovery** schedules the
+observer immediately when a retry is safe, or lets it install an already recorded
+response. Pending/unknown exchanges, active leases and flows, paused monitoring,
+and credentials requiring reauthorization refuse this action. API clients can
+submit `action: retry_renewal` with the role and current revision to the existing
+OAuth endpoint. A successful submission means recovery was queued; monitor
+connection health to confirm its outcome.
+
+### Protocol performance charts
+
+Open **MCP operations**, select an application's **Protocol performance** link,
+and review the last hour's call traffic, failures, execution latency, and stream
+latency. The charts aggregate starter `mcp_protocol_request` events at host log
+intake, independently of log viewers. Execution p50/p95/p99 and stream p95 need
+at least 20 measurements; missing samples stay missing. The displayed last-event
+time shows observation recency. An idle app may have no recent events. Long-lived
+streams report their measurements when delivery ends.
+
+Only reviewed starter tool names receive individual labels; other custom tools
+share `other`, and other RPC methods share `none`. Arguments and results never
+enter these metrics. These are app-attributed, starter-reported observations,
+not an exact request ledger or authorization evidence. Background tasks,
+notifications, and pre-dispatch rejects are outside their coverage.
+
+Platform operator alerts cover sustained error ratios above 10%, execution p95
+above five seconds, and aggregation capacity drops. Traffic alerts require at
+least 20 observations per five-minute window and ten minutes of sustained
+failure. These defaults use existing Alertmanager routing; customer alert-rule
+configuration is not extended by this feature. See
+[the performance runbook](runbooks/FaasMCPProtocolPerformance.md) and
+[ADR 20261017191506](adr/20261017191506-mcp-protocol-performance.md).
+
+### Customer performance alerts
+
+On **MCP operations → Protocol performance**, open **Add performance alert**.
+Choose RPC/tool error rate (%) or execution p95 (ms), enter a threshold, select a
+5m/15m/1h rolling window, and configure minimum observations and sustained minutes.
+Defaults are 20 observations and 10 sustained minutes. Latency counts measured
+executions; error rate counts parsed RPC outcomes. Background task execution,
+notifications and pre-dispatch rejects remain outside coverage.
+
+Provide a webhook URL and signing secret. Existing alert plan limits, quotas,
+webhook signatures, retry handling and cooldowns apply. The page can edit thresholds
+and traffic settings or enable/disable a rule. Open the rule to inspect deliveries.
+These starter-reported signals support webhook notifications only.
+
+Each 30-second historical check must have enough measurements for the full
+sustained period. Sparse or missing data and incomplete sustained history show as
+`unknown`; query failures show as `degraded`. Neither means healthy zero traffic,
+and neither sends an idle-app alert. Observation recency is shown separately in
+the charts. Newly created rules wait for their configured duration; editing or
+re-enabling evaluates the new settings against retained history.
+
+The alert API accepts `mcp_protocol_error_rate_pct` and
+`mcp_protocol_execution_p95_ms`, with optional `mcp_min_calls` (20..1000000) and
+`mcp_for_minutes` (1..60). Omit these fields for other metrics. MCP rules require
+app scope, webhook action, gt/gte comparison and a supported window. Error-rate
+thresholds are 0..100; latency thresholds are 0..300000 ms. The Node and Python
+SDKs expose the same fields. See [ADR 20261017191507](adr/20261017191507-customer-mcp-performance-alerts.md).
+
+### Independent telemetry coverage
+
+Updated Go, Python and Node web starters emit a minimal heartbeat every 30 seconds,
+including while RPC traffic is idle. The MCP operations dashboard compares
+host-attributed reports with scheduler inventory, showing reporting, partially
+reporting, starting, stale, unavailable or idle coverage. Paused/frozen/warm
+instances do not require a heartbeat. Heartbeats are process telemetry, not MCP
+readiness or evidence of successful tools. Existing deployments need the updated
+starter module and startup wiring.
+
+Set `MCP_TELEMETRY_LOSS_ALERT=true` to opt into operator telemetry-loss alerts
+through the platform's Alertmanager. This is separate from customer performance
+webhooks. Startup/resume has a three-minute grace period; heartbeats older than
+two minutes must remain missing for five minutes before alerting. See
+[the performance runbook](runbooks/FaasMCPProtocolPerformance.md#telemetry-heartbeat-loss)
+for missing host scrapes and coverage limits.
+
+### Public deployment readiness
+
+Check a zero-traffic candidate or serving deployment through its public preview
+endpoint without moving traffic:
+
+```sh
+gregale mcp readiness --app my-mcp --deployment <deployment-uuid> \
+  --token-env MCP_PROBE_TOKEN --baseline gregale-mcp.lock.json --json > readiness.json
+```
+
+Omit `--token-env` for public apps. For private apps, use a dedicated MCP client
+credential with only the scopes needed to initialize, ping and list the intended
+catalog. The CLI's platform API key is used only for deployment lookup. Probe
+tokens stay in the environment and are excluded from reports. `--legacy` selects
+the legacy protocol; `--endpoint` defaults to `/mcp`; `--timeout` is at most 30s.
+
+The probe validates initialization, protocol response headers, statelessness,
+ping and catalog metadata (including resource/prompt-only servers). It refuses redirects, applies bounded response and
+pagination limits, and exits nonzero on failure. `--baseline` is optional; when
+supplied it requires an exact catalog match, including additions. Format-2 locks
+also check other advertised catalog metadata. No tool is invoked, resource
+content fetched or prompt rendered. The report contains fixed failure categories
+and a hash of the observed contract, without private definitions or response bodies.
+
+`mcp deploy` includes these fresh public readiness results for each release role
+in its deployment receipt and blocks promotion if any fails. It also retains its
+existing exact-replica and guarded traffic checks. A saved standalone report is
+point-in-time evidence and cannot authorize promotion. Local results are CLI/CI artifacts. Use the platform recording mode below for
+durable dashboard evidence and server-side promotion enforcement.
+
+### Enforce readiness on platform traffic changes
+
+An optional app policy makes readiness mandatory across API traffic changes,
+automated deployment activation, canaries and rollbacks. The platform runs the
+probe itself; uploading a local success report cannot satisfy the gate.
+
+1. Review a role's catalog lock and use local `mcp readiness --baseline` to obtain
+   its canonical `catalog_format` and `catalog_sha256`.
+2. Read `GET /v1/apps/{slug}/mcp-readiness-policy`, then configure policy with
+   `PUT` using its `revision` as `expected_revision`. Initial revision is empty.
+3. Deploy a zero-traffic candidate and record each role's platform probe:
+
+```sh
+gregale mcp readiness --app my-mcp --deployment <uuid> --record \
+  --role reader --token-env MCP_READER_PROBE_TOKEN --json
+```
+
+Example policy request (replace the digest with the reviewed canonical hash):
+
+```json
+{
+  "expected_revision": "",
+  "enabled": true,
+  "endpoint": "/mcp",
+  "max_age_seconds": 300,
+  "roles": [{
+    "name": "reader",
+    "protocol_version": "2026-07-28",
+    "catalog_format": 2,
+    "catalog_sha256": "<reviewed-64-character-sha256>"
+  }],
+  "reason": "Require reviewed reader readiness before release"
+}
+```
+
+Policy changes and emergency overrides require admin scope and applicable MFA.
+Probes require deployment-write scope and the separate MCP credential. Platform
+policy determines the endpoint/protocol/baseline with `--record`; omit local
+`--baseline`, `--endpoint` and `--legacy` flags. `mcp deploy` automatically records
+platform evidence when policy is enabled; release-role names must cover all
+configured roles. Missing, failed, stale or configuration-mismatched evidence
+blocks traffic increases with `mcp_readiness_required`. Existing traffic remains
+serving. A row can lose traffic without readiness, but any compensating increase
+for another revision still requires evidence or an override. Ordinary deploy APIs must create zero-traffic
+candidates before activation when this gate is enabled.
+
+`GET /v1/deployments/{id}/mcp-readiness` and the selected app's MCP dashboard show
+retained role results and override audit. A recorded `passed` value describes
+that observation; it is not a reusable promotion authorization. The gate also
+checks age, current policy, artifact and runtime/secret versions at admission.
+Changing policy invalidates all earlier results. A newer failed probe replaces
+an earlier success; an older in-flight probe cannot overwrite it.
+
+For emergency recovery, an admin can POST
+`/v1/deployments/{id}/mcp-readiness-overrides` with `expected_revision` and a
+nonempty `reason`. The platform binds the override to the current deployment
+configuration for five minutes and consumes it with one traffic increase.
+The account, reason, timestamps and consumption remain in the audit. Other
+admission guards still apply. A new policy/configuration invalidates the override.
+
+### Continuous readiness monitoring
+
+Add `monitor` to each role in the existing readiness policy (`PUT /v1/apps/{slug}/mcp-readiness-policy`, admin scope and MFA). Preserve `expected_revision` and all existing policy fields when updating:
+
+```json
+{
+  "name": "reader",
+  "protocol_version": "2026-07-28",
+  "catalog_format": 1,
+  "catalog_sha256": "<reviewed 64-character SHA-256>",
+  "monitor": {
+    "enabled": true,
+    "interval_seconds": 60,
+    "failure_threshold": 3,
+    "secret_ref": "secret:MCP_READINESS_TOKEN"
+  }
+}
+```
+
+Monitoring checks live deployments receiving traffic. Store the token as an app secret in the deployment's environment scope; the worker reads its latest version on each probe. Omit `secret_ref` for an anonymous role. Plaintext credentials and arbitrary target URLs are rejected. Checks perform initialization, ping, and catalog discovery without calling tools, reading resources, or rendering prompts.
+
+Intervals range from 60 to 3600 seconds and thresholds from one to ten failures. With admission enabled, choose an interval no greater than half `max_age_seconds`. Monitoring can also run with admission disabled. Candidates at zero traffic still use explicit readiness probes before promotion.
+
+The deployment readiness response includes `monitoring`: last success, next probe, failure count, state, and the last 20 checks. The MCP dashboard displays these fields and recent history. Policy or deployment-configuration changes reset the monitoring history for that subject. A missing credential reports `credential_unavailable`; server authentication rejection reports `protocol_failure`; expected-catalog mismatches report `catalog_drift`.
+
+Create an app-scoped webhook alert rule with metric `mcp_readiness_unhealthy`, comparison `gt`, and threshold `0`, or select the **MCP readiness monitor unhealthy** preset in the alert catalog. The metric counts roles that reached their configured failure threshold or whose next probe is over 90 seconds overdue. Existing alert cooldown and recovery handling apply. Observation histories and tokens are excluded from webhook payloads.
+
+Readiness alert rules can select an environment with `mcp_readiness_scope`. Omit it or use an empty string to monitor all environments (the behavior of existing rules and the preset); use `default` to monitor only the default environment. Other valid environment names match exactly. There is no fallback to another environment. Create separate rules for production and staging to configure independent thresholds, cooldowns, signing secrets, and webhook destinations. The selector is immutable: create a new rule to change environments, preserving the old rule's incident and delivery history.
+
+For example, `gregale alerts add --app APP --name "Production readiness" --metric mcp_readiness_unhealthy --comparison gt --threshold 0 --window-spec 5m --mcp-readiness-scope default --webhook-url https://example.com/hook --webhook-secret-stdin` creates a default-environment rule (provide the signing secret on stdin). The MCP dashboard offers a readiness alert form for the selected environment and shows applicable all-environment rules. The API accepts the same selector on alert creation; PATCH may repeat the existing selector but cannot change or clear it. Other alert metrics reject nonempty selectors.
+
+Readiness webhooks include `app_id`, the selected `mcp_readiness_scope` when present, and up to 50 matching `mcp_readiness` status summaries identifying environment (`scope`), deployment, role, and policy revision. A backend failure degrades evaluation without declaring recovery; environments with no monitored roles pause evaluation. These alerts send notifications and never move serving traffic.
+
+
+Every failed scheduled probe immediately replaces the deployment's admission evidence. Consecutive-failure thresholds delay alerts, not admission enforcement. Monitoring never changes serving traffic automatically.
+
+### Managed OAuth credentials for readiness
+
+Readiness probes can use an existing managed OAuth connection instead of a static app-secret token. Connect the role through the MCP dashboard or existing catalog OAuth API, then use its current role and revision in the readiness policy:
+
+```json
+{
+  "enabled": true,
+  "interval_seconds": 60,
+  "failure_threshold": 3,
+  "oauth_connection": {
+    "role": "reader",
+    "revision": "<current managed connection revision UUID>"
+  }
+}
+```
+
+This object is the role's `monitor` configuration. It replaces `secret_ref`; the two credential sources cannot be combined. The connection must belong to the same app, be enabled and unpaused, and use the same endpoint path. The connection scope must match the deployment environment. Use `oauth_connections` for policies covering multiple environments; see the example below.
+
+Scheduled checks refresh expiring tokens under the existing connection lease and persist rotated refresh tokens before probing. Catalog observation cadence is preserved. A revoked grant or uncertain exchange uses the existing reconnect/recovery flow instead of repeatedly exchanging a potentially consumed refresh token.
+
+Explicit platform probes also use the managed connection:
+
+```sh
+gregale mcp readiness --app my-mcp --deployment <uuid> --role reader --record --json
+```
+
+Omit `--token-env` for an OAuth-bound role. Supplying a probe token header is rejected. The platform never exports the managed token. Local checks in a release policy continue to use their configured local credentials; platform evidence recording selects the managed connection automatically.
+
+Monitoring and alert summaries identify the connection and return a `recovery_action`: `reconnect`, `review_binding`, or `review_connection`. The MCP dashboard links to connection health and OAuth controls. Reconnecting or changing connection intent creates a new revision; update the readiness policy's connection reference after reviewing it.
+
+Connection changes invalidate readiness evidence, including results still being recorded. Ordinary token renewal under the same grant preserves the binding. Existing `mcp_readiness_unhealthy` alerts cover failures and stale monitoring, and serving traffic is never moved automatically.
+
+### Separate OAuth grants for staging and production
+
+Set a connection's environment with `gregale mcp monitor setup --scope staging
+--role staging-reader ...` (alongside the existing baseline/provider flags).
+Store its refresh source and confidential client secret in the same scope.
+Connection role names are app-wide and their scope is immutable; create separate
+roles for each environment. Existing roles stay in `default` when scope is omitted.
+Pause, reconnect and disconnect continue to address the connection by role.
+
+A readiness role can select a reviewed grant for each deployment environment:
+
+```json
+{
+  "enabled": true,
+  "interval_seconds": 60,
+  "failure_threshold": 2,
+  "oauth_connections": {
+    "default": {"role": "production-reader", "revision": "<connection revision UUID>"},
+    "staging": {"role": "staging-reader", "revision": "<connection revision UUID>"}
+  }
+}
+```
+
+Use this map instead of `oauth_connection` or `secret_ref`. Missing environments
+fail readiness; they never inherit the production grant. Each referenced role
+must already be enabled, use the policy endpoint and belong to the map's scope.
+Reconnect changes the connection revision; review and update the pinned reference.
+Readiness policy edits affect only the selected environment; see environment readiness policies below.
+Nondefault catalog observers require an available deployment preview in that
+exact environment. Dashboard connection rows identify the environment.
+
+### Environment readiness policies
+
+Readiness policies now have independent revisions per environment. Existing
+policies remain in `default`. Updating staging's catalog expectations or pinned
+OAuth connection requires new staging evidence; production evidence stays valid.
+
+```sh
+gregale mcp readiness policy get --app my-mcp --scope staging
+gregale mcp readiness policy set --app my-mcp --scope staging --file staging-readiness.json
+```
+
+The file contains the existing policy fields, `expected_revision` from the selected
+scope, and an audit `reason`. Its optional `scope` must match `--scope`. Each scope
+can use a different endpoint, roles, catalog hashes and monitor configuration.
+A single `oauth_connection` with the matching scope is sufficient; existing
+`oauth_connections` maps remain readable and select only this policy's scope.
+
+The policy API accepts `GET /v1/apps/{slug}/mcp-readiness-policy?scope=staging` and
+PUT with `"scope":"staging"` in the request body. An optional query scope on PUT
+must match the body. Deployment readiness and overrides always infer scope from
+the deployment ID. The dashboard readiness environment filter selects the policy,
+evidence, overrides and monitor statuses together.
+
+For an app with readiness policies, new traffic in an unconfigured nondefault
+environment is blocked. Save an environment policy explicitly, including a disabled
+policy if that environment should opt out. Apps without readiness policies retain
+existing behavior. Existing serving traffic and traffic decreases continue.
+
+### Readiness policy history, diff and restore
+
+Inspect policy revisions separately for each environment:
+
+```sh
+gregale mcp readiness policy history --app my-mcp --scope staging --limit 20
+gregale mcp readiness policy history --app my-mcp --scope staging --before-revision <cursor>
+gregale mcp readiness policy diff --app my-mcp --scope staging --from-revision <old-revision>
+gregale mcp readiness policy diff --app my-mcp --scope staging --from-revision <old-revision> --to-revision <new-revision>
+gregale mcp readiness policy restore --app my-mcp --scope staging --revision <old-revision> --expected-revision <current-revision> --reason 'Restore reviewed catalog expectations'
+```
+
+History contains author, time, audit reason and restore provenance. Diffs compare
+configuration, including role catalogs and OAuth connection references, and ignore
+role ordering and audit metadata. Omitting `--to-revision` compares against the
+current policy and returns its captured revision for a subsequent CAS.
+
+Restore writes a new revision and revalidates current OAuth bindings. It requires
+admin access, applicable MFA, the expected current revision and a new reason.
+Run fresh platform probes before increasing traffic: previous evidence and
+emergency overrides do not qualify the restored revision. Restoring a disabled
+configuration explicitly disables that environment's readiness gate.
+
+The API provides `GET .../mcp-readiness-policy/history`,
+`GET .../history/{revision}`, `GET .../mcp-readiness-policy/diff` and
+`POST .../history/{revision}/restore`. Reads take `scope`; history supports
+`limit` (1–50) and `before_revision`; diff takes `from_revision` and optional
+`to_revision`. Restore takes `scope`, `expected_revision` and `reason` in JSON.
+Dashboard readiness shows the latest 20 revisions for the selected environment.
+
+### Readiness incidents and recovery notifications
+
+Readiness rules now send paired, signed `alert.fired` and `alert.resolved` events.
+Each incident has a stable `incident_id`; each logical event has its own
+`event_id`, also used as the signed webhook ID. Delivery retries retain those
+IDs and the payload's `occurred_at`. The transport signing timestamp is fresh
+on every attempt. Receivers should deduplicate by event ID: transport delivery
+is at least once, including recovery after a worker loses an acknowledgement.
+
+Incident and event records are independent of webhook delivery. If a destination
+is unavailable during failure, recovery, and another failure, all three logical
+events are retained immediately. Each event is enqueued atomically with its
+incident transition. Older or duplicate observations cannot rewrite newer state.
+Successfully delivered failures do not repeat during a continuous incident outside
+maintenance reconciliation; a
+new breach after recovery receives a new incident ID.
+
+The delivery queue retries after the rule's cooldown, including when monitoring
+is unavailable. Notifications remain ordered per rule, so a failed earlier event
+delays later notifications without delaying incident history. A two-minute lease
+allows another worker to reclaim an abandoned attempt. Each dispatch has a
+one-minute deadline; completion requires the current unexpired lease token, so
+a late worker cannot acknowledge a newer attempt. Disabling a rule pauses future
+claims and observation writes; re-enabling resumes its retained queue. Deleting
+the rule deletes its incident history and queued events.
+
+Recovery requires a complete, nonpending observation below the rule's threshold
+with the same environment and role coverage as the failure. Empty results,
+unavailable monitoring, and disappearing roles cannot establish recovery.
+Replacement deployments or policy revisions can recover after their current
+monitors report healthy; both event payloads retain their respective deployment
+and policy context. Changed environment/role coverage leaves recovery unverified
+until matching coverage is observable again. Existing pre-incident delivery rows
+remain readable through ordinary alert deliveries; paired events start with the
+next observed breach.
+
+Inspect events and delivery attempts for one environment:
+
+```sh
+gregale mcp readiness incidents --app my-mcp --scope staging --limit 20
+gregale mcp readiness incidents --app my-mcp --scope staging --before '<next_before>'
+```
+
+The read-only `GET /v1/apps/{slug}/mcp-readiness-incidents` endpoint accepts
+`scope`, `before`, and `limit` (1–50, default 20). Omitting scope returns all
+environments; the CLI defaults to `default` and accepts `--scope ''` for all.
+Newest logical events come first, with an opaque `next_before` cursor. Retries
+update delivery metadata without adding timeline rows or moving existing rows
+between pages. `incident_status` (`open` or `resolved`) is independent of
+`delivery_status` (`pending`, `delivering`, `failed`, `delivered`, or `suppressed`). The response
+also includes `attempt_count`, optional `attempted_at`, `next_attempt_at` (the
+event's earliest retry eligibility; earlier queued events can delay it), and
+`last_delivery_id` for the ordinary delivery-attempt journal. A resolved incident
+can therefore have a failed notification. The CLI returns these same fields;
+the dashboard displays incident and notification status separately. Existing
+lifecycle deliveries are imported with their stable IDs and latest attempt
+status. Test deliveries are excluded. Results
+contain at most 50 subject summaries per event, without observation histories or
+credentials; environment filtering uses all observed scopes, including those
+outside the bounded summaries. The MCP dashboard provides the same scoped
+timeline and pagination.
+
+### Readiness maintenance windows and temporary silences
+
+Mute readiness notifications during planned work without disabling the rule.
+Monitoring, readiness enforcement, and incident recording continue. A window
+selects one exact environment; `default` means the default environment. A rule
+spanning multiple environments is muted only when every observed environment is
+covered by active windows. Use separate environment rules for independent
+notification control.
+
+Start a temporary silence immediately or schedule a future window:
+
+```sh
+gregale mcp readiness maintenance create --app my-mcp --scope staging --duration 30m --reason 'Upgrade staging database'
+gregale mcp readiness maintenance create --app my-mcp --scope staging --start 2026-10-17T01:00:00Z --end 2026-10-17T02:00:00Z --reason 'Planned maintenance'
+gregale mcp readiness maintenance list --app my-mcp --scope staging --limit 20
+gregale mcp readiness maintenance cancel --app my-mcp --id '<window UUID>' --reason 'Work finished early'
+```
+
+Times use RFC3339 with a timezone. An omitted start begins now; the end must be
+in the future and within 720 hours of the start. Past starts older than one
+minute are rejected. Reasons must be nonblank UTF-8, at most 500 bytes. Windows
+cover `[starts_at, ends_at)`; cancellation shortens that interval. Overlapping
+windows remain effective until the last covering window ends or is cancelled.
+Cancelling one window never cancels another. Cancellation retries retain the
+original cancellation time, account, and reason; an expired window returns 409.
+
+Muted logical events remain visible with `delivery_status: suppressed`,
+`suppression_reason`, and `maintenance_window_ids`. They have no next retry time.
+Pending and failed notifications covered by maintenance become suppressed;
+notifications already claimed may finish. Suppressed events never replay after
+maintenance. Failure, recovery, and a second failure during the window remain
+separate incident facts. If a muted incident recovers just after maintenance
+without any attempted failure notification, its recovery is also suppressed to
+avoid sending an orphan recovery.
+
+The first fresh unhealthy observation after maintenance sends one `alert.fired`
+event on the existing incident, with a new stable event ID and
+`notification_reason: maintenance_ended`. The following healthy observation can
+send its paired recovery. Ordinary cooldown retries keep the new event ID.
+Unavailable monitoring cannot create this notification or manufacture recovery.
+Observation cursors and durable window history also reconcile windows crossed
+while the evaluator was stopped, without replaying the muted backlog.
+
+`GET /v1/apps/{slug}/mcp-readiness-maintenance` lists history for `scope`
+(default `default`), with `before` and `limit` (1–50). The page includes expired
+and cancelled windows, newest creation first. `POST` on that path creates a
+window; `POST .../{id}/cancel` takes a cancellation reason. Changes require admin
+scope and MFA, reads use the read surface scopes and MFA. Created/cancelled audit
+events accompany the retained creator/cancellation attribution. The MCP
+operations dashboard offers the same controls and shows the latest 20 windows
+for its selected environment. Node, Python, and Go clients expose these APIs.
+
+For rollout, apply the migration and upgrade every readiness evaluator before
+creating maintenance windows. Older evaluator binaries do not recognize the
+suppressed delivery state.
+
+### Readiness notification queue health and recovery
+
+Inspect delivery separately from MCP readiness:
+
+```sh
+gregale mcp readiness notifications list --app demo --scope production
+```
+
+The API is `GET /v1/apps/{slug}/mcp-readiness-notifications`, with optional
+`scope`, `after` (rule UUID), and `limit` (1–50, default 20). It reports outstanding
+and blocked counts, oldest age, the oldest event, retry time, attempt count, safe
+failure category and `idle`, `ready`, `delayed`, `delivering`, `paused` or
+`maintenance` state. An environment filter includes all-environment rules with
+their **whole** queue. The `destinations` entries show independent receiver heads. Read scope and
+MFA are required. Reads do not mutate events; maintenance state can describe
+pending suppression until the evaluator next reconciles it.
+
+After fixing a receiver, use the head's current `event_id` and `delivery_version`:
+
+```sh
+gregale mcp readiness notifications retry --app demo \
+  --event EVENT_UUID --expected-version 2 --request-id REQUEST_UUID \
+  --reason 'Receiver credentials repaired'
+```
+
+Supply a new UUID for a new decision. Reuse the same request UUID **and identical
+arguments** when retrying an uncertain API response. The durable receipt records
+the original account, time, reason and resulting delivery version. Retry makes
+the head eligible for the next evaluator pass; it does not send inline or change
+the event ID. Receivers still deduplicate the stable signed webhook event ID.
+
+If a notification must never be retried, `notifications abandon` accepts the
+same flags and permanently removes that event from delivery eligibility. This
+allows the next queued event through, which may be a recovery whose failure was
+abandoned. Incident facts and attempts remain in the timeline, with the last
+operator action and reason. There is no automatic abandonment threshold.
+
+`POST /v1/apps/{slug}/mcp-readiness-notifications/actions` accepts `request_id`,
+`event_id`, `expected_version`, `action` (`retry` or `abandon`), and a nonblank
+`reason` of at most 500 UTF-8 bytes. Admin scope and MFA are required. Actions
+reject stale versions, non-head events, disabled rules, active leases, terminal
+events and maintenance-covered work with 409. Retry additionally requires a
+previous attempt that failed or whose lease expired. The API never revives
+suppressed or abandoned notifications. Duplicate request keys with changed
+payloads conflict. Refresh queue health before a new decision.
+
+The MCP dashboard shows these queues, recovery forms and receipt attribution.
+The Go, Node and Python clients expose the same contracts. Apply the migration
+and upgrade **all readiness evaluators before using recovery controls**; older
+binaries do not understand abandoned events or delivery-version fencing.
+
+### Incident acknowledgement and finite reminders
+
+Open incidents have separate acknowledgement and reminder state. Acknowledging
+records who is handling an incident without changing readiness, moving traffic or
+resolving it. Initial failure, recovery and maintenance-end notifications continue;
+only reminders pause. An in-flight reminder may finish.
+
+```sh
+gregale mcp readiness attention list --app demo --scope production
+gregale mcp readiness attention acknowledge --app demo --incident '<incident UUID>' \
+  --expected-version 0 --request-id '<stable decision UUID>' \
+  --reason 'Investigating provider outage' --expires-at 2026-10-18T12:00:00+03:00
+gregale mcp readiness attention release --app demo --incident '<incident UUID>' \
+  --expected-version 1 --request-id '<new stable decision UUID>' --reason 'Handing back to on-call'
+gregale mcp readiness attention configure --app demo --incident '<incident UUID>' \
+  --expected-version 2 --request-id '<new stable decision UUID>' --reason 'Remind during investigation' \
+  --interval 15m --max-reminders 3
+gregale mcp readiness attention history --app demo --incident '<incident UUID>' --limit 20
+```
+
+Use the current `version` from attention inspection for each new decision. Versions
+also advance when a reminder is created; refresh after a 409. Reuse the identical
+body and request UUID when retrying a decision after a lost response. Its immutable
+receipt remains replayable after expiry, disablement or recovery. A different body
+with the same app-scoped UUID conflicts. Reasons require 1–500 nonblank UTF-8 bytes.
+Omit `--expires-at` for indefinite acknowledgement, or use an absolute future time
+within 30 days. History retains the original account, time, reason and result.
+
+Reminders are **off until configured**. New incidents capture their rule defaults;
+existing incidents retain their captured policy or explicit override. Enable an interval from 1 minute
+to 24 hours (whole seconds) and a lifetime creation limit of 1–10. Set both
+`--interval 0s --max-reminders 0` to disable. Changing policy, releasing an
+acknowledgement or disabling/re-enabling reminders never resets the used budget.
+Suppressed and abandoned reminders consume it too. A new incident starts with a
+new budget. Disabled rules can be acknowledged/configured but cannot dispatch.
+
+Only fresh evaluator observations of the same incident coverage can create a
+reminder. The incident must remain unhealthy, unacknowledged, outside maintenance,
+past its next eligibility time, below its creation limit, with no outstanding notification for that incident.
+Each pass creates at most one; downtime never creates a burst of missed reminders.
+A reminder is a signed `alert.fired` event with `notification_reason: reminder` and
+`reminder_number`. Retries keep the same logical event UUID and payload. The budget
+limits logical reminders, not HTTP attempts. Normal delivery retry behavior applies.
+
+Queued reminders become terminal `suppressed` when acknowledged, resolved, disabled
+by policy, over a reduced limit, or lacking matching unhealthy evidence within the
+last two minutes. Reasons are `acknowledged`, `incident_resolved`,
+`reminders_disabled` or `reminder_obsolete`; maintenance uses its existing reasons.
+Live leases may finish; expired tokens cannot complete a suppressed reminder.
+After acknowledgement expiry, fresh unhealthy evidence is still required. Release
+and policy changes start the interval from their decision time.
+
+The MCP dashboard shows open incidents, actions and their latest five decisions.
+The API provides `GET /v1/apps/{slug}/mcp-readiness-attention` (optional `scope`,
+`after`, `limit` 1–50, `include_resolved` default false), and GET/POST
+`/v1/apps/{slug}/mcp-readiness-incidents/{id}/attention-actions`. History supports
+`before` and `limit`; inspection includes all-environment incidents alongside the
+selected environment. Reads require read scope and MFA; changes require admin
+scope and MFA. Browser changes additionally require the named MCP-alert CSRF token.
+
+Deploy the migration and upgrade **all readiness evaluators before enabling
+reminders**. Older binaries do not enforce acknowledgement or stale reminder
+suppression. Rollback refuses to discard attention decisions or reminder history.
+Native PagerDuty delivery and fallback webhook routing are described below.
+
+### Readiness fallback webhook delivery
+
+A readiness webhook rule can use one separately signed fallback receiver when its
+primary is unavailable. Fallback is disabled by default. Read the policy with read
+scope and MFA; replacing it requires admin scope and MFA:
+
+```sh
+gregale mcp readiness fallback get --app demo --rule '<rule UUID>'
+# Set MCP_FALLBACK_SECRET through your secret manager before this command.
+gregale mcp readiness fallback set --app demo --rule '<rule UUID>' \
+  --expected-version 0 --webhook-url https://fallback.example.com/alerts \
+  --secret-env MCP_FALLBACK_SECRET --after-failures 3
+gregale mcp readiness fallback disable --app demo --rule '<rule UUID>' \
+  --expected-version 1
+```
+
+The corresponding API is `GET/PUT /v1/apps/{slug}/alerts/{id}/mcp-readiness-fallback`. PUT requires `expected_version`
+and `enabled`. Enable additionally requires `webhook_url`, `webhook_secret`, and
+`after_failures` (1–10). Disable omits all three. A stale version returns 409;
+refresh before replacing it. Both URLs pass the normal webhook egress controls,
+and fallback must differ from primary. Signing secrets are independently sealed;
+reads and write responses return only a mask. The MCP dashboard has equivalent
+forms under the readiness alert, with session, MFA and CSRF protection.
+
+The threshold counts completed unsuccessful primary **dispatch claims per event**,
+not internal HTTP retries or elapsed outage time. A crashed lease does not count
+as a completed failure. Once the threshold is met, the next evaluator pass may
+send the same immutable event to fallback immediately. Failed fallback delivery
+uses the existing cooldown and durable retries. There is one fallback and one
+switch per incident. The signed event ID and payload remain stable; receivers
+must deduplicate by event ID independently at each destination.
+
+At the incident's first delivery claim, Gregale captures the policy, threshold and
+receiver URLs. Changes apply to incidents not yet attempted. An incident first
+attempted without fallback keeps the existing live primary behavior. With fallback
+enabled, its URLs remain pinned; new credentials for the same configured URL are
+used on subsequent claims. Replacing a URL retains the incident's last used sealed
+credential for that old address. Disabling fallback affects new incidents; disable
+the alert rule to pause existing delivery, or explicitly abandon the queue head.
+
+After a switch, subsequent fired notifications and recovery use fallback. If the
+primary previously accepted a fired notification, recovery also goes to primary:
+preferring fallback first while allowing independent primary recovery. An expired primary lease
+is conservatively treated as potentially accepted. Successful destinations are not
+resent within the same logical recovery. A recovery may therefore remain at the
+primary queue head after fallback succeeds while primary is still unavailable.
+Healthy fallback delivery continues through later incidents. Queue inspection
+and receiver-specific recovery controls remain available. Fallback can receive a
+standalone recovery if failover first happens during recovery delivery.
+
+Incident timelines and notification queue heads expose `delivery_routing`, including
+policy version, destination claim counts, completed primary failures and delivery
+success per receiver. Physical alert delivery history includes `readiness_event_id`,
+`readiness_destination` and `readiness_failover_reason`. Delivery progress is separate
+from MCP readiness and acknowledgement. Existing maintenance and reminder
+suppression remain in effect; acknowledgements do not cancel ordinary failure or
+recovery delivery.
+
+Apply the fallback migration and upgrade **all readiness evaluators** before enabling
+this policy. Older evaluator binaries do not honor pinned routing. Rollback refuses
+to discard fallback policies or routing history. See
+[ADR 20261017191522](adr/20261017191522-mcp-readiness-fallback-delivery.md) for the routing decisions.
+
+### Independent webhook receiver queues
+
+Readiness notifications now preserve FIFO order separately for primary and
+fallback. A recovery still retries every informed receiver, but an unavailable
+primary no longer stops a healthy fallback from receiving later incidents.
+When an older failed-over incident still owes primary a recovery, a new incident
+with fallback enabled starts on fallback (`primary_queue_blocked`) and stays
+there for its lifetime. After old primary recoveries finish, new incidents start
+at primary again. A rule without fallback continues waiting on primary.
+
+The notification queue API returns `destinations` with each receiver's head,
+state, outstanding count and recovery controls. Incident events include
+`destination_deliveries` with independent status, attempt count, next retry,
+active lease deadline and physical delivery ID. These views omit receiver URLs,
+credentials and lease tokens. The original rule summary remains the oldest
+outstanding logical event, so inspect receiver queues for actual delivery progress.
+`waiting_primary` reserves fallback order until an earlier primary event succeeds
+or fails over. `waiting_receiver` prevents reordering when the same pinned URL
+appears under different receiver roles after configuration changes.
+
+Use the existing action endpoint with optional `destination: primary|fallback`
+to retry or abandon only that receiver's head. Read its current event
+`delivery_version`, supply a fresh request UUID and reason, and reuse the complete
+body for request retries. The shared event version changes when either receiver
+progresses; refresh it after a conflict. Omit `destination` for the existing
+whole-event action, which still requires the oldest event and no live lease.
+A targeted action preserves other receivers' successful deliveries and leases.
+The dashboard exposes these receiver controls, and the Go, Node and Python SDKs
+include the same fields.
+
+```sh
+gregale mcp readiness notifications retry --app demo \
+  --destination primary --event EVENT_UUID --expected-version VERSION \
+  --request-id REQUEST_UUID --reason 'Primary receiver repaired'
+```
+
+Upgrade: stop readiness evaluators, apply
+`20261017181315090_mcp_readiness_destination_queues.sql`, upgrade all evaluators,
+then resume. Existing queued events lazily acquire independent state while
+preserving retry deadlines, successful receiver flags and legacy lease fences.
+Do not mix old and new evaluators. Rollback refuses to discard destination
+progress or targeted action history.
+
+See [ADR 20261017191523](adr/20261017191523-mcp-readiness-destination-queues.md) for ordering and upgrade decisions.
+
+
+### Reminder defaults for new incidents
+
+Readiness webhook rules can define a reminder interval and finite creation budget
+for future incidents. The MCP dashboard provides “Save reminder defaults” and
+“Disable future reminders” controls beside each readiness webhook alert.
+
+```sh
+gregale mcp readiness reminder-defaults get --app demo --rule RULE_UUID
+gregale mcp readiness reminder-defaults set --app demo --rule RULE_UUID \
+  --expected-version 0 --interval-seconds 300 --max-reminders 3
+gregale mcp readiness reminder-defaults disable --app demo --rule RULE_UUID \
+  --expected-version 1
+```
+
+GET/PUT `/v1/apps/{slug}/alerts/{id}/mcp-readiness-reminder-defaults` exposes
+`version` and `reminder_policy: {interval_seconds, max_reminders}`. PUT requires
+`expected_version` and `reminder_policy`. Version zero means unconfigured and
+disabled. A policy must use 60–86400 seconds and 1–10 reminders, or zero for both
+to disable. A stale version returns 409; reload before retrying. Read scope is
+required for GET and admin scope for PUT, with MFA on both. Disabled rules can
+still be configured. Go, Node and Python SDKs expose these operations.
+
+Defaults are captured atomically **when the incident opens**, including openings
+during maintenance. Changing or disabling defaults affects future incidents only;
+it never changes an existing incident's acknowledgement, interval, next eligibility
+time, or used budget. Use the existing incident `configure_reminders` action to
+change or disable reminders for an open incident. That action preserves the
+lifetime creation count.
+
+Attention inspection includes `reminder_policy_source` (`rule_default`,
+`incident_override`, or `legacy`) and the captured `reminder_defaults_version`
+when available, including version zero. An incident override retains its original
+defaults version. Older incidents remain `legacy` until overridden and are never
+backfilled. Rule defaults versions are independent of incident attention versions;
+use the current incident attention version for acknowledgement and override actions.
+
+Apply the migration and upgrade all readiness evaluators before configuring defaults.
+Mixed old/new evaluators can ignore defaults or erase inheritance metadata. Existing
+fresh-evidence, acknowledgement, maintenance, lifetime budget, and per-incident
+notification ordering safeguards continue to apply. Rollback refuses to discard
+configured defaults or captured inheritance history, including version zero.
+
+
+### Native PagerDuty readiness delivery
+
+Existing MCP readiness webhook rules can use PagerDuty as their primary receiver,
+with signed webhook or native PagerDuty fallback available (see below). Native delivery
+supports the US and EU Events API v2 endpoints. Configure the integration
+in the MCP dashboard, or use an environment variable with the CLI:
+
+```sh
+export PAGERDUTY_INTEGRATION_KEY=YOUR_INTEGRATION_KEY
+gregale mcp readiness pagerduty get --app demo --rule RULE_UUID
+gregale mcp readiness pagerduty set --app demo --rule RULE_UUID \
+  --expected-version 0 --key-env PAGERDUTY_INTEGRATION_KEY --region eu
+gregale mcp readiness pagerduty disable --app demo --rule RULE_UUID \
+  --expected-version 1
+```
+
+GET/PUT `/v1/apps/{slug}/alerts/{id}/mcp-readiness-pagerduty` provides versioned
+configuration. PUT requires `expected_version` and `enabled`; enabling also requires
+an `integration_key` of 32 ASCII alphanumeric characters, while disabling omits it.
+Optional `region` selects `us` (the default when omitted) or `eu`; disabling omits
+region and key. GET always returns effective `region` (`us` when unconfigured or
+disabled). Version zero means unconfigured. GET returns version, enabled, region,
+and a fixed
+`integration_key_masked` value for enabled configurations. Reads require read scope
+and MFA; writes require admin scope and MFA. Browser writes also require the named
+MCP-alert CSRF token. Go, Node and Python SDKs expose the same operations.
+
+Keys use a dedicated encryption namespace. Their plaintext, ciphertext and private
+fingerprint never appear in configuration responses, incident inspection, audit
+metadata or provider errors. The selected provider endpoint is fixed:
+`https://events.pagerduty.com/v2/enqueue`
+for US or `https://events.eu.pagerduty.com/v2/enqueue` for EU. Customer-supplied URLs
+and redirects cannot receive a key. Credentials are included only in the provider's
+required request body. Provider responses are bounded and never recorded verbatim.
+
+Fired events, reminders and retries share `gregale:mcp:INCIDENT_UUID` as their
+PagerDuty deduplication key. Recovery resolves that same key. PagerDuty configuration,
+region and encrypted credentials are pinned at an incident's **first delivery attempt**.
+Replacing or disabling the configuration affects unattempted incidents; existing
+incidents keep their receiver for reminders and recovery. Retain the old integration
+key until those recoveries finish. Webhook primary is restored for unattempted
+incidents when native delivery is disabled. The existing rule webhook configuration
+is retained for that behavior. PagerDuty acknowledgement does not change Gregale
+acknowledgement automatically; enable the separate signed acknowledgement policy
+below to synchronize it.
+
+Only a valid HTTP 202 response with `status: success` and the matching deduplication
+key counts as accepted. Acceptance confirms provider ingestion, not that a person
+was paged. Per-receiver inspection includes `provider` and PagerDuty
+`provider_status` (`accepted`, `retrying`, or the current queue delivery state).
+Existing generic delivery fields retain their compatibility meanings. Recovery is
+also owed to a primary whose timeout, invalid acknowledgement, server error or
+expired lease could have followed acceptance.
+
+429 and 503 `Retry-After` values support seconds or HTTP dates, bounded to 24 hours.
+Completion commits the physical outcome and retry deadline atomically under the
+existing lease fence. The next attempt observes both the rule cooldown and the
+provider deadline. Existing operator retry controls can explicitly override the
+queue deadline. Maintenance, acknowledgement and fresh-evidence reminder guards,
+receiver FIFO ordering, fallback failover, and uncertain-delivery recovery remain
+active. A separate PagerDuty integration is distinguished by its private receiver
+identity, which includes region endpoint and private key fingerprint. The same key
+in different regions has distinct receiver identity. Region changes cannot refresh
+credentials on an incident pinned to another region.
+
+Stop readiness evaluators, apply the PagerDuty migrations through
+`20261017181315128_mcp_readiness_pagerduty_regions.sql`, upgrade every evaluator,
+then resume before enabling EU PagerDuty. Existing configurations remain US. Older
+workers cannot honor EU receiver claims. Rollback refuses to discard provider configuration
+or delivery history; the regional migration also refuses rollback while any EU
+configuration or pinned EU incident history exists. Regional routing does not imply
+platform-wide data residency. Local fake-provider contracts cover the adapter; real
+PagerDuty service/key interoperability and paging outcomes require separate live qualification.
+
+### PagerDuty acknowledgement sync
+
+A separate signed webhook policy lets PagerDuty acknowledgements pause Gregale
+reminders. Readiness probes still determine health and recovery. Provider resolve
+and unacknowledge events do not change Gregale state; release an acknowledgement in
+Gregale to resume eligible reminders. Existing local acknowledgement expiry is
+preserved, and already resolved incidents are never reopened.
+
+1. Configure native PagerDuty primary delivery and read its current version. To bind a native fallback instead, follow the fallback-specific version and destination instructions below.
+2. Get the acknowledgement settings below. Their `webhook_path` is available even
+   before enabling. Add that path to your trusted public API origin to obtain the
+   webhook URL; it does not use an application invocation URL.
+3. Create a PagerDuty **v3** subscription for `incident.acknowledged`, filtered to
+   the service receiving this integration's events. Use that webhook URL and copy
+   the subscription signing secret returned by PagerDuty.
+4. Save the service ID, signing secret and current native policy version. The
+   server captures the integration fingerprint and US/EU region automatically.
+
+```sh
+gregale mcp readiness pagerduty acknowledgements get --app demo --rule RULE_UUID
+export PAGERDUTY_WEBHOOK_SECRET=YOUR_SUBSCRIPTION_SIGNING_SECRET
+gregale mcp readiness pagerduty acknowledgements set --app demo --rule RULE_UUID \
+  --expected-version 0 --expected-pagerduty-version 1 --service-id PSVC001 \
+  --secret-env PAGERDUTY_WEBHOOK_SECRET
+gregale mcp readiness pagerduty acknowledgements events --app demo --rule RULE_UUID \
+  --limit 20
+gregale mcp readiness pagerduty acknowledgements disable --app demo --rule RULE_UUID \
+  --expected-version 1
+```
+
+GET/PUT `/v1/apps/{slug}/alerts/{id}/mcp-readiness-pagerduty-acknowledgements`
+provides versioned settings. Enabling requires `expected_version`, `enabled: true`,
+`expected_pagerduty_version`, `service_id` and `signing_secret`. The signing secret
+is the exact 16–1024 printable non-space ASCII bytes supplied by PagerDuty, not an
+integration routing key or a signature header. Disabling sends only current
+`expected_version` and `enabled: false`. Credentials use a dedicated encryption
+namespace, and reads return only a fixed mask. Reads require read scope and MFA;
+writes require admin scope and MFA. The dashboard also requires its named CSRF
+cookie. Go, Node and Python SDKs expose settings and receipt pagination.
+
+PagerDuty posts to `/v1/webhooks/mcp-readiness/pagerduty/{rule_id}` with
+`Content-Type: application/json` and `X-PagerDuty-Signature`. The receiver verifies
+HMAC-SHA256 over the unmodified raw body. Comma-separated `v1=HEX` signatures
+support provider key rotation; any matching current signature is sufficient.
+Bearer tokens or browser sessions do not replace signature authentication.
+Valid handled, duplicate or unrelated events receive HTTP 202. Invalid signatures
+receive 401; a disabled or missing receiver returns 404; invalid supported events
+return 400; oversized bodies return 413; temporarily unavailable decryption/storage
+returns 503. Policy changes during authentication require retrying with the current
+credential. Conflicting reuse of a provider event ID returns 409.
+
+The authenticated body must contain a v3 `incident.acknowledged` event with
+`resource_type: incident`, `data.type: incident`, `data.status: acknowledged`,
+`data.incident_key: gregale:mcp:INCIDENT_UUID`, the configured `data.service.id`,
+and the matching regional `data.self` incident URL. The integration, region,
+application and rule must match the incident's pinned outgoing receiver. Unrelated
+incident keys, rules and services are ignored. Configure PagerDuty alert grouping
+to preserve the Gregale incident key; grouped incidents without that key cannot be
+correlated safely. No provider URLs are fetched.
+
+Event IDs are scoped to the rule; opt-in releases additionally track delivery destination
+(see below). Duplicate events replay their immutable receipt
+without changing attention state. Events older than the incident or no newer than
+its latest attention decision are retained as stale for acknowledgement-only bindings;
+opt-in ownership uses the per-destination ordering described below. Preserve local acknowledgement
+expiry; an expired local acknowledgement is replaced only by a later provider event.
+A newer provider acknowledgement after a local release can acknowledge again.
+Times use the signed provider event timestamp; the receiver permits at most five
+minutes of future clock skew and seven days of delivery age. Keep clocks synchronized.
+An in-flight reminder may finish; queued reminders are suppressed atomically with
+an applied acknowledgement. Initial failure and recovery delivery remain intact.
+
+Bodies are limited to 64 KiB, signature headers to 1024 bytes/eight signatures, JSON
+to 32 levels, and provider identifiers to 128 ASCII letters/digits/underscores/
+hyphens. Retain at most 128 unique authenticated events per incident. At that bound,
+further new IDs receive 202 without changing attention or adding receipts; local
+attention actions remain available. Raw payloads, signatures, actor identities,
+plaintext/ciphertext secrets and receiver fingerprints are never exposed in receipt
+history. Minimal receipts and the attention decision commit in one transaction.
+
+GET `/v1/apps/{slug}/alerts/{id}/mcp-readiness-pagerduty-acknowledgements/events`
+returns newest-first receipts, `limit` 1–50 (default 20), and an optional
+`next_before` cursor. Receipts identify the service, region, provider/Gregale incident
+IDs, provider event/time, receipt time, captured policy version and attention
+version. Outcomes are `acknowledged`, `already_acknowledged`, `stale` or `resolved`.
+Attention history and dashboard acknowledgements include `source: pagerduty` and
+provider identifiers, making the owner-authorized integration distinct from a local
+account action.
+
+Only the current webhook signing secret is accepted. Saving a fresh signing secret
+or disabling settings revokes the previous secret immediately; resubmitting the
+same secret does not rotate it. Recreate/rotate the PagerDuty subscription and update
+Gregale together;
+disable the remote subscription when retiring it. Outgoing key/region changes do
+not retarget this binding. Rebind explicitly to the new integration, after which
+old pinned integrations cannot use that binding. Disabling outgoing delivery alone
+leaves signed acknowledgement sync available for matching old incidents; disable
+acknowledgement sync explicitly to revoke it. Previously applied acknowledgements
+remain in place; release them in Gregale to resume reminders. Repeated invalid
+signatures use the shared failed-auth IP limiter and may receive HTTP 429.
+
+Apply `20261017181315142_mcp_readiness_pagerduty_acknowledgements.sql` and upgrade
+apid and evaluators before enabling. Rollback preserves configuration and provider
+history, including disabled policies. Local signed-webhook and memory/PostgreSQL
+contracts cover the implementation; live subscription delivery and PagerDuty
+service/key interoperability require separate qualification.
+
+### Native PagerDuty readiness fallback
+
+A readiness alert can now escalate from a failing webhook directly to PagerDuty.
+The existing fallback policy selects `provider: webhook` (the default when omitted)
+or `provider: pagerduty`. The completed-primary-failure threshold remains 1–10;
+existing per-receiver queues, maintenance, reminder and acknowledgement guards apply.
+A blocked primary queue can activate fallback with `primary_queue_blocked` as before.
+
+```sh
+# Set the integration key through your secret manager first.
+gregale mcp readiness fallback set --app demo --rule RULE_UUID \
+  --expected-version 0 --provider pagerduty --region eu \
+  --key-env PAGERDUTY_FALLBACK_KEY --after-failures 3
+gregale mcp readiness fallback get --app demo --rule RULE_UUID
+```
+
+GET/PUT `/v1/apps/{slug}/alerts/{id}/mcp-readiness-fallback` accepts the same
+versioned policy. A PagerDuty replacement sends `expected_version`, `enabled: true`,
+`provider: pagerduty`, `integration_key`, `after_failures`, and optional `region`
+(`us` by default, or `eu`). Omit `webhook_url` and `webhook_secret`. A webhook
+replacement omits all PagerDuty fields and uses its existing URL and signing secret.
+Disable with only current `expected_version` and `enabled: false`. Reads return
+provider and a fixed key mask, with region for native PagerDuty; fingerprints and
+plaintext/ciphertext credentials are never exposed. The dashboard has separate
+webhook and PagerDuty replacement forms. CLI, Go, Node and Python support both.
+
+The native fallback key is separately configured and encrypted in the PagerDuty
+namespace. API destinations are fixed by region. Primary and fallback cannot use
+the same PagerDuty integration in the same region, including when replacing the
+primary after configuring fallback. Separate services/integrations within a shared
+provider do not guarantee delivery during a provider-wide outage.
+
+At first dispatch, fallback provider, region, integration identity, encrypted key,
+threshold and policy version stay pinned to that incident. Later replacements or
+disabling affect incidents not yet attempted. Re-encrypting the same integration
+key refreshes credentials for its pinned receiver. A different key denotes another
+integration and does not retarget active incidents. Keep old keys valid until all
+pinned incident recoveries finish. `delivery_routing.policy_version` identifies
+the captured fallback version; `pagerduty_version` continues to identify native
+primary configuration. Per-destination progress reports `provider: pagerduty`,
+acceptance/retry status and next-attempt time. HTTP 202 acceptance is not proof
+that an engineer was paged.
+
+A stable incident dedup key is used for trigger, reminders, retry and resolve.
+Recovery goes to the activated fallback and any previously informed or uncertain
+primary, with independent retry queues. Restarting evaluators, changing region,
+or disabling future fallback cannot silently discard an outstanding recovery.
+
+Signed acknowledgement sync can select the native fallback:
+
+```sh
+gregale mcp readiness pagerduty acknowledgements get --app demo --rule RULE_UUID --destination fallback
+# Create the v3 subscription using webhook_path as described above.
+gregale mcp readiness pagerduty acknowledgements set --app demo --rule RULE_UUID \
+  --expected-version 0 --destination fallback --expected-fallback-version 1 \
+  --service-id PSVC001 --secret-env PAGERDUTY_FALLBACK_WEBHOOK_SECRET
+```
+
+Use the fallback configuration's actual current version in
+`expected_fallback_version`; omit `expected_pagerduty_version`. The API accepts the
+same optional `destination: fallback` selector. Omitted destination remains primary
+and continues requiring `expected_pagerduty_version`. Primary and fallback have
+independent inbound bindings, signing secrets and policy versions. Saving or
+disabling one leaves the other unchanged. Use a fresh secret when rotating a
+subscription. Reads include the selected destination and captured
+`fallback_version` or `pagerduty_version`.
+
+A fallback callback can acknowledge only after that incident's fallback has
+activated and its pinned PagerDuty integration, region, service, application and
+rule all match. A signed callback before activation is ignored without a receipt.
+Accepted minimal receipts include `destination`; absent destination in older
+receipts means primary. Duplicate/stale callbacks cannot override newer local
+attention decisions. Disabling outgoing fallback alone leaves the incoming binding
+available for matching old incidents; disable acknowledgement sync separately to
+revoke it. Readiness probes remain authoritative for health and recovery.
+
+Stop readiness evaluators, apply
+`20261017181315159_mcp_readiness_pagerduty_fallback.sql`, upgrade **all readiness
+evaluators and apid**, then resume before enabling native fallback. Old evaluators cannot enforce
+native fallback routing and credential namespaces. Existing policies remain
+webhook, and acknowledgement bindings remain primary. Rollback refuses to discard
+native fallback configuration, pinned routing, delivery or acknowledgement history.
+See [ADR 20261017191528](adr/20261017191528-mcp-readiness-pagerduty-fallback.md). Memory/PostgreSQL and
+local fake-provider tests cover the implementation; real PagerDuty service/key,
+paging and subscription delivery still require live qualification.
+
+
+### Independent PagerDuty acknowledgement subscriptions
+
+Configure both primary and fallback acknowledgement sync on the same readiness
+rule. Read each binding explicitly before creating its PagerDuty v3 subscription:
+
+```sh
+gregale mcp readiness pagerduty acknowledgements get --app demo --rule RULE_UUID --destination primary
+gregale mcp readiness pagerduty acknowledgements get --app demo --rule RULE_UUID --destination fallback
+# Use each response's webhook_path with your API origin and a separate signing secret.
+gregale mcp readiness pagerduty acknowledgements disable --app demo --rule RULE_UUID \
+  --destination fallback --expected-version 1
+```
+
+The management API supports `GET ?destination=primary|fallback`. Its existing
+`PUT` body uses `destination` for enabling, rotating and disabling. Use the
+selected binding's `version` for `expected_version`; configuring the other binding
+does not change that value. Enabling still requires the selected outgoing native
+integration's version, service ID and signing secret. Disabling omits these
+credentials and outgoing versions while retaining the destination's own version.
+
+Explicit reads always return destination-specific callbacks at
+`/v1/webhooks/mcp-readiness/pagerduty/RULE_UUID/primary` or `/fallback`. Each accepts
+only its own current signing secret. Existing subscriptions using the original
+`/v1/webhooks/mcp-readiness/pagerduty/RULE_UUID` continue to authenticate against the
+same binding, including previously configured fallback subscriptions. For a new
+rule the first saved binding owns that original callback. Adding or disabling
+another binding never reassigns that URL. GET and disable without a destination
+select its original owner; enable without a destination selects primary. Specify
+both destinations explicitly when managing dual subscriptions.
+
+Both callbacks still enforce application, rule, service, region and pinned
+integration identity; fallback callbacks have no effect before activation. If the
+same PagerDuty acknowledgement event reaches both valid subscriptions, Gregale retains one receipt
+and returns it on replay, even after a local attention release. Its destination
+identifies the first accepted callback. Different event IDs retain their own
+receipts while an existing acknowledgement prevents repeated attention actions.
+No raw payloads, actor details or signing secrets enter event history. Readiness
+probes continue to determine health and recovery.
+
+Pause acknowledgement configuration writes and incoming subscriptions, apply
+`20261017181315175_mcp_readiness_pagerduty_independent_bindings.sql`, upgrade every
+apid instance, then resume callbacks and configuration writes. The previous
+binary cannot write the new composite-key schema. Existing credentials, versions
+and original callback URLs are preserved. Create destination-specific
+subscriptions only after every apid instance is upgraded. Switching a binding from primary to fallback now leaves the primary
+active: explicitly disable any subscription that should be revoked. Rollback
+refuses independent bindings and disabled fallback version tombstones; preserve
+these records before a downgrade. Older binaries do not serve destination-specific
+callbacks, so pause incoming subscriptions during rollback and reconfigure to the
+original callback URL only after preserving the data required by the rollback
+guard. See [ADR 20261017191529](adr/20261017191529-mcp-readiness-independent-pagerduty-bindings.md).
+Local signature, persistence and migration checks do not replace live PagerDuty
+subscription qualification.
+
+
+### Opt-in PagerDuty acknowledgement release
+
+PagerDuty can release its own tracked acknowledgement when a signed v3
+`incident.unacknowledged` event arrives with incident status `triggered`. This is
+independently opt-in per primary/fallback subscription. Existing bindings default
+to acknowledgement-only; other provider events, including `incident.resolved`,
+never change readiness health. Probes remain authoritative for recovery.
+
+```sh
+gregale mcp readiness pagerduty acknowledgements set --app demo --rule RULE_UUID \
+  --destination primary --expected-version CURRENT_BINDING_VERSION \
+  --expected-pagerduty-version CURRENT_PRIMARY_VERSION --service-id PSVC001 \
+  --secret-env PAGERDUTY_WEBHOOK_SECRET --sync-unacknowledgements
+```
+
+For fallback, select `--destination fallback` and use
+`--expected-fallback-version` instead of `--expected-pagerduty-version`. Subscribe
+each PagerDuty v3 subscription to both `incident.acknowledged` and
+`incident.unacknowledged`, using the destination's returned `webhook_path` and
+signing secret. API PUT uses `sync_unacknowledgements: true`; GET returns the
+setting. Replacements must explicitly retain it. Omission or false disables
+release sync. Disable requests must omit it or set false. Go, Node and Python
+SDKs expose the setting, active provider acknowledgements and event actions.
+
+Ownership starts with a fresh acknowledgement received while release sync is
+enabled. Existing active acknowledgements are never retroactively adopted;
+release locally and wait for a fresh provider acknowledgement to start a tracked
+cycle. `provider_acknowledgements` on incident attention lists at most two active
+holds, in primary then fallback order, with public provider IDs, timestamps,
+policy versions and `release_sync_enabled`. It never exposes integration
+fingerprints or credentials. Dashboard shows both settings and active holds.
+
+Each destination has its own hold and event timestamp watermark. A release must
+match that hold's provider incident, service, region and captured integration.
+Releasing primary leaves fallback acknowledged. A known acknowledgement received
+with release sync off remains protected from automatic release after enabling;
+a fresh matching acknowledgement after enabling can make it releasable. If
+multiple provider incidents acknowledge through one destination, Gregale retains
+a conservative hold requiring local release. Manual acknowledgements always
+require local release. A local acknowledgement or release clears provider holds;
+all local attention decisions advance a timestamp barrier against delayed events.
+
+Older events are recorded as stale. Equal timestamps favor acknowledgement to
+keep reminders paused. A release received before its acknowledgement records an
+inactive watermark to reject older delayed acknowledgements. Duplicate receipts
+are immutable and cannot reapply attention after a manual action. Acknowledgement
+event IDs remain deduplicated across both subscriptions, preserving legacy IDs
+and digests. Release events have separate primary/fallback receipts so one event
+can release both destinations; conflicting semantic payloads under the same event
+ID remain conflicts across destinations. The existing 128-receipt lifetime cap
+per incident includes both release deliveries; duplicate lookup precedes the cap.
+
+When the final releasable provider hold clears, Gregale schedules the next
+reminder after the existing interval. It preserves the reminder count and lifetime
+budget, and normal fresh evidence, maintenance and queue guards still apply. An
+exhausted or disabled policy stays exhausted or disabled. Provider history adds
+`action: release` and outcomes `released`, `retained`, or `not_acknowledged`;
+existing acknowledgement, stale and resolved outcomes remain. Ownership-only
+updates advance the attention CAS version; canonical attention history records
+effective acknowledge/release transitions.
+
+Before enabling, pause acknowledgement configuration writes and incoming
+subscriptions, apply `20261017181315189_mcp_readiness_pagerduty_release.sql`, and
+upgrade **all apid instances, readiness evaluators and other attention snapshot
+writers**. Older writers discard unknown ownership/watermark fields, and older
+receipt readers assume one row per event ID. Resume subscriptions only after
+all writers are upgraded; enable release sync and begin a fresh acknowledgement
+cycle. Rollback refuses enabled release settings, ownership/watermarks or release
+receipts rather than discarding ordering and audit history. Disabling the setting
+alone does not remove that retained state. See
+[ADR 20261017191530](adr/20261017191530-mcp-readiness-pagerduty-release.md). Local tests cover memory,
+PostgreSQL restart, signatures, migration replay and client contracts; live
+PagerDuty subscription qualification remains pending.

@@ -151,6 +151,18 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}": true, // authenticated browser-only tracker review/notification surface
 	"GET /dashboard/apps/{slug}/issues/tracker-review":                                  true, // authenticated browser-only tracker review/notification surface
 	"GET /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync/{link_id}":               true, // authenticated browser-only tracker review/notification surface
+	// Browser session and named-CSRF adapters for documented MCP APIs.
+	"POST /dashboard/mcp/apps/{slug}/alerts":                           true,
+	"POST /dashboard/mcp/apps/{slug}/alerts/{id}":                      true,
+	"POST /dashboard/mcp/apps/{slug}/incidents/{id}/attention-actions": true,
+	"POST /dashboard/mcp/apps/{slug}/alerts/{id}/pagerduty":            true,
+	"POST /dashboard/mcp/apps/{slug}/alerts/{id}/reminder-defaults":    true,
+	"POST /dashboard/mcp/apps/{slug}/alerts/{id}/fallback":             true,
+	"POST /dashboard/mcp/apps/{slug}/maintenance":                      true,
+	"POST /dashboard/mcp/apps/{slug}/maintenance/{id}/cancel":          true,
+	"POST /dashboard/mcp/apps/{slug}/notifications/actions":            true,
+	"POST /dashboard/mcp/apps/{slug}/oauth":                            true,
+	"POST /dashboard/mcp/retirements/{id}":                             true,
 
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules":                true, // session + CSRF adapter for the public split-rule creation API
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}":      true, // session + CSRF adapter for the public split-rule update API
@@ -291,6 +303,10 @@ var routeExclude = map[string]bool{
 	"GET /v1/internal/metrics/builderd-targets":                       true, // compute daemon metrics use the active node registry
 	"GET /v1/internal/metrics/realtimed-targets":                      true, // compute daemon metrics use the active node registry
 	"GET /v1/internal/metrics/promtail-targets":                       true, // issue #274 — loopback Promtail HTTP-SD endpoint
+
+	"POST /v1/webhooks/mcp-readiness/pagerduty/{id}":                         true, // Provider HMAC authentication, not Bearer HTTP.
+	"POST /v1/webhooks/mcp-readiness/pagerduty/{id}/{destination}":           true, // Destination-scoped provider HMAC ingress (ADR-20261017191529).
+	"POST /dashboard/mcp/apps/{slug}/alerts/{id}/pagerduty-acknowledgements": true, // Named-CSRF browser adapter.
 	// Issue #777 / ADR-091: operator observability backend.
 	// Mirror the operator-only exclusion across both this list
 	// AND cmd/sdk-coverage/main.go::routeExclude. The two lists
@@ -1365,6 +1381,17 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "mcp_connection_health.go"),
 		filepath.Join(root, "pkg", "api", "mcp_oauth_retirement.go"),
 		filepath.Join(root, "pkg", "api", "mcp_task_compatibility.go"),
+		filepath.Join(root, "pkg", "api", "mcp_readiness.go"),
+		filepath.Join(root, "pkg", "api", "mcp_readiness_policy_history.go"),
+		filepath.Join(root, "pkg", "api", "mcp_readiness_incidents.go"),
+		filepath.Join(root, "pkg", "api", "mcp_readiness_maintenance.go"),
+		filepath.Join(root, "pkg", "api", "mcp_readiness_notifications.go"),
+		filepath.Join(root, "pkg", "api", "mcp_readiness_attention.go"),
+		filepath.Join(root, "pkg", "api", "mcp_readiness_reminder_defaults.go"),
+		filepath.Join(root, "pkg", "api", "mcp_readiness_pagerduty.go"),
+		filepath.Join(root, "pkg", "api", "mcp_readiness_pagerduty_acknowledgements.go"),
+		filepath.Join(root, "pkg", "api", "mcp_readiness_fallback.go"),
+
 		filepath.Join(root, "pkg", "api", "event_replay_preview.go"),
 		filepath.Join(root, "pkg", "api", eventReplayBackfillFile),
 		filepath.Join(root, "pkg", "api", "event_circuit_breaker.go"),
