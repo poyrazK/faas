@@ -1,4 +1,5 @@
 -- filename: 20261009150004271_crash_capture_sdk_trigger.sql
+-- migration-compat: expand
 
 -- +goose Up
 -- +goose StatementBegin

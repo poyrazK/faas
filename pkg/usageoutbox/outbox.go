@@ -43,6 +43,13 @@ type Event struct {
 	// BillingRoute is the bounded route label of consumer-attributed
 	// traffic, kept as route-level billable minutes for weights (ADR-952).
 	BillingRoute string `json:"billing_route,omitempty"`
+	// ComputeMS and ResponseBytes measure a billable consumer request for
+	// rate cards that price compute time or response size (ADR-1308).
+	ComputeMS int64 `json:"compute_ms,omitempty"`
+	// MeterUnits are the units the app reported for a billable consumer
+	// request, by meter (ADR-1318).
+	MeterUnits    map[string]int64 `json:"meter_units,omitempty"`
+	ResponseBytes int64            `json:"response_bytes,omitempty"`
 }
 
 // AuditEvidence is opt-in request metadata attached to the same fsynced
@@ -390,6 +397,66 @@ func (q *Outbox) compact() error {
 		return err
 	}
 	return syncDir(q.root)
+}
+
+// Absorb appends every unacknowledged event of the outbox at dir to q in
+// one fsynced write, then empties dir. A hand-off's old generation leaves its
+// outbox in its own directory (ADR-1580); the generation that adopts it
+// delivers those events. A crash between the two steps replays event IDs,
+// which apid deduplicates. ErrFull leaves dir untouched.
+func (q *Outbox) Absorb(dir string) (int64, error) {
+	src, err := Open(dir, DefaultMaxBytes)
+	if err != nil {
+		return 0, fmt.Errorf("open usage outbox %s: %w", dir, err)
+	}
+	if src.pending > 0 {
+		if err := q.appendFrom(src); err != nil {
+			return 0, err
+		}
+	}
+	for _, name := range []string{src.dataPath, src.cursorPath} {
+		if err := os.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return src.pending, err
+		}
+	}
+	return src.pending, syncDir(dir)
+}
+
+func (q *Outbox) appendFrom(src *Outbox) error {
+	in, err := os.Open(src.dataPath) //nolint:forbidigo // server-owned outbox path, never a customer-supplied file
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+	b := make([]byte, src.durableEnd-src.offset)
+	if _, err := in.ReadAt(b, src.offset); err != nil {
+		return fmt.Errorf("read usage outbox %s: %w", src.root, err)
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.broken != nil {
+		return q.broken
+	}
+	if q.end-q.offset+int64(len(b)) > q.maxBytes {
+		return ErrFull
+	}
+	f, err := os.OpenFile(q.dataPath, os.O_WRONLY|os.O_APPEND, 0o640)
+	if err != nil {
+		q.broken = err
+		return err
+	}
+	_, err = f.Write(b)
+	closeErr := f.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		q.broken = fmt.Errorf("append adopted usage events: %w", err)
+		return q.broken
+	}
+	q.end += int64(len(b))
+	q.pending += src.pending
+	return q.waitDurableLocked(q.end)
 }
 
 func (q *Outbox) Stats() Stats {

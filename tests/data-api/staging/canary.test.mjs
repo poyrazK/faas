@@ -183,6 +183,23 @@ test('sync admission, mismatched fingerprints and incomplete receipts cannot qua
 test('SDK IDs must match safe runtime records from the serving deployment', () => {
   verifiedDiagnostic(info)
   assert.equal(matchingRuntimeLog(envelope(runtimeRecord()), info, 'deployment', 'POST', 'rpc').request_id, requestID)
+  const admission = { outcome: 'admitted', wait_ms: 10, active: 2, queued: 8 }
+  assert.equal(matchingRuntimeLog(envelope({ ...runtimeRecord(), admission }), info, 'deployment', 'POST', 'rpc').request_id, requestID)
+  const timings = { verification: { duration_ms: 0, complete: true }, upstream: { duration_ms: 10, complete: true } }
+  assert.equal(matchingRuntimeLog(envelope({ ...runtimeRecord(), admission, timings }), info, 'deployment', 'POST', 'rpc').request_id, requestID)
+  const database_timings = { version: 1, source: 'postgrest_server_timing', state: 'observed', sql_execution: 'unknown', pool_wait: 'unknown', phases: Object.fromEntries(['jwt', 'parse', 'plan', 'transaction', 'response'].map(phase => [phase, { duration_ms: 0, complete: true }])) }
+  assert.equal(matchingRuntimeLog(envelope({ ...runtimeRecord(), database_timings }), info, 'deployment', 'POST', 'rpc').request_id, requestID)
+  for (const change of [{ source: 'private-test-token' }, { sql_execution: 'observed' }, { pool_wait: 'observed' }, { phases: {} }, { phases: { ...database_timings.phases, transaction: { duration_ms: 0, complete: false } } }, { secret: 'private-test-token' }]) {
+    assert.throws(() => matchingRuntimeLog(envelope({ ...runtimeRecord(), database_timings: { ...database_timings, ...change } }), info, 'deployment', 'POST', 'rpc'), /runtime_log_database_timings_invalid/)
+  }
+  const unknownTiming = { version: 1, source: 'postgrest_server_timing', state: 'unknown', sql_execution: 'unknown', pool_wait: 'unknown', reason: 'missing_header' }
+  assert.equal(matchingRuntimeLog(envelope({ ...runtimeRecord(), database_timings: unknownTiming }), info, 'deployment', 'POST', 'rpc').request_id, requestID)
+  for (const invalid of [{}, [], { secret: timings.upstream }, { upstream: { complete: true } }, { upstream: { duration_ms: -1, complete: true } }, { upstream: { duration_ms: 10, complete: false } }, { upstream: { ...timings.upstream, secret: 'private-test-token' } }]) {
+    assert.throws(() => matchingRuntimeLog(envelope({ ...runtimeRecord(), timings: invalid }), info, 'deployment', 'POST', 'rpc'), /runtime_log_timings_invalid/)
+  }
+  for (const change of [{ outcome: 'queue_full' }, { active: 3 }, { queued: 9 }, { wait_ms: -1 }, { secret: 'private-test-token' }]) {
+    assert.throws(() => matchingRuntimeLog(envelope({ ...runtimeRecord(), admission: { ...admission, ...change } }), info, 'deployment', 'POST', 'rpc'), /runtime_log_admission_invalid/)
+  }
   assert.equal(matchingRuntimeLog('', info, 'deployment', 'POST', 'rpc'), null)
   assert.equal(matchingRuntimeLog('not JSON\n'+envelope({ ...runtimeRecord(), request_id: 'other' }), info, 'deployment', 'POST', 'rpc'), null)
   for (const change of [{ status: 409 }, { method: 'GET' }, { route: 'rest' }, { code: 'upstream_error' }, { outcome: 'aborted' }, { secret: 'private-test-token' }]) {
@@ -289,6 +306,9 @@ async function journey(t, failure = '') {
   }
   runner.captureContract = async () => '/simulated/contract.json'
   runner.qualifyRollout = async () => {}
+  runner.qualifyLoad = async () => runner.check('hosted_load_and_recovery', async () => {
+    if (failure === 'hosted-load') throw new CanaryFailure('hosted_load_failed')
+  })
   // The simulated API is immediately ready; no sleeping or provider access.
   runner.wait = async (read, ready) => { const value = await read(); assert.ok(ready(value), 'simulated operation must be complete'); return value }
   return runner
@@ -305,6 +325,7 @@ test('complete canary journey verifies three syncs, RPC grants, SDK logs, rotati
   assert.ok(report.checks.includes('rpc_denied_before_permission_setup'))
   assert.ok(report.checks.includes('schema_migration_sync_native_build'))
   assert.ok(report.checks.includes('credential_rotation_preserves_data'))
+  assert.ok(report.checks.includes('hosted_load_and_recovery'))
   assert.equal(report.deployments.length, 6)
   assert.deepEqual(report.rotation, { binding_id: 'api-binding', previous_generation: 1, current_generation: 2, completed: true })
   assert.doesNotMatch(await readFile(runner.evidence, 'utf8'), /private-test-token|postgres:\/\/|eyJ|atomic canary/)
@@ -314,6 +335,7 @@ for (const [failure, stage] of [
   ['sync-unverified','rpc_permissions_sync_native_build'], ['serving-stale','serving_fingerprint_agreement'],
   ['unsafe-log','typed_rpc_subject_isolation_and_logs'], ['rotated-rpc','credential_rotation_preserves_data'],
   ['rotation-unchanged','credential_rotation_preserves_data'],
+  ['hosted-load','hosted_load_and_recovery'],
 ]) test(`failed ${failure} canary retains redacted evidence and cleans resources`, async t => {
   const runner = await journey(t, failure)
   await assert.rejects(runner.run(), /staging_canary_failed/)

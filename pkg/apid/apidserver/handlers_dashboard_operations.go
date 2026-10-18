@@ -182,6 +182,8 @@ func dashboardOperationState(value api.OperationState) (string, string) {
 		return "Accepted", "pending"
 	case api.OperationRunning:
 		return "Running", "pending"
+	case api.OperationWaiting:
+		return "Waiting", "pending"
 	case api.OperationSucceeded:
 		return "Succeeded", "good"
 	case api.OperationFailed:
@@ -289,6 +291,11 @@ func projectDashboardOperationDetail(op state.Operation, slug string) dashboard.
 		DeploymentURL: "/dashboard/apps/" + url.PathEscape(slug) + "/deployments/" + url.PathEscape(op.DeploymentID),
 		ReleaseID:     op.ReleaseID, FailureCode: op.FailureCode, ExpiresAt: dashboardJobsTime(op.ExpiresAt),
 		ResultAvailable: len(op.Result) > 0, RecordURL: base, DeliveryID: op.CompletionDelivery.DeliveryID}
+	detail.DataRepair = op.DataRepair
+	detail.RepairURL = "/v1/apps/" + url.PathEscape(slug) + "/data-repair/review?source=" + url.QueryEscape(op.ID)
+	if op.DataRepair != nil {
+		detail.RepairURL = "/v1/apps/" + url.PathEscape(slug) + "/data-repair/review?operation=" + url.QueryEscape(op.ID)
+	}
 	detail.SubjectURL = dashboardOperationSubjectURL(slug, op.Scope, op.PlatformTenantID, op.Subject)
 	if op.CompletionDelivery.NextAttemptAt != nil {
 		detail.NextDeliveryAt = dashboardJobsTime(*op.CompletionDelivery.NextAttemptAt)
@@ -305,6 +312,10 @@ func projectDashboardOperationDetail(op state.Operation, slug string) dashboard.
 }
 
 func populateDashboardOperationDefinition(r *http.Request, log *slog.Logger, acct state.Account, op state.Operation, store state.OperationStore, detail *dashboard.CustomerOperationDetail) {
+	if op.DataRepair != nil {
+		detail.Stages = []string{"prepared", "rehearsing", "awaiting_approval", "approved", "applying", "succeeded"}
+		return
+	}
 	def, err := store.OperationDefinitionByID(r.Context(), acct.ID, op.DefinitionID)
 	if err != nil || def.AppID != op.AppID || def.DeploymentID != op.DeploymentID || def.Revision != op.DefinitionRevision {
 		detail.DefinitionError = "The pinned definition is unavailable. Reported progress remains visible below."
@@ -327,6 +338,10 @@ func populateDashboardOperationExecutions(r *http.Request, log *slog.Logger, acc
 		item := dashboard.CustomerOperationExecution{Generation: execution.Generation, InvocationID: execution.InvocationID,
 			URL: dashboardAsyncInvocationPath + url.PathEscape(execution.InvocationID), State: execution.State, Attempts: execution.Attempts,
 			CreatedAt: dashboardJobsTime(execution.CreatedAt)}
+		if execution.DataRepairID != "" {
+			item.InvocationID = execution.DataRepairID
+			item.URL = detail.RepairURL
+		}
 		if execution.CompletedAt != nil {
 			item.CompletedAt = dashboardJobsTime(*execution.CompletedAt)
 		}

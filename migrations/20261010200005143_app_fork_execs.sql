@@ -1,4 +1,5 @@
 -- filename: 20261010200005143_app_fork_execs.sql
+-- migration-compat: expand
 
 -- +goose Up
 -- +goose StatementBegin

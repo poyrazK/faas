@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // BuildPlan binds every proposed mutation to the desired revision, observed
@@ -128,6 +130,7 @@ func BuildPlan(desired DesiredState, observed ObservedState, owners []Ownership,
 		old := current[key]
 		plan.Changes = append(plan.Changes, Change{Resource: old.Resource, Path: old.Path, Action: "retain_unmanaged", Before: old.Value})
 	}
+	planWorkloadRetirements(&plan, compiled, ownership, overrides, options)
 	slices.SortFunc(plan.Changes, func(a, b Change) int {
 		return strings.Compare((Field{Resource: a.Resource, Path: a.Path}).Key(), (Field{Resource: b.Resource, Path: b.Path}).Key())
 	})
@@ -160,6 +163,17 @@ func BuildPlan(desired DesiredState, observed ObservedState, owners []Ownership,
 		return plan, err
 	}
 	plan.Hash = digest(preimage)
+	// Live work counts are review information, not a gate that prevents a busy
+	// workload from ever retiring. Mutation authority uses stable scoped inputs.
+	for _, impact := range observed.RetirementImpacts {
+		for _, change := range plan.Changes {
+			if change.Resource == impact.Resource && change.Path == "presence" && (change.Action == "remove" || change.Action == "remove_candidate") {
+				plan.RetirementImpacts = append(plan.RetirementImpacts, impact)
+				break
+			}
+		}
+	}
+	slices.SortFunc(plan.RetirementImpacts, func(a, b api.EnvironmentWorkloadRetirementImpact) int { return strings.Compare(a.Resource, b.Resource) })
 	return plan, nil
 }
 

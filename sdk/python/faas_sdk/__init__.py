@@ -66,12 +66,16 @@ from .crash_snapshots import (
 from .customer_operations import (
     CustomerOperationConflictError,
     CustomerOperationPublicationError,
-    CustomerOperationRequest,
     CustomerOperationTransaction,
-    awith_customer_operation_transaction,
-    customer_operation_receipt_schema,
-    customer_operation_request_digest,
-    customer_operation_request_from_headers,
+)
+from .data_repair import awith_data_repair_capture, with_data_repair_capture
+from .data_repair_readiness import acheck_data_repair_capture, check_data_repair_capture
+from .data_repair_transactions import (
+    DataRepairCaptureError,
+    awith_repairable_customer_operation_transaction,
+    awith_repairable_operation_transaction,
+    with_repairable_customer_operation_transaction,
+    with_repairable_operation_transaction,
 )
 from .dev_bridge import (
     DEV_BRIDGE_CONTEXT_HEADER,
@@ -247,6 +251,15 @@ __all__ = (
     "operation_request_digest",
     "operation_request_from_headers",
     "with_operation_transaction",
+    "with_data_repair_capture",
+    "awith_data_repair_capture",
+    "check_data_repair_capture",
+    "acheck_data_repair_capture",
+    "DataRepairCaptureError",
+    "with_repairable_operation_transaction",
+    "awith_repairable_operation_transaction",
+    "with_repairable_customer_operation_transaction",
+    "awith_repairable_customer_operation_transaction",
     "CustomerOperationConflictError",
     "CustomerOperationPublicationError",
     "CustomerOperationRequest",
@@ -580,6 +593,35 @@ from .commit_recovery_status import (
 )
 
 __all__ += ("adiagnose_commit_recovery_status", "CommitRecoveryStatusError", "aget_commit_recovery_status", "awatch_commit_recovery_status", "commit_recovery_status_settled")
+
+from ._binding_runner import (
+    BindingVerificationProgress,
+    BindingVerificationRecoveryError,
+    arun_binding_verification,
+    arun_project_binding_verification,
+    run_binding_verification,
+    run_project_binding_verification,
+)
+
+__all__ += (
+    "BindingVerificationRecoveryError", "BindingVerificationProgress",
+    "run_binding_verification", "run_project_binding_verification",
+    "arun_binding_verification", "arun_project_binding_verification",
+)
+from ._binding_creation import (
+    BindingVerificationCreationError,
+    acreate_binding_verification_from_review,
+    acreate_project_binding_verification_from_review,
+    areconcile_binding_verification_creation,
+    areconcile_project_binding_verification_creation,
+    create_binding_verification_from_review,
+    create_project_binding_verification_from_review,
+    reconcile_binding_verification_creation,
+    reconcile_project_binding_verification_creation,
+)
+
+__all__ += ('BindingVerificationCreationError', 'create_binding_verification_from_review', 'reconcile_binding_verification_creation', 'create_project_binding_verification_from_review', 'reconcile_project_binding_verification_creation', 'acreate_binding_verification_from_review', 'areconcile_binding_verification_creation', 'acreate_project_binding_verification_from_review', 'areconcile_project_binding_verification_creation')
+
 from .event_consumer_delivery_context import (
     EventConsumerDeliveryContext,
     EventConsumerDeliveryContextUnavailableError,
@@ -587,3 +629,255 @@ from .event_consumer_delivery_context import (
 )
 
 __all__ += ("EventConsumerDeliveryContext", "EventConsumerDeliveryContextUnavailableError", "event_consumer_delivery_context_from_headers")
+
+from ._event_deadline_policy import EVENT_DEADLINE_REASONS, EventDeadlinePolicyOptions, EventDeadlineTarget
+from .event_deadline_checkpoint import acknowledge_event_deadline_alerts, validate_event_deadline_checkpoint
+from .event_deadline_watch import (
+    EventDeadlineWatchCallbackError,
+    EventDeadlineWatchCancelled,
+    EventDeadlineWatchOptions,
+    awatch_event_subscription_deadlines,
+)
+
+__all__ += (
+    "EVENT_DEADLINE_REASONS", "EventDeadlinePolicyOptions", "EventDeadlineTarget",
+    "EventDeadlineWatchOptions", "EventDeadlineWatchCallbackError", "EventDeadlineWatchCancelled",
+    "awatch_event_subscription_deadlines", "validate_event_deadline_checkpoint", "acknowledge_event_deadline_alerts",
+)
+
+from ._event_deadline_policy import EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX, EventDeadlineRatioOptions
+
+__all__ += ("EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX", "EventDeadlineRatioOptions")
+
+from .event_deadline_investigation import (
+    EventDeadlineInvestigationOptions,
+    EventDeadlineInvestigationReadError,
+    ainvestigate_event_deadline_alert,
+)
+
+__all__ += (
+    "EventDeadlineInvestigationOptions", "EventDeadlineInvestigationReadError", "ainvestigate_event_deadline_alert",
+)
+
+from ._event_acknowledgment_protocol import (
+    EventAcknowledgmentWorkerCancellation,
+    EventAcknowledgmentWorkerCancelled,
+    EventAcknowledgmentWorkerError,
+    EventAcknowledgmentWorkerOptions,
+    EventAcknowledgmentWorkerResult,
+    EventAcknowledgmentWorkerStatus,
+)
+from .event_acknowledgment_worker import AsyncEventAcknowledgmentWorker
+
+__all__ += (
+    "AsyncEventAcknowledgmentWorker", "EventAcknowledgmentWorkerOptions", "EventAcknowledgmentWorkerResult",
+    "EventAcknowledgmentWorkerStatus", "EventAcknowledgmentWorkerError", "EventAcknowledgmentWorkerCancelled",
+    "EventAcknowledgmentWorkerCancellation",
+)
+
+from .event_acknowledgment_intent_recovery import (
+    EventAcknowledgmentIntentClaim,
+    aclaim_event_acknowledgment_intent,
+    arecover_next_event_acknowledgment_intent,
+)
+from .event_acknowledgment_intent_retry_policy import (
+    EventAcknowledgmentIntentRetryBudget,
+    EventAcknowledgmentIntentRetryPolicy,
+    EventAcknowledgmentIntentStoredRetryPolicy,
+)
+from .event_acknowledgment_intents import (
+    EventAcknowledgmentIntentError,
+    EventAcknowledgmentIntentParkedError,
+    EventAcknowledgmentIntentResult,
+    EventAcknowledgmentIntentStatus,
+    alist_event_acknowledgment_intents,
+    event_acknowledgment_intent_schema,
+    event_acknowledgment_intent_stored_retry_policy_schema,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentError", "EventAcknowledgmentIntentResult", "EventAcknowledgmentIntentStatus",
+    "EventAcknowledgmentIntentClaim", "aclaim_event_acknowledgment_intent",
+    "arecover_next_event_acknowledgment_intent", "alist_event_acknowledgment_intents",
+    "event_acknowledgment_intent_schema",
+    "EventAcknowledgmentIntentRetryPolicy", "EventAcknowledgmentIntentRetryBudget", "EventAcknowledgmentIntentParkedError",
+    "EventAcknowledgmentIntentStoredRetryPolicy", "event_acknowledgment_intent_stored_retry_policy_schema",
+)
+
+from .event_acknowledgment_intent_policy_adoption import (
+    EventAcknowledgmentIntentAdoptRetryPolicyOptions,
+    EventAcknowledgmentIntentPolicyAdoptionError,
+    EventAcknowledgmentIntentPolicyAdoptionReceipt,
+    aadopt_event_acknowledgment_intent_retry_policy,
+    event_acknowledgment_intent_policy_adoption_schema,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentAdoptRetryPolicyOptions", "EventAcknowledgmentIntentPolicyAdoptionError",
+    "EventAcknowledgmentIntentPolicyAdoptionReceipt", "aadopt_event_acknowledgment_intent_retry_policy",
+    "event_acknowledgment_intent_policy_adoption_schema",
+)
+
+from .event_acknowledgment_intent_retry_resume import (
+    EventAcknowledgmentIntentResumeRetryBudgetOptions,
+    EventAcknowledgmentIntentRetryResumeError,
+    EventAcknowledgmentIntentRetryResumeReceipt,
+    aget_event_acknowledgment_intent_retry_resume_candidate,
+    aresume_event_acknowledgment_intent_retry_budget,
+    event_acknowledgment_intent_retry_budget_schema,
+    event_acknowledgment_intent_retry_resume_schema,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentResumeRetryBudgetOptions", "EventAcknowledgmentIntentRetryResumeError",
+    "EventAcknowledgmentIntentRetryResumeReceipt", "aget_event_acknowledgment_intent_retry_resume_candidate",
+    "aresume_event_acknowledgment_intent_retry_budget", "event_acknowledgment_intent_retry_budget_schema",
+    "event_acknowledgment_intent_retry_resume_schema",
+)
+
+from .event_acknowledgment_intent_budget_adoption import (
+    EventAcknowledgmentIntentAdoptRetryBudgetOptions,
+    EventAcknowledgmentIntentBudgetAdoptionError,
+    EventAcknowledgmentIntentBudgetAdoptionReceipt,
+    aadopt_event_acknowledgment_intent_retry_budget,
+    aget_event_acknowledgment_intent_budget_adoption_candidate,
+    event_acknowledgment_intent_budget_adoption_schema,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentAdoptRetryBudgetOptions", "EventAcknowledgmentIntentBudgetAdoptionError",
+    "EventAcknowledgmentIntentBudgetAdoptionReceipt", "aadopt_event_acknowledgment_intent_retry_budget",
+    "aget_event_acknowledgment_intent_budget_adoption_candidate", "event_acknowledgment_intent_budget_adoption_schema",
+)
+
+from .event_acknowledgment_intent_health import (
+    EventAcknowledgmentIntentHealth,
+    EventAcknowledgmentIntentHealthOptions,
+    aget_event_acknowledgment_intent_health,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentHealth", "EventAcknowledgmentIntentHealthOptions",
+    "aget_event_acknowledgment_intent_health",
+)
+
+from .event_acknowledgment_intent_health_metrics import (
+    EventAcknowledgmentIntentHealthMetrics,
+    EventAcknowledgmentIntentHealthMetricsOptions,
+    EventAcknowledgmentIntentHealthMetricsSample,
+    EventAcknowledgmentIntentHealthMetricsSnapshot,
+)
+from .event_acknowledgment_intent_health_metrics_watch import awatch_event_acknowledgment_intent_health_metrics
+from .event_acknowledgment_intent_health_prometheus import (
+    EVENT_ACKNOWLEDGMENT_INTENT_HEALTH_PROMETHEUS_CONTENT_TYPE,
+    format_event_acknowledgment_intent_health_metrics,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentHealthMetrics", "EventAcknowledgmentIntentHealthMetricsOptions",
+    "EventAcknowledgmentIntentHealthMetricsSample", "EventAcknowledgmentIntentHealthMetricsSnapshot",
+    "awatch_event_acknowledgment_intent_health_metrics", "EVENT_ACKNOWLEDGMENT_INTENT_HEALTH_PROMETHEUS_CONTENT_TYPE",
+    "format_event_acknowledgment_intent_health_metrics",
+)
+
+from .event_acknowledgment_intent_watch import (
+    EventAcknowledgmentIntentAlert,
+    EventAcknowledgmentIntentWatchCallbackError,
+    EventAcknowledgmentIntentWatchOptions,
+    awatch_event_acknowledgment_intent_health,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentAlert", "EventAcknowledgmentIntentWatchCallbackError",
+    "EventAcknowledgmentIntentWatchOptions", "awatch_event_acknowledgment_intent_health",
+)
+
+from .event_acknowledgment_intent_checkpoint import (
+    EVENT_ACKNOWLEDGMENT_INTENT_OUTBOX_MAX,
+    acknowledge_event_acknowledgment_intent_alerts,
+    validate_event_acknowledgment_intent_checkpoint,
+)
+from .event_acknowledgment_intent_checkpoint_watch import (
+    EventAcknowledgmentIntentCheckpointWatchCallbackError,
+    EventAcknowledgmentIntentCheckpointWatchCancelled,
+    EventAcknowledgmentIntentCheckpointWatchOptions,
+    awatch_event_acknowledgment_intent_health_with_checkpoint,
+)
+
+__all__ += (
+    "EVENT_ACKNOWLEDGMENT_INTENT_OUTBOX_MAX", "acknowledge_event_acknowledgment_intent_alerts",
+    "validate_event_acknowledgment_intent_checkpoint", "EventAcknowledgmentIntentCheckpointWatchCallbackError",
+    "EventAcknowledgmentIntentCheckpointWatchCancelled", "EventAcknowledgmentIntentCheckpointWatchOptions",
+    "awatch_event_acknowledgment_intent_health_with_checkpoint",
+)
+
+from .event_consumer_processing import (
+    EventConsumerProcessingError,
+    EventConsumerProcessingLease,
+    aclaim_event_consumer_processing,
+    event_consumer_processing_schema,
+)
+
+__all__ += (
+    "EventConsumerProcessingError", "EventConsumerProcessingLease",
+    "aclaim_event_consumer_processing", "event_consumer_processing_schema",
+)
+
+from .event_acknowledgment_preparation import EventAcknowledgmentPreparedOptions
+
+__all__ += ("EventAcknowledgmentPreparedOptions",)
+
+from .event_consumer_processing_inspection import (
+    EventConsumerProcessingInspection,
+    ainspect_event_consumer_processing,
+)
+
+__all__ += ("EventConsumerProcessingInspection", "ainspect_event_consumer_processing")
+
+from .event_acknowledgment_preparation_events import (
+    EventAcknowledgmentPreparationEvent,
+    EventAcknowledgmentPreparationOutcome,
+    EventAcknowledgmentPreparationReason,
+    EventAcknowledgmentPreparationStage,
+)
+
+__all__ += (
+    "EventAcknowledgmentPreparationEvent", "EventAcknowledgmentPreparationOutcome",
+    "EventAcknowledgmentPreparationReason", "EventAcknowledgmentPreparationStage",
+)
+
+from .event_acknowledgment_preparation_metrics import (
+    EVENT_ACKNOWLEDGMENT_PREPARATION_DURATION_BUCKETS_MS,
+    EventAcknowledgmentPreparationHistogram,
+    EventAcknowledgmentPreparationMetrics,
+    EventAcknowledgmentPreparationMetricsSnapshot,
+)
+
+__all__ += (
+    "EVENT_ACKNOWLEDGMENT_PREPARATION_DURATION_BUCKETS_MS", "EventAcknowledgmentPreparationHistogram",
+    "EventAcknowledgmentPreparationMetrics", "EventAcknowledgmentPreparationMetricsSnapshot",
+)
+
+from .event_acknowledgment_preparation_prometheus import (
+    EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE,
+    format_event_acknowledgment_preparation_metrics,
+)
+
+__all__ += (
+    "EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE", "format_event_acknowledgment_preparation_metrics",
+)
+
+from .event_acknowledgment_intent_recovery_pass import (
+    EventAcknowledgmentIntentRecoveryPassCancelled,
+    EventAcknowledgmentIntentRecoveryPassCommitUnknownError,
+    EventAcknowledgmentIntentRecoveryPassError,
+    EventAcknowledgmentIntentRecoveryPassOptions,
+    EventAcknowledgmentIntentRecoveryPassResult,
+    arecover_event_acknowledgment_intents,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentRecoveryPassCancelled", "EventAcknowledgmentIntentRecoveryPassCommitUnknownError",
+    "EventAcknowledgmentIntentRecoveryPassError", "EventAcknowledgmentIntentRecoveryPassOptions",
+    "EventAcknowledgmentIntentRecoveryPassResult", "arecover_event_acknowledgment_intents",
+)

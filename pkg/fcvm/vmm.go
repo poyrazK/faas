@@ -161,7 +161,11 @@ type JailerVMM struct {
 	// evictedLine receives lines that cross the per-instance ring byte
 	// budget. Production supplies a bounded async archive sink; the callback
 	// must not perform disk or network I/O while the ring mutex is held.
-	evictedLine func(instance string, line logbuf.Line)
+	evictedLine           func(instance string, line logbuf.Line)
+	committedLine         func(appID string, line logbuf.Line)
+	instancePauseObserver func(string, bool)
+	instanceLogObserver   func(appID, deploymentID, instance string) (func(logbuf.Line), func())
+	instanceLogStops      map[string]func()
 	// retiredLines receives the lines a ring still holds when its VM is
 	// torn down. Without it a log volume under the ring budget never
 	// reaches the archive, so a parked instance had no retained logs.
@@ -637,8 +641,32 @@ func (v *JailerVMM) LogRing(instance string) *logbuf.Ring {
 // Returns the ring pointer for callers that want to pre-publish a line
 // (e.g. M6 builder VMs writing the build-done marker).
 func (v *JailerVMM) registerRing(instance string) *logbuf.Ring {
+	return v.registerAppRing(instance, "")
+}
+
+func (v *JailerVMM) registerAppRing(instance, appID string) *logbuf.Ring {
+	return v.registerDeploymentRing(instance, appID, "")
+}
+
+// registerLeaseRing registers the lease's ring with the app and deployment
+// identity the wake carried in its correlation fields. Builder VMs get an
+// anonymous ring, so build output never counts as the app's log lines
+// (ADR-746) or reaches app log observers.
+func (v *JailerVMM) registerLeaseRing(ctx context.Context, l Lease) *logbuf.Ring {
+	if l.IsBuilder {
+		return v.registerRing(l.Instance)
+	}
+	fields, _ := wire.FromContext(ctx)
+	return v.registerDeploymentRing(l.Instance, fields.AppID, fields.DeploymentID)
+}
+
+func (v *JailerVMM) registerDeploymentRing(instance, appID, deploymentID string) *logbuf.Ring {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	if stop := v.instanceLogStops[instance]; stop != nil {
+		stop()
+		delete(v.instanceLogStops, instance)
+	}
 	if old, ok := v.rings[instance]; ok {
 		_ = old.Close()
 	}
@@ -659,6 +687,26 @@ func (v *JailerVMM) registerRing(instance string) *logbuf.Ring {
 		evictedLine := v.evictedLine
 		r.SetEvictCallback(func(line logbuf.Line) {
 			evictedLine(instance, line)
+		})
+	}
+	var observe func(logbuf.Line)
+	if v.instanceLogObserver != nil && appID != "" {
+		var stop func()
+		observe, stop = v.instanceLogObserver(appID, deploymentID, instance)
+		if v.instanceLogStops == nil {
+			v.instanceLogStops = map[string]func(){}
+		}
+		v.instanceLogStops[instance] = stop
+	}
+	if (v.committedLine != nil || observe != nil) && appID != "" {
+		cb := v.committedLine
+		r.SetCommitCallback(func(line logbuf.Line) {
+			if cb != nil {
+				cb(appID, line)
+			}
+			if observe != nil {
+				observe(line)
+			}
 		})
 	}
 	v.rings[instance] = r
@@ -688,6 +736,40 @@ func (v *JailerVMM) WithSlowSubscriberCallback(cb func()) *JailerVMM {
 	v.slowSubscriber = cb
 	v.mu.Unlock()
 	return v
+}
+
+// WithLogCommitCallback observes newly received app log lines. App identity
+// comes from the scheduler's correlation envelope captured before guest startup.
+func (v *JailerVMM) WithLogCommitCallback(cb func(appID string, line logbuf.Line)) *JailerVMM {
+	v.mu.Lock()
+	v.committedLine = cb
+	v.mu.Unlock()
+	return v
+}
+
+// WithInstanceLogObserver installs bounded, non-blocking lifecycle and log callbacks.
+// Identities come from host context. Stop must be idempotent.
+func (v *JailerVMM) WithInstanceLogObserver(cb func(string, string, string) (func(logbuf.Line), func())) *JailerVMM {
+	v.mu.Lock()
+	v.instanceLogObserver = cb
+	v.mu.Unlock()
+	return v
+}
+
+// WithInstancePauseObserver reports successful host pause/resume transitions.
+func (v *JailerVMM) WithInstancePauseObserver(cb func(string, bool)) *JailerVMM {
+	v.mu.Lock()
+	v.instancePauseObserver = cb
+	v.mu.Unlock()
+	return v
+}
+func (v *JailerVMM) observeInstancePause(instance string, paused bool) {
+	v.mu.Lock()
+	cb := v.instancePauseObserver
+	v.mu.Unlock()
+	if cb != nil {
+		cb(instance, paused)
+	}
 }
 
 // WithLogEvictionCallback installs the per-line callback every future ring
@@ -744,6 +826,10 @@ func (v *JailerVMM) unregisterRing(instance string) {
 func (v *JailerVMM) retireRing(instance string, archive bool) {
 	v.mu.Lock()
 	r, ok := v.rings[instance]
+	if stop := v.instanceLogStops[instance]; stop != nil {
+		stop()
+		delete(v.instanceLogStops, instance)
+	}
 	if ok {
 		delete(v.rings, instance)
 	}
@@ -1100,7 +1186,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 			_ = v.Kill(context.WithoutCancel(ctx), l)
 		}
 	}()
-	_ = v.registerRing(l.Instance)
+	_ = v.registerLeaseRing(ctx, l)
 
 	cfg = v.withBalloon(cfg)
 	cfg = v.withPmemBase(l, cfg)
@@ -2155,7 +2241,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// Move 4 (issue #254): register the per-instance ring BEFORE
 	// startJailer so cmd.Stdout captures every byte the resumed FC
 	// writes, including the boot echo and the resume hook's ack.
-	_ = v.registerRing(l.Instance)
+	_ = v.registerLeaseRing(ctx, l)
 	networkWait, networkSetup, err := awaitWakeNetwork(ctx)
 	if err != nil {
 		return err
@@ -2196,6 +2282,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if err = v.loadRestoredSnapshot(ctx, l, root, spec, body); err != nil {
 		return fmt.Errorf("vmm: load snapshot: %w", err)
 	}
+	v.observeInstancePause(l.Instance, spec.KeepPaused)
 	tLoad := time.Now()
 	// A warm-pool restore deliberately remains paused. The guest resume hook
 	// and readiness probe belong to the later in-place resume, after the
@@ -3798,6 +3885,7 @@ func (v *JailerVMM) ResumeVM(ctx context.Context, l Lease) error {
 	// a real failure and bubbles up.
 	var apiErr *fcAPIError
 	if errors.As(err, &apiErr) && apiErr.statusCode == http.StatusConflict {
+		v.observeInstancePause(l.Instance, false)
 		return nil
 	}
 	return fmt.Errorf("vmm: resume: %w", err)
@@ -6529,19 +6617,29 @@ func characterizationBootOutcome(report api.CharacterizationReport, executionMod
 		case "worker":
 			return true, nil
 		case "job", "http", "graphql", "grpc":
-			return true, fmt.Errorf("execution mode %q conflicts with characterized class %q (port=%d, exit_code=%d)", executionMode, report.ObservedClass, report.ObservedPort, report.ExitCode)
+			return true, executionModeConflict(executionMode, report)
 		}
 	case api.ExecutionModeJob:
 		switch report.ObservedClass {
 		case "job":
 			return true, nil
 		case "worker", "http", "graphql", "grpc":
-			return true, fmt.Errorf("execution mode %q conflicts with characterized class %q (port=%d, exit_code=%d)", executionMode, report.ObservedClass, report.ObservedPort, report.ExitCode)
+			return true, executionModeConflict(executionMode, report)
 		}
 	default:
 		return true, fmt.Errorf("unsupported execution mode %q", executionMode)
 	}
 	return false, nil
+}
+
+// executionModeConflict is the customer's declared mode disagreeing with what
+// the workload did at startup: a worker that bound a port or exited, a job
+// that served. production-us hunt #10 (H10-135): the plain error surfaced as
+// "internal", so the status page counted it as a platform failure and the
+// owner got no stable code.
+func executionModeConflict(executionMode string, report api.CharacterizationReport) error {
+	return api.NewProblem(422, api.CodeExecutionModeConflict, "execution mode conflicts with the app's behavior",
+		fmt.Sprintf("execution mode %q conflicts with characterized class %q (port=%d, exit_code=%d)", executionMode, report.ObservedClass, report.ObservedPort, report.ExitCode))
 }
 
 // loopbackBindProblem names a readiness failure whose only observed listener
@@ -7365,7 +7463,15 @@ func (v *JailerVMM) apiPut(ctx context.Context, instance, path string, body any)
 }
 
 func (v *JailerVMM) apiPatch(ctx context.Context, instance, path string, body any) error {
-	return v.apiCall(ctx, http.MethodPatch, instance, path, body)
+	err := v.apiCall(ctx, http.MethodPatch, instance, path, body)
+	if err == nil && path == "/vm" {
+		if payload, ok := body.(map[string]any); ok {
+			if state, ok := payload["state"].(string); ok && (state == "Paused" || state == "Resumed") {
+				v.observeInstancePause(instance, state == "Paused")
+			}
+		}
+	}
+	return err
 }
 
 // fcAPIError (issue #470 / PR #470-FU-A) is the typed error

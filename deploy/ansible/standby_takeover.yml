@@ -1,0 +1,16 @@
+# ADR-1344 §8: install the control-plane files staged on the promoted
+# standby, before it is bootstrapped as the control plane. Run it after
+# postgres_promote.yml and before the manifest is changed, while the host is
+# still in the postgres_standby group (docs/runbooks/ControlPlaneFailover.md).
+
+- name: Install the staged control-plane files on the promoted standby
+  hosts: postgres_standby
+  gather_facts: false
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+  tasks:
+    - name: Install the staged control-plane files
+      ansible.builtin.include_role:
+        name: control_plane_standby
+        tasks_from: takeover

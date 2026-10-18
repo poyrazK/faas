@@ -71,6 +71,9 @@ export async function startMcpTaskRuntime(config, {
   if (role === 'observer' && !metricsSettings) throw new Error('MCP task observer requires scaling metric credentials');
 
   const pool = createPool({ connectionString: settings.databaseURL, max: 4, connectionTimeoutMillis: 5000, statement_timeout: 10_000, application_name: 'gregale-mcp-tasks' });
+  // An idle client dropped by a database restart must not crash the runtime;
+  // driver errors can carry connection details, so report a fixed message.
+  pool.on?.('error', () => console.error('MCP task database connection unavailable'));
   let taskRuntime;
   let metricsPublisher;
   try {

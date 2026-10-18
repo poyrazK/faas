@@ -31,7 +31,9 @@ class OperatorIntentAcceptedResponse:
     under operator.action.{park_instance, restart_instance,
     force_cold_boot} with target_account_id = the instance's /
     app's owning account. StatusURL is the relative path;
-    clients prepend the apid base URL.
+    clients prepend the apid base URL. The exact response is retained for
+    matching request-key retries independently of target state and audit
+    queue retention (ADR-1524).
 
     """
 
@@ -41,7 +43,8 @@ class OperatorIntentAcceptedResponse:
     status_url: str
     """Relative path to GET /v1/admin/operator-intents/{intent_id}."""
     expires_at: datetime.datetime
-    """Recommended horizon to stop polling (UTC, RFC 3339)."""
+    """Advisory horizon for one polling session (UTC, RFC 3339), retained unchanged on replay. This is not receipt
+    expiry."""
     kind: OperatorIntentAcceptedResponseKind
     reason: str
     instance_id: UUID | Unset = UNSET

@@ -133,6 +133,11 @@ func newRetryRoundTripper(next http.RoundTripper, max int, backoff time.Duration
 // The sleep is context-aware: a cancelled or expired request
 // context aborts the wait and returns the context error.
 func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Outbox policy recovery owns retry scheduling and must see Retry-After.
+	if managed, _ := req.Context().Value(eventOutboxPolicyContextKey{}).(bool); managed {
+		return r.next.RoundTrip(req)
+	}
+
 	// Session and URL capabilities are returned once. Repeating creation
 	// could leave inaccessible authority or another capacity reservation.
 	path := strings.TrimRight(req.URL.Path, "/")

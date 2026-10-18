@@ -9,22 +9,20 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
 	"golang.org/x/sys/unix"
 )
 
-// EventPublishEndpoint is the stable in-guest endpoint applications use to
-// publish an internal event without carrying a control-plane credential.
-// guest-init forwards the request over the instance-bound Firecracker vsock;
-// vmmd supplies the tenant identity from its live-instance map.
-const EventPublishEndpoint = "http://169.254.169.254/v1/events:publish"
-
+// EventPublishEndpoint (metadata_port.go) is the in-guest endpoint
+// applications use to publish an internal event without carrying a
+// control-plane credential. guest-init forwards the request over the
+// instance-bound Firecracker vsock; vmmd supplies the tenant identity from its
+// live-instance map.
 const (
-	eventPublishListenAddr = "169.254.169.254:80"
-	eventPublishPath       = "/v1/events:publish"
-	eventPublishType       = byte(0x07)
-	eventPublishMaxBody    = 64 << 10
+	eventPublishType    = byte(0x07)
+	eventPublishMaxBody = 64 << 10
 )
 
 // startEventPublishProxy exposes the metadata-style event ingress inside the
@@ -38,7 +36,9 @@ func startEventPublishProxy(log *slog.Logger) error {
 	if err := configureMetadataLoopback(); err != nil {
 		return err
 	}
-	ln, err := net.Listen("tcp4", eventPublishListenAddr)
+	// Leave port 80 to a workload that serves it; see metadata_port.go.
+	setMetadataProxyPort(metadataProxyPort(metadataWorkloadTCPPorts(os.DirFS("/"))))
+	ln, err := net.Listen("tcp4", metadataListenAddr)
 	if err != nil {
 		return fmt.Errorf("event publish proxy listen: %w", err)
 	}

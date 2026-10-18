@@ -414,6 +414,9 @@ func (c CredentialMaterial) Validate() error {
 
 type CredentialRequest struct {
 	ProviderResourceID string
+	// BindingID identifies owner-approved policies across credential generations.
+	// Standalone provider qualification requests may omit it.
+	BindingID string
 	// IdentityKey is a stable, non-secret identity for one credential
 	// generation. Rotation uses a new key; revocation repeats the key that
 	// created the credential.
@@ -881,6 +884,7 @@ type Database struct {
 	Health             *HealthSummary
 	ID                 string
 	AccountID          string
+	OrgID              string
 	Name               string
 	Spec               Spec
 	BackendID          string
@@ -921,6 +925,7 @@ const (
 type Binding struct {
 	ID                   string
 	AccountID            string
+	DatabaseAccountID    string
 	DatabaseID           string
 	AppID                string
 	Scope                string

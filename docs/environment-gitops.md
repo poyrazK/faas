@@ -293,11 +293,24 @@ and guest-init built from the same checkout. Run it with
 checkout, refuses active Gregale services, checks leaks before and after, and
 requires the named metal test to pass rather than skip. Set the host class to
 `nested-diagnostic` only for troubleshooting; that result cannot qualify a
-production gate. A passing journey would prove API serving through the gateway,
-a completed scoped customer queue delivery for the applied Git revision, and
+production gate. A passing journey must prove API serving through the gateway,
+a completed scoped customer queue delivery for each applied generation, and
 repair of a console change after its temporary override expires while the
-graph is serving. Dedicated native results and outage/rollback on that graph
-remain outstanding.
+graph is serving. It observes activation before sending the delivery needed to
+prove mixed-graph serving; it never waits for an applied revision before
+admitting that first customer message.
+
+The resilience cases inject source unavailability through the real githubd RPC
+client, restart apid during that outage and while an image pull is held, and
+supersede the held revision through HTTP review and approval. A later case
+restarts schedd after activation with an accepted customer delivery in flight.
+The reviewed rollback must obtain a fresh graph and native qualification at a
+new generation, preserve accepted queue identities, and serve another customer
+delivery before convergence. Slow gateway requests continue throughout these
+transitions; a failed request or a response from the superseded image fails the
+journey. The guarded runner allows up to 90 minutes and retains its pre-run and
+post-run leak checks. These cases still require execution on the exclusive
+native host; no passing dedicated native result has been established.
 
 ## Next implementation steps
 

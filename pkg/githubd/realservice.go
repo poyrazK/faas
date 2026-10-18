@@ -103,7 +103,9 @@ type RealService struct {
 	Streamer SourceRefStreamer
 	// BranchHeads resolves branch refs for webhook freshness checks and the
 	// source-ref promotion guard.
-	BranchHeads BranchHeadClient
+	BranchHeads    BranchHeadClient
+	CIPullRequests CIPullRequestClient
+	CIChanges      CIChangedFilesClient
 	// ProtectedBranches observes policy evidence without approving revisions.
 	ProtectedBranches ProtectedBranchClient
 	ReviewedMerges    ReviewedMergeClient
@@ -397,6 +399,9 @@ func (s *RealService) ExchangeOAuthCode(accountID, code, stateStr string) (strin
 		TokenExpiresAt:   expiresAt,
 		AuditGithubLogin: auditLogin,
 	}); err != nil {
+		if errors.Is(err, state.ErrConflict) {
+			return "", "", api.ErrGitHubAccountConflict()
+		}
 		return "", "", fmt.Errorf("githubd: persist install state: %w", err)
 	}
 

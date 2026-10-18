@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/outbound"
+	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
 
 const outboundIdentityEndpoint = "http://127.0.0.1:2773/oidc/token"
@@ -52,7 +52,7 @@ func outboundProbe(ctx context.Context, spec api.OutboundBindingProbeSpec, clien
 		report.Gateway.Status, report.Error = "failed", "outbound gateway request invalid"
 		return report
 	}
-	req.Header.Set(outbound.WorkloadIdentityHeader, token)
+	req.Header.Set(workloadidentity.OutboundHeader, token)
 	req.Header.Set("Cache-Control", "no-cache, no-store")
 	resp, err := clone.Do(req)
 	if err != nil {

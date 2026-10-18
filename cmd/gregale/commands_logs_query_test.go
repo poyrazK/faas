@@ -83,6 +83,13 @@ func TestCmdLogsHTTPFiltersUseRequestDatabase(t *testing.T) {
 func TestCmdLogsRelativeSinceReachesRuntimeAsTimestamp(t *testing.T) {
 	var gotSince string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// An explicit window first lists instances so parked ones are read
+		// from the retained archive (H10-100); none are parked here.
+		if r.URL.Path == "/v1/apps/myapp/instances" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `[]`)
+			return
+		}
 		if r.URL.Path != "/v1/apps/myapp/logs" {
 			t.Errorf("path = %q, want runtime log endpoint", r.URL.Path)
 		}

@@ -81,6 +81,17 @@ func HelloQueueWorkerImage(repo string) (fakeImage, string) {
 	return layeredHelloImageOnPortWithCmd(repo, "queue worker", false, 8080, []string{"/hello-server", "-queue-ack"})
 }
 
+// HelloGitOpsRequestImage adds bounded slow requests for native cutover tests.
+func HelloGitOpsRequestImage(repo, body string) (fakeImage, string) {
+	return layeredHelloImageOnPortWithCmd(repo, body, false, 8080, []string{"/hello-server", "-gitops-resilience"})
+}
+
+// HelloGitOpsWorkerImage can hold a specifically marked customer delivery.
+// Qualification smoke payloads remain immediate and never enter that hold.
+func HelloGitOpsWorkerImage(repo string) (fakeImage, string) {
+	return layeredHelloImageOnPortWithCmd(repo, "queue worker", false, 8080, []string{"/hello-server", "-queue-ack", "-gitops-resilience"})
+}
+
 // ImageOnlyBuilderBaseImage is a startup fixture for metal tests that deploy
 // full-rootfs OCI images and never launch a source builder. imaged still stages
 // and validates its builder base before subscribing, so this image carries the
@@ -187,17 +198,23 @@ func HelloImageWithoutHealthz(repo, helloBody string) (fakeImage, string) {
 // numeric user/group, working directory, and image environment in a shell-free
 // full-rootfs image. Its /contract endpoint exposes only fixed fixture fields.
 func HelloImageWithProcessContract(repo, body, user string) (fakeImage, string) {
-	return helloImageWithProcessContract(repo, body, user, false)
+	return helloImageWithProcessContract(repo, body, user, false, 8080)
+}
+
+// HelloImageWithProcessContractOnPort is HelloImageWithProcessContract served
+// on an image-declared port. An empty user models an image without USER.
+func HelloImageWithProcessContractOnPort(repo, body, user string, port int) (fakeImage, string) {
+	return helloImageWithProcessContract(repo, body, user, false, port)
 }
 
 // HelloImageWithProcessHealthcheck adds a shell-free OCI exec probe that
 // reports its process context to the fixture's /contract endpoint.
 func HelloImageWithProcessHealthcheck(repo, body, user string) (fakeImage, string) {
-	return helloImageWithProcessContract(repo, body, user, true)
+	return helloImageWithProcessContract(repo, body, user, true, 8080)
 }
 
-func helloImageWithProcessContract(repo, body, user string, healthcheck bool) (fakeImage, string) {
-	img, _ := HelloImage(repo, body)
+func helloImageWithProcessContract(repo, body, user string, healthcheck bool, port int) (fakeImage, string) {
+	img, _ := layeredHelloImageOnPort(repo, body, false, port)
 	var cfg map[string]any
 	if err := json.Unmarshal(img.configBytes, &cfg); err != nil {
 		panic(err)
@@ -590,6 +607,7 @@ type FakeRegistry struct {
 	authUser string
 	authPass string
 	tokens   map[string]struct{} // issued bearer tokens; opaque random strings
+	holds    map[string]*registryRepositoryHold
 }
 
 // NewFakeRegistry returns a running registry bound to 127.0.0.1. The caller
@@ -726,12 +744,21 @@ func (f *FakeRegistry) Host() string {
 // AddImage installs an image under repo (e.g. "library/hello"). Returns the
 // digest-pinned reference the e2e test passes to apid.
 func (f *FakeRegistry) AddImage(repo string, img fakeImage) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.images[repo] = img
 	return fmt.Sprintf("%s/%s@%s", f.Host(), repo, img.manifestDigest)
 }
 
 // Close shuts down the httptest server.
-func (f *FakeRegistry) Close() { f.srv.Close() }
+func (f *FakeRegistry) Close() {
+	f.mu.Lock()
+	for _, hold := range f.holds {
+		hold.release()
+	}
+	f.mu.Unlock()
+	f.srv.Close()
+}
 
 // route dispatches /v2/<repo>/manifests/<ref> and /v2/<repo>/blobs/<digest>.
 // No auth — the harness is local-only.
@@ -759,10 +786,21 @@ func (f *FakeRegistry) route(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	f.mu.Lock()
 	img, ok := f.images[repo]
+	hold := f.holds[repo]
+	f.mu.Unlock()
 	if !ok {
 		http.Error(w, "unknown repo", http.StatusNotFound)
 		return
+	}
+	if hold != nil {
+		hold.enteredOnce.Do(func() { close(hold.entered) })
+		select {
+		case <-hold.done:
+		case <-r.Context().Done():
+			return
+		}
 	}
 	switch kind {
 	case "manifests":

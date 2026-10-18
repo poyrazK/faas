@@ -563,6 +563,13 @@ func TestOrgRemoval_EndsTheMembersAccess(t *testing.T) {
 	if code := call(bobKey, "GET", "/v1/orgs/offboard-team/members", ""); code != http.StatusOK {
 		t.Fatalf("member listing members = %d, want 200", code)
 	}
+	personalKey, personalHash, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.store.CreateAPIKey(t.Context(), bob.ID, personalHash, "personal", api.ScopesAdminOnly); err != nil {
+		t.Fatal(err)
+	}
 	if err := env.store.RemoveOrgMember(t.Context(), org.ID, bob.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -571,9 +578,15 @@ func TestOrgRemoval_EndsTheMembersAccess(t *testing.T) {
 		{"GET", "/v1/orgs/offboard-team/keys", ""},
 		{"POST", "/v1/orgs/offboard-team/members", `{"email":"bob-again@example.com","role":"admin"}`},
 	} {
-		if code := call(bobKey, c.method, c.path, c.body); code != http.StatusForbidden {
-			t.Errorf("removed member %s %s = %d, want 403", c.method, c.path, code)
+		if code := call(bobKey, c.method, c.path, c.body); code != http.StatusUnauthorized {
+			t.Errorf("revoked org key %s %s = %d, want 401", c.method, c.path, code)
 		}
+		if code := call(personalKey, c.method, c.path, c.body); code != http.StatusForbidden {
+			t.Errorf("removed member's personal key %s %s = %d, want 403", c.method, c.path, code)
+		}
+	}
+	if code := call(personalKey, "GET", "/v1/apps", ""); code != http.StatusOK {
+		t.Errorf("personal access after removal = %d, want 200", code)
 	}
 }
 
@@ -581,7 +594,7 @@ func TestOrgRemoval_EndsTheMembersAccess(t *testing.T) {
 // cascade with the account, so purging the only owner of a shared org left
 // its members with an ownerless org nobody could transfer, delete or
 // manage. Self-service deletion now asks for the org to be handed over or
-// deleted first; an org with no other member does not block.
+// deleted first, including when the owner is its only remaining member.
 func TestDeleteAccount_RefusedWhileOwningASharedOrgWithMembers(t *testing.T) {
 	env, _ := setupChangePlan(t, api.PlanPro, "")
 	call := func(method, path, body string) *httptest.ResponseRecorder {
@@ -615,8 +628,14 @@ func TestDeleteAccount_RefusedWhileOwningASharedOrgWithMembers(t *testing.T) {
 	if err := env.store.RemoveOrgMember(t.Context(), org.ID, carol.ID); err != nil {
 		t.Fatal(err)
 	}
+	if rec := call("DELETE", "/v1/account", ""); rec.Code != http.StatusConflict {
+		t.Fatalf("delete while sole owner = %d %s, want 409", rec.Code, rec.Body)
+	}
+	if err := env.store.SoftDeleteOrg(t.Context(), org.ID); err != nil {
+		t.Fatal(err)
+	}
 	if rec := call("DELETE", "/v1/account", ""); rec.Code != http.StatusOK {
-		t.Fatalf("delete once the org has no other member = %d %s, want 200", rec.Code, rec.Body)
+		t.Fatalf("delete after deleting the org = %d %s, want 200", rec.Code, rec.Body)
 	}
 }
 

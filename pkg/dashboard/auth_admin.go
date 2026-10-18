@@ -9,5 +9,23 @@ package dashboard
 type AuthAdminData struct {
 	Slug, AuthOrigin, Message string
 	CSRFToken, Changed, Error string
-	Providers                 []string
+	// RestartPending reports a change saved while the app was already
+	// restarting, which may not have loaded it.
+	RestartPending bool
+	Providers      []string
+	// Keys are the sealed signing keys; the script joins them with the
+	// running app's published keys to show each key's state. MaxKeys is
+	// api.AuthMaxSigningKeys.
+	Keys    []AuthKey
+	MaxKeys int
+	// EmailProviders are the HTTPS email services the Auth app sends
+	// through; SMSProviders the services it texts sign-in codes through.
+	EmailProviders, SMSProviders []string
+}
+
+// AuthKey is a sealed signing key: Signer reports an AUTH_JWT_SIGNER_<ID>
+// marker, which makes it the signer once the app restarts.
+type AuthKey struct {
+	ID, CreatedAt string
+	Signer        bool
 }

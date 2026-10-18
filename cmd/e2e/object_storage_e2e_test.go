@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -212,8 +213,18 @@ func seedObjectStorageAccounting(t *testing.T, env objectStorageE2EEnv, accountI
 		t.Fatal("PgStore does not implement object accounting")
 	}
 	token := "e2e-inventory-" + bucket.ID
-	if err := accounting.ClaimObjectInventory(ctx, bucket.ID, token); err != nil {
-		t.Fatalf("claim object inventory: %v", err)
+	// The real daemon may own its startup inventory sweep. Wait for that
+	// lease to complete rather than racing it or replacing its authority.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		err := accounting.ClaimObjectInventory(ctx, bucket.ID, token)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, state.ErrConflict) || time.Now().After(deadline) {
+			t.Fatalf("claim object inventory: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	if err := accounting.FinishObjectInventory(ctx, bucket.ID, token, 0, 0); err != nil {
 		t.Fatalf("finish object inventory: %v", err)
@@ -592,6 +603,7 @@ type objectStorageS3Stub struct {
 	buckets       map[string]map[string]objectStorageS3Object
 	multiparts    map[string]objectStorageS3Multipart
 	createCalls   map[string]int
+	putCalls      map[string]int
 	completeCalls map[string]int
 	nextUploadID  int
 	failComplete  bool
@@ -602,7 +614,7 @@ func newObjectStorageS3Stub(t *testing.T) *objectStorageS3Stub {
 	stub := &objectStorageS3Stub{
 		buckets:     make(map[string]map[string]objectStorageS3Object),
 		multiparts:  make(map[string]objectStorageS3Multipart),
-		createCalls: make(map[string]int), completeCalls: make(map[string]int),
+		createCalls: make(map[string]int), putCalls: make(map[string]int), completeCalls: make(map[string]int),
 	}
 	stub.server = httptest.NewServer(http.HandlerFunc(stub.handle))
 	t.Cleanup(stub.server.Close)
@@ -669,6 +681,9 @@ func (s *objectStorageS3Stub) handle(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && key == "" && query.Has("versioning"):
 		s3StubXML(w, `<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"/>`)
 	case r.Method == http.MethodPut && key != "" && query.Get("uploadId") == "":
+		s.mu.Lock()
+		s.putCalls[bucket+"/"+key]++
+		s.mu.Unlock()
 		body, err := io.ReadAll(io.LimitReader(r.Body, api.MaxObjectSinglePutBytes+1))
 		if err != nil {
 			s3StubError(w, http.StatusInternalServerError, "InternalError", "read failed")

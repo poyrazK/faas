@@ -1385,64 +1385,6 @@ func TestForwardingReverseProxy_StreamOtherErrorIs502(t *testing.T) {
 	}
 }
 
-// TestStripHopByHop is a focused unit test for the header-stripping
-// function. It catches the easy mistake of forgetting a header (e.g.
-// Transfer-Encoding when the inbound used chunked) before a
-// real-world client trips over it.
-func TestStripHopByHop(t *testing.T) {
-	in := http.Header{}
-	in.Set("Connection", "close")
-	in.Set("Keep-Alive", "timeout=5")
-	in.Set("Transfer-Encoding", "chunked")
-	in.Set("Upgrade", "h2c")
-	in.Set("Proxy-Authenticate", "Basic realm=x")
-	in.Set("Proxy-Authorization", "Basic xyz")
-	in.Set("Te", "trailers")
-	in.Set("Trailers", "X-Some-Trailer")
-	in.Set("X-Custom", "keep")
-	in.Set("Authorization", "keep")
-
-	out := stripHopByHopTest(in)
-	for _, k := range []string{
-		"Connection", "Keep-Alive", "Transfer-Encoding", "Upgrade",
-		"Proxy-Authenticate", "Proxy-Authorization", "Te", "Trailers",
-	} {
-		if out.Get(k) != "" {
-			t.Errorf("hop-by-hop header %q leaked: %q", k, out.Get(k))
-		}
-	}
-	if out.Get("X-Custom") != "keep" {
-		t.Errorf("X-Custom lost")
-	}
-	if out.Get("Authorization") != "keep" {
-		t.Errorf("Authorization lost")
-	}
-}
-
-// stripHopByHopTest is a thin shim into the gateway package so we
-// can unit-test it without exporting the production symbol.
-func stripHopByHopTest(h http.Header) http.Header {
-	return stripHopByHopImpl(h)
-}
-
-// indirection so the package symbol isn't pulled into the test file
-// unless the production code re-exports it. For now we just take the
-// local copy; future refactors can swap to a public symbol without
-// changing the tests.
-//
-// (This keeps the test pass even if the gateway package decides to
-// keep stripHopByHop unexported forever.)
-func stripHopByHopImpl(h http.Header) http.Header {
-	out := h.Clone()
-	for _, k := range []string{
-		"Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization",
-		"Te", "Trailers", "Transfer-Encoding", "Upgrade",
-	} {
-		out.Del(k)
-	}
-	return out
-}
-
 // TestForwardingReverseProxyWithEvents_EmitsProxyFirstByte pins the
 // wake.proxy_first_byte emit (issue #517 / PR-C / ADR-064). The
 // forwarder is the customer-facing "how long until the upstream

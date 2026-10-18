@@ -218,8 +218,12 @@ type AppManifest struct {
 	RestartPolicy    string                `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
-	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
-	Tracing          *TracingConfig        `json:"tracing,omitempty"`
+	// Pause declares when the platform may pause the VM (ADR-1151):
+	// between_requests, when_idle or never. Empty selects the default for
+	// the app's type (EffectivePause).
+	Pause     string           `json:"pause,omitempty"`
+	Profiling *ProfilingConfig `json:"profiling,omitempty"`
+	Tracing   *TracingConfig   `json:"tracing,omitempty"`
 	// StartupDeadlineS is the upper bound on time-to-ready. After this
 	// many seconds without reaching READY the instance transitions to
 	// FAILED with lifecycle_failure_reason='startup_fail' (ADR-138
@@ -234,6 +238,10 @@ type AppManifest struct {
 	// Zero inherits the plan/type default; positive values are bounded by
 	// the plan request-budget ceiling.
 	RequestTimeoutS int `json:"request_timeout_s,omitempty"`
+	// FunctionConcurrency is how many requests one Node or Python function
+	// worker serves at once (ADR-1342). Zero and one keep one request per
+	// worker; the plan's per-VM concurrency bound caps it.
+	FunctionConcurrency int `json:"function_concurrency,omitempty"`
 	// ServiceReplicas is the per-deployment replica scaffold (ADR-137
 	// §Decision 3). Only honoured when ExecutionMode=service. M-2
 	// lays the schema + admission; M-4 workstream E lands the
@@ -722,6 +730,12 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	if m.BeforeCheckpoint != nil && m.EffectiveExecutionMode() != ExecutionModeRequest && m.EffectiveExecutionMode() != ExecutionModeService {
 		return fmt.Errorf("app manifest: before_checkpoint requires request or service execution mode")
 	}
+	if err := ValidatePause(m.Pause); err != nil {
+		return fmt.Errorf("app manifest: %w", err)
+	}
+	if m.Pause != "" && m.Pause != PauseNever && m.EffectiveExecutionMode() != ExecutionModeRequest {
+		return fmt.Errorf("app manifest: pause %s requires request execution mode; worker, service and job workloads never idle out", m.Pause)
+	}
 	if err := m.ValidateCrawlerPolicy(); err != nil {
 		return fmt.Errorf("app manifest: %w", err)
 	}
@@ -858,6 +872,9 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	requestTimeoutCap := int(limits.RequestBudgetMaxDuration() / time.Second)
 	if requestTimeoutCap > 0 && m.RequestTimeoutS > requestTimeoutCap {
 		return fmt.Errorf("app manifest: request_timeout_s %d exceeds plan %q cap %d", m.RequestTimeoutS, plan, requestTimeoutCap)
+	}
+	if m.FunctionConcurrency < 0 || m.FunctionConcurrency > limits.ConcurrencyPerVMBound {
+		return fmt.Errorf("app manifest: function_concurrency %d must be between 0 and %d on plan %q", m.FunctionConcurrency, limits.ConcurrencyPerVMBound, plan)
 	}
 	// ServiceReplicas shape: only meaningful when ExecutionMode=service.
 	// Rejecting the other modes here prevents a stale replica policy from

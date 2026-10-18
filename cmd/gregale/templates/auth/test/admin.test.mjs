@@ -181,3 +181,24 @@ test('lists organizations and shows members and pending invitations', async t =>
   assert.equal(detail.body.invitations[0].email, 'b@example.test')
   assert.equal((await call('GET', '/admin/v1/orgs/nope', { key })).status, 400)
 })
+
+test('lists sign-in activity newest first, for everyone or one user', async t => {
+  const { key, hash } = newAdminKey()
+  const entry = i => ({ id: `e${i}`, created_at: `t${i}`, action: 'login', actor: 'user', user_id: user, email: 'a@example.test' })
+  const pool = fakePool(() => ({ rows: [entry(1), entry(2), entry(3)] }))
+  const call = await serve(t, { admin: fakeAdmin([]).admin, pool, keys: adminKeyHashes({ AUTH_ADMIN_KEY_0A1B2C3D: hash }) })
+  const listed = await call('GET', `/admin/v1/activity?user=${user}&per_page=2&page=3&search=log%25in`, { key })
+  assert.equal(listed.status, 200)
+  // One extra row tells the page there is more, without counting the log.
+  assert.deepEqual(listed.body, { entries: [entry(1), entry(2)], more: true, page: 3, per_page: 2 })
+  const { sql, args } = pool.log.at(-1)
+  assert.match(sql, /FROM auth\.audit_log_entries/)
+  assert.match(sql, /ORDER BY created_at DESC/)
+  assert.deepEqual(args, [user, 'log%in', '%log\\%in%', 3, 4, '00000000-0000-0000-0000-000000000000'])
+  // An administrator's action counts against the affected user.
+  assert.match(sql, /payload->'traits'->>'user_id' = \$1/)
+  assert.deepEqual((await call('GET', '/admin/v1/activity', { key })).body.more, false)
+  assert.equal(pool.log.at(-1).args[0], '')
+  assert.equal((await call('GET', '/admin/v1/activity?user=not-a-uuid', { key })).status, 400)
+  assert.equal((await call('GET', '/admin/v1/activity')).status, 401)
+})

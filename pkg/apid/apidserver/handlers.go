@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/meter"
@@ -108,6 +109,9 @@ func (s *server) resolveOverflowNode(ctx context.Context, wire *string, strictEm
 
 func (s *server) listApps(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	apps, err := s.store.ListApps(r.Context(), acct.ID)
+	if err == nil {
+		apps, err = appaccess.VisibleApps(r, s.store, actorAccount(r, acct), apps)
+	}
 	if err != nil {
 		s.log.Error("list apps failed", "account", acct.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("could not list apps"))
@@ -172,6 +176,15 @@ func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 }
 
 func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct state.Account, orgID string) {
+	if orgID != "" {
+		policy, err := state.AppResourceAccount(r.Context(), s.store, state.App{AccountID: acct.ID, OrgID: orgID})
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not resolve organization application policy"))
+			return
+		}
+		acct = policy
+	}
+
 	var req api.CreateAppRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
@@ -202,9 +215,9 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, prob)
 		return
 	}
-	// AccountID remains the creator and the current quota/billing identity;
+	// AccountID remains the creator and legacy storage/runtime/billing identity;
 	// the org-scoped route stamps the workspace attribution that activity
-	// producers and timeline reads treat as canonical.
+	// producers, app quota admission and timeline reads treat as canonical.
 	app.OrgID = orgID
 	// Stamp the resolved UUID (or nil) onto the App before the
 	// store layer sees it. The store writes the column verbatim
@@ -215,11 +228,8 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 	// PlacementClaimSubscriber stamps the owner (see emitAppCreated
 	// for the full architectural rationale + docs/adr/055).
 	app.NodeID = ""
-	// Deployed-app count quota + insert happen in the same critical
-	// section inside the store (PgStore: SELECT … FOR UPDATE on the
-	// parent accounts row; MemStore: m.mu). This closes the TOCTOU the
-	// previous CountDeployedApps + CreateApp pair exposed on Free/Hobby
-	// accounts under concurrency (spec §4.2).
+	// The store serializes quota counting/insertion across creators and holds
+	// the organization plan stable. Personal pools exclude company apps.
 	created, err := s.createAppIfUnderQuotaWithActivity(r.Context(), r, acct, app, limits)
 	if err != nil {
 		var qe *state.QuotaError
@@ -227,7 +237,9 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 		case state.ServiceCapacityProblem(err) != nil:
 			api.WriteProblem(w, state.ServiceCapacityProblem(err))
 		case errors.As(err, &qe):
-			api.WriteProblem(w, api.ErrPlanLimitApps(limits, qe.Observed))
+			api.WriteProblem(w, appaccess.QuotaProblem(qe, limits))
+		case errors.Is(err, state.ErrOrgAppAdmissionUnavailable):
+			api.WriteProblem(w, appaccess.AdmissionUnavailableProblem())
 		case errors.Is(err, state.ErrConflict):
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 				"Slug taken", fmt.Sprintf("app slug %q is already in use", req.Slug)))
@@ -274,6 +286,10 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if typ == state.AppTypeFunction && !api.ValidFunctionRuntime(req.Runtime) {
 		return state.App{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid runtime", "functions require runtime "+strings.Join(api.FunctionRuntimes, ", "))
+	}
+	if typ == state.AppTypeApp && req.Runtime != "" {
+		return state.App{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Runtime is only valid for functions", "omit runtime for type app; the container supplies its own process")
 	}
 	visibility := api.AppVisibility(req.Visibility)
 	if visibility == "" {
@@ -712,7 +728,7 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 	}
 	if !isDigestPinned(req.Image) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeImageRequired,
-			"Image required", "image: deploys require a digest-pinned reference, e.g. registry.gregale.dev/app@sha256:..."))
+			"Image digest required", "image: deploys require a digest-pinned reference, e.g. registry.gregale.dev/app@sha256:..."))
 		return
 	}
 	// Pre-CreateDeployment validation gates (#472 / #460 / #463).
@@ -937,12 +953,14 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 	// the time it lands in the store, so we never see one here.
 	ea := egressStringList(a.EgressAllowlist)
 	return api.AppResponse{
-		ID: a.ID, Slug: a.Slug, Type: string(a.Type), WorkloadClass: string(a.WorkloadClass), Runtime: a.Runtime,
+		ServiceBindingFingerprint: state.ServiceBindingFingerprint(a),
+		ID:                        a.ID, Slug: a.Slug, Type: string(a.Type), WorkloadClass: string(a.WorkloadClass), Runtime: a.Runtime,
 		Visibility: string(api.NormalizeAppVisibility(a.Visibility)),
 		RAMMB:      a.RAMMB, VCPU: api.VCPUPerPlan[plan], CPUMillicores: effectiveAppCPUMillicores(a, plan),
 		ResourceProfile: api.ResourceProfileForResources(a.RAMMB, effectiveAppCPUMillicores(a, plan)),
 		MaxConcurrency:  a.MaxConcurrency, IdleTimeoutS: a.IdleTimeoutS,
-		RequestTimeoutS: a.Manifest.RequestTimeoutS,
+		RequestTimeoutS:     a.Manifest.RequestTimeoutS,
+		FunctionConcurrency: a.Manifest.FunctionConcurrency,
 		// Issue #559: platform-advertised per-VM concurrency cap
 		// for the customer's plan. Distinct from MaxConcurrency
 		// (the per-app instance cap above). Unknown plans fall
@@ -980,11 +998,13 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 			WorkerReplicas:               apiManifestFromState(a.Manifest).WorkerReplicas,
 			AfterRestore:                 a.Manifest.AfterRestore,
 			BeforeCheckpoint:             a.Manifest.BeforeCheckpoint,
+			Pause:                        a.Manifest.Pause,
 			Profiling:                    a.Manifest.Profiling,
 			Tracing:                      a.Manifest.Tracing,
 			StartupDeadlineS:             a.Manifest.StartupDeadlineS,
 			MaxRetries:                   a.Manifest.MaxRetries,
 			RequestTimeoutS:              a.Manifest.RequestTimeoutS,
+			FunctionConcurrency:          a.Manifest.FunctionConcurrency,
 			ServiceReplicas:              apiManifestFromState(a.Manifest).ServiceReplicas,
 			Favicon:                      append([]byte(nil), a.Manifest.Favicon...),
 			RobotsTxt:                    a.Manifest.RobotsTxt,

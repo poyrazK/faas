@@ -102,3 +102,95 @@ func TestCharacterClassesNeedNoEscaping(t *testing.T) {
 		}
 	}
 }
+
+func TestPasskeySettings(t *testing.T) {
+	set, unset, err := Change{Passkeys: ptr(true), PasskeyRPID: ptr("example.com")}.Secrets()
+	if err != nil || !reflect.DeepEqual(set, map[string]string{"GOTRUE_PASSKEY_ENABLED": "true", "AUTH_PASSKEY_RP_ID": "example.com"}) || len(unset) != 0 {
+		t.Fatalf("set = %v unset = %v err = %v", set, unset, err)
+	}
+	set, unset, err = Change{Passkeys: ptr(false), PasskeyRPID: ptr("")}.Secrets()
+	if err != nil || set["GOTRUE_PASSKEY_ENABLED"] != "false" || !reflect.DeepEqual(unset, []string{"AUTH_PASSKEY_RP_ID"}) {
+		t.Fatalf("clearing: set = %v unset = %v err = %v", set, unset, err)
+	}
+	for _, bad := range []string{"localhost", "Example.com", "example..com", "-example.com", "https://example.com", "example.com/", "*.example.com"} {
+		if _, _, err := (Change{PasskeyRPID: ptr(bad)}).Secrets(); err == nil {
+			t.Errorf("passkey domain %q accepted", bad)
+		}
+	}
+}
+
+func TestBrandingCaptchaAndRetention(t *testing.T) {
+	set, unset, err := Change{
+		UIName: ptr("Shop"), UIColor: ptr("#4F46E5"), UILogoURL: ptr("https://cdn.example.com/logo.svg"),
+		Captcha:               &Captcha{Provider: "turnstile", SiteKey: "1x00000000000000000000AA", Secret: "1x0000000000000000000000000000000AA"},
+		ActivityRetentionDays: ptr(90),
+	}.Secrets()
+	want := map[string]string{
+		"AUTH_UI_NAME": "Shop", "AUTH_UI_COLOR": "#4f46e5", "AUTH_UI_LOGO_URL": "https://cdn.example.com/logo.svg",
+		"GOTRUE_SECURITY_CAPTCHA_ENABLED": "true", "GOTRUE_SECURITY_CAPTCHA_PROVIDER": "turnstile",
+		"GOTRUE_SECURITY_CAPTCHA_SECRET": "1x0000000000000000000000000000000AA", "AUTH_CAPTCHA_SITE_KEY": "1x00000000000000000000AA",
+		"AUTH_AUDIT_RETENTION_DAYS": "90",
+	}
+	if err != nil || !reflect.DeepEqual(set, want) || len(unset) != 0 {
+		t.Fatalf("set = %v unset = %v err = %v", set, unset, err)
+	}
+	set, unset, err = Change{UIName: ptr(""), UIColor: ptr(""), UILogoURL: ptr(""), Captcha: &Captcha{}, ActivityRetentionDays: ptr(0)}.Secrets()
+	wantUnset := []string{"AUTH_UI_NAME", "AUTH_UI_COLOR", "AUTH_UI_LOGO_URL", "GOTRUE_SECURITY_CAPTCHA_PROVIDER", "GOTRUE_SECURITY_CAPTCHA_SECRET", "AUTH_CAPTCHA_SITE_KEY", "AUTH_AUDIT_RETENTION_DAYS"}
+	if err != nil || !reflect.DeepEqual(set, map[string]string{"GOTRUE_SECURITY_CAPTCHA_ENABLED": "false"}) || !reflect.DeepEqual(unset, wantUnset) {
+		t.Fatalf("clearing: set = %v unset = %v err = %v", set, unset, err)
+	}
+	for name, change := range map[string]Change{
+		"long name":        {UIName: ptr(strings.Repeat("x", 61))},
+		"markup name":      {UIName: ptr("<b>Shop</b>")},
+		"named colour":     {UIColor: ptr("red")},
+		"short colour":     {UIColor: ptr("#fff")},
+		"http logo":        {UILogoURL: ptr("http://cdn.example.com/logo.svg")},
+		"logo credentials": {UILogoURL: ptr("https://u:p@cdn.example.com/logo.svg")},
+		"recaptcha":        {Captcha: &Captcha{Provider: "recaptcha", SiteKey: "abcdefgh", Secret: "s"}},
+		"no site key":      {Captcha: &Captcha{Provider: "hcaptcha", Secret: "s"}},
+		"no secret":        {Captcha: &Captcha{Provider: "hcaptcha", SiteKey: "10000000-ffff-ffff-ffff-000000000001"}},
+		"negative days":    {ActivityRetentionDays: ptr(-1)},
+		"too many days":    {ActivityRetentionDays: ptr(3651)},
+	} {
+		if _, _, err := change.Secrets(); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}
+
+func TestMoreMFASettings(t *testing.T) {
+	on, off := true, false
+	set, _, err := Change{MFAPhone: &on, RecoveryCodes: &off}.Secrets()
+	want := map[string]string{"GOTRUE_MFA_PHONE_ENROLL_ENABLED": "true", "GOTRUE_MFA_PHONE_VERIFY_ENABLED": "true",
+		"GOTRUE_MFA_RECOVERY_CODES_ENROLL_ENABLED": "false", "GOTRUE_MFA_RECOVERY_CODES_VERIFY_ENABLED": "true"}
+	if err != nil || !reflect.DeepEqual(set, want) {
+		t.Fatalf("set %v err %v", set, err)
+	}
+}
+
+func TestOAuthServerSwitches(t *testing.T) {
+	set, unset, err := Change{OAuthServer: ptr(true), OAuthRegistration: ptr(false)}.Secrets()
+	if err != nil || !reflect.DeepEqual(set, map[string]string{"AUTH_OAUTH_SERVER": "1", "AUTH_OAUTH_REGISTRATION": "0"}) || len(unset) != 0 {
+		t.Fatalf("set = %v unset = %v err = %v", set, unset, err)
+	}
+	if (Change{OAuthRegistration: ptr(true)}).Empty() {
+		t.Fatal("a registration change is not empty")
+	}
+}
+
+func TestAnonymousUsersAndIdentityLinking(t *testing.T) {
+	set, unset, err := Change{Anonymous: ptr(true), AnonymousRetentionDays: ptr(30), IdentityLinking: ptr(true)}.Secrets()
+	want := map[string]string{"GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED": "true", "AUTH_ANONYMOUS_RETENTION_DAYS": "30", "AUTH_IDENTITY_LINKING": "1"}
+	if err != nil || !reflect.DeepEqual(set, want) || len(unset) != 0 {
+		t.Fatalf("set = %v unset = %v err = %v", set, unset, err)
+	}
+	set, unset, err = Change{Anonymous: ptr(false), AnonymousRetentionDays: ptr(0)}.Secrets()
+	if err != nil || set["GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED"] != "false" || !reflect.DeepEqual(unset, []string{"AUTH_ANONYMOUS_RETENTION_DAYS"}) {
+		t.Fatalf("off: set = %v unset = %v err = %v", set, unset, err)
+	}
+	for _, days := range []int{-1, 3651} {
+		if _, _, err := (Change{AnonymousRetentionDays: ptr(days)}).Secrets(); err == nil {
+			t.Fatalf("accepted %d days", days)
+		}
+	}
+}

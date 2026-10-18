@@ -165,3 +165,33 @@ func serviceProbeTestCertificate(t *testing.T, dnsName string) (tls.Certificate,
 	}
 	return cert, certPEM
 }
+
+func TestRunServiceBindingTargetProbeRequiresExactTargetEcho(t *testing.T) {
+	target := "11111111-1111-4111-8111-111111111111"
+	for _, echo := range []string{"", "22222222-2222-4222-8222-222222222222", target} {
+		t.Run(echo, func(t *testing.T) {
+			cert, ca := serviceProbeTestCertificate(t, "billing.internal")
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodHead || r.Header.Get(api.TargetDeploymentHeader) != target {
+					t.Fatal("wrong target request")
+				}
+				w.Header().Set(api.ServiceBindingProbeResponseHeader, api.ServiceBindingProbeVersion)
+				w.Header().Set(api.ServiceBindingProbeStageHeader, "complete")
+				if echo != "" {
+					w.Header().Set(api.TargetDeploymentHeader, echo)
+				}
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			server.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13}
+			server.StartTLS()
+			defer server.Close()
+			resolver := &serviceProbeTestResolver{addresses: []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}}
+			report := runServiceBindingTargetProbe(context.Background(), "billing", target, ca, resolver, func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
+			})
+			if report.Passed() != (echo == target) || report.TargetDeploymentID != target {
+				t.Fatalf("echo=%q report=%+v", echo, report)
+			}
+		})
+	}
+}

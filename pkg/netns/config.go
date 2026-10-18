@@ -90,12 +90,13 @@ func SetDefaultHostBridgeIP(addr netip.Addr) {
 //	                                  │  (veth pair)
 //	netns fc-<instance>:  vethPeer(10.100.x.y/16) ── [route/DNAT] ── tap0(10.0.0.1) ── guest(10.0.0.2)
 type Config struct {
-	Instance string     // instance id
-	Netns    string     // fc-<instance>
-	Tap      string     // tap0 (identical in every netns)
-	VethHost string     // root-ns end, enslaved to br-tenants
-	VethPeer string     // netns end, holds HostIP
-	HostIP   netip.Addr // routable identity, 10.100.x.y
+	RehearsalRunID string     // immutable, retained run-scoped outbound containment (ADR-20261017201005)
+	Instance       string     // instance id
+	Netns          string     // fc-<instance>
+	Tap            string     // tap0 (identical in every netns)
+	VethHost       string     // root-ns end, enslaved to br-tenants
+	VethPeer       string     // netns end, holds HostIP
+	HostIP         netip.Addr // routable identity, 10.100.x.y
 	// PrivateVethHost/PrivateVethPeer are an additive side-link for a
 	// Gregale-owned network. The public veth above remains attached to
 	// br-tenants; this pair is attached to the account-scoped gpn-* bridge.
@@ -613,6 +614,9 @@ func (c Config) NftCommands() [][]string {
 		if c.QualificationOnly {
 			proxyPorts = []int{ServiceProxyPort}
 		}
+		if c.RehearsalRunID != "" && !c.QualificationOnly {
+			proxyPorts = append(proxyPorts, rehearsalPostgresProxyPort, rehearsalObjectProxyPort)
+		}
 		for _, port := range proxyPorts {
 			add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 				"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(port), "accept")
@@ -621,10 +625,14 @@ func (c Config) NftCommands() [][]string {
 			add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 				"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(ServiceProxyHTTPSPort), "accept")
 		}
+		dnsPort := ServiceDiscoveryDNSPort
+		if c.RehearsalRunID != "" {
+			dnsPort = RehearsalServiceDiscoveryDNSPort
+		}
 		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
-			"ip", "daddr", c.HostBridgeIP.String(), "udp", "dport", strconv.Itoa(ServiceDiscoveryDNSPort), "accept")
+			"ip", "daddr", c.HostBridgeIP.String(), "udp", "dport", strconv.Itoa(dnsPort), "accept")
 		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
-			"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(ServiceDiscoveryDNSPort), "accept")
+			"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(dnsPort), "accept")
 	}
 	// PR scale-out tier-1 residual (Gap #4): per-netns operator
 	// exception accept rules. Each entry emits
@@ -856,6 +864,7 @@ func (c Config) NftCommands() [][]string {
 		add("add", "rule", "ip6", "faas", "forward", "iifname", c.Tap,
 			"counter", "name", EgressDenyCounterAllowlist, "drop")
 	}
+	cmds = append(cmds, c.RehearsalNftCommands()...)
 	return cmds
 }
 

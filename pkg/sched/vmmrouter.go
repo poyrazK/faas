@@ -191,7 +191,25 @@ type WarmResumeVMM interface {
 // surface; a node whose client lacks it answers 501 CodeNotImplemented.
 type FrozenVMM interface {
 	FreezeInstance(ctx context.Context, nodeID, instance string, reclaim bool) (FreezeReport, error)
-	ThawInstance(ctx context.Context, nodeID, instance string, imageHealthcheckRequired bool) (healthcheckVerified bool, err error)
+	ThawInstance(ctx context.Context, nodeID, instance string, req ThawRequest) (ThawResult, error)
+}
+
+// ThawRequest is the work schedd asks an in-place thaw to run before it
+// returns (ADR-1151).
+type ThawRequest struct {
+	// ImageHealthcheckRequired runs the image healthcheck the deployment
+	// requires, as a warm-pool resume does.
+	ImageHealthcheckRequired bool
+	// RunAfterRestore runs the guest's resume hook, and with it the app's
+	// after_restore callback, as a snapshot restore does.
+	RunAfterRestore bool
+}
+
+// ThawResult is the work vmmd confirmed the thaw ran. A vmmd that predates a
+// ThawRequest field leaves its confirmation false.
+type ThawResult struct {
+	HealthcheckVerified bool
+	AfterRestoreRan     bool
 }
 
 // DialFunc is the factory VMMRouter uses to open a per-target VMM
@@ -872,19 +890,19 @@ func (r *VMMRouter) FreezeInstance(ctx context.Context, nodeID, instance string,
 // ThawInstance implements FrozenVMM (ADR-1151). The scheduler admits the thaw
 // and commits FROZEN -> RUNNING separately; this only forwards the vmmd-side
 // resume.
-func (r *VMMRouter) ThawInstance(ctx context.Context, nodeID, instance string, imageHealthcheckRequired bool) (bool, error) {
+func (r *VMMRouter) ThawInstance(ctx context.Context, nodeID, instance string, req ThawRequest) (ThawResult, error) {
 	cli, err := r.resolveFor(ctx, nodeID)
 	if err != nil {
-		return false, err
+		return ThawResult{}, err
 	}
 	t, ok := cli.(interface {
-		ThawInstance(context.Context, string, bool) (bool, error)
+		ThawInstance(context.Context, string, ThawRequest) (ThawResult, error)
 	})
 	if !ok {
-		return false, api.NewProblem(501, api.CodeNotImplemented,
+		return ThawResult{}, api.NewProblem(501, api.CodeNotImplemented,
 			"Thaw unavailable", "vmmd client does not support in-place thaw")
 	}
-	return t.ThawInstance(ctx, instance, imageHealthcheckRequired)
+	return t.ThawInstance(ctx, instance, req)
 }
 
 // Destroy implements RoutedVMM.
@@ -1227,6 +1245,6 @@ var (
 	_ FrozenVMM = (*VMMRouter)(nil)
 	_           = interface {
 		FreezeInstance(context.Context, string, bool) (FreezeReport, error)
-		ThawInstance(context.Context, string, bool) (bool, error)
+		ThawInstance(context.Context, string, ThawRequest) (ThawResult, error)
 	}((*VMMClient)(nil))
 )

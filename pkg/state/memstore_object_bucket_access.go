@@ -37,9 +37,14 @@ func keySupportsObjectBucketPermission(key APIKey, permission string) bool {
 	}
 }
 
-func (m *MemStore) ListObjectBucketAccessGrants(_ context.Context, accountID, bucketID string) ([]ObjectBucketAccessGrant, error) {
+func (m *MemStore) ListObjectBucketAccessGrants(ctx context.Context, accountID, bucketID string) ([]ObjectBucketAccessGrant, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []ObjectBucketAccessGrant
+		return zero0, err
+	}
+
 	bucket, ok := m.objectBuckets[bucketID]
 	if !ok || bucket.AccountID != accountID || bucket.State == "deleted" || !m.cloneBucketAccessibleLocked(bucket) {
 		return nil, ErrNotFound
@@ -47,7 +52,7 @@ func (m *MemStore) ListObjectBucketAccessGrants(_ context.Context, accountID, bu
 	out := make([]ObjectBucketAccessGrant, 0)
 	for _, grant := range m.objectAccessGrants {
 		key, exists := m.keys[grant.APIKeyID]
-		if grant.AccountID != accountID || grant.BucketID != bucketID || !exists || key.AccountID != accountID {
+		if grant.AccountID != accountID || grant.BucketID != bucketID || !exists || !m.objectGrantKeyOwnedLocked(key, bucket) {
 			continue
 		}
 		grant.KeyLabel, grant.KeyStatus = key.Label, key.Status
@@ -59,12 +64,17 @@ func (m *MemStore) ListObjectBucketAccessGrants(_ context.Context, accountID, bu
 	return out, nil
 }
 
-func (m *MemStore) SetObjectBucketAccessGrant(_ context.Context, accountID, bucketID, keyID, permission string) (ObjectBucketAccessGrant, error) {
+func (m *MemStore) SetObjectBucketAccessGrant(ctx context.Context, accountID, bucketID, keyID, permission string) (ObjectBucketAccessGrant, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketAccessGrant
+		return zero0, err
+	}
+
 	bucket, bucketOK := m.objectBuckets[bucketID]
 	key, keyOK := m.keys[keyID]
-	if !bucketOK || bucket.AccountID != accountID || bucket.State == "deleted" || !m.cloneBucketAccessibleLocked(bucket) || !keyOK || key.AccountID != accountID {
+	if !bucketOK || bucket.AccountID != accountID || bucket.State == "deleted" || !m.cloneBucketAccessibleLocked(bucket) || !keyOK || !m.objectKeyBelongsLocked(key, bucket) {
 		return ObjectBucketAccessGrant{}, ErrNotFound
 	}
 	if (key.Status != string(APIKeyStatusActive) && key.Status != string(APIKeyStatusGrace)) || !keySupportsObjectBucketPermission(key, permission) {
@@ -82,9 +92,13 @@ func (m *MemStore) SetObjectBucketAccessGrant(_ context.Context, accountID, buck
 	return grant, nil
 }
 
-func (m *MemStore) DeleteObjectBucketAccessGrant(_ context.Context, accountID, bucketID, keyID string) error {
+func (m *MemStore) DeleteObjectBucketAccessGrant(ctx context.Context, accountID, bucketID, keyID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	mapKey := objectBucketAccessGrantKey(bucketID, keyID)
 	grant, ok := m.objectAccessGrants[mapKey]
 	if !ok || grant.AccountID != accountID {
@@ -94,16 +108,21 @@ func (m *MemStore) DeleteObjectBucketAccessGrant(_ context.Context, accountID, b
 	return nil
 }
 
-func (m *MemStore) ObjectBucketKeyCan(_ context.Context, accountID, bucketID, keyID, permission string) (bool, error) {
+func (m *MemStore) ObjectBucketKeyCan(ctx context.Context, accountID, bucketID, keyID, permission string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 bool
+		return zero0, err
+	}
+
 	if permission != ObjectBucketPermissionRead && permission != ObjectBucketPermissionWrite {
 		return false, ErrConflict
 	}
 	bucket, bucketOK := m.objectBuckets[bucketID]
 	key, keyOK := m.keys[keyID]
 	grant, grantOK := m.objectAccessGrants[objectBucketAccessGrantKey(bucketID, keyID)]
-	if !bucketOK || bucket.AccountID != accountID || bucket.State == "deleted" || !m.cloneBucketAccessibleLocked(bucket) || !keyOK || key.AccountID != accountID || !grantOK || grant.AccountID != accountID {
+	if !bucketOK || bucket.AccountID != accountID || bucket.State == "deleted" || !m.cloneBucketAccessibleLocked(bucket) || !keyOK || !m.objectKeyBelongsLocked(key, bucket) || !grantOK || grant.AccountID != accountID {
 		return false, nil
 	}
 	if key.Status != string(APIKeyStatusActive) && key.Status != string(APIKeyStatusGrace) {
@@ -121,17 +140,22 @@ func (m *MemStore) ObjectBucketKeyCan(_ context.Context, accountID, bucketID, ke
 	return grant.Permission == ObjectBucketPermissionWrite || grant.Permission == ObjectBucketPermissionReadWrite, nil
 }
 
-func (m *MemStore) ListObjectBucketsForKey(_ context.Context, accountID, appID, keyID string) ([]ObjectBucket, error) {
+func (m *MemStore) ListObjectBucketsForKey(ctx context.Context, accountID, appID, keyID string) ([]ObjectBucket, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []ObjectBucket
+		return zero0, err
+	}
+
 	key, ok := m.keys[keyID]
-	if !ok || key.AccountID != accountID || (key.Status != string(APIKeyStatusActive) && key.Status != string(APIKeyStatusGrace)) {
+	if !ok || (key.Status != string(APIKeyStatusActive) && key.Status != string(APIKeyStatusGrace)) {
 		return []ObjectBucket{}, nil
 	}
 	out := make([]ObjectBucket, 0)
 	for _, bucket := range m.objectBuckets {
 		grant, granted := m.objectAccessGrants[objectBucketAccessGrantKey(bucket.ID, keyID)]
-		if bucket.AccountID == accountID && bucket.AppID == appID && bucket.State != "deleted" && m.cloneBucketAccessibleLocked(bucket) && granted && grant.AccountID == accountID {
+		if bucket.AccountID == accountID && bucket.AppID == appID && m.objectKeyBelongsLocked(key, bucket) && bucket.State != "deleted" && m.cloneBucketAccessibleLocked(bucket) && granted && grant.AccountID == accountID {
 			out = append(out, bucket)
 		}
 	}

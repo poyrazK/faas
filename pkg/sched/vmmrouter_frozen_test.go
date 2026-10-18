@@ -25,17 +25,17 @@ func (f *frozenRouterVMM) FreezeInstance(_ context.Context, instance string, rec
 	return FreezeReport{Pause: time.Millisecond, ResidentBytesBefore: 64 << 20, ResidentBytesAfter: 64 << 20}, nil
 }
 
-func (f *frozenRouterVMM) ThawInstance(_ context.Context, instance string, imageHealthcheckRequired bool) (bool, error) {
+func (f *frozenRouterVMM) ThawInstance(_ context.Context, instance string, req ThawRequest) (ThawResult, error) {
 	f.thaws = append(f.thaws, instance)
-	f.check = imageHealthcheckRequired
-	return imageHealthcheckRequired, nil
+	f.check = req.ImageHealthcheckRequired
+	return ThawResult{HealthcheckVerified: req.ImageHealthcheckRequired}, nil
 }
 
 func TestVMMRouterFrozenTierUnsupportedClient(t *testing.T) {
 	r := NewVMMRouter(nil, nil, nil)
 	r.SetClient("node-1", &fakeRouterVMM{})
 	_, freezeErr := r.FreezeInstance(t.Context(), "node-1", "inst", false)
-	_, thawErr := r.ThawInstance(t.Context(), "node-1", "inst", false)
+	_, thawErr := r.ThawInstance(t.Context(), "node-1", "inst", ThawRequest{})
 	for name, err := range map[string]error{"freeze": freezeErr, "thaw": thawErr} {
 		var prob *api.Problem
 		if !errors.As(err, &prob) || prob.Code != api.CodeNotImplemented || prob.Status != 501 {
@@ -52,9 +52,9 @@ func TestVMMRouterFrozenTierForwardsToNode(t *testing.T) {
 	if err != nil || rep.ResidentBytesAfter != 64<<20 || rep.Pause != time.Millisecond {
 		t.Fatalf("FreezeInstance = %+v, %v", rep, err)
 	}
-	verified, err := r.ThawInstance(t.Context(), "node-1", "inst", true)
-	if err != nil || !verified {
-		t.Fatalf("ThawInstance = %v, %v", verified, err)
+	result, err := r.ThawInstance(t.Context(), "node-1", "inst", ThawRequest{ImageHealthcheckRequired: true})
+	if err != nil || !result.HealthcheckVerified {
+		t.Fatalf("ThawInstance = %+v, %v", result, err)
 	}
 	if len(node.freezes) != 1 || len(node.thaws) != 1 || !node.reclaim || !node.check {
 		t.Fatalf("node saw freezes=%v thaws=%v reclaim=%v check=%v", node.freezes, node.thaws, node.reclaim, node.check)

@@ -1,4 +1,5 @@
 -- filename: 20261008204918834_crash_captures.sql
+-- migration-compat: expand
 
 -- +goose Up
 -- +goose StatementBegin

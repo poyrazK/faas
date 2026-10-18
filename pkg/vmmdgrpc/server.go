@@ -261,6 +261,10 @@ type flowSnapshotter interface {
 
 // Server implements vmmdpb.VmmdServer.
 type Server struct {
+	parkStore     state.OperatorParkStore
+	parkNodeID    string
+	restartStore  state.OperatorRestartStore
+	restartNodeID string
 	vmmdpb.UnimplementedVmmdServer
 
 	// appTaskAttach pairs interactive app tasks with their attached client
@@ -331,7 +335,11 @@ type Server struct {
 	// migrationLeases is the optional durable source-side lease record. The
 	// in-memory tracker remains the hot cache for paused-VM handles; this store
 	// survives vmmd restarts and supplies those handles to Ack/Cancel/expiry.
-	migrationLeases state.MigrationLeaseStore
+	migrationLeases         state.MigrationLeaseStore
+	migrationAdmissions     state.MigrationAdmissionStore
+	migrationAdmissionAfter string // owned by LeaseExpiryLoop
+	migrationSources        state.MigrationSourceStore
+	migrationSourceAfter    string // owned by LeaseExpiryLoop
 	// nodeID is this vmmd's registered compute-node identity. Lease
 	// expiry uses it to distinguish a source VM that still belongs
 	// here from a row already committed to a peer; without that
@@ -418,6 +426,8 @@ func (s *Server) WithEvents(p *events.Platform) *Server {
 func (s *Server) WithMigrationStore(store state.Store) *Server {
 	if s != nil {
 		s.migrationStore = store
+		s.migrationAdmissions, _ = store.(state.MigrationAdmissionStore)
+		s.migrationSources, _ = store.(state.MigrationSourceStore)
 		s.migrationLeases = nil
 		if leases, ok := store.(state.MigrationLeaseStore); ok {
 			s.migrationLeases = leases
@@ -1331,7 +1341,34 @@ func (s *Server) Destroy(ctx context.Context, req *vmmdpb.DestroyRequest) (*vmmd
 	const op = "Destroy"
 	start := time.Now()
 	exportDir := s.exportDirFor(req.GetInstance())
-	code, err := s.vmm.DestroyWithExport(ctx, req.GetInstance(), exportDir)
+	var code int
+	var err error
+	if req.GetRehearsalColdPreparationId() != "" && req.GetRehearsalWorkerFaultId() != "" {
+		return nil, status.Error(codes.InvalidArgument, "one rehearsal retirement authority is required")
+	}
+	if prep := req.GetRehearsalColdPreparationId(); prep != "" {
+		owner, ok := s.vmm.(interface {
+			RetireRehearsalCold(context.Context, string, string) error
+		})
+		if !ok {
+			err = status.Error(codes.Unimplemented, "cold-start rehearsal retirement unavailable")
+			s.ops.Observe(op, time.Since(start), err)
+			return nil, err
+		}
+		err = owner.RetireRehearsalCold(ctx, req.GetInstance(), prep)
+	} else if fault := req.GetRehearsalWorkerFaultId(); fault != "" {
+		terminator, ok := s.vmm.(interface {
+			TerminateRehearsalWorker(context.Context, string, string) error
+		})
+		if !ok {
+			err = status.Error(codes.Unimplemented, "rehearsal worker termination unavailable")
+			s.ops.Observe(op, time.Since(start), err)
+			return nil, err
+		}
+		err = terminator.TerminateRehearsalWorker(ctx, req.GetInstance(), fault)
+	} else {
+		code, err = s.vmm.DestroyWithExport(ctx, req.GetInstance(), exportDir)
+	}
 	if err != nil {
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(toProblem(err))
@@ -1342,7 +1379,7 @@ func (s *Server) Destroy(ctx context.Context, req *vmmdpb.DestroyRequest) (*vmmd
 	s.ForgetActivity(req.GetInstance())
 	s.diverged.Forget(req.GetInstance())
 	s.ops.Observe(op, time.Since(start), nil)
-	return &vmmdpb.DestroyResponse{Instance: req.GetInstance(), ExitCode: int32(code)}, nil
+	return &vmmdpb.DestroyResponse{Instance: req.GetInstance(), ExitCode: int32(code), RehearsalWorkerFaultId: req.GetRehearsalWorkerFaultId(), RehearsalColdPreparationId: req.GetRehearsalColdPreparationId()}, nil
 }
 
 // StopInstance (M-2 / ADR-138 §Decision 1) is the graceful
@@ -2345,6 +2382,10 @@ func toProblem(err error) *api.Problem {
 	if errors.Is(err, fcvm.ErrInstanceFrozen) {
 		return api.NewProblem(409, api.CodeFrozenInstanceRefused,
 			"Instance frozen", "the instance is frozen; thaw or destroy it instead")
+	}
+	if errors.Is(err, fcvm.ErrCompressUnavailable) {
+		return api.NewProblem(409, api.CodeFrozenCompressUnavailable,
+			"Compression unavailable", "this host has no memory-only swap to compress a frozen instance into")
 	}
 	if errors.Is(err, fcvm.ErrBeforeCheckpointFailed) {
 		return api.NewProblem(422, api.CodeBeforeCheckpointFailed,

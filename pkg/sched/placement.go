@@ -48,9 +48,10 @@ const restorePressureHighWatermark = 2
 // target so the wake loop doesn't need a second lookup against the
 // compute_nodes table.
 type Placement struct {
-	NodeID    string
-	Name      string
-	TargetURL string // wire.ParseTarget-compatible (unix://|tcp://|dns://)
+	LifecycleGeneration int64
+	NodeID              string
+	Name                string
+	TargetURL           string // wire.ParseTarget-compatible (unix://|tcp://|dns://)
 	// Region is copied from compute_nodes at placement time so the wake
 	// identity can describe the locality that actually hosted the VM.
 	Region string
@@ -140,9 +141,10 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 	// through a parallel per-node usedVCPU map passed by the
 	// engine. (A zero-budget node with r.VCPU > 0 is excluded.)
 	var (
-		candidates []state.ComputeNode
-		warmFit    *state.ComputeNode
-		snapshotF  []state.ComputeNode
+		candidates                          []state.ComputeNode
+		warmFit                             *state.ComputeNode
+		snapshotF                           []state.ComputeNode
+		refusedRAM, refusedVCPU, refusedCPU bool
 	)
 	for i := range nodes {
 		n := nodes[i]
@@ -165,6 +167,7 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 			continue
 		}
 		if n.AdmissionCeilingMB <= 0 {
+			refusedRAM = true
 			continue
 		}
 		// Per-node vCPU budget gate (Tier A2). A node with
@@ -173,6 +176,7 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 		// (shouldn't happen — DEFAULT 160 — but a defensive
 		// zero-check) or a node that an operator drained.
 		if n.VCPUBudget <= 0 {
+			refusedVCPU = true
 			continue
 		}
 		// usedVCPU is keyed by node id; absent means 0. The
@@ -189,6 +193,7 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 				budget -= flexibleAppReserveVCPU
 			}
 			if used+int64(r.VCPU) > int64(budget) {
+				refusedVCPU = true
 				continue // this node can't fit the vCPU
 			}
 		}
@@ -203,6 +208,7 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 				budget -= flexibleAppReserveCPUMillicores
 			}
 			if budget <= 0 || usedCPUMillicores[n.ID]+int64(r.CPUMillicores) > budget {
+				refusedCPU = true
 				continue
 			}
 		}
@@ -212,6 +218,7 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 			ramCeiling -= flexibleAppReserveRAMMB
 		}
 		if used+billable > int64(ramCeiling) {
+			refusedRAM = true
 			continue // this node can't fit the request
 		}
 		candidates = append(candidates, n)
@@ -237,6 +244,7 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 		(r.PrioritizeSnapshotLocality || r.CPUMillicores <= 0 ||
 			cpuHeadroomMillicores(*warmFit, usedCPUMillicores[warmFit.ID]) >= maxCPUHeadroomMillicores(candidates, usedCPUMillicores)) {
 		return Placement{
+			LifecycleGeneration: warmFit.LifecycleGeneration,
 			NodeID:              warmFit.ID,
 			Name:                warmFit.Name,
 			TargetURL:           warmFit.TargetURL,
@@ -273,9 +281,24 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 	}
 
 	if len(candidates) == 0 {
-		return Placement{}, api.ErrCapacity(fmt.Sprintf(
+		// Capture the gates that actually removed candidates. Do not sum
+		// headroom across hosts or expose other tenants' reservations.
+		var blockers []api.WorkerAdmissionBlocker
+		if refusedRAM {
+			blockers = append(blockers, resourceBlocker("node_ram", "ram_mb", billable))
+		}
+		if refusedVCPU {
+			blockers = append(blockers, resourceBlocker("node_vcpu", "vcpu", int64(r.VCPU)))
+		}
+		if refusedCPU {
+			blockers = append(blockers, resourceBlocker("node_cpu", "cpu_millicores", int64(r.CPUMillicores)))
+		}
+		if len(blockers) == 0 {
+			blockers = append(blockers, api.WorkerAdmissionBlocker{Code: "no_admitting_nodes"})
+		}
+		return Placement{}, explainAdmission(api.ErrCapacity(fmt.Sprintf(
 			"placement: no active compute_node fits %d MB billable (per-node ceilings: see compute_nodes.admission_ceiling_mb) / %d guest vCPU (per-node budgets: see compute_nodes.vcpu_budget) / %d millicores (physical host CPU budget) across %d candidates",
-			billable, r.VCPU, r.CPUMillicores, len(nodes)))
+			billable, r.VCPU, r.CPUMillicores, len(nodes))), blockers...)
 	}
 
 	// Single best candidate — short-circuit the sort.
@@ -334,6 +357,7 @@ func restorePressureCanSelect(n state.ComputeNode, candidates []state.ComputeNod
 
 func placementForNode(n state.ComputeNode, usedMB int64) Placement {
 	return Placement{
+		LifecycleGeneration: n.LifecycleGeneration,
 		NodeID:              n.ID,
 		Name:                n.Name,
 		TargetURL:           n.TargetURL,

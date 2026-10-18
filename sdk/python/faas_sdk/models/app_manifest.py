@@ -19,6 +19,7 @@ from ..models.app_manifest_execution_mode_type_3_type_1 import (
     AppManifestExecutionModeType3Type1,
     check_app_manifest_execution_mode_type_3_type_1,
 )
+from ..models.app_manifest_pause import AppManifestPause, check_app_manifest_pause
 from ..models.app_manifest_restart_policy_type_1 import (
     AppManifestRestartPolicyType1,
     check_app_manifest_restart_policy_type_1,
@@ -139,10 +140,14 @@ class AppManifest:
     """Restart behaviour when the main workload exits (ADR-137 §Decision 2). Default is mode-derived: always for
     worker/service, no for job, on-failure for request."""
     after_restore: AfterRestoreHook | Unset = UNSET
-    """Optional loopback callback that must succeed after snapshot restore before the instance becomes ready."""
+    """Optional loopback callback that must succeed after snapshot restore, or after a frozen instance resumes,
+    before the instance becomes ready."""
     before_checkpoint: BeforeCheckpointHook | Unset = UNSET
     """Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables
     warm snapshots; snapshot reuse skips the callback."""
+    pause: AppManifestPause | Unset = UNSET
+    """The app's declared pause tier (ADR-1151). Absent means the default for its type: between_requests for a
+    function, when_idle for a request-mode app."""
     startup_deadline_s: int | None | Unset = UNSET
     """Upper bound on time-to-ready (seconds). Per-plan cap enforced by Validate() (ADR-138 §Decision 3). Default 0
     means 'use plan default'."""
@@ -151,6 +156,9 @@ class AppManifest:
     means 'use plan default'."""
     request_timeout_s: int | None | Unset = UNSET
     """Runtime request wall-clock timeout in seconds. 0 inherits the plan/type default."""
+    function_concurrency: int | None | Unset = UNSET
+    """Per-worker request concurrency imaged stamps into the function's build as FAAS_FUNCTION_CONCURRENCY
+    (ADR-1342). 0 or 1 means one request per worker."""
     service_replicas: ServiceReplicas | Unset = UNSET
     """Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E).
     Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
@@ -302,6 +310,10 @@ class AppManifest:
         if not isinstance(self.before_checkpoint, Unset):
             before_checkpoint = self.before_checkpoint.to_dict()
 
+        pause: str | Unset = UNSET
+        if not isinstance(self.pause, Unset):
+            pause = self.pause
+
         startup_deadline_s: int | None | Unset
         if isinstance(self.startup_deadline_s, Unset):
             startup_deadline_s = UNSET
@@ -319,6 +331,12 @@ class AppManifest:
             request_timeout_s = UNSET
         else:
             request_timeout_s = self.request_timeout_s
+
+        function_concurrency: int | None | Unset
+        if isinstance(self.function_concurrency, Unset):
+            function_concurrency = UNSET
+        else:
+            function_concurrency = self.function_concurrency
 
         service_replicas: dict[str, Any] | Unset = UNSET
         if not isinstance(self.service_replicas, Unset):
@@ -407,12 +425,16 @@ class AppManifest:
             field_dict["after_restore"] = after_restore
         if before_checkpoint is not UNSET:
             field_dict["before_checkpoint"] = before_checkpoint
+        if pause is not UNSET:
+            field_dict["pause"] = pause
         if startup_deadline_s is not UNSET:
             field_dict["startup_deadline_s"] = startup_deadline_s
         if max_retries is not UNSET:
             field_dict["max_retries"] = max_retries
         if request_timeout_s is not UNSET:
             field_dict["request_timeout_s"] = request_timeout_s
+        if function_concurrency is not UNSET:
+            field_dict["function_concurrency"] = function_concurrency
         if service_replicas is not UNSET:
             field_dict["service_replicas"] = service_replicas
         if worker_replicas is not UNSET:
@@ -724,6 +746,13 @@ class AppManifest:
         else:
             before_checkpoint = BeforeCheckpointHook.from_dict(_before_checkpoint)
 
+        _pause = d.pop("pause", UNSET)
+        pause: AppManifestPause | Unset
+        if isinstance(_pause, Unset):
+            pause = UNSET
+        else:
+            pause = check_app_manifest_pause(_pause)
+
         def _parse_startup_deadline_s(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -750,6 +779,15 @@ class AppManifest:
             return cast(int | None | Unset, data)
 
         request_timeout_s = _parse_request_timeout_s(d.pop("request_timeout_s", UNSET))
+
+        def _parse_function_concurrency(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        function_concurrency = _parse_function_concurrency(d.pop("function_concurrency", UNSET))
 
         _service_replicas = d.pop("service_replicas", UNSET)
         service_replicas: ServiceReplicas | Unset
@@ -832,9 +870,11 @@ class AppManifest:
             restart_policy=restart_policy,
             after_restore=after_restore,
             before_checkpoint=before_checkpoint,
+            pause=pause,
             startup_deadline_s=startup_deadline_s,
             max_retries=max_retries,
             request_timeout_s=request_timeout_s,
+            function_concurrency=function_concurrency,
             service_replicas=service_replicas,
             worker_replicas=worker_replicas,
             favicon=favicon,

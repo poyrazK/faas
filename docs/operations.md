@@ -119,6 +119,123 @@ described in the [workflow export starter](../examples/customer-operation-workfl
 See [ADR-672](adr/672-customer-workflow-operation-starter.md) and
 [ADR-676](adr/676-workflow-customer-operations.md). Admission remains closed.
 
+## Waits and approvals
+
+A workflow operation can pause without holding an app instance. Besides HTTP
+actions, its linear chain may contain a `wait_for_duration` timer or a
+`wait_for_callback` step that the definition declares as an approval:
+
+```yaml
+workflows:
+  - name: refund-chain
+    steps:
+      - {name: validate, path: /refunds/validate}
+      - {name: manager-approval, wait_for_callback: true, timeout: 72h, depends_on: [validate]}
+      - {name: cooling-off, wait_for_duration: 24h, depends_on: [manager-approval]}
+      - {name: refund, path: /refunds/execute, depends_on: [cooling-off]}
+operations:
+  - name: refund
+    workflow: refund-chain
+    progress_stages: [validate, manager-approval, cooling-off, refund]
+    approvals:
+      - {step: manager-approval, approver: account}
+```
+
+While parked, the operation is `waiting` with `waiting: {kind, step, since,
+until, approver}`; history records `waiting` and `resumed` events. The declared
+approver decides with `POST /v1/apps/{slug}/operations/{id}/approvals/{step}`
+(account) or `POST /v1/platform-tenant-self/customer-operations/{id}/approvals/{step}`
+(customer), sending `expected_generation`, `decision` (`approved` or `rejected`)
+and an optional comment, or run `gregale customer-operations approve OP_ID --app
+SLUG --expected-generation N --step STEP --decision approved` (`--self` with a
+customer token). The decision and the deciding key or token are recorded as an
+`approval_decided` event. Repeating a decision is idempotent; a different
+decision conflicts. Rejection settles the operation `failed` with
+`approval_rejected`; a passed approval timeout settles `approval_expired`. Waits
+never require reconciliation, and cancelling a waiting operation settles it
+`cancelled`. Generic workflow callback completion is refused for operation runs,
+so only the approval endpoints can resume an approval. Condition checks and
+branches remain unavailable to operations. See
+[ADR-1194](adr/1194-operation-waits-and-approvals.md).
+
+### Event waits and signals
+
+A step can also wait for something outside the app, such as a payment provider
+confirming a charge:
+
+```yaml
+      - {name: payment, wait_for_event: payment.succeeded, timeout: 24h, depends_on: [validate]}
+      - {name: ship, path: /orders/ship, depends_on: [payment], input: {charge: '{{steps.payment.output.charge}}'}}
+```
+
+An event wait needs a `timeout`. While parked, the operation is `waiting` with
+`waiting.kind: event` and `waiting.event`. Deliver the event with a signal:
+
+```sh
+gregale customer-operations signal OP_ID --app shop --event payment.succeeded \
+  --signal-id evt_3Nx --payload '{"charge":"ch_1"}'
+# Or reach every active operation about one business subject:
+gregale customer-operations signal --app shop --scope production --operation fulfil \
+  --subject order:ord_42 --event payment.succeeded --signal-id evt_3Nx
+```
+
+The API routes are `POST /v1/apps/{slug}/operations/{id}/signals` and
+`POST /v1/apps/{slug}/operation-signals`. Both take deploy-write scope and MFA.
+The payload becomes the wait step's output. `signal_id` makes delivery
+idempotent: repeating a signal returns its original receipt, and reusing the ID
+with a different event or payload is `409 operation_signal_conflict`.
+
+- An event the workflow never waits for is `422 operation_signal_unexpected`.
+- A settled operation takes no new signals (`409 operation_not_active`).
+- A signal that arrives before its wait is held and used when the wait starts.
+- A subject signal reaches at most 16 active operations of that definition,
+  matched by the [subject](#business-references) fixed at acceptance.
+- History records each delivery as a `signal_received` event.
+- A wait that times out settles `failed` with `event_timeout`.
+- Native workflow event injection is refused for operation runs, so every event
+  appears in the operation's history.
+
+See [ADR-1197](adr/1197-operation-event-waits-and-signals.md).
+
+## Deadlines and budgets
+
+A definition can bound each Operation it accepts:
+
+```yaml
+operations:
+  - name: refund
+    # ...contract fields...
+    limits:
+      deadline_seconds: 3600       # wall clock from acceptance, waits included
+      max_attempts: 5              # automatic attempts of one HTTP execution
+      max_execution_seconds: 300   # attempt runtime summed across generations
+```
+
+Each field is optional and bounded by the plan (see [Limits](#limits)). Limits
+are fixed when an Operation is accepted; a later definition does not change
+accepted work.
+
+- **Deadline.** The Operation settles `failed` with `failure_code:
+  deadline_exceeded` when its deadline passes, whether it is queued, retrying,
+  running or waiting for a timer or approval. Its completion callback fires.
+  An HTTP attempt still running at the deadline is cut. Unless the definition
+  declares `recovery: safe_to_retry`, that attempt needs reconciliation,
+  because Gregale cannot know whether it took effect. Workflow Operations
+  settle within one minute of the deadline.
+- **Attempts.** `max_attempts` becomes the HTTP execution's retry policy.
+- **Execution budget.** HTTP attempts are cut when the summed runtime reaches
+  `max_execution_seconds`; a retry that would start with no budget left settles
+  the Operation `failed` with `budget_exhausted`.
+- **Recovery** with `safe_to_retry` is refused (`409 operation_limit_exceeded`)
+  once a deadline has passed or the budget is spent. Recording an outcome is
+  still allowed.
+
+Workflow definitions accept only `deadline_seconds`; their steps carry their own
+retries and timeouts. Job definitions accept no limits. Reads return `limits`,
+`deadline_at` and `usage {execution_ms, attempts}`, and
+`gregale customer-operations get` prints the deadline and budget. See
+[ADR-1196](adr/1196-operation-deadlines-and-budgets.md).
+
 ## Contract
 
 `OperationDefinitionSpec` captures an HTTP target or named workflow, platform-tenant ownership,
@@ -291,6 +408,9 @@ allowance. The following are contract bounds, not a rollout announcement.
 | Artifacts per operation | 8 | 16 | 32 |
 | Bytes per artifact | 8 MiB | 32 MiB | 64 MiB |
 | Total artifact bytes per operation | 32 MiB | 128 MiB | 256 MiB |
+| Maximum `deadline_seconds` | 1 day | 7 days | 30 days |
+| Maximum `max_attempts` | 3 | 10 | 25 |
+| Maximum `max_execution_seconds` | 1 hour | 1 day | 7 days |
 
 Schemas are capped at 64 KiB, submission JSON at 1 MiB, and idempotency keys at
 128 bytes. Retained idempotency receipts outlive results. A replay during that
@@ -522,6 +642,29 @@ again. An identical accepted recovery request remains replayable with its origin
 revision. Completion notification recovery stays independent.
 See [ADR-660](adr/660-operation-recovery-inspection.md).
 
+## Read one operation's history
+
+`GET /v1/apps/{slug}/operations/{id}/timeline` merges an Operation's events, HTTP
+execution attempts, workflow step attempts and completion delivery attempts into
+one page ordered by time. It requires account read scope and MFA; platform tenants
+read events instead.
+
+```sh
+gregale customer-operations timeline OPERATION_ID --app exports --all
+gregale customer-operations timeline OPERATION_ID --app exports --all --logs
+```
+
+Each source pages after its own position, so following `next_cursor` never skips
+or repeats a record while the Operation runs. Attempt entries are read-time
+snapshots: a running attempt is not repeated once it ends, so follow live work
+with events. Each HTTP attempt names the instance that ran it, its time window
+and the UTC archive days to read with `gregale logs --archive`. That is an
+instance window, not request-exact correlation. Workflow step attempts carry
+timing and outcome only, because the gateway chooses their instance. When event
+history has expired, `events_expired` is set and attempts and deliveries remain.
+Attempt history is kept for at most 30 days. See
+[ADR-1195](adr/1195-unified-operation-timeline.md).
+
 ## Bounded preview admission
 
 The local continuation adds the operator TOML setting
@@ -597,6 +740,45 @@ as current business status. Account-only `POST .../{id}/recover-receipt` returns
 conflicts fail, expired unconfirmed receipts cannot apply, and preview never
 creates receipts. See the [operator examples](ops/customer-operations-cli.md#resume-a-recovery-decision-after-losing-its-response)
 and [ADR-662](adr/662-operation-recovery-decision-receipts.md).
+
+## Webhook-submitted Operations
+
+A signed provider event can start an Operation directly. Create an inbound
+webhook endpoint (ADR-212), then bind it to an operation and the customer that
+owns the resulting work:
+
+```sh
+curl -X PUT "$GREGALE_API/v1/apps/billing/inbound-webhooks/$ENDPOINT/operation-binding" \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"expected_version":0,"operation":"invoice-paid","platform_tenant_id":"'$TENANT'",
+       "event_types":["invoice.paid"],"take_over_delivery":true}'
+```
+
+The owner is fixed by the binding; Gregale never reads a customer from the
+provider payload. The tenant must be active and linked to the app through an
+active tenant surface. The operation must exist on the environment's live
+deployment when you bind; each event resolves it again and admission pins the
+definition exactly as for a customer submission.
+
+Each verified event becomes this input, so the definition's input schema and
+`subject.id_from` pointer describe the envelope:
+
+```json
+{"webhook": {"endpoint": "stripe-invoices", "provider": "stripe",
+             "event_id": "evt_123", "event_type": "invoice.paid"},
+ "payload": {"id": "evt_123", "type": "invoice.paid", "data": {"object": {}}}}
+```
+
+The same input reaches HTTP, workflow and Job adapters. A provider retry returns
+the original operation with `duplicate: true`, even after the binding changes;
+the same event ID with a different body returns 409. Event types outside a
+non-empty `event_types` list are acknowledged as `ignored` and create no work.
+Closed preview admission, a missing definition or capacity limits return 503
+with `Retry-After`, so the provider keeps the event and retries. Deleting the
+binding with its `expected_version` returns the endpoint to ordinary delivery;
+admitted operations and their receipts are retained. An endpoint has one
+delivery mode: remove an automation or exclusive operation binding first. See
+[ADR-1193](adr/1193-webhook-submitted-customer-operations.md).
 
 ## Batch Job Operations (closed preview)
 

@@ -62,6 +62,16 @@ func verifyProjectConnection(link localProjectContext, linked bool, timeout time
 	if !linked {
 		return fail("Account authenticated, but this checkout has no linked project.", recoveryCLI()+" projects list")
 	}
+	if link.Project == "" {
+		report.Project, report.Environment = "not_set_standalone_app", "not_set_command_defaults"
+		if err := verifyStandaloneContextApp(ctx, client, link.App); err != nil {
+			report.App = "unavailable"
+			return fail(err.Error(), recoveryCLI()+" apps")
+		}
+		report.App, report.OK = "verified", true
+		report.Message = "Account and saved standalone app were verified on the selected connection; health was not checked."
+		return report
+	}
 	project, err := client.GetProject(ctx, link.Project)
 	if err != nil {
 		report.Project = "unavailable"
@@ -103,6 +113,17 @@ func verifyProjectConnection(link localProjectContext, linked bool, timeout time
 	report.OK = true
 	report.Message = "Account and configured linked targets were verified on the selected connection. Unset environments retain command-specific defaults; health and configuration delivery are not checked."
 	return report
+}
+
+func verifyStandaloneContextApp(ctx context.Context, client *Client, slug string) error {
+	app, err := client.GetApp(ctx, slug)
+	if err != nil {
+		return fmt.Errorf("verify saved app: %w", err)
+	}
+	if app.Slug != slug {
+		return errors.New("app response did not identify the saved app")
+	}
+	return nil
 }
 
 func renderContextVerification(report *contextVerification) {

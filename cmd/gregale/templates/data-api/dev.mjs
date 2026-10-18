@@ -292,7 +292,8 @@ export async function run(options) {
       await owner.query(`REVOKE ALL ON DATABASE gregale_dev FROM PUBLIC;
         REVOKE ALL ON SCHEMA public FROM PUBLIC;
         CREATE ROLE gregale_data_api LOGIN NOINHERIT NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD '${password}';
-        ALTER ROLE gregale_data_api SET statement_timeout='15000';
+        ALTER ROLE gregale_data_api SET statement_timeout='${limits.queryMs}';
+        ALTER ROLE gregale_data_api SET lock_timeout='${limits.lockMs}';
         GRANT CONNECT ON DATABASE gregale_dev TO gregale_data_api;`)
     } finally { await owner.end() }
     phase = 'SQL migrations'

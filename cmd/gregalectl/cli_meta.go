@@ -87,6 +87,38 @@ type cliFlag struct {
 // command to gregale fails CI immediately.
 var cliCommands = []cliCommand{
 	{
+		Name: "ci", DocSlug: "ci", Short: "Internal, default-off CI planning and execution controls",
+		Subcommands: []cliSub{
+			{Name: "validate", Short: "Validate a local pipeline without running steps", Flags: []cliFlag{{Name: "file", Short: "local CI definition"}}},
+			{Name: "plan", Short: "Compile a local immutable pipeline plan", Flags: []cliFlag{{Name: "file", Short: "local CI definition"}}},
+			{Name: "capabilities", Short: "Inspect internal CI availability"},
+			{Name: "health", Short: "Inspect internal CI queues, workers and quota headroom"},
+			{Name: "checks", Short: "List, inspect or retry exhausted execution Check delivery", Flags: []cliFlag{
+				{Name: "id", Short: "execution UUID"}, {Name: "key", Short: "stable retry request identity"}, {Name: "generation", Short: "current retry_generation from Check status"},
+			}},
+			{Name: "put", Short: "Save an immutable pipeline revision", Flags: []cliFlag{{Name: "name", Short: "pipeline name", Req: true}, {Name: "file", Short: "local CI definition"}}},
+			{Name: "revisions", Short: "List saved pipeline revisions"},
+			{Name: "revision", Short: "Read a saved revision", Flags: []cliFlag{{Name: "id", Short: "revision UUID", Req: true}}},
+			{Name: "run", Short: "Create a blocked metadata receipt", Flags: []cliFlag{{Name: "revision", Short: "revision UUID", Req: true}, {Name: "commit", Short: "full commit SHA", Req: true}, {Name: "key", Short: "stable receipt identity", Req: true}}},
+			{Name: "runs", Short: "List blocked metadata receipts"},
+			{Name: "status", Short: "Read a metadata receipt", Flags: []cliFlag{{Name: "id", Short: "receipt UUID", Req: true}}},
+			{Name: "events", Short: "Read metadata receipt events", Flags: []cliFlag{{Name: "id", Short: "receipt UUID", Req: true}}},
+			{Name: "cancel", Short: "Cancel a metadata receipt", Flags: []cliFlag{{Name: "id", Short: "receipt UUID", Req: true}}},
+			{Name: "github", Short: "Bind, list or disable account-owned GitHub sources", Flags: []cliFlag{{Name: "name", Short: "binding name"}, {Name: "revision", Short: "revision UUID"}, {Name: "installation", Short: "GitHub installation ID"}, {Name: "repository-id", Short: "immutable repository ID"}, {Name: "push-branches", Short: "exact push branches"}, {Name: "pr-branches", Short: "exact PR base branches"}}},
+			{Name: "execution", Short: "Submit, inspect, cancel, read output or archive completed execution history", Flags: []cliFlag{
+				{Name: "profile", Short: "saved execution profile UUID; replaces revision/binding/template"},
+				{Name: "id", Short: "execution UUID"}, {Name: "revision", Short: "revision UUID"}, {Name: "commit", Short: "full commit SHA"}, {Name: "binding", Short: "verified binding UUID"}, {Name: "key", Short: "stable execution identity"}, {Name: "template", Short: "JOB=materialized Jobs UUID; repeat for each job"},
+				{Name: "attempt", Short: "attempt UUID for logs"}, {Name: "offset", Short: "log byte offset"}, {Name: "limit", Short: "log page byte bound"}, {Name: "job", Short: "artifact job name"}, {Name: "path", Short: "verified artifact path"}, {Name: "output", Short: "new private artifact file"},
+			}},
+			{Name: "profile", Short: "Save, list, inspect or disable immutable execution profiles", Flags: []cliFlag{
+				{Name: "name", Short: "immutable profile name"}, {Name: "id", Short: "profile UUID"}, {Name: "revision", Short: "revision UUID"}, {Name: "binding", Short: "verified binding UUID"}, {Name: "template", Short: "JOB=materialized Jobs UUID; repeat for each job"},
+			}},
+			{Name: "automation", Short: "Configure explicit branch-push admission through a saved profile", Flags: []cliFlag{
+				{Name: "binding", Short: "verified binding UUID"}, {Name: "profile", Short: "saved profile UUID"}, {Name: "push-branches", Short: "exact trusted push branches"},
+			}},
+		},
+	},
+	{
 		Name:    dispatchBilling,
 		DocSlug: "billing",
 		Short:   "Operator billing catalog, reconciliation, and webhook diagnostics",
@@ -198,6 +230,8 @@ var cliCommands = []cliCommand{
 			{Name: "unseal-rclone", Short: "Unseal the rclone config"},
 			{Name: "unseal-archive-creds", Short: "Unseal the log-archive credentials"},
 			{Name: "init", Short: "Initialise the on-disk backup credentials store"},
+			{Name: "seal-cp-state", Short: "Encrypt the control plane's host-local state for off-host backup"},
+			{Name: "restore-cp-state", Short: "Decrypt a control-plane state backup into the takeover stage"},
 		},
 	},
 	{
@@ -413,6 +447,7 @@ var cliCommands = []cliCommand{
 					{Name: "ssh-user", Short: "SSH user (default root)"},
 					{Name: "ssh-key", Short: "SSH private key"},
 					{Name: "repo-root", Short: "repository root containing deploy/ansible"},
+					{Name: "roles", Short: "converge only these comma-separated control-plane roles and record nothing (host-configuration lane)"},
 					{Name: "json", Short: "emit structured JSON"},
 				},
 			},

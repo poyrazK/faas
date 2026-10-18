@@ -1,6 +1,6 @@
 // commands_overage_cap.go — `gregale overage-cap` (Tier B audit gap).
 // PATCH /v1/account/overage-cap lets the customer set or clear the
-// per-account overage cap (€0.01/GB-h above the plan's included GB-h).
+// per-account overage cap ($0.01/GB-h above the plan's included GB-h).
 // schedd refuses new wakes once the current-month overage meets the
 // cap; the CLI is the only path to flip the cap outside the dashboard.
 //
@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func cmdOverageCap(args []string) int {
@@ -71,7 +73,7 @@ func cmdOverageCap(args []string) int {
 	if cap == nil {
 		PrintOK(osStdout, "Overage cap cleared (no limit).")
 	} else {
-		PrintOK(osStdout, "Overage cap set to %d cents (€%.2f).", *cap, float64(*cap)/100)
+		PrintOK(osStdout, "Overage cap set to %d cents (%s).", *cap, api.FormatBillingCents(*cap))
 	}
 	return 0
 }

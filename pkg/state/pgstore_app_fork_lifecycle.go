@@ -11,10 +11,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-func pgTime(t time.Time) pgtype.Timestamptz {
-	return pgtype.Timestamptz{Time: t.UTC(), Valid: true}
-}
-
 func pgText(s string) pgtype.Text {
 	return pgtype.Text{String: s, Valid: s != ""}
 }

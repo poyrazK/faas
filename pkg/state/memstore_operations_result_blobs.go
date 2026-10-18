@@ -74,7 +74,7 @@ func (m *MemStore) ClaimOperationArtifactCleanup(_ context.Context, token string
 		}
 		if blob.State == "retained" {
 			op, exists := data.operations[blob.OperationID]
-			if exists && (op.ExpiresAt.After(now) || op.State == api.OperationAccepted || op.State == api.OperationRunning) {
+			if exists && (op.ExpiresAt.After(now) || operationIsActive(op)) {
 				pinned := false
 				for _, key := range op.ArtifactStorageKeys {
 					if key == blob.StorageKey {

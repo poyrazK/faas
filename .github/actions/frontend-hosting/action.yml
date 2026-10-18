@@ -1,0 +1,84 @@
+name: Gregale frontend preview
+description: Stage prebuilt static output and publish a private immutable preview using one-site credentials.
+inputs:
+  enabled:
+    description: Explicit internal opt-in. Default off.
+    default: 'false'
+  api-token:
+    description: Site-scoped fp_host_ credential stored as a GitHub secret.
+    default: ''
+  oidc-enabled:
+    description: Explicit OIDC opt-in; omit api-token and grant the calling job id-token write permission.
+    default: 'false'
+  oidc-trust:
+    description: Explicit site trust UUID for GitHub identity exchange.
+    default: ''
+  api-base:
+    description: Gregale HTTPS API origin.
+    default: https://api.gregale.dev
+  site:
+    description: Site UUID bound to the credential.
+    required: true
+  cli-path:
+    description: Path to an explicitly installed trusted Gregale CLI containing sites ci; pin its source/release in the calling workflow.
+    required: true
+  path:
+    description: Already-built output directory containing index.html.
+    default: dist
+  spa:
+    description: Use index.html for SPA navigations.
+    default: 'false'
+  run-id:
+    description: Optional stable intent UUID; otherwise derived from repository, GitHub run ID, API and site. Reruns reuse it.
+    default: ''
+  reserve-preview:
+    description: Reserve preview capacity before uploads; independently gated by the API. Keep unchanged on retries.
+    default: 'false'
+  preview-ttl:
+    description: Immutable preview TTL measured from the first accepted run.
+    default: 24h
+  wait-timeout:
+    description: Bounded wait for provider publication receipts, not worldwide serving health.
+    default: 2m
+  description:
+    description: Optional unverified deployment description.
+    default: ''
+outputs:
+  run-id:
+    description: Stable CI run UUID; retry this intent after an interrupted job.
+    value: ${{ steps.preview.outputs.run-id }}
+  release-id:
+    description: Retained release UUID.
+    value: ${{ steps.preview.outputs.release-id }}
+  preview-id:
+    description: Immutable preview UUID.
+    value: ${{ steps.preview.outputs.preview-id }}
+  preview-url:
+    description: Private Access-protected URL, available after publication acknowledgment.
+    value: ${{ steps.preview.outputs.preview-url }}
+  publication-state:
+    description: Publication acknowledgment or incomplete/pending intent. No edge health claim.
+    value: ${{ steps.preview.outputs.publication-state }}
+runs:
+  using: composite
+  steps:
+    - name: Stage and publish a private preview
+      id: preview
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        HOSTING_ENABLED: ${{ inputs.enabled }}
+        HOSTING_OIDC_ENABLED: ${{ inputs.oidc-enabled }}
+        HOSTING_OIDC_TRUST: ${{ inputs.oidc-trust }}
+        FAAS_TOKEN: ${{ inputs.api-token }}
+        FAAS_API: ${{ inputs.api-base }}
+        HOSTING_SITE: ${{ inputs.site }}
+        HOSTING_CLI: ${{ inputs.cli-path }}
+        HOSTING_PATH: ${{ inputs.path }}
+        HOSTING_SPA: ${{ inputs.spa }}
+        HOSTING_RUN_ID: ${{ inputs.run-id }}
+        HOSTING_RESERVE_PREVIEW: ${{ inputs.reserve-preview }}
+        HOSTING_PREVIEW_TTL: ${{ inputs.preview-ttl }}
+        HOSTING_WAIT_TIMEOUT: ${{ inputs.wait-timeout }}
+        HOSTING_DESCRIPTION: ${{ inputs.description }}
+      run: python3 "$ACTION_PATH/run.py"

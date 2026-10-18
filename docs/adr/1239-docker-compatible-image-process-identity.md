@@ -59,3 +59,11 @@ Unit tests cover root preservation on and off, the root default for images
 without `USER`, and GID 0 for an unknown numeric UID. Native acceptance must
 run imaged as the production service user to observe file ownership; the e2e
 harness runs it as root. Recovery is a redeploy of the previous artifact.
+
+Native evidence (gregale-internal-test-1, 2026-10-14):
+`TestImageProcessIdentityMetal` passes in a real guest (an image without
+`USER` runs as 0:0; `USER 1001` without a passwd entry runs as 1001:0).
+`TestRootOwnershipPublishedByUnprivilegedBuilder`, run under `setpriv` as UID
+65534 with only `CAP_CHOWN`, `CAP_DAC_OVERRIDE` and `CAP_FOWNER`, publishes
+root-owned entries as 0:0 and a `1001:0` entry intact; without `CAP_CHOWN` the
+chown to root fails, and plain `mkfs.ext4 -d` publishes the builder's own UID.

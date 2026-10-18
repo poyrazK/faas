@@ -141,7 +141,10 @@ func (s *PgStore) ActivateEnvironmentGitOpsWorkloadGraph(ctx context.Context, le
 					return err
 				}
 			}
-			return activateEnvironmentGitOpsScheduledJobsTx(ctx, tx, graph)
+			if err := activateEnvironmentGitOpsScheduledJobsTx(ctx, tx, graph); err != nil {
+				return err
+			}
+			return s.activateWorkloadRetirementsTx(ctx, tx, lease)
 		}, candidateFallbackExclusions)
 	if err != nil {
 		if errors.Is(err, ErrConflict) {
@@ -229,6 +232,10 @@ func activeProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, projectID, enviro
 
 func environmentGitOpsReleaseMembersTx(ctx context.Context, tx pgx.Tx, source EnvironmentGitSource, graph EnvironmentWorkloadGraph,
 	activeID string) ([]ProjectReleaseMember, []ProjectReleaseMember, int, error) {
+	excluded, err := workloadReleaseExclusionsTx(ctx, tx, source)
+	if err != nil {
+		return nil, nil, 0, err
+	}
 	activeTargets := map[string]string{}
 	if activeID != "" {
 		rows, err := tx.Query(ctx, `select app_id::text,deployment_id::text from project_release_members where release_id=$1::uuid order by app_id`, activeID)
@@ -280,19 +287,21 @@ func environmentGitOpsReleaseMembersTx(ctx context.Context, tx pgx.Tx, source En
 			rows.Close()
 			return nil, nil, 0, mapErr(err)
 		}
-		apps = append(apps, app)
+		if !excluded[app.id] {
+			apps = append(apps, app)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
 		return nil, nil, 0, mapErr(err)
 	}
 	rows.Close()
-	if len(apps) == 0 || len(apps) > api.ProjectReleaseSetMaxMembers {
+	if len(apps) > api.ProjectReleaseSetMaxMembers {
 		return nil, nil, 0, ErrConflict
 	}
 	members := make([]ProjectReleaseMember, 0, len(apps))
 	fallback := make([]ProjectReleaseMember, 0, len(apps))
-	minimumTTL := int(^uint(0) >> 1)
+	minimumTTL := api.RevisionPinMaxTTLSeconds
 	for _, app := range apps {
 		var manifest AppManifest
 		if json.Unmarshal(app.manifest, &manifest) != nil || manifest.RevisionPinTTLSeconds <= 0 {

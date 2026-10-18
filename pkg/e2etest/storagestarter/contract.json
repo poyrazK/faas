@@ -1,0 +1,53 @@
+{
+  "version": 2,
+  "package": "github.com/onebox-faas/faas/cmd/e2e",
+  "root": "TestObjectStorageNativeMetal",
+  "starters": [
+    {
+      "template": "object-storage-node",
+      "runtime": "node22",
+      "trust_env": "NODE_EXTRA_CA_CERTS",
+      "app_artifact": "node22_app_layer",
+      "source_artifact": "node22_source_archive"
+    },
+    {
+      "template": "object-storage-python",
+      "runtime": "python312",
+      "trust_env": "AWS_CA_BUNDLE",
+      "app_artifact": "python312_app_layer",
+      "source_artifact": "python312_source_archive"
+    }
+  ],
+  "phases": [
+    "starter_deploy_and_initial_restore",
+    "same_revision_transport_recovery",
+    "running_rotation_and_retirement",
+    "parked_rotation_scheduler_recovery",
+    "rotated_snapshot_restore",
+    "failed_hook_cold_boot",
+    "public_hook_forbidden",
+    "revoke_and_independent_cleanup"
+  ],
+  "artifacts": [
+    "apid",
+    "schedd",
+    "vmmd",
+    "imaged",
+    "gatewayd-internal",
+    "gatewayd-public",
+    "meterd",
+    "builderd",
+    "vmmd-stream-bridge",
+    "vmmd-raw-bridge",
+    "vmmd-tcp-bridge",
+    "vmmd-udp-bridge",
+    "vmmd-jail-helper",
+    "guest_init",
+    "kernel",
+    "builder_base",
+    "firecracker",
+    "jailer",
+    "e2e_test",
+    "deploy_base"
+  ]
+}

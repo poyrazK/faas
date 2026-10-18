@@ -1,9 +1,10 @@
 from typing import Literal
 
-ConsumerKeyResponseScopesItem = Literal["admin", "read", "write"]
+ConsumerKeyResponseScopesItem = Literal["admin", "billing", "read", "write"]
 
 CONSUMER_KEY_RESPONSE_SCOPES_ITEM_VALUES: set[ConsumerKeyResponseScopesItem] = {
     "admin",
+    "billing",
     "read",
     "write",
 }

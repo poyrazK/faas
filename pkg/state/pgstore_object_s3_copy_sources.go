@@ -41,7 +41,7 @@ func (s *PgStore) SetObjectS3CopySource(ctx context.Context, account, bucket, cr
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(account)); err != nil {
+	if _, err = lockObjectUsageScope(ctx, tx, mustPgUUID(account), mustPgUUID(bucket)); err != nil {
 		return ObjectS3CopySource{}, mapErr(err)
 	}
 	buckets, err := q.ObjectCopySourceLockBuckets(ctx, tx, sqlc.ObjectCopySourceLockBucketsParams{AccountID: mustPgUUID(account), DestinationBucket: mustPgUUID(bucket), SourceBucket: mustPgUUID(source)})

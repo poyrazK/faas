@@ -73,9 +73,7 @@ func (e *Engine) freezeRefusal(ctx context.Context, ins state.Instance) (string,
 	if err != nil {
 		return "", err
 	}
-	// The first release covers function apps that serve HTTP, woken as
-	// ordinary instances outside private networks (quiet pause's rule).
-	if quietPauseAfterMS(app, ins.Mode, e.privateNetworkProjection(ctx, app).NetworkID) == 0 || app.Status != state.AppActive {
+	if app.Status != state.AppActive || !e.frozenTierAllows(app, ins.Mode, e.privateNetworkProjection(ctx, app).NetworkID) {
 		return "ineligible", nil
 	}
 	if ins.RAMMB != app.RAMMB || e.runtimeConfigStale(ctx, ins) {
@@ -118,7 +116,7 @@ func (e *Engine) warmCapturePending(ctx context.Context, app state.App, ins stat
 	if !app.WarmSnapshotEnabled || ins.FrameworkReadyAt == nil || app.Manifest.BeforeCheckpoint != nil {
 		return false
 	}
-	acct, err := e.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil || !acct.Plan.WarmSnapshotAllowed() {
 		return false
 	}

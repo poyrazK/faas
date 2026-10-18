@@ -20,6 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/sharedruntime"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -163,38 +164,12 @@ func (h *Handler) functionBuildArtifactForRef(ctx context.Context, runtime, arch
 		}, nil
 	}
 
-	mp, ok := h.oci.(oci.ManifestPuller)
-	if !ok {
-		cleanup()
-		return nil, "", func() {}, errors.New("builder OCI function artifact requires a manifest-capable runtime base puller")
-	}
-	baseRef := recordedRef
-	if baseRef == "" {
-		baseRef = h.deployBaseRefOverride
-	}
-	if baseRef == "" {
-		baseRef, err = resolveDeployBaseRef(runtime, os.Getenv)
-		if err != nil {
-			cleanup()
-			return nil, "", func() {}, err
-		}
-	}
-	baseManifest, err := pullManifestWithAuth(ctx, mp, baseRef, nil)
+	baseRef, baseDiffIDs, err := h.runtimeBaseDiffIDs(ctx, runtime, recordedRef)
 	if err != nil {
 		cleanup()
-		return nil, "", func() {}, fmt.Errorf("pull runtime base manifest %q: %w", baseRef, err)
+		return nil, "", func() {}, err
 	}
-	baseRepo := repoWithHost(baseRef)
-	if baseRepo == "" {
-		cleanup()
-		return nil, "", func() {}, fmt.Errorf("invalid runtime base reference %q", baseRef)
-	}
-	baseConfig, err := h.pullConfig(ctx, mp, baseRepo, baseManifest.Config.Digest, nil)
-	if err != nil {
-		cleanup()
-		return nil, "", func() {}, fmt.Errorf("pull runtime base config %q: %w", baseRef, err)
-	}
-	above, err := oci.LayersAboveBase(baseConfig.DiffIDs, config.DiffIDs)
+	above, err := oci.LayersAboveBase(baseDiffIDs, config.DiffIDs)
 	if err != nil {
 		cleanup()
 		return nil, "", func() {}, fmt.Errorf("runtime base %q does not match builder artifact: %w", baseRef, err)
@@ -215,6 +190,39 @@ func (h *Handler) functionBuildArtifactForRef(ctx context.Context, runtime, arch
 	return filtered, sourcePath, filteredCleanup, nil
 }
 
+// runtimeBaseDiffIDs resolves a runtime's runner base and returns its layer
+// diff IDs, so a build artifact made FROM that base can be split at it.
+func (h *Handler) runtimeBaseDiffIDs(ctx context.Context, runtime, recordedRef string) (string, []string, error) {
+	mp, ok := h.oci.(oci.ManifestPuller)
+	if !ok {
+		return "", nil, errors.New("builder OCI artifact requires a manifest-capable runtime base puller")
+	}
+	baseRef := recordedRef
+	if baseRef == "" {
+		baseRef = h.deployBaseRefOverride
+	}
+	if baseRef == "" {
+		var err error
+		baseRef, err = resolveDeployBaseRef(runtime, os.Getenv)
+		if err != nil {
+			return "", nil, err
+		}
+	}
+	baseManifest, err := pullManifestWithAuth(ctx, mp, baseRef, nil)
+	if err != nil {
+		return "", nil, fmt.Errorf("pull runtime base manifest %q: %w", baseRef, err)
+	}
+	baseRepo := repoWithHost(baseRef)
+	if baseRepo == "" {
+		return "", nil, fmt.Errorf("invalid runtime base reference %q", baseRef)
+	}
+	baseConfig, err := h.pullConfig(ctx, mp, baseRepo, baseManifest.Config.Digest, nil)
+	if err != nil {
+		return "", nil, fmt.Errorf("pull runtime base config %q: %w", baseRef, err)
+	}
+	return baseRef, baseConfig.DiffIDs, nil
+}
+
 // makeFunctionAppLayers retains only /app from Railpack's deploy layers.
 // The Gregale runtime is already present on immutable drive0; copying
 // Railpack's mise installation and build caches into drive1 made a hello-world
@@ -223,6 +231,35 @@ func (h *Handler) functionBuildArtifactForRef(ctx context.Context, runtime, arch
 // /app/node_modules, so preserving the layered /app tree keeps runtime inputs
 // while dropping builder-only /mise, /opt/*-cache, and /root/.cache content.
 func makeFunctionAppLayers(layers []io.ReadCloser) ([]io.Reader, func(), error) {
+	return filterAppLayers(layers, nil)
+}
+
+// appLayerReport records what filterAppLayers dropped and the app's
+// package.json, so a shared-runtime app layer can tell whether the runner
+// base replaces everything outside /app (H10-140).
+type appLayerReport struct {
+	// Unexpected names the first non-directory entries outside /app that are
+	// not toolchain or cache content.
+	Unexpected  []string
+	PackageJSON []byte
+}
+
+const appLayerReportMaxUnexpected = 8
+
+func (r *appLayerReport) dropped(hdr *tar.Header) {
+	if r == nil || hdr.Typeflag == tar.TypeDir || len(r.Unexpected) >= appLayerReportMaxUnexpected {
+		return
+	}
+	clean := pathpkg.Clean(hdr.Name)
+	if base := pathpkg.Base(clean); strings.HasPrefix(base, ".wh.") {
+		return // a whiteout removes a lower file; it adds nothing to the runtime.
+	}
+	if !sharedruntime.DroppableOutsideApp(clean) {
+		r.Unexpected = append(r.Unexpected, clean)
+	}
+}
+
+func filterAppLayers(layers []io.ReadCloser, report *appLayerReport) ([]io.Reader, func(), error) {
 	tmpDir, err := os.MkdirTemp("", "faas-function-layers-")
 	if err != nil {
 		return nil, func() {}, fmt.Errorf("create function layer tempdir: %w", err)
@@ -268,6 +305,7 @@ func makeFunctionAppLayers(layers []io.ReadCloser) ([]io.Reader, func(), error) 
 			}
 			name, keep := functionAppEntryName(hdr.Name)
 			if !keep {
+				report.dropped(hdr)
 				continue
 			}
 			copyHeader := *hdr
@@ -297,12 +335,21 @@ func makeFunctionAppLayers(layers []io.ReadCloser) ([]io.Reader, func(), error) 
 				_ = zr.Close()
 				return fail(fmt.Errorf("write function layer %d header: %w", i, err))
 			}
-			if _, err := io.CopyN(tw, tr, copyHeader.Size); err != nil {
+			var content io.Reader = tr
+			var packageJSON bytes.Buffer
+			capture := report != nil && name == "app/package.json" && copyHeader.Typeflag == tar.TypeReg && copyHeader.Size <= 1<<20
+			if capture {
+				content = io.TeeReader(tr, &packageJSON)
+			}
+			if _, err := io.CopyN(tw, content, copyHeader.Size); err != nil {
 				_ = tw.Close()
 				_ = zw.Close()
 				_ = out.Close()
 				_ = zr.Close()
 				return fail(fmt.Errorf("write function layer %d content: %w", i, err))
+			}
+			if capture {
+				report.PackageJSON = packageJSON.Bytes()
 			}
 			retainedBytes += copyHeader.Size
 			entries++
@@ -522,8 +569,28 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 		return fmt.Errorf("imaged: local OCI storageFor: %w", err)
 	}
 	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	buildLayers := layersAsReaders(layers)
+	runtime := sharedRuntimeClaim(app, source)
+	if source == nil {
+		unsigned, provErr := h.sharedRuntimeFromProvenance(ctx, app, *dep)
+		if provErr != nil {
+			return fmt.Errorf("imaged: shared runtime: %w", provErr)
+		}
+		runtime = unsigned
+	}
+	if runtime != "" {
+		shared, sharedErr := h.sharedRuntimeAppLayers(ctx, runtime, dep.RootfsPath, config, layers, &manifest, app)
+		if sharedErr != nil {
+			return fmt.Errorf("imaged: shared runtime app layer: %w", sharedErr)
+		}
+		defer shared.cleanup()
+		buildLayers = shared.layers
+		if shared.Reason != "" {
+			h.log.Info("imaged: shared runtime layer keeps the toolchain", "app", app.Slug, "runtime", runtime, "reason", shared.Reason)
+		}
+	}
 	result, err := h.builder.Build(ctx, rootfs.BuildInput{
-		Layers:         layersAsReaders(layers),
+		Layers:         buildLayers,
 		Manifest:       manifest,
 		GuestInitPath:  h.guestInitPath,
 		Plan:           acct.Plan,
@@ -536,6 +603,27 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 		return fmt.Errorf("imaged: build local OCI app layer: %w", err)
 	}
 	h.updateBuildProvenanceSBOM(ctx, dep.ID, result.SBOMKey)
+	if runtime != "" {
+		// schedd boots the runner base as drive0, so stage it before the
+		// deployment is recorded against it. The caller's own staging pass
+		// reads the deployment from before this stamp and stages minimal.
+		selected := app
+		selected.Runtime = runtime
+		if err := h.ensureDeploymentRuntimeBase(ctx, selected); err != nil {
+			return err
+		}
+	}
+	if source == nil && runtime != "" {
+		// A signed build stamps the runner base with its source rootfs
+		// record; an unsigned one stamps it before the rootfs it boots under.
+		stamper, ok := h.store.(state.DeploymentRuntimeBaseStore)
+		if !ok {
+			return fmt.Errorf("imaged: deployment runtime base store unavailable")
+		}
+		if err := stamper.SetDeploymentRuntimeBase(ctx, dep.ID, runtime); err != nil {
+			return fmt.Errorf("imaged: stamp runtime base: %w", err)
+		}
+	}
 	if err := h.publishSourceRootfs(ctx, app, *dep, appsKey, result, source); err != nil {
 		return fmt.Errorf("imaged: stamp local OCI rootfs: %w", err)
 	}

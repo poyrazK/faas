@@ -1,6 +1,8 @@
 -- filename: 20261008190746911_instances_mode_fork.sql
+-- migration-compat: expand
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 -- ADR-732: widen instances.mode with 'fork', a quarantined, non-serving
 -- production fork. Forks bill like any live instance (only 'mirror' is

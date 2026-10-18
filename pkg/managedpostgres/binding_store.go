@@ -4,18 +4,25 @@ import (
 	"context"
 	"sort"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/db"
 )
 
 var _ BindingStore = (*MemoryStore)(nil)
 
-func (s *MemoryStore) ReserveBinding(_ context.Context, binding Binding) (Binding, bool, error) {
+func (s *MemoryStore) ReserveBinding(ctx context.Context, binding Binding) (Binding, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlockIntent, intentErr := db.LockMemoryIntent(ctx)
+	if intentErr != nil {
+		return Binding{}, false, intentErr
+	}
+	defer unlockIntent()
 	if err := validateBindingReservation(binding); err != nil {
 		return Binding{}, false, err
 	}
 	database, exists := s.databases[binding.DatabaseID]
-	if !exists || database.AccountID != binding.AccountID || database.EnvironmentCloneOperationID != "" {
+	if !exists || database.AccountID != binding.DatabaseNamespace() || database.EnvironmentCloneOperationID != "" {
 		return Binding{}, false, ErrNotFound
 	}
 	if database.State != StateReady && database.State != StateProvisioning {
@@ -61,7 +68,7 @@ func (s *MemoryStore) ListBindings(_ context.Context, accountID, databaseID stri
 	defer s.mu.Unlock()
 	items := make([]Binding, 0)
 	for _, binding := range s.bindings {
-		if binding.AccountID == accountID && binding.DatabaseID == databaseID && binding.State != BindingStateDeleted {
+		if binding.DatabaseNamespace() == accountID && binding.DatabaseID == databaseID && binding.State != BindingStateDeleted {
 			items = append(items, cloneBinding(binding))
 		}
 	}
@@ -105,12 +112,17 @@ func (s *MemoryStore) DueBindings(_ context.Context, includeProvisioning bool, l
 	return items, nil
 }
 
-func (s *MemoryStore) BeginBindingRotation(_ context.Context, accountID, bindingID, wakeID string, now time.Time) (Binding, bool, error) {
+func (s *MemoryStore) BeginBindingRotation(ctx context.Context, accountID, bindingID, wakeID string, now time.Time) (Binding, bool, error) {
 	if accountID == "" || bindingID == "" || wakeID == "" || now.IsZero() {
 		return Binding{}, false, ErrInvalid
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlockIntent, intentErr := db.LockMemoryIntent(ctx)
+	if intentErr != nil {
+		return Binding{}, false, intentErr
+	}
+	defer unlockIntent()
 	binding, ok := s.bindings[bindingID]
 	if !ok || binding.AccountID != accountID {
 		return Binding{}, false, ErrNotFound
@@ -139,9 +151,14 @@ func (s *MemoryStore) BeginBindingRotation(_ context.Context, accountID, binding
 	return cloneBinding(binding), true, nil
 }
 
-func (s *MemoryStore) ClaimBinding(_ context.Context, accountID, bindingID, leaseToken string, operation BindingState, now, leaseUntil time.Time) (Binding, error) {
+func (s *MemoryStore) ClaimBinding(ctx context.Context, accountID, bindingID, leaseToken string, operation BindingState, now, leaseUntil time.Time) (Binding, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlockIntent, intentErr := db.LockMemoryIntent(ctx)
+	if intentErr != nil {
+		return Binding{}, intentErr
+	}
+	defer unlockIntent()
 	binding, ok := s.bindings[bindingID]
 	if !ok || binding.AccountID != accountID {
 		return Binding{}, ErrNotFound
@@ -190,12 +207,17 @@ func (s *MemoryStore) ClaimBinding(_ context.Context, accountID, bindingID, leas
 	return cloneBinding(binding), nil
 }
 
-func (s *MemoryStore) FinishBindingProvision(_ context.Context, bindingID, leaseToken, providerIdentityID, credentialRef string, now time.Time) (Binding, error) {
+func (s *MemoryStore) FinishBindingProvision(ctx context.Context, bindingID, leaseToken, providerIdentityID, credentialRef string, now time.Time) (Binding, error) {
 	if leaseToken == "" || !validOpaqueID(providerIdentityID) || !validOpaqueID(credentialRef) || now.IsZero() {
 		return Binding{}, ErrInvalid
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlockIntent, intentErr := db.LockMemoryIntent(ctx)
+	if intentErr != nil {
+		return Binding{}, intentErr
+	}
+	defer unlockIntent()
 	binding, ok := s.bindings[bindingID]
 	if !ok {
 		return Binding{}, ErrNotFound
@@ -219,13 +241,18 @@ func (s *MemoryStore) FinishBindingProvision(_ context.Context, bindingID, lease
 	return cloneBinding(binding), nil
 }
 
-func (s *MemoryStore) ReleaseBinding(_ context.Context, bindingID, leaseToken string, next BindingState, errorCode string, now, retryAt time.Time) error {
+func (s *MemoryStore) ReleaseBinding(ctx context.Context, bindingID, leaseToken string, next BindingState, errorCode string, now, retryAt time.Time) error {
 	if leaseToken == "" || now.IsZero() || retryAt.Before(now) || !validErrorCode(errorCode) ||
 		(next != BindingStateProvisioning && next != BindingStateDeleting && next != BindingStateRetiring && next != BindingStateFailed) {
 		return ErrInvalid
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlockIntent, intentErr := db.LockMemoryIntent(ctx)
+	if intentErr != nil {
+		return intentErr
+	}
+	defer unlockIntent()
 	binding, ok := s.bindings[bindingID]
 	if !ok {
 		return ErrNotFound
@@ -243,12 +270,17 @@ func (s *MemoryStore) ReleaseBinding(_ context.Context, bindingID, leaseToken st
 	return nil
 }
 
-func (s *MemoryStore) FinishBindingRotationCleanup(_ context.Context, bindingID, leaseToken, wakeID string, now time.Time) (Binding, error) {
+func (s *MemoryStore) FinishBindingRotationCleanup(ctx context.Context, bindingID, leaseToken, wakeID string, now time.Time) (Binding, error) {
 	if leaseToken == "" || wakeID == "" || now.IsZero() {
 		return Binding{}, ErrInvalid
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlockIntent, intentErr := db.LockMemoryIntent(ctx)
+	if intentErr != nil {
+		return Binding{}, intentErr
+	}
+	defer unlockIntent()
 	binding, ok := s.bindings[bindingID]
 	if !ok {
 		return Binding{}, ErrNotFound
@@ -271,12 +303,17 @@ func (s *MemoryStore) FinishBindingRotationCleanup(_ context.Context, bindingID,
 	return cloneBinding(binding), nil
 }
 
-func (s *MemoryStore) FinishBindingDelete(_ context.Context, bindingID, leaseToken string, now time.Time) (Binding, error) {
+func (s *MemoryStore) FinishBindingDelete(ctx context.Context, bindingID, leaseToken string, now time.Time) (Binding, error) {
 	if leaseToken == "" || now.IsZero() {
 		return Binding{}, ErrInvalid
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlockIntent, intentErr := db.LockMemoryIntent(ctx)
+	if intentErr != nil {
+		return Binding{}, intentErr
+	}
+	defer unlockIntent()
 	binding, ok := s.bindings[bindingID]
 	if !ok {
 		return Binding{}, ErrNotFound

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "checks": [
+    {
+      "name": "Product categories restored",
+      "sql": "SELECT count(*) FILTER (WHERE category='original')=460 FROM public.products"
+    },
+    {
+      "name": "Human edits preserved",
+      "sql": "SELECT count(*) FILTER (WHERE category='human-correction')=40 FROM public.products"
+    }
+  ]
+}

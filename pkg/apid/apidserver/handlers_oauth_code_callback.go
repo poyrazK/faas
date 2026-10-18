@@ -41,6 +41,7 @@
 //   - missing code or state query param   → 400 problem
 //   - missing or mismatched CSRF cookie   → 403 csrf_rejected + audit
 //   - missing GitHub App installation      → redirect to GitHub install flow
+//   - installation belongs to another account → 409 github_account_conflict
 //   - githubd.ExchangeOAuthCode errs      → 502 problem
 //   - success                             → 302 to the saved dashboard return
 //     target (or /dashboard/account) with github=connected, install=<id>,
@@ -277,6 +278,15 @@ func (s *server) renderOAuthCodeCallback(w http.ResponseWriter, r *http.Request)
 	// permanence is the audit-worthy event).
 	installID, defaultBranch, err := s.githubd.ExchangeOAuthCode(r.Context(), acct.ID, code, queryState)
 	if err != nil {
+		if p := api.AsProblem(err); p != nil && p.Code == api.CodeGitHubAccountConflict {
+			log.Warn("oauth code callback: GitHub installation belongs to another account", "account_id", acct.ID)
+			acctID := acct.ID
+			s.audit.Emit(r.Context(), "auth.install.account_conflict", &acctID, map[string]any{
+				"reason": api.CodeGitHubAccountConflict,
+			})
+			api.WriteProblemForRequest(w, r, api.ErrGitHubAccountConflict())
+			return
+		}
 		if isGithubAppNotInstalled(err) {
 			log.Warn("oauth code callback: GitHub App installation required",
 				"account_id", acct.ID)

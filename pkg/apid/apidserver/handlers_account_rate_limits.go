@@ -45,7 +45,7 @@ func (s *server) readAccountDeployRate(ctx context.Context, acct state.Account, 
 	if !ok {
 		return state.AccountDeployRateSnapshot{}, errors.New("account deploy rate store is unavailable")
 	}
-	return store.ReadAccountDeployRate(ctx, acct.ID, acct.Plan.DeploysPerHour(), now)
+	return store.ReadAccountDeployRate(ctx, acct.ResourceOwnerID(), acct.Plan.DeploysPerHour(), now)
 }
 
 func (s *server) getAccountRateLimits(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -70,7 +70,7 @@ func (s *server) admitAccountDeploy(w http.ResponseWriter, r *http.Request, acct
 	}
 	// Every deploy route also wraps requireVerifiedEmail; this keeps
 	// the rule for paths that reach admission another way (retries).
-	if !acct.EmailVerified() {
+	if !actorAccount(r, acct).EmailVerified() {
 		api.WriteProblem(w, api.ErrEmailVerificationRequired())
 		return false
 	}
@@ -95,5 +95,5 @@ func (s *server) consumeAccountDeployRate(ctx context.Context, acct state.Accoun
 	if !ok {
 		return state.AccountDeployRateSnapshot{}, errors.New("account deploy rate store is unavailable")
 	}
-	return store.ConsumeAccountDeployRate(ctx, acct.ID, acct.Plan.DeploysPerHour(), now)
+	return store.ConsumeAccountDeployRate(ctx, acct.ResourceOwnerID(), acct.Plan.DeploysPerHour(), now)
 }

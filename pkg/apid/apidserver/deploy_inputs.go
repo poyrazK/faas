@@ -545,7 +545,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			FunctionRuntime:           functionRuntimeForApp(app),
 			LogSpool:                  spoolRoot(),
 			Log:                       s.log,
-			ActorUserID:               acct.ID,
+			ActorUserID:               actorAccount(r, acct).ID,
 			ActorVia:                  routeKindForRequest(r),
 			ActorFromIP:               middleware.ClientIP(r),
 			Workflows:                 marshalWorkflowDefinitions(workflows),
@@ -919,7 +919,7 @@ func archiveLogicalRoot(path, sourceRoot string) (string, error) {
 // archiveEntryRelativeToRoot returns the slash-separated path of an archive
 // entry below logicalRoot. An empty logicalRoot means a flat archive root.
 func archiveEntryRelativeToRoot(name, logicalRoot string) (string, bool) {
-	name = strings.TrimPrefix(strings.TrimSuffix(name, "/"), "./")
+	name = strings.TrimSuffix(tarball.TrimLeadingDotSlash(name), "/")
 	if name == "" {
 		return "", false
 	}
@@ -973,7 +973,7 @@ func archiveHasSourceRoot(path, sourceRoot string) (bool, error) {
 			tar.TypeGNULongName, tar.TypeGNULongLink:
 			continue
 		}
-		name := strings.TrimPrefix(strings.TrimSuffix(hdr.Name, "/"), "./")
+		name := strings.TrimSuffix(tarball.TrimLeadingDotSlash(hdr.Name), "/")
 		if strings.HasPrefix(name, prefix) && strings.TrimPrefix(name, prefix) != "" {
 			return true, nil
 		}

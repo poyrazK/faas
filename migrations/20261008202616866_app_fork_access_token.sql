@@ -1,4 +1,5 @@
 -- filename: 20261008202616866_app_fork_access_token.sql
+-- migration-compat: expand
 
 -- +goose Up
 -- +goose StatementBegin

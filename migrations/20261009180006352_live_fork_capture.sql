@@ -1,4 +1,5 @@
 -- filename: 20261009180006352_live_fork_capture.sql
+-- migration-compat: expand
 
 -- +goose Up
 -- +goose StatementBegin

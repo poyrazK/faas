@@ -11,6 +11,13 @@ import type { ControlEventExecutionLineageCaseBackfillRequest } from '../models/
 import type { ControlEventExecutionLineageRetryJobRequest } from '../models/ControlEventExecutionLineageRetryJobRequest.js';
 import type { ControlWorkflowRecoveryPolicyRequest } from '../models/ControlWorkflowRecoveryPolicyRequest.js';
 import type { CreateEventExecutionLineageRetryJobRequest } from '../models/CreateEventExecutionLineageRetryJobRequest.js';
+import type { EventAcknowledgmentFailureRequest } from '../models/EventAcknowledgmentFailureRequest.js';
+import type { EventAcknowledgmentHistory } from '../models/EventAcknowledgmentHistory.js';
+import type { EventAcknowledgmentHistoryPage } from '../models/EventAcknowledgmentHistoryPage.js';
+import type { EventAcknowledgmentPolicy } from '../models/EventAcknowledgmentPolicy.js';
+import type { EventAcknowledgmentPolicyRequest } from '../models/EventAcknowledgmentPolicyRequest.js';
+import type { EventAcknowledgmentRequest } from '../models/EventAcknowledgmentRequest.js';
+import type { EventAcknowledgmentStatus } from '../models/EventAcknowledgmentStatus.js';
 import type { EventBacklogResponse } from '../models/EventBacklogResponse.js';
 import type { EventCircuitBreakerPolicy } from '../models/EventCircuitBreakerPolicy.js';
 import type { EventCircuitBreakerResponse } from '../models/EventCircuitBreakerResponse.js';
@@ -65,8 +72,16 @@ import type { EventStorageUsageResponse } from '../models/EventStorageUsageRespo
 import type { EventSubscriptionCapacityCommandReceipt } from '../models/EventSubscriptionCapacityCommandReceipt.js';
 import type { EventSubscriptionCapacityCommands } from '../models/EventSubscriptionCapacityCommands.js';
 import type { EventSubscriptionCapacityRequest } from '../models/EventSubscriptionCapacityRequest.js';
+import type { EventSubscriptionDeadlinePage } from '../models/EventSubscriptionDeadlinePage.js';
+import type { EventSubscriptionDeadlineWindow } from '../models/EventSubscriptionDeadlineWindow.js';
 import type { EventSubscriptionDeliveryControl } from '../models/EventSubscriptionDeliveryControl.js';
 import type { EventSubscriptionListResponse } from '../models/EventSubscriptionListResponse.js';
+import type { EventSubscriptionPendingSummary } from '../models/EventSubscriptionPendingSummary.js';
+import type { EventSubscriptionRateCommandReceipt } from '../models/EventSubscriptionRateCommandReceipt.js';
+import type { EventSubscriptionRateCommands } from '../models/EventSubscriptionRateCommands.js';
+import type { EventSubscriptionRatePreview } from '../models/EventSubscriptionRatePreview.js';
+import type { EventSubscriptionRatePreviewRequest } from '../models/EventSubscriptionRatePreviewRequest.js';
+import type { EventSubscriptionRateRequest } from '../models/EventSubscriptionRateRequest.js';
 import type { EventSubscriptionResumeRequest } from '../models/EventSubscriptionResumeRequest.js';
 import type { EventSubscriptionSchemaVersionsRequest } from '../models/EventSubscriptionSchemaVersionsRequest.js';
 import type { EventSubscriptionSchemaVersionsResponse } from '../models/EventSubscriptionSchemaVersionsResponse.js';
@@ -174,6 +189,8 @@ export class EventsService {
    * replacement_acceptance or unavailable independently of content status.
    * Returned receipts describe the currently observed acceptance even on mismatch.
    * Only expected_accepted_at is accepted as a query parameter; use the status read for consumer evidence.
+   * An optional expected_app_id in the body returns 409 before comparison if
+   * the resolved application UUID differs.
    *
    * @returns AppEventPublicationVerification Content comparison observation with retained acceptance when available.
    * @throws ApiError
@@ -212,6 +229,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        409: `code: conflict`,
         413: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
@@ -316,6 +334,8 @@ export class EventsService {
    * become eligible for pruning after 30 days; holds can extend this window.
    * After pruning the same key may be accepted again. App renames preserve
    * identity; replacement apps have a new UUID and a new key namespace.
+   * Optional expected_app_id must match the resolved canonical app UUID;
+   * mismatches return 409 before accepting any publication.
    * No request-wide Idempotency-Key middleware is used. Retry uncertain outcomes
    * with the same app, key and content. Acceptance does not mean delivery success.
    *
@@ -2882,6 +2902,327 @@ export class EventsService {
     });
   }
   /**
+   * List pending deliveries by effective deadline.
+   * Read-only deadline triage for retained captured pending application recipients of one owned subscription, without payloads. Orders by effective deadline, acceptance time and internal receipt ID ascending; this does not guarantee delivery order. Optional deadline_from is inclusive and deadline_before exclusive. Expired/upcoming filters compare to the first page window_at, which also bounds acceptance time. Each page has a fresh observation and live routing state, so expired flags and waiting reasons use observed_at. Cursor is scoped to account, application, subscription, normalized filters and page size, expires after 15 minutes, and is navigational metadata rather than authorization. Membership and deadlines can change between pages; newly captured or replayed work can appear, disappear, move or be skipped. This is not a frozen snapshot, reservation or deadline-safety certificate. No effective deadline means exclusion. Reads have fixed time budgets; timeout returns no partial page.
+   * @returns EventSubscriptionDeadlinePage A bounded live page of pending deliveries with effective deadlines.
+   * @throws ApiError
+   */
+  public static listEventSubscriptionDeadlines({
+    slug,
+    subscriptionId,
+    deadlineFrom,
+    deadlineBefore,
+    status = 'all',
+    cursor,
+    limit = 50,
+    withinMillis,
+    waitingReason,
+  }: {
+    /**
+     * Application slug for a deadline-ordered pending-delivery listing.
+     */
+    slug: string,
+    /**
+     * Owned application subscription UUID whose pending deadlines are being investigated.
+     */
+    subscriptionId: string,
+    /**
+     * Inclusive effective-deadline bound, normalized to UTC microseconds.
+     */
+    deadlineFrom?: string,
+    /**
+     * Exclusive effective-deadline bound, later than deadline_from after normalization.
+     */
+    deadlineBefore?: string,
+    /**
+     * Expiry classification at the first page window_at; keep unchanged across pages.
+     */
+    status?: 'all' | 'expired' | 'upcoming',
+    /**
+     * Opaque continuation; preserve scope, filters and page size. Expires 15 minutes after the first page.
+     */
+    cursor?: string,
+    /**
+     * Maximum returned recipients; keep unchanged across pages.
+     */
+    limit?: number,
+    /**
+     * Optional upcoming window strictly after the first page window_at and before window_at plus this horizon. Normalizes all/omitted status to upcoming; expired status is rejected. Keep unchanged across pages.
+     */
+    withinMillis?: number,
+    /**
+     * Optional known observed backlog waiting reason, applied before pagination at each page observation. Keep unchanged across pages; reasons remain live.
+     */
+    waitingReason?: 'circuit_open' | 'circuit_probe_wait' | 'circuit_recovery_rate_limited' | 'subscription_paused' | 'subscription_rate_limited' | 'ordering_blocked' | 'capacity_consumer' | 'capacity_app' | 'capacity_account' | 'routing_in_progress' | 'receipt_processing' | 'retry_backoff' | 'workflow_routing' | 'ready',
+  }): CancelablePromise<EventSubscriptionDeadlinePage> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/deadlines',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      query: {
+        'deadline_from': deadlineFrom,
+        'deadline_before': deadlineBefore,
+        'status': status,
+        'cursor': cursor,
+        'limit': limit,
+        'within_millis': withinMillis,
+        'waiting_reason': waitingReason,
+      },
+      errors: {
+        400: `Subscription UUID, deadline filters, page size or cursor are invalid or expired.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Deadline listing exceeded its read budget; no partial page was returned.`,
+      },
+    });
+  }
+  /**
+   * Count upcoming delivery deadlines and observed waiting reasons.
+   * Read-only, payload-free full pending summary and deadline cohorts from one Repeatable Read snapshot. Upcoming deadlines are strictly after summary.observed_at and strictly before window_end_at. Already-expired recipients are separate in summary.already_expired_count. Each cohort has an exact partition of observed backlog waiting reasons, including zero keys. Counts have no sample cap and include only retained captured pending application recipients with effective deadlines; processing, future arrivals and recipients without deadlines are excluded from cohorts. Waiting reasons are observations, not unique causes or execution guarantees. Fixed request and statement budgets apply; timeout returns no partial counts. Require summary.complete before interpreting coverage or recovery. This does not predict admissions, change state, reserve capacity or extend deadlines.
+   * @returns EventSubscriptionDeadlineWindow Full pending summary, separate upcoming and expired counts, and exact waiting-reason partitions.
+   * @throws ApiError
+   */
+  public static getEventSubscriptionDeadlineWindow({
+    slug,
+    subscriptionId,
+    withinMillis,
+  }: {
+    /**
+     * Application slug for full deadline-window monitoring.
+     */
+    slug: string,
+    /**
+     * Owned application subscription UUID whose retained pending deadlines are being counted.
+     */
+    subscriptionId: string,
+    /**
+     * Positive whole-millisecond horizon from this snapshot observation; upper deadline boundary is exclusive.
+     */
+    withinMillis: number,
+  }): CancelablePromise<EventSubscriptionDeadlineWindow> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/deadline-window',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      query: {
+        'within_millis': withinMillis,
+      },
+      errors: {
+        400: `Subscription UUID or within_millis is invalid, missing, repeated or unsupported.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Deadline-window read exceeded its budget; no partial counts were returned.`,
+      },
+    });
+  }
+  /**
+   * Read complete consumer pending counts and effective deadlines.
+   * Read-only, payload-free counts and earliest effective deadline across all retained captured pending application recipients for this subscription. One Repeatable Read snapshot includes current controls. Processing work, future arrivals and publications awaiting recipient capture are excluded. No sample cap; request and statement budgets bound scan time. Timeout returns 504 without partial counts. Incomplete or absent evidence is unknown, never zero or a successful recovery. Counts do not model future admission or guarantee deadline safety.
+   * @returns EventSubscriptionPendingSummary Complete pending counts, effective deadlines and current controls; inspect complete before monitoring.
+   * @throws ApiError
+   */
+  public static getEventSubscriptionPendingSummary({
+    slug,
+    subscriptionId,
+  }: {
+    /**
+     * Application slug for a full pending summary.
+     */
+    slug: string,
+    /**
+     * Owned application subscription UUID whose retained pending recipients are being counted.
+     */
+    subscriptionId: string,
+  }): CancelablePromise<EventSubscriptionPendingSummary> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/pending-summary',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      errors: {
+        400: `Subscription UUID is invalid.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Full pending-summary read exceeded its budget; coverage is unknown.`,
+      },
+    });
+  }
+  /**
+   * Preview consumer pacing and delivery deadline risk.
+   * Read-only advisory preview of proposed interval/burst settings from one owned subscription snapshot. Requires read scope. Returns the reviewed bucket revision for a subsequent guarded command, without allocating a command ID or receipt, consuming tokens, claiming work or reserving capacity. Models the oldest 1000 captured pending recipients in acceptance order, with current scheduled times and the legacy per-second cap. This models admission rather than completion and does not promise scheduler ordering. Pause, circuit, lease and capacity constraints can delay actual admission without bound; inspect constraints and completeness. Deadline-risk identities are limited to 100.
+   * @returns EventSubscriptionRatePreview Advisory rate-only admission model and bounded deadline evidence; completeness does not certify deadline safety.
+   * @throws ApiError
+   */
+  public static previewEventSubscriptionRateLimit({
+    slug,
+    subscriptionId,
+    requestBody,
+  }: {
+    /**
+     * Application slug for a read-only consumer pacing preview.
+     */
+    slug: string,
+    /**
+     * Owned application subscription UUID whose pacing is being reviewed.
+     */
+    subscriptionId: string,
+    requestBody: EventSubscriptionRatePreviewRequest,
+  }): CancelablePromise<EventSubscriptionRatePreview> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit/preview',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Proposed preview settings or subscription UUID are invalid.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Read-only pacing preview exceeded its request deadline; retry with a fresh observation.`,
+      },
+    });
+  }
+  /**
+   * Configure rate bucket.
+   * Configure rate bucket: Durable per-subscription pacing shared by admission workers. Mutations require deploy:write or admin and return an applied or rejected receipt; revision mismatch is a recorded rejection with no configuration change. Repeating an unexpired command UUID with identical inputs returns its original receipt. Reads require read scope. Existing pause, circuit, per-second drain caps, attempts and delivery deadlines remain in force. Capacity observations reserve nothing.
+   * @returns EventSubscriptionRateCommandReceipt Configure rate bucket: Retained rate command evidence; inspect outcome for applied or rejected.
+   * @throws ApiError
+   */
+  public static setEventSubscriptionRateLimit({
+    slug,
+    subscriptionId,
+    requestBody,
+  }: {
+    /**
+     * Configure rate bucket: Application slug owning this subscription rate policy.
+     */
+    slug: string,
+    /**
+     * Configure rate bucket: Application subscription UUID for rate controls.
+     */
+    subscriptionId: string,
+    requestBody: EventSubscriptionRateRequest,
+  }): CancelablePromise<EventSubscriptionRateCommandReceipt> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Configure rate bucket: Invalid rate control input.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Configure rate bucket: Command UUID inputs changed or database clock moved behind the refill anchor.`,
+        429: `Configure rate bucket: 128 unexpired receipts retained; known repeats remain available.`,
+        504: `Configure rate bucket: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID.`,
+      },
+    });
+  }
+  /**
+   * List rate history.
+   * List rate history: Durable per-subscription pacing shared by admission workers. Mutations require deploy:write or admin and return an applied or rejected receipt; revision mismatch is a recorded rejection with no configuration change. Repeating an unexpired command UUID with identical inputs returns its original receipt. Reads require read scope. Existing pause, circuit, per-second drain caps, attempts and delivery deadlines remain in force. Capacity observations reserve nothing.
+   * @returns EventSubscriptionRateCommands List rate history: Retained rate command evidence; inspect outcome for applied or rejected.
+   * @throws ApiError
+   */
+  public static listEventSubscriptionRateCommands({
+    slug,
+    subscriptionId,
+    after,
+  }: {
+    /**
+     * List rate history: Application slug owning this subscription rate policy.
+     */
+    slug: string,
+    /**
+     * List rate history: Application subscription UUID for rate controls.
+     */
+    subscriptionId: string,
+    /**
+     * List rate history: Exclusive increasing history sequence; pages contain at most 50 retained receipts and do not freeze history.
+     */
+    after?: number,
+  }): CancelablePromise<EventSubscriptionRateCommands> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit/commands',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      query: {
+        'after': after,
+      },
+      errors: {
+        400: `List rate history: Invalid rate control input.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `List rate history: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID.`,
+      },
+    });
+  }
+  /**
+   * Look up rate command.
+   * Look up rate command: Durable per-subscription pacing shared by admission workers. Mutations require deploy:write or admin and return an applied or rejected receipt; revision mismatch is a recorded rejection with no configuration change. Repeating an unexpired command UUID with identical inputs returns its original receipt. Reads require read scope. Existing pause, circuit, per-second drain caps, attempts and delivery deadlines remain in force. Capacity observations reserve nothing.
+   * @returns EventSubscriptionRateCommandReceipt Look up rate command: Retained rate command evidence; inspect outcome for applied or rejected.
+   * @throws ApiError
+   */
+  public static getEventSubscriptionRateCommand({
+    slug,
+    subscriptionId,
+    commandId,
+  }: {
+    /**
+     * Look up rate command: Application slug owning this subscription rate policy.
+     */
+    slug: string,
+    /**
+     * Look up rate command: Application subscription UUID for rate controls.
+     */
+    subscriptionId: string,
+    /**
+     * Look up rate command: Nonzero UUID of a retained rate command.
+     */
+    commandId: string,
+  }): CancelablePromise<EventSubscriptionRateCommandReceipt> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit/commands/{commandID}',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+        'commandID': commandId,
+      },
+      errors: {
+        400: `Look up rate command: Invalid rate control input.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Look up rate command: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID.`,
+      },
+    });
+  }
+  /**
    * Set a lower live-delivery ceiling for one event consumer.
    * Set a lower live-delivery ceiling for one event consumer. Requires `deploy:write` or `admin`. Controls survive deployment and subscription removal. Already admitted invocations continue. The explicit integer counts pending plus dispatching invocations. Zero restores the current plan limit; positive values cannot exceed it. Lowering does not evict existing work. Pause, rate and circuit state are preserved; plan downgrades clamp the effective ceiling. Routing and replay share this limit.
    * @returns EventSubscriptionDeliveryControl Set consumer delivery capacity: current control configuration and waiting recipient counts.
@@ -5223,6 +5564,394 @@ export class EventsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Page through retained acknowledgment outcome groups.
+   * Requires apps:read or admin. Orders immutable first occurrence and identity fields descending so renewals cannot move groups between pages. A fixed first-page cutoff excludes later-created groups. Counts and last_at remain live; deletion, retention and initially uncommitted inserts prevent a database snapshot guarantee. Filters select groups by first_at, not individual occurrences. Repeat all filters and the page size with the cursor. Cursors expire one hour after the cutoff and grant no authority. The existing acknowledgment-history operation keeps its latest-update ordering.
+   * @returns EventAcknowledgmentHistoryPage Retained outcome page with stable ordering and an optional continuation cursor.
+   * @throws ApiError
+   */
+  public static listEventAcknowledgmentHistoryPage({
+    slug,
+    subscriptionId,
+    invocationId,
+    kind,
+    from,
+    until,
+    limit = 100,
+    cursor,
+  }: {
+    /**
+     * Application slug owning the paginated outcome view.
+     */
+    slug: string,
+    /**
+     * Consumer subscription used to bind page cursors.
+     */
+    subscriptionId: string,
+    /**
+     * Restrict all pages to the specified delivery UUID.
+     */
+    invocationId?: string,
+    /**
+     * Restrict pages to one deferred outcome kind.
+     */
+    kind?: 'accepted' | 'renewed' | 'renewal_rejected' | 'completed' | 'expired' | 'retry_requested' | 'dead_letter_requested',
+    /**
+     * Inclusive first occurrence lower bound, normalized to UTC microseconds.
+     */
+    from?: string,
+    /**
+     * Exclusive first occurrence upper bound, normalized to UTC microseconds.
+     */
+    until?: string,
+    /**
+     * Maximum groups per page, fixed for the cursor traversal.
+     */
+    limit?: number,
+    /**
+     * Opaque continuation bound to account, application, consumer, filters and page size.
+     */
+    cursor?: string,
+  }): CancelablePromise<EventAcknowledgmentHistoryPage> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-history/pages',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      query: {
+        'invocation_id': invocationId,
+        'kind': kind,
+        'from': from,
+        'until': until,
+        'limit': limit,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `Invalid, expired or mismatched history page cursor or filters.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Paginated acknowledgment read exceeded its request deadline.`,
+      },
+    });
+  }
+  /**
+   * Inspect retained deferred acknowledgment outcomes.
+   * Requires apps:read or admin. Returns the 100 most recently updated outcome groups for this consumer, optionally restricted to one delivery. Repeated operations coalesce per attempt and kind; occurrences saturates at 2147483647. Retention ends seven days after the attempt deadline, or earlier when the invocation is deleted. Invalid and replaced tokens produce no history. This is diagnostic coverage since rollout, not a complete audit log or a rate denominator.
+   * @returns EventAcknowledgmentHistory Bounded coalesced acknowledgment history, with explicit truncation.
+   * @throws ApiError
+   */
+  public static listEventAcknowledgmentHistory({
+    slug,
+    subscriptionId,
+    invocationId,
+  }: {
+    /**
+     * Application slug owning acknowledgment history.
+     */
+    slug: string,
+    /**
+     * Consumer subscription whose retained outcomes are inspected.
+     */
+    subscriptionId: string,
+    /**
+     * Optional delivery UUID restricting consumer outcome history.
+     */
+    invocationId?: string,
+  }): CancelablePromise<EventAcknowledgmentHistory> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-history',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      query: {
+        'invocation_id': invocationId,
+      },
+      errors: {
+        400: `Malformed acknowledgment history scope or delivery filter.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Acknowledgment history read exceeded its time budget.`,
+      },
+    });
+  }
+  /**
+   * Inspect future delivery acknowledgment policy.
+   * Requires apps:read or admin. Tokens are never returned by inspection. Policies affect future acceptances and explicit backfills only. Zero preserves HTTP-success acknowledgment; 1–300 seconds enables a deferred lease after HTTP 202.
+   * @returns EventAcknowledgmentPolicy Inspect future delivery acknowledgment policy result.
+   * @throws ApiError
+   */
+  public static getEventAcknowledgmentPolicy({
+    slug,
+    subscriptionId,
+  }: {
+    /**
+     * slug identifying the target for getEventAcknowledgmentPolicy.
+     */
+    slug: string,
+    /**
+     * subscriptionID identifying the target for getEventAcknowledgmentPolicy.
+     */
+    subscriptionId: string,
+  }): CancelablePromise<EventAcknowledgmentPolicy> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-policy',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      errors: {
+        400: `Invalid scope, token or policy for getEventAcknowledgmentPolicy.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Expired lease, replaced attempt or incompatible completion for getEventAcknowledgmentPolicy.`,
+        504: `Acknowledgment request timed out for getEventAcknowledgmentPolicy.`,
+      },
+    });
+  }
+  /**
+   * Configure future delivery acknowledgment policy.
+   * Requires deploy:write or admin. Writes remain app-scoped; delivery callbacks additionally require the opaque token. Never log tokens. Policies affect future acceptances and explicit backfills only. Zero preserves HTTP-success acknowledgment; 1–300 seconds enables a deferred lease after HTTP 202.
+   * @returns EventAcknowledgmentPolicy Configure future delivery acknowledgment policy result.
+   * @throws ApiError
+   */
+  public static setEventAcknowledgmentPolicy({
+    slug,
+    subscriptionId,
+    requestBody,
+  }: {
+    /**
+     * slug identifying the target for setEventAcknowledgmentPolicy.
+     */
+    slug: string,
+    /**
+     * subscriptionID identifying the target for setEventAcknowledgmentPolicy.
+     */
+    subscriptionId: string,
+    requestBody: EventAcknowledgmentPolicyRequest,
+  }): CancelablePromise<EventAcknowledgmentPolicy> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-policy',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid scope, token or policy for setEventAcknowledgmentPolicy.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Expired lease, replaced attempt or incompatible completion for setEventAcknowledgmentPolicy.`,
+        504: `Acknowledgment request timed out for setEventAcknowledgmentPolicy.`,
+      },
+    });
+  }
+  /**
+   * Inspect retained delivery processing state.
+   * Requires apps:read or admin. Tokens are never returned by inspection. Processing state distinguishes waiting, delivering, processing, expired and terminal invocation states. It does not prove business effects outside the consumer transaction.
+   * @returns EventAcknowledgmentStatus Inspect retained delivery processing state result.
+   * @throws ApiError
+   */
+  public static getEventAcknowledgment({
+    slug,
+    invocationId,
+  }: {
+    /**
+     * slug identifying the target for getEventAcknowledgment.
+     */
+    slug: string,
+    /**
+     * invocationID identifying the target for getEventAcknowledgment.
+     */
+    invocationId: string,
+  }): CancelablePromise<EventAcknowledgmentStatus> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment',
+      path: {
+        'slug': slug,
+        'invocationID': invocationId,
+      },
+      errors: {
+        400: `Invalid scope, token or policy for getEventAcknowledgment.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Expired lease, replaced attempt or incompatible completion for getEventAcknowledgment.`,
+        504: `Acknowledgment request timed out for getEventAcknowledgment.`,
+      },
+    });
+  }
+  /**
+   * Renew a deferred delivery processing lease.
+   * Requires deploy:write or admin. Writes remain app-scoped; delivery callbacks additionally require the opaque token. Never log tokens. Renewal requires an unexpired awaiting lease and cannot exceed the one-hour attempt deadline. A 409 during the 202 handoff may be retried with the same token.
+   * @returns EventAcknowledgmentStatus Renew a deferred delivery processing lease result.
+   * @throws ApiError
+   */
+  public static renewEventAcknowledgment({
+    slug,
+    invocationId,
+    requestBody,
+  }: {
+    /**
+     * slug identifying the target for renewEventAcknowledgment.
+     */
+    slug: string,
+    /**
+     * invocationID identifying the target for renewEventAcknowledgment.
+     */
+    invocationId: string,
+    requestBody: EventAcknowledgmentRequest,
+  }): CancelablePromise<EventAcknowledgmentStatus> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/renew',
+      path: {
+        'slug': slug,
+        'invocationID': invocationId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid scope, token or policy for renewEventAcknowledgment.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Expired lease, replaced attempt or incompatible completion for renewEventAcknowledgment.`,
+        504: `Acknowledgment request timed out for renewEventAcknowledgment.`,
+      },
+    });
+  }
+  /**
+   * Complete a deferred delivery attempt.
+   * Requires deploy:write or admin. Writes remain app-scoped; delivery callbacks additionally require the opaque token. Never log tokens. Complete only after durable business processing. Matching successful repeats return the saved completion state. Replaced attempts and changed results return 409. Completion can precede the scheduler observing 202.
+   * @returns EventAcknowledgmentStatus Complete a deferred delivery attempt result.
+   * @throws ApiError
+   */
+  public static completeEventAcknowledgment({
+    slug,
+    invocationId,
+    requestBody,
+  }: {
+    /**
+     * slug identifying the target for completeEventAcknowledgment.
+     */
+    slug: string,
+    /**
+     * invocationID identifying the target for completeEventAcknowledgment.
+     */
+    invocationId: string,
+    requestBody: EventAcknowledgmentRequest,
+  }): CancelablePromise<EventAcknowledgmentStatus> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/complete',
+      path: {
+        'slug': slug,
+        'invocationID': invocationId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid scope, token or policy for completeEventAcknowledgment.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Expired lease, replaced attempt or incompatible completion for completeEventAcknowledgment.`,
+        504: `Acknowledgment request timed out for completeEventAcknowledgment.`,
+      },
+    });
+  }
+  /**
+   * Retry a deferred delivery attempt.
+   * Requires deploy:write or admin and the current delivery token. Atomically releases the claim and quota and schedules the captured backoff; an exhausted captured attempt budget dead-letters instead. Matching repeats return the saved disposition until the attempt or replay generation is replaced. Changed reason or action returns 409. May precede the scheduler observing 202. Reason is a bounded non-sensitive code. Does not undo consumer effects.
+   * @returns EventAcknowledgmentStatus Retry a deferred delivery attempt result.
+   * @throws ApiError
+   */
+  public static retryEventAcknowledgment({
+    slug,
+    invocationId,
+    requestBody,
+  }: {
+    /**
+     * slug identifying the target for retryEventAcknowledgment.
+     */
+    slug: string,
+    /**
+     * invocationID identifying the target for retryEventAcknowledgment.
+     */
+    invocationId: string,
+    requestBody: EventAcknowledgmentFailureRequest,
+  }): CancelablePromise<EventAcknowledgmentStatus> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/retry',
+      path: {
+        'slug': slug,
+        'invocationID': invocationId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid scope, token or policy for retryEventAcknowledgment.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Expired lease, replaced attempt or incompatible completion for retryEventAcknowledgment.`,
+        504: `Acknowledgment request timed out for retryEventAcknowledgment.`,
+      },
+    });
+  }
+  /**
+   * Dead-letter a deferred delivery attempt.
+   * Requires deploy:write or admin and the current delivery token. Atomically releases the claim and quota and dead-letters this delivery independently of other consumers. Matching repeats return the saved disposition until replacement; changed reason or action returns 409. May precede the scheduler observing 202. Reason is a bounded non-sensitive code. Does not undo consumer effects.
+   * @returns EventAcknowledgmentStatus Dead-letter a deferred delivery attempt result.
+   * @throws ApiError
+   */
+  public static deadLetterEventAcknowledgment({
+    slug,
+    invocationId,
+    requestBody,
+  }: {
+    /**
+     * slug identifying the target for deadLetterEventAcknowledgment.
+     */
+    slug: string,
+    /**
+     * invocationID identifying the target for deadLetterEventAcknowledgment.
+     */
+    invocationId: string,
+    requestBody: EventAcknowledgmentFailureRequest,
+  }): CancelablePromise<EventAcknowledgmentStatus> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/dead-letter',
+      path: {
+        'slug': slug,
+        'invocationID': invocationId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid scope, token or policy for deadLetterEventAcknowledgment.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Expired lease, replaced attempt or incompatible completion for deadLetterEventAcknowledgment.`,
+        504: `Acknowledgment request timed out for deadLetterEventAcknowledgment.`,
       },
     });
   }

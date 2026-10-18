@@ -6,12 +6,14 @@ import (
 	"bytes"
 	"io/fs"
 	"regexp"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
 
-// SourcesForSchema binds the five issued public declarations to the target
-// schema. Public execution and every other embedded source retain exact bytes.
+// SourcesForSchema adapts frozen public declarations in the issued allowlist to
+// the target schema. Unqualified declarations already follow search_path.
+// Public execution and every other embedded source retain exact bytes.
 func SourcesForSchema(schema string) fs.FS {
 	if schema == "public" {
 		return FS
@@ -36,17 +38,25 @@ func (s scopedMigrationFS) Open(name string) (fs.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	body = scopeIssuedMigrationDeclarations(body, s.schema)
+	if name == "20261018003100003_org_resource_lifecycle.sql" {
+		// This issued expansion copies migration-owned functions from a public
+		// schema dump. Keep every copied declaration/reference in the target.
+		body = bytes.ReplaceAll(body, []byte("public.%I"), []byte(strings.ReplaceAll(s.schema, "'", "''")+".%I"))
+		body = bytes.ReplaceAll(body, []byte("public."), []byte(s.schema+"."))
+	} else {
+		body = scopeIssuedMigrationDeclarations(body, s.schema)
+	}
 	return &scopedMigrationFile{Reader: bytes.NewReader(body), info: scopedMigrationInfo{FileInfo: info, size: int64(len(body))}}, nil
 }
 
 func issuedPublicDeclarationMigration(name string) bool {
 	switch name {
-	case "20261003160458628_application_standard_runtime_default_base.sql",
-		"20261003210400000_application_standard_source_build_rootfs.sql",
+	case "20261003210400000_application_standard_source_build_rootfs.sql",
 		"20261004043519306_application_standard_exception_authority.sql",
 		"20261004232943929_application_standard_retained_native_admission.sql",
-		"20261004234710285_application_standard_retained_native_protocol.sql":
+		"20261004234710285_application_standard_retained_native_protocol.sql",
+		"20261012080000001_application_standard_shared_base_read_fences.sql",
+		"20261018003100003_org_resource_lifecycle.sql":
 		return true
 	default:
 		return false

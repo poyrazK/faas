@@ -1,0 +1,152 @@
+---
+- name: gatewayd_public_edge_service — check the edge configuration
+  ansible.builtin.assert:
+    that:
+      - faas_edge_control_plane_target is match('^http://[^/]+:[0-9]+$')
+      - ansible_architecture in ['x86_64', 'aarch64']
+    fail_msg: >-
+      The compute-node app edge needs faas_edge_control_plane_target
+      (http://<control-plane private address>:<port>) and an x86_64 or
+      aarch64 host.
+
+- name: gatewayd_public_edge_service — pick the connector architecture
+  ansible.builtin.set_fact:
+    faas_cloudflared_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_architecture] }}"
+
+- name: gatewayd_public_edge_service — create the connector user
+  ansible.builtin.user:
+    name: cloudflared
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+- name: gatewayd_public_edge_service — create the connector install directory
+  ansible.builtin.file:
+    path: "{{ faas_cloudflared_install_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: gatewayd_public_edge_service — download the pinned connector
+  notify: restart faas-cloudflared
+  ansible.builtin.get_url:
+    url: "https://github.com/cloudflare/cloudflared/releases/download/{{ faas_cloudflared_version }}/cloudflared-linux-{{ faas_cloudflared_arch }}"
+    dest: "{{ faas_cloudflared_install_dir }}/cloudflared"
+    checksum: "sha256:{{ faas_cloudflared_sha256[faas_cloudflared_arch] }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: gatewayd_public_edge_service — create the token directory
+  ansible.builtin.file:
+    path: "{{ faas_cloudflared_token_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: gatewayd_public_edge_service — install the connector unit
+  notify: restart faas-cloudflared
+  ansible.builtin.template:
+    src: faas-cloudflared.service.j2
+    dest: /etc/systemd/system/faas-cloudflared.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: gatewayd_public_edge_service — install the edge unit and socket
+  notify: restart faas-gatewayd-public-edge
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - faas-gatewayd-public-edge.service
+    - faas-gatewayd-public-edge.socket
+
+- name: gatewayd_public_edge_service — create systemd drop-in directories
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - faas-gatewayd-public-edge.service
+    - faas-gatewayd-internal.service
+
+- name: gatewayd_public_edge_service — install FAAS_NODE_NAME drop-in
+  notify: restart faas-gatewayd-public-edge
+  ansible.builtin.template:
+    src: ../../_shared/templates/99-faas-node-name.conf.j2
+    dest: /etc/systemd/system/faas-gatewayd-public-edge.service.d/99-faas-node-name.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: gatewayd_public_edge_service — install apps domain and control-plane target drop-in
+  notify: restart faas-gatewayd-public-edge
+  ansible.builtin.template:
+    src: 99-faas-edge.conf.j2
+    dest: /etc/systemd/system/faas-gatewayd-public-edge.service.d/99-faas-edge.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+# Release activation restarts gatewayd-internal on every compute release. The
+# edge follows it both ways: PartOf= carries stop and restart to the edge,
+# and Wants= on gatewayd-internal carries start, so the edge always runs the
+# active release's binary.
+- name: gatewayd_public_edge_service — tie the edge to gatewayd-internal
+  notify: restart faas-gatewayd-public-edge
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-gatewayd-public-edge.service.d/10-faas-edge-partof.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (gatewayd_public_edge_service). ADR-1343.
+      [Unit]
+      PartOf=faas-gatewayd-internal.service
+
+- name: gatewayd_public_edge_service — start the edge with gatewayd-internal
+  notify: restart faas-gatewayd-public-edge
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-gatewayd-internal.service.d/50-faas-edge-wants.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (gatewayd_public_edge_service). ADR-1343.
+      [Unit]
+      Wants=faas-gatewayd-public-edge.service
+
+- name: gatewayd_public_edge_service — reload systemd before enabling the edge  # noqa: no-handler (enable below needs the new units)
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+# Enable always, so the edge comes back after a reboot; start only outside a
+# node join that defers service starts to its own activation step. The
+# connector starts only once the token exists (ConditionPathExists); until
+# then it stays inactive without failing.
+- name: gatewayd_public_edge_service — enable the edge and the connector
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+  loop:
+    - faas-gatewayd-public-edge.socket
+    - faas-gatewayd-public-edge.service
+    - faas-cloudflared.service
+
+- name: gatewayd_public_edge_service — start the edge and the connector
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: started
+  loop:
+    - faas-gatewayd-public-edge.socket
+    - faas-gatewayd-public-edge.service
+    - faas-cloudflared.service
+  when: not (faas_join_defer_service_handlers | default(false) | bool)

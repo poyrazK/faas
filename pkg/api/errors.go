@@ -808,6 +808,10 @@ const (
 	CodeInstanceBusy          = "instance_busy"
 	CodeFrozenInstanceRefused = "frozen_instance_refused"
 	CodeInstanceFrozen        = "instance_frozen"
+	// CodeFrozenCompressUnavailable refuses to compress a frozen instance on
+	// a host without memory-only swap (zswap with writeback disabled, ADR-906
+	// decision 6); schedd parks it instead.
+	CodeFrozenCompressUnavailable = "frozen_compress_unavailable"
 	// CodeDevDebugSessionLimit (ADR-741) caps concurrent debugger tunnels to
 	// one developer environment.
 	CodeDevDebugSessionLimit = "dev_debug_session_limit"
@@ -1027,6 +1031,7 @@ const (
 	CodeDeploymentScopeCollision = "deployment_scope_collision"
 	// ADR-1239: app/release review changed before the atomic candidate insert.
 	CodeReleaseReviewChanged = "release_review_changed"
+	CodeRegressionChanged    = "regression_changed"
 
 	// Trusted cosign signers (issue #472 / ADR-054). Same shape as
 	// the env-var quota — config cap, not a credential one — but a
@@ -1622,6 +1627,10 @@ const (
 	// Distinct from app_startup_timeout (still running, never ready) and
 	// app_not_listening (running, nothing bound).
 	CodeAppStartupCrash = "app_startup_crash"
+	// CodeExecutionModeConflict means the workload's startup behavior
+	// contradicts its declared execution mode: a worker that bound a port or
+	// exited, or a job that served. Customer-caused, like app_startup_crash.
+	CodeExecutionModeConflict = "execution_mode_conflict"
 	// CodeDeploymentSmokeFailed means the public post-readiness health
 	// request did not complete successfully. It is distinct from guest boot
 	// failures so operators can tell serving-path regressions from image
@@ -1939,7 +1948,7 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
-	case CodeProfileGateBlocked, CodeReleaseReviewChanged:
+	case CodeProfileGateBlocked, CodeRegressionChanged, CodeReleaseReviewChanged, CodeGitHubAccountConflict:
 		return http.StatusConflict
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests
@@ -2029,9 +2038,9 @@ func StatusForCode(code string) int {
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
 		CodeSecurityQuarantineRecoveryBlocked, CodeDevSourceDiverged,
-		CodeInstanceNotFreezable, CodeInstanceBusy, CodeFrozenInstanceRefused:
+		CodeInstanceNotFreezable, CodeInstanceBusy, CodeFrozenInstanceRefused, CodeFrozenCompressUnavailable:
 		return http.StatusConflict
-	case CodeMCPAccessPolicyChanged, CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeMCPTaskCompatibilityGate, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
+	case CodeMCPReadinessRequired, CodeMCPAccessPolicyChanged, CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeMCPTaskCompatibilityGate, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected
 		// serving revision. Sits next to CodeConflict /
 		// CodeDomainNotVerified / CodeNoRollbackTarget because the
@@ -2120,6 +2129,7 @@ func StatusForCode(code string) int {
 		CodeDepInstallFailed,
 		CodeAppStartupTimeout,
 		CodeAppStartupCrash,
+		CodeExecutionModeConflict,
 		CodeDeploymentSmokeFailed,
 		CodeReleaseCommandFailed,
 		CodeReleasePhaseUnavailable:
@@ -6682,7 +6692,7 @@ func ErrMCPGatewayPromotion(code string) *Problem {
 
 func IsMCPPromotionConditionFailure(code string) bool {
 	switch code {
-	case CodeMCPAdmissionEvidenceUnavailable, CodeMCPAccessPolicyChanged, CodeMCPAccountRevisionChanged, CodeMCPGatewayEvidenceUnavailable, CodeMCPGatewayEvidenceStale, CodeMCPGatewayReplayPending:
+	case CodeMCPReadinessRequired, CodeMCPAdmissionEvidenceUnavailable, CodeMCPAccessPolicyChanged, CodeMCPAccountRevisionChanged, CodeMCPGatewayEvidenceUnavailable, CodeMCPGatewayEvidenceStale, CodeMCPGatewayReplayPending:
 		return true
 	}
 	return false

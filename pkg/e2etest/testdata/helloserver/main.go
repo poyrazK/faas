@@ -11,7 +11,8 @@
 //
 // Modes:
 //
-//	(default)      serve the contents of -body-file on / and 200 on /healthz;
+//	(default)      serve the contents of -body-file on / and 200 on /healthz,
+//	               echo POST /echo request bodies back;
 //	               bind $PORT when -addr is omitted (falling back to 8080)
 //	-spin          also burn one CPU forever (cpu-fairness fixture)
 //	-ignore-term   ignore SIGTERM (wedged-process fixture)
@@ -26,6 +27,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -67,6 +69,7 @@ func main() {
 	probeContract := flag.Bool("probe-contract", false, "report this exec probe process to the local fixture server")
 	noHealthz := flag.Bool("no-healthz", false, "omit the /healthz endpoint")
 	queueAck := flag.Bool("queue-ack", false, "acknowledge push-queue fixture deliveries without returning customer data")
+	gitOpsResilience := flag.Bool("gitops-resilience", false, "allow bounded native acceptance request and queue delays")
 	durableCounter := flag.Bool("durable-counter", false, "serve pure durable entity transitions")
 	printFile := flag.String("print-file", "", "print this file to stdout and exit (a shell-free cat for fork exec tests)")
 	crashCapture := flag.Bool("crash-capture", false, "serve /boom, which asks for an ADR-733 crash capture of itself")
@@ -139,6 +142,7 @@ func main() {
 	body = []byte(strings.TrimRight(string(body), "\n") + "\n")
 
 	mux := http.NewServeMux()
+	registerTCPFixture(mux)
 	if *identityProbe {
 		serveIdentityProbe(mux)
 	}
@@ -190,10 +194,31 @@ func main() {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
 			}
+			if *gitOpsResilience && !waitGitOpsQueueDelay(w, r) {
+				return
+			}
 			w.WriteHeader(http.StatusNoContent)
 		})
 	}
-	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+	// /echo answers with the request body, so service-proxy tests can check
+	// that a replayed request still carried it.
+	mux.HandleFunc("/echo", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		got, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<20))
+		if err != nil {
+			http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write(got)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if *gitOpsResilience && !waitGitOpsRequestDelay(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write(body)
 	})

@@ -1,0 +1,16 @@
+[Unit]
+Description=Gregale compute-node app edge listener (ADR-1343)
+Documentation=https://gregale.dev/docs/ops/gatewayd-public
+Before=faas-gatewayd-public-edge.service
+
+[Socket]
+# Only the local Cloudflare Tunnel connector dials this socket. It stays open
+# while the edge restarts, so tunnel requests queue instead of failing.
+ListenStream=127.0.0.1:8090
+FileDescriptorName=public
+NoDelay=true
+Backlog=4096
+Service=faas-gatewayd-public-edge.service
+
+[Install]
+WantedBy=sockets.target

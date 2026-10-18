@@ -30,6 +30,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/buildpublisher"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/markers"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -505,7 +506,11 @@ type BuildResult struct {
 	RailpackVer       string
 	BuilderBaseDigest string
 	RuntimeBaseRef    string
-	DevPatch          *api.DevPatchSourceMap
+	// Runtime is the runtime the artifact was built FROM: the app's own, or
+	// the shared runner base it was built on (H10-140). The export claim
+	// signs it.
+	Runtime  string
+	DevPatch *api.DevPatchSourceMap
 }
 
 // ProcessOne claims the next queued build (or processes the buildID passed in
@@ -652,7 +657,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// customer's cached layer must not serve a Pro build (the layer
 	// was built against the Hobby cap, not the Pro cap). Load the
 	// account eagerly so the cache lookup below can include the plan.
-	acct, acctErr := b.store.AccountByID(ctx, app.AccountID)
+	acct, acctErr := state.AppResourceAccount(ctx, b.store, app)
 	if acctErr != nil {
 		b.recoverClaimAfterLookupFailure(ctx, build, "load account", acctErr)
 		return BuildResult{}, fmt.Errorf("builderd: load account: %w", acctErr)
@@ -833,6 +838,22 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, build, state.FailureInfra, "resolve runtime base: "+baseErr.Error(), buildStart)
 		return BuildResult{}, baseErr
 	}
+	// The runner base reaches imaged through the signed export claim, or, on
+	// a node without a build publisher, through this build's provenance.
+	nodeSpec := ""
+	if fw == FrameworkNode {
+		nodeSpec = markers.NodeVersionSpecAtRoot(dep.SourcePath, dep.SourceRoot)
+	}
+	sharedRuntime := sharedSourceAppRuntime(app, fw, nodeSpec, dockerfilePath, os.Getenv)
+	if sharedRuntime != "" {
+		ref, refErr := resolveBuildRuntimeBaseRef(sharedRuntime, fw, os.Getenv)
+		if refErr != nil {
+			b.markFailed(ctx, build, state.FailureInfra, "resolve shared runtime base: "+refErr.Error(), buildStart)
+			return BuildResult{}, refErr
+		}
+		runtimeName, runtimeBaseRef = sharedRuntime, ref
+		b.emitBuildLog(ctx, build.ID, "building on the shared "+sharedRuntime+" runtime base\n")
+	}
 	watch, watchErr := devWatch(ctx, b.store, app)
 	if watchErr != nil {
 		b.markFailed(ctx, build, state.FailureInfra, "load developer watch mode: "+watchErr.Error(), buildStart)
@@ -884,7 +905,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		completed, completeErr := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,
 			BuildResult{BuildID: build.ID, LayerPath: cached.Path, LayerBytes: cached.Bytes, CacheHit: true,
 				BuildkitVer: cached.Toolchain.BuildkitVer, RailpackVer: cached.Toolchain.RailpackVer,
-				BuilderBaseDigest: buildEnvironment.BaseDigest, RuntimeBaseRef: runtimeBaseRef,
+				BuilderBaseDigest: buildEnvironment.BaseDigest, RuntimeBaseRef: runtimeBaseRef, Runtime: runtimeName,
 				DevPatch: cached.Toolchain.DevPatch}, buildStart)
 		if completeErr != nil || completed.BuildID == "" {
 			b.cache.ReleaseLease(cached.Path)
@@ -954,6 +975,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		Runtime:            runtimeName,
 		RuntimeBaseRef:     runtimeBaseRef,
 		Function:           app.Type == state.AppTypeFunction,
+		SharedRuntime:      sharedRuntime != "",
 		DevWatchCommand:    watch.Command,
 		DevWatchHost:       watch.Host,
 		DependencyCacheKey: dependencyCacheKey,
@@ -1137,6 +1159,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if tail := boundedGuestBuildLogTail(out.LogTail); tail != "" {
 		b.emitBuildLog(ctx, build.ID, "[guest build output]\n"+tail+"\n")
 	}
+	if line := sharedRuntimeBuildLog(out.SharedRuntime); line != "" && out.ExitCode == 0 {
+		b.emitBuildLog(ctx, build.ID, line)
+	}
 	if out.ExitCode != 0 {
 		// Prefer the failure class the guest-init captured in build-done.json
 		// (one of: "FailureUserError", "FailureInfra", "FailureOOM",
@@ -1220,7 +1245,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	result, err := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,
 		BuildResult{BuildID: build.ID, LayerPath: out.OCIImage, LayerBytes: artifactBytes,
 			BuildkitVer: out.BuildkitVer, RailpackVer: out.RailpackVer,
-			BuilderBaseDigest: buildEnvironment.BaseDigest, RuntimeBaseRef: runtimeBaseRef,
+			BuilderBaseDigest: buildEnvironment.BaseDigest, RuntimeBaseRef: runtimeBaseRef, Runtime: runtimeName,
 			DevPatch: out.DevPatch}, buildStart)
 	if err != nil || result.BuildID == "" {
 		return result, err

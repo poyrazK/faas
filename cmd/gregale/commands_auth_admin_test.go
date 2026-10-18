@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -182,6 +183,7 @@ func TestAuthAdminKeyListJSON(t *testing.T) {
 	})
 	out := captureAuthStdout(t)
 	jsonOutput = true
+	t.Cleanup(resetJSONOutput) // later tests expect text output
 	if code := cmdAuth([]string{"admin-key", "list", "shop-auth"}); code != 0 {
 		t.Fatalf("list = %d", code)
 	}
@@ -193,5 +195,84 @@ func TestAuthAdminKeyListJSON(t *testing.T) {
 	}
 	if err := json.Unmarshal(out.Bytes(), &body); err != nil || len(body.AdminKeys) != 1 || body.AdminKeys[0].ID != "0A1B2C3D" {
 		t.Fatalf("json = %s (%v)", out.String(), err)
+	}
+}
+
+func TestAuthActivityReadsTheAdminAPIWithTheOwnerKey(t *testing.T) {
+	resetJSONEnv(t)
+	authIssuerServer(t, func(http.ResponseWriter, *http.Request) bool { return false })
+	key := "gaak_" + strings.Repeat("k", 43)
+	var seen *http.Request
+	old := authAdminHTTPClient
+	authAdminHTTPClient = &http.Client{Transport: authRoundTrip(func(r *http.Request) (*http.Response, error) {
+		seen = r
+		recorder := httptest.NewRecorder()
+		if r.Header.Get("Authorization") != "Bearer "+key || r.Method != http.MethodGet {
+			recorder.WriteHeader(http.StatusUnauthorized)
+			return recorder.Result(), nil
+		}
+		writeJSONTest(recorder, map[string]any{"entries": []map[string]any{
+			{"id": "e1", "created_at": "2026-10-15T10:00:00Z", "action": "login", "user_id": "u1", "email": "a@example.test"},
+			{"id": "e2", "created_at": "2026-10-15T09:00:00Z", "action": "user_signedup", "user_id": "u2", "email": nil},
+			{"id": "e3", "created_at": "2026-10-15T08:00:00Z", "action": "user_deleted", "actor": "administrator", "user_id": "u3", "email": "c@example.test"},
+		}, "more": true})
+		return recorder.Result(), nil
+	})}
+	t.Cleanup(func() { authAdminHTTPClient = old })
+	oldIn := osStdin
+	osStdin = strings.NewReader(key + "\n")
+	t.Cleanup(func() { osStdin = oldIn })
+	out := captureAuthStdout(t)
+	if code := cmdAuth([]string{"activity", "shop-auth", "--search", "login", "--limit", "20", "--admin-key-stdin"}); code != 0 {
+		t.Fatalf("activity = %d", code)
+	}
+	if seen.URL.Host != "shop-auth.gregale.app" || seen.URL.Path != "/admin/v1/activity" || seen.URL.Query().Get("search") != "login" || seen.URL.Query().Get("per_page") != "20" || seen.URL.Query().Has("user") {
+		t.Fatalf("request = %s", seen.URL)
+	}
+	text := out.String()
+	for _, want := range []string{"login", "a@example.test", "u2", "user_deleted (administrator)", "More entries exist"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("output lacks %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, key) {
+		t.Fatal("printed the admin key")
+	}
+	if code := cmdAuth([]string{"activity", "shop-auth", "--limit", "500"}); code == 0 {
+		t.Fatal("accepted a limit above 100")
+	}
+}
+
+func TestRestartAuthAppRetriesWhileARestartIsRunning(t *testing.T) {
+	resetJSONEnv(t)
+	attempts := 0
+	authIssuerServer(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method != "POST" || r.URL.Path != "/v1/apps/shop-auth/restart" {
+			return false
+		}
+		attempts++
+		if attempts < 3 {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusConflict)
+			writeJSONTest(w, map[string]any{"status": 409, "code": "conflict", "title": "Restart already in progress"})
+			return true
+		}
+		writeJSONTest(w, map[string]any{"app_id": "auth-app", "wake_id": "w1"})
+		return true
+	})
+	oldWindow, oldPause := authRestartRetryWindow, authRestartRetryPause
+	authRestartRetryWindow, authRestartRetryPause = time.Minute, time.Millisecond
+	t.Cleanup(func() { authRestartRetryWindow, authRestartRetryPause = oldWindow, oldPause })
+	client, err := authedClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	old := osStderr
+	osStderr = &stderr
+	t.Cleanup(func() { osStderr = old })
+	restartAuthApp(t.Context(), client, "shop-auth")
+	if attempts != 3 || stderr.Len() != 0 {
+		t.Fatalf("attempts = %d, warnings = %q", attempts, stderr.String())
 	}
 }

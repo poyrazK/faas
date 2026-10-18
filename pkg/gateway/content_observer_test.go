@@ -97,11 +97,11 @@ func TestContentTeeClassifiesResponses(t *testing.T) {
 	if got := serveThroughTee(o, "/catalog?b=2&a=1", 200, nil, "v1", now); got != api.ContentOutcomeFirst {
 		t.Fatalf("first = %q", got)
 	}
-	// Query order does not split the URL; the body repeats.
-	if got := serveThroughTee(o, "/catalog?a=1&b=2", 200, nil, "v1", now.Add(30*time.Second)); got != "same_60" {
+	// The same request target repeats; other query orders are separate URLs.
+	if got := serveThroughTee(o, "/catalog?b=2&a=1", 200, nil, "v1", now.Add(30*time.Second)); got != "same_60" {
 		t.Fatalf("repeat = %q", got)
 	}
-	if got := serveThroughTee(o, "/catalog?a=1&b=2", 200, nil, "v2", now.Add(4*time.Minute)); got != "changed_300" {
+	if got := serveThroughTee(o, "/catalog?b=2&a=1", 200, nil, "v2", now.Add(4*time.Minute)); got != "changed_300" {
 		t.Fatalf("change = %q", got)
 	}
 	big := strings.Repeat("x", ResponseCachePerEntryMaxBytes+1)
