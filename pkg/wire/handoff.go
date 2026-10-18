@@ -26,6 +26,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -58,11 +59,15 @@ type HandoffOptions struct {
 	Log *slog.Logger
 
 	// Test seams: whether the process runs under systemd, the main-PID
-	// notification and its confirmation, and the cgroup memory check.
+	// notification and its confirmation, the cgroup memory check, how freed
+	// heap is returned to the OS, and how long a memory spike is waited out.
 	underSystemd  func() bool
 	notify        func(state string) error
 	confirmMain   func(ctx context.Context, pid int) error
 	memoryAllowed func() error
+	freeMemory    func()
+	memoryWait    time.Duration
+	memoryPoll    time.Duration
 }
 
 // HandoffRequests delivers one value per SIGUSR2, the signal the units'
@@ -115,7 +120,7 @@ func Handoff(ctx context.Context, opts HandoffOptions) (int, error) {
 }
 
 func handoff(ctx context.Context, opts HandoffOptions) (int, error) {
-	if err := opts.memoryAllowed(); err != nil {
+	if err := waitForMemory(ctx, opts.memoryAllowed, opts.freeMemory, opts.memoryWait, opts.memoryPoll); err != nil {
 		return 0, fmt.Errorf("wire: hand-off refused: %w", err)
 	}
 	endPredecessor(opts.Log)
@@ -192,7 +197,42 @@ func (o HandoffOptions) withDefaults() HandoffOptions {
 	if o.memoryAllowed == nil {
 		o.memoryAllowed = cgroupMemoryAllowsSecondGeneration
 	}
+	if o.freeMemory == nil {
+		o.freeMemory = debug.FreeOSMemory
+	}
+	if o.memoryWait == 0 {
+		o.memoryWait = time.Duration(api.HandoffMemoryWaitSeconds) * time.Second
+	}
+	if o.memoryPoll == 0 {
+		o.memoryPoll = 2 * time.Second
+	}
 	return o
+}
+
+// waitForMemory returns once allowed reports nil. While the cgroup is over
+// the hand-off share, it returns freed heap to the OS and checks again every
+// poll for up to wait: a reload during a transient spike then goes ahead
+// instead of falling back to a restart. It returns allowed's last error.
+func waitForMemory(ctx context.Context, allowed func() error, free func(), wait, poll time.Duration) error {
+	err := allowed()
+	if err == nil {
+		return nil
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		free()
+		if err = allowed(); err == nil {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(poll):
+		}
+	}
 }
 
 // endPredecessor asks a still-draining predecessor to finish now: at most
