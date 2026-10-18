@@ -69,18 +69,14 @@ func TestDeploymentAnnotationTags_MirrorsDB(t *testing.T) {
 }
 
 func TestDeployTagHelpNamesEveryAcceptedValue(t *testing.T) {
-	var help string
-	for _, command := range cliCommands {
-		if command.Name != "deploy" {
-			continue
-		}
-		for _, flag := range command.Flags {
-			if flag.Name == "tag" {
-				help = flag.Short
-			}
-		}
+	command, ok := lookupCliCommand("deploy")
+	if !ok {
+		t.Fatal("deploy metadata is missing")
 	}
-	if help == "" {
+	var out strings.Builder
+	printLocalCommandHelpDetail(&out, command, true)
+	help := out.String()
+	if !strings.Contains(help, "--tag <TAG>") {
 		t.Fatal("deploy --tag metadata is missing")
 	}
 	for _, tag := range DeploymentAnnotationTags {

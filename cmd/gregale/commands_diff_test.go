@@ -362,12 +362,14 @@ func TestRunDiff_LenientBaselineFailureEmitsWarning(t *testing.T) {
 		JSON:      true,
 		Lenient:   true,
 		BuildPlan: &api.BuildPlan{Class: "app"},
+		Preview:   newCLIPreview("remote comparison", "target", "", "", "", "Build execution is not verified."),
 	})
 	if code != 0 {
 		t.Fatalf("lenient runDiff exit = %d, want 0; stderr=%s", code, stderr.String())
 	}
 	var envelope struct {
-		Blocking bool `json:"blocking"`
+		Blocking bool              `json:"blocking"`
+		Preview  cliPreviewSummary `json:"preview"`
 		Diff     struct {
 			Breaks []struct {
 				Code   string `json:"code"`
@@ -380,6 +382,9 @@ func TestRunDiff_LenientBaselineFailureEmitsWarning(t *testing.T) {
 	}
 	if envelope.Blocking {
 		t.Fatal("lenient incomplete preview marked blocking")
+	}
+	if envelope.Preview.Verification != "partial remote comparison" || !strings.Contains(envelope.Preview.Limits, "current settings are unknown") {
+		t.Fatalf("incomplete comparison was not explained: %+v", envelope.Preview)
 	}
 	found := false
 	for _, b := range envelope.Diff.Breaks {

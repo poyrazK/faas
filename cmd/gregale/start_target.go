@@ -39,8 +39,8 @@ func (r *startRunner) resolveLaunchTarget() error {
 		if err != nil && (!errors.As(err, &problem) || problem.Problem.Status != http.StatusNotFound) {
 			return fmt.Errorf("check app name: %w", err)
 		}
-		if r.session.Project != "" && !exists {
-			return errors.New("the linked app is unavailable; verify its project and environment before starting")
+		if r.session.SourceContext != "" && !exists {
+			return errors.New("the saved app is unavailable; run gregale context --verify, or unlink before choosing a new app")
 		}
 		if r.session.AppID != "" && (!exists || app.ID != r.session.AppID) {
 			return errors.New("app identity changed; this launch must target the app recorded by its session")
@@ -52,7 +52,7 @@ func (r *startRunner) resolveLaunchTarget() error {
 			}
 			continue
 		}
-		if exists && r.session.AppID == "" && r.session.Project == "" {
+		if exists && r.session.AppID == "" && r.session.SourceContext == "" {
 			reuse, err := r.chooseExistingTarget()
 			if err != nil {
 				return err

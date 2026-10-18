@@ -38,7 +38,10 @@ func (r *startRunner) resolveStartContext() error {
 	r.session.SourceContext = key
 	r.session.Project, r.session.Environment = link.Project, link.Environment
 	r.session.ProjectID, r.session.EnvironmentID = "", ""
-	if key != "" {
+	if key != "" && link.Project == "" {
+		r.session.AppSlug = link.App
+	}
+	if link.Project != "" {
 		project, err := r.client.GetProject(r.ctx, link.Project)
 		if err != nil {
 			return fmt.Errorf("verify linked project: %w", err)
