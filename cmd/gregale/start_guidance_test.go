@@ -187,7 +187,7 @@ func TestStartGuidedSecretsStayOutOfSourceUploadAndSession(t *testing.T) {
 			api.WriteProblem(w, api.NewProblem(404, "not_found", "Not found", "No resource"))
 		}
 	})
-	pipeStdin(t, "\n4\n"+file+"\ny\n")
+	pipeStdin(t, "4\n"+file+"\ny\n")
 	if code := cmdStart(nil); code != 0 || secrets.Load() != 1 || deployments.Load() != 1 {
 		t.Fatalf("code=%d secrets=%d deployments=%d stderr=%s stdout=%s", code, secrets.Load(), deployments.Load(), stderr(), stdout)
 	}

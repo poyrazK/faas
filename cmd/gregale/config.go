@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -172,6 +173,14 @@ func legacyTokenPath() (string, error) {
 // probe runs cheaply. The new saveToken migrates the legacy entry
 // forward on the first successful Set — see saveToken below.
 func loadToken() string {
+	var diagnostics io.Writer = os.Stderr
+	if jsonOutput {
+		diagnostics = io.Discard
+	}
+	return loadTokenWithDiagnostics(diagnostics)
+}
+
+func loadTokenWithDiagnostics(diagnostics io.Writer) string {
 	if v := os.Getenv("FAAS_TOKEN"); v != "" {
 		return strings.TrimSpace(v)
 	}
@@ -183,16 +192,16 @@ func loadToken() string {
 			if validPersistedToken(v) {
 				return v
 			}
-			PrintWarn(os.Stderr, "OS keychain contains an invalid Gregale API key; falling back to the token file.")
+			PrintWarn(diagnostics, "OS keychain contains an invalid Gregale API key; falling back to the token file.")
 		case errors.Is(err, keyring.ErrNotFound):
 			// fall through to file — not an error worth a WARN
 		default:
-			PrintWarn(os.Stderr, "OS keychain lookup failed (%v); falling back to plaintext file.", err)
+			PrintWarn(diagnostics, "OS keychain lookup failed (%v); falling back to plaintext file.", err)
 		}
 	}
 	p, err := tokenPath()
 	if err != nil {
-		return loadLegacyToken()
+		return loadLegacyToken(diagnostics)
 	}
 	b, err := os.ReadFile(p)
 	if err != nil {
@@ -206,16 +215,16 @@ func loadToken() string {
 		if validPersistedToken(v) {
 			return v
 		}
-		PrintWarn(os.Stderr, "Token file contains an invalid Gregale API key; trying legacy stores.")
+		PrintWarn(diagnostics, "Token file contains an invalid Gregale API key; trying legacy stores.")
 	}
-	return loadLegacyToken()
+	return loadLegacyToken(diagnostics)
 }
 
 // loadLegacyToken probes the pre-#439 keychain service and the
 // pre-#439 plaintext file in turn. Silent on ErrNotFound (the
 // expected case for a fresh install); other keychain errors get
 // a WARN.
-func loadLegacyToken() string {
+func loadLegacyToken(diagnostics io.Writer) string {
 	if currentProfile() != "default" {
 		return ""
 	}
@@ -227,11 +236,11 @@ func loadLegacyToken() string {
 			if validPersistedToken(v) {
 				return v
 			}
-			PrintWarn(os.Stderr, "Legacy OS keychain contains an invalid Gregale API key; trying the legacy token file.")
+			PrintWarn(diagnostics, "Legacy OS keychain contains an invalid Gregale API key; trying the legacy token file.")
 		case errors.Is(err, keyring.ErrNotFound):
 			// fall through to legacy file
 		default:
-			PrintWarn(os.Stderr, "Legacy keychain lookup failed (%v).", err)
+			PrintWarn(diagnostics, "Legacy keychain lookup failed (%v).", err)
 		}
 	}
 	if p, err := legacyTokenPath(); err == nil {
@@ -240,7 +249,7 @@ func loadLegacyToken() string {
 			if validPersistedToken(v) {
 				return v
 			}
-			PrintWarn(os.Stderr, "Legacy token file contains an invalid Gregale API key; ignoring it.")
+			PrintWarn(diagnostics, "Legacy token file contains an invalid Gregale API key; ignoring it.")
 		}
 	}
 	return ""
