@@ -10,7 +10,8 @@ jobs:
   qualify:
     name: managed storage Node (embedded app + gateway journey)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Include cold race builds under the 2 GiB Go memory target.
+    timeout-minutes: 20
     env:
       GOMEMLIMIT: 2GiB
       GOGC: 10
