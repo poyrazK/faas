@@ -3648,6 +3648,20 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 		checkedRollback = err == nil && operation.Status == "preparing"
 	}
+	// ADR-1446: a plain rollback (manual or first-wake 5xx auto-rollback)
+	// deliberately activates an older revision. Like a checked rollback it
+	// must skip the latest-revision fence and the source-branch freshness
+	// check, which would otherwise supersede every rollback target.
+	if !checkedRollback {
+		if prepared, ok := h.store.(state.RollbackPreparedStore); ok {
+			isPrepared, err := prepared.DeploymentRollbackPrepared(ctx, dep.ID)
+			if err != nil && !errors.Is(err, state.ErrNotFound) {
+				return fmt.Errorf("imaged: read rollback marker: %w", err)
+			}
+			checkedRollback = isPrepared
+		}
+	}
+
 	if h.validatorArtifactCheck != nil {
 		if err := h.validatorArtifactCheck(ctx, dep.AppID, dep.ID); err != nil {
 			return fmt.Errorf("imaged: validator artifact preflight: %w", err)

@@ -319,6 +319,16 @@ type MemStore struct {
 	// environmentWorkloadQueueServingAcks can arrive before the controller has
 	// created the serving receipt; keyed per graph/binding to mirror Postgres.
 	environmentWorkloadQueueServingAcks map[string]map[string]EnvironmentWorkloadServingQueueAck
+	// rollbackPrepared mirrors deployments.rollback_prepared_at (ADR-1446).
+	rollbackPrepared map[string]time.Time
+	// rollbackRecords mirrors deployment_rollbacks (ADR-1446).
+	rollbackRecords map[string]RollbackRecord
+	// configRevisions, configGuards and configGuardSecrets mirror
+	// app_config_revisions, app_config_guards and app_config_guard_secrets
+	// (ADR-1451). Revisions are kept in revision order per scope.
+	configRevisions    map[configScopeKey][]ConfigRevision
+	configGuards       map[string]ConfigGuard
+	configGuardSecrets map[string]map[string]ConfigGuardSecret
 	// Snapshot restore reservations are separate from mu so the coordinator
 	// can serialize only its short lease/count critical section.
 	snapshotRestorePressureMu sync.Mutex
@@ -5610,6 +5620,7 @@ func (m *MemStore) AdvanceCanary(ctx context.Context, id string, params CanaryAd
 	d.CanaryStep = persistedStep
 	d.CanaryStepStartedAt = &now
 	d.TrafficPercent = params.TrafficPercent
+	d.RolloutDecision = cloneRawJSON(params.Decision)
 	if terminal {
 		d.RolloutState = "complete"
 		d.RolloutCompletedAt = &now
@@ -8347,24 +8358,37 @@ func (m *MemStore) SafedeployStampRollout(_ context.Context, id string, rolloutS
 // closed-set guards so handler tests can pin the same shape
 // against either store.
 func (m *MemStore) RecoverRollout(ctx context.Context, appID string, action, reason string) (Deployment, int64, error) {
-	return m.recoverRollout(ctx, appID, "", "", action, reason)
+	return m.recoverRollout(ctx, appID, "", "", action, reason, nil)
 }
 
 func (m *MemStore) RecoverRolloutForDeployment(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string) (Deployment, int64, error) {
 	if deploymentID == "" || expectedPredecessorID == "" || sameDeploymentID(deploymentID, expectedPredecessorID) || action != "abort" {
 		return Deployment{}, 0, ErrRolloutStateInvalid
 	}
-	return m.recoverRollout(ctx, appID, deploymentID, expectedPredecessorID, action, reason)
+	return m.recoverRollout(ctx, appID, deploymentID, expectedPredecessorID, action, reason, nil)
 }
 
-func (m *MemStore) recoverRollout(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string) (Deployment, int64, error) {
+// RecoverRolloutForDeploymentWithDecision mirrors PgStore (ADR-1447).
+func (m *MemStore) RecoverRolloutForDeploymentWithDecision(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string, decision json.RawMessage) (Deployment, int64, error) {
+	if deploymentID == "" || expectedPredecessorID == "" || sameDeploymentID(deploymentID, expectedPredecessorID) || action != "abort" {
+		return Deployment{}, 0, ErrRolloutStateInvalid
+	}
+	return m.recoverRollout(ctx, appID, deploymentID, expectedPredecessorID, action, reason, decision)
+}
+
+// RecoverRolloutWithDecision mirrors PgStore (ADR-1447).
+func (m *MemStore) RecoverRolloutWithDecision(ctx context.Context, appID string, action, reason string, decision json.RawMessage) (Deployment, int64, error) {
+	return m.recoverRollout(ctx, appID, "", "", action, reason, decision)
+}
+
+func (m *MemStore) recoverRollout(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string, decision json.RawMessage) (Deployment, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	defer m.invalidateChangedLifecycleSuccessorsLocked()
-	return m.recoverRolloutLocked(ctx, appID, deploymentID, expectedPredecessorID, action, reason, nil)
+	return m.recoverRolloutLocked(ctx, appID, deploymentID, expectedPredecessorID, action, reason, nil, decision)
 }
 
-func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string, auditOverride *DeploymentAudit) (Deployment, int64, error) {
+func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string, auditOverride *DeploymentAudit, decision json.RawMessage) (Deployment, int64, error) {
 	previousRecovery := m.lifecycleRecovery
 	m.lifecycleRecovery = action == "abort"
 	defer func() { m.lifecycleRecovery = previousRecovery }()
@@ -8508,6 +8532,8 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		return *target, auditID, nil
 	}
 
+	// ADR-1447: the transition records its decision, or clears a stale one.
+	target.RolloutDecision = cloneRawJSON(decision)
 	switch action {
 	case "advance":
 		// Stuck-detection gate. The CLI distinguishes
@@ -8586,7 +8612,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			Kind:         DeployTrafficChanged,
 			Actor:        "operator:cli:recover_rollout",
 			At:           now,
-			Data:         json.RawMessage(rolloutAuditData("advance", reason)),
+			Data:         json.RawMessage(rolloutAuditDataWithDecision("advance", reason, decision)),
 		})
 		if err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: append recovery audit: %w", err)
@@ -8624,7 +8650,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			Kind:         DeployTrafficChanged,
 			Actor:        "operator:cli:recover_rollout",
 			At:           now,
-			Data:         json.RawMessage(rolloutAuditData("promote", reason)),
+			Data:         json.RawMessage(rolloutAuditDataWithDecision("promote", reason, decision)),
 		})
 		if err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: append recovery audit: %w", err)
@@ -8655,7 +8681,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			m.putDeploymentLocked(expectedPredecessorID, predecessor)
 			m.putDeploymentLocked(target.ID, *target)
 			entry := DeploymentAudit{DeploymentID: uuid.MustParse(target.ID), Kind: DeployRolledBack, Actor: "operator:cli:recover_rollout", At: now,
-				Data: json.RawMessage(rolloutRecoveryAuditData(reason, expectedPredecessorID, bindingReleaseFences(ctx)))}
+				Data: json.RawMessage(withAuditDecision(rolloutRecoveryAuditData(reason, expectedPredecessorID, bindingReleaseFences(ctx)), decision))}
 			if auditOverride != nil {
 				entry = *auditOverride
 			}
@@ -8695,7 +8721,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			Kind:         DeployRolledBack,
 			Actor:        "operator:cli:recover_rollout",
 			At:           now,
-			Data:         json.RawMessage(rolloutAuditData("abort", reason)),
+			Data:         json.RawMessage(rolloutAuditDataWithDecision("abort", reason, decision)),
 		})
 		if err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: append recovery audit: %w", err)
@@ -9321,6 +9347,12 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	defer m.invalidateChangedLifecycleSuccessorsLocked()
+	// A prepared rollback is consumed by its promotion (ADR-1446).
+	defer func() {
+		if err == nil {
+			delete(m.rollbackPrepared, id)
+		}
+	}()
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
@@ -10350,6 +10382,10 @@ func (m *MemStore) prepareDeploymentRollbackLocked(appID, targetDeploymentID str
 	target.RolloutAbortedReason = ""
 	target.StageState = stage
 	m.putDeploymentLocked(targetDeploymentID, target)
+	if m.rollbackPrepared == nil {
+		m.rollbackPrepared = map[string]time.Time{}
+	}
+	m.rollbackPrepared[targetDeploymentID] = now
 	return target, nil
 }
 
