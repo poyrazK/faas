@@ -1,6 +1,11 @@
 # Architecture Decision Records
 
-- [1660 · Publish final Node build source maps with build completion](1660-builder-issue-source-map-publication.md)
+- [ADR-1739: Shared-window compound Issues alerts](1739-shared-window-issue-compound-alerts.md)
+- [ADR-1738: Offline grouping previews and reviewed regression baselines](1738-issue-grouping-previews-and-baselines.md)
+- [ADR-1737: Publish final Node build source maps with build completion](1737-builder-issue-source-map-publication.md)
+- [ADR-1736: Publish prebuilt Issues source maps during CLI deployment](1736-deploy-issue-source-map-publication.md)
+
+- [Preserve request identity in response caching](20261017214848-response-cache-request-identity.md)
 
 - [Restart-safe Go acknowledgment recovery alerts](20261017182028-go-recovery-alert-checkpoints.md)
 
@@ -123,6 +128,18 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 1658 | [Owner-authorized deployment response checks](1658-owner-authorized-deployment-response-checks.md) | accepted; native deployment validation pending | Exact-deployment GET checks through the trusted gateway, with bounded HTTP evidence and no forwarded account credentials |
+| 2026101709 | [Receipt-bound repairable operation transactions](2026101709-repairable-operation-transactions.md) | accepted for internal qualification | Go, Node and Python capture, business writes and receipt bindings commit together; replay survives payload compaction |
+| 2026101708 | [Application writer capture readiness](2026101708-repair-capture-readiness.md) | accepted for internal qualification | Read-only checks on the actual application writer connection |
+| 2026101707 | [Read-only selective repair readiness](2026101707-repair-readiness.md) | accepted for internal qualification | Bounded executor catalog, enrollment and policy diagnostics |
+| 2026101706 | [Source-backed repair history](2026101706-repair-history-discovery.md) | accepted for internal qualification | Scoped discovery and recovery after payload compaction |
+| 2026101705 | [Read-only verification of committed repairs](2026101705-repair-post-apply-verification.md) | accepted for internal qualification | Compare present rows with the committed repair while preserving its receipt |
+| 2026101704 | [Compaction of superseded repair plans](2026101704-repair-superseded-retention.md) | accepted for internal qualification | Preserve replacement lineage and pin active child evidence |
+| 2026101703 | [Authoritative repair apply resolution](2026101703-repair-apply-resolution.md) | accepted for internal qualification | Resolve uncertain outcomes through receipts or durable source closure |
+| 2026101702 | [Linked replacement repair plans](2026101702-repair-replacement.md) | accepted for internal qualification | Narrow original candidates with parent fencing and fresh approval |
+| 2026101701 | [Reviewed retention of repair payloads](2026101701-repair-retention.md) | accepted for internal qualification | Digest-reviewed compaction retains identities, receipts and closure |
+| 2026101710 | [Daemon-bound repair producers](2026101710-repair-producer-retirement.md) | accepted; native execution pending | Physical producer retirement fences cleanup and capacity release |
+| 20261016 | [Selective data repair](20261016-selective-data-repair.md) | accepted for internal qualification | Explicit PostgreSQL field-update capture, isolated rehearsal and atomic approved repair; limits in `pkg/api/limits.go` |
 | 1576 | [Internal CI control plane with compute admission closed](1576-internal-ci-control-plane.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
 | 1571 | [Durable CI execution engine qualification without compute dispatch](1571-ci-execution-engine-qualification.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
 | 1572 | [Account-owned GitHub sources for blocked CI admission](1572-internal-ci-github-sources.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
@@ -144,6 +161,33 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1588 | [Explicit internal CI dependency artifact inputs](1588-internal-ci-dependency-artifact-inputs.md) | implemented behind default-off CI gates; native qualification pending | Named dependency artifacts pinned to sealed producer attempts, verified guest downloads and execution-scoped retention |
 | 1589 | [Explicit internal CI environment and working directories](1589-internal-ci-step-configuration.md) | implemented behind default-off CI gates; native qualification pending | Frozen literal job/step environments, reserved runner settings and descriptor-bound checkout directories |
 | 1590 | [Bounded named matrices for internal CI](1590-internal-ci-named-matrix-jobs.md) | implemented behind default-off CI gates; native qualification pending | Deterministic concrete variants, exact image/template binding, dependency barriers and explicit producer inputs |
+| 1701 | [Internal Product Control above Operations](1701-product-control.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1702 | [Product Control deployment bindings and admission evidence](1702-product-control-deployment-bindings-and-evidence.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1703 | [Product Control customer identity, consent and browser recovery](1703-product-control-customer-portal-and-consent.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1704 | [Product Control billing review, finalization and invoice handoff](1704-product-control-billing-lifecycle.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1705 | [Internal Product Control owner console](1705-product-control-owner-console.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1706 | [Product Control guided setup and observed readiness](1706-product-control-guided-setup-and-readiness.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1707 | [Product Control guided customer onboarding](1707-product-control-guided-customer-onboarding.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1708 | [Product Control customer permissions](1708-product-control-customer-permissions.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1709 | [Product Control self-service plans](1709-product-control-self-service-plans.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1710 | [Product Control customer teams](1710-product-control-customer-teams.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1711 | [Verified Application Auth release migrations](1711-verified-application-auth-release-migrations.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1712 | [Product Control customer readiness and activation overview](1712-product-control-customer-readiness-overview.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1713 | [Product Control customer activity timeline](1713-product-control-customer-activity.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1714 | [Product Control customer usage guidance](1714-product-control-customer-usage-guidance.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1715 | [Product Control Customer Help](1715-product-control-customer-help.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1716 | [Product Control internal pilot evidence](1716-product-control-internal-pilot-evidence.md) | accepted for internal implementation; deployed pilot pending | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1717 | [Product Control Customer Notifications](1717-product-control-customer-notifications.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1718 | [Product Control complete internal pilot](1718-product-control-complete-internal-pilot.md) | accepted for internal preparation; deployed pilot pending | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1719 | [Product Control customer account recovery](1719-product-control-customer-account-recovery.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1720 | [Product Control personal notification email](1720-product-control-personal-notification-email.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1721 | [Product Control owner email controls](1721-product-control-owner-email-controls.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1722 | [Product Control email delivery feedback](1722-product-control-email-provider-feedback.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1723 | [Product Control notification recovery](1723-product-control-notification-recovery.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1724 | [Product Control notification unsubscribe](1724-product-control-notification-unsubscribe.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1725 | [Product Control customer workspace activity](1725-product-control-workspace-activity.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1726 | [Product Control customer run details](1726-product-control-customer-run-details.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 1727 | [Product Control customer work history](1727-product-control-customer-work-history.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
 | 1583 | [Default-off same-repository PR execution automation](1583-internal-ci-pull-request-automation.md) | implemented behind default-off CI gates; native qualification pending | Explicit PR target filters, fresh source verification, per-PR slots and existing cleanup fences |
 | 1582 | [Bounded internal CI JUnit diagnostics](1582-internal-ci-junit-reports.md) | implemented behind default-off CI gates; native qualification pending | Verified attempt-bound reports, bounded failure detail and aggregate-only GitHub Checks |
 | 1581 | [Internal CI branch serialization and verified-head supersession](1581-internal-ci-branch-concurrency.md) | implemented behind default-off CI gates; native qualification pending | One automatic branch slot, verified-head opt-in supersession, durable cancellation and cleanup fencing |
@@ -188,6 +232,15 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 831 | [Edge WAF signatures, bot challenge, and client certificates](831-edge-waf-bot-challenge-mtls.md) | proposed | Sequenced plan: Coraza + OWASP CRS `kind=waf` first (observe-only preview, latency gate), then a proof-of-work `kind=challenge`, then custom-domain-only mTLS on demand |
 | 830 | [Platform security headers on customer app responses](830-customer-response-security-headers.md) | accepted | Customer responses keep app-set security headers; platform fills defaults only when absent, drops `includeSubDomains` on custom domains, and stops forcing `X-Frame-Options`/`Permissions-Policy` on customer apps |
 | 829 | [New apps observe the pre-auth source limit by default](829-default-pre-auth-observe.md) | accepted | New apps get an observe-only, plan-clamped per-source guard unless the create request sets `pre_auth_rate_limit`; existing apps unchanged; amendment 1 adds the advisory enforce suggestion and `gregale app --pre-auth` |
+| 752 | [One-command Datadog integration](752-datadog-integration.md) | proposed | Agentless logs and deployment events to Datadog with unified service tags |
+| 751 | [Application change timeline](751-app-change-timeline.md) | proposed | One read-only timeline of an app's deploys, config changes, incidents and health transitions |
+| 749 | [Alert notification channels](749-alert-notification-channels.md) | proposed | Account-level Slack, PagerDuty and email destinations for alert rules, sealed at rest, with test sends |
+| 748 | [Synthetic HTTP checks](748-synthetic-checks.md) | proposed | Scheduled checks against an app through the public edge, with uptime, latency and alerts |
+| 747 | [Customer-defined SLOs and error budgets](747-custom-slos-error-budgets.md) | proposed | Availability and latency objectives with hourly budget rollups, burn rates and SLO alerts |
+| 746 | [Log-level line counts and log alerts](746-log-level-alerts.md) | proposed | vmmd counts error and warn guest log lines per app; alert rules watch them |
+| 745 | [Custom metric history, OTLP ingestion, charts, and alerts](745-custom-metric-history.md) | proposed | Extends ADR-202 pushed gauges with Prometheus-backed history and read surfaces |
+| 744 | [Baseline-relative ("anomaly") alerts for apps](744-anomaly-alerts.md) | proposed | Alert on a multiple of the app's usual metric value instead of a fixed threshold |
+| 743 | [Allocate route compute cost by request time](743-route-cost-by-request-time.md) | proposed | Route cost estimates follow time spent serving, not request count |
 | 742 | [WebSocket forwarding through Dev Bridge](742-dev-bridge-websocket-forwarding.md) | accepted for internal Dev Bridge use | Bounded, revocable WebSocket upgrades in both bridge directions; other upgrades, gRPC and raw TCP remain out of scope |
 | 741 | [Remote debugger attach for developer environments](741-developer-debugger-attach.md) | proposed | `gregale dev --debug` over a leased edge WebSocket to vmmd `ForwardTCPStream`; developer sessions only |
 | 740 | [Developer live source patches](740-developer-live-source-patch.md) | proposed | ~1 s interpreted-source edits via a guest long-poll on the runtime-config vsock; the build still converges |
@@ -974,7 +1027,57 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1026: Later eligibility observations for workflow failures](1026-workflow-failure-eligibility-observer.md)
 - [ADR-1259: Reviewed first recovery from captured workflow failures](1259-reviewed-initial-workflow-recovery.md)
 
+## Data API execution and recovery
+
+- [ADR-1660: Data API connection-capacity observations](1660-data-api-connection-capacity-observations.md)
+
+- [ADR-1661: Data API runtime connection-demand observations](1661-data-api-runtime-connection-demand.md)
+
+- [ADR-1662: Data API database timing telemetry](1662-data-api-database-timing-telemetry.md)
+
+- [ADR-1663: Data API per-user concurrent request limits](1663-data-api-user-concurrency-limits.md)
+
+- [ADR-1664: Data API lock waits and contention recovery](1664-data-api-lock-contention-policy.md)
+
+- [ADR-1665: Data API deadlines across SQL transaction retries](1665-data-api-sql-retry-deadlines.md)
+
+- [ADR-1666: Owner-approved deadline grants during credential rotation](1666-data-api-deadline-grant-rotation.md)
+
+- [ADR-1667: Coordinated SQL refresh across credential rotation](1667-data-api-coordinated-refresh-rotation.md)
+
+- [ADR-1668: Read-only Data API rotation preflight](1668-data-api-rotation-preflight.md)
+
+- [ADR-1669: Read-only mutation receipt recovery](1669-data-api-read-only-mutation-recovery.md)
+
+- [ADR-1670: Versioned Data API replay expiry](1670-data-api-versioned-replay-expiry.md)
+
+- [ADR-1671: Versioned update and delete receipts](1671-data-api-versioned-update-delete-receipts.md)
+
+- [ADR-1672: Recoverable atomic note batches](1672-data-api-atomic-note-batches.md)
+
+- [ADR-1673: V2 Data API transaction generation](1673-data-api-v2-transaction-generator.md)
+
+- [ADR-1674: Durable client mutation recovery](1674-data-api-durable-mutation-journal.md)
+
+- [ADR-1675: Data API receipt storage diagnostics](1675-data-api-receipt-storage-diagnostics.md)
+
+- [ADR-1676: Incremental note change feed](1676-data-api-incremental-note-change-feed.md)
+
+- [ADR-1677: Ranked, indexed note search under RLS](1677-data-api-ranked-note-search.md)
+
+- [ADR-1678: Read-only team order aggregation](1678-data-api-team-order-aggregation.md)
+
 ## Events and delivery
+
+- [Node and Python stored acknowledgment policy parity](20261017213800-cross-sdk-stored-acknowledgment-policies.md)
+
+- [Stored Go acknowledgment intent retry policies](20261017212845-stored-go-acknowledgment-retry-policy.md)
+
+- [Adaptive Python acknowledgment intent retry scheduling](20261017212320-python-acknowledgment-retry-policy.md)
+
+- [Adaptive Node acknowledgment intent retry scheduling](20261017211931-node-acknowledgment-retry-policy.md)
+
+- [Adaptive Go acknowledgment intent retry scheduling](20261017211526-go-acknowledgment-retry-policy.md)
 
 - [ADR-606: Independent event recipient routing and recovery](606-independent-event-recipient-routing.md)
 - [ADR-607: Unified event receipt inspection](607-unified-event-receipts.md)
@@ -1471,10 +1574,37 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1499: Native issue lifecycle alert policy](1499-issue-lifecycle-alert-policy.md)
 - [ADR-1500: Source-built apps run on the shared runtime base](1500-shared-runtime-source-apps.md)
 - [ADR-1501: Reconcile worker pools once at scheduler start](1501-worker-startup-reconcile.md)
+
+- [ADR-20261017191501: Browser and Task migration parity for Go/Python MCP starters](20261017191501-mcp-go-python-starter-parity.md)
+- [ADR-20261017191502: Bounded starter protocol observations](20261017191502-mcp-starter-protocol-telemetry.md)
+- [ADR-20261017191503: Read-only MCP operations dashboard](20261017191503-read-only-mcp-operations-dashboard.md)
+- [ADR 20261017191504: MCP dashboard grant retirement recovery](20261017191504-mcp-dashboard-grant-retirement-recovery.md)
+- [ADR 20261017191505: MCP browser OAuth and guarded renewal recovery](20261017191505-mcp-browser-oauth-and-renewal-recovery.md)
+- [ADR 20261017191506: MCP protocol performance aggregation](20261017191506-mcp-protocol-performance.md)
+- [ADR 20261017191507: Customer MCP performance alerts](20261017191507-customer-mcp-performance-alerts.md)
+- [ADR 20261017191508: Independent MCP telemetry heartbeats](20261017191508-mcp-telemetry-heartbeats.md)
+- [ADR 20261017191509: Public deployment MCP readiness](20261017191509-deployment-mcp-readiness.md)
+- [ADR 20261017191510: Durable platform MCP readiness admission](20261017191510-platform-mcp-readiness-gate.md)
+- [ADR-20261017191511: Continuous MCP readiness monitoring](20261017191511-continuous-mcp-readiness.md)
+- [ADR-20261017191512: Managed OAuth credentials for MCP readiness](20261017191512-managed-oauth-readiness.md)
+- [ADR 20261017191513: Environment-scoped MCP OAuth connections](20261017191513-environment-scoped-mcp-oauth.md)
+- [ADR 20261017191514: Environment-scoped MCP readiness policies](20261017191514-environment-readiness-policies.md)
+- [ADR 20261017191515: MCP readiness policy history and restore](20261017191515-mcp-readiness-policy-history.md)
+- [1274: Environment-scoped MCP readiness alerts](20261017191516-environment-scoped-mcp-readiness-alerts.md)
+- [1275: MCP readiness incident lifecycle](20261017191517-mcp-readiness-incident-lifecycle.md)
+- [1276: Independent MCP readiness incidents and delivery outbox](20261017191518-independent-mcp-readiness-outbox.md)
+- [1277: MCP readiness maintenance windows and notification silences](20261017191519-mcp-readiness-maintenance-windows.md)
+- [1278: Readiness notification queue health and operator recovery](20261017191520-mcp-readiness-notification-recovery.md)
+- [1279: Incident acknowledgement and finite readiness reminders](20261017191521-mcp-readiness-incident-attention.md)
+- [1280: Bounded readiness webhook failover and incident routing](20261017191522-mcp-readiness-fallback-delivery.md)
+- [ADR-20261017191523: Independent MCP readiness destination queues](20261017191523-mcp-readiness-destination-queues.md)
+- [ADR-20261017191524: Versioned readiness reminder defaults](20261017191524-mcp-readiness-reminder-defaults.md)
+- [ADR-20261017191525: Native PagerDuty readiness delivery](20261017191525-mcp-readiness-pagerduty.md)
+- [ADR-20261017191526: Regional PagerDuty readiness delivery](20261017191526-mcp-readiness-pagerduty-regions.md)
+- [ADR-20261017191527: Signed PagerDuty readiness acknowledgements](20261017191527-mcp-readiness-pagerduty-acknowledgements.md)
+- [ADR-20261017191528: Native PagerDuty readiness fallback](20261017191528-mcp-readiness-pagerduty-fallback.md)
+- [ADR 20261017191529: Independent PagerDuty acknowledgement bindings](20261017191529-mcp-readiness-independent-pagerduty-bindings.md)
+- [ADR 20261017191530: Opt-in PagerDuty acknowledgement release](20261017191530-mcp-readiness-pagerduty-release.md)
 - [ADR 202610171900: Release compatibility gates (N±1, deploy order, skew and migration checks, SLO gate)](202610171900-release-compatibility-gates.md)
 
 - [ADR-1650: Per-unit control-plane releases](1650-per-unit-control-plane-releases.md)
-- [ADR-1659: Publish prebuilt Issues source maps during CLI deployment](1659-deploy-issue-source-map-publication.md)
-- [ADR-1661: Offline grouping previews and reviewed regression baselines](1661-issue-grouping-previews-and-baselines.md)
-
-- [ADR-1662: Shared-window compound Issues alerts](1662-shared-window-issue-compound-alerts.md)

@@ -1,10 +1,21 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { readFile, writeFile, copyFile } from 'node:fs/promises'
+import { readdir, readFile, writeFile, copyFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 import { run } from '../cmd/gregale/templates/data-api-starter/tools/artifact-lib.mjs'
+
+export async function rolloutMigrationVersions(directory) {
+  const names = await readdir(directory)
+  const latest = Math.max(0, ...names.flatMap(name => {
+    const match = /^(\d{4})_[a-z0-9_]+\.sql$/.exec(name)
+    return match ? [Number(match[1])] : []
+  }))
+  const versions = [latest + 1, latest + 2].map(version => String(version).padStart(4, '0'))
+  assert.ok(versions.every(version => /^\d{4}$/.test(version)), 'Rollout fixture needs two unused four-digit migration versions')
+  return versions
+}
 
 async function localSession(cli, app, env) {
   const child = spawn(cli,['--json','data-api','dev','--port','0','--watch=false','--accepted-contracts','accepted-contracts.json'],{cwd:app,env,stdio:['ignore','pipe','pipe']})
@@ -36,7 +47,8 @@ export async function verifyBundleRollout(app,cli,env,profile = {}) {
     body:(identity,value)=>({subject:identity,body:value}),
     values:['release-rollout-replay','release-sdk-old','release-sdk-current','release-must-not-write','release-must-not-rpc','release-sdk-rpc'],
     rpc:'create_note_with_tags', rpcArgs:value=>({note_body:value,tag_names:[]}),
-    migrations:'migrations/sql', versions:['0011','0012'], client:'client', types:'client/src/database.types.ts', ...profile }
+    migrations:'migrations/sql', client:'client', types:'client/src/database.types.ts', ...profile }
+  const versions = await rolloutMigrationVersions(join(app,p.migrations))
   const [identityA,identityB] = p.identities
   const path = `/rest/v1/${p.table}`
   let olderTypesReady = !p.keepOlderTypes
@@ -46,7 +58,7 @@ export async function verifyBundleRollout(app,cli,env,profile = {}) {
   await copyFile(contractPath,join(app,'older-schema.json'))
   const older=JSON.parse(await readFile(contractPath,'utf8')).fingerprint
   if(p.keepOlderTypes) { await copyFile(join(app,p.types),join(app,p.client,'older.database.types.ts')); olderTypesReady=true }
-  await writeFile(join(app,p.migrations,`${p.versions[0]}_release_rollout.sql`),`ALTER TABLE api.${p.table} ADD COLUMN release_label text;\n`)
+  await writeFile(join(app,p.migrations,`${versions[0]}_release_rollout.sql`),`ALTER TABLE api.${p.table} ADD COLUMN release_label text;\n`)
   once([])
   const current=JSON.parse(await readFile(contractPath,'utf8')).fingerprint
   assert.notEqual(older,current)
@@ -104,7 +116,7 @@ export async function verifyBundleRollout(app,cli,env,profile = {}) {
   assert.equal(revokedReplay.find(event=>event.event==='replay_summary')?.failed,0)
   const typesPath=join(app,p.types)
   const types=await readFile(typesPath),contract=await readFile(contractPath)
-  await writeFile(join(app,p.migrations,`${p.versions[1]}_release_stale.sql`),`ALTER TABLE api.${p.table} ADD COLUMN later_label text;\n`)
+  await writeFile(join(app,p.migrations,`${versions[1]}_release_stale.sql`),`ALTER TABLE api.${p.table} ADD COLUMN later_label text;\n`)
   const stale=spawnSync(cli,['--json','data-api','dev','--port','0','--once','--accepted-contracts','accepted-contracts.json'],{cwd:app,env,encoding:'utf8',timeout:180000,maxBuffer:1048576})
   assert.equal(stale.status,1,'Stale policies must reject the next schema')
   assert.ok(/Accepted contracts are stale/.test(stale.stderr ?? ''),'Stale-policy failure must be identified explicitly, rather than accepting an unrelated command failure')

@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ConnectionBudgetRuntimeObservations } from './ConnectionBudgetRuntimeObservations.js';
 /**
  * Canonical runtime pools and explicit planning headroom. Unbounded consumers remain unknown.
  */
@@ -12,5 +13,6 @@ export type ConnectionBudgetDemand = {
   control_headroom: number;
   migration_headroom: number;
   modeled_peak_connections: number;
+  runtime_observations?: ConnectionBudgetRuntimeObservations;
 };
 

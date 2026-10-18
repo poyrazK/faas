@@ -733,3 +733,32 @@ by the worker scheduler. Configure previous worker stop grace longer than the
 Task shutdown deadline. See `docs/mcp.md`'s native adapter section for the full
 plan and recovery contract. Keep the journal and `.gate` checkpoint outside
 source directories; rerunning unchanged sources resumes recorded deployments.
+
+## Protocol telemetry
+
+The server emits structured `mcp_protocol_request` events from actual parsed RPC
+methods and response objects, including tool errors returned with HTTP 200.
+Method and tool categories are fixed; custom tool names use `other`. Events do
+not contain arguments, results, resource URIs, error messages, bearer values or
+RPC IDs. Valid UUID `X-Faas-Request-Id` and nonzero version-00 `traceparent` IDs
+support correlation with Gregale request evidence; they are not trusted identity.
+
+`execution_duration_ms` ends at response construction (subscription acknowledgment
+for subscription setup). `stream_duration_ms` measures SSE lifetime separately;
+the durations overlap. Unobserved timings are omitted. Protocol outcomes and
+stream termination are separate, so delivery failure does not erase an observed
+result. Task creation measures admission, not background completion. Typed
+termination distinguishes cancellation and timeout without adding tool deadlines.
+
+Aggregate only this event family into counters/histograms. This is structured
+logging, not a public metrics endpoint. Pre-parse/pre-dispatch authentication
+failures and notifications are outside coverage. Keep correlation IDs out of
+metric labels and use existing log retention/access controls.
+
+### Telemetry heartbeats
+
+The web process emits a payload-free `mcp_telemetry_heartbeat` immediately and
+every 30 seconds, independent of RPC traffic. Shutdown stops the emitter.
+This is process telemetry, not an MCP readiness check. Set
+`MCP_TELEMETRY_LOSS_ALERT=true` to opt into platform operator alerts for lost
+heartbeats; customer performance webhook settings are separate.

@@ -21,6 +21,126 @@ import (
 	"time"
 )
 
+// Product Control internal contract bounds. Customer quotas are explicit grants.
+const (
+	ProductControlMaxFeatures                             = 32
+	ProductControlAccessMaxRoles                          = 32
+	ProductControlAccessRoleMaxBytes                      = 32
+	ProductControlAccessMaxPermissions                    = 5
+	ProductControlTeamMaxMembers                          = 500
+	ProductControlTeamMaxInvitations                      = 500
+	ProductControlTeamMaxAuthRoles                        = 64
+	ProductControlTeamMaxAuthPermissions                  = 64
+	ProductControlTeamAuthPermissionMaxBytes              = 64
+	ProductControlTeamResponseMaxBytes                    = 1 << 20
+	ProductControlTeamEmailMaxBytes                       = 320
+	ProductControlTeamContextMaxBytes                     = 4096
+	ProductControlTeamInvitationMinSeconds                = 300
+	ProductControlTeamInvitationMaxSeconds                = 14 * 24 * 60 * 60
+	ProductControlTeamInvitationDefaultSeconds            = 7 * 24 * 60 * 60
+	ProductControlTeamHistoryPageSize                     = 100
+	ProductControlPlanPolicyMaxSources                    = 32
+	ProductControlPlanPolicyMaxTargets                    = 32
+	ProductControlAuthBodyBytes                           = 16 << 10
+	ProductControlCookieTokenMaxBytes                     = 3500
+	ProductControlAuthResponseBytes                       = 256 << 10
+	ProductControlAuthMaxOrganizations                    = 100
+	ProductControlAuthTimeoutSeconds                      = 10
+	ProductControlSessionMaxSeconds                       = 7 * 24 * 60 * 60
+	ProductControlReceiptMaxBytes                         = 8192
+	ProductControlRecoveryMaxEntries                      = 64
+	ProductControlReplaySeconds                           = 24 * 60 * 60
+	ProductControlMaxPlans                                = 32
+	ProductControlMaxLabelBytes                           = 120
+	ProductControlMaxCatalogBytes                         = 64 << 10
+	ProductControlCustomerPageSize                        = 100
+	ProductControlBillingPageSize                         = 100
+	ProductControlBillingMaxLines                         = 1000
+	ProductControlBillingReasonMaxBytes                   = 512
+	ProductControlInvoiceReferenceMaxBytes                = 255
+	ProductControlOwnerPageSize                           = 100
+	ProductControlOwnerCursorMaxBytes                     = 1024
+	ProductControlOwnerFormMaxBytes                       = 16 << 10
+	ProductControlSetupFormMaxBytes                       = 128 << 10
+	ProductControlDoctorMaxChecks                         = 1024
+	ProductControlDoctorMaxDuration                       = 20 * time.Second
+	ProductControlOverviewPageSize                        = 10
+	ProductControlOverviewMaxDuration                     = 20 * time.Second
+	ProductControlOverviewMaxActions                      = 4
+	ProductControlOverviewMaxResponseBytes                = 3 << 20
+	ProductControlActivityPageSize                        = 50
+	ProductControlActivityMaxDuration                     = 20 * time.Second
+	ProductControlActivityMaxResponseBytes                = 3 << 20
+	ProductControlWorkspaceActivityPageSize               = 25
+	ProductControlWorkspaceActivityMaxDuration            = 20 * time.Second
+	ProductControlWorkspaceActivityMaxResponseBytes       = 64 << 10
+	ProductControlRunDetailsMaxDuration                   = 20 * time.Second
+	ProductControlRunDetailsMaxResponseBytes              = 16 << 10
+	ProductControlWorkHistoryPageSize                     = 25
+	ProductControlWorkHistoryCursorMaxBytes               = 2048
+	ProductControlWorkHistoryMaxDuration                  = 20 * time.Second
+	ProductControlWorkHistoryMaxResponseBytes             = 32 << 10
+	ProductControlGuidanceNearLimitPercent          int64 = 80
+	ProductControlGuidanceMaxDuration                     = 20 * time.Second
+	ProductControlHelpTextMaxBytes                        = 2000
+	ProductControlHelpBodyMaxBytes                        = 16 << 10
+	ProductControlHelpResponseMaxBytes                    = 256 << 10
+	ProductControlHelpPageSize                            = 20
+	ProductControlHelpMaxOpen                             = 20
+	ProductControlHelpMaxRequests                         = 200
+	ProductControlHelpMaxUpdates                    int64 = 1000
+	ProductControlHelpMaxDuration                         = 20 * time.Second
+	ProductControlNotificationPageSize                    = 20
+	ProductControlNotificationWindow                      = 30 * 24 * time.Hour
+	ProductControlNotificationMaxReads                    = 1000
+	ProductControlNotificationMaxUpdates            int64 = 1000000
+	ProductControlNotificationBodyMaxBytes                = 4 << 10
+	ProductControlNotificationResponseMaxBytes            = 128 << 10
+	ProductControlNotificationMaxDuration                 = 20 * time.Second
+	ProductControlEmailGrantSeconds                       = 30 * 24 * 60 * 60
+	ProductControlEmailMaxSubscribers                     = 500
+	ProductControlEmailMaxDeliveries                      = 1000
+	ProductControlEmailBatchSize                          = 25
+	ProductControlEmailClaimSize                          = 1
+	ProductControlEmailMaxGrants                          = 100
+	ProductControlEmailPruneSize                          = 1000
+	ProductControlEmailCycleTimeout                       = 50 * time.Second
+	ProductControlEmailMaxAttempts                        = 6
+	ProductControlEmailRetryWindow                        = 12 * time.Hour
+	ProductControlEmailLease                              = 2 * time.Minute
+	ProductControlEmailPoll                               = time.Minute
+	ProductControlEmailRetryBase                          = time.Minute
+	ProductControlEmailSendTimeout                        = 15 * time.Second
+	ProductControlEmailCipherMaxBytes                     = 4096
+	ProductControlEmailOwnerPageSize                      = 25
+	ProductControlEmailOwnerMaxDuration                   = 10 * time.Second
+	ProductControlEmailOwnerBodyMaxBytes                  = 1024
+	ProductControlEmailOwnerResponseMaxBytes              = 64 * 1024
+	ProductControlEmailFeedbackBodyMaxBytes               = 64 * 1024
+	ProductControlEmailFeedbackHeaderMaxBytes             = 1024
+	ProductControlEmailConsentWait                        = 25 * time.Millisecond
+	ProductControlEmailRecoveryLimit                      = 50
+	ProductControlEmailUnsubscribeTokenBytes              = 32
+	ProductControlEmailUnsubscribeBodyMaxBytes            = 1024
+	ProductControlEmailPendingFeedbackLimit               = 10000
+	ProductControlEmailPendingFeedbackTTL                 = 24 * time.Hour
+	ProductControlEmailFeedbackTolerance                  = 5 * time.Minute
+	ProductControlPilotMaxCases                           = 32
+	ProductControlPilotManifestMaxBytes                   = 64 << 10
+	ProductControlPilotOutputMaxBytes                     = 16 << 20
+	ProductControlPilotOutputPathMaxBytes                 = 512
+	ProductControlPilotMaxJourneys                        = 3
+	ProductControlPilotMaxJourneySteps                    = 32
+	ProductControlPilotJourneyEvidenceMaxBytes            = 4 << 20
+	ProductControlOnboardingBodyMaxBytes                  = 32 << 10
+	ProductControlOnboardingFileMaxBytes                  = 128 << 10
+	ProductControlOnboardingSessionSeconds                = 10 * 60
+	ProductControlOnboardingNameMaxBytes                  = 128
+	ProductControlOnboardingExternalRefMaxBytes           = 256
+	ProductControlMaxMonthlyStarts                  int64 = 1000000
+	ProductControlMaxUnitPriceMillicents            int64 = 1000000000
+)
+
 // Operator restart execution and persistence budgets (ADR-1522).
 const (
 	OperatorRestartGenerationMaxBytes    = 128
@@ -188,6 +308,14 @@ const (
 	ImageSignatureMaxJSONDepth                      = 32
 	ImageSignatureVerificationTTL                   = 24 * time.Hour
 )
+
+// Owner-authorized deployment GET checks retain only a bounded response preview.
+const DeploymentResponseCheckMaxBodyBytes = 4096
+const DeploymentResponseCheckMaxPathBytes = 2048
+const DeploymentResponseCheckMaxWireBytes = 64 << 10
+const DeploymentResponseCheckTimeout = 20 * time.Second
+const DeploymentResponseCheckCapabilityTimeout = 3 * time.Second
+const DeploymentResponseCheckPreflightTimeout = 5 * time.Second
 
 // Business condition evidence is bounded independently of milestone payload bytes.
 const OperationBusinessConditionsMax = 16
@@ -6179,6 +6307,26 @@ const (
 	// other signals instead of holding the fleet at a frozen backlog.
 	CustomMetricFreshnessSeconds = 300
 
+	// CustomMetricExportMaxSeries caps one ADR-745 exporter scrape. The
+	// per-app name cap already bounds the table; this bounds a scrape even
+	// if that cap is raised.
+	CustomMetricExportMaxSeries = 50000
+	// CustomMetricExportCacheSeconds reuses one store read across scrapes
+	// from several Prometheus replicas inside the same scrape interval.
+	CustomMetricExportCacheSeconds = 15
+
+	// CustomMetricSeriesDefaultRange is the history window when ?range= is
+	// omitted (ADR-745).
+	CustomMetricSeriesDefaultRange = "24h"
+
+	// OTLPMetricsMaxBodyBytes bounds one OTLP metrics export (ADR-745). An
+	// app holds at most MaxCustomMetricsPerApp names, so a larger body is
+	// almost certainly attribute-heavy data the endpoint would reject anyway.
+	OTLPMetricsMaxBodyBytes = 1 << 20
+
+	// CustomMetricCounterRateWindow is the rate() window for counter history.
+	CustomMetricCounterRateWindow = "5m"
+
 	// Scaling policy cooldowns (issue #462 / ADR-058). The
 	// customer-facing knobs are `scale_out_cooldown_s` /
 	// `scale_in_cooldown_s` on the wire; the floor / ceiling
@@ -6466,9 +6614,15 @@ const (
 	//
 	// Hard limits policy (CLAUDE.md): every limit is a constant
 	// here, never inlined.
-	GatewayDrainGraceSeconds        = 25
-	ReplicaHeartbeatIntervalSeconds = 5
-	WarmHintCacheSize               = 1000
+	GatewayDrainGraceSeconds = 25
+	// ComputeGatewayRestartWaitSeconds caps how long gatewayd-public keeps
+	// sending new requests to a compute node whose gatewayd-internal stopped
+	// answering (for example while it restarts behind its durable socket)
+	// before failing over to another node (ADR-1580). Override with
+	// FAAS_COMPUTE_GATEWAY_RESTART_WAIT.
+	ComputeGatewayRestartWaitSeconds = 3
+	ReplicaHeartbeatIntervalSeconds  = 5
+	WarmHintCacheSize                = 1000
 	// ServiceRouteConvergenceTimeoutSeconds bounds one routing-generation
 	// acknowledgement round. A timeout does not retire the predecessor; the
 	// scheduler leaves it serving and retries reconciliation.
@@ -6798,6 +6952,15 @@ const (
 	// change cannot widen the attack surface on this listener; a single
 	// tenant-crafted 1 MiB header is fine, 64 MiB is not.
 	DefaultMaxHeaderBytes = 1 << 20 // 1 MiB
+
+	// InternalHopReplayableBodyBytes is the largest request body
+	// gatewayd-public buffers before forwarding it to gatewayd-internal, so
+	// the HTTP/2 hop can resend it. A request that crosses gatewayd-internal's
+	// graceful-restart GOAWAY was never processed; the transport retries it on
+	// a new connection only when it can rewind the body. Larger or chunked
+	// bodies keep streaming and can still fail in that window
+	// (docs/adr/1580-zero-downtime-daemon-restarts.md).
+	InternalHopReplayableBodyBytes = 64 << 10 // 64 KiB
 )
 
 // EffectiveRetryMaxAttempts resolves a requested durable-invocation attempt
@@ -10044,7 +10207,7 @@ const (
 	IssueMaxClockSkew     = 5 * time.Minute
 )
 
-// Offline grouping evaluation and reviewed partition snapshots (ADR-1661).
+// Offline grouping evaluation and reviewed partition snapshots (ADR-1738).
 const (
 	IssueGroupingEvaluationCasesMax         = 10000
 	IssueGroupingEvaluationCorpusMaxBytes   = 8 << 20
@@ -10072,7 +10235,7 @@ const (
 	IssueTagValueMaxBytes          = 128
 )
 
-// Match Node build discovery's bundle hashing bounds (ADR-1659).
+// Match Node build discovery's bundle hashing bounds (ADR-1736).
 const (
 	IssueSourceMapBundleMaxBytes      = 16 << 20
 	IssueSourceMapBundlesMaxBytes     = 64 << 20
@@ -10998,11 +11161,58 @@ const (
 	DataAPIConnectionBudgetControlHeadroom   = 1
 	DataAPIConnectionBudgetMigrationHeadroom = 1
 	DataAPIConnectionBudgetOverlapInstances  = 1
-	DataAPIMaxRows                           = 1000
-	DataAPIMaxRequestBytes                   = 1 << 20
-	DataAPIMaxResponseBytes                  = 16 << 20
-	DataAPIMaxOutputBytes                    = 1 << 20
-	DataAPIQueryTimeoutMS                    = 15000
+	// Authenticated runtime configuration reports; never SQL-session counts.
+	DataAPIRuntimeConnectionReportMaxBytes = 4096
+	DataAPIRuntimeConnectionReportTimeout  = 5 * time.Second
+	DataAPIRuntimeConnectionReportInterval = 15 * time.Second
+	// Operator capacity observations never run in customer request handling.
+	DataAPIConnectionCapacityTimeout     = 10 * time.Second
+	DataAPIConnectionCapacityLease       = 15 * time.Second
+	DataAPIConnectionCapacityInterval    = 15 * time.Second
+	DataAPIConnectionCapacityControlPool = 1
+	DataAPIConnectionAllocationMaxAge    = 5 * time.Minute
+	DataAPIConnectionAllocationMaxBytes  = 16 << 10
+	DataAPIMaxRows                       = 1000
+	DataAPIMaxRequestBytes               = 1 << 20
+	DataAPIMaxResponseBytes              = 16 << 20
+	DataAPIMaxOutputBytes                = 1 << 20
+	// Fixed v2 customer SQL contract (ADR-1670). Never extend this window in
+	// place: doing so could revive keys whose receipts have already been purged.
+	DataAPIReplayV2WindowMS     = 86400000
+	DataAPIReplayV2FutureSkewMS = 300000
+	// Fixed atomic note-batch contract (ADR-1672), mirrored in customer SQL
+	// and the paired starter client under a parity check.
+	DataAPIAtomicBatchV2MaxOperations  = 100
+	DataAPIAtomicBatchV2MaxResultBytes = 1048576
+	// Opt-in client mutation journal bounds (ADR-1674), mirrored in the Data SDK.
+	DataAPIMutationJournalMaxRecords    = 100
+	DataAPIMutationJournalMaxBytes      = 8388608
+	DataAPIMutationJournalMaxEntryBytes = 1048576
+	DataAPIMutationJournalMaxSlotBytes  = 256
+	DataAPIMutationJournalMaxDepth      = 64
+	// Owner-only v2 receipt diagnostics (ADR-1675), mirrored in the shared
+	// customer-package reporter under a parity check. Milliseconds.
+	DataAPIReceiptDiagnosticsConnectMS   = 5000
+	DataAPIReceiptDiagnosticsStatementMS = 5000
+	DataAPIReceiptDiagnosticsLockMS      = 1000
+	DataAPIReceiptDiagnosticsQueryMS     = 6000
+	// Subject-scoped note change feed (ADR-1676), mirrored in customer SQL
+	// and the typed starter helper under a parity check.
+	DataAPINoteChangeFeedMaxPageSize    = 100
+	DataAPINoteChangeFeedRetainedEvents = 10000
+	DataAPINoteChangeFeedMaxCursorBytes = 128
+	// Ranked note search (ADR-1677), mirrored in customer SQL/client helpers.
+	DataAPINoteSearchMaxQueryBytes  = 1024
+	DataAPINoteSearchMaxTerms       = 16
+	DataAPINoteSearchMaxPageSize    = 100
+	DataAPINoteSearchMaxCursorBytes = 128
+	// Local owner command/config bounds for read-only rotation diagnostics.
+	DataAPIRotationConfigMaxBytes = 64 << 10
+	DataAPIRotationReportMaxBytes = 16 << 10
+	DataAPIRotationCheckTimeout   = 2 * time.Minute
+	DataAPIRotationMaxTimeout     = time.Hour
+	DataAPIQueryTimeoutMS         = 15000
+	DataAPILockTimeoutMS          = 5000
 	// Per-runtime HTTP admission. Active work follows the engine pool size;
 	// coordinated refresh reserves one pool connection for its control reader.
 	DataAPIMaxQueuedRequests    = 8
@@ -11023,6 +11233,9 @@ const (
 	DataAPIRateLimitMaxBurst         = 1000
 	DataAPIRateLimitMaxSubjects      = 4096
 	DataAPIRateLimitSweepMS          = 1000
+	// Per-runtime user concurrency accounting, including uncertain dispatches.
+	DataAPIUserConcurrencyMaxSubjects = DataAPIRateLimitMaxSubjects
+	DataAPIUserConcurrencyCooldownMS  = DataAPIQueryTimeoutMS
 
 	// Data API diagnostics is a bounded CLI analysis of retained request logs,
 	// not a plan quota or a change to runtime log retention.
@@ -11128,6 +11341,19 @@ const (
 	// and AuthSSOMaxDomains the email domains one provider serves.
 	AuthSSOMetadataBytes = 512 << 10
 	AuthSSOMaxDomains    = 50
+	// AuthSMSMaxCountries bounds the country calling codes phone sign-in may
+	// text (AUTH_SMS_COUNTRIES).
+	AuthSMSMaxCountries = 50
+	// AuthSCIMPageSize bounds one SCIM list page, and AuthSCIMBodyBytes a
+	// SCIM request body.
+	AuthSCIMPageSize  = 100
+	AuthSCIMBodyBytes = 64 << 10
+	// AuthOAuthMaxClients bounds the OAuth clients one Auth app holds,
+	// registered by the owner or by the clients themselves (RFC 7591).
+	AuthOAuthMaxClients = 1000
+	// AuthAnonymousRetentionMaxDays bounds how long idle anonymous users may
+	// be kept before the Auth app deletes them, when the owner sets a limit.
+	AuthAnonymousRetentionMaxDays = 3650
 	// AuthUINameMaxChars bounds the hosted pages' display name.
 	AuthUINameMaxChars = 60
 	// AuthAuditRetentionMaxDays bounds activity retention. The Auth app
@@ -11709,6 +11935,85 @@ const (
 
 // Review decisions retain a bounded journal independent of item reviews.
 const OperationWorkflowPlaybookReviewsMax = 32
+
+// Alert notification channels (ADR-749).
+const (
+	MaxNotificationChannelsPerAccount = 20
+	MaxChannelsPerAlertRule           = 5
+)
+
+// Change timeline bounds (ADR-751). Each source is read with the event cap so
+// one busy source cannot starve the others before the newest-first merge.
+const (
+	ChangeTimelineDefaultWindow = 24 * time.Hour
+	ChangeTimelineMaxWindow     = 7 * 24 * time.Hour
+	ChangeTimelineMaxEvents     = 200
+)
+
+// Anomaly alert bounds (ADR-744). A baseline rule compares a request metric
+// with the median of its value at the same time of day over the previous
+// AnomalyBaselineDays days.
+const (
+	AnomalyBaselineDays       = 7
+	AnomalyBaselineMinDays    = 5
+	AnomalyBaselineCacheTTL   = time.Hour
+	AnomalyAlertMinRequests   = 50
+	AnomalyAboveMultiplierMin = 1.5
+	AnomalyAboveMultiplierMax = 20.0
+	AnomalyBelowMultiplierMin = 0.05
+	AnomalyBelowMultiplierMax = 0.67
+)
+
+// AnomalyAlertMetrics are the request metrics that support baseline
+// comparisons, mapped to the absolute floor an above_baseline value must also
+// clear so ratios on tiny numbers never fire.
+var AnomalyAlertMetrics = map[string]float64{
+	"error_rate_pct": 1.0,  // percent
+	"latency_p95_ms": 50.0, // milliseconds
+	"latency_p99_ms": 50.0,
+	"cold_start_pct": 5.0,
+	"request_count":  AnomalyAlertMinRequests,
+}
+
+// Log line counts (ADR-746): vmmd counts error and warn lines per app as they
+// enter the instance ring. Apps past the per-vmmd cap share app_id="other";
+// plain-text lines are classified from at most the scan window.
+const (
+	LogLineCounterMaxApps = 10000
+	LogLevelScanBytes     = 512
+)
+
+// Customer-defined SLOs (ADR-747). The latency thresholds are the gateway
+// request-duration histogram bucket bounds, so attainment is exact; the
+// rollup backfills at most SLORollupBackfillHours from Prometheus.
+const (
+	MaxSLOsPerApp          = 10
+	SLOObjectiveMinBP      = 9000
+	SLOObjectiveMaxBP      = 9999
+	SLORollupBackfillHours = 14 * 24
+)
+
+// SLOLatencyThresholdsMS and SLOWindowDays are the closed sets app_slos accepts.
+var (
+	SLOLatencyThresholdsMS = []int{5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000, 10000}
+	SLOWindowDays          = []int{7, 30}
+)
+
+// Synthetic checks (ADR-748). The 5-minute floor keeps a check from pinning
+// an app resident on Free, Hobby and Pro (idle timeouts 30/60/300 s); the
+// timeout ceiling matches the gateway wake hold.
+const (
+	MaxSyntheticChecksPerApp       = 5
+	SyntheticCheckTimeoutMinMS     = 1000
+	SyntheticCheckTimeoutMaxMS     = 30000
+	SyntheticCheckDefaultTimeoutMS = 10000
+	SyntheticCheckPathMaxBytes     = 512
+	SyntheticCheckRunRetentionDays = 7
+	SyntheticCheckRecentRuns       = 20
+)
+
+// SyntheticCheckIntervalsSeconds is the closed set synthetic_checks accepts.
+var SyntheticCheckIntervalsSeconds = []int{300, 900, 3600}
 
 // IssueBulkActionMax bounds one atomic triage transaction.
 const IssueBulkActionMax = 50
@@ -12526,3 +12831,86 @@ const ServiceMapDefaultRange = "1h"
 
 // ServiceMapHighErrorRatePct is the edge error rate the dashboard highlights.
 const ServiceMapHighErrorRatePct = 5.0
+
+// MCPReadinessFallbackMaxFailures bounds completed primary failures before failover.
+const MCPReadinessFallbackMaxFailures = 10
+
+// MCPReadinessFallbackURLMaxBytes bounds persisted fallback receiver addresses.
+const MCPReadinessFallbackURLMaxBytes = 2048
+
+// MCP readiness reminders have a finite per-incident budget and bounded interval.
+const (
+	MCPReadinessReminderMinIntervalSeconds = 60
+	MCPReadinessReminderMaxIntervalSeconds = 86400
+	MCPReadinessReminderMaxCount           = 10
+)
+
+// Native PagerDuty readiness delivery uses bounded credentials and transport work.
+const (
+	MCPReadinessPagerDutyWebhookPageDefault       = 20
+	MCPReadinessPagerDutyWebhookPageMax           = 50
+	MCPReadinessPagerDutyWebhookDashboardEvents   = 5
+	MCPReadinessPagerDutyWebhookBodyMaxBytes      = 64 * 1024
+	MCPReadinessPagerDutyWebhookHeaderMaxBytes    = 1024
+	MCPReadinessPagerDutyWebhookMaxSignatures     = 8
+	MCPReadinessPagerDutyWebhookJSONMaxDepth      = 32
+	MCPReadinessPagerDutyWebhookSecretMinBytes    = 16
+	MCPReadinessPagerDutyWebhookSecretMaxBytes    = 1024
+	MCPReadinessPagerDutyWebhookIDMaxBytes        = 128
+	MCPReadinessPagerDutyWebhookMaxAgeSeconds     = 7 * 86400
+	MCPReadinessPagerDutyWebhookFutureSkewSeconds = 300
+	MCPReadinessPagerDutyWebhookEventsPerIncident = 128
+	MCPReadinessPagerDutyKeyBytes                 = 32
+	MCPReadinessPagerDutyCiphertextMaxBytes       = 4096
+	MCPReadinessPagerDutyResponseMaxBytes         = 64 * 1024
+	MCPReadinessPagerDutySummaryMaxBytes          = 1024
+	MCPReadinessPagerDutyTimeoutSeconds           = 30
+	MCPReadinessPagerDutyMaxRetryAfterSeconds     = 86400
+)
+
+// Selective repair is an internal, explicitly enrolled PostgreSQL contract.
+const (
+	DataRepairMaxRows                  = 1000
+	DataRepairMaxJournalBytes          = 4 << 20
+	DataRepairMaxPlanBytes             = 16 << 20
+	DataRepairMaxRequestBytes          = 16 << 10
+	DataRepairMaxObservedRowBytes      = 16 << 10
+	DataRepairMaxObservedPlanBytes     = 256 << 10
+	DataRepairSourcePageSize           = 25
+	DataRepairSourceMaxPageSize        = 100
+	DataRepairSourceMaxCursorBytes     = 1024
+	DataRepairSourceMaxFilterBytes     = 1024
+	DataRepairSourceMaxResponseBytes   = 512 << 10
+	DataRepairDoctorMaxResponseBytes   = 64 << 10
+	DataRepairDoctorMaxObjects         = 64
+	DataRepairDoctorTimeoutSeconds     = 10
+	DataRepairCaptureContextMaxBytes   = 256
+	DataRepairMaxChecks                = 16
+	DataRepairCheckNameMaxBytes        = 64
+	DataRepairActorMaxBytes            = 256
+	DataRepairMaxSnapshotBytes         = 64 << 20
+	DataRepairPlanTTLSeconds           = 15 * 60
+	DataRepairTimeoutSeconds           = 120
+	DataRepairSandboxMemoryMB          = 512
+	DataRepairSandboxDiskBytes         = 1 << 30
+	DataRepairRehearsalsPerAccount     = 1
+	DataRepairRehearsalsPerNode        = 1
+	DataRepairRehearsalPageSize        = 64
+	DataRepairRehearsalChunkBytes      = 64 << 10
+	DataRepairRehearsalCleanupSeconds  = 30
+	DataRepairSandboxVCPUs             = 1
+	DataRepairSandboxCPUMillicores     = 1000
+	DataRepairHealthPollSeconds        = 30
+	DataRepairHealthQuerySeconds       = 10
+	DataRepairHealthStaleSeconds       = 120
+	DataRepairHealthQueueWarnSeconds   = 120
+	DataRepairHealthCleanupWarnSeconds = 60
+	DataRepairHealthPublishWarnSeconds = 60
+	DataRepairRetentionMinSeconds      = 7 * 24 * 60 * 60
+	DataRepairPurgeMaxItems            = 32
+	DataRepairPurgeMaxBytes            = 64 << 20
+	DataRepairPurgeMaxPlanBytes        = 1 << 20
+	DataRepairPurgePlanTTLSeconds      = 15 * 60
+	DataRepairPurgeTimeoutSeconds      = 10
+	DataRepairPurgeLockTimeoutMS       = 2000
+)

@@ -1,6 +1,6 @@
 package main
 
-// ADR-1659: archive-bound publication and recovery before production promotion.
+// ADR-1736: archive-bound publication and recovery before production promotion.
 
 import (
 	"bytes"

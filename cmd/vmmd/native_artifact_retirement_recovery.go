@@ -36,6 +36,11 @@ func runNativeArtifactRetirementRecovery(ctx context.Context, manager nativeArti
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// Cancellation and a queued tick can both be ready. Do not start
+			// another storage attempt when shutdown has already been signalled.
+			if ctx.Err() != nil {
+				return
+			}
 			attemptCtx, cancel := context.WithTimeout(ctx, nativeArtifactRetirementRecoveryTimeout)
 			page, err := manager.RecoverNativeQualificationArtifactRetirementPage(attemptCtx, after, api.NativeSnapshotPublicationRecoveryBatchMax)
 			cancel()

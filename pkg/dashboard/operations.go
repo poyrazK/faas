@@ -142,6 +142,8 @@ type CustomerOperationItem struct {
 }
 
 type CustomerOperationDetail struct {
+	DataRepair *api.OperationDataRepair
+	RepairURL  string
 	CustomerOperationItem
 	Generation         int
 	DefinitionRevision string

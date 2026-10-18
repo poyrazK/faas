@@ -2,7 +2,7 @@
 set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
-node --test scripts/data-api-toolchain.test.mjs scripts/data-api-release-report.test.mjs
+node --test scripts/data-api-toolchain.test.mjs scripts/data-api-release-report.test.mjs scripts/data-api-bundle-rollout.test.mjs
 output=""
 if [[ "$#" -gt 0 ]]; then
   [[ "$#" -eq 2 && "$1" == "--out-dir" ]] || { echo 'Usage: scripts/test-data-api-packaging.sh [--out-dir NEW_DIR]' >&2; exit 1; }

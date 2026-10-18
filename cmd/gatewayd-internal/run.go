@@ -42,6 +42,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -1340,7 +1341,7 @@ type runDeps struct {
 
 func defaultDeps() runDeps {
 	return runDeps{
-		listen:       net.Listen,
+		listen:       wire.ListenInherited,
 		listenPacket: net.ListenPacket,
 		newSrv:       defaultServer,
 		backend:      unwiredBackend{},
@@ -3767,6 +3768,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// reads from the same *Limiter the public edge uses (handler.Limiter()
 	// is the seam) so the snapshot agrees with what Allow consumed.
 	controlMux.HandleFunc("/v1/internal/quota", internalQuotaHandler(handler, log))
+	responsePicker, _ := deps.backend.(deploymentResponsePicker)
+	var responseStore state.Store
+	if deps.pgStore != nil {
+		responseStore = deps.pgStore
+	}
+	var responseForward func(gateway.Target) http.Handler
+	if deps.nodeCache != nil {
+		responseForward = deps.nodeCache.Forwarding()
+	}
+	responseChecker := deploymentResponseChecker{store: responseStore, picker: responsePicker, ensure: handler.EnsureServiceDeploymentCapacity, forward: responseForward, appsDomain: deps.appsDomain}
+	controlMux.HandleFunc(api.DeploymentResponseCheckCapabilitiesControlPath, responseChecker.Capabilities)
 	// ADR-093: mount the per-route observability reader on the
 	// control mux so apid can reverse-proxy
 	// /v1/apps/{slug}/routes → /v1/internal/apps/{slug}/routes
@@ -3799,6 +3811,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			})
 			if strings.HasSuffix(r.URL.Path, "/streaming-cap") {
 				internalStreamingCapHandler(deps.edgeRulesMatcher, resolve, log).ServeHTTP(w, r)
+				return
+			}
+			if strings.HasSuffix(r.URL.Path, "/response-check") {
+				responseChecker.ServeHTTP(w, r)
 				return
 			}
 			if strings.HasSuffix(r.URL.Path, "/service-endpoints") {
@@ -3885,6 +3901,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Wake:      newServiceProxyWaker(pgStore, handler.EnsureWakeAheadCapacity),
 		})
 		serviceProxyConfig := gateway.ServiceProxyConfig{
+			AdmitManagedAsync:         gateway.NewRehearsalAsyncAdmitter(pgStore),
 			Provider:                  serviceEndpointProvider,
 			Resolve:                   newServiceProxyResolver(pgStore),
 			Authorize:                 newServiceProxyAuthorizer(pgStore),
@@ -3940,7 +3957,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {
 			identityResolver := newServiceProxyCallerIdentityResolver(pgStore.ListAllInstances, cfg.NodeName)
-			identityResolver.lookup = pgStore.LiveInstancesByHostIP
+			identityResolver.lookup = pgStore.LiveServiceCallersByHostIP
 			serviceProxyConfig.ResolveCallerIdentity = func(ctx context.Context, remote string) (string, string, error) {
 				if err := ordinaryQualificationCallerGuard(ctx, pgStore, cfg.NodeName, remote); err != nil {
 					return "", "", err
@@ -3967,9 +3984,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// them in parallel. sslib guidance is "call Shutdown on each" rather
 	// than Close: Shutdown lets in-flight requests finish; Close does not.
 	errc := make(chan error, 6)
-	var servers []*http.Server
+	var servers []drainedServer
 	var serviceDiscoveryServers []*dns.Server
-	addSrv := func(s *http.Server) { servers = append(servers, s) }
+	addSrv := func(s *http.Server) *wire.HTTPDrain {
+		drain := wire.NewHTTPDrain(s)
+		servers = append(servers, drainedServer{srv: s, drain: drain})
+		return drain
+	}
 
 	// Issue #675: build the unified mux that the unix-socket server
 	// (`deps.synth`) serves. The mux routes:
@@ -4102,7 +4123,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// still hits this cap.
 			public.MaxHeaderBytes = int(api.DefaultMaxHeaderBytes)
 		}
-		addSrv(public)
+		publicDrain := addSrv(public)
 		l, lerr := deps.listen("tcp", listenAddr)
 		if lerr != nil {
 			log.Error("gatewayd public listen failed", "addr", listenAddr, "err", lerr)
@@ -4110,7 +4131,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		go func() {
 			log.Info("gatewayd public listening", "addr", listenAddr)
-			if err := public.Serve(l); err != nil && err != http.ErrServerClosed {
+			if err := publicDrain.ServeErr(public.Serve(publicDrain.Listener(l))); err != nil {
 				errc <- err
 			}
 		}()
@@ -4134,6 +4155,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}
 	serviceProxyAddr := strings.TrimSpace(cfg.ServiceProxyListen)
+	if err := startRehearsalObjectProxy(ctx, deps, serviceProxyAddr, cfg.NodeName, errc); err != nil {
+		return err
+	}
+	if err := startRehearsalPostgresProxy(ctx, deps, serviceProxyAddr, cfg.NodeName, errc); err != nil {
+		return err
+	}
 	serviceProxyTLS, tlsErr := serviceProxyHTTPSConfig(cfg)
 	if tlsErr != nil {
 		return tlsErr
@@ -4172,14 +4199,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				httpsSrv.Protocols.SetHTTP2(true)
 				httpsSrv.ReadTimeout = readTimeoutOrDefault(deps.readTimeout)
 				httpsSrv.WriteTimeout = writeTimeoutOrDefault(deps.writeTimeout)
-				addSrv(httpsSrv)
+				httpsDrain := addSrv(httpsSrv)
 				httpsListener, listenErr := deps.listen("tcp", httpsAddr)
 				if listenErr != nil {
 					return fmt.Errorf("gatewayd guest service HTTPS listen %s: %w", httpsAddr, listenErr)
 				}
 				go func() {
 					log.Info("gatewayd guest service HTTPS listening", "addr", httpsAddr)
-					if err := httpsSrv.ServeTLS(httpsListener, "", ""); err != nil && err != http.ErrServerClosed {
+					if err := httpsDrain.ServeErr(httpsSrv.ServeTLS(httpsDrain.Listener(httpsListener), "", "")); err != nil {
 						errc <- err
 					}
 				}()
@@ -4188,75 +4215,80 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if bridgeErr != nil {
 				return fmt.Errorf("gatewayd: service discovery DNS bridge address: %w", bridgeErr)
 			}
-			dnsHandler, dnsErr := gateway.NewServiceDiscoveryDNSHandler(bridgeIP, serviceDiscoveryUpstreams(), log, guestServiceCallerResolver, guestServiceAliasAllowed)
-			if dnsErr != nil {
-				return fmt.Errorf("gatewayd: service discovery DNS: %w", dnsErr)
-			}
-			if chaosMatchRecorder != nil {
-				dnsHandler.WithScenarioDNSChaos(newServiceDNSChaosResolver(deps.pgStore, cfg.NodeName), chaosMatchRecorder.Observe)
-			}
-			// ADR-373: refuse abuse infrastructure at the pinned resolver.
-			// FAAS_DNS_BLOCKLIST_FILE adds operator threat feeds to the
-			// built-in mining-pool list; a configured file that cannot be
-			// read fails startup rather than silently dropping the feed.
-			var extraBlocked map[string]string
-			if path := strings.TrimSpace(os.Getenv("FAAS_DNS_BLOCKLIST_FILE")); path != "" {
-				loaded, loadErr := gateway.LoadDNSBlocklistFile(path)
-				if loadErr != nil {
-					return fmt.Errorf("gatewayd: %w", loadErr)
+			for _, dnsPort := range []int{gateway.ServiceDiscoveryDNSPort, gateway.RehearsalServiceDiscoveryDNSPort} {
+				dnsHandler, dnsErr := gateway.NewServiceDiscoveryDNSHandler(bridgeIP, serviceDiscoveryUpstreams(), log, guestServiceCallerResolver, guestServiceAliasAllowed)
+				if dnsErr != nil {
+					return fmt.Errorf("gatewayd: service discovery DNS: %w", dnsErr)
 				}
-				extraBlocked = loaded
-			}
-			blocklist := gateway.NewDNSBlocklist(extraBlocked)
-			dnsHandler.WithBlocklist(blocklist, func(category string) {
-				if c := deps.opsMetrics.DNSBlocked(category); c != nil {
-					c.Inc()
+				if dnsPort == gateway.RehearsalServiceDiscoveryDNSPort {
+					dnsHandler.WithPrivateServiceNamesOnly()
 				}
-			})
-			log.Info("gatewayd: guest DNS blocklist loaded", "domains", blocklist.Len())
-			// ADR-373 DNS-gated egress: report every guest answer to this
-			// node's vmmd before replying, so the guest may connect to it.
-			if deps.nodeCache != nil && deps.pgStore != nil && cfg.NodeName != "" {
-				dnsHandler.WithResolvedEgressHook(newResolvedEgressHook(deps.nodeCache.cache, newLocalNodeID(deps.pgStore, cfg.NodeName)))
-			}
-			// ADR-576: answer service names with service addresses only once
-			// the TCP proxy behind them is configured.
-			if cfg.ServiceTCPDNS {
-				if strings.TrimSpace(cfg.ServiceTCPListen) == "" || deps.pgStore == nil {
-					return errors.New("gatewayd: service_tcp_dns requires service_tcp_listen and the state store")
+				if chaosMatchRecorder != nil {
+					dnsHandler.WithScenarioDNSChaos(newServiceDNSChaosResolver(deps.pgStore, cfg.NodeName), chaosMatchRecorder.Observe)
 				}
-				dnsHandler.WithServiceAddressLookup(newServiceAddressLookup(deps.pgStore, cfg.NodeName, log))
-				log.Info("gatewayd: service DNS answers private service addresses", "service_address_cidr", api.ServiceAddressCIDR().String())
-			}
-			dnsAddr := net.JoinHostPort(bridgeIP.String(), strconv.Itoa(gateway.ServiceDiscoveryDNSPort))
-			listenPacket := deps.listenPacket
-			if listenPacket == nil {
-				listenPacket = net.ListenPacket
-			}
-			packetConn, packetErr := listenPacket("udp", dnsAddr)
-			if packetErr != nil {
-				return fmt.Errorf("gatewayd: service discovery DNS UDP listen %s: %w", dnsAddr, packetErr)
-			}
-			dnsTCP, tcpErr := deps.listen("tcp", dnsAddr)
-			if tcpErr != nil {
-				_ = packetConn.Close()
-				return fmt.Errorf("gatewayd: service discovery DNS TCP listen %s: %w", dnsAddr, tcpErr)
-			}
-			udpServer := &dns.Server{PacketConn: packetConn, Handler: dnsHandler, ReadTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second}
-			tcpServer := &dns.Server{Listener: dnsTCP, Net: "tcp", Handler: dnsHandler, ReadTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second}
-			serviceDiscoveryServers = append(serviceDiscoveryServers, udpServer, tcpServer)
-			go func() {
-				log.Info("gatewayd service discovery DNS listening", "addr", dnsAddr, "network", "udp")
-				if err := udpServer.ActivateAndServe(); err != nil && ctx.Err() == nil {
-					errc <- err
+				// ADR-373: refuse abuse infrastructure at the pinned resolver.
+				// FAAS_DNS_BLOCKLIST_FILE adds operator threat feeds to the
+				// built-in mining-pool list; a configured file that cannot be
+				// read fails startup rather than silently dropping the feed.
+				var extraBlocked map[string]string
+				if path := strings.TrimSpace(os.Getenv("FAAS_DNS_BLOCKLIST_FILE")); path != "" {
+					loaded, loadErr := gateway.LoadDNSBlocklistFile(path)
+					if loadErr != nil {
+						return fmt.Errorf("gatewayd: %w", loadErr)
+					}
+					extraBlocked = loaded
 				}
-			}()
-			go func() {
-				log.Info("gatewayd service discovery DNS listening", "addr", dnsAddr, "network", "tcp")
-				if err := tcpServer.ActivateAndServe(); err != nil && ctx.Err() == nil {
-					errc <- err
+				blocklist := gateway.NewDNSBlocklist(extraBlocked)
+				dnsHandler.WithBlocklist(blocklist, func(category string) {
+					if c := deps.opsMetrics.DNSBlocked(category); c != nil {
+						c.Inc()
+					}
+				})
+				log.Info("gatewayd: guest DNS blocklist loaded", "domains", blocklist.Len())
+				// ADR-373 DNS-gated egress: report every guest answer to this
+				// node's vmmd before replying, so the guest may connect to it.
+				if deps.nodeCache != nil && deps.pgStore != nil && cfg.NodeName != "" {
+					dnsHandler.WithResolvedEgressHook(newResolvedEgressHook(deps.nodeCache.cache, newLocalNodeID(deps.pgStore, cfg.NodeName)))
 				}
-			}()
+				// ADR-576: answer service names with service addresses only once
+				// the TCP proxy behind them is configured.
+				if cfg.ServiceTCPDNS {
+					if strings.TrimSpace(cfg.ServiceTCPListen) == "" || deps.pgStore == nil {
+						return errors.New("gatewayd: service_tcp_dns requires service_tcp_listen and the state store")
+					}
+					dnsHandler.WithServiceAddressLookup(newServiceAddressLookup(deps.pgStore, cfg.NodeName, log))
+					log.Info("gatewayd: service DNS answers private service addresses", "service_address_cidr", api.ServiceAddressCIDR().String())
+				}
+				dnsAddr := net.JoinHostPort(bridgeIP.String(), strconv.Itoa(dnsPort))
+				listenPacket := deps.listenPacket
+				if listenPacket == nil {
+					listenPacket = net.ListenPacket
+				}
+				packetConn, packetErr := listenPacket("udp", dnsAddr)
+				if packetErr != nil {
+					return fmt.Errorf("gatewayd: service discovery DNS UDP listen %s: %w", dnsAddr, packetErr)
+				}
+				dnsTCP, tcpErr := deps.listen("tcp", dnsAddr)
+				if tcpErr != nil {
+					_ = packetConn.Close()
+					return fmt.Errorf("gatewayd: service discovery DNS TCP listen %s: %w", dnsAddr, tcpErr)
+				}
+				udpServer := &dns.Server{PacketConn: packetConn, Handler: dnsHandler, ReadTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second}
+				tcpServer := &dns.Server{Listener: dnsTCP, Net: "tcp", Handler: dnsHandler, ReadTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second}
+				serviceDiscoveryServers = append(serviceDiscoveryServers, udpServer, tcpServer)
+				go func() {
+					log.Info("gatewayd service discovery DNS listening", "addr", dnsAddr, "network", "udp")
+					if err := udpServer.ActivateAndServe(); err != nil && ctx.Err() == nil {
+						errc <- err
+					}
+				}()
+				go func() {
+					log.Info("gatewayd service discovery DNS listening", "addr", dnsAddr, "network", "tcp")
+					if err := tcpServer.ActivateAndServe(); err != nil && ctx.Err() == nil {
+						errc <- err
+					}
+				}()
+			}
 		}
 	}
 	go func() {
@@ -4274,6 +4306,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				"socket", gatewaydInternalSocket, "err", err)
 		}
 	}
+	// faas-gatewayd-internal.socket must only carry addresses this process
+	// serves; anything else would hold its callers' connections forever.
+	if err := wire.RequireInheritedListenersClaimed("gatewayd-internal"); err != nil {
+		return err
+	}
 
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, readyProbe.ReadyFunc())
 	defer notifyStop()
@@ -4285,20 +4322,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), drain.DrainGrace)
 		defer cancel()
-		for _, s := range serviceDiscoveryServers {
-			//nolint:contextcheck // shutdownCtx intentionally outlives the cancelled run context.
-			_ = s.ShutdownContext(shutdownCtx)
+		if deps.drain != nil {
+			// SSE and WebSocket sessions end now: their clients reconnect,
+			// and the replacement process cannot start until this one exits.
+			deps.drain.BeginShutdown()
 		}
 		//nolint:contextcheck // shutdown ctx must outlive the cancelled caller ctx (net/http contract).
-		// Best-effort shutdown of every listener we may have started.
-		// Servers track themselves in `servers`; certmagic owns its renew loop
-		// on a separate goroutine — we Close the bundle now that the public +
-		// ACME servers have drained. The bundle's Close is a no-op against
-		// certmagic v0.25 (no public Stop API) but the seam lets a future
-		// upgrade wire real shutdown without touching call sites.
-		for _, s := range servers {
-			_ = s.Shutdown(shutdownCtx)
-		}
+		shutdownListeners(shutdownCtx, servers, serviceDiscoveryServers, deps.synth)
 		if wakeAheadPersisted != nil {
 			select {
 			case <-wakeAheadPersisted:
@@ -4307,10 +4337,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		// ADR-068 / Tier A7 split: tlsBundle.Close + tlsCertExpiryCancel
 		// moved to gatewayd-public's shutdown path (cmd/gatewayd-public/main.go).
-		if deps.synth != nil {
-			//nolint:contextcheck // same shutdown-ctx contract as public.Shutdown above.
-			_ = deps.synth.Stop(shutdownCtx)
-		}
 		if deps.nodeCache != nil {
 			// Closing every cached *grpc.ClientConn here means
 			// in-flight ForwardHTTPStream RPCs see a "transport
@@ -4373,6 +4399,31 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		return nil
 	}
+}
+
+// shutdownListeners stops every listener at once and waits for their
+// requests within ctx. Stopping them one at a time let the first server's
+// slowest request keep every later listener accepting and spend the grace
+// serially, while connections to the stopped ones queued for the restart.
+func shutdownListeners(ctx context.Context, servers []drainedServer, dnsServers []*dns.Server, synth *gateway.SynthServer) {
+	var wg sync.WaitGroup
+	for _, s := range dnsServers {
+		wg.Go(func() { _ = s.ShutdownContext(ctx) })
+	}
+	for _, s := range servers {
+		wg.Go(func() { _ = s.drain.Shutdown(ctx, s.srv) })
+	}
+	if synth != nil {
+		wg.Go(func() { _ = synth.Stop(ctx) })
+	}
+	wg.Wait()
+}
+
+// drainedServer is an HTTP listener whose stop first lets accepted
+// connections deliver their requests (wire.HTTPDrain).
+type drainedServer struct {
+	srv   *http.Server
+	drain *wire.HTTPDrain
 }
 
 // unwiredBackend routes nothing; every request 404s until the Postgres routing
@@ -4468,7 +4519,7 @@ func assertLoopbackBind(addr string) error {
 
 // startGuestServiceHTTPListeners serves both canonical and persisted URLs
 // through the same authorization handler and transport policy (ADR-384).
-func startGuestServiceHTTPListeners(deps runDeps, addr string, handler http.Handler, addSrv func(*http.Server), errc chan<- error, log *slog.Logger) error {
+func startGuestServiceHTTPListeners(deps runDeps, addr string, handler http.Handler, addSrv func(*http.Server) *wire.HTTPDrain, errc chan<- error, log *slog.Logger) error {
 	if err := validateServiceProxyListen(addr); err != nil {
 		return err
 	}
@@ -4484,14 +4535,14 @@ func startGuestServiceHTTPListeners(deps runDeps, addr string, handler http.Hand
 		srv.Protocols.SetUnencryptedHTTP2(true)
 		srv.ReadTimeout = readTimeoutOrDefault(deps.readTimeout)
 		srv.WriteTimeout = writeTimeoutOrDefault(deps.writeTimeout)
-		addSrv(srv)
+		drain := addSrv(srv)
 		listener, err := deps.listen("tcp", httpAddr)
 		if err != nil {
 			return fmt.Errorf("gatewayd: guest service proxy listen %s: %w", httpAddr, err)
 		}
 		go func() {
 			log.Info("gatewayd guest service proxy listening", "addr", httpAddr)
-			if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
+			if err := drain.ServeErr(srv.Serve(drain.Listener(listener))); err != nil {
 				errc <- err
 			}
 		}()

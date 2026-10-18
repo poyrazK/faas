@@ -229,3 +229,44 @@ func TestMemStore_SetAppNodeID(t *testing.T) {
 		t.Error("SetAppNodeID empty: nil error; want rejection")
 	}
 }
+
+// H10-145: schedd's live-only owner listing drops terminal wake history,
+// other nodes' apps and deleted apps.
+func TestMemStore_ListLiveInstancesByNodeID(t *testing.T) {
+	m, ctx, _, unplaced, claimed := memNodeShardFixture(t)
+	dep, err := m.CreateDeployment(ctx, Deployment{AppID: claimed.ID, ImageDigest: "sha256:shard"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{}
+	for _, st := range []string{"running", "waking", "frozen", "parked", "stopped", "failed"} {
+		ins, err := m.CreateInstance(ctx, claimed.ID, dep.ID, st, 256, "node-fsn-2", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if IsLive(st) {
+			want[ins.ID] = true
+		}
+	}
+	if _, err := m.CreateInstance(ctx, unplaced.ID, dep.ID, "running", 256, "node-fsn-2", ""); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.ListLiveInstancesByNodeID(ctx, "node-fsn-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("live instances = %d, want %d (running, waking, frozen)", len(got), len(want))
+	}
+	for _, ins := range got {
+		if !want[ins.ID] {
+			t.Fatalf("unexpected instance %s in state %s", ins.ID, ins.State)
+		}
+	}
+	if _, err := m.SoftDeleteAppCascade(ctx, claimed.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := m.ListLiveInstancesByNodeID(ctx, "node-fsn-2"); err != nil || len(got) != 0 {
+		t.Fatalf("after app delete = %d instances, %v; want none", len(got), err)
+	}
+}

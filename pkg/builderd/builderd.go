@@ -30,6 +30,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/buildpublisher"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/markers"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -841,7 +842,11 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}
 	// The runner base reaches imaged through the signed export claim, or, on
 	// a node without a build publisher, through this build's provenance.
-	sharedRuntime := sharedSourceAppRuntime(app, fw, ver, dockerfilePath, os.Getenv)
+	nodeSpec := ""
+	if fw == FrameworkNode {
+		nodeSpec = markers.NodeVersionSpecAtRoot(dep.SourcePath, dep.SourceRoot)
+	}
+	sharedRuntime := sharedSourceAppRuntime(app, fw, nodeSpec, dockerfilePath, os.Getenv)
 	if sharedRuntime != "" {
 		ref, refErr := resolveBuildRuntimeBaseRef(sharedRuntime, fw, os.Getenv)
 		if refErr != nil {

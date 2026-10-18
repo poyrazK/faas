@@ -1426,10 +1426,61 @@ errors. It preserves committed settlements even when their callbacks return
 uncertainty. See the [Go recovery pass contract](../../docs/event-acknowledgment-go-recovery-pass.md)
 and [buildable host example](examples/event-acknowledgment-recovery/README.md).
 
+Set `RetryPolicy: &faas.EventAcknowledgmentIntentRetryPolicy{}` on the pass for
+capped exponential full jitter based on persisted recovery claims. Single-intent
+recovery and claims expose `WithRetryPolicy` variants. Leave `Backoff` zero when
+enabling the policy; omitted policies retain fixed delays. See the
+[adaptive retry contract](../../docs/event-acknowledgment-go-retry-policy.md).
+
+Use `RunDurableWithRetryPolicy` and the other binding-aware staging variants to
+save a versioned policy atomically with a new intent. Captured bindings override
+worker fallback and appear in `Intent.RetryPolicy` / listing metadata. Existing
+installs need an explicit application schema upgrade before current Go intent
+staging/recovery. See [stored policies and compatible-worker rollout](../../docs/event-acknowledgment-stored-retry-policy.md).
+
+Use `AdoptEventAcknowledgmentIntentRetryPolicy` for existing unbound backlog,
+guarded by the selected timestamp/count and absence of a live claim. Install the
+optional `EventAcknowledgmentIntentPolicyAdoptionSchema` first and retain the
+command UUID/original inputs for idempotent resolution of unknown commits. It
+preserves callback data, count and due time. See the
+[policy adoption contract](../../docs/event-acknowledgment-policy-adoption.md).
+
+Use `RunDurableWithRetryBudget` and the other budget-aware staging variants to
+bind a v2 total recovery-claim budget. Exhausted callbacks are durably parked
+with their protected inputs retained; `ResumeEventAcknowledgmentIntentRetryBudget`
+grants a larger total with timestamp/count/limit guards and idempotent receipts.
+Listing, pass progress and bounded health expose parked work. Upgrade the schema
+before current Go helpers and use current budget-aware Go, Node or Python hosts
+exclusively for enabled scopes. See the
+[budget, parking and resume contract](../../docs/event-acknowledgment-retry-budgets.md).
+
 `WatchEventAcknowledgmentIntentHealthWithCheckpoint` retains stable incidents and
 pending lifecycle alerts in application-persisted metadata. It provides exact
 acknowledgments, fresh confirmation after resume and final state alongside context
 cancellation. See the [Go checkpoint contract](../../docs/event-acknowledgment-go-checkpoints.md).
+
+Set `EventAcknowledgmentIntentWatchOptions.ParkedThreshold` to enable sustained
+`parked_intents` alerts in either Go watch, including a parked-only selection.
+Checkpointed parked alerts use version 2 and the existing replay/acknowledgment
+outbox; disabled parked alerts preserve version 1. Incomplete evidence stays
+unknown, and a lower parked count does not prove callback confirmation. See
+[rollout and evidence rules](../../docs/event-acknowledgment-go-checkpoints.md#parked-intent-alerts).
+
+`NewEventAcknowledgmentIntentHealthMetrics` adds a concurrency-safe bounded cache,
+with explicit `WatchEventAcknowledgmentIntentHealthMetrics` polling and a
+cache-only `NewEventAcknowledgmentIntentHealthMetricsHandler` for `net/http`.
+The thirteen Prometheus gauges share Node/Python evidence and missing-data rules;
+failed reads omit backlog, and scraping starts no SQL or callback work. Reuse the
+shared alerts/dashboard with the distinct Go target on loopback 9468. See
+[metrics and host ownership](../../docs/event-acknowledgment-go-recovery-prometheus.md)
+and the [buildable host](examples/event-acknowledgment-recovery/README.md#export-recovery-health-to-prometheus).
+
+`RecoverEventAcknowledgmentIntentsWithMetrics` adds actual pass start/joined-return
+observation with a separate scoped worker cache. It preserves original recovery
+progress/errors and excludes health reads/scrapes from worker activity. Idle and
+in-flight expectations, latest-pass outcomes and opt-in worker alerts distinguish
+an overdue recovery host from failed database evidence. See
+[Go worker liveness](../../docs/event-acknowledgment-go-worker-liveness.md).
 
 For application event publication, `SaveEventOutbox` stages a producer-key request
 in the business transaction; `RecoverNextEventOutbox` publishes retained due work
@@ -1552,3 +1603,25 @@ including unavailable/replaced evidence and independent read errors. Diagnostic
 timestamps and ordering-blocker identities remain separate from triage observations.
 Check `Explanations.ReadComplete` for read coverage. See
 [blocker explanation semantics](../../docs/event-deadline-alert-investigation.md#blocker-explanations).
+
+### MCP readiness notification queues
+
+MCP readiness notification queues expose separate `Destinations` with independent
+heads and retry status. Use `ListMCPReadinessNotificationQueues` to inspect them,
+then `ActMCPReadinessNotification` with `Destination: "primary"` or `"fallback"`,
+the head's `DeliveryVersion`, a stable request UUID and operator reason. Omit
+`Destination` for the whole-event action. `GetMCPReadinessFallback` and
+`SetMCPReadinessFallback` manage the rule's optional signed fallback;
+`ListMCPReadinessIncidents` includes per-receiver delivery history. These APIs
+require the normal app ownership, scopes and MFA checks.
+
+### Adopt claim budgets for existing callback backlog
+
+`AdoptEventAcknowledgmentIntentRetryBudget` attaches v2 to a selected active unbound/
+v1 intent with exact timestamp/count/policy guards, no live claim and no newer
+invocation attempt. Nil `ExpectedPolicy` requires unbound work; a v1 expectation
+must preserve timing. The total must exceed consumed claims; counts and due times
+remain unchanged. Install `EventAcknowledgmentIntentBudgetAdoptionSchema` beside
+the budget-upgraded table and durably save each command before execution. Exact
+retries resolve uncertain commits through historical receipts without another
+COMMIT. See the [budget-adoption contract](../../docs/event-acknowledgment-budget-adoption.md).

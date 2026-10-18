@@ -14,12 +14,16 @@ var ErrEventAcknowledgmentIntentRecoveryPassFailed = errors.New("acknowledgment 
 
 // EventAcknowledgmentIntentRecoveryPassOptions bounds one explicitly invoked pass.
 // Zero values select 100 attempts, four workers, a 30-second database claim and
-// one-second persisted backoff. CallbackOptions keeps lease-relative defaults.
+// one-second fixed persisted backoff unless RetryPolicy is supplied.
+// CallbackOptions keeps lease-relative defaults.
 type EventAcknowledgmentIntentRecoveryPassOptions struct {
-	MaxAttempts     int
-	Concurrency     int
-	ClaimDuration   time.Duration
-	Backoff         time.Duration
+	MaxAttempts   int
+	Concurrency   int
+	ClaimDuration time.Duration
+	// Backoff is the legacy fixed delay; cannot be combined with RetryPolicy.
+	Backoff time.Duration
+	// RetryPolicy is copied before I/O; nil keeps fixed Backoff behavior.
+	RetryPolicy     *EventAcknowledgmentIntentRetryPolicy
 	CallbackOptions EventAcknowledgmentWorkerOptions
 }
 
@@ -31,6 +35,7 @@ type EventAcknowledgmentIntentRecoveryPassResult struct {
 	Attempts      int    `json:"attempts"`
 	Confirmed     int    `json:"confirmed"`
 	Unconfirmed   int    `json:"unconfirmed"`
+	Parked        int    `json:"parked"`
 	Superseded    int    `json:"superseded"`
 	Empty         int    `json:"empty"`
 	ClaimLost     int    `json:"claim_lost"`
@@ -49,11 +54,25 @@ func eventIntentRecoveryPassOptions(o EventAcknowledgmentIntentRecoveryPassOptio
 	if o.ClaimDuration == 0 {
 		o.ClaimDuration = 30 * time.Second
 	}
-	if o.Backoff == 0 {
-		o.Backoff = time.Second
-	}
-	if o.MaxAttempts < 1 || o.MaxAttempts > 10000 || o.Concurrency < 1 || o.Concurrency > 32 || o.ClaimDuration < time.Second || o.ClaimDuration > 5*time.Minute || o.ClaimDuration%time.Millisecond != 0 || o.Backoff < time.Millisecond || o.Backoff > time.Hour || o.Backoff%time.Millisecond != 0 {
+	if o.MaxAttempts < 1 || o.MaxAttempts > 10000 || o.Concurrency < 1 || o.Concurrency > 32 || o.ClaimDuration < time.Second || o.ClaimDuration > 5*time.Minute || o.ClaimDuration%time.Millisecond != 0 {
 		return o, ErrInvalidEventConsumerRequest
+	}
+	if o.RetryPolicy == nil {
+		if o.Backoff == 0 {
+			o.Backoff = time.Second
+		}
+		if o.Backoff < time.Millisecond || o.Backoff > time.Hour || o.Backoff%time.Millisecond != 0 {
+			return o, ErrInvalidEventConsumerRequest
+		}
+	} else {
+		if o.Backoff != 0 {
+			return o, ErrInvalidEventConsumerRequest
+		}
+		policy, err := eventIntentRetryPolicy(*o.RetryPolicy)
+		if err != nil {
+			return o, err
+		}
+		o.RetryPolicy = &policy
 	}
 	// Validate broad bounds without replacing lease-relative zero defaults. The
 	// existing Deliver primitive validates overrides against the selected row.
@@ -66,7 +85,8 @@ func eventIntentRecoveryPassOptions(o EventAcknowledgmentIntentRecoveryPassOptio
 // RecoverEventAcknowledgmentIntents joins a finite number of concurrent saved
 // callback recoveries. Empty, cancellation, hard failure or unknown commit closes
 // admission; admitted work drains using ctx. Unconfirmed settlements and lost
-// claims allow further admissions. No scheduling, business work or renewal runs.
+// claims and known parking mutations allow further admissions. No polling,
+// business work or renewal runs.
 //
 // Always inspect progress, including on error. errors.Is recognizes
 // ErrEventConsumerCommitUnknown, context.Canceled, context.DeadlineExceeded and
@@ -98,7 +118,13 @@ func RecoverEventAcknowledgmentIntents(ctx context.Context, db *sql.DB, client *
 		go func() {
 			defer workers.Done()
 			for s.admit(ctx, options.MaxAttempts) {
-				status, err := RecoverNextEventAcknowledgmentIntent(ctx, db, client, account, app, options.ClaimDuration, options.CallbackOptions, options.Backoff)
+				var status EventAcknowledgmentIntentStatus
+				var err error
+				if options.RetryPolicy == nil {
+					status, err = RecoverNextEventAcknowledgmentIntent(ctx, db, client, account, app, options.ClaimDuration, options.CallbackOptions, options.Backoff)
+				} else {
+					status, err = RecoverNextEventAcknowledgmentIntentWithRetryPolicy(ctx, db, client, account, app, options.ClaimDuration, options.CallbackOptions, *options.RetryPolicy)
+				}
 				s.observe(status, err)
 			}
 		}()
@@ -138,6 +164,8 @@ func (s *eventIntentRecoveryPass) observe(status EventAcknowledgmentIntentStatus
 		// Deliver can return a committed settlement and a callback error. That
 		// uncertainty belongs to the saved intent, not the pass failure count.
 		s.result.Unconfirmed++
+	case status.State == "parked":
+		s.result.Parked++
 	case status.State == "superseded":
 		s.result.Superseded++
 	case errors.Is(err, ErrEventAcknowledgmentIntentEmpty):

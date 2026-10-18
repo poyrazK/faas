@@ -212,3 +212,6 @@
 1258
 1259
 1260
+
+# Refreshed 2026-10-18 from main @ b284c7cbabb; #4894 independently duplicated ADR-1580.
+1580

@@ -44,9 +44,10 @@ import (
 	"time"
 )
 
-// ErrTruncated is returned when GitHub's compare response is too
-// large to trust (files capped at 300, or commits paginated past
-// page 1). Service.HandlePushRequest maps this to the
+// ErrTruncated is returned when GitHub's compare response cannot describe
+// the complete change from base to head: files are capped at 300, commits
+// are paginated past page 1, or the push is not a fast-forward.
+// Service.HandlePushRequest maps this to the
 // "rebuild all" fallback per ADR-050 §109.
 //
 // Also returned when the caller's `base` SHA is empty — the
@@ -434,6 +435,12 @@ func (c *httpChangedFiles) fetchOnce(
 	var payload compareResponse
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, false, fmt.Errorf("decode: %w", err)
+	}
+	// GitHub's three-dot comparison starts at the merge base. A replaced
+	// branch can therefore omit files reverted from the old tip, including
+	// every file when the new head is behind it. Rebuild all on these pushes.
+	if payload.Status == "behind" || payload.Status == "diverged" {
+		return nil, true, nil
 	}
 
 	// Truncation detection: commits paginated past page 1, or

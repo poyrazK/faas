@@ -27,8 +27,8 @@ function fakePool(respond) {
   }
 }
 
-async function serve(t, pool, { authenticate = async () => ({ sub: member, session_id: 'session' }), origins = ['https://app.example.test'], invitations, storage, workflows } = {}) {
-  const server = createServer({ upstreamPort: 1, authz: createAuthzHandler({ pool, authenticate, origins, invitations, storage, workflows }) })
+async function serve(t, pool, { authenticate = async () => ({ sub: member, session_id: 'session' }), origins = ['https://app.example.test'], invitations, storage, workflows, teamEnabled = false } = {}) {
+  const server = createServer({ upstreamPort: 1, authz: createAuthzHandler({ pool, authenticate, origins, invitations, storage, workflows, teamEnabled }) })
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
   t.after(() => server.close())
@@ -39,6 +39,43 @@ async function serve(t, pool, { authenticate = async () => ({ sub: member, sessi
     return { status: response.status, headers: response.headers, body: text ? JSON.parse(text) : null }
   }
 }
+
+test('team endpoints are hidden before authentication and preflight unless explicitly enabled', async t => {
+  const pool = fakePool(() => { throw new Error('must not query') })
+  let authenticated = 0
+  const call = await serve(t, pool, { authenticate: async () => { authenticated++; throw new Error('must not authenticate') } })
+  for (const [method, path] of [['GET', `/orgs/${org}/team`], ['POST', `/orgs/${org}/team-actions`], ['GET', `/orgs/${org}/team-actions/${member}`], ['OPTIONS', `/orgs/${org}/team-actions`]]) {
+    assert.equal((await call(method, path)).status, 404)
+  }
+  assert.equal(authenticated, 0); assert.equal(pool.log.length, 0)
+})
+
+test('team actions reject ambiguous fields, unsafe context, and malformed cursors before SQL', async t => {
+  const pool = fakePool(() => { throw new Error('must not query') })
+  const call = await serve(t, pool, { teamEnabled: true })
+  const action = { id: member, action: 'invite', email: 'friend@example.test', role: 'member', expected_snapshot: 'a'.repeat(64) }
+  for (const patch of [{ tenant_id: org }, { context: { token: 'secret' } }, { context: { product_id: 'wrong' } }, { expires_in: 1 }, { target_id: member }, { role: 'Owner' }, { email: 'a@b\nsecret' }, { email: `${'é'.repeat(200)}@example.test` }, { action: 'set_role', target_id: member }]) {
+    const value = await call('POST', `/orgs/${org}/team-actions`, { body: { ...action, ...patch } })
+    assert.equal(value.status, 400, JSON.stringify(patch)); assert.ok(!JSON.stringify(value.body).includes('secret'))
+  }
+  for (const query of ['cursor=wrong', 'cursor=a&cursor=b', 'tenant_id=foreign']) assert.equal((await call('GET', `/orgs/${org}/team-actions?${query}`)).status, 400)
+  assert.equal(pool.log.filter(entry => entry.sql.includes('gregale_auth.')).length, 0)
+})
+
+test('team reads use verified claims and a scoped transaction and hide upstream failures', async t => {
+  const value = { actor_id: member, actor_role: 'owner', members: [], invitations: [], roles: [] }
+  const pool = fakePool((sql, args) => {
+    assert.match(sql, /gregale_auth.team_state/); assert.equal(args[0], org)
+    return { rows: [{ state: value }] }
+  })
+  const call = await serve(t, pool, { teamEnabled: true })
+  const response = await call('GET', `/orgs/${org}/team`)
+  assert.equal(response.status, 200); assert.equal(response.body.protocol, 1); assert.match(response.body.snapshot, /^[a-f0-9]{64}$/)
+  assert.deepEqual(JSON.parse(pool.log[1].args[0]), { sub: member, session_id: 'session' })
+  assert.equal(response.headers.get('cache-control'), 'no-store')
+  const bad = await serve(t, fakePool(() => { throw new Error('database password and token') }), { teamEnabled: true })
+  assert.deepEqual((await bad('GET', `/orgs/${org}/team`)).body, { status: 500, code: 'internal_error' })
+})
 
 test('authenticates before any database work', async t => {
   const pool = fakePool(() => ({ rows: [] }))

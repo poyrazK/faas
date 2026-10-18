@@ -24,12 +24,14 @@ func cmdMCPCatalogMonitor(args []string) int {
 	}
 	fs := newFlagSet("mcp-monitor-"+args[0], flag.ContinueOnError)
 	app := fs.String("app", "", "HTTP MCP app slug")
+	scope := fs.String("scope", "", "connection environment (setup only; default when omitted)")
 	role := fs.String("role", "default", "reviewed MCP authorization role")
 	allRoles := fs.Bool("all-roles", false, "aggregate all configured roles (status only)")
 	oauthRevocation := fs.String("oauth-revocation-endpoint", "", "explicit HTTPS RFC 7009 endpoint")
 	oauthRevocationAuth := fs.String("oauth-revocation-auth-method", "", "revocation authentication: none, client_secret_basic or client_secret_post")
 	oauthProfile := fs.String("oauth-profile", "", "provider profile: generic (default), google or oidc")
 	oauthAuthMethod := fs.String("oauth-token-auth-method", "", "none, client_secret_basic or client_secret_post")
+	oauthBrowserRedirect := fs.String("oauth-browser-redirect-uri", "", "registered HTTPS console MCP callback URL")
 	oauthCallbackPort := fs.Int("oauth-callback-port", 0, "fixed loopback port; 0 chooses a dynamic port")
 	oauthResource := fs.String("oauth-resource", "", "reviewed HTTPS MCP resource indicator")
 	oauthIssuer := fs.String("oauth-issuer", "", "reviewed HTTPS provider issuer")
@@ -42,10 +44,10 @@ func cmdMCPCatalogMonitor(args []string) int {
 	oauthRefresh := fs.String("oauth-refresh-secret-ref", "", "app secret holding initial OAuth refresh token")
 	oauthSecret := fs.String("oauth-client-secret-ref", "", "optional app secret for confidential client authentication")
 	oauthRequested := func() bool {
-		return *oauthRevocation != "" || *oauthRevocationAuth != "" || *oauthProfile != "" || *oauthAuthMethod != "" || *oauthCallbackPort != 0 || *oauthResource != "" || *oauthIssuer != "" || *oauthDiscovery != "" || *oauthGuided || *oauthAuthorization != "" || *oauthScopes != "" || *oauthEndpoint != "" || *oauthClient != "" || *oauthRefresh != "" || *oauthSecret != ""
+		return *oauthBrowserRedirect != "" || *oauthRevocation != "" || *oauthRevocationAuth != "" || *oauthProfile != "" || *oauthAuthMethod != "" || *oauthCallbackPort != 0 || *oauthResource != "" || *oauthIssuer != "" || *oauthDiscovery != "" || *oauthGuided || *oauthAuthorization != "" || *oauthScopes != "" || *oauthEndpoint != "" || *oauthClient != "" || *oauthRefresh != "" || *oauthSecret != ""
 	}
 	managed := fs.Bool("managed", false, "run a platform-managed observer (setup only)")
-	secretRef := fs.String("secret-ref", "", "app default-scope secret:NAME for the managed MCP token (setup only)")
+	secretRef := fs.String("secret-ref", "", "app environment secret:NAME for the managed MCP token (setup only)")
 	baseline := fs.String("baseline", "", "reviewed format-2 catalog baseline (setup only)")
 	freshness := fs.Int("freshness-seconds", api.MCPCatalogMonitorDefaultFreshnessSeconds, "maximum observation age (setup only)")
 	tokenEnv := fs.String("token-env", "", "MCP client token environment variable name (setup/run)")
@@ -55,7 +57,7 @@ func cmdMCPCatalogMonitor(args []string) int {
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
-	if !api.ValidCatalogMonitorRole(*role) || !api.ValidCatalogMonitorTokenEnv(*tokenEnv) || (*allRoles && args[0] != "status") || (*allRoles && *role != "default") || fs.NArg() != 0 || !api.ValidAppSlug(*app) || *timeout <= 0 || *timeout > 2*time.Minute {
+	if api.ValidateScope(api.MCPConnectionScope(*scope)) != nil || !api.ValidCatalogMonitorRole(*role) || !api.ValidCatalogMonitorTokenEnv(*tokenEnv) || (*allRoles && args[0] != "status") || (*allRoles && *role != "default") || fs.NArg() != 0 || !api.ValidAppSlug(*app) || *timeout <= 0 || *timeout > 2*time.Minute {
 		return printErr("Invalid MCP monitor flags", errors.New("supply --app and a positive --timeout up to 2m"))
 	}
 	switch args[0] {
@@ -63,7 +65,7 @@ func cmdMCPCatalogMonitor(args []string) int {
 	default:
 		return printErr("MCP catalog monitor", errors.New("use setup, disable, status, run, pause, resume, restart, stop, connect, reconnect, disconnect or provider-check"))
 	}
-	if args[0] != "setup" && (*managed || *secretRef != "" || oauthRequested()) {
+	if args[0] != "setup" && (*scope != "" || *managed || *secretRef != "" || oauthRequested()) {
 		return printErr("Invalid MCP monitor flags", errors.New("--managed, --secret-ref and OAuth flags apply to setup"))
 	}
 	if (*secretRef != "" || oauthRequested()) && !*managed {
@@ -86,14 +88,14 @@ func cmdMCPCatalogMonitor(args []string) int {
 		}
 		readCtx, cancel := context.WithTimeout(ctx, *timeout)
 		defer cancel()
-		req := api.MCPCatalogMonitorConfigRequest{Role: *role, TokenEnv: *tokenEnv, Enabled: true, Baseline: raw, FreshnessSeconds: *freshness}
+		req := api.MCPCatalogMonitorConfigRequest{Scope: *scope, Role: *role, TokenEnv: *tokenEnv, Enabled: true, Baseline: raw, FreshnessSeconds: *freshness}
 		if *managed {
 			if *interval%time.Second != 0 || *timeout%time.Second != 0 {
 				return printErr("MCP managed observer", errors.New("use whole-second intervals and timeouts"))
 			}
 			req.Observer = &api.MCPCatalogObserverConfig{Enabled: true, IntervalSeconds: int(*interval / time.Second), TimeoutSeconds: int(*timeout / time.Second), Endpoint: *endpoint, SecretRef: *secretRef}
 			if oauthRequested() {
-				req.Observer.OAuth = &api.MCPCatalogObserverOAuthConfig{RevocationEndpoint: *oauthRevocation, RevocationAuthMethod: *oauthRevocationAuth, Profile: *oauthProfile, TokenAuthMethod: *oauthAuthMethod, CallbackPort: *oauthCallbackPort, Resource: *oauthResource, Issuer: *oauthIssuer, DiscoveryURL: *oauthDiscovery, Guided: *oauthGuided, AuthorizationEndpoint: *oauthAuthorization, Scopes: strings.Fields(*oauthScopes), TokenEndpoint: *oauthEndpoint, ClientID: *oauthClient, RefreshTokenSecretRef: *oauthRefresh, ClientSecretRef: *oauthSecret}
+				req.Observer.OAuth = &api.MCPCatalogObserverOAuthConfig{RevocationEndpoint: *oauthRevocation, RevocationAuthMethod: *oauthRevocationAuth, Profile: *oauthProfile, TokenAuthMethod: *oauthAuthMethod, BrowserRedirectURI: *oauthBrowserRedirect, CallbackPort: *oauthCallbackPort, Resource: *oauthResource, Issuer: *oauthIssuer, DiscoveryURL: *oauthDiscovery, Guided: *oauthGuided, AuthorizationEndpoint: *oauthAuthorization, Scopes: strings.Fields(*oauthScopes), TokenEndpoint: *oauthEndpoint, ClientID: *oauthClient, RefreshTokenSecretRef: *oauthRefresh, ClientSecretRef: *oauthSecret}
 			}
 			if problem := req.Observer.NormalizeAndValidate(*freshness, *tokenEnv); problem != nil {
 				return printErr("MCP managed observer", errors.New(problem.Detail))
@@ -301,7 +303,7 @@ func monitorTokenEnv(config api.MCPCatalogMonitorConfig, override string) (strin
 }
 
 func managedMonitorAction(config api.MCPCatalogMonitorConfig, action string) (api.MCPCatalogMonitorConfigRequest, error) {
-	req := api.MCPCatalogMonitorConfigRequest{Role: config.Role, TokenEnv: config.TokenEnv, Enabled: config.Enabled, Baseline: config.Baseline, FreshnessSeconds: config.FreshnessSeconds}
+	req := api.MCPCatalogMonitorConfigRequest{Scope: config.Scope, Role: config.Role, TokenEnv: config.TokenEnv, Enabled: config.Enabled, Baseline: config.Baseline, FreshnessSeconds: config.FreshnessSeconds}
 	if config.Observer != nil {
 		observer := *config.Observer
 		req.Observer = &observer

@@ -136,6 +136,10 @@ exec busybox httpd -f -p 8080 -h /tmp/www
 // Mirrors buildBusyboxExt4 in busybox_ext4_metal_test.go, but with
 // inittab+symlinks shaped for our probe-then-serve model.
 func ensureEgressGuestExt4(t *testing.T, dir string) string {
+	return ensureEgressGuestExt4WithScript(t, dir, egressProbeScript)
+}
+
+func ensureEgressGuestExt4WithScript(t *testing.T, dir, script string) string {
 	t.Helper()
 	dst := filepath.Join(dir, egressFixtureName)
 	if _, err := os.Stat(dst); err == nil {
@@ -178,7 +182,7 @@ func ensureEgressGuestExt4(t *testing.T, dir string) string {
 	if err := os.WriteFile(filepath.Join(work, "etc/inittab"), []byte(inittab), 0o644); err != nil {
 		t.Fatalf("inittab: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(work, "etc/egress-probe.sh"), []byte(egressProbeScript), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(work, "etc/egress-probe.sh"), []byte(script), 0o755); err != nil {
 		t.Fatalf("probe script: %v", err)
 	}
 

@@ -5,6 +5,10 @@
 // adr: 694
 // adr: 695
 // adr: 708
+// adr: 1701 — commercial configuration needs isolation; user email consent is not copied.
+// adr: 749 — notification channels and rule bindings are customer configuration.
+// adr: 747 — SLO definitions are configuration; hourly rollups are operational.
+// adr: 748 — synthetic check definitions are configuration; runs are operational.
 package state
 
 import (
@@ -19,6 +23,25 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
+		// Rehearsal fixtures, leases and sealed run evidence remain with their source.
+		"scenario_cold_preparations":          CloneSchemaOperational,
+		"scenario_command_networks":           CloneSchemaOperational,
+		"scenario_managed_work":               CloneSchemaOperational,
+		"scenario_object_fixtures":            CloneSchemaOperational,
+		"scenario_postgres_fixtures":          CloneSchemaOperational,
+		"scenario_recorder_requests":          CloneSchemaOperational,
+		"scenario_recorder_sessions":          CloneSchemaOperational,
+		"scenario_simulation_attempts":        CloneSchemaOperational,
+		"scenario_suspend_resumes":            CloneSchemaOperational,
+		"scenario_test_action_policies":       CloneSchemaOperational,
+		"scenario_worker_faults":              CloneSchemaOperational,
+		"product_control_heads":               CloneSchemaConfiguration,
+		"product_control_revisions":           CloneSchemaConfiguration,
+		"product_control_customers":           CloneSchemaConfiguration,
+		"product_control_help_requests":       CloneSchemaData,
+		"product_control_email_subscriptions": CloneSchemaIdentity,
+		"product_control_receipts":            CloneSchemaOperational,
+		"product_control_billing_documents":   CloneSchemaOperational,
 		// CI configuration stays scoped; execution authority remains at its source.
 		"ci_automation_event_retries": CloneSchemaOperational,
 		"ci_automation_branches":      CloneSchemaOperational,
@@ -130,6 +153,16 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"financial_price_snapshots":                CloneSchemaIdentity,
 		"financial_evidence_coverage":              CloneSchemaOperational,
 		"financial_sampling_windows":               CloneSchemaOperational,
+		"notification_channels":                    CloneSchemaConfiguration,
+		"alert_rule_channels":                      CloneSchemaConfiguration,
+		"app_slos":                                 CloneSchemaConfiguration,
+		"app_slo_hourly":                           CloneSchemaOperational,
+		"synthetic_checks":                         CloneSchemaConfiguration,
+		"synthetic_check_runs":                     CloneSchemaOperational,
+
+		// Capacity and runtime observations are source-bound, expiring evidence.
+		"managed_postgres_connection_capacity":     CloneSchemaOperational,
+		"data_api_runtime_connection_observations": CloneSchemaOperational,
 
 		"object_bucket_encryption":                           CloneSchemaConfiguration,
 		"object_bucket_lifecycle":                            CloneSchemaConfiguration,

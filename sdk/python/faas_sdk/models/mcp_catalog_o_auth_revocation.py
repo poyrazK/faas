@@ -41,7 +41,8 @@ class MCPCatalogOAuthRevocation:
     failure_reason: MCPCatalogOAuthRevocationFailureReason | Unset = UNSET
     acknowledged_at: datetime.datetime | Unset = UNSET
     private_config: MCPCatalogObserverOAuthConfig | Unset = UNSET
-    """Explicit OAuth refresh grant for one app and role; credentials are app default-scope secret references."""
+    """Explicit OAuth refresh grant for one app and role; credentials are app secret references in the connection
+    environment."""
     private_client_ciphertext: str | Unset = UNSET
     """Internal sealed client credential captured at disconnect and omitted from responses"""
     private_ciphertext: str | Unset = UNSET

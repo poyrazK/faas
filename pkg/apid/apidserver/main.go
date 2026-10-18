@@ -21,6 +21,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/apid/mcpreadiness"
 	"log/slog"
 	"net"
 	"net/http"
@@ -766,7 +767,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runManagedPostgresUsageCollector(ctx)
 		go srv.runManagedPostgresHealthCollector(ctx)
 		go srv.runAppHealthCollector(ctx)
-		go mcpcatalog.RunManagedObservers(ctx, srv.store, srv.domain, hostIdentitiesForUnseal, log)
+		go mcpcatalog.RunManagedObservers(ctx, srv.store, srv.domain, hostIdentitiesForUnseal, log, srv.mcpReadinessPreview)
+		readinessMonitor := &mcpreadiness.MonitorRunner{Handler: mcpreadiness.New(srv.store, srv.mcpReadinessPreview, nil), Identities: hostIdentitiesForUnseal, Log: log}
+		go readinessMonitor.Run(ctx)
 		go srv.realtime.RunManagedRealtimeEndpointReconciler(ctx)
 		go srv.realtime.RunManagedRealtimeChannelRouteReconciler(ctx)
 		go srv.realtime.RunManagedRealtimeOwnerReaper(ctx)
@@ -1478,6 +1481,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithRealtimeTicketsPreviewEnabled(deps.getenv("FAAS_REALTIME_TICKETS_PREVIEW_ENABLED") == "1").
 		WithRealtimeAccessPreviewEnabled(deps.getenv("FAAS_REALTIME_ACCESS_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv, resolveGithubdBridgeSock(deps.getenv, cfg)))
+	srv.rehearsalNetworkEnabled = deps.getenv("FAAS_REHEARSAL_NETWORK_CONTAINMENT") == "1"
+	srv.rehearsalSimulationEnabled = deps.getenv("FAAS_REHEARSAL_ACTION_SIMULATION") == "1"
+	srv.rehearsalWorkersEnabled = deps.getenv("FAAS_REHEARSAL_WORKERS") == "1"
+	srv.rehearsalWorkerFaultsEnabled = deps.getenv("FAAS_REHEARSAL_WORKER_FAULTS") == "1"
+	srv.rehearsalSuspendResumeEnabled = deps.getenv("FAAS_REHEARSAL_SUSPEND_RESUME") == "1"
+	srv.rehearsalRunningSuspendEnabled = deps.getenv("FAAS_REHEARSAL_RUNNING_JOB_SUSPEND") == "1"
+	srv.rehearsalColdStartEnabled = deps.getenv("FAAS_REHEARSAL_COLD_START") == "1"
+	srv.rehearsalCommandsEnabled = deps.getenv("FAAS_REHEARSAL_COMMAND_EXECUTION") == "1"
+	if err := srv.configureRehearsalObjects(ctx, deps.getenv); err != nil {
+		return err
+	}
+	if err := srv.configureRehearsalPostgres(ctx, deps.getenv); err != nil {
+		return err
+	}
 	closeCIStorage, err := srv.configureInternalCIStorage(ctx, deps.getenv)
 	if err != nil {
 		return fmt.Errorf("apid internal CI storage: %w", err)
@@ -1496,7 +1513,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := srv.configureOperations(*cfg, deps.getenv); err != nil {
 		return err
 	}
+	if err := srv.configureDataRepair(*cfg, deps.getenv); err != nil {
+		return err
+	}
 	srv.operation.StartOperationNotifications(ctx)
+	srv.configureProductControl(*cfg, deps.getenv)
 	if err := srv.configureFeatureFlags(*cfg, deps.getenv); err != nil {
 		return err
 	}
@@ -1513,6 +1534,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	srv.WithBillingMode(billingMode)
 	srv.devBridgeEnabled = deps.getenv("FAAS_DEV_BRIDGE_ENABLED") == "1"
 	srv.serviceMap.Enabled = deps.getenv("FAAS_SERVICE_MAP_ENABLED") == "1"
+	srv.changeTimelineEnabled = deps.getenv("FAAS_CHANGE_TIMELINE_ENABLED") == "1"
+	srv.anomalyAlertsEnabled = deps.getenv("FAAS_ANOMALY_ALERTS_ENABLED") == "1"
+	srv.customMetricHistoryEnabled = deps.getenv("FAAS_CUSTOM_METRIC_HISTORY_ENABLED") == "1"
+	if srv.customMetricHistoryEnabled {
+		// ADR-745: expose fresh pushed gauges so Prometheus keeps history.
+		if exportStore, ok := srv.store.(state.CustomMetricExportStore); ok {
+			ops.Registry().MustRegister(newCustomMetricExporter(exportStore, time.Now, srv.log))
+		}
+	}
 	srv.devBridgeURL = deps.getenv("FAAS_DEV_BRIDGE_RELAY_URL")
 	if srv.devBridgeURL == "" {
 		srv.devBridgeURL = "http://127.0.0.1:9098"
@@ -1696,6 +1726,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		Metrics: budgetMetrics,
 		Log:     log,
 		DefaultFor: func(r *http.Request) time.Duration {
+			if reqbudget.IsDeploymentResponseCheckRequest(r) {
+				return api.DeploymentResponseCheckTimeout
+			}
 			if reqbudget.IsSyncInvokeRequest(r) || reqbudget.IsDeploySubmissionRequest(r) || managedrealtime.IsRealtimeGroupClaimRequest(r) {
 				// invokeApp applies the plan-specific 5s/30s wait, a deploy
 				// commit scans its source archive (H9-157), and realtime
@@ -1895,6 +1928,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	} else {
 		log.Warn("FAAS_HOST_AGE_IDENTITY_PATH unset — MFA /confirm, /verify, /disable, /recover will return 503")
+	}
+
+	if err := srv.configureProductEmail(deps.getenv); err != nil {
+		return fmt.Errorf("apid: configure product email: %w", err)
+	}
+	if srv.productControl.Enabled && srv.productControl.EmailTransport != nil {
+		go srv.runProductEmail(ctx)
 	}
 
 	// ADR-117 PR-C: load the host HMAC key so sealAndPersist
@@ -2479,10 +2519,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, apidProbe.ReadyFunc())
 	defer notifyStop()
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()
+	// The drain lets a connection faas-apid.socket handed over just before
+	// shutdown deliver its request; net/http drops one it reads after
+	// Shutdown began (ADR-1580).
+	httpDrain := wire.NewHTTPDrain(httpSrv)
 	errc := make(chan error, 1)
 	go func() {
 		log.Info("apid listening", "addr", listenBind)
-		if err := httpSrv.Serve(l); err != nil && err != http.ErrServerClosed {
+		if err := httpDrain.ServeErr(httpSrv.Serve(httpDrain.Listener(l))); err != nil {
 			errc <- err
 		}
 	}()
@@ -2493,7 +2537,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		//nolint:contextcheck // shutdown context must outlive request ctx; detached from caller per net/http contract.
-		_ = httpSrv.Shutdown(shutdownCtx)
+		_ = httpDrain.Shutdown(shutdownCtx, httpSrv)
 		if metricsSrv != nil {
 			//nolint:contextcheck // shutdown context must outlive request ctx; detached from caller per net/http contract.
 			_ = metricsSrv.Shutdown(shutdownCtx)

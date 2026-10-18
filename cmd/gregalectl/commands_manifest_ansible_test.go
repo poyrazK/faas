@@ -136,6 +136,13 @@ func TestRenderManifestAnsibleFiles_DerivesRouting(t *testing.T) {
 	if !strings.Contains(controlVars, `faas_schedd_gateway_metrics_url: ""`) {
 		t.Errorf("control host vars should disable unreachable remote gateway metrics:\n%s", controlVars)
 	}
+	// ADR-1580: the durable schedd socket listens on exactly schedd's bind.
+	if !strings.Contains(controlVars, `faas_schedd_listen_addr: "tcp://0.0.0.0:7100"`) {
+		t.Errorf("control host vars missing schedd listen address from daemons.schedd.bind:\n%s", controlVars)
+	}
+	if strings.Contains(computeVars, "faas_schedd_listen_addr") {
+		t.Errorf("compute host vars must not drive the control-plane schedd socket:\n%s", computeVars)
+	}
 	if !strings.Contains(controlVars, "faas_meterd_config_managed: true") ||
 		!strings.Contains(controlVars, `faas_meterd_egress_socket: "tcp://egress.faas:9092"`) {
 		t.Errorf("control host vars missing managed meterd egress route:\n%s", controlVars)
