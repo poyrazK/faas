@@ -50,3 +50,31 @@ func TestConnectionBudgetClientRequiresExplicitCounters(t *testing.T) {
 		}
 	}
 }
+
+func TestConnectionBudgetClientRequiresCompleteOptionalRuntimeCoverage(t *testing.T) {
+	b := ManagedPostgresConnectionBudget{Version: 1, Reasons: []string{}, Demand: ConnectionBudgetDemand{RuntimeObservations: &ConnectionBudgetRuntimeObservations{State: "unknown", Source: "workload_report"}}}
+	data, _ := json.Marshal(b)
+	if err := validateConnectionBudgetFields(data); err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	demand := fields["demand"].(map[string]any)
+	delete(demand["runtime_observations"].(map[string]any), "observed_instances")
+	data, _ = json.Marshal(fields)
+	if validateConnectionBudgetFields(data) == nil {
+		t.Fatal("missing runtime counter became a false zero")
+	}
+	demand["runtime_observations"] = nil
+	data, _ = json.Marshal(fields)
+	if validateConnectionBudgetFields(data) == nil {
+		t.Fatal("null coverage accepted")
+	}
+	delete(demand, "runtime_observations")
+	data, _ = json.Marshal(fields)
+	if err := validateConnectionBudgetFields(data); err != nil {
+		t.Fatal("older server rejected", err)
+	}
+}

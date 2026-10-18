@@ -1,6 +1,6 @@
 package sched
 
-// adr: 1664. Resolve ambiguity before either physical owner can serve again.
+// adr: 20261018030615. Resolve ambiguity before either physical owner can serve again.
 
 import (
 	"context"

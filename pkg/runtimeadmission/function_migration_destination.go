@@ -1,6 +1,6 @@
 package runtimeadmission
 
-// adr: 1664. A migration retains its logical ID, with fresh physical authority.
+// adr: 20261018030615. A migration retains its logical ID, with fresh physical authority.
 
 import (
 	"time"

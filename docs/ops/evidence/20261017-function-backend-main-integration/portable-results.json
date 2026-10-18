@@ -699,5 +699,121 @@
     },
     "native_acceptance": false,
     "production_activation": false
+  },
+  "data_api_event_main_integration": {
+    "main_base": "ee0cc7135dac4149b1c905cf36e628088ab279f9",
+    "feature_head_before_merge": "149de7497676ea5016aca0da07f516fe4f360830",
+    "recorded_at": "2026-10-18T03:30:23.646687+00:00",
+    "function_adr_renames": {
+      "1659": {
+        "new_id": "20261018030610",
+        "old_path": "docs/adr/1659-function-vm-execution-lifetime.md",
+        "new_path": "docs/adr/20261018030610-function-vm-execution-lifetime.md"
+      },
+      "1660": {
+        "new_id": "20261018030611",
+        "old_path": "docs/adr/1660-function-postgres-resource-lifecycle.md",
+        "new_path": "docs/adr/20261018030611-function-postgres-resource-lifecycle.md"
+      },
+      "1661": {
+        "new_id": "20261018030612",
+        "old_path": "docs/adr/1661-function-warm-snapshot-resource-recovery.md",
+        "new_path": "docs/adr/20261018030612-function-warm-snapshot-resource-recovery.md"
+      },
+      "1662": {
+        "new_id": "20261018030613",
+        "old_path": "docs/adr/1662-function-migration-source-rollback.md",
+        "new_path": "docs/adr/20261018030613-function-migration-source-rollback.md"
+      },
+      "1663": {
+        "new_id": "20261018030614",
+        "old_path": "docs/adr/1663-function-migration-admission.md",
+        "new_path": "docs/adr/20261018030614-function-migration-admission.md"
+      },
+      "1664": {
+        "new_id": "20261018030615",
+        "old_path": "docs/adr/1664-function-migration-destination.md",
+        "new_path": "docs/adr/20261018030615-function-migration-destination.md"
+      },
+      "1665": {
+        "new_id": "20261018030616",
+        "old_path": "docs/adr/1665-function-migration-scheduler-restart.md",
+        "new_path": "docs/adr/20261018030616-function-migration-scheduler-restart.md"
+      }
+    },
+    "background_adr_preserved": "20261018005023",
+    "published_data_api_adrs_1660_1678_unchanged": true,
+    "schema_lines": 80157,
+    "checks": {
+      "schema": {
+        "passed": true,
+        "log_sha256": "d64e3733ffb5785965af44fa65e15c19187914cee453ffd3ffca27cac8495d05"
+      },
+      "migration-roundtrip": {
+        "passed": true,
+        "log_sha256": "7d065b3baaacce88dea1ee2ecdc95507b354bb5c1c40fc9793ba1286bd0f05d5"
+      },
+      "sqlc-generate": {
+        "passed": true,
+        "log_sha256": "e446c92dbb3d88045bec51f0ad24386ed1b0f40d60039508b551b2ea3e041a2e"
+      },
+      "sqlc-check": {
+        "passed": true,
+        "log_sha256": "1175d7bbb92d8df7bf5aba98f1372028e88e4395ff62071b1297e5d5502e7855"
+      },
+      "docs": {
+        "passed": true,
+        "log_sha256": "6c191b22b6f3571146902e0a2a34edbde5d6c67631fa4ebf0d793a578a4ac5e9"
+      },
+      "node-regen": {
+        "passed": true,
+        "log_sha256": "b6913cb29f1e44c3ee02c032c1bf9406b952db06dd6ee315662929812ae922ca"
+      },
+      "python-regen": {
+        "passed": true,
+        "log_sha256": "7e688397f920a4fa5a6fa76de15aa7c88612e9ee2d961ee5eaff0de6be3a9c2a"
+      },
+      "helper-drift": {
+        "passed": true,
+        "log_sha256": "0caa3cb06df3a0e27b06e05a6d7b8f350c58c317dff0cc571ac3b8afd9b502c0"
+      },
+      "sdk-build": {
+        "passed": true,
+        "log_sha256": "01569a110227e471b5b46e1c495f2fc92cf3f1cd4f021b4a8f09186d17e1288c"
+      }
+    },
+    "qualified_race_contracts": {
+      "state": {
+        "passed_tests": 76,
+        "skipped_tests": [],
+        "failed_tests": [],
+        "log_sha256": "b1f95439aa6a372c9bced200cf64f9d81d295165c9e3c21aa37ba045c4c86951"
+      },
+      "managedpostgres": {
+        "passed_tests": 44,
+        "skipped_tests": [],
+        "failed_tests": [],
+        "log_sha256": "b22aeab47c5266abf7664c4dadb94291b286ebd7511ddfcbb2d36c66086cecca"
+      },
+      "api": {
+        "passed_tests": 6,
+        "skipped_tests": [],
+        "failed_tests": [],
+        "log_sha256": "98fb2c4b217844ea9ebc2ed8805806b617e180abfaa920f069a936313635e98d"
+      }
+    },
+    "compile_GOMEMLIMIT": "5GiB",
+    "runtime_limits": {
+      "GOMEMLIMIT": "2GiB",
+      "GOGC": "10",
+      "GOMAXPROCS": "2",
+      "timeout": "3m"
+    },
+    "local_state_test_DWARF_disabled_for_disk_fit": true,
+    "sdk_access_enum_matches_current_main_five_modes": true,
+    "published_OpenAPI_unchanged": true,
+    "native_acceptance": false,
+    "production_activation": false,
+    "local_capacity_note": "First compile exhausted managed workspace before test execution. Removed only inactive generated Go archive caches and reran all contracts successfully."
   }
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only native host witnesses for ADR-1664's isolated migration fixture."""
+"""Read-only native host witnesses for ADR-20261018030615's isolated migration fixture."""
 
 import hashlib
 import json

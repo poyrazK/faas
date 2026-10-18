@@ -5,7 +5,7 @@ Later integration checks are recorded below with their own source revision.
 It preserves the shipped `PostgresPoolBinding` API, its secret-adoption and
 starter checkpoint behavior, and the generic migration source journal. The
 function decisions are [ADR-20261018005023](../../../adr/20261018005023-function-background-completion-protocol.md)
-and ADR-1659 through [ADR-1665](../../../adr/1665-function-migration-scheduler-restart.md).
+and ADR-20261018030610 through [ADR-20261018030616](../../../adr/20261018030616-function-migration-scheduler-restart.md).
 The existing cancellation decision remains ADR-1540.
 
 ## Integration contracts
@@ -226,6 +226,38 @@ cache and the new compiler settings. Its binary SHA-256 is
 `36393c32b0ff0f9b5d58043fe07d9ea86f7702657f1e57d55915875f3fe847d0`.
 This records compilation only. No native test body or production activation is
 qualified; hosted CI must still pass on the newly published head.
+
+## Integration with Data API and event recovery releases
+
+Main through `ee0cc7135dac4149b1c905cf36e628088ab279f9` adds connection-capacity
+observations, recoverable Data API workflows and durable event retry/recovery
+controls. All sixteen SQLC source blocks and the published query list are
+retained alongside the three function sources. Fresh combined schema generation
+produced 80,157 lines; function migration replay and reverse down/forward up
+preserved the identical schema. SQLC generation/drift and documentation/live
+fixture checks pass.
+
+The published Data API decisions retain ADR-1660 through ADR-1678 byte-for-byte.
+The remaining unpublished function decisions use timestamp IDs
+20261018030610 through 20261018030616; background completion keeps
+ADR-20261018005023. Only function-owned added-line references and live link
+targets change. Historical evidence numbers and hashes retain their original
+meaning. ADR uniqueness holds the existing 164-duplicate baseline.
+
+Both SDK generators, the Node build, Python compilation and canonical runtime
+helper drift checks pass. Generated access enums follow current main's published
+five-mode OpenAPI schema, including `auth`; the earlier four-mode dark-launch
+record above describes its earlier source revision. The published spec and
+activation flags are preserved.
+
+Qualified race contracts on the combined schema pass 76 state, 44 managed
+PostgreSQL and 6 API tests/subtests with zero skips or failures. Test binaries
+compile separately, then execute with CI's 2 GiB target, GOGC 10, two processors
+and three-minute deadline. Local external state-test DWARF is disabled to fit
+the managed disk; race instrumentation and assertions remain enabled. An initial
+compile reached workspace capacity before tests ran; generated archive caches
+were reclaimed and the complete contract run passed. No native test body or
+production activation is qualified by these checks.
 
 ## Qualification boundary
 

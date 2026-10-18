@@ -1,6 +1,6 @@
 package state
 
-// adr: 1662. The source's physical recovery follows a durable ownership fence.
+// adr: 20261018030613. The source's physical recovery follows a durable ownership fence.
 
 import (
 	"context"

@@ -524,7 +524,7 @@ test-metal: ## Integration tests tagged //go:build metal — needs KVM + root (R
 	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" $(GO) test -tags metal -race -count=1 $(RUN_ARGS) "$$@" $(PKGS)
 
 .PHONY: test-function-background-native
-test-function-background-native: ## Strict Node execution lifetime/capture/thaw gate on the isolated native KVM host (ADR-1659)
+test-function-background-native: ## Strict Node execution lifetime/capture/thaw gate on the isolated native KVM host (ADR-20261018030610)
 	@test "$$(id -u)" = 0 || (echo "requires root on the isolated native KVM acceptance host" >&2; exit 1)
 	@test -c /dev/kvm || (echo "/dev/kvm missing; native qualification cannot skip" >&2; exit 1)
 	@test -r /etc/faas/builder-acceptance-host || (echo "requires the designated isolated acceptance host" >&2; exit 1)
@@ -539,7 +539,7 @@ test-function-background-native: ## Strict Node execution lifetime/capture/thaw 
 	$(MAKE) leakcheck
 
 .PHONY: test-function-migration-native
-test-function-migration-native: ## Guarded Node22/24 migration, replies and coordinator restart on native KVM hosts (ADR-1665)
+test-function-migration-native: ## Guarded Node22/24 migration, replies and coordinator restart on native KVM hosts (ADR-20261018030616)
 	@test -n "$${FAAS_FUNCTION_MIGRATION_NATIVE_CONFIG:-}" || (echo "FAAS_FUNCTION_MIGRATION_NATIVE_CONFIG must name the isolated two-host fixture" >&2; exit 1)
 	@test -n "$${FAAS_FUNCTION_MIGRATION_NATIVE_EVIDENCE:-}" || (echo "FAAS_FUNCTION_MIGRATION_NATIVE_EVIDENCE must name a new private directory outside this checkout" >&2; exit 1)
 	python3 scripts/ci/function-migration-native.py --config "$$FAAS_FUNCTION_MIGRATION_NATIVE_CONFIG" --out "$$FAAS_FUNCTION_MIGRATION_NATIVE_EVIDENCE"
@@ -1218,8 +1218,10 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  cp pkg/managedpostgres/copycontents/queries.sql pkg/managedpostgres/copycontents/schema.sql "$$tmp/pkg/managedpostgres/copycontents/"; \
 	  cp pkg/managedpostgres/copydatabases/queries.sql pkg/managedpostgres/copydatabases/maintenance.sql pkg/managedpostgres/copydatabases/verification.sql pkg/managedpostgres/copydatabases/verification_retries.sql pkg/managedpostgres/copydatabases/schema.sql "$$tmp/pkg/managedpostgres/copydatabases/"; \
 	  cp pkg/managedpostgres/credentialdelivery/probe_queries.sql pkg/managedpostgres/credentialdelivery/probe_schema.sql "$$tmp/pkg/managedpostgres/credentialdelivery/"; \
+	  mkdir -p "$$tmp/pkg/managedpostgres/connectioncapacity"; \
+	  cp pkg/managedpostgres/connectioncapacity/queries.sql pkg/managedpostgres/connectioncapacity/schema.sql "$$tmp/pkg/managedpostgres/connectioncapacity/"; \
 	  (cd "$$tmp" && $(SQLC) generate); \
-	  for package in pkg/productemail/sqlc pkg/ci/db/sqlc pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/scenariopg/sqlc pkg/state/scenarioobj/sqlc pkg/rehearsalpg/runtime/sqlc pkg/state/sqlc pkg/db/migrationsqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc; do \
+	  for package in pkg/productemail/sqlc pkg/ci/db/sqlc pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/scenariopg/sqlc pkg/state/scenarioobj/sqlc pkg/rehearsalpg/runtime/sqlc pkg/state/sqlc pkg/db/migrationsqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc pkg/managedpostgres/connectioncapacity/sqlc; do \
 	    diff -r "$$package" "$$tmp/$$package" || \
 	      { echo "sqlc-check: generated $$package is out of sync; run 'make sqlc-generate' and commit the diff"; exit 1; }; \
 	  done

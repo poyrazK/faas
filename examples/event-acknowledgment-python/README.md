@@ -1,5 +1,19 @@
 # Durable Python ingestion with immediate event acknowledgment
 
+[`stored_policy.py`](stored_policy.py) shows explicit atomic policy binding for
+new completion intents. Apply the shared upgrade and update every recovery host
+first. Repeat the original normalized policy on explicit staging retries;
+existing unbound duplicates conflict. See the
+[shared binding contract](../../docs/event-acknowledgment-stored-retry-policy.md).
+
+[`policy_adoption.py`](policy_adoption.py) separates deliberate selection from
+applying a durably saved command for existing unbound backlog. Pass exact metadata
+from intent listing to `select_policy_adoption`, persist the returned command
+under its trusted owner scope, then call `apply_policy_adoption`. Keep the same
+command inputs when resolving uncertainty. The optional receipt schema is shared
+with Go/Node; install it explicitly before adoption. See
+[receipts, guards and cancellation](../../docs/event-acknowledgment-policy-adoption.md#python-adoption-and-replay).
+
 For leased completion, see [the explicit processing mode](#complete-with-a-processing-lease).
 
 `consumer.py` integrates the [async acknowledgment worker](../../docs/event-acknowledgment-python-worker.md)
@@ -259,8 +273,8 @@ async def notify(alert, cancel):
 await watch_acknowledgment_recovery(connection_scope, scope, shutdown, notify)
 ```
 
-The example enables due backlog at 100 and stalled recovery at 1, with 30 seconds
-of sustained proof. It uses summary defaults, five-second sequential polling and
+The example enables due backlog at 100, stalled recovery at 1 and parked intents
+at 1, with 30 seconds of sustained proof. It uses summary defaults, five-second sequential polling and
 a five-second cooperative read budget including acquisition/cleanup. Configure
 the pool to discard failed/closed connections and bound driver/statement/cleanup
 calls. The factory returns an async context manager, not a connection or coroutine.
@@ -305,6 +319,16 @@ acknowledgments, and commits every `snapshot["checkpoint"]` **before** attemptin
 any pending notification. It records a delivery acknowledgment only after the
 destination confirms that exact incident/sequence pair. Pending history replays
 at startup before any health query, even if the health database is unavailable.
+
+Both wrappers enable parked alerts with `parked_threshold=1`; checkpoint mode
+therefore selects version 2. Upgrade every host that can resume or acknowledge
+that checkpoint first. Omit the option or set it to zero to preserve the previous
+version 1 selection and resume its snapshots. Changing selection requires a new
+session after reconciling and retaining the old incidents/checkpoint/notifications
+under the writer fence; do not edit a saved version. A parked alert resolution
+means only that parked count stayed below threshold, including after an operator
+resume or supersession. See the
+[parked alert contract](../../docs/event-acknowledgment-python-checkpoints.md#parked-intent-alerts).
 
 The additional adapter contract is:
 
@@ -620,6 +644,9 @@ through the application's monitoring process.
 trusted account/app scope, with at most 100 admitted iterations and concurrency 4.
 It processes existing saved callback intents for durable job modes, without
 reading/changing job records or acknowledging ingestion jobs.
+Its retry policy selects exponential full jitter with a one-second initial cap
+and five-minute maximum. PostgreSQL retains the claim count and due time. For a
+fixed delay, omit the policy and supply `backoff_ms=1000` instead.
 
 ```python
 from dataclasses import asdict
@@ -656,7 +683,7 @@ client, and finish joining the pass before shutting either down.
 
 The pass returns for a used budget or an empty probe. An empty probe can miss
 claimed rows and says nothing about future due work. Unconfirmed callbacks retain
-their existing persisted backoff; they can be admitted again if due within a pass.
+their selected jittered delay; they can be admitted again if due within a pass.
 There is no idle wait, automatic polling or new per-job deduplication. The host
 decides when to run another pass, using its independent retained-health evidence.
 
@@ -666,3 +693,90 @@ scope failure; cleanup and uncertainty counts can overlap them. Pass exceptions
 do not establish rollback/callback failure or permit re-running business work,
 changing intent actions or deleting fences. See the
 [bounded pass contract](../../docs/event-acknowledgment-python-recovery-pass.md).
+See [retry policy bounds and uncertainty](../../docs/event-acknowledgment-python-retry-policy.md)
+for database-clock scheduling and coordinated worker settings.
+
+## Bound recovery claims and resume parked callbacks
+
+[retry_budget.py](retry_budget.py) shows optional budget staging, exact metadata
+selection and execution of a durably persisted operator command. Apply the budget
+upgrade before current helpers, even for unbound/v1-only work; install the optional
+resume ledger before commands. Omitted budgets remain unlimited. Counts track
+committed claims including crashes, and never reset on resume. Known parked
+outcomes appear in progress and health; enable `parked_threshold` for sustained
+parked alerts. Keep enabled scopes on current budget-aware
+Go, Node or Python hosts. See
+[parking, precise fences and receipt replay](../../docs/event-acknowledgment-retry-budgets.md#python-budgets-and-guarded-resume).
+
+## Adopt budgets for existing backlog
+
+[budget_adoption.py](budget_adoption.py) selects precise metadata and constructs a
+frozen command while preserving v1 timing. Authorize the owner/key and total,
+durably save all original inputs, then call the apply function on an exclusively
+leased idle autocommit async connection. Install the optional budget-adoption ledger
+first. Live claims, newer attempts and stale fences produce retained conflicts;
+exact retries read historical outcomes before current rows, without another COMMIT.
+Counts, callbacks and due times remain unchanged. See
+[Python adoption and receipt replay](../../docs/event-acknowledgment-budget-adoption.md#python-selection-adoption-and-replay).
+
+## Export recovery health to Prometheus
+
+[`RecoveryHealthMetricsHost`](recovery_metrics.py) creates a scope-bound cache
+and provides explicit `run(stop_event=...)` and cache-only ASGI `app` methods.
+Construction/import starts no connection, task, listener or SQL. Use the same
+host/cache and event-loop thread for polling and scraping, with one process:
+
+```python
+import asyncio
+import uvicorn  # Application supplied; not an SDK dependency.
+from faas_sdk import EventAcknowledgmentWorkerCancelled
+from recovery_metrics import RecoveryHealthMetricsHost
+
+host = RecoveryHealthMetricsHost(
+    lambda: application_pool.connection(timeout=3), account_id, app_id,
+)
+shutdown = asyncio.Event()
+server = uvicorn.Server(uvicorn.Config(
+    host.app, host="127.0.0.1", port=9467, workers=1,
+    lifespan="off", access_log=False,
+))
+polling = asyncio.create_task(host.run(stop_event=shutdown))
+try:
+    await server.serve()
+finally:
+    shutdown.set()
+    try:
+        await polling  # Joins acquisition, SQL and connection cleanup before pool close.
+    except EventAcknowledgmentWorkerCancelled:
+        pass
+```
+
+The application supervises both tasks, listener failures and bounded HTTP/pool
+shutdown. A second poller for the cache is rejected before I/O. Run the SDK
+poller directly for configurable health scan/stall/poll/query settings; the
+example uses 1000 rows, five-minute stall, five-second polling/query budgets and
+thirty-second sample freshness. The connection factory leases a fresh exclusive
+idle autocommit async connection per read and discards failed/closed connections.
+Bound actual acquisition, SQL and cleanup calls: cancellation is cooperative and
+does not force an unresponsive driver to return. Native/event cancellation joins
+work, clears the cached sample and raises `EventAcknowledgmentWorkerCancelled`.
+
+Only `GET /metrics` without query parameters is served. Other methods return 405,
+other paths/queries 404 and invalid exposition generic 503. Headers/body are built
+synchronously before response awaits, with `Cache-Control: no-store`. Scraping
+never queries PostgreSQL. Keep ASGI lifespan off and avoid a separate Uvicorn
+process/worker; it would hold another cache. Serialize cross-thread access explicitly.
+
+Use [prometheus-recovery-python.yml](../event-acknowledgment-monitoring/prometheus-recovery-python.yml)
+with a distinct job/9467 listener and one copy of the shared recovery rules.
+Node recovery uses 9466; preparation listeners use other ports. Protect remote
+scrape paths and keep delivery ingress separate. Never sum duplicate scope
+observers or add protected/owner identity labels. Missing data remains Unknown;
+Prometheus alert resolution after evidence loss does not prove callback recovery.
+
+See [freshness/exposition](../../docs/event-acknowledgment-python-recovery-prometheus.md),
+[the shared monitoring pack](../event-acknowledgment-monitoring/README.md#recovery-health-python)
+and [Python operator recovery](../../docs/runbooks/GregaleEventRecovery.md#python-hosts-and-guarded-recovery).
+Live ASGI scraping, driver cancellation, alert transitions and Grafana rendering
+remain pending hosted qualification. Local checks use syntax, lint, generation,
+packaging and static monitoring/documentation checks; no local tests run.

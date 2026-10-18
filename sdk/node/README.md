@@ -3674,14 +3674,14 @@ Recovery sends only the saved callback; inspect its returned `state` / `lastCode
 See [transaction, recovery and retention details](../../docs/event-acknowledgment-node-intents.md).
 
 `getEventAcknowledgmentIntentHealth(pool, accountId, appId, { scanLimit, stallAfterMs, signal })`
-reads one owner-scoped database snapshot for pending/unconfirmed backlog, due work,
+reads one owner-scoped database snapshot for pending/unconfirmed/parked backlog, due work,
 live/expired claims, stalled recovery and oldest overdue age. Export `complete`,
 `truncated` and `coverage` with the counts; incomplete scans cannot establish
 healthy recovery. The helper reads metadata only and claims no work. See
 [options, coverage and cancellation](../../docs/event-acknowledgment-intent-health.md#node-summary).
 
 `watchEventAcknowledgmentIntentHealth(pool, accountId, appId, options, notify)`
-adds sustained `due_backlog` / `stalled_recovery` alerts with opt-in thresholds.
+adds sustained `due_backlog` / `stalled_recovery` / `parked_intents` alerts with opt-in thresholds.
 Firing and resolution require multiple fresh, complete observations; failed,
 incomplete or stale evidence becomes `unknown` / `confirmation_lost`. Polls and
 local callbacks run sequentially, and cancellation never resolves an incident.
@@ -3695,6 +3695,29 @@ outbox. Persist `progress.checkpoint` in `onProgress` before delivering
 `acknowledgeEventAcknowledgmentIntentAlerts`. Resume validates owner/policy and
 requires fresh confirmation while retaining unresolved incident identity.
 See [checkpoint validation, replay and shutdown](../../docs/event-acknowledgment-node-checkpoints.md).
+
+Set `parkedThreshold` to enable parked-count alerts in either Node watch,
+including a parked-only selection. Checkpointed parked alerts use version 2;
+zero/omission preserves version 1 with the existing policy JSON. Upgrade hosts
+that can resume or acknowledge version 2 first. Incomplete evidence stays unknown;
+operator resume or newer staging can reduce parked count without confirming a
+callback. See [parked evidence and rollout](../../docs/event-acknowledgment-node-checkpoints.md#parked-intent-alerts).
+
+`EventAcknowledgmentIntentHealthMetrics(accountId, appId, { maxAgeMs: 30000 })`
+caches one bounded recovery-health sample. Feed sequential reads with `record`
+and failures with `recordReadFailure`, then format a fresh `snapshot()` per scrape
+with `formatEventAcknowledgmentIntentHealthMetrics`. It exports due/stalled/parked
+counts and coverage/age gauges without identity labels; missing reads omit counts.
+The [read-only metrics contract](../../docs/event-acknowledgment-node-recovery-prometheus.md)
+and [Prometheus/Grafana pack](../../examples/event-acknowledgment-monitoring/README.md#recovery-health-node)
+include freshness guards, unavailable-evidence alerts and guarded operator resume.
+
+`EventAcknowledgmentIntentRecoveryWorkerMetrics` and
+`recoverEventAcknowledgmentIntentsWithMetrics` add actual pass liveness, separate
+from healthy reads/scrapes. The wrapper preserves original joined results/errors;
+its formatter shares Go's 23 gauges and adds Node's overlapping cleanup-failure
+gauge. Reuse the shared opt-in worker alerts/dashboard with the explicit same-loop
+host. See [Node worker liveness](../../docs/event-acknowledgment-node-worker-liveness.md).
 
 `claimEventConsumerProcessing(pool, input, durationMs, { signal })` provides an
 opaque local preparation lease with `completed`, `renew` and `complete`. Install
@@ -3743,12 +3766,45 @@ runbook. Tune sample guards and thresholds for your worker workload and install
 it through your own monitoring deployment process.
 
 `recoverEventAcknowledgmentIntents(pool, accountId, appId, { maxAttempts?,
-concurrency?, signal?, claimDurationMs?, backoffMs?, callbackOptions? })` runs one
+concurrency?, signal?, claimDurationMs?, backoffMs?, retryPolicy?, callbackOptions? })` runs one
 finite saved-callback recovery pass. Admissions/concurrency are bounded, existing
 transaction fences remain authoritative and all worker promises join. Frozen
 `.result` progress accompanies ordinary failure, AbortError and uncertain-COMMIT
 exceptions. The host schedules later passes and owns pool/client lifetime. See
 [budgets, pool release and recovery progress](../../docs/event-acknowledgment-node-recovery-pass.md).
+
+Set `retryPolicy: { initialBackoffMs: 1000, maxBackoffMs: 300000 }` for capped
+exponential full jitter based on persisted recovery claims. Single-intent
+recovery and `claim.deliver` accept the same option. Omit `backoffMs` with a policy;
+omitted policies keep fixed delays. See the
+[adaptive retry contract](../../docs/event-acknowledgment-node-retry-policy.md).
+
+Durable staging accepts `retryPolicy` to atomically bind an immutable versioned
+schedule to a new intent. Updated recovery uses the captured binding instead of
+worker fallback; status exposes optional frozen `retryPolicy` metadata. Apply
+`eventAcknowledgmentIntentStoredRetryPolicySchema` to existing installations
+before upgrading current intent workers. See the
+[shared binding and rollout contract](../../docs/event-acknowledgment-stored-retry-policy.md).
+
+Use `getEventAcknowledgmentIntentPolicyAdoptionCandidate` for a precise timestamp
+snapshot of selected backlog, then `adoptEventAcknowledgmentIntentRetryPolicy`
+with a durably saved command UUID, expected timestamp/count and optional policy.
+Install `eventAcknowledgmentIntentPolicyAdoptionSchema` first. Frozen receipts
+resolve exact retries across Go and Node within Node's safe generation range;
+typed rejection errors expose their retained `.receipt`. Callback data, attempts
+and due time are preserved. See the
+[adoption, timestamp and replay contract](../../docs/event-acknowledgment-policy-adoption.md#node-selection-adoption-and-replay).
+
+Set `retryBudget: { maxDeliveryAttempts: 8, retryPolicy: { initialBackoffMs: 1000,
+maxBackoffMs: 300000 } }` during durable staging to opt into v2 exhaustion. Apply
+`eventAcknowledgmentIntentRetryBudgetSchema` after the v1 upgrade before upgrading
+current helpers, including v1-only hosts. Parked callbacks retain protected inputs;
+passes and health expose `parked`. Install `eventAcknowledgmentIntentRetryResumeSchema`
+before guarded resume, select exact timestamp/count/grant metadata with
+`getEventAcknowledgmentIntentRetryResumeCandidate`, durably retain the command, then
+call `resumeEventAcknowledgmentIntentRetryBudget`. Exact retries resolve uncertain
+commits across Go/Node within Node's safe generation range. See
+[budgets, migration and operator resume](../../docs/event-acknowledgment-retry-budgets.md#node-budgets-and-guarded-resume).
 
 ## Issue source maps
 
@@ -3791,3 +3847,16 @@ reporter.captureException(error, context.snapshot());
 ```
 
 Import `createIssueContext` from `@gregale/sdk-node`. The collector retains at most 16 entries and immutable snapshots; it does not collect data automatically. Only the operational tag allowlist is accepted. See [the Issues guide](../../docs/issues.md) for server sanitation, retention, tag search, and deployment source-map publication.
+
+### Adopt recovery budgets for existing callback backlog
+
+`adoptEventAcknowledgmentIntentRetryBudget` attaches v2 to a selected active unbound/
+v1 intent with exact timestamp/count/policy guards, no live claim and no newer
+attempt. Install `eventAcknowledgmentIntentBudgetAdoptionSchema`, select exact
+metadata with `getEventAcknowledgmentIntentBudgetAdoptionCandidate`, then durably
+save `EventAcknowledgmentIntentAdoptRetryBudgetOptions` before execution. Omitted/
+null `expectedPolicy` means unbound; complete v1 timing must be preserved. The total
+exceeds consumed claims without resetting them. Frozen receipts resolve exact
+retries across Go/Node within Node's safe generation range, with known rejection
+receipts on `EventAcknowledgmentIntentBudgetAdoptionError.receipt`. See
+[budget adoption, exact fences and uncertainty](../../docs/event-acknowledgment-budget-adoption.md#node-selection-adoption-and-replay).

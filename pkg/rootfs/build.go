@@ -852,7 +852,7 @@ func applyTarballWithCap(dst string, r io.Reader, capBytes int64, prefix string)
 			}
 			written += hdr.Size
 		}
-		archiveName := hdr.Name
+		archiveName := tarball.TrimLeadingDotSlash(hdr.Name)
 		if prefix != "" {
 			archiveName = strings.TrimSuffix(archiveName, "/")
 			if archiveName == prefix {

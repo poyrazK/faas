@@ -2,7 +2,7 @@
 
 package e2e_test
 
-// adr: 1664
+// adr: 20261018030615
 // Controlled reply discards exercise native effects at the client boundary;
 // they do not qualify real packet loss, PostgreSQL failover or vsock faults.
 

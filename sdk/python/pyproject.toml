@@ -12,6 +12,11 @@ include = [
     { path = "faas_sdk/event_consumer_schema.sql", format = ["sdist", "wheel"] },
     { path = "faas_sdk/event_consumer_processing_schema.sql", format = ["sdist", "wheel"] },
     { path = "faas_sdk/event_acknowledgment_intent_schema.sql", format = ["sdist", "wheel"] },
+    { path = "faas_sdk/event_acknowledgment_intent_stored_retry_policy_schema.sql", format = ["sdist", "wheel"] },
+    { path = "faas_sdk/event_acknowledgment_intent_policy_adoption_schema.sql", format = ["sdist", "wheel"] },
+    { path = "faas_sdk/event_acknowledgment_intent_retry_budget_schema.sql", format = ["sdist", "wheel"] },
+    { path = "faas_sdk/event_acknowledgment_intent_retry_resume_schema.sql", format = ["sdist", "wheel"] },
+    { path = "faas_sdk/event_acknowledgment_intent_budget_adoption_schema.sql", format = ["sdist", "wheel"] },
     { path = "faas_sdk/operation_schema.sql", format = ["sdist", "wheel"] },
     { path = "faas_sdk/customer_operation_schema.sql", format = ["sdist", "wheel"] },
 ]

@@ -1,4 +1,4 @@
--- ADR-1662: retain source ownership until pool recovery or retirement is confirmed.
+-- ADR-20261018030613: retain source ownership until pool recovery or retirement is confirmed.
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 CREATE TABLE IF NOT EXISTS function_migration_sources (

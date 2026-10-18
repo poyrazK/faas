@@ -3,7 +3,7 @@
 Date: 2026-10-17. Branch: `codex/function-postgres-lifecycle`.
 Base: `d76c4ee3a974b59755f020c6b4bf7a4e2be6583f`.
 
-This milestone implements [ADR-1352](../../../adr/1664-function-migration-destination.md):
+This milestone implements [ADR-1352](../../../adr/20261018030615-function-migration-destination.md):
 restore a measured Node function destination, transfer ownership and retire the
 source. Production activation remains disabled. This is portable evidence;
 native two-host KVM/TLS SQL execution is not qualified. PR #4768 remains closed

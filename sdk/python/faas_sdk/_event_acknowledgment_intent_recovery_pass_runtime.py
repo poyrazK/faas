@@ -12,14 +12,25 @@ from typing import Any, Literal
 from ._event_acknowledgment_protocol import Control, EventAcknowledgmentWorkerOptions
 from .client import AuthenticatedClient
 from .event_acknowledgment_intent_recovery import arecover_next_event_acknowledgment_intent
+from .event_acknowledgment_intent_retry_policy import EventAcknowledgmentIntentRetryPolicy
 from .event_acknowledgment_intents import EventAcknowledgmentIntentError, EventAcknowledgmentIntentStatus
 from .event_consumer_transactions import EventConsumerCommitUnknownError
 
 ConnectionFactory = Callable[[], AbstractAsyncContextManager[Any]]
 Kind = Literal[
-    "confirmed", "unconfirmed", "superseded", "empty", "claim_lost", "interrupted", "failed", "commit_unknown"
+    "confirmed", "unconfirmed", "parked", "superseded", "empty", "claim_lost", "interrupted", "failed", "commit_unknown"
 ]
-_KINDS = ("confirmed", "unconfirmed", "superseded", "empty", "claim_lost", "interrupted", "failed", "commit_unknown")
+_KINDS = (
+    "confirmed",
+    "unconfirmed",
+    "parked",
+    "superseded",
+    "empty",
+    "claim_lost",
+    "interrupted",
+    "failed",
+    "commit_unknown",
+)
 _STOP = ("empty", "interrupted", "failed", "commit_unknown")
 
 
@@ -28,8 +39,9 @@ class Policy:
     max_attempts: int
     concurrency: int
     claim_duration_ms: int
-    backoff_ms: int
+    backoff_ms: int | None
     callback_options: EventAcknowledgmentWorkerOptions | None
+    retry_policy: EventAcknowledgmentIntentRetryPolicy | None
 
 
 @dataclass(frozen=True)
@@ -125,12 +137,14 @@ async def _attempt(
                     app,
                     claim_duration_ms=policy.claim_duration_ms,
                     backoff_ms=policy.backoff_ms,
+                    retry_policy=policy.retry_policy,
                     callback_options=policy.callback_options,
                     stop_event=control.event,
                 )
                 if type(status) is not EventAcknowledgmentIntentStatus or status.state not in (
                     "confirmed",
                     "unconfirmed",
+                    "parked",
                     "superseded",
                 ):
                     raise ValueError("invalid acknowledgment intent recovery outcome")

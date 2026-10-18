@@ -1,6 +1,6 @@
 package vmmdgrpc
 
-// adr: 1663. The authenticated source owner obtains current durable permission.
+// adr: 20261018030614. The authenticated source owner obtains current durable permission.
 
 import (
 	"context"

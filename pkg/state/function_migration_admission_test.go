@@ -1,6 +1,6 @@
 package state
 
-// adr: 1663
+// adr: 20261018030614
 // Durable authority tests simulate consumption, not native effects.
 
 import (

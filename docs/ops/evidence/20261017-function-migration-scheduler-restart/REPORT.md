@@ -2,7 +2,7 @@
 
 Status: implementation for qualification; native execution pending; production off.
 
-This increment adds [ADR-1353](../../../adr/1665-function-migration-scheduler-restart.md)
+This increment adds [ADR-1353](../../../adr/20261018030616-function-migration-scheduler-restart.md)
 startup recovery and extends the guarded native migration fixture. No production
 capability, deployment, automatic invocation retry or VM reattachment is enabled.
 

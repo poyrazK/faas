@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Preserve request identity in response caching](20261017214848-response-cache-request-identity.md)
+
 - [Restart-safe Go acknowledgment recovery alerts](20261017182028-go-recovery-alert-checkpoints.md)
 
 - [Bounded Go acknowledgment intent recovery passes](20261017181200-bounded-go-intent-recovery.md)
@@ -199,13 +201,13 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1285 | [Guided automation dashboard](1285-guided-automation-dashboard.md) | accepted | App-owner starter, validation, simulation, checked publishing, and run inspection flow |
 | 1540 | [Function cancellation completion and trusted lifecycle context](1540-function-cancellation-cleanup-and-lifecycle-context.md) | accepted | Shared slots remain occupied through cleanup; Node abort signals, Python cancellation events and socket-derived function lifecycle context support bounded database work |
 | 20261018005023 | [Negotiated Node post-response execution completion](20261018005023-function-background-completion-protocol.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
-| 1659 | [Acknowledged function VM execution lifetime](1659-function-vm-execution-lifetime.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
-| 1660 | [Automatic PostgreSQL ownership in Node functions](1660-function-postgres-resource-lifecycle.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
-| 1661 | [Recover Node resources after warm capture](1661-function-warm-snapshot-resource-recovery.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
-| 1662 | [Recover a function migration source after rollback](1662-function-migration-source-rollback.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
-| 1663 | [Admit function migration capture and source recovery](1663-function-migration-admission.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
-| 1664 | [Restore and publish a measured function migration destination](1664-function-migration-destination.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
-| 1665 | [Reconstruct measured function handoffs at scheduler startup](1665-function-migration-scheduler-restart.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 20261018030610 | [Acknowledged function VM execution lifetime](20261018030610-function-vm-execution-lifetime.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 20261018030611 | [Automatic PostgreSQL ownership in Node functions](20261018030611-function-postgres-resource-lifecycle.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 20261018030612 | [Recover Node resources after warm capture](20261018030612-function-warm-snapshot-resource-recovery.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 20261018030613 | [Recover a function migration source after rollback](20261018030613-function-migration-source-rollback.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 20261018030614 | [Admit function migration capture and source recovery](20261018030614-function-migration-admission.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 20261018030615 | [Restore and publish a measured function migration destination](20261018030615-function-migration-destination.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 20261018030616 | [Reconstruct measured function handoffs at scheduler startup](20261018030616-function-migration-scheduler-restart.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
 | 1190 | [Application Auth on a pinned GoTrue server](1190-application-auth.md) | proposed | Ordinary auth app on the customer database, `auth` credential mode, organizations and one SQL authorization function shared by data, storage, realtime and workflows |
 | 1385 | [Refresh authorization for retained WebSocket channels](1385-retained-channel-authorization-refresh.md) | accepted for implementation; deployed qualification pending | Share SSE's bounded channel grants with WebSocket history and buffered delivery; remove denied subscriptions and reconnect after callback outages |
 | 1332 | [Bind retained realtime to the verified login session](1332-session-bound-retained-realtime.md) | accepted for implementation; deployed qualification pending | Verified session/expiry handoff, periodic WebSocket JWT checks and session-aware Auth channel callbacks |
@@ -1008,7 +1010,57 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1026: Later eligibility observations for workflow failures](1026-workflow-failure-eligibility-observer.md)
 - [ADR-1259: Reviewed first recovery from captured workflow failures](1259-reviewed-initial-workflow-recovery.md)
 
+## Data API execution and recovery
+
+- [ADR-1660: Data API connection-capacity observations](1660-data-api-connection-capacity-observations.md)
+
+- [ADR-1661: Data API runtime connection-demand observations](1661-data-api-runtime-connection-demand.md)
+
+- [ADR-1662: Data API database timing telemetry](1662-data-api-database-timing-telemetry.md)
+
+- [ADR-1663: Data API per-user concurrent request limits](1663-data-api-user-concurrency-limits.md)
+
+- [ADR-1664: Data API lock waits and contention recovery](1664-data-api-lock-contention-policy.md)
+
+- [ADR-1665: Data API deadlines across SQL transaction retries](1665-data-api-sql-retry-deadlines.md)
+
+- [ADR-1666: Owner-approved deadline grants during credential rotation](1666-data-api-deadline-grant-rotation.md)
+
+- [ADR-1667: Coordinated SQL refresh across credential rotation](1667-data-api-coordinated-refresh-rotation.md)
+
+- [ADR-1668: Read-only Data API rotation preflight](1668-data-api-rotation-preflight.md)
+
+- [ADR-1669: Read-only mutation receipt recovery](1669-data-api-read-only-mutation-recovery.md)
+
+- [ADR-1670: Versioned Data API replay expiry](1670-data-api-versioned-replay-expiry.md)
+
+- [ADR-1671: Versioned update and delete receipts](1671-data-api-versioned-update-delete-receipts.md)
+
+- [ADR-1672: Recoverable atomic note batches](1672-data-api-atomic-note-batches.md)
+
+- [ADR-1673: V2 Data API transaction generation](1673-data-api-v2-transaction-generator.md)
+
+- [ADR-1674: Durable client mutation recovery](1674-data-api-durable-mutation-journal.md)
+
+- [ADR-1675: Data API receipt storage diagnostics](1675-data-api-receipt-storage-diagnostics.md)
+
+- [ADR-1676: Incremental note change feed](1676-data-api-incremental-note-change-feed.md)
+
+- [ADR-1677: Ranked, indexed note search under RLS](1677-data-api-ranked-note-search.md)
+
+- [ADR-1678: Read-only team order aggregation](1678-data-api-team-order-aggregation.md)
+
 ## Events and delivery
+
+- [Node and Python stored acknowledgment policy parity](20261017213800-cross-sdk-stored-acknowledgment-policies.md)
+
+- [Stored Go acknowledgment intent retry policies](20261017212845-stored-go-acknowledgment-retry-policy.md)
+
+- [Adaptive Python acknowledgment intent retry scheduling](20261017212320-python-acknowledgment-retry-policy.md)
+
+- [Adaptive Node acknowledgment intent retry scheduling](20261017211931-node-acknowledgment-retry-policy.md)
+
+- [Adaptive Go acknowledgment intent retry scheduling](20261017211526-go-acknowledgment-retry-policy.md)
 
 - [ADR-606: Independent event recipient routing and recovery](606-independent-event-recipient-routing.md)
 - [ADR-607: Unified event receipt inspection](607-unified-event-receipts.md)

@@ -5647,7 +5647,7 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 // Qualified Node capture instead keeps the guest paused through publication,
 // then recovers all workers' resources under this flight. Failed or cancelled
 // captures also recover; unconfirmed recovery seals admission and retires the
-// physical VM (ADR-1661).
+// physical VM (ADR-20261018030612).
 //
 // Ordinary failure path: any error from SnapshotKeepAlive OR ResumeVM is
 // surfaced as-is. The engine's captureWarmSnapshotLocked decides

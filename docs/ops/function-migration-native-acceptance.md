@@ -2,8 +2,8 @@
 
 Status: harness implemented; native execution pending; production off.
 This is the successful-migration, reply-boundary and coordinator process-loss
-slice of [ADR-1664](../adr/1664-function-migration-destination.md) and
-[ADR-1665](../adr/1665-function-migration-scheduler-restart.md), for Node 22 and Node 24. The complete
+slice of [ADR-20261018030615](../adr/20261018030615-function-migration-destination.md) and
+[ADR-20261018030616](../adr/20261018030616-function-migration-scheduler-restart.md), for Node 22 and Node 24. The complete
 [destination qualification matrix](function-backend-concurrency-acceptance.md#measured-migration-destination-qualification)
 still applies before release.
 

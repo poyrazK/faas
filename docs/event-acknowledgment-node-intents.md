@@ -14,7 +14,19 @@ packaged from the existing Go schema by `scripts/gen-operation-inbox-schema.py`.
 No helper installs, migrates or prunes either table. There is no platform migration
 or new API route. Existing immediate worker and receipt calls do not use this table.
 
-Pending/unconfirmed rows contain the raw platform token and completion JSON.
+Existing installations must apply `eventAcknowledgmentIntentStoredRetryPolicySchema`
+once in an application migration transaction before upgrading current Node
+intent workers. Durable staging accepts optional `retryPolicy` and recovery
+captures saved bindings under the row lock. All-null bindings retain fallback.
+See [upgrade, staging APIs and rollout](event-acknowledgment-stored-retry-policy.md).
+
+Current Node helpers also require the budget-schema upgrade, even for v1/unbound
+work. Apply `eventAcknowledgmentIntentRetryBudgetSchema` after the v1 upgrade and
+before upgrading helpers. Optional `retryBudget` binds a finite total claim limit;
+exhaustion parks saved callbacks, and an explicit receipt-backed resume grants more
+claims. See [budget staging, migration order and resume](event-acknowledgment-retry-budgets.md#node-budgets-and-guarded-resume).
+
+Pending/unconfirmed/parked rows contain the raw platform token and completion JSON.
 Restrict database, backup and worker access and use protected storage. Diagnostic
 statuses exclude tokens, results, original events and recovery capabilities.
 Claim objects redact string, inspection and JSON formatting and are process-local;
@@ -131,6 +143,13 @@ uses the existing worker's lease-dependent bounds and defaults; `recoverNext`
 validates it against the selected row before committing the claim. Separate claim
 calls can also supply `callbackOptions` for validation before claiming.
 
+Delivery and `recoverNext` also accept an optional `retryPolicy` with initial
+and maximum millisecond caps. The bounded pass accepts the same option. It uses
+persisted claim counts for exponential full jitter and retains database-clock
+due times. Omit `backoffMs` when enabling it; omitted policies keep fixed-delay
+behavior. See [adaptive retry scheduling](event-acknowledgment-node-retry-policy.md).
+The shared schema and saved-callback fences are unchanged.
+
 Delivery verifies saved token/action hashes, uses the original token and exact
 JSON/reason, never renews the platform lease and never executes business code.
 Remaining database lease time minus elapsed local time bounds HTTP. Settlement
@@ -180,3 +199,10 @@ remain independent. No ordering or external exactly-once guarantee is added.
 See the [durable integration example](../examples/event-acknowledgment-node/README.md).
 Build/generation/static validation is local; runtime concurrency, restart and
 cross-SDK database behavior require hosted acceptance before release.
+
+For existing active unbound/v1 backlog, use the separate
+`adoptEventAcknowledgmentIntentRetryBudget` command. Install its optional receipt
+schema, select precise metadata, authorize and durably save the original command,
+then apply timestamp/count/policy guards. It rejects live claims/newer attempts and
+preserves v1 timing, callbacks, counts and due times. See
+[Node budget adoption and replay](event-acknowledgment-budget-adoption.md#node-selection-adoption-and-replay).

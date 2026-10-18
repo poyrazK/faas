@@ -1,5 +1,5 @@
 -- filename: 20261018003150916_function_migration_admission.sql
--- adr: 1663. Fresh permissions remain attached to the original durable source.
+-- adr: 20261018030614. Fresh permissions remain attached to the original durable source.
 
 -- +goose Up
 SET LOCAL lock_timeout = '5s';

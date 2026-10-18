@@ -348,10 +348,10 @@ VM replacement; bounded post-response work does not provide durable execution.
 
 See [ADR-1540](adr/1540-function-cancellation-cleanup-and-lifecycle-context.md),
 [ADR-20261018005023](adr/20261018005023-function-background-completion-protocol.md),
-[ADR-1659](adr/1659-function-vm-execution-lifetime.md),
-[ADR-1660](adr/1660-function-postgres-resource-lifecycle.md),
-[ADR-1661](adr/1661-function-warm-snapshot-resource-recovery.md),
-[ADR-1662](adr/1662-function-migration-source-rollback.md),
-[ADR-1663](adr/1663-function-migration-admission.md),
-[ADR-1664](adr/1664-function-migration-destination.md)
+[ADR-20261018030610](adr/20261018030610-function-vm-execution-lifetime.md),
+[ADR-20261018030611](adr/20261018030611-function-postgres-resource-lifecycle.md),
+[ADR-20261018030612](adr/20261018030612-function-warm-snapshot-resource-recovery.md),
+[ADR-20261018030613](adr/20261018030613-function-migration-source-rollback.md),
+[ADR-20261018030614](adr/20261018030614-function-migration-admission.md),
+[ADR-20261018030615](adr/20261018030615-function-migration-destination.md)
 and [backend concurrency acceptance](ops/function-backend-concurrency-acceptance.md).

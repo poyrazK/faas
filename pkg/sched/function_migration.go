@@ -1,6 +1,6 @@
 package sched
 
-// adr: 1662. schedd owns the rollback fence and final instance transition.
+// adr: 20261018030613. schedd owns the rollback fence and final instance transition.
 
 import (
 	"context"

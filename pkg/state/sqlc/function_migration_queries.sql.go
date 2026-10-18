@@ -308,7 +308,7 @@ type RegisterFunctionMigrationSourceParams struct {
 	VmstateKey   string
 }
 
-// ADR-1662: schedd fences rollback before vmmd can reopen a function source.
+// ADR-20261018030613: schedd fences rollback before vmmd can reopen a function source.
 func (q *Queries) RegisterFunctionMigrationSource(ctx context.Context, db DBTX, arg RegisterFunctionMigrationSourceParams) (int64, error) {
 	result, err := db.Exec(ctx, registerFunctionMigrationSource,
 		arg.InstanceID,

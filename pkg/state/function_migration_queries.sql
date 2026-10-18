@@ -1,4 +1,4 @@
--- ADR-1662: schedd fences rollback before vmmd can reopen a function source.
+-- ADR-20261018030613: schedd fences rollback before vmmd can reopen a function source.
 -- name: RegisterFunctionMigrationSource :execrows
 WITH owner AS (
     SELECT i.id, i.wake_id, m.lease_token, m.source_node_id

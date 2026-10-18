@@ -1,6 +1,6 @@
 package runtimeadmission
 
-// adr: 1663. Serving history never substitutes for current lifecycle permission.
+// adr: 20261018030614. Serving history never substitutes for current lifecycle permission.
 
 import (
 	"strings"

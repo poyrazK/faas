@@ -9,7 +9,7 @@ historical.
 
 ## Measured Node function migration destinations — 2026-10-17
 
-[ADR-1664](adr/1664-function-migration-destination.md) adds qualification-only
+[ADR-20261018030615](adr/20261018030615-function-migration-destination.md) adds qualification-only
 measured destination restore, durable readiness and ownership epochs, a separate
 execution activation fence, and confirmed destination retirement before source
 recovery. Current configuration and artifact approval are rechecked at commit;
@@ -20,7 +20,7 @@ two-host Node 22/24 KVM/TLS SQL qualification remain pending. See the
 
 ## Measured Node function migration source permissions — 2026-10-17
 
-[ADR-1663](adr/1663-function-migration-admission.md) adds separate capture and
+[ADR-20261018030614](adr/20261018030614-function-migration-admission.md) adds separate capture and
 recovery permissions to the qualification-only source path. Each permission
 binds the measured parent, original wake, source lease and capture files, and
 uses the existing current-input and artifact approval fences. Recovery permission
@@ -34,19 +34,19 @@ production activation and destination adoption remain gated. See the
 
 ## Node function migration source rollback — 2026-10-17
 
-[ADR-1662](adr/1662-function-migration-source-rollback.md) adds a qualification-only
+[ADR-20261018030613](adr/20261018030613-function-migration-source-rollback.md) adds a qualification-only
 source path: mandatory all-interpreter checkpoint drainage, paused publication,
 a durable scheduler rollback fence, and one acknowledged pool-recovery attempt.
 Cancellation and expired leases retain source capacity until recovery or physical
 retirement is confirmed. schedd completes RUNNING or STOPPED after that result;
-vmmd never writes the instance ownership row. ADR-1663 above adds measured source
+vmmd never writes the instance ownership row. ADR-20261018030614 above adds measured source
 permission; destination adoption remains refused. Native KVM/vsock, restart/private-environment
 acceptance and production activation remain pending. See the
 [evidence](ops/evidence/20261017-function-migration-source-rollback/REPORT.md).
 
 ## Node function warm-snapshot recovery — 2026-10-17
 
-[ADR-1661](adr/1661-function-warm-snapshot-resource-recovery.md) adds qualified
+[ADR-20261018030612](adr/20261018030612-function-warm-snapshot-resource-recovery.md) adds qualified
 warm capture with PostgreSQL drainage, paused publication and all-worker recovery
 before the original VM admits traffic. Cancelled/failed capture also recovers;
 unconfirmed recovery seals admission and retires the original physical VM.
@@ -1053,7 +1053,7 @@ records the disabled activation boundary and native prerequisite failures.
 
 ## Node VM execution lifetime and checkpoint admission — 2026-10-16
 
-[ADR-1659](adr/1659-function-vm-execution-lifetime.md) adds host-acknowledged,
+[ADR-20261018030610](adr/20261018030610-function-vm-execution-lifetime.md) adds host-acknowledged,
 incarnation-scoped execution reservations before handler dispatch. HTTP EOF
 does not release them; actual worker completion/cancellation does. Lost replies,
 late messages and runner generation changes retain ownership conservatively.
@@ -1075,7 +1075,7 @@ not qualified by these portable checks. No deployment was performed.
 
 ## Automatic Node function PostgreSQL lifecycle — 2026-10-17
 
-[ADR-1660](adr/1660-function-postgres-resource-lifecycle.md) adds automatic SDK
+[ADR-20261018030611](adr/20261018030611-function-postgres-resource-lifecycle.md) adds automatic SDK
 pool registration before driver creation in qualified generated adapters. It
 supplies default lifecycle endpoints, preserves custom hooks, consumes their
 response cleanup before drainage and waits for every registered pool in every

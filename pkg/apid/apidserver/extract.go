@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/tarball"
 )
 
 // scanSpoolRoot returns the directory under which per-request
@@ -95,10 +96,38 @@ func extractTarGzToDir(src string, lim extractLimits) (string, *api.Problem) {
 	if err := os.Mkdir(dst, 0o700); err != nil {
 		return "", api.ErrCapacity("could not create scan dir")
 	}
-	if prob := extractTarGzInto(src, dst, lim); prob != nil {
-		_ = os.RemoveAll(dst)
+	published := false
+	defer func() {
+		if !published {
+			_ = os.RemoveAll(dst)
+		}
+	}()
+	unpackDir, err := os.MkdirTemp(scanSpoolRoot(), ".scan-extract-")
+	if err != nil {
+		return "", api.ErrCapacity("could not create extraction dir")
+	}
+	defer func() { _ = os.RemoveAll(unpackDir) }()
+	if prob := extractTarGzInto(src, unpackDir, lim); prob != nil {
 		return "", prob
 	}
+	// Select the wrapper only after all entries have passed the extraction
+	// limits. Guessing from the first entry can flatten a workload directory
+	// and overwrite unrelated files in an otherwise flat monorepo archive.
+	prefix, err := tarball.RootPrefix(src)
+	if err != nil {
+		return "", api.ErrSourceInvalid("could not determine archive root: " + err.Error())
+	}
+	root := filepath.Join(unpackDir, prefix)
+	if err := os.Chmod(root, 0o700); err != nil {
+		return "", api.ErrCapacity("could not set scan dir permissions")
+	}
+	if err := os.Remove(dst); err != nil {
+		return "", api.ErrCapacity("could not prepare scan dir")
+	}
+	if err := os.Rename(root, dst); err != nil {
+		return "", api.ErrCapacity("could not publish scan dir")
+	}
+	published = true
 	return dst, nil
 }
 
@@ -165,12 +194,6 @@ func extractTarGzInto(src, dst string, lim extractLimits) *api.Problem {
 	var (
 		entries int
 		total   int64
-		// firstDir is the single top-level prefix the tarball must
-		// share (tar wraps every entry under `<root>/...`). We
-		// strip it on write so reposcan.Scan sees a clean root
-		// directory. Set on the first non-empty-name header.
-		firstDir string
-		firstSet bool
 	)
 	for {
 		// codeql[go/path-injection] false-positive: escapesArchiveRoot
@@ -223,36 +246,10 @@ func extractTarGzInto(src, dst string, lim extractLimits) *api.Problem {
 				fmt.Sprintf("too many files (>%d)", lim.MaxEntries))
 		}
 
-		// Strip the leading "<root>/" prefix on the first
-		// non-empty-name header. tar archives the customer uploaded
-		// usually have this; fs.MapFS test fixtures don't. The
-		// no-prefix case (single root already) leaves firstDir="".
-		// Canonicalise harmless leading "./" segments before selecting
-		// and stripping the archive wrapper. Without this, an entry such
-		// as "./repo/compose.yaml" selected "." as the wrapper and left
-		// the real repository root nested one level too deep, producing an
-		// empty project plan. escapesArchiveRoot above already rejected
-		// absolute names and parent traversal. Preserve a trailing slash on
-		// directory headers because wrapper discovery uses that separator.
-		name := hdr.Name
-		for strings.HasPrefix(name, "./") {
-			name = strings.TrimPrefix(name, "./")
-		}
-		if !firstSet {
-			// Only consume the first segment as the archive root
-			// if every other entry also begins with it. We can't
-			// know that yet on the first header, so we tentatively
-			// set and re-strip; on a mismatch the path becomes
-			// root-relative (still safe — escapesArchiveRoot
-			// already cleared the security check).
-			if i := strings.IndexByte(name, '/'); i >= 0 {
-				firstDir = name[:i]
-			}
-			firstSet = true
-		}
-		if firstDir != "" && strings.HasPrefix(name, firstDir+"/") {
-			name = name[len(firstDir)+1:]
-		}
+		// Canonicalise harmless leading "./" segments without removing
+		// any real directory. Wrapper selection happens after extraction,
+		// once the full archive shape is known.
+		name := tarball.TrimLeadingDotSlash(hdr.Name)
 		if name == "" {
 			// the root directory entry itself; skip
 			continue
@@ -305,6 +302,14 @@ func extractTarGzInto(src, dst string, lim extractLimits) *api.Problem {
 		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 		if err != nil {
 			return api.ErrCapacity("could not create file")
+		}
+		// This tree becomes the staged build archive. Keep source execute
+		// bits, but never setuid/setgid or extra write bits. Explicit chmod
+		// also prevents the daemon's umask or an earlier duplicate entry
+		// from changing the permissions delivered to the builder.
+		if err := out.Chmod(0o644 | os.FileMode(hdr.Mode)&0o111); err != nil {
+			_ = out.Close()
+			return api.ErrCapacity("could not set source file permissions")
 		}
 		written, copyErr := io.Copy(out, io.LimitReader(tr, lim.MaxFileBytes))
 		_ = out.Close()
