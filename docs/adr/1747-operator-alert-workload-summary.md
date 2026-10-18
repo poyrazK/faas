@@ -1,4 +1,4 @@
-# Operator alert workload summary
+# ADR-1747: Operator alert workload summary
 
 Status: Accepted, 2026-10-16. Extends retained episodes and triage history.
 

@@ -1,4 +1,4 @@
-# Operator incident evidence
+# ADR-1746: Operator incident evidence
 
 Status: Accepted, 2026-10-15. Extends ADR-091 and operator observability fidelity.
 
