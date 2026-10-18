@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -194,6 +195,7 @@ func TestHostManagedReleaseSwapsBinariesOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	stubSystemdShow(t, map[string]string{"faas-gatewayd-internal.service": "faas-vmmd.service", "faas-vmmd.service": "active loaded"})
 	manifest := releasebundle.Manifest{Target: "linux/amd64"}
 
 	all := hostRuntime{unitDir: unitDir, serviceOrder: order}
@@ -260,5 +262,59 @@ func TestOnlyNarrowsTheRestartOrderOfAHostManagedRelease(t *testing.T) {
 	}
 	if want := []string{"faas-gatewayd-internal.service"}; !reflect.DeepEqual(restarted, want) {
 		t.Fatalf("host-managed --only restarted %v, want %v", restarted, want)
+	}
+}
+
+// stubSystemdShow answers `systemctl show` for the dependency guard: a
+// service's value is its Wants/Requires/BindsTo, a dependency's its
+// "ActiveState LoadState".
+func stubSystemdShow(t *testing.T, units map[string]string) {
+	t.Helper()
+	orig := commandOutput
+	t.Cleanup(func() { commandOutput = orig })
+	commandOutput = func(_ context.Context, name string, args ...string) (string, error) {
+		if name != "systemctl" || len(args) < 2 || args[0] != "show" {
+			return "", fmt.Errorf("unexpected %s %v", name, args)
+		}
+		return units[args[1]] + "\n", nil
+	}
+}
+
+func TestOnlyDeployRefusesToStartAStoppedDependency(t *testing.T) {
+	order, err := daemonunitspec.RestartOrder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, vmmd, want string
+	}{
+		{name: "dependency active", vmmd: "active loaded"},
+		{name: "dependency masked", vmmd: "inactive masked"},
+		{name: "dependency stopped", vmmd: "inactive loaded", want: "faas-vmmd.service, which is inactive/loaded"},
+		{name: "dependency crash-looping", vmmd: "activating loaded", want: "which is activating/loaded"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stubSystemdShow(t, map[string]string{
+				// gatewayd-internal Wants vmmd and realtimed, and the slice.
+				"faas-gatewayd-internal.service": "faas-cp.slice faas-vmmd.service faas-realtimed.service",
+				"faas-vmmd.service":              tc.vmmd,
+				"faas-realtimed.service":         "active loaded",
+			})
+			r := hostRuntime{serviceOrder: order, only: set("gatewayd-internal")}
+			err := r.requireDependenciesUp(context.Background())
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("requireDependenciesUp: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("requireDependenciesUp = %v, want %q", err, tc.want)
+			}
+		})
+	}
+	// A full deploy restarts every daemon anyway, so it is not guarded.
+	if err := (hostRuntime{serviceOrder: order}).requireDependenciesUp(context.Background()); err != nil {
+		t.Fatalf("full deploy guarded: %v", err)
 	}
 }

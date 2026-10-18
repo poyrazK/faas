@@ -269,9 +269,51 @@ func (r hostRuntime) preflightHostManaged(releaseRoot string) error {
 	return nil
 }
 
-func (r hostRuntime) Preflight(_ context.Context, manifest releasebundle.Manifest, releaseRoot string) error {
+// requireDependenciesUp refuses a --only deploy that would start a stopped
+// daemon. systemd starts a restarted unit's Wants=/Requires=/BindsTo= units
+// that are down and orders the restart behind them: gatewayd-internal Wants
+// vmmd, so restarting it on a node whose vmmd is stopped (a maintenance, a
+// drain) starts vmmd (fsn-4, 2026-10-18). A masked dependency cannot start
+// and is fine.
+func (r hostRuntime) requireDependenciesUp(ctx context.Context) error {
+	if r.only == nil {
+		return nil
+	}
+	services, err := r.onlyServices(r.serviceOrder)
+	if err != nil {
+		return err
+	}
+	for _, service := range services {
+		out, err := commandOutput(ctx, "systemctl", "show", serviceFilePrefix+service+serviceFileSuffix,
+			"-p", "Wants", "-p", "Requires", "-p", "BindsTo", "--value")
+		if err != nil {
+			return err
+		}
+		for _, dep := range strings.Fields(out) {
+			if !strings.HasPrefix(dep, serviceFilePrefix) || !strings.HasSuffix(dep, serviceFileSuffix) {
+				continue
+			}
+			state, err := commandOutput(ctx, "systemctl", "show", dep, "-p", "ActiveState", "-p", "LoadState", "--value")
+			if err != nil {
+				return err
+			}
+			fields := strings.Fields(state)
+			if len(fields) == 2 && (fields[0] == "active" || fields[1] == "masked") {
+				continue
+			}
+			return fmt.Errorf("%s depends on %s, which is %s: restarting %s alone would start it; deploy when it is active",
+				service, dep, strings.Join(fields, "/"), service)
+		}
+	}
+	return nil
+}
+
+func (r hostRuntime) Preflight(ctx context.Context, manifest releasebundle.Manifest, releaseRoot string) error {
 	if manifest.Target != "linux/amd64" {
 		return fmt.Errorf("unsupported release target %q", manifest.Target)
+	}
+	if err := r.requireDependenciesUp(ctx); err != nil {
+		return err
 	}
 	if hostManagedUnits(releaseRoot) {
 		return r.preflightHostManaged(releaseRoot)

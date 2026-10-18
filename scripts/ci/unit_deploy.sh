@@ -140,7 +140,7 @@ cmd_script() {
     echo "${release_dir}/bin/deployctl deploy --only '${only}' --expect-current ${expect} ${release_id}"
     echo "if [[ -n \"\${ROLLOUT_ACTIVATION_MARKER:-}\" ]]; then touch \"\$ROLLOUT_ACTIVATION_MARKER\"; fi"
     echo "if ! bash ${stage}/unit-release-verify.sh ${release_dir}${specs}; then"
-    echo "  ${release_dir}/bin/deployctl rollback --only '${only}'"
+    echo "  ${stage}/bin/deployctl rollback --only '${only}'"
     # Put optional units back on the release now active, too.
     echo "  bash ${stage}/unit-release-verify.sh \"\$(readlink -f /opt/faas/current)\"${specs} || true"
     echo '  exit 1'
@@ -228,7 +228,8 @@ cmd_rollback() {
   script="$(mktemp "${RUNNER_TEMP:-/tmp}/unit-rollback.XXXXXX")"
   {
     echo 'set -euo pipefail'
-    echo "\"\$(readlink -f /opt/faas/current)/bin/deployctl\" rollback --only '${only}'"
+    # The staged deployctl: a full release on a compute host ships none.
+    echo "${stage}/bin/deployctl rollback --only '${only}'"
     echo "bash ${stage}/unit-release-verify.sh \"\$(readlink -f /opt/faas/current)\"${specs}"
   } > "$script"
   cmd_run "$script"

@@ -81,7 +81,7 @@ for want in \
   "bin/apid=$stage/bin/apid" \
   "/opt/faas/releases/0123456789abcdef0123456789abcdef01234567/bin/deployctl deploy --only 'apid,meterd' --expect-current 00000000000000000000000000000000000000b0 0123456789abcdef0123456789abcdef01234567" \
   "unit-release-verify.sh /opt/faas/releases/0123456789abcdef0123456789abcdef01234567 apid=http://127.0.0.1:9101/readyz \\?apid-clone-worker" \
-  "deployctl rollback --only 'apid,meterd'"; do
+  "$stage/bin/deployctl rollback --only 'apid,meterd'"; do
   grep -Fq -- "$want" "$test_root/activate.sh" || fail "activation script lacks: $want"
 done
 
@@ -145,7 +145,7 @@ chmod +x "$stub/bash-capture"
 sed 's#"$(as_root "$target") -s"#"CAPTURE=$CAPTURE bash-capture"#' "$helper" > "$test_root/helper-capture.sh"
 CAPTURE="$test_root/rollback.sh" UNIT_SSH_TARGET=deploy@node.example \
   bash "$test_root/helper-capture.sh" rollback "$plan" "$stage"
-grep -Fq "bin/deployctl\" rollback --only 'apid,meterd'" "$test_root/rollback.sh" || fail "rollback does not restore the plan's services"
+grep -Fq "$stage/bin/deployctl rollback --only 'apid,meterd'" "$test_root/rollback.sh" || fail "rollback does not restore the plan's services with the staged deployctl"
 grep -Fq "unit-release-verify.sh \"\$(readlink -f /opt/faas/current)\" apid=http://127.0.0.1:9101/readyz" "$test_root/rollback.sh" \
   || fail "rollback does not verify the restored release"
 grep -q "sudo -n bash" "$helper" || fail "non-root hosts must run through sudo"
