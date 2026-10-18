@@ -1,0 +1,60 @@
+rule_files: []
+evaluation_interval: 30s
+tests:
+- name: sustained failures with complete eligible history
+  interval: 30s
+  input_series:
+  - series: vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001",outcome="success"}
+    values: 0+7x50
+  - series: vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001",outcome="tool_error"}
+    values: 0+3x50
+  promql_expr_test:
+  - expr: min_over_time((((100 * (sum(increase(vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001",outcome=~"rpc_error|tool_error|authorization_error|internal_error|timeout"}[5m]))) / (sum(increase(vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001"}[5m])))) > bool 10) and on() ((sum(increase(vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001"}[5m]))) >= 20))[10m:30s]) == 1 and on() (count_over_time((((100 * (sum(increase(vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001",outcome=~"rpc_error|tool_error|authorization_error|internal_error|timeout"}[5m]))) / (sum(increase(vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001"}[5m])))) > bool 10) and on() ((sum(increase(vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001"}[5m]))) >= 20))[10m:30s]) >= 20 + (time() % 30 == bool 0))
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+- name: sparse traffic never fires
+  interval: 30s
+  input_series:
+  - series: vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001",outcome="tool_error"}
+    values: 0+1x50
+  promql_expr_test:
+  - expr: min_over_time((((100 * (sum(increase(vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001",outcome=~"rpc_error|tool_error|authorization_error|internal_error|timeout"}[5m]))) / (sum(increase(vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001"}[5m])))) > bool 10) and on() ((sum(increase(vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001"}[5m]))) >= 20))[10m:30s]) == 1 and on() (count_over_time((((100 * (sum(increase(vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001",outcome=~"rpc_error|tool_error|authorization_error|internal_error|timeout"}[5m]))) / (sum(increase(vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001"}[5m])))) > bool 10) and on() ((sum(increase(vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001"}[5m]))) >= 20))[10m:30s]) >= 20 + (time() % 30 == bool 0))
+    eval_time: 20m
+    exp_samples: []
+- name: short failure burst never fires
+  interval: 30s
+  input_series:
+  - series: vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001",outcome="tool_error"}
+    values: 0+10x5 50+0x45
+  promql_expr_test:
+  - expr: min_over_time((((100 * (sum(increase(vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001",outcome=~"rpc_error|tool_error|authorization_error|internal_error|timeout"}[5m]))) / (sum(increase(vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001"}[5m])))) > bool 10) and on() ((sum(increase(vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001"}[5m]))) >= 20))[10m:30s]) == 1 and on() (count_over_time((((100 * (sum(increase(vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001",outcome=~"rpc_error|tool_error|authorization_error|internal_error|timeout"}[5m]))) / (sum(increase(vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001"}[5m])))) > bool 10) and on() ((sum(increase(vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001"}[5m]))) >= 20))[10m:30s]) >= 20 + (time() % 30 == bool 0))
+    eval_time: 20m
+    exp_samples: []
+- name: telemetry interruption breaks sustained eligibility
+  interval: 30s
+  input_series:
+  - series: vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001",outcome="tool_error"}
+    values: 0+10x10 stale _x11 100+10x17
+  promql_expr_test:
+  - expr: min_over_time((((100 * (sum(increase(vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001",outcome=~"rpc_error|tool_error|authorization_error|internal_error|timeout"}[5m]))) / (sum(increase(vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001"}[5m])))) > bool 10) and on() ((sum(increase(vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001"}[5m]))) >= 20))[10m:30s]) == 1 and on() (count_over_time((((100 * (sum(increase(vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001",outcome=~"rpc_error|tool_error|authorization_error|internal_error|timeout"}[5m]))) / (sum(increase(vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001"}[5m])))) > bool 10) and on() ((sum(increase(vmmd_mcp_protocol_requests_total{app_id="00000000-0000-4000-8000-000000000001"}[5m]))) >= 20))[10m:30s]) >= 20 + (time() % 30 == bool 0))
+    eval_time: 20m
+    exp_samples: []
+- name: sustained slow response construction
+  interval: 30s
+  input_series:
+  - series: vmmd_mcp_protocol_execution_seconds_bucket{app_id="00000000-0000-4000-8000-000000000001",le="1"}
+    values: 0+0x50
+  - series: vmmd_mcp_protocol_execution_seconds_bucket{app_id="00000000-0000-4000-8000-000000000001",le="10"}
+    values: 0+10x50
+  - series: vmmd_mcp_protocol_execution_seconds_bucket{app_id="00000000-0000-4000-8000-000000000001",le="+Inf"}
+    values: 0+10x50
+  - series: vmmd_mcp_protocol_execution_seconds_count{app_id="00000000-0000-4000-8000-000000000001"}
+    values: 0+10x50
+  promql_expr_test:
+  - expr: min_over_time((((1000 * histogram_quantile(0.95,sum by (le) (increase(vmmd_mcp_protocol_execution_seconds_bucket{app_id="00000000-0000-4000-8000-000000000001"}[5m])))) > bool 5000) and on() ((sum(increase(vmmd_mcp_protocol_execution_seconds_count{app_id="00000000-0000-4000-8000-000000000001"}[5m]))) >= 20))[10m:30s]) == 1 and on() (count_over_time((((1000 * histogram_quantile(0.95,sum by (le) (increase(vmmd_mcp_protocol_execution_seconds_bucket{app_id="00000000-0000-4000-8000-000000000001"}[5m])))) > bool 5000) and on() ((sum(increase(vmmd_mcp_protocol_execution_seconds_count{app_id="00000000-0000-4000-8000-000000000001"}[5m]))) >= 20))[10m:30s]) >= 20 + (time() % 30 == bool 0))
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1

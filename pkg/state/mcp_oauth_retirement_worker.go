@@ -11,7 +11,7 @@ import (
 )
 
 func retirementJob(account string, r api.MCPOAuthRetirement) MCPCatalogObserverJob {
-	root := api.MCPCatalogMonitorSnapshot{Config: api.MCPCatalogMonitorConfig{Revision: r.ID, Role: r.Role}, OAuthLifecycle: &api.MCPCatalogOAuthLifecycle{LocalState: "disconnected", History: []api.MCPCatalogOAuthEvent{}, Revocation: r.Revocation}}
+	root := api.MCPCatalogMonitorSnapshot{Config: api.MCPCatalogMonitorConfig{Scope: r.Scope, Revision: r.ID, Role: r.Role}, OAuthLifecycle: &api.MCPCatalogOAuthLifecycle{LocalState: "disconnected", History: []api.MCPCatalogOAuthEvent{}, Revocation: r.Revocation}}
 	if r.Role != "default" {
 		root.Config.Role = r.Role
 	}
