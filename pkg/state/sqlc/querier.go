@@ -249,10 +249,10 @@ type Querier interface {
 	CheckpointAutomaticApplicationStandardObservation(ctx context.Context, db DBTX, arg CheckpointAutomaticApplicationStandardObservationParams) (int64, error)
 	CheckpointRuntimeUpgradeOperationControl(ctx context.Context, db DBTX, arg CheckpointRuntimeUpgradeOperationControlParams) (RuntimeUpgradeOperation, error)
 	CheckpointRuntimeUpgradeVerification(ctx context.Context, db DBTX, arg CheckpointRuntimeUpgradeVerificationParams) (RuntimeUpgradeVerification, error)
-	// Lock order matches ApplyProjectPlan (account, then its apps). The insert's
-	// account_id foreign key needs a key-share lock on the account; taking it
-	// here with SKIP LOCKED skips an app whose account is mid-apply instead of
-	// holding the app row while waiting for the account (deadlock 40P01).
+	// Lock order matches ApplyProjectPlan (resource namespace, then its apps).
+	// The insert's account_id foreign key needs a key-share lock on the
+	// namespace; taking it here with SKIP LOCKED skips an app whose namespace is
+	// mid-apply instead of holding the app row while waiting for it (40P01).
 	ClaimAppHealth(ctx context.Context, db DBTX, arg ClaimAppHealthParams) (ClaimAppHealthRow, error)
 	ClaimApplicationStandardEnrollment(ctx context.Context, db DBTX, arg ClaimApplicationStandardEnrollmentParams) (ClaimApplicationStandardEnrollmentRow, error)
 	// Interactive creation uses the same lease, without scanning or claiming a
@@ -2991,9 +2991,9 @@ type Querier interface {
 	// Serializes revision numbering and guard bookkeeping for one app scope.
 	LockAppConfigScope(ctx context.Context, db DBTX, arg LockAppConfigScopeParams) error
 	LockAppEnvironmentSecretReferenceScope(ctx context.Context, db DBTX, arg LockAppEnvironmentSecretReferenceScopeParams) (LockAppEnvironmentSecretReferenceScopeRow, error)
-	// FinishAppHealth takes the account first, before history inserts reach the
-	// app and account rows through their foreign keys, in the same order as
-	// ApplyProjectPlan.
+	// FinishAppHealth takes the resource namespace first, before history inserts
+	// reach the app and namespace rows through their foreign keys, in the same
+	// order as ApplyProjectPlan.
 	LockAppHealthAccount(ctx context.Context, db DBTX, accountID string) error
 	LockAppHealthCollection(ctx context.Context, db DBTX, arg LockAppHealthCollectionParams) (LockAppHealthCollectionRow, error)
 	// ADR-1741: an admission insert decided from schedd's owner cache commits

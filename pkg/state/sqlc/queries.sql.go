@@ -3669,13 +3669,14 @@ const claimAppHealth = `-- name: ClaimAppHealth :one
 WITH candidate AS (
  SELECT a.id, a.account_id FROM apps a
  JOIN app_resource_accounts acct ON acct.app_id = a.id
+ JOIN resource_namespaces rn ON rn.id = a.account_id
  LEFT JOIN app_health_collection_state h ON h.app_id = a.id
  WHERE a.status <> 'deleted' AND a.deleted_at IS NULL
  AND COALESCE(a.manifest->>'execution_mode', '') IN ('', 'request', 'service')
  AND (h.next_check_at IS NULL OR h.next_check_at <= $1::timestamptz)
  AND (h.lease_until IS NULL OR h.lease_until <= $1::timestamptz)
  ORDER BY COALESCE(h.next_check_at, '-infinity'::timestamptz), a.id
- LIMIT 1 FOR UPDATE OF a SKIP LOCKED
+ LIMIT 1 FOR UPDATE OF a SKIP LOCKED FOR KEY SHARE OF rn SKIP LOCKED
 )
 INSERT INTO app_health_collection_state(app_id, account_id, next_check_at, lease_token, lease_started_at, lease_until)
 SELECT id, account_id, $1::timestamptz, $2::text, $1::timestamptz, $3::timestamptz FROM candidate
@@ -3698,10 +3699,10 @@ type ClaimAppHealthRow struct {
 	LeaseUntil     pgtype.Timestamptz
 }
 
-// Lock order matches ApplyProjectPlan (account, then its apps). The insert's
-// account_id foreign key needs a key-share lock on the account; taking it
-// here with SKIP LOCKED skips an app whose account is mid-apply instead of
-// holding the app row while waiting for the account (deadlock 40P01).
+// Lock order matches ApplyProjectPlan (resource namespace, then its apps).
+// The insert's account_id foreign key needs a key-share lock on the
+// namespace; taking it here with SKIP LOCKED skips an app whose namespace is
+// mid-apply instead of holding the app row while waiting for it (40P01).
 func (q *Queries) ClaimAppHealth(ctx context.Context, db DBTX, arg ClaimAppHealthParams) (ClaimAppHealthRow, error) {
 	row := db.QueryRow(ctx, claimAppHealth, arg.CheckedNow, arg.Token, arg.ExpiresAt)
 	var i ClaimAppHealthRow
@@ -48085,12 +48086,12 @@ func (q *Queries) LockAppEnvironmentSecretReferenceScope(ctx context.Context, db
 }
 
 const lockAppHealthAccount = `-- name: LockAppHealthAccount :exec
-SELECT 1 FROM accounts WHERE id = $1::text::uuid FOR KEY SHARE
+SELECT 1 FROM resource_namespaces WHERE id = $1::text::uuid FOR KEY SHARE
 `
 
-// FinishAppHealth takes the account first, before history inserts reach the
-// app and account rows through their foreign keys, in the same order as
-// ApplyProjectPlan.
+// FinishAppHealth takes the resource namespace first, before history inserts
+// reach the app and namespace rows through their foreign keys, in the same
+// order as ApplyProjectPlan.
 func (q *Queries) LockAppHealthAccount(ctx context.Context, db DBTX, accountID string) error {
 	_, err := db.Exec(ctx, lockAppHealthAccount, accountID)
 	return err
@@ -68907,6 +68908,8 @@ SELECT (jsonb_build_object(
     'deployment_revision_pins_deployment_id_fkey', (SELECT count(*) FROM deployment_revision_pins WHERE deployment_id = $1::uuid),
     'deployment_rollback_operations_current_deployment_id_fkey', (SELECT count(*) FROM deployment_rollback_operations WHERE current_deployment_id = $1::uuid),
     'deployment_rollback_operations_target_deployment_id_fkey', (SELECT count(*) FROM deployment_rollback_operations WHERE target_deployment_id = $1::uuid),
+    'deployment_rollbacks_from_deployment_id_fkey', (SELECT count(*) FROM deployment_rollbacks WHERE from_deployment_id = $1::uuid),
+    'deployment_rollbacks_target_deployment_id_fkey', (SELECT count(*) FROM deployment_rollbacks WHERE target_deployment_id = $1::uuid),
     'deployment_route_policy_snapshots_deployment_id_fkey', (SELECT count(*) FROM deployment_route_policy_snapshots WHERE deployment_id = $1::uuid),
     'deployment_runtime_environment_owners_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_environment_owners WHERE deployment_id = $1::uuid),
     'deployment_sidecar_layers_deployment_id_fkey', (SELECT count(*) FROM deployment_sidecar_layers WHERE deployment_id = $1::uuid),
