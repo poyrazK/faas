@@ -93,16 +93,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	dependencies.FlushInterval = -1
 	server := &http.Server{Addr: address, Handler: devbridge.NewServer(relay, lookup, dependencies), ReadHeaderTimeout: 10 * time.Second, MaxHeaderBytes: api.DevBridgeMaxHeaderBytes, BaseContext: func(net.Listener) context.Context { return ctx }}
-	go func() {
-		<-ctx.Done()
-		shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdown)
-	}()
-	log.Info("development bridge relay listening", "address", address)
-	err = server.ListenAndServe()
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
+	listener, err := wire.ListenInherited("tcp", address)
+	if err != nil {
+		return fmt.Errorf("bridged: listen %s: %w", address, err)
 	}
-	return err
+	if err := wire.RequireInheritedListenersClaimed("bridged"); err != nil {
+		_ = listener.Close()
+		return err
+	}
+	log.Info("development bridge relay listening", "address", address)
+	// Waits for in-flight bridge requests; returning when ListenAndServe did
+	// exited the process under them on every restart.
+	return wire.ServeUntilShutdown(ctx, server, listener, 5*time.Second)
 }

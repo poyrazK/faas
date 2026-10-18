@@ -71,6 +71,23 @@ func TestLoadConfig_RoutingEnvironmentOverrides(t *testing.T) {
 	}
 }
 
+// The listen address the unit renders wins over the TOML, so the durable
+// socket rendered from the same variable always matches (ADR-20261018072701).
+func TestLoadConfig_ListenAddrEnvironmentOverridesTOML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "schedd.toml")
+	if err := os.WriteFile(path, []byte("listen_addr = \"unix:///run/faas/schedd.sock\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAAS_SCHEDD_LISTEN_ADDR", "tcp://0.0.0.0:9091")
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if got := cfg.ResolveListenTarget(); got != "tcp://0.0.0.0:9091" {
+		t.Fatalf("listen target = %q, want the unit's tcp://0.0.0.0:9091", got)
+	}
+}
+
 func TestLoadConfig_OverridesFromTOML(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "schedd.toml")
 	body := `

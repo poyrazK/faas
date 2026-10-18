@@ -205,6 +205,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		body := renderManifestHostVars(host, ansibleHost, targetURL, gatewaySynthTarget, hostScheddTarget, controlPlaneAPIDLoopback, privateHosts, overlayCIDRs, m.Overlay.Provider, m.DNS.Mode, m.PrivateDNS.Mode, m.PrivateDNS.Zone, postgresListenAddress, postgresAllowedCIDRs, computeAllowedCIDRs, controlPlaneAllowedCIDRs, m.Storage.FastRoot)
 		if host.Role == roleControlPlane {
 			body += renderCustomDomainEdgeVars(m.PublicEdge.CustomDomains)
+			body += renderScheddListenVars(m)
 			if standby := m.PostgreSQL.Standby; standby != nil {
 				// ADR-1344 §8: the primary admits replication from the
 				// standby's address and keeps its slot.
@@ -265,6 +266,17 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 	}
 	files = append(files, hostVars...)
 	return files, nil
+}
+
+// renderScheddListenVars hands the control plane's schedd bind to the
+// control_plane_service role, which renders it into both schedd's
+// FAAS_SCHEDD_LISTEN_ADDR and faas-schedd.socket (ADR-20261018072701). The renderer
+// writes the same bind into schedd.toml, so the three cannot disagree.
+func renderScheddListenVars(m *manifest.Manifest) string {
+	if m.Daemons.Schedd == nil || m.Daemons.Schedd.Bind == "" {
+		return ""
+	}
+	return fmt.Sprintf("faas_schedd_listen_addr: %q\n", m.Daemons.Schedd.Bind)
 }
 
 // manifestScheddTarget returns the endpoint a host-local daemon should use.

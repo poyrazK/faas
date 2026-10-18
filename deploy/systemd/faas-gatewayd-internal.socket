@@ -1,0 +1,24 @@
+[Unit]
+Description=Gregale durable gatewayd-internal listener
+Documentation=https://gregale.dev/docs/ops/gatewayd-internal
+Before=faas-gatewayd-internal.service
+
+# Holds gatewayd-internal's unix socket across restarts: gatewayd-public's
+# connections queue in the backlog for the replacement instead of failing
+# (docs/adr/20261018072701-zero-downtime-daemon-restarts.md). Inert unless the
+# gatewayd_internal_service role sets faas_compute_durable_listeners; split-box
+# compute nodes then add their data listener in 99-faas-data-listen.conf. Every
+# ListenStream= must be an address gatewayd-internal serves; it refuses to
+# start with one it does not.
+[Socket]
+ListenStream=/run/faas/gatewayd-internal.sock
+SocketUser=faas
+SocketGroup=faas
+SocketMode=0660
+FileDescriptorName=gatewayd-internal
+NoDelay=true
+Backlog=4096
+Service=faas-gatewayd-internal.service
+
+[Install]
+WantedBy=sockets.target

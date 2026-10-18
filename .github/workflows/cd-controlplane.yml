@@ -438,6 +438,7 @@ jobs:
             faas-githubd.service \
             faas-meterd.service \
             faas-outboundd.service \
+            faas-schedd.socket \
             faas-schedd.service; do
             # Look up the unit in the v2 role files/ trees. The role
             # ownership is the source of truth for the CP subset; deployctl

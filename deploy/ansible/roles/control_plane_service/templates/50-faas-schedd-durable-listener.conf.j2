@@ -1,0 +1,9 @@
+# Managed by Ansible (control_plane_service). ADR-20261018072701: schedd serves
+# faas_schedd_listen_addr, and faas-schedd.socket holds that address open
+# across restarts. Both come from the one variable so they cannot drift.
+[Unit]
+Wants=faas-schedd.socket
+After=faas-schedd.socket
+
+[Service]
+Environment=FAAS_SCHEDD_LISTEN_ADDR={{ faas_schedd_listen_addr }}
