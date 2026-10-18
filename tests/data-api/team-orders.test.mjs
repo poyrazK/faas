@@ -654,7 +654,9 @@ test('team orders enforce membership, idempotency, concurrency and real dashboar
       await evaluate(`document.getElementById('batch-confirm').checked=true;document.getElementById('batch-confirm').dispatchEvent(new Event('change'));document.getElementById('token').value=${JSON.stringify(token)};window.dropRpc=true;document.getElementById('batch-replay').click()`)
       await wait("!document.getElementById('control-resolve').disabled")
       await evaluate(`document.getElementById('token').value=${JSON.stringify(token)};document.getElementById('control-resolve').click()`)
-      await wait("document.getElementById('control-message').textContent.includes('batch_replay operation confirmed') && document.getElementById('control-resolve').disabled")
+      // Receipt confirmation precedes the health refresh. Wait for the next
+      // action to be enabled so a click cannot be lost while that refresh runs.
+      await wait("document.getElementById('control-message').textContent.includes('batch_replay operation confirmed') && document.getElementById('control-resolve').disabled && !document.getElementById('delivery-resume').disabled")
       assert.equal((await owner.query('SELECT generation FROM api.team_order_outbox WHERE event_id=$1',[secondDead])).rows[0].generation,2)
       await evaluate(`document.getElementById('token').value=${JSON.stringify(token)};document.getElementById('delivery-resume').click()`)
       await wait("document.getElementById('control-message').textContent.includes('resume operation confirmed') && document.getElementById('queue-health').textContent.includes('Running')")

@@ -36,6 +36,7 @@ func (m *MemStore) operationClaimLocked(inv Invocation) (Invocation, error) {
 }
 
 func (m *MemStore) operationSaveLocked(op Operation, event api.OperationEvent) {
+	m.settleProductOperationLocked(op)
 	m.operationPinsLocked(op)
 	m.operationRetainIdentityLocked(op)
 	m.operationData.operations[op.ID] = cloneOperation(op)
