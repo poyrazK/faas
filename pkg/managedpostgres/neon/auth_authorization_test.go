@@ -297,6 +297,50 @@ func TestSQLSubjectAuthorizationForRealtimeIsOwnerOnlyAndUserLevel(t *testing.T)
 	deniedSQL(t, reader, `SELECT gregale_auth.user_active('`+bob.id.String()+`')`)
 }
 
+// TestSQLActiveOrganizationIsChosenByAMemberForTheirSession pins sql/0015:
+// a session may act in an organization its user belongs to, and the choice
+// goes with the session or the organization.
+func TestSQLActiveOrganizationIsChosenByAMemberForTheirSession(t *testing.T) {
+	f := newCredentialFixture(t)
+	ctx := context.Background()
+	_, owner := installAuthorization(t, f)
+	alice, bob := newAuthUser(t, owner, "alice@example.test"), newAuthUser(t, owner, "bob@example.test")
+	actAs(ctx, t, owner, alice)
+	var org uuid.UUID
+	if err := owner.QueryRow(ctx, `SELECT id FROM gregale_auth.create_organization('acme', 'Acme')`).Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	var slug, role string
+	if err := owner.QueryRow(ctx, `SELECT slug, role FROM gregale_auth.set_active_organization($1)`, org).Scan(&slug, &role); err != nil || slug != "acme" || role != "owner" {
+		t.Fatalf("set = %q %q, %v", slug, role, err)
+	}
+	active := func(u authUser) bool {
+		return queryBool(t, owner, `SELECT EXISTS (SELECT 1 FROM gregale_auth.session_organizations WHERE session_id = $1)`, u.session)
+	}
+	executeSQL(t, owner, `SELECT gregale_auth.set_active_organization($1)`, org)
+	if !active(alice) {
+		t.Fatal("choosing again lost the choice")
+	}
+	actAs(ctx, t, owner, bob)
+	wantSQLError(t, owner, "P0002", "not_found", `SELECT gregale_auth.set_active_organization($1)`, org)
+	actAs(ctx, t, owner, alice)
+	executeSQL(t, owner, `SELECT gregale_auth.set_active_organization(NULL)`)
+	if active(alice) {
+		t.Fatal("NULL did not clear the choice")
+	}
+	executeSQL(t, owner, `SELECT gregale_auth.set_active_organization($1)`, org)
+	executeSQL(t, owner, `DELETE FROM auth.sessions WHERE id = $1`, alice.session)
+	if active(alice) {
+		t.Fatal("an ended session kept its organization")
+	}
+	executeSQL(t, owner, `SELECT set_config('request.jwt.claims', '', false)`)
+	wantSQLError(t, owner, "28000", "not_authenticated", `SELECT gregale_auth.set_active_organization($1)`, org)
+	if err := f.manager.Ensure(ctx, f.material, f.readonly); err != nil {
+		t.Fatal(err)
+	}
+	deniedSQL(t, f.connect(t, f.readonly.name), `SELECT gregale_auth.set_active_organization('`+org.String()+`')`)
+}
+
 // TestSQLLifecycleEventsRecordUserChangesOnlyWhenEnabled pins the outbox the
 // Auth app publishes (ADR-1190): nothing while off, one row per change while
 // on, and never an address or metadata.

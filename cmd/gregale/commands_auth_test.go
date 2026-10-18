@@ -544,8 +544,8 @@ func TestAuthConfigAnonymousUsersAndLinking(t *testing.T) {
 	oldErr := osStderr
 	osStderr = &stderr
 	t.Cleanup(func() { osStderr = oldErr })
-	if code := cmdAuth([]string{"config", "shop-auth", "--anonymous", "on", "--anonymous-retention", "30", "--identity-linking", "on"}); code != 0 ||
-		sealed["GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED"] != "true" || sealed["AUTH_ANONYMOUS_RETENTION_DAYS"] != "30" || sealed["AUTH_IDENTITY_LINKING"] != "1" {
+	if code := cmdAuth([]string{"config", "shop-auth", "--anonymous", "on", "--anonymous-retention", "30", "--identity-linking", "on", "--org-claims", "on"}); code != 0 ||
+		sealed["GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED"] != "true" || sealed["AUTH_ANONYMOUS_RETENTION_DAYS"] != "30" || sealed["AUTH_IDENTITY_LINKING"] != "1" || sealed["AUTH_ORG_CLAIMS"] != "1" {
 		t.Fatalf("config = %d, sealed %v", code, sortedKeys(sealed))
 	}
 	if !strings.Contains(stderr.String(), "turn on CAPTCHA") {

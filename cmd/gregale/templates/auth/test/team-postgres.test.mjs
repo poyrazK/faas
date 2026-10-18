@@ -24,7 +24,7 @@ test('reviewed team actions against PostgreSQL', { skip: !database }, async t =>
   try {
     for (let i = 0; i < 2; i++) await applyGregaleMigrations(client, undefined, JSON.stringify({ roles: { operator: ['org:read'], viewer: ['org:read'], manager: ['org:read', 'members:manage'] } }))
   } finally { client.release() }
-  assert.equal((await pool.query('SELECT count(*)::int AS count FROM gregale_auth.schema_versions')).rows[0].count, 11)
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM gregale_auth.schema_versions')).rows[0].count, 12)
 
   async function user(email = `${randomUUID()}@example.test`, confirmed = true) {
     const value = { id: randomUUID(), session: randomUUID(), email }

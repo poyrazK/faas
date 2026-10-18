@@ -48,12 +48,28 @@ export type FactorChallenge = Readonly<{ id: string; type: string; expires_at?: 
 export type RecoveryCodes = Readonly<{ id: string; type: string; total: number; remaining?: number; codes?: readonly string[] }>
 export type AssuranceLevel = Readonly<{ current: 'aal1' | 'aal2' | null; next: 'aal1' | 'aal2' | null }>
 
-/** aal reads the assurance level of an access token without verifying it. */
-function aal(token: string): 'aal1' | 'aal2' {
+/** payload reads an access token's claims without verifying them. */
+function payload(token: string): Record<string, unknown> {
   try {
     const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
-    return JSON.parse(atob(part + '='.repeat((4 - part.length % 4) % 4))).aal === 'aal2' ? 'aal2' : 'aal1'
-  } catch { return 'aal1' }
+    const claims = JSON.parse(atob(part + '='.repeat((4 - part.length % 4) % 4)))
+    return claims && typeof claims === 'object' ? claims : {}
+  } catch { return {} }
+}
+
+/** aal reads the assurance level of an access token without verifying it. */
+function aal(token: string): 'aal1' | 'aal2' {
+  return payload(token).aal === 'aal2' ? 'aal2' : 'aal1'
+}
+
+/** The organization a session acts in, from its token's org_* claims. */
+export type ActiveOrganization = Readonly<{ id: string; slug: string; role: string; permissions: readonly string[] }>
+
+function activeOrganization(token: string): ActiveOrganization | null {
+  const c = payload(token)
+  if (typeof c.org_id !== 'string' || typeof c.org_slug !== 'string' || typeof c.org_role !== 'string') return null
+  const permissions = Array.isArray(c.org_permissions) ? c.org_permissions.filter((p): p is string => typeof p === 'string') : []
+  return { id: c.org_id, slug: c.org_slug, role: c.org_role, permissions }
 }
 
 /** A third-party app (an OAuth client) the user allowed to use their account. */
@@ -407,6 +423,21 @@ export function createAuthClient(options: AuthClientOptions) {
     organizations: {
       list: async () => (await authz<{ organizations: Organization[] }>('GET', '/orgs')).organizations,
       create: (input: { slug: string; name: string }) => authz<Organization>('POST', '/orgs', input),
+      /**
+       * Makes org (one the user belongs to) the session's active
+       * organization, or none with null, and refreshes the session so its
+       * token carries it. Needs organization claims on in the Auth app.
+       */
+      setActive: async (org: string | null): Promise<ActiveOrganization | null> => {
+        await authz('POST', '/active-organization', { org })
+        const session = await refresh()
+        return session ? activeOrganization(session.accessToken) : null
+      },
+      /** The session's active organization, read from its token; null when none. */
+      active: async (): Promise<ActiveOrganization | null> => {
+        const session = await getSession()
+        return session ? activeOrganization(session.accessToken) : null
+      },
     },
     members: {
       list: async (org: string) => (await authz<{ members: Member[] }>('GET', `/orgs/${id(org)}/members`)).members,

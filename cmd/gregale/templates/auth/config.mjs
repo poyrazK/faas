@@ -201,7 +201,7 @@ export function runtimeConfig(env) {
   if (redirects.length > limits.redirectURLs) throw new Error('Too many AUTH_REDIRECT_URLS')
   redirects.forEach(value => redirectURL(value, 'AUTH_REDIRECT_URLS'))
   if (typeof env.AUTH_JWT_SECRET !== 'string' || env.AUTH_JWT_SECRET.length < 32) throw new Error('AUTH_JWT_SECRET must hold at least 32 characters')
-  for (const flag of ['AUTH_AUTOCONFIRM', 'AUTH_DISABLE_SIGNUP', 'AUTH_LIFECYCLE_EVENTS', 'AUTH_SSO', 'AUTH_ORG_SSO', 'AUTH_OAUTH_SERVER', 'AUTH_OAUTH_REGISTRATION', 'AUTH_IDENTITY_LINKING']) {
+  for (const flag of ['AUTH_AUTOCONFIRM', 'AUTH_DISABLE_SIGNUP', 'AUTH_LIFECYCLE_EVENTS', 'AUTH_SSO', 'AUTH_ORG_SSO', 'AUTH_OAUTH_SERVER', 'AUTH_OAUTH_REGISTRATION', 'AUTH_IDENTITY_LINKING', 'AUTH_ORG_CLAIMS']) {
     if (env[flag] !== undefined && env[flag] !== '1' && env[flag] !== '0') throw new Error(`Invalid ${flag}`)
   }
   const passthrough = {}
@@ -263,7 +263,7 @@ export function runtimeConfig(env) {
   const config = { external, api, gotrueEnv, redirects, keys: { signing: keys.signing, verifying: keys.verifying }, authz: authzConfig(env.AUTH_AUTHZ), origins: browserOrigins(site, redirects), email, app: branding.name, branding, captcha, lifecycleEvents: env.AUTH_LIFECYCLE_EVENTS === '1', auditRetentionDays: retention === '' ? null : Number(retention), smsCountries: smsCountries(env),
     // Self-service organization SSO needs SSO itself.
     orgSSO: env.AUTH_ORG_SSO === '1' && gotrueEnv.GOTRUE_SAML_ENABLED === 'true',
-    oauth: env.AUTH_OAUTH_SERVER === '1', anonymousRetentionDays: anonymousRetention === '' ? null : Number(anonymousRetention), productControlTeamEnabled: env.AUTH_PRODUCT_CONTROL_TEAM_ENABLED === '1', productControlEmailEnabled: env.AUTH_PRODUCT_CONTROL_EMAIL_ENABLED === '1' }
+    oauth: env.AUTH_OAUTH_SERVER === '1', orgClaims: env.AUTH_ORG_CLAIMS === '1', anonymousRetentionDays: anonymousRetention === '' ? null : Number(anonymousRetention), productControlTeamEnabled: env.AUTH_PRODUCT_CONTROL_TEAM_ENABLED === '1', productControlEmailEnabled: env.AUTH_PRODUCT_CONTROL_EMAIL_ENABLED === '1' }
   return { ...config, settings: publicSettings(config) }
 }
 
@@ -271,7 +271,7 @@ export function runtimeConfig(env) {
 // anyway (published key IDs, enabled providers, rules a sign-up form shows)
 // or harmless. The CLI and dashboard read settings here because app secrets
 // are write-only.
-export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, branding, captcha, lifecycleEvents, auditRetentionDays, smsCountries: countries, orgSSO, anonymousRetentionDays }) {
+export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, branding, captcha, lifecycleEvents, auditRetentionDays, smsCountries: countries, orgSSO, anonymousRetentionDays, orgClaims }) {
   const passkeys = g.GOTRUE_PASSKEY_ENABLED === 'true'
   const flag = (value, fallback) => value === undefined ? fallback : value === 'true'
   const required = (g.GOTRUE_PASSWORD_REQUIRED_CHARACTERS ?? '').split(':').filter(Boolean)
@@ -293,6 +293,8 @@ export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, bran
     // Anonymous users idle longer than retention_days are deleted.
     anonymous: { enabled: g.GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED === 'true', retention_days: anonymousRetentionDays },
     identity_linking: g.GOTRUE_SECURITY_MANUAL_LINKING_ENABLED === 'true',
+    // Access tokens carry the session's active organization (org_* claims).
+    organization_claims: orgClaims === true,
     passkeys: { enabled: passkeys, rp_id: g.GOTRUE_WEBAUTHN_RP_ID, origins: g.GOTRUE_WEBAUTHN_RP_ORIGINS.split(',').filter(Boolean) },
     branding: { name: branding.name, color: branding.color, logo_url: branding.logoURL },
     captcha: captcha ? { provider: captcha.provider, site_key: captcha.siteKey } : null,
