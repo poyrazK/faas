@@ -173,6 +173,110 @@ func (x *RecordRequestIDJournalResponse) GetRecorded() bool {
 	return false
 }
 
+type RecordRequestIDJournalBatchRequest struct {
+	state         protoimpl.MessageState           `protogen:"open.v1"`
+	Records       []*RecordRequestIDJournalRequest `protobuf:"bytes,1,rep,name=records,proto3" json:"records,omitempty"` // 1..512
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RecordRequestIDJournalBatchRequest) Reset() {
+	*x = RecordRequestIDJournalBatchRequest{}
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RecordRequestIDJournalBatchRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RecordRequestIDJournalBatchRequest) ProtoMessage() {}
+
+func (x *RecordRequestIDJournalBatchRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RecordRequestIDJournalBatchRequest.ProtoReflect.Descriptor instead.
+func (*RecordRequestIDJournalBatchRequest) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_apid_v1_request_telemetry_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *RecordRequestIDJournalBatchRequest) GetRecords() []*RecordRequestIDJournalRequest {
+	if x != nil {
+		return x.Records
+	}
+	return nil
+}
+
+type RecordRequestIDJournalBatchResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Recorded      int32                  `protobuf:"varint,1,opt,name=recorded,proto3" json:"recorded,omitempty"`                          // inserted, or an identical retry of an existing record
+	NotEntitled   int32                  `protobuf:"varint,2,opt,name=not_entitled,json=notEntitled,proto3" json:"not_entitled,omitempty"` // the account's plan has no debugger retention
+	Rejected      int32                  `protobuf:"varint,3,opt,name=rejected,proto3" json:"rejected,omitempty"`                          // malformed, or the app is not owned by the account
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RecordRequestIDJournalBatchResponse) Reset() {
+	*x = RecordRequestIDJournalBatchResponse{}
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RecordRequestIDJournalBatchResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RecordRequestIDJournalBatchResponse) ProtoMessage() {}
+
+func (x *RecordRequestIDJournalBatchResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RecordRequestIDJournalBatchResponse.ProtoReflect.Descriptor instead.
+func (*RecordRequestIDJournalBatchResponse) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_apid_v1_request_telemetry_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *RecordRequestIDJournalBatchResponse) GetRecorded() int32 {
+	if x != nil {
+		return x.Recorded
+	}
+	return 0
+}
+
+func (x *RecordRequestIDJournalBatchResponse) GetNotEntitled() int32 {
+	if x != nil {
+		return x.NotEntitled
+	}
+	return 0
+}
+
+func (x *RecordRequestIDJournalBatchResponse) GetRejected() int32 {
+	if x != nil {
+		return x.Rejected
+	}
+	return 0
+}
+
 // The financial fields contain no request path, client metadata, or payload.
 // Optional audit evidence is a separate, opt-in part of the delivery envelope;
 // apid commits both in one transaction before acknowledging the event.
@@ -213,7 +317,7 @@ type ConsumerUsageEvent struct {
 
 func (x *ConsumerUsageEvent) Reset() {
 	*x = ConsumerUsageEvent{}
-	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[2]
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -225,7 +329,7 @@ func (x *ConsumerUsageEvent) String() string {
 func (*ConsumerUsageEvent) ProtoMessage() {}
 
 func (x *ConsumerUsageEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[2]
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -238,7 +342,7 @@ func (x *ConsumerUsageEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConsumerUsageEvent.ProtoReflect.Descriptor instead.
 func (*ConsumerUsageEvent) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_apid_v1_request_telemetry_proto_rawDescGZIP(), []int{2}
+	return file_onebox_faas_apid_v1_request_telemetry_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ConsumerUsageEvent) GetEventId() string {
@@ -394,7 +498,7 @@ type ConsumerUsageReceipt struct {
 
 func (x *ConsumerUsageReceipt) Reset() {
 	*x = ConsumerUsageReceipt{}
-	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[3]
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -406,7 +510,7 @@ func (x *ConsumerUsageReceipt) String() string {
 func (*ConsumerUsageReceipt) ProtoMessage() {}
 
 func (x *ConsumerUsageReceipt) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[3]
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -419,7 +523,7 @@ func (x *ConsumerUsageReceipt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConsumerUsageReceipt.ProtoReflect.Descriptor instead.
 func (*ConsumerUsageReceipt) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_apid_v1_request_telemetry_proto_rawDescGZIP(), []int{3}
+	return file_onebox_faas_apid_v1_request_telemetry_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *ConsumerUsageReceipt) GetApplied() bool {
@@ -493,7 +597,7 @@ type RequestAuditEvidence struct {
 
 func (x *RequestAuditEvidence) Reset() {
 	*x = RequestAuditEvidence{}
-	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[4]
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -505,7 +609,7 @@ func (x *RequestAuditEvidence) String() string {
 func (*RequestAuditEvidence) ProtoMessage() {}
 
 func (x *RequestAuditEvidence) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[4]
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -518,7 +622,7 @@ func (x *RequestAuditEvidence) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RequestAuditEvidence.ProtoReflect.Descriptor instead.
 func (*RequestAuditEvidence) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_apid_v1_request_telemetry_proto_rawDescGZIP(), []int{4}
+	return file_onebox_faas_apid_v1_request_telemetry_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *RequestAuditEvidence) GetRouteTemplate() string {
@@ -722,7 +826,7 @@ type IncrementRequestTelemetryRequest struct {
 
 func (x *IncrementRequestTelemetryRequest) Reset() {
 	*x = IncrementRequestTelemetryRequest{}
-	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[5]
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -734,7 +838,7 @@ func (x *IncrementRequestTelemetryRequest) String() string {
 func (*IncrementRequestTelemetryRequest) ProtoMessage() {}
 
 func (x *IncrementRequestTelemetryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[5]
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -747,7 +851,7 @@ func (x *IncrementRequestTelemetryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IncrementRequestTelemetryRequest.ProtoReflect.Descriptor instead.
 func (*IncrementRequestTelemetryRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_apid_v1_request_telemetry_proto_rawDescGZIP(), []int{5}
+	return file_onebox_faas_apid_v1_request_telemetry_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *IncrementRequestTelemetryRequest) GetAccountId() string {
@@ -1030,7 +1134,7 @@ type IncrementRequestTelemetryResponse struct {
 
 func (x *IncrementRequestTelemetryResponse) Reset() {
 	*x = IncrementRequestTelemetryResponse{}
-	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[6]
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1042,7 +1146,7 @@ func (x *IncrementRequestTelemetryResponse) String() string {
 func (*IncrementRequestTelemetryResponse) ProtoMessage() {}
 
 func (x *IncrementRequestTelemetryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[6]
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1055,7 +1159,7 @@ func (x *IncrementRequestTelemetryResponse) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use IncrementRequestTelemetryResponse.ProtoReflect.Descriptor instead.
 func (*IncrementRequestTelemetryResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_apid_v1_request_telemetry_proto_rawDescGZIP(), []int{6}
+	return file_onebox_faas_apid_v1_request_telemetry_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *IncrementRequestTelemetryResponse) GetOutcome() string {
@@ -1094,7 +1198,7 @@ type TelemetryCoverage struct {
 
 func (x *TelemetryCoverage) Reset() {
 	*x = TelemetryCoverage{}
-	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[7]
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1106,7 +1210,7 @@ func (x *TelemetryCoverage) String() string {
 func (*TelemetryCoverage) ProtoMessage() {}
 
 func (x *TelemetryCoverage) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[7]
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1119,7 +1223,7 @@ func (x *TelemetryCoverage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TelemetryCoverage.ProtoReflect.Descriptor instead.
 func (*TelemetryCoverage) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_apid_v1_request_telemetry_proto_rawDescGZIP(), []int{7}
+	return file_onebox_faas_apid_v1_request_telemetry_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *TelemetryCoverage) GetNodeName() string {
@@ -1210,7 +1314,7 @@ type TelemetryAppGap struct {
 
 func (x *TelemetryAppGap) Reset() {
 	*x = TelemetryAppGap{}
-	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[8]
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1222,7 +1326,7 @@ func (x *TelemetryAppGap) String() string {
 func (*TelemetryAppGap) ProtoMessage() {}
 
 func (x *TelemetryAppGap) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[8]
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1235,7 +1339,7 @@ func (x *TelemetryAppGap) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TelemetryAppGap.ProtoReflect.Descriptor instead.
 func (*TelemetryAppGap) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_apid_v1_request_telemetry_proto_rawDescGZIP(), []int{8}
+	return file_onebox_faas_apid_v1_request_telemetry_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *TelemetryAppGap) GetAppId() string {
@@ -1268,7 +1372,7 @@ type TelemetryCoverageReceipt struct {
 
 func (x *TelemetryCoverageReceipt) Reset() {
 	*x = TelemetryCoverageReceipt{}
-	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[9]
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1280,7 +1384,7 @@ func (x *TelemetryCoverageReceipt) String() string {
 func (*TelemetryCoverageReceipt) ProtoMessage() {}
 
 func (x *TelemetryCoverageReceipt) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[9]
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1293,7 +1397,7 @@ func (x *TelemetryCoverageReceipt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TelemetryCoverageReceipt.ProtoReflect.Descriptor instead.
 func (*TelemetryCoverageReceipt) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_apid_v1_request_telemetry_proto_rawDescGZIP(), []int{9}
+	return file_onebox_faas_apid_v1_request_telemetry_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *TelemetryCoverageReceipt) GetRecorded() bool {
@@ -1318,7 +1422,13 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\btrace_id\x18\x05 \x01(\tR\atraceId\x12-\n" +
 	"\x13received_at_unix_ms\x18\x06 \x01(\x03R\x10receivedAtUnixMs\"<\n" +
 	"\x1eRecordRequestIDJournalResponse\x12\x1a\n" +
-	"\brecorded\x18\x01 \x01(\bR\brecorded\"\x8b\a\n" +
+	"\brecorded\x18\x01 \x01(\bR\brecorded\"r\n" +
+	"\"RecordRequestIDJournalBatchRequest\x12L\n" +
+	"\arecords\x18\x01 \x03(\v22.onebox.faas.apid.v1.RecordRequestIDJournalRequestR\arecords\"\x80\x01\n" +
+	"#RecordRequestIDJournalBatchResponse\x12\x1a\n" +
+	"\brecorded\x18\x01 \x01(\x05R\brecorded\x12!\n" +
+	"\fnot_entitled\x18\x02 \x01(\x05R\vnotEntitled\x12\x1a\n" +
+	"\brejected\x18\x03 \x01(\x05R\brejected\"\x8b\a\n" +
 	"\x12ConsumerUsageEvent\x12\x19\n" +
 	"\bevent_id\x18\x01 \x01(\tR\aeventId\x12\x1d\n" +
 	"\n" +
@@ -1438,12 +1548,13 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\rdropped_count\x18\x02 \x01(\x03R\fdroppedCount\x12#\n" +
 	"\rpending_count\x18\x03 \x01(\x05R\fpendingCount\"6\n" +
 	"\x18TelemetryCoverageReceipt\x12\x1a\n" +
-	"\brecorded\x18\x01 \x01(\bR\brecorded2\x84\x04\n" +
+	"\brecorded\x18\x01 \x01(\bR\brecorded2\x97\x05\n" +
 	"\x10RequestTelemetry\x12p\n" +
 	"\x17RecordTelemetryCoverage\x12&.onebox.faas.apid.v1.TelemetryCoverage\x1a-.onebox.faas.apid.v1.TelemetryCoverageReceipt\x12\x8e\x01\n" +
 	"\x19IncrementRequestTelemetry\x125.onebox.faas.apid.v1.IncrementRequestTelemetryRequest\x1a6.onebox.faas.apid.v1.IncrementRequestTelemetryResponse(\x010\x01\x12i\n" +
 	"\x13RecordConsumerUsage\x12'.onebox.faas.apid.v1.ConsumerUsageEvent\x1a).onebox.faas.apid.v1.ConsumerUsageReceipt\x12\x81\x01\n" +
-	"\x16RecordRequestIDJournal\x122.onebox.faas.apid.v1.RecordRequestIDJournalRequest\x1a3.onebox.faas.apid.v1.RecordRequestIDJournalResponseBBZ@github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1;apidpbb\x06proto3"
+	"\x16RecordRequestIDJournal\x122.onebox.faas.apid.v1.RecordRequestIDJournalRequest\x1a3.onebox.faas.apid.v1.RecordRequestIDJournalResponse\x12\x90\x01\n" +
+	"\x1bRecordRequestIDJournalBatch\x127.onebox.faas.apid.v1.RecordRequestIDJournalBatchRequest\x1a8.onebox.faas.apid.v1.RecordRequestIDJournalBatchResponseBBZ@github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1;apidpbb\x06proto3"
 
 var (
 	file_onebox_faas_apid_v1_request_telemetry_proto_rawDescOnce sync.Once
@@ -1457,37 +1568,42 @@ func file_onebox_faas_apid_v1_request_telemetry_proto_rawDescGZIP() []byte {
 	return file_onebox_faas_apid_v1_request_telemetry_proto_rawDescData
 }
 
-var file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_onebox_faas_apid_v1_request_telemetry_proto_goTypes = []any{
-	(*RecordRequestIDJournalRequest)(nil),     // 0: onebox.faas.apid.v1.RecordRequestIDJournalRequest
-	(*RecordRequestIDJournalResponse)(nil),    // 1: onebox.faas.apid.v1.RecordRequestIDJournalResponse
-	(*ConsumerUsageEvent)(nil),                // 2: onebox.faas.apid.v1.ConsumerUsageEvent
-	(*ConsumerUsageReceipt)(nil),              // 3: onebox.faas.apid.v1.ConsumerUsageReceipt
-	(*RequestAuditEvidence)(nil),              // 4: onebox.faas.apid.v1.RequestAuditEvidence
-	(*IncrementRequestTelemetryRequest)(nil),  // 5: onebox.faas.apid.v1.IncrementRequestTelemetryRequest
-	(*IncrementRequestTelemetryResponse)(nil), // 6: onebox.faas.apid.v1.IncrementRequestTelemetryResponse
-	(*TelemetryCoverage)(nil),                 // 7: onebox.faas.apid.v1.TelemetryCoverage
-	(*TelemetryAppGap)(nil),                   // 8: onebox.faas.apid.v1.TelemetryAppGap
-	(*TelemetryCoverageReceipt)(nil),          // 9: onebox.faas.apid.v1.TelemetryCoverageReceipt
-	nil,                                       // 10: onebox.faas.apid.v1.ConsumerUsageEvent.MeterUnitsEntry
+	(*RecordRequestIDJournalRequest)(nil),       // 0: onebox.faas.apid.v1.RecordRequestIDJournalRequest
+	(*RecordRequestIDJournalResponse)(nil),      // 1: onebox.faas.apid.v1.RecordRequestIDJournalResponse
+	(*RecordRequestIDJournalBatchRequest)(nil),  // 2: onebox.faas.apid.v1.RecordRequestIDJournalBatchRequest
+	(*RecordRequestIDJournalBatchResponse)(nil), // 3: onebox.faas.apid.v1.RecordRequestIDJournalBatchResponse
+	(*ConsumerUsageEvent)(nil),                  // 4: onebox.faas.apid.v1.ConsumerUsageEvent
+	(*ConsumerUsageReceipt)(nil),                // 5: onebox.faas.apid.v1.ConsumerUsageReceipt
+	(*RequestAuditEvidence)(nil),                // 6: onebox.faas.apid.v1.RequestAuditEvidence
+	(*IncrementRequestTelemetryRequest)(nil),    // 7: onebox.faas.apid.v1.IncrementRequestTelemetryRequest
+	(*IncrementRequestTelemetryResponse)(nil),   // 8: onebox.faas.apid.v1.IncrementRequestTelemetryResponse
+	(*TelemetryCoverage)(nil),                   // 9: onebox.faas.apid.v1.TelemetryCoverage
+	(*TelemetryAppGap)(nil),                     // 10: onebox.faas.apid.v1.TelemetryAppGap
+	(*TelemetryCoverageReceipt)(nil),            // 11: onebox.faas.apid.v1.TelemetryCoverageReceipt
+	nil,                                         // 12: onebox.faas.apid.v1.ConsumerUsageEvent.MeterUnitsEntry
 }
 var file_onebox_faas_apid_v1_request_telemetry_proto_depIdxs = []int32{
-	4,  // 0: onebox.faas.apid.v1.ConsumerUsageEvent.audit:type_name -> onebox.faas.apid.v1.RequestAuditEvidence
-	10, // 1: onebox.faas.apid.v1.ConsumerUsageEvent.meter_units:type_name -> onebox.faas.apid.v1.ConsumerUsageEvent.MeterUnitsEntry
-	8,  // 2: onebox.faas.apid.v1.TelemetryCoverage.app_gaps:type_name -> onebox.faas.apid.v1.TelemetryAppGap
-	7,  // 3: onebox.faas.apid.v1.RequestTelemetry.RecordTelemetryCoverage:input_type -> onebox.faas.apid.v1.TelemetryCoverage
-	5,  // 4: onebox.faas.apid.v1.RequestTelemetry.IncrementRequestTelemetry:input_type -> onebox.faas.apid.v1.IncrementRequestTelemetryRequest
-	2,  // 5: onebox.faas.apid.v1.RequestTelemetry.RecordConsumerUsage:input_type -> onebox.faas.apid.v1.ConsumerUsageEvent
-	0,  // 6: onebox.faas.apid.v1.RequestTelemetry.RecordRequestIDJournal:input_type -> onebox.faas.apid.v1.RecordRequestIDJournalRequest
-	9,  // 7: onebox.faas.apid.v1.RequestTelemetry.RecordTelemetryCoverage:output_type -> onebox.faas.apid.v1.TelemetryCoverageReceipt
-	6,  // 8: onebox.faas.apid.v1.RequestTelemetry.IncrementRequestTelemetry:output_type -> onebox.faas.apid.v1.IncrementRequestTelemetryResponse
-	3,  // 9: onebox.faas.apid.v1.RequestTelemetry.RecordConsumerUsage:output_type -> onebox.faas.apid.v1.ConsumerUsageReceipt
-	1,  // 10: onebox.faas.apid.v1.RequestTelemetry.RecordRequestIDJournal:output_type -> onebox.faas.apid.v1.RecordRequestIDJournalResponse
-	7,  // [7:11] is the sub-list for method output_type
-	3,  // [3:7] is the sub-list for method input_type
-	3,  // [3:3] is the sub-list for extension type_name
-	3,  // [3:3] is the sub-list for extension extendee
-	0,  // [0:3] is the sub-list for field type_name
+	0,  // 0: onebox.faas.apid.v1.RecordRequestIDJournalBatchRequest.records:type_name -> onebox.faas.apid.v1.RecordRequestIDJournalRequest
+	6,  // 1: onebox.faas.apid.v1.ConsumerUsageEvent.audit:type_name -> onebox.faas.apid.v1.RequestAuditEvidence
+	12, // 2: onebox.faas.apid.v1.ConsumerUsageEvent.meter_units:type_name -> onebox.faas.apid.v1.ConsumerUsageEvent.MeterUnitsEntry
+	10, // 3: onebox.faas.apid.v1.TelemetryCoverage.app_gaps:type_name -> onebox.faas.apid.v1.TelemetryAppGap
+	9,  // 4: onebox.faas.apid.v1.RequestTelemetry.RecordTelemetryCoverage:input_type -> onebox.faas.apid.v1.TelemetryCoverage
+	7,  // 5: onebox.faas.apid.v1.RequestTelemetry.IncrementRequestTelemetry:input_type -> onebox.faas.apid.v1.IncrementRequestTelemetryRequest
+	4,  // 6: onebox.faas.apid.v1.RequestTelemetry.RecordConsumerUsage:input_type -> onebox.faas.apid.v1.ConsumerUsageEvent
+	0,  // 7: onebox.faas.apid.v1.RequestTelemetry.RecordRequestIDJournal:input_type -> onebox.faas.apid.v1.RecordRequestIDJournalRequest
+	2,  // 8: onebox.faas.apid.v1.RequestTelemetry.RecordRequestIDJournalBatch:input_type -> onebox.faas.apid.v1.RecordRequestIDJournalBatchRequest
+	11, // 9: onebox.faas.apid.v1.RequestTelemetry.RecordTelemetryCoverage:output_type -> onebox.faas.apid.v1.TelemetryCoverageReceipt
+	8,  // 10: onebox.faas.apid.v1.RequestTelemetry.IncrementRequestTelemetry:output_type -> onebox.faas.apid.v1.IncrementRequestTelemetryResponse
+	5,  // 11: onebox.faas.apid.v1.RequestTelemetry.RecordConsumerUsage:output_type -> onebox.faas.apid.v1.ConsumerUsageReceipt
+	1,  // 12: onebox.faas.apid.v1.RequestTelemetry.RecordRequestIDJournal:output_type -> onebox.faas.apid.v1.RecordRequestIDJournalResponse
+	3,  // 13: onebox.faas.apid.v1.RequestTelemetry.RecordRequestIDJournalBatch:output_type -> onebox.faas.apid.v1.RecordRequestIDJournalBatchResponse
+	9,  // [9:14] is the sub-list for method output_type
+	4,  // [4:9] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_onebox_faas_apid_v1_request_telemetry_proto_init() }
@@ -1501,7 +1617,7 @@ func file_onebox_faas_apid_v1_request_telemetry_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc), len(file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   11,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

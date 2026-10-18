@@ -1411,5 +1411,70 @@
     "fresh_hosted_current_head_checks": "required",
     "native_physical_acceptance": false,
     "production_activation": false
+  },
+  "worker_recovery_main_integration": {
+    "integrated_main": "2243dce395256150b5d4841206057d896d2dd418",
+    "tested_source_tree": "9090f5bfc1cced6337c32642336f06c4eed08aa0",
+    "unpublished_function_migration_mapping": [
+      {
+        "old": "20261018003150915",
+        "new": "20261018095849457",
+        "name": "function_migration_sources"
+      },
+      {
+        "old": "20261018003150916",
+        "new": "20261018095850003",
+        "name": "function_migration_admission"
+      },
+      {
+        "old": "20261018003150917",
+        "new": "20261018095850501",
+        "name": "function_migration_destination"
+      }
+    ],
+    "allocator": "repository go run ./cmd/migration-new -after published main prerequisite",
+    "published_migration_bytes_preserved": true,
+    "historical_evidence_versions_retained": true,
+    "worker_main_schema_upgrade_and_function_down_up": "pass; canonical schema byte-identical",
+    "upgrade_start_version": "20261018013954350",
+    "migration_source_digest": "58bcf3107ece49813545201ec9c2f7e465350b33f47d8d4193bfecb645e9a0ee",
+    "schema_sha256": "b5a03e0b85235a93c9893c241df260e166ea11ff13530051b21a6396b364a214",
+    "sqlc_blocks": 18,
+    "sqlc_generation_and_drift": "pass",
+    "clone_registry": {
+      "published_main_records_preserved": 946,
+      "operational_function_journals": 2,
+      "duplicates": 0
+    },
+    "qualified_scheduler_function_worker_phases": [
+      {
+        "phase": "compile",
+        "exitCode": 0,
+        "seconds": 316.123
+      },
+      {
+        "phase": "race",
+        "exitCode": 0,
+        "seconds": 30.154,
+        "counts": {
+          "pass": 54
+        },
+        "skippedTests": [],
+        "failedTests": []
+      }
+    ],
+    "log_sha256": "2991a4c88453f466c7ad42119bc53952fae425f3f7841294236f053da5bca224",
+    "runtime": "2GiB/GOGC10/GOMAXPROCS2/3m",
+    "node_sdk_regeneration_build_helpers": "pass",
+    "python_sdk_regeneration_compile": "pass",
+    "generated_daemons": "pass",
+    "environment_contract": "pass",
+    "documentation_links": "pass",
+    "http_documentation_fixtures_passed": 4,
+    "adr_uniqueness": "1811 decisions1607distinct164unchangedbaseline",
+    "function_migration_expand_contract": "pass",
+    "fresh_hosted_current_head_checks": "required",
+    "native_physical_acceptance": false,
+    "production_activation": false
   }
 }

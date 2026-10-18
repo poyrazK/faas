@@ -1,4 +1,4 @@
--- filename: 20261018003150916_function_migration_admission.sql
+-- filename: 20261018095850003_function_migration_admission.sql
 -- adr: 20261018030614. Fresh permissions remain attached to the original durable source.
 
 -- +goose Up

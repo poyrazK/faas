@@ -472,6 +472,37 @@ published migration bytes and the 164-entry duplicate baseline remain intact.
 ADR uniqueness and the three function migration expand/contract checks pass.
 Fresh exact-head hosted checks remain required; native activation remains off.
 
+## Durable worker recovery coexistence (2026-10-18)
+
+Main `2243dce395256150b5d4841206057d896d2dd418` adds durable worker recovery,
+admission explanations and newer migration versions. Only the three unpublished
+function migrations are reallocated with the repository's `migration-new`
+allocator, after the published worker migrations:
+
+- `20261018095849457_function_migration_sources.sql`
+- `20261018095850003_function_migration_admission.sql`
+- `20261018095850501_function_migration_destination.sql`
+
+Earlier evidence retains the versions used for those earlier executions.
+Published migration bytes remain intact. A clean schema replay and an upgrade
+from worker version `20261018013954350`, including a down/up of exactly the
+three function migrations, produce byte-identical canonical schemas. The new
+source digest is
+`58bcf3107ece49813545201ec9c2f7e465350b33f47d8d4193bfecb645e9a0ee`.
+All eighteen SQLC blocks and published worker query sources are retained;
+generation/drift checks pass. The 946 published clone policies and two
+operational function journals remain complete and distinct.
+
+Merged source tree `9090f5bfc1cced6337c32642336f06c4eed08aa0` passes 54
+qualified scheduler function/worker recovery and admission tests/subtests with
+zero skips or failures. Compilation uses 5 GiB/GOGC 50; execution retains
+2 GiB/GOGC 10, two processors and the three-minute deadline. Both SDK generators
+match main's worker OpenAPI, TypeScript builds, Python compiles, and helper
+drift checks pass. Generated daemon, environment, ADR, migration and documentation
+checks pass, including four HTTP fixtures. Fresh hosted exact-head checks and
+native compilation remain required; physical acceptance and activation stay
+pending.
+
 ## Qualification boundary
 
 Production activation remains disabled. This managed container has no supported

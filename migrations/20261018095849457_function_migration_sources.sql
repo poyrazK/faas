@@ -1,3 +1,5 @@
+-- filename: 20261018095849457_function_migration_sources.sql
+
 -- ADR-20261018030613: retain source ownership until pool recovery or retirement is confirmed.
 -- +goose Up
 SET LOCAL lock_timeout = '5s';

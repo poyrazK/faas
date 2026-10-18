@@ -1,4 +1,4 @@
--- filename: 20261018003150917_function_migration_destination.sql
+-- filename: 20261018095850501_function_migration_destination.sql
 -- adr: 20261018030615. Immutable migration epochs retain the original admission capture.
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
