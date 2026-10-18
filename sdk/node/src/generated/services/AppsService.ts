@@ -165,6 +165,7 @@ import type { SavedRouteRequirements } from '../models/SavedRouteRequirements.js
 import type { SaveProfileDeploymentPolicyRequest } from '../models/SaveProfileDeploymentPolicyRequest.js';
 import type { SaveProfileInvestigationRequest } from '../models/SaveProfileInvestigationRequest.js';
 import type { SaveRouteRequirementsRequest } from '../models/SaveRouteRequirementsRequest.js';
+import type { ServiceBindingExplanation } from '../models/ServiceBindingExplanation.js';
 import type { ServiceWakeAheadResponse } from '../models/ServiceWakeAheadResponse.js';
 import type { SetBindingReleasePolicyRequest } from '../models/SetBindingReleasePolicyRequest.js';
 import type { SetCanaryRouteGateRequest } from '../models/SetCanaryRouteGateRequest.js';
@@ -357,7 +358,98 @@ export class AppsService {
     });
   }
   /**
+   * Explain service authorization for an exact caller deployment.
+   * Read-only policy and routing observation using the gateway app authorizer,
+   * managed environment binding resolver and project release resolver. Requires
+   * apps:read or admin and completed MFA. The deployment must belong to the
+   * selected app. Its environment is inferred; scope, when supplied, asserts
+   * that environment. Managed deployments never fall back to global app names.
+   * Target identities are returned only within the selected account. Policy
+   * denials and incomplete contexts return 200 with result denied or
+   * indeterminate. Missing or foreign caller deployments return 404. Previews,
+   * qualification guests and development bridges are not evaluated. No tasks,
+   * guest requests, writes or provider calls occur. Separate metadata reads
+   * are not an atomic snapshot, caller authentication, runtime adoption or
+   * connectivity evidence. Unpinned routes do not select a target deployment.
+   * Responses use Cache-Control: no-store.
+   *
+   * @returns ServiceBindingExplanation Sanitized policy and routing explanation, without connectivity claims.
+   * @throws ApiError
+   */
+  public static explainAppServiceBinding({
+    slug,
+    service,
+    deploymentId,
+    scope,
+    method = 'GET',
+    path = '/',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Logical service workload for managed deployments, otherwise target app slug.
+     */
+    service: string,
+    /**
+     * Exact app-owned caller deployment UUID. This selector does not establish live caller identity.
+     */
+    deploymentId: string,
+    /**
+     * Optional assertion of the selected deployment environment. A mismatch produces a denied explanation.
+     */
+    scope?: string,
+    /**
+     * HTTP method to evaluate against the target scope.
+     */
+    method?: string,
+    /**
+     * Origin-form request path. Ambiguous paths are rejected; query values are omitted from the report.
+     */
+    path?: string,
+  }): CancelablePromise<ServiceBindingExplanation> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/bindings/services/{service}/explanation',
+      path: {
+        'slug': slug,
+        'service': service,
+      },
+      query: {
+        'deployment_id': deploymentId,
+        'scope': scope,
+        'method': method,
+        'path': path,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Inspect all runtime resource bindings attached to an app.
+   * Service entries use the selected deployment's frozen environment graph
+   * when managed; without deployment_id the current live deployment is selected.
+   * Logical service names remain distinct from physical target app identities.
+   * service_context reports the reviewed route and a context revision, never
+   * connectivity evidence. Ordinary task-probe verification of managed services
+   * is unsupported and app-scoped receipts are excluded. Managed target routes
+   * cannot be overridden through service_targets. Invalid frozen context or
+   * unreadable routes make complete=false without falling back to app settings.
    * Read-only, best-effort metadata for service, PostgreSQL, object-storage,
    * queue and outbound bindings. Requires apps:read or admin. PostgreSQL
    * sections additionally require managed-postgres:read or admin; object
@@ -387,7 +479,7 @@ export class AppsService {
      */
     slug: string,
     /**
-     * Select evidence for this exact app-owned, materialized live deployment, including zero-traffic candidates. No fallback to evidence from another deployment. Omit to use the manual-task selection.
+     * Select the service namespace and evidence for this exact app-owned, materialized live deployment, including zero-traffic candidates. No fallback to evidence from another deployment. Omit to use the manual-task selection.
      */
     deploymentId?: string,
     /**

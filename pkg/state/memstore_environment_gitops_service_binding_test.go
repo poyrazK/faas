@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -95,7 +96,7 @@ func environmentGitOpsServiceBindingFixture(t *testing.T, includeBinding bool) (
 	store.projectReleaseSets = map[string]ProjectReleaseSet{}
 	store.activeProjectReleaseSets = map[string]string{}
 	accountID, projectID, environmentID, sourceID := newID(), newID(), newID(), newID()
-	callerID, callerDeploymentID, targetID, targetDeploymentID, releaseID := newID(), newID(), newID(), newID(), newID()
+	callerID, callerDeploymentID, targetID, targetDeploymentID, releaseID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	caller := App{ID: callerID, AccountID: accountID, ProjectID: projectID, Slug: "git-api", Status: AppActive}
 	target := App{ID: targetID, AccountID: accountID, ProjectID: projectID, Slug: "git-database", Status: AppActive}
 	store.apps[caller.ID], store.apps[target.ID] = caller, target

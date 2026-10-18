@@ -5094,6 +5094,90 @@ END $$;
 
 
 --
+-- Name: authorize_environment_binding_release(uuid, uuid, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.authorize_environment_binding_release(target_graph uuid, next_release uuid, prior_release text, members jsonb) RETURNS boolean
+    LANGUAGE plpgsql
+    AS $$
+DECLARE g environment_workload_graphs%ROWTYPE; s environment_git_sources%ROWTYPE; release_scope text; deadline timestamptz; actual jsonb; latest text;
+BEGIN
+ SELECT * INTO g FROM environment_workload_graphs WHERE id=target_graph;
+ SELECT * INTO s FROM active_environment_git_sources WHERE id=g.source_id;
+ SELECT slug INTO release_scope FROM project_environments WHERE id=g.environment_id;
+ IF NOT EXISTS(SELECT 1 FROM environment_gitops_jobs j WHERE j.source_id=s.id AND j.claimed_generation=s.generation AND j.lease_token=current_setting('gregale.gitops_lease',true) AND j.lease_until>clock_timestamp()) THEN
+  RAISE EXCEPTION 'candidate binding release requires its intent lease' USING ERRCODE='23514',CONSTRAINT='binding_release_required'; END IF;
+ PERFORM r.app_id FROM app_binding_promotion_revisions r JOIN apps a ON a.id=r.app_id WHERE a.project_id=s.project_id ORDER BY r.app_id FOR UPDATE OF r;
+ SELECT id::text INTO latest FROM project_release_sets WHERE project_id=s.project_id AND environment_slug=release_scope AND active;
+ SELECT jsonb_object_agg(app_id::text,deployment_id::text) INTO actual FROM environment_workload_qualification_requests WHERE graph_id=g.id;
+ deadline:=environment_binding_qualification_deadline(g.id);
+ IF deadline IS NULL OR actual IS DISTINCT FROM members OR coalesce(latest,'')<>prior_release OR
+  (SELECT count(*) FROM apps WHERE project_id=s.project_id AND status<>'deleted' AND coalesce(preview_of_slug,'')='')<>(SELECT count(*) FROM jsonb_each(members)) THEN
+  RAISE EXCEPTION 'managed graph requires current complete candidate binding evidence' USING ERRCODE='23514',CONSTRAINT='binding_release_required'; END IF;
+ INSERT INTO environment_binding_release_receipts(release_id,graph_id,members,valid_until) VALUES(next_release,g.id,members,deadline);
+ PERFORM set_config('gregale.binding_release_graph',jsonb_build_object('project_id',s.project_id,'environment',release_scope,'new_id',next_release,'old_id',prior_release,'members',members,'fences',jsonb_build_array(jsonb_build_object('valid_until',deadline)))::text,true);
+ RETURN true;
+END $$;
+
+
+--
+-- Name: authorize_environment_binding_retirement(uuid, uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.authorize_environment_binding_retirement(target_source uuid, next_release uuid, prior_release text, reviewed_plan text) RETURNS boolean
+    LANGUAGE plpgsql
+    AS $$
+DECLARE s environment_git_sources%ROWTYPE; audit environment_binding_retirement_receipts%ROWTYPE; release_scope text; latest text;
+BEGIN
+ SELECT * INTO s FROM active_environment_git_sources WHERE id=target_source FOR UPDATE;
+ IF s.id IS NULL THEN RAISE EXCEPTION 'retirement source changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed'; END IF;
+ PERFORM id FROM projects WHERE id=s.project_id AND account_id=s.account_id FOR UPDATE;
+ PERFORM id FROM apps WHERE project_id=s.project_id ORDER BY id FOR UPDATE;
+ PERFORM r.app_id FROM app_binding_promotion_revisions r JOIN apps a ON a.id=r.app_id WHERE a.project_id=s.project_id ORDER BY r.app_id FOR UPDATE OF r;
+ SELECT slug INTO release_scope FROM project_environments WHERE id=s.environment_id;
+ SELECT id::text INTO latest FROM project_release_sets WHERE project_id=s.project_id AND environment_slug=release_scope AND active;
+ IF coalesce(latest,'')<>prior_release THEN RAISE EXCEPTION 'active graph changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed'; END IF;
+ audit.release_id:=next_release; audit.source_id:=s.id; audit.revision_id:=s.approved_revision_id; audit.generation:=s.generation;
+ audit.intent_version:=s.intent_version; audit.plan_hash:=reviewed_plan; audit.prior_release:=prior_release;
+ SELECT array_agg(id ORDER BY id),jsonb_object_agg(id::text,binding_policy_context) INTO audit.retirement_ids,audit.policies
+ FROM environment_workload_retirements WHERE source_id=s.id AND revision_id=s.approved_revision_id AND generation=s.generation AND phase='retiring';
+ SELECT lease_until INTO audit.valid_until FROM environment_gitops_jobs WHERE source_id=s.id AND lease_token=current_setting('gregale.gitops_lease',true);
+ IF audit.retirement_ids IS NULL OR audit.valid_until IS NULL OR NOT environment_binding_retirement_current(audit) THEN
+  RAISE EXCEPTION 'complete removal requires current reviewed binding retirement authority' USING ERRCODE='23514',CONSTRAINT='binding_release_required'; END IF;
+ INSERT INTO environment_binding_retirement_receipts(release_id,source_id,revision_id,generation,intent_version,plan_hash,prior_release,retirement_ids,policies,valid_until)
+ VALUES(audit.release_id,audit.source_id,audit.revision_id,audit.generation,audit.intent_version,audit.plan_hash,audit.prior_release,audit.retirement_ids,audit.policies,audit.valid_until);
+ PERFORM set_config('gregale.binding_release_graph',jsonb_build_object('project_id',s.project_id,'environment',release_scope,'new_id',next_release,'old_id',prior_release,'members','{}'::jsonb,'fences',jsonb_build_array(jsonb_build_object('valid_until',audit.valid_until)))::text,true);
+ RETURN true;
+END $$;
+
+
+--
+-- Name: authorize_environment_binding_traffic(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.authorize_environment_binding_traffic(target_graph uuid, target_release uuid) RETURNS boolean
+    LANGUAGE plpgsql
+    AS $$
+DECLARE audit environment_binding_release_receipts%ROWTYPE; g environment_workload_graphs%ROWTYPE; s environment_git_sources%ROWTYPE; release_scope text; grants jsonb;
+BEGIN
+ SELECT * INTO g FROM environment_workload_graphs WHERE id=target_graph;
+ SELECT * INTO s FROM active_environment_git_sources WHERE id=g.source_id;
+ SELECT slug INTO release_scope FROM project_environments WHERE id=g.environment_id;
+ IF NOT EXISTS(SELECT 1 FROM apps a JOIN app_binding_release_policies p ON p.app_id=a.id WHERE a.project_id=s.project_id AND p.scope=release_scope AND p.mode='enforce') THEN RETURN true; END IF;
+ PERFORM r.app_id FROM app_binding_promotion_revisions r JOIN apps a ON a.id=r.app_id WHERE a.project_id=s.project_id ORDER BY r.app_id FOR UPDATE OF r;
+ SELECT * INTO audit FROM environment_binding_release_receipts WHERE release_id=target_release AND graph_id=target_graph;
+ IF audit.release_id IS NULL OR audit.valid_until<=clock_timestamp() OR environment_binding_qualification_deadline(target_graph) IS NULL OR
+ NOT EXISTS(SELECT 1 FROM project_release_sets WHERE id=target_release AND active) OR
+ NOT EXISTS(SELECT 1 FROM environment_gitops_jobs j WHERE j.source_id=s.id AND j.claimed_generation=s.generation AND j.lease_token=current_setting('gregale.gitops_lease',true) AND j.lease_until>clock_timestamp()) THEN
+ RAISE EXCEPTION 'managed serving requires its current checked candidate graph' USING ERRCODE='23514',CONSTRAINT='binding_release_required'; END IF;
+ SELECT jsonb_agg(jsonb_build_object('app_id',q.app_id,'deployment_id',q.deployment_id,'scope',release_scope,'policy_revision',p.revision,'valid_until',audit.valid_until)) INTO grants
+ FROM environment_workload_qualification_requests q JOIN app_binding_release_policies p ON p.app_id=q.app_id AND p.scope=release_scope WHERE q.graph_id=g.id;
+ PERFORM set_config('gregale.binding_release_fences',grants::text,true);
+ RETURN true;
+END $$;
+
+
+--
 -- Name: automatic_route_check_capture_changed(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8095,6 +8179,189 @@ $$;
 
 
 --
+-- Name: environment_binding_artifact_inputs(public.deployments); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_binding_artifact_inputs(d public.deployments) RETURNS jsonb
+    LANGUAGE sql IMMUTABLE
+    AS $$
+ SELECT jsonb_build_object('rootfs_key',coalesce(d.rootfs_key,''),'rootfs_bytes',coalesce(d.rootfs_bytes,0),
+ 'kind',d.kind,'image_digest',coalesce(d.image_digest,''),'build_id',coalesce(d.build_id::text,''),
+ 'source_path',coalesce(d.source_path,''),'source_sha256',coalesce(d.source_sha256,''),'source_bytes',coalesce(d.source_bytes,0),
+ 'source_root',coalesce(d.source_root,''),'log_path',coalesce(d.log_path,''),'source_url',coalesce(d.source_url,''),
+ 'commit_sha',coalesce(d.commit_sha,''),'handler',coalesce(d.handler,''),'deployment_inputs',environment_workload_deployment_inputs(d));
+$$;
+
+
+--
+-- Name: environment_binding_catalog_supported(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_binding_catalog_supported(target_app uuid, target_scope text) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT NOT EXISTS(SELECT 1 FROM managed_postgres_bindings WHERE app_id=target_app AND scope=target_scope AND state<>'deleted')
+ AND NOT EXISTS(SELECT 1 FROM object_storage_s3_credentials WHERE managed_app_id=target_app AND managed_scope=target_scope AND status='active')
+ AND NOT EXISTS(SELECT 1 FROM outbound_app_bindings WHERE app_id=target_app)
+ AND NOT EXISTS(SELECT 1 FROM outbound_integration_apps WHERE app_id=target_app);
+$$;
+
+
+--
+-- Name: environment_binding_qualification_deadline(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_binding_qualification_deadline(target_graph uuid) RETURNS timestamp with time zone
+    LANGUAGE plpgsql
+    AS $$
+DECLARE g environment_workload_graphs%ROWTYPE; s environment_git_sources%ROWTYPE; e project_environments%ROWTYPE;
+ q environment_workload_qualification_requests%ROWTYPE; p app_binding_release_policies%ROWTYPE;
+ smoke environment_qualification_smoke_receipts%ROWTYPE; edge record; target environment_workload_qualification_requests%ROWTYPE;
+ receipt environment_qualification_service_receipts%ROWTYPE; until_at timestamptz; deadline timestamptz; count_members integer:=0;
+BEGIN
+ SELECT * INTO g FROM environment_workload_graphs WHERE id=target_graph;
+ SELECT * INTO s FROM active_environment_git_sources WHERE id=g.source_id;
+ SELECT * INTO e FROM project_environments WHERE id=g.environment_id;
+ IF g.id IS NULL OR s.id IS NULL OR s.mode<>'enforce' OR s.suspended OR g.generation<>s.generation OR
+ g.intent_version<>s.intent_version OR g.revision_id<>s.approved_revision_id OR g.phase<>'prepared' THEN RETURN NULL; END IF;
+ IF EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) m WHERE coalesce(m->>'candidate_deployment_id','')='') THEN RETURN NULL; END IF;
+ IF (SELECT count(*) FROM jsonb_array_elements(g.members))<>(SELECT count(*) FROM environment_workload_qualification_requests WHERE graph_id=g.id) THEN RETURN NULL; END IF;
+ FOR q IN SELECT * FROM environment_workload_qualification_requests WHERE graph_id=g.id ORDER BY app_id LOOP
+  count_members:=count_members+1;
+  SELECT * INTO p FROM app_binding_release_policies WHERE app_id=q.app_id AND scope=e.slug;
+  SELECT * INTO smoke FROM environment_qualification_smoke_receipts WHERE request_id=q.id AND attempt=q.attempt;
+  IF q.binding_context IS NULL OR p.app_id IS NULL OR p.mode<>'enforce' OR p.require_application_ack OR p.object_storage_requirements<>'{}'::jsonb OR
+   q.binding_context->'policy'->>'revision' IS DISTINCT FROM p.revision::text OR q.binding_context->'policy'->>'mode' IS DISTINCT FROM p.mode OR
+   q.binding_context->'policy'->>'scope' IS DISTINCT FROM e.slug OR q.binding_context->'policy'->>'app_id' IS DISTINCT FROM q.app_id::text OR
+   coalesce(q.binding_context->'policy'->'queue_requirements','{}'::jsonb) IS DISTINCT FROM p.queue_requirements OR
+   coalesce(q.binding_context->'policy'->'object_storage_requirements','{}'::jsonb) IS DISTINCT FROM p.object_storage_requirements OR
+   NOT environment_binding_catalog_supported(q.app_id,e.slug) OR NOT environment_workload_qualification_evidence_current(q.id) OR
+   q.binding_context->'artifact_inputs' IS DISTINCT FROM (SELECT environment_binding_artifact_inputs(d) FROM deployments d WHERE d.id=q.deployment_id) OR
+   q.binding_context->>'service_revision' IS DISTINCT FROM (SELECT epoch::text||':'||service_revision::text FROM app_binding_promotion_revisions WHERE app_id=q.app_id) OR
+   EXISTS(SELECT 1 FROM queue_bindings b WHERE b.app_id=q.app_id AND coalesce(nullif(b.deployment_scope,''),'default') IN (e.slug,'default') AND b.retired_at IS NULL AND NOT EXISTS(SELECT 1 FROM jsonb_each(coalesce(q.frozen_inputs->'queue_bindings','{}'::jsonb)) f WHERE f.value->>'binding_id'=b.id::text)) OR
+   q.execution_mode NOT IN ('request','service','worker') OR q.frozen_inputs->>'workload_class' NOT IN ('http','worker') OR
+   smoke.request_id IS NULL OR smoke.recorded_at>clock_timestamp() OR q.lease_until IS NULL THEN RETURN NULL; END IF;
+  IF NOT EXISTS(SELECT 1 FROM environment_qualification_snapshot_receipts capture
+   JOIN environment_qualification_executions original ON original.instance_id=capture.instance_id
+   JOIN environment_qualification_restore_receipts restored ON restored.request_id=q.id AND restored.attempt=q.attempt AND restored.capture_instance_id=capture.instance_id
+   JOIN environment_qualification_executions runtime ON runtime.instance_id=restored.instance_id
+   JOIN environment_qualification_framework_ready_receipts ready ON ready.request_id=q.id AND ready.attempt=q.attempt AND ready.instance_id=restored.instance_id
+   JOIN environment_qualification_config_receipts source_config ON source_config.instance_id=capture.instance_id
+   JOIN environment_qualification_config_receipts restore_config ON restore_config.instance_id=restored.instance_id
+   WHERE capture.instance_id=q.reserved_instance_id AND restored.instance_id=smoke.instance_id AND smoke.graph_id=g.id AND smoke.capture_instance_id=q.reserved_instance_id
+    AND original.dispatch_started AND runtime.dispatch_started AND original.retired_at IS NOT NULL AND runtime.retired_at IS NOT NULL
+    AND original.retirement->>'kind'='native_retired' AND runtime.retirement->>'kind'='native_retired'
+    AND environment_runtime_inputs_fresh(q.app_id,e.slug,(capture.inputs->>'boundary')::timestamptz,capture.inputs->'variables',capture.inputs->'secret_versions',(capture.inputs->>'all_secrets')::boolean,capture.inputs->'secret_refs',coalesce(capture.inputs->'sidecar_secret_versions','{}'::jsonb))
+    AND environment_runtime_inputs_fresh(q.app_id,e.slug,(restored.runtime_inputs->>'boundary')::timestamptz,restored.runtime_inputs->'variables',restored.runtime_inputs->'secret_versions',(restored.runtime_inputs->>'all_secrets')::boolean,restored.runtime_inputs->'secret_refs',coalesce(restored.runtime_inputs->'sidecar_secret_versions','{}'::jsonb))) THEN RETURN NULL; END IF;
+  IF coalesce(q.frozen_inputs->'service_bindings','{}'::jsonb)<>'{}'::jsonb AND
+   coalesce(nullif(q.frozen_inputs->'runtime'->>'service_binding_transport',''),q.frozen_inputs->'baseline'->>'service_binding_transport','http')<>'https' THEN RETURN NULL; END IF;
+  IF (SELECT count(*) FROM jsonb_each(coalesce(q.frozen_inputs->'queue_bindings','{}'::jsonb)))<>(SELECT count(*) FROM jsonb_each(p.queue_requirements)) OR
+   EXISTS(SELECT 1 FROM jsonb_each(coalesce(q.frozen_inputs->'queue_bindings','{}'::jsonb)) b
+    WHERE q.execution_mode<>'worker' OR b.value->'contract'->>'mode'<>'push' OR b.value->'contract'->>'enabled' IS DISTINCT FROM 'true' OR
+     p.queue_requirements->>b.key IS DISTINCT FROM 'handler_completion' OR NOT coalesce(q.frozen_inputs->'queue_smoke','{}'::jsonb) ? b.key) THEN RETURN NULL; END IF;
+  deadline:=least(q.lease_until,smoke.recorded_at+p.max_age_seconds*interval '1 second');
+  FOR edge IN SELECT key,value FROM jsonb_each(coalesce(q.frozen_inputs->'service_bindings','{}'::jsonb)) LOOP
+   SELECT * INTO target FROM environment_workload_qualification_requests WHERE graph_id=g.id AND app_id=(edge.value->>'target_app_id')::uuid;
+   SELECT * INTO receipt FROM environment_qualification_service_receipts WHERE request_id=q.id AND attempt=q.attempt AND binding=edge.key;
+   IF target.id IS NULL OR receipt.request_id IS NULL OR receipt.recorded_at>smoke.recorded_at OR receipt.route->>'RequireHTTPS' IS DISTINCT FROM 'true' OR
+    receipt.route->'Caller'->>'request_id' IS DISTINCT FROM q.id::text OR receipt.route->'Caller'->>'attempt' IS DISTINCT FROM q.attempt::text OR
+    receipt.route->'Caller'->>'instance_id' IS DISTINCT FROM smoke.instance_id::text OR receipt.route->'Caller'->>'capture_instance_id' IS DISTINCT FROM q.reserved_instance_id::text OR
+    receipt.route->'Target'->>'request_id' IS DISTINCT FROM target.id::text OR receipt.route->'Target'->>'attempt' IS DISTINCT FROM target.attempt::text OR
+    receipt.route->'Target'->>'capture_instance_id' IS DISTINCT FROM target.reserved_instance_id::text OR
+    receipt.route->'Target'->>'deployment_id' IS DISTINCT FROM target.deployment_id::text OR
+    receipt.route->'Target'->>'instance_id' IS DISTINCT FROM (SELECT instance_id::text FROM environment_qualification_restore_receipts WHERE request_id=target.id AND attempt=target.attempt)
+    THEN RETURN NULL; END IF;
+   deadline:=least(deadline,(receipt.route->>'Deadline')::timestamptz,receipt.recorded_at+p.max_age_seconds*interval '1 second');
+  END LOOP;
+  until_at:=least(until_at,deadline);
+ END LOOP;
+ IF count_members=0 OR until_at<=clock_timestamp() THEN RETURN NULL; END IF;
+ RETURN until_at;
+END $$;
+
+
+--
+-- Name: environment_binding_retirement_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_binding_retirement_receipts (
+    release_id uuid NOT NULL,
+    source_id uuid NOT NULL,
+    revision_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    intent_version bigint NOT NULL,
+    plan_hash text NOT NULL,
+    prior_release text NOT NULL,
+    retirement_ids uuid[] NOT NULL,
+    policies jsonb NOT NULL,
+    valid_until timestamp with time zone NOT NULL,
+    recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT environment_binding_retirement_receipts_generation_check CHECK ((generation > 0)),
+    CONSTRAINT environment_binding_retirement_receipts_intent_version_check CHECK ((intent_version > 0)),
+    CONSTRAINT environment_binding_retirement_receipts_plan_hash_check CHECK ((plan_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT environment_binding_retirement_receipts_policies_check CHECK ((jsonb_typeof(policies) = 'object'::text)),
+    CONSTRAINT environment_binding_retirement_receipts_prior_release_check CHECK (((prior_release = ''::text) OR (prior_release ~ '^[a-f0-9-]{36}$'::text))),
+    CONSTRAINT environment_binding_retirement_receipts_retirement_ids_check CHECK (((cardinality(retirement_ids) > 0) AND (array_position(retirement_ids, NULL::uuid) IS NULL)))
+);
+
+
+--
+-- Name: environment_binding_retirement_current(public.environment_binding_retirement_receipts); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_binding_retirement_current(audit public.environment_binding_retirement_receipts) RETURNS boolean
+    LANGUAGE plpgsql
+    AS $$
+DECLARE s environment_git_sources%ROWTYPE; rev environment_desired_revisions%ROWTYPE; release_scope text;
+ r environment_workload_retirements%ROWTYPE; ids uuid[]; policy_map jsonb;
+BEGIN
+ SELECT * INTO s FROM active_environment_git_sources WHERE id=audit.source_id;
+ SELECT * INTO rev FROM environment_desired_revisions WHERE id=s.approved_revision_id AND source_id=s.id;
+ SELECT slug INTO release_scope FROM project_environments WHERE id=s.environment_id;
+ IF s.id IS NULL OR s.mode<>'enforce' OR s.suspended OR NOT s.prune OR rev.id IS DISTINCT FROM audit.revision_id OR
+  s.generation<>audit.generation OR s.intent_version<>audit.intent_version OR audit.valid_until<=clock_timestamp() OR
+  rev.definition->'workloads' IS DISTINCT FROM '{}'::jsonb OR rev.definition->>'workload_pruning_policy' IS DISTINCT FROM 'retain' OR
+  NOT EXISTS(SELECT 1 FROM environment_gitops_jobs j WHERE j.source_id=s.id AND j.desired_generation=s.generation
+   AND j.claimed_generation=s.generation AND j.lease_token=current_setting('gregale.gitops_lease',true) AND j.lease_until>clock_timestamp()) THEN RETURN false; END IF;
+ SELECT array_agg(id ORDER BY id),jsonb_object_agg(id::text,binding_policy_context) INTO ids,policy_map
+ FROM environment_workload_retirements WHERE source_id=s.id AND revision_id=rev.id AND generation=s.generation AND phase='retiring';
+ IF ids IS DISTINCT FROM audit.retirement_ids OR policy_map IS DISTINCT FROM audit.policies THEN RETURN false; END IF;
+ FOR r IN SELECT * FROM environment_workload_retirements WHERE id=ANY(audit.retirement_ids) LOOP
+  IF r.binding_policy_context IS DISTINCT FROM environment_binding_retirement_policy(r.app_id,release_scope) OR
+   ROW(r.account_id,r.project_id,r.environment_id) IS DISTINCT FROM ROW(s.account_id,s.project_id,s.environment_id) OR
+   NOT EXISTS(SELECT 1 FROM environment_gitops_resources WHERE source_id=s.id AND logical_name=r.resource AND app_id=r.app_id) OR
+   NOT EXISTS(SELECT 1 FROM environment_managed_fields WHERE source_id=s.id AND manager_id=s.id::text AND resource=r.resource AND field_path='presence') OR
+   EXISTS(SELECT 1 FROM environment_managed_fields WHERE environment_id=s.environment_id AND resource=r.resource AND manager_id<>s.id::text) OR
+   EXISTS(SELECT 1 FROM environment_external_field_owners WHERE environment_id=s.environment_id AND resource IN (r.resource,'app/'||r.app_id::text)) OR
+   EXISTS(SELECT 1 FROM environment_management_overrides WHERE environment_id=s.environment_id AND resource=r.resource AND expires_at>clock_timestamp()) OR
+   r.deployment_ids IS DISTINCT FROM ARRAY(SELECT id FROM deployments WHERE app_id=r.app_id AND scope=release_scope AND environment_workload_runtime->>'source_id'=s.id::text ORDER BY id) OR
+   r.queue_binding_ids IS DISTINCT FROM ARRAY(SELECT binding_id FROM environment_gitops_queue_bindings WHERE source_id=s.id AND resource=r.resource AND binding_id IS NOT NULL ORDER BY binding_id) OR
+   r.job_id IS DISTINCT FROM (SELECT job_id FROM app_environment_workload_intents WHERE app_id=r.app_id AND environment_id=s.environment_id) OR
+   EXISTS(SELECT 1 FROM deployments WHERE app_id=r.app_id AND scope=release_scope AND status='live' AND (environment_workload_runtime->>'source_id' IS DISTINCT FROM s.id::text OR traffic_percent<>0)) OR
+   EXISTS(SELECT 1 FROM queue_bindings WHERE app_id=r.app_id AND environment_id=s.environment_id AND NOT(id=ANY(r.queue_binding_ids))) THEN RETURN false; END IF;
+ END LOOP;
+ -- Complete removal only. Any surviving caller or recipient needs a separately
+ -- qualified replacement graph; this path cannot retain or redistribute traffic.
+ IF EXISTS(SELECT 1 FROM apps a WHERE a.project_id=s.project_id AND a.account_id=s.account_id AND a.status<>'deleted' AND coalesce(a.preview_of_slug,'')=''
+  AND NOT EXISTS(SELECT 1 FROM environment_workload_retirements owned WHERE owned.source_id=s.id AND owned.app_id=a.id AND owned.environment_id=s.environment_id
+   AND (owned.id=ANY(audit.retirement_ids) AND owned.phase='retiring' OR owned.phase='retired'))) THEN RETURN false; END IF;
+ RETURN true;
+END $$;
+
+
+--
+-- Name: environment_binding_retirement_policy(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_binding_retirement_policy(target_app uuid, target_scope text) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT coalesce((SELECT jsonb_build_object('revision',revision,'mode',mode)
+  FROM app_binding_release_policies WHERE app_id=target_app AND scope=target_scope),jsonb_build_object('revision',0,'mode','off'));
+$$;
+
+
+--
 -- Name: environment_gitops_guard_app_presence(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8304,6 +8571,8 @@ CREATE TABLE public.environment_workload_qualification_requests (
     lease_until timestamp with time zone,
     attempt bigint DEFAULT 0 NOT NULL,
     reserved_instance_id uuid,
+    binding_context jsonb,
+    CONSTRAINT environment_workload_qualification_reques_binding_context_check CHECK (((binding_context IS NULL) OR (((jsonb_typeof(binding_context) = 'object'::text) AND (jsonb_typeof((binding_context -> 'policy'::text)) = 'object'::text) AND (jsonb_typeof((binding_context -> 'artifact_inputs'::text)) = 'object'::text) AND ((binding_context ->> 'artifact_revision'::text) ~ '^[a-f0-9]{64}$'::text) AND (length((binding_context ->> 'service_revision'::text)) > 0)) IS TRUE))),
     CONSTRAINT environment_workload_qualification_request_execution_mode_check CHECK ((execution_mode = ANY (ARRAY['request'::text, 'service'::text, 'worker'::text, 'job'::text]))),
     CONSTRAINT environment_workload_qualification_requests_artifact_check CHECK ((jsonb_typeof(artifact) = 'object'::text)),
     CONSTRAINT environment_workload_qualification_requests_attempt_check CHECK ((attempt >= 0)),
@@ -9058,6 +9327,8 @@ CREATE TABLE public.environment_workload_retirements (
     recovery_revision_id uuid,
     recovery_generation bigint DEFAULT 0 NOT NULL,
     recovered_at timestamp with time zone,
+    binding_policy_context jsonb,
+    CONSTRAINT environment_workload_retirements_binding_policy_context_check CHECK (((binding_policy_context IS NULL) OR (jsonb_typeof(binding_policy_context) = 'object'::text))),
     CONSTRAINT environment_workload_retirements_check CHECK (((array_position(acknowledged_gateways, NULL::text) IS NULL) AND (acknowledged_gateways <@ expected_gateways))),
     CONSTRAINT environment_workload_retirements_check1 CHECK (((route_deployment_id IS NULL) OR (route_deployment_id = ANY (deployment_ids)))),
     CONSTRAINT environment_workload_retirements_check2 CHECK (((phase = ANY (ARRAY['planned'::text, 'retiring'::text, 'cancelled'::text])) = (retired_at IS NULL))),
@@ -12122,6 +12393,64 @@ $$;
 
 
 --
+-- Name: guard_environment_binding_context(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_binding_context() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.binding_context IS DISTINCT FROM OLD.binding_context THEN
+  RAISE EXCEPTION 'candidate binding context is immutable; qualify a fresh reviewed graph' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_environment_binding_release_audit(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_binding_release_audit() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' AND pg_trigger_depth()>1 THEN RETURN OLD; END IF;
+ RAISE EXCEPTION 'candidate binding release audit is immutable' USING ERRCODE='23514';
+END $$;
+
+
+--
+-- Name: guard_environment_binding_retirement_audit(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_binding_retirement_audit() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' AND pg_trigger_depth()>1 THEN RETURN OLD; END IF;
+ RAISE EXCEPTION 'checked binding retirement audit is immutable' USING ERRCODE='23514';
+END $$;
+
+
+--
+-- Name: guard_environment_binding_retirement_policy(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_binding_retirement_policy() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' THEN
+  NEW.binding_policy_context:=environment_binding_retirement_policy(NEW.app_id,(SELECT slug FROM project_environments WHERE id=NEW.environment_id));
+ ELSIF NEW.binding_policy_context IS DISTINCT FROM OLD.binding_policy_context THEN
+  RAISE EXCEPTION 'retirement policy review is immutable; review a fresh generation' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_environment_external_field_owner(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -12871,6 +13200,34 @@ BEGIN
   OR NOT environment_runtime_inputs_fresh(i.app_id,NEW.scope,NEW.boundary_at,NEW.variables,NEW.secret_versions,NEW.all_secrets,NEW.secret_refs,NEW.sidecar_secret_versions) THEN
   RAISE EXCEPTION 'environment runtime evidence requires its current qualification attempt and delivered inputs' USING ERRCODE='23514';
  END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_environment_qualification_service_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_qualification_service_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP<>'INSERT' THEN
+  IF TG_OP='DELETE' AND pg_trigger_depth()>1 THEN RETURN OLD; END IF;
+  RAISE EXCEPTION 'candidate service receipts are immutable' USING ERRCODE='23514';
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q
+  JOIN environment_qualification_executions caller ON caller.request_id=q.id AND caller.instance_id=(NEW.route->'Caller'->>'instance_id')::uuid
+  JOIN environment_qualification_executions target ON target.instance_id=(NEW.route->'Target'->>'instance_id')::uuid
+  JOIN environment_workload_qualification_requests t ON t.id=target.request_id
+  WHERE q.id=NEW.request_id AND q.attempt=NEW.attempt AND q.graph_id=t.graph_id AND caller.frame=NEW.route->'Caller' AND target.frame=NEW.route->'Target'
+   AND caller.dispatch_started AND target.dispatch_started AND caller.retired_at IS NULL AND target.retired_at IS NULL
+   AND q.lease_until>clock_timestamp() AND t.lease_until>clock_timestamp() AND environment_workload_qualification_inputs_current(q.id)
+   AND NEW.route->>'RequireHTTPS'='true' AND NEW.route->'Caller'->>'capture_instance_id'=q.reserved_instance_id::text
+   AND NEW.route->'Target'->>'capture_instance_id'=t.reserved_instance_id::text
+   AND q.frozen_inputs->'service_bindings'->NEW.binding->>'target_app_id'=t.app_id::text
+   AND (NEW.route->>'Deadline')::timestamptz<=least(q.lease_until,t.lease_until) AND (NEW.route->>'Deadline')::timestamptz>clock_timestamp()) THEN
+  RAISE EXCEPTION 'candidate service receipt requires the original restored graph endpoints' USING ERRCODE='23514'; END IF;
  RETURN NEW;
 END $$;
 
@@ -24187,6 +24544,38 @@ END $$;
 
 
 --
+-- Name: validate_environment_binding_release(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.validate_environment_binding_release() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE actual jsonb;
+BEGIN
+ SELECT jsonb_object_agg(app_id::text,deployment_id::text) INTO actual FROM project_release_members WHERE release_id=NEW.release_id;
+ IF actual IS DISTINCT FROM NEW.members OR NEW.valid_until<=clock_timestamp() OR environment_binding_qualification_deadline(NEW.graph_id) IS NULL THEN
+  RAISE EXCEPTION 'candidate binding evidence changed before commit' USING ERRCODE='23514',CONSTRAINT='binding_release_required'; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: validate_environment_binding_retirement(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.validate_environment_binding_retirement() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NOT environment_binding_retirement_current(NEW) OR EXISTS(SELECT 1 FROM project_release_members WHERE release_id=NEW.release_id) OR
+  NOT EXISTS(SELECT 1 FROM project_release_sets rs JOIN environment_git_sources s ON s.id=NEW.source_id JOIN project_environments e ON e.id=s.environment_id
+   WHERE rs.id=NEW.release_id AND rs.project_id=s.project_id AND rs.account_id=s.account_id AND rs.environment_slug=e.slug AND rs.active) THEN
+  RAISE EXCEPTION 'binding retirement authority changed before commit' USING ERRCODE='23514',CONSTRAINT='binding_release_required'; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: validate_financial_evidence_insert(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -26492,7 +26881,7 @@ END)), false)) AND ((binding_verification IS NULL) OR (COALESCE((binding_verific
     CONSTRAINT app_tasks_exclusive_generation_check CHECK ((((exclusive_operation_id IS NULL) AND (exclusive_generation IS NULL)) OR ((exclusive_operation_id IS NOT NULL) AND (exclusive_generation > 0)))),
     CONSTRAINT app_tasks_exit_code_chk CHECK (((exit_code IS NULL) OR ((exit_code >= 0) AND (exit_code <= 255)))),
     CONSTRAINT app_tasks_failure_shape_chk CHECK ((((failure_code IS NULL) = (failure_message IS NULL)) AND ((failure_code IS NULL) OR (status = ANY (ARRAY['failed'::text, 'timed_out'::text])) OR ((status = 'queued'::text) AND (retry_at IS NOT NULL))) AND ((failure_code IS NULL) OR ((octet_length(failure_code) >= 1) AND (octet_length(failure_code) <= 64))) AND ((failure_message IS NULL) OR (octet_length(failure_message) <= 4096)))),
-    CONSTRAINT app_tasks_image_digest_chk CHECK (((octet_length(image_digest) >= 1) AND (octet_length(image_digest) <= 255))),
+    CONSTRAINT app_tasks_image_digest_chk CHECK ((((octet_length(image_digest) >= 1) AND (octet_length(image_digest) <= 255)) OR ((image_digest = ''::text) AND COALESCE(((kind = 'manual'::text) AND (NOT command_shell) AND ((binding_verification ->> 'type'::text) = 'service'::text) AND (jsonb_typeof((binding_verification -> 'managed_service'::text)) = 'object'::text) AND (((binding_verification -> 'managed_service'::text) ->> 'version'::text) = '1'::text) AND (((binding_verification -> 'managed_service'::text) ->> 'caller_deployment_id'::text) = (deployment_id)::text) AND (((binding_verification -> 'managed_service'::text) ->> 'scope'::text) = deployment_scope) AND (((binding_verification -> 'managed_service'::text) ->> 'service'::text) = (binding_verification ->> 'binding'::text)) AND (((binding_verification -> 'managed_service'::text) ->> 'target_deployment_id'::text) = (binding_verification ->> 'target_deployment_id'::text)) AND (((binding_verification -> 'managed_service'::text) ->> 'context_revision'::text) = (binding_verification ->> 'revision'::text)) AND (((binding_verification -> 'managed_service'::text) ->> 'release_id'::text) ~ '^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$'::text) AND (((binding_verification -> 'managed_service'::text) ->> 'target_app_id'::text) ~ '^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$'::text)), false)))),
     CONSTRAINT app_tasks_kind_chk CHECK ((kind = ANY (ARRAY['manual'::text, 'release'::text, 'cron'::text]))),
     CONSTRAINT app_tasks_lease_shape_chk CHECK ((((lease_token IS NULL) AND (lease_owner IS NULL) AND (lease_expires_at IS NULL)) OR ((lease_token IS NOT NULL) AND (lease_owner IS NOT NULL) AND (lease_expires_at IS NOT NULL)))),
     CONSTRAINT app_tasks_lease_status_chk CHECK (((status = ANY (ARRAY['restoring'::text, 'running'::text])) = (lease_token IS NOT NULL))),
@@ -30926,6 +31315,20 @@ CREATE TABLE public.entity_outbox_acceptances (
 
 
 --
+-- Name: environment_binding_release_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_binding_release_receipts (
+    release_id uuid NOT NULL,
+    graph_id uuid NOT NULL,
+    members jsonb NOT NULL,
+    valid_until timestamp with time zone NOT NULL,
+    recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT environment_binding_release_receipts_members_check CHECK ((jsonb_typeof(members) = 'object'::text))
+);
+
+
+--
 -- Name: environment_desired_revisions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -31422,6 +31825,22 @@ CREATE TABLE public.environment_qualification_restore_reservations (
     CONSTRAINT environment_qualification_restore_reservation_instance_id_check CHECK ((instance_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT environment_qualification_restore_reservations_attempt_check CHECK ((attempt > 0)),
     CONSTRAINT environment_qualification_restore_reservations_check CHECK ((instance_id <> capture_instance_id))
+);
+
+
+--
+-- Name: environment_qualification_service_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_qualification_service_receipts (
+    request_id uuid NOT NULL,
+    attempt bigint NOT NULL,
+    binding text NOT NULL,
+    route jsonb NOT NULL,
+    recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT environment_qualification_service_receipts_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT environment_qualification_service_receipts_binding_check CHECK ((binding ~ '^[a-z0-9][a-z0-9-]*$'::text)),
+    CONSTRAINT environment_qualification_service_receipts_route_check CHECK ((jsonb_typeof(route) = 'object'::text))
 );
 
 
@@ -41359,7 +41778,7 @@ CREATE TABLE public.platform_mail_deployment_fences (
     revision bigint DEFAULT 1 NOT NULL,
     success_revision bigint DEFAULT 0 NOT NULL,
     CONSTRAINT platform_mail_deployment_fences_revision_check CHECK ((revision > 0)),
-    CONSTRAINT platform_mail_deployment_fences_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT platform_mail_deployment_fences_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
     CONSTRAINT platform_mail_deployment_fences_success_revision_check CHECK ((success_revision >= 0))
 );
 
@@ -41476,7 +41895,7 @@ CREATE TABLE public.platform_mail_producer_outbox (
     CONSTRAINT platform_mail_producer_outbox_code_check CHECK ((code = ANY (ARRAY[''::text, 'maild_unavailable'::text, 'maild_rejected'::text, 'attempt_limit'::text, 'notification_expired'::text, 'account_changed'::text, 'platform_suppressed'::text, 'token_unavailable'::text, 'payload_unavailable'::text]))),
     CONSTRAINT platform_mail_producer_outbox_created_at_check CHECK (isfinite(created_at)),
     CONSTRAINT platform_mail_producer_outbox_deletion_requested_at_check CHECK (isfinite(deletion_requested_at)),
-    CONSTRAINT platform_mail_producer_outbox_deployment_failure_check CHECK ((((template = 'deployment_failed'::text) AND (deployment_failure_id IS NOT NULL) AND (deployment_failure_app_id IS NOT NULL) AND (deployment_failure_scope IS NOT NULL) AND (deployment_failure_scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text) AND (deployment_failure_revision IS NOT NULL) AND (deployment_failure_revision > 0) AND (deployment_failure_account_revision IS NOT NULL) AND (deployment_failure_account_revision > 0) AND (deployment_failure_app_revision IS NOT NULL) AND (deployment_failure_app_revision > 0) AND (deployment_failure_success_revision IS NOT NULL) AND (deployment_failure_success_revision >= 0) AND (deployment_failure_at IS NOT NULL) AND isfinite(deployment_failure_at)) OR ((template <> 'deployment_failed'::text) AND (deployment_failure_id IS NULL) AND (deployment_failure_app_id IS NULL) AND (deployment_failure_scope IS NULL) AND (deployment_failure_revision IS NULL) AND (deployment_failure_account_revision IS NULL) AND (deployment_failure_app_revision IS NULL) AND (deployment_failure_success_revision IS NULL) AND (deployment_failure_at IS NULL)))),
+    CONSTRAINT platform_mail_producer_outbox_deployment_failure_check CHECK ((((template = 'deployment_failed'::text) AND (deployment_failure_id IS NOT NULL) AND (deployment_failure_app_id IS NOT NULL) AND (deployment_failure_scope IS NOT NULL) AND (deployment_failure_scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text) AND (deployment_failure_revision IS NOT NULL) AND (deployment_failure_revision > 0) AND (deployment_failure_account_revision IS NOT NULL) AND (deployment_failure_account_revision > 0) AND (deployment_failure_app_revision IS NOT NULL) AND (deployment_failure_app_revision > 0) AND (deployment_failure_success_revision IS NOT NULL) AND (deployment_failure_success_revision >= 0) AND (deployment_failure_at IS NOT NULL) AND isfinite(deployment_failure_at)) OR ((template <> 'deployment_failed'::text) AND (deployment_failure_id IS NULL) AND (deployment_failure_app_id IS NULL) AND (deployment_failure_scope IS NULL) AND (deployment_failure_revision IS NULL) AND (deployment_failure_account_revision IS NULL) AND (deployment_failure_app_revision IS NULL) AND (deployment_failure_success_revision IS NULL) AND (deployment_failure_at IS NULL)))),
     CONSTRAINT platform_mail_producer_outbox_from_address_check CHECK (((length(from_address) >= 3) AND (length(from_address) <= 1024))),
     CONSTRAINT platform_mail_producer_outbox_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT platform_mail_producer_outbox_lease_until_check CHECK (((lease_until IS NULL) OR isfinite(lease_until))),
@@ -51337,6 +51756,22 @@ ALTER TABLE ONLY public.entity_outbox_acceptances
 
 
 --
+-- Name: environment_binding_release_receipts environment_binding_release_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_binding_release_receipts
+    ADD CONSTRAINT environment_binding_release_receipts_pkey PRIMARY KEY (release_id);
+
+
+--
+-- Name: environment_binding_retirement_receipts environment_binding_retirement_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_binding_retirement_receipts
+    ADD CONSTRAINT environment_binding_retirement_receipts_pkey PRIMARY KEY (release_id);
+
+
+--
 -- Name: environment_desired_revisions environment_desired_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -51622,6 +52057,14 @@ ALTER TABLE ONLY public.environment_qualification_restore_reservations
 
 ALTER TABLE ONLY public.environment_qualification_restore_reservations
     ADD CONSTRAINT environment_qualification_restore_reservations_pkey PRIMARY KEY (instance_id);
+
+
+--
+-- Name: environment_qualification_service_receipts environment_qualification_service_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_qualification_service_receipts
+    ADD CONSTRAINT environment_qualification_service_receipts_pkey PRIMARY KEY (request_id, attempt, binding);
 
 
 --
@@ -70912,6 +71355,34 @@ CREATE TRIGGER github_webhook_secrets_notify_trg AFTER INSERT OR UPDATE ON publi
 
 
 --
+-- Name: environment_workload_qualification_requests guard_environment_binding_context; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_environment_binding_context BEFORE UPDATE OF binding_context ON public.environment_workload_qualification_requests FOR EACH ROW EXECUTE FUNCTION public.guard_environment_binding_context();
+
+
+--
+-- Name: environment_binding_release_receipts guard_environment_binding_release_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_environment_binding_release_audit BEFORE DELETE OR UPDATE ON public.environment_binding_release_receipts FOR EACH ROW EXECUTE FUNCTION public.guard_environment_binding_release_audit();
+
+
+--
+-- Name: environment_binding_retirement_receipts guard_environment_binding_retirement_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_environment_binding_retirement_audit BEFORE DELETE OR UPDATE ON public.environment_binding_retirement_receipts FOR EACH ROW EXECUTE FUNCTION public.guard_environment_binding_retirement_audit();
+
+
+--
+-- Name: environment_workload_retirements guard_environment_binding_retirement_policy; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_environment_binding_retirement_policy BEFORE INSERT OR UPDATE ON public.environment_workload_retirements FOR EACH ROW EXECUTE FUNCTION public.guard_environment_binding_retirement_policy();
+
+
+--
 -- Name: environment_workload_qualification_requests guard_environment_qualification_attempt_replacement; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -70937,6 +71408,13 @@ CREATE TRIGGER guard_environment_qualification_physical_retirement BEFORE DELETE
 --
 
 CREATE TRIGGER guard_environment_qualification_runtime_receipt BEFORE INSERT OR UPDATE ON public.instance_runtime_config_receipts FOR EACH ROW EXECUTE FUNCTION public.guard_environment_qualification_runtime_receipt();
+
+
+--
+-- Name: environment_qualification_service_receipts guard_environment_qualification_service_receipt; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_environment_qualification_service_receipt BEFORE INSERT OR DELETE OR UPDATE ON public.environment_qualification_service_receipts FOR EACH ROW EXECUTE FUNCTION public.guard_environment_qualification_service_receipt();
 
 
 --
@@ -73772,6 +74250,20 @@ CREATE TRIGGER trigger_record_held_queue_guard BEFORE UPDATE OF state, claim_gen
 --
 
 CREATE TRIGGER triggers_delete_exclusive_broker_binding AFTER DELETE ON public.triggers FOR EACH ROW EXECUTE FUNCTION public.delete_exclusive_broker_binding();
+
+
+--
+-- Name: environment_binding_release_receipts validate_environment_binding_release; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER validate_environment_binding_release AFTER INSERT ON public.environment_binding_release_receipts DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.validate_environment_binding_release();
+
+
+--
+-- Name: environment_binding_retirement_receipts validate_environment_binding_retirement; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER validate_environment_binding_retirement AFTER INSERT ON public.environment_binding_retirement_receipts DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.validate_environment_binding_retirement();
 
 
 --
@@ -78027,6 +78519,46 @@ ALTER TABLE ONLY public.entity_outbox_acceptances
 
 
 --
+-- Name: environment_binding_release_receipts environment_binding_release_receipts_graph_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_binding_release_receipts
+    ADD CONSTRAINT environment_binding_release_receipts_graph_id_fkey FOREIGN KEY (graph_id) REFERENCES public.environment_workload_graphs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_binding_release_receipts environment_binding_release_receipts_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_binding_release_receipts
+    ADD CONSTRAINT environment_binding_release_receipts_release_id_fkey FOREIGN KEY (release_id) REFERENCES public.project_release_sets(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: environment_binding_retirement_receipts environment_binding_retirement_receipts_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_binding_retirement_receipts
+    ADD CONSTRAINT environment_binding_retirement_receipts_release_id_fkey FOREIGN KEY (release_id) REFERENCES public.project_release_sets(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: environment_binding_retirement_receipts environment_binding_retirement_receipts_revision_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_binding_retirement_receipts
+    ADD CONSTRAINT environment_binding_retirement_receipts_revision_id_fkey FOREIGN KEY (revision_id) REFERENCES public.environment_desired_revisions(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: environment_binding_retirement_receipts environment_binding_retirement_receipts_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_binding_retirement_receipts
+    ADD CONSTRAINT environment_binding_retirement_receipts_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE;
+
+
+--
 -- Name: environment_desired_revisions environment_desired_revisions_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -78336,6 +78868,14 @@ ALTER TABLE ONLY public.environment_qualification_restore_receipts
 
 ALTER TABLE ONLY public.environment_qualification_restore_reservations
     ADD CONSTRAINT environment_qualification_restore_rese_capture_instance_id_fkey FOREIGN KEY (capture_instance_id) REFERENCES public.environment_qualification_snapshot_receipts(instance_id);
+
+
+--
+-- Name: environment_qualification_service_receipts environment_qualification_service_receipts_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_qualification_service_receipts
+    ADD CONSTRAINT environment_qualification_service_receipts_request_id_fkey FOREIGN KEY (request_id) REFERENCES public.environment_workload_qualification_requests(id) ON DELETE CASCADE;
 
 
 --

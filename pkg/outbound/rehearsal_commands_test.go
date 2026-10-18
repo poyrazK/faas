@@ -76,7 +76,7 @@ func commandSimulation(t *testing.T, backend, mode string) api.ScenarioActionSna
 	}
 	if pg, ok := f.store.(*state.PgStore); ok {
 		callers, err := pg.LiveServiceCallersByHostIP(t.Context(), state.DefaultLocalNodeName, "10.100.1.2")
-		if err != nil || len(callers) != 1 || callers[0].AppID != identity.AppID || callers[0].DeploymentID != identity.DeploymentID {
+		if err != nil || len(callers) != 1 || callers[0].ID != identity.InstanceID || callers[0].AppID != identity.AppID || callers[0].DeploymentID != identity.DeploymentID {
 			t.Fatalf("command private caller identity missing: %+v %v", callers, err)
 		}
 	}

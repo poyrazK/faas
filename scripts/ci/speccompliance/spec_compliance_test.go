@@ -695,6 +695,7 @@ var dtoExclude = map[string]bool{
 	"PlatformTenantActivityOptions":                   true, // client-only query parameters; the response DTOs are in the public spec
 	"OperationMilestoneListOptions":                   true, // client-only milestone query selectors
 	"OperationListOptions":                            true, // client-only history query parameters; OperationListResponse is the wire DTO
+	"ExplainServiceBindingOptions":                    true, // client-only explanation query parameters; ServiceBindingExplanation is the wire DTO
 	// ADR-1194: the decision payload delivered to the workflow, not an apid request or response.
 	"OperationApprovalPayload":  true,
 	"OperationApprovalDecision": true,
@@ -1660,6 +1661,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", queueBindingFile),
 		filepath.Join(root, "pkg", "api", "queue_leases.go"), // ADR-1140 pull-lease DTOs
 		filepath.Join(root, "pkg", "api", "binding_inventory.go"),
+		filepath.Join(root, "pkg", "api", "service_binding_explanation.go"),
+		filepath.Join(root, "pkg", "api", "managed_service_probe.go"),
 		filepath.Join(root, "pkg", "api", "binding_release_policy.go"),
 		filepath.Join(root, "pkg", "api", "rollout_recovery.go"),
 		filepath.Join(root, "pkg", "api", "service_rollout_bindings.go"),

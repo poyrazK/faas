@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
@@ -378,7 +379,28 @@ func (s *PgStore) ActivateEnvironmentGitOpsEmptyRetirement(ctx context.Context, 
 	if err != nil {
 		return false, err
 	}
-	if _, err = publishProjectReleaseSetTx(ctx, tx, lease.Source.AccountID, lease.Source.ProjectID, lease.Source.EnvironmentSlug, &activeID, fallback, ttl, members, true, func(ctx context.Context, tx pgx.Tx) error { return s.activateWorkloadRetirementsTx(ctx, tx, lease) }); err != nil {
+	required, err := q.EnvironmentBindingReleaseRequired(ctx, tx, sqlc.EnvironmentBindingReleaseRequiredParams{ProjectID: mustPgUUID(lease.Source.ProjectID), Scope: lease.Source.EnvironmentSlug})
+	if err != nil {
+		return false, mapErr(err)
+	}
+	if required && len(members) != 0 {
+		return false, ErrBindingReleaseRequired
+	}
+	releaseID := uuid.NewString()
+	if required {
+		ctx = context.WithValue(ctx, qualifiedEnvironmentReleaseKey{}, releaseID)
+	}
+	before := func(ctx context.Context, tx pgx.Tx) error {
+		if err := s.activateWorkloadRetirementsTx(ctx, tx, lease); err != nil {
+			return err
+		}
+		if required {
+			_, err := q.AuthorizeEnvironmentBindingRetirement(ctx, tx, sqlc.AuthorizeEnvironmentBindingRetirementParams{SourceID: mustPgUUID(lease.Source.ID), NextRelease: mustPgUUID(releaseID), PriorRelease: activeID, PlanHash: reviewed.Hash})
+			return mapErr(err)
+		}
+		return nil
+	}
+	if _, err = publishProjectReleaseSetTx(ctx, tx, lease.Source.AccountID, lease.Source.ProjectID, lease.Source.EnvironmentSlug, &activeID, fallback, ttl, members, true, before); err != nil {
 		return false, err
 	}
 	return true, mapErr(tx.Commit(ctx))

@@ -32,6 +32,18 @@ func cmdAITokens(args []string) int {
 	if err := parseInterspersed(fs, args[1:]); err != nil || *slug == "" {
 		return printErr("Invalid ai tokens arguments", errors.New(aiTokensUsage))
 	}
+	switch args[0] {
+	case "list", "create":
+		if fs.NArg() != 0 {
+			return printErr("Invalid ai tokens arguments", errors.New(aiTokensUsage))
+		}
+	case "revoke":
+		if fs.NArg() != 1 {
+			return printErr("Invalid ai tokens arguments", errors.New(aiTokensUsage))
+		}
+	default:
+		return printErr("Invalid ai tokens arguments", errors.New(aiTokensUsage))
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)

@@ -9755,24 +9755,40 @@ ORDER BY totals.request_count DESC, totals.decision_type, totals.decision_value
 LIMIT 101;
 
 -- name: EnqueueInvocationRow :one
-WITH replay_parent AS (
-  SELECT i.id, i.replay_root_invocation_id, coalesce(i.replay_root_created_at, i.created_at) AS root_created_at
-  FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
-  WHERE i.id=sqlc.narg(replayed_from_invocation_id)::uuid
-    AND i.account_id=sqlc.arg(account_id)::uuid AND i.app_id=sqlc.arg(app_id)::uuid
-    AND i.deployment_scope=coalesce(nullif(sqlc.arg(deployment_scope)::text, ''),
-      CASE WHEN a.project_id IS NOT NULL AND coalesce(a.preview_of_slug, '')='' THEN 'production' ELSE 'default' END)
-    AND i.platform_tenant_id IS NOT DISTINCT FROM sqlc.narg(platform_tenant_id)::uuid
-    AND i.state IN ('failed', 'dead_letter') AND sqlc.arg(source)::text='replay'
-    AND (i.work_policy_name IS NULL OR (
-      i.work_policy_name=nullif(sqlc.arg(work_policy_name)::text, '')
-      AND i.work_key_digest=sqlc.narg(work_key_digest)::bytea
-      AND i.work_policy_revision IS NOT DISTINCT FROM sqlc.narg(work_policy_revision)::bigint
-      AND i.work_fairness_digest IS NOT DISTINCT FROM sqlc.narg(work_fairness_digest)::bytea
-      AND i.work_fairness_limit IS NOT DISTINCT FROM sqlc.narg(work_fairness_limit)::int
-      AND i.work_expires_at IS NOT DISTINCT FROM sqlc.narg(work_expires_at)::timestamptz
-    ))
-  FOR SHARE OF i, a
+-- Managed-work capture takes this action-run lock in its trigger; acquire it before replay-parent row locks.
+WITH scenario_action_run_locks AS MATERIALIZED (
+  SELECT pg_advisory_xact_lock(hashtextextended(
+    'scenario-action-run:' || p.account_id::text || ':' || p.run_id, 0)) AS acquired
+  FROM scenario_test_action_policies p
+  WHERE p.app_id=sqlc.arg(app_id)::uuid AND p.managed_work_plan IS NOT NULL
+  ORDER BY p.account_id, p.run_id
+),
+scenario_action_lock_gate AS MATERIALIZED (
+  SELECT count(acquired)>=0 AS ready FROM scenario_action_run_locks
+),
+replay_parent AS (
+  SELECT parent.id, parent.replay_root_invocation_id, parent.root_created_at
+  FROM scenario_action_lock_gate gate
+  CROSS JOIN LATERAL (
+    SELECT i.id, i.replay_root_invocation_id, coalesce(i.replay_root_created_at, i.created_at) AS root_created_at
+    FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+    WHERE i.id=sqlc.narg(replayed_from_invocation_id)::uuid
+      AND i.account_id=sqlc.arg(account_id)::uuid AND i.app_id=sqlc.arg(app_id)::uuid
+      AND i.deployment_scope=coalesce(nullif(sqlc.arg(deployment_scope)::text, ''),
+        CASE WHEN a.project_id IS NOT NULL AND coalesce(a.preview_of_slug, '')='' THEN 'production' ELSE 'default' END)
+      AND i.platform_tenant_id IS NOT DISTINCT FROM sqlc.narg(platform_tenant_id)::uuid
+      AND i.state IN ('failed', 'dead_letter') AND sqlc.arg(source)::text='replay'
+      AND (i.work_policy_name IS NULL OR (
+        i.work_policy_name=nullif(sqlc.arg(work_policy_name)::text, '')
+        AND i.work_key_digest=sqlc.narg(work_key_digest)::bytea
+        AND i.work_policy_revision IS NOT DISTINCT FROM sqlc.narg(work_policy_revision)::bigint
+        AND i.work_fairness_digest IS NOT DISTINCT FROM sqlc.narg(work_fairness_digest)::bytea
+        AND i.work_fairness_limit IS NOT DISTINCT FROM sqlc.narg(work_fairness_limit)::int
+        AND i.work_expires_at IS NOT DISTINCT FROM sqlc.narg(work_expires_at)::timestamptz
+      ))
+    FOR SHARE OF i, a
+  ) parent
+  WHERE gate.ready
 )
 INSERT INTO invocations (
   id, app_id, account_id, source, queue_name, state, method, path,
@@ -9796,8 +9812,10 @@ INSERT INTO invocations (
   sqlc.narg(platform_tenant_id), nullif(sqlc.arg(deployment_scope)::text, ''), sqlc.narg(queue_binding_id),
   sqlc.narg(occurrence_id)::uuid, sqlc.narg(start_deadline_at)::timestamptz, sqlc.narg(failure_rules)::jsonb,
   sqlc.narg(environment_id)::uuid, replay_parent.id, coalesce(replay_parent.replay_root_invocation_id, replay_parent.id), replay_parent.root_created_at
-FROM (SELECT 1) seed LEFT JOIN replay_parent ON true
-WHERE sqlc.narg(replayed_from_invocation_id)::uuid IS NULL OR replay_parent.id IS NOT NULL
+FROM scenario_action_lock_gate gate
+LEFT JOIN replay_parent ON true
+WHERE gate.ready
+  AND (sqlc.narg(replayed_from_invocation_id)::uuid IS NULL OR replay_parent.id IS NOT NULL)
 RETURNING *;
 
 -- Queue binding/consumer publication (ADR-393). Parent locks also serialize
@@ -11617,49 +11635,6 @@ attempt_count=CASE WHEN evidence.complete THEN 0 ELSE attempt_count END,
 last_error_code=NULL,updated_at=sqlc.arg(now),retry_at=sqlc.arg(now)
 FROM evidence WHERE id=sqlc.arg(id)::text::uuid;
 
--- name: ProbeManagedPostgresCredential :one
-SELECT session_user::text AS login, current_user::text AS effective_user,
- current_database()::text AS database_name, current_setting('server_version_num')::integer AS version_num,
- current_setting('transaction_read_only')::boolean AS read_only,
- current_setting('row_security')='on' AS row_security,
- has_schema_privilege(current_user,'public','USAGE') AS schema_usage,
- has_schema_privilege(current_user,'public','CREATE') AS schema_create,
- (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls OR r.rolinherit
- OR e.rolsuper OR e.rolcreatedb OR e.rolcreaterole OR e.rolreplication OR e.rolbypassrls OR e.rolinherit) AS unsafe_role,
- ((sqlc.arg(access)::text<>'migration' AND has_database_privilege(current_user,current_database(),'CREATE'))
- OR has_database_privilege(current_user,current_database(),'TEMPORARY')
- OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member=r.oid
- AND (sqlc.arg(access)::text<>'migration' OR roleid<>e.oid))
- OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member=e.oid AND e.oid<>r.oid)) AS elevated_runtime,
- NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
- WHERE n.nspname='public' AND ((c.relkind IN ('r','p','v','m','f') AND NOT
- (has_table_privilege(current_user,c.oid,'SELECT') AND
- ((sqlc.arg(access)::text='read_only' AND NOT (has_table_privilege(current_user,c.oid,'INSERT')
- OR has_table_privilege(current_user,c.oid,'UPDATE') OR has_table_privilege(current_user,c.oid,'DELETE')))
- OR (sqlc.arg(access)::text<>'read_only' AND has_table_privilege(current_user,c.oid,'INSERT')
- AND has_table_privilege(current_user,c.oid,'UPDATE') AND has_table_privilege(current_user,c.oid,'DELETE')))
- AND (sqlc.arg(access)::text='migration' OR
- (c.relowner<>e.oid AND NOT has_table_privilege(current_user,c.oid,'TRUNCATE')))))
- OR (c.relkind='S' AND NOT (has_sequence_privilege(current_user,c.oid,'SELECT') AND
- ((sqlc.arg(access)::text='read_only' AND NOT (has_sequence_privilege(current_user,c.oid,'USAGE')
- OR has_sequence_privilege(current_user,c.oid,'UPDATE'))) OR (sqlc.arg(access)::text<>'read_only'
- AND has_sequence_privilege(current_user,c.oid,'USAGE')))))))
- AND (sqlc.arg(access)::text<>'read_only' OR NOT (
- EXISTS (SELECT 1 FROM pg_catalog.pg_namespace n WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema'
- AND has_schema_privilege(current_user,n.oid,'CREATE'))
- OR EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
- WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND
- ((c.relkind IN ('r','p','v','m','f') AND (has_table_privilege(current_user,c.oid,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
- OR has_any_column_privilege(current_user,c.oid,'INSERT,UPDATE,REFERENCES')))
- OR (c.relkind='S' AND has_sequence_privilege(current_user,c.oid,'USAGE,UPDATE'))))
- OR EXISTS (SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
- WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND p.prosecdef AND has_function_privilege(current_user,p.oid,'EXECUTE'))
- OR EXISTS (SELECT 1 FROM pg_catalog.pg_default_acl d, LATERAL aclexplode(d.defaclacl) a
- WHERE a.grantee IN (0,e.oid) AND
- ((d.defaclobjtype='r' AND a.privilege_type IN ('INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'))
- OR (d.defaclobjtype='S' AND a.privilege_type IN ('USAGE','UPDATE')))))) AS data_access
-FROM pg_catalog.pg_roles r JOIN pg_catalog.pg_roles e ON e.rolname=current_user WHERE r.rolname=session_user;
-
 -- name: LockUDPListenerAppOwner :one
 SELECT account_id::text AS account_id FROM apps
 WHERE id = sqlc.arg(app_id)::text::uuid AND status <> 'deleted'
@@ -13268,11 +13243,11 @@ WHERE id=sqlc.arg(id)::uuid AND phase<>'failed'
 RETURNING *;
 
 -- name: CreateEnvironmentWorkloadQualification :execrows
-INSERT INTO environment_workload_qualification_requests(graph_id,deployment_id,app_id,resource,artifact,frozen_inputs,execution_mode)
+INSERT INTO environment_workload_qualification_requests(graph_id,deployment_id,app_id,resource,artifact,frozen_inputs,execution_mode,binding_context)
 SELECT sqlc.arg(graph_id)::uuid,d.id,d.app_id,sqlc.arg(resource)::text,environment_workload_artifact(d),d.environment_workload_runtime,
  CASE WHEN d.environment_workload_runtime->'runtime' ? 'execution_mode'
  THEN coalesce(nullif(d.environment_workload_runtime->'runtime'->>'execution_mode',''),'request')
- ELSE coalesce(nullif(d.environment_workload_runtime->'baseline'->>'execution_mode',''),'request') END
+ ELSE coalesce(nullif(d.environment_workload_runtime->'baseline'->>'execution_mode',''),'request') END, sqlc.narg(binding_context)::jsonb
 FROM deployments d WHERE d.id=sqlc.arg(deployment_id)::uuid
 ON CONFLICT(graph_id,resource) DO NOTHING;
 
@@ -14920,9 +14895,28 @@ SELECT a.account_id, a.id, d.id, 'manual', sqlc.arg(command)::text[], false,
 FROM apps a JOIN deployments d ON d.app_id = a.id
 WHERE a.id = sqlc.arg(app_id) AND a.account_id = sqlc.arg(account_id)
  AND a.status <> 'deleted' AND d.id = sqlc.arg(deployment_id)
- AND d.rootfs_key IS NOT NULL AND d.rootfs_key <> '' AND d.image_digest <> ''
+ AND d.rootfs_key IS NOT NULL AND d.rootfs_key <> ''
+ AND (d.image_digest <> '' OR (
+  sqlc.arg(binding_verification)::jsonb ? 'managed_service' AND d.kind='github'
+  AND d.environment_workload_runtime->'source_archive' IS NOT NULL
+  AND NOT d.environment_workload_held AND d.rootfs_bytes>0
+ ))
  AND d.status IN ('imaging', 'snapshotting', 'live', 'superseded')
  AND (NOT sqlc.arg(require_live_deployment)::boolean OR d.status = 'live')
+ AND (NOT (sqlc.arg(binding_verification)::jsonb ? 'managed_service') OR EXISTS (
+  SELECT 1 FROM project_release_sets release
+  JOIN project_release_members caller_member ON caller_member.release_id=release.id AND caller_member.app_id=a.id AND caller_member.deployment_id=d.id
+  JOIN project_release_members target_member ON target_member.release_id=release.id
+  JOIN active_environment_git_sources source ON source.id::text=d.environment_workload_runtime->>'source_id'
+  WHERE release.id::text=sqlc.arg(binding_verification)::jsonb->'managed_service'->>'release_id'
+   AND release.active AND release.account_id=a.account_id AND release.project_id=a.project_id
+   AND release.environment_slug=COALESCE(NULLIF(d.scope,''),'default')
+   AND source.account_id=a.account_id AND source.project_id=a.project_id AND source.mode='enforce' AND NOT source.suspended
+   AND NOT d.environment_workload_held
+   AND target_member.app_id::text=sqlc.arg(binding_verification)::jsonb->'managed_service'->>'target_app_id'
+   AND target_member.deployment_id::text=sqlc.arg(binding_verification)::jsonb->>'target_deployment_id'
+  FOR SHARE OF release, source
+ ))
 FOR SHARE OF d
 RETURNING id;
 -- name: ListBindingVerificationTasks :many
@@ -14935,6 +14929,7 @@ FROM app_tasks
 WHERE account_id = sqlc.arg(account_id) AND app_id = sqlc.arg(app_id)
  AND binding_verification IS NOT NULL
  AND binding_verification->>'type' = ANY(sqlc.arg(kinds)::text[])
+ AND (binding_verification->>'type' <> 'service' OR (binding_verification->'managed_service' IS NOT NULL) = sqlc.arg(managed_service)::boolean)
  AND (binding_verification->>'type' <> 'service' OR coalesce(binding_verification->>'target_deployment_id','') = coalesce(sqlc.arg(service_targets)::jsonb->>(binding_verification->>'binding'),''))
  AND (NOT sqlc.arg(exact_deployment)::boolean OR deployment_id = sqlc.narg(selected_deployment_id)::uuid)
 ORDER BY binding_verification->>'type', binding_verification->>'binding', deployment_scope,
@@ -22111,6 +22106,33 @@ WHERE j.account_id = sqlc.arg(account_id)::uuid
   AND r.id = sqlc.arg(run_id)::uuid
   AND t.task_index = sqlc.arg(task_index)::int;
 
+-- name: EnvironmentBindingCandidate :one
+SELECT to_jsonb(d)::jsonb AS deployment, a.account_id, environment_binding_catalog_supported(d.app_id,d.scope)::boolean AS catalog_supported
+FROM deployments d JOIN apps a ON a.id=d.app_id WHERE d.id=sqlc.arg(deployment_id)::uuid;
+
+-- name: EnvironmentBindingReleaseRequired :one
+SELECT EXISTS(SELECT 1 FROM apps a JOIN app_binding_release_policies p ON p.app_id=a.id
+ WHERE a.project_id=sqlc.arg(project_id)::uuid AND p.scope=sqlc.arg(scope)::text AND p.mode='enforce');
+
+-- name: RecordEnvironmentQualificationServiceExchange :exec
+INSERT INTO environment_qualification_service_receipts(request_id,attempt,binding,route)
+VALUES(sqlc.arg(request_id)::uuid,sqlc.arg(attempt)::bigint,sqlc.arg(binding)::text,sqlc.arg(route)::jsonb)
+ON CONFLICT(request_id,attempt,binding) DO NOTHING;
+
+-- name: EnvironmentQualificationServiceExchanges :many
+SELECT request_id,attempt,binding,route,recorded_at FROM environment_qualification_service_receipts
+WHERE request_id IN (SELECT id FROM environment_workload_qualification_requests WHERE graph_id=sqlc.arg(graph_id)::uuid);
+
+-- name: AuthorizeEnvironmentBindingRelease :one
+SELECT authorize_environment_binding_release(sqlc.arg(graph_id)::uuid,sqlc.arg(release_id)::uuid,sqlc.arg(prior_release)::text,sqlc.arg(members)::jsonb)::boolean;
+
+-- name: InsertEnvironmentBindingRelease :one
+INSERT INTO project_release_sets(id,account_id,project_id,environment_slug,active,ttl_seconds)
+VALUES(sqlc.arg(id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(project_id)::uuid,sqlc.arg(environment)::text,true,sqlc.arg(ttl)::integer)
+RETURNING created_at;
+
+-- name: AuthorizeEnvironmentBindingTraffic :one
+SELECT authorize_environment_binding_traffic(sqlc.arg(graph_id)::uuid,sqlc.arg(release_id)::uuid)::boolean;
 -- name: ReleaseRunsCrossedBy :many
 -- ADR-1448: release tasks of other deployments in a rollback target's scope
 -- that started after the target last served (serving_ended_at), or after it

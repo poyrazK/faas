@@ -1215,6 +1215,7 @@ export type { ManagedRealtimeSignalResponse } from './models/ManagedRealtimeSign
 export type { ManagedRealtimeSlugPath } from './models/ManagedRealtimeSlugPath.js';
 export type { ManagedRealtimeStatusQuery } from './models/ManagedRealtimeStatusQuery.js';
 export type { ManagedRealtimeVersionPath } from './models/ManagedRealtimeVersionPath.js';
+export type { ManagedServiceProbeSpec } from './models/ManagedServiceProbeSpec.js';
 export type { MCPAdmissionEvidence } from './models/MCPAdmissionEvidence.js';
 export type { MCPAdmissionGateway } from './models/MCPAdmissionGateway.js';
 export type { MCPAdmissionHistoryResponse } from './models/MCPAdmissionHistoryResponse.js';
@@ -2572,6 +2573,9 @@ export type { SelectedTraceLookupResponse } from './models/SelectedTraceLookupRe
 export type { SelectedTraceRequest } from './models/SelectedTraceRequest.js';
 export type { SendAppMessageRequest } from './models/SendAppMessageRequest.js';
 export type { SendAppMessageResponse } from './models/SendAppMessageResponse.js';
+export type { ServiceAuthorizationCheck } from './models/ServiceAuthorizationCheck.js';
+export type { ServiceBindingExplanation } from './models/ServiceBindingExplanation.js';
+export type { ServiceBindingInventoryContext } from './models/ServiceBindingInventoryContext.js';
 export type { ServiceBindingPolicy } from './models/ServiceBindingPolicy.js';
 export type { ServiceBindingTransport } from './models/ServiceBindingTransport.js';
 export type { ServiceCallerJWK } from './models/ServiceCallerJWK.js';

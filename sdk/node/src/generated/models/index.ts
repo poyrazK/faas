@@ -1301,6 +1301,7 @@ export type { ManagedRealtimeSignalResponse } from './ManagedRealtimeSignalRespo
 export type { ManagedRealtimeSlugPath } from './ManagedRealtimeSlugPath.js';
 export type { ManagedRealtimeStatusQuery } from './ManagedRealtimeStatusQuery.js';
 export type { ManagedRealtimeVersionPath } from './ManagedRealtimeVersionPath.js';
+export type { ManagedServiceProbeSpec } from './ManagedServiceProbeSpec.js';
 export type { MemberListResponse } from './MemberListResponse.js';
 export type { MirrorCleanCondition } from './MirrorCleanCondition.js';
 export type { MirrorReplayBatchRequest } from './MirrorReplayBatchRequest.js';
@@ -2569,6 +2570,9 @@ export type { SelectedTraceLookupResponse } from './SelectedTraceLookupResponse.
 export type { SelectedTraceRequest } from './SelectedTraceRequest.js';
 export type { SendAppMessageRequest } from './SendAppMessageRequest.js';
 export type { SendAppMessageResponse } from './SendAppMessageResponse.js';
+export type { ServiceAuthorizationCheck } from './ServiceAuthorizationCheck.js';
+export type { ServiceBindingExplanation } from './ServiceBindingExplanation.js';
+export type { ServiceBindingInventoryContext } from './ServiceBindingInventoryContext.js';
 export type { ServiceBindingPolicy } from './ServiceBindingPolicy.js';
 export type { ServiceBindingTransport } from './ServiceBindingTransport.js';
 export type { ServiceCallScope } from './ServiceCallScope.js';
