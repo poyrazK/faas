@@ -89,7 +89,17 @@ func testOwnershipRecoveryTransfer(t *testing.T, fx *Fixture) {
 		if err := transfer(); !errors.Is(err, state.ErrConflict) {
 			t.Fatalf("destination %s accepted: %v", lifecycle, err)
 		}
-		if err := fx.Store.NodeSetLifecycle(fx.Ctx, destination.ID, lifecycle, state.NodeLifecycleActive); err != nil {
+		// ADR-1522: recovering -> active needs a generation-bound completion
+		// receipt, so this fixture returns the destination through
+		// unavailable instead of completing a recovery it never ran.
+		restore := lifecycle
+		if lifecycle == state.NodeLifecycleRecovering {
+			if err := fx.Store.NodeSetLifecycle(fx.Ctx, destination.ID, lifecycle, state.NodeLifecycleUnavailable); err != nil {
+				t.Fatal(err)
+			}
+			restore = state.NodeLifecycleUnavailable
+		}
+		if err := fx.Store.NodeSetLifecycle(fx.Ctx, destination.ID, restore, state.NodeLifecycleActive); err != nil {
 			t.Fatal(err)
 		}
 	}
