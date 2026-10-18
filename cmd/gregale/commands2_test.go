@@ -2371,7 +2371,7 @@ func TestCmdDeployTarball_GithubFlag(t *testing.T) {
 	if !strings.Contains(out, "Ref: ${{ github.sha }}") {
 		t.Errorf("snippet missing ${{ github.sha }} placeholder; got:\n%s", out)
 	}
-	if !strings.Contains(out, "app: my-app") {
+	if !strings.Contains(out, `app: "my-app"`) {
 		t.Errorf("snippet missing the --app slug; got:\n%s", out)
 	}
 	if !strings.Contains(out, "uses: poyrazK/faas/.github/actions/deploy@"+githubActionDefaultSHA+" # v0") {
