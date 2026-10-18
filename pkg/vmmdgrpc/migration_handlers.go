@@ -100,11 +100,8 @@ func (t *migrationTracker) put(m *activeMigration) error {
 	return nil
 }
 
-// reserve claims an instance before the snapshot side effect starts.
+// reserveSource claims an instance before the snapshot side effect starts.
 // complete fills in the storage metadata after SnapshotKeepAlive succeeds.
-func (t *migrationTracker) reserve(instanceID string, createdAt time.Time) (*activeMigration, error) {
-	return t.reserveSource(instanceID, createdAt, false)
-}
 func (t *migrationTracker) reserveSource(instanceID string, createdAt time.Time, qualified bool) (*activeMigration, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()

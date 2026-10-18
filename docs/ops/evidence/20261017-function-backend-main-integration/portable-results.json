@@ -616,5 +616,88 @@
     "schema_changed": false,
     "native_acceptance": false,
     "production_activation": false
+  },
+  "lint_and_compilation_phase_corrections": {
+    "recorded_at": "2026-10-18T02:48:38.366890+00:00",
+    "source_base": "758198bc429b1a568abd0b7f009f8cc9c4b7194a",
+    "go_patch_sha256": "8769903fceebfb82e4eadc1427b0ff7ec18f87d613c6b2ca0e4169f9deaf6bbc",
+    "removed_unused_private_tracker_forwarder": true,
+    "full_package_lint": {
+      "ordinary_issues": 0,
+      "qualified_issues": 0,
+      "qualified_nonfatal_cache_persistence_warnings": 10136,
+      "warnings_note": "All analysis completed; default home fact cache was read-only. Future local invocations use a writable workspace cache."
+    },
+    "rpc_race": {
+      "ordinary": {
+        "passed_tests": 59,
+        "skipped_tests": [
+          "TestFunctionMigrationRefusedRecoveryRetirement"
+        ],
+        "failed_tests": [],
+        "log_sha256": "82d6e60e3abd8f852b6712b806499740cdba58e5de794ed9e37b969b1dc8d049"
+      },
+      "qualified": {
+        "passed_tests": 65,
+        "skipped_tests": [],
+        "failed_tests": [],
+        "log_sha256": "7622279760740ad4d0435bb5d34b359e10c1833dba585fa0e71d0172796916bd"
+      }
+    },
+    "ordinary_guard_skip_executed_in_qualified": true,
+    "shared_ci_previous_head": {
+      "job": 117552264429,
+      "all_test_steps_passed": true,
+      "native_compile_cancelled_at_job_budget": true,
+      "job_timeout_minutes": 45,
+      "imaged_test_seconds": 0.042,
+      "imaged_cold_nonrace_compile_approx_minutes": 11
+    },
+    "compile_phase": {
+      "compile_only": true,
+      "GOMEMLIMIT": "5GiB",
+      "GOGC": "50",
+      "GOMAXPROCS": "2",
+      "multi_package_output_directory_verified": true,
+      "verified_packages": [
+        "pkg/functionlifetime",
+        "pkg/fcvm/activity",
+        "pkg/imaged"
+      ],
+      "test_bodies_executed_in_probe": false,
+      "job_timeout_unchanged_minutes": 45,
+      "runtime_limits_unchanged": {
+        "GOMEMLIMIT": "2GiB",
+        "GOGC": "10",
+        "GOMAXPROCS": "2"
+      },
+      "test_selections_and_deadlines_unchanged": true,
+      "image_lifecycle_now_race_instrumented": true
+    },
+    "imaged_race": {
+      "passed_tests": 2,
+      "skipped_tests": [],
+      "failed_tests": [],
+      "runtime_GOMEMLIMIT": "2GiB",
+      "runtime_GOGC": "10",
+      "timeout": "3m",
+      "log_sha256": "83446d95088204958929dd04fdf117cc3ba7914ad2437907a494496f948cdcdd"
+    },
+    "native_compile": {
+      "compile_return_code": 0,
+      "elapsed_seconds": 56.717,
+      "maximum_child_rss_kib": 2310784,
+      "GOMEMLIMIT": "5GiB",
+      "GOGC": "50",
+      "compile_only": true,
+      "native_execution": false,
+      "source_base": "758198bc429b1a568abd0b7f009f8cc9c4b7194a",
+      "go_patch_sha256": "8769903fceebfb82e4eadc1427b0ff7ec18f87d613c6b2ca0e4169f9deaf6bbc",
+      "binary_sha256": "36393c32b0ff0f9b5d58043fe07d9ea86f7702657f1e57d55915875f3fe847d0",
+      "existing_dependency_cache": true,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "native_acceptance": false,
+    "production_activation": false
   }
 }

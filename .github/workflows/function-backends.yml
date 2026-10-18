@@ -128,6 +128,22 @@ jobs:
           npm run starter:sync -- --check
           node --test dist-test/test/postgres-pool-runtime.test.js dist-test/test/restore-aware-postgres-pool.test.js
           node --test test/postgres-pool-package.test.mjs
+      - name: compile portable and qualified test binaries
+        env:
+          # Compilation is serial on the 16 GiB runner. Keep the smaller
+          # runtime bounds below without making the compiler churn at 2 GiB.
+          GOMEMLIMIT: 5GiB
+          GOGC: 50
+        run: |
+          umask 022
+          mkdir -p "$RUNNER_TEMP/function-builds/ordinary" "$RUNNER_TEMP/function-builds/qualified"
+          go test -p 1 -race -c -o "$RUNNER_TEMP/function-builds/ordinary/" \
+            ./guest/runners/... ./pkg/rootfs \
+            ./pkg/e2etest/functionmigration ./pkg/e2etest/functionsql ./pkg/state/statetest \
+            ./pkg/functionlifetime ./pkg/fcvm/activity ./guest/init \
+            ./pkg/state ./pkg/fcvm ./pkg/sched ./pkg/vmmdgrpc ./pkg/imaged
+          go test -p 1 -race -tags metal,function_background_native -c -o "$RUNNER_TEMP/function-builds/qualified/" \
+            ./pkg/fcvm ./pkg/sched ./pkg/vmmdgrpc ./pkg/runtimeadmission
       - name: runner, adapter and real SQL race checks
         env:
           DATABASE_URL: postgres://faas:function_fixture@127.0.0.1:5432/faas?sslmode=require
@@ -148,9 +164,14 @@ jobs:
           go test -p 1 -race ./pkg/functionlifetime ./pkg/fcvm/activity ./guest/init -count=1 -timeout=3m
           go test -p 1 -race ./pkg/state ./pkg/fcvm ./pkg/sched ./pkg/vmmdgrpc -run '^Test(Function(Migration|Destination|Resource|Execution)|PgStoreFunctionMigrationSource)' -count=1 -timeout=3m
           go test -p 1 -race -tags metal,function_background_native ./pkg/fcvm ./pkg/sched ./pkg/vmmdgrpc ./pkg/runtimeadmission -run '^Test(Function(Migration|Destination|Resource|Execution)|SnapshotGrant|SnapshotAcknowledgment)' -count=1 -timeout=3m
-          go test -p 1 ./pkg/imaged -run '^TestApplyAppLifecycle' -count=1 -timeout=3m
+          go test -p 1 -race ./pkg/imaged -run '^TestApplyAppLifecycle' -count=1 -timeout=3m
       - name: compile the guarded two-host native suite (execution requires the native fixture)
+        env:
+          GOMEMLIMIT: 5GiB
+          GOGC: 50
         run: go test -p 1 -race -tags metal,function_background_native -c -o "$RUNNER_TEMP/function-migration-native.test" ./cmd/e2e
       - name: remove fixture private key and compiled test binary
         if: always()
-        run: rm -f "$RUNNER_TEMP/function-sql/server.key" "$RUNNER_TEMP/function-migration-native.test"
+        run: |
+          rm -f "$RUNNER_TEMP/function-sql/server.key" "$RUNNER_TEMP/function-migration-native.test"
+          rm -rf "$RUNNER_TEMP/function-builds"

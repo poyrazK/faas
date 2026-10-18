@@ -192,6 +192,41 @@ The exact managed-PostgreSQL cutover/clone-exclusion and live-authority downgrad
 regression passes in 8.43 seconds. Workflow actionlint passes. No schema migration,
 production activation or native execution qualification is introduced.
 
+## Full-package lint and bounded compilation
+
+The old private `migrationTracker.reserve` forwarder has no callers after
+source-aware reservations adopted `reserveSource`; it is removed. Full-package
+lint passes without filtering findings to changed lines in both ordinary and
+qualified builds. The qualified check reports only nonfatal fact-cache write
+warnings from the managed read-only home cache; analysis completes with zero
+issues. Subsequent local commands select a writable workspace cache.
+
+Existing migration RPC race coverage passes 59 tests/subtests in ordinary builds
+and 65 in qualification builds. The ordinary qualification-only recovery guard
+skips as designed and executes successfully in the qualified run. These are
+simulated-host results, not native execution evidence.
+
+The hosted shared-worker job completed every test command successfully, then
+exhausted its 45-minute job allocation 28 seconds into native compilation. Its
+non-race image-service build alone consumed about eleven minutes for a test run
+of 0.042 seconds. Compilation now runs separately, serially, with a 5 GiB Go
+memory target and GOGC 50. Executed tests retain the 2 GiB target, GOGC 10,
+two logical processors, original selections and deadlines. Image lifecycle tests
+now use race instrumentation and the already-built race dependency graph. The
+job budget and read-only CI cache policy are unchanged.
+
+The multi-package `go test -c` output-directory path produced all three expected
+ELF binaries without executing test bodies. Both selected image lifecycle tests
+then passed with race instrumentation under the unchanged CI runtime settings
+and three-minute deadline. Workflow actionlint passes.
+
+The guarded native suite compiles from source base `758198bc429b1a568abd0b7f009f8cc9c4b7194a`
+plus the recorded tracker-removal patch, using the existing managed dependency
+cache and the new compiler settings. Its binary SHA-256 is
+`36393c32b0ff0f9b5d58043fe07d9ea86f7702657f1e57d55915875f3fe847d0`.
+This records compilation only. No native test body or production activation is
+qualified; hosted CI must still pass on the newly published head.
+
 ## Qualification boundary
 
 Production activation remains disabled. This managed container has no supported
