@@ -39,7 +39,12 @@ async function rolePlan(client, requested) {
     throw error
   }
   const role = roles[0]
-  if (!role.login || role.elevated || role.settings.length !== 1 || role.settings[0] !== `statement_timeout=${limits.queryMs}` ||
+  // ACL readiness supports the exact legacy and current policies. This tool
+  // does not alter role defaults or qualify existing SQL sessions.
+  const settings = [...role.settings].sort().join(',')
+  const legacy = `statement_timeout=${limits.queryMs}`
+  const current = `lock_timeout=${limits.lockMs},${legacy}`
+  if (!role.login || role.elevated || ![legacy, current].includes(settings) ||
       (expected && role.marker !== expected) || (!expected && role.marker && !/^gregale:credential:v1:[a-f0-9]{40}:data_api$/.test(role.marker))) throw new Error('Unsafe or mismatched Data API role')
   return { role, owner: context.owner }
 }

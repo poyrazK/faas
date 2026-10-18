@@ -60,10 +60,18 @@ func applySimpleAppPlanToCreateRequest(req *api.CreateAppRequest, plan simpleapp
 	}
 }
 
-func renderSimpleAppPlan(w io.Writer, plan simpleapp.Plan, jsonMode bool) int {
-	if jsonMode {
-		return jsonOut(writeJSONTo(w, plan))
+func renderSimpleAppPlan(w io.Writer, plan simpleapp.Plan, jsonMode bool, previews ...*cliPreviewSummary) int {
+	var preview *cliPreviewSummary
+	if len(previews) > 0 {
+		preview = previews[0]
 	}
+	if jsonMode {
+		return jsonOut(writeJSONTo(w, struct {
+			simpleapp.Plan
+			Preview *cliPreviewSummary `json:"preview,omitempty"`
+		}{plan, preview}))
+	}
+	renderCLIPreview(w, preview)
 	_, _ = fmt.Fprintf(w, "Simple app plan for %s\n", plan.Slug)
 	_, _ = fmt.Fprintf(w, "  source:             %s\n", plan.Source)
 	if plan.Framework != "" {
@@ -86,6 +94,6 @@ func renderSimpleAppPlan(w io.Writer, plan simpleapp.Plan, jsonMode bool) int {
 	for _, applied := range plan.DefaultsApplied {
 		_, _ = fmt.Fprintf(w, "    - %s\n", applied)
 	}
-	_, _ = fmt.Fprintln(w, "No remote state changed. Run `gregale deploy` to apply this plan.")
+	_, _ = fmt.Fprintln(w, "No remote state changed. This is local inference, not a saved apply plan; deploy rechecks the source and remote state.")
 	return 0
 }

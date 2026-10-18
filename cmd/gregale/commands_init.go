@@ -158,12 +158,12 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 	// bad flag like "--template ../../etc/passwd" is rejected before we
 	// touch the embed FS.
 	if !templateAvailable(tpl) {
-		PrintFail(stderr, "unknown --template %q (known: %s)",
-			tpl, strings.Join(templates.ListedNames(), ", "))
+		PrintUsage(stderr, fmt.Sprintf("unknown --template %q (known: %s)",
+			tpl, strings.Join(templates.ListedNames(), ", ")), initCmdDocsTopic)
 		return 1
 	}
 	if deploy && (templates.CategoryFor(tpl) == "operations" || templates.CategoryFor(tpl) == "durable-entities") {
-		PrintFail(stderr, "%s requires a local SDK bundle; initialize without --deploy, follow README.md, then deploy the prepared source", tpl)
+		PrintUsage(stderr, fmt.Sprintf("%s requires a local SDK bundle; initialize without --deploy, follow README.md, then deploy the prepared source", tpl), initCmdDocsTopic)
 		return 1
 	}
 

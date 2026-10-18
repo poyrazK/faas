@@ -1,4 +1,6 @@
-export type DataErrorCategory = 'unique_violation' | 'foreign_key_violation' | 'authentication' | 'permission_denied' | 'contract_mismatch' | 'timeout' | 'cancelled' | 'unavailable' | 'no_response' | 'response_too_large' | 'rate_limited' | 'unknown'
+import { isReplayExpired } from './replay-key.js'
+
+export type DataErrorCategory = 'unique_violation' | 'foreign_key_violation' | 'authentication' | 'permission_denied' | 'contract_mismatch' | 'timeout' | 'cancelled' | 'unavailable' | 'no_response' | 'response_too_large' | 'rate_limited' | 'concurrency_limited' | 'lock_conflict' | 'deadlock' | 'replay_expired' | 'unknown'
 export type DataErrorRecovery = 'change_input' | 'authenticate' | 'check_permissions' | 'refresh_contract' | 'reconcile' | 'check_service' | 'wait' | 'inspect'
 export type ClassifiedDataError<Error = unknown> = Readonly<{
   category: DataErrorCategory
@@ -13,6 +15,8 @@ const categories: Readonly<Record<string, DataErrorCategory>> = Object.freeze({
   '23505': 'unique_violation',
   '23503': 'foreign_key_violation',
   '42501': 'permission_denied',
+  '55P03': 'lock_conflict',
+  '40P01': 'deadlock',
   token_required: 'authentication',
   token_invalid: 'authentication',
   PGRST301: 'authentication',
@@ -22,6 +26,7 @@ const categories: Readonly<Record<string, DataErrorCategory>> = Object.freeze({
   schema_contract_mismatch: 'contract_mismatch',
   query_timeout: 'timeout',
   request_deadline_exceeded: 'timeout',
+  data_api_sql_deadline_exceeded: 'timeout',
   response_too_large: 'response_too_large',
   request_timeout: 'timeout',
   request_cancelled: 'cancelled',
@@ -29,6 +34,7 @@ const categories: Readonly<Record<string, DataErrorCategory>> = Object.freeze({
   data_api_unavailable: 'unavailable',
   data_api_overloaded: 'unavailable',
   data_api_rate_limited: 'rate_limited',
+  data_api_concurrency_limited: 'concurrency_limited',
   serving_contract_unavailable: 'unavailable',
   data_api_refresh_unavailable: 'unavailable',
 })
@@ -37,7 +43,7 @@ const recoveries: Record<DataErrorCategory, DataErrorRecovery> = {
   unique_violation: 'change_input', foreign_key_violation: 'change_input',
   authentication: 'authenticate', permission_denied: 'check_permissions',
   contract_mismatch: 'refresh_contract', timeout: 'reconcile', cancelled: 'reconcile',
-  unavailable: 'check_service', no_response: 'reconcile', response_too_large: 'reconcile', rate_limited: 'wait', unknown: 'inspect',
+  unavailable: 'check_service', no_response: 'reconcile', response_too_large: 'reconcile', rate_limited: 'wait', concurrency_limited: 'wait', lock_conflict: 'wait', deadlock: 'wait', replay_expired: 'reconcile', unknown: 'inspect',
 }
 
 /** Classify without executing, retrying or changing an error. HTTP status is
@@ -50,8 +56,10 @@ export function classifyDataError<Error>(error: Error, options: { status?: numbe
   const code = typeof rawCode === 'string' ? rawCode : null
   const status = Number.isInteger(options.status) && (options.status === 0 || (options.status! >= 100 && options.status! <= 599)) ? options.status! : null
   // Own-property lookup prevents arbitrary codes such as "constructor" from
-  // acquiring a category. Messages, hints and details never drive classification.
+  // acquiring a category. The v2 expiry contract needs its exact SQLSTATE/message
+  // pair because PT410 is also available to unrelated customer RPCs.
   let category: DataErrorCategory = code !== null && Object.hasOwn(categories, code) ? categories[code] : 'unknown'
+  if (isReplayExpired(error) && (status === null || status === 410)) category = 'replay_expired'
   if (category === 'unknown') {
     if (status === 401) category = 'authentication'
     else if (status === 403) category = 'permission_denied'

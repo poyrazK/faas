@@ -27,6 +27,7 @@ type envPushPreviewFinding struct {
 }
 
 type envPushPreview struct {
+	Preview             *cliPreviewSummary        `json:"preview,omitempty"`
 	App                 string                    `json:"app_slug"`
 	Scope               string                    `json:"scope"`
 	DryRun              bool                      `json:"dry_run"`
@@ -153,11 +154,13 @@ func previewEnvPush(app, scope string, pairs []secretsPair, origin string, mode 
 		preview.Blockers = append(preview.Blockers, "Required secret keys have empty proposed values; fill these placeholders before uploading.")
 	}
 	preview.CanPush = len(preview.Blockers) == 0
+	preview.Preview = newCLIPreview("remote metadata comparison", app, scope, "proposed secret keys (values hidden)", "", "Remote values are not compared; key presence does not verify values or runtime delivery.")
 	if jsonOutput {
 		if code := jsonOut(writeJSON(preview)); code != 0 {
 			return code
 		}
 	} else {
+		renderCLIPreview(osStdout, preview.Preview)
 		PrintProgress(osStdout, "Env push preview: app=%s; scope=%s (values hidden)", app, scope)
 		for _, change := range preview.Changes {
 			_, _ = fmt.Fprintf(osStdout, "  %s  %s\n", change.Action, change.Key)

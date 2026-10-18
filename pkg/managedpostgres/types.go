@@ -416,6 +416,9 @@ type CredentialRequest struct {
 	ProviderResourceID string
 	// Nonzero only when a durable capacity reservation bounds this login.
 	ConnectionLimit int64
+	// BindingID identifies owner-approved policies across credential generations.
+	// Standalone provider qualification requests may omit it.
+	BindingID string
 	// IdentityKey is a stable, non-secret identity for one credential
 	// generation. Rotation uses a new key; revocation repeats the key that
 	// created the credential.

@@ -24,15 +24,25 @@ generations; the Node safe-integer restriction does not apply to Go.
 
 ## Options and admissions
 
-Options are copied by value before I/O. Each zero field selects its default:
+Options, including a supplied retry policy, are copied before I/O. Zero values
+select the defaults below:
 
 | Field | Default | Bounds/meaning |
 | --- | --- | --- |
 | `MaxAttempts` | 100 | 1..10000 admitted recovery iterations. |
 | `Concurrency` | 4 | 1..32 concurrent iterations. |
 | `ClaimDuration` | 30 seconds | Whole milliseconds, one second through five minutes. |
-| `Backoff` | One second | Persisted unconfirmed-settlement delay, whole milliseconds from one millisecond through one hour. |
+| `Backoff` | One second when `RetryPolicy` is nil | Fixed fallback unconfirmed-settlement delay, whole milliseconds from one millisecond through one hour. Leave zero with a policy. |
+| `RetryPolicy` | Nil | Optional fallback `EventAcknowledgmentIntentRetryPolicy` for capped exponential full jitter based on the durable claim count. |
 | `CallbackOptions` | Zero worker options | Existing `EventAcknowledgmentWorkerOptions`, including lease-relative defaults. |
+
+See the [retry policy contract](event-acknowledgment-go-retry-policy.md) for bounds,
+jitter and worker coordination. Supplying both a policy and nonzero `Backoff` is
+invalid. Policy values are normalized before any claim or worker starts.
+
+Captured stored policies override worker fallback on bound intents. Upgrade
+the intent schema before using current Go recovery; see
+[stored policies and rollout](event-acknowledgment-stored-retry-policy.md).
 
 Nil context/database/client, invalid scope, out-of-range options and broadly
 invalid callback overrides return `ErrInvalidEventConsumerRequest` with zero
@@ -45,8 +55,9 @@ callback fields for lease-relative defaults across intents with different leases
 At most `min(Concurrency, MaxAttempts)` worker goroutines run, each recovering one
 iteration at a time. A mutex protects the admission check, attempt reservation,
 stop flag and counters. Each slot is reserved before calling the existing
-`RecoverNextEventAcknowledgmentIntent`; no mutex is held during database or HTTP
-work. No goroutine or retained result list is allocated per intent.
+`RecoverNextEventAcknowledgmentIntent` or its `WithRetryPolicy` variant; no mutex
+is held during database or HTTP work. No goroutine or retained result list is
+allocated per intent.
 
 Empty probes, acquisition failures, interrupted iterations and settled callbacks
 all consume slots. The work budget counts iterations rather than HTTP requests,
@@ -97,6 +108,7 @@ reasons, tokens, payloads, connections or raw errors:
 | `Attempts` | Admitted iterations, including empty probes and acquisition failures. |
 | `Confirmed` | Returned locally committed confirmed settlements. |
 | `Unconfirmed` | Returned locally committed unconfirmed settlements with persisted backoff. |
+| `Parked` | Known committed exhaustion parking, including expired crashed claims; no automatic redelivery until explicit resume. |
 | `Superseded` | Returned locally committed superseded settlements. |
 | `Empty` | Empty recovery probes. |
 | `ClaimLost` | Expired/replaced claims without a returned settlement. |
@@ -111,6 +123,12 @@ settlement is not a hard pass failure or owner cancellation. Supersession due to
 an unavailable platform lease or a committed receipt remains a known settlement.
 Raw per-callback errors are not retained. Uncertain commit is classified before
 any other iteration observation.
+
+Go [v2 retry budgets](event-acknowledgment-retry-budgets.md) can park exhausted
+callbacks. Parking consumes a pass admission and permits further admissions;
+already parked rows are not selected again. Empty can coexist with parked work
+requiring operator action. Current Go helpers require the budget schema upgrade
+even for unbound/v1 work.
 
 Normal completion returns nil error with `limit` or `empty`; always inspect
 progress, since nil does not mean every callback was confirmed. An owner
@@ -144,8 +162,8 @@ shows explicit scheduling and error handling. The
 [Python](event-acknowledgment-python-recovery-pass.md) passes use the same finite
 admission model with their own connection and native cancellation contracts.
 
-Local validation covers the standalone SDK/example build, vet, Go AST admission,
-result/error and unchanged primitive/schema checks, plus documentation checks.
+Local validation covers the standalone SDK/example build, vet, source admission,
+result/error and shared schema checks, plus documentation checks.
 No tests/assertions are added or changed and no local tests are run. Hosted
 concurrency, empty races, independent retries, connection isolation, cancellation
 and uncertain-commit qualification remains pending before release.

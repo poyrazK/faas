@@ -373,6 +373,7 @@ export type { ComposeHealthcheck } from './models/ComposeHealthcheck.js';
 export type { ConnectionBudgetCapacity } from './models/ConnectionBudgetCapacity.js';
 export type { ConnectionBudgetDemand } from './models/ConnectionBudgetDemand.js';
 export type { ConnectionBudgetInventory } from './models/ConnectionBudgetInventory.js';
+export type { ConnectionBudgetRuntimeObservations } from './models/ConnectionBudgetRuntimeObservations.js';
 export type { ConsumedCreditRow } from './models/ConsumedCreditRow.js';
 export type { ConsumeInvoiceResponse } from './models/ConsumeInvoiceResponse.js';
 export type { ConsumerBillingDay } from './models/ConsumerBillingDay.js';
@@ -490,6 +491,7 @@ export type { DailyUsageListResponse } from './models/DailyUsageListResponse.js'
 export type { DailyUsagePoint } from './models/DailyUsagePoint.js';
 export type { DailyUsageResponse } from './models/DailyUsageResponse.js';
 export type { DataAPIConnectionBudgets } from './models/DataAPIConnectionBudgets.js';
+export type { DataAPIRuntimeConnectionReport } from './models/DataAPIRuntimeConnectionReport.js';
 export type { DataConnection } from './models/DataConnection.js';
 export type { DataConnectionCheck } from './models/DataConnectionCheck.js';
 export type { DataConnectionIssue } from './models/DataConnectionIssue.js';

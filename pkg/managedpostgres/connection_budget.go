@@ -8,6 +8,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/connectioncapacity"
+	sqlcapacity "github.com/onebox-faas/faas/pkg/managedpostgres/connectioncapacity"
 )
 
 // ConnectionBudgetSnapshot is a credential-free catalog read. Counts are
@@ -34,24 +35,45 @@ type ConnectionBudgetCapacityEvidence struct {
 	DatabaseID, BackendFingerprint string
 	Generation, UsableConnections  int64
 	CheckedAt, ExpiresAt           time.Time
+	Source, SourceSHA256           string
+	AllocationCheckedAt            time.Time
+	AllocationExpiresAt            time.Time
+	AllocationConnections          int64
+	SQL                            *sqlcapacity.Observation
+}
+
+func (c *ConnectionBudgetCapacityEvidence) valid(databaseID, fingerprint string, generation int64, asOf, now time.Time) bool {
+	return c != nil && c.DatabaseID == databaseID && c.BackendFingerprint == fingerprint && c.Generation == generation && generation > 0 &&
+		!c.CheckedAt.IsZero() && !c.CheckedAt.After(asOf) && !now.Before(c.CheckedAt) && now.Before(c.ExpiresAt) &&
+		c.ExpiresAt.Sub(c.CheckedAt) <= api.DataAPIConnectionBudgetMaxAge &&
+		(c.Source == "provider_api" || c.Source == "native_qualification") && validSHA256(c.SourceSHA256) &&
+		!c.AllocationCheckedAt.IsZero() && !c.AllocationCheckedAt.After(c.CheckedAt) && !c.ExpiresAt.After(c.AllocationExpiresAt) &&
+		c.AllocationExpiresAt.Sub(c.AllocationCheckedAt) <= api.DataAPIConnectionAllocationMaxAge &&
+		c.AllocationConnections > 0 && c.AllocationConnections <= api.DataAPIConnectionBudgetMaxCount &&
+		c.SQL != nil && c.SQL.Valid() && c.SQL.MaxConnections <= api.DataAPIConnectionBudgetMaxCount &&
+		c.UsableConnections == c.SQL.Ceiling(c.AllocationConnections)
 }
 
 type connectionBudgetBinding struct {
-	AppID          string   `json:"app_id"`
-	Scope          string   `json:"scope"`
-	Access         string   `json:"access"`
-	State          string   `json:"state"`
-	Plan           api.Plan `json:"plan"`
-	MaxConcurrency int64    `json:"max_concurrency"`
-	Rotation       bool     `json:"rotation"`
-	Residents      int64    `json:"residents"`
-	Parked         int64    `json:"parked"`
-	Auxiliary      int64    `json:"auxiliary"`
-	Tasks          int64    `json:"tasks"`
-	StaleNodes     int64    `json:"stale_nodes"`
-	Deployments    int64    `json:"deployments"`
-	Sidecars       bool     `json:"sidecars"`
-	Migrating      bool     `json:"migrating"`
+	AppID                 string    `json:"app_id"`
+	Scope                 string    `json:"scope"`
+	Access                string    `json:"access"`
+	State                 string    `json:"state"`
+	Plan                  api.Plan  `json:"plan"`
+	MaxConcurrency        int64     `json:"max_concurrency"`
+	Rotation              bool      `json:"rotation"`
+	Residents             int64     `json:"residents"`
+	Parked                int64     `json:"parked"`
+	Auxiliary             int64     `json:"auxiliary"`
+	Tasks                 int64     `json:"tasks"`
+	StaleNodes            int64     `json:"stale_nodes"`
+	Deployments           int64     `json:"deployments"`
+	Sidecars              bool      `json:"sidecars"`
+	Migrating             bool      `json:"migrating"`
+	ObservedResidents     int64     `json:"observed_residents"`
+	ObservedConnections   int64     `json:"observed_connections"`
+	ObservationsCheckedAt time.Time `json:"observations_checked_at"`
+	ObservationsExpiresAt time.Time `json:"observations_expires_at"`
 }
 
 type ConnectionBudgetStore interface {
@@ -159,6 +181,7 @@ func describeConnectionBudget(s ConnectionBudgetSnapshot, now time.Time) api.Man
 		add("external_consumers_unobserved")
 	}
 	groups := map[string][]connectionBudgetBinding{}
+	out.Demand.RuntimeObservations = &api.ConnectionBudgetRuntimeObservations{State: "not_applicable", Source: "workload_report"}
 	for _, b := range s.Bindings {
 		groups[b.AppID+"\x00"+b.Scope+"\x00"+b.Access] = append(groups[b.AppID+"\x00"+b.Scope+"\x00"+b.Access], b)
 	}
@@ -166,6 +189,7 @@ func describeConnectionBudget(s ConnectionBudgetSnapshot, now time.Time) api.Man
 	for _, bindings := range groups {
 		accountConnectionBudgetGroup(&out, bindings, seen, add)
 	}
+	finalizeRuntimeConnectionCoverage(&out, now)
 	out.Demand.ControlHeadroom = api.DataAPIConnectionBudgetControlHeadroom
 	if out.Inventory.MigrationBindings > 0 {
 		out.Demand.MigrationHeadroom = api.DataAPIConnectionBudgetMigrationHeadroom
@@ -176,14 +200,17 @@ func describeConnectionBudget(s ConnectionBudgetSnapshot, now time.Time) api.Man
 	}
 	out.Demand.ModeledPeakConnections = out.Demand.DataAPIWakeEstimate + out.Demand.AuthWakeEstimate + out.Demand.ControlHeadroom + out.Demand.MigrationHeadroom
 	c := s.Capacity
-	if c == nil || c.DatabaseID != s.DatabaseID || c.BackendFingerprint != s.BackendFingerprint || c.Generation != s.Generation || c.UsableConnections < 1 || c.UsableConnections > api.DataAPIConnectionBudgetMaxCount ||
-		c.Generation < 1 || c.CheckedAt.IsZero() || c.CheckedAt.After(s.CheckedAt) || now.Before(c.CheckedAt) || !now.Before(c.ExpiresAt) || c.ExpiresAt.Sub(c.CheckedAt) > api.DataAPIConnectionBudgetMaxAge {
+	if s.DatabaseState != string(StateReady) || !c.valid(s.DatabaseID, s.BackendFingerprint, s.Generation, s.CheckedAt, now) {
 		add("capacity_unverified")
 	} else {
 		out.Capacity.State = "verified"
 		value := c.UsableConnections
 		out.Capacity.UsableConnections = &value
-		if c.ExpiresAt.Before(s.CheckedAt.Add(api.DataAPIConnectionBudgetMaxAge)) {
+		out.Capacity.Source = c.Source
+		out.Capacity.CheckedAt = c.CheckedAt.UTC().Format(time.RFC3339Nano)
+		out.Capacity.ExpiresAt = c.ExpiresAt.UTC().Format(time.RFC3339Nano)
+		reportExpires, _ := time.Parse(time.RFC3339Nano, out.ExpiresAt)
+		if c.ExpiresAt.Before(reportExpires) {
 			out.ExpiresAt = c.ExpiresAt.UTC().Format(time.RFC3339Nano)
 		}
 	}
@@ -267,7 +294,7 @@ func accountConnectionBudgetGroup(out *api.ManagedPostgresConnectionBudget, bind
 	concurrency := b.MaxConcurrency
 	if b.Access == string(CredentialDataAPI) {
 		out.Inventory.DataAPIConsumers++
-		out.Demand.DataAPIResidentEstimate += b.Residents * api.DataAPIMaxPoolConnections
+		accountRuntimeConnectionCoverage(out, b)
 	} else {
 		out.Inventory.AuthConsumers++
 	}

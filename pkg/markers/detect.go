@@ -126,7 +126,7 @@ func DetectFromTarballAtRoot(path, sourceRoot string) (Framework, error) {
 			tar.TypeGNULongName, tar.TypeGNULongLink:
 			continue
 		}
-		name := strings.TrimPrefix(hdr.Name, "./")
+		name := tarball.TrimLeadingDotSlash(hdr.Name)
 		parts := strings.Split(name, "/")
 		if len(parts) == 1 {
 			hasRootFile = true
@@ -197,7 +197,7 @@ func detectFromTarballNestedRoot(path, sourceRoot string) (Framework, error) {
 			tar.TypeGNULongName, tar.TypeGNULongLink:
 			continue
 		}
-		name := strings.TrimPrefix(hdr.Name, "./")
+		name := tarball.TrimLeadingDotSlash(hdr.Name)
 		if !strings.HasPrefix(name, prefixWithSlash) {
 			continue
 		}

@@ -51,8 +51,9 @@ class ManagedPostgresConnectionBudget:
     demand: ConnectionBudgetDemand
     """Canonical runtime pools and explicit planning headroom. Unbounded consumers remain unknown."""
     capacity: ConnectionBudgetCapacity
-    """Qualified tenant-usable allocation for the exact database generation and placement. Current adapters leave
-    this unknown."""
+    """Operator-qualified tenant allocation clamped to observed SQL ceilings for the exact database generation and
+    placement. Unknown without fresh evidence; this does not reserve connections or establish complete consumer
+    coverage."""
     reasons: list[str]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

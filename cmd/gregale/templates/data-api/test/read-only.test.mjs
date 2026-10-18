@@ -5,9 +5,11 @@ import { runtimeConfig } from '../config.mjs'
 import { createServer } from '../server.mjs'
 
 test('an owner-selected read-only API rejects writes even when the JWT allows writes', async t => {
-  const env = { DATABASE_URL: 'postgres://restricted:private@localhost/db', DATA_API_SCHEMAS: 'public', DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'mirror', DATA_API_READ_ONLY: 'true' }
+  const env = { DATABASE_URL: 'postgres://restricted:private@localhost/db', DATA_API_SCHEMAS: 'public', DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'mirror', DATA_API_READ_ONLY: 'true', DATA_API_SQL_DEADLINE: '1', DATA_API_USER_CONCURRENCY: '1' }
   assert.throws(() => runtimeConfig({ ...env, DATA_API_READ_ONLY: 'yes' }))
   const config = runtimeConfig(env)
+  assert.equal(config.sqlDeadline, true)
+  assert.equal(config.postgrestEnv.PGRST_DB_PRE_REQUEST, 'gregale_data_api.check_deadline_request')
   let requests = 0
   const upstream = http.createServer((req, res) => { requests++; res.setHeader('Content-Type', 'application/json'); res.end('[]') })
   await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve))

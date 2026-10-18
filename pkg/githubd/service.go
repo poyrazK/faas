@@ -905,8 +905,8 @@ func (s *Service) ObserveFilterModeWire(mode string) {
 //
 //   - "paths": only apps whose RootDir intersects changedFiles,
 //     plus all apps with RootDir == "" (they sit at repo root).
-//     If NO app intersects the file set, rebuild ALL (spec: a
-//     change at repo root outside every member's RootDir —
+//     If any changed path falls outside every app's RootDir, rebuild ALL
+//     (spec: a change at repo root outside every member's RootDir —
 //     lockfile, root Dockerfile, CI config — rebuilds every
 //     member). This is the lockfile/CI-fallback rule from
 //     ADR-050 §103-109.
@@ -918,6 +918,20 @@ func (s *Service) ObserveFilterModeWire(mode string) {
 func (s *Service) filterByPath(touched []state.App, changedFiles []string, filterMode string) ([]state.App, []string) {
 	if filterMode != filterModePaths {
 		return touched, nil
+	}
+	// Shared files can affect every build even when the same push also
+	// changes a file inside one member. Check each path before filtering.
+	for _, path := range changedFiles {
+		memberPath := false
+		for _, app := range touched {
+			if app.RootDir == "" || pathIntersectsDir([]string{path}, app.RootDir) {
+				memberPath = true
+				break
+			}
+		}
+		if !memberPath {
+			return touched, nil
+		}
 	}
 	var matched []state.App
 	var skipped []string

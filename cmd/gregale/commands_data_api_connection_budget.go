@@ -73,10 +73,22 @@ func validDataAPIConnectionBudget(b api.ManagedPostgresConnectionBudget, now tim
 	if !bounded && d.ModeledPeakConnections != d.DataAPIWakeEstimate+d.AuthWakeEstimate+d.ControlHeadroom+d.MigrationHeadroom {
 		return false
 	}
+	if !validRuntimeConnectionCoverage(b, now) {
+		return false
+	}
+	if b.Capacity.Source != "" || b.Capacity.CheckedAt != "" || b.Capacity.ExpiresAt != "" {
+		capacityChecked, checkedErr := time.Parse(time.RFC3339Nano, b.Capacity.CheckedAt)
+		capacityExpires, expiresErr := time.Parse(time.RFC3339Nano, b.Capacity.ExpiresAt)
+		if b.Capacity.State != "verified" || !slices.Contains([]string{"provider_api", "native_qualification"}, b.Capacity.Source) ||
+			checkedErr != nil || expiresErr != nil || capacityChecked.After(checked) || now.Before(capacityChecked) || !now.Before(capacityExpires) ||
+			capacityExpires.Sub(capacityChecked) > api.DataAPIConnectionBudgetMaxAge || expires.After(capacityExpires) {
+			return false
+		}
+	}
 	if b.Capacity.State == "unknown" {
 		return b.Capacity.UsableConnections == nil && b.State == "unknown" && len(b.Reasons) > 0
 	}
-	if b.Capacity.State != "verified" || b.Capacity.UsableConnections == nil || *b.Capacity.UsableConnections < 1 || *b.Capacity.UsableConnections > api.DataAPIConnectionBudgetMaxCount {
+	if b.Capacity.State != "verified" || b.Capacity.UsableConnections == nil || *b.Capacity.UsableConnections < 0 || *b.Capacity.UsableConnections > api.DataAPIConnectionBudgetMaxCount {
 		return false
 	}
 	if b.State == "unknown" {
@@ -133,6 +145,46 @@ func writeDataAPIConnectionBudget(budget *api.DataAPIConnectionBudgets) error {
 		if _, err := fmt.Fprintf(osStdout, "  %s: modeled peak %d; verified usable capacity %s; %s\n", database.DatabaseName, database.Demand.ModeledPeakConnections, capacity, database.State); err != nil {
 			return err
 		}
+		if database.Capacity.Source != "" {
+			if _, err := fmt.Fprintf(osStdout, "    Capacity source: %s; checked %s; expires %s\n", database.Capacity.Source, database.Capacity.CheckedAt, database.Capacity.ExpiresAt); err != nil {
+				return err
+			}
+		}
+		if r := database.Demand.RuntimeObservations; r != nil {
+			if _, err := fmt.Fprintf(osStdout, "    Runtime pools: %s; %d configured connections across %d observed residents; %d unobserved residents; %d parked (workload reports)\n", r.State, r.ConfiguredConnections, r.ObservedInstances, r.UnobservedInstances, r.ParkedInstances); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
+}
+
+func validRuntimeConnectionCoverage(b api.ManagedPostgresConnectionBudget, now time.Time) bool {
+	r := b.Demand.RuntimeObservations
+	if r == nil { // Older servers omit the optional observation projection.
+		return true
+	}
+	if r.Source != "workload_report" || !slices.Contains([]string{"unknown", "partial", "observed", "not_applicable"}, r.State) {
+		return false
+	}
+	for _, count := range []int64{r.ObservedInstances, r.UnobservedInstances, r.ParkedInstances, r.ConfiguredConnections} {
+		if count < 0 || count > api.DataAPIConnectionBudgetMaxCount*api.DataAPIConnectionBudgetMaxBindings*api.AuthMaxPoolConnections {
+			return false
+		}
+	}
+	if r.ConfiguredConnections != r.ObservedInstances*api.DataAPIMaxPoolConnections || r.ConfiguredConnections > b.Demand.DataAPIResidentEstimate ||
+		(r.ObservedInstances+r.UnobservedInstances)*api.DataAPIMaxPoolConnections != b.Demand.DataAPIResidentEstimate ||
+		r.ObservedInstances+r.UnobservedInstances > b.Inventory.ResidentInstances || r.ParkedInstances > b.Inventory.ParkedInstances {
+		return false
+	}
+	if r.ObservedInstances == 0 {
+		return r.CheckedAt == "" && r.ExpiresAt == "" && (r.State == "unknown" || r.State == "not_applicable" && b.Inventory.DataAPIConsumers == 0 && r.UnobservedInstances == 0 && r.ParkedInstances == 0)
+	}
+	checked, first := time.Parse(time.RFC3339Nano, r.CheckedAt)
+	expires, second := time.Parse(time.RFC3339Nano, r.ExpiresAt)
+	asOf, _ := time.Parse(time.RFC3339Nano, b.CheckedAt)
+	reportExpires, _ := time.Parse(time.RFC3339Nano, b.ExpiresAt)
+	return first == nil && second == nil && !checked.After(asOf) && !now.Before(checked) && now.Before(expires) &&
+		expires.Sub(checked) <= api.DataAPIConnectionBudgetMaxAge && !reportExpires.After(expires) &&
+		(r.State == "observed" && r.UnobservedInstances == 0 && r.ParkedInstances == 0 || r.State == "partial" && r.UnobservedInstances+r.ParkedInstances > 0)
 }

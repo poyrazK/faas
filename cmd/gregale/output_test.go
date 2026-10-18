@@ -68,6 +68,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	_ = os.Setenv("TMPDIR", tempRoot)
+	_ = os.Setenv("GOTMPDIR", tempRoot)
 	_ = os.Setenv("TMP", tempRoot)
 	_ = os.Setenv("TEMP", tempRoot)
 	testOnlyProjectContextRoot = sandbox

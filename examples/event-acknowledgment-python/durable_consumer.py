@@ -13,6 +13,7 @@ from faas_sdk import (
     EventAcknowledgmentIntentError,
     EventAcknowledgmentIntentHealthOptions,
     EventAcknowledgmentIntentRecoveryPassOptions,
+    EventAcknowledgmentIntentRetryPolicy,
     EventAcknowledgmentIntentWatchOptions,
     EventAcknowledgmentWorkerCancelled,
     EventAcknowledgmentWorkerResult,
@@ -181,7 +182,13 @@ async def recover_saved_callbacks_pass(
         connection_factory,
         scope["account_id"],
         scope["app_id"],
-        EventAcknowledgmentIntentRecoveryPassOptions(max_attempts=100, concurrency=4),
+        EventAcknowledgmentIntentRecoveryPassOptions(
+            max_attempts=100,
+            concurrency=4,
+            retry_policy=EventAcknowledgmentIntentRetryPolicy(
+                initial_backoff_ms=1000, max_backoff_ms=300000
+            ),
+        ),
         stop_event=stop_event,
     )
 
@@ -200,6 +207,7 @@ async def watch_acknowledgment_recovery(
             ),
             due_threshold=100,
             stalled_threshold=1,
+            parked_threshold=1,
             sustain_ms=30000,
         ),
         notify,
@@ -247,6 +255,7 @@ async def watch_acknowledgment_recovery_with_checkpoint(
             ),
             due_threshold=100,
             stalled_threshold=1,
+            parked_threshold=1,
             sustain_ms=30000,
             resume=saved,
             on_progress=progress,

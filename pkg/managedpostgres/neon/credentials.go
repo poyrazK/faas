@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -134,6 +135,12 @@ func (p *Provider) ownerCredentials(ctx context.Context, projectID, branchID str
 func validateCredentialRequest(request managedpostgres.CredentialRequest) error {
 	if request.ConnectionLimit < 0 || request.ConnectionLimit > api.DataPipelineAuthBindingConnections {
 		return managedpostgres.ErrInvalid
+	}
+	if request.BindingID != "" {
+		id, err := uuid.Parse(request.BindingID)
+		if err != nil || id == uuid.Nil || id.String() != request.BindingID {
+			return managedpostgres.ErrInvalid
+		}
 	}
 	if _, err := parseResourceRef(request.ProviderResourceID); err != nil || request.IdentityKey == "" || len(request.IdentityKey) > 1024 || request.IdempotencyKey == "" || len(request.IdempotencyKey) > 255 {
 		return managedpostgres.ErrInvalid
