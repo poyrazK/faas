@@ -26426,6 +26426,7 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - $ref: '#/components/parameters/SecretKey'
+      - $ref: '#/components/parameters/ConfigGuardQuery'
       # ADR-092 PR-B: ?scope= selects which env-scope the row
       # belongs to. PUT/DELETE/POST (single-row writes) reject
       # the reserved sentinel __all__ as 400 EnvScopeReserved.
@@ -26520,6 +26521,7 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - $ref: '#/components/parameters/SecretKey'
+      - $ref: '#/components/parameters/ConfigGuardQuery'
       # ADR-092 PR-B: ?scope= selects which scope to rotate.
       - $ref: '#/components/parameters/EnvScope'
     post:
@@ -27561,10 +27563,106 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/config/revisions:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/EnvScope'
+      - name: limit
+        in: query
+        required: false
+        description: Revisions to return, newest first.
+        schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    get:
+      tags: [env]
+      operationId: listConfigRevisions
+      summary: List a scope's config revisions (ADR-1451).
+      description: "Newest first. Each customer env or secret write records a revision of the scope's complete config; the newest 100 are kept. Values are not listed; read one revision for its variables."
+      responses:
+        '200':
+          description: Config revisions and the scope's newest config guard.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListConfigRevisionsResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/config/revisions/{revision}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/EnvScope'
+      - name: revision
+        in: path
+        required: true
+        description: The scope's config revision number, from the config history.
+        schema: { type: integer, format: int64, minimum: 1 }
+    get:
+      tags: [env]
+      operationId: getConfigRevision
+      summary: Read one config revision (ADR-1451).
+      description: "The scope's variables and secret versions after the change. Secret values and fingerprints are never returned."
+      responses:
+        '200':
+          description: The config revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConfigRevisionDetail' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/config/guard:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/EnvScope'
+    get:
+      tags: [env]
+      operationId: getConfigGuard
+      summary: Read a scope's newest config guard (ADR-1451).
+      description: "A guard judges the first traffic served with a changed config against the config before it, and restores the previous config when the new one fails. 404 `config_guard_not_found` when no change in the scope was guarded."
+      responses:
+        '200':
+          description: The config guard and, once closed, its decision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConfigGuard' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/config/rollback:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/EnvScope'
+    post:
+      tags: [env]
+      operationId: rollbackConfig
+      summary: Restore a scope's variables to a config revision (ADR-1451).
+      description: "Sets and deletes variables until the scope matches the revision, as one guarded change. Secrets cannot be restored from a revision; those that differ are listed in `secrets_not_restored`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConfigRollbackRequest' }
+            example: {"revision": 12}
+      responses:
+        '200':
+          description: What the rollback changed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConfigRollbackResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/env/{key}:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - $ref: '#/components/parameters/SecretKey'
+      - $ref: '#/components/parameters/ConfigGuardQuery'
       - $ref: '#/components/parameters/EnvScope'
     put:
       tags: [env]
@@ -61193,6 +61291,16 @@ components:
     # scope=default — the wire shape is byte-identical to
     # pre-PR-B. See EnvScopeInvalid / EnvScopeReserved in
     # responses/ for the 400 codes.
+    ConfigGuardQuery:
+      name: guard
+      in: query
+      required: false
+      schema: { type: boolean }
+      description: |
+        `false` opts this env or secret write out of the config guard
+        (ADR-1451): no guard opens, and a guard already watching the scope
+        closes as superseded. Omitted or `true` guards the change when the
+        scope has a live deployment.
     EnvScope:
       name: scope
       in: query
@@ -78123,6 +78231,15 @@ components:
           minimum: 0
           maximum: 604800
           default: 0
+        release_policy:
+          description: "Default rollout for production releases that name no rollout policy (ADR-1446). safe (or unset) uses the adaptive health-gated canary (ADR-1321: each stage advances on clean evidence after a minute) with first-wake 5xx rollback; fast uses the aggressive ladder with the same rollback (ADR-1450); immediate moves all traffic at once."
+          type: string
+          enum: [safe, fast, immediate]
+        release_probe_paths:
+          description: "Up to 3 concrete GET paths the default rollout probe checks instead of / (ADR-1449). No queries, fragments, wildcards or parameters."
+          type: array
+          maxItems: 3
+          items: { type: string, maxLength: 240, pattern: '^/' }
         # ADR-093: per-route observability opt-in. Default-on for
         # Hobby/Pro/Scale; Free customers always see this as false.
         # PATCH-true on Free is rejected with 403
@@ -80422,6 +80539,15 @@ components:
           minimum: 0
           maximum: 604800
           default: 0
+        release_policy:
+          description: "Default rollout for production releases that name no rollout policy (ADR-1446, ADR-1450). Omit for safe."
+          type: string
+          enum: [safe, fast, immediate]
+        release_probe_paths:
+          description: "Up to 3 concrete GET paths the default rollout probe checks instead of / (ADR-1449)."
+          type: array
+          maxItems: 3
+          items: { type: string, maxLength: 240, pattern: '^/' }
         # Issue #471 / ADR-047 (PR-A): optional at create-time.
         # Omitted → apid applies the plan default (Hobby/Pro/Scale
         # default to true; Free defaults to false). Spec
@@ -81755,6 +81881,15 @@ components:
           type: [integer, "null"]
           minimum: 0
           maximum: 604800
+        release_policy:
+          description: "Set the default rollout for production releases (ADR-1446, ADR-1450). Omit for no change."
+          type: [string, "null"]
+          enum: [safe, fast, immediate, null]
+        release_probe_paths:
+          description: "Replace the paths the default rollout probe checks (ADR-1449). An empty list restores /. Omit for no change."
+          type: [array, "null"]
+          maxItems: 3
+          items: { type: string, maxLength: 240, pattern: '^/' }
         min_instances: { type: [integer, "null"], minimum: 0 }
         # ADR-031 (tier-2 of the network roadmap): per-app
         # outbound CIDR allowlist. Replace-mode semantics:
@@ -82763,6 +82898,14 @@ components:
           minimum: 0
           maximum: 604800
           default: 0
+        release_policy:
+          description: "Effective default rollout for production releases (ADR-1446, ADR-1450)."
+          type: string
+          enum: [safe, fast, immediate]
+        release_probe_paths:
+          description: "Paths the default rollout probe checks; absent means / (ADR-1449)."
+          type: array
+          items: { type: string }
 
     WorkloadPort:
       description: "One protocol-aware listener in a container workload (ADR-165)."
@@ -83595,7 +83738,7 @@ components:
         # SAFE-RELEASES-A/F: canary ladder and durable rollout state.
         canary_preset:
           type: string
-          enum: [none, slow, balanced, aggressive, 1-10-50-100]
+          enum: [none, slow, balanced, aggressive, 1-10-50-100, adaptive]
           description: "Canary preset used by the deployment's progressive rollout. `none` preserves the default 100% deployment path."
         canary_step:
           type: integer
@@ -83628,6 +83771,15 @@ components:
         rollout_aborted_reason:
           type: string
           description: "Operator or orchestrator reason recorded when the rollout is aborted."
+        rollout_decision:
+          $ref: '#/components/schemas/RolloutDecision'
+          description: "Evidence recorded with the latest rollout transition (ADR-1447). It explains an outcome only when its kind matches: an advance record for completion, an abort record for an abort."
+        rollout_hold:
+          $ref: '#/components/schemas/RolloutDecision'
+          description: "The newest hold recorded since the current canary step started, while the rollout is in flight (ADR-1447). Filled on GET /v1/deployments/{id} and the deployment summary."
+        release:
+          $ref: '#/components/schemas/DeploymentRelease'
+          description: "The deployment's release command run, for a deployment that declares one (ADR-1448). Filled on GET /v1/deployments/{id} and the deployment summary."
         rollback_operation:
           $ref: '#/components/schemas/RollbackOperation'
         service_rollout_handoff:
@@ -83866,6 +84018,57 @@ components:
           minimum: 0
           description: "The canary_step the caller read before requesting the next stage."
           example: 1
+        decision:
+          $ref: '#/components/schemas/RolloutDecision'
+          description: "Reserved for Gregale's Safe Deploy worker (ADR-1447). Public requests that set it are rejected with 422."
+
+    RolloutDecision:
+      description: "Evidence behind one decision about a rollout (ADR-1447): why a canary stage advanced, is held, or was aborted. Aggregates only; no request payloads, routes, URLs or customer text."
+      type: object
+      required: [kind, rule, step, traffic_percent, decided_at]
+      properties:
+        kind: { type: string, enum: [advance, hold, abort] }
+        rule:
+          type: string
+          enum: [advance_healthy, advance_probe_evidence, advance_low_traffic, advance_no_predecessor, advance_manual, hold_insufficient_samples, hold_signal_unavailable, hold_observation_unavailable, hold_health_alert, abort_5xx, abort_p95_latency, abort_cold_boot_p95, abort_cpu_per_request, abort_dependency_errors, abort_oom, abort_crash_loop, abort_manual, abort_worker_lease_expired, abort_post_release_5xx, abort_post_release_p95_latency]
+          description: "Closed set; the breaker rules reuse the canary_progression_circuit_breaker_total event names."
+        summary: { type: string, maxLength: 256, description: "The circuit breaker's aggregate-only reason." }
+        step: { type: integer, minimum: 0, description: "Zero-based canary step that was evaluated." }
+        traffic_percent: { type: integer, minimum: 0, maximum: 100, description: "The candidate's share during the observation window." }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        stable_deployment_id: { type: string, format: uuid }
+        candidate: { $ref: '#/components/schemas/RolloutDecisionSample' }
+        stable: { $ref: '#/components/schemas/RolloutDecisionSample' }
+        probes_included: { type: boolean, description: "The 5xx sample included synthetic probes of the app (ADR-1446)." }
+        signals: { $ref: '#/components/schemas/RolloutDecisionSignals' }
+        decided_at: { type: string, format: date-time }
+
+    RolloutDecisionSample:
+      description: "One side's aggregates over the observation window. Request counts are organic requests; probe counts are reported separately."
+      type: object
+      required: [requests, server_errors]
+      properties:
+        requests: { type: integer, minimum: 0 }
+        server_errors: { type: integer, minimum: 0 }
+        probe_requests: { type: integer, minimum: 0 }
+        probe_server_errors: { type: integer, minimum: 0 }
+        p95_latency_ms: { type: number, minimum: 0 }
+        cold_boot_requests: { type: integer, minimum: 0 }
+        cold_boot_p95_latency_ms: { type: number, minimum: 0 }
+        cpu_requests: { type: integer, minimum: 0 }
+        cpu_usec: { type: integer, minimum: 0 }
+        dependency_calls: { type: integer, minimum: 0 }
+        dependency_errors: { type: integer, minimum: 0 }
+
+    RolloutDecisionSignals:
+      description: "The candidate's OOM kills and both sides' liveness-driven restarts over the window."
+      type: object
+      required: [oom_kills, candidate_liveness_restarts, stable_liveness_restarts]
+      properties:
+        oom_kills: { type: number, minimum: 0 }
+        candidate_liveness_restarts: { type: number, minimum: 0 }
+        stable_liveness_restarts: { type: number, minimum: 0 }
 
     CanaryAdvanceResponse:
       description: "The atomic canary transition result and the deployment_audit row id."
@@ -83943,7 +84146,7 @@ components:
 
     RollbackOperation:
       type: object
-      description: Durable progress of a checked historical rollback. This receipt grants no authority to reuse binding evidence or move traffic for another operation.
+      description: Durable progress of a rollback. A checked historical rollback reports its binding gates; a plain rollback (manual, dashboard, alert, or first-wake 5xx auto-rollback, ADR-1446) reports preparing until its target serves (complete, with recovery_ms) or fails. This receipt grants no authority to reuse binding evidence or move traffic for another operation.
       required: [id, app_id, scope, target_deployment_id, current_deployment_id, status, service, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
@@ -83963,6 +84166,18 @@ components:
         updated_at: { type: string, format: date-time }
         completed_at: { type: [string, "null"], format: date-time }
         audit_id: { type: string }
+        trigger:
+          type: string
+          enum: [manual, auto_5xx, alert]
+          description: What started a plain rollback. Absent for a checked rollback.
+        recovery_ms:
+          type: integer
+          minimum: 0
+          description: Milliseconds from the plain rollback request until its target served. Present once a plain rollback is complete.
+        error:
+          type: string
+          maxLength: 1024
+          description: Why a failed plain rollback did not restore the previous release; code carries the stable error code.
 
     RollbackRequest:
       description: "Body for POST /v1/apps/{slug}/rollback (SAFE-RELEASES-G, issue #976). All fields optional. Without a body the handler falls back to rolling back to the most-recent superseded deployment (pre-#976 behaviour). With `target_deployment_id` set, the handler validates that the named deployment belongs to this app and is superseded or live with zero traffic."
@@ -83986,6 +84201,57 @@ components:
           type: string
           maxLength: 256
           description: One-line reason for an exact checked rollback. Cannot be combined with alert_rule_id.
+        acknowledge_releases:
+          type: boolean
+          description: "Roll back although release commands ran after the target last served (ADR-1448). Rollback does not undo them. Without it such a rollback is refused with rollback_crosses_release, which lists them. Automated rollbacks never set it."
+
+    RollbackCrossedRelease:
+      description: "A release command that ran after a rollback target last served (ADR-1448). A rollback does not undo it."
+      type: object
+      required: [deployment_id, status, started_at]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1, description: "The deployment's vN revision." }
+        status:
+          type: string
+          description: "The release task's status. A failed release may still have committed changes."
+        started_at: { type: string, format: date-time }
+
+    ReleaseRestorePoint:
+      description: "The moment before the earliest crossed release for one managed PostgreSQL database the app's release commands can migrate (ADR-1448), with the command that restores it into a new database."
+      type: object
+      required: [database_id, database_name, point_in_time, command]
+      properties:
+        database_id: { type: string, format: uuid }
+        database_name: { type: string }
+        point_in_time: { type: string, format: date-time }
+        command:
+          type: string
+          example: "gregale postgres restore 0123... --name orders-before-v42 --point-in-time 2026-10-15T10:02:13Z"
+
+    ReleaseDatabaseRef:
+      description: "A managed PostgreSQL database a release command can migrate (ADR-1448)."
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+
+    DeploymentRelease:
+      description: "A deployment's release command run (ADR-1448)."
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [pending, queued, restoring, running, succeeded, failed, timed_out, cancelled]
+          description: "The release task's status; pending before imaged has admitted the task."
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        migration_databases:
+          type: array
+          items: { $ref: '#/components/schemas/ReleaseDatabaseRef' }
+          description: "Managed PostgreSQL databases whose migration binding the release task receives."
 
 
 
@@ -92229,7 +92495,7 @@ components:
 
     # ─── Canary ladder (issue #976 / ADR-122 / SAFE-RELEASES-A) ───────────
     # The catalog lives in pkg/api/canary (the closed set of preset
-    # names: none / slow / balanced / aggressive / 1-10-50-100 /
+    # names: none / slow / balanced / aggressive / 1-10-50-100 / adaptive /
     # custom). Production-leveling Stream F widens the set with
     # `custom` and re-homes the per-deployment ladder onto the row's
     # canary_stages jsonb column (migrations/00487). Wire shape:
@@ -92283,7 +92549,7 @@ components:
         The canary ladder a customer asks for on a deploy (issue
         #976 / ADR-122 / SAFE-RELEASES-A + production-leveling
         Stream F). Preset is the catalog name from
-        pkg/api/canary (none/slow/balanced/aggressive/1-10-50-100/
+        pkg/api/canary (none/slow/balanced/aggressive/1-10-50-100/adaptive/
         custom). When Preset is 'custom', Stages is the
         customer-supplied ladder (each entry is percent +
         duration string in time.ParseDuration form, e.g.
@@ -92297,7 +92563,7 @@ components:
       properties:
         preset:
           type: string
-          enum: [none, slow, balanced, aggressive, 1-10-50-100, custom]
+          enum: [none, slow, balanced, aggressive, 1-10-50-100, adaptive, custom]
           description: "Catalog preset name. 'none' = no canary (server stamps canary_preset='none', canary_total_steps=0). 'custom' requires Stages to be non-empty."
           example: "balanced"
         stages:
@@ -99118,6 +99384,9 @@ components:
       type: object
       required: [key, scope, secret_class, created_at, updated_at, delivery_version, delivery_status]
       properties:
+        config_change:
+          $ref: '#/components/schemas/ConfigChangeReceipt'
+          description: "Present on writes: the config revision recorded and the config guard watching it (ADR-1451)."
         key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128 , example: "DATABASE_URL"}
         # ADR-092 PR-B: scope echoes the env-scope the row was
         # written to. Always populated — flat-list reads render
@@ -99363,6 +99632,107 @@ components:
       properties:
         value: { type: string, description: 'Plaintext env-var value. Stored as-is; do NOT use this surface for credentials.', example: "debug" }
 
+    ConfigGuardSummary:
+      description: "The config guard an env or secret write opened or joined (ADR-1451)."
+      type: object
+      required: [id, status, base_revision]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [watching, clean, restored, regressed, no_traffic, superseded] }
+        base_revision: { type: integer, format: int64 }
+        window_minutes: { type: integer }
+    ConfigChangeReceipt:
+      description: "The config revision an env or secret write recorded and the guard watching it (ADR-1451)."
+      type: object
+      required: [revision]
+      properties:
+        revision: { type: integer, format: int64 }
+        guard: { $ref: '#/components/schemas/ConfigGuardSummary' }
+    ConfigGuardDecision:
+      description: "Why a config guard closed: the rule, a one-line summary and the new-config and old-config samples."
+      type: object
+      required: [rule, summary, new_requests, new_server_errors, old_requests, old_server_errors]
+      properties:
+        rule: { type: string, example: fail_first_wake_5xx }
+        summary: { type: string }
+        new_requests: { type: integer, format: int64 }
+        new_server_errors: { type: integer, format: int64 }
+        old_requests: { type: integer, format: int64 }
+        old_server_errors: { type: integer, format: int64 }
+        restored_revision: { type: integer, format: int64 }
+        not_restorable: { type: array, items: { type: string } }
+    ConfigGuard:
+      description: "A scope's config guard (ADR-1451)."
+      type: object
+      required: [id, scope, status, base_revision, head_revision, restorable, opened_at, last_change_at]
+      properties:
+        id: { type: string, format: uuid }
+        scope: { type: string }
+        status: { type: string, enum: [watching, clean, restored, regressed, no_traffic, superseded] }
+        base_revision: { type: integer, format: int64 }
+        head_revision: { type: integer, format: int64 }
+        restorable: { type: boolean }
+        opened_at: { type: string, format: date-time }
+        last_change_at: { type: string, format: date-time }
+        window_ends_at: { type: string, format: date-time }
+        closed_at: { type: string, format: date-time }
+        decision: { $ref: '#/components/schemas/ConfigGuardDecision' }
+    ConfigRevision:
+      description: "One recorded config change, without values (ADR-1451)."
+      type: object
+      required: [revision, scope, source, actor, created_at, variable_count, secret_count]
+      properties:
+        revision: { type: integer, format: int64 }
+        scope: { type: string }
+        source: { type: string, enum: [baseline, env.set, env.delete, secret.set, secret.delete, secret.rotate, config.rollback, config.guard_restore] }
+        key: { type: string }
+        actor: { type: string }
+        created_at: { type: string, format: date-time }
+        variable_count: { type: integer }
+        secret_count: { type: integer }
+        guard_id: { type: string, format: uuid }
+        guard_status: { type: string }
+        restored_revision: { type: integer, format: int64 }
+    ConfigRevisionDetail:
+      description: "A config revision with its variables and secret versions. Secret values are never returned."
+      allOf:
+        - $ref: '#/components/schemas/ConfigRevision'
+        - type: object
+          required: [variables, secret_versions]
+          properties:
+            variables: { type: object, additionalProperties: { type: string } }
+            secret_versions: { type: object, additionalProperties: { type: integer, format: int64 } }
+    ListConfigRevisionsResponse:
+      description: "A scope's config revisions, newest first, and its newest config guard (ADR-1451)."
+      type: object
+      required: [revisions]
+      properties:
+        revisions: { type: array, items: { $ref: '#/components/schemas/ConfigRevision' } }
+        guard: { $ref: '#/components/schemas/ConfigGuard' }
+    ConfigRollbackRequest:
+      description: "The config revision whose variables a rollback restores (ADR-1451)."
+      type: object
+      required: [revision]
+      properties:
+        revision: { type: integer, format: int64, minimum: 1 }
+    ConfigSecretDifference:
+      description: "A secret a config rollback could not restore."
+      type: object
+      required: [key]
+      properties:
+        key: { type: string }
+        target_version: { type: integer, format: int64 }
+        current_version: { type: integer, format: int64 }
+    ConfigRollbackResponse:
+      description: "What a config rollback changed, and the secrets it could not restore (ADR-1451)."
+      type: object
+      required: [restored_revision, set, deleted, secrets_not_restored]
+      properties:
+        restored_revision: { type: integer, format: int64 }
+        change: { $ref: '#/components/schemas/ConfigChangeReceipt' }
+        set: { type: array, items: { type: string } }
+        deleted: { type: array, items: { type: string } }
+        secrets_not_restored: { type: array, items: { $ref: '#/components/schemas/ConfigSecretDifference' } }
     AppEnvResponse:
       description: "An env var envelope: key name + scope + timestamps. The plaintext value never appears here."
       type: object
@@ -99377,6 +99747,9 @@ components:
           example: "default"
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        config_change:
+          $ref: '#/components/schemas/ConfigChangeReceipt'
+          description: "Present on env writes: the revision this write recorded and the config guard watching it (ADR-1451)."
 
     # ADR-090 PR-B: per-row shape for the nested `env_by_scope`
     # response. Identical to AppEnvResponse except the `scope`
@@ -103949,6 +104322,14 @@ components:
         message_index: { type: integer, minimum: 0 }
         expected_sequence: { type: integer, format: int64, minimum: 0, description: 'Requested channel head precondition.' }
         bindings_check: { $ref: '#/components/schemas/BindingCheckReport' }
+        crossed_releases:
+          type: array
+          items: { $ref: '#/components/schemas/RollbackCrossedRelease' }
+          description: "rollback_crosses_release: release commands the rollback would not undo (ADR-1448)."
+        restore_points:
+          type: array
+          items: { $ref: '#/components/schemas/ReleaseRestorePoint' }
+          description: "rollback_crosses_release: how to restore each managed PostgreSQL database to before those releases (ADR-1448)."
         type: { type: string, format: uri-reference, example: "https://gregale.dev/docs/errors/validation_failed"}
         title: { type: string , example: "Validation failed"}
         status: { type: integer , example: 422}
@@ -106101,6 +106482,9 @@ components:
         rollout_state: { type: string, enum: [complete] }
         traffic_percent: { type: integer, minimum: 0, maximum: 100 }
         completed_at: { type: string, format: date-time }
+        decision:
+          $ref: '#/components/schemas/RolloutDecision'
+          description: "The advance evidence that completed the rollout (ADR-1447)."
       additionalProperties: true
 
     RolloutAbortedWebhookPayload:
@@ -106114,6 +106498,9 @@ components:
         traffic_percent: { type: integer, minimum: 0, maximum: 100 }
         reason: { type: string }
         aborted_at: { type: string, format: date-time }
+        decision:
+          $ref: '#/components/schemas/RolloutDecision'
+          description: "The abort evidence when the circuit breaker, a person, or the worker lease expiry aborted the rollout (ADR-1447). Aborts by route monitors, alert rollbacks and profile gates carry only reason."
       additionalProperties: true
 
     ErrorNewWebhookPayload:

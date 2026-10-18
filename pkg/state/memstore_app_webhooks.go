@@ -90,6 +90,7 @@ func (m *MemStore) enqueueRolloutOutcomeWebhooksLocked(before, after Deployment)
 		payload = api.RolloutCompletedWebhookPayload{
 			AppID: after.AppID, DeploymentID: after.ID, RolloutState: "complete",
 			TrafficPercent: after.TrafficPercent, CompletedAt: at.UTC().Format(time.RFC3339Nano),
+			Decision: rolloutDecisionOfKind(after.RolloutDecision, api.RolloutDecisionAdvance),
 		}
 	case "aborted":
 		if before.Status != DeployLive || (after.Status != DeployLive && after.Status != DeploySuperseded) {
@@ -107,6 +108,7 @@ func (m *MemStore) enqueueRolloutOutcomeWebhooksLocked(before, after Deployment)
 		payload = api.RolloutAbortedWebhookPayload{
 			AppID: after.AppID, DeploymentID: after.ID, RolloutState: "aborted",
 			TrafficPercent: after.TrafficPercent, Reason: reason, AbortedAt: at.UTC().Format(time.RFC3339Nano),
+			Decision: rolloutDecisionOfKind(after.RolloutDecision, api.RolloutDecisionAbort),
 		}
 	default:
 		return

@@ -212,6 +212,7 @@ from .app_manifest_execution_mode_type_2_type_1 import AppManifestExecutionModeT
 from .app_manifest_execution_mode_type_3_type_1 import AppManifestExecutionModeType3Type1
 from .app_manifest_healthcheck import AppManifestHealthcheck
 from .app_manifest_pause import AppManifestPause
+from .app_manifest_release_policy import AppManifestReleasePolicy
 from .app_manifest_restart_policy_type_1 import AppManifestRestartPolicyType1
 from .app_manifest_restart_policy_type_2_type_1 import AppManifestRestartPolicyType2Type1
 from .app_manifest_restart_policy_type_3_type_1 import AppManifestRestartPolicyType3Type1
@@ -259,6 +260,7 @@ from .app_response_cpu_millicores import AppResponseCpuMillicores
 from .app_response_deployment_availability import AppResponseDeploymentAvailability
 from .app_response_eviction_priority import AppResponseEvictionPriority
 from .app_response_preview_pr_state import AppResponsePreviewPrState
+from .app_response_release_policy import AppResponseReleasePolicy
 from .app_response_runtime import AppResponseRuntime
 from .app_response_status import AppResponseStatus
 from .app_response_type import AppResponseType
@@ -716,6 +718,20 @@ from .complete_object_multipart_upload_request import CompleteObjectMultipartUpl
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
 from .compose_healthcheck import ComposeHealthcheck
+from .config_change_receipt import ConfigChangeReceipt
+from .config_guard import ConfigGuard
+from .config_guard_decision import ConfigGuardDecision
+from .config_guard_status import ConfigGuardStatus
+from .config_guard_summary import ConfigGuardSummary
+from .config_guard_summary_status import ConfigGuardSummaryStatus
+from .config_revision import ConfigRevision
+from .config_revision_detail import ConfigRevisionDetail
+from .config_revision_detail_secret_versions import ConfigRevisionDetailSecretVersions
+from .config_revision_detail_variables import ConfigRevisionDetailVariables
+from .config_revision_source import ConfigRevisionSource
+from .config_rollback_request import ConfigRollbackRequest
+from .config_rollback_response import ConfigRollbackResponse
+from .config_secret_difference import ConfigSecretDifference
 from .configure_managed_realtime_push_provider_provider import ConfigureManagedRealtimePushProviderProvider
 from .configure_managed_realtime_push_provider_response_200 import ConfigureManagedRealtimePushProviderResponse200
 from .configure_managed_realtime_push_provider_response_200_provider import (
@@ -777,6 +793,7 @@ from .create_app_request_crawler_policy import CreateAppRequestCrawlerPolicy
 from .create_app_request_eviction_priority import CreateAppRequestEvictionPriority
 from .create_app_request_execution_mode import CreateAppRequestExecutionMode
 from .create_app_request_pause import CreateAppRequestPause
+from .create_app_request_release_policy import CreateAppRequestReleasePolicy
 from .create_app_request_restart_policy import CreateAppRequestRestartPolicy
 from .create_app_request_runtime import CreateAppRequestRuntime
 from .create_app_request_service_binding_policy import CreateAppRequestServiceBindingPolicy
@@ -1131,6 +1148,8 @@ from .deployment_preview_url import DeploymentPreviewURL
 from .deployment_promotion_hold import DeploymentPromotionHold
 from .deployment_promotion_hold_last_recovery_outcome import DeploymentPromotionHoldLastRecoveryOutcome
 from .deployment_readiness_probe import DeploymentReadinessProbe
+from .deployment_release import DeploymentRelease
+from .deployment_release_status import DeploymentReleaseStatus
 from .deployment_response import DeploymentResponse
 from .deployment_response_build_cache_status import DeploymentResponseBuildCacheStatus
 from .deployment_response_canary_preset import DeploymentResponseCanaryPreset
@@ -2181,6 +2200,7 @@ from .list_billing_run_items_outcome import ListBillingRunItemsOutcome
 from .list_binding_verification_runs_status import ListBindingVerificationRunsStatus
 from .list_bucket_objects_response_200 import ListBucketObjectsResponse200
 from .list_bucket_objects_response_200_items_item import ListBucketObjectsResponse200ItemsItem
+from .list_config_revisions_response import ListConfigRevisionsResponse
 from .list_cron_runs_response import ListCronRunsResponse
 from .list_delayed_tasks_response import ListDelayedTasksResponse
 from .list_deploy_tokens_response import ListDeployTokensResponse
@@ -4354,6 +4374,8 @@ from .register_scenario_test_response_policy_version import RegisterScenarioTest
 from .register_scenario_test_response_recorder_version import RegisterScenarioTestResponseRecorderVersion
 from .register_scenario_test_response_webhook_mode import RegisterScenarioTestResponseWebhookMode
 from .rekey_progress import RekeyProgress
+from .release_database_ref import ReleaseDatabaseRef
+from .release_restore_point import ReleaseRestorePoint
 from .remove_environment_git_ops_override_request import RemoveEnvironmentGitOpsOverrideRequest
 from .rename_app_request import RenameAppRequest
 from .reorder_deployment_body import ReorderDeploymentBody
@@ -4419,16 +4441,23 @@ from .review_project_binding_verification_request import ReviewProjectBindingVer
 from .revoke_application_standard_exception_request import RevokeApplicationStandardExceptionRequest
 from .revoke_execution_artifact_grant_response import RevokeExecutionArtifactGrantResponse
 from .revoke_platform_tenant_self_consumers_request import RevokePlatformTenantSelfConsumersRequest
+from .rollback_crossed_release import RollbackCrossedRelease
 from .rollback_edge_rules_request import RollbackEdgeRulesRequest
 from .rollback_feature_flags_request import RollbackFeatureFlagsRequest
 from .rollback_operation import RollbackOperation
 from .rollback_operation_status import RollbackOperationStatus
+from .rollback_operation_trigger import RollbackOperationTrigger
 from .rollback_operator_runtime_config_request import RollbackOperatorRuntimeConfigRequest
 from .rollback_request import RollbackRequest
 from .rollout_aborted_webhook_payload import RolloutAbortedWebhookPayload
 from .rollout_aborted_webhook_payload_rollout_state import RolloutAbortedWebhookPayloadRolloutState
 from .rollout_completed_webhook_payload import RolloutCompletedWebhookPayload
 from .rollout_completed_webhook_payload_rollout_state import RolloutCompletedWebhookPayloadRolloutState
+from .rollout_decision import RolloutDecision
+from .rollout_decision_kind import RolloutDecisionKind
+from .rollout_decision_rule import RolloutDecisionRule
+from .rollout_decision_sample import RolloutDecisionSample
+from .rollout_decision_signals import RolloutDecisionSignals
 from .rollout_recovery_receipt import RolloutRecoveryReceipt
 from .rollout_recovery_receipt_restored_traffic_percent import RolloutRecoveryReceiptRestoredTrafficPercent
 from .rollout_transition_response import RolloutTransitionResponse
@@ -5118,6 +5147,9 @@ from .update_app_request_execution_mode_type_1 import UpdateAppRequestExecutionM
 from .update_app_request_execution_mode_type_2_type_1 import UpdateAppRequestExecutionModeType2Type1
 from .update_app_request_execution_mode_type_3_type_1 import UpdateAppRequestExecutionModeType3Type1
 from .update_app_request_pause import UpdateAppRequestPause
+from .update_app_request_release_policy_type_1 import UpdateAppRequestReleasePolicyType1
+from .update_app_request_release_policy_type_2_type_1 import UpdateAppRequestReleasePolicyType2Type1
+from .update_app_request_release_policy_type_3_type_1 import UpdateAppRequestReleasePolicyType3Type1
 from .update_app_request_restart_policy_type_1 import UpdateAppRequestRestartPolicyType1
 from .update_app_request_restart_policy_type_2_type_1 import UpdateAppRequestRestartPolicyType2Type1
 from .update_app_request_restart_policy_type_3_type_1 import UpdateAppRequestRestartPolicyType3Type1
@@ -5801,6 +5833,7 @@ __all__ = (
     "AppManifestExecutionModeType3Type1",
     "AppManifestHealthcheck",
     "AppManifestPause",
+    "AppManifestReleasePolicy",
     "AppManifestRestartPolicyType1",
     "AppManifestRestartPolicyType2Type1",
     "AppManifestRestartPolicyType3Type1",
@@ -5848,6 +5881,7 @@ __all__ = (
     "AppResponseDeploymentAvailability",
     "AppResponseEvictionPriority",
     "AppResponsePreviewPrState",
+    "AppResponseReleasePolicy",
     "AppResponseRuntime",
     "AppResponseStatus",
     "AppResponseType",
@@ -6200,6 +6234,20 @@ __all__ = (
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
     "ComposeHealthcheck",
+    "ConfigChangeReceipt",
+    "ConfigGuard",
+    "ConfigGuardDecision",
+    "ConfigGuardStatus",
+    "ConfigGuardSummary",
+    "ConfigGuardSummaryStatus",
+    "ConfigRevision",
+    "ConfigRevisionDetail",
+    "ConfigRevisionDetailSecretVersions",
+    "ConfigRevisionDetailVariables",
+    "ConfigRevisionSource",
+    "ConfigRollbackRequest",
+    "ConfigRollbackResponse",
+    "ConfigSecretDifference",
     "ConfigureManagedRealtimePushProviderProvider",
     "ConfigureManagedRealtimePushProviderResponse200",
     "ConfigureManagedRealtimePushProviderResponse200Provider",
@@ -6263,6 +6311,7 @@ __all__ = (
     "CreateAppRequestEvictionPriority",
     "CreateAppRequestExecutionMode",
     "CreateAppRequestPause",
+    "CreateAppRequestReleasePolicy",
     "CreateAppRequestRestartPolicy",
     "CreateAppRequestRuntime",
     "CreateAppRequestServiceBindingPolicy",
@@ -6592,6 +6641,8 @@ __all__ = (
     "DeploymentPromotionHold",
     "DeploymentPromotionHoldLastRecoveryOutcome",
     "DeploymentReadinessProbe",
+    "DeploymentRelease",
+    "DeploymentReleaseStatus",
     "DeploymentResponse",
     "DeploymentResponseBuildCacheStatus",
     "DeploymentResponseCanaryPreset",
@@ -7595,6 +7646,7 @@ __all__ = (
     "ListBindingVerificationRunsStatus",
     "ListBucketObjectsResponse200",
     "ListBucketObjectsResponse200ItemsItem",
+    "ListConfigRevisionsResponse",
     "ListCronRunsResponse",
     "ListDelayedTasksResponse",
     "ListDeploymentAuditResponse",
@@ -9548,6 +9600,8 @@ __all__ = (
     "RegisterScenarioTestResponseRecorderVersion",
     "RegisterScenarioTestResponseWebhookMode",
     "RekeyProgress",
+    "ReleaseDatabaseRef",
+    "ReleaseRestorePoint",
     "RemoveEnvironmentGitOpsOverrideRequest",
     "RenameAppRequest",
     "ReorderDeploymentBody",
@@ -9609,16 +9663,23 @@ __all__ = (
     "RevokeApplicationStandardExceptionRequest",
     "RevokeExecutionArtifactGrantResponse",
     "RevokePlatformTenantSelfConsumersRequest",
+    "RollbackCrossedRelease",
     "RollbackEdgeRulesRequest",
     "RollbackFeatureFlagsRequest",
     "RollbackOperation",
     "RollbackOperationStatus",
+    "RollbackOperationTrigger",
     "RollbackOperatorRuntimeConfigRequest",
     "RollbackRequest",
     "RolloutAbortedWebhookPayload",
     "RolloutAbortedWebhookPayloadRolloutState",
     "RolloutCompletedWebhookPayload",
     "RolloutCompletedWebhookPayloadRolloutState",
+    "RolloutDecision",
+    "RolloutDecisionKind",
+    "RolloutDecisionRule",
+    "RolloutDecisionSample",
+    "RolloutDecisionSignals",
     "RolloutRecoveryReceipt",
     "RolloutRecoveryReceiptRestoredTrafficPercent",
     "RolloutTransitionResponse",
@@ -10288,6 +10349,9 @@ __all__ = (
     "UpdateAppRequestExecutionModeType2Type1",
     "UpdateAppRequestExecutionModeType3Type1",
     "UpdateAppRequestPause",
+    "UpdateAppRequestReleasePolicyType1",
+    "UpdateAppRequestReleasePolicyType2Type1",
+    "UpdateAppRequestReleasePolicyType3Type1",
     "UpdateAppRequestRestartPolicyType1",
     "UpdateAppRequestRestartPolicyType2Type1",
     "UpdateAppRequestRestartPolicyType3Type1",
