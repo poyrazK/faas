@@ -1,6 +1,8 @@
 -- filename: 20261018120000001_job_run_process_overrides.sql
+-- migration-compat: expand
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 -- ADR-1790: an image run's `gregale run -u/-w` overrides of the image's USER
 -- and WORKDIR, snapshotted with the run like its command. NULL keeps the

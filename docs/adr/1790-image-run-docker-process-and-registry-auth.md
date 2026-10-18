@@ -103,8 +103,11 @@ accepting `user`, `workdir` and `registry_auth`. Image runs stay behind
   directory, including official images that set `USER`.
 - User and workdir are per run, like args, entrypoint and env; the cached
   runner job and its artifact are shared across runs of the image.
-- Native acceptance (`TestImageRunsMetal`) covers the image defaults and the
-  overrides; it has not run, because the native acceptance VM is gone.
+- Native acceptance (`TestImageRunProcessMetal`) covers the image defaults
+  (USER, a missing WORKDIR, ENV, a bare command on the image PATH, HOME from
+  passwd) and the `-u/-w` overrides. It has not run, because the native
+  acceptance VM is gone. The fake registry has no authentication, so an
+  authenticated pull is covered by unit tests only.
 
 ## Rejected alternatives
 
