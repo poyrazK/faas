@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Preserve request identity in response caching](20261017214848-response-cache-request-identity.md)
+
 - [Restart-safe Go acknowledgment recovery alerts](20261017182028-go-recovery-alert-checkpoints.md)
 
 - [Bounded Go acknowledgment intent recovery passes](20261017181200-bounded-go-intent-recovery.md)
