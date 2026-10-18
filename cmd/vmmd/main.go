@@ -948,6 +948,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.NativeProcessRecovery {
 		jailer.WithNativeProcessRecovery()
 	}
+	// The runtime admission identity published below (ADR-435) needs the node
+	// that owns this daemon. A single-box daemon with a store has no
+	// registration of its own and failed that check at startup.
+	runtimeNodeID, err := localRuntimeNodeID(ctx, store, nodeID)
+	if err != nil {
+		return err
+	}
 	mgr := fcvm.NewManager(
 		wire.ExecRunner{},
 		jailer,
@@ -956,7 +963,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log,
 		cbm,
 	).WithFrameworkReady(frm).
-		WithRuntimeAdmissionNodeID(nodeID).
+		WithRuntimeAdmissionNodeID(runtimeNodeID).
 		WithCaptureRunner(wire.ExecRunner{}).
 		WithPrivateNetworkTransport(privateNetworkTransport).
 		WithDiskMetrics(dsm).
@@ -1030,12 +1037,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// ADR-471: install durable failure delivery before accepting Wake RPCs.
 	failureNodeID := nodeID
-	if deps.scheddTarget != "" && failureNodeID == "" && store != nil {
-		localNode, lookupErr := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
-		if lookupErr != nil {
-			return fmt.Errorf("vmmd: resolve local failure-report node: %w", lookupErr)
-		}
-		failureNodeID = localNode.ID
+	if deps.scheddTarget != "" && failureNodeID == "" {
+		failureNodeID = runtimeNodeID
 	}
 	// The native qualification journal and RPC envelope must agree on the
 	// physical node that owns an attempt. A named node uses its registered
