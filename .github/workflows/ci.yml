@@ -375,6 +375,11 @@ jobs:
           ./bin/gregale test --manifest tests/scenario-acceptance/gregale-test.yaml --validate
           ./bin/gregale test --manifest tests/scenario-acceptance/gregale-test.yaml --suite simulation --report scenario-results.json --junit scenario-results.xml
 
+      - name: running-job and PostgreSQL recovery rehearsal contracts
+        run: |
+          python3 scripts/ci/rehearsal-native_test.py
+          node tests/scenario-acceptance/rehearsal-running-job/worker/importer.test.mjs
+
       # Run the copyable functional and load suites with this commit's CLI.
       # Saved runs exercise HTML reporting and the offline regression gate.
       - name: scenario reports example
@@ -993,6 +998,20 @@ jobs:
       contents: read
       id-token: write
     services:
+      rehearsal-postgres:
+        # Fault injection must never target the platform metadata cluster.
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: gregale_rehearsal_admin
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d gregale_rehearsal_admin"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
       postgres:
         # Keep state and provider SQL contracts on the supported version.
         image: mirror.gcr.io/library/postgres:16
@@ -1067,6 +1086,14 @@ jobs:
           sh -n scripts/test-queue-bindings-native.sh
           go test -race -p 1 ./pkg/managedpostgres/guestqualification ./pkg/e2etest/postgresstarter ./pkg/e2etest/queuestarter
           go test -race -p 1 ./pkg/e2etest -run '^Test(PostgresGuest|StorageGuest|QueueGuest)'
+      - name: scoped PostgreSQL rehearsal fault and recovery (no KVM)
+        if: matrix.id == 'b'
+        env:
+          FAAS_REHEARSAL_PG_TEST_ADMIN_URL: postgres://faas:faas@127.0.0.1:5433/gregale_rehearsal_admin?sslmode=disable
+        run: >-
+          go test -race -p 1 -count=1 -v -timeout=5m
+          ./pkg/rehearsalpg/runtime ./pkg/rehearsalwork/acceptance
+          -run 'TestPostgresFault|TestPostgresCollectorFailureAndCleanupFailureCannotPass'
       - uses: actions/setup-node@v7
         if: matrix.id == 'b'
         with:

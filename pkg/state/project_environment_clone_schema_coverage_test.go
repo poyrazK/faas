@@ -48,6 +48,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"scenario_managed_work":         CloneSchemaOperational,
 		"scenario_object_fixtures":      CloneSchemaOperational,
 		"scenario_postgres_fixtures":    CloneSchemaOperational,
+		"scenario_postgres_faults":      CloneSchemaOperational,
 		"scenario_recorder_requests":    CloneSchemaOperational,
 		"scenario_recorder_sessions":    CloneSchemaOperational,
 		"scenario_simulation_attempts":  CloneSchemaOperational,

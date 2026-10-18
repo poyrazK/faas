@@ -18628,7 +18628,7 @@ SELECT lock_clone_deployment_cleanup_borrower_writers();
 -- name: LockCloneDeploymentCleanupRetirementWriters :exec
 -- Deployment UUID arrays and rehearsal receipts retain original artifacts without
 -- a foreign-key lock; exclude their writers through deletion and receipt commit.
-LOCK TABLE environment_workload_retirements,environment_build_artifact_pins,scenario_cold_preparations,scenario_recorder_sessions,scenario_suspend_resumes,scenario_worker_faults,platform_mail_deployment_observations,platform_mail_producer_outbox IN SHARE MODE;
+LOCK TABLE environment_workload_retirements,environment_build_artifact_pins,scenario_cold_preparations,scenario_postgres_faults,scenario_recorder_sessions,scenario_suspend_resumes,scenario_worker_faults,platform_mail_deployment_observations,platform_mail_producer_outbox IN SHARE MODE;
 
 -- name: DeleteCloneOwnedDeployments :execrows
 DELETE FROM deployments d USING project_environment_clone_workloads w
@@ -18657,6 +18657,8 @@ SELECT jsonb_build_object(
  'runtime_upgrade_gateway_drains.deployment_id', (SELECT count(*) FROM runtime_upgrade_gateway_drains WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
  'runtime_upgrade_gateway_receipts.deployment_id', (SELECT count(*) FROM runtime_upgrade_gateway_receipts WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
  'scenario_cold_preparations.deployment_id', (SELECT count(*) FROM scenario_cold_preparations WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
+ -- PostgreSQL recovery receipts keep the original dispatch identity in JSON.
+ 'scenario_postgres_faults.receipt.deployment_id', (SELECT count(*) FROM scenario_postgres_faults WHERE receipt->>'deployment_id'=sqlc.arg(deployment_id)::uuid::text),
  'scenario_recorder_sessions.deployment_id', (SELECT count(*) FROM scenario_recorder_sessions WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'scenario_suspend_resumes.deployment_id', (SELECT count(*) FROM scenario_suspend_resumes WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'scenario_worker_faults.deployment_id', (SELECT count(*) FROM scenario_worker_faults WHERE deployment_id=sqlc.arg(deployment_id)::uuid),

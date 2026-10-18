@@ -2421,6 +2421,8 @@ export type { ScenarioObjectsReceipt } from './ScenarioObjectsReceipt.js';
 export type { ScenarioObjectsSpec } from './ScenarioObjectsSpec.js';
 export type { ScenarioPostgresDelta } from './ScenarioPostgresDelta.js';
 export type { ScenarioPostgresEvidence } from './ScenarioPostgresEvidence.js';
+export type { ScenarioPostgresFaultReceipt } from './ScenarioPostgresFaultReceipt.js';
+export type { ScenarioPostgresFaultSpec } from './ScenarioPostgresFaultSpec.js';
 export type { ScenarioPostgresReceipt } from './ScenarioPostgresReceipt.js';
 export type { ScenarioPostgresSnapshot } from './ScenarioPostgresSnapshot.js';
 export type { ScenarioPostgresSpec } from './ScenarioPostgresSpec.js';

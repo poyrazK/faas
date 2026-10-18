@@ -96,6 +96,8 @@ func TestPgCloneDeploymentBorrowers(t *testing.T) {
  AND NOT EXISTS(SELECT 1 FROM pg_constraint f JOIN pg_class tab ON tab.oid=f.conrelid
  JOIN pg_namespace ns ON ns.oid=tab.relnamespace JOIN pg_attribute a ON a.attrelid=tab.oid AND a.attnum=ANY(f.conkey)
  WHERE f.contype='f' AND f.confrelid='deployments'::regclass AND ns.nspname=c.table_schema AND tab.relname=c.table_name AND a.attname=c.column_name)
+ UNION ALL SELECT 'scenario_postgres_faults.receipt.deployment_id'
+ WHERE EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='scenario_postgres_faults' AND column_name='receipt' AND data_type='jsonb')
  ORDER BY 1`)
 			if err != nil {
 				t.Fatal(err)

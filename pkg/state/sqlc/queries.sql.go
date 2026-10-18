@@ -48844,7 +48844,7 @@ func (q *Queries) LockCloneDeploymentCleanupBorrowerWriters(ctx context.Context,
 }
 
 const lockCloneDeploymentCleanupRetirementWriters = `-- name: LockCloneDeploymentCleanupRetirementWriters :exec
-LOCK TABLE environment_workload_retirements,environment_build_artifact_pins,scenario_cold_preparations,scenario_recorder_sessions,scenario_suspend_resumes,scenario_worker_faults,platform_mail_deployment_observations,platform_mail_producer_outbox IN SHARE MODE
+LOCK TABLE environment_workload_retirements,environment_build_artifact_pins,scenario_cold_preparations,scenario_postgres_faults,scenario_recorder_sessions,scenario_suspend_resumes,scenario_worker_faults,platform_mail_deployment_observations,platform_mail_producer_outbox IN SHARE MODE
 `
 
 // Deployment UUID arrays and rehearsal receipts retain original artifacts without
@@ -68703,6 +68703,8 @@ SELECT jsonb_build_object(
  'runtime_upgrade_gateway_drains.deployment_id', (SELECT count(*) FROM runtime_upgrade_gateway_drains WHERE deployment_id::text=$1::uuid::text),
  'runtime_upgrade_gateway_receipts.deployment_id', (SELECT count(*) FROM runtime_upgrade_gateway_receipts WHERE deployment_id::text=$1::uuid::text),
  'scenario_cold_preparations.deployment_id', (SELECT count(*) FROM scenario_cold_preparations WHERE deployment_id=$1::uuid),
+ -- PostgreSQL recovery receipts keep the original dispatch identity in JSON.
+ 'scenario_postgres_faults.receipt.deployment_id', (SELECT count(*) FROM scenario_postgres_faults WHERE receipt->>'deployment_id'=$1::uuid::text),
  'scenario_recorder_sessions.deployment_id', (SELECT count(*) FROM scenario_recorder_sessions WHERE deployment_id=$1::uuid),
  'scenario_suspend_resumes.deployment_id', (SELECT count(*) FROM scenario_suspend_resumes WHERE deployment_id=$1::uuid),
  'scenario_worker_faults.deployment_id', (SELECT count(*) FROM scenario_worker_faults WHERE deployment_id=$1::uuid),

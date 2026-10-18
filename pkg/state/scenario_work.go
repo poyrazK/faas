@@ -30,6 +30,10 @@ func finishScenarioManagedWork(e *rehearsalwork.Evidence, failed bool) {
 			return
 		}
 	}
+	if e.Plan.PostgresFault != nil && e.PostgresFault != nil && e.PostgresFault.State != "recovered" && e.PostgresFault.State != "failed" {
+		e.Status, e.Reason = "pending", "PostgreSQL fault activation or recovery is still pending"
+		return
+	}
 	if err := e.Validate(); err != nil {
 		e.Status, e.Reason = "incomplete", "managed work is incomplete: "+err.Error()
 	}
@@ -99,6 +103,9 @@ func addScenarioManagedWorkSnapshot(ctx context.Context, tx pgx.Tx, snapshot *ap
 		failed = failed || f.State == "failed"
 	}
 	e.BindRecovery()
+	if err := addScenarioPostgresFaultSnapshot(ctx, tx, e, account); err != nil {
+		return err
+	}
 	finishScenarioManagedWork(e, failed)
 	return nil
 }
@@ -138,6 +145,18 @@ func (m *MemStore) admitScenarioManagedWorkLocked(inv *Invocation) error {
 		return ErrConflict
 	}
 	participant, _ := rehearsalwork.Decode(p.Member.ManagedWorkJSON).Participant(p.Member.Workload)
+	plan := rehearsalwork.Decode(p.Member.ManagedWorkJSON)
+	if plan.PostgresFault != nil {
+		if p.Member.Workload != plan.PostgresFault.Workload {
+			return ErrConflict
+		}
+		for _, j := range m.invocations {
+			w := m.scenarioActionPolicies[j.AppID].Member
+			if w.AccountID == p.Member.AccountID && w.RunID == p.Member.RunID {
+				return ErrConflict
+			}
+		}
+	}
 	_, count := m.managedDeploymentLocked(inv.AppID)
 	jobs := 0
 	for _, j := range m.scenarioManagedWork {
@@ -258,6 +277,12 @@ func (m *MemStore) addScenarioManagedWorkSnapshotLocked(snapshot *api.ScenarioAc
 		}
 	}
 	e.BindRecovery()
+	for _, r := range m.scenarioPostgresFaults {
+		if r.RunID == snapshot.RunID && r.AccountID == m.scenarioActionPolicies[apps[0]].Member.AccountID {
+			f := r.Receipt
+			e.PostgresFault = &f
+		}
+	}
 	sort.Slice(e.Bindings, func(i, j int) bool { return e.Bindings[i].Workload < e.Bindings[j].Workload })
 	sort.Slice(e.Jobs, func(i, j int) bool { return e.Jobs[i].ID < e.Jobs[j].ID })
 	finishScenarioManagedWork(e, failed)
