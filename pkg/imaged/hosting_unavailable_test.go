@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type hostingRecoveryTransport func(*http.Request) (*http.Response, error)
@@ -75,12 +76,12 @@ func TestHostingUnavailableVerificationRecoversAfterRestart(t *testing.T) {
 			}
 			now = *first.RetryNotBefore
 			recovered.Store(true)
-			f.handler = New(f.store, f.notif, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmokeRequired(true).WithHostingSmoke(smoke)
+			f.handler = New(statetest.NewMem(f.store), f.notif, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmokeRequired(true).WithHostingSmoke(smoke)
 			f.handler.hostingVerificationNow = func() time.Time { return now }
 			if err := f.handler.HandleNotification(context.Background(), f.notification); err != nil {
 				t.Fatal(err)
 			}
-			live, err := f.store.LiveDeploymentForScope(context.Background(), f.candidate.AppID, state.DefaultEnvScope)
+			live, err := f.store.MemStore.LiveDeploymentForScope(context.Background(), f.candidate.AppID, state.DefaultEnvScope)
 			last := hostingProgress(t, f)
 			if err != nil || live.ID != f.candidate.ID || f.notif.failed != 0 || last.Attempts != 2 || !last.DeadlineAt.Equal(first.DeadlineAt) || last.LastErrorCode != "" || last.CompletedAt == nil {
 				t.Fatalf("same candidate did not recover: live=%s progress=%+v events=%d err=%v", live.ID, last, f.notif.failed, err)
@@ -115,7 +116,7 @@ func TestHostingUnavailableDeadlineKeepsReasonAndAtomicVerdict(t *testing.T) {
 			if err := f.handler.HandleNotification(context.Background(), f.notification); err == nil {
 				t.Fatal("exhausted verification did not finalize")
 			}
-			dep, _ := f.store.DeploymentByID(context.Background(), f.candidate.ID)
+			dep, _ := f.store.MemStore.DeploymentByID(context.Background(), f.candidate.ID)
 			receipt, err := apihostingreceipt.Decode(dep.APIHostingReceipt)
 			last := hostingProgress(t, f)
 			if err != nil || dep.Status != state.DeployFailed || dep.ErrorCode != api.CodeDeploymentVerificationUnavailable || receipt.Smoke.ErrorCode != apihostingreceipt.SmokeErrorVerificationUnavailable || last.LastErrorCode != code || !last.DeadlineAt.Equal(first.DeadlineAt) || probes != 1 || f.notif.failed != 1 || f.notif.commitErr != nil {
@@ -152,7 +153,7 @@ func TestHostingUnavailableDeadlineRetainsRouteCheckEvidence(t *testing.T) {
 	if err := f.handler.HandleNotification(context.Background(), f.notification); err == nil {
 		t.Fatal("expired route verification was not finalized")
 	}
-	dep, err := f.store.DeploymentByID(context.Background(), f.candidate.ID)
+	dep, err := f.store.MemStore.DeploymentByID(context.Background(), f.candidate.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +175,7 @@ func TestHostingUnavailableCannotOverwriteCancellation(t *testing.T) {
 			f.handler.WithHostingSmoke(func(ctx context.Context, _ state.App, dep state.Deployment) (apihostingreceipt.SmokeResult, error) {
 				if consumer {
 					cancel()
-				} else if err := f.store.UpdateDeploymentStatus(ctx, dep.ID, state.DeployCancelled, "customer cancelled"); err != nil {
+				} else if err := f.store.MemStore.UpdateDeploymentStatus(ctx, dep.ID, state.DeployCancelled, "customer cancelled"); err != nil {
 					t.Fatal(err)
 				}
 				return apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeSkipped}, &apihostingreceipt.VerificationUnavailableError{Code: apihostingreceipt.SmokeErrorTransportUnavailable, Cause: context.Canceled}
@@ -183,7 +184,7 @@ func TestHostingUnavailableCannotOverwriteCancellation(t *testing.T) {
 			if (consumer && !errors.Is(err, context.Canceled)) || (!consumer && err != nil) {
 				t.Fatalf("wrong cancellation disposition: %v", err)
 			}
-			dep, _ := f.store.DeploymentByID(context.Background(), f.candidate.ID)
+			dep, _ := f.store.MemStore.DeploymentByID(context.Background(), f.candidate.ID)
 			want := state.DeployCancelled
 			if consumer {
 				want = state.DeploySnapshotting

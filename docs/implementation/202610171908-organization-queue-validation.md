@@ -580,3 +580,9 @@ keeper suite passes (0.022s), and daemon environment tests pass (1.628s). The
 OpenAPI and SDK inputs are unchanged by this integration. Earlier fixture,
 state, HTTP and CI evidence remains scoped to its recorded revision. Fresh
 GitHub checks must qualify the merged source.
+
+Main through `fba27482c` also replaces scheduler and image-store test fakes
+with the shared dispatch harness. The merge retains all 352 dispatch methods,
+including enterprise project lookups, and its map/delegation tests pass
+(0.033s). Production code, schemas and SDK inputs are unchanged by this
+follow-up; the node-lease integration evidence above still applies.

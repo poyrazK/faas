@@ -15,6 +15,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // A simulated native consumer for scheduler/storage integration only. Native
@@ -191,7 +192,7 @@ func TestApplicationStandardNativeSnapshotAndWarmRestore(t *testing.T) {
 
 // Instances created before runtime capture existed have no capture row.
 type missingRuntimeCaptureStore struct {
-	*state.MemStore
+	MemStore *state.MemStore
 }
 
 func (*missingRuntimeCaptureStore) GetInstanceApplicationStandardAdmission(context.Context, string) (state.InstanceApplicationStandardAdmission, error) {
@@ -208,7 +209,7 @@ func TestApplicationStandardLegacyInstanceWithoutCapture(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		e := newEngine(t, &missingRuntimeCaptureStore{MemStore: s}, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+		e := newEngine(t, statetest.NewMem(&missingRuntimeCaptureStore{MemStore: s}), &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 		capture, err := e.capturedStandardRuntimeForApp(t.Context(), app, uuid.NewString())
 		if err != nil || capture.Managed {
 			t.Fatalf("legacy unmanaged instance refused: %+v %v", capture, err)
@@ -216,7 +217,7 @@ func TestApplicationStandardLegacyInstanceWithoutCapture(t *testing.T) {
 	})
 	t.Run("managed", func(t *testing.T) {
 		s, app, _ := newStandardCaptureService(t)
-		e := newEngine(t, &missingRuntimeCaptureStore{MemStore: s}, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+		e := newEngine(t, statetest.NewMem(&missingRuntimeCaptureStore{MemStore: s}), &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 		if _, err := e.capturedStandardRuntimeForApp(t.Context(), app, uuid.NewString()); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 			t.Fatalf("legacy instance of a managed app = %v, want stale", err)
 		}
