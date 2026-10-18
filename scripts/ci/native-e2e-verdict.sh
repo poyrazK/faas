@@ -27,8 +27,10 @@
 # with "did not accept within 10s". CI already runs the non-metal e2e tests
 # sharded across four dedicated runners, so repeating them here buys nothing and
 # costs the signal this gate exists for.
-# Always run the tool from its real module, including when a contract test
-# inspects a disposable source tree. No packages under that tree are compiled.
+# Always run the inventory tool from its real module, including when a
+# contract test inspects a disposable source tree. Go build.Context handles
+# Linux/amd64 and dedicated tags, while AST discovery ignores files without
+# tests; this avoids text-pipeline failures under pipefail.
 native_e2e_inventory() {
   local root="${1:?repository required}" tool_root
   shift

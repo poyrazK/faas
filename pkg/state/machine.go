@@ -210,6 +210,17 @@ func (s State) Billable() bool {
 // that adding a future state to the live set is a one-line change.
 func IsLive(s string) bool { return State(s).CountsForRAM() }
 
+// liveStates lists every state IsLive accepts, for queries that filter live
+// rows at the database boundary. TestLiveStatesMatchIsLive keeps the two in
+// step.
+var liveStates = []string{
+	string(StateWaking), string(StateColdBooting), string(StateRunning), string(StateDraining),
+	string(StateSnapshotting), string(StateMigrating), string(StateWarm), string(StateFrozen),
+}
+
+// LiveStates returns the states IsLive accepts.
+func LiveStates() []string { return append([]string(nil), liveStates...) }
+
 // IsMeteredSkippableMode reports whether an instance in `mode` should
 // be skipped by the meter sampler (issue #72 / ADR-125 + ADR-137).
 //

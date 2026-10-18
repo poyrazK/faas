@@ -103,6 +103,25 @@ func pgTestMaintenanceNode(t *testing.T, ctx context.Context, s *state.PgStore) 
 	return id
 }
 
+// pgTestDeadNodeWithRunningInstance places a RUNNING instance while its node
+// still admits, then takes the node out of service to lifecycle. ADR-1528
+// refuses a live placement on a node outside active/recovering, and placing
+// first is how production reaches a dead node that still holds running rows.
+func pgTestDeadNodeWithRunningInstance(t *testing.T, ctx context.Context, s *state.PgStore, lifecycle state.NodeLifecycle) (string, string) {
+	t.Helper()
+	nodeID := pgTestComputeNode(t, ctx, s, true, 0)
+	_, insID := pgTestSeedRunningInstance(t, ctx, s, nodeID)
+	if err := s.NodeSetLifecycle(ctx, nodeID, state.NodeLifecycleActive, state.NodeLifecycleUnavailable); err != nil {
+		t.Fatalf("NodeSetLifecycle(active→unavailable): %v", err)
+	}
+	if lifecycle != state.NodeLifecycleUnavailable {
+		if err := s.NodeSetLifecycle(ctx, nodeID, state.NodeLifecycleUnavailable, lifecycle); err != nil {
+			t.Fatalf("NodeSetLifecycle(unavailable→%s): %v", lifecycle, err)
+		}
+	}
+	return nodeID, insID
+}
+
 // pgTestSeedRunningInstance creates an account + app + deployment +
 // RUNNING instance on the given node. MemStore accepts empty
 // deployment_id and empty wakeID strings; pgstore requires a valid
@@ -153,8 +172,7 @@ func TestPg_ListRunningInstancesOnDeadNodes_FilterByActiveOrStale(t *testing.T) 
 	s, ctx, _ := pgWithPool(t)
 
 	// maintenance/active=false → eligible regardless of heartbeat freshness
-	deadNodeID := pgTestMaintenanceNode(t, ctx, s)
-	_, deadInsID := pgTestSeedRunningInstance(t, ctx, s, deadNodeID)
+	_, deadInsID := pgTestDeadNodeWithRunningInstance(t, ctx, s, state.NodeLifecycleMaintenance)
 
 	// active=true, fresh heartbeat → NOT eligible
 	liveNodeID := pgTestComputeNode(t, ctx, s, true, 0)
@@ -196,17 +214,17 @@ func TestPg_ListRunningInstancesOnDeadNodes_RecoveryManagedAppRowsExcluded(t *te
 	} {
 		lifecycle := lifecycle
 		t.Run(string(lifecycle), func(t *testing.T) {
-			nodeID := pgTestComputeNode(t, ctx, s, lifecycle == state.NodeLifecycleRecovering, 0)
-			start := state.NodeLifecycleUnavailable
+			var nodeID, insID string
 			if lifecycle == state.NodeLifecycleRecovering {
-				start = state.NodeLifecycleActive
-			}
-			if lifecycle != start {
-				if err := s.NodeSetLifecycle(ctx, nodeID, start, lifecycle); err != nil {
-					t.Fatalf("NodeSetLifecycle(%s→%s): %v", start, lifecycle, err)
+				// A recovering node still admits (ADR-1528).
+				nodeID = pgTestComputeNode(t, ctx, s, true, 0)
+				if err := s.NodeSetLifecycle(ctx, nodeID, state.NodeLifecycleActive, lifecycle); err != nil {
+					t.Fatalf("NodeSetLifecycle(active→%s): %v", lifecycle, err)
 				}
+				_, insID = pgTestSeedRunningInstance(t, ctx, s, nodeID)
+			} else {
+				nodeID, insID = pgTestDeadNodeWithRunningInstance(t, ctx, s, lifecycle)
 			}
-			_, insID := pgTestSeedRunningInstance(t, ctx, s, nodeID)
 			threshold := time.Now().UTC().Add(time.Minute)
 			rows, err := s.ListRunningInstancesOnDeadNodes(ctx, threshold, 500)
 			if err != nil {
@@ -226,9 +244,8 @@ func TestPg_ListRunningInstancesOnDeadNodes_RecoveryManagedAppRowsExcluded(t *te
 
 func TestPg_DeadNodeReconciler_OrphanRowEligible(t *testing.T) {
 	s, ctx, pool := pgWithPool(t)
-	validNodeID := pgTestComputeNode(t, ctx, s, false, 0)
+	_, insID := pgTestDeadNodeWithRunningInstance(t, ctx, s, state.NodeLifecycleUnavailable)
 	orphanNodeID := uuid.NewString()
-	_, insID := pgTestSeedRunningInstance(t, ctx, s, validNodeID)
 	// Production schema integrity normally prevents an instance from
 	// referencing a missing compute node. The reconciler still needs to
 	// recover rows left behind by an interrupted repair or an older schema,
@@ -289,8 +306,7 @@ func TestPg_FailRunningInstanceOnDeadNode_ConditionalMatches(t *testing.T) {
 	s, ctx := pgStore(t)
 
 	// Seed: dead node + RUNNING instance → transition succeeds.
-	deadNodeID := pgTestMaintenanceNode(t, ctx, s)
-	_, insID := pgTestSeedRunningInstance(t, ctx, s, deadNodeID)
+	deadNodeID, insID := pgTestDeadNodeWithRunningInstance(t, ctx, s, state.NodeLifecycleMaintenance)
 	threshold := time.Now().UTC().Add(-time.Minute)
 
 	if err := s.FailRunningInstanceOnDeadNode(ctx, insID, deadNodeID, threshold); err != nil {
@@ -316,8 +332,7 @@ func TestPg_FailRunningInstanceOnDeadNode_ConditionalMatches(t *testing.T) {
 
 func TestPg_FailRunningInstanceOnDeadNode_NodeRecoveredReturnsConflict(t *testing.T) {
 	s, ctx, _ := pgWithPool(t)
-	nodeID := pgTestMaintenanceNode(t, ctx, s)
-	_, insID := pgTestSeedRunningInstance(t, ctx, s, nodeID)
+	nodeID, insID := pgTestDeadNodeWithRunningInstance(t, ctx, s, state.NodeLifecycleMaintenance)
 	threshold := time.Now().UTC().Add(-time.Minute)
 	if err := s.NodeSetLifecycle(ctx, nodeID, state.NodeLifecycleMaintenance, state.NodeLifecycleActive); err != nil {
 		t.Fatalf("NodeSetLifecycle(maintenance→active): %v", err)

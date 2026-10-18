@@ -33,13 +33,20 @@ func PostgresProbeExecutable() ([]byte, error) {
 			return
 		}
 		output := filepath.Join(dir, "postgres-probe")
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		// The static Linux fixture cannot reuse race-instrumented package
+		// builds. Keep cold compilation bounded while allowing it to finish
+		// alongside the other packages on a hosted runner.
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 		defer cancel()
 		command := exec.CommandContext(ctx, "go", "build", "-p", "1", "-trimpath", "-buildvcs=false", "-ldflags=-s -w", "-o", output, ".")
 		command.Dir = filepath.Join(filepath.Dir(source), "testdata", "postgresprobe")
 		command.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64")
-		if output, err := command.CombinedOutput(); err != nil {
-			postgresProbeErr = fmt.Errorf("build PostgreSQL probe: %w\n%s", err, output)
+		buildOutput, err := command.CombinedOutput()
+		if err != nil {
+			if ctx.Err() != nil {
+				err = ctx.Err()
+			}
+			postgresProbeErr = fmt.Errorf("build PostgreSQL probe: %w\n%s", err, buildOutput)
 			return
 		}
 		postgresProbeBytes, postgresProbeErr = os.ReadFile(output)

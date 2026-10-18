@@ -40,6 +40,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
+	"github.com/onebox-faas/faas/pkg/datarepair"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -931,6 +932,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		jailer.WithLogEvictionCallback(archiveSink.Enqueue)
 		jailer.WithLogRetireCallback(archiveSink.Retire)
 	}
+	// ADR-746: count error and warn guest log lines per app for log alerts.
+	jailer.WithLogCommitCallback(newAppLogLineCounter(ops.Registry()).Observe)
 	// Activity tracker (PR-B, issue #462): per-instance in-flight
 	// ForwardHTTP request counter. It is shared by the gRPC server's
 	// stats surface and the liveness loop so load-correlated probe misses
@@ -1042,6 +1045,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.NativeProcessRecovery {
 		qualificationNodeID = failureNodeID
 		mgr.WithNativeQualificationNodeID(qualificationNodeID)
+	}
+	repairRunner, repairConfigured, repairErr := datarepair.RunnerFromEnv(os.Getenv)
+	if repairErr != nil || repairConfigured && (!cfg.NativeProcessRecovery || qualificationNodeID == "") {
+		return fmt.Errorf("vmmd: data repair runner requires complete artifact metadata and native process recovery")
+	}
+	if cfg.NativeProcessRecovery {
+		mgr.WithDataRepairRehearsals(qualificationNodeID, repairRunner)
 	}
 	// The schedd client mTLS material is loaded further down, after the
 	// node verifier exists; delivery reads it through this reference.

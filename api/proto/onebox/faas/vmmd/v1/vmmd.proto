@@ -17,6 +17,11 @@ option go_package = "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1;v
 // auth model (mode 0660 group `faas`, ADR-015) is the only authentication
 // story for v1.0 — Gate-A multi-host replaces it with mTLS.
 service Vmmd {
+  // Dedicated one-shot, networkless repair guests. The first stream message
+  // carries immutable metadata only; following messages carry bounded input.
+  rpc DataRepairRehearsalIdentity(DataRepairRehearsalIdentityRequest) returns (DataRepairRehearsalIdentityResponse);
+  rpc RunDataRepairRehearsal(stream DataRepairRehearsalChunk) returns (DataRepairRehearsalResult);
+  rpc RetireDataRepairRehearsal(RetireDataRepairRehearsalRequest) returns (RetireDataRepairRehearsalResponse);
   // ADR-20261017201005: old nodes reject these methods before releasing guest code.
   rpc CreateRehearsalColdBoot(CreateColdBootRequest) returns (WakeResponse);
   rpc CreateRehearsalFromSnapshot(CreateFromSnapshotRequest) returns (WakeResponse);
@@ -3077,6 +3082,23 @@ message ResolveServiceCallerResponse {
   string deployment_id = 5;
   bool app_task = 6;
   bool job_task = 7;
+}
+
+message DataRepairRehearsalIdentityRequest {}
+message DataRepairRehearsalIdentityResponse {
+  string node_id = 1;
+  string incarnation = 2;
+  string runner_sha256 = 3;
+}
+message DataRepairRehearsalChunk {
+  bytes frame_json = 1;
+  bytes chunk = 2;
+}
+message DataRepairRehearsalResult { bytes evidence_json = 1; }
+message RetireDataRepairRehearsalRequest { bytes frame_json = 1; }
+message RetireDataRepairRehearsalResponse {
+  bytes frame_json = 1;
+  google.protobuf.Timestamp retired_at = 2;
 }
 
 // ADR-20261017201014: authority names the durable run-owned lifecycle receipt.

@@ -129,8 +129,13 @@ func cmdAlertAdd(args []string) int {
 	threshold := fs.Float64("threshold", math.NaN(), "threshold value (must be finite)")
 	windowSpec := fs.String("window-spec", "", "window (5m|15m|1h|6h|24h|7d|15d)")
 	failureSource := fs.String("failure-source", "", "failure source (any|cron|queue|delayed_task|async_invoke|inbound_webhook) — required iff --metric=failed_invocations")
+	customMetric := fs.String("custom-metric", "", "pushed custom metric name — required iff --metric=custom_metric")
+	sloID := fs.String("slo", "", "SLO id — required iff --metric is slo_budget_burn or slo_budget_remaining_pct")
+	syntheticCheck := fs.String("synthetic-check", "", "synthetic check id — required iff --metric is synthetic_check_*")
 	action := fs.String(flagNameAction, "", "action (webhook|rollback|demote|promote; defaults to webhook)")
-	webhookURL := fs.String("webhook-url", "", "webhook URL (required, http(s)://...; https recommended)")
+	webhookURL := fs.String("webhook-url", "", "webhook URL (http(s)://...; https recommended); optional with --channel")
+	var channels stringListFlag
+	fs.Var(&channels, "channel", "notification channel id to deliver to (repeatable, up to 5)")
 	webhookSecret := fs.String("webhook-secret", "", "webhook secret (compatibility; visible in argv; prefer --webhook-secret-stdin)")
 	webhookSecretStdin := fs.Bool("webhook-secret-stdin", false, "read the webhook secret from stdin")
 	postWindow := fs.Duration("post-deploy-rollback-window", 0, "completed-release recovery window (0 off; up to 1h; requires rollback action)")
@@ -145,11 +150,20 @@ func cmdAlertAdd(args []string) int {
 	if err := resolveAlertSecret(webhookSecret, *webhookSecretStdin); err != nil {
 		return printErr("Invalid webhook secret input", err)
 	}
-	if code, ok := requireAlertCreateFlags(slug, name, metric, comparison, windowSpec, webhookURL, webhookSecret, threshold, cooldown); !ok {
+	if code, ok := requireAlertCreateFlags(slug, name, metric, comparison, windowSpec, webhookURL, webhookSecret, threshold, cooldown, len(channels) > 0); !ok {
 		return code
 	}
 	if !validateAlertClosedSets(metric, comparison, windowSpec, failureSource, action) {
 		return 1
+	}
+	if (*metric == api.AlertRuleMetricCustomMetric) != (*customMetric != "") {
+		return printErr("Invalid custom-metric", fmt.Errorf("--custom-metric is required with --metric=custom_metric and not allowed otherwise"))
+	}
+	if api.IsSLOAlertMetric(*metric) != (*sloID != "") {
+		return printErr("Invalid slo", fmt.Errorf("--slo is required with --metric slo_budget_burn or slo_budget_remaining_pct and not allowed otherwise"))
+	}
+	if api.IsSyntheticCheckAlertMetric(*metric) != (*syntheticCheck != "") {
+		return printErr("Invalid synthetic-check", fmt.Errorf("--synthetic-check is required with --metric synthetic_check_* and not allowed otherwise"))
 	}
 	windowSeconds, err := alertRollbackWindowSeconds(*postWindow)
 	if err != nil || windowSeconds > 0 && *action != "rollback" {
@@ -175,6 +189,10 @@ func cmdAlertAdd(args []string) int {
 		EventSubscriptionID:             *eventSubscription,
 		EdgeRuleID:                      *edgeRule,
 		FailureSource:                   *failureSource,
+		ChannelIDs:                      channels,
+		CustomMetricName:                *customMetric,
+		SLOID:                           *sloID,
+		SyntheticCheckID:                *syntheticCheck,
 		Action:                          ptrIfNonEmpty(*action),
 		WebhookURL:                      *webhookURL,
 		WebhookSecret:                   *webhookSecret,
@@ -197,10 +215,16 @@ func cmdAlertAdd(args []string) int {
 // usage line should fire, (0, true) on success. Extracts the
 // repeated presence check so both leaves stay under the
 // 50-line handler cap (CLAUDE.md "Handlers ≤ 50 lines — extract").
-func requireAlertCreateFlags(slug, name, metric, comparison, windowSpec, webhookURL, webhookSecret *string, threshold *float64, cooldown *int) (int, bool) {
+func requireAlertCreateFlags(slug, name, metric, comparison, windowSpec, webhookURL, webhookSecret *string, threshold *float64, cooldown *int, hasChannels bool) (int, bool) {
+	// ADR-749: with at least one --channel the webhook is optional, but a
+	// half-specified webhook (URL without secret or vice versa) is not.
+	webhookMissing := *webhookURL == "" || *webhookSecret == ""
+	if hasChannels && *webhookURL == "" && *webhookSecret == "" {
+		webhookMissing = false
+	}
 	if *slug == "" || *name == "" || *metric == "" || *comparison == "" ||
-		*windowSpec == "" || *webhookURL == "" || *webhookSecret == "" || math.IsNaN(*threshold) {
-		PrintUsage(os.Stderr, "usage: gregale alerts add --app <slug> --name <text> --metric <v> --comparison <op> --threshold <num> --window-spec <w> --webhook-url <url> (--webhook-secret-stdin|--webhook-secret <s>) [--failure-source <s>] [--action <webhook|rollback|demote|promote>] [--cooldown-minutes N] [--enabled=false]", "alerts")
+		*windowSpec == "" || webhookMissing || math.IsNaN(*threshold) {
+		PrintUsage(os.Stderr, "usage: gregale alerts add --app <slug> --name <text> --metric <v> --comparison <op> --threshold <num> --window-spec <w> (--webhook-url <url> (--webhook-secret-stdin|--webhook-secret <s>) | --channel <id>...) [--failure-source <s>] [--action <webhook|rollback|demote|promote>] [--cooldown-minutes N] [--enabled=false]", "alerts")
 		return 1, false
 	}
 	if *cooldown < api.AlertRuleCooldownMinMinutes || *cooldown > api.AlertRuleCooldownMaxMinutes {
@@ -283,6 +307,18 @@ func cmdAlertInfo(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "window_spec:  %s\n", resp.WindowSpec)
 	if resp.FailureSource != "" {
 		_, _ = fmt.Fprintf(osStdout, "failure_source: %s\n", resp.FailureSource)
+	}
+	if len(resp.ChannelIDs) > 0 {
+		_, _ = fmt.Fprintf(osStdout, "channels:     %s\n", strings.Join(resp.ChannelIDs, ", "))
+	}
+	if resp.CustomMetricName != "" {
+		_, _ = fmt.Fprintf(osStdout, "custom_metric: %s\n", resp.CustomMetricName)
+	}
+	if resp.SLOID != "" {
+		_, _ = fmt.Fprintf(osStdout, "slo:          %s\n", resp.SLOID)
+	}
+	if resp.SyntheticCheckID != "" {
+		_, _ = fmt.Fprintf(osStdout, "synthetic_check: %s\n", resp.SyntheticCheckID)
 	}
 	_, _ = fmt.Fprintf(osStdout, "action:       %s\n", resp.Action)
 	_, _ = fmt.Fprintf(osStdout, "webhook_url:  %s\n", resp.WebhookURL)

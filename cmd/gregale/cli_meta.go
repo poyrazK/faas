@@ -153,7 +153,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-ahead", "wake-timeline", "workers":
 		return "Delivery"
-	case "alerts", "analytics", "audit-events", "debug", "inspect", "log-drains", "logs", "metrics", "realtime", "slo", "status", "tail", "throttle-suggestions", "trace":
+	case "alerts", "analytics", "channels", "audit-events", "debug", "inspect", "log-drains", "logs", "metrics", "realtime", "slo", "slos", "status", "synthetics", "tail", "throttle-suggestions", "trace":
 		return "Observe"
 	default:
 		return "Core"
@@ -654,6 +654,18 @@ var cliCommands = []cliCommand{
 				{Name: "prefix", Short: "injected storage secret prefix", Value: "PREFIX"},
 				{Name: "wait-timeout", Short: "readiness timeout", Value: "DURATION"},
 			}},
+			{Name: "datadog", Short: "Send the app's logs and deployment events to Datadog (ADR-752)", Examples: []string{
+				"DD_API_KEY=... gregale add datadog --app my-api --site eu1",
+				"gregale add datadog --app my-api --dry-run",
+				"gregale add datadog --app my-api --remove",
+			}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "APP"},
+				{Name: "site", Short: "Datadog site (default us1)", Value: "SITE", ClosedSet: []string{"ap1", "eu1", "us1", "us3", "us5"}},
+				{Name: "api-key-env", Short: "environment variable holding the API key (default DD_API_KEY)", Value: "NAME"},
+				{Name: "api-key-stdin", Short: "read the API key from stdin"},
+				{Name: "dry-run", Short: "show the plan without changing anything"},
+				{Name: "remove", Short: "remove the app's Datadog log drain and webhook"},
+			}},
 		},
 	},
 	{
@@ -974,6 +986,78 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "channels",
+		DocSlug: "channels",
+		Short:   "Alert notification channels: Slack, PagerDuty, email (channels list|add|test|rm)",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List channels with their last delivery"},
+			{Name: "add", Short: "Add a channel; Slack URLs and PagerDuty keys are read from stdin", Flags: []cliFlag{
+				{Name: "name", Short: "channel name, unique per account", Req: true, Value: "NAME"},
+				{Name: "kind", Short: "destination type", Req: true, Value: "KIND", ClosedSet: []string{"slack", "pagerduty", "email"}},
+				{Name: "secret-stdin", Short: "read the Slack webhook URL or PagerDuty routing key from stdin"},
+				{Name: "pagerduty-region", Short: "PagerDuty service region", Value: "REGION", ClosedSet: []string{"us", "eu"}},
+				{Name: "email", Short: "your account email (kind email)", Value: "EMAIL"},
+			}},
+			{Name: "test", Short: "Send a marked test notification", Positionals: []string{"<channel-id>"}},
+			{Name: "rm", Short: "Delete a channel", Positionals: []string{"<channel-id>"}},
+		},
+	},
+	{
+		Name:    "slos",
+		DocSlug: "slos",
+		Short:   "Customer-defined SLOs and error budgets (slos list|create|status|rm --app <slug>)",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List the app's SLOs", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}},
+			{Name: "create", Short: "Define an availability or latency SLO", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "name", Short: "SLO name, unique per app", Req: true, Value: "NAME"},
+				{Name: "objective", Short: "objective percentage, 90 to 99.99", Req: true, Value: "PCT"},
+				{Name: "sli", Short: "service level indicator", Value: "SLI", ClosedSet: []string{"availability", "latency"}},
+				{Name: "latency-threshold-ms", Short: "latency threshold (5|10|25|50|100|250|500|1000|2000|5000|10000)", Value: "MS"},
+				{Name: "window-days", Short: "rolling window", Value: "DAYS", ClosedSet: []string{"7", "30"}},
+			}},
+			{Name: "status", Short: "Show an SLO's attainment, budget remaining and burn rate", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}, Positionals: []string{"<slo-id>"}},
+			{Name: "rm", Short: "Delete one SLO", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}, Positionals: []string{"<slo-id>"}},
+		},
+	},
+	{
+		Name:    "synthetics",
+		DocSlug: "synthetics",
+		Short:   "Scheduled HTTP checks against an app (synthetics list|create|status|pause|resume|rm --app <slug>)",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List the app's synthetic checks", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}},
+			{Name: "create", Short: "Schedule a GET or HEAD check on a path", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "name", Short: "check name, unique per app", Req: true, Value: "NAME"},
+				{Name: "path", Short: "path on the app (default /)", Value: "PATH"},
+				{Name: "method", Short: "HTTP method", Value: "METHOD", ClosedSet: []string{"GET", "HEAD"}},
+				{Name: "expect-status", Short: "exact expected status (default any 2xx)", Value: "N"},
+				{Name: "timeout-ms", Short: "timeout including any wake, 1000-30000", Value: "MS"},
+				{Name: "every-minutes", Short: "interval", Value: "MIN", ClosedSet: []string{"5", "15", "60"}},
+			}},
+			{Name: "status", Short: "Show a check's uptime, latency and recent runs", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}, Positionals: []string{"<check-id>"}},
+			{Name: "pause", Short: "Stop running a check", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}, Positionals: []string{"<check-id>"}},
+			{Name: "resume", Short: "Resume a paused check", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}, Positionals: []string{"<check-id>"}},
+			{Name: "rm", Short: "Delete a check and its history", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}, Positionals: []string{"<check-id>"}},
+		},
+	},
+	{
 		Name:    "alerts",
 		DocSlug: "alerts",
 		Short:   "Per-app alert rules (alerts list|add|info|update|rm|rotate-secret|preset|actions --app <slug>)",
@@ -993,14 +1077,18 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "name", Short: "rule name (3..120 chars)", Req: true, Value: "NAME"},
 				{Name: "metric", Short: "metric; MCP task gauges: mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale (includes min=0 observer heartbeat)", Value: "METRIC"},
-				{Name: "comparison", Short: "gt|gte|lt|lte", Value: "OP"},
+				{Name: "comparison", Short: "gt|gte|lt|lte|above_baseline|below_baseline", Value: "OP"},
 				{Name: "threshold", Short: "threshold value", Value: "N"},
 				{Name: "window-spec", Short: "5m|15m|1h|6h|24h|7d|15d", Value: "WINDOW"},
 				{Name: "event-subscription-id", Short: "Subscription UUID for event consumer metrics", Value: "UUID"},
 				{Name: "edge-rule-id", Short: "edge rule for edge_rule_hits / edge_rule_log_hits (empty = all rules)", Value: "ID"},
 				{Name: "mcp-readiness-scope", Short: "readiness environment; omitted means all environments (immutable)", Value: "SCOPE"},
 				{Name: "failure-source", Short: "any|cron|queue|delayed_task|async_invoke|inbound_webhook", Value: "SOURCE"},
-				{Name: "webhook-url", Short: "http(s) webhook URL (https recommended: deliveries are signed, not encrypted)", Req: true, Value: "URL"},
+				{Name: "channel", Short: "notification channel id (repeatable); with one, the webhook is optional", Value: "CHANNEL_ID", Repeatable: true},
+				{Name: "custom-metric", Short: "Pushed custom metric to watch; required with --metric custom_metric", Value: "NAME"},
+				{Name: "slo", Short: "SLO id for slo_budget_burn or slo_budget_remaining_pct", Value: "SLO_ID"},
+				{Name: "synthetic-check", Short: "synthetic check id for synthetic_check_* metrics", Value: "CHECK_ID"},
+				{Name: "webhook-url", Short: "http(s) webhook URL (https recommended: deliveries are signed, not encrypted); required unless --channel", Value: "URL"},
 				{Name: flagNameAction, Short: "alert action", Value: "ACTION", ClosedSet: api.AllowedAlertRuleActions},
 				{Name: "post-deploy-rollback-window", Short: "completed-release rollback window (0 off; up to 1h)", Value: "duration"},
 				{Name: "webhook-secret-stdin", Short: "read the webhook signing secret from stdin (this or --webhook-secret is required)"},
@@ -1051,6 +1139,82 @@ var cliCommands = []cliCommand{
 			{Name: "get", Short: "Show one audit event", Positionals: []string{"<id>"}},
 		},
 		Positionals: []string{"[<id>]"},
+	},
+	{
+		Name: "data-repair", DocSlug: "data-repair", Short: "Review and repair recorded PostgreSQL field updates (internal)", Audience: cliAudienceOperator,
+		Subcommands: []cliSub{
+			{Name: "schema", Short: "Print explicit owner-installation SQL", Flags: []cliFlag{{Name: "upgrade", Short: "print the transactional upgrade for an existing installation"}}},
+			{Name: "doctor", Short: "Inspect read-only repair configuration; exit 0 only when ready", Flags: []cliFlag{
+				{Name: "profile", Value: "NAME", Short: "executor (default) or local application capture readiness"},
+				{Name: "database-env", Value: "NAME", Short: "capture: explicit writer connection environment variable"},
+				{Name: "scope-file", Value: "PATH", Short: "capture: trusted application scope JSON"},
+				{Name: "release", Value: "VERSION", Short: "capture: configured application release"},
+				{Name: "receipt-protocol", Value: "NAME", Short: "capture: managed (default) or customer receipt inbox"},
+				{Name: "table", Value: "NAME", Req: true, Short: "exact qualified enrolled table name"},
+				{Name: "app", Value: "SLUG", Short: "hosted application; uses normal login"},
+				{Name: "environment", Value: "NAME", Short: "configured hosted environment"},
+				{Name: "customer", Value: "UUID", Short: "configured hosted customer; empty selects account scope"},
+				{Name: "url", Value: "URL", Short: "executor URL"},
+				{Name: "token-env", Value: "NAME", Short: "executor token environment variable"},
+			}},
+			{Name: "sources", Short: "Find recorded operations by release, table and capture time", Flags: []cliFlag{
+				{Name: "app", Value: "SLUG", Short: "hosted application; uses normal login"},
+				{Name: "environment", Value: "NAME", Short: "configured hosted environment"},
+				{Name: "customer", Value: "UUID", Short: "configured hosted customer; empty selects account scope"},
+				{Name: "scopes", Short: "list configured hosted source scopes"},
+				{Name: "release", Value: "VERSION", Short: "exact captured release"},
+				{Name: "table", Value: "NAME", Short: "exact enrolled qualified table"},
+				{Name: "since", Value: "RFC3339", Short: "inclusive capture time"},
+				{Name: "before", Value: "RFC3339", Short: "exclusive capture time"},
+				{Name: "limit", Value: "N", Short: "maximum sources per page (1..100; default 25)"},
+				{Name: "cursor", Value: "CURSOR", Short: "next_cursor; keep filters and limit unchanged"},
+				{Name: "url", Value: "URL", Short: "executor URL"},
+				{Name: "token-env", Value: "NAME", Short: "executor token environment variable"},
+			}},
+			{Name: "history", Positionals: []string{"<source-operation-id>"}, Short: "Find retained repair plans, replacement links, closures and receipts", Flags: []cliFlag{
+				{Name: "app", Value: "SLUG", Short: "hosted application; uses normal login"},
+				{Name: "environment", Value: "NAME", Short: "configured hosted environment"},
+				{Name: "customer", Value: "UUID", Short: "configured hosted customer; empty selects account scope"},
+				{Name: "limit", Value: "N", Short: "maximum plans per page (1..100; default 25)"},
+				{Name: "cursor", Value: "CURSOR", Short: "next_cursor; keep source, scope and limit unchanged"},
+				{Name: "url", Value: "URL", Short: "executor URL"},
+				{Name: "token-env", Value: "NAME", Short: "executor token environment variable"},
+			}},
+			{Name: "retention", Short: "Review and compact old repair payloads while preserving receipts", Subcommands: []cliSub{
+				{Name: "schema", Short: "Print the explicit owner-installed retention upgrade"},
+				{Name: "plan", Short: "Save a bounded inventory of eligible payloads", Flags: []cliFlag{
+					{Name: "database-env", Value: "NAME", Short: "local maintenance connection environment variable"},
+					{Name: "scope-file", Value: "PATH", Req: true, Short: "fixed application scope"},
+					{Name: "before", Value: "RFC3339", Short: "cutoff at least seven days old"},
+					{Name: "limit", Value: "N", Short: "maximum entries (default 32)"},
+				}},
+				{Name: "get", Positionals: []string{"<retention-plan-id>"}, Short: "Read the saved inventory and purge receipt", Flags: []cliFlag{
+					{Name: "database-env", Value: "NAME", Short: "local maintenance connection environment variable"},
+					{Name: "scope-file", Value: "PATH", Req: true, Short: "fixed application scope"},
+				}},
+				{Name: "purge", Positionals: []string{"<retention-plan-id>"}, Short: "Compact the exact reviewed payload inventory", Flags: []cliFlag{
+					{Name: "database-env", Value: "NAME", Short: "local maintenance connection environment variable"},
+					{Name: "scope-file", Value: "PATH", Req: true, Short: "fixed application scope"},
+					{Name: "digest", Value: "SHA256", Req: true, Short: "exact reviewed retention plan digest"},
+					{Name: "actor", Value: "NAME", Req: true, Short: "recorded purge operator"},
+					{Name: "yes", Req: true, Bool: true, Short: "confirm the reviewed payload purge"},
+				}},
+			}},
+			{Name: "enroll", Short: "Enroll a declared update-only table", Flags: []cliFlag{{Name: "database-env", Value: "NAME", Short: "database URL environment variable"}, {Name: "table", Value: "TABLE", Req: true, Short: "qualified table"}, {Name: "fields", Value: "COLUMNS", Req: true, Short: "comma-separated repairable columns"}}},
+			{Name: "serve", Short: "Start an authenticated operator executor and review UI", Flags: []cliFlag{{Name: "database-env", Value: "NAME", Short: "database URL environment variable"}, {Name: "scope-file", Value: "PATH", Req: true, Short: "fixed authenticated executor scope"}, {Name: "actor", Value: "NAME", Req: true, Short: "recorded operator identity"}, {Name: "token-env", Value: "NAME", Short: "executor token environment variable"}, {Name: "listen", Value: "ADDRESS", Short: "default 127.0.0.1:8796"}, {Name: "pg-dump", Value: "PATH", Short: "pg_dump executable"}, {Name: "checks-file", Value: "PATH", Short: "reviewed SQL SELECT returning one boolean"}, {Name: "checks-policy-file", Value: "PATH", Short: "version 1 JSON policy containing named SQL checks"}, {Name: "managed-coordinator", Short: "trust the managed API approval actor"}, {Name: "sandbox-image", Value: "IMAGE", Short: "pre-pulled digest-pinned PostgreSQL image"}}},
+			{Name: "plan", Positionals: []string{"<operation-id>"}, Short: "Prepare an immutable candidate/conflict plan", Flags: []cliFlag{{Name: "repair-operation", Value: "UUID", Short: "saved identity required for hosted preparation"}, {Name: "app", Value: "SLUG", Short: "use the hosted API and normal login"}, {Name: "url", Value: "URL", Short: "executor URL"}, {Name: "token-env", Value: "NAME", Short: "executor token environment variable"}}},
+			{Name: "get", Positionals: []string{"<plan-id>"}, Short: "Inspect a plan and its durable apply receipt", Flags: []cliFlag{{Name: "source", Value: "UUID", Short: "original source for read-only hosted recovery after execution history expires"}, {Name: "environment", Value: "NAME", Short: "configured environment with --source"}, {Name: "customer", Value: "UUID", Short: "configured customer with --source; empty selects account scope"}, {Name: "app", Value: "SLUG", Short: "use the hosted API and normal login"}, {Name: "url", Value: "URL", Short: "executor URL"}, {Name: "token-env", Value: "NAME", Short: "executor token environment variable"}}},
+			{Name: "validate", Positionals: []string{"<plan-id>"}, Short: "Read current drift without changing a saved plan or approval", Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "use the hosted API and normal login"}, {Name: "url", Value: "URL", Short: "executor URL"}, {Name: "token-env", Value: "NAME", Short: "executor token environment variable"}, {Name: "digest", Value: "SHA256", Req: true, Short: "exact plan digest"}}},
+			{Name: "verify", Positionals: []string{"<plan-id>"}, Short: "Observe committed repair rows without changing receipt history", Flags: []cliFlag{{Name: "source", Value: "UUID", Short: "original source for read-only hosted recovery after execution history expires"}, {Name: "environment", Value: "NAME", Short: "configured environment with --source"}, {Name: "customer", Value: "UUID", Short: "configured customer with --source; empty selects account scope"}, {Name: "app", Value: "SLUG", Short: "use the hosted API and normal login"}, {Name: "url", Value: "URL", Short: "executor URL"}, {Name: "token-env", Value: "NAME", Short: "executor token environment variable"}, {Name: "digest", Value: "SHA256", Req: true, Short: "exact plan digest"}}},
+			{Name: "replace", Positionals: []string{"<plan-id>"}, Short: "Prepare a linked replacement and disable further use of the old plan", Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "use the hosted API and normal login"}, {Name: "url", Value: "URL", Short: "executor URL"}, {Name: "token-env", Value: "NAME", Short: "executor token environment variable"}, {Name: "digest", Value: "SHA256", Req: true, Short: "exact parent plan digest"}, {Name: "repair-operation", Value: "UUID", Req: true, Short: "saved new replacement identity; reuse on response loss"}, {Name: "yes", Req: true, Bool: true, Short: "confirm replacement of this exact plan"}}},
+			{Name: "resolve", Positionals: []string{"<plan-id>"}, Short: "Resolve apply outcome and permanently close an uncommitted plan", Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "use the hosted API and normal login"}, {Name: "url", Value: "URL", Short: "executor URL"}, {Name: "token-env", Value: "NAME", Short: "executor token environment variable"}, {Name: "digest", Value: "SHA256", Req: true, Short: "exact plan digest"}, {Name: "repair-operation", Value: "UUID", Short: "original apply identity; required for standalone resolution"}, {Name: "yes", Req: true, Bool: true, Short: "confirm permanent closure if not committed"}}},
+			{Name: "rehearse", Positionals: []string{"<plan-id>"}, Short: "Rehearse exact candidates in an isolated database", Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "use the hosted API and normal login"}, {Name: "url", Value: "URL", Short: "executor URL"}, {Name: "token-env", Value: "NAME", Short: "executor token environment variable"}, {Name: "digest", Value: "SHA256", Req: true, Short: "exact plan digest"}}},
+			{Name: "approve", Positionals: []string{"<plan-id>"}, Short: "Record approval for the exact rehearsed plan", Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "use the hosted API and normal login"}, {Name: "url", Value: "URL", Short: "executor URL"}, {Name: "token-env", Value: "NAME", Short: "executor token environment variable"}, {Name: "digest", Value: "SHA256", Req: true, Short: "exact plan digest"}, {Name: "yes", Req: true, Bool: true, Short: "confirm reviewed approval"}}},
+			{Name: "apply", Positionals: []string{"<plan-id>"}, Short: "Atomically apply an approved plan with fresh row guards", Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "use the hosted API and normal login"}, {Name: "url", Value: "URL", Short: "executor URL"}, {Name: "token-env", Value: "NAME", Short: "executor token environment variable"}, {Name: "digest", Value: "SHA256", Req: true, Short: "exact plan digest"}, {Name: "repair-operation", Value: "UUID", Short: "stable ID required by standalone executor apply"}, {Name: "yes", Req: true, Bool: true, Short: "confirm correction submission"}}},
+			{Name: "cancel-rehearsal", Positionals: []string{"<repair-id>"}, Short: "Cancel a scheduled rehearsal and await sandbox cleanup", Flags: []cliFlag{{Name: "app", Value: "SLUG", Req: true, Short: "hosted application"}, {Name: "digest", Value: "SHA256", Req: true, Short: "exact plan digest"}}},
+			{Name: "reconcile", Positionals: []string{"<repair-id>"}, Short: "Read the application receipt and reconcile the hosted Operation", Flags: []cliFlag{{Name: "app", Value: "SLUG", Req: true, Short: "hosted application"}, {Name: "digest", Value: "SHA256", Req: true, Short: "exact plan digest"}}},
+			{Name: "reject", Positionals: []string{"<repair-id>"}, Short: "Reject a hosted repair approval", Flags: []cliFlag{{Name: "app", Value: "SLUG", Req: true, Short: "hosted application"}, {Name: "digest", Value: "SHA256", Req: true, Short: "exact plan digest"}, {Name: "yes", Req: true, Bool: true, Short: "confirm rejection"}}},
+		},
 	},
 	{
 		Name: "commit", DocSlug: "commit", Short: "Manage transactional PostgreSQL outbox sources (internal)",
@@ -1374,6 +1538,13 @@ var cliCommands = []cliCommand{
 				{Name: "limit", Short: "history page size", Value: "N"},
 				{Name: "before", Short: "history cursor", Value: "CURSOR"},
 				{Name: "environment", Short: "assess this project environment instead of the default scope; excludes history options", Value: "SLUG"},
+			}},
+			{Name: subChanges, Short: "List recorded changes and health transitions, newest first (ADR-751)", Examples: []string{
+				"gregale app my-api changes",
+				"gregale app my-api changes --since 2026-10-08T12:00:00Z --json",
+			}, Flags: []cliFlag{
+				{Name: "since", Short: "window start, RFC3339 (default: 24h before until)", Value: "RFC3339"},
+				{Name: "until", Short: "window end, RFC3339 (default: now)", Value: "RFC3339"},
 			}},
 			{Name: "scale", Common: true, Short: "Preview or change resources and settings", Examples: []string{
 				"gregale app my-api scale --interactive",
@@ -4190,9 +4361,10 @@ var cliCommands = []cliCommand{
 		DocSlug: "metrics",
 		Short:   "Per-app or account-wide metrics, or the service map (slug defaults to linked context)",
 		Flags: []cliFlag{
-			{Name: "range", Short: "window (5m|15m|1h|6h|24h|7d)", Value: "WINDOW", ClosedSet: []string{"5m", "15m", "1h", "6h", "24h", "7d"}},
+			{Name: "range", Short: "window (5m|15m|1h|6h|24h|7d|15d)", Value: "WINDOW", ClosedSet: []string{"5m", "15m", "1h", "6h", "24h", "7d", "15d"}},
 			{Name: "account", Short: "account-wide roll-up"},
 			{Name: "services", Short: "service map of app-to-app calls (default range 1h)"},
+			{Name: "custom", Short: "history of one pushed custom metric (ranges 1h|6h|24h|7d|15d)", Value: "NAME"},
 		},
 		Positionals: []string{"[<slug>]"},
 	},
