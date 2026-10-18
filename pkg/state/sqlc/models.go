@@ -7987,6 +7987,14 @@ type NodeJoinJob struct {
 	CompletedAt    pgtype.Timestamptz
 }
 
+type NodeLease struct {
+	NodeID    pgtype.UUID
+	Holder    string
+	Epoch     int64
+	RenewedAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+}
+
 type NodeLifecycleCompletion struct {
 	NodeID           pgtype.UUID
 	SourceGeneration int64
