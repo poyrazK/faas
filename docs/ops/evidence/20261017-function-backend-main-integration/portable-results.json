@@ -1122,5 +1122,70 @@
     "hosted_current_head_ci": "required after publication",
     "native_physical_acceptance": false,
     "production_activation": false
+  },
+  "durable_listener_main_integration": {
+    "integrated_main": "744a82c005887d75c01b9c0210560fade3ca45a7",
+    "tested_source_tree_before_citation_correction": "31d473f5aea3c73403b32b2f7be8658006f5e786",
+    "compiler_target": "5GiB/GOGC50/serial",
+    "runtime": "2GiB/GOGC10/GOMAXPROCS2/3m",
+    "race": {
+      "phase": "race",
+      "exitCode": 0,
+      "seconds": 166.062,
+      "counts": {
+        "github.com/onebox-faas/faas/cmd/schedd": {
+          "pass": 130,
+          "skip": 1
+        },
+        "github.com/onebox-faas/faas/pkg/wire": {
+          "pass": 500,
+          "skip": 2
+        },
+        "github.com/onebox-faas/faas/pkg/scheddgrpc": {
+          "pass": 182
+        }
+      },
+      "skippedTests": [
+        "TestLoadSchedInternalSvcKey_SealedPath",
+        "TestActivationHelperProcess",
+        "TestListenOrRecreateByName_Happy"
+      ],
+      "failedTests": [],
+      "packageResults": [
+        {
+          "Package": "github.com/onebox-faas/faas/cmd/schedd",
+          "Action": "pass",
+          "Elapsed": 32.998
+        },
+        {
+          "Package": "github.com/onebox-faas/faas/pkg/wire",
+          "Action": "pass",
+          "Elapsed": 115.781
+        },
+        {
+          "Package": "github.com/onebox-faas/faas/pkg/scheddgrpc",
+          "Action": "pass",
+          "Elapsed": 4.5280000000000005
+        }
+      ]
+    },
+    "log_sha256": "c74d010be90b1a07f5f9502fb1e5eea18d293bece72e464fba1d56b3a876b7a8",
+    "adr_correction": {
+      "id": "20261018074719",
+      "old_path": "docs/adr/1580-zero-downtime-daemon-restarts.md",
+      "new_path": "docs/adr/20261018074719-zero-downtime-daemon-restarts.md",
+      "upstream_source": "87bf08561783f60b2850b2f217986b7f99df0961",
+      "scoped_citation_files": 41,
+      "legacy_ci_decision_preserved": true,
+      "ratchet_baseline_unchanged": true
+    },
+    "adr_uniqueness": "pass with unchanged164-entry baseline",
+    "generated_units": "pass",
+    "environment_contract": "pass",
+    "documentation_links": "pass",
+    "listener_template_fixtures_passed": 7,
+    "http_documentation_fixtures_passed": 4,
+    "production_activation": false,
+    "native_physical_acceptance": false
   }
 }

@@ -286,6 +286,12 @@ func ListenAs(ctx context.Context, target string, tlsCfg *tls.Config, daemonUser
 		if tlsCfg == nil {
 			return nil, fmt.Errorf("wire: mTLS required for tcp listen_addr %q", target)
 		}
+		if l, ok, err := InheritedListener("tcp", t.Address); err != nil {
+			return nil, fmt.Errorf("wire: listen %s: %w", t, err)
+		} else if ok {
+			lis = l
+			break
+		}
 		l, err := (&net.ListenConfig{}).Listen(ctx, "tcp", t.Address)
 		if err != nil {
 			return nil, fmt.Errorf("wire: listen %s: %w", t, err)

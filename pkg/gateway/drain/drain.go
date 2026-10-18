@@ -110,13 +110,66 @@ type Tracker struct {
 	// maxInflight records the high-water mark since construction.
 	// Diagnostic only; not exported.
 	maxInflight atomic.Int64
+	// shutdown closes when the daemon begins a graceful shutdown.
+	shutdown     chan struct{}
+	shutdownOnce sync.Once
 }
 
 // NewTracker constructs a zero-valued Tracker. The zero value is
 // NOT directly usable (sync.WaitGroup must not be copied after first
 // use); always go through NewTracker.
 func NewTracker() *Tracker {
-	return &Tracker{}
+	return &Tracker{shutdown: make(chan struct{})}
+}
+
+// BeginShutdown announces a graceful shutdown to the streams watching
+// ShuttingDown. Call it before closing the listeners. Idempotent.
+//
+// A restart cannot start the replacement process until this one exits, and
+// connections that arrive meanwhile wait in the systemd socket's backlog.
+// Streams a client reopens on its own (SSE, WebSocket) therefore end at once
+// instead of holding the drain open for its whole grace; ordinary requests
+// keep the full grace (docs/adr/20261018074719-zero-downtime-daemon-restarts.md).
+func (t *Tracker) BeginShutdown() {
+	t.shutdownOnce.Do(func() { close(t.shutdown) })
+}
+
+// ShuttingDown is closed once BeginShutdown or Drain has been called.
+func (t *Tracker) ShuttingDown() <-chan struct{} {
+	return t.shutdown
+}
+
+type shutdownKey struct{}
+
+// WithShutdownNotice attaches t's shutdown notice to ctx for the stream
+// copiers below the request handler. A nil t leaves ctx unchanged.
+func WithShutdownNotice(ctx context.Context, t *Tracker) context.Context {
+	if t == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, shutdownKey{}, t.ShuttingDown())
+}
+
+// ShutdownNotice returns the notice WithShutdownNotice attached, or nil.
+func ShutdownNotice(ctx context.Context) <-chan struct{} {
+	ch, _ := ctx.Value(shutdownKey{}).(<-chan struct{})
+	return ch
+}
+
+// EndOnShutdown calls end when ctx's shutdown notice fires before ctx ends.
+// Stream copiers use it for a stream the client reconnects by itself.
+func EndOnShutdown(ctx context.Context, end func()) {
+	notice := ShutdownNotice(ctx)
+	if notice == nil {
+		return
+	}
+	go func() {
+		select {
+		case <-notice:
+			end()
+		case <-ctx.Done():
+		}
+	}()
 }
 
 // Begin increments the in-flight counter and returns the Done
@@ -226,6 +279,7 @@ func (t *Tracker) Drain(ctx context.Context, deadline time.Duration) (DrainOutco
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	t.BeginShutdown()
 	t.addMu.Lock()
 	t.draining = true
 	// Capture the current inflight count while holding the mutex

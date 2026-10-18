@@ -13,6 +13,13 @@ gatewayd_route_metrics_enabled: true
 gatewayd_streaming_enabled: true
 gatewayd_ratelimit_mode: central
 
+# ADR-20261018074719: hold gatewayd-internal's unix socket and split-box data listener
+# (faas_gateway_listen), and realtimed's socket, in systemd sockets so a
+# restart queues callers instead of refusing them. Off until node_join stops
+# and starts these sockets with their services; while a socket is active, a
+# connection to it restarts a service node_join stopped.
+faas_compute_durable_listeners: false
+
 # Set this URL once for the gateway fleet through Ansible Vault. The role
 # copies it to a root-only systemd credential on each gateway node. Set
 # gatewayd_retry_budget_required=true for the activation pass so an omitted

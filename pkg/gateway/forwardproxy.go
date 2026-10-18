@@ -623,6 +623,12 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// 3/30-second request budget.
 			if init.GetStatus() >= http.StatusOK && init.GetStatus() < http.StatusBadRequest {
 				detachBudget()
+				if isEventStream(w.Header()) {
+					// An EventSource reconnects with Last-Event-ID, so a
+					// gateway restart ends it cleanly below rather than
+					// holding the drain open.
+					drain.EndOnShutdown(ctx, cancel)
+				}
 			}
 			if grpcDuplex {
 				flushSafe(w)
@@ -980,6 +986,11 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				// the 24-hour ceiling, and client cancellation.
 				detachBudget()
 			}
+			if upgraded {
+				// WebSocket clients reconnect; a restart closes the session
+				// now instead of holding the drain for its whole grace.
+				drain.EndOnShutdown(ctx, cancel)
+			}
 			touch()
 			// Mirror fwdStreamOnceWithEvents: emit
 			// wake.proxy_first_byte on the first downstream
@@ -1268,7 +1279,7 @@ func ForwardingRawReverseProxyWithEventsAndDrain(nodes NodeClientLookup, log *sl
 				done = tracker.Begin("upgrade")
 			}
 			defer done()
-			ctx := contextWithProxyStart(r.Context(), time.Now())
+			ctx := drain.WithShutdownNotice(contextWithProxyStart(r.Context(), time.Now()), tracker)
 			cli, closer, ok := nodes.ClientFor(r.Context(), t.NodeID)
 			if !ok {
 				markStaleTarget(r.Context())

@@ -74,6 +74,9 @@ type egressGRPCListener struct {
 	serveDone  chan struct{}
 	sink       *egresssink.EgressSink
 	log        *slog.Logger
+	// drain ends meterd's long-lived frame stream at stop, so GracefulStop
+	// does not hold gatewayd-internal's exit (and its restart) for 5 s.
+	drain *wire.StreamDrain
 }
 
 // chmodSocket applies mode to a unix-socket path, retrying briefly
@@ -163,6 +166,8 @@ func newEgressGRPCListener(target string, tlsCfg *tls.Config, srv *egressgrpc.Se
 	// handler, the vmmd/gateway egress client span would terminate at
 	// the listener and the trace would lose the receiver-side span.
 	opts = append(opts, wire.TraceServerOptions()...)
+	drain := wire.NewStreamDrain()
+	opts = append(opts, drain.ServerOption())
 	gs := grpc.NewServer(opts...)
 	egresspb.RegisterEgressTxServiceServer(gs, srv)
 	return &egressGRPCListener{
@@ -171,6 +176,7 @@ func newEgressGRPCListener(target string, tlsCfg *tls.Config, srv *egressgrpc.Se
 		tlsCfg:     tlsCfg,
 		sink:       nil, // reserved for a future /debug endpoint
 		log:        log,
+		drain:      drain,
 	}
 }
 
@@ -283,6 +289,9 @@ func (l *egressGRPCListener) start(ctx context.Context) error {
 func (l *egressGRPCListener) stop(ctx context.Context) error {
 	if l == nil || l.server == nil {
 		return nil
+	}
+	if l.drain != nil {
+		l.drain.Begin()
 	}
 	done := make(chan struct{})
 	go func() {

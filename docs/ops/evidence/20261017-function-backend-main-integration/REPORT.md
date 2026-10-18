@@ -381,6 +381,24 @@ expand/contract check against the integrated main. New exact-head hosted CI
 and the guarded native compile remain required before merge. No physical
 execution or production activation is supplied by these checks.
 
+## Durable listener compatibility (2026-10-18)
+
+Published main through `744a82c005887d75c01b9c0210560fade3ca45a7` adds
+inherited listeners and bounded stream draining. The merged source tree
+`31d473f5aea3c73403b32b2f7be8658006f5e786` passes full scheduler-entrypoint,
+wire and scheduler-client race suites: 130, 500 and 182 tests/subtests,
+respectively, with three existing helper/path skips and zero failures.
+Compilation uses 5 GiB/GOGC 50; execution uses 2 GiB/GOGC 10, two processors
+and three-minute package deadlines.
+
+The main integration exposed two different ADR-1580 decisions. The older
+internal CI admission decision and duplicate-number baseline are preserved.
+The newer daemon restart decision uses ADR-20261018074719; only its citations
+introduced by the daemon restart commit are updated. No restart behavior is
+changed by that correction. ADR uniqueness passes with the existing 164
+baseline entries. Generation, environment-contract and documentation checks
+pass, including seven listener-template and four HTTP documentation fixtures.
+
 ## Qualification boundary
 
 Production activation remains disabled. This managed container has no supported

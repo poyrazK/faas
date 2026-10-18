@@ -6614,9 +6614,15 @@ const (
 	//
 	// Hard limits policy (CLAUDE.md): every limit is a constant
 	// here, never inlined.
-	GatewayDrainGraceSeconds        = 25
-	ReplicaHeartbeatIntervalSeconds = 5
-	WarmHintCacheSize               = 1000
+	GatewayDrainGraceSeconds = 25
+	// ComputeGatewayRestartWaitSeconds caps how long gatewayd-public keeps
+	// sending new requests to a compute node whose gatewayd-internal stopped
+	// answering (for example while it restarts behind its durable socket)
+	// before failing over to another node (ADR-20261018074719). Override with
+	// FAAS_COMPUTE_GATEWAY_RESTART_WAIT.
+	ComputeGatewayRestartWaitSeconds = 3
+	ReplicaHeartbeatIntervalSeconds  = 5
+	WarmHintCacheSize                = 1000
 	// ServiceRouteConvergenceTimeoutSeconds bounds one routing-generation
 	// acknowledgement round. A timeout does not retire the predecessor; the
 	// scheduler leaves it serving and retries reconciliation.
@@ -6946,6 +6952,15 @@ const (
 	// change cannot widen the attack surface on this listener; a single
 	// tenant-crafted 1 MiB header is fine, 64 MiB is not.
 	DefaultMaxHeaderBytes = 1 << 20 // 1 MiB
+
+	// InternalHopReplayableBodyBytes is the largest request body
+	// gatewayd-public buffers before forwarding it to gatewayd-internal, so
+	// the HTTP/2 hop can resend it. A request that crosses gatewayd-internal's
+	// graceful-restart GOAWAY was never processed; the transport retries it on
+	// a new connection only when it can rewind the body. Larger or chunked
+	// bodies keep streaming and can still fail in that window
+	// (docs/adr/20261018074719-zero-downtime-daemon-restarts.md).
+	InternalHopReplayableBodyBytes = 64 << 10 // 64 KiB
 )
 
 // EffectiveRetryMaxAttempts resolves a requested durable-invocation attempt
