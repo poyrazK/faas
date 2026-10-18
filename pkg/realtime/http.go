@@ -518,6 +518,7 @@ type endpointRequest struct {
 	MaxConnections             int               `json:"max_connections,omitempty"`
 	MaxMessageBytes            int64             `json:"max_message_bytes,omitempty"`
 	MaxConnectionAgeSeconds    int64             `json:"max_connection_age_seconds,omitempty"`
+	LiveRoutes                 []LiveRoute       `json:"live_routes,omitempty"`
 }
 
 func (r endpointRequest) endpoint() Endpoint {
@@ -543,6 +544,7 @@ func (r endpointRequest) endpoint() Endpoint {
 		MaxConnections:   r.MaxConnections,
 		MaxMessageBytes:  r.MaxMessageBytes,
 		MaxConnectionAge: time.Duration(r.MaxConnectionAgeSeconds) * time.Second,
+		LiveRoutes:       append([]LiveRoute(nil), r.LiveRoutes...),
 	}
 }
 

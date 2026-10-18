@@ -16,7 +16,8 @@ export function newHookSecret() {
 }
 
 // The custom access token hook runs on every token GoTrue issues, so it is
-// on only with the OAuth server, whose client tokens it changes (oauth.mjs).
+// on only when it changes tokens: with the OAuth server (client tokens,
+// oauth.mjs) or organization claims (AUTH_ORG_CLAIMS, authz.mjs).
 export function hookEnv(secret, { accessToken = false } = {}) {
   return {
     GOTRUE_HOOK_SEND_EMAIL_ENABLED: 'true',
@@ -47,9 +48,62 @@ export function verifyWebhook(secret, headers, body, now = Date.now()) {
   })
 }
 
+// Email templates (ADR-1190): the owner may replace the subject and body of
+// each type (emails.mjs, sql/0014). A body is plain text with {{placeholder}}
+// values; every value is escaped and the HTML layout is fixed, so a template
+// cannot add markup, and an email that carries a link or code always has it.
+const verification = ['app', 'email', 'link', 'code']
+export const emailTypes = Object.freeze({
+  signup: { placeholders: verification, subject: 'Confirm your email', body: 'Confirm your email address to finish signing up for {{app}}.' },
+  invite: { placeholders: verification, subject: 'You have been invited', body: 'You have been invited to create an account on {{app}}.' },
+  magiclink: { placeholders: verification, subject: 'Your sign-in link', body: 'Use this link to sign in to {{app}}. It expires soon and works once.' },
+  recovery: { placeholders: verification, subject: 'Reset your password', body: 'Use this link to choose a new password for {{app}}. If you did not ask for this, ignore this email.' },
+  email_change: { placeholders: ['app', 'email', 'new_email', 'link', 'code'], subject: 'Confirm your email change', body: 'Confirm the change of your email address on {{app}} to {{new_email}}.' },
+  code: { placeholders: ['app', 'email', 'code'], subject: 'Your verification code', body: 'Enter this code in {{app}}. It expires soon.' },
+  security_notice: { placeholders: ['app', 'email', 'event'], subject: '{{event}}', body: 'This is a security notice from {{app}}. If this was not you, reset your password.' },
+  organization_invitation: { placeholders: ['app', 'email', 'org', 'link'], subject: 'Join {{org}} on {{app}}', body: 'You have been invited to join {{org}} on {{app}}.\n\nSign in or create an account with this email address to accept.' },
+})
+
+export const placeholder = /\{\{\s*([a-z_]+)\s*\}\}/g
+
 function escapeHTML(value) {
   return String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
 }
+
+const oneLine = value => String(value ?? '').replace(/[\r\n]+/g, ' ')
+
+// renderEmail fills a template. values.link and values.code are added at
+// the end when the body does not place them.
+export function renderEmail(to, template, values) {
+  const subject = template.subject.replace(placeholder, (_, name) => oneLine(values[name]))
+  const placed = new Set([...template.body.matchAll(placeholder)].map(([, name]) => name))
+  const text = [template.body.replace(placeholder, (_, name) => String(values[name] ?? ''))]
+  const html = template.body.split(/\n{2,}/).map(paragraph => {
+    let out = '', last = 0
+    for (const match of paragraph.matchAll(placeholder)) {
+      out += escapeHTML(paragraph.slice(last, match.index))
+      const value = values[match[1]] ?? ''
+      out += match[1] === 'link' && value ? `<a href="${escapeHTML(value)}">${escapeHTML(value)}</a>` : match[1] === 'code' && value ? `<strong>${escapeHTML(value)}</strong>` : escapeHTML(value)
+      last = match.index + match[0].length
+    }
+    return `<p>${(out + escapeHTML(paragraph.slice(last))).replace(/\n/g, '<br>')}</p>`
+  })
+  if (values.link && !placed.has('link')) { text.push('', values.link); html.push(`<p><a href="${escapeHTML(values.link)}">${escapeHTML(subject)}</a></p>`) }
+  if (values.code && !placed.has('code')) { text.push('', `Code: ${values.code}`); html.push(`<p>Code: <strong>${escapeHTML(values.code)}</strong></p>`) }
+  return { to, subject, text: text.join('\n'), html: html.join('\n') }
+}
+
+// loadEmailTemplates returns the owner's templates by type; db is a pool or
+// a client already in a transaction.
+export async function loadEmailTemplates(db) {
+  const { rows } = await db.query('SELECT type, subject, body FROM gregale_auth.email_templates')
+  return Object.fromEntries(rows.filter(row => emailTypes[row.type]).map(row => [row.type, { subject: row.subject, body: row.body }]))
+}
+
+export function templateFor(templates, type) {
+  return templates?.[type] ?? emailTypes[type]
+}
+
 
 function verifyLink(api, tokenHash, type, redirectTo) {
   const url = new URL(`${api}/verify`)
@@ -59,20 +113,7 @@ function verifyLink(api, tokenHash, type, redirectTo) {
   return url.toString()
 }
 
-function message(to, subject, lines, link, code) {
-  const text = [...lines, ...(link ? ['', link] : []), ...(code ? ['', `Code: ${code}`] : [])].join('\n')
-  const html = [...lines.map(line => `<p>${escapeHTML(line)}</p>`),
-    ...(link ? [`<p><a href="${escapeHTML(link)}">${escapeHTML(subject)}</a></p>`] : []),
-    ...(code ? [`<p>Code: <strong>${escapeHTML(code)}</strong></p>`] : [])].join('\n')
-  return { to, subject, text, html }
-}
-
-const linkActions = {
-  signup: ['Confirm your email', 'Confirm your email address to finish signing up for {app}.'],
-  invite: ['You have been invited', 'You have been invited to create an account on {app}.'],
-  magiclink: ['Your sign-in link', 'Use this link to sign in to {app}. It expires soon and works once.'],
-  recovery: ['Reset your password', 'Use this link to choose a new password for {app}. If you did not ask for this, ignore this email.'],
-}
+const linkActions = new Set(['signup', 'invite', 'magiclink', 'recovery'])
 
 const notifications = {
   password_changed_notification: 'Your password was changed',
@@ -85,33 +126,26 @@ const notifications = {
 }
 
 // messagesFor turns one GoTrue send-email hook payload into the emails to
-// deliver. For a secure email change GoTrue pairs token_hash_new with the
-// current address and token_hash with the new one.
-export function messagesFor(payload, { api, app }) {
+// deliver, in the owner's templates where set. For a secure email change
+// GoTrue pairs token_hash_new with the current address and token_hash with
+// the new one.
+export function messagesFor(payload, { api, app, templates = {} }) {
   const user = payload?.user ?? {}
   const data = payload?.email_data ?? {}
   const action = data.email_action_type
-  const say = text => text.replace('{app}', app)
-  if (linkActions[action]) {
-    const [subject, line] = linkActions[action]
-    return [message(user.email, subject, [say(line)], verifyLink(api, data.token_hash, action, data.redirect_to), data.token)]
-  }
+  const render = (type, to, values) => renderEmail(to, templateFor(templates, type), { app, email: to, ...values })
+  if (linkActions.has(action)) return [render(action, user.email, { link: verifyLink(api, data.token_hash, action, data.redirect_to), code: data.token })]
   if (action === 'email_change') {
-    const lines = [say('Confirm the change of your email address on {app}.')]
+    const addresses = { email: user.email, new_email: user.new_email }
+    const link = hash => verifyLink(api, hash, 'email_change', data.redirect_to)
     if (data.token_hash_new) {
-      return [
-        message(user.email, 'Confirm your email change', lines, verifyLink(api, data.token_hash_new, 'email_change', data.redirect_to), data.token),
-        message(user.new_email, 'Confirm your new email', lines, verifyLink(api, data.token_hash, 'email_change', data.redirect_to), data.token_new),
-      ]
+      return [render('email_change', user.email, { ...addresses, link: link(data.token_hash_new), code: data.token }),
+        render('email_change', user.new_email, { ...addresses, link: link(data.token_hash), code: data.token_new })]
     }
-    return [message(user.new_email, 'Confirm your new email', lines, verifyLink(api, data.token_hash, 'email_change', data.redirect_to), data.token)]
+    return [render('email_change', user.new_email, { ...addresses, link: link(data.token_hash), code: data.token })]
   }
-  if (action === 'email' || action === 'reauthentication') {
-    return [message(user.email, 'Your verification code', [say('Enter this code in {app}. It expires soon.')], null, data.token)]
-  }
-  if (notifications[action]) {
-    return [message(user.email, notifications[action], [say('This is a security notice from {app}. If this was not you, reset your password.')])]
-  }
+  if (action === 'email' || action === 'reauthentication') return [render('code', user.email, { code: data.token })]
+  if (notifications[action]) return [render('security_notice', user.email, { event: notifications[action] })]
   throw new EmailError(400, 'unsupported_email_action')
 }
 
@@ -160,7 +194,7 @@ function hookReply(res, error) {
 
 // createHookServer serves only GoTrue on loopback. It is a separate listener
 // from the public front, so the gateway can never route to it.
-export function createHookServer({ secret, mailer, api, app, accessToken = null }) {
+export function createHookServer({ secret, mailer, api, app, accessToken = null, templates = async () => ({}) }) {
   return http.createServer((req, res) => {
     const tokenHook = accessToken && req.url === hookAddress.accessTokenPath
     if (req.method !== 'POST' || (req.url !== hookAddress.path && !tokenHook)) { res.writeHead(404); return res.end() }
@@ -177,7 +211,12 @@ export function createHookServer({ secret, mailer, api, app, accessToken = null 
       if (tokenHook) return answerTokenHook(res, accessToken, body)
       try {
         if (!mailer) throw new EmailError(503, 'email_provider_unconfigured')
-        const messages = messagesFor(JSON.parse(body.toString('utf8')), { api, app })
+        // The defaults stand in when the owner's templates cannot be read.
+        const owned = await templates().catch(() => {
+          console.error(JSON.stringify({ level: 'warning', event: 'auth_email_templates_unavailable' }))
+          return {}
+        })
+        const messages = messagesFor(JSON.parse(body.toString('utf8')), { api, app, templates: owned })
         // One idempotency key per message lets GoTrue's retries reuse it.
         for (const [i, m] of messages.entries()) await mailer.send(m, `${req.headers['webhook-id']}-${i}`)
         hookReply(res)
@@ -205,7 +244,7 @@ async function answerTokenHook(res, accessToken, body) {
   }
 }
 
-export function invitationMessage(to, { external, app, orgName, token }) {
+export function invitationMessage(to, { external, app, orgName, token, templates = {} }) {
   const link = `${external}/ui/invitation#token=${encodeURIComponent(token)}`
-  return message(to, `Join ${orgName} on ${app}`, [`You have been invited to join ${orgName} on ${app}.`, 'Sign in or create an account with this email address to accept.'], link)
+  return renderEmail(to, templateFor(templates, 'organization_invitation'), { app, email: to, org: orgName, link })
 }

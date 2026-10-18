@@ -6899,6 +6899,17 @@ type ManagedPostgresHealth struct {
 	AttemptCount       int32
 }
 
+// ADR-20261016151947 live-query secrets per managed database, sealed to livequeryd; at most one active and one retiring key.
+type ManagedPostgresLiveKey struct {
+	Kid          string
+	AccountID    pgtype.UUID
+	DatabaseID   pgtype.UUID
+	SealedSecret []byte
+	Recipient    string
+	CreatedAt    pgtype.Timestamptz
+	RetiresAt    pgtype.Timestamptz
+}
+
 type ManagedPostgresResize struct {
 	ID                 pgtype.UUID
 	AccountID          pgtype.UUID

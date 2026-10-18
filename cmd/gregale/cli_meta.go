@@ -4584,6 +4584,8 @@ var cliCommands = []cliCommand{
 				{Name: "anonymous", Value: "on|off", Short: "let people start without an account (anonymous users); turn on CAPTCHA with it", ClosedSet: []string{"on", "off"}},
 				{Name: "anonymous-retention", Value: "DAYS", Short: "days an anonymous user may stay idle before it is deleted, or forever"},
 				{Name: "identity-linking", Value: "on|off", Short: "let signed-in users link and unlink sign-in methods", ClosedSet: []string{"on", "off"}},
+				{Name: "self-deletion", Value: "on|off", Short: "let signed-in users delete their own accounts after a recent sign-in", ClosedSet: []string{"on", "off"}},
+				{Name: "org-claims", Value: "on|off", Short: "put each session's active organization, role and permissions in its access tokens", ClosedSet: []string{"on", "off"}},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 			}, Examples: []string{"gregale auth config shop-auth", "gregale auth config shop-auth --events on", "gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit --mfa on"}},
 			{Name: "providers", Short: "Manage OAuth sign-in providers such as Google or GitHub", Subcommands: []cliSub{
@@ -4603,11 +4605,38 @@ var cliCommands = []cliCommand{
 				{Name: "activate", Short: "Make a published key sign; the previous key keeps verifying", Positionals: []string{"<name>", "<id>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
 				{Name: "revoke", Short: "Remove a key that no longer signs; its tokens stop verifying", Positionals: []string{"<name>", "<id>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
 			}},
-			{Name: "admin-key", Short: "Manage owner keys for the dashboard's users and organizations screens and imports", Subcommands: []cliSub{
+			{Name: "admin-key", Short: "Manage owner keys for user and organization administration and imports", Subcommands: []cliSub{
 				{Name: "create", Short: "Create a key; it is shown once and only its hash is stored", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
 				{Name: "list", Short: "List admin key IDs", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
 				{Name: "revoke", Short: "Revoke an admin key", Positionals: []string{"<name>", "<id>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
 			}},
+			{Name: "users", Short: "Find, sign out, ban and delete the application's users", Subcommands: []cliSub{
+				{Name: "list", Short: "List users, newest first", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "search", Value: "TEXT", Short: "part of an email address or name"}, {Name: "page", Value: "N", Short: "page to show"}, {Name: "limit", Value: "N", Short: "entries per page (1-100)"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "get", Short: "Show a user with their organizations and active sessions", Positionals: []string{"<name>", "<user>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "sign-out", Short: "End every session of a user", Positionals: []string{"<name>", "<user>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "ban", Short: "Ban a user for a time and end their sessions", Positionals: []string{"<name>", "<user>"}, Flags: []cliFlag{
+					{Name: "for", Value: "DURATION", Req: true, Short: "hours (24h), days (7d) or forever"},
+					{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
+				}},
+				{Name: "unban", Short: "Lift a user's ban", Positionals: []string{"<name>", "<user>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "delete", Short: "Delete a user with their sessions and sign-in methods", Positionals: []string{"<name>", "<user>"}, Flags: []cliFlag{
+					{Name: "yes", Short: "delete without the typed confirmation (needed with --admin-key-stdin)"},
+					{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
+				}},
+			}, Examples: []string{"gregale auth users list shop-auth --search example.com", "gregale auth users ban shop-auth ada@example.com --for 7d", "printf '%s' \"$ADMIN_KEY\" | gregale auth users delete shop-auth 0b5f2f0e-7a51-4d8f-8a3a-5c1b9d2e6f70 --yes --admin-key-stdin"}},
+			{Name: "orgs", Short: "List the application's organizations with their members and invitations", Subcommands: []cliSub{
+				{Name: "list", Short: "List organizations, newest first", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "search", Value: "TEXT", Short: "part of a slug or name"}, {Name: "page", Value: "N", Short: "page to show"}, {Name: "limit", Value: "N", Short: "entries per page (1-100)"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "get", Short: "Show an organization's members and pending invitations", Positionals: []string{"<name>", "<org>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+			}},
+			{Name: "emails", Short: "Change the wording of the emails the Auth app sends", Subcommands: []cliSub{
+				{Name: "list", Short: "List the email types and whether each uses your wording", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "show", Short: "Show an email's subject, body and placeholders", Positionals: []string{"<name>", "<type>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "set", Short: "Change an email's subject, body or both", Positionals: []string{"<name>", "<type>"}, Flags: []cliFlag{{Name: "subject", Value: "TEXT", Short: "the subject line; placeholders such as {{app}} are filled in"}, {Name: "body", Value: "TEXT", Short: "the body text; separate paragraphs with a blank line"}, {Name: "body-file", Value: "FILE", Short: "read the body text from this file"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "reset", Short: "Return an email to the default wording", Positionals: []string{"<name>", "<type>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "preview", Short: "Render an email with example values, optionally a draft, and send it to yourself", Positionals: []string{"<name>", "<type>"}, Flags: []cliFlag{
+					{Name: "subject", Value: "TEXT", Short: "the subject line; placeholders such as {{app}} are filled in"}, {Name: "body", Value: "TEXT", Short: "the body text; separate paragraphs with a blank line"}, {Name: "body-file", Value: "FILE", Short: "read the body text from this file"}, {Name: "send-to", Value: "EMAIL", Short: "also send the preview to this address through your email provider"}, {Name: "html", Value: "FILE", Short: "write the preview's HTML version to this file"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
+				}},
+			}, Examples: []string{"gregale auth emails set shop-auth signup --subject 'Welcome to {{app}}' --body-file signup.txt", "gregale auth emails preview shop-auth signup --send-to me@example.com"}},
 			{Name: "import", Short: "Import users with their password hashes from a JSON or JSON Lines file", Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "file", Value: "FILE", Req: true, Short: "JSON array or JSON Lines file of users"},
 				{Name: "dry-run", Short: "validate the file without importing"},
@@ -4889,6 +4918,21 @@ var cliCommands = []cliCommand{
 			{Name: "restore", Short: "Restore a database to a new database", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "name", Short: "name for the restored database", Req: true, Value: "NAME"},
 				{Name: "point-in-time", Short: "RFC3339 restore timestamp", Req: true, Value: "TIMESTAMP"},
+			}},
+			{Name: "live", Short: "Enable live queries and manage the live secret (operator preview)", Subcommands: []cliSub{
+				{Name: "status", Short: "Show whether live queries are enabled and the live secrets' key IDs", Positionals: []string{"<database>"}},
+				{Name: "enable", Short: "Enable live queries and issue the live secret", Positionals: []string{"<database>"}, Flags: []cliFlag{
+					{Name: "app", Short: "store the secret as an app secret on this app", Value: "APP"},
+					{Name: "scope", Short: "environment scope for --app", Value: "SCOPE"},
+					{Name: "env", Short: "secret name for --app (default GREGALE_LIVE_SECRET)", Value: "NAME"},
+				}, Examples: []string{"gregale postgres live enable orders --app web"}},
+				{Name: "rotate", Short: "Issue a new live secret; the previous one retires after the overlap", Positionals: []string{"<database>"}, Flags: []cliFlag{
+					{Name: "app", Short: "store the secret as an app secret on this app", Value: "APP"},
+					{Name: "scope", Short: "environment scope for --app", Value: "SCOPE"},
+					{Name: "env", Short: "secret name for --app (default GREGALE_LIVE_SECRET)", Value: "NAME"},
+					{Name: "overlap", Short: "how long the previous secret keeps working (default 24h, 0 revokes it at once)", Value: "DURATION"},
+				}},
+				{Name: "disable", Short: "Revoke every live secret and turn live queries off", Positionals: []string{"<database>"}},
 			}},
 			{Name: "cutover", Short: "Stage and verify a restore target without moving workloads", Subcommands: []cliSub{
 				{Name: "prepare", Short: "Stage all source bindings for one app and scope", Positionals: []string{"<source>", "<target>", "<app>"}, Flags: []cliFlag{{Name: "scope", Short: "environment scope", Value: "SCOPE"}}},
