@@ -135,7 +135,7 @@ func (s *server) listTemplates(w http.ResponseWriter, r *http.Request) {
 	_ = op
 
 	rows := make([]templateView, 0, len(templates.Names))
-	for _, name := range templates.Names {
+	for _, name := range templates.ListedNames() {
 		cat := templates.CategoryFor(name)
 		desc := templateDescription(name)
 		if cat == "" || desc == "" {

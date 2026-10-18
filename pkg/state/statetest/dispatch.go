@@ -24,6 +24,7 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"ScenarioWebhookDeliveryBlocked":                          true,
 	"CreateInstanceWithMode":                                  true,
 	"CreateAndClaimJobInstance":                               true,
 	"CompleteNodeLifecycle":                                   true,
@@ -1027,6 +1028,7 @@ func (s *Mem) WarmPoolReconciliationAppIDs(p0 context.Context, p1 string) ([]str
 
 // pgDispatched lists the methods Pg forwards to its override.
 var pgDispatched = map[string]bool{
+	"ScenarioWebhookDeliveryBlocked":                                     true,
 	"SubmitOperatorRecovery":                                             true,
 	"AbandonProjectEnvironmentCloneConfigurationFence":                   true,
 	"AbandonProjectEnvironmentCloneObjectWriteFences":                    true,
@@ -2362,6 +2364,7 @@ func (s *Pg) WithdrawProjectEnvironmentCloneCheckpointPgBindings(p0 context.Cont
 
 // storeDispatched lists the methods Store forwards to its override.
 var storeDispatched = map[string]bool{
+	"ScenarioWebhookDeliveryBlocked":                true,
 	"SubmitOperatorRecovery":                        true,
 	"MCPPolicyConvergenceSnapshot":                  true,
 	"LatestAccountEdgeRulePolicyPosition":           true,
@@ -2919,6 +2922,33 @@ func (s *Store) MCPPolicyConvergenceSnapshot(ctx context.Context, accountID, app
 		return source.MCPPolicyConvergenceSnapshot(ctx, accountID, appID)
 	}
 	return api.MCPPolicyConvergenceSnapshot{}, state.ErrNotFound
+}
+
+func (s *Mem) ScenarioWebhookDeliveryBlocked(ctx context.Context, appID, webhookID string) (bool, error) {
+	if f, ok := s.over.(interface {
+		ScenarioWebhookDeliveryBlocked(context.Context, string, string) (bool, error)
+	}); ok {
+		return f.ScenarioWebhookDeliveryBlocked(ctx, appID, webhookID)
+	}
+	return s.MemStore.ScenarioWebhookDeliveryBlocked(ctx, appID, webhookID)
+}
+
+func (s *Pg) ScenarioWebhookDeliveryBlocked(ctx context.Context, appID, webhookID string) (bool, error) {
+	if f, ok := s.over.(interface {
+		ScenarioWebhookDeliveryBlocked(context.Context, string, string) (bool, error)
+	}); ok {
+		return f.ScenarioWebhookDeliveryBlocked(ctx, appID, webhookID)
+	}
+	return s.PgStore.ScenarioWebhookDeliveryBlocked(ctx, appID, webhookID)
+}
+
+func (s *Store) ScenarioWebhookDeliveryBlocked(ctx context.Context, appID, webhookID string) (bool, error) {
+	if f, ok := s.over.(interface {
+		ScenarioWebhookDeliveryBlocked(context.Context, string, string) (bool, error)
+	}); ok {
+		return f.ScenarioWebhookDeliveryBlocked(ctx, appID, webhookID)
+	}
+	return s.Store.ScenarioWebhookDeliveryBlocked(ctx, appID, webhookID)
 }
 
 func (s *Mem) CompleteNodeLifecycle(ctx context.Context, in state.NodeLifecycleCompletion) (state.NodeLifecycleCompletionResult, error) {

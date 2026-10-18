@@ -59,6 +59,8 @@ const (
 	workQueuePushDispatch    workKind = "queue_push_dispatch"
 	workEventFanout          workKind = "event_fanout"
 	workReaper               workKind = "reaper"
+	workRehearsalFault       workKind = "rehearsal_worker_fault"
+	workRehearsalSuspend     workKind = "rehearsal_suspend_resume"
 	// workWorkerStartupReconcile runs once per schedd start (H10-136).
 	workWorkerStartupReconcile workKind = "worker_startup_reconcile"
 )
@@ -68,7 +70,10 @@ var workKinds = []workKind{
 	workServiceRecovery, workServiceRecoverySweep,
 	workPrime, workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workJobDispatch, workPrimeRecovery,
 	workWorkflowDispatch, workWorkflowSchedules, workTriggerDispatch, workQueuePushDispatch, workEventFanout,
-	workReaper, workWorkerStartupReconcile,
+	workReaper,
+	workRehearsalFault,
+	workRehearsalSuspend,
+	workWorkerStartupReconcile,
 }
 
 // overflowPolicy decides what submit does when a kind has no free slot.
@@ -127,7 +132,9 @@ var workSpecs = map[workKind]workSpec{
 	// One reaper tick at a time, sequential inside, as before it moved off
 	// the loop. A tick that fires while the previous one still runs
 	// coalesces into it; the next tick re-reads the instance table.
-	workReaper: {slots: 1, overflow: overflowDrop},
+	workReaper:           {slots: 1, overflow: overflowDrop},
+	workRehearsalFault:   {slots: 1, overflow: overflowDrop},
+	workRehearsalSuspend: {slots: 1, overflow: overflowDrop},
 }
 
 // workPool runs bounded, coalesced, off-loop tasks for Loop.

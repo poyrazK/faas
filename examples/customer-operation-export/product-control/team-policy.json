@@ -1,0 +1,6 @@
+{
+  "delegations": {
+    "team-manager": ["member", "viewer", "operator", "billing"],
+    "owner": ["member", "viewer", "operator", "billing", "team-manager"]
+  }
+}

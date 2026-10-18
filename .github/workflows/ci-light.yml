@@ -111,10 +111,10 @@ jobs:
     runs-on: ubuntu-latest
     # Light-tier budget: about 10 minutes. golangci-lint (govet included) runs
     # on the changed packages; compiling their importers moved to the mega
-    # tier, because a pkg/api change recompiles most of the module. Main
-    # pushes also lint the three large packages to keep their analysis in
-    # the cache, which takes longer.
-    timeout-minutes: ${{ github.ref == 'refs/heads/main' && 40 || 20 }}
+    # tier, because a pkg/api change recompiles most of the module. Broad
+    # changes can touch all three large packages and need the same 40-minute
+    # cold-cache budget as main. Keep every selected package in the check.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
         with:
@@ -368,6 +368,11 @@ jobs:
         run: |
           python3 scripts/ci/check_migration_expand_contract_test.py
           python3 scripts/ci/slo_gate_test.py
+      - name: per-unit release selection and planning tests
+        run: |
+          python3 scripts/ci/affected_units_test.py
+          python3 scripts/ci/plan_unit_deploy_test.py
+          bash scripts/unit-release-verify_test.sh
       - name: MemStore stub guard
         run: make memstore-stubs-check
       - name: daemon environment contract

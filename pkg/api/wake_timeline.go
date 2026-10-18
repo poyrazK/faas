@@ -37,8 +37,8 @@ type WakeTimelineEvent struct {
 // WakeTimelineResponse is the wire shape for
 // `GET /v1/apps/{slug}/wakes/{wake_id}/timeline`. Events is the
 // ordered list (at ASC — forward narrative). NextCursor is the
-// opaque RFC 3339 timestamp the client passes back as `?cursor=`
-// to fetch the next page; empty when this is the last page. Limit
+// legacy RFC3339 timestamp hint sent back as since; it can skip tied
+// events. Opt-in keyset_v1 uses Page.NextCursor as cursor instead. Limit
 // echoes the effective limit applied by the handler (capped at
 // the SDK's documented max).
 type WakeTimelineResponse struct {
@@ -47,4 +47,15 @@ type WakeTimelineResponse struct {
 	Events     []WakeTimelineEvent `json:"events"`
 	NextCursor string              `json:"next_cursor,omitempty"`
 	Limit      int                 `json:"limit"`
+	Page       *WakeTimelinePage   `json:"page,omitempty"`
+}
+
+// WakeTimelinePage is present only for explicit keyset_v1 pagination. Legacy
+// next_cursor remains timestamp-based; Page.NextCursor must be sent as cursor.
+type WakeTimelinePage struct {
+	Mode       string `json:"mode"`
+	Since      string `json:"since,omitempty"`
+	Cursor     string `json:"cursor,omitempty"`
+	NextCursor string `json:"next_cursor,omitempty"`
+	Complete   bool   `json:"complete"`
 }

@@ -99,6 +99,8 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 		switch {
 		case path == "/dashboard/" || path == "/dashboard":
 			s.renderIndex(w, r, log, acct)
+		case path == "/dashboard/mcp":
+			s.renderMCPOperations(w, r, log, acct)
 		case path == "/dashboard/apps":
 			s.renderAppsList(w, r, log, acct)
 		case path == "/dashboard/app-costs":
@@ -919,7 +921,9 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 	operational := s.appOperationalSummary(ctx, acct, app)
 	appCosts := s.dashboardAppCosts(ctx, log, acct, app, costMonth, costMonthNotice)
 	page := dashboard.Page{Title: app.Slug, Body: "app_detail", Account: dashboardAccountView(view, appCount), Data: dashboard.AppDetailData{
+		ProductControlURL:  s.productControlConsoleURL(app.Slug),
 		ProfilingAvailable: s.profileBackend != nil && api.MustLimitsFor(acct.Plan).Profiling.Enabled,
+		ApplicationAuth:    api.ApplicationAuthEnabled(acct.ID),
 		Operational:        &operational,
 		App:                appRow,
 		AppCosts:           appCosts,

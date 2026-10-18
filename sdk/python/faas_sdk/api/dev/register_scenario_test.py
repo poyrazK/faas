@@ -8,6 +8,7 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.problem import Problem
 from ...models.register_scenario_test_request import RegisterScenarioTestRequest
+from ...models.register_scenario_test_response import RegisterScenarioTestResponse
 from ...types import Response
 
 
@@ -33,7 +34,14 @@ def _get_kwargs(
     return _kwargs
 
 
-def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Any | Problem | None:
+def _parse_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Any | Problem | RegisterScenarioTestResponse | None:
+    if response.status_code == 200:
+        response_200 = RegisterScenarioTestResponse.from_dict(response.json())
+
+        return response_200
+
     if response.status_code == 204:
         response_204 = cast(Any, None)
         return response_204
@@ -64,7 +72,9 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         return None
 
 
-def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[Any | Problem]:
+def _build_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[Any | Problem | RegisterScenarioTestResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -78,7 +88,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: RegisterScenarioTestRequest,
-) -> Response[Any | Problem]:
+) -> Response[Any | Problem | RegisterScenarioTestResponse]:
     """Register an isolated service namespace for a scenario test.
 
      All members must be live developer sessions from this account and run. A missing sibling never
@@ -94,7 +104,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | Problem]
+        Response[Any | Problem | RegisterScenarioTestResponse]
     """
 
     kwargs = _get_kwargs(
@@ -114,7 +124,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: RegisterScenarioTestRequest,
-) -> Any | Problem | None:
+) -> Any | Problem | RegisterScenarioTestResponse | None:
     """Register an isolated service namespace for a scenario test.
 
      All members must be live developer sessions from this account and run. A missing sibling never
@@ -130,7 +140,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | Problem
+        Any | Problem | RegisterScenarioTestResponse
     """
 
     return sync_detailed(
@@ -145,7 +155,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: RegisterScenarioTestRequest,
-) -> Response[Any | Problem]:
+) -> Response[Any | Problem | RegisterScenarioTestResponse]:
     """Register an isolated service namespace for a scenario test.
 
      All members must be live developer sessions from this account and run. A missing sibling never
@@ -161,7 +171,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | Problem]
+        Response[Any | Problem | RegisterScenarioTestResponse]
     """
 
     kwargs = _get_kwargs(
@@ -179,7 +189,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: RegisterScenarioTestRequest,
-) -> Any | Problem | None:
+) -> Any | Problem | RegisterScenarioTestResponse | None:
     """Register an isolated service namespace for a scenario test.
 
      All members must be live developer sessions from this account and run. A missing sibling never
@@ -195,7 +205,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | Problem
+        Any | Problem | RegisterScenarioTestResponse
     """
 
     return (

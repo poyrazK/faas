@@ -61,6 +61,11 @@ test('request logs correlate success, auth and rejection without recording calle
       assert.equal(record.admission.outcome, 'admitted')
       assert.ok(record.admission.wait_ms >= 0)
     }
+    if (item.status === 200 || item.code === 'upstream_error') {
+      fields.push('database_timings')
+      assert.equal(record.database_timings.state, 'unknown')
+      assert.equal(record.database_timings.reason, 'missing_header')
+    }
     assert.deepEqual(Object.keys(record).sort(), fields.sort())
   }
   assert.doesNotMatch(JSON.stringify(logs), /sentinel|postgres:|Bearer/)

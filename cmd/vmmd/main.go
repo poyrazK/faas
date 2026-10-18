@@ -45,9 +45,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/fcvm/activity"
 	"github.com/onebox-faas/faas/pkg/fcvm/cpustats"
+	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/fcvm/netstats"
 	"github.com/onebox-faas/faas/pkg/frameworkready"
 	"github.com/onebox-faas/faas/pkg/imaged"
+	"github.com/onebox-faas/faas/pkg/mcpprotocol"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/sched"
@@ -885,9 +887,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.PmemBaseDir != "" && fcvm.PmemBaseSupported(fcVersion) && !cfg.NativeProcessRecovery {
 		pmemBaseDir = cfg.PmemBaseDir
 	}
+	protocolMetrics := mcpprotocol.New(ops.Registry())
+	protocolCoverage := mcpprotocol.NewCoverage(ops.Registry())
 	jailer := fcvm.NewJailerVMM(fcvm.JailChrootBase, 30*time.Second).
 		WithRuntimeSourceRoot(vmmdRuntimeSourceRoot(storageBackend)).
 		WithServiceProxyCA(serviceProxyCAPEM).
+		WithLogCommitCallback(func(appID string, line logbuf.Line) { protocolMetrics.Observe(appID, line.Line, line.WrittenAt) }).
+		WithInstanceLogObserver(protocolCoverage.Start).
+		WithInstancePauseObserver(protocolCoverage.Pause).
 		// Same registry the Manager gets below, so per-artifact
 		// materialization lands next to the wake phases in one scrape.
 		WithWakePhaseMetrics(wpm).
@@ -962,6 +969,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
+	if store != nil {
+		policies, ok := store.(state.ScenarioNetworkPolicyStore)
+		if !ok {
+			return errors.New("vmmd: rehearsal network policy storage is unavailable")
+		}
+		mgr.WithRehearsalNetworkPolicies(policies)
+		if fencer, ok := store.(interface {
+			RevokeScenarioCommandNetworksForNode(context.Context, string) error
+		}); ok {
+			if err := fencer.RevokeScenarioCommandNetworksForNode(ctx, nodeID); err != nil {
+				return fmt.Errorf("vmmd: revoke prior command network identities: %w", err)
+			}
+		}
+	}
 	// Native recovery owns the physical inventory, but must also exclude a
 	// concurrent legacy daemon and refuse any outstanding legacy leases. Hold
 	// the legacy journal lock for this daemon's entire lifetime before native
@@ -1345,7 +1366,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if store == nil || pool == nil {
 				return errors.New("event publish persistence is not configured")
 			}
-			_, accountID, identityErr := mgr.InstanceIdentity(instance)
+			_, accountID, identityErr := mgr.InstanceExternalActionIdentity(publishCtx, instance)
 			if identityErr != nil {
 				return identityErr
 			}

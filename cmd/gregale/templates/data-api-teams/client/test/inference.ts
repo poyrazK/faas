@@ -1,5 +1,17 @@
 import { teamsClient } from '../src/orders.js'
 const client = teamsClient({ url: 'https://orders.example', accessToken: 'test' }, 'shop-a')
+void client.summary({ status: 'submitted', minimum: 100 }).then(result => {
+  const count: string | null | undefined = result.data?.[0].order_count
+  const cents: string | null | undefined = result.data?.[0].total_cents
+  void count; void cents
+  // @ts-expect-error aggregate cents remain strings rather than imprecise numbers
+  const numeric: number = result.data![0].total_cents!
+  void numeric
+})
+// @ts-expect-error summary filters use the database order-status enum
+void client.summary({ status: 'paid' })
+// @ts-expect-error summary inputs are filters, with no page limit
+void client.summary({ pageSize: 20 })
 const args = { request_key: 'key', team_id: 'team', order_id: 'id', expected_version: 0, order_total: 1, order_state: 'draft' as const }
 void client.db.rpc('save_team_order_once', args).then(result => {
   const total: number | undefined = result.data?.[0].total_cents

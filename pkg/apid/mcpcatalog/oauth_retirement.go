@@ -50,6 +50,10 @@ func RetirementHandler(store state.Store) httpkit.AccountHandler {
 			return
 		}
 		out, err := source.RecoverMCPOAuthRetirement(r.Context(), account.ID, id.String(), action)
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Grant retirement cannot be changed", "The record is leased, terminal, or past retention; reload the retirement ledger"))
+			return
+		}
 		respond(w, out, err)
 	}
 }

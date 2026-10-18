@@ -826,6 +826,40 @@ func TestDiskDrift_StorageBackend_OrphanDepIncrements(t *testing.T) {
 	}
 }
 
+// H10-142: production keeps a backing sidecar beside every capture and keeps
+// stale captures until retention ends. Neither is drift; a real orphan still
+// is. On production this sweep reported 608 discrepancies an hour for 59
+// active rows, almost all of them these two shapes.
+func TestDiskDrift_StorageBackend_RetainedAndBackingAreNotDrift(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	seedDriftRow(ctx, t, store, "d-live")
+	seedDriftRow(ctx, t, store, "d-stale")
+	rows, err := store.ListSnapshotsForGC(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row.DeploymentID == "d-stale" {
+			if err := store.MarkSnapshotStale(ctx, row.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	dd := NewDiskDrift(store, nil).WithStorage(&fakeStorageLister{keys: []string{
+		"snap/d-live/mem", "snap/d-live/vmstate", "snap/d-live/backing",
+		"snap/d-stale/mem", "snap/d-stale/vmstate", "snap/d-stale/backing",
+		"snap/d-orphan/mem", "snap/d-orphan/vmstate",
+	}})
+	drift, err := dd.Tick(ctx)
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if drift != 1 {
+		t.Fatalf("drift = %d, want 1 (only d-orphan)", drift)
+	}
+}
+
 // TestDiskDrift_StorageBackend_ListErrorIsUnavailable pins that a partial
 // remote inventory is surfaced as a failure rather than a clean zero.
 func TestDiskDrift_StorageBackend_ListErrorIsUnavailable(t *testing.T) {

@@ -34,6 +34,7 @@ if (noteForm && form) {
   let working = false
   const save = noteForm.querySelector<HTMLButtonElement>('#save-note')!
   const recover = noteForm.querySelector<HTMLButtonElement>('#recover-note')!
+  const retry = noteForm.querySelector<HTMLButtonElement>('#retry-note')!
   const output = document.querySelector<HTMLElement>('#note-result')!
   const protectedInputs = [...Array.from(form.querySelectorAll<HTMLInputElement>('[name=url],[name=subject]')), ...Array.from(noteForm.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('[name=body],[name=tags]'))]
   const sync = () => {
@@ -42,9 +43,11 @@ if (noteForm && form) {
     save.disabled = working || pending
     recover.hidden = !pending
     recover.disabled = working
+    retry.hidden = !pending
+    retry.disabled = working
     form.querySelector<HTMLButtonElement>('button')!.disabled = working || pending
   }
-  const run = async (recovering: boolean) => {
+  const run = async (action: 'submit' | 'check' | 'retry') => {
     if (working) return
     for (const field of ['body', 'tags']) {
       document.querySelector<HTMLElement>(`#${field === 'body' ? 'insert-body' : field}-error`)!.textContent = ''
@@ -59,9 +62,9 @@ if (noteForm && form) {
         url: form.querySelector<HTMLInputElement>('[name=url]')!.value,
         subject: form.querySelector<HTMLInputElement>('[name=subject]')!.value,
         accessToken: () => noteToken,
-      }))
+      }), { replayContract: 'v2' })
       const input = { body: noteForm.querySelector<HTMLTextAreaElement>('[name=body]')!.value, tags: noteForm.querySelector<HTMLInputElement>('[name=tags]')!.value }
-      const result = recovering ? await controller.reconcile() : await controller.submit(input)
+      const result = action === 'check' ? await controller.reconcile() : action === 'retry' ? await controller.retry() : await controller.submit(input)
       if (result.outcome === 'validation_failed') {
         for (const [field, message] of Object.entries(result.fields)) {
           document.querySelector<HTMLElement>(`#${field === 'body' ? 'insert-body' : field}-error`)!.textContent = message
@@ -82,8 +85,11 @@ if (noteForm && form) {
       sync()
     }
   }
-  noteForm.addEventListener('submit', event => { event.preventDefault(); void run(false) })
-  recover.addEventListener('click', () => { void run(true) })
+  noteForm.addEventListener('submit', event => { event.preventDefault(); void run('submit') })
+  recover.addEventListener('click', () => { void run('check') })
+  retry.addEventListener('click', () => {
+    if (window.confirm('Retry the original save with the same request? Check the pending save first. Retrying after its replay window closes will be refused.')) void run('retry')
+  })
 }
 
 const editForm=document.querySelector<HTMLFormElement>('#edit-form')

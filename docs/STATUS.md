@@ -59,6 +59,555 @@ listener behind a socket unit each restarted five times under load with 0 of
 returned 103,323 502s. Open: the first socket conversion through `node_join`
 and deployctl, and the listeners the ADR leaves without socket activation.
 
+## Product Control customer work history — 2026-10-17
+
+[ADR-1727](adr/1727-product-control-customer-work-history.md) adds a private
+customer API and explicit portal search over independently retained receipts.
+Exact run reference, original feature, outcome and inclusive UTC start dates
+combine with AND. Removed features and old plans stay discoverable. Pages use
+immutable admission time and UUID descending at microsecond precision; scope,
+Auth realm, role, effective permissions and all filters bind continuation.
+Missing and foreign exact references return the same empty scoped page.
+
+Both stores recheck current customer authority and View work. Billing-only and
+plan-manager roles cannot read history; pausing starts preserves authorized
+reads. PostgreSQL shares a read-only repeatable-read authorization/source
+snapshot; memory returns detached entries with bounded collection space. Limits
+are 25 entries, 2048 cursor bytes, 32 KiB JSON and a 20-second service read budget.
+Source scan cost still depends on retained history. There is no total count,
+new retention window, audit journal or snapshot across pages; outcome changes
+can enter/leave a filtered search and require a fresh first page.
+
+The shared Run details projection preserves settled outcomes after result expiry,
+keeps active Operations retention, and labels unavailable unresolved work without
+inventing failure. Entries contain no input/result bodies, prices or charges,
+allowance counts, execution diagnostics or owner billing evidence. View run
+details links to the independently permitted result/files, billing month and help.
+
+The portal adds next/first page and clear-filter actions, with no polling or
+search persistence. Editing filters, switching workspaces, permission changes,
+sign-out and access denial clear history and selected results/details. Request
+and workspace generations fence late responses and stale buttons. Timestamp
+parsing accepts the memory store's nanoseconds and PostgreSQL's microseconds.
+
+All 313 selected Go checks, 106 portal checks and 10 Chromium checks passed,
+including race-enabled domain/customer service and memory/PostgreSQL contracts.
+The full Product Control HTTP race suite passed after the final asset change.
+Chromium used the production router/customer middleware and SQLC/PostgreSQL with
+fictional Auth and state-only work, covering 28 tied-timestamp receipts, removed
+features, original plans, result expiry, filters, actions, access changes,
+workspace/sign-out clearing, default-off routes and desktop/mobile layout.
+Scoped changed-file lint, SQLC consistency, private spec/SDK coverage, repository
+policy, documentation paths and formatting passed. The disposable browser fixture
+stopped and its database was removed. Prior verification artifacts are preserved.
+
+The Product Control and independent email switches remain default off. No schema
+migration, worker, CLI/SDK implementation, email transport, real provider/Auth
+qualification, workload execution or deployment is introduced. See the
+[work-history runbook](ops/product-control.md#customer-work-history).
+
+## Product Control customer run details — 2026-10-17
+
+[ADR-1726](adr/1726-product-control-customer-run-details.md) adds a private,
+read-only customer API and Run details panel to Recent work and work activity
+links. The original receipt supplies the plan, admission month, one consumed
+start and optional historical allowance before/after admission. Current plan
+changes do not rewrite those terms. Older missing allowance is explicit, settled
+outcomes survive result expiry, and expired unresolved work establishes neither
+failure nor a zero charge. Active work follows existing Operations retention.
+
+Live Application Auth membership and current account/app/tenant/realm mapping
+remain mandatory. Both stores recheck current role permissions at the receipt
+boundary. View work is required; billing-only and plan-manager roles cannot read
+runs. The complete charge object is omitted without View billing. Billing members
+see provisional/finalized success charges, waivers, minimal statement references
+and signed credit aggregates for the exact run. Partial/full credits reduce the
+net amount. No statement or credit claims payment or a cash refund. Source
+selection excludes payloads, execution diagnostics, owner reasons and handoffs.
+
+PostgreSQL shares read-only repeatable-read authorization and source queries;
+memory returns detached values. JSON is limited to 16 KiB and the service read
+budget is 20 seconds. No migration, worker, journal or extra polling is added.
+The portal provides explicit result/files, original billing-month and contextual
+help actions. Selection, closing details, workspace/role changes, sign-out and
+access denials fence stale responses and old buttons and clear prior results.
+The panel is not persisted and shows its observation time with explicit refresh.
+
+All 297 selected Go checks passed, including race-enabled domain/customer service
+and memory/PostgreSQL contracts. The full Product Control HTTP race suite passed.
+All 96 portal checks and 10 Chromium checks passed. Chromium exercised the
+production router, customer middleware and SQLC/PostgreSQL with fictional Auth
+and state-only work fixtures. It covered original Starter terms under a current
+Pro plan, signed partial credits, result expiry, source links, role changes,
+foreign workspace reads, sign-out, default-off routes and desktop/mobile layouts.
+The local fixture stopped and its disposable database was removed. SQLC
+consistency, private-route spec/SDK coverage, schema-source binding, documentation
+paths, formatting and repository policy checks passed. Scoped lint, including tests and router wiring, passed with zero introduced
+issues. This check covers every line in every changed Go file; it does not claim
+a clean repository-wide lint.
+
+The default-off Product Control and independent email switches remain unchanged.
+Migrations, schema, Auth protocols/templates, CLI/SDKs, email transport and
+VM/scheduler source and earlier verification artifacts are preserved. No real
+credentials, email, workload execution, deployment, flag enablement or live
+provider/Auth/native qualification is claimed. See the
+[run-details runbook](ops/product-control.md#customer-run-details).
+
+## Product Control customer workspace activity — 2026-10-17
+
+[ADR-1725](adr/1725-product-control-workspace-activity.md) adds customer workspace
+activity to the existing Updates area. The read-only private API and portal join
+retained work outcomes, confirmed self-service plans, finalized statements,
+signed credit notes and the latest help updates. Source fields are selected
+explicitly; owner notes, reviews, assignment evidence, handoffs, work prices and
+billing snapshots are absent. No migration, journal or worker is added.
+
+Live Application Auth membership and current account/product/tenant/realm mapping
+remain mandatory. Both stores recheck current permissions before pagination.
+Work, plan, billing and help each retain their existing access rules; work-only
+members receive no billing amounts or plan confirmations. Plan/help history also
+checks its recorded organization. Cursors bind workspace, Auth app, organization,
+role, effective permissions, filter and the full descending time/kind/UUID key.
+Pages have 25 entries, 64 KiB responses and a 20-second service deadline. The
+SQLC query shares a read-only repeatable-read snapshot with authorization; memory
+collects at most a page plus lookahead. Source scan cost still depends on retained
+history. Signed credits remain negative, matching the original documents.
+
+Links open existing independently authorized readers: a run/result, exact plan
+confirmation, original billing month or help request. Looking at a previous plan
+confirmation preserves an unconfirmed new review. Browser ordering retains all
+six microsecond digits. Filters survive ordinary workspace refreshes; pending
+responses and old buttons are fenced across selection, sign-out and workspace
+or permission changes. The activity list is not persisted and adds no polling
+loop. The unread inbox and personal email consent remain separate. Available
+history is not a complete audit log; results may expire and help updates coalesce.
+
+All 304 selected Go checks passed, including race-enabled domain/customer service
+and memory/PostgreSQL contracts. The full Product Control HTTP race suite passed.
+All 82 portal checks and 10 Chromium checks passed. Chromium uses the production
+router, customer middleware and SQLC/PostgreSQL projection with fictional Auth
+and state-only workload fixtures. Its isolated Go overlay supplies equivalents
+of existing test accessors without changing repository source. It covers source
+links, pending reviews, signed credits, role visibility, cursor scope, workspace
+switching, sign-out, default-off routes and desktop/mobile layouts. Browser checks
+sent no external requests or email and executed no real workload. The fixture
+stopped cleanly and its disposable database was removed.
+
+SQLC consistency, private-route spec/SDK coverage, schema-source binding,
+formatting, documentation paths and repository policy checks passed. Scoped changed-file lint, including tests and router wiring, passed with zero
+introduced issues. The initial broad run exceeded its budget and reported twelve
+context warnings in unchanged legacy test helpers; the verification report records
+that baseline rather than claiming a repository-wide clean lint. The default-off Product Control flag and independent email
+switches remain unchanged. Existing migrations, schema, Auth templates/protocols,
+SDKs, outbox and VM/scheduler source, and earlier verification artifacts are
+preserved. No deployment, real credentials or live provider/Auth/native workload
+qualification is claimed. See the
+[activity runbook](ops/product-control.md#customer-workspace-activity).
+
+## Product Control notification unsubscribe — 2026-10-17
+
+[ADR-1724](adr/1724-product-control-notification-unsubscribe.md) adds unsubscribe
+without sign-in to new personal work/help notification emails. Each retained
+delivery has a separate random capability, persisted only as a lookup hash and a
+delivery-bound age envelope. Retries reuse the original capability and message
+body. Text/HTML links use a URL fragment; GET and HEAD show confirmation without
+reading or changing preferences. An explicit browser POST or standard mailbox
+one-click POST performs the same scoped action. Both supported mailbox form
+encodings are bounded and validated; cookies and Auth availability are unnecessary.
+
+Unsubscribe records one immutable confirmation per original consent version,
+turns both categories off, clears recipient authority and cancels queued mail.
+Leased work stops at the final readiness check. Requests already in flight may
+finish and retain their provider receipts. Bounce/complaint holds and recipient
+generations remain intact. Even the preference-version ceiling cannot prevent
+stopping mail. Repeats recover the same acknowledgement; old confirmed links
+report their historical result after later consent, while stale unconfirmed links
+cannot change newer choices. Re-enabling requires authenticated explicit consent
+and enables only future updates.
+
+The portal, owner console/private API and `gregale product email opt-outs` expose
+scoped historical receipts separately from current preferences. Public
+acknowledgements reveal only confirmation ID/time and whether that confirmation
+still matches current choices. Authenticated history exposes safe references,
+versions and generations without addresses, Auth actors, capabilities or message
+content. Pages have 25 entries and scoped time/UUID cursors. Receipts cascade with
+the original delivery's 30-day window and existing delivery cap; there is no new
+receipt quota that could refuse an opt-out. The append-only migration adds checked
+capability fields and receipt storage. Earlier migrations, Auth templates, SDKs
+and VM/scheduler code remain unchanged.
+
+All 3,008 unique selected Go checks passed, including 147 domain/outbox race
+checks, 184 CLI/completion checks, the full API client suite, private-route and
+schema checks. The two optional Fish/PowerShell syntax checks were skipped
+because those shells are unavailable. The full Product Control router race suite
+passed, including owner scope/session/MFA and all-method default-off routes.
+All 73 portal checks, nine confirmation-script checks and 11 Chromium checks
+passed. Browser checks use production customer/owner views and sender code with
+fictional Auth, a loopback provider and signed callbacks; they cover lost
+acknowledgements, same-tab fragment links, newer consent, queue cancellation,
+mailbox POSTs, complaint holds, sign-out and desktop/mobile layouts. A delayed
+response for an older link cannot replace a newer confirmation screen.
+
+Fresh schema generation/source binding, SQLC consistency, private-route SDK
+coverage, scoped lint with tests (zero issues), formatting and repository policy
+checks passed. The verification packet retains the source manifest, review files,
+logs and browser evidence. The disposable schema database and browser fixture
+were cleaned up. Product Control remains default off; email defaults disabled
+and real sending keeps its independent switch. No deployment, real credentials
+or external email was used. Real mailbox behavior, DKIM header coverage and proxy
+query redaction remain deployment qualification. See the
+[unsubscribe runbook](ops/product-control.md#unsubscribing-from-notification-email).
+
+## Product Control notification recovery — 2026-10-17
+
+[ADR-1723](adr/1723-product-control-notification-recovery.md) adds an explicit
+customer action to recover a personal hard-bounce pause after verifying a
+different sign-in address and renewing consent. Sender evidence is an encrypted,
+subscription-bound address digest; plaintext addresses and digests are omitted
+from platform records and public projections. Existing Auth protocols and
+migrations are unchanged. Historical pauses without evidence, inaccessible
+identity keys and complaint holds stay under review.
+
+An immutable scoped receipt records the confirmation, selected categories,
+preference versions and recipient generations. Concurrent unchanged requests
+converge on one confirmation. Recovery resets eligibility to future updates;
+cancelled messages, original deadlines and attempt budgets remain intact. Old
+recipient bounces cannot pause the replacement or cancel its queue. Current
+recipient bounces pause normally, and complaints from any retained generation
+still establish a hold. Replaying an old receipt cannot clear a new hold.
+
+Preference saves and recovery serialize per subscription before Auth grant
+rotation. PostgreSQL consent waiters release their connection between attempts;
+the holder uses a bounded request budget. Callbacks retain a separate short lock
+and can still prevent recovery during external verification. Owners inspect
+scoped confirmations in the console/API and `gregale product email recoveries`;
+there is no owner resume action. Customer history is personal. Pages are bounded
+to 25 records with scoped cursors; retention is 30 days and recovery capacity is
+50 per subscription in that window. The append-only platform migration adds
+checked generations, encrypted evidence and confirmation receipts.
+
+All 2,974 unique selected Go checks passed, including 127 domain/outbox race
+checks, 183 CLI/completion checks, the full API client suite, private-route
+compliance and schema-source binding. The two optional Fish/PowerShell syntax
+checks were skipped because those shells are unavailable. The full Product
+Control router race suite passed, including owner scope/session/MFA checks and
+all-method disabled recovery routes. All 71 portal checks and eight Chromium
+checks passed with same-address rejection, unchanged-request response recovery,
+consent serialization, old/new recipient feedback and complaint holds. Chromium
+used production customer/owner views, fictional Auth and a signed loopback
+provider on desktop and mobile. Fresh schema generation, SQLC consistency, SDK
+coverage, scoped lint with tests (zero issues) and repository policy checks
+passed. The source-bound verification packet retains the logs, review source
+and desktop/mobile browser evidence for this increment.
+
+Product Control remains default off; email defaults disabled and real sending
+keeps its independent switch. No deployment, real credentials or external email
+was used. Live Auth/address verification and provider qualification remain
+separate. See the [notification recovery runbook](ops/product-control.md#recovering-notifications-after-a-hard-bounce).
+
+## Product Control provider delivery feedback — 2026-10-17
+
+[ADR-1722](adr/1722-product-control-email-provider-feedback.md) adds signed Resend
+delivery, bounce and complaint reports above durable provider receipts. The
+portal, owner console and `gregale product email` show provider-reported states
+and report times. Receiving-server delivery does not establish inbox placement
+or reading. Semantic duplicates and out-of-order reports preserve one message,
+its attempt budget and complaint/bounce precedence. A bounded, expiring metadata
+buffer handles reports that arrive before the send receipt commits; matching
+checks expiry even when cleanup has a backlog. Previously accepted messages
+without provider IDs cannot acquire feedback retroactively.
+
+Permanent bounces and complaints pause the affected personal product/workspace
+subscription. Queued messages cancel and leased messages stop at the next
+readiness check; in-flight provider calls can complete. Other subscriptions
+remain independent. Preference saves, grant renewals, address changes and owner
+retries cannot clear the pause. This increment has no resume or force-send
+action. Temporary and unclassified bounces are visible without an automatic
+pause. The append-only migration adds checked pause/report fields, unique
+provider receipts and the bounded pending table; prior migrations are preserved.
+
+All 3,095 unique selected Go checks passed, including 249 domain/outbox/mail
+race checks, memory and real PostgreSQL feedback contracts, 182 CLI/completion
+checks, the API client suite, private-route compliance and schema-source binding.
+Two optional Fish/PowerShell syntax checks were skipped because those shells
+are unavailable. The full Product Control and existing platform-mail HTTP race
+suites passed. All 68 portal checks and eight Chromium checks passed across
+production customer/owner views on desktop and mobile, using fictional Auth and
+a signed loopback provider. Fresh migration/schema generation, SQLC consistency,
+SDK coverage, scoped lint with tests (zero issues), documentation links and
+repository policy checks passed.
+
+An initial API contract compile was killed when overlapping builds reached the
+workspace memory limit. Lint was stopped to release memory, and the contract
+suite and lint passed after rerunning with bounded memory and build concurrency.
+The initial resource failure and final source-bound verification evidence are
+retained with this increment.
+
+Product Control remains default off, email defaults disabled and real sending
+still needs its separate switch. The optional feedback secret neither enables
+sending nor shares the global platform-mail suppression path. No deployment,
+real credential setup, external email or live provider qualification was
+performed. See the [feedback runbook](ops/product-control.md#provider-delivery-feedback-and-paused-subscriptions).
+
+## Product Control owner notification controls — 2026-10-17
+
+[ADR-1721](adr/1721-product-control-owner-email-controls.md) adds owner console
+and `gregale product email` controls for whole-window queue totals, oldest
+pending age, customer-scoped delivery history and clear failure guidance.
+Counts cover the selected rolling 30-day product/customer window across all
+statuses; filtered 25-message pages use scoped keyset cursors. Safe projections
+omit addresses, Auth identities, recipient grants and private message bodies.
+
+Owners can requeue eligible provider-rejected failures against their observed
+failed attempt. Recovery preserves the delivery/provider key, original deadline,
+preference/source revisions and six-attempt budget. It rechecks current Auth
+authority, mapping, role/product permissions and source before queueing; the
+worker repeats those checks before sending. Transient outages retain automatic
+backoff and Retry-After. Atomic retry receipts make concurrent clicks and lost
+responses safe, including after a later attempt completes. The append-only
+platform migration adds bounded retry receipts and an owner scope index.
+
+All 2,953 unique selected Go checks passed, including 108 domain/outbox race
+checks, PostgreSQL and memory recovery contracts, 181 CLI/completion checks,
+the complete API client suite, shared Product Control validation, private route
+compliance and schema-source binding. Two optional Fish/PowerShell completion
+syntax checks were skipped because those shells are not installed. The full
+Product Control HTTP race suite passed with owner scope, session, MFA, verified
+email, CSRF and all-method disabled-route checks. Chromium passed eight
+desktop/mobile checks using production owner service/templates, fictional Auth
+and a private local sink. Fresh migration/schema generation, SQLC consistency,
+SDK coverage, scoped lint with tests and repository policy checks passed.
+
+Everything remains behind the default-off Product Control flag; email still
+defaults disabled and real sending requires its separate switch. No deployment,
+real credential setup or external email was performed. Existing Auth protocols,
+issued migrations, pilot evidence, work execution and commercial behavior are
+preserved. Real provider acceptance/inbox delivery qualification remains later
+internal release work and does not block implementation.
+
+See the [owner email runbook](ops/product-control.md#owner-notification-email-controls).
+
+## Product Control personal notification email — 2026-10-17
+
+[ADR-1720](adr/1720-product-control-personal-notification-email.md) adds personal
+Work outcomes and Help replies opt-ins above the workspace inbox, with a durable
+outbox, bounded retries, delivery status and a private local mail sink. Preferences
+start off, use version checks and apply only to new updates. Auth issues a narrow
+30-day recipient grant for the current verified address; the platform encrypts
+it and saves no customer login token or plaintext recipient address. Each send
+rechecks live membership/role, owned realm, mapping, current product permissions,
+source revision, preferences and lease. Messages omit help text and run payloads.
+
+All 2,921 unique selected Go checks passed, including 87 domain/outbox race
+checks, the full API client suite, shared Product Control validation, CLI/Auth
+runtime contracts, private route compliance and schema-source binding. The full
+Product Control HTTP race suite also passed. PostgreSQL verified outbox CAS,
+leases and send-time mapping checks; 79 Auth runtime tests passed, including live
+SQL grant checks for changed/unverified addresses, bans, membership removal and
+expiry. Chromium passed nine desktop/mobile checks through production portal and
+service code with fictional Auth responses and local capture. Scoped lint with
+tests, fresh migration/schema generation, SQLC consistency and repository policy
+checks passed. Earlier pilot and recovery evidence remains frozen.
+
+The Product Control flag stays default off. Email separately defaults disabled;
+local mode records captured messages, and real Resend mode requires an explicit
+send switch. Provider acceptance never claims inbox delivery. No deployment,
+real provider call or external email was performed. Deployed Auth rollout and
+real provider qualification remain later internal release work; credentials are
+not a prerequisite for continuing implementation.
+
+See the [personal email runbook](ops/product-control.md#personal-notification-email).
+
+## Product Control customer account recovery — 2026-10-17
+
+[ADR-1719](adr/1719-product-control-customer-account-recovery.md) adds **Forgot
+password?** to the customer sign-in page. It opens the latest product's owned
+Application Auth recovery UI in a separate tab, without passing credentials or
+requesting email on navigation. The existing Auth flow owns recovery mail,
+one-time links, password policy and session behavior. Customers return to the
+product afterward and sign in normally. Caller targets/queries are rejected;
+an explicit empty redirect fragment prevents fragment inheritance.
+
+All 841 selected API/domain/CLI/private-contract checks passed, along with the
+full Product Control HTTP race suite, scoped lint with tests and repository
+policy checks. Local Chromium exercised nine checks using the production
+recovery handler and portal/Auth UI assets with fictional Auth API responses:
+separate-tab privacy, explicit recovery/reset actions, missing tokens, fragment
+discarding, realm changes, mobile layout and disabled methods.
+
+Implementation continues while deployed pilot access is unavailable. The new
+entry point remains behind the default-off Product Control flag. Actual recovery
+delivery and deployed reset/session behavior remain separate live checks; no
+external messages, deployments or flag changes were performed. No schema,
+commercial receipt, Operations lifecycle or Auth implementation changed.
+
+See the [account recovery runbook](ops/product-control.md#customer-account-recovery).
+
+## Product Control complete internal pilot preparation — 2026-10-17
+
+[ADR-1718](adr/1718-product-control-complete-internal-pilot.md) adds an opt-in
+version-two manifest requiring three baseline downloads, three journeys linked
+to help about those same runs, and observed customer inbox pages. Both the
+selected successful work and latest help source must match retained evidence.
+Missing stages or older sources leave the journey incomplete; malformed or
+foreign pages are rejected. Version-one ledger workflows remain compatible.
+Reports retain only artifact paths/hashes/byte counts and keep live browser,
+read recovery and native qualification unverified.
+
+All 249 selected Product Control domain/CLI and help-dispatch checks passed,
+including the read-only HTTP verifier. The
+[pilot guide](../examples/customer-operation-export/product-control/README.md#customer-updates-inbox-pilot)
+includes inbox sharing, newer-source unread, stale updates, lost acknowledgements
+and current authority. The verified inbox runtime retains its earlier build/source
+evidence; updated pilot tooling is captured separately. No runtime API, schema,
+portal or default-off gate changes are part of this preparation.
+
+The live three-customer trial remains pending a selected internal deployment,
+access profile and qualified native Operations host. No live scenarios or actual
+downloads have been recorded during preparation.
+
+## Product Control customer notifications — 2026-10-17
+
+[ADR-1717](adr/1717-product-control-customer-notifications.md) adds an Updates
+inbox for retained work outcomes, runs needing attention and the latest owner
+help response/status. It uses a rolling thirty-day view with current workspace
+and kind-specific permissions applied before pages and unread counts. Read
+status is explicitly shared within the workspace, scoped to its Auth identity;
+newer source versions become unread and stale acknowledgements conflict.
+
+Local qualification passed all 103 Product Control memory/PostgreSQL cases,
+134 API/domain/service checks, 68 portal/recovery contracts, the HTTP race suite
+and nine migration regressions including the full apply/ledger walk. Chromium
+checked current source kinds, explicit read choices, lost-response recovery,
+workspace clearing, escaped text and mobile layout. Both binaries built; scoped
+Go lint, SQLC and private API contract checks passed. A local disk-exhaustion
+failure during the final storage attempt was resolved by reclaiming completed
+derived caches; the full rerun passed without prerequisite skips.
+
+The customer portal offers read/unread controls, filtering, pagination and links
+to existing help/run readers. Lost acknowledgements refresh through GET without
+POST replay. Read metadata has bounded capacity and expiry; inbox actions cannot
+execute work or change access, plans or billing. The existing default-off flag
+covers the routes and asset. Email delivery and the deployed three-customer
+Auth/browser/native-export pilot remain separate release work.
+
+## Product Control internal release candidate — 2026-10-17
+
+[ADR-1716](adr/1716-product-control-internal-pilot-evidence.md) extends
+`gregale product pilot verify` with optional scoped help expectations and
+three-customer journey records. Help snapshots must match reviewed hashes and,
+for run requests, the original admission terms. `product pilot help` inspects
+hashes without printing messages/responses. Journey records report observed time
+to first success, blocked steps and elapsed time to the latest help resolution.
+Local artifacts are bounded and hashed; contents are excluded from reports.
+Incomplete journeys and evidence mismatches have distinct nonzero exits.
+
+All 221 Product Control/API/CLI and selected help checks passed. The earlier
+migration-scoping failure is corrected without changing issued SQL: an already
+unqualified migration must retain its bytes, and PostgreSQL integration checks
+its actual function placement. The full migration apply/ledger walk passed.
+Broader database tests completed with existing prerequisite skips, recorded in
+the verification report rather than treated as executed acceptance.
+
+The service remains internal behind the default-off flag. Operator-recorded
+journeys retain unverified qualification; the deployed three-customer browser,
+Auth and native-export trial still needs a selected internal target and access.
+The [pilot guide](../examples/customer-operation-export/product-control/README.md#customer-help-and-complete-customer-journeys)
+now includes help creation/responses, interrupted acknowledgements, permissions,
+workspace changes and friction recording. No deployment or flag change occurs
+during preparation.
+
+## Product Control Customer Help — 2026-10-17
+
+[ADR-1715](adr/1715-product-control-customer-help.md) adds customer requests with
+server-generated diagnostic snapshots, an owner review queue and customer-visible
+status/response. Requests follow current workspace, role and Auth realm authority.
+Feature/run requests retain only permitted context; messages and responses are
+shared with authorized members of that workspace. Exact request retries preserve
+the initial snapshot; version checks prevent competing owner edits from losing
+updates. Help does not execute work or change permissions, plans or billing.
+
+All 87 Product Control memory/PostgreSQL cases passed without skips, alongside
+the HTTP race suite and 58 portal/recovery contracts. Chromium checked explicit
+submission, customer-visible responses, lost-acknowledgement recovery, workspace
+clearing, escaped text and mobile layouts. Both binaries built; SQLC, private API
+contract checks and scoped Go lint passed. Database package tests and the full
+migration apply/ledger walk passed against a clean disposable local database.
+
+The portal and owner APIs/pages remain internal behind the existing default-off
+flag. At this milestone, the historical migration scoping assertion failed for the unchanged
+`20261003160458628_application_standard_runtime_default_base.sql`; its source
+and scoping helper/test matched the preceding milestone. The release candidate
+recorded above corrects that assertion. The deployed pilot remains
+separate. See the [Customer Help runbook](ops/product-control.md#customer-help).
+
+## Local Product Control customer usage guidance — 2026-10-16
+
+[ADR-1714](adr/1714-product-control-customer-usage-guidance.md) adds customer
+usage progress, warnings from 80%, exact UTC resets and separate explanations
+for exhausted/zero allowances, paused access, permissions and unavailable
+features. The portal and private customer read API share existing accepted-start
+counts across plans/revisions. Authorized customers can open explicitly offered
+plan choices through the existing review and confirmation flow. No new storage
+schema, counters, automatic plan changes or work submissions are introduced.
+
+API/domain/service checks and the complete Product Control HTTP suite with race
+detection passed. All 49 portal/recovery contract cases passed. Local Chromium
+exercised six guidance states, authorized read-only plan review, escaped long
+feature labels, logout clearing and desktop/mobile widths without page overflow.
+SQLC generation, internal-route spec/SDK checks and repository policy gates
+passed. This milestone changes no storage implementation; the preceding
+milestone's memory/PostgreSQL storage evidence remains historical.
+
+The service remains internal behind its existing default-off flag. The live
+Auth/email/browser/native-export pilot still needs a selected deployment and
+access. See the [usage guidance runbook](ops/product-control.md#usage-and-next-steps).
+
+## Local Product Control customer activity timeline — 2026-10-16
+
+[ADR-1713](adr/1713-product-control-customer-activity.md) adds an owner-only
+activity timeline in the console, private read API, and `gregale product customers
+activity`. Ten event kinds combine retained setup/activation, reviewed assignment
+and self-service plan changes, original run terms and verified outcomes,
+waivers, billing documents and invoice handoffs. Scoped cursors preserve
+simultaneous events; each page is a fresh observation, bounded at fifty events,
+3 MiB and twenty seconds. No new journal, observation writes or Auth authority
+is introduced. Legacy direct assignments and Auth team events are not inferred.
+
+All 71 Product Control memory/PostgreSQL storage cases passed without skips,
+along with API/domain/service and CLI help/completion checks. The complete Product
+Control HTTP suite passed with the race detector, including disabled-method
+fallback protection. Both binaries built. Chromium checked all ten rendered event
+kinds, expandable details, source-text escaping and desktop/mobile widths using
+fictional data. These are local checks with simulated Auth/execution boundaries.
+
+The service stays internal and off by default. Local verification is separate
+from the live internal Auth/email/browser/native-export pilot, which still needs
+an approved target and access. The [runbook](ops/product-control.md#customer-activity-timeline)
+documents history coverage, source links and continuation semantics.
+
+## Local Product Control customer readiness overview — 2026-10-16
+
+[ADR-1712](adr/1712-product-control-customer-readiness-overview.md) adds an
+owner-only **Customer readiness and activation** page, private read API, and
+`gregale product customers overview`. Assigned customers combine pinned plans,
+existing feature/binding/allowance diagnostics, guided activation evidence, and
+work needing review across all retained months. Pages share a twenty-second
+deadline, contain at most ten customers and 3 MiB of JSON, and link to existing
+review flows. No new activation, membership, execution or billing writes occur.
+
+The 69 Product Control memory/PostgreSQL storage test cases passed without skips;
+Product Control API/domain/CLI checks and the complete HTTP boundary suite with
+the race detector passed. Chromium checked the rendered overview's five customer
+states, expandable checks, and desktop/mobile widths. These are local checks,
+with simulated Auth/execution at the HTTP boundary, not a deployed pilot.
+
+Product Control remains internal behind its existing default-off flag. The live
+internal Auth/email/browser/native-export pilot still needs a deployment target
+and access; this overview grants no native qualification and enables no flag.
+The [runbook](ops/product-control.md#customer-readiness-and-activation-overview)
+describes the observation and continuation contracts.
+
 ## Durable migration source retirement — 2026-10-17
 
 [ADR-1530](adr/1530-durable-migration-source-retirement.md) binds production

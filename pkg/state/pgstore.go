@@ -15430,7 +15430,7 @@ func (s *PgStore) SetAlertRuleLastEvaluated(ctx context.Context, ruleID string, 
 
 const alertDeliverySelectCols = `id, rule_id, account_id, app_id, idempotency_key, payload,
        status, attempt_count, last_status_code, last_error,
-       observed_value, fired_at, delivered_at, is_test`
+       observed_value, fired_at, delivered_at, is_test, readiness_event_id, readiness_destination, readiness_failover_reason`
 
 func scanAlertDelivery(row pgx.Row) (AlertDelivery, error) {
 	d := AlertDelivery{}
@@ -15444,7 +15444,7 @@ func scanAlertDelivery(row pgx.Row) (AlertDelivery, error) {
 	if err := row.Scan(
 		&d.ID, &d.RuleID, &d.AccountID, &appID, &d.IdempotencyKey, &payload,
 		&status, &attemptCount, &lastStatusCode, &lastError, &d.ObservedValue,
-		&d.FiredAt, &deliveredAt, &d.IsTest,
+		&d.FiredAt, &deliveredAt, &d.IsTest, &d.ReadinessEventID, &d.ReadinessDestination, &d.ReadinessFailoverReason,
 	); err != nil {
 		return AlertDelivery{}, err
 	}
@@ -15483,7 +15483,7 @@ func scanAlertDeliveries(rows pgx.Rows) ([]AlertDelivery, error) {
 		if err := rows.Scan(
 			&d.ID, &d.RuleID, &d.AccountID, &appID, &d.IdempotencyKey, &payload,
 			&status, &attemptCount, &lastStatusCode, &lastError, &d.ObservedValue,
-			&d.FiredAt, &deliveredAt, &d.IsTest,
+			&d.FiredAt, &deliveredAt, &d.IsTest, &d.ReadinessEventID, &d.ReadinessDestination, &d.ReadinessFailoverReason,
 		); err != nil {
 			return nil, err
 		}
@@ -15823,6 +15823,11 @@ func (s *PgStore) ClaimInvocation(ctx context.Context, id, instanceID string, le
 		return Invocation{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if instanceID == "" {
+		if err := sqlc.New().ResetScenarioManagedInvocationBinding(ctx, tx, id); err != nil {
+			return Invocation{}, err
+		}
+	}
 	if err := lockInvocationEnvironmentClaimDB(ctx, tx, id); err != nil {
 		return Invocation{}, err
 	}
@@ -25746,6 +25751,9 @@ func mapErr(err error) error {
 				return ErrApplicationStandardsPending
 			case "application_standard_scope_owner":
 				return ErrInvalidArgument
+
+			case "deployment_mcp_readiness_required":
+				return ErrMCPReadinessRequired
 			case "environment_gitops_job_managed":
 				return ErrEnvironmentGitManaged
 			case "environment_gitops_job_link_contract":
@@ -31971,6 +31979,11 @@ func (s *PgStore) ClaimInvocationWithCap(ctx context.Context, id, instanceID str
 		return Invocation{}, fmt.Errorf("state: invocations claim cap begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if instanceID == "" {
+		if err := sqlc.New().ResetScenarioManagedInvocationBinding(ctx, tx, id); err != nil {
+			return Invocation{}, err
+		}
+	}
 	if err := lockInvocationEnvironmentClaimDB(ctx, tx, id); err != nil {
 		return Invocation{}, err
 	}

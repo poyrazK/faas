@@ -39,6 +39,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
+	"github.com/onebox-faas/faas/pkg/apid/product"
 	"github.com/onebox-faas/faas/pkg/apid/statementinvoices"
 	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
 	"github.com/onebox-faas/faas/pkg/billing"
@@ -49,6 +50,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/profiling"
 	"github.com/onebox-faas/faas/pkg/promql"
+	objruntime "github.com/onebox-faas/faas/pkg/rehearsalobj/runtime"
+	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -149,6 +152,7 @@ const DashboardJobsCSRFCookie = dashboardJobsCSRFCookie
 const DashboardKeyConfirmField = dashboardKeyConfirmField
 const DashboardKeyDeleteCSRFCookie = dashboardKeyDeleteCSRFCookie
 const DashboardMFAPath = dashboardMFAPath
+const DashboardMCPAlertCookie = dashboardMCPAlertCookie
 const DashboardMirrorsCSRFCookie = dashboardMirrorsCSRFCookie
 const DashboardReplayFailedAction = dashboardReplayFailedAction
 const DashboardReplayFailedCSRFCookie = dashboardReplayFailedCSRFCookie
@@ -551,6 +555,8 @@ var ResendReason = resendReason
 var ReserveRecoveryBucket = reserveRecoveryBucket
 var ResolveManagedPostgresDatabaseRecord = resolveManagedPostgresDatabaseRecord
 var ResolveSourceOperations = resolveSourceOperations
+var ArchiveHasSourceRoot = archiveHasSourceRoot
+var ArchiveHasRootDockerfileAtRoot = archiveHasRootDockerfileAtRoot
 var RestartProgressDashboardCookie = restartProgressDashboardCookie
 var RestartProgressDashboardGET = restartProgressDashboardGET
 var RollbackOn5xxBreached = rollbackOn5xxBreached
@@ -1211,6 +1217,9 @@ func (r *server) RollbackSourceRefManifest(p0 context.Context, p1 sourceRefManif
 func (r *server) RotateManagedPostgresBinding(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.rotateManagedPostgresBinding(p0, p1, p2)
 }
+func (r *server) CreateManagedPostgresBinding(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
+	r.createManagedPostgresBinding(p0, p1, p2)
+}
 func (r *server) SaveOwnedProfileInvestigation(p0 context.Context, p1 state.Account, p2 state.App, p3 state.ProfileInvestigationStore, p4 string, p5 api.SaveProfileInvestigationRequest) (api.ProfileInvestigation, *api.Problem) {
 	return r.saveOwnedProfileInvestigation(p0, p1, p2, p3, p4, p5)
 }
@@ -1413,4 +1422,33 @@ func StageApplyTarball(ctx context.Context, scanDir, accountID, projectID string
 // WorkloadTrust exposes workload-trust setting precedence (ADR-1141).
 func WorkloadTrust(cfg Config, getenv func(string) string, pathEnv, path, issuerEnv, issuer string) (string, string) {
 	return workloadTrust(cfg, getenv, pathEnv, path, issuerEnv, issuer)
+}
+
+func (r *server) ProductControl() *product.Service { return &r.productControl }
+
+func (r *server) ConfigureProductEmail(getenv func(string) string) error {
+	return r.configureProductEmail(getenv)
+}
+
+func (s *server) RehearsalNetworkEnabled() *bool { return &s.rehearsalNetworkEnabled }
+
+func (s *server) RehearsalSimulationEnabled() *bool { return &s.rehearsalSimulationEnabled }
+func (s *server) RehearsalCommandsEnabled() *bool   { return &s.rehearsalCommandsEnabled }
+
+func (s *server) SetRehearsalPostgresForTest(service *pgruntime.Service, enabled bool) {
+	s.rehearsalPostgres, s.rehearsalPostgresEnabled = service, enabled
+}
+
+func (s *server) SetRehearsalObjectsForTest(service *objruntime.Service, enabled bool) {
+	s.rehearsalObjects, s.rehearsalObjectsEnabled = service, enabled
+}
+
+func (s *server) RehearsalWorkersEnabled() *bool        { return &s.rehearsalWorkersEnabled }
+func (s *server) RehearsalSuspendResumeEnabled() *bool  { return &s.rehearsalSuspendResumeEnabled }
+func (s *server) RehearsalRunningSuspendEnabled() *bool { return &s.rehearsalRunningSuspendEnabled }
+func (s *server) RehearsalColdStartEnabled() *bool      { return &s.rehearsalColdStartEnabled }
+func (s *server) RehearsalWorkerFaultsEnabled() *bool   { return &s.rehearsalWorkerFaultsEnabled }
+
+func (s *server) StartInternalCIWorker(ctx context.Context, log *slog.Logger) func() {
+	return s.startInternalCIWorker(ctx, log)
 }

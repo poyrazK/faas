@@ -151,6 +151,18 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}": true, // authenticated browser-only tracker review/notification surface
 	"GET /dashboard/apps/{slug}/issues/tracker-review":                                  true, // authenticated browser-only tracker review/notification surface
 	"GET /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync/{link_id}":               true, // authenticated browser-only tracker review/notification surface
+	// Browser session and named-CSRF adapters for documented MCP APIs.
+	"POST /dashboard/mcp/apps/{slug}/alerts":                           true,
+	"POST /dashboard/mcp/apps/{slug}/alerts/{id}":                      true,
+	"POST /dashboard/mcp/apps/{slug}/incidents/{id}/attention-actions": true,
+	"POST /dashboard/mcp/apps/{slug}/alerts/{id}/pagerduty":            true,
+	"POST /dashboard/mcp/apps/{slug}/alerts/{id}/reminder-defaults":    true,
+	"POST /dashboard/mcp/apps/{slug}/alerts/{id}/fallback":             true,
+	"POST /dashboard/mcp/apps/{slug}/maintenance":                      true,
+	"POST /dashboard/mcp/apps/{slug}/maintenance/{id}/cancel":          true,
+	"POST /dashboard/mcp/apps/{slug}/notifications/actions":            true,
+	"POST /dashboard/mcp/apps/{slug}/oauth":                            true,
+	"POST /dashboard/mcp/retirements/{id}":                             true,
 
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules":                true, // session + CSRF adapter for the public split-rule creation API
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}":      true, // session + CSRF adapter for the public split-rule update API
@@ -166,6 +178,103 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/issues/saved-views":                           true, // session/CSRF HTML adapter for the corresponding public Issues API
 	"POST /dashboard/apps/{slug}/issues/teams":                                 true, // session/CSRF HTML adapter for the corresponding public Issues API
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-links":              true, // session/CSRF HTML adapter for the corresponding public Issues API
+	"GET /v1/product-control/email/unsubscribe":                                true,
+	"POST /v1/product-control/email/unsubscribe":                               true,
+	"GET /v1/product-control/email-unsubscribe.js":                             true,
+	"GET /v1/apps/{slug}/product/email-opt-outs":                               true,
+	"GET /v1/product-control/customer/{slug}/email-opt-outs":                   true,
+	"POST /v1/product-control/email/resend-events":                             true,
+	"GET /v1/apps/{slug}/product/email-deliveries":                             true,
+	"POST /v1/apps/{slug}/product/email-deliveries/{delivery}/retry":           true,
+	"GET /v1/apps/{slug}/product/billing/documents":                            true,
+	"GET /v1/apps/{slug}/product/billing/documents/{document}/handoff":         true,
+	"GET /v1/apps/{slug}/product/billing/receipts":                             true,
+	"POST /v1/apps/{slug}/product/onboarding/workspaces":                       true,
+	"POST /v1/apps/{slug}/product/onboarding/preview":                          true,
+	"POST /v1/apps/{slug}/product/onboarding/confirm":                          true,
+	"GET /v1/apps/{slug}/product/onboarding/{onboarding}":                      true,
+	"GET /v1/apps/{slug}/product/team-policy":                                  true,
+	"POST /v1/apps/{slug}/product/team-policy/preview":                         true,
+	"PUT /v1/apps/{slug}/product/team-policy":                                  true,
+	"GET /v1/product-control/portal-guidance.js":                               true,
+	"GET /v1/product-control/portal-email.js":                                  true,
+	"GET /v1/product-control/customer/{slug}/email-preferences":                true,
+	"PUT /v1/product-control/customer/{slug}/email-preferences":                true,
+	"GET /v1/apps/{slug}/product/email-recoveries":                             true,
+	"POST /v1/product-control/customer/{slug}/email-recovery":                  true,
+	"GET /v1/product-control/customer/{slug}/email-recoveries":                 true,
+	"GET /v1/product-control/customer/{slug}/email-deliveries":                 true,
+	"GET /v1/product-control/portal-activity.js":                               true,
+	"GET /v1/product-control/portal-history.js":                                true,
+	"GET /v1/product-control/customer/{slug}/work-history":                     true,
+	"GET /v1/product-control/portal-run.js":                                    true,
+	"GET /v1/product-control/customer/{slug}/operations/{operation}/details":   true,
+	"GET /v1/product-control/customer/{slug}/activity":                         true,
+	"GET /v1/product-control/portal-notifications.js":                          true,
+	"GET /v1/product-control/customer/{slug}/notifications":                    true,
+	"POST /v1/product-control/customer/{slug}/notifications/read":              true,
+	"GET /v1/product-control/portal-help.js":                                   true,
+	"POST /v1/product-control/customer/{slug}/help":                            true,
+	"GET /v1/product-control/customer/{slug}/help":                             true,
+	"GET /v1/product-control/customer/{slug}/help/{request}":                   true,
+	"GET /v1/apps/{slug}/product/help":                                         true,
+	"GET /v1/apps/{slug}/product/help/{request}":                               true,
+	"PUT /v1/apps/{slug}/product/help/{request}":                               true,
+	"GET /v1/product-control/portal-team.js":                                   true,
+	"GET /v1/product-control/customer/{slug}/team":                             true,
+	"POST /v1/product-control/customer/{slug}/team/preview":                    true,
+	"POST /v1/product-control/customer/{slug}/team/confirm":                    true,
+	"GET /v1/product-control/customer/{slug}/team/actions":                     true,
+	"GET /v1/product-control/customer/{slug}/team/actions/{change}":            true,
+	"GET /v1/product-control/portal-plans.js":                                  true,
+	"GET /v1/apps/{slug}/product/plan-policy":                                  true,
+	"POST /v1/apps/{slug}/product/plan-policy/preview":                         true,
+	"PUT /v1/apps/{slug}/product/plan-policy":                                  true,
+	"GET /v1/product-control/customer/{slug}/plans":                            true,
+	"POST /v1/product-control/customer/{slug}/plans/preview":                   true,
+	"POST /v1/product-control/customer/{slug}/plans/confirm":                   true,
+	"GET /v1/product-control/customer/{slug}/plans/changes":                    true,
+	"GET /v1/product-control/customer/{slug}/plans/changes/{change}":           true,
+	"GET /v1/apps/{slug}/product/access":                                       true,
+	"POST /v1/apps/{slug}/product/access/preview":                              true,
+	"PUT /v1/apps/{slug}/product/access":                                       true,
+	"GET /v1/apps/{slug}/product/doctor":                                       true,
+	"GET /v1/apps/{slug}/product/billing/review":                               true,
+	"GET /v1/platform-tenant-self/product/billing":                             true,
+	"GET /v1/product-control/customer/{slug}/billing":                          true,
+	"POST /v1/apps/{slug}/product/billing/credits":                             true,
+	"POST /v1/apps/{slug}/product/billing/documents/{document}/handoff":        true,
+	"POST /v1/apps/{slug}/product/billing/receipts/{operation}/waive":          true,
+	"POST /v1/apps/{slug}/product/billing/statements/finalize":                 true,
+	// ADR-1701: internal Product Control pilot; absent from the public SDK contract.
+	"POST /v1/platform-tenant-self/product/start":                                  true,
+	"GET /v1/apps/{slug}/product":                                                  true,
+	"PUT /v1/apps/{slug}/product":                                                  true,
+	"GET /v1/apps/{slug}/product/customers":                                        true,
+	"GET /v1/apps/{slug}/product/customers/activity":                               true,
+	"GET /v1/apps/{slug}/product/customers/overview":                               true,
+	"PUT /v1/apps/{slug}/product/customers/{tenant}":                               true,
+	"GET /v1/apps/{slug}/product/usage":                                            true,
+	"GET /v1/apps/{slug}/product/operations/{operation}/explain":                   true,
+	"GET /v1/platform-tenant-self/product":                                         true,
+	"GET /v1/product-control/portal":                                               true,
+	"GET /v1/product-control/portal.js":                                            true,
+	"GET /v1/product-control/portal.css":                                           true,
+	"POST /v1/platform-tenant-self/product/submissions/lookup":                     true,
+	"POST /v1/product-control/customer/{slug}/session":                             true,
+	"GET /v1/product-control/customer/{slug}/account-recovery":                     true,
+	"POST /v1/product-control/customer/{slug}/session/refresh":                     true,
+	"DELETE /v1/product-control/customer/{slug}/session":                           true,
+	"GET /v1/product-control/customer/{slug}/workspaces":                           true,
+	"GET /v1/product-control/customer/{slug}/guidance":                             true,
+	"GET /v1/product-control/customer/{slug}/product":                              true,
+	"POST /v1/product-control/customer/{slug}/start":                               true,
+	"POST /v1/product-control/customer/{slug}/submissions/lookup":                  true,
+	"GET /v1/product-control/customer/{slug}/operations/{id}":                      true,
+	"GET /v1/product-control/customer/{slug}/operations/{id}/events":               true,
+	"POST /v1/product-control/customer/{slug}/operations/{id}/cancel":              true,
+	"GET /v1/product-control/customer/{slug}/operations/{id}/artifacts/{artifact}": true,
+	"GET /v1/product-control/portal-core.js":                                       true,
 
 	"GET /v1/dev/bridges/{id}/connect":                                true, // ADR-378 scoped WebSocket transport, described in docs/dev-bridge.md
 	"GET /v1/dev/bridges/{id}/status":                                 true, // attachment-authenticated CLI readiness protocol
@@ -194,6 +303,10 @@ var routeExclude = map[string]bool{
 	"GET /v1/internal/metrics/builderd-targets":                       true, // compute daemon metrics use the active node registry
 	"GET /v1/internal/metrics/realtimed-targets":                      true, // compute daemon metrics use the active node registry
 	"GET /v1/internal/metrics/promtail-targets":                       true, // issue #274 — loopback Promtail HTTP-SD endpoint
+
+	"POST /v1/webhooks/mcp-readiness/pagerduty/{id}":                         true, // Provider HMAC authentication, not Bearer HTTP.
+	"POST /v1/webhooks/mcp-readiness/pagerduty/{id}/{destination}":           true, // Destination-scoped provider HMAC ingress (ADR-20261017191529).
+	"POST /dashboard/mcp/apps/{slug}/alerts/{id}/pagerduty-acknowledgements": true, // Named-CSRF browser adapter.
 	// Issue #777 / ADR-091: operator observability backend.
 	// Mirror the operator-only exclusion across both this list
 	// AND cmd/sdk-coverage/main.go::routeExclude. The two lists
@@ -479,6 +592,8 @@ var dtoExclude = map[string]bool{
 	// Parsed ARN routing helper; notification wire requests carry a string destination.
 	"ObjectNotificationTarget":          true,
 	"ObjectWriteConditions":             true, // internal S3 protocol validators, not a JSON wire DTO
+	"ScenarioSimulationRequest":         true, // ADR-20261017201006: authenticated host-to-store command; never a customer JSON request.
+	"ScenarioSimulationDecision":        true, // ADR-20261017201006: internal persisted decision and fixture response; not a public response DTO.
 	"ApplyResponseApp":                  true, // inline {slug,id} row in ApplyResponse.apis schema
 	"CliAuthCodeRequest":                true, // Optional purpose on the private browser/device-code mint
 	"CliAuthCodeResponse":               true, // POST /v1/cli-auth/code (anonymous)
@@ -1229,7 +1344,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	t.Helper()
 
 	files := []string{
-		filepath.Join(root, "pkg", "api", "data_api_connection_budget.go"), // ADR-650 read-only shared database planning DTOs.
+		filepath.Join(root, "pkg", "api", "data_api_runtime_connections.go"), // ADR-1661 private runtime reporting.
+		filepath.Join(root, "pkg", "api", "data_api_connection_budget.go"),   // ADR-650 read-only shared database planning DTOs.
 		filepath.Join(root, "pkg", "api", "compose_healthcheck.go"),
 		filepath.Join(root, "pkg", "api", "environment_gitops.go"),
 		filepath.Join(root, "pkg", "api", "environment_workload_retirement.go"), // ADR-1331 retained workload retirement and recovery DTO
@@ -1237,6 +1353,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "environment_gitops_notifications.go"),
 		filepath.Join(root, "pkg", "api", "environment_definition.go"),
 		filepath.Join(root, "pkg", "api", dtoFile),
+		filepath.Join(root, "pkg", "api", "deployment_response_check.go"),
 		filepath.Join(root, "pkg", "api", devBucketsFile),
 		filepath.Join(root, "pkg", "api", "mcp_policy.go"),
 		filepath.Join(root, "pkg", "api", "mcp_admission.go"),
@@ -1248,6 +1365,17 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "mcp_connection_health.go"),
 		filepath.Join(root, "pkg", "api", "mcp_oauth_retirement.go"),
 		filepath.Join(root, "pkg", "api", "mcp_task_compatibility.go"),
+		filepath.Join(root, "pkg", "api", "mcp_readiness.go"),
+		filepath.Join(root, "pkg", "api", "mcp_readiness_policy_history.go"),
+		filepath.Join(root, "pkg", "api", "mcp_readiness_incidents.go"),
+		filepath.Join(root, "pkg", "api", "mcp_readiness_maintenance.go"),
+		filepath.Join(root, "pkg", "api", "mcp_readiness_notifications.go"),
+		filepath.Join(root, "pkg", "api", "mcp_readiness_attention.go"),
+		filepath.Join(root, "pkg", "api", "mcp_readiness_reminder_defaults.go"),
+		filepath.Join(root, "pkg", "api", "mcp_readiness_pagerduty.go"),
+		filepath.Join(root, "pkg", "api", "mcp_readiness_pagerduty_acknowledgements.go"),
+		filepath.Join(root, "pkg", "api", "mcp_readiness_fallback.go"),
+
 		filepath.Join(root, "pkg", "api", "event_replay_preview.go"),
 		filepath.Join(root, "pkg", "api", eventReplayBackfillFile),
 		filepath.Join(root, "pkg", "api", "event_circuit_breaker.go"),
@@ -1486,6 +1614,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "udp_listeners.go"),
 		filepath.Join(root, "pkg", "api", "preflight.go"),
 		filepath.Join(root, "pkg", "api", "exclusive_operations.go"),
+		filepath.Join(root, "pkg", "api", "scenario_actions.go"),
+		filepath.Join(root, "pkg", "api", "scenario_simulation.go"),
 		filepath.Join(root, "pkg", "api", "operations.go"),
 		filepath.Join(root, "pkg", "api", "operations_job.go"),
 		filepath.Join(root, "pkg", "api", "operations_recovery.go"),
@@ -1556,6 +1686,44 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	}
 	for name, schema := range map[string]string{"Price": "FinancialPrice", "Attribution": "FinancialAttribution", "Allocation": "FinancialAllocation", "MeterCost": "FinancialMeterCost", "ContractCosts": "FinancialContractCosts", "Forecast": "FinancialForecast", "BudgetSpec": "FinancialBudgetSpec", "BudgetScope": "FinancialBudgetScope"} {
 		dtos[schema] = financialDTOs[name]
+	}
+	objectDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "rehearsalobj", "protocol.go")})
+	if err != nil {
+		t.Fatalf("scan rehearsal object DTOs: %v", err)
+	}
+	for name, schema := range map[string]string{"Spec": "ScenarioObjectsSpec", "Data": "ScenarioObjectsData", "Object": "ScenarioObjectsObject", "CreateRequest": "CreateScenarioObjectsRequest", "SealRequest": "SealScenarioObjectsRequest", "Receipt": "ScenarioObjectsReceipt", "Mutation": "ScenarioObjectsMutation", "Evidence": "ScenarioObjectsEvidence"} {
+		dtos[schema] = objectDTOs[name]
+	}
+	resumeDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "rehearsalresume", "protocol.go")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, schema := range map[string]string{"Spec": "ScenarioSuspendResumeSpec", "Receipt": "ScenarioSuspendResumeReceipt", "Evidence": "ScenarioSuspendResumeEvidence"} {
+		dtos[schema] = resumeDTOs[name]
+	}
+	coldDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "rehearsalcold", "protocol.go")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, schema := range map[string]string{"Spec": "ScenarioColdStartSpec", "Preparation": "ScenarioColdPreparation", "Evidence": "ScenarioColdStartEvidence"} {
+		dtos[schema] = coldDTOs[name]
+	}
+	workDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "rehearsalwork", "protocol.go"), filepath.Join(root, "pkg", "rehearsalwork", "fault.go")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, schema := range map[string]string{"Plan": "ScenarioManagedWorkPlan", "Participant": "ScenarioManagedWorkParticipant", "Binding": "ScenarioManagedWorkBinding", "Attempt": "ScenarioManagedWorkAttempt", "Job": "ScenarioManagedWorkJob", "Evidence": "ScenarioManagedWorkEvidence"} {
+		dtos[schema] = workDTOs[name]
+	}
+	for name, schema := range map[string]string{"WorkerTermination": "ScenarioWorkerTermination", "WorkerFault": "ScenarioWorkerFault"} {
+		dtos[schema] = workDTOs[name]
+	}
+	postgresDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "rehearsalpg", "protocol.go")})
+	if err != nil {
+		t.Fatalf("scan rehearsal PostgreSQL DTOs: %v", err)
+	}
+	for name, schema := range map[string]string{"Table": "ScenarioPostgresTable", "Spec": "ScenarioPostgresSpec", "CreateRequest": "CreateScenarioPostgresRequest", "SealRequest": "SealScenarioPostgresRequest", "Receipt": "ScenarioPostgresReceipt", "Snapshot": "ScenarioPostgresSnapshot", "Delta": "ScenarioPostgresDelta", "Evidence": "ScenarioPostgresEvidence"} {
+		dtos[schema] = postgresDTOs[name]
 	}
 
 	// Git approval evidence is shared with githubd and the state transaction

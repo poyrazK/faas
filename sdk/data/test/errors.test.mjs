@@ -6,13 +6,15 @@ test('classifies stable codes while preserving original identity and private det
   const cases = {
     '23505': ['unique_violation', 'change_input'], '23503': ['foreign_key_violation', 'change_input'],
     '42501': ['permission_denied', 'check_permissions'], token_required: ['authentication', 'authenticate'],
+    '55P03': ['lock_conflict', 'wait'], '40P01': ['deadlock', 'wait'],
     token_invalid: ['authentication', 'authenticate'], PGRST301: ['authentication', 'authenticate'],
     PGRST302: ['authentication', 'authenticate'], PGRST303: ['authentication', 'authenticate'],
     origin_not_allowed: ['permission_denied', 'check_permissions'],
     schema_contract_mismatch: ['contract_mismatch', 'refresh_contract'],
     request_timeout: ['timeout', 'reconcile'], query_timeout: ['timeout', 'reconcile'], request_deadline_exceeded: ['timeout', 'reconcile'],
+    data_api_sql_deadline_exceeded: ['timeout', 'reconcile'],
     response_too_large: ['response_too_large', 'reconcile'], request_cancelled: ['cancelled', 'reconcile'], '57014': ['cancelled', 'reconcile'],
-    data_api_rate_limited: ['rate_limited', 'wait'], data_api_unavailable: ['unavailable', 'check_service'], serving_contract_unavailable: ['unavailable', 'check_service'],
+    data_api_rate_limited: ['rate_limited', 'wait'], data_api_concurrency_limited: ['concurrency_limited', 'wait'], data_api_unavailable: ['unavailable', 'check_service'], serving_contract_unavailable: ['unavailable', 'check_service'],
     data_api_refresh_unavailable: ['unavailable', 'check_service'],
   }
   for (const [code, [category, recovery]] of Object.entries(cases)) {
@@ -29,7 +31,7 @@ test('status fallback is bounded and generic conflicts or messages do not imply 
   for (const [status, category] of [[401, 'authentication'], [403, 'permission_denied'], [429, 'rate_limited'], [503, 'unavailable'], [504, 'timeout'], [0, 'no_response'], [409, 'unknown'], [500, 'unknown']]) {
     assert.equal(classifyDataError({}, { status }).category, category)
   }
-  for (const code of ['PT409', 'PT503', 'constructor', '__proto__', '', 23505]) {
+  for (const code of ['PT409', 'PT503', '55p03', '40001', 'constructor', '__proto__', '', 23505]) {
     assert.equal(classifyDataError({ code, message: 'schema_contract_mismatch', details: '23505' }).category, 'unknown')
   }
   for (const status of [-1, 600, 1.5, NaN, Infinity, '503']) assert.equal(classifyDataError({}, { status }).status, null)
@@ -38,6 +40,29 @@ test('status fallback is bounded and generic conflicts or messages do not imply 
   }
   assert.equal(classifyDataError(null), null)
   assert.equal(classifyDataError(undefined), null)
+})
+
+test('lock conflicts and deadlocks preserve codes and never replay CRUD or RPC mutations', async () => {
+  for (const [code, category] of [['55P03', 'lock_conflict'], ['40P01', 'deadlock']]) {
+    let calls = 0
+    const db = createDataClient({ url: 'https://data.example', accessToken: 'token', fetch: async () => {
+      calls++
+      return new Response(JSON.stringify({ code, message: 'private lock or relation', details: 'private SQL' }), { status: 500 })
+    } })
+    for (const query of [db.from('notes').insert({ body: 'private' }), db.from('notes').update({ body: 'private' }).eq('id', 1), db.from('notes').delete().eq('id', 1), db.rpc('save', {})]) {
+      const result = await query
+      assert.equal(classifyDataError(result.error, { status: result.status }).category, category)
+      assert.equal(classifyDataError(result.error).recovery, 'wait')
+      assert.equal(classifyDataError(result.error).original, result.error)
+    }
+    await assert.rejects(async () => await db.rpc('save', {}).throwOnError(), error => {
+      assert.equal(classifyDataError(error).category, category)
+      assert.equal(classifyDataError(error).status, null)
+      return true
+    })
+    assert.equal(calls, 5)
+    assert.equal(classifyDataError({ code }, { status: 503 }).category, category)
+  }
 })
 
 test('real client result and throwOnError retain SQL and gateway classification without extra requests', async () => {
@@ -98,6 +123,20 @@ test('a server deadline does not retry an ordinary mutation', async () => {
   assert.equal(calls, 1)
 })
 
+test('a SQL retry deadline retains reconciliation guidance without replaying normal or throwing RPCs', async () => {
+  let calls = 0
+  const db = createDataClient({ url: 'https://data.example', accessToken: 'token', fetch: async () => {
+    calls++
+    return new Response(JSON.stringify({ code: 'data_api_sql_deadline_exceeded', message: 'SQL request deadline exceeded' }), { status: 504 })
+  } })
+  const result = await db.rpc('save_once', {})
+  assert.equal(classifyDataError(result.error).category, 'timeout')
+  assert.equal(classifyDataError(result.error).recovery, 'reconcile')
+  await assert.rejects(async () => await db.rpc('save_once', {}).throwOnError(), error => classifyDataError(error).recovery === 'reconcile')
+  assert.equal(calls, 2)
+  assert.equal(classifyDataError({ code: 'data_api_sql_deadline_invalid' }).category, 'unknown')
+})
+
 test('response limits preserve reconciliation guidance without retrying GET, POST or thrown errors', async () => {
   let calls = 0
   const db = createDataClient({ url: 'https://data.example', accessToken: 'token', fetch: async () => {
@@ -148,4 +187,22 @@ test('rate-limited GET, mutation and throwOnError requests wait without automati
   assert.equal(calls, 3)
   assert.equal(classifyDataError({ code: 'PT429' }, { status: 429 }).category, 'rate_limited')
   assert.equal(classifyDataError({ code: '23505' }, { status: 429 }).category, 'unique_violation')
+})
+
+test('concurrent-request rejections preserve recovery guidance without retrying mutations', async () => {
+  let calls = 0
+  const db = createDataClient({ url: 'https://data.example', accessToken: 'private-token', fetch: async () => {
+    calls++
+    return new Response(JSON.stringify({ code: 'data_api_concurrency_limited', retry_after_seconds: 15 }), { status: 429, headers: { 'Retry-After': '15' } })
+  } })
+  for (const query of [db.from('notes').insert({ body: 'private-body' }), db.rpc('save', {}), db.from('notes').delete().eq('id', 'private-id')]) {
+    const result = await query
+    assert.equal(classifyDataError(result.error).category, 'concurrency_limited')
+    assert.equal(classifyDataError(result.error).recovery, 'wait')
+    assert.equal(classifyDataError(result.error).original, result.error)
+  }
+  await assert.rejects(async () => await db.rpc('save', {}).throwOnError(), error => classifyDataError(error).category === 'concurrency_limited')
+  assert.equal(calls, 4, 'concurrency rejection must not replay mutations')
+  assert.equal(classifyDataError({ code: 'data_api_concurrency_limited' }, { status: 429 }).category, 'concurrency_limited')
+  assert.equal(classifyDataError({ code: 'PT429' }, { status: 429 }).category, 'rate_limited')
 })
