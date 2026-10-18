@@ -16,10 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/imagepublisher"
 )
 
-type runtimeArtifactInputTestStore interface {
-	artifactBaseEvidenceTestStore
-	DeploymentRuntimeArtifactInputStore
-}
+type runtimeArtifactInputTestStore = contractTestStore
 
 func runtimeArtifactInputRenewal(t *testing.T, s runtimeArtifactInputTestStore) {
 	t.Helper()

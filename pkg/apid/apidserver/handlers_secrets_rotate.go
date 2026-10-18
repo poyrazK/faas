@@ -155,10 +155,14 @@ func (s *server) rotateAppSecret(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 
+	change := s.beginConfigChange(r, acct, app, scope, "")
 	if prob := s.sealAndPersistWithKid(r.Context(), acct, app, scope, key, req.Value, limits, kid); prob != nil {
+		s.abandonConfigChange(r.Context(), change)
 		api.WriteProblem(w, prob)
 		return
 	}
+	// ADR-1451: rotation is a security action; a guard never undoes it.
+	s.finishConfigChange(r.Context(), change, state.ConfigSourceSecretRotate, key, true)
 	invalidated, err := s.invalidateAppSnapshots(r.Context(), app.ID)
 	if err != nil {
 		s.log.Error("secret rotate: invalidate snapshots", "app", safeAppSlug, "err", err)

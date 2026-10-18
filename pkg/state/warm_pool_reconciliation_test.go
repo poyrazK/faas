@@ -10,11 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type warmPoolCandidateStore interface {
-	state.Store
-	state.ProjectEnvironmentWorkloadSpecStore
-	state.WarmPoolReconciliationStore
-}
+type warmPoolCandidateStore = contractTestStore
 
 func TestMemWarmPoolReconciliationCandidates(t *testing.T) {
 	testWarmPoolReconciliationCandidates(t, state.NewMemStore(), state.DefaultLocalNodeName)

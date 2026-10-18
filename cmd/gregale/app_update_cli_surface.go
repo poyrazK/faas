@@ -14,6 +14,8 @@ type updateAppCLISurface struct {
 
 var updateAppRequestCLISurfaces = map[string]updateAppCLISurface{
 	"expected_service_binding_fingerprint": {Path: "gregale bindings service apply <app> --plan"},
+	"release_policy":                       {Path: "gregale app <slug> --release-policy", AppFlags: []string{"release-policy"}},
+	"release_probe_paths":                  {Path: "gregale app <slug> --release-probe-paths", AppFlags: []string{"release-probe-paths"}},
 	"visibility":                           {Path: "gregale app <slug> --visibility", AppFlags: []string{"visibility"}},
 	"allowed_service_callers":              {Path: "gregale bindings service configure <app> --file"},
 	"allowed_service_call_scopes":          {Path: "gregale bindings service configure <app> --file"},

@@ -35,6 +35,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -75,6 +76,10 @@ func main() {
 	durableCounter := flag.Bool("durable-counter", false, "serve pure durable entity transitions")
 	echoSession := flag.Bool("echo-session", false, "run the interactive app-task fixture instead of serving")
 	identityProbe := flag.Bool("identity-probe", false, "serve /identity, which fetches a workload identity token from guest-init")
+	failAPI := flag.Bool("fail-api", false, "answer /api with 500 while / and /healthz stay healthy (bad release)")
+	failLivez := flag.Bool("fail-livez", false, "answer /livez with 500 while /healthz stays healthy (crash loop)")
+	failRootAfter := flag.Int64("fail-root-after-requests", 0, "answer / with 500 after this many / requests, so a release passes its post-readiness smoke and fails later (0 disables)")
+	delayRoot := flag.Duration("delay-root", 0, "wait this long before answering / (a release that is slow at full traffic, ADR-1445)")
 	flag.Parse()
 	if *workerIsolation {
 		if err := assertWorkerTaskIsolation(workerStartupMarker, "127.0.0.1:8080"); err != nil {
@@ -215,8 +220,44 @@ func main() {
 		w.Header().Set("Content-Type", "application/octet-stream")
 		_, _ = w.Write(got)
 	})
+	// /livez is a separate liveness endpoint so a release can pass its
+	// startup /healthz gate and still fail its liveness probe afterwards.
+	mux.HandleFunc("/livez", func(w http.ResponseWriter, _ *http.Request) {
+		if *failLivez {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	// A bad release that still passes the platform's post-readiness smoke
+	// (which probes / and the health path) and fails real API traffic.
+	mux.HandleFunc("/api", func(w http.ResponseWriter, _ *http.Request) {
+		if *failAPI {
+			http.Error(w, "fixture bad release", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write(body)
+	})
+	// A release that passes its post-readiness smoke and then fails /, which
+	// only synthetic probes see on a quiet app (ADR-1446).
+	var rootRequests atomic.Int64
+	// FIXTURE_FAIL_REQUESTS=1 is a broken config value (ADR-1451): the app
+	// boots and passes /healthz, then answers / with 500.
+	failRequests := os.Getenv("FIXTURE_FAIL_REQUESTS") == "1"
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if failRequests {
+			http.Error(w, "fixture broken config", http.StatusInternalServerError)
+			return
+		}
+		if *delayRoot > 0 {
+			time.Sleep(*delayRoot)
+		}
 		if *gitOpsResilience && !waitGitOpsRequestDelay(w, r) {
+			return
+		}
+		if *failRootAfter > 0 && rootRequests.Add(1) > *failRootAfter {
+			http.Error(w, "fixture delayed failure", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")

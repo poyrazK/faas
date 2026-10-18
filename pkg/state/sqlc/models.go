@@ -700,6 +700,48 @@ type AppBindingReleasePolicyHistory struct {
 	ChangedAt pgtype.Timestamptz
 }
 
+type AppConfigGuard struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	Scope        string
+	BaseRevision int64
+	HeadRevision int64
+	Status       string
+	Restorable   bool
+	OpenedAt     pgtype.Timestamptz
+	LastChangeAt pgtype.Timestamptz
+	WindowEndsAt pgtype.Timestamptz
+	ClosedAt     pgtype.Timestamptz
+	Decision     []byte
+}
+
+type AppConfigGuardSecret struct {
+	GuardID     pgtype.UUID
+	ConfigKey   string
+	Existed     bool
+	Ciphertext  []byte
+	Kid         pgtype.Text
+	ValueHash   pgtype.Text
+	SecretClass pgtype.Text
+}
+
+type AppConfigRevision struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	Scope            string
+	Revision         int64
+	Source           string
+	ConfigKey        string
+	Actor            string
+	Variables        []byte
+	Secrets          []byte
+	GuardID          pgtype.UUID
+	RestoredRevision pgtype.Int8
+	CreatedAt        pgtype.Timestamptz
+}
+
 type AppCpuPolicyNodeStatus struct {
 	AppID             pgtype.UUID
 	NodeID            pgtype.UUID
@@ -3123,6 +3165,8 @@ type Deployment struct {
 	ServingEndedAt             pgtype.Timestamptz
 	RuntimeUpgradeRoutingToken pgtype.UUID
 	EnvironmentWorkloadHeld    bool
+	RollbackPreparedAt         pgtype.Timestamptz
+	RolloutDecision            []byte
 	SnapshotRecoveryGeneration int64
 	RuntimeBase                string
 	MailFailureRevision        int64
@@ -3324,6 +3368,23 @@ type DeploymentRevisionPin struct {
 	AppID        pgtype.UUID
 	ExpiresAt    pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
+}
+
+type DeploymentRollback struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	Scope              string
+	TargetDeploymentID pgtype.UUID
+	FromDeploymentID   pgtype.UUID
+	Trigger            string
+	Status             string
+	RequestedAt        pgtype.Timestamptz
+	FinishedAt         pgtype.Timestamptz
+	RecoveryMs         pgtype.Int8
+	AuditID            pgtype.Int8
+	ErrorCode          string
+	Error              string
 }
 
 type DeploymentRollbackOperation struct {
