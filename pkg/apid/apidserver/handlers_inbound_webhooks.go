@@ -339,7 +339,7 @@ func (s *server) receiveVerifiedInboundWebhook(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, api.ErrCapacity("could not resolve inbound webhook app"))
 		return
 	}
-	acct, err := s.store.AccountByID(r.Context(), app.AccountID)
+	acct, err := state.AppResourceAccount(r.Context(), s.store, app)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not resolve inbound webhook account"))
 		return

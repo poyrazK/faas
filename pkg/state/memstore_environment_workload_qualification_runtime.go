@@ -16,6 +16,9 @@ func (m *MemStore) PublishEnvironmentWorkloadQualificationRuntime(ctx context.Co
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return Instance{}, err
+	}
 	memory, current, err := m.qualificationLocked(claimed.ID)
 	if err != nil {
 		return Instance{}, err

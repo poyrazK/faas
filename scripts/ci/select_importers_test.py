@@ -6,6 +6,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
@@ -48,6 +49,58 @@ func Refund(
 def lines_of(source, *needles):
     rows = source.split("\n")
     return {i + 1 for i, row in enumerate(rows) for n in needles if n in row}
+
+
+class SelectionBudgetTest(unittest.TestCase):
+    def run_selector(self, go_source, started=None, budget=10):
+        with tempfile.TemporaryDirectory() as root:
+            marker = pathlib.Path(root, "go-started")
+            go = pathlib.Path(root, "go")
+            go.write_text(f"#!{sys.executable}\n"
+                          "import json, os, pathlib, subprocess, sys, time\n"
+                          f"pathlib.Path({str(marker)!r}).touch()\n" + go_source)
+            go.chmod(0o755)
+            env = {**os.environ, "GO": str(go),
+                   "LINT_SELECTED_AT": str(time.time() if started is None else started),
+                   "BUDGET_SECONDS": str(budget)}
+            before = time.monotonic()
+            result = subprocess.run(
+                [sys.executable, str(pathlib.Path(si.__file__).resolve()), "--base", "HEAD"],
+                input="", text=True, capture_output=True, env=env, timeout=8)
+            return result, marker.exists(), time.monotonic() - before
+
+    def test_expired_budget_does_not_start_package_discovery(self):
+        result, discovered, _ = self.run_selector("raise AssertionError('must not run')\n",
+                                                 started=time.time() - 100, budget=1)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertFalse(discovered)
+        self.assertIn("deferred to the mega tier", result.stderr)
+
+    def test_selection_and_its_descendants_cannot_outlive_the_budget(self):
+        result, discovered, elapsed = self.run_selector(
+            "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+            "time.sleep(30)\n", budget=2)
+        self.assertTrue(discovered)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("compile budget", result.stderr)
+        self.assertLess(elapsed, 6)
+
+    def test_successful_selection_preserves_its_output(self):
+        result, discovered, _ = self.run_selector(
+            "print(json.dumps({'ImportPath': 'example.test', 'Dir': os.getcwd(), 'Imports': []}))\n")
+        self.assertTrue(discovered)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "\n")
+        self.assertIn("importers to compile: 0", result.stderr)
+        self.assertNotIn("::warning::", result.stderr)
+
+    def test_selection_errors_remain_failures(self):
+        result, discovered, _ = self.run_selector("sys.exit(1)\n")
+        self.assertTrue(discovered)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("deferred to the mega tier", result.stderr)
 
 
 class TouchedNamesTest(unittest.TestCase):

@@ -64,12 +64,15 @@ func (m *MemStore) GetEnvironmentRouteBudgets(_ context.Context, account, app, s
 	defer m.mu.Unlock()
 	return m.environmentBudgetsLocked(account, app, scope)
 }
-func (m *MemStore) SetEnvironmentRouteBudgets(_ context.Context, account, app, scope string, req api.SetEnvironmentRouteBudgetsRequest) (api.EnvironmentRouteBudgets, error) {
+func (m *MemStore) SetEnvironmentRouteBudgets(ctx context.Context, account, app, scope string, req api.SetEnvironmentRouteBudgetsRequest) (api.EnvironmentRouteBudgets, error) {
 	if routemonitor.ValidateEnvironmentBudgets(req) != nil || req.AppID != app {
 		return api.EnvironmentRouteBudgets{}, ErrInvalidArgument
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return api.EnvironmentRouteBudgets{}, err
+	}
 	current, err := m.environmentBudgetsLocked(account, app, scope)
 	if err != nil {
 		return current, err

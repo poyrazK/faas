@@ -24,22 +24,41 @@ from, and a deploy can tell whether the host already runs that version.
 
 Non-Go inputs map to flags (scripts/ci/release_units.json):
 
-  blocking  deploy/ (units, roles, rules), the files cd-controlplane
-            copies into its bundle, the release tarball's own contents, and
-            migrations that are not lane-eligible. Any of these since base
-            makes the range ineligible: the per-unit lane reuses them from
-            the base release.
-  data      migrations added since base when every one is lane-eligible
-            (check_migration_expand_contract.classify_range: declared
-            `-- migration-compat: expand`, no contract change, no unwaived
-            finding; docs/adr/20261018084150-unit-lane-expand-migrations.md).
-            The control-plane lane applies them before it restarts anything;
-            the edge lane waits for that.
-  pending   guest/, images/, kernel, and deploy/ roles only compute hosts
-            run (compute_only_paths). They ship with the next full release
-            and do not stop control-plane units from deploying alone. A
-            compute-only role does block the edge lane, which deploys onto
-            compute hosts without converging their roles.
+  blocking     the release units deployctl installs at activation (unit
+               files and tmpfiles rule of the control-plane bundle), other
+               files cd-controlplane copies into its bundle that no
+               control-plane role installs, the release tarball's own
+               contents, migrations that are not lane-eligible, and deploy/
+               paths no host role reads. Any of these since base
+               makes the range ineligible: the per-unit lane reuses them
+               from the base release.
+  data         migrations added since base when every one is lane-eligible
+               (check_migration_expand_contract.classify_range: declared
+               `-- migration-compat: expand`, no contract change, no
+               unwaived finding;
+               docs/adr/20261018084150-unit-lane-expand-migrations.md). The
+               control-plane lane applies them before it restarts anything;
+               the edge lane waits for that.
+  stateful_restart
+               blocking: the range changed a control-plane role that can
+               restart PostgreSQL or pgbouncer (host_config.
+               stateful_services, host_roles.restart_roles), or every
+               role's globals. The lane never restarts those; only a full
+               release or a maintenance window does.
+  host_config  deploy/ paths and bundle files a control-plane host role
+               reads (scripts/ci/host_roles.py). The control-plane lane converges
+               the roles whose content hash changed before anything else
+               (docs/adr/20261018133100-host-configuration-lane.md).
+  pending      guest/, images/, kernel, and deploy/ paths a compute host
+               role reads (compute_deploy). They ship with the next full
+               release and do not stop control-plane units from deploying
+               alone. compute_deploy does block the edge lane, which deploys
+               onto compute hosts without converging their roles.
+
+deploy/ documentation, tests, and files of a tree no release installs
+(host_config.outside_releases: the generated legacy unit tree, the
+dashboard mirror, Cloudflare workers) that no host role reads map to
+nothing.
 
 Binaries outside both lanes (shared with compute hosts, compute-only, CLIs)
 are reported as pending: the per-unit lanes leave them at base, which is the
@@ -62,6 +81,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_CONFIG = os.path.join(HERE, "release_units.json")
 sys.path.insert(0, HERE)
 import check_migration_expand_contract as migration_lint  # noqa: E402
+import host_roles  # noqa: E402
 
 LANES = ("control-plane", "edge", "shared", "compute", "tool")
 # Lanes a unit release deploys, in deploy order.
@@ -76,6 +96,9 @@ RECIPE_VARS = re.compile(r"^(GO|GO_BUILD_FLAGS|LDFLAGS|BUILD_CGO_ENABLED|DAEMONS
 RECIPE_TARGETS = ("build-release-batch:", "build-release-unit:")
 # How many paths a flag lists in the report; the count is always complete.
 FLAG_PATH_LIMIT = 20
+# Host groups (pkg/daemonunitspec roles) whose roles a unit lane converges.
+HOST_GROUP_ROLES = {"control_plane": "control-plane", "compute_nodes": "compute-only"}
+NOT_SHIPPED = re.compile(r"(^|/)tests?/|_test\.(go|sh|py)$|\.md$")
 
 
 def git(*args, root="."):
@@ -96,6 +119,9 @@ def load_config(path=DEFAULT_CONFIG):
         for service in entry.get("services") or []:
             if service.get("host", "control-plane") not in HOST_ROLES:
                 raise ValueError(f"{path}: {name} service {service.get('name')} has unknown host {service['host']!r}")
+    for group in (config.get("host_config") or {}).get("converged_groups") or []:
+        if group not in HOST_GROUP_ROLES:
+            raise ValueError(f"{path}: host_config converges unknown host group {group!r}")
     return config
 
 
@@ -271,10 +297,85 @@ def data_step(commits, config, verdict):
             "blockers": verdict["blockers"], "commit": commit, "version": f"data-{commit}" if commit else None}
 
 
-def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=None):
+def host_config_step(commits, config, host):
+    """The control-plane host roles the range changed, and the newest commit
+    that changed a path they read: {"group", "roles", "all", "commit",
+    "version"}. Roles come from the content hashes at base and head when
+    the host view has them, else from the owners of the changed paths."""
+    out = {"group": None, "roles": [], "all": False, "commit": None, "version": None}
+    groups = (config.get("host_config") or {}).get("converged_groups") or []
+    group = next((g for g in groups if HOST_GROUP_ROLES[g] == "control-plane"), None)
+    if not group or group not in host:
+        return out
+    owners, release_units = host[group]["owners"], set(config["host_config"].get("release_units") or [])
+    owned = [p for _, ps in commits for p in ps if p in owners and p not in release_units]
+    diff = host[group].get("changed") or changed_roles(owners, owned)
+    out.update(group=group, roles=list(diff["roles"]), all=bool(diff["all"]))
+    if out["roles"]:
+        # The host-config version moves only when a role input does.
+        commit = next((sha for sha, ps in commits if any(p in owners for p in ps)), None)
+        out.update(commit=commit, version=f"host-{commit}" if commit else None)
+    return out
+
+
+def stateful_step(commits, host_step, config, host):
+    """Changed paths of the control-plane roles that can restart a stateful
+    service (PostgreSQL, pgbouncer), when the range changed one of those
+    roles, or every role through the group's globals. The lane never runs
+    such a change."""
+    group = host_step["group"]
+    if not group or not host_step["roles"]:
+        return []
+    restart = set((host.get(group) or {}).get("restart_roles") or [])
+    hit = restart & set(host_step["roles"])
+    if not hit:
+        return []
+    owners = host[group]["owners"]
+    return sorted({p for _, ps in commits for p in ps
+                   if p in owners and (hit & set(owners[p]) or "*" in owners[p])})
+
+
+def changed_roles(owners, paths):
+    """The roles owning any of paths, for a host view without hash diffs; a
+    global path changes every role the owners name."""
+    roles = {r for p in paths for r in owners.get(p, ())}
+    if "*" in roles:
+        roles = {r for names in owners.values() for r in names}
+    return {"all": "*" in roles, "roles": sorted(roles - {"*"})}
+
+
+def classify_deploy(paths, config, host):
+    """{flag: [paths]} for changed deploy/ paths: release_units (blocking),
+    host_config (a converged group's role reads it), compute_deploy (a
+    compute role reads it) and deploy (blocking: nothing that converges
+    reads it). Documentation, tests and files of trees no release installs
+    map to no flag."""
+    hc = config.get("host_config") or {}
+    release_units = set(hc.get("release_units") or [])
+    outside = hc.get("outside_releases") or []
+    converged = set(hc.get("converged_groups") or [])
+    out = {}
+    for path in sorted(paths):
+        flags = []
+        if path in release_units:
+            flags.append("release_units")
+        else:
+            for group, view in sorted(host.items()):
+                if path in view["owners"]:
+                    flags.append("host_config" if group in converged else "compute_deploy")
+            if not flags and not (NOT_SHIPPED.search(path) or matches(path, outside)):
+                flags.append("deploy")
+        for flag in dict.fromkeys(flags):
+            out.setdefault(flag, []).append(path)
+    return out
+
+
+def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=None, host=None):
     """The report for a range. commits are newest first; closures map each
     binary to (package dirs, input files) at head; exists is head's file set;
-    data is classify_range's verdict on the range's migrations."""
+    data is classify_range's verdict on the range's migrations; host maps
+    each host group to {"owners": {path: [roles]}, "changed": {"all",
+    "roles"}} (host_view), and without it every deploy/ path blocks."""
     global_inputs = set(config.get("global_inputs") or [])
     binaries = {}
     for name, entry in sorted(config["binaries"].items()):
@@ -297,22 +398,38 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=Non
             raise ValueError(f"release binary {name} has no lane in the lane table")
 
     flags = {}
-    compute_only = config.get("compute_only_paths") or []
+    host = host or {}
     step = data_step(commits, config, data)
     # Lane-eligible migrations are the data step, not a blocking change.
     claimed = set(step["paths"]) if step["eligible"] else set()
     changed_paths = {p for _, paths in commits for p in paths} - claimed
-    # A deploy/ role that only compute hosts run cannot change the control
-    # plane: it waits for the full release instead of blocking the lane.
-    groups = [("compute_deploy", False, compute_only)]
+    deploy_prefixes = (config.get("blocking_paths") or {}).get("deploy") or []
+    # A bundle file a control-plane role installs is host configuration:
+    # the lane's convergence installs it, and no unit activation does.
+    converged_owned = {p for g in (config.get("host_config") or {}).get("converged_groups") or []
+                       for p in (host.get(g) or {}).get("owners", {})}
+    bundle_prefixes = (config.get("blocking_paths") or {}).get("control_plane_bundle") or []
     for kind in ("blocking_paths", "pending_paths"):
         for flag, prefixes in sorted((config.get(kind) or {}).items()):
-            groups.append((flag, kind == "blocking_paths", prefixes))
-    for flag, blocking, prefixes in groups:
-        found = sorted(p for p in changed_paths if matches(p, prefixes)
-                       and (flag == "compute_deploy" or not matches(p, compute_only)))
-        if found:
-            flags[flag] = {"blocking": blocking, "count": len(found), "paths": found[:FLAG_PATH_LIMIT]}
+            if kind == "blocking_paths" and flag == "deploy":
+                continue
+            found = sorted(p for p in changed_paths if matches(p, prefixes)
+                           and not (flag == "control_plane_bundle" and p in converged_owned))
+            if found:
+                flags[flag] = {"blocking": kind == "blocking_paths", "count": len(found), "paths": found[:FLAG_PATH_LIMIT]}
+    # deploy/ by what reads it: a role a lane converges (host_config), a
+    # compute role (compute_deploy, which waits for the full release and
+    # holds the edge lane), the release's own units, or nothing that
+    # converges (deploy). A deploy/ path no host role reads blocks.
+    deploy_paths = {p for p in changed_paths if matches(p, deploy_prefixes)
+                    or (matches(p, bundle_prefixes) and p in converged_owned)}
+    for flag, found in classify_deploy(deploy_paths, config, host).items():
+        flags[flag] = {"blocking": flag in ("deploy", "release_units"), "count": len(found),
+                       "paths": found[:FLAG_PATH_LIMIT]}
+    host_step = host_config_step(commits, config, host)
+    stateful = stateful_step(commits, host_step, config, host)
+    if stateful:
+        flags["stateful_restart"] = {"blocking": True, "count": len(stateful), "paths": stateful[:FLAG_PATH_LIMIT]}
     if recipe_shas:
         flags["build_recipe"] = {"blocking": False, "count": len(recipe_shas), "paths": ["Makefile"]}
     if claimed:
@@ -320,6 +437,7 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=Non
 
     blocking = sorted(f for f, v in flags.items() if v["blocking"])
     has_data = bool(step["version"])
+    has_host = bool(host_step["version"])
     lanes = {}
     for lane in DEPLOY_LANES:
         changed = sorted(n for n, b in binaries.items() if b["changed"] and b["lane"] == lane)
@@ -329,11 +447,12 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=Non
         reasons = [f"{f} changed since base ({flags[f]['count']} paths, e.g. {flags[f]['paths'][0]})" for f in blocked]
         if "migrations" in blocked and step["blockers"]:
             reasons.append(f"migrations are not lane-eligible: {step['blockers'][0]}")
-        # Deploy order: the control-plane lane applies the data step, so it
-        # deploys even when no daemon of its own changed. Whatever blocks it
-        # blocks the edge lane too, which therefore never goes ahead of it
-        # (cd-edge-units.yml checks the control plane before any gateway).
-        carries = bool(changed) or (lane == "control-plane" and has_data)
+        # Deploy order: the control-plane lane converges its host roles and
+        # applies the data step, so it deploys even when no daemon of its
+        # own changed. Whatever blocks it blocks the edge lane too, which
+        # therefore never goes ahead of it (cd-edge-units.yml checks the
+        # control plane before any gateway).
+        carries = bool(changed) or (lane == "control-plane" and (has_data or has_host))
         if not carries:
             reasons.append(f"no {lane} daemon changed since base")
         lanes[lane] = {"changed": changed, "blocked_by": blocked, "eligible": carries and not blocked,
@@ -349,6 +468,7 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=Non
         "format_version": 2,
         "binaries": binaries,
         "data": step,
+        "host_config": host_step,
         "flags": flags,
         "lanes": lanes,
         "deployable": deployable,
@@ -358,6 +478,42 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=Non
         "reasons": [] if eligible else [r for lane in lanes.values() for r in lane["reasons"]],
         "commits": len(commits),
     }
+
+
+def host_view(base_sha, head_sha, root=".", services=()):
+    """{group: {"owners", "changed"}} for every host group: the paths each
+    group's roles read at base or head, and the roles whose content hash
+    differs between them (host_roles.py), and the roles that can restart one
+    of services at base or head. Empty when head has no bootstrap
+    playbook."""
+    head_tree = host_roles.git_tree(head_sha, root)
+    if not head_tree.is_file(host_roles.BOOTSTRAP):
+        return {}
+    base_tree = host_roles.git_tree(base_sha, root)
+    view = {}
+    for group in host_roles.GROUPS:
+        roles = host_roles.Roles(head_tree)
+        try:
+            new = host_roles.group_hashes(head_tree, group, roles)
+        except ValueError:
+            continue  # no play for the group: none of its paths are host config
+        owners = {p: set(r) for p, r in host_roles.group_owners(head_tree, group, roles).items()}
+        try:
+            old_roles = host_roles.Roles(base_tree)
+            old = host_roles.group_hashes(base_tree, group, old_roles)
+            for path, names in host_roles.group_owners(base_tree, group, old_roles).items():
+                owners.setdefault(path, set()).update(names)
+        except (KeyError, ValueError):
+            old = None
+        restart = set(host_roles.restart_roles(head_tree, group, services, roles))
+        try:
+            restart |= set(host_roles.restart_roles(base_tree, group, services))
+        except (KeyError, ValueError):
+            pass
+        view[group] = {"owners": {p: sorted(r) for p, r in owners.items()},
+                       "changed": host_roles.changed(old, new, host_roles.notify_targets(head_tree, new["order"])),
+                       "restart_roles": sorted(restart)}
+    return view
 
 
 def report(base, head, config_path=DEFAULT_CONFIG, root="."):
@@ -384,7 +540,9 @@ def report(base, head, config_path=DEFAULT_CONFIG, root="."):
     data = None
     if directory and any(migration_lint.is_migration_file(p, directory) for _, paths in commits for p in paths):
         data = migration_lint.classify_range(root, base_sha, head_sha, directory)
-    out = analyze(commits, closures, config, exists, recipe_commits(commits, root), data)
+    hc = config.get("host_config")
+    host = host_view(base_sha, head_sha, root, hc.get("stateful_services") or ()) if hc else {}
+    out = analyze(commits, closures, config, exists, recipe_commits(commits, root), data, host)
     out.update(base=base_sha, head=head_sha, base_ref=base)
     return out
 
@@ -395,7 +553,7 @@ def summary(rep):
         if b["changed"]:
             lines.append(f"  {name:20} {b['lane']:14} {b['commit'][:12]}")
     for flag, v in sorted(rep["flags"].items()):
-        if flag == "data":
+        if flag in ("data", "host_config"):
             continue
         kind = "blocking" if v["blocking"] else "pending"
         lines.append(f"  flag {flag} ({kind}): {v['count']} paths, e.g. {v['paths'][0]}")
@@ -403,6 +561,10 @@ def summary(rep):
     if data.get("migrations"):
         state = f"applied first, {data['version']}" if data["eligible"] else "blocking: " + "; ".join(data["blockers"][:3])
         lines.append(f"  data: {len(data['migrations'])} migrations ({state})")
+    hc = rep.get("host_config") or {}
+    if hc.get("roles"):
+        lines.append(f"  host config: {'every role' if hc['all'] else ' '.join(hc['roles'])} "
+                     f"(converged first, {hc['version']})")
     for lane, v in rep["lanes"].items():
         state = "eligible" if v["eligible"] else "not eligible: " + "; ".join(v["reasons"])
         lines.append(f"{lane} lane: {' '.join(v['changed']) or '<none>'} ({state})")

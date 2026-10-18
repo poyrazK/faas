@@ -58,10 +58,9 @@ func TestMigrations_00046_APIKeyScopesV2_BackfillAndCheck(t *testing.T) {
 	}
 	// api_keys.org_id is NOT NULL with an FK to orgs (00099 added the
 	// column + api_keys_org_id_fkey; 00134 flipped it NOT NULL), so a
-	// key needs a real org parent. The org is not what 00046 pins —
-	// it is just the FK parent that makes the scope-expansion seeds
-	// insertable.
-	orgID := seedOrg(t, ctx, pool)
+	// key needs a real org parent. Use this account's personal organization
+	// so current membership guards accept the legacy scope fixtures.
+	orgID := seedPersonalOrg(t, ctx, pool, acctID)
 
 	type seed struct {
 		hashHex string

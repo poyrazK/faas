@@ -87,8 +87,9 @@ func wakeResponseValue(cold bool, method WakeMethod) string {
 
 // App is the routing target for a hostname.
 type App struct {
-	ID        string
-	AccountID string // joined in pgRouter.toApp; empty only in fakeBackend unit tests (ADR-040)
+	ID              string
+	ResourceOwnerID string // aggregate policy subject; empty falls back to AccountID in older adapters
+	AccountID       string // joined in pgRouter.toApp; empty only in fakeBackend unit tests (ADR-040)
 	// Host-specific tenant surface binding. Never store these in the shared
 	// app cache: one app can serve several independent customer hostnames.
 	RoutedSurfaceID  string
@@ -6644,9 +6645,9 @@ haveApp:
 		// challenge. Customer rate buckets must not make a healthy deployment
 		// fail promotion, and platform verification must not consume customer
 		// quota.
-	} else if app.AccountID == "" {
+	} else if app.rateOwnerID() == "" {
 		h.warnEmptyAccountOnce()
-	} else if !h.accountLimiter.AllowAccount(r.Context(), app.AccountID, app.Plan) { //nolint:contextcheck // r.Context() is the inherited per-request ctx in ServeHTTP
+	} else if !h.accountLimiter.AllowAccount(r.Context(), app.rateOwnerID(), app.Plan) { //nolint:contextcheck // r.Context() is the inherited per-request ctx in ServeHTTP
 		w.Header().Set("Retry-After", "1")
 		w.Header().Set("x-faas-rate-limit-scope", "account")
 		// Per-account 429 still surfaces the per-account bucket state
@@ -6654,10 +6655,10 @@ haveApp:
 		// tripped. Distinct X-AccountRateLimit-* header family so
 		// generic tooling that auto-parses X-RateLimit-* doesn't
 		// conflate per-app and per-account values (Finding 6).
-		writeRateLimited(w, h.writeAccountRateLimitHeaders(w, app.AccountID, app.Plan),
+		writeRateLimited(w, h.writeAccountRateLimitHeaders(w, app.rateOwnerID(), app.Plan),
 			"this account's apps together exceeded the plan's request rate; slow down and retry")
 		if h.metrics != nil {
-			h.metrics.ObserveAccountRateLimit(app.AccountID, string(app.Plan))
+			h.metrics.ObserveAccountRateLimit(app.rateOwnerID(), string(app.Plan))
 		}
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
