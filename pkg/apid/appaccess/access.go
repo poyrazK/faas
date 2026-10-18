@@ -98,7 +98,7 @@ func Wrap(store Store, audit authz.AuditEmitter, next authmw.AccountHandler) aut
 			return
 		}
 		if err != nil {
-			writeLookupError(w, err)
+			writeLookupError(w, r, err)
 			return
 		}
 		owner, problem := authorize(r, store, audit, actor, app)
@@ -136,6 +136,11 @@ func addressedApp(r *http.Request, store Store) (state.App, bool, error) {
 			return app, true, err
 		}
 		app, err := store.AppBySlug(r.Context(), r.PathValue("slug"))
+		if errors.Is(err, state.ErrNotFound) && r.Pattern == "POST /v1/apps/{slug}/diff" {
+			// Diffing an unused slug previews creating the app; nothing exists
+			// to authorize, and the handler scopes the lookup to the caller.
+			return state.App{}, false, nil
+		}
 		return app, true, err
 	}
 	if r.PathValue("id") == "" {
@@ -167,45 +172,48 @@ func authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor sta
 	if !ok {
 		return state.Account{}, api.ErrCapacity("application authorization requires an authenticated principal")
 	}
-	if key != nil && (key.AppID != "" && key.AppID != app.ID || key.OrgID != "" && app.OrgID != "" && key.OrgID != app.OrgID) {
-		return state.Account{}, notFound()
+	// An account key is unbound (MemStore, OIDC bearers) or, once persisted,
+	// bound to its owner's personal org; either way it is not an org key.
+	accountKey := key != nil && (key.OrgID == "" || personalKey(r.Context(), store, key.OrgID, actor.ID))
+	if key != nil && (key.AppID != "" && key.AppID != app.ID || !accountKey && app.OrgID != "" && key.OrgID != app.OrgID) {
+		return state.Account{}, notFound(r)
 	}
 	if app.OrgID == "" {
 		// Unattributed legacy apps never become shared by guessing a tenant.
-		if app.AccountID != actor.ID || key != nil && key.OrgID != "" && !personalKey(r.Context(), store, key.OrgID, actor.ID) {
-			return state.Account{}, notFound()
+		if app.AccountID != actor.ID || key != nil && !accountKey {
+			return state.Account{}, notFound(r)
 		}
 		return actor, nil
 	}
 	org, err := store.OrgByID(r.Context(), app.OrgID)
 	if err != nil {
-		return state.Account{}, lookupProblem(err)
+		return state.Account{}, lookupProblem(r, err)
 	}
 	if org.Personal {
 		if app.AccountID != actor.ID || org.PersonalOwnerAccountID == nil || *org.PersonalOwnerAccountID != actor.ID {
-			return state.Account{}, notFound()
+			return state.Account{}, notFound(r)
 		}
 		return actor, nil
 	}
-	return authorizeShared(r, store, audit, actor, key, app, org)
+	return authorizeShared(r, store, audit, actor, key, accountKey, app, org)
 }
 
-func authorizeShared(r *http.Request, store Store, audit authz.AuditEmitter, actor state.Account, key *state.APIKey, app state.App, org state.Org) (state.Account, *api.Problem) {
+func authorizeShared(r *http.Request, store Store, audit authz.AuditEmitter, actor state.Account, key *state.APIKey, accountKey bool, app state.App, org state.Org) (state.Account, *api.Problem) {
 	mem, err := store.OrgMemberByAccount(r.Context(), org.ID, actor.ID)
 	if err != nil {
-		return state.Account{}, lookupProblem(err)
+		return state.Account{}, lookupProblem(r, err)
 	}
 	if mem.RemovedAt != nil || mem.OrgID != org.ID || mem.AccountID != actor.ID || org.DeletedPending || org.Status == state.OrgStatusDeletedPending {
-		return state.Account{}, notFound()
+		return state.Account{}, notFound(r)
 	}
 	snapshot, err := store.OrgAccessSnapshot(r.Context(), org.ID, actor.ID)
 	if err != nil {
-		return state.Account{}, lookupProblem(err)
+		return state.Account{}, lookupProblem(r, err)
 	}
 	mem.Role = snapshot.Role
 	// Account keys retain their existing creator-owned boundary. Sharing an
 	// app across creators requires a session or a key explicitly bound to its org.
-	if key != nil && key.OrgID == "" && app.AccountID != actor.ID {
+	if accountKey && app.AccountID != actor.ID {
 		return state.Account{}, api.NewProblem(http.StatusConflict, api.CodeOrgAPIKeyRequiresOrg,
 			"Organization key required", "mint an API key bound to the application's organization")
 	}
@@ -247,7 +255,7 @@ func authorizeShared(r *http.Request, store Store, audit authz.AuditEmitter, act
 	}
 	owner, err := state.AppResourceAccount(r.Context(), store, app)
 	if err != nil {
-		return state.Account{}, lookupProblem(err)
+		return state.Account{}, lookupProblem(r, err)
 	}
 	if !owner.Active() && !authmw.InactiveAccountMayReach(owner, r.Method, r.URL.Path) {
 		return state.Account{}, api.ErrAccountSuspended()
@@ -265,17 +273,34 @@ func personalKey(ctx context.Context, store Store, orgID, actorID string) bool {
 	return err == nil && org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == actorID
 }
 
-func notFound() *api.Problem {
-	return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such application resource")
+// notFound answers absent and foreign resources alike. Each route family
+// keeps the 404 its handlers document, so authorization neither enumerates
+// resources nor changes a published error (build_not_found, "no such cron").
+func notFound(r *http.Request) *api.Problem {
+	path := r.URL.Path
+	what := "no such application resource"
+	switch {
+	case strings.HasPrefix(path, "/v1/builds/"):
+		return api.ErrBuildNotFound()
+	case strings.HasPrefix(path, "/v1/crons/") && r.PathValue("run_id") != "":
+		what = "no such cron run"
+	case strings.HasPrefix(path, "/v1/crons/"):
+		what = "no such cron"
+	case strings.HasPrefix(path, "/v1/deployments/"):
+		what = "no such deployment"
+	case strings.HasPrefix(path, "/v1/domains/"):
+		what = "no such domain"
+	}
+	return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", what)
 }
 
-func lookupProblem(err error) *api.Problem {
+func lookupProblem(r *http.Request, err error) *api.Problem {
 	if errors.Is(err, state.ErrNotFound) {
-		return notFound()
+		return notFound(r)
 	}
 	return api.ErrCapacity("could not authorize application access")
 }
 
-func writeLookupError(w http.ResponseWriter, err error) {
-	api.WriteProblem(w, lookupProblem(err))
+func writeLookupError(w http.ResponseWriter, r *http.Request, err error) {
+	api.WriteProblem(w, lookupProblem(r, err))
 }

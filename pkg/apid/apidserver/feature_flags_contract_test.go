@@ -94,6 +94,11 @@ func flagSchemaProperties(body map[string]any, spec *specDoc) map[string]bool {
 
 func TestFeatureFlagsDisabledByDefault(t *testing.T) {
 	e := apidserver.Setup(t, "pro")
+	// Project access resolves the addressed project first (#4882), so the gate
+	// is observed on a project the caller owns.
+	if _, err := (*e.Store()).CreateProject(t.Context(), state.Project{AccountID: (*e.Acct()).ID, Slug: "example"}); err != nil {
+		t.Fatal(err)
+	}
 	for _, path := range []string{"/v1/projects/example/environments/production/flags", "/v1/runtime/flags"} {
 		if res := e.Do(t, "GET", path, nil, nil); res.Code != 403 {
 			t.Fatalf("disabled flags %s = %d", path, res.Code)

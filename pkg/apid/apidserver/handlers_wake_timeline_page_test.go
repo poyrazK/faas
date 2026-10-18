@@ -59,6 +59,7 @@ func TestWakeTimelineKeysetAPI(t *testing.T) {
 		}
 	}
 	free := apidserver.Setup(t, api.PlanFree)
+	apidserver.MustSeedApp(t, free, "wake-paged") // the gate applies to the caller's own app (#4882)
 	if rec := free.Do(t, http.MethodGet, path+"?pagination=keyset_v1", nil, nil); rec.Code != 402 {
 		t.Fatal("Free plan bypassed gate")
 	}
