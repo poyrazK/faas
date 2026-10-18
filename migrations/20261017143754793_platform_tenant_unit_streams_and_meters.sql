@@ -5,7 +5,13 @@
 -- tenant cards and plans can price units the app reports (ADR-1318).
 -- Re-runnable: constraints are dropped before being re-added or guarded.
 
+-- migration-compat: contract
+-- Contract: it replaces the per-minute unique key with a per-unit one, and
+-- the previous apid relied on the old key to refuse a second card in a minute.
+-- migration-lint: allow index-build platform_tenant_rate_cards: API monetization is unreleased (ADR-20261018090210), so the table holds a handful of rows and the unique index builds in milliseconds
+
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 ALTER TABLE platform_tenant_rate_cards DROP CONSTRAINT IF EXISTS platform_tenant_rate_cards_account_id_platform_tenant_id_ef_key;
 DO $$ BEGIN

@@ -5,7 +5,10 @@
 -- free trial. ADR-1325: app and tenant cards can prorate a month's fees for
 -- a consumer or tenant created during it. Re-runnable.
 
+-- migration-compat: expand
+
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 ALTER TABLE platform_tenant_rate_cards ADD COLUMN IF NOT EXISTS base_fee_millicents_per_month bigint NOT NULL DEFAULT 0;
 ALTER TABLE platform_tenant_rate_cards ADD COLUMN IF NOT EXISTS minimum_millicents_per_month bigint NOT NULL DEFAULT 0;

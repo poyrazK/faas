@@ -4,7 +4,10 @@
 -- is unpaid that many days after its due date, as ADR-1315 does for app
 -- consumers. Re-runnable.
 
+-- migration-compat: expand
+
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS platform_tenant_billing_policies (
     account_id uuid PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
