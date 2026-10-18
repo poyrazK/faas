@@ -193,6 +193,7 @@ func Run(t *testing.T, open Open) {
 		{"app_deletion_claim_closes_restore_window", testAppDeletionClaim},
 		{"preview_lifecycle_is_scoped_and_reclaimable", testPreviewLifecycle},
 		{"scenario_test_namespace_is_scoped_and_reaped", testScenarioTestNamespace},
+		{"scenario_containment_and_capture_survive_namespace_cleanup", testScenarioRetainedContainment},
 		{"mcp_compatibility_snapshots_and_recovery_leases_are_fenced", testMCPCompatibilityAndRecovery},
 		{"preview_teardown_claim_fences_reopen", testPreviewTeardownClaim},
 		{"pr_preview_lease_reopens_and_renews", testPRPreviewLease},
