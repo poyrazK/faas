@@ -194,6 +194,15 @@ ship no deployment manifest and no systemd units. Two changes cover that:
   that each service is installed on the host and that its binary is in the
   release, installs no units, and runs no migration.
 
+**Dependency guard.** systemd starts a restarted unit's
+`Wants=`/`Requires=`/`BindsTo=` units that are down, and holds the restart
+until they finish starting. faas-gatewayd-internal Wants faas-vmmd. An edge
+deploy on a node whose vmmd is stopped (a maintenance, a drain) would
+therefore start vmmd, and wait on it. `deployctl deploy --only` refuses,
+before changing anything, while such a dependency is neither active nor
+masked. A rollback is not guarded: recovery takes priority, and the deploy
+it undoes already passed the guard.
+
 **Restart or reload.** deployctl decides how a service restarts. With
 ADR-1580's two-generation hand-off (#4898), it reloads a gateway when both the
 running and the new binary support the hand-off and nothing the unit read at
@@ -234,6 +243,52 @@ config, and a test fails if it exceeds 30 minutes. The per-host costs are
 estimates from the steps' local and slice-1 timings, not production
 measurements. A queued hosted build runner (0-14 min on busy CI days) comes
 on top. Each extra compute node adds 3.5 minutes.
+
+## Real-host evidence (fsn-4, 2026-10-18)
+
+The owner approved a run on fsn-4 (faas-compute-node-4). The run used the
+node's own `gregalectl release install` release (v0.1.18-rc.198, 1.2 GB, 31
+files), its real faas-gatewayd-internal unit, and deployctl and the host
+scripts from this branch. fsn-4's own gateway cannot reach a database, so
+stub gateway binaries served readiness on the real control port. Five runs,
+each restoring the host on exit:
+
+1. **Bug: `--only` was ignored on host-managed releases.** On a release
+   without unit files, `--only` was ignored, and a gatewayd-internal deploy
+   restarted vmmd first. Fixed, with a regression test.
+2. **Bug: rollback could not find deployctl.** The post-gate rollback used
+   the active release's deployctl, which a full compute release does not
+   ship. It now uses the staged copy.
+3. **Gap: dependencies were started by systemd.** Restarting
+   gatewayd-internal while vmmd was down made systemd start vmmd and hold
+   the restart behind it. This led to the dependency guard above.
+4. **Bug: the guard read unit states by position.** systemctl prints
+   properties in its own order, so the guard would have refused every
+   deploy. It now parses them by key.
+5. **All phases pass:**
+   - the guard refuses while vmmd is down, before any change;
+   - a deploy over the base and one over an overlay each restart only
+     gatewayd-internal;
+   - a rerun restarts nothing;
+   - the post-gate rollback restores the previous overlay;
+   - a broken binary rolls back by itself;
+   - the base's binaries stay untouched and unchanged daemons are hard
+     links;
+   - no other faas unit was restarted in any phase.
+
+On-host times:
+
+| step | time |
+|---|---|
+| first overlay on a node (hashes the base once) + refusal | 24-48 s |
+| deploy over the base | 10.5 s |
+| deploy over an earlier overlay | 7.2 s |
+| converged rerun | 3.4 s |
+| post-gate rollback | 7.2 s |
+| broken binary to automatic rollback | 10.9 s |
+
+These sit inside the budget's 2-minute per-host deploy. The first deploy on
+a node pays its one-time hashing.
 
 ## Still needed
 
