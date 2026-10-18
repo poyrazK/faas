@@ -34,6 +34,7 @@
 - [ADR-1744: Offline grouping previews and reviewed regression baselines](1744-issue-grouping-previews-and-baselines.md)
 - [ADR-1743: Publish final Node build source maps with build completion](1743-builder-issue-source-map-publication.md)
 - [ADR-1742: Publish prebuilt Issues source maps during CLI deployment](1742-deploy-issue-source-map-publication.md)
+- [Customer log search and analytics over the unified ledger](20261018083536-customer-log-search.md)
 
 - [Preserve request identity in response caching](20261017214848-response-cache-request-identity.md)
 

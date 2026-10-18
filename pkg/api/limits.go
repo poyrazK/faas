@@ -13100,6 +13100,22 @@ const (
 	ChangeTimelineMaxEvents     = 200
 )
 
+// Customer log search bounds (ADR-20261018083536). Searches are clamped to
+// the plan's ledger retention (LogArchiveRetentionDaysMax). Text matching and
+// facets are bounded by window so one query never scans more than a day
+// (text) or a week (facets) of one app's ledger, and every query runs under
+// LogSearchStatementTimeout.
+const (
+	LogSearchDefaultWindow    = time.Hour
+	LogSearchTextMaxWindow    = 24 * time.Hour
+	LogSearchFacetMaxWindow   = 7 * 24 * time.Hour
+	LogSearchPageMax          = 200
+	LogSearchQueryMinChars    = 2
+	LogSearchQueryMaxChars    = 256
+	LogSearchFacetRoutes      = 10
+	LogSearchStatementTimeout = 5 * time.Second
+)
+
 // Anomaly alert bounds (ADR-744). A baseline rule compares a request metric
 // with the median of its value at the same time of day over the previous
 // AnomalyBaselineDays days.

@@ -20402,6 +20402,88 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/log-events:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [observability]
+      operationId: searchAppLogEvents
+      summary: Search an app's log events.
+      description: |
+        ADR-20261018083536 internal preview, enabled by
+        `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 503 `log_search_unavailable`.
+        Requires apps:read or admin.
+
+        Returns one newest-first page of the app's ADR-213 log ledger. Filters
+        combine with AND. A text search (`q`) covers at most 24 hours and
+        answers 400 `log_search_window_too_large` beyond that; every search
+        runs under a 5 second statement timeout and answers 503
+        `log_search_timeout` when it trips. Pass `next_cursor` back as
+        `cursor` for the following page.
+      parameters:
+        - $ref: '#/components/parameters/LogSearchSince'
+        - $ref: '#/components/parameters/LogSearchUntil'
+        - $ref: '#/components/parameters/LogSearchSource'
+        - $ref: '#/components/parameters/LogSearchLevel'
+        - $ref: '#/components/parameters/LogSearchRoute'
+        - $ref: '#/components/parameters/LogSearchStatus'
+        - $ref: '#/components/parameters/LogSearchDeployment'
+        - $ref: '#/components/parameters/LogSearchRequest'
+        - $ref: '#/components/parameters/LogSearchTrace'
+        - $ref: '#/components/parameters/LogSearchText'
+        - name: limit
+          in: query
+          description: Page size.
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+        - name: cursor
+          in: query
+          description: The next_cursor of the previous page.
+          schema: { type: string }
+      responses:
+        '200':
+          description: One page of matching events.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LogEventsResponse' }
+        default:
+          description: Invalid filters, a window over its bound, a timeout, or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/log-events/facets:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [observability]
+      operationId: getAppLogEventFacets
+      summary: Count an app's log events by facet.
+      description: |
+        ADR-20261018083536 internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
+        Takes the same filters as the search and counts the matches by
+        source, level, status class, and the ten busiest routes. Counts sum
+        each event's occurrences. The window is at most 7 days.
+      parameters:
+        - $ref: '#/components/parameters/LogSearchSince'
+        - $ref: '#/components/parameters/LogSearchUntil'
+        - $ref: '#/components/parameters/LogSearchSource'
+        - $ref: '#/components/parameters/LogSearchLevel'
+        - $ref: '#/components/parameters/LogSearchRoute'
+        - $ref: '#/components/parameters/LogSearchStatus'
+        - $ref: '#/components/parameters/LogSearchDeployment'
+        - $ref: '#/components/parameters/LogSearchRequest'
+        - $ref: '#/components/parameters/LogSearchTrace'
+        - $ref: '#/components/parameters/LogSearchText'
+      responses:
+        '200':
+          description: Facet counts for the window.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LogEventFacetsResponse' }
+        default:
+          description: Invalid filters, a window over 7 days, a timeout, or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/apps/{slug}/metrics:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -64676,6 +64758,56 @@ components:
       required: true
       schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40 }
       description: App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+    LogSearchSince:
+      name: since
+      in: query
+      description: Window start, as a lookback duration (15m, 6h, 3d) or RFC 3339. Defaults to one hour before until and is clamped to the plan's log retention.
+      schema: { type: string }
+    LogSearchUntil:
+      name: until
+      in: query
+      description: Exclusive window end (RFC 3339). Defaults to and is clamped to now.
+      schema: { type: string, format: date-time }
+    LogSearchSource:
+      name: source
+      in: query
+      description: Keep one ledger source.
+      schema: { type: string, enum: [runtime, build, deploy, http, network, dns] }
+    LogSearchLevel:
+      name: level
+      in: query
+      description: Comma list of severities to keep (trace, debug, info, warn, error, fatal).
+      schema: { type: string, example: 'error,warn' }
+    LogSearchRoute:
+      name: route
+      in: query
+      description: Exact route template without the method, such as /checkout/{id}.
+      schema: { type: string, maxLength: 256 }
+    LogSearchStatus:
+      name: status
+      in: query
+      description: Exact HTTP status (502) or a status class (5xx).
+      schema: { type: string, example: 5xx }
+    LogSearchDeployment:
+      name: deployment_id
+      in: query
+      description: Keep events from one deployment.
+      schema: { type: string, format: uuid }
+    LogSearchRequest:
+      name: request_id
+      in: query
+      description: Keep events whose request id or trace id equals this value.
+      schema: { type: string, maxLength: 256 }
+    LogSearchTrace:
+      name: trace_id
+      in: query
+      description: Keep events carrying this W3C trace id.
+      schema: { type: string, maxLength: 128 }
+    LogSearchText:
+      name: q
+      in: query
+      description: Case-insensitive literal substring of the message, 2 to 256 characters. Text searches cover at most 24 hours.
+      schema: { type: string, minLength: 2, maxLength: 256 }
     QueueLeaseQueue:
       name: queue
       in: path
@@ -110629,6 +110761,45 @@ components:
           type: array
           items: { $ref: '#/components/schemas/AccountTraceLookupError' }
 
+    LogEventsResponse:
+      description: One newest-first page of an app's log ledger (ADR-20261018083536).
+      type: object
+      required: [since, until, events]
+      properties:
+        since: { type: string, format: date-time, description: Effective window start after clamping to retention. }
+        until: { type: string, format: date-time }
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/LogQueryEvent' }
+        next_cursor: { type: string, description: Present when more events match; pass it back as cursor. }
+    LogFacetCount:
+      description: One facet value and how many events carry it.
+      type: object
+      required: [value, count]
+      properties:
+        value: { type: string }
+        count: { type: integer, format: int64 }
+    LogEventFacetsResponse:
+      description: Log event counts by facet over one window (ADR-20261018083536).
+      type: object
+      required: [since, until, total, sources, levels, status_classes, routes, routes_truncated]
+      properties:
+        since: { type: string, format: date-time, description: Facet window start after clamping to retention. }
+        until: { type: string, format: date-time }
+        total: { type: integer, format: int64 }
+        sources:
+          type: array
+          items: { $ref: '#/components/schemas/LogFacetCount' }
+        levels:
+          type: array
+          items: { $ref: '#/components/schemas/LogFacetCount' }
+        status_classes:
+          type: array
+          items: { $ref: '#/components/schemas/LogFacetCount' }
+        routes:
+          type: array
+          items: { $ref: '#/components/schemas/LogFacetCount' }
+        routes_truncated: { type: boolean, description: More routes matched than the ten returned. }
     LogQueryEvent:
       type: object
       description: "Safe source-neutral log query event; trace lookup returns the HTTP access-log projection."

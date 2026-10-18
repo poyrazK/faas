@@ -6,6 +6,9 @@ import type { AppLogDrainAnalyticsResponse } from '../models/AppLogDrainAnalytic
 import type { AppLogDrainHealthResponse } from '../models/AppLogDrainHealthResponse.js';
 import type { AppLogDrainResponse } from '../models/AppLogDrainResponse.js';
 import type { CreateAppLogDrainRequest } from '../models/CreateAppLogDrainRequest.js';
+import type { LogEventFacetsResponse } from '../models/LogEventFacetsResponse.js';
+import type { LogEventsResponse } from '../models/LogEventsResponse.js';
+import type { Problem } from '../models/Problem.js';
 import type { ServiceMapResponse } from '../models/ServiceMapResponse.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
 import type { Trace } from '../models/Trace.js';
@@ -15,6 +18,202 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class ObservabilityService {
+  /**
+   * Search an app's log events.
+   * ADR-20261018083536 internal preview, enabled by
+   * `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 503 `log_search_unavailable`.
+   * Requires apps:read or admin.
+   *
+   * Returns one newest-first page of the app's ADR-213 log ledger. Filters
+   * combine with AND. A text search (`q`) covers at most 24 hours and
+   * answers 400 `log_search_window_too_large` beyond that; every search
+   * runs under a 5 second statement timeout and answers 503
+   * `log_search_timeout` when it trips. Pass `next_cursor` back as
+   * `cursor` for the following page.
+   *
+   * @returns LogEventsResponse One page of matching events.
+   * @returns Problem Invalid filters, a window over its bound, a timeout, or the preview is disabled.
+   * @throws ApiError
+   */
+  public static searchAppLogEvents({
+    slug,
+    since,
+    until,
+    source,
+    level,
+    route,
+    status,
+    deploymentId,
+    requestId,
+    traceId,
+    q,
+    limit = 100,
+    cursor,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Window start, as a lookback duration (15m, 6h, 3d) or RFC 3339. Defaults to one hour before until and is clamped to the plan's log retention.
+     */
+    since?: string,
+    /**
+     * Exclusive window end (RFC 3339). Defaults to and is clamped to now.
+     */
+    until?: string,
+    /**
+     * Keep one ledger source.
+     */
+    source?: 'runtime' | 'build' | 'deploy' | 'http' | 'network' | 'dns',
+    /**
+     * Comma list of severities to keep (trace, debug, info, warn, error, fatal).
+     */
+    level?: string,
+    /**
+     * Exact route template without the method, such as /checkout/{id}.
+     */
+    route?: string,
+    /**
+     * Exact HTTP status (502) or a status class (5xx).
+     */
+    status?: string,
+    /**
+     * Keep events from one deployment.
+     */
+    deploymentId?: string,
+    /**
+     * Keep events whose request id or trace id equals this value.
+     */
+    requestId?: string,
+    /**
+     * Keep events carrying this W3C trace id.
+     */
+    traceId?: string,
+    /**
+     * Case-insensitive literal substring of the message, 2 to 256 characters. Text searches cover at most 24 hours.
+     */
+    q?: string,
+    /**
+     * Page size.
+     */
+    limit?: number,
+    /**
+     * The next_cursor of the previous page.
+     */
+    cursor?: string,
+  }): CancelablePromise<LogEventsResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/log-events',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+        'until': until,
+        'source': source,
+        'level': level,
+        'route': route,
+        'status': status,
+        'deployment_id': deploymentId,
+        'request_id': requestId,
+        'trace_id': traceId,
+        'q': q,
+        'limit': limit,
+        'cursor': cursor,
+      },
+    });
+  }
+  /**
+   * Count an app's log events by facet.
+   * ADR-20261018083536 internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
+   * Takes the same filters as the search and counts the matches by
+   * source, level, status class, and the ten busiest routes. Counts sum
+   * each event's occurrences. The window is at most 7 days.
+   *
+   * @returns LogEventFacetsResponse Facet counts for the window.
+   * @returns Problem Invalid filters, a window over 7 days, a timeout, or the preview is disabled.
+   * @throws ApiError
+   */
+  public static getAppLogEventFacets({
+    slug,
+    since,
+    until,
+    source,
+    level,
+    route,
+    status,
+    deploymentId,
+    requestId,
+    traceId,
+    q,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Window start, as a lookback duration (15m, 6h, 3d) or RFC 3339. Defaults to one hour before until and is clamped to the plan's log retention.
+     */
+    since?: string,
+    /**
+     * Exclusive window end (RFC 3339). Defaults to and is clamped to now.
+     */
+    until?: string,
+    /**
+     * Keep one ledger source.
+     */
+    source?: 'runtime' | 'build' | 'deploy' | 'http' | 'network' | 'dns',
+    /**
+     * Comma list of severities to keep (trace, debug, info, warn, error, fatal).
+     */
+    level?: string,
+    /**
+     * Exact route template without the method, such as /checkout/{id}.
+     */
+    route?: string,
+    /**
+     * Exact HTTP status (502) or a status class (5xx).
+     */
+    status?: string,
+    /**
+     * Keep events from one deployment.
+     */
+    deploymentId?: string,
+    /**
+     * Keep events whose request id or trace id equals this value.
+     */
+    requestId?: string,
+    /**
+     * Keep events carrying this W3C trace id.
+     */
+    traceId?: string,
+    /**
+     * Case-insensitive literal substring of the message, 2 to 256 characters. Text searches cover at most 24 hours.
+     */
+    q?: string,
+  }): CancelablePromise<LogEventFacetsResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/log-events/facets',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+        'until': until,
+        'source': source,
+        'level': level,
+        'route': route,
+        'status': status,
+        'deployment_id': deploymentId,
+        'request_id': requestId,
+        'trace_id': traceId,
+        'q': q,
+      },
+    });
+  }
   /**
    * List runtime log destinations for this app.
    * @returns AppLogDrainResponse The configured log destinations. Authentication headers are always masked.

@@ -2039,6 +2039,7 @@ from .get_account_slo_window import GetAccountSLOWindow
 from .get_app_data_api_usage_granularity import GetAppDataAPIUsageGranularity
 from .get_app_edge_protection_range import GetAppEdgeProtectionRange
 from .get_app_log_drain_analytics_window import GetAppLogDrainAnalyticsWindow
+from .get_app_log_event_facets_source import GetAppLogEventFacetsSource
 from .get_app_metrics_range import GetAppMetricsRange
 from .get_app_open_api_response_200 import GetAppOpenAPIResponse200
 from .get_app_open_api_source import GetAppOpenAPISource
@@ -2468,9 +2469,12 @@ from .list_workflow_schedules_response import ListWorkflowSchedulesResponse
 from .list_workflow_schedules_response_unavailable_reason import ListWorkflowSchedulesResponseUnavailableReason
 from .list_workflow_step_attempts_response import ListWorkflowStepAttemptsResponse
 from .list_workflow_steps_response import ListWorkflowStepsResponse
+from .log_event_facets_response import LogEventFacetsResponse
+from .log_events_response import LogEventsResponse
 from .log_excerpt import LogExcerpt
 from .log_excerpt_level import LogExcerptLevel
 from .log_excerpt_source import LogExcerptSource
+from .log_facet_count import LogFacetCount
 from .log_query_event import LogQueryEvent
 from .log_query_event_level import LogQueryEventLevel
 from .log_query_event_source import LogQueryEventSource
@@ -5334,6 +5338,7 @@ from .scoped_route_budget_report import ScopedRouteBudgetReport
 from .scoped_route_budget_report_budget_source import ScopedRouteBudgetReportBudgetSource
 from .seal_scenario_objects_request import SealScenarioObjectsRequest
 from .seal_scenario_postgres_request import SealScenarioPostgresRequest
+from .search_app_log_events_source import SearchAppLogEventsSource
 from .seat_usage_response import SeatUsageResponse
 from .seat_usage_response_plan import SeatUsageResponsePlan
 from .secret_finding import SecretFinding
@@ -7994,6 +7999,7 @@ __all__ = (
     "GetAppDataAPIUsageGranularity",
     "GetAppEdgeProtectionRange",
     "GetAppLogDrainAnalyticsWindow",
+    "GetAppLogEventFacetsSource",
     "GetAppMetricsRange",
     "GetAppOpenAPIResponse200",
     "GetAppOpenAPISource",
@@ -8379,9 +8385,12 @@ __all__ = (
     "ListWorkflowSchedulesResponseUnavailableReason",
     "ListWorkflowStepAttemptsResponse",
     "ListWorkflowStepsResponse",
+    "LogEventFacetsResponse",
+    "LogEventsResponse",
     "LogExcerpt",
     "LogExcerptLevel",
     "LogExcerptSource",
+    "LogFacetCount",
     "LogQueryEvent",
     "LogQueryEventLevel",
     "LogQueryEventSource",
@@ -11043,6 +11052,7 @@ __all__ = (
     "ScopedRouteBudgetReportBudgetSource",
     "SealScenarioObjectsRequest",
     "SealScenarioPostgresRequest",
+    "SearchAppLogEventsSource",
     "SeatUsageResponse",
     "SeatUsageResponsePlan",
     "SecretFinding",

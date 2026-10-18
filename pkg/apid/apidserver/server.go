@@ -35,6 +35,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/apid/livequeries"
+	"github.com/onebox-faas/faas/pkg/apid/logsearch"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/mcpadmission"
 	"github.com/onebox-faas/faas/pkg/apid/mcpcatalog"
@@ -145,6 +146,7 @@ type server struct {
 	productControl                         product.Service
 	appEvents                              appevents.Service  // ADR-977; Host wired in newServer
 	serviceMap                             servicemap.Service // ADR-1131; Host wired in newServer
+	logSearch                              logsearch.Service  // ADR-20261018083536; Host wired in newServer
 	// configGuardTelemetry overrides the store's request telemetry for
 	// config guards (ADR-1451); nil reads it from the store.
 	configGuardTelemetry state.ConfigGuardTelemetryStore
@@ -1447,6 +1449,7 @@ func newServerWithDeps(
 	s.tenantPlans.Host = tenantPlansHost{s}
 	s.serviceMap.Host = serviceMapHost{s}
 	s.platformFlagAdmin.Host = platformFlagAdminHost{s}
+	s.logSearch.Host = logSearchHost{s}
 	// ADR-120: wire the package-level appsDomainFunc seam (declared at
 	// cmd/apid/dns_probes.go:125) to the server's apps base domain so
 	// checkPointsToGregale has the configured Gregale apex in
@@ -2320,6 +2323,9 @@ func (s *server) handler() http.Handler {
 	// because there's no slug path.
 	mux.HandleFunc("GET /v1/apps/metrics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppsMetrics)))
 	mux.HandleFunc("GET /v1/service-map", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.serviceMap.Get))) // ADR-1131
+	// ADR-20261018083536 — customer log search over the ADR-213 ledger.
+	mux.HandleFunc("GET /v1/apps/{slug}/log-events", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.logSearch.Search)))
+	mux.HandleFunc("GET /v1/apps/{slug}/log-events/facets", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.logSearch.Facets)))
 	// Issue #696 / ADR-082 — per-app SLO panel. Closed-set
 	// windowed vocabulary (1h | 24h | 7d). Auth chain matches
 	// /v1/apps/{slug}/metrics: read-only, NO MFA, primary
@@ -4668,6 +4674,7 @@ func (s *server) handler() http.Handler {
 	mux.Handle("GET /dashboard/apps/{slug}/changes", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderAppChangesDashboard))))
 	// ADR-20261020085706: the page approval notifications link to.
 	mux.Handle("GET /dashboard/releases/{id}/approval", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderReleaseApprovalPage))))
+	mux.Handle("GET /dashboard/apps/{slug}/log-search", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderAppLogSearchDashboard))))
 	mux.Handle("GET /dashboard/apps/{slug}/custom-metrics", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderCustomMetricsDashboard))))
 	mux.Handle("POST /dashboard/dev-bridges/{id}/revoke", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.revokeDevBridgeDashboard))))
 

@@ -472,6 +472,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_LOG_ARCHIVE_SPOOL_ROOT` | shared | `default` |  |  | `` |  |
 | `FAAS_LOG_DRAIN_SPOOL_ROOT` | gatewayd-internal | `default` |  |  | `` | optional gateway log-drain spool override; defaults to /var/lib/faas/log-drains |
 | `FAAS_LOG_LEVEL` | shared | `default` |  |  | `` | info; re-read on SIGHUP |
+| `FAAS_LOG_SEARCH_ENABLED` | apid | `default` |  | 0 | `` | ADR-20261018083536 operator gate for GET /v1/apps/{slug}/log-events and /log-events/facets; explicit 1 enables the internal preview |
 | `FAAS_MAIL_FROM` | apid, shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_MAIL_POSTMARK_TOKEN` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_MAIL_RESEND_API_KEY` | apid, shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
