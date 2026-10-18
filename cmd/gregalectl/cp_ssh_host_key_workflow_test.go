@@ -13,7 +13,7 @@ import (
 // would have received production secrets.
 func TestControlPlaneSSHTrustsOnlyVerifiedHostKeys(t *testing.T) {
 	unverifiedScan := regexp.MustCompile(`ssh-keyscan[^\n]*>>`)
-	for _, name := range []string{"cd-controlplane.yml", "cd-platform.yml", "pki-renew.yml", "synthetic-canary.yml"} {
+	for _, name := range []string{"cd-controlplane.yml", "cd-edge-node.yml", "cd-edge-units.yml", "cd-platform.yml", "pki-renew.yml", "synthetic-canary.yml"} {
 		t.Run(name, func(t *testing.T) {
 			workflow := readWorkflow(t, name)
 			if loc := unverifiedScan.FindStringIndex(workflow); loc != nil {

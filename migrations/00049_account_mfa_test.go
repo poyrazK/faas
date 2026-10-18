@@ -42,14 +42,19 @@ func TestMigrations_00047_AccountMFA_ShapeAndCheck(t *testing.T) {
 		t.Fatalf("seed account: %v", err)
 	}
 
-	// (1) The four mfa_* columns exist.
+	// (1) The four columns introduced by this migration still exist. Later
+	// migrations may add MFA lifecycle fields, such as the mail revision fence.
+	want := []string{
+		"mfa_enrolled_at", "mfa_recovery_codes_hash",
+		"mfa_required", "mfa_secret_encrypted",
+	}
 	rows, err := pool.Query(ctx, `
 		select attname from pg_attribute
 		 where attrelid = 'accounts'::regclass
-		   and attname like 'mfa_%'
+		   and attname = any($1::text[])
 		   and attnum > 0
 		 order by attname
-	`)
+	`, want)
 	if err != nil {
 		t.Fatalf("pg_attribute: %v", err)
 	}
@@ -61,10 +66,6 @@ func TestMigrations_00047_AccountMFA_ShapeAndCheck(t *testing.T) {
 			t.Fatalf("scan: %v", err)
 		}
 		got = append(got, s)
-	}
-	want := []string{
-		"mfa_enrolled_at", "mfa_recovery_codes_hash",
-		"mfa_required", "mfa_secret_encrypted",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("mfa_* column count = %d (%v), want %d (%v)", len(got), got, len(want), want)

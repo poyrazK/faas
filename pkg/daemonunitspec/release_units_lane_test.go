@@ -11,6 +11,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/daemonunitspec"
 )
 
+// edgeBinaries are the edge lane: the gateways, which roll host by host
+// without a drain. vmmd and compute schedd stay with the full release.
+var edgeBinaries = map[string]bool{"gatewayd-public": true, "gatewayd-internal": true}
+
 // releaseUnits mirrors scripts/ci/release_units.json, the lane table the
 // per-unit release lane reads (docs/adr/1650-per-unit-control-plane-releases.md).
 type releaseUnits struct {
@@ -18,6 +22,7 @@ type releaseUnits struct {
 		Lane     string `json:"lane"`
 		Services []struct {
 			Name     string `json:"name"`
+			Host     string `json:"host"`
 			Optional bool   `json:"optional"`
 			Readyz   string `json:"readyz"`
 		} `json:"services"`
@@ -41,6 +46,7 @@ func TestReleaseUnitLanesMatchTheRegistry(t *testing.T) {
 	}
 
 	type service struct {
+		host     daemonunitspec.Role
 		optional bool
 		readyz   string
 	}
@@ -64,9 +70,7 @@ func TestReleaseUnitLanesMatchTheRegistry(t *testing.T) {
 		for _, role := range entry.AdditionalRoles {
 			roles[binary][role] = true
 		}
-		if entry.Role == daemonunitspec.RoleControlPlane {
-			services[binary][entry.Name] = service{optional: optional[entry.Name], readyz: entry.Lifecycle.ReadyzURL}
-		}
+		services[binary][entry.Name] = service{host: entry.Role, optional: optional[entry.Name], readyz: entry.Lifecycle.ReadyzURL}
 	}
 
 	for binary, have := range roles {
@@ -77,6 +81,8 @@ func TestReleaseUnitLanesMatchTheRegistry(t *testing.T) {
 		}
 		want := "compute"
 		switch {
+		case edgeBinaries[binary]:
+			want = "edge"
 		case have[daemonunitspec.RoleControlPlane] && have[daemonunitspec.RoleComputeOnly]:
 			want = "shared"
 		case have[daemonunitspec.RoleControlPlane]:
@@ -85,20 +91,32 @@ func TestReleaseUnitLanesMatchTheRegistry(t *testing.T) {
 		if entry.Lane != want {
 			t.Errorf("%s: lane %q, registry roles make it %q", binary, entry.Lane, want)
 		}
-		if want != "control-plane" {
+		if want != "control-plane" && want != "edge" {
 			continue
+		}
+		// The control-plane lane deploys to the control plane only; the
+		// edge lane to every host role that runs the binary.
+		expected := map[string]service{}
+		for name, s := range services[binary] {
+			if want == "edge" || s.host == daemonunitspec.RoleControlPlane {
+				expected[name] = s
+			}
 		}
 		got := map[string]service{}
 		for _, s := range entry.Services {
-			got[s.Name] = service{optional: s.Optional, readyz: s.Readyz}
+			host := daemonunitspec.Role(s.Host)
+			if host == "" {
+				host = daemonunitspec.RoleControlPlane
+			}
+			got[s.Name] = service{host: host, optional: s.Optional, readyz: s.Readyz}
 		}
-		for name, s := range services[binary] {
+		for name, s := range expected {
 			if got[name] != s {
 				t.Errorf("%s: service %s is %+v in the lane table, registry says %+v", binary, name, got[name], s)
 			}
 		}
 		for name := range got {
-			if _, ok := services[binary][name]; !ok {
+			if _, ok := expected[name]; !ok {
 				t.Errorf("%s: lane table lists service %s, which the registry does not run from it", binary, name)
 			}
 		}
@@ -109,7 +127,7 @@ func TestReleaseUnitLanesMatchTheRegistry(t *testing.T) {
 	// nothing to restart.
 	var unitless []string
 	for binary, entry := range table.Binaries {
-		if _, ok := roles[binary]; !ok && (entry.Lane == "control-plane" || entry.Lane == "shared") {
+		if _, ok := roles[binary]; !ok && (entry.Lane == "control-plane" || entry.Lane == "shared" || entry.Lane == "edge") {
 			unitless = append(unitless, binary)
 		}
 	}

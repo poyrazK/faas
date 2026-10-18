@@ -1,0 +1,61 @@
+rule_files:
+  - faas.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: disabled retention stays quiet despite absent or failed pass data
+    interval: 1m
+    input_series:
+      - series: 'maild_mail_retention_enabled{job="node",instance="pilot"}'
+        values: '0+0x10'
+      - series: 'maild_mail_retention_last_run_up{job="node",instance="pilot"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: InternalMailRetentionFailed
+        exp_alerts: []
+  - name: cleanup failures produce an internal warning
+    interval: 1m
+    input_series:
+      - series: 'maild_mail_retention_enabled{job="node",instance="pilot"}'
+        values: '1+0x10'
+      - series: 'maild_mail_retention_last_run_up{job="node",instance="pilot"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: InternalMailRetentionFailed
+        exp_alerts:
+          - exp_labels:
+              job: node
+              instance: pilot
+              severity: warn
+              component: maild
+              family: internal_mail
+              public_status: internal
+            exp_annotations:
+              summary: "Internal mail payload retention is failing or stale"
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+  - name: stale retention worker produces an internal warning
+    interval: 1m
+    input_series:
+      - series: 'maild_mail_retention_enabled{job="node",instance="pilot"}'
+        values: '1+0x140'
+      - series: 'maild_mail_retention_last_run_up{job="node",instance="pilot"}'
+        values: '1+0x140'
+      - series: 'maild_mail_retention_last_attempt_seconds{job="node",instance="pilot"}'
+        values: '1+0x140'
+    alert_rule_test:
+      - eval_time: 125m
+        alertname: InternalMailRetentionFailed
+        exp_alerts:
+          - exp_labels:
+              job: node
+              instance: pilot
+              severity: warn
+              component: maild
+              family: internal_mail
+              public_status: internal
+            exp_annotations:
+              summary: "Internal mail payload retention is failing or stale"
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
