@@ -175,6 +175,36 @@ export class ProjectsService {
     });
   }
   /**
+   * Deploy an account-owned reviewed project source without another upload.
+   * Applies the exact archive retained by a project scan, not the current
+   * head of a mutable Git ref. The normal scanner and apply admission gates
+   * run again. The account-scoped source expires after one hour; rescan on
+   * preview_expired. Initial secrets require secrets:write or admin and are
+   * sealed before any deployment is enqueued. Failed configuration starts
+   * no builds; saved apps and any completed configuration remain available
+   * for correction. Values are never included in responses or scan plans.
+   *
+   * @returns ApplyResponse Project applied with per-workload deployment receipts.
+   * @throws ApiError
+   */
+  public static applyCachedProjectPlan({
+    requestBody,
+  }: {
+    requestBody: ApplyCachedProjectPlanRequest,
+  }): CancelablePromise<ApplyResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/apply-plan',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        403: `The caller lacks deployment or secret write permission.`,
+        409: `The plan is stale, blocked, or requires environment approval.`,
+        410: `The account-owned reviewed source expired; scan again.`,
+      },
+    });
+  }
+  /**
    * Scan an uploaded tarball and return a deploy plan.
    * Dry-run. Accepts a multipart upload (`source=<tar.gz>`,
    * `project_slug`, `production_branch`, `install_id`, `only`)
@@ -251,36 +281,6 @@ export class ProjectsService {
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.
         `,
-      },
-    });
-  }
-  /**
-   * Deploy an account-owned reviewed project source without another upload.
-   * Applies the exact archive retained by a project scan, not the current
-   * head of a mutable Git ref. The normal scanner and apply admission gates
-   * run again. The account-scoped source expires after one hour; rescan on
-   * preview_expired. Initial secrets require secrets:write or admin and are
-   * sealed before any deployment is enqueued. Failed configuration starts
-   * no builds; saved apps and any completed configuration remain available
-   * for correction. Values are never included in responses or scan plans.
-   *
-   * @returns ApplyResponse Project applied with per-workload deployment receipts.
-   * @throws ApiError
-   */
-  public static applyCachedProjectPlan({
-    requestBody,
-  }: {
-    requestBody: ApplyCachedProjectPlanRequest,
-  }): CancelablePromise<ApplyResponse> {
-    return __request(OpenAPI, {
-      method: 'POST',
-      url: '/v1/projects/apply-plan',
-      body: requestBody,
-      mediaType: 'application/json',
-      errors: {
-        403: `The caller lacks deployment or secret write permission.`,
-        409: `The plan is stale, blocked, or requires environment approval.`,
-        410: `The account-owned reviewed source expired; scan again.`,
       },
     });
   }

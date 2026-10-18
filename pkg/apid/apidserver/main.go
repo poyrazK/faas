@@ -21,6 +21,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/apid/mcpreadiness"
 	"log/slog"
 	"net"
 	"net/http"
@@ -766,7 +767,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runManagedPostgresUsageCollector(ctx)
 		go srv.runManagedPostgresHealthCollector(ctx)
 		go srv.runAppHealthCollector(ctx)
-		go mcpcatalog.RunManagedObservers(ctx, srv.store, srv.domain, hostIdentitiesForUnseal, log)
+		go mcpcatalog.RunManagedObservers(ctx, srv.store, srv.domain, hostIdentitiesForUnseal, log, srv.mcpReadinessPreview)
+		readinessMonitor := &mcpreadiness.MonitorRunner{Handler: mcpreadiness.New(srv.store, srv.mcpReadinessPreview, nil), Identities: hostIdentitiesForUnseal, Log: log}
+		go readinessMonitor.Run(ctx)
 		go srv.realtime.RunManagedRealtimeEndpointReconciler(ctx)
 		go srv.realtime.RunManagedRealtimeChannelRouteReconciler(ctx)
 		go srv.realtime.RunManagedRealtimeOwnerReaper(ctx)

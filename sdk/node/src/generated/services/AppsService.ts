@@ -196,230 +196,6 @@ import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class AppsService {
   /**
-   * Read a scope's stored binding release policy.
-   * Requires apps:read or admin and completed MFA. Defaults to off with revision 0. No probes or provider calls occur.
-   * @returns BindingReleasePolicy Stored policy, or the disabled default.
-   * @throws ApiError
-   */
-  public static getBindingReleasePolicy({
-    slug,
-    scope = 'default',
-  }: {
-    /**
-     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
-     */
-    slug: string,
-    /**
-     * Exact deployment scope. Omit to select default.
-     */
-    scope?: string,
-  }): CancelablePromise<BindingReleasePolicy> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/apps/{slug}/bindings/release-policy',
-      path: {
-        'slug': slug,
-      },
-      query: {
-        'scope': scope,
-      },
-      errors: {
-        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
-        host age recipient not loaded → registry credential PUT
-        returns 503 instead of accepting plaintext).
-        `,
-      },
-    });
-  }
-  /**
-   * Replace a binding release policy using its current revision.
-   * Requires deploy:write or admin and completed MFA. expected_revision is
-   * mandatory (0 initially); each accepted write increments it. Enforcement
-   * requires complete fresh verification on every deployment gaining traffic,
-   * including through redistribution. Promotion, direct traffic PATCH and
-   * canary advance evaluate the policy; request flags may only strengthen it.
-   * New candidates must be admitted with explicit zero traffic. Automatic
-   * cutovers, legacy recovery and project release graph switches fail closed
-   * until they support binding fences. Policies with storage requirements must use
-   * release-policy-with-object-storage for updates, including explicit clearing.
-   * Policies with queue requirements must use release-policy-with-queues and
-   * explicitly retain or clear every queue and storage requirement.
-   * To recover without evidence, explicitly
-   * set off with the current revision and a reason, then retry. Every update
-   * has durable policy history. Existing traffic is not changed by this call.
-   *
-   * @returns BindingReleasePolicy Saved policy with incremented revision.
-   * @throws ApiError
-   */
-  public static setBindingReleasePolicy({
-    slug,
-    requestBody,
-    scope = 'default',
-  }: {
-    /**
-     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
-     */
-    slug: string,
-    requestBody: SetBindingReleasePolicyRequest,
-    /**
-     * Exact deployment scope. Omit to select default.
-     */
-    scope?: string,
-  }): CancelablePromise<BindingReleasePolicy> {
-    return __request(OpenAPI, {
-      method: 'PUT',
-      url: '/v1/apps/{slug}/bindings/release-policy',
-      path: {
-        'slug': slug,
-      },
-      query: {
-        'scope': scope,
-      },
-      body: requestBody,
-      mediaType: 'application/json',
-      errors: {
-        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        409: `code: conflict`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
-        host age recipient not loaded → registry credential PUT
-        returns 503 instead of accepting plaintext).
-        `,
-      },
-    });
-  }
-  /**
-   * Replace release policy including required object-storage operations.
-   * Requires deploy:write or admin and completed MFA. Uses the same revision
-   * compare-and-set and traffic fences as release-policy. Explicit
-   * object_storage_requirements is required; an empty object clears it.
-   * Keys are managed environment prefixes in this scope (at most 32), values
-   * are read, write or read_write. Missing bindings, insufficient permissions,
-   * stale evidence, incomplete stages and mismatched operations block traffic.
-   * Read accepts the legacy listing canary; write requires upload and cleanup;
-   * read_write also requires byte-for-byte download. Current application ACKs
-   * are independently required when configured. This call only records policy;
-   * neither policy updates nor promotion initiate storage writes. Old servers
-   * return 404 on this route rather than silently dropping the requirements.
-   *
-   * @returns BindingReleasePolicy Updated object-storage release requirements and the new policy revision.
-   * @throws ApiError
-   */
-  public static setObjectStorageBindingReleasePolicy({
-    slug,
-    requestBody,
-    scope = 'default',
-  }: {
-    /**
-     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
-     */
-    slug: string,
-    requestBody: SetObjectStorageBindingReleasePolicyRequest,
-    /**
-     * Deployment scope whose object-storage release policy will be replaced. Omit for default.
-     */
-    scope?: string,
-  }): CancelablePromise<BindingReleasePolicy> {
-    return __request(OpenAPI, {
-      method: 'PUT',
-      url: '/v1/apps/{slug}/bindings/release-policy-with-object-storage',
-      path: {
-        'slug': slug,
-      },
-      query: {
-        'scope': scope,
-      },
-      body: requestBody,
-      mediaType: 'application/json',
-      errors: {
-        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        409: `code: conflict`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
-        host age recipient not loaded → registry credential PUT
-        returns 503 instead of accepting plaintext).
-        `,
-      },
-    });
-  }
-  /**
-   * Inspect all runtime resource bindings attached to an app.
-   * Read-only, best-effort metadata for service, PostgreSQL, object-storage,
-   * queue and outbound bindings. Requires apps:read or admin. PostgreSQL
-   * sections additionally require managed-postgres:read or admin; object
-   * storage sections require storage:manage or admin, matching the existing
-   * compute-binding read surface. MFA-pending sessions are rejected.
-   * Missing permissions and failed sections appear as structured issues in
-   * a 200 response with complete=false; successfully read sections remain.
-   * An unconfigured managed PostgreSQL feature is a warning. Other issues
-   * have error severity. No provider calls, workload probes or writes occur.
-   * State describes configuration/provisioning, not applied runtime health.
-   * Runtime status is unknown unless a scheduler queue observation exists;
-   * verification status includes durable service, PostgreSQL and object-storage task-guest canary results. GeneratedAt is collection time, not a
-   * promise of an atomic snapshot. Credential material and raw errors are
-   * excluded. Responses use Cache-Control: no-store.
-   *
-   * @returns AppBindingInventory Complete or partial binding inventory, without credentials.
-   * @throws ApiError
-   */
-  public static getAppBindingInventory({
-    slug,
-    deploymentId,
-    serviceTargets,
-    scope,
-  }: {
-    /**
-     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
-     */
-    slug: string,
-    /**
-     * Select evidence for this exact app-owned, materialized live deployment, including zero-traffic candidates. No fallback to evidence from another deployment. Omit to use the manual-task selection.
-     */
-    deploymentId?: string,
-    /**
-     * JSON object mapping declared service names to exact live deployment UUIDs in the caller scope. Requires deployment_id. Target evidence is isolated from ordinary any-replica evidence. Does not change routes or grant access.
-     */
-    serviceTargets?: string,
-    /**
-     * Filter database and bucket binding scopes. Omit to include all scopes. App-wide service, queue and outbound bindings always remain included.
-     */
-    scope?: string,
-  }): CancelablePromise<AppBindingInventory> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/apps/{slug}/bindings',
-      path: {
-        'slug': slug,
-      },
-      query: {
-        'deployment_id': deploymentId,
-        'service_targets': serviceTargets,
-        'scope': scope,
-      },
-      errors: {
-        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        409: `code: conflict`,
-        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
-        \`profile_investigation_limit\`.
-        `,
-      },
-    });
-  }
-  /**
    * List saved production cutover plans.
    * Return the latest app-owned production switch plans, newest first. Revalidate
    * deployment, configuration and domain binding evidence without starting network
@@ -852,6 +628,230 @@ export class AppsService {
         \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Read a scope's stored binding release policy.
+   * Requires apps:read or admin and completed MFA. Defaults to off with revision 0. No probes or provider calls occur.
+   * @returns BindingReleasePolicy Stored policy, or the disabled default.
+   * @throws ApiError
+   */
+  public static getBindingReleasePolicy({
+    slug,
+    scope = 'default',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Exact deployment scope. Omit to select default.
+     */
+    scope?: string,
+  }): CancelablePromise<BindingReleasePolicy> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/bindings/release-policy',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Replace a binding release policy using its current revision.
+   * Requires deploy:write or admin and completed MFA. expected_revision is
+   * mandatory (0 initially); each accepted write increments it. Enforcement
+   * requires complete fresh verification on every deployment gaining traffic,
+   * including through redistribution. Promotion, direct traffic PATCH and
+   * canary advance evaluate the policy; request flags may only strengthen it.
+   * New candidates must be admitted with explicit zero traffic. Automatic
+   * cutovers, legacy recovery and project release graph switches fail closed
+   * until they support binding fences. Policies with storage requirements must use
+   * release-policy-with-object-storage for updates, including explicit clearing.
+   * Policies with queue requirements must use release-policy-with-queues and
+   * explicitly retain or clear every queue and storage requirement.
+   * To recover without evidence, explicitly
+   * set off with the current revision and a reason, then retry. Every update
+   * has durable policy history. Existing traffic is not changed by this call.
+   *
+   * @returns BindingReleasePolicy Saved policy with incremented revision.
+   * @throws ApiError
+   */
+  public static setBindingReleasePolicy({
+    slug,
+    requestBody,
+    scope = 'default',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetBindingReleasePolicyRequest,
+    /**
+     * Exact deployment scope. Omit to select default.
+     */
+    scope?: string,
+  }): CancelablePromise<BindingReleasePolicy> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/bindings/release-policy',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Replace release policy including required object-storage operations.
+   * Requires deploy:write or admin and completed MFA. Uses the same revision
+   * compare-and-set and traffic fences as release-policy. Explicit
+   * object_storage_requirements is required; an empty object clears it.
+   * Keys are managed environment prefixes in this scope (at most 32), values
+   * are read, write or read_write. Missing bindings, insufficient permissions,
+   * stale evidence, incomplete stages and mismatched operations block traffic.
+   * Read accepts the legacy listing canary; write requires upload and cleanup;
+   * read_write also requires byte-for-byte download. Current application ACKs
+   * are independently required when configured. This call only records policy;
+   * neither policy updates nor promotion initiate storage writes. Old servers
+   * return 404 on this route rather than silently dropping the requirements.
+   *
+   * @returns BindingReleasePolicy Updated object-storage release requirements and the new policy revision.
+   * @throws ApiError
+   */
+  public static setObjectStorageBindingReleasePolicy({
+    slug,
+    requestBody,
+    scope = 'default',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetObjectStorageBindingReleasePolicyRequest,
+    /**
+     * Deployment scope whose object-storage release policy will be replaced. Omit for default.
+     */
+    scope?: string,
+  }): CancelablePromise<BindingReleasePolicy> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/bindings/release-policy-with-object-storage',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect all runtime resource bindings attached to an app.
+   * Read-only, best-effort metadata for service, PostgreSQL, object-storage,
+   * queue and outbound bindings. Requires apps:read or admin. PostgreSQL
+   * sections additionally require managed-postgres:read or admin; object
+   * storage sections require storage:manage or admin, matching the existing
+   * compute-binding read surface. MFA-pending sessions are rejected.
+   * Missing permissions and failed sections appear as structured issues in
+   * a 200 response with complete=false; successfully read sections remain.
+   * An unconfigured managed PostgreSQL feature is a warning. Other issues
+   * have error severity. No provider calls, workload probes or writes occur.
+   * State describes configuration/provisioning, not applied runtime health.
+   * Runtime status is unknown unless a scheduler queue observation exists;
+   * verification status includes durable service, PostgreSQL and object-storage task-guest canary results. GeneratedAt is collection time, not a
+   * promise of an atomic snapshot. Credential material and raw errors are
+   * excluded. Responses use Cache-Control: no-store.
+   *
+   * @returns AppBindingInventory Complete or partial binding inventory, without credentials.
+   * @throws ApiError
+   */
+  public static getAppBindingInventory({
+    slug,
+    deploymentId,
+    serviceTargets,
+    scope,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Select evidence for this exact app-owned, materialized live deployment, including zero-traffic candidates. No fallback to evidence from another deployment. Omit to use the manual-task selection.
+     */
+    deploymentId?: string,
+    /**
+     * JSON object mapping declared service names to exact live deployment UUIDs in the caller scope. Requires deployment_id. Target evidence is isolated from ordinary any-replica evidence. Does not change routes or grant access.
+     */
+    serviceTargets?: string,
+    /**
+     * Filter database and bucket binding scopes. Omit to include all scopes. App-wide service, queue and outbound bindings always remain included.
+     */
+    scope?: string,
+  }): CancelablePromise<AppBindingInventory> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/bindings',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'deployment_id': deploymentId,
+        'service_targets': serviceTargets,
+        'scope': scope,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
       },
     });
   }

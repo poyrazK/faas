@@ -56,6 +56,16 @@ class AlertRuleResponse:
     the rule's app back to its last live deployment. demote = pin the current canary step (no traffic advance).
     promote = short-circuit the canary ladder to 100%. Pre-auth target and MCP task, event consumer, and workflow
     metrics support webhook only."""
+    mcp_readiness_scope: str | Unset = UNSET
+    """Immutable readiness environment selector. Omitted or empty means every environment; default selects only
+    default. Valid only for mcp_readiness_unhealthy."""
+    mcp_min_calls: int | Unset = UNSET
+    """MCP protocol alerts only. Minimum observations in every rolling window; defaults to 20 on create. Latency
+    uses measured executions. Omit for other metrics."""
+    mcp_for_minutes: int | Unset = UNSET
+    """MCP protocol alerts only. Continuous breach duration sampled every 30 seconds; defaults to 10 on create.
+    Missing observations interrupt eligibility. Webhook action, app scope, gt/gte and windows 5m/15m/1h are
+    required. Error thresholds are percent (0..100), execution p95 thresholds are milliseconds (0..300000)."""
     event_subscription_id: UUID | Unset = UNSET
     """Immutable subscription selector. Required only for event consumer metrics; webhook action and windows up to
     24h are required."""
@@ -102,6 +112,12 @@ class AlertRuleResponse:
 
         updated_at = self.updated_at.isoformat()
 
+        mcp_readiness_scope = self.mcp_readiness_scope
+
+        mcp_min_calls = self.mcp_min_calls
+
+        mcp_for_minutes = self.mcp_for_minutes
+
         event_subscription_id: str | Unset = UNSET
         if not isinstance(self.event_subscription_id, Unset):
             event_subscription_id = str(self.event_subscription_id)
@@ -145,6 +161,12 @@ class AlertRuleResponse:
                 "updated_at": updated_at,
             }
         )
+        if mcp_readiness_scope is not UNSET:
+            field_dict["mcp_readiness_scope"] = mcp_readiness_scope
+        if mcp_min_calls is not UNSET:
+            field_dict["mcp_min_calls"] = mcp_min_calls
+        if mcp_for_minutes is not UNSET:
+            field_dict["mcp_for_minutes"] = mcp_for_minutes
         if event_subscription_id is not UNSET:
             field_dict["event_subscription_id"] = event_subscription_id
         if edge_rule_id is not UNSET:
@@ -192,6 +214,12 @@ class AlertRuleResponse:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
+
+        mcp_readiness_scope = d.pop("mcp_readiness_scope", UNSET)
+
+        mcp_min_calls = d.pop("mcp_min_calls", UNSET)
+
+        mcp_for_minutes = d.pop("mcp_for_minutes", UNSET)
 
         _event_subscription_id = d.pop("event_subscription_id", UNSET)
         event_subscription_id: UUID | Unset
@@ -246,6 +274,9 @@ class AlertRuleResponse:
             state=state,
             created_at=created_at,
             updated_at=updated_at,
+            mcp_readiness_scope=mcp_readiness_scope,
+            mcp_min_calls=mcp_min_calls,
+            mcp_for_minutes=mcp_for_minutes,
             event_subscription_id=event_subscription_id,
             edge_rule_id=edge_rule_id,
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,

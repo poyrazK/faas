@@ -28,6 +28,26 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"migration_verifications":           CloneSchemaOperational,
 		"project_migrations":                CloneSchemaOperational,
 
+		// MCP policies and notification credentials need an isolated strategy.
+		// Evidence, overrides, leases and incident delivery authority stay at source.
+		"app_mcp_readiness_policies":               CloneSchemaConfiguration,
+		"app_mcp_readiness_policy_history":         CloneSchemaConfiguration,
+		"deployment_mcp_readiness_evidence":        CloneSchemaOperational,
+		"deployment_mcp_readiness_monitors":        CloneSchemaOperational,
+		"deployment_mcp_readiness_overrides":       CloneSchemaOperational,
+		"mcp_readiness_attention_actions":          CloneSchemaOperational,
+		"mcp_readiness_fallback_policies":          CloneSchemaConfiguration,
+		"mcp_readiness_incident_attention":         CloneSchemaOperational,
+		"mcp_readiness_incident_cursors":           CloneSchemaOperational,
+		"mcp_readiness_incident_events":            CloneSchemaOperational,
+		"mcp_readiness_incidents":                  CloneSchemaOperational,
+		"mcp_readiness_maintenance_windows":        CloneSchemaConfiguration,
+		"mcp_readiness_notification_actions":       CloneSchemaOperational,
+		"mcp_readiness_pagerduty_ack_events":       CloneSchemaOperational,
+		"mcp_readiness_pagerduty_acknowledgements": CloneSchemaConfiguration,
+		"mcp_readiness_pagerduty_policies":         CloneSchemaConfiguration,
+		"mcp_readiness_reminder_defaults":          CloneSchemaConfiguration,
+
 		// Rehearsal authority, admission policies and evidence belong to the
 		// original run; cloning must never enroll or resume its execution.
 		"scenario_cold_preparations":    CloneSchemaOperational,
@@ -368,6 +388,34 @@ func TestHostingCloneInventoryRetainsCopyStrategyBlockers(t *testing.T) {
 	}
 	if len(wanted) != 0 {
 		t.Fatal("hosting copy strategies became implicitly available", wanted)
+	}
+}
+
+func TestMCPReadinessCloneInventoryRetainsCopyStrategyBlockers(t *testing.T) {
+	policies, err := ProjectEnvironmentCloneSchemaPolicies()
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := cloneSchemaCoverage(policies)
+	if err != nil || !report.Known {
+		t.Fatal("registered schema must be known", report, err)
+	}
+	wanted := map[string]bool{
+		"app_mcp_readiness_policies":               true,
+		"app_mcp_readiness_policy_history":         true,
+		"mcp_readiness_fallback_policies":          true,
+		"mcp_readiness_maintenance_windows":        true,
+		"mcp_readiness_pagerduty_acknowledgements": true,
+		"mcp_readiness_pagerduty_policies":         true,
+		"mcp_readiness_reminder_defaults":          true,
+	}
+	for _, blocker := range report.Blockers {
+		if blocker.Code == "isolated_strategy_unavailable" {
+			delete(wanted, blocker.Table)
+		}
+	}
+	if len(wanted) != 0 {
+		t.Fatal("MCP readiness configuration became implicitly cloneable", wanted)
 	}
 }
 
