@@ -7,6 +7,28 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Zero-downtime daemon restarts — 2026-10-17 (branch, not released)
+
+gatewayd-internal (unix socket and compute data listener), realtimed and the
+control plane's schedd can restart behind systemd sockets that keep their
+listeners open, as apid and gatewayd-public already did (ADR-068). schedd's
+socket follows its configured address (`faas_schedd_listen_addr`, from the
+manifest's schedd bind); the compute sockets stay off
+(`faas_compute_durable_listeners`) until node_join manages them. Shutdown ends
+SSE and WebSocket sessions at once instead of holding the restart for the
+25 s grace, gRPC servers end watch streams so GracefulStop finishes, the
+public-to-internal H2C hop resends requests that crossed a graceful GOAWAY,
+wake RPCs wait out a schedd restart, outboundd and bridged drain before
+exiting, and HTTP daemons answer requests on connections accepted just before
+shutdown instead of closing them
+([ADR-1580](adr/1580-zero-downtime-daemon-restarts.md)). Portable
+restart-under-load tests show no failed requests. On fsn-4 (systemd 255),
+gatewayd-internal's synth server behind a socket unit and a TCP schedd
+listener behind a socket unit each restarted five times under load with 0 of
+138,179 and 0 of 127,987 requests failing; without the socket unit the gateway
+returned 103,323 502s. Open: the first socket conversion through `node_join`
+and deployctl, and the listeners the ADR leaves without socket activation.
+
 ## Worker admission explanations — 2026-10-18
 
 Worker pool recovery now records the actual admission blockers per environment:
@@ -103,28 +125,6 @@ Both CI tiers run these harness checks. Native execution remains pending: this
 workspace has no KVM device or designated peer credentials. Host power loss,
 partitions, automatic recovery-policy and drain qualification remain separate.
 The earlier heartbeat smoke is available separately. Nothing deployed.
-## Zero-downtime daemon restarts — 2026-10-17 (branch, not released)
-
-gatewayd-internal (unix socket and compute data listener), realtimed and the
-control plane's schedd can restart behind systemd sockets that keep their
-listeners open, as apid and gatewayd-public already did (ADR-068). schedd's
-socket follows its configured address (`faas_schedd_listen_addr`, from the
-manifest's schedd bind); the compute sockets stay off
-(`faas_compute_durable_listeners`) until node_join manages them. Shutdown ends
-SSE and WebSocket sessions at once instead of holding the restart for the
-25 s grace, gRPC servers end watch streams so GracefulStop finishes, the
-public-to-internal H2C hop resends requests that crossed a graceful GOAWAY,
-wake RPCs wait out a schedd restart, outboundd and bridged drain before
-exiting, and HTTP daemons answer requests on connections accepted just before
-shutdown instead of closing them
-([ADR-1580](adr/1580-zero-downtime-daemon-restarts.md)). Portable
-restart-under-load tests show no failed requests. On fsn-4 (systemd 255),
-gatewayd-internal's synth server behind a socket unit and a TCP schedd
-listener behind a socket unit each restarted five times under load with 0 of
-138,179 and 0 of 127,987 requests failing; without the socket unit the gateway
-returned 103,323 502s. Open: the first socket conversion through `node_join`
-and deployctl, and the listeners the ADR leaves without socket activation.
-
 ## Product Control customer work history — 2026-10-17
 
 [ADR-1727](adr/1727-product-control-customer-work-history.md) adds a private
