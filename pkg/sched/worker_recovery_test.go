@@ -474,9 +474,9 @@ func TestWorkerRecoveryScopedSuccessDoesNotPostponeFullSweep(t *testing.T) {
 }
 
 func TestWorkerRecoveryInactiveAccountsNeverBoot(t *testing.T) {
-	ctx := context.Background()
 	for _, status := range []state.AccountStatus{state.AccountSuspended, state.AccountDeletedPending} {
 		t.Run(string(status), func(t *testing.T) {
+			ctx := t.Context()
 			store := state.NewMemStore()
 			vmm := &fakeVMM{}
 			e, app, _ := workerRecoveryFixture(t, store, vmm, 1)
