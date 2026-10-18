@@ -869,8 +869,10 @@ type Manager struct {
 	// waking marks leases between acquisition and live-map publication.
 	// ProcessExited records a pending marker only for this narrow phase;
 	// an exit observed after explicit Destroy has removed live must not
-	// be mistaken for a future Wake of the same id.
-	waking     map[string]struct{}
+	// be mistaken for a future Wake of the same id. A Wake records the
+	// request's runtime identity so a booting guest can register its
+	// secret execution before exec (ADR-508), ahead of publication.
+	waking     map[string]wakingInstance
 	exportDirs map[string]string // instance -> host export dir (builder VMs only, M6)
 	// cidToID (issue #470 / PR #470-FU-B) is the reverse
 	// Firecracker-vsock-CID → instance id index the framework_ready
@@ -1267,7 +1269,7 @@ func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Lo
 		pendingProcessExits:               make(map[string]int),
 		processGenerations:                make(map[string]uint64),
 		processStartedAt:                  make(map[string]time.Time),
-		waking:                            make(map[string]struct{}),
+		waking:                            make(map[string]wakingInstance),
 		exportDirs:                        make(map[string]string),
 		// Issue #470 / PR #470-FU-B: O(1) CID→instance lookup
 		// for the framework_ready DGRAM receipt path. See the
@@ -2870,17 +2872,27 @@ func (m *Manager) ExecutionRelayIdentity(instance string) (accountID, executionI
 }
 
 // InstanceRuntimeSecretIdentity resolves the deployment, app, and account
-// principal for a live guest stream under one lock. Keeping the tuple atomic
+// principal for a guest stream under one lock. Keeping the tuple atomic
 // prevents a park/reuse race from mixing identities during runtime secret
-// refresh.
+// refresh. A guest that is still booting resolves to its Wake request's
+// identity: guest-init registers each secret-reload process before exec
+// (ADR-508), and readiness, hence publication, waits on that process.
 func (m *Manager) InstanceRuntimeSecretIdentity(instance string) (deploymentID, appID, accountID string, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	inst, ok := m.live[instance]
-	if !ok {
-		return "", "", "", fmt.Errorf("fcvm: runtime secret identity %s: not live", instance)
+	if inst, ok := m.live[instance]; ok {
+		return inst.DeploymentID, inst.AppID, inst.AccountID, nil
 	}
-	return inst.DeploymentID, inst.AppID, inst.AccountID, nil
+	if w, ok := m.waking[instance]; ok && w.deploymentID != "" && w.appID != "" && w.accountID != "" {
+		return w.deploymentID, w.appID, w.accountID, nil
+	}
+	return "", "", "", fmt.Errorf("fcvm: runtime secret identity %s: not live", instance)
+}
+
+// wakingInstance is the identity a Wake request fixed for an instance that
+// has not been published to live yet. Other waking markers leave it empty.
+type wakingInstance struct {
+	deploymentID, appID, accountID string
 }
 
 // InstanceIdentityByCID resolves the peer CID and its app/account principal
@@ -4305,9 +4317,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	lease.DisableStartupCPUBoost = req.DisableStartupCPUBoost
 	m.mu.Lock()
 	if m.waking == nil {
-		m.waking = make(map[string]struct{})
+		m.waking = make(map[string]wakingInstance)
 	}
-	m.waking[req.Instance] = struct{}{}
+	m.waking[req.Instance] = wakingInstance{deploymentID: req.DeploymentID, appID: req.AppID, accountID: req.AccountID}
 	m.mu.Unlock()
 	lease = m.beginProcessAttempt(lease)
 	// Any failure from this point — Plan validation, wire-side
