@@ -1,3 +1,5 @@
+-- migration-compat: contract
+-- Provider approval guards require the coordinated GitOps code rollout.
 -- Provider-bound reviewed GitLab evidence; production enforcement remains gated.
 -- +goose Up
 SET LOCAL lock_timeout = '5s';

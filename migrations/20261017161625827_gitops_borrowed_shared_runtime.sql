@@ -1,3 +1,5 @@
+-- migration-compat: contract
+-- Shared source-runtime producer predicates change with the GitOps artifact contract.
 -- filename: 20261017161625827_gitops_borrowed_shared_runtime.sql
 -- ADR-20261017190804 and ADR-1500: preserve borrowed artifact validation alongside shared runner claims.
 

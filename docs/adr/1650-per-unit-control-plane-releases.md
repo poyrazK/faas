@@ -2,7 +2,7 @@
 
 - **Status:** proposed
 - **Date:** 2026-10-17 (slice 2: 2026-10-18)
-- **Related:** ADR-113 (canonical signed release), ADR-129 (deploy version gauge), ADR-580 (control-plane convergence in CD), ADR-20261018072701 (zero-downtime restarts), ADR 202610171900 (release compatibility gates)
+- **Related:** ADR-113 (canonical signed release), ADR-129 (deploy version gauge), ADR-580 (control-plane convergence in CD), ADR-20261018072701 (zero-downtime restarts), ADR 202610171900 (release compatibility gates), ADR 20261018084150 (expand-only migrations in per-unit releases)
 
 ## Context
 
@@ -47,7 +47,8 @@ of its inputs. Lanes come from `scripts/ci/release_units.json`, which a test
 keeps in lockstep with `pkg/daemonunitspec` roles, units and readiness URLs.
 
 A range is eligible when at least one control-plane daemon changed and none of
-these did since the base: migrations, `deploy/` (units, roles, rules,
+these did since the base: migrations (since ADR 20261018084150, only those
+that are not lane-eligible), `deploy/` (units, roles, rules,
 manifests), go.mod/go.sum, the files cd-controlplane copies into its bundle,
 and the release tarball's own contents. Roles only the compute play runs
 (`compute_only_paths`, which a test checks against bootstrap.yml) wait instead
@@ -90,9 +91,13 @@ one.
    on the previous release. All of this runs under the same public-path
    availability observer as a full activation.
 
-The unit lane never runs migrations, role convergence, KGV rotation or
-fleet-seal steps. Those inputs are blocking, so they are unchanged since the
-base, which already ran them. This is the split between release activation
+The unit lane never runs role convergence, KGV rotation or fleet-seal
+steps. Those inputs are blocking, so they are unchanged since the base,
+which already ran them. Migrations follow ADR 20261018084150. When every
+migration since the base is expand-only, the control-plane lane applies
+them with the release commit's `bin/migrate`, through deployctl's own
+migration step, before it restarts anything. Any other migration still
+blocks the lane. This is the split between release activation
 and host configuration, for the control plane: no Ansible runs on the unit
 lane's critical path.
 
@@ -214,10 +219,12 @@ deploy --only` and inherit that choice.
 - *N±1:* every lane refuses a unit release that is not built over the newest
   full release tag before its commit. That is the release CI compared each
   merge against, so mixed units are at most one release apart.
-- *Order:* migrations block the unit lanes, so data changes go out only in a
-  full release. `release-units.yml` deploys the control-plane lane, then the
-  edge lane. The edge lane checks the control plane itself when it is run
-  alone. Runtime (guest, images) waits for a full release.
+- *Order:* lane-eligible migrations (ADR 20261018084150) are applied by the
+  control-plane lane before its restarts, and contract migrations go out
+  only in a full release. `release-units.yml` deploys the control-plane
+  lane, then the edge lane. When the edge lane runs alone, it checks the
+  control plane itself, including the applied migrations. Runtime (guest,
+  images) waits for a full release.
 
 The `base` dispatch input can no longer move a unit release onto an older
 production release. That combination is exactly what N±1 forbids.
@@ -292,9 +299,11 @@ a node pays its one-time hashing.
 
 ## Still needed
 
-- **Migrations.** Most blocked ranges contain a migration. Allowing the lane to
-  run expand-only migrations ahead of restarts needs a machine-checkable
-  compatibility marker (owned by the release-safety-rails work).
+- **Migrations.** Done in ADR 20261018084150. Every new migration declares
+  `-- migration-compat: expand|contract`. The control-plane lane applies a
+  range of expand migrations ahead of restarts, and contract migrations
+  still need a full release. After that change, `deploy/` changes are what
+  most often close the lane.
 - **Compute daemons beyond the gateways.** schedd and realtimed restart
   without touching VMs and could join the edge lane once their restarts are
   covered (ADR-20261018072701). vmmd needs the restart-adoption work.

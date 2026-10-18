@@ -1,3 +1,5 @@
+-- migration-compat: contract
+-- Same-scope rollback changes shared artifact predicates with the GitOps rollout.
 -- filename: 20261017081218727_environment_built_artifact_same_scope_rollback.sql
 -- adr: 20261017190805
 -- +goose Up

@@ -1,3 +1,5 @@
+-- migration-compat: contract
+-- Source-Job qualification and reserved-VM guards require the coordinated GitOps rollout.
 -- Source-backed schedules reuse a qualified deployment layer; they never
 -- ask imaged to pull the internal source reference or rebuild per occurrence.
 -- +goose Up

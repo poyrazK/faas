@@ -1,3 +1,5 @@
+-- migration-compat: contract
+-- Signed-artifact scheduled Jobs change shared provenance and Job-link guards.
 -- filename: 20261017115917804_environment_scheduled_job_artifact_reuse.sql
 -- adr: 20261017190808. Signed artifacts supply future scheduled runs; no execution is replayed.
 -- +goose Up

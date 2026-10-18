@@ -1,3 +1,5 @@
+-- migration-compat: contract
+-- Recovery protection and retention guards require the coordinated GitOps rollout.
 -- ADR-20261017190807: bounded artifact recovery protection from reviewed Git intent.
 -- +goose Up
 SET LOCAL lock_timeout = '5s';

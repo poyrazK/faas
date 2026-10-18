@@ -8,7 +8,7 @@
 #   * the unit release must be built over the previous full release (N±1);
 #   * the control-plane lane of the same unit release must already be on the
 #     control plane (cd-controlplane.yml's deploy-units job, which also ran
-#     its SLO gate).
+#     its SLO gate), including the migrations it applies first.
 #
 # Then the lane runs canary first (scripts/ci/plan_edge_rollout.py): the
 # designated compute node (edge_canary, or the environment variable
@@ -203,7 +203,7 @@ jobs:
             --out "$RUNNER_TEMP/cp-plan"
           action="$(jq -r .action "$RUNNER_TEMP/cp-plan/plan.json")"
           if [[ "$action" == deploy ]]; then
-            echo "::error::deploy order: the control-plane lane of this unit release ($(jq -r '.units | join(", ")' "$RUNNER_TEMP/cp-plan/plan.json")) is not on the control plane yet; run cd-controlplane.yml with units_run_id first" >&2
+            echo "::error::deploy order: the control-plane lane of this unit release ($(jq -r '[.units[], .migrations[]?] | join(", ")' "$RUNNER_TEMP/cp-plan/plan.json")) is not on the control plane yet; run cd-controlplane.yml with units_run_id first" >&2
             exit 1
           fi
           echo "control-plane lane is in place ($action); previous release $previous_tag"

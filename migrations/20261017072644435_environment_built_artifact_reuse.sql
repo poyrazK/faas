@@ -1,3 +1,5 @@
+-- migration-compat: contract
+-- Borrowed-artifact provenance and pin guards require the coordinated GitOps rollout.
 -- filename: 20261017072644435_environment_built_artifact_reuse.sql
 -- ADR-20261017190804: Immutable code reuse with independent target authority.
 
