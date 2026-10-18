@@ -1087,6 +1087,9 @@ from .deployment_readiness_probe import DeploymentReadinessProbe
 from .deployment_response import DeploymentResponse
 from .deployment_response_build_cache_status import DeploymentResponseBuildCacheStatus
 from .deployment_response_canary_preset import DeploymentResponseCanaryPreset
+from .deployment_response_check_capabilities import DeploymentResponseCheckCapabilities
+from .deployment_response_check_request import DeploymentResponseCheckRequest
+from .deployment_response_check_result import DeploymentResponseCheckResult
 from .deployment_response_deployed_via_type_1 import DeploymentResponseDeployedViaType1
 from .deployment_response_deployed_via_type_2_type_1 import DeploymentResponseDeployedViaType2Type1
 from .deployment_response_deployed_via_type_3_type_1 import DeploymentResponseDeployedViaType3Type1
@@ -6418,6 +6421,9 @@ __all__ = (
     "DeploymentResponse",
     "DeploymentResponseBuildCacheStatus",
     "DeploymentResponseCanaryPreset",
+    "DeploymentResponseCheckCapabilities",
+    "DeploymentResponseCheckRequest",
+    "DeploymentResponseCheckResult",
     "DeploymentResponseDeployedViaType1",
     "DeploymentResponseDeployedViaType2Type1",
     "DeploymentResponseDeployedViaType3Type1",

@@ -3399,6 +3399,8 @@ func (s *server) handler() http.Handler {
 	// they're the customer-facing event surface; the existing
 	// adminAllows email gate still narrows /v1/compute-nodes separately.
 	mux.HandleFunc("POST /v1/apps/{slug}/invoke", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.invokeApp))))
+	mux.HandleFunc("POST /v1/apps/{slug}/deployments/{deployment}/response-check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.checkDeploymentResponse))))
+	mux.HandleFunc("GET /v1/deployments/response-check/capabilities", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.getDeploymentResponseCheckCapabilities)))
 	mux.HandleFunc("GET /v1/apps/{slug}/entities/quotas", s.durable.Route(s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.durable.App(s.durable.InspectEntityTenantQuotas))))))
 	mux.HandleFunc("GET /v1/apps/{slug}/entities/readiness", s.durable.Route(s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.durable.App(s.durable.InspectDurableEntityReadiness))))))
 	mux.HandleFunc("GET /v1/apps/{slug}/entities/quota-migration/plan", s.durable.Route(s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.durable.App(s.durable.PlanEntityQuotaMigration))))))
