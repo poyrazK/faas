@@ -95,7 +95,7 @@ function pageParams(query) {
   const page = Number(query.get('page') ?? 1)
   const perPage = Number(query.get('per_page') ?? 50)
   if (!Number.isInteger(page) || page < 1 || page > 100000) throw new HTTPError(400, 'invalid_page')
-  if (!Number.isInteger(perPage) || perPage < 1 || perPage > 100) throw new HTTPError(400, 'invalid_per_page')
+  if (!Number.isInteger(perPage) || perPage < 1 || perPage > limits.adminPageSize) throw new HTTPError(400, 'invalid_per_page')
   const search = query.get('search') ?? ''
   if (search.length > 200 || /[\x00-\x1f\x7f]/.test(search)) throw new HTTPError(400, 'invalid_search')
   return { page, perPage, search }
