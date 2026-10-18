@@ -13,6 +13,7 @@ import (
 // fees, trial-set sends days, and the account-level overdue verbs need no
 // tenant.
 func TestCmdPlatformTenantControls(t *testing.T) {
+	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1") // adr: 20261018090210 — exercises released monetization
 	var card api.CreatePlatformTenantRateCardRequest
 	var trial api.PutAPIConsumerTrialRequest
 	var policy api.PutAPIConsumerBillingPolicyRequest
