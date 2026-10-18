@@ -20,6 +20,9 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
+		// Function capture and destination authority stay with their original instance.
+		"function_migration_sources":      CloneSchemaOperational,
+		"function_migration_destinations": CloneSchemaOperational,
 		// Rehearsal fixtures, leases and sealed run evidence remain with their source.
 		"scenario_cold_preparations":          CloneSchemaOperational,
 		"scenario_command_networks":           CloneSchemaOperational,

@@ -59,6 +59,9 @@ jobs:
       GOMEMLIMIT: 2GiB
       GOGC: 10
       GOMAXPROCS: 2
+      # Each state fixture gets a private clone of the fully migrated schema.
+      # Migration-focused fixtures using pgtest.Open still start empty.
+      FAAS_PGTEST_TEMPLATE_DATABASE: '1'
       # Keep the expanded state contracts within the runner's memory/disk budget.
       GOFLAGS: '-gcflags=github.com/onebox-faas/faas/pkg/state=-dwarf=false'
     services:

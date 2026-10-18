@@ -581,5 +581,40 @@
     "python_compilation_passed": true,
     "native_acceptance": false,
     "production_activation": false
+  },
+  "hosted_sql_gate_corrections": {
+    "feature_head_before_fix": "8096ff29af0cd7181b4f8f32851f1b6591cdc1d6",
+    "recorded_at": "2026-10-18T01:16:28.877909+00:00",
+    "workflow_migrated_template_opt_in": true,
+    "private_database_per_test": true,
+    "test_timeout_unchanged": "3m",
+    "race_binary_compile_memlimit": "5GiB",
+    "race_runtime_limits": {
+      "GOMEMLIMIT": "2GiB",
+      "GOGC": "10",
+      "GOMAXPROCS": "2"
+    },
+    "state_race": {
+      "passed_tests": 76,
+      "skipped_tests": [],
+      "failed_tests": [],
+      "log_sha256": "34cf43fc9882d81339c54027b65cbb669e7735cb1d647d5ebfb380690e2137cb"
+    },
+    "managed_postgres_cutover": {
+      "passed_tests": 1,
+      "skipped_tests": [],
+      "failed_tests": [],
+      "elapsed_seconds": 8.43,
+      "log_sha256": "337f3a30eb39a5e4081f6abbf48e68675da4da456ff599e3512407185ebd0163"
+    },
+    "operational_tables": [
+      "function_migration_destinations",
+      "function_migration_sources"
+    ],
+    "unknown_schema_still_fails_before_reservation": true,
+    "actionlint_passed": true,
+    "schema_changed": false,
+    "native_acceptance": false,
+    "production_activation": false
   }
 }

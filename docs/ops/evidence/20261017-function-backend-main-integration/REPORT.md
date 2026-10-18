@@ -172,6 +172,26 @@ integration. Fresh-head hosted checks, including guarded native compilation,
 must finish before merge. No native execution or production activation is
 qualified by this integration.
 
+## Hosted SQL fixture and clone inventory corrections
+
+The function portable workflow now opts into the existing migrated-template
+fixture mode. The full migration history runs once, and each state test receives
+its own database clone. Migration-focused fixtures using `pgtest.Open` keep their
+empty-schema behavior. The test timeout remains three minutes.
+
+The ordinary function SQL selection plus registry and migrated-schema coverage
+passed 76 race tests/subtests without skips or failures within that deadline.
+The binary was compiled separately with a 5 GiB memory limit, then executed with
+CI's 2 GiB limit, GOGC 10 and two logical processors. The migrated-schema test
+still rejects unknown columns/tables before reserving an operation.
+
+Both function handoff journals are explicitly operational in the clone inventory.
+Capture permissions, leases, destination readiness and physical ownership stay
+with the original instance; environment cloning cannot copy that authority.
+The exact managed-PostgreSQL cutover/clone-exclusion and live-authority downgrade
+regression passes in 8.43 seconds. Workflow actionlint passes. No schema migration,
+production activation or native execution qualification is introduced.
+
 ## Qualification boundary
 
 Production activation remains disabled. This managed container has no supported

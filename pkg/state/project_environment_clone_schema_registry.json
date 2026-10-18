@@ -4994,6 +4994,35 @@
     "kind": "platform_configuration"
   },
   {
+    "table": "function_migration_destinations",
+    "columns": [
+      "grant_data",
+      "instance_id",
+      "lease_token",
+      "node_id",
+      "phase",
+      "receipt",
+      "token",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "function_migration_sources",
+    "columns": [
+      "capture_grant",
+      "capture_result",
+      "capture_token",
+      "instance_id",
+      "lease_token",
+      "phase",
+      "recovery_grant",
+      "source_node_id",
+      "source_wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "gateway_concurrency_queue_leases",
     "columns": [
       "app_id",
