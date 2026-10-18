@@ -2210,6 +2210,17 @@
     "kind": "operational"
   },
   {
+    "table": "customer_operation_children",
+    "columns": [
+      "account_id",
+      "child_key",
+      "child_operation_id",
+      "created_at",
+      "parent_operation_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "customer_operation_code_pins",
     "columns": [
       "app_id",

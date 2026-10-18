@@ -23671,6 +23671,21 @@ CREATE TABLE public.customer_operation_attempt_instances (
 
 
 --
+-- Name: customer_operation_children; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_children (
+    parent_operation_id uuid NOT NULL,
+    child_key text NOT NULL,
+    child_operation_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_children_check CHECK ((parent_operation_id <> child_operation_id)),
+    CONSTRAINT customer_operation_children_child_key_check CHECK (((octet_length(child_key) >= 1) AND (octet_length(child_key) <= 64)))
+);
+
+
+--
 -- Name: customer_operation_code_pins; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -39959,6 +39974,22 @@ ALTER TABLE ONLY public.custom_domains
 
 ALTER TABLE ONLY public.customer_operation_attempt_instances
     ADD CONSTRAINT customer_operation_attempt_instances_pkey PRIMARY KEY (operation_id, generation, attempt);
+
+
+--
+-- Name: customer_operation_children customer_operation_children_child_operation_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_children
+    ADD CONSTRAINT customer_operation_children_child_operation_id_key UNIQUE (child_operation_id);
+
+
+--
+-- Name: customer_operation_children customer_operation_children_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_children
+    ADD CONSTRAINT customer_operation_children_pkey PRIMARY KEY (parent_operation_id, child_key);
 
 
 --
@@ -60695,6 +60726,30 @@ ALTER TABLE ONLY public.custom_domains
 
 ALTER TABLE ONLY public.customer_operation_attempt_instances
     ADD CONSTRAINT customer_operation_attempt_instanc_operation_id_generation_fkey FOREIGN KEY (operation_id, generation) REFERENCES public.customer_operation_executions(operation_id, generation) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_children customer_operation_children_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_children
+    ADD CONSTRAINT customer_operation_children_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_children customer_operation_children_child_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_children
+    ADD CONSTRAINT customer_operation_children_child_operation_id_fkey FOREIGN KEY (child_operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_children customer_operation_children_parent_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_children
+    ADD CONSTRAINT customer_operation_children_parent_operation_id_fkey FOREIGN KEY (parent_operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
 
 
 --
