@@ -21,10 +21,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/imagepublisher"
 )
 
-type registryVerificationTestStore interface {
-	Store
-	DeploymentRegistryVerificationStore
-}
+type registryVerificationTestStore = contractTestStore
 type registryEvidencePuller struct {
 	digest     string
 	attachment imagepublisher.ImageSignatureAttachment

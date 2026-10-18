@@ -13,10 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appstandards"
 )
 
-type standardLocalArtifactTestStore interface {
-	standardLocalIntentTestStore
-	standardArtifactReviewTestStore
-}
+type standardLocalArtifactTestStore = contractTestStore
 
 func TestMemApplicationStandardLocalIntentArtifacts(t *testing.T) {
 	standardLocalIntentArtifacts(t, func(*testing.T) standardLocalArtifactTestStore { return NewMemStore() })

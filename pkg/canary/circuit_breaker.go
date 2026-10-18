@@ -3,6 +3,7 @@ package canary
 import (
 	"fmt"
 	"math"
+	"strings"
 )
 
 const (
@@ -28,6 +29,10 @@ const (
 	// Managed service dependencies are less frequent than inbound requests, so
 	// require a smaller but still useful denominator before comparing rates.
 	CircuitBreakerMinDependencyCalls int64 = 10
+	// CircuitBreakerMinCrashLoopRestarts is how many liveness-driven restarts
+	// of the candidate mark a crash loop (ADR-1446). Restarts need no request
+	// sample, so a crash-looping release is caught even with no traffic.
+	CircuitBreakerMinCrashLoopRestarts float64 = 2
 
 	circuitBreakerErrorRateFloorPct      = 5.0
 	circuitBreakerErrorRateDeltaPct      = 5.0
@@ -44,6 +49,10 @@ const (
 	circuitBreakerDependencyErrorFloorPct  = 20.0
 	circuitBreakerDependencyErrorDeltaPct  = 10.0
 	circuitBreakerDependencyErrorFactor    = 3.0
+	// A candidate must restart more than this multiple of its predecessor's
+	// restarts in the same window, so a predecessor that already flaps does
+	// not make every release look like a regression.
+	circuitBreakerCrashLoopFactor = 2.0
 )
 
 type CircuitBreakerAction string
@@ -67,17 +76,30 @@ type HealthWindow struct {
 	CPUUsec              int64
 	DependencyCalls      int64
 	DependencyErrors     int64
+	// ProbeRequests and ProbeServerErrors are synthetic probe responses
+	// attributed to this deployment over the stage (ADR-1446), excluding
+	// responses rejected by the app's own auth. They join the 5xx sample only
+	// while organic traffic is below the request floor and never feed
+	// latency, cold-boot, CPU, or dependency comparisons.
+	ProbeRequests     int64
+	ProbeServerErrors int64
 }
 
 // CircuitBreakerObservation compares the candidate with its currently
 // serving predecessor and carries the independent per-deployment OOM signal.
 type CircuitBreakerObservation struct {
-	Candidate                 HealthWindow
-	Stable                    HealthWindow
-	StableDeploymentID        string
-	HasStable                 bool
-	OOMKills                  float64
-	OOMSignalAvailable        bool
+	Candidate          HealthWindow
+	Stable             HealthWindow
+	StableDeploymentID string
+	HasStable          bool
+	OOMKills           float64
+	OOMSignalAvailable bool
+	// Liveness-driven destroy+cold-boot cycles in the rollout window
+	// (ADR-1446). LivenessSignalAvailable is false when the metric family is
+	// not exported, which holds rather than reading as zero restarts.
+	CandidateLivenessRestarts float64
+	StableLivenessRestarts    float64
+	LivenessSignalAvailable   bool
 	CPURequestSignalAvailable bool
 	DependencySignalAvailable bool
 }
@@ -105,25 +127,28 @@ func EvaluateCircuitBreaker(o CircuitBreakerObservation) CircuitBreakerDecision 
 	if !o.OOMSignalAvailable {
 		return CircuitBreakerDecision{Action: CircuitBreakerHold, Reason: "workload OOM signal unavailable"}
 	}
+	if !o.LivenessSignalAvailable {
+		return CircuitBreakerDecision{Action: CircuitBreakerHold, Reason: "liveness restart signal unavailable"}
+	}
+	if o.CandidateLivenessRestarts >= CircuitBreakerMinCrashLoopRestarts &&
+		o.CandidateLivenessRestarts > o.StableLivenessRestarts*circuitBreakerCrashLoopFactor {
+		return CircuitBreakerDecision{Action: CircuitBreakerAbort, Reason: fmt.Sprintf(
+			"crash loop (candidate %.0f liveness restarts, stable %.0f)",
+			o.CandidateLivenessRestarts, o.StableLivenessRestarts)}
+	}
 	if decision, ok := decisiveSmallSample5xx(o); ok {
 		return decision
 	}
 	if o.Candidate.Requests < CircuitBreakerMinRequests || o.Stable.Requests < CircuitBreakerMinRequests {
+		if decision, ok := probeBacked5xx(o); ok {
+			return decision
+		}
 		return CircuitBreakerDecision{Action: CircuitBreakerHold, Reason: fmt.Sprintf(
 			"insufficient request samples (candidate=%d stable=%d; need %d each)",
 			o.Candidate.Requests, o.Stable.Requests, CircuitBreakerMinRequests)}
 	}
-	candidateErrorPct := 100 * float64(o.Candidate.ServerErrors) / float64(o.Candidate.Requests)
-	stableErrorPct := 100 * float64(o.Stable.ServerErrors) / float64(o.Stable.Requests)
-	errorThreshold := math.Max(circuitBreakerErrorRateFloorPct, stableErrorPct*circuitBreakerErrorRateFactor)
-	if o.Candidate.ServerErrors >= 2 &&
-		candidateErrorPct >= errorThreshold &&
-		candidateErrorPct >= stableErrorPct+circuitBreakerErrorRateDeltaPct {
-		return CircuitBreakerDecision{Action: CircuitBreakerAbort, Reason: fmt.Sprintf(
-			"5xx regression (candidate %.1f%%, stable %.1f%%; %d/%d vs %d/%d requests)",
-			candidateErrorPct, stableErrorPct,
-			o.Candidate.ServerErrors, o.Candidate.Requests,
-			o.Stable.ServerErrors, o.Stable.Requests)}
+	if decision, ok := serverErrorRegression(o.Candidate, o.Stable, ""); ok {
+		return decision
 	}
 
 	if o.Candidate.P95LatencyMS >= o.Stable.P95LatencyMS*circuitBreakerLatencyFactor &&
@@ -189,6 +214,114 @@ func EvaluateCircuitBreaker(o CircuitBreakerObservation) CircuitBreakerDecision 
 		}
 	}
 	return CircuitBreakerDecision{Action: CircuitBreakerAdvance}
+}
+
+// LowTrafficAdvanceAllowed reports whether an inconclusive hold is only a
+// sample-size hold with no negative evidence (ADR-1446). A scale-to-zero app
+// may never send twenty requests to a 1% candidate, so an unbounded hold
+// would strand it there. Any candidate 5xx, OOM kill, liveness restart, or
+// unreadable OOM or liveness signal keeps the hold; regressions with enough
+// samples abort before this.
+func LowTrafficAdvanceAllowed(d CircuitBreakerDecision, o CircuitBreakerObservation) bool {
+	if d.Action != CircuitBreakerHold {
+		return false
+	}
+	if !strings.HasPrefix(d.Reason, "insufficient request samples") &&
+		!strings.HasPrefix(d.Reason, "insufficient CPU/request samples") {
+		return false
+	}
+	// A probe 5xx is negative evidence too; the probe path below decides once
+	// enough probes arrive.
+	return o.Candidate.ServerErrors == 0 && o.Candidate.ProbeServerErrors == 0 && quietSignalsClean(o)
+}
+
+// ProbeEvidenceAdvanceAllowed reports whether synthetic probes cover a
+// request-sample hold (ADR-1446): organic plus probe responses meet the
+// request floor on both sides, the candidate shows no 5xx regression against
+// its predecessor, and the OOM and liveness signals are readable and clean.
+// The canary then advances at the stage boundary on evidence instead of
+// waiting api.CanaryLowTrafficMaxHold for traffic that may never come.
+func ProbeEvidenceAdvanceAllowed(d CircuitBreakerDecision, o CircuitBreakerObservation) bool {
+	if d.Action != CircuitBreakerHold || !strings.HasPrefix(d.Reason, "insufficient request samples") {
+		return false
+	}
+	if o.Candidate.ProbeRequests == 0 || o.Stable.ProbeRequests == 0 {
+		return false
+	}
+	c, s := withProbes(o.Candidate), withProbes(o.Stable)
+	if c.Requests < CircuitBreakerMinRequests || s.Requests < CircuitBreakerMinRequests {
+		return false
+	}
+	if _, regressed := serverErrorRegression(c, s, ""); regressed {
+		return false
+	}
+	return quietSignalsClean(o)
+}
+
+func quietSignalsClean(o CircuitBreakerObservation) bool {
+	return o.OOMSignalAvailable && o.OOMKills == 0 && o.LivenessSignalAvailable && o.CandidateLivenessRestarts == 0
+}
+
+// withProbes is the 5xx sample of one side with its probe responses added.
+func withProbes(w HealthWindow) HealthWindow {
+	return HealthWindow{Requests: w.Requests + w.ProbeRequests, ServerErrors: w.ServerErrors + w.ProbeServerErrors}
+}
+
+// probeBacked5xx applies the 5xx rules to organic plus probe responses while
+// organic traffic is below the request floor (ADR-1446), so a quiet canary
+// that fails its probes aborts before it is promoted.
+func probeBacked5xx(o CircuitBreakerObservation) (CircuitBreakerDecision, bool) {
+	if o.Candidate.ProbeRequests == 0 && o.Stable.ProbeRequests == 0 {
+		return CircuitBreakerDecision{}, false
+	}
+	combined := CircuitBreakerObservation{Candidate: withProbes(o.Candidate), Stable: withProbes(o.Stable)}
+	if decision, ok := decisiveSmallSample5xx(combined); ok {
+		decision.Reason += "; synthetic probes included"
+		return decision, true
+	}
+	if combined.Candidate.Requests < CircuitBreakerMinRequests || combined.Stable.Requests < CircuitBreakerMinRequests {
+		return CircuitBreakerDecision{}, false
+	}
+	return serverErrorRegression(combined.Candidate, combined.Stable, "; synthetic probes included")
+}
+
+// ServerErrorRegression applies the breaker's 5xx rate comparison to two
+// samples that both meet CircuitBreakerMinRequests. Config guards (ADR-1451)
+// judge a config change against the config before it with the same rule.
+func ServerErrorRegression(candidate, stable HealthWindow) (CircuitBreakerDecision, bool) {
+	if candidate.Requests < CircuitBreakerMinRequests || stable.Requests < CircuitBreakerMinRequests {
+		return CircuitBreakerDecision{}, false
+	}
+	return serverErrorRegression(candidate, stable, "")
+}
+
+// LatencyRegression applies the breaker's p95 comparison to two samples that
+// both meet CircuitBreakerMinRequests. The post-release watch (ADR-1445)
+// judges a completed release against its predecessor with it.
+func LatencyRegression(candidate, stable HealthWindow) (CircuitBreakerDecision, bool) {
+	if candidate.Requests < CircuitBreakerMinRequests || stable.Requests < CircuitBreakerMinRequests {
+		return CircuitBreakerDecision{}, false
+	}
+	if candidate.P95LatencyMS >= stable.P95LatencyMS*circuitBreakerLatencyFactor &&
+		candidate.P95LatencyMS-stable.P95LatencyMS >= circuitBreakerLatencyDeltaMS {
+		return CircuitBreakerDecision{Action: CircuitBreakerAbort, Reason: fmt.Sprintf(
+			"p95 latency regression (candidate %.0fms, stable %.0fms)", candidate.P95LatencyMS, stable.P95LatencyMS)}, true
+	}
+	return CircuitBreakerDecision{}, false
+}
+
+// serverErrorRegression is the 5xx rate comparison for two samples that
+// already meet the request floor.
+func serverErrorRegression(c, s HealthWindow, note string) (CircuitBreakerDecision, bool) {
+	candidateErrorPct := 100 * float64(c.ServerErrors) / float64(c.Requests)
+	stableErrorPct := 100 * float64(s.ServerErrors) / float64(s.Requests)
+	errorThreshold := math.Max(circuitBreakerErrorRateFloorPct, stableErrorPct*circuitBreakerErrorRateFactor)
+	if c.ServerErrors < 2 || candidateErrorPct < errorThreshold || candidateErrorPct < stableErrorPct+circuitBreakerErrorRateDeltaPct {
+		return CircuitBreakerDecision{}, false
+	}
+	return CircuitBreakerDecision{Action: CircuitBreakerAbort, Reason: fmt.Sprintf(
+		"5xx regression (candidate %.1f%%, stable %.1f%%; %d/%d vs %d/%d requests%s)",
+		candidateErrorPct, stableErrorPct, c.ServerErrors, c.Requests, s.ServerErrors, s.Requests, note)}, true
 }
 
 // cpuLoadComparable reports whether the candidate carried enough of the

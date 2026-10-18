@@ -13,10 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type recoveryStore interface {
-	state.Store
-	state.ObjectBucketStore
-}
+type recoveryStore = contractTestStore
 
 func seedRecoveryBucket(t *testing.T, st recoveryStore) state.ObjectBucket {
 	t.Helper()

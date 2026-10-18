@@ -13,14 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type cloneBucketReservationTestStore interface {
-	cloneBindingTestStore
-	state.ProjectEnvironmentCloneWorkerLeaseStore
-	state.ProjectEnvironmentCloneObjectBucketStore
-	state.ObjectBucketReservationResultStore
-	state.ObjectMultipartUploadStore
-	state.ObjectUploadRouteStore
-}
+type cloneBucketReservationTestStore = contractTestStore
 
 func TestMemCloneBucketReservationUsesFrozenCatalogueAndWorker(t *testing.T) {
 	cloneBucketReservationContract(t, state.NewMemStore())

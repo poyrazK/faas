@@ -15,18 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type cloneCredentialPreparationTestStore interface {
-	cloneBucketReservationTestStore
-	state.ProjectEnvironmentCloneObjectCredentialStore
-	state.ProjectEnvironmentCloneLeasedObjectManifestStore
-	PutManagedObjectStorageSecret(context.Context, state.AppSecret) error
-	DeleteManagedObjectStorageSecrets(context.Context, string) error
-	GetAppSecretInScope(context.Context, string, string, string, string) (*state.AppSecret, error)
-	LiveDeploymentForScope(context.Context, string, string) (state.Deployment, error)
-	CreateSnapshot(context.Context, state.Snapshot) (state.Snapshot, error)
-	LatestSnapshot(context.Context, string) (state.Snapshot, error)
-	AppRuntimeConfigChangedAt(context.Context, string) (time.Time, bool, error)
-}
+type cloneCredentialPreparationTestStore = contractTestStore
 
 func TestMemCloneObjectCredentialPreparationIsAtomicAndRecoverable(t *testing.T) {
 	cloneObjectCredentialPreparationContract(t, state.NewMemStore())
