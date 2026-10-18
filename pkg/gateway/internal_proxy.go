@@ -618,11 +618,12 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	// leak that to the customer.
 	encodeOriginStatus := edgeTransportStatus(r, resp.StatusCode)
 	customerOwned := httpsec.SurfaceFrom(r.Context()).CustomerOwned()
+	// H2 can expose trailer declarations only in the header map. Retain
+	// them so this hop can announce its own trailers after stripping.
+	trailerDeclarations := resp.Header.Values("Trailer")
+	stripHopByHopInPlace(resp.Header)
 	replacedStatic := map[string]bool{}
 	for k, vv := range resp.Header {
-		if isHopByHop(k) {
-			continue
-		}
 		// On Gregale-owned hosts the outer middleware is the only wire
 		// owner for these headers; copying an inner copy would duplicate
 		// policy values. On customer hosts the app's value replaces the
@@ -705,7 +706,7 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	for name := range resp.Trailer {
 		announce(name)
 	}
-	for _, value := range resp.Header.Values("Trailer") {
+	for _, value := range trailerDeclarations {
 		for _, name := range strings.Split(value, ",") {
 			announce(strings.TrimSpace(name))
 		}
@@ -789,6 +790,13 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 // §6.1) from h in place. Avoids the double-alloc of Clone +
 // rebuild.
 func stripHopByHopInPlace(h http.Header) {
+	// Connection's options name additional hop-specific fields. Read all
+	// values before removing Connection itself (RFC 9110 §7.6.1).
+	for _, value := range h.Values("Connection") {
+		for _, name := range strings.Split(value, ",") {
+			h.Del(strings.TrimSpace(name))
+		}
+	}
 	for k := range h {
 		if isHopByHop(k) {
 			delete(h, k)

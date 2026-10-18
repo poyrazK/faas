@@ -37,6 +37,11 @@ type hostRuntime struct {
 	// that are already in use by unrelated processes — flaky).
 	// Production sets it to nil (=> default) at construction.
 	waitReadyOverride func(ctx context.Context, service string) error
+	// only, when set, restricts restarts, readiness and canary-override
+	// retirement to these services: a per-unit release
+	// (docs/adr/1650-per-unit-control-plane-releases.md) replaces only
+	// their binaries, and every other daemon keeps running untouched.
+	only map[string]struct{}
 }
 
 const (
@@ -181,7 +186,32 @@ func (r hostRuntime) restartServices(manifest releasebundle.Manifest) ([]string,
 	if len(filtered) != len(services) {
 		return nil, fmt.Errorf("manifest daemon units are not covered by restart order")
 	}
-	return filtered, nil
+	return r.onlyServices(filtered)
+}
+
+// onlyServices narrows an ordered service list to r.only, keeping its
+// order. Every requested service must be one the release runs.
+func (r hostRuntime) onlyServices(services []string) ([]string, error) {
+	if r.only == nil {
+		return services, nil
+	}
+	out := make([]string, 0, len(r.only))
+	for _, service := range services {
+		if _, ok := r.only[service]; ok {
+			out = append(out, service)
+		}
+	}
+	if len(out) != len(r.only) {
+		var missing []string
+		for service := range r.only {
+			if !hasService(services, service) {
+				missing = append(missing, service)
+			}
+		}
+		sort.Strings(missing)
+		return nil, fmt.Errorf("--only names services the release does not run: %s", strings.Join(missing, ", "))
+	}
+	return out, nil
 }
 
 func healthAddressForManifest(manifest releasebundle.Manifest) (string, error) {
@@ -276,7 +306,14 @@ func (r hostRuntime) Activate(ctx context.Context, releaseRoot string) error {
 	}); err != nil {
 		return fmt.Errorf("install units: %w", err)
 	}
-	if err := removeCanaryExecOverrides(r.unitDir, services); err != nil {
+	// A canary override pins its service to a hotfix binary. Retire only the
+	// overrides of services this activation restarts: dropping another
+	// service's override would change its unit on disk without a restart.
+	restarted, err := r.onlyServices(services)
+	if err != nil {
+		return err
+	}
+	if err := removeCanaryExecOverrides(r.unitDir, restarted); err != nil {
 		return fmt.Errorf("remove canary exec overrides: %w", err)
 	}
 	tmpfiles := filepath.Join(releaseRoot, "tmpfiles.d", "faas.conf")

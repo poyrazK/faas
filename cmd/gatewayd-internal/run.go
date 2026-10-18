@@ -3768,6 +3768,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// reads from the same *Limiter the public edge uses (handler.Limiter()
 	// is the seam) so the snapshot agrees with what Allow consumed.
 	controlMux.HandleFunc("/v1/internal/quota", internalQuotaHandler(handler, log))
+	responsePicker, _ := deps.backend.(deploymentResponsePicker)
+	var responseStore state.Store
+	if deps.pgStore != nil {
+		responseStore = deps.pgStore
+	}
+	var responseForward func(gateway.Target) http.Handler
+	if deps.nodeCache != nil {
+		responseForward = deps.nodeCache.Forwarding()
+	}
+	responseChecker := deploymentResponseChecker{store: responseStore, picker: responsePicker, ensure: handler.EnsureServiceDeploymentCapacity, forward: responseForward, appsDomain: deps.appsDomain}
+	controlMux.HandleFunc(api.DeploymentResponseCheckCapabilitiesControlPath, responseChecker.Capabilities)
 	// ADR-093: mount the per-route observability reader on the
 	// control mux so apid can reverse-proxy
 	// /v1/apps/{slug}/routes → /v1/internal/apps/{slug}/routes
@@ -3800,6 +3811,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			})
 			if strings.HasSuffix(r.URL.Path, "/streaming-cap") {
 				internalStreamingCapHandler(deps.edgeRulesMatcher, resolve, log).ServeHTTP(w, r)
+				return
+			}
+			if strings.HasSuffix(r.URL.Path, "/response-check") {
+				responseChecker.ServeHTTP(w, r)
 				return
 			}
 			if strings.HasSuffix(r.URL.Path, "/service-endpoints") {
@@ -3886,6 +3901,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Wake:      newServiceProxyWaker(pgStore, handler.EnsureWakeAheadCapacity),
 		})
 		serviceProxyConfig := gateway.ServiceProxyConfig{
+			AdmitManagedAsync:         gateway.NewRehearsalAsyncAdmitter(pgStore),
 			Provider:                  serviceEndpointProvider,
 			Resolve:                   newServiceProxyResolver(pgStore),
 			Authorize:                 newServiceProxyAuthorizer(pgStore),
@@ -3941,7 +3957,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {
 			identityResolver := newServiceProxyCallerIdentityResolver(pgStore.ListAllInstances, cfg.NodeName)
-			identityResolver.lookup = pgStore.LiveInstancesByHostIP
+			identityResolver.lookup = pgStore.LiveServiceCallersByHostIP
 			serviceProxyConfig.ResolveCallerIdentity = func(ctx context.Context, remote string) (string, string, error) {
 				if err := ordinaryQualificationCallerGuard(ctx, pgStore, cfg.NodeName, remote); err != nil {
 					return "", "", err
@@ -4139,6 +4155,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}
 	serviceProxyAddr := strings.TrimSpace(cfg.ServiceProxyListen)
+	if err := startRehearsalObjectProxy(ctx, deps, serviceProxyAddr, cfg.NodeName, errc); err != nil {
+		return err
+	}
+	if err := startRehearsalPostgresProxy(ctx, deps, serviceProxyAddr, cfg.NodeName, errc); err != nil {
+		return err
+	}
 	serviceProxyTLS, tlsErr := serviceProxyHTTPSConfig(cfg)
 	if tlsErr != nil {
 		return tlsErr
@@ -4193,75 +4215,80 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if bridgeErr != nil {
 				return fmt.Errorf("gatewayd: service discovery DNS bridge address: %w", bridgeErr)
 			}
-			dnsHandler, dnsErr := gateway.NewServiceDiscoveryDNSHandler(bridgeIP, serviceDiscoveryUpstreams(), log, guestServiceCallerResolver, guestServiceAliasAllowed)
-			if dnsErr != nil {
-				return fmt.Errorf("gatewayd: service discovery DNS: %w", dnsErr)
-			}
-			if chaosMatchRecorder != nil {
-				dnsHandler.WithScenarioDNSChaos(newServiceDNSChaosResolver(deps.pgStore, cfg.NodeName), chaosMatchRecorder.Observe)
-			}
-			// ADR-373: refuse abuse infrastructure at the pinned resolver.
-			// FAAS_DNS_BLOCKLIST_FILE adds operator threat feeds to the
-			// built-in mining-pool list; a configured file that cannot be
-			// read fails startup rather than silently dropping the feed.
-			var extraBlocked map[string]string
-			if path := strings.TrimSpace(os.Getenv("FAAS_DNS_BLOCKLIST_FILE")); path != "" {
-				loaded, loadErr := gateway.LoadDNSBlocklistFile(path)
-				if loadErr != nil {
-					return fmt.Errorf("gatewayd: %w", loadErr)
+			for _, dnsPort := range []int{gateway.ServiceDiscoveryDNSPort, gateway.RehearsalServiceDiscoveryDNSPort} {
+				dnsHandler, dnsErr := gateway.NewServiceDiscoveryDNSHandler(bridgeIP, serviceDiscoveryUpstreams(), log, guestServiceCallerResolver, guestServiceAliasAllowed)
+				if dnsErr != nil {
+					return fmt.Errorf("gatewayd: service discovery DNS: %w", dnsErr)
 				}
-				extraBlocked = loaded
-			}
-			blocklist := gateway.NewDNSBlocklist(extraBlocked)
-			dnsHandler.WithBlocklist(blocklist, func(category string) {
-				if c := deps.opsMetrics.DNSBlocked(category); c != nil {
-					c.Inc()
+				if dnsPort == gateway.RehearsalServiceDiscoveryDNSPort {
+					dnsHandler.WithPrivateServiceNamesOnly()
 				}
-			})
-			log.Info("gatewayd: guest DNS blocklist loaded", "domains", blocklist.Len())
-			// ADR-373 DNS-gated egress: report every guest answer to this
-			// node's vmmd before replying, so the guest may connect to it.
-			if deps.nodeCache != nil && deps.pgStore != nil && cfg.NodeName != "" {
-				dnsHandler.WithResolvedEgressHook(newResolvedEgressHook(deps.nodeCache.cache, newLocalNodeID(deps.pgStore, cfg.NodeName)))
-			}
-			// ADR-576: answer service names with service addresses only once
-			// the TCP proxy behind them is configured.
-			if cfg.ServiceTCPDNS {
-				if strings.TrimSpace(cfg.ServiceTCPListen) == "" || deps.pgStore == nil {
-					return errors.New("gatewayd: service_tcp_dns requires service_tcp_listen and the state store")
+				if chaosMatchRecorder != nil {
+					dnsHandler.WithScenarioDNSChaos(newServiceDNSChaosResolver(deps.pgStore, cfg.NodeName), chaosMatchRecorder.Observe)
 				}
-				dnsHandler.WithServiceAddressLookup(newServiceAddressLookup(deps.pgStore, cfg.NodeName, log))
-				log.Info("gatewayd: service DNS answers private service addresses", "service_address_cidr", api.ServiceAddressCIDR().String())
-			}
-			dnsAddr := net.JoinHostPort(bridgeIP.String(), strconv.Itoa(gateway.ServiceDiscoveryDNSPort))
-			listenPacket := deps.listenPacket
-			if listenPacket == nil {
-				listenPacket = net.ListenPacket
-			}
-			packetConn, packetErr := listenPacket("udp", dnsAddr)
-			if packetErr != nil {
-				return fmt.Errorf("gatewayd: service discovery DNS UDP listen %s: %w", dnsAddr, packetErr)
-			}
-			dnsTCP, tcpErr := deps.listen("tcp", dnsAddr)
-			if tcpErr != nil {
-				_ = packetConn.Close()
-				return fmt.Errorf("gatewayd: service discovery DNS TCP listen %s: %w", dnsAddr, tcpErr)
-			}
-			udpServer := &dns.Server{PacketConn: packetConn, Handler: dnsHandler, ReadTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second}
-			tcpServer := &dns.Server{Listener: dnsTCP, Net: "tcp", Handler: dnsHandler, ReadTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second}
-			serviceDiscoveryServers = append(serviceDiscoveryServers, udpServer, tcpServer)
-			go func() {
-				log.Info("gatewayd service discovery DNS listening", "addr", dnsAddr, "network", "udp")
-				if err := udpServer.ActivateAndServe(); err != nil && ctx.Err() == nil {
-					errc <- err
+				// ADR-373: refuse abuse infrastructure at the pinned resolver.
+				// FAAS_DNS_BLOCKLIST_FILE adds operator threat feeds to the
+				// built-in mining-pool list; a configured file that cannot be
+				// read fails startup rather than silently dropping the feed.
+				var extraBlocked map[string]string
+				if path := strings.TrimSpace(os.Getenv("FAAS_DNS_BLOCKLIST_FILE")); path != "" {
+					loaded, loadErr := gateway.LoadDNSBlocklistFile(path)
+					if loadErr != nil {
+						return fmt.Errorf("gatewayd: %w", loadErr)
+					}
+					extraBlocked = loaded
 				}
-			}()
-			go func() {
-				log.Info("gatewayd service discovery DNS listening", "addr", dnsAddr, "network", "tcp")
-				if err := tcpServer.ActivateAndServe(); err != nil && ctx.Err() == nil {
-					errc <- err
+				blocklist := gateway.NewDNSBlocklist(extraBlocked)
+				dnsHandler.WithBlocklist(blocklist, func(category string) {
+					if c := deps.opsMetrics.DNSBlocked(category); c != nil {
+						c.Inc()
+					}
+				})
+				log.Info("gatewayd: guest DNS blocklist loaded", "domains", blocklist.Len())
+				// ADR-373 DNS-gated egress: report every guest answer to this
+				// node's vmmd before replying, so the guest may connect to it.
+				if deps.nodeCache != nil && deps.pgStore != nil && cfg.NodeName != "" {
+					dnsHandler.WithResolvedEgressHook(newResolvedEgressHook(deps.nodeCache.cache, newLocalNodeID(deps.pgStore, cfg.NodeName)))
 				}
-			}()
+				// ADR-576: answer service names with service addresses only once
+				// the TCP proxy behind them is configured.
+				if cfg.ServiceTCPDNS {
+					if strings.TrimSpace(cfg.ServiceTCPListen) == "" || deps.pgStore == nil {
+						return errors.New("gatewayd: service_tcp_dns requires service_tcp_listen and the state store")
+					}
+					dnsHandler.WithServiceAddressLookup(newServiceAddressLookup(deps.pgStore, cfg.NodeName, log))
+					log.Info("gatewayd: service DNS answers private service addresses", "service_address_cidr", api.ServiceAddressCIDR().String())
+				}
+				dnsAddr := net.JoinHostPort(bridgeIP.String(), strconv.Itoa(dnsPort))
+				listenPacket := deps.listenPacket
+				if listenPacket == nil {
+					listenPacket = net.ListenPacket
+				}
+				packetConn, packetErr := listenPacket("udp", dnsAddr)
+				if packetErr != nil {
+					return fmt.Errorf("gatewayd: service discovery DNS UDP listen %s: %w", dnsAddr, packetErr)
+				}
+				dnsTCP, tcpErr := deps.listen("tcp", dnsAddr)
+				if tcpErr != nil {
+					_ = packetConn.Close()
+					return fmt.Errorf("gatewayd: service discovery DNS TCP listen %s: %w", dnsAddr, tcpErr)
+				}
+				udpServer := &dns.Server{PacketConn: packetConn, Handler: dnsHandler, ReadTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second}
+				tcpServer := &dns.Server{Listener: dnsTCP, Net: "tcp", Handler: dnsHandler, ReadTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second}
+				serviceDiscoveryServers = append(serviceDiscoveryServers, udpServer, tcpServer)
+				go func() {
+					log.Info("gatewayd service discovery DNS listening", "addr", dnsAddr, "network", "udp")
+					if err := udpServer.ActivateAndServe(); err != nil && ctx.Err() == nil {
+						errc <- err
+					}
+				}()
+				go func() {
+					log.Info("gatewayd service discovery DNS listening", "addr", dnsAddr, "network", "tcp")
+					if err := tcpServer.ActivateAndServe(); err != nil && ctx.Err() == nil {
+						errc <- err
+					}
+				}()
+			}
 		}
 	}
 	go func() {

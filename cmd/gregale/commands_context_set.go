@@ -108,7 +108,15 @@ func cmdContextSetSelected(args []string, selection *contextUpdateSelection) int
 	if *clearEnvironment {
 		after.Environment = ""
 	}
-	if appSet || environmentSet {
+	if err := after.validate(); err != nil {
+		return printErr("Invalid context update", err)
+	}
+	if (appSet || environmentSet) && before.Project == "" {
+		if err := validatePresetUpdateTargets(after, appSet, environmentSet); err != nil {
+			return printErr("Could not validate saved app", err)
+		}
+	}
+	if (appSet || environmentSet) && before.Project != "" {
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)

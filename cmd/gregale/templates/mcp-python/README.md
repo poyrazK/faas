@@ -29,13 +29,13 @@ scopes, and each catalog entry's scopes before exposing private tools, resources
 or prompts. Configured policy maps are allowlists: entries missing from a map
 are hidden and denied. Resource scope keys can be exact URIs or simple URI
 templates such as `customer://records/{recordId}`; each template variable
-matches one URI segment. The sample rejects every browser `Origin`; it accepts
+matches one URI segment. The sample rejects browser `Origin` headers unless explicitly allowlisted; it accepts
 non-browser MCP clients that omit that header.
 
 Durable Tasks are disabled by default. Set `tasks.enabled` in
 `gregale-mcp.json`, bind the configured PostgreSQL URL, and provide a stable
-`MCP_TASK_OWNER_KEY` with at least 32 bytes. The database role needs permission
-to create and alter the task table and indexes. The starter advertises
+`MCP_TASK_OWNER_KEY` with at least 32 bytes. Run the explicit migration command below before starting Tasks. Runtime accounts
+need data access, not schema CREATE or table ownership. The starter advertises
 `io.modelcontextprotocol/tasks` only when enabled and returns task handles for
 registered handlers when clients opt in. `tasks/get`, `tasks/cancel`, and
 `tasks/update`, and the caller-owned `task://tasks/{taskId}` resource are
@@ -294,3 +294,74 @@ gregale mcp deploy --path . --name <slug>
 
 The deploy command stages a zero-traffic candidate, verifies its MCP endpoint,
 and promotes only after the previous serving revision still owns all traffic.
+
+## Browser clients
+
+Configure exact origins in `allowed_origins`. The MCP endpoint accepts browser
+OPTIONS preflight before authentication and allows GET/POST with Authorization,
+Content-Type, Accept, MCP-Protocol-Version, MCP-Method, MCP-Name and valid
+MCP-Param-* headers. Responses expose WWW-Authenticate, MCP-Protocol-Version and
+Streaming-Status, including authorization failures and streamed responses.
+Untrusted origins, unsupported requested methods/headers and duplicate Origin
+headers are rejected. Actual MCP requests still require the configured bearer
+and scopes; cookies and credentialed CORS are not enabled.
+
+## Task schema setup and upgrade
+
+Run schema setup from a trusted operator environment using a schema-owner account:
+
+```sh
+python task_schema.py apply
+python task_schema.py status
+```
+
+Both commands require `MCP_TASK_MIGRATION_DATABASE_URL`; they never fall back to
+DATABASE_URL and do not start HTTP serving, workers or observers. Bind the
+migration credential only to this operator process. Server processes use their
+configured `tasks.database_url_env` binding and only validate installed schema
+version, required columns and the enabled notification trigger. Startup fails
+with migration guidance if that schema is missing or incompatible.
+
+Use a dedicated schema without CREATE privileges for PUBLIC. Configure the same
+search_path (that schema, then pg_catalog) for migration and service accounts.
+For example, after migration, grant the existing runtime role USAGE on that
+schema, SELECT/INSERT/UPDATE/DELETE on gregale_mcp_tasks and
+gregale_mcp_task_worker_handlers, and SELECT on gregale_mcp_task_starter_schema.
+An observer needs SELECT on all three tables and USAGE on the schema; its existing
+read-only privilege checks still apply. Do not grant schema CREATE, table
+ownership, TRIGGER or write access to the version table to service accounts.
+
+For existing queues, run apply once before deploying these updated starters.
+It retains Task rows and installs the version marker transactionally. Repeat
+apply is supported; a future schema version is rejected rather than downgraded.
+Go and Python share this marker. For a queue also used by Node, retain Node's
+own migration and admission setup; this command does not replace it.
+
+## Protocol telemetry
+
+The server emits structured `mcp_protocol_request` events from actual parsed RPC
+methods and response objects, including tool errors returned with HTTP 200.
+Method and tool categories are fixed; custom tool names use `other`. Events do
+not contain arguments, results, resource URIs, error messages, bearer values or
+RPC IDs. Valid UUID `X-Faas-Request-Id` and nonzero version-00 `traceparent` IDs
+support correlation with Gregale request evidence; they are not trusted identity.
+
+`execution_duration_ms` ends at response construction (subscription acknowledgment
+for subscription setup). `stream_duration_ms` measures SSE lifetime separately;
+the durations overlap. Unobserved timings are omitted. Protocol outcomes and
+stream termination are separate, so delivery failure does not erase an observed
+result. Task creation measures admission, not background completion. Typed
+termination distinguishes cancellation and timeout without adding tool deadlines.
+
+Aggregate only this event family into counters/histograms. This is structured
+logging, not a public metrics endpoint. Pre-parse/pre-dispatch authentication
+failures and notifications are outside coverage. Keep correlation IDs out of
+metric labels and use existing log retention/access controls.
+
+### Telemetry heartbeats
+
+The web process emits a payload-free `mcp_telemetry_heartbeat` immediately and
+every 30 seconds, independent of RPC traffic. Shutdown stops the emitter.
+This is process telemetry, not an MCP readiness check. Set
+`MCP_TELEMETRY_LOSS_ALERT=true` to opt into platform operator alerts for lost
+heartbeats; customer performance webhook settings are separate.

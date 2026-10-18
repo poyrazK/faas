@@ -248,6 +248,10 @@ func TestBindingsVerifyReleasePolicyQueueWaitAndDeadline(t *testing.T) {
 				}
 			}
 			code, report, _ := f.run("--wait-timeout", "100ms")
+			// A deadline can return while the final fixture request is still
+			// finishing. Read its counters under the handler's mutex.
+			f.mu.Lock()
+			defer f.mu.Unlock()
 			if (code == 0) != recoverPoll || report.Passed != recoverPoll || len(f.requests) != 0 || len(report.Probes) != 0 || report.Preflight == nil || polls < 4 {
 				t.Fatalf("queue wait failed: %d %+v polls=%d", code, report, polls)
 			}

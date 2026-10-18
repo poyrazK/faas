@@ -72,6 +72,8 @@ from .advance_automation_live_suite_request import AdvanceAutomationLiveSuiteReq
 from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
 from .alert_delivery_response import AlertDeliveryResponse
+from .alert_delivery_response_readiness_destination import AlertDeliveryResponseReadinessDestination
+from .alert_delivery_response_readiness_failover_reason import AlertDeliveryResponseReadinessFailoverReason
 from .alert_delivery_response_status import AlertDeliveryResponseStatus
 from .alert_preset_response import AlertPresetResponse
 from .alert_preset_response_category import AlertPresetResponseCategory
@@ -305,6 +307,10 @@ from .app_task_response_status import AppTaskResponseStatus
 from .app_trusted_signer_list_response import AppTrustedSignerListResponse
 from .app_usage_summary_response import AppUsageSummaryResponse
 from .app_usage_summary_response_source import AppUsageSummaryResponseSource
+from .app_wake_history_page import AppWakeHistoryPage
+from .app_wake_history_page_count_scope import AppWakeHistoryPageCountScope
+from .app_wake_history_page_mode import AppWakeHistoryPageMode
+from .app_wake_history_page_source_status import AppWakeHistoryPageSourceStatus
 from .app_wake_response import AppWakeResponse
 from .app_wake_timeline_response import AppWakeTimelineResponse
 from .app_wake_timeline_response_trigger_class_histogram import AppWakeTimelineResponseTriggerClassHistogram
@@ -647,6 +653,8 @@ from .cancel_deployment_request import CancelDeploymentRequest
 from .cancel_deployment_request_reason import CancelDeploymentRequestReason
 from .cancel_deployment_response_200 import CancelDeploymentResponse200
 from .cancel_event_execution_lineage_retry_job_request import CancelEventExecutionLineageRetryJobRequest
+
+from .cancel_mcp_readiness_maintenance_request import CancelMCPReadinessMaintenanceRequest
 from .cancel_pending_work_request import CancelPendingWorkRequest
 from .cancel_pending_work_response import CancelPendingWorkResponse
 from .capabilities_response import CapabilitiesResponse
@@ -708,9 +716,13 @@ from .configure_managed_realtime_push_provider_response_200_provider import (
     ConfigureManagedRealtimePushProviderResponse200Provider,
 )
 from .connection_budget_capacity import ConnectionBudgetCapacity
+from .connection_budget_capacity_source import ConnectionBudgetCapacitySource
 from .connection_budget_capacity_state import ConnectionBudgetCapacityState
 from .connection_budget_demand import ConnectionBudgetDemand
 from .connection_budget_inventory import ConnectionBudgetInventory
+from .connection_budget_runtime_observations import ConnectionBudgetRuntimeObservations
+from .connection_budget_runtime_observations_source import ConnectionBudgetRuntimeObservationsSource
+from .connection_budget_runtime_observations_state import ConnectionBudgetRuntimeObservationsState
 from .consume_invoice_response import ConsumeInvoiceResponse
 from .consumed_credit_row import ConsumedCreditRow
 from .consumer_billing_day import ConsumerBillingDay
@@ -848,6 +860,7 @@ from .create_managed_realtime_endpoint_request_auth_mode import CreateManagedRea
 from .create_managed_realtime_endpoint_request_auth_required_claims import (
     CreateManagedRealtimeEndpointRequestAuthRequiredClaims,
 )
+from .create_mcp_readiness_maintenance_request import CreateMCPReadinessMaintenanceRequest
 from .create_mirror_rule_request import CreateMirrorRuleRequest
 from .create_native_issue_ticket_request import CreateNativeIssueTicketRequest
 from .create_native_linear_issue_ticket_request import CreateNativeLinearIssueTicketRequest
@@ -906,6 +919,8 @@ from .create_queue_binding_canary_request import CreateQueueBindingCanaryRequest
 from .create_queue_binding_request import CreateQueueBindingRequest
 from .create_queue_binding_request_mode import CreateQueueBindingRequestMode
 from .create_queue_binding_request_workload_class import CreateQueueBindingRequestWorkloadClass
+from .create_scenario_objects_request import CreateScenarioObjectsRequest
+from .create_scenario_postgres_request import CreateScenarioPostgresRequest
 from .create_statement_invoice_request import CreateStatementInvoiceRequest
 from .create_tcp_listener_request import CreateTCPListenerRequest
 from .create_tenant_surface_request import CreateTenantSurfaceRequest
@@ -947,6 +962,10 @@ from .dashboard_replay_failed_event_body import DashboardReplayFailedEventBody
 from .data_api_connection_budgets import DataAPIConnectionBudgets
 from .data_api_connection_budgets_state import DataAPIConnectionBudgetsState
 from .data_api_connection_budgets_version import DataAPIConnectionBudgetsVersion
+from .data_api_runtime_connection_report import DataAPIRuntimeConnectionReport
+from .data_api_runtime_connection_report_runtime_model import DataAPIRuntimeConnectionReportRuntimeModel
+from .data_api_runtime_connection_report_state import DataAPIRuntimeConnectionReportState
+from .data_api_runtime_connection_report_version import DataAPIRuntimeConnectionReportVersion
 from .data_upstream_history_bucket import DataUpstreamHistoryBucket
 from .data_upstream_history_response import DataUpstreamHistoryResponse
 from .data_upstream_history_response_kind import DataUpstreamHistoryResponseKind
@@ -1081,6 +1100,9 @@ from .deployment_readiness_probe import DeploymentReadinessProbe
 from .deployment_response import DeploymentResponse
 from .deployment_response_build_cache_status import DeploymentResponseBuildCacheStatus
 from .deployment_response_canary_preset import DeploymentResponseCanaryPreset
+from .deployment_response_check_capabilities import DeploymentResponseCheckCapabilities
+from .deployment_response_check_request import DeploymentResponseCheckRequest
+from .deployment_response_check_result import DeploymentResponseCheckResult
 from .deployment_response_deployed_via_type_1 import DeploymentResponseDeployedViaType1
 from .deployment_response_deployed_via_type_2_type_1 import DeploymentResponseDeployedViaType2Type1
 from .deployment_response_deployed_via_type_3_type_1 import DeploymentResponseDeployedViaType3Type1
@@ -1837,6 +1859,7 @@ from .get_app_request_analytics_timeseries_group_by import GetAppRequestAnalytic
 from .get_app_request_analytics_timeseries_method import GetAppRequestAnalyticsTimeseriesMethod
 from .get_app_routes_scope import GetAppRoutesScope
 from .get_app_slo_window import GetAppSLOWindow
+from .get_app_wake_timeline_pagination import GetAppWakeTimelinePagination
 from .get_apps_metrics_range import GetAppsMetricsRange
 from .get_build_sbom_response_200 import GetBuildSbomResponse200
 from .get_builds_status import GetBuildsStatus
@@ -1859,6 +1882,9 @@ from .get_event_consumer_execution_health_window import GetEventConsumerExecutio
 from .get_event_consumer_health_window import GetEventConsumerHealthWindow
 from .get_exclusive_operation_trigger_binding_source import GetExclusiveOperationTriggerBindingSource
 from .get_github_recovery_status_status import GetGithubRecoveryStatusStatus
+from .get_mcp_readiness_pager_duty_acknowledgements_destination import (
+    GetMCPReadinessPagerDutyAcknowledgementsDestination,
+)
 from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
 from .get_outbound_ai_price_catalog_provider import GetOutboundAIPriceCatalogProvider
@@ -2222,6 +2248,7 @@ from .list_tenant_surfaces_response import ListTenantSurfacesResponse
 from .list_tenant_workflow_schedules_response import ListTenantWorkflowSchedulesResponse
 from .list_trigger_dead_letter_response import ListTriggerDeadLetterResponse
 from .list_trigger_records_response import ListTriggerRecordsResponse
+from .list_wake_timeline_pagination import ListWakeTimelinePagination
 from .list_workflow_callbacks_response import ListWorkflowCallbacksResponse
 from .list_workflow_resumes_response import ListWorkflowResumesResponse
 from .list_workflow_runs_response import ListWorkflowRunsResponse
@@ -2483,6 +2510,101 @@ from .mcp_policy_convergence_snapshot_state import MCPPolicyConvergenceSnapshotS
 from .mcp_probe_rpc_request import MCPProbeRPCRequest
 from .mcp_probe_rpc_request_method import MCPProbeRPCRequestMethod
 from .mcp_probe_rpc_request_params import MCPProbeRPCRequestParams
+from .mcp_readiness_acknowledgement import MCPReadinessAcknowledgement
+from .mcp_readiness_acknowledgement_source import MCPReadinessAcknowledgementSource
+from .mcp_readiness_attention_action import MCPReadinessAttentionAction
+from .mcp_readiness_attention_action_action import MCPReadinessAttentionActionAction
+from .mcp_readiness_attention_history import MCPReadinessAttentionHistory
+from .mcp_readiness_attention_page import MCPReadinessAttentionPage
+from .mcp_readiness_attention_receipt import MCPReadinessAttentionReceipt
+from .mcp_readiness_attention_receipt_action import MCPReadinessAttentionReceiptAction
+from .mcp_readiness_attention_receipt_source import MCPReadinessAttentionReceiptSource
+from .mcp_readiness_check import MCPReadinessCheck
+from .mcp_readiness_check_status import MCPReadinessCheckStatus
+from .mcp_readiness_delivery_routing import MCPReadinessDeliveryRouting
+from .mcp_readiness_delivery_routing_failover_reason import MCPReadinessDeliveryRoutingFailoverReason
+from .mcp_readiness_delivery_routing_last_destination import MCPReadinessDeliveryRoutingLastDestination
+from .mcp_readiness_destination_delivery import MCPReadinessDestinationDelivery
+from .mcp_readiness_destination_delivery_destination import MCPReadinessDestinationDeliveryDestination
+from .mcp_readiness_destination_delivery_provider import MCPReadinessDestinationDeliveryProvider
+from .mcp_readiness_destination_delivery_provider_status import MCPReadinessDestinationDeliveryProviderStatus
+from .mcp_readiness_destination_delivery_status import MCPReadinessDestinationDeliveryStatus
+from .mcp_readiness_destination_queue import MCPReadinessDestinationQueue
+from .mcp_readiness_destination_queue_destination import MCPReadinessDestinationQueueDestination
+from .mcp_readiness_destination_queue_failure_kind import MCPReadinessDestinationQueueFailureKind
+from .mcp_readiness_destination_queue_provider import MCPReadinessDestinationQueueProvider
+from .mcp_readiness_destination_queue_state import MCPReadinessDestinationQueueState
+from .mcp_readiness_evidence import MCPReadinessEvidence
+from .mcp_readiness_fallback_policy import MCPReadinessFallbackPolicy
+from .mcp_readiness_fallback_policy_integration_key_masked import MCPReadinessFallbackPolicyIntegrationKeyMasked
+from .mcp_readiness_fallback_policy_provider import MCPReadinessFallbackPolicyProvider
+from .mcp_readiness_fallback_policy_region import MCPReadinessFallbackPolicyRegion
+from .mcp_readiness_incident_attention import MCPReadinessIncidentAttention
+from .mcp_readiness_incident_attention_reminder_policy_source import MCPReadinessIncidentAttentionReminderPolicySource
+from .mcp_readiness_incident_attention_state import MCPReadinessIncidentAttentionState
+from .mcp_readiness_incident_event import MCPReadinessIncidentEvent
+from .mcp_readiness_incident_event_delivery_status import MCPReadinessIncidentEventDeliveryStatus
+from .mcp_readiness_incident_event_event import MCPReadinessIncidentEventEvent
+from .mcp_readiness_incident_event_incident_status import MCPReadinessIncidentEventIncidentStatus
+from .mcp_readiness_incident_event_notification_reason import MCPReadinessIncidentEventNotificationReason
+from .mcp_readiness_incident_event_suppression_reason import MCPReadinessIncidentEventSuppressionReason
+from .mcp_readiness_incident_timeline import MCPReadinessIncidentTimeline
+from .mcp_readiness_maintenance_page import MCPReadinessMaintenancePage
+from .mcp_readiness_maintenance_window import MCPReadinessMaintenanceWindow
+from .mcp_readiness_monitor_config import MCPReadinessMonitorConfig
+from .mcp_readiness_monitor_config_oauth_connections import MCPReadinessMonitorConfigOauthConnections
+from .mcp_readiness_monitor_observation import MCPReadinessMonitorObservation
+from .mcp_readiness_monitor_status import MCPReadinessMonitorStatus
+from .mcp_readiness_monitor_status_recovery_action import MCPReadinessMonitorStatusRecoveryAction
+from .mcp_readiness_monitor_status_state import MCPReadinessMonitorStatusState
+from .mcp_readiness_notification_action import MCPReadinessNotificationAction
+from .mcp_readiness_notification_action_action import MCPReadinessNotificationActionAction
+from .mcp_readiness_notification_action_destination import MCPReadinessNotificationActionDestination
+from .mcp_readiness_notification_queue import MCPReadinessNotificationQueue
+from .mcp_readiness_notification_queue_failure_kind import MCPReadinessNotificationQueueFailureKind
+from .mcp_readiness_notification_queue_state import MCPReadinessNotificationQueueState
+from .mcp_readiness_notification_queues import MCPReadinessNotificationQueues
+from .mcp_readiness_notification_receipt import MCPReadinessNotificationReceipt
+from .mcp_readiness_notification_receipt_action import MCPReadinessNotificationReceiptAction
+from .mcp_readiness_notification_receipt_destination import MCPReadinessNotificationReceiptDestination
+from .mcp_readiness_o_auth_connection import MCPReadinessOAuthConnection
+from .mcp_readiness_override import MCPReadinessOverride
+from .mcp_readiness_override_request import MCPReadinessOverrideRequest
+from .mcp_readiness_pager_duty_acknowledgement_event import MCPReadinessPagerDutyAcknowledgementEvent
+from .mcp_readiness_pager_duty_acknowledgement_event_action import MCPReadinessPagerDutyAcknowledgementEventAction
+from .mcp_readiness_pager_duty_acknowledgement_event_destination import (
+    MCPReadinessPagerDutyAcknowledgementEventDestination,
+)
+from .mcp_readiness_pager_duty_acknowledgement_event_outcome import MCPReadinessPagerDutyAcknowledgementEventOutcome
+from .mcp_readiness_pager_duty_acknowledgement_event_region import MCPReadinessPagerDutyAcknowledgementEventRegion
+from .mcp_readiness_pager_duty_acknowledgement_events import MCPReadinessPagerDutyAcknowledgementEvents
+from .mcp_readiness_pager_duty_acknowledgement_hold import MCPReadinessPagerDutyAcknowledgementHold
+from .mcp_readiness_pager_duty_acknowledgement_hold_destination import (
+    MCPReadinessPagerDutyAcknowledgementHoldDestination,
+)
+from .mcp_readiness_pager_duty_acknowledgement_hold_region import MCPReadinessPagerDutyAcknowledgementHoldRegion
+from .mcp_readiness_pager_duty_acknowledgement_policy import MCPReadinessPagerDutyAcknowledgementPolicy
+from .mcp_readiness_pager_duty_acknowledgement_policy_destination import (
+    MCPReadinessPagerDutyAcknowledgementPolicyDestination,
+)
+from .mcp_readiness_pager_duty_acknowledgement_policy_region import MCPReadinessPagerDutyAcknowledgementPolicyRegion
+from .mcp_readiness_pager_duty_acknowledgement_policy_signing_secret_masked import (
+    MCPReadinessPagerDutyAcknowledgementPolicySigningSecretMasked,
+)
+from .mcp_readiness_pager_duty_policy import MCPReadinessPagerDutyPolicy
+from .mcp_readiness_pager_duty_policy_integration_key_masked import MCPReadinessPagerDutyPolicyIntegrationKeyMasked
+from .mcp_readiness_pager_duty_policy_region import MCPReadinessPagerDutyPolicyRegion
+from .mcp_readiness_policy import MCPReadinessPolicy
+from .mcp_readiness_policy_change import MCPReadinessPolicyChange
+from .mcp_readiness_policy_diff import MCPReadinessPolicyDiff
+from .mcp_readiness_policy_history import MCPReadinessPolicyHistory
+from .mcp_readiness_probe_request import MCPReadinessProbeRequest
+from .mcp_readiness_reminder_defaults import MCPReadinessReminderDefaults
+from .mcp_readiness_reminder_policy import MCPReadinessReminderPolicy
+from .mcp_readiness_role import MCPReadinessRole
+from .mcp_readiness_role_catalog_format import MCPReadinessRoleCatalogFormat
+from .mcp_readiness_role_protocol_version import MCPReadinessRoleProtocolVersion
+from .mcp_readiness_snapshot import MCPReadinessSnapshot
 from .mcp_resource_policy import MCPResourcePolicy
 from .mcp_resource_policy_prompt_scopes_type_0 import MCPResourcePolicyPromptScopesType0
 from .mcp_resource_policy_resource_scopes_type_0 import MCPResourcePolicyResourceScopesType0
@@ -4107,6 +4229,17 @@ from .register_event_schema_request import RegisterEventSchemaRequest
 from .register_event_schema_response import RegisterEventSchemaResponse
 from .register_managed_realtime_push_device_response_200 import RegisterManagedRealtimePushDeviceResponse200
 from .register_scenario_test_request import RegisterScenarioTestRequest
+from .register_scenario_test_request_action_evidence_version import RegisterScenarioTestRequestActionEvidenceVersion
+from .register_scenario_test_request_command_version import RegisterScenarioTestRequestCommandVersion
+from .register_scenario_test_request_network_mode import RegisterScenarioTestRequestNetworkMode
+from .register_scenario_test_request_webhook_mode import RegisterScenarioTestRequestWebhookMode
+from .register_scenario_test_response import RegisterScenarioTestResponse
+from .register_scenario_test_response_action_evidence_version import RegisterScenarioTestResponseActionEvidenceVersion
+from .register_scenario_test_response_command_version import RegisterScenarioTestResponseCommandVersion
+from .register_scenario_test_response_network_mode import RegisterScenarioTestResponseNetworkMode
+from .register_scenario_test_response_policy_version import RegisterScenarioTestResponsePolicyVersion
+from .register_scenario_test_response_recorder_version import RegisterScenarioTestResponseRecorderVersion
+from .register_scenario_test_response_webhook_mode import RegisterScenarioTestResponseWebhookMode
 from .rekey_progress import RekeyProgress
 from .remove_environment_git_ops_override_request import RemoveEnvironmentGitOpsOverrideRequest
 from .rename_app_request import RenameAppRequest
@@ -4151,6 +4284,7 @@ from .resolved_execution_limits import ResolvedExecutionLimits
 from .resource_profile import ResourceProfile
 from .restore_automation_revision_request import RestoreAutomationRevisionRequest
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
+from .restore_mcp_readiness_policy_request import RestoreMCPReadinessPolicyRequest
 from .resume_automation_failure_pause_request import ResumeAutomationFailurePauseRequest
 from .resume_workflow_run_request import ResumeWorkflowRunRequest
 from .retire_automation_live_baseline_request import RetireAutomationLiveBaselineRequest
@@ -4468,6 +4602,81 @@ from .scaling_target import ScalingTarget
 from .scaling_target_metric import ScalingTargetMetric
 from .scan_result import ScanResult
 from .scan_result_status import ScanResultStatus
+from .scenario_action_snapshot import ScenarioActionSnapshot
+from .scenario_action_snapshot_recorder_version import ScenarioActionSnapshotRecorderVersion
+from .scenario_action_snapshot_scope import ScenarioActionSnapshotScope
+from .scenario_action_snapshot_simulation_version import ScenarioActionSnapshotSimulationVersion
+from .scenario_action_snapshot_status import ScenarioActionSnapshotStatus
+from .scenario_action_snapshot_version import ScenarioActionSnapshotVersion
+from .scenario_captured_action import ScenarioCapturedAction
+from .scenario_captured_action_source import ScenarioCapturedActionSource
+from .scenario_cold_preparation import ScenarioColdPreparation
+from .scenario_cold_preparation_method import ScenarioColdPreparationMethod
+from .scenario_cold_preparation_state import ScenarioColdPreparationState
+from .scenario_cold_start_evidence import ScenarioColdStartEvidence
+from .scenario_cold_start_evidence_status import ScenarioColdStartEvidenceStatus
+from .scenario_cold_start_evidence_version import ScenarioColdStartEvidenceVersion
+from .scenario_cold_start_spec import ScenarioColdStartSpec
+from .scenario_cold_start_spec_version import ScenarioColdStartSpecVersion
+from .scenario_managed_work_attempt import ScenarioManagedWorkAttempt
+from .scenario_managed_work_binding import ScenarioManagedWorkBinding
+from .scenario_managed_work_evidence import ScenarioManagedWorkEvidence
+from .scenario_managed_work_evidence_status import ScenarioManagedWorkEvidenceStatus
+from .scenario_managed_work_evidence_version import ScenarioManagedWorkEvidenceVersion
+from .scenario_managed_work_job import ScenarioManagedWorkJob
+from .scenario_managed_work_participant import ScenarioManagedWorkParticipant
+from .scenario_managed_work_participant_objects import ScenarioManagedWorkParticipantObjects
+from .scenario_managed_work_participant_postgres import ScenarioManagedWorkParticipantPostgres
+from .scenario_managed_work_plan import ScenarioManagedWorkPlan
+from .scenario_managed_work_plan_version import ScenarioManagedWorkPlanVersion
+from .scenario_objects_data import ScenarioObjectsData
+from .scenario_objects_data_metadata import ScenarioObjectsDataMetadata
+from .scenario_objects_evidence import ScenarioObjectsEvidence
+from .scenario_objects_evidence_provenance import ScenarioObjectsEvidenceProvenance
+from .scenario_objects_evidence_status import ScenarioObjectsEvidenceStatus
+from .scenario_objects_mutation import ScenarioObjectsMutation
+from .scenario_objects_mutation_method import ScenarioObjectsMutationMethod
+from .scenario_objects_mutation_status import ScenarioObjectsMutationStatus
+from .scenario_objects_object import ScenarioObjectsObject
+from .scenario_objects_object_metadata import ScenarioObjectsObjectMetadata
+from .scenario_objects_receipt import ScenarioObjectsReceipt
+from .scenario_objects_receipt_version import ScenarioObjectsReceiptVersion
+from .scenario_objects_spec import ScenarioObjectsSpec
+from .scenario_objects_spec_version import ScenarioObjectsSpecVersion
+from .scenario_postgres_delta import ScenarioPostgresDelta
+from .scenario_postgres_delta_deleted_item import ScenarioPostgresDeltaDeletedItem
+from .scenario_postgres_delta_inserted_item import ScenarioPostgresDeltaInsertedItem
+from .scenario_postgres_evidence import ScenarioPostgresEvidence
+from .scenario_postgres_evidence_provenance import ScenarioPostgresEvidenceProvenance
+from .scenario_postgres_evidence_status import ScenarioPostgresEvidenceStatus
+from .scenario_postgres_receipt import ScenarioPostgresReceipt
+from .scenario_postgres_receipt_version import ScenarioPostgresReceiptVersion
+from .scenario_postgres_snapshot import ScenarioPostgresSnapshot
+from .scenario_postgres_snapshot_rows_item import ScenarioPostgresSnapshotRowsItem
+from .scenario_postgres_spec import ScenarioPostgresSpec
+from .scenario_postgres_spec_version import ScenarioPostgresSpecVersion
+from .scenario_postgres_table import ScenarioPostgresTable
+from .scenario_postgres_table_schema import ScenarioPostgresTableSchema
+from .scenario_simulation_attempt import ScenarioSimulationAttempt
+from .scenario_simulation_attempt_adapter import ScenarioSimulationAttemptAdapter
+from .scenario_simulation_attempt_fault import ScenarioSimulationAttemptFault
+from .scenario_simulation_attempt_status import ScenarioSimulationAttemptStatus
+from .scenario_simulation_fixture import ScenarioSimulationFixture
+from .scenario_simulation_fixture_adapter import ScenarioSimulationFixtureAdapter
+from .scenario_simulation_fixture_method import ScenarioSimulationFixtureMethod
+from .scenario_simulation_plan import ScenarioSimulationPlan
+from .scenario_simulation_plan_version import ScenarioSimulationPlanVersion
+from .scenario_simulation_response import ScenarioSimulationResponse
+from .scenario_simulation_response_fault import ScenarioSimulationResponseFault
+from .scenario_suspend_resume_evidence import ScenarioSuspendResumeEvidence
+from .scenario_suspend_resume_evidence_status import ScenarioSuspendResumeEvidenceStatus
+from .scenario_suspend_resume_evidence_version import ScenarioSuspendResumeEvidenceVersion
+from .scenario_suspend_resume_receipt import ScenarioSuspendResumeReceipt
+from .scenario_suspend_resume_receipt_method import ScenarioSuspendResumeReceiptMethod
+from .scenario_suspend_resume_receipt_state import ScenarioSuspendResumeReceiptState
+from .scenario_suspend_resume_spec import ScenarioSuspendResumeSpec
+from .scenario_suspend_resume_spec_checkpoint import ScenarioSuspendResumeSpecCheckpoint
+from .scenario_suspend_resume_spec_version import ScenarioSuspendResumeSpecVersion
 from .scenario_test_chaos_match import ScenarioTestChaosMatch
 from .scenario_test_chaos_matches_response import ScenarioTestChaosMatchesResponse
 from .scenario_test_chaos_rule import ScenarioTestChaosRule
@@ -4475,6 +4684,9 @@ from .scenario_test_chaos_rule_direction import ScenarioTestChaosRuleDirection
 from .scenario_test_chaos_rule_kind import ScenarioTestChaosRuleKind
 from .scenario_test_chaos_rule_status_code_type_0 import ScenarioTestChaosRuleStatusCodeType0
 from .scenario_test_workload import ScenarioTestWorkload
+from .scenario_worker_fault import ScenarioWorkerFault
+from .scenario_worker_fault_state import ScenarioWorkerFaultState
+from .scenario_worker_termination import ScenarioWorkerTermination
 from .schedule_occurrence_response import ScheduleOccurrenceResponse
 from .schedule_occurrence_response_status import ScheduleOccurrenceResponseStatus
 from .schedule_policy import SchedulePolicy
@@ -4493,6 +4705,8 @@ from .scoped_app_secret_response_last_runtime_reload_signal import ScopedAppSecr
 from .scoped_app_secret_response_secret_class import ScopedAppSecretResponseSecretClass
 from .scoped_route_budget_report import ScopedRouteBudgetReport
 from .scoped_route_budget_report_budget_source import ScopedRouteBudgetReportBudgetSource
+from .seal_scenario_objects_request import SealScenarioObjectsRequest
+from .seal_scenario_postgres_request import SealScenarioPostgresRequest
 from .seat_usage_response import SeatUsageResponse
 from .seat_usage_response_plan import SeatUsageResponsePlan
 from .secret_finding import SecretFinding
@@ -4567,6 +4781,17 @@ from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_environment_route_budgets_request import SetEnvironmentRouteBudgetsRequest
 from .set_environment_route_budgets_scope import SetEnvironmentRouteBudgetsScope
 from .set_grace_window_request import SetGraceWindowRequest
+from .set_mcp_readiness_fallback_request import SetMCPReadinessFallbackRequest
+from .set_mcp_readiness_fallback_request_provider import SetMCPReadinessFallbackRequestProvider
+from .set_mcp_readiness_fallback_request_region import SetMCPReadinessFallbackRequestRegion
+from .set_mcp_readiness_pager_duty_acknowledgements_request import SetMCPReadinessPagerDutyAcknowledgementsRequest
+from .set_mcp_readiness_pager_duty_acknowledgements_request_destination import (
+    SetMCPReadinessPagerDutyAcknowledgementsRequestDestination,
+)
+from .set_mcp_readiness_pager_duty_request import SetMCPReadinessPagerDutyRequest
+from .set_mcp_readiness_pager_duty_request_region import SetMCPReadinessPagerDutyRequestRegion
+from .set_mcp_readiness_policy_request import SetMCPReadinessPolicyRequest
+from .set_mcp_readiness_reminder_defaults_request import SetMCPReadinessReminderDefaultsRequest
 from .set_object_bucket_access_grant_request import SetObjectBucketAccessGrantRequest
 from .set_object_bucket_access_grant_request_permission import SetObjectBucketAccessGrantRequestPermission
 from .set_object_s3_copy_source_request import SetObjectS3CopySourceRequest
@@ -4885,6 +5110,8 @@ from .wake_timeline_json_row import WakeTimelineJSONRow
 from .wake_timeline_json_row_kind import WakeTimelineJSONRowKind
 from .wake_timeline_json_row_tier import WakeTimelineJSONRowTier
 from .wake_timeline_json_row_trigger_class import WakeTimelineJSONRowTriggerClass
+from .wake_timeline_page import WakeTimelinePage
+from .wake_timeline_page_mode import WakeTimelinePageMode
 from .wake_timeline_response import WakeTimelineResponse
 from .webhook_automation_binding_response import WebhookAutomationBindingResponse
 from .webhook_automation_binding_response_filter import WebhookAutomationBindingResponseFilter
@@ -5207,6 +5434,8 @@ __all__ = (
     "AdvanceCanaryRequest",
     "AfterRestoreHook",
     "AlertDeliveryResponse",
+    "AlertDeliveryResponseReadinessDestination",
+    "AlertDeliveryResponseReadinessFailoverReason",
     "AlertDeliveryResponseStatus",
     "AlertPresetResponse",
     "AlertPresetResponseCategory",
@@ -5543,6 +5772,10 @@ __all__ = (
     "AppTrustedSignerListResponse",
     "AppUsageSummaryResponse",
     "AppUsageSummaryResponseSource",
+    "AppWakeHistoryPage",
+    "AppWakeHistoryPageCountScope",
+    "AppWakeHistoryPageMode",
+    "AppWakeHistoryPageSourceStatus",
     "AppWakeResponse",
     "AppWakeTimelineResponse",
     "AppWakeTimelineResponseTriggerClassHistogram",
@@ -5774,6 +6007,8 @@ __all__ = (
     "CancelDeploymentRequestReason",
     "CancelDeploymentResponse200",
     "CancelEventExecutionLineageRetryJobRequest",
+
+    "CancelMCPReadinessMaintenanceRequest",
     "CancelPendingWorkRequest",
     "CancelPendingWorkResponse",
     "CapabilitiesResponse",
@@ -5827,9 +6062,13 @@ __all__ = (
     "ConfigureManagedRealtimePushProviderResponse200",
     "ConfigureManagedRealtimePushProviderResponse200Provider",
     "ConnectionBudgetCapacity",
+    "ConnectionBudgetCapacitySource",
     "ConnectionBudgetCapacityState",
     "ConnectionBudgetDemand",
     "ConnectionBudgetInventory",
+    "ConnectionBudgetRuntimeObservations",
+    "ConnectionBudgetRuntimeObservationsSource",
+    "ConnectionBudgetRuntimeObservationsState",
     "ConsumedCreditRow",
     "ConsumeInvoiceResponse",
     "ConsumerBillingDay",
@@ -5961,6 +6200,7 @@ __all__ = (
     "CreateManagedRealtimeEndpointRequestAuthAlgorithmsItem",
     "CreateManagedRealtimeEndpointRequestAuthMode",
     "CreateManagedRealtimeEndpointRequestAuthRequiredClaims",
+    "CreateMCPReadinessMaintenanceRequest",
     "CreateMirrorRuleRequest",
     "CreateNativeIssueTicketRequest",
     "CreateNativeLinearIssueTicketRequest",
@@ -6011,6 +6251,8 @@ __all__ = (
     "CreateQueueBindingRequest",
     "CreateQueueBindingRequestMode",
     "CreateQueueBindingRequestWorkloadClass",
+    "CreateScenarioObjectsRequest",
+    "CreateScenarioPostgresRequest",
     "CreateStatementInvoiceRequest",
     "CreateTCPListenerRequest",
     "CreateTenantSurfaceRequest",
@@ -6048,6 +6290,10 @@ __all__ = (
     "DataAPIConnectionBudgets",
     "DataAPIConnectionBudgetsState",
     "DataAPIConnectionBudgetsVersion",
+    "DataAPIRuntimeConnectionReport",
+    "DataAPIRuntimeConnectionReportRuntimeModel",
+    "DataAPIRuntimeConnectionReportState",
+    "DataAPIRuntimeConnectionReportVersion",
     "DataUpstreamHistoryBucket",
     "DataUpstreamHistoryResponse",
     "DataUpstreamHistoryResponseKind",
@@ -6179,6 +6425,9 @@ __all__ = (
     "DeploymentResponse",
     "DeploymentResponseBuildCacheStatus",
     "DeploymentResponseCanaryPreset",
+    "DeploymentResponseCheckCapabilities",
+    "DeploymentResponseCheckRequest",
+    "DeploymentResponseCheckResult",
     "DeploymentResponseDeployedViaType1",
     "DeploymentResponseDeployedViaType2Type1",
     "DeploymentResponseDeployedViaType3Type1",
@@ -6901,6 +7150,7 @@ __all__ = (
     "GetAppRoutesScope",
     "GetAppSLOWindow",
     "GetAppsMetricsRange",
+    "GetAppWakeTimelinePagination",
     "GetBuildSbomResponse200",
     "GetBuildsStatus",
     "GetDeploymentOpenAPIDocResponse200",
@@ -6922,6 +7172,7 @@ __all__ = (
     "GetEventConsumerHealthWindow",
     "GetExclusiveOperationTriggerBindingSource",
     "GetGithubRecoveryStatusStatus",
+    "GetMCPReadinessPagerDutyAcknowledgementsDestination",
     "GetMirrorRuleSummaryWindow",
     "GetOpenAPISpecJSONResponse200",
     "GetOutboundAIPriceCatalogProvider",
@@ -7243,6 +7494,7 @@ __all__ = (
     "ListTenantWorkflowSchedulesResponse",
     "ListTriggerDeadLetterResponse",
     "ListTriggerRecordsResponse",
+    "ListWakeTimelinePagination",
     "ListWorkflowCallbacksResponse",
     "ListWorkflowResumesResponse",
     "ListWorkflowRunsResponse",
@@ -7494,6 +7746,93 @@ __all__ = (
     "MCPProbeRPCRequest",
     "MCPProbeRPCRequestMethod",
     "MCPProbeRPCRequestParams",
+    "MCPReadinessAcknowledgement",
+    "MCPReadinessAcknowledgementSource",
+    "MCPReadinessAttentionAction",
+    "MCPReadinessAttentionActionAction",
+    "MCPReadinessAttentionHistory",
+    "MCPReadinessAttentionPage",
+    "MCPReadinessAttentionReceipt",
+    "MCPReadinessAttentionReceiptAction",
+    "MCPReadinessAttentionReceiptSource",
+    "MCPReadinessCheck",
+    "MCPReadinessCheckStatus",
+    "MCPReadinessDeliveryRouting",
+    "MCPReadinessDeliveryRoutingFailoverReason",
+    "MCPReadinessDeliveryRoutingLastDestination",
+    "MCPReadinessDestinationDelivery",
+    "MCPReadinessDestinationDeliveryDestination",
+    "MCPReadinessDestinationDeliveryProvider",
+    "MCPReadinessDestinationDeliveryProviderStatus",
+    "MCPReadinessDestinationDeliveryStatus",
+    "MCPReadinessDestinationQueue",
+    "MCPReadinessDestinationQueueDestination",
+    "MCPReadinessDestinationQueueFailureKind",
+    "MCPReadinessDestinationQueueProvider",
+    "MCPReadinessDestinationQueueState",
+    "MCPReadinessEvidence",
+    "MCPReadinessFallbackPolicy",
+    "MCPReadinessFallbackPolicyIntegrationKeyMasked",
+    "MCPReadinessFallbackPolicyProvider",
+    "MCPReadinessFallbackPolicyRegion",
+    "MCPReadinessIncidentAttention",
+    "MCPReadinessIncidentAttentionReminderPolicySource",
+    "MCPReadinessIncidentAttentionState",
+    "MCPReadinessIncidentEvent",
+    "MCPReadinessIncidentEventDeliveryStatus",
+    "MCPReadinessIncidentEventEvent",
+    "MCPReadinessIncidentEventIncidentStatus",
+    "MCPReadinessIncidentEventNotificationReason",
+    "MCPReadinessIncidentEventSuppressionReason",
+    "MCPReadinessIncidentTimeline",
+    "MCPReadinessMaintenancePage",
+    "MCPReadinessMaintenanceWindow",
+    "MCPReadinessMonitorConfig",
+    "MCPReadinessMonitorConfigOauthConnections",
+    "MCPReadinessMonitorObservation",
+    "MCPReadinessMonitorStatus",
+    "MCPReadinessMonitorStatusRecoveryAction",
+    "MCPReadinessMonitorStatusState",
+    "MCPReadinessNotificationAction",
+    "MCPReadinessNotificationActionAction",
+    "MCPReadinessNotificationActionDestination",
+    "MCPReadinessNotificationQueue",
+    "MCPReadinessNotificationQueueFailureKind",
+    "MCPReadinessNotificationQueues",
+    "MCPReadinessNotificationQueueState",
+    "MCPReadinessNotificationReceipt",
+    "MCPReadinessNotificationReceiptAction",
+    "MCPReadinessNotificationReceiptDestination",
+    "MCPReadinessOAuthConnection",
+    "MCPReadinessOverride",
+    "MCPReadinessOverrideRequest",
+    "MCPReadinessPagerDutyAcknowledgementEvent",
+    "MCPReadinessPagerDutyAcknowledgementEventAction",
+    "MCPReadinessPagerDutyAcknowledgementEventDestination",
+    "MCPReadinessPagerDutyAcknowledgementEventOutcome",
+    "MCPReadinessPagerDutyAcknowledgementEventRegion",
+    "MCPReadinessPagerDutyAcknowledgementEvents",
+    "MCPReadinessPagerDutyAcknowledgementHold",
+    "MCPReadinessPagerDutyAcknowledgementHoldDestination",
+    "MCPReadinessPagerDutyAcknowledgementHoldRegion",
+    "MCPReadinessPagerDutyAcknowledgementPolicy",
+    "MCPReadinessPagerDutyAcknowledgementPolicyDestination",
+    "MCPReadinessPagerDutyAcknowledgementPolicyRegion",
+    "MCPReadinessPagerDutyAcknowledgementPolicySigningSecretMasked",
+    "MCPReadinessPagerDutyPolicy",
+    "MCPReadinessPagerDutyPolicyIntegrationKeyMasked",
+    "MCPReadinessPagerDutyPolicyRegion",
+    "MCPReadinessPolicy",
+    "MCPReadinessPolicyChange",
+    "MCPReadinessPolicyDiff",
+    "MCPReadinessPolicyHistory",
+    "MCPReadinessProbeRequest",
+    "MCPReadinessReminderDefaults",
+    "MCPReadinessReminderPolicy",
+    "MCPReadinessRole",
+    "MCPReadinessRoleCatalogFormat",
+    "MCPReadinessRoleProtocolVersion",
+    "MCPReadinessSnapshot",
     "MCPResourcePolicy",
     "MCPResourcePolicyPromptScopesType0",
     "MCPResourcePolicyResourceScopesType0",
@@ -8950,6 +9289,17 @@ __all__ = (
     "RegisterEventSchemaResponse",
     "RegisterManagedRealtimePushDeviceResponse200",
     "RegisterScenarioTestRequest",
+    "RegisterScenarioTestRequestActionEvidenceVersion",
+    "RegisterScenarioTestRequestCommandVersion",
+    "RegisterScenarioTestRequestNetworkMode",
+    "RegisterScenarioTestRequestWebhookMode",
+    "RegisterScenarioTestResponse",
+    "RegisterScenarioTestResponseActionEvidenceVersion",
+    "RegisterScenarioTestResponseCommandVersion",
+    "RegisterScenarioTestResponseNetworkMode",
+    "RegisterScenarioTestResponsePolicyVersion",
+    "RegisterScenarioTestResponseRecorderVersion",
+    "RegisterScenarioTestResponseWebhookMode",
     "RekeyProgress",
     "RemoveEnvironmentGitOpsOverrideRequest",
     "RenameAppRequest",
@@ -8994,6 +9344,7 @@ __all__ = (
     "ResourceProfile",
     "RestoreAutomationRevisionRequest",
     "RestoreManagedPostgresDatabaseRequest",
+    "RestoreMCPReadinessPolicyRequest",
     "ResumeAutomationFailurePauseRequest",
     "ResumeWorkflowRunRequest",
     "RetireAutomationLiveBaselineRequest",
@@ -9305,6 +9656,81 @@ __all__ = (
     "ScalingTargetMetric",
     "ScanResult",
     "ScanResultStatus",
+    "ScenarioActionSnapshot",
+    "ScenarioActionSnapshotRecorderVersion",
+    "ScenarioActionSnapshotScope",
+    "ScenarioActionSnapshotSimulationVersion",
+    "ScenarioActionSnapshotStatus",
+    "ScenarioActionSnapshotVersion",
+    "ScenarioCapturedAction",
+    "ScenarioCapturedActionSource",
+    "ScenarioColdPreparation",
+    "ScenarioColdPreparationMethod",
+    "ScenarioColdPreparationState",
+    "ScenarioColdStartEvidence",
+    "ScenarioColdStartEvidenceStatus",
+    "ScenarioColdStartEvidenceVersion",
+    "ScenarioColdStartSpec",
+    "ScenarioColdStartSpecVersion",
+    "ScenarioManagedWorkAttempt",
+    "ScenarioManagedWorkBinding",
+    "ScenarioManagedWorkEvidence",
+    "ScenarioManagedWorkEvidenceStatus",
+    "ScenarioManagedWorkEvidenceVersion",
+    "ScenarioManagedWorkJob",
+    "ScenarioManagedWorkParticipant",
+    "ScenarioManagedWorkParticipantObjects",
+    "ScenarioManagedWorkParticipantPostgres",
+    "ScenarioManagedWorkPlan",
+    "ScenarioManagedWorkPlanVersion",
+    "ScenarioObjectsData",
+    "ScenarioObjectsDataMetadata",
+    "ScenarioObjectsEvidence",
+    "ScenarioObjectsEvidenceProvenance",
+    "ScenarioObjectsEvidenceStatus",
+    "ScenarioObjectsMutation",
+    "ScenarioObjectsMutationMethod",
+    "ScenarioObjectsMutationStatus",
+    "ScenarioObjectsObject",
+    "ScenarioObjectsObjectMetadata",
+    "ScenarioObjectsReceipt",
+    "ScenarioObjectsReceiptVersion",
+    "ScenarioObjectsSpec",
+    "ScenarioObjectsSpecVersion",
+    "ScenarioPostgresDelta",
+    "ScenarioPostgresDeltaDeletedItem",
+    "ScenarioPostgresDeltaInsertedItem",
+    "ScenarioPostgresEvidence",
+    "ScenarioPostgresEvidenceProvenance",
+    "ScenarioPostgresEvidenceStatus",
+    "ScenarioPostgresReceipt",
+    "ScenarioPostgresReceiptVersion",
+    "ScenarioPostgresSnapshot",
+    "ScenarioPostgresSnapshotRowsItem",
+    "ScenarioPostgresSpec",
+    "ScenarioPostgresSpecVersion",
+    "ScenarioPostgresTable",
+    "ScenarioPostgresTableSchema",
+    "ScenarioSimulationAttempt",
+    "ScenarioSimulationAttemptAdapter",
+    "ScenarioSimulationAttemptFault",
+    "ScenarioSimulationAttemptStatus",
+    "ScenarioSimulationFixture",
+    "ScenarioSimulationFixtureAdapter",
+    "ScenarioSimulationFixtureMethod",
+    "ScenarioSimulationPlan",
+    "ScenarioSimulationPlanVersion",
+    "ScenarioSimulationResponse",
+    "ScenarioSimulationResponseFault",
+    "ScenarioSuspendResumeEvidence",
+    "ScenarioSuspendResumeEvidenceStatus",
+    "ScenarioSuspendResumeEvidenceVersion",
+    "ScenarioSuspendResumeReceipt",
+    "ScenarioSuspendResumeReceiptMethod",
+    "ScenarioSuspendResumeReceiptState",
+    "ScenarioSuspendResumeSpec",
+    "ScenarioSuspendResumeSpecCheckpoint",
+    "ScenarioSuspendResumeSpecVersion",
     "ScenarioTestChaosMatch",
     "ScenarioTestChaosMatchesResponse",
     "ScenarioTestChaosRule",
@@ -9312,6 +9738,9 @@ __all__ = (
     "ScenarioTestChaosRuleKind",
     "ScenarioTestChaosRuleStatusCodeType0",
     "ScenarioTestWorkload",
+    "ScenarioWorkerFault",
+    "ScenarioWorkerFaultState",
+    "ScenarioWorkerTermination",
     "ScheduleOccurrenceResponse",
     "ScheduleOccurrenceResponseStatus",
     "SchedulePolicy",
@@ -9328,6 +9757,8 @@ __all__ = (
     "ScopedAppSecretResponseSecretClass",
     "ScopedRouteBudgetReport",
     "ScopedRouteBudgetReportBudgetSource",
+    "SealScenarioObjectsRequest",
+    "SealScenarioPostgresRequest",
     "SeatUsageResponse",
     "SeatUsageResponsePlan",
     "SecretFinding",
@@ -9400,6 +9831,15 @@ __all__ = (
     "SetEnvironmentRouteBudgetsRequest",
     "SetEnvironmentRouteBudgetsScope",
     "SetGraceWindowRequest",
+    "SetMCPReadinessFallbackRequest",
+    "SetMCPReadinessFallbackRequestProvider",
+    "SetMCPReadinessFallbackRequestRegion",
+    "SetMCPReadinessPagerDutyAcknowledgementsRequest",
+    "SetMCPReadinessPagerDutyAcknowledgementsRequestDestination",
+    "SetMCPReadinessPagerDutyRequest",
+    "SetMCPReadinessPagerDutyRequestRegion",
+    "SetMCPReadinessPolicyRequest",
+    "SetMCPReadinessReminderDefaultsRequest",
     "SetObjectBucketAccessGrantRequest",
     "SetObjectBucketAccessGrantRequestPermission",
     "SetObjectS3CopySourceRequest",
@@ -9686,6 +10126,8 @@ __all__ = (
     "WakeTimelineJSONRowKind",
     "WakeTimelineJSONRowTier",
     "WakeTimelineJSONRowTriggerClass",
+    "WakeTimelinePage",
+    "WakeTimelinePageMode",
     "WakeTimelineResponse",
     "WebhookAutomationBindingResponse",
     "WebhookAutomationBindingResponseFilter",

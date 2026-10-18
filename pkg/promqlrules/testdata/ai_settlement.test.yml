@@ -1,0 +1,33 @@
+# Regression fixture for an existing missing page-alert coverage gate.
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 30s
+tests:
+- name: settlement persistence failures page after ten minutes
+  interval: 30s
+  input_series:
+  - series: outbound_ai_usage_record_events_total{event="state_error"}
+    values: 0+1x40
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: FaasAIGatewaySettlementFailing
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: outboundd
+        family: ai_gateway
+      exp_annotations:
+        summary: AI gateway usage is not being settled
+        description: outboundd has failed to record AI usage for 10m. Calls still succeed, but token and cost caps,
+          usage reports and alerts under-count until settlement recovers. Check Postgres for outboundd; close the
+          AI gateway if it does not recover.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md
+- name: successful settlement stays quiet
+  interval: 30s
+  input_series:
+  - series: outbound_ai_usage_record_events_total{event="state_error"}
+    values: 0+0x40
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: FaasAIGatewaySettlementFailing
+    exp_alerts: []

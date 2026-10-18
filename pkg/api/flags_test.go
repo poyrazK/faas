@@ -269,3 +269,26 @@ func TestApiContractDiffEnabledRejectsOtherTokens(t *testing.T) {
 		}
 	}
 }
+
+func TestApplicationAuthEnabledIsOffUnlessTurnedOnOrListed(t *testing.T) {
+	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "")
+	t.Setenv("FAAS_APPLICATION_AUTH_ACCOUNTS", "")
+	if ApplicationAuthEnabled("acct_1") {
+		t.Fatal("on by default")
+	}
+	t.Setenv("FAAS_APPLICATION_AUTH_ACCOUNTS", " acct_2 , acct_1,")
+	if !ApplicationAuthEnabled("acct_1") || !ApplicationAuthEnabled("acct_2") || ApplicationAuthEnabled("acct_3") || ApplicationAuthEnabled("") {
+		t.Fatal("the account list is not exact")
+	}
+	t.Setenv("FAAS_APPLICATION_AUTH_ACCOUNTS", "")
+	for _, on := range []string{"1", "true", "YES", " on "} {
+		t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", on)
+		if !ApplicationAuthEnabled("acct_3") {
+			t.Fatalf("%q does not turn it on for every account", on)
+		}
+	}
+	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "0")
+	if ApplicationAuthEnabled("acct_3") {
+		t.Fatal("0 turns it on")
+	}
+}

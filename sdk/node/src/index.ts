@@ -35,6 +35,7 @@ export { InstancesService } from './generated/services/InstancesService.js';
 export { InvocationsService } from './generated/services/InvocationsService.js';
 export { KeysService } from './generated/services/KeysService.js';
 export { ManagedPostgresService } from './generated/services/ManagedPostgresService.js';
+export { McpService } from './generated/services/McpService.js';
 export { MetaService } from './generated/services/MetaService.js';
 export { MfaService } from './generated/services/MfaService.js';
 export { OperationsService } from './generated/services/OperationsService.js';
@@ -332,7 +333,11 @@ export type { RealtimeChangefeedConfig } from './realtime-changefeeds.js';
 export { eventConsumerReceiptSchema, newEventConsumerRequest, eventConsumerRequestFromHeaders,
   withEventConsumerTransaction, EventConsumerConflictError, EventConsumerCommitUnknownError,
   type EventConsumerIdentity, type EventConsumerRequest, type EventConsumerPool,
-  type EventConsumerTransaction, type EventConsumerTransactionResult } from './event-consumer-transactions.js';
+  type EventConsumerTransaction, type EventConsumerTransactionResult,
+  type EventConsumerTransactionOptions } from './event-consumer-transactions.js';
+export { EventAcknowledgmentWorker, eventAcknowledgmentWorkerFromHeaders, EventAcknowledgmentWorkerError,
+  type EventAcknowledgmentWorkerOptions, type EventAcknowledgmentWorkerOperationOptions,
+  type EventAcknowledgmentWorkerResult, type EventAcknowledgmentWorkerErrorCode } from './event-acknowledgment-worker.js';
 
 export { waitCommitSubscriber, type CommitSubscriberWaitResult } from './commit-subscriber-wait.js';
 
@@ -609,3 +614,68 @@ export { EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX, type EventDeadlineRatioOptions,
 
 export { investigateEventDeadlineAlert, type EventDeadlineInvestigationOptions,
   type EventDeadlineInvestigationQuery, type EventDeadlineInvestigation } from './event-deadline-investigation.js';
+
+export { eventAcknowledgmentIntentSchema, eventAcknowledgmentIntentStoredRetryPolicySchema, EventAcknowledgmentIntentError, EventAcknowledgmentIntentParkedError, listEventAcknowledgmentIntents,
+  type EventAcknowledgmentIntentErrorCode, type EventAcknowledgmentIntentStatus,
+  type EventAcknowledgmentIntentResult, type EventAcknowledgmentIntentStagingOptions } from './event-acknowledgment-intent-store.js';
+export { EventAcknowledgmentIntentClaim, claimEventAcknowledgmentIntent, recoverNextEventAcknowledgmentIntent,
+  type EventAcknowledgmentIntentClaimOptions, type EventAcknowledgmentIntentDeliveryOptions,
+  type EventAcknowledgmentIntentRecoveryOptions } from './event-acknowledgment-intent-recovery.js';
+export type { EventAcknowledgmentIntentRetryPolicy, EventAcknowledgmentIntentStoredRetryPolicy, EventAcknowledgmentIntentRetryBudget } from './event-acknowledgment-intent-retry-policy.js';
+export { eventAcknowledgmentIntentPolicyAdoptionSchema, getEventAcknowledgmentIntentPolicyAdoptionCandidate,
+  adoptEventAcknowledgmentIntentRetryPolicy, EventAcknowledgmentIntentPolicyAdoptionError,
+  type EventAcknowledgmentIntentAdoptRetryPolicyOptions,
+  type EventAcknowledgmentIntentPolicyAdoptionReceipt } from './event-acknowledgment-intent-policy-adoption.js';
+
+export { eventAcknowledgmentIntentRetryBudgetSchema, eventAcknowledgmentIntentRetryResumeSchema,
+  getEventAcknowledgmentIntentRetryResumeCandidate, resumeEventAcknowledgmentIntentRetryBudget, EventAcknowledgmentIntentRetryResumeError,
+  type EventAcknowledgmentIntentResumeRetryBudgetOptions, type EventAcknowledgmentIntentRetryResumeReceipt } from './event-acknowledgment-intent-retry-resume.js';
+
+export { eventAcknowledgmentIntentBudgetAdoptionSchema, getEventAcknowledgmentIntentBudgetAdoptionCandidate,
+  adoptEventAcknowledgmentIntentRetryBudget, EventAcknowledgmentIntentBudgetAdoptionError,
+  type EventAcknowledgmentIntentAdoptRetryBudgetOptions, type EventAcknowledgmentIntentBudgetAdoptionReceipt } from './event-acknowledgment-intent-budget-adoption.js';
+
+export { getEventAcknowledgmentIntentHealth, type EventAcknowledgmentIntentHealthOptions,
+  type EventAcknowledgmentIntentHealth } from './event-acknowledgment-intent-health.js';
+
+export { EventAcknowledgmentIntentHealthMetrics, formatEventAcknowledgmentIntentHealthMetrics,
+  EVENT_ACKNOWLEDGMENT_INTENT_HEALTH_PROMETHEUS_CONTENT_TYPE,
+  type EventAcknowledgmentIntentHealthMetricsOptions, type EventAcknowledgmentIntentHealthMetricsSample,
+  type EventAcknowledgmentIntentHealthMetricsSnapshot,
+  type EventAcknowledgmentIntentHealthPrometheusOptions } from './event-acknowledgment-intent-health-metrics.js';
+
+export { watchEventAcknowledgmentIntentHealth, EventAcknowledgmentIntentWatchCallbackError,
+  type EventAcknowledgmentIntentWatchOptions, type EventAcknowledgmentIntentWatchMetric,
+  type EventAcknowledgmentIntentAlert, type EventAcknowledgmentIntentAlertChange,
+  type EventAcknowledgmentIntentAlertReason } from './event-acknowledgment-intent-watch.js';
+
+export { EVENT_ACKNOWLEDGMENT_INTENT_OUTBOX_MAX, validateEventAcknowledgmentIntentCheckpoint,
+  acknowledgeEventAcknowledgmentIntentAlerts, type EventAcknowledgmentIntentCheckpoint,
+  type EventAcknowledgmentIntentCheckpointCondition, type EventAcknowledgmentIntentNotification,
+  type EventAcknowledgmentIntentAcknowledgment } from './event-acknowledgment-intent-checkpoint.js';
+export { watchEventAcknowledgmentIntentHealthWithCheckpoint, EventAcknowledgmentIntentCheckpointWatchCallbackError,
+  type EventAcknowledgmentIntentCheckpointWatchOptions,
+  type EventAcknowledgmentIntentCheckpointWatchResult } from './event-acknowledgment-intent-checkpoint-watch.js';
+export type { EventAcknowledgmentIntentConfirmation } from './event-acknowledgment-intent-checkpoint-state.js';
+
+export { eventConsumerProcessingSchema, claimEventConsumerProcessing, EventConsumerProcessingLease,
+  EventConsumerProcessingError, type EventConsumerProcessingErrorCode } from './event-consumer-processing.js';
+export type { EventAcknowledgmentPreparedOptions } from './event-acknowledgment-preparation.js';
+export { inspectEventConsumerProcessing, type EventConsumerProcessingInspection,
+  type EventConsumerProcessingInspectionState } from './event-consumer-processing-inspection.js';
+export type { EventAcknowledgmentPreparationEvent, EventAcknowledgmentPreparationStage,
+  EventAcknowledgmentPreparationOutcome, EventAcknowledgmentPreparationReason } from './event-acknowledgment-preparation-events.js';
+export { EventAcknowledgmentPreparationMetrics, EVENT_ACKNOWLEDGMENT_PREPARATION_DURATION_BUCKETS_MS,
+  type EventAcknowledgmentPreparationMetricsSnapshot, type EventAcknowledgmentPreparationHistogram } from './event-acknowledgment-preparation-metrics.js';
+export { formatEventAcknowledgmentPreparationMetrics, EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE,
+  type EventAcknowledgmentPreparationPrometheusOptions } from './event-acknowledgment-preparation-prometheus.js';
+
+export { recoverEventAcknowledgmentIntents, EventAcknowledgmentIntentRecoveryPassError,
+  EventAcknowledgmentIntentRecoveryPassCommitUnknownError, EventAcknowledgmentIntentRecoveryPassCancelled,
+  type EventAcknowledgmentIntentRecoveryPassOptions, type EventAcknowledgmentIntentRecoveryPassResult } from './event-acknowledgment-intent-recovery-pass.js';
+
+export { EventAcknowledgmentIntentRecoveryWorkerMetrics, recoverEventAcknowledgmentIntentsWithMetrics,
+  type EventAcknowledgmentIntentRecoveryWorkerMetricsOptions, type EventAcknowledgmentIntentRecoveryWorkerPassSample,
+  type EventAcknowledgmentIntentRecoveryWorkerMetricsSnapshot } from './event-acknowledgment-intent-worker-metrics.js';
+export { formatEventAcknowledgmentIntentRecoveryWorkerMetrics,
+  type EventAcknowledgmentIntentRecoveryWorkerPrometheusOptions } from './event-acknowledgment-intent-worker-prometheus.js';
