@@ -391,7 +391,7 @@ func (s *Store) downloadReplicaBlob(ctx context.Context, source ReplicationSourc
 		_ = syncDirectory(filepath.Dir(part))
 		return transferred, false, ErrDigest
 	}
-	if err = unix.Renameat2(unix.AT_FDCWD, part, unix.AT_FDCWD, final, unix.RENAME_NOREPLACE); err != nil {
+	if err = renameNoReplace(part, final); err != nil {
 		return transferred, false, err
 	}
 	s.journalUsage.Blobs++

@@ -79,6 +79,21 @@ func startTestRunner(t *testing.T, source, input string) *startRunner {
 	}
 }
 
+// startTestSessionRecord returns the scope's only recovery record. A finished
+// launch moves it from the directory key to its remembered context key.
+func startTestSessionRecord(t *testing.T, scope string) string {
+	t.Helper()
+	base, err := startSessionPath(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, err := filepath.Glob(strings.TrimSuffix(base, ".json") + "*.json")
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("start session records=%v err=%v", paths, err)
+	}
+	return paths[0]
+}
+
 func startTestAPI(t *testing.T, handler http.HandlerFunc, compatibility ...http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -248,7 +263,7 @@ func TestCmdStartLaunchAndPublicRequest(t *testing.T) {
 			t.Errorf("healthy path still contains %q", unwanted)
 		}
 	}
-	saved, _, err := loadStartSession(statePath)
+	saved, _, err := loadStartSession(startTestSessionRecord(t, source))
 	if err != nil || saved.Status != "live" || saved.DeploymentID != "d1" || !saved.RequireDeploymentEvidence {
 		t.Fatalf("saved result=%+v err=%v", saved, err)
 	}

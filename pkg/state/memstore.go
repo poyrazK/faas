@@ -5701,6 +5701,24 @@ func (m *MemStore) ListInstancesByNodeID(_ context.Context, nodeID string) ([]In
 	return out, nil
 }
 
+// ListLiveInstancesByNodeID mirrors PgStore.ListLiveInstancesByNodeID: live
+// instances of the node's non-deleted apps.
+func (m *MemStore) ListLiveInstancesByNodeID(_ context.Context, nodeID string) ([]Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	owned := make(map[string]bool, len(m.apps))
+	for _, a := range m.apps {
+		owned[a.ID] = a.NodeID == nodeID && a.Status != AppDeleted
+	}
+	var out []Instance
+	for _, ins := range m.instances {
+		if owned[ins.AppID] && IsLive(ins.State) {
+			out = append(out, ins)
+		}
+	}
+	return out, nil
+}
+
 // ListInstancesOnNodeID mirrors PgStore.ListInstancesOnNodeID. This is the
 // physical-placement view used by drain safety and node observability; it
 // intentionally does not consult the app's scheduler-owner NodeID because a
