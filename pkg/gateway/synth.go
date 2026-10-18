@@ -325,7 +325,7 @@ func (s *SynthServer) Start() error {
 		_ = lis.Close()
 		return fmt.Errorf("gateway synth: chmod: %w", err)
 	}
-	wire.Share(lis) // a hand-off successor serves the same socket (ADR-2026101801)
+	wire.Share(lis) // a hand-off successor serves the same socket (ADR-1580)
 	s.serve(lis)
 	return nil
 }

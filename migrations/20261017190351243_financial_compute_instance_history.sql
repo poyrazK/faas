@@ -7,3 +7,7 @@ CREATE INDEX IF NOT EXISTS financial_compute_instance_history ON financial_compu
 
 -- +goose Down
 DROP INDEX financial_compute_instance_history;
+
+-- migration-compat: contract
+-- Financial funding rollout coordinates scheduler, native-owner and meter
+-- capabilities with the USD gate; this batch requires a full release.

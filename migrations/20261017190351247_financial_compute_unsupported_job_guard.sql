@@ -51,3 +51,7 @@ DROP TRIGGER financial_compute_job_definition_guard ON jobs;
 DROP FUNCTION financial_compute_guard_job_task();
 DROP FUNCTION financial_compute_guard_job_definition();
 DROP FUNCTION financial_compute_require_job_support(uuid);
+
+-- migration-compat: contract
+-- Financial funding rollout coordinates scheduler, native-owner and meter
+-- capabilities with the USD gate; this batch requires a full release.

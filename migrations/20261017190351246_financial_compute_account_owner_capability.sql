@@ -16,3 +16,7 @@ END $$;
 
 -- +goose Down
 ALTER TABLE financial_compute_owners DROP COLUMN account_compute_incarnation;
+
+-- migration-compat: contract
+-- Financial funding rollout coordinates scheduler, native-owner and meter
+-- capabilities with the USD gate; this batch requires a full release.

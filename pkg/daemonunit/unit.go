@@ -85,7 +85,7 @@ type Unit struct {
 	// [Service]
 	Type string // "simple" for every faas daemon today
 	// NotifyAccess names who may send sd_notify messages. A daemon that
-	// hands off on reload (ADR-2026101801) pins "main": once its successor is the
+	// hands off on reload (ADR-1580) pins "main": once its successor is the
 	// main process, the old generation's messages are rejected.
 	NotifyAccess  string
 	User          string
@@ -94,7 +94,7 @@ type Unit struct {
 	ExecStartPre  []string // ordered (vmmd has 2; nobody else has any)
 	ExecStartPost []string // ordered post-start fixups (vmmd runtime dir)
 	// ExecReload is what `systemctl reload` runs. "/bin/kill -USR2 $MAINPID"
-	// starts a two-generation hand-off (ADR-2026101801).
+	// starts a two-generation hand-off (ADR-1580).
 	ExecReload      string
 	Restart         string
 	RestartSec      string
@@ -117,7 +117,7 @@ type Unit struct {
 	MemoryMax  string
 	// OOMPolicy decides what an OOM kill of one of the unit's processes
 	// does. "continue" keeps a hand-off's serving generation running when
-	// the kernel kills the draining one (ADR-2026101801); a killed main process
+	// the kernel kills the draining one (ADR-1580); a killed main process
 	// still restarts under Restart=on-failure.
 	OOMPolicy             string
 	CPUQuota              string // aggregate process and subprocess CPU ceiling

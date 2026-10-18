@@ -15,7 +15,7 @@ gatewayd_ratelimit_mode: central
 # ADR-1520 rate-limit token leasing; requires gatewayd_ratelimit_mode central.
 gatewayd_ratelimit_lease: false
 
-# ADR-2026101801: hold gatewayd-internal's unix socket and split-box data listener
+# ADR-1580: hold gatewayd-internal's unix socket and split-box data listener
 # (faas_gateway_listen), and realtimed's socket, in systemd sockets so a
 # restart queues callers instead of refusing them. Off until node_join stops
 # and starts these sockets with their services; while a socket is active, a

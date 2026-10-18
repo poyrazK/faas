@@ -44,3 +44,7 @@ END $$;
 -- +goose StatementBegin
 DO $$ BEGIN RAISE EXCEPTION 'USD financial funding requires coordinated forward repair'; END $$;
 -- +goose StatementEnd
+
+-- migration-compat: contract
+-- Financial funding rollout coordinates scheduler, native-owner and meter
+-- capabilities with the USD gate; this batch requires a full release.

@@ -107,7 +107,11 @@ func TestUnitLaneRestartsOnlyPlannedServicesOverTheExpectedRelease(t *testing.T)
 		"unit-release-verify.sh ${release_dir}${specs}",
 		"deployctl rollback --only '${only}'",
 	)
-	for _, forbidden := range []string{"migrate", "converge-control-plane", "kgv rotate", "fleet-seal"} {
+	// Planner-approved expand migrations run before activation (ADR-20261018084150).
+	// The planner and helper behavior suites enforce that data step and keep
+	// contract migrations out of the unit lanes. Full provisioning and key
+	// changes still belong to the full lane.
+	for _, forbidden := range []string{"converge-control-plane", "kgv rotate", "fleet-seal"} {
 		if strings.Contains(helper, forbidden) {
 			t.Errorf("the unit lanes must leave %q to the full lane", forbidden)
 		}

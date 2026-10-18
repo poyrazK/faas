@@ -6660,10 +6660,10 @@ const (
 	// ComputeGatewayRestartWaitSeconds caps how long gatewayd-public keeps
 	// sending new requests to a compute node whose gatewayd-internal stopped
 	// answering (for example while it restarts behind its durable socket)
-	// before failing over to another node (ADR-2026101801). Override with
+	// before failing over to another node (ADR-1580). Override with
 	// FAAS_COMPUTE_GATEWAY_RESTART_WAIT.
 	ComputeGatewayRestartWaitSeconds = 3
-	// Two-generation hand-off (ADR-2026101801). A hand-off starts the new release
+	// Two-generation hand-off (ADR-1580). A hand-off starts the new release
 	// beside the running one on the same listening sockets; the old generation
 	// stops accepting and finishes what it holds.
 	//
@@ -7017,7 +7017,7 @@ const (
 	// graceful-restart GOAWAY was never processed; the transport retries it on
 	// a new connection only when it can rewind the body. Larger or chunked
 	// bodies keep streaming and can still fail in that window
-	// (docs/adr/2026101801-zero-downtime-daemon-restarts.md).
+	// (docs/adr/1580-zero-downtime-daemon-restarts.md).
 	InternalHopReplayableBodyBytes = 64 << 10 // 64 KiB
 )
 
@@ -12490,7 +12490,7 @@ const CIExecutionCheckSummaryMaxBytes = 8 << 10
 // (ADR-1577, ADR-1586). Each delivery has its own lifetime budget.
 const CICheckRetryMaxGenerations = 3
 
-// Explicit recovery of a retained, never-admitted automatic source (ADR-1580).
+// Explicit recovery of a retained, never-admitted automatic source (ADR-1592).
 const CIAutomationRetryMaxGenerations = 3
 
 // Automatic runs serialize per account, binding and branch (ADR-1581).

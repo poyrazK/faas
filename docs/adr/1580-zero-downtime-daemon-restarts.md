@@ -1,4 +1,4 @@
-# ADR-2026101801: Zero-downtime daemon restarts
+# ADR-1580: Zero-downtime daemon restarts
 
 Date: 2026-10-17 (two-generation hand-off added 2026-10-18)
 Status: Accepted

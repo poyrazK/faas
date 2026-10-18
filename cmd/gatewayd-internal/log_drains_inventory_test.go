@@ -312,7 +312,7 @@ func TestStandardLogManagerLockSurvivesWorkerShutdown(t *testing.T) {
 	defer next.spoolLease.Unlock()
 }
 
-// ADR-2026101801: a hand-off successor waits for the old generation to release the
+// ADR-1580: a hand-off successor waits for the old generation to release the
 // spool instead of leaving customer log drains off.
 func TestLogDrainManagerWaitsForTheSpoolLease(t *testing.T) {
 	old := newAppLogDrainManager(state.NewMemStore(), nil, nil, nil, nil)

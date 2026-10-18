@@ -1,6 +1,6 @@
 # Managed by Ansible (control_plane_service). Rendered from
 # faas_schedd_listen_addr together with schedd's FAAS_SCHEDD_LISTEN_ADDR
-# (ADR-2026101801). The empty line resets the unit's default unix listener.
+# (ADR-1580). The empty line resets the unit's default unix listener.
 [Socket]
 ListenStream=
 ListenStream={{ faas_schedd_listen_addr | regex_replace('^unix://', '') | regex_replace('^tcp://', '') }}

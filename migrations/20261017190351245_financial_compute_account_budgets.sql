@@ -53,3 +53,7 @@ $$;
 ALTER TABLE financial_compute_leases DROP CONSTRAINT financial_compute_account_quantity_check;
 DROP INDEX financial_compute_account_active;
 DROP TABLE financial_compute_account_books;
+
+-- migration-compat: contract
+-- Financial funding rollout coordinates scheduler, native-owner and meter
+-- capabilities with the USD gate; this batch requires a full release.

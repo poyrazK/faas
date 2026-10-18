@@ -13,3 +13,7 @@ END $$;
 
 -- +goose Down
 ALTER TABLE financial_preview_command_runtimes DROP COLUMN prepare_until;
+
+-- migration-compat: contract
+-- Financial funding rollout coordinates scheduler, native-owner and meter
+-- capabilities with the USD gate; this batch requires a full release.

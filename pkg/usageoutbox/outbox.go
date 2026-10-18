@@ -401,7 +401,7 @@ func (q *Outbox) compact() error {
 
 // Absorb appends every unacknowledged event of the outbox at dir to q in
 // one fsynced write, then empties dir. A hand-off's old generation leaves its
-// outbox in its own directory (ADR-2026101801); the generation that adopts it
+// outbox in its own directory (ADR-1580); the generation that adopts it
 // delivers those events. A crash between the two steps replays event IDs,
 // which apid deduplicates. ErrFull leaves dir untouched.
 func (q *Outbox) Absorb(dir string) (int64, error) {

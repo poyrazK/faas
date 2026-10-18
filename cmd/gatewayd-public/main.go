@@ -768,7 +768,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// is skipped when no store is wired (the dev single-box path).
 	// The DNS hand-off subscriber and standby warm-up speak for this node's
 	// edge; a two-generation hand-off ends them here and the successor runs
-	// them (ADR-2026101801).
+	// them (ADR-1580).
 	handoffCtx, endHandoffWork := context.WithCancel(ctx)
 	defer endHandoffWork()
 	if err := startHAComponents(handoffCtx, log, pool, pgStore, inflight, envOr("FAAS_NODE_NAME", ""), envOr("FAAS_NODE_PUBLIC_IP", listenAddr), opsMetrics); err != nil {
@@ -1034,7 +1034,7 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 			}
 			// The successor serves new connections; finish what this
 			// generation holds, including requests and streams that outlive
-			// a restart's grace (ADR-2026101801).
+			// a restart's grace (ADR-1580).
 			if endHandoffWork != nil {
 				endHandoffWork()
 			}

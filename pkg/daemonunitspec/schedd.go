@@ -35,7 +35,7 @@ func UnitSchedd() daemonunit.Unit {
 		Description: "onebox-faas schedd — scheduler + lifecycle owner",
 		// faas-schedd.socket is opt-in: the control-plane role adds
 		// Wants=/After= on it, with the matching listen address, in a
-		// drop-in when faas_schedd_listen_addr is set (ADR-2026101801).
+		// drop-in when faas_schedd_listen_addr is set (ADR-1580).
 		After: []string{"network.target", "postgresql.service", "faas-cp.slice", "faas-brokerq.slice"},
 		Wants: []string{"faas-cp.slice", "faas-brokerq.slice"},
 		// PostgreSQL is local on the control plane and remote on

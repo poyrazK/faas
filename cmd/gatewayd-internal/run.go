@@ -1077,7 +1077,7 @@ type runDeps struct {
 	// Tests use a private ledger; an empty value retains the production path.
 	egressPendingPath string
 	// onHandoff stops node-level work run() started before runWithDeps once
-	// a hand-off's successor serves (ADR-2026101801).
+	// a hand-off's successor serves (ADR-1580).
 	onHandoff []func()
 	// lastSeen flushes per-instance last_request_at to schedd (spec §4.1). nil in
 	// tests (the wake/routing path doesn't need it); production wires the
@@ -1441,7 +1441,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	deps := defaultDeps()
 	// handoffCtx carries the work that speaks for this node's gateway rather
 	// than for one request: a hand-off ends it here and the successor takes it
-	// over (ADR-2026101801). Requests and their sinks keep ctx.
+	// over (ADR-1580). Requests and their sinks keep ctx.
 	handoffCtx, endHandoffWork := context.WithCancel(ctx)
 	defer endHandoffWork()
 	deps.onHandoff = append(deps.onHandoff, endHandoffWork)
@@ -2538,7 +2538,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// handoffCtx carries the work that speaks for this node's gateway rather
 	// than for one request: a hand-off ends it here and the successor takes it
-	// over (ADR-2026101801). Requests and their sinks keep ctx.
+	// over (ADR-1580). Requests and their sinks keep ctx.
 	handoffCtx, endHandoffWork := context.WithCancel(ctx)
 	defer endHandoffWork()
 	stores := &generationStores{log: log}
@@ -4011,7 +4011,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	errc := make(chan error, 6)
 	var servers []drainedServer
 	// sessionDrains stop raw listeners and wait for their sessions; a
-	// hand-off's old generation runs them (ADR-2026101801).
+	// hand-off's old generation runs them (ADR-1580).
 	var sessionDrains []func(context.Context) error
 	var serviceDiscoveryServers []*dns.Server
 	addSrv := func(s *http.Server) *wire.HTTPDrain {

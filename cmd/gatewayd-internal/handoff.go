@@ -18,7 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/usageoutbox"
 )
 
-// Two-generation hand-off (docs/adr/2026101801-zero-downtime-daemon-restarts.md).
+// Two-generation hand-off (docs/adr/1580-zero-downtime-daemon-restarts.md).
 // On `systemctl reload` this process starts its successor on the same
 // sockets and, once the successor serves, finishes its own requests. The
 // durable queues each generation writes live in per-generation slots

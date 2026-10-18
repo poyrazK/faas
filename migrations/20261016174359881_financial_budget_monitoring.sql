@@ -38,3 +38,7 @@ CREATE INDEX IF NOT EXISTS financial_budget_alert_due_idx ON financial_budget_al
 -- +goose Down
 DROP TABLE financial_budget_alerts;
 DROP TABLE financial_budget_evaluations;
+
+-- migration-compat: contract
+-- Financial funding rollout coordinates scheduler, native-owner and meter
+-- capabilities with the USD gate; this batch requires a full release.

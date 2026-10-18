@@ -34,3 +34,7 @@ CREATE TABLE IF NOT EXISTS financial_budget_stop_targets (
 -- +goose Down
 DROP TABLE financial_budget_stop_targets;
 DROP TABLE financial_budget_stops;
+
+-- migration-compat: contract
+-- Financial funding rollout coordinates scheduler, native-owner and meter
+-- capabilities with the USD gate; this batch requires a full release.

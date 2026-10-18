@@ -113,3 +113,7 @@ CREATE OR REPLACE TRIGGER financial_egress_preserve_lease BEFORE UPDATE ON finan
 -- +goose StatementBegin
 DO $$ BEGIN RAISE EXCEPTION 'strict egress funding requires forward repair; rollback could erase byte authority'; END $$;
 -- +goose StatementEnd
+
+-- migration-compat: contract
+-- Financial funding rollout coordinates scheduler, native-owner and meter
+-- capabilities with the USD gate; this batch requires a full release.

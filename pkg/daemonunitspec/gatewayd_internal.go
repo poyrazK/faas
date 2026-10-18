@@ -58,7 +58,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		// local dependency.
 		// faas-gatewayd-internal.socket is opt-in: the gatewayd_internal_service
 		// role adds Wants=/After= on it in a drop-in when
-		// faas_compute_durable_listeners is on (ADR-2026101801).
+		// faas_compute_durable_listeners is on (ADR-1580).
 		After:                 []string{"faas-cp.slice", "network-online.target", "faas-vmmd.service", "faas-realtimed.service"},
 		Wants:                 []string{"faas-cp.slice", "faas-vmmd.service", "faas-realtimed.service"},
 		StartLimitIntervalSec: "60s",
@@ -66,7 +66,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 
 		Type: "notify",
 		// `systemctl reload` hands off to a second generation that serves
-		// new connections while this one finishes its own (ADR-2026101801).
+		// new connections while this one finishes its own (ADR-1580).
 		NotifyAccess: "main",
 		ExecReload:   handoffReload,
 		OOMPolicy:    "continue",

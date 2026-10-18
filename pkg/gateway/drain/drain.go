@@ -129,7 +129,7 @@ func NewTracker() *Tracker {
 // connections that arrive meanwhile wait in the systemd socket's backlog.
 // Streams a client reopens on its own (SSE, WebSocket) therefore end at once
 // instead of holding the drain open for its whole grace; ordinary requests
-// keep the full grace (docs/adr/2026101801-zero-downtime-daemon-restarts.md).
+// keep the full grace (docs/adr/1580-zero-downtime-daemon-restarts.md).
 func (t *Tracker) BeginShutdown() {
 	t.shutdownOnce.Do(func() { close(t.shutdown) })
 }

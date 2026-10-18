@@ -1,4 +1,4 @@
-# Managed by Ansible (gatewayd_internal_service). ADR-2026101801: start the
+# Managed by Ansible (gatewayd_internal_service). ADR-1580: start the
 # durable socket before the service, which then inherits its listener.
 [Unit]
 Wants={{ item.socket }}

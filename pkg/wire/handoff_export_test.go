@@ -2,7 +2,7 @@
 
 package wire
 
-// adr: 2026101801 — handoff fixtures control host observations independently.
+// adr: 1580 — handoff fixtures control host observations independently.
 
 import (
 	"errors"

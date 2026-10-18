@@ -48,3 +48,7 @@ $$;
 -- +goose Down
 DROP FUNCTION financial_preview_command_held(uuid, uuid, timestamptz);
 DROP TABLE financial_preview_command_runtimes;
+
+-- migration-compat: contract
+-- Financial funding rollout coordinates scheduler, native-owner and meter
+-- capabilities with the USD gate; this batch requires a full release.

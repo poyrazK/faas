@@ -1,6 +1,6 @@
 //go:build unix
 
-// Socket activation (docs/adr/2026101801-zero-downtime-daemon-restarts.md):
+// Socket activation (docs/adr/1580-zero-downtime-daemon-restarts.md):
 // a systemd-owned socket must carry connections across a daemon restart.
 
 package wire_test

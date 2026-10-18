@@ -72,7 +72,7 @@ func TestLoadConfig_RoutingEnvironmentOverrides(t *testing.T) {
 }
 
 // The listen address the unit renders wins over the TOML, so the durable
-// socket rendered from the same variable always matches (ADR-2026101801).
+// socket rendered from the same variable always matches (ADR-1580).
 func TestLoadConfig_ListenAddrEnvironmentOverridesTOML(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "schedd.toml")
 	if err := os.WriteFile(path, []byte("listen_addr = \"unix:///run/faas/schedd.sock\"\n"), 0o600); err != nil {

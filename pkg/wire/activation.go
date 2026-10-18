@@ -16,7 +16,7 @@
 // itself. A daemon that adopts this calls RequireInheritedListenersClaimed
 // once its listeners are bound: a socket unit that passes an address the
 // daemon never serves would otherwise accept and hold connections forever.
-// See docs/adr/2026101801-zero-downtime-daemon-restarts.md.
+// See docs/adr/1580-zero-downtime-daemon-restarts.md.
 
 package wire
 

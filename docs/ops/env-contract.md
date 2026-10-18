@@ -117,7 +117,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_COMPLETION_CACHE_PATH` | shared | `client` |  |  | `` | read by the CLI/SDK on the operator's machine, never by a daemon |
 | `FAAS_COMPUTE_ADMISSION_CEILING_MB` | vmmd | `dropin` |  |  | `` | host-fact-derived RAM admission ceiling installed by node_join |
 | `FAAS_COMPUTE_GATEWAY_DISCOVERY` | gatewayd-public, shared | `unit` |  |  | `` |  |
-| `FAAS_COMPUTE_GATEWAY_RESTART_WAIT` | gatewayd-public | `default` |  |  | `` | caps the wait for a restarting compute gateway before failover; default api.ComputeGatewayRestartWaitSeconds (ADR-2026101801) |
+| `FAAS_COMPUTE_GATEWAY_RESTART_WAIT` | gatewayd-public | `default` |  |  | `` | caps the wait for a restarting compute gateway before failover; default api.ComputeGatewayRestartWaitSeconds (ADR-1580) |
 | `FAAS_COMPUTE_MAX_CONCURRENCY` | vmmd | `dropin` |  |  | `` | host-fact-derived live-instance ceiling installed by node_join |
 | `FAAS_COMPUTE_MEM_MB` | vmmd | `dropin` |  |  | `` | host memory reported by node_join |
 | `FAAS_COMPUTE_VCPUS` | vmmd | `dropin` |  |  | `` | host vCPU count reported by node_join |
@@ -334,10 +334,10 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GRYPE_BIN` | imaged | `default` |  |  | `` |  |
 | `FAAS_GUEST_INIT` | imaged, shared | `dropin` |  |  | `` |  |
 | `FAAS_GUEST_TRACING_ENABLED` | apid, vmmd | `default` |  | 0 | `` | operator-only in-guest request tracing broker; set in /etc/faas/otel.env on apid and vmmd hosts; apid refuses tracing.enabled until set (ADR-958) |
-| `FAAS_HANDOFF_FDS` | apid, gatewayd-internal, gatewayd-public, realtimed, shared | `internal` |  |  | `` | set by a daemon for the successor it starts on `systemctl reload`: how many listening sockets follow fd 3 (ADR-2026101801) |
-| `FAAS_HANDOFF_PARENT` | apid, gatewayd-internal, gatewayd-public, realtimed, shared | `internal` |  |  | `` | set for a hand-off successor: the PID of the generation still draining, which a newer hand-off ends (ADR-2026101801) |
-| `FAAS_HANDOFF_READY_FD` | apid, gatewayd-internal, gatewayd-public, realtimed, shared | `internal` |  |  | `` | set for a hand-off successor: the pipe it reports readiness on to its predecessor (ADR-2026101801) |
-| `FAAS_HANDOFF_SPAWN` | apid, gatewayd-internal, gatewayd-public, realtimed, shared | `internal` |  |  | `` | set for the short-lived intermediate a hand-off starts: it starts the successor so that systemd, not the old generation, is its parent (ADR-2026101801) |
+| `FAAS_HANDOFF_FDS` | apid, gatewayd-internal, gatewayd-public, realtimed, shared | `internal` |  |  | `` | set by a daemon for the successor it starts on `systemctl reload`: how many listening sockets follow fd 3 (ADR-1580) |
+| `FAAS_HANDOFF_PARENT` | apid, gatewayd-internal, gatewayd-public, realtimed, shared | `internal` |  |  | `` | set for a hand-off successor: the PID of the generation still draining, which a newer hand-off ends (ADR-1580) |
+| `FAAS_HANDOFF_READY_FD` | apid, gatewayd-internal, gatewayd-public, realtimed, shared | `internal` |  |  | `` | set for a hand-off successor: the pipe it reports readiness on to its predecessor (ADR-1580) |
+| `FAAS_HANDOFF_SPAWN` | apid, gatewayd-internal, gatewayd-public, realtimed, shared | `internal` |  |  | `` | set for the short-lived intermediate a hand-off starts: it starts the successor so that systemd, not the old generation, is its parent (ADR-1580) |
 | `FAAS_HEARTBEAT_FAILURE_THRESHOLD` | schedd | `default` |  | 3 | `` | consecutive failed node pings before schedd declares a node lost (H9-171); the e2e harness sets 1 so recovery tests need not wait three heartbeat periods |
 | `FAAS_HOST_AGE_IDENTITY_PATH` | apid, githubd, imaged, meterd, s3-gatewayd, schedd, shared | `unit` |  |  | `` |  |
 | `FAAS_HOST_AGE_KEY` | githubd | `default` |  |  | `` |  |
@@ -665,7 +665,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SCHEDD_EXECUTION_DISPATCH_CONCURRENCY` | schedd | `default` |  |  | `` | bounded disposable-execution worker pool; 1 by default and at most 32; only consulted when FAAS_EXECUTION_DISPATCH=1 |
 | `FAAS_SCHEDD_FC_VERSION` | schedd | `dev-only` |  |  | `` | pins the Firecracker version instead of detecting it, so KVM-free acceptance can reach the snapshot-restore path and the ADR-005 staleness contract; must never be set on a production host, where the running binary is the only truthful source |
 | `FAAS_SCHEDD_INVOCATION_DISPATCH_CONCURRENCY` | schedd | `default` |  |  | `` |  |
-| `FAAS_SCHEDD_LISTEN_ADDR` | schedd | `dropin` |  |  | `` | rendered with faas-schedd.socket's ListenStream from faas_schedd_listen_addr (ADR-2026101801) |
+| `FAAS_SCHEDD_LISTEN_ADDR` | schedd | `dropin` |  |  | `` | rendered with faas-schedd.socket's ListenStream from faas_schedd_listen_addr (ADR-1580) |
 | `FAAS_SCHEDD_NODE_INVENTORY_ENFORCE` | schedd, shared | `dropin` |  | 0 | `` | ADR-419; control-plane and compute-only roles deliver the signed process-inventory canary switch; enable only after native recovery qualification |
 | `FAAS_SCHEDD_RECONCILE_ENFORCE` | schedd, shared | `default` |  |  | `` | ADR-191; "1" lets the instance-divergence sweep write. Default off ships the sweep report-only: it counts and logs what it would repair and touches no row |
 | `FAAS_SCHEDD_ROLE` | schedd, shared | `dropin` |  |  | `` |  |

@@ -13,7 +13,7 @@ gatewayd-public, gatewayd-internal, apid and realtimed hand off on
 `systemctl reload`: the new release starts on the same sockets and serves new
 connections, and the old generation finishes requests and streams longer than
 the 25 s restart grace, for up to 30 minutes
-([ADR-2026101801](adr/2026101801-zero-downtime-daemon-restarts.md), "Two generations").
+([ADR-1580](adr/1580-zero-downtime-daemon-restarts.md), "Two generations").
 deployctl reloads them when only the binary changed and both releases can
 hand off, and restarts otherwise. gatewayd-internal's egress ledger and usage
 outbox and realtimed's callback outbox use per-generation slots. realtimed
@@ -51,7 +51,7 @@ public-to-internal H2C hop resends requests that crossed a graceful GOAWAY,
 wake RPCs wait out a schedd restart, outboundd and bridged drain before
 exiting, and HTTP daemons answer requests on connections accepted just before
 shutdown instead of closing them
-([ADR-2026101801](adr/2026101801-zero-downtime-daemon-restarts.md)). Portable
+([ADR-1580](adr/1580-zero-downtime-daemon-restarts.md)). Portable
 restart-under-load tests show no failed requests. On fsn-4 (systemd 255),
 gatewayd-internal's synth server behind a socket unit and a TCP schedd
 listener behind a socket unit each restarted five times under load with 0 of

@@ -62,3 +62,7 @@ DROP TABLE financial_compute_owners;
 DROP TABLE financial_compute_holds;
 DROP TABLE financial_compute_leases;
 DROP TABLE financial_compute_books;
+
+-- migration-compat: contract
+-- Financial funding rollout coordinates scheduler, native-owner and meter
+-- capabilities with the USD gate; this batch requires a full release.

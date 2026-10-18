@@ -113,3 +113,7 @@ DO $$ BEGIN
  RAISE EXCEPTION 'ADR-1641 compute authority migration requires a coordinated forward repair';
 END $$;
 -- +goose StatementEnd
+
+-- migration-compat: contract
+-- Financial funding rollout coordinates scheduler, native-owner and meter
+-- capabilities with the USD gate; this batch requires a full release.

@@ -14,7 +14,7 @@ import (
 // hold watch streams (warm hints, log follows, capacity reports) open
 // indefinitely, so without it every stop spent its whole grace before the
 // replacement could start, while callers waited
-// (docs/adr/2026101801-zero-downtime-daemon-restarts.md).
+// (docs/adr/1580-zero-downtime-daemon-restarts.md).
 //
 // Ended streams return codes.Unavailable, the status clients already treat
 // as "reconnect"; unary RPCs still finish within the grace.

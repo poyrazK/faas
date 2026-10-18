@@ -5,7 +5,7 @@ Before=faas-gatewayd-internal.service
 
 # Holds gatewayd-internal's unix socket across restarts: gatewayd-public's
 # connections queue in the backlog for the replacement instead of failing
-# (docs/adr/2026101801-zero-downtime-daemon-restarts.md). Inert unless the
+# (docs/adr/1580-zero-downtime-daemon-restarts.md). Inert unless the
 # gatewayd_internal_service role sets faas_compute_durable_listeners; split-box
 # compute nodes then add their data listener in 99-faas-data-listen.conf. Every
 # ListenStream= must be an address gatewayd-internal serves; it refuses to

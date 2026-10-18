@@ -13,7 +13,7 @@ var handoffReady = daemonunit.HandoffReady
 // readyGate holds Accept until ready closes. A hand-off successor shares
 // its listening sockets with a predecessor that is still serving; while the
 // successor starts, the predecessor accepts every connection, so none waits
-// on a process that cannot answer it yet (ADR-2026101801).
+// on a process that cannot answer it yet (ADR-1580).
 type readyGate struct {
 	net.Listener
 	ready     <-chan struct{}

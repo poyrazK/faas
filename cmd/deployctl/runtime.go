@@ -771,7 +771,7 @@ func (r hostRuntime) Restart(ctx context.Context, manifest releasebundle.Manifes
 			return err
 		}
 		// A reload hands off to a second generation, which keeps the old
-		// one's long requests and streams (ADR-2026101801); otherwise restart.
+		// one's long requests and streams (ADR-1580); otherwise restart.
 		handedOff, reason, err := r.reloadByHandoff(ctx, service)
 		if err != nil {
 			return err
@@ -1011,7 +1011,7 @@ func installAtomic(source, destination string, mode fs.FileMode) error {
 	}
 	// An unchanged unit keeps its mtime: a reload by hand-off is allowed
 	// only while every file the unit read at start is older than the start
-	// (ADR-2026101801).
+	// (ADR-1580).
 	if current, err := os.ReadFile(destination); err == nil && bytes.Equal(current, body) {
 		if info, err := os.Stat(destination); err == nil && info.Mode().Perm() == mode.Perm() {
 			return nil

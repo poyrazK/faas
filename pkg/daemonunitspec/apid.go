@@ -55,7 +55,7 @@ func UnitApid() daemonunit.Unit {
 
 		Type: "notify",
 		// `systemctl reload` hands off to a second generation that serves
-		// new connections while this one finishes its own (ADR-2026101801).
+		// new connections while this one finishes its own (ADR-1580).
 		NotifyAccess: "main",
 		ExecReload:   handoffReload,
 		OOMPolicy:    "continue",
