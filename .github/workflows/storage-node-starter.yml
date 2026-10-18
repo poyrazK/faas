@@ -10,8 +10,8 @@ jobs:
   qualify:
     name: managed storage Node (embedded app + gateway journey)
     runs-on: ubuntu-latest
-    # Cold-cache race builds include the full e2etest dependency graph.
-    # Keep the fixture and gateway assertions within one bounded job.
+    # A cold cache compiles both the gateway journey and native fixture race
+    # binaries; allow both sets of checks to finish on hosted runners.
     timeout-minutes: 30
     env:
       GOMEMLIMIT: 2GiB

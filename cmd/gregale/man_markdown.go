@@ -24,6 +24,8 @@ func renderMarkdownReference(w io.Writer, cmds []cliCommand) {
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "Generated from the CLI's command manifest by `gregale man --markdown`. Do not edit by hand.")
 	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Local help: `gregale deploy --help` and `gregale app --help` show common tasks. Add `--all` to see every option grouped by purpose, or use `gregale help deploy --all`. This reference always lists every option.")
+	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "Automation: put `--non-interactive` before the command to disable prompts and browser launches; use `--json` for structured output. Required confirmations must be supplied explicitly. Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. See [CLI configuration](cli-config.md) for connection profiles and environment precedence.")
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "| Command | What it does |")
@@ -40,6 +42,9 @@ func renderMarkdownReference(w io.Writer, cmds []cliCommand) {
 			synopsisSuffix = "\n"
 		}
 		_, _ = fmt.Fprintf(w, "`%s`%s", mdSynopsis(c), synopsisSuffix)
+		for _, note := range c.HelpNotes {
+			_, _ = fmt.Fprintf(w, "%s\n\n", mdText(note))
+		}
 		if len(c.ClosedSet) > 0 && len(c.Positionals) > 0 {
 			_, _ = fmt.Fprintf(w, "%s is one of %s.\n\n", mdText(c.Positionals[0]), mdCodeList(c.ClosedSet))
 		}

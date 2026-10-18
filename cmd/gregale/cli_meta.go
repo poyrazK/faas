@@ -48,6 +48,8 @@ const (
 	cliAudienceCompatibility
 )
 
+const resourceProfileHelpNote = "Connection: use --profile NAME before the command; RAM/CPU: use --profile SIZE after the command."
+
 // cliCommand is one top-level gregale command.
 type cliCommand struct {
 	// Name is the literal the user types: "apps", "delayed-task", etc.
@@ -62,6 +64,11 @@ type cliCommand struct {
 	// Examples are runnable command lines shown by local help, man pages,
 	// and the generated Markdown reference for common customer tasks.
 	Examples []string
+	// CompactHelp shows only Common flags and subcommands by default.
+	// --help --all, completion, and references retain the complete manifest.
+	CompactHelp bool
+	// HelpNotes explain defaults and argument placement across help and references.
+	HelpNotes []string
 	// Subcommands enumerates the verb set the dispatcher recognises.
 	// Empty for commands with no verb set (e.g. `whoami`, `version`).
 	Subcommands []cliSub
@@ -184,6 +191,8 @@ func (c cliCommand) completionSubcommandWord() int {
 type cliSub struct {
 	Name  string
 	Short string
+	// Common keeps this verb visible in a parent's compact help.
+	Common bool
 	// Aliases are accepted spellings for this subcommand. They are used
 	// when expanding manifest completion paths.
 	Aliases []string
@@ -321,6 +330,10 @@ type cliFlag struct {
 	// Unreleased keeps a dark-launched flag out of every customer surface
 	// unless it is turned on (unreleased.go).
 	Unreleased bool
+	// Common keeps this option visible in compact command help. Group labels
+	// organize expanded help without changing parser or completion behavior.
+	Common bool
+	Group  string
 	// Req marks required flags. Completion backends do NOT offer
 	// required flags as a TAB choice (the user is forced to provide
 	// them); the marker exists for the man-page SYNOPSIS section
@@ -368,7 +381,7 @@ func cliFlagPrimarySpelling(f cliFlag) string {
 func appScaleCLIFlags() []cliFlag {
 	return []cliFlag{
 		{Name: "environment", Short: "edit desired workload settings in a project environment", Value: "SLUG"},
-		{Name: "profile", Short: "named RAM/CPU profile", Value: "PROFILE", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}},
+		{Name: "profile", Short: "RAM/CPU resource size (connection --profile goes before app)", Value: "SIZE", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}},
 		{Name: "ram", Short: "RAM in MB", Value: "MB"},
 		{Name: "cpu-millicores", Short: "sustained CPU allowance", Value: "250|500|1000", ClosedSet: []string{"250", "500", "1000"}},
 		{Name: "max-concurrency", Short: "maximum concurrent requests", Value: "N"},
@@ -559,7 +572,8 @@ var cliCommands = []cliCommand{
 	},
 	{
 		Name: "start", DocSlug: "deploy", Short: "Get your first app live with a few guided prompts",
-		Examples: []string{"gregale start"},
+		Positionals: []string{"[path]"},
+		Examples:    []string{"gregale start", "gregale start ./my-api"},
 	},
 	{
 		Name:    "account",
@@ -1340,18 +1354,22 @@ var cliCommands = []cliCommand{
 		Flags: []cliFlag{{Name: "dry-run", Short: "preview app deletion without changing resources", Bool: true}, {Name: "quiet", ShortName: "q", Short: "delete one app without prompting"}, {Name: "yes", Short: "confirm app deletion without prompting", Bool: true}},
 	},
 	{
-		Name:    appSlugFallback,
-		DocSlug: "apps",
-		Short:   "Get/update one app or run a deployment-attached command",
+		Name:        appSlugFallback,
+		DocSlug:     "apps",
+		Short:       "Inspect an app, change settings, or manage its runtime",
+		CompactHelp: true,
+		HelpNotes: []string{
+			"Without update flags, shows the app. Omitted settings stay unchanged.",
+			resourceProfileHelpNote,
+		},
 		Examples: []string{
-			"gregale app my-api --maintenance",
+			"gregale app my-api",
+			"gregale app my-api scale --interactive",
 			"gregale app my-api --environment staging --ram 512",
-			"gregale app my-api --no-maintenance --streaming-enabled --websocket-enabled --route-metrics",
-			"gregale app my-api --consumer-auth-mode required --json",
 		},
 		SubcommandsAfterPositionals: true,
 		Subcommands: []cliSub{
-			{Name: subHealth, Short: "Explain default-scope serving health and missing evidence", Examples: []string{"gregale app my-api health --wait --timeout 2m"}, Flags: []cliFlag{
+			{Name: subHealth, Common: true, Short: "Check serving health and readiness", Examples: []string{"gregale app my-api health --wait --timeout 2m"}, Flags: []cliFlag{
 				{Name: "check", Short: "single read; exit 0 only for a fresh healthy default-scope assessment; excludes wait and history options", Bool: true},
 				{Name: "wait", Short: "wait for a fresh healthy default-scope assessment", Bool: true},
 				{Name: "timeout", Short: "maximum wait (default 2m; requires --wait)", Value: "DURATION"},
@@ -1361,12 +1379,12 @@ var cliCommands = []cliCommand{
 				{Name: "before", Short: "history cursor", Value: "CURSOR"},
 				{Name: "environment", Short: "assess this project environment instead of the default scope; excludes history options", Value: "SLUG"},
 			}},
-			{Name: "scale", Short: "Preview, save, apply or update app resource and runtime settings", Examples: []string{
+			{Name: "scale", Common: true, Short: "Preview or change resources and settings", Examples: []string{
 				"gregale app my-api scale --interactive",
 				"gregale app my-api scale --plan --ram 512 --out scale-change.json",
 				"gregale app my-api scale --apply scale-change.json --confirm",
 			}, Flags: append([]cliFlag{
-				{Name: "interactive", Short: "choose resource settings with a guided preview and confirmation", Bool: true},
+				{Name: "interactive", Short: "choose settings with a preview and confirmation; accepts only --environment", Bool: true},
 				{Name: "plan", Short: "show changes and supported plan effects without applying them"},
 				{Name: "out", Short: "write a reusable plan JSON to a new file (requires --plan)", Value: "PATH"},
 				{Name: "apply", Short: "apply a saved scale plan JSON file", Value: "PATH"},
@@ -1377,7 +1395,7 @@ var cliCommands = []cliCommand{
 				{Name: "json", Short: "Print the machine-readable app cost report"},
 			}, Examples: []string{"gregale app my-api costs", "gregale app my-api costs --month 2026-10 --json"}},
 			{Name: "rename", Short: "Rename an app; the old hostname stops routing", Positionals: []string{"<new-slug>"}, Examples: []string{"gregale app my-api rename my-api-v2"}},
-			{Name: "restart", Short: "Request a snapshot restart, or track a fresh runtime-configuration restart", Flags: []cliFlag{
+			{Name: "restart", Common: true, Short: "Restart from a snapshot or fresh configuration", Flags: []cliFlag{
 				{Name: "fresh", Short: "cold-boot replacements with current runtime configuration"},
 				{Name: "wait", Short: "wait for processing; requires --fresh"},
 				{Name: "timeout", Short: "client deadline (default 10m)", Value: "DURATION"},
@@ -1390,7 +1408,7 @@ var cliCommands = []cliCommand{
 				{Name: "poll-interval", Short: "status polling interval (default 2s)", Value: "DURATION"},
 				{Name: "json", Short: "print the last observed restart receipt"},
 			}}}},
-			{Name: subExec, Short: "Run a one-off command against the live deployment", Flags: []cliFlag{
+			{Name: subExec, Common: true, Short: "Run a command against the live deployment", Flags: []cliFlag{
 				{Name: "interactive", Short: "attach stdin and stream output live (-i; default command /bin/sh)"},
 				{Name: "tty", Short: "allocate a remote terminal (-t; use -it)"},
 				{Name: "shell", Short: "interpret one command string through the app shell"},
@@ -1430,63 +1448,63 @@ var cliCommands = []cliCommand{
 		},
 		Positionals: []string{"<slug>"},
 		Flags: []cliFlag{
-			{Name: "concurrency", Short: "print only the per-VM concurrency bound for the app's plan", Bool: true},
-			{Name: "environment", Short: "read or edit desired workload settings in a project environment", Value: "SLUG"},
-			{Name: "visibility", Short: "set public edge exposure", Value: "public|internal", ClosedSet: []string{"public", "internal"}},
-			{Name: "profile", Short: "set a named RAM/CPU profile", Value: "micro|small|medium|large|xlarge", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}},
-			{Name: "ram", Short: "set RAM in MB", Value: "MB"},
-			{Name: "cpu-millicores", Short: "set sustained CPU allowance", Value: "250|500|1000", ClosedSet: []string{"250", "500", "1000"}},
-			{Name: "max-concurrency", Short: "set max_concurrency", Value: "N"},
-			{Name: "concurrency-overflow", Short: "set saturated concurrency behavior", ClosedSet: []string{"queue", "drop"}},
-			{Name: "max-queue-depth", Short: "set maximum warm-saturation waiters", Value: "N"},
-			{Name: "max-queue-wait", Short: "set maximum warm-saturation wait as a duration", Value: "DURATION"},
-			{Name: "max-queue-wait-ms", Short: "set maximum queued concurrency wait", Value: "N"},
-			{Name: "wake-max-queue-depth", Short: "set per-app cold-wake waiter cap", Value: "N"},
-			{Name: "wake-max-queue-wait-seconds", Short: "set per-app cold-wake wait budget", Value: "N"},
-			{Name: "idle", Short: "set idle timeout in seconds", Value: "SEC"},
-			{Name: "request-timeout", Short: "set per-app request timeout in seconds", Value: "SEC"},
-			{Name: "function-concurrency", Short: "set requests one Node/Python function worker serves at once", Value: "N"},
-			{Name: "revision-pin-ttl", Short: "revision pin lifetime; 0 disables, maximum 168h", Value: "DURATION"},
-			{Name: "require-signed", Short: "toggle require_signed", ClosedSet: []string{"true", "false"}},
-			{Name: "security-policy", Short: "deploy posture policy", ClosedSet: []string{"off", "warn", "enforce"}},
-			{Name: "basic-user", Short: "basic-auth username (required with --public-auth=basic)", Value: "USER"},
-			{Name: "basic-pass", Short: "basic-auth password (required with --public-auth=basic)", Value: "PASS"},
-			{Name: "min", Short: "set minimum warm instances (Pro/Scale only)", Value: "N"},
-			{Name: "autoscale-target-rps", Short: "set per-instance RPS scale-up target; 0 disables", Value: "N"},
-			{Name: "autoscale-target-cpu-pct", Short: "set per-instance CPU scale-up target; 0 disables", Value: "1..100"},
-			{Name: "warm-snapshot", Short: "enable the warm-snapshot tier"},
-			{Name: "no-warm-snapshot", Short: "disable the warm-snapshot tier"},
-			{Name: "warm-snapshot-min-requests", Short: "set the warm-snapshot request threshold", Value: "N"},
-			{Name: "warm-snapshot-min-ms", Short: "set the warm-snapshot ready-time threshold", Value: "MS"},
-			{Name: "warm-pool-size", Short: "set the paused warm-pool size", Value: "N"},
-			{Name: "eviction-priority", Short: "set the app eviction tier", Value: "best_effort|reserved", ClosedSet: []string{"best_effort", "reserved"}},
-			{Name: "require-authn", Short: "require a Gregale bearer token on every request (Pro/Scale only)"},
-			{Name: "no-require-authn", Short: "disable the per-deployment token requirement"},
-			{Name: "platform-tenant-required", Short: "require verified customer identity on app traffic (Hobby and above)"},
-			{Name: "no-platform-tenant-required", Short: "allow app traffic without verified customer identity"},
-			{Name: "maintenance", Short: "put every request into 503 maintenance mode"},
-			{Name: "no-maintenance", Short: "resume normal request handling"},
-			{Name: "streaming-enabled", Short: "enable streamed responses (plan eligibility is checked by the API)"},
-			{Name: "no-streaming-enabled", Short: "use buffered responses"},
-			{Name: "websocket-enabled", Short: "allow WebSocket upgrade forwarding (plan eligibility is checked by the API)"},
-			{Name: "no-websocket", Short: "disable WebSocket upgrade forwarding"},
-			{Name: "route-metrics", Short: "enable per-route gateway metrics (plan eligibility is checked by the API)"},
-			{Name: "no-route-metrics", Short: "disable per-route gateway metrics"},
-			{Name: "consumer-auth-mode", Short: "end-customer API-key policy: optional|required", Value: "optional|required", ClosedSet: []string{api.ConsumerAuthModeOptional, api.ConsumerAuthModeRequired}},
-			{Name: "only-declared-routes", Short: "reject undeclared paths before waking the app (OpenAPI or explicit route list)"},
-			{Name: "no-only-declared-routes", Short: "disable the declared-route pre-wake gate"},
-			{Name: "head-wakes", Short: "wake a parked app for HEAD /", Bool: true, ClosedSet: []string{"true", "false"}},
-			{Name: "crawler-policy", Short: "monitor/crawler wake policy", Value: "wake|cached|block", ClosedSet: []string{"wake", "cached", "block"}},
-			{Name: "pre-auth", Short: "per-source pre-auth limit mode; enforce first prints the 24h readiness check", Value: "off|observe|enforce", ClosedSet: []string{"off", "observe", "enforce"}},
-			{Name: "pre-auth-rps", Short: "pre-auth requests per second per source", Value: "N"},
-			{Name: "pre-auth-burst", Short: "pre-auth burst per source", Value: "N"},
-			{Name: "health-path", Short: "set the monitor-facing health path", Value: "PATH"},
-			{Name: "health-path-wakes", Short: "allow health probes to wake the app"},
-			{Name: "no-health-path-wakes", Short: "answer health probes without waking the app"},
-			{Name: "app-protocol", Short: "set the wire-protocol selector", Value: "http1|http2|grpc", ClosedSet: []string{"http1", "http2", "grpc"}},
-			{Name: "public-auth", Short: "set public URL authentication; internal_only admits Gregale internal services, ip_allowlist is Pro+", Value: "open|bearer|basic|ip_allowlist|internal_only", ClosedSet: []string{"open", "bearer", "basic", "ip_allowlist", "internal_only"}},
-			{Name: "ip-allowlist", Short: "allow a CIDR through the public URL; repeat for multiple ranges; requires --public-auth ip_allowlist", Value: "CIDR", Repeatable: true},
-			{Name: "overflow-node", Short: "set or clear the preferred overflow compute node", Value: "NAME"},
+			{Name: "concurrency", Group: "Scope and inspection", Short: "print only the per-VM concurrency bound for the app's plan", Bool: true},
+			{Name: "environment", Group: "Scope and inspection", Common: true, Short: "read or edit this project environment", Value: "SLUG"},
+			{Name: "visibility", Group: "Access and security", Short: "set public edge exposure", Value: "public|internal", ClosedSet: []string{"public", "internal"}},
+			{Name: "profile", Group: "Resources and scaling", Short: "set RAM/CPU resource size", Value: "SIZE", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}},
+			{Name: "ram", Group: "Resources and scaling", Short: "set RAM in MB", Value: "MB"},
+			{Name: "cpu-millicores", Group: "Resources and scaling", Short: "set sustained CPU allowance", Value: "250|500|1000", ClosedSet: []string{"250", "500", "1000"}},
+			{Name: "max-concurrency", Group: "Resources and scaling", Short: "set maximum concurrent requests", Value: "N"},
+			{Name: "concurrency-overflow", Group: "Queues and timeouts", Short: "set saturated concurrency behavior", ClosedSet: []string{"queue", "drop"}},
+			{Name: "max-queue-depth", Group: "Queues and timeouts", Short: "set maximum queued requests (0 uses plan default)", Value: "N"},
+			{Name: "max-queue-wait", Group: "Queues and timeouts", Short: "set queue wait, e.g. 750ms (0 uses plan default); excludes --max-queue-wait-ms", Value: "DURATION"},
+			{Name: "max-queue-wait-ms", Group: "Queues and timeouts", Short: "set queue wait in milliseconds (0 uses plan default); excludes --max-queue-wait", Value: "N"},
+			{Name: "wake-max-queue-depth", Group: "Queues and timeouts", Short: "set per-app cold-wake waiter cap", Value: "N"},
+			{Name: "wake-max-queue-wait-seconds", Group: "Queues and timeouts", Short: "set per-app cold-wake wait budget", Value: "N"},
+			{Name: "idle", Group: "Queues and timeouts", Short: "set idle timeout in seconds", Value: "SEC"},
+			{Name: "request-timeout", Group: "Queues and timeouts", Short: "set per-app request timeout in seconds", Value: "SEC"},
+			{Name: "function-concurrency", Group: "Resources and scaling", Short: "set requests one Node/Python function worker serves at once", Value: "N"},
+			{Name: "revision-pin-ttl", Group: "Queues and timeouts", Short: "revision pin lifetime; 0 disables, maximum 168h", Value: "DURATION"},
+			{Name: "require-signed", Group: "Access and security", Short: "require signed images on deploy", Value: "true|false", ClosedSet: []string{"true", "false"}},
+			{Name: "security-policy", Group: "Access and security", Short: "deploy posture policy", ClosedSet: []string{"off", "warn", "enforce"}},
+			{Name: "basic-user", Group: "Access and security", Short: "basic-auth username (required with --public-auth=basic)", Value: "USER"},
+			{Name: "basic-pass", Group: "Access and security", Short: "basic-auth password (required with --public-auth=basic)", Value: "PASS"},
+			{Name: "min", Group: "Resources and scaling", Short: "set minimum warm instances (Pro/Scale; 0 scales to zero)", Value: "N"},
+			{Name: "autoscale-target-rps", Group: "Resources and scaling", Short: "set per-instance RPS scale-up target; 0 disables", Value: "N"},
+			{Name: "autoscale-target-cpu-pct", Group: "Resources and scaling", Short: "set per-instance CPU scale-up target; 0 disables", Value: "1..100"},
+			{Name: "warm-snapshot", Group: "Wake behavior", Short: "enable the warm-snapshot tier"},
+			{Name: "no-warm-snapshot", Group: "Wake behavior", Short: "disable the warm-snapshot tier"},
+			{Name: "warm-snapshot-min-requests", Group: "Wake behavior", Short: "set the warm-snapshot request threshold", Value: "N"},
+			{Name: "warm-snapshot-min-ms", Group: "Wake behavior", Short: "set the warm-snapshot ready-time threshold", Value: "MS"},
+			{Name: "warm-pool-size", Group: "Wake behavior", Short: "set the paused warm-pool size", Value: "N"},
+			{Name: "eviction-priority", Group: "Resources and scaling", Short: "set the app eviction tier", Value: "best_effort|reserved", ClosedSet: []string{"best_effort", "reserved"}},
+			{Name: "require-authn", Group: "Access and security", Short: "require a Gregale bearer token on every request (Pro/Scale only)"},
+			{Name: "no-require-authn", Group: "Access and security", Short: "disable the per-deployment token requirement"},
+			{Name: "platform-tenant-required", Group: "Access and security", Short: "require verified customer identity on app traffic (Hobby and above)"},
+			{Name: "no-platform-tenant-required", Group: "Access and security", Short: "allow app traffic without verified customer identity"},
+			{Name: "maintenance", Group: "Request handling", Common: true, Short: "put every request into 503 maintenance mode"},
+			{Name: "no-maintenance", Group: "Request handling", Common: true, Short: "resume normal request handling"},
+			{Name: "streaming-enabled", Group: "Request handling", Short: "enable streamed responses (plan eligibility is checked by the API)"},
+			{Name: "no-streaming-enabled", Group: "Request handling", Short: "use buffered responses"},
+			{Name: "websocket-enabled", Group: "Request handling", Short: "allow WebSocket upgrade forwarding (plan eligibility is checked by the API)"},
+			{Name: "no-websocket", Group: "Request handling", Short: "disable WebSocket upgrade forwarding"},
+			{Name: "route-metrics", Group: "Request handling", Short: "enable per-route gateway metrics (plan eligibility is checked by the API)"},
+			{Name: "no-route-metrics", Group: "Request handling", Short: "disable per-route gateway metrics"},
+			{Name: "consumer-auth-mode", Group: "Access and security", Short: "end-customer API-key policy: optional|required", Value: "optional|required", ClosedSet: []string{api.ConsumerAuthModeOptional, api.ConsumerAuthModeRequired}},
+			{Name: "only-declared-routes", Group: "Request handling", Short: "reject undeclared paths before waking the app (OpenAPI or explicit route list)"},
+			{Name: "no-only-declared-routes", Group: "Request handling", Short: "disable the declared-route pre-wake gate"},
+			{Name: "head-wakes", Group: "Wake behavior", Short: "wake a parked app for HEAD /", Bool: true, ClosedSet: []string{"true", "false"}},
+			{Name: "crawler-policy", Group: "Wake behavior", Short: "monitor/crawler wake policy", Value: "wake|cached|block", ClosedSet: []string{"wake", "cached", "block"}},
+			{Name: "pre-auth", Group: "Access and security", Short: "per-source pre-auth limit mode; enforce first prints the 24h readiness check", Value: "off|observe|enforce", ClosedSet: []string{"off", "observe", "enforce"}},
+			{Name: "pre-auth-rps", Group: "Access and security", Short: "pre-auth requests per second per source", Value: "N"},
+			{Name: "pre-auth-burst", Group: "Access and security", Short: "pre-auth burst per source", Value: "N"},
+			{Name: "health-path", Group: "Wake behavior", Short: "set the monitor-facing health path", Value: "PATH"},
+			{Name: "health-path-wakes", Group: "Wake behavior", Short: "allow health probes to wake the app"},
+			{Name: "no-health-path-wakes", Group: "Wake behavior", Short: "answer health probes without waking the app"},
+			{Name: "app-protocol", Group: "Request handling", Short: "set the wire-protocol selector", Value: "http1|http2|grpc", ClosedSet: []string{"http1", "http2", "grpc"}},
+			{Name: "public-auth", Group: "Access and security", Short: "set public URL authentication; internal_only admits Gregale internal services, ip_allowlist is Pro+", Value: "open|bearer|basic|ip_allowlist|internal_only", ClosedSet: []string{"open", "bearer", "basic", "ip_allowlist", "internal_only"}},
+			{Name: "ip-allowlist", Group: "Access and security", Short: "allow a CIDR through the public URL; repeat for multiple ranges; requires --public-auth ip_allowlist", Value: "CIDR", Repeatable: true},
+			{Name: "overflow-node", Group: "Request handling", Short: "set or clear the preferred overflow compute node", Value: "NAME"},
 		},
 	},
 	// operator-side "backup" verb moved to gregalectl in PR-6.5
@@ -2286,48 +2304,52 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:     "deploy",
-		DocSlug:  "deploy",
-		Short:    "Deploy an app, function, or project",
+		Name:        "deploy",
+		DocSlug:     "deploy",
+		Short:       "Deploy an app, function, or project",
+		CompactHelp: true,
+		HelpNotes: []string{
+			"Source defaults to committed HEAD when origin exists; otherwise local files. Use --source=worktree to include local changes.",
+			resourceProfileHelpNote,
+		},
 		Examples: []string{"gregale deploy --plan", "gregale deploy --source=head --name my-api", "gregale deploy --path packages/api --source=worktree"},
 		Flags: []cliFlag{
-			{Name: "image", Short: "deploy from a container image reference", Value: "REF"},
-			{Name: "tarball", Short: "deploy from a source tarball", Value: "PATH"},
-			{Name: "path", Short: "deploy a selected local source directory (relative to the current directory)", Value: "DIR"},
-			{Name: "source", Short: "local source policy (default: auto)", Value: "auto|head|worktree", ClosedSet: []string{"auto", "head", "worktree"}},
-			{Name: "worktree", Short: "deploy the selected source directory from the working tree, including local changes"},
-			{Name: "repo", Short: "deploy from a GitHub repo", Value: "OWNER/NAME"},
-			{Name: "repository", Short: "GitHub owner/name to bind to a project", Value: "OWNER/NAME"},
-			{Name: "install-id", Short: "GitHub installation id for a project binding", Value: "N"},
-			{Name: "production-branch", Short: "production branch for a project binding", Value: "BRANCH"},
+			{Name: "image", Group: "Source and build", Short: "deploy a digest-pinned container image", Value: "REF"},
+			{Name: "tarball", Group: "Source and build", Short: "deploy from a source tarball", Value: "PATH"},
+			{Name: "path", Group: "Source and build", Common: true, Short: "source directory (default: current directory)", Value: "DIR"},
+			{Name: "source", Group: "Source and build", Common: true, Short: "local source policy (default: auto)", Value: "auto|head|worktree", ClosedSet: []string{"auto", "head", "worktree"}},
+			{Name: "worktree", Group: "Source and build", Short: "deploy the selected source directory from the working tree, including local changes"},
+			{Name: "repo", Group: "GitHub", Short: "deploy a GitHub repository (requires --ref)", Value: "OWNER/NAME"},
+			{Name: "repository", Group: "GitHub", Short: "bind a project to GitHub (requires --install-id)", Value: "OWNER/NAME"},
+			{Name: "install-id", Group: "GitHub", Short: "GitHub installation ID (requires --repository)", Value: "N"},
+			{Name: "production-branch", Group: "GitHub", Short: "production branch for a project binding (default: main)", Value: "BRANCH"},
 			// Issue #739 / ADR-092: --ref pairs with --repo to
 			// drive the headless source-ref deploy (CI-friendly,
 			// no install-token env). Required when --repo is set.
-			{Name: "ref", Short: "git ref for --repo (branch, tag, or 40-char SHA)", Value: "REF"},
-			{Name: "source-branch", Short: "reject promotion if the branch for a pinned --ref moves", Value: "BRANCH"},
+			{Name: "ref", Group: "GitHub", Short: "branch, tag, or 40-character SHA (required with --repo)", Value: "REF"},
+			{Name: "source-branch", Group: "GitHub", Short: "reject promotion if the branch for a pinned --ref moves", Value: "BRANCH"},
 			// Issue #270: --github emits a copy-paste Actions workflow
 			// snippet; --pin-action can resolve the public Action tag.
 			// The snippet uses --name / cwd as the app slug.
-			{Name: "github", Short: "emit a GitHub Actions workflow snippet for the Gregale deploy action"},
-			{Name: "pinned-sha", Short: "with --github only, pin the generated Action to this full 40-character commit SHA", Value: "SHA"},
-			{Name: "pin-action", Short: "with --github only, resolve the current v0 Action tag to its commit SHA"},
-			{Name: "template", Short: "scaffold from a built-in template", Value: "NAME", ClosedSet: templateNames13},
-			{Name: "dockerfile", Short: "build with the supplied Dockerfile inside --tarball"},
-			{Name: "runtime", Short: "function runtime", Value: "RUNTIME", ClosedSet: []string{"node22", "python312", "go124", "go124-alpine", "node24", "python313", "binary"}},
-			{Name: "handler", Short: "function handler", Value: "HANDLER"},
-			{Name: "name", Short: "app name (default: selected source directory, or current directory)", Value: "SLUG"},
-			{Name: "profile", Short: "named app resource profile", Value: "PROFILE", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}},
-			{Name: "vcpu", Short: "assert the plan guest vCPU shape (omit to use the plan default)", Value: "N"},
-			{Name: "execution-mode", Short: "app lifecycle mode", Value: "request|service|worker|job"},
-			{Name: "restart-policy", Short: "app restart policy", Value: "no|on-failure|always|unless-stopped"},
-			{Name: "startup-deadline-s", Short: "maximum startup seconds (0 uses plan default)", Value: "SECONDS"},
-			{Name: "max-retries", Short: "maximum restart attempts (0 uses plan default)", Value: "N"},
-			{Name: "function", Short: "deploy as a function; skip shape auto-detection"},
-			{Name: "app", Short: "deploy as an app; skip shape auto-detection"},
-			{Name: "yes", Short: "skip the apply confirmation prompt"},
-			{Name: "only", Short: "workloads to apply; retain unselected project workloads (comma-separated)", Value: "SLUGS"},
-			{Name: "project", Short: "deploy all detected workloads as one project (slug defaults from --name or source)"},
-			{Name: "environment", Short: "deploy to a registered project environment (defaults to linked context)", Value: "SLUG"},
+			{Name: "github", Group: "GitHub", Short: "emit a GitHub Actions workflow snippet for the Gregale deploy action"},
+			{Name: "pinned-sha", Group: "GitHub", Short: "with --github only, pin the generated Action to this full 40-character commit SHA", Value: "SHA"},
+			{Name: "pin-action", Group: "GitHub", Short: "with --github only, resolve the current v0 Action tag to its commit SHA"},
+			{Name: "template", Group: "Source and build", Short: "scaffold from a built-in template", Value: "NAME", ClosedSet: templateNames13},
+			{Name: "dockerfile", Group: "Source and build", Short: "build with the supplied Dockerfile inside --tarball"},
+			{Name: "runtime", Group: "Source and build", Short: "function runtime", Value: "RUNTIME", ClosedSet: []string{"node22", "python312", "go124", "go124-alpine", "node24", "python313", "binary"}},
+			{Name: "handler", Group: "Source and build", Short: "function handler", Value: "HANDLER"},
+			{Name: "name", Group: "App and resources", Common: true, Short: "app slug (default: source directory name)", Value: "SLUG"},
+			{Name: "profile", Group: "App and resources", Short: "RAM/CPU size for one app; excludes --repo and project deploys", Value: "SIZE", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}},
+			{Name: "vcpu", Group: "App and resources", Short: "assert the plan guest vCPU shape (omit to use the plan default)", Value: "N"},
+			{Name: "execution-mode", Group: "App and resources", Short: "app lifecycle mode", Value: "MODE", ClosedSet: []string{"request", "service", "worker", "job"}},
+			{Name: "restart-policy", Group: "App and resources", Short: "app restart policy", Value: "POLICY", ClosedSet: []string{"no", "on-failure", "always", "unless-stopped"}},
+			{Name: "startup-deadline-s", Group: "App and resources", Short: "maximum startup seconds (0 uses plan default)", Value: "SECONDS"},
+			{Name: "max-retries", Group: "App and resources", Short: "maximum restart attempts (0 uses plan default)", Value: "N"},
+			{Name: "function", Group: "Source and build", Short: "deploy as a function; skip shape auto-detection"},
+			{Name: "app", Group: "Source and build", Short: "deploy as an app; skip shape auto-detection"},
+			{Name: "only", Group: "Projects", Short: "workloads to apply; retain unselected project workloads (comma-separated)", Value: "SLUGS"},
+			{Name: "project", Group: "Projects", Short: "deploy all detected workloads as one project (slug defaults from --name or source)"},
+			{Name: "environment", Group: "Projects", Short: "deploy to a registered project environment (defaults to linked context)", Value: "SLUG"},
 			// Issue #977 / ADR-116: deployment annotations surface.
 			// --reason is free text (≤280 chars); --tag is closed-set
 			// (see DeploymentAnnotationTags in cmd_deploy_annotations.go);
@@ -2347,10 +2369,10 @@ var cliCommands = []cliCommand{
 			// Action path defaults to ${{ github.event.pull_request.number }}
 			// but operators running the CLI directly with a known
 			// PR number need an discoverable way to stamp it.
-			{Name: "reason", Short: "free-text deploy reason (≤280 chars)", Value: "text"},
-			{Name: "tag", Short: "annotation tag (" + strings.Join(DeploymentAnnotationTags, "|") + ")", Value: "TAG", ClosedSet: DeploymentAnnotationTags},
-			{Name: "deployed-by", Short: "operator label (auto-resolved from git config user.name)", Value: "NAME"},
-			{Name: "pr-number", Short: "GitHub PR number (positive int; 0 = absent). CI paths stamp via the GitHub Action.", Value: "N"},
+			{Name: "reason", Group: "Annotations", Short: "free-text deploy reason (≤280 chars)", Value: "text"},
+			{Name: "tag", Group: "Annotations", Short: "deployment annotation tag", Value: "TAG", ClosedSet: DeploymentAnnotationTags},
+			{Name: "deployed-by", Group: "Annotations", Short: "operator label (auto-resolved from git config user.name)", Value: "NAME"},
+			{Name: "pr-number", Group: "Annotations", Short: "GitHub PR number (positive int; 0 = absent). CI paths stamp via the GitHub Action.", Value: "N"},
 			// ADR-124 follow-up #1: --exclude + --show-affected
 			// were added to cmdDeployTarball in PR-#1065 but the
 			// cli_meta manifest (this file's source of truth for
@@ -2361,47 +2383,48 @@ var cliCommands = []cliCommand{
 			// contract headline (slug, mutex with --only) without
 			// re-litigating the ADR-124 partition semantic — that's
 			// public docs site territory.
-			{Name: "exclude", Short: "omit workloads (comma-separated slugs; cannot combine with --only)", Value: "SLUGS"},
-			{Name: "show-affected", Short: "show workloads that deploy, stay unchanged, or are removed"},
+			{Name: "exclude", Group: "Projects", Short: "omit workloads (comma-separated slugs; cannot combine with --only)", Value: "SLUGS"},
+			{Name: "show-affected", Group: "Projects", Short: "show workloads that deploy, stay unchanged, or are removed"},
 			// ADR-124 follow-up #3 (PR-B commit 5): write-side
 			// complement to --exclude. Records excluded slugs into
 			// deployment_scope_exclusions on a successful apply so
 			// subsequent deploys honor the persisted set automatically.
-			{Name: "persist-exclude", Short: "save --exclude slugs for future project deploys"},
-			{Name: "project-slug", Short: "kebab slug for the project (one-key provision)", Value: "SLUG"},
-			{Name: "canary-preset", Short: "canary ladder preset", Value: "PRESET", ClosedSet: []string{"none", "slow", "balanced", "aggressive", "1-10-50-100", "custom"}},
-			{Name: "canary-stages", Short: "custom percent@duration canary stages (requires --canary-preset custom)", Value: "STAGES"},
-			{Name: "safe", Short: "deploy with the balanced health-gated rollout and first-wake 5xx rollback"},
-			{Name: "require-authn", Short: "require bearer auth on every request"},
-			{Name: "no-require-authn", Short: "drop the token requirement"},
-			{Name: "platform-tenant-required", Short: "require verified customer identity on selected apps (Hobby and above)"},
-			{Name: "no-platform-tenant-required", Short: "allow selected apps to receive traffic without customer identity"},
-			{Name: "app-protocol", Short: "wire protocol selector", Value: "PROTOCOL", ClosedSet: []string{"http1", "http2", "grpc"}},
-			{Name: "traffic-percent", Short: "deployment traffic split weight (0-100)", Value: "PERCENT"},
-			{Name: "no-traffic", Short: "stage with 0% production traffic and print the preview URL"},
-			{Name: "rollback-on-5xx", Short: "roll back after repeated first-wake 5xx responses"},
-			{Name: "queue-canary-binding", Short: "declare safe queue canary support for this deployment", Value: "NAME", Repeatable: true},
-			{Name: "healthcheck-path", Short: "startup HTTP readiness path", Value: "PATH"},
-			{Name: "healthcheck-grpc", Short: "use standard gRPC health for startup readiness"},
-			{Name: "healthcheck-grpc-service", Short: "service name for --healthcheck-grpc; empty checks overall health", Value: "SERVICE"},
-			{Name: "disable-startup-cpu-boost", Short: "disable temporary CPU boost during VM startup"},
-			{Name: "mcp-task-migration-override", Short: "allow this deployment to replace incompatible MCP task workers once"},
-			{Name: "no-triggers", Short: "skip gregale.yaml trigger and async-route changes"},
-			{Name: "wait", Short: "wait for deployment to become live (default)"},
-			{Name: "no-wait", Short: "return after deployment is queued"},
-			{Name: "create-only", Short: "create or reserve the app without uploading a deployment"},
-			{Name: "timeout", Short: "maximum wait seconds for deploy (default 1200)", Value: "SECONDS"},
-			{Name: "idempotency-key", Short: "stable logical retry key for this deployment", Value: "KEY"},
-			{Name: "secrets-file", Short: "seal KEY=VALUE pairs before the first deployment", Value: "PATH"},
-			{Name: "secret-scan", Short: "scan .env files before packing", Value: "on|off", ClosedSet: []string{"on", "off"}},
-			{Name: "diff", Short: "preview what would change without deploying"},
-			{Name: "dry-run", Short: "run deploy preflight without uploading or changing remote state"},
-			{Name: "plan", Short: "show local stateless app defaults without login or remote changes"},
-			{Name: "strict", Short: "fail on diff schema/quota/env breaks"},
-			{Name: "lenient", Short: "return success even when diff has breaks"},
-			{Name: "server-diff", Short: "compute deploy diff on apid"},
-			{Name: "doctor-strict", Short: "run doctor before deploy and abort on errors"},
-			{Name: "no-doctor", Short: "skip the automatic local doctor preflight"},
+			{Name: "persist-exclude", Group: "Projects", Short: "save --exclude slugs for future project deploys"},
+			{Name: "project-slug", Group: "Projects", Short: "kebab slug for the project (one-key provision)", Value: "SLUG"},
+			{Name: "canary-preset", Group: "Rollout and health", Short: "canary rollout ladder (default: none)", Value: "PRESET", ClosedSet: []string{"none", "slow", "balanced", "aggressive", "1-10-50-100", "custom"}},
+			{Name: "canary-stages", Group: "Rollout and health", Short: "custom percent@duration canary stages (requires --canary-preset custom)", Value: "STAGES"},
+			{Name: "safe", Group: "Rollout and health", Short: "deploy with the balanced health-gated rollout and first-wake 5xx rollback"},
+			{Name: "require-authn", Group: "Access and secrets", Short: "require bearer auth on every request"},
+			{Name: "no-require-authn", Group: "Access and secrets", Short: "drop the token requirement"},
+			{Name: "platform-tenant-required", Group: "Access and secrets", Short: "require verified customer identity on selected apps (Hobby and above)"},
+			{Name: "no-platform-tenant-required", Group: "Access and secrets", Short: "allow selected apps to receive traffic without customer identity"},
+			{Name: "app-protocol", Group: "Rollout and health", Short: "wire protocol selector", Value: "PROTOCOL", ClosedSet: []string{"http1", "http2", "grpc"}},
+			{Name: "traffic-percent", Group: "Rollout and health", Short: "deployment traffic split weight (0-100)", Value: "PERCENT"},
+			{Name: "no-traffic", Group: "Rollout and health", Short: "stage with 0% production traffic and print the preview URL"},
+			{Name: "rollback-on-5xx", Group: "Rollout and health", Short: "roll back after repeated first-wake 5xx responses"},
+			{Name: "queue-canary-binding", Group: "Rollout and health", Short: "declare safe queue canary support for this deployment", Value: "NAME", Repeatable: true},
+			{Name: "healthcheck-path", Group: "Rollout and health", Short: "startup HTTP readiness path", Value: "PATH"},
+			{Name: "healthcheck-grpc", Group: "Rollout and health", Short: "use standard gRPC health for startup readiness"},
+			{Name: "healthcheck-grpc-service", Group: "Rollout and health", Short: "service name (requires --healthcheck-grpc; default: overall server)", Value: "SERVICE"},
+			{Name: "disable-startup-cpu-boost", Group: "Rollout and health", Short: "disable temporary CPU boost during VM startup"},
+			{Name: "mcp-task-migration-override", Group: "Rollout and health", Short: "allow this deployment to replace incompatible MCP task workers once"},
+			{Name: "no-triggers", Group: "Projects", Short: "skip gregale.yaml trigger and async-route changes"},
+			{Name: "wait", Group: "Confirmation and waiting", Short: "wait for deployment to become live (default)"},
+			{Name: "no-wait", Group: "Confirmation and waiting", Short: "return after deployment is queued"},
+			{Name: "create-only", Group: "Confirmation and waiting", Short: "create or reserve the app without uploading a deployment"},
+			{Name: "timeout", Group: "Confirmation and waiting", Short: "readiness wait limit; seconds or duration, e.g. 10m (default: 1200s; maximum: 24h)", Value: "DURATION"},
+			{Name: "idempotency-key", Group: "Confirmation and waiting", Short: "stable logical retry key for this deployment", Value: "KEY"},
+			{Name: "secrets-file", Group: "Access and secrets", Short: "seal KEY=VALUE pairs before the first deployment", Value: "PATH"},
+			{Name: "secret-scan", Group: "Access and secrets", Short: "scan .env files before packing (default: on)", Value: "on|off", ClosedSet: []string{"on", "off"}},
+			{Name: "diff", Group: "Preview and checks", Short: "alias of --dry-run"},
+			{Name: "plan", Group: "Preview and checks", Common: true, Short: "preview local app defaults; no login needed"},
+			{Name: "dry-run", Group: "Preview and checks", Common: true, Short: "check against remote state without deploying"},
+			{Name: "yes", Group: "Confirmation and waiting", Common: true, Short: "skip the apply confirmation prompt"},
+			{Name: "strict", Group: "Preview and checks", Short: "fail on schema/quota/env breaks (default with --dry-run, --diff, or --server-diff)"},
+			{Name: "lenient", Group: "Preview and checks", Short: "allow diff breaks; requires --dry-run, --diff, or --server-diff; excludes --strict"},
+			{Name: "server-diff", Group: "Preview and checks", Short: "preview changes using the server diff engine"},
+			{Name: "doctor-strict", Group: "Preview and checks", Short: "run doctor before deploy and abort on errors"},
+			{Name: "no-doctor", Group: "Preview and checks", Short: "skip the automatic local doctor preflight"},
 		},
 	},
 	{
@@ -2501,6 +2524,8 @@ var cliCommands = []cliCommand{
 				{Name: "env-file", Short: "validate and sync developer secrets", Value: "PATH"},
 				{Name: "service-override-file", Short: "validate and sync service URLs", Value: "PATH"},
 				{Name: "start", Short: "start after preflight"},
+				{Name: "save", Short: "save portable developer defaults in gregale.yaml"},
+				{Name: "dry-run", Short: "preview saved defaults; requires --save"},
 				{Name: "once", Short: "sync once and exit"},
 				{Name: "no-logs", Short: "do not attach runtime logs"},
 				{Name: "open", Short: "open the verified URL"},

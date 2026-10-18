@@ -34,19 +34,18 @@ evidence behind each compatibility claim are tracked in the generated
 
 ## Quickstart
 
-Install the CLI, sign in, and deploy from an existing project:
+Install the CLI and launch your project with the guided command:
 
 ```bash
 curl -fsSL https://get.gregale.dev | sh
-gregale login
-
-cd my-api
-gregale deploy --dry-run
-gregale deploy
+gregale start ./my-api
 ```
 
-The CLI detects the application shape, packages the source, streams the build,
-waits for readiness, verifies the public route, and prints the live URL.
+The CLI handles login when needed and detects your app. Review the source,
+account, connection, access, and resources, then confirm deployment. It uploads
+your working files, including uncommitted changes, shows build progress, waits
+for readiness, and tests the first response. The result includes the tested URL
+and commands to update the app, read logs, open it, and delete it.
 
 ```bash
 gregale logs my-api --follow
@@ -57,8 +56,11 @@ gregale open my-api
 No project handy:
 
 ```bash
-gregale deploy --template hello-node
+gregale start
 ```
+
+Run it from an empty directory to choose a Node.js, Python, or Go starter.
+Use `gregale deploy` for explicit deployment options and automation.
 
 The npm channel uses the `rc` tag for prereleases. Check the
 [installation guide](docs/cli-install.md) for its publication status before
@@ -67,7 +69,7 @@ using it:
 ```bash
 npm view gregale dist-tags --json
 npm install -g gregale@rc
-npx gregale@rc deploy
+npx gregale@rc start
 ```
 
 See the [quickstart](docs/quickstart.md) for the first-deploy flow, the

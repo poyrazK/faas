@@ -182,6 +182,10 @@ func renderManCommand(w io.Writer, c cliCommand) {
 	})
 	manSection(w, "DESCRIPTION", func(w io.Writer) {
 		writeRoffParagraph(w, c.Short)
+		for _, note := range c.HelpNotes {
+			_, _ = fmt.Fprintln(w, ".PP")
+			writeRoffParagraph(w, note)
+		}
 	})
 	if len(c.Subcommands) > 0 {
 		manSection(w, "SUBCOMMANDS", func(w io.Writer) {
