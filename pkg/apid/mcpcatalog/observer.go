@@ -21,6 +21,7 @@ import (
 // ObserverRunner runs bounded batches. Durable role leases provide crash recovery
 // and prevent two apid processes from recording the same scheduled check.
 type ObserverRunner struct {
+	Endpoint   func(context.Context, state.App, state.Deployment) (string, error)
 	Store      state.Store
 	Domain     string
 	Identities func(context.Context) []*age.X25519Identity
@@ -30,7 +31,7 @@ type ObserverRunner struct {
 	Log   *slog.Logger
 }
 
-func RunManagedObservers(ctx context.Context, store state.Store, domain string, identities func(context.Context) []*age.X25519Identity, log *slog.Logger) {
+func RunManagedObservers(ctx context.Context, store state.Store, domain string, identities func(context.Context) []*age.X25519Identity, log *slog.Logger, endpoints ...func(context.Context, state.App, state.Deployment) (string, error)) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	transport.DialContext = oci.EgressDialContext(nil)
@@ -38,6 +39,9 @@ func RunManagedObservers(ctx context.Context, store state.Store, domain string, 
 	transport.IdleConnTimeout = time.Duration(api.MCPCatalogObserverLeaseSeconds) * time.Second
 	defer transport.CloseIdleConnections()
 	runner := ObserverRunner{Store: store, Domain: domain, Identities: identities, Log: log, Client: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	if len(endpoints) > 0 {
+		runner.Endpoint = endpoints[0]
+	}
 	// Slow provider retirement must not delay ordinary catalog observation.
 	var revocations sync.WaitGroup
 	revocations.Add(1)
@@ -110,14 +114,31 @@ func (r *ObserverRunner) check(ctx context.Context, source state.MCPCatalogObser
 	// timeout, leaving room to report within the durable lease.
 	sourceCtx, sourceCancel := context.WithTimeout(ctx, time.Duration(cfg.Observer.TimeoutSeconds)*time.Second)
 	defer sourceCancel()
-	token, tokenErr := r.token(sourceCtx, job)
+	endpoint, endpointErr := managedObserverEndpoint(r.Domain, app.Slug, cfg.Observer.Endpoint)
+	if scope := api.MCPConnectionScope(cfg.Scope); scope != state.DefaultEnvScope {
+		endpointErr = state.ErrConflict
+		deployment, e := state.ResolveEnvironmentDeployment(sourceCtx, r.Store, app.ID, scope)
+		if e == nil && deployment.AppID == app.ID && api.MCPConnectionScope(deployment.Scope) == scope && r.Endpoint != nil {
+			base, e := r.Endpoint(sourceCtx, app, deployment)
+			if e == nil {
+				endpoint, endpointErr = (mcphosting.Config{Endpoint: cfg.Observer.Endpoint}).URL(base)
+			}
+		}
+	}
+	var token string
+	var tokenErr error
+	if endpointErr == nil {
+		token, tokenErr = r.token(sourceCtx, job)
+	}
+
 	reason := ""
 	var observed []byte
-	if tokenErr != nil {
+	if endpointErr != nil {
+		reason = "source_unavailable"
+	} else if tokenErr != nil {
 		reason = "credential_unavailable"
 	} else {
 		baseline, _, baselineErr := contract(cfg.Baseline)
-		endpoint, endpointErr := managedObserverEndpoint(r.Domain, app.Slug, cfg.Observer.Endpoint)
 		if baselineErr != nil || endpointErr != nil {
 			reason = "comparison_unavailable"
 		} else {
@@ -172,8 +193,8 @@ func (r *ObserverRunner) token(ctx context.Context, job state.MCPCatalogObserver
 	}
 	readCtx, cancel := context.WithTimeout(ctx, api.MCPPolicyConvergenceReadTimeout)
 	defer cancel()
-	secret, err := r.Store.GetAppSecret(readCtx, job.AccountID, job.AppID, key)
-	if err != nil || secret == nil || secret.AccountID != job.AccountID || secret.AppID != job.AppID || secret.Scope != state.DefaultEnvScope || secret.Key != key || secret.ManagedPostgresBindingID != "" || secret.ManagedObjectStorageCredentialID != "" || secret.ManagedCredentialRef != "" {
+	secret, err := r.Store.GetAppSecretInScope(readCtx, job.AccountID, job.AppID, api.MCPConnectionScope(job.Snapshot.Config.Scope), key)
+	if err != nil || secret == nil || secret.AccountID != job.AccountID || secret.AppID != job.AppID || secret.Scope != api.MCPConnectionScope(job.Snapshot.Config.Scope) || secret.Key != key || secret.ManagedPostgresBindingID != "" || secret.ManagedObjectStorageCredentialID != "" || secret.ManagedCredentialRef != "" {
 		return "", errors.New("credential unavailable")
 	}
 	envelope, err := secretbox.OpenMulti(r.Identities(readCtx), secret.Ciphertext)
