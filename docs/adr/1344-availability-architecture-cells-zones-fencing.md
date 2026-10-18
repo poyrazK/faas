@@ -603,6 +603,12 @@ second provider. Tracking: epic #4700.
   - Replication is plain physical streaming. The primary holds a
     `faas_standby` slot capped by `max_slot_wal_keep_size`, and admits the
     `replicator` role from the standby's overlay address only.
+  - Replication is TLS-only (2026-10-18). The primary serves a
+    self-signed certificate that the standby pins over the Ansible
+    connection and verifies (`sslmode=verify-full`); `pg_hba` admits the
+    replicator with `hostssl` only. The overlay alone did not guarantee
+    encryption: a `static` overlay (a provider network, as on the GCP beta)
+    has none, and a link between providers would be built outside Gregale.
   - The standby's `pg_basebackup` seed refuses to wipe a cluster that may
     be a promoted primary.
   - The second backup repository is a separate decision; the replica does

@@ -330,6 +330,16 @@ var routeExclude = map[string]bool{
 	"POST /v1/webhooks/mcp-readiness/pagerduty/{id}":                         true, // Provider HMAC authentication, not Bearer HTTP.
 	"POST /v1/webhooks/mcp-readiness/pagerduty/{id}/{destination}":           true, // Destination-scoped provider HMAC ingress (ADR-20261017191529).
 	"POST /dashboard/mcp/apps/{slug}/alerts/{id}/pagerduty-acknowledgements": true, // Named-CSRF browser adapter.
+
+	// ADR-20261016151947 live queries: a preview gated by FAAS_LIVE_QUERIES_ACCOUNTS
+	// and answering like unregistered routes outside it, so it stays out of
+	// the public OpenAPI spec and generated SDKs until launch. pkg/api keeps
+	// its client for the operator CLI. Mirror across this list AND cmd/sdk-coverage/main.go::routeExclude.
+	"GET /v1/postgres/databases/{id}/live":         true,
+	"POST /v1/postgres/databases/{id}/live":        true,
+	"DELETE /v1/postgres/databases/{id}/live":      true,
+	"POST /v1/postgres/databases/{id}/live/rotate": true,
+
 	// Issue #777 / ADR-091: operator observability backend.
 	// Mirror the operator-only exclusion across both this list
 	// AND cmd/sdk-coverage/main.go::routeExclude. The two lists
