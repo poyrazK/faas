@@ -49,9 +49,9 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 	}
 	store, path, key := testStateStore(t)
 	f := newRemoteFixtureWithOptions(t, false, HTTPOptions{Onboarding: "browser", StateStore: store, RedirectURIs: []string{testRedirect, "http://127.0.0.1/callback/*"}})
-	var profileReads, historyPageReads, wakePageReads, wakeTimelineReads, wakeHistoryReads, errorGroupsReads, errorRequestsReads, timeseriesReads, analyticsReads, requestReads, performanceReads, criticalPathReads, comparisonReads, regressionReads, residencyReads, nativeWrites atomic.Int32
+	var profileReads, historyPageReads, wakePageReads, wakeTimelineReads, wakeHistoryReads, errorGroupsReads, errorRequestsReads, timeseriesReads, analyticsReads, requestReads, performanceReads, criticalPathReads, comparisonReads, regressionReads, residencyReads, traceReads, nativeWrites atomic.Int32
 	var replaced atomic.Bool
-	var performanceEmpty atomic.Bool
+	var performanceEmpty, tracePartial atomic.Bool
 	var residencyEmpty atomic.Bool
 	if requestMode != "" {
 		f.mu.Lock()
@@ -197,10 +197,30 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 				_ = json.NewEncoder(w).Encode(native)
 				return true
 			}
+			if req.URL.Path == "/v1/account/traces/"+traceFixtureID+"/selected-apps" {
+				traceReads.Add(1)
+				if req.Method != "GET" || req.URL.Query().Get("app_id") != account+"-app" || len(req.URL.Query()["app_id"]) != 1 || req.URL.Query().Get("limit") != "10" || len(req.URL.Query()) != 2 {
+					t.Error("Codex trace selection changed")
+					w.WriteHeader(400)
+					return true
+				}
+				native := selectedTraceFixture(account + "-app")
+				if performanceEmpty.Load() {
+					native.Requests = []api.SelectedTraceRequest{}
+					native.Invocations = []api.SelectedTraceInvocation{}
+				}
+				if tracePartial.Load() {
+					native.Requests = nil
+					native.RequestsStatus = "unavailable"
+					native.Partial = true
+				}
+				_ = json.NewEncoder(w).Encode(native)
+				return true
+			}
 			if req.URL.Path == "/v1/apps/alpha/debug/compare" {
 				comparisonReads.Add(1)
 				var selection api.DebugCompareRequest
-				if req.Method != http.MethodPost || json.NewDecoder(req.Body).Decode(&selection) != nil || selection.Source != discoveryDeploymentID || selection.Mirror != comparisonTargetID || selection.Since != "1h" || selection.Until != comparisonUntil || selection.Route != "" {
+				if req.Method != http.MethodPost || json.NewDecoder(req.Body).Decode(&selection) != nil || selection.Source != discoveryDeploymentID || selection.Mirror != comparisonTargetID || selection.Since != "1h" || (selection.Until != comparisonUntil && selection.Until != "") || selection.Route != "" {
 					t.Error("real client comparison selection changed")
 					w.WriteHeader(400)
 					return true
@@ -479,6 +499,8 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 			}
 		case "/replace":
 			replaced.Store(true)
+		case "/trace-partial":
+			tracePartial.Store(true)
 		case "/performance-empty":
 			performanceEmpty.Store(true)
 		case "/residency-empty":
@@ -486,7 +508,7 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 		case "/evidence":
 			mu.Lock()
 			defer mu.Unlock()
-			writeOAuthJSON(w, 200, map[string]int{"profile_reads": int(profileReads.Load()), "refreshes": refreshes, "wake_history_reads": int(wakeHistoryReads.Load()), "wake_history_page_reads": int(historyPageReads.Load()), "wake_timeline_reads": int(wakeTimelineReads.Load()), "wake_page_reads": int(wakePageReads.Load()), "request_reads": int(requestReads.Load()), "analytics_reads": int(analyticsReads.Load()), "timeseries_reads": int(timeseriesReads.Load()), "error_groups_reads": int(errorGroupsReads.Load()), "error_requests_reads": int(errorRequestsReads.Load()), "performance_reads": int(performanceReads.Load()), "critical_path_reads": int(criticalPathReads.Load()), "comparison_reads": int(comparisonReads.Load()), "regression_reads": int(regressionReads.Load()), "residency_reads": int(residencyReads.Load()), "native_writes": int(nativeWrites.Load())})
+			writeOAuthJSON(w, 200, map[string]int{"profile_reads": int(profileReads.Load()), "refreshes": refreshes, "wake_history_reads": int(wakeHistoryReads.Load()), "wake_history_page_reads": int(historyPageReads.Load()), "wake_timeline_reads": int(wakeTimelineReads.Load()), "wake_page_reads": int(wakePageReads.Load()), "request_reads": int(requestReads.Load()), "analytics_reads": int(analyticsReads.Load()), "timeseries_reads": int(timeseriesReads.Load()), "error_groups_reads": int(errorGroupsReads.Load()), "error_requests_reads": int(errorRequestsReads.Load()), "performance_reads": int(performanceReads.Load()), "critical_path_reads": int(criticalPathReads.Load()), "comparison_reads": int(comparisonReads.Load()), "regression_reads": int(regressionReads.Load()), "residency_reads": int(residencyReads.Load()), "trace_reads": int(traceReads.Load()), "native_writes": int(nativeWrites.Load())})
 			return
 		default:
 			w.WriteHeader(404)
@@ -519,10 +541,10 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 	if json.Unmarshal(output, &report) != nil || report["revocation"] != "passed" || report["refresh"] != "passed" || report["restart"] != "passed" {
 		t.Fatal("incomplete real-client evidence")
 	}
-	if requestMode != "" && (report["request_diagnostics"] != requestMode || report["request_discovery"] != "passed" || nativeWrites.Load() != 0 || requestReads.Load() != map[string]int32{"denied": 0, "approved": 28}[requestMode]) {
+	if requestMode != "" && (report["request_diagnostics"] != requestMode || report["request_discovery"] != "passed" || nativeWrites.Load() != 0 || requestReads.Load() != map[string]int32{"denied": 0, "approved": 32}[requestMode]) {
 		t.Fatal("incomplete request consent evidence or unexpected native writes")
 	}
-	if requestMode != "" && (report["performance_diagnosis"] != "passed" || performanceReads.Load() != map[string]int32{"denied": 0, "approved": 8}[requestMode]) {
+	if requestMode != "" && (report["performance_diagnosis"] != "passed" || performanceReads.Load() != map[string]int32{"denied": 0, "approved": 12}[requestMode]) {
 		t.Fatal("incomplete real-client performance consent/empty-evidence verification")
 	}
 	if requestMode != "" && (report["residency_diagnosis"] != "passed" || residencyReads.Load() != map[string]int32{"denied": 0, "approved": 4}[requestMode]) {
@@ -531,11 +553,17 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 	if requestMode != "" && (report["critical_paths"] != "passed" || criticalPathReads.Load() != map[string]int32{"denied": 0, "approved": 4}[requestMode]) {
 		t.Fatal("incomplete real-client critical-path consent/empty-evidence verification")
 	}
-	if requestMode != "" && (report["deployment_comparison"] != "passed" || comparisonReads.Load() != map[string]int32{"denied": 0, "approved": 4}[requestMode]) {
+	if requestMode != "" && (report["deployment_comparison"] != "passed" || comparisonReads.Load() != map[string]int32{"denied": 0, "approved": 8}[requestMode]) {
 		t.Fatal("incomplete real-client deployment comparison verification")
 	}
-	if requestMode != "" && (report["regression_inbox"] != "passed" || regressionReads.Load() != map[string]int32{"denied": 0, "approved": 4}[requestMode]) {
-		t.Fatal("incomplete real-client regression inbox verification")
+	if requestMode != "" && (report["regression_inbox"] != "passed" || report["regression_resource"] != "passed" || report["fleet_regressions"] != "passed" || regressionReads.Load() != map[string]int32{"denied": 0, "approved": 16}[requestMode]) {
+		t.Fatal("incomplete real-client regression inbox/resource/fleet verification")
+	}
+	if requestMode != "" && (report["selected_trace"] != "passed" || traceReads.Load() != map[string]int32{"denied": 0, "approved": 5}[requestMode] || requestMode == "approved" && report["partial_trace"] != "passed") {
+		t.Fatal("incomplete real-client selected trace verification")
+	}
+	if requestMode != "" && report["incident_bundle"] != "passed" {
+		t.Fatal("incomplete real-client incident bundle verification")
 	}
 	if requestMode != "" && (report["request_explanations"] != "passed" || requestMode == "approved" && report["empty_request_explanation"] != "passed") {
 		t.Fatal("incomplete real-client structured request explanation verification")

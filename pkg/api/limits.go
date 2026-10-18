@@ -10804,6 +10804,19 @@ const (
 	MCPCompareUntilMaxBytes                       = 64
 	MCPRegressionsDefault                         = 20
 	MCPRegressionsMax                             = 50
+	MCPFleetRegressionAppsMax                     = 5
+	MCPFleetRegressionsDefaultPerApp              = 5
+	MCPFleetRegressionsMaxPerApp                  = 10
+	MCPFleetRegressionAppResultMaxBytes           = 16 << 10
+	MCPFleetRegressionAppTimeout                  = 5 * time.Second
+	MCPIncidentEvidenceMaxBytes                   = 48 << 10
+	MCPIncidentSectionMaxBytes                    = 16 << 10
+	MCPIncidentRegressionLimit                    = 5
+	MCPIncidentComparisonLimit                    = 5
+	MCPIncidentSectionTimeout                     = 5 * time.Second
+	SelectedTraceAppsMax                          = 5
+	SelectedTraceRowsDefault                      = 10
+	SelectedTraceRowsMax                          = 20
 	MCPResidencyHistoryDefault                    = 10
 	MCPResidencyHistoryMax                        = 20
 	MCPResidencyCausesMax                         = 16
@@ -12847,6 +12860,13 @@ const (
 	EnvironmentRecoveryMaxSeconds            = 7 * 24 * 60 * 60
 	EnvironmentRecoveryMaxBytes        int64 = 1 << 30
 	EnvironmentRecoveryAccountMaxBytes int64 = 2 << 30
+)
+
+// Debugger triage duration bounds are shared by planning, API validation and
+// fresh transactional writes. Replaying a committed receipt does not renew them.
+const (
+	DebugRegressionDefaultDismissal = 24 * time.Hour
+	DebugRegressionMaxDismissal     = 30 * 24 * time.Hour
 )
 
 // Durable worker recovery is bounded independently of events and queue polling.

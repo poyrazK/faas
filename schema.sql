@@ -162,6 +162,20 @@ END $$;
 
 
 --
+-- Name: advance_regression_review_version(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.advance_regression_review_version() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+        BEGIN
+            NEW.review_version := gen_random_uuid();
+            RETURN NEW;
+        END;
+        $$;
+
+
+--
 -- Name: alert_presets_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -28479,6 +28493,7 @@ CREATE TABLE public.debug_regression_observations (
     error_rate_pct numeric(5,2) DEFAULT 0 NOT NULL,
     error_rate_base_pct numeric(5,2) DEFAULT 0 NOT NULL,
     error_count integer DEFAULT 0 NOT NULL,
+    review_version uuid DEFAULT '00000000-0000-0000-0000-000000000001'::uuid NOT NULL,
     CONSTRAINT debug_regression_observations_affected_count_check CHECK ((affected_count >= 0)),
     CONSTRAINT debug_regression_observations_error_count_check CHECK ((error_count >= 0)),
     CONSTRAINT debug_regression_observations_error_rate_base_pct_check CHECK (((error_rate_base_pct >= (0)::numeric) AND (error_rate_base_pct <= (100)::numeric))),
@@ -28489,7 +28504,8 @@ CREATE TABLE public.debug_regression_observations (
     CONSTRAINT debug_regression_observations_regression_factor_check CHECK ((regression_factor >= 1.0)),
     CONSTRAINT debug_regression_observations_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
     CONSTRAINT debug_regression_observations_state_check CHECK ((state = ANY (ARRAY['active'::text, 'acknowledged'::text, 'dismissed'::text, 'resolved'::text]))),
-    CONSTRAINT debug_regression_observations_suspected_dependency_check CHECK (((suspected_dependency IS NULL) OR ((jsonb_typeof(suspected_dependency) = 'object'::text) AND (octet_length((suspected_dependency)::text) <= 1024))))
+    CONSTRAINT debug_regression_observations_suspected_dependency_check CHECK (((suspected_dependency IS NULL) OR ((jsonb_typeof(suspected_dependency) = 'object'::text) AND (octet_length((suspected_dependency)::text) <= 1024)))),
+    CONSTRAINT debug_regression_review_version_nonzero CHECK ((review_version <> '00000000-0000-0000-0000-000000000000'::uuid))
 );
 
 
@@ -39869,7 +39885,7 @@ CREATE TABLE public.platform_mail_deployment_fences (
     revision bigint DEFAULT 1 NOT NULL,
     success_revision bigint DEFAULT 0 NOT NULL,
     CONSTRAINT platform_mail_deployment_fences_revision_check CHECK ((revision > 0)),
-    CONSTRAINT platform_mail_deployment_fences_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT platform_mail_deployment_fences_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
     CONSTRAINT platform_mail_deployment_fences_success_revision_check CHECK ((success_revision >= 0))
 );
 
@@ -39986,7 +40002,7 @@ CREATE TABLE public.platform_mail_producer_outbox (
     CONSTRAINT platform_mail_producer_outbox_code_check CHECK ((code = ANY (ARRAY[''::text, 'maild_unavailable'::text, 'maild_rejected'::text, 'attempt_limit'::text, 'notification_expired'::text, 'account_changed'::text, 'platform_suppressed'::text, 'token_unavailable'::text, 'payload_unavailable'::text]))),
     CONSTRAINT platform_mail_producer_outbox_created_at_check CHECK (isfinite(created_at)),
     CONSTRAINT platform_mail_producer_outbox_deletion_requested_at_check CHECK (isfinite(deletion_requested_at)),
-    CONSTRAINT platform_mail_producer_outbox_deployment_failure_check CHECK ((((template = 'deployment_failed'::text) AND (deployment_failure_id IS NOT NULL) AND (deployment_failure_app_id IS NOT NULL) AND (deployment_failure_scope IS NOT NULL) AND (deployment_failure_scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text) AND (deployment_failure_revision IS NOT NULL) AND (deployment_failure_revision > 0) AND (deployment_failure_account_revision IS NOT NULL) AND (deployment_failure_account_revision > 0) AND (deployment_failure_app_revision IS NOT NULL) AND (deployment_failure_app_revision > 0) AND (deployment_failure_success_revision IS NOT NULL) AND (deployment_failure_success_revision >= 0) AND (deployment_failure_at IS NOT NULL) AND isfinite(deployment_failure_at)) OR ((template <> 'deployment_failed'::text) AND (deployment_failure_id IS NULL) AND (deployment_failure_app_id IS NULL) AND (deployment_failure_scope IS NULL) AND (deployment_failure_revision IS NULL) AND (deployment_failure_account_revision IS NULL) AND (deployment_failure_app_revision IS NULL) AND (deployment_failure_success_revision IS NULL) AND (deployment_failure_at IS NULL)))),
+    CONSTRAINT platform_mail_producer_outbox_deployment_failure_check CHECK ((((template = 'deployment_failed'::text) AND (deployment_failure_id IS NOT NULL) AND (deployment_failure_app_id IS NOT NULL) AND (deployment_failure_scope IS NOT NULL) AND (deployment_failure_scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text) AND (deployment_failure_revision IS NOT NULL) AND (deployment_failure_revision > 0) AND (deployment_failure_account_revision IS NOT NULL) AND (deployment_failure_account_revision > 0) AND (deployment_failure_app_revision IS NOT NULL) AND (deployment_failure_app_revision > 0) AND (deployment_failure_success_revision IS NOT NULL) AND (deployment_failure_success_revision >= 0) AND (deployment_failure_at IS NOT NULL) AND isfinite(deployment_failure_at)) OR ((template <> 'deployment_failed'::text) AND (deployment_failure_id IS NULL) AND (deployment_failure_app_id IS NULL) AND (deployment_failure_scope IS NULL) AND (deployment_failure_revision IS NULL) AND (deployment_failure_account_revision IS NULL) AND (deployment_failure_app_revision IS NULL) AND (deployment_failure_success_revision IS NULL) AND (deployment_failure_at IS NULL)))),
     CONSTRAINT platform_mail_producer_outbox_from_address_check CHECK (((length(from_address) >= 3) AND (length(from_address) <= 1024))),
     CONSTRAINT platform_mail_producer_outbox_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT platform_mail_producer_outbox_lease_until_check CHECK (((lease_until IS NULL) OR isfinite(lease_until))),
@@ -70719,6 +70735,13 @@ CREATE TRIGGER registry_rootfs_current_private_guard BEFORE INSERT OR DELETE OR 
 --
 
 CREATE TRIGGER registry_rootfs_private_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_registry_rootfs FOR EACH ROW EXECUTE FUNCTION public.deployment_registry_rootfs_guard();
+
+
+--
+-- Name: debug_regression_observations regression_review_version; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regression_review_version BEFORE INSERT OR UPDATE ON public.debug_regression_observations FOR EACH ROW EXECUTE FUNCTION public.advance_regression_review_version();
 
 
 --
