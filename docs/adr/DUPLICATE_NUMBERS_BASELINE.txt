@@ -212,9 +212,3 @@
 1258
 1259
 1260
-
-# Refreshed 2026-10-18 from main @ b284c7cbabb; #4894 independently duplicated ADR-1580.
-1580
-# Refreshed 2026-10-18 from main @ 53116be8b341 after the internal-mail merge.
-20261015
-20261016

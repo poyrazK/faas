@@ -627,6 +627,7 @@ lint-drill: ## Static lint of restore, backup-retention, and TLS drill scripts
 	bash deploy/scripts/faas-pg-wal-prune_test.sh
 	bash deploy/scripts/faas-pg-backup-contract-preflight_test.sh
 	bash deploy/scripts/faas-check-compute-edges_test.sh
+	bash deploy/ansible/roles/cp_state_backup/files/faas-cp-state-backup_test.sh
 
 .PHONY: m8-evidence-check
 m8-evidence-check: ## Fail when the executed M8 restore-drill record is missing or older than 30 days
@@ -697,8 +698,23 @@ native-profiling-acceptance: ## Qualify deployed CPU profiling, request counters
 native-dev-bridge-acceptance: ## Verify Dev Bridge against designated native split-box fixtures and public TLS
 	@bash scripts/ci/run-native-dev-bridge-acceptance.sh
 
-native-m9-acceptance: ## M9: run the guarded two-node failure-safe drill on the native x86 split-box pair
-	@bash scripts/ci/run-native-m9-acceptance.sh
+native-m9-acceptance: ## M9: qualify real migration, lost acknowledgement, vmmd restart and replacement protection on native x86
+	@GO="$(GO)" bash scripts/ci/run-native-m9-acceptance.sh
+
+.PHONY: native-m9-drain-acceptance
+native-m9-drain-acceptance: ## Qualify the real drain API, schedd restart, automatic migration and maintenance completion on native x86
+	@GO="$(GO)" bash scripts/ci/run-native-m9-acceptance.sh --scenario drain
+
+.PHONY: native-m9-heartbeat-smoke test-native-m9-contracts
+native-m9-heartbeat-smoke: ## Separate native two-node heartbeat smoke (does not qualify migration recovery)
+	@bash scripts/ci/run-native-m9-heartbeat-smoke.sh
+
+test-native-m9-contracts: ## Portable migration/drain verdicts, API and peer guards, and in-memory fixture tests; no KVM claim
+	@python3 scripts/ci/native-m9-gate_test.py
+	@python3 scripts/ci/native-m9-drain_test.py
+	@python3 tests/native/m9/native_m9_peer_test.py
+	@node --test tests/native/m9/fixture/server.test.mjs
+	@$(GO) test -race -count=1 ./tests/native/m9
 
 .PHONY: metal-lima-m5
 metal-lima-m5: ## Run the M5 §14 deploy-to-park cold-boot acceptance on Lima (subtest 1 only)
@@ -977,6 +993,7 @@ ansible-syntax-check: ## Validate the bare-metal Ansible playbooks with the prod
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/postgres_standby.yml --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/postgres_promote.yml --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/standby_takeover.yml --syntax-check
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/cp_state_restore.yml --syntax-check
 
 .PHONY: ansible-lint
 ansible-lint: ## Lint deploy/ansible at the production profile (config: deploy/ansible/.ansible-lint) — ADR-143

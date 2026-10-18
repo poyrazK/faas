@@ -486,6 +486,11 @@ type DaemonConfig struct {
 	// per node. "local" keeps one in-process bucket per gateway.
 	RateLimitMode string `yaml:"ratelimit_mode,omitempty"`
 
+	// RateLimitLease is gatewayd-internal's [ratelimit] lease (ADR-1520):
+	// central counters are spent from local leases instead of one Postgres
+	// consult per request. Omitted renders false. Requires central mode.
+	RateLimitLease *bool `yaml:"ratelimit_lease,omitempty"`
+
 	// GatewaySynthTarget is schedd's optional remote gatewayd-internal
 	// synthesis endpoint. It is separate from Outbound because schedd has
 	// two remote peers in a split-box fleet: vmmd for placement and
@@ -1372,6 +1377,13 @@ func (d *Daemons) validate() Errors {
 			} else if !contains(RateLimitModes, dc.RateLimitMode) {
 				errs = append(errs, Error{path + ".ratelimit_mode",
 					fmt.Sprintf("unsupported %q (allowed: %s)", dc.RateLimitMode, strings.Join(RateLimitModes, "|"))})
+			}
+		}
+		if dc.RateLimitLease != nil {
+			if name != "gatewayd_internal" {
+				errs = append(errs, Error{path + ".ratelimit_lease", "is only valid for gatewayd_internal"})
+			} else if *dc.RateLimitLease && dc.RateLimitMode != "" && dc.RateLimitMode != "central" {
+				errs = append(errs, Error{path + ".ratelimit_lease", fmt.Sprintf("requires ratelimit_mode central, got %q", dc.RateLimitMode)})
 			}
 		}
 	}

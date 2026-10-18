@@ -1,4 +1,5 @@
 -- +goose Up
+-- migration-compat: expand
 SET LOCAL lock_timeout = '5s';
 CREATE TABLE IF NOT EXISTS app_issue_compound_alert_policies (
  app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,

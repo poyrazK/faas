@@ -185,6 +185,8 @@ func TestCmdBackupDispatch_Routing(t *testing.T) {
 		{"init", "init"},
 		{"unseal_rclone", "unseal-rclone"},
 		{"unseal_archive_creds", "unseal-archive-creds"},
+		{"seal_cp_state", "seal-cp-state"},
+		{"restore_cp_state", "restore-cp-state"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

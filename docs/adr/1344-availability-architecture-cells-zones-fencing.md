@@ -585,6 +585,20 @@ second provider. Tracking: epic #4700.
     not depend on it.
   - Alerts: `FaasPostgresStandby*`; runbook:
     `docs/runbooks/FaasPostgresStandby.md`.
+- **Control-plane host state** (2026-10-18). The CA key, the apid HMAC keys,
+  `sealed.env` and the per-daemon secrets are in neither PostgreSQL nor the
+  release. Two copies protect them, both read from one list
+  (`deploy/ansible/vars/cp_state_files.yml`):
+  - the standby stages them on every converge, and a takeover installs them
+    before the first bootstrap;
+  - `faas-cp-state-backup` seals them daily into an age bundle and pushes it
+    off-host with the PostgreSQL backups' remote. The bundle is encrypted
+    only to operator recipients, so the control plane cannot read its own
+    backup.
+
+  A rebuild after losing both hosts restores the bundle
+  (`gregalectl backup restore-cp-state`, `cp_state_restore.yml`) before
+  bootstrap. Runbook: `docs/runbooks/ControlPlaneStateBackup.md`.
 - **Why not two control nodes (OVH + GCP)?**
   - etcd and Patroni need three members to survive losing one. With two,
     losing either stops automatic failover, and a cut between the
@@ -610,13 +624,13 @@ The scaling roadmap ("Gregale scaling roadmap", 2026-10-15) removes the
 throughput limits: control-plane work off the request path, then a split
 control plane, then cells. Its branches so far are
 `perf/thaw-timing-data`, `perf/wake-dedupe-reads`,
-`perf/wake-pipeline-reads`, `perf/batch-request-id-journal` (ADR-1340) and
-`design/rate-limit-token-leasing` (ADR-1341). The two plans overlap, so
+`perf/wake-pipeline-reads`, `perf/batch-request-id-journal` (ADR-1521) and
+`perf/rate-limit-token-leasing` (ADR-1520). The two plans overlap, so
 each topic has one owner:
 
 | Topic | Owner |
 |---|---|
-| Request path: batched request-ID journal (ADR-1340), local rate-limit allowance (ADR-1341) | Scaling roadmap |
+| Request path: batched request-ID journal (ADR-1521), local rate-limit allowance (ADR-1520) | Scaling roadmap |
 | Public edge on every compute node, DNS split, node-local gateway routing | This ADR's work, designed in ADR-1343. The owner moved it from the scaling roadmap's Stage 1 on 2026-10-15. |
 | PgBouncer | Scaling roadmap (Stage 1) |
 | Wake-path reads, the schedd owner cache, the frozen fast path | Scaling roadmap |
