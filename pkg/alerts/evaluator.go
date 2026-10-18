@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/http"
 	"net/url"
 	"strconv"
 	"sync"
@@ -38,6 +39,7 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/onebox-faas/faas/pkg/alertchannels"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/audit"
@@ -45,7 +47,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/webhookout"
-	"net/http"
 )
 
 // AlertSecretNamespace is the secretbox namespace stamped onto every
@@ -184,6 +185,14 @@ type Evaluator struct {
 	now          func() time.Time
 	log          *slog.Logger
 	ops          Ops
+	// channels and its companions deliver to ADR-749 notification
+	// channels; nil disables channel delivery.
+	channels         ChannelSender
+	channelOutcome   func(kind, outcome string)
+	dashboardBaseURL string
+
+	// anomaly caches ADR-744 baselines per rule; see anomaly.go.
+	anomaly anomalyState
 }
 
 // SetActionExec (issue #976 / ADR-122 / SAFE-RELEASES-B) swaps
@@ -245,6 +254,16 @@ type EvaluatorOptions struct {
 	Now        func() time.Time
 	Log        *slog.Logger
 	Ops        Ops
+	// Channels delivers to ADR-749 notification channels (Slack,
+	// PagerDuty, email); nil disables channel delivery.
+	Channels ChannelSender
+	// ChannelOutcome observes each channel delivery (kind, outcome) for
+	// the meterd_alert_channel_deliveries_total counter. Optional; called
+	// concurrently, so it must be safe for concurrent use.
+	ChannelOutcome func(kind, outcome string)
+	// DashboardBaseURL ("https://gregale.dev") links notifications to the
+	// app dashboard; empty omits the link.
+	DashboardBaseURL string
 }
 
 // NewEvaluator returns a wired Evaluator. nil-coerced dependencies
@@ -277,6 +296,10 @@ func NewEvaluator(o EvaluatorOptions) *Evaluator {
 		now:        o.Now,
 		log:        o.Log,
 		ops:        o.Ops,
+
+		channels:         o.Channels,
+		channelOutcome:   o.ChannelOutcome,
+		dashboardBaseURL: o.DashboardBaseURL,
 	}
 	if o.ActionExec != nil {
 		e.actionExec = o.ActionExec
@@ -440,11 +463,16 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 			changed, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateOk, now)
 			if err != nil {
 				e.log.Warn("alerts: set state ok", "rule", rule.ID, "err", err)
-			} else if changed && rule.State == state.AlertStateFiring && e.audit != nil && !api.IsMCPConnectionHealthMetric(string(rule.Metric)) {
-				e.audit.Emit(ctx, "alert.resolved", &rule.AccountID, map[string]any{
-					"rule_id": rule.ID,
-					"rule":    rule.Name,
-				})
+			} else if changed && rule.State == state.AlertStateFiring {
+				if e.audit != nil && !api.IsMCPConnectionHealthMetric(string(rule.Metric)) {
+					e.audit.Emit(ctx, "alert.resolved", &rule.AccountID, map[string]any{
+						"rule_id": rule.ID,
+						"rule":    rule.Name,
+					})
+				}
+				// ADR-749: channels hear the recovery so PagerDuty can
+				// close the incident the fire opened.
+				e.notifyChannels(ctx, rule, alertchannels.EventResolve, observed, now)
 			}
 		}
 		if err := e.store.SetAlertRuleLastEvaluated(ctx, rule.ID, now); err != nil {
@@ -520,7 +548,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	if convergence != nil {
 		paths.mcpConvergence = convergence
 	}
-	payloadBytes, payloadMap, err := buildPayload(rule, observed, paths)
+	payloadBytes, payloadMap, err := buildPayload(rule, observed, paths, e.anomalyPayload(rule, observed))
 	if err != nil {
 		e.log.Warn("alerts: marshal payload", "rule", rule.ID, "err", err)
 		return
@@ -570,6 +598,22 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		e.log.Warn("alerts: set state firing", "rule", rule.ID, "err", err)
 	}
 
+	// ADR-749: notification channels receive the fire independently of
+	// the webhook. A channel-only rule (no webhook URL) records its
+	// delivery from the channel outcome and skips the webhook path.
+	attempted, delivered := e.notifyChannels(ctx, rule, alertchannels.EventFire, observed, now)
+	if rule.WebhookURL == "" {
+		result := webhookout.Result{Attempts: 1, StatusCode: http.StatusOK}
+		if delivered == 0 {
+			result.StatusCode = 0
+			result.Err = fmt.Errorf("no notification channel accepted the alert (%d attempted)", attempted)
+		}
+		e.recordResult(ctx, rule, deliveryID, observed, result, now, stats)
+		e.dispatchMu.Lock()
+		e.runAction(ctx, rule, deliveryID, observed, now, stats)
+		e.dispatchMu.Unlock()
+		return
+	}
 	e.deliverAlert(ctx, rule, deliveryID, observed, payloadMap, now, stats)
 }
 func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deliveryID string, observed float64, payloadMap map[string]any, now time.Time, stats *Stats) {
@@ -791,6 +835,9 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 	}
 	if api.IsMCPProtocolMetric(string(rule.Metric)) {
 		return e.observeMCPProtocol(ctx, rule)
+	}
+	if api.IsAnomalyAlertComparison(string(rule.Comparison)) {
+		return e.observeAnomaly(ctx, rule)
 	}
 	if api.IsMCPConnectionHealthMetric(string(rule.Metric)) {
 		return e.observeMCPConnectionHealth(ctx, rule)
@@ -1042,6 +1089,12 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 			observed = 1
 		}
 		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
+	case state.AlertMetricCustomMetric:
+		return e.observeCustomMetric(ctx, rule)
+	case state.AlertMetricSLOBudgetBurn, state.AlertMetricSLOBudgetRemaining:
+		return e.observeCustomSLO(ctx, rule)
+	case state.AlertMetricSyntheticConsecutiveFailures, state.AlertMetricSyntheticLatencyP95:
+		return e.observeSyntheticCheck(ctx, rule)
 	case state.AlertMetricSLOBurnRate:
 		// PromQL-backed customer SLO signal. FetchSLOBurnRate folds
 		// the 1h/14.4x and 6h/6x windows into one effective value so
@@ -1231,7 +1284,7 @@ func preAuthObservationMetric(metric state.AlertMetric) bool {
 	return false
 }
 
-func buildPayload(rule state.AlertRule, observed float64, paths investigationPaths) ([]byte, map[string]any, error) {
+func buildPayload(rule state.AlertRule, observed float64, paths investigationPaths, extra map[string]any) ([]byte, map[string]any, error) {
 	m := map[string]any{
 		"rule_id":    rule.ID,
 		"rule_name":  rule.Name,
@@ -1252,6 +1305,15 @@ func buildPayload(rule state.AlertRule, observed float64, paths investigationPat
 	if rule.FailureSource != "" {
 		m["failure_source"] = string(rule.FailureSource)
 	}
+	if rule.CustomMetricName != "" {
+		m["custom_metric_name"] = rule.CustomMetricName
+	}
+	if rule.SLOID != "" {
+		m["slo_id"] = rule.SLOID
+	}
+	if rule.SyntheticCheckID != "" {
+		m["synthetic_check_id"] = rule.SyntheticCheckID
+	}
 	if rule.EdgeRuleID != "" {
 		m["edge_rule_id"] = rule.EdgeRuleID
 	}
@@ -1266,6 +1328,9 @@ func buildPayload(rule state.AlertRule, observed float64, paths investigationPat
 		if paths.workflowDeadRuns != "" {
 			m["workflow_dead_runs_path"] = paths.workflowDeadRuns
 		}
+	}
+	for k, v := range extra { // ADR-744 baseline fields
+		m[k] = v
 	}
 	if paths.mcpHealth != nil {
 		m["mcp_connection_health"] = paths.mcpHealth

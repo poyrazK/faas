@@ -22,8 +22,17 @@ func TestStartRemembersAppAndRetainsAcceptedRecovery(t *testing.T) {
 			runner := startTestRunner(t, scope, "")
 			runner.session.SourcePath = source
 			runner.session.AppID, runner.session.DeploymentID = "app-1", "accepted-1"
+			// The launch has already saved its accepted record before finishing.
+			accepted := runner.statePath
+			if err := saveStartSession(accepted, runner.session); err != nil {
+				t.Fatal(err)
+			}
 			if err := runner.rememberApp(); err != nil {
 				t.Fatal(err)
+			}
+			records, err := filepath.Glob(filepath.Join(filepath.Dir(accepted), "*.json"))
+			if err != nil || len(records) != 1 || records[0] != runner.statePath || runner.statePath == accepted {
+				t.Fatalf("remembering the app must move, not copy, the recovery record: records=%v state=%s err=%v", records, runner.statePath, err)
 			}
 			link, path, err := findProjectContext(source)
 			if err != nil || link.Version != standaloneContextVersion || link.Project != "" || link.App != runner.session.AppSlug || path != projectContextPath(source) {

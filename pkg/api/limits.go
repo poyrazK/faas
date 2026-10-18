@@ -6307,6 +6307,26 @@ const (
 	// other signals instead of holding the fleet at a frozen backlog.
 	CustomMetricFreshnessSeconds = 300
 
+	// CustomMetricExportMaxSeries caps one ADR-745 exporter scrape. The
+	// per-app name cap already bounds the table; this bounds a scrape even
+	// if that cap is raised.
+	CustomMetricExportMaxSeries = 50000
+	// CustomMetricExportCacheSeconds reuses one store read across scrapes
+	// from several Prometheus replicas inside the same scrape interval.
+	CustomMetricExportCacheSeconds = 15
+
+	// CustomMetricSeriesDefaultRange is the history window when ?range= is
+	// omitted (ADR-745).
+	CustomMetricSeriesDefaultRange = "24h"
+
+	// OTLPMetricsMaxBodyBytes bounds one OTLP metrics export (ADR-745). An
+	// app holds at most MaxCustomMetricsPerApp names, so a larger body is
+	// almost certainly attribute-heavy data the endpoint would reject anyway.
+	OTLPMetricsMaxBodyBytes = 1 << 20
+
+	// CustomMetricCounterRateWindow is the rate() window for counter history.
+	CustomMetricCounterRateWindow = "5m"
+
 	// Scaling policy cooldowns (issue #462 / ADR-058). The
 	// customer-facing knobs are `scale_out_cooldown_s` /
 	// `scale_in_cooldown_s` on the wire; the floor / ceiling
@@ -6594,9 +6614,15 @@ const (
 	//
 	// Hard limits policy (CLAUDE.md): every limit is a constant
 	// here, never inlined.
-	GatewayDrainGraceSeconds        = 25
-	ReplicaHeartbeatIntervalSeconds = 5
-	WarmHintCacheSize               = 1000
+	GatewayDrainGraceSeconds = 25
+	// ComputeGatewayRestartWaitSeconds caps how long gatewayd-public keeps
+	// sending new requests to a compute node whose gatewayd-internal stopped
+	// answering (for example while it restarts behind its durable socket)
+	// before failing over to another node (ADR-1580). Override with
+	// FAAS_COMPUTE_GATEWAY_RESTART_WAIT.
+	ComputeGatewayRestartWaitSeconds = 3
+	ReplicaHeartbeatIntervalSeconds  = 5
+	WarmHintCacheSize                = 1000
 	// ServiceRouteConvergenceTimeoutSeconds bounds one routing-generation
 	// acknowledgement round. A timeout does not retire the predecessor; the
 	// scheduler leaves it serving and retries reconciliation.
@@ -6926,6 +6952,15 @@ const (
 	// change cannot widen the attack surface on this listener; a single
 	// tenant-crafted 1 MiB header is fine, 64 MiB is not.
 	DefaultMaxHeaderBytes = 1 << 20 // 1 MiB
+
+	// InternalHopReplayableBodyBytes is the largest request body
+	// gatewayd-public buffers before forwarding it to gatewayd-internal, so
+	// the HTTP/2 hop can resend it. A request that crosses gatewayd-internal's
+	// graceful-restart GOAWAY was never processed; the transport retries it on
+	// a new connection only when it can rewind the body. Larger or chunked
+	// bodies keep streaming and can still fail in that window
+	// (docs/adr/1580-zero-downtime-daemon-restarts.md).
+	InternalHopReplayableBodyBytes = 64 << 10 // 64 KiB
 )
 
 // EffectiveRetryMaxAttempts resolves a requested durable-invocation attempt
@@ -11893,6 +11928,85 @@ const (
 
 // Review decisions retain a bounded journal independent of item reviews.
 const OperationWorkflowPlaybookReviewsMax = 32
+
+// Alert notification channels (ADR-749).
+const (
+	MaxNotificationChannelsPerAccount = 20
+	MaxChannelsPerAlertRule           = 5
+)
+
+// Change timeline bounds (ADR-751). Each source is read with the event cap so
+// one busy source cannot starve the others before the newest-first merge.
+const (
+	ChangeTimelineDefaultWindow = 24 * time.Hour
+	ChangeTimelineMaxWindow     = 7 * 24 * time.Hour
+	ChangeTimelineMaxEvents     = 200
+)
+
+// Anomaly alert bounds (ADR-744). A baseline rule compares a request metric
+// with the median of its value at the same time of day over the previous
+// AnomalyBaselineDays days.
+const (
+	AnomalyBaselineDays       = 7
+	AnomalyBaselineMinDays    = 5
+	AnomalyBaselineCacheTTL   = time.Hour
+	AnomalyAlertMinRequests   = 50
+	AnomalyAboveMultiplierMin = 1.5
+	AnomalyAboveMultiplierMax = 20.0
+	AnomalyBelowMultiplierMin = 0.05
+	AnomalyBelowMultiplierMax = 0.67
+)
+
+// AnomalyAlertMetrics are the request metrics that support baseline
+// comparisons, mapped to the absolute floor an above_baseline value must also
+// clear so ratios on tiny numbers never fire.
+var AnomalyAlertMetrics = map[string]float64{
+	"error_rate_pct": 1.0,  // percent
+	"latency_p95_ms": 50.0, // milliseconds
+	"latency_p99_ms": 50.0,
+	"cold_start_pct": 5.0,
+	"request_count":  AnomalyAlertMinRequests,
+}
+
+// Log line counts (ADR-746): vmmd counts error and warn lines per app as they
+// enter the instance ring. Apps past the per-vmmd cap share app_id="other";
+// plain-text lines are classified from at most the scan window.
+const (
+	LogLineCounterMaxApps = 10000
+	LogLevelScanBytes     = 512
+)
+
+// Customer-defined SLOs (ADR-747). The latency thresholds are the gateway
+// request-duration histogram bucket bounds, so attainment is exact; the
+// rollup backfills at most SLORollupBackfillHours from Prometheus.
+const (
+	MaxSLOsPerApp          = 10
+	SLOObjectiveMinBP      = 9000
+	SLOObjectiveMaxBP      = 9999
+	SLORollupBackfillHours = 14 * 24
+)
+
+// SLOLatencyThresholdsMS and SLOWindowDays are the closed sets app_slos accepts.
+var (
+	SLOLatencyThresholdsMS = []int{5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000, 10000}
+	SLOWindowDays          = []int{7, 30}
+)
+
+// Synthetic checks (ADR-748). The 5-minute floor keeps a check from pinning
+// an app resident on Free, Hobby and Pro (idle timeouts 30/60/300 s); the
+// timeout ceiling matches the gateway wake hold.
+const (
+	MaxSyntheticChecksPerApp       = 5
+	SyntheticCheckTimeoutMinMS     = 1000
+	SyntheticCheckTimeoutMaxMS     = 30000
+	SyntheticCheckDefaultTimeoutMS = 10000
+	SyntheticCheckPathMaxBytes     = 512
+	SyntheticCheckRunRetentionDays = 7
+	SyntheticCheckRecentRuns       = 20
+)
+
+// SyntheticCheckIntervalsSeconds is the closed set synthetic_checks accepts.
+var SyntheticCheckIntervalsSeconds = []int{300, 900, 3600}
 
 // IssueBulkActionMax bounds one atomic triage transaction.
 const IssueBulkActionMax = 50

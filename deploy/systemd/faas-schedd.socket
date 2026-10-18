@@ -1,0 +1,22 @@
+[Unit]
+Description=Gregale durable schedd listener
+Documentation=https://gregale.dev/docs/ops/schedd
+Before=faas-schedd.service
+
+# Holds schedd's listener open across restarts so callers wait for the
+# replacement (docs/adr/1580-zero-downtime-daemon-restarts.md). Inert unless
+# the control_plane_service role sets faas_schedd_listen_addr: its drop-ins
+# then make faas-schedd.service want this socket and replace ListenStream
+# with the address schedd is told to serve. schedd refuses to start with an
+# inherited socket it does not serve.
+[Socket]
+ListenStream=/run/faas/schedd.sock
+SocketUser=faas-schedd
+SocketGroup=faas
+SocketMode=0660
+FileDescriptorName=schedd
+Backlog=4096
+Service=faas-schedd.service
+
+[Install]
+WantedBy=sockets.target

@@ -19,7 +19,7 @@ func TestShutdownGatewayServersReturnsImmediatelyWhenIdle(t *testing.T) {
 	t.Cleanup(control.Close)
 
 	started := time.Now()
-	err := shutdownGatewayServers(context.Background(), discardLogger(), public.Config, control.Config, drain.NewTracker(), nil, 2*time.Second, nil)
+	err := shutdownGatewayServers(context.Background(), discardLogger(), public.Config, nil, control.Config, drain.NewTracker(), nil, 2*time.Second, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestShutdownGatewayServersWaitsForInflightRequest(t *testing.T) {
 
 	shutdownDone := make(chan error, 1)
 	go func() {
-		shutdownDone <- shutdownGatewayServers(context.Background(), discardLogger(), public.Config, control.Config, tracker, nil, 2*time.Second, nil)
+		shutdownDone <- shutdownGatewayServers(context.Background(), discardLogger(), public.Config, nil, control.Config, tracker, nil, 2*time.Second, nil)
 	}()
 	select {
 	case err := <-shutdownDone:
@@ -88,7 +88,7 @@ func TestShutdownGatewayServersDrainsTCPWithSharedBudget(t *testing.T) {
 	}
 	shutdownDone := make(chan error, 1)
 	go func() {
-		shutdownDone <- shutdownGatewayServers(context.Background(), discardLogger(), public.Config, control.Config, drain.NewTracker(), nil, time.Second, tcpDrain)
+		shutdownDone <- shutdownGatewayServers(context.Background(), discardLogger(), public.Config, nil, control.Config, drain.NewTracker(), nil, time.Second, tcpDrain)
 	}()
 	<-tcpStarted
 	select {
@@ -124,7 +124,7 @@ func TestShutdownGatewayServersUsesOneBoundedBudget(t *testing.T) {
 	<-requestStarted
 
 	started := time.Now()
-	err := shutdownGatewayServers(context.Background(), discardLogger(), public.Config, control.Config, tracker, nil, 75*time.Millisecond, nil)
+	err := shutdownGatewayServers(context.Background(), discardLogger(), public.Config, nil, control.Config, tracker, nil, 75*time.Millisecond, nil)
 	elapsed := time.Since(started)
 	close(releaseRequest)
 	if err == nil {

@@ -142,6 +142,7 @@
     - { src: "faas-outboundd.service", dest: "/etc/systemd/system/faas-outboundd.service" }
     - { src: "faas-bridged.service", dest: "/etc/systemd/system/faas-bridged.service" }
     - { src: "faas-schedd.service", dest: "/etc/systemd/system/faas-schedd.service" }
+    - { src: "faas-schedd.socket", dest: "/etc/systemd/system/faas-schedd.socket" }
     - { src: "faas-meterd.service", dest: "/etc/systemd/system/faas-meterd.service" }
   register: cp_units
 
@@ -278,6 +279,53 @@
     name: faas-apid.socket
     enabled: true
   when: control_plane_apid_enabled.rc == 0
+
+# ADR-1580: faas_schedd_listen_addr is schedd's listen address. The same
+# variable renders schedd's FAAS_SCHEDD_LISTEN_ADDR and faas-schedd.socket's
+# ListenStream, so the durable socket always carries the address schedd
+# serves (schedd refuses an inherited socket it does not serve). Empty keeps
+# schedd.toml in charge and the socket off.
+- name: control_plane_service — validate the durable schedd listen address
+  ansible.builtin.assert:
+    that:
+      - faas_schedd_listen_addr | length == 0 or faas_schedd_listen_addr is regex('^(unix:///\\S+|tcp://[^\\s/]+:[0-9]+)$')
+    fail_msg: faas_schedd_listen_addr must be unix:///path or tcp://host:port
+
+- name: control_plane_service — create durable schedd listener drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-schedd.socket.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: control_plane_service — render the durable schedd listener
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: &schedd_listener_files
+    - { src: 50-faas-schedd-durable-listener.conf.j2, dest: /etc/systemd/system/faas-schedd.service.d/50-faas-durable-listener.conf }
+    - { src: 50-faas-schedd-listen.conf.j2, dest: /etc/systemd/system/faas-schedd.socket.d/50-faas-listen.conf }
+  when: faas_schedd_listen_addr | length > 0
+  notify: restart faas-schedd listener
+
+- name: control_plane_service — remove the durable schedd listener when unset
+  ansible.builtin.file:
+    path: "{{ item.dest }}"
+    state: absent
+  loop: *schedd_listener_files
+  when: faas_schedd_listen_addr | length == 0
+  notify: restart faas-schedd listener
+
+# Enabled only, never started here: the notified handler binds the socket
+# after the running schedd has released the address.
+- name: control_plane_service — enable the durable schedd socket with its listener
+  ansible.builtin.systemd_service:
+    name: faas-schedd.socket
+    enabled: "{{ faas_schedd_listen_addr | length > 0 }}"
 
 - name: control_plane_service — create systemd drop-in directories
   ansible.builtin.file:

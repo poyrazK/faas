@@ -11764,10 +11764,15 @@ type RequestAnalyticsRoute struct {
 	OtherDeploymentRequests                       int64 `json:"other_deployment_requests,omitempty"`
 	OtherDeploymentEstimatedComputeCostMillicents int64 `json:"other_deployment_estimated_compute_cost_millicents,omitempty"`
 	// EstimatedComputeCostMillicents allocates this app's estimated raw
-	// RAM-hour value to the route by its share of observed requests. It is
+	// RAM-hour value to the route by its share of observed request time
+	// (ADR-743), falling back to request share when no timing exists. It is
 	// an estimate at the current compute overage rate, not an invoice line.
 	EstimatedComputeCostMillicents int64   `json:"estimated_compute_cost_millicents,omitempty"`
 	RequestSharePct                float64 `json:"request_share_pct,omitempty"`
+	// RequestTimeMS is the route's total gateway-observed request time in the
+	// window; RequestTimeSharePct is its share of the app's total.
+	RequestTimeMS       int64   `json:"request_time_ms,omitempty"`
+	RequestTimeSharePct float64 `json:"request_time_share_pct,omitempty"`
 }
 
 // RequestAnalyticsRouteDeploymentObservation is one route's request-share
@@ -12816,6 +12821,9 @@ type CustomMetricResponse struct {
 	// therefore NOT driving scaling. Computed server-side so the API and
 	// the scheduler cannot disagree about which rows count.
 	Stale bool `json:"stale"`
+	// Kind is "gauge" (pushed, a scaling signal) or "counter" (an ADR-745
+	// OTLP cumulative sum, charted as a rate and never a scaling signal).
+	Kind string `json:"kind,omitempty"`
 }
 
 // CustomMetricListResponse carries the rows plus the two limits an operator

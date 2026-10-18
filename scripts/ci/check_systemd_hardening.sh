@@ -60,6 +60,32 @@ for socket_unit in "${apid_socket_units[@]}"; do
   done
 done
 
+# Durable unix listeners (docs/adr/1580-zero-downtime-daemon-restarts.md).
+# Socket permissions are the authentication boundary (ADR-015): the daemons
+# refuse an inherited socket that grants access to other users.
+unix_socket_units=(
+  "gatewayd_internal_service/files/faas-gatewayd-internal.socket|/run/faas/gatewayd-internal.sock"
+  "gatewayd_internal_service/files/faas-realtimed.socket|/run/faas/realtimed.sock"
+  "control_plane_service/files/faas-schedd.socket|/run/faas/schedd.sock"
+)
+for entry in "${unix_socket_units[@]}"; do
+  rel="${entry%%|*}"
+  path="${entry#*|}"
+  for socket_unit in "${unit_root}/${rel}" "${root}/deploy/systemd/$(basename "$rel")"; do
+    if [[ ! -f "$socket_unit" ]]; then
+      echo "systemd-hardening-check: missing ${socket_unit}" >&2
+      errors=$((errors + 1))
+      continue
+    fi
+    for directive in "ListenStream=${path}" 'SocketGroup=faas' 'SocketMode=0660' 'Backlog=4096'; do
+      if ! grep -Fqx "$directive" "$socket_unit"; then
+        echo "systemd-hardening-check: ${socket_unit}: missing ${directive}" >&2
+        errors=$((errors + 1))
+      fi
+    done
+  done
+done
+
 caddy_dropin="${unit_root}/host_hardening/templates/90-gregale-caddy-hardening.conf.j2"
 if [[ ! -f "$caddy_dropin" ]]; then
   echo "systemd-hardening-check: missing ${caddy_dropin}" >&2

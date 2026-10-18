@@ -1531,6 +1531,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	srv.WithBillingMode(billingMode)
 	srv.devBridgeEnabled = deps.getenv("FAAS_DEV_BRIDGE_ENABLED") == "1"
 	srv.serviceMap.Enabled = deps.getenv("FAAS_SERVICE_MAP_ENABLED") == "1"
+	srv.changeTimelineEnabled = deps.getenv("FAAS_CHANGE_TIMELINE_ENABLED") == "1"
+	srv.anomalyAlertsEnabled = deps.getenv("FAAS_ANOMALY_ALERTS_ENABLED") == "1"
+	srv.customMetricHistoryEnabled = deps.getenv("FAAS_CUSTOM_METRIC_HISTORY_ENABLED") == "1"
+	if srv.customMetricHistoryEnabled {
+		// ADR-745: expose fresh pushed gauges so Prometheus keeps history.
+		if exportStore, ok := srv.store.(state.CustomMetricExportStore); ok {
+			ops.Registry().MustRegister(newCustomMetricExporter(exportStore, time.Now, srv.log))
+		}
+	}
 	srv.devBridgeURL = deps.getenv("FAAS_DEV_BRIDGE_RELAY_URL")
 	if srv.devBridgeURL == "" {
 		srv.devBridgeURL = "http://127.0.0.1:9098"
@@ -2507,10 +2516,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, apidProbe.ReadyFunc())
 	defer notifyStop()
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()
+	// The drain lets a connection faas-apid.socket handed over just before
+	// shutdown deliver its request; net/http drops one it reads after
+	// Shutdown began (ADR-1580).
+	httpDrain := wire.NewHTTPDrain(httpSrv)
 	errc := make(chan error, 1)
 	go func() {
 		log.Info("apid listening", "addr", listenBind)
-		if err := httpSrv.Serve(l); err != nil && err != http.ErrServerClosed {
+		if err := httpDrain.ServeErr(httpSrv.Serve(httpDrain.Listener(l))); err != nil {
 			errc <- err
 		}
 	}()
@@ -2521,7 +2534,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		//nolint:contextcheck // shutdown context must outlive request ctx; detached from caller per net/http contract.
-		_ = httpSrv.Shutdown(shutdownCtx)
+		_ = httpDrain.Shutdown(shutdownCtx, httpSrv)
 		if metricsSrv != nil {
 			//nolint:contextcheck // shutdown context must outlive request ctx; detached from caller per net/http contract.
 			_ = metricsSrv.Shutdown(shutdownCtx)
