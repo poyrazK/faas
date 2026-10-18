@@ -937,15 +937,13 @@ func (s *server) setGraceWindow(w http.ResponseWriter, r *http.Request, acct sta
 
 // getAccountEgressAllowlistExtra returns the per-account additive
 // budget on top of the plan's apps.egress_allowlist cap (issue #679
-// / PR-B / ADR-082). The endpoint is admin-only — the override is
-// meaningless for a non-admin caller (the customer-facing validator
-// reads the field, the admin endpoint is the only place it's
-// written). The PlanCap field is unconditionally populated so the
-// dashboard can render the "Override: N / Plan cap: 16" pair
+// / PR-B / ADR-082). The PlanCap field is unconditionally populated so
+// the dashboard can render the "Override: N / Plan cap: 16" pair
 // without a second round-trip.
 //
-// Auth: admin scope (ScopesAdminOnly); middleware already
-// short-circuits non-admin callers.
+// Auth: admin scope (ScopesAdminOnly). Reading is harmless, so a
+// customer may see their own value; only setAccountEgressAllowlistExtra
+// is operator-only.
 func (s *server) getAccountEgressAllowlistExtra(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	extra, err := s.store.GetAccountEgressAllowlistExtra(r.Context(), acct.ID)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
@@ -968,7 +966,9 @@ func (s *server) getAccountEgressAllowlistExtra(w http.ResponseWriter, r *http.R
 // comment on api.MaxAccountEgressAllowlistExtra. Extra == 0 clears
 // the override (the plan cap is authoritative again).
 //
-// Auth: admin scope (ScopesAdminOnly).
+// Auth: admin scope plus the operator allowlist (requireOperator in the
+// route table). The admin scope alone admits every customer, whose
+// dashboard session and default key both carry it.
 //
 // Audit: account.egress_allowlist_extra_set carries both old and
 // new values so the dashboard can render the toggle history. The

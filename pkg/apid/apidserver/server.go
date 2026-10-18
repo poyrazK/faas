@@ -1727,13 +1727,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PATCH /v1/account/keys/grace_window_days", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.setGraceWindow))))
 	// Per-account additive budget on top of the plan's
 	// apps.egress_allowlist cap (issue #679 / PR-B / ADR-082).
-	// The override is admin-settable only; the customer-facing
-	// validator reads the value but has no API surface to write it.
-	// Mirrors the grace-window chain shape (admin + MFA + no
-	// additional step-up since the cost surface is small — a typo
-	// reverts by setting extra=0).
+	// Customers may read it; only a platform operator may write it.
+	// The admin scope alone is not that gate: every customer's
+	// dashboard session and default key hold it, so a customer could
+	// raise their own allowlist cap past the plan limit.
+	// requireOperator checks the operator allowlist.
 	mux.HandleFunc("GET /v1/account/egress_allowlist_extra", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getAccountEgressAllowlistExtra))))
-	mux.HandleFunc("PATCH /v1/account/egress_allowlist_extra", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.setAccountEgressAllowlistExtra))))
+	mux.HandleFunc("PATCH /v1/account/egress_allowlist_extra", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.setAccountEgressAllowlistExtra)))))
 	// G6 account self-service (spec §17 G6, ADR-021). /v1/account/dpa
 	// is intentionally mounted without s.auth — the DPA is a public
 	// artefact a prospect reads before signing up. The export + delete
