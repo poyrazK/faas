@@ -4798,6 +4798,10 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "server-key", Short: "Manage server keys for trusted backends (RLS still applies)", Subcommands: []cliSub{
 				{Name: "create", Short: "Generate a key, store its hash in a free slot and show the key once", Positionals: []string{"<name>"}, Flags: []cliFlag{
+					{Name: "read-only", Short: "allow only GET and HEAD; RPCs need --rpcs"},
+					{Name: "relations", Value: "SCHEMA.RELATION[,...]", Short: "relations the key may use, including embeddings"},
+					{Name: "rpcs", Value: "SCHEMA.FUNCTION[,...]", Short: "approved RPCs the key may call"},
+					{Name: "no-subjects", Short: "refuse X-Gregale-Subject"},
 					{Name: "replace-oldest", Short: "replace the older slot when both are in use"},
 					{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 					{Name: "no-restart", Short: "store the hash without a fresh restart"},

@@ -107,7 +107,27 @@ A request with representation headers that hits an existing entry receives the
 canonical JSON. The data is public by construction, so this costs fidelity, not
 confidentiality.
 
-### Aggregates
+### Server-key permissions
+
+Each slot may carry `DATA_API_SERVER_KEY_{A,B}_PERMISSIONS`, a version-1 JSON
+object with up to 4 KiB and 64 entries per list:
+
+- `access`: `read` or `write`. Read-only keys allow `GET` and `HEAD`, and call
+  only RPCs listed explicitly, because a function may write.
+- `relations`: the relations a key may use, covering every relation embedded
+  through `select`.
+- `rpcs`: the functions a key may call.
+- `subjects`: whether a key may send `X-Gregale-Subject`.
+
+The gateway enforces permissions before admission, with
+`403 server_key_permission_denied`, and RLS still applies to whatever they
+allow. Keys with allowlists cannot read the full OpenAPI catalog.
+
+Entries outside the exposed schemas never match, so permissions can only deny.
+Permissions without a key are ignored rather than failing startup. The CLI
+writes permissions before a slot's hash and removes them after it, so a key
+never runs with another key's permissions or none at all.
+
 
 `DATA_API_AGGREGATES=1` sets PostgREST's `db-aggregates-enabled`. It requires
 `DATA_API_SQL_DEADLINE=1`, so an expensive aggregate is cancelled by the

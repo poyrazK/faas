@@ -1116,6 +1116,35 @@ gregale data-api server-key revoke shop-data --slot a   # after backends moved
 With both slots in use, `create` refuses unless you pass `--replace-oldest`.
 `revoke --slot all` removes every key.
 
+### Restrict what a server key can do
+
+A key created without permissions can do everything your RLS policies allow for
+`server`. Give a key only the access its backend needs:
+
+```sh
+gregale data-api server-key create shop-data \
+  --read-only --relations api.orders,api.customers --no-subjects
+gregale data-api server-key create shop-data \
+  --relations api.orders --rpcs api.ship_order
+```
+
+- `--read-only` allows only `GET` and `HEAD`. A read-only key can call an RPC
+  only when you list it in `--rpcs`, because a function may write.
+- `--relations` lists the tables and views the key may use, including every
+  relation embedded through `select`.
+- `--rpcs` lists the approved functions the key may call.
+- `--no-subjects` refuses `X-Gregale-Subject`, so the key cannot act for a user.
+- A key with allowlists cannot read the full OpenAPI catalog. The
+  fingerprint-only serving contract stays readable.
+
+Anything outside a key's permissions returns `403 server_key_permission_denied`
+before any SQL runs. RLS still applies to whatever the permissions allow.
+Permissions belong to the slot: the CLI stores them before the key's hash and
+removes them after it, so a key never has another key's permissions or none at
+all. `server-key list` marks restricted slots, and request logs show
+`server_key_restricted`. To change a key's permissions, create a new key with
+the new flags and revoke the old slot.
+
 ## Aggregates
 
 Aggregate queries are off by default. Turn them on with:

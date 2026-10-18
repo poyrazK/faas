@@ -6,7 +6,7 @@ const codes = new Set(['origin_not_allowed', 'not_found', 'invalid_path', 'metho
   'token_required', 'token_invalid', 'read_only_identity', 'serving_contract_unavailable', 'data_api_unavailable',
   'data_api_refresh_paused', 'data_api_refresh_unavailable', 'data_api_overloaded', 'data_api_rate_limited', 'data_api_concurrency_limited',
   'request_too_large', 'response_too_large', 'query_timeout', 'request_deadline_exceeded', 'schema_document_too_large', 'schema_contract_mismatch', 'upstream_error',
-  'public_read_not_allowed', 'server_key_browser_forbidden'])
+  'public_read_not_allowed', 'server_key_browser_forbidden', 'server_key_permission_denied'])
 
 function route(url) {
   if (url === '/healthz' || url === '/livez') return 'health'
@@ -60,7 +60,7 @@ export function markRequest(res, code) {
 
 // Access kind and server-key slot only: never subjects, client addresses or keys.
 export function markAccess(res, access) {
-  if (res[trace] && ['user', 'anonymous', 'server'].includes(access?.kind)) res[trace].access = { kind: access.kind, ...(['a', 'b'].includes(access.server_key_slot) ? { server_key_slot: access.server_key_slot } : {}) }
+  if (res[trace] && ['user', 'anonymous', 'server'].includes(access?.kind)) res[trace].access = { kind: access.kind, ...(['a', 'b'].includes(access.server_key_slot) ? { server_key_slot: access.server_key_slot, ...(access.server_key_restricted === true ? { server_key_restricted: true } : {}) } : {}) }
 }
 
 export function markAdmission(res, admission) {

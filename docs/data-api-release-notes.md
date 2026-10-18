@@ -19,6 +19,9 @@ closes five product gaps, all opt-in:
   hash-only rotation slots for trusted backends. RLS still applies, keys are
   refused when sent with an `Origin` header, and `X-Gregale-Subject` acts for
   one user.
+- **Scoped server keys.** `server-key create --read-only --relations ...
+  --rpcs ... --no-subjects` restricts a key. Anything outside its permissions
+  returns `403 server_key_permission_denied` before SQL, and RLS still applies.
 - **Aggregates.** `--aggregates` enables PostgREST aggregates and requires the
   SQL deadline, so expensive queries are cancelled inside PostgreSQL.
 - **Single-app projects.** `--migrations` and `data-api deploy` run migrations

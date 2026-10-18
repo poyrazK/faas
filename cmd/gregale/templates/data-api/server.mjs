@@ -17,7 +17,7 @@ import { createRateLimiter, admitRateLimit } from './rate-limit.mjs'
 import { createUserConcurrency, admitUserConcurrency } from './user-concurrency.mjs'
 import { qualifiedConnectionEngine, startConnectionReporter } from './connection-observations.mjs'
 import { createPoolObservation } from './pool.mjs'
-import { publicReadTarget, publicReadCache, clientKey, matchServerKey, serverSubject, checkPublicRelations } from './access.mjs'
+import { publicReadTarget, publicReadCache, clientKey, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations } from './access.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
   const servingFingerprint = config.fingerprint
@@ -75,7 +75,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     if (!['GET', 'HEAD', 'POST', 'PATCH', 'DELETE'].includes(req.method)) return problem(res, 405, 'method_not_allowed')
     if (['/__gregale/schema', '/openapi.json'].includes(req.url) && req.method !== 'GET') return problem(res, 405, 'method_not_allowed')
     const token = req.headers.authorization?.match(/^Bearer ([^\s]+)$/i)?.[1]
-    let access = 'user', serverKeySlot = null, subject = null, publicCache = null
+    let access = 'user', serverKeySlot = null, serverKeyPermissions = null, subject = null, publicCache = null
     if (req.headers.authorization === undefined) {
       // Never downgrade a present but invalid credential to anonymous access.
       const target = publicReadTarget(req, config)
@@ -90,8 +90,10 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       const named = serverSubject(req.headers['x-gregale-subject'])
       if (!serverKeySlot || named.invalid) return problem(res, 401, 'token_invalid')
       subject = named.subject
+      serverKeyPermissions = config.serverKeys.find(entry => entry.slot === serverKeySlot).permissions
     }
-    markAccess(res, { kind: access, ...(serverKeySlot ? { server_key_slot: serverKeySlot } : {}) })
+    markAccess(res, { kind: access, ...(serverKeySlot ? { server_key_slot: serverKeySlot, ...(serverKeyPermissions ? { server_key_restricted: true } : {}) } : {}) })
+    if (serverKeyPermissions && !serverKeyAllows(req, serverKeyPermissions, config, rpc)) return problem(res, 403, 'server_key_permission_denied')
     const declared = Number(req.headers['content-length'] ?? 0)
     if (!Number.isSafeInteger(declared) || declared < 0 || declared > limits.bodyBytes) return problem(res, 413, 'request_too_large')
     return admitted(req, res, async () => {

@@ -4,8 +4,9 @@ package main
 import "errors"
 
 type dataAPIAccessRecord struct {
-	Kind          string `json:"kind"`
-	ServerKeySlot string `json:"server_key_slot,omitempty"`
+	Kind                string `json:"kind"`
+	ServerKeySlot       string `json:"server_key_slot,omitempty"`
+	ServerKeyRestricted bool   `json:"server_key_restricted,omitempty"`
 }
 
 // Observed access kinds; older runtimes and pre-classification rejections have none.
@@ -23,7 +24,7 @@ func validateDataAPIAccess(record dataAPIRequestRecord) error {
 	if !dataAPIDiagnosticAllowed(a.Kind, "user", "anonymous", "server") || !dataAPIDiagnosticAllowed(record.Route, "rest", "rpc", "schema", "openapi") {
 		return errors.New("invalid access metadata")
 	}
-	if (a.Kind == "server") != (a.ServerKeySlot != "") || (a.ServerKeySlot != "" && !dataAPIDiagnosticAllowed(a.ServerKeySlot, "a", "b")) {
+	if (a.Kind == "server") != (a.ServerKeySlot != "") || (a.ServerKeySlot != "" && !dataAPIDiagnosticAllowed(a.ServerKeySlot, "a", "b")) || (a.ServerKeyRestricted && a.Kind != "server") {
 		return errors.New("inconsistent server key metadata")
 	}
 	if a.Kind == "anonymous" && (record.Route != "rest" || !dataAPIDiagnosticAllowed(record.Method, "GET", "HEAD")) {

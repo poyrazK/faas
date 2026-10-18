@@ -193,8 +193,8 @@ func TestDataAPIServerKeyLifecycle(t *testing.T) {
 		t.Fatalf("slot b must store only the hash: %s", stored)
 	}
 	calls := server.calls()
-	if len(calls) != 3 || !strings.HasSuffix(calls[0], "/secrets") || !strings.Contains(calls[2], "restart") {
-		t.Fatalf("calls = %v", calls)
+	if len(calls) != 4 || !strings.HasSuffix(calls[0], "/secrets") || calls[1] != "DELETE /v1/apps/shop-data/secrets/DATA_API_SERVER_KEY_B_PERMISSIONS" || calls[2] != "PUT /v1/apps/shop-data/secrets/DATA_API_SERVER_KEY_B_SHA256" || !strings.Contains(calls[3], "restart") {
+		t.Fatalf("calls = %v (an unrestricted key must clear stale permissions before its hash)", calls)
 	}
 }
 
@@ -216,7 +216,8 @@ func TestDataAPIServerKeySlotsRefuseSilentReplacement(t *testing.T) {
 	}
 	resetJSONOut(t)
 	server := newSettingsAPI(t)
-	for _, args := range [][]string{{"rotate", "shop-data"}, {"revoke", "shop-data"}, {"revoke", "shop-data", "--slot", "c"}, {"create", "shop-data", "--slot", "a"}, {"list", "shop-data", "--replace-oldest"}} {
+	for _, args := range [][]string{{"rotate", "shop-data"}, {"revoke", "shop-data"}, {"revoke", "shop-data", "--slot", "c"}, {"create", "shop-data", "--slot", "a"}, {"list", "shop-data", "--replace-oldest"},
+		{"list", "shop-data", "--read-only"}, {"revoke", "shop-data", "--slot", "a", "--relations", "api.orders"}} {
 		if code := cmdDataAPIServerKey(args); code != 1 {
 			t.Fatalf("%v exit = %d", args, code)
 		}
@@ -227,7 +228,7 @@ func TestDataAPIServerKeySlotsRefuseSilentReplacement(t *testing.T) {
 	if code := cmdDataAPIServerKey([]string{"revoke", "shop-data", "--slot", "all", "--no-restart"}); code != 0 {
 		t.Fatal("revoke all failed")
 	}
-	if calls := server.calls(); strings.Join(calls[1:], "|") != "DELETE /v1/apps/shop-data/secrets/DATA_API_SERVER_KEY_A_SHA256|DELETE /v1/apps/shop-data/secrets/DATA_API_SERVER_KEY_B_SHA256" {
+	if calls := server.calls(); strings.Join(calls[1:], "|") != "DELETE /v1/apps/shop-data/secrets/DATA_API_SERVER_KEY_A_SHA256|DELETE /v1/apps/shop-data/secrets/DATA_API_SERVER_KEY_A_PERMISSIONS|DELETE /v1/apps/shop-data/secrets/DATA_API_SERVER_KEY_B_SHA256|DELETE /v1/apps/shop-data/secrets/DATA_API_SERVER_KEY_B_PERMISSIONS" {
 		t.Fatalf("revoke calls = %v", calls)
 	}
 }
@@ -485,5 +486,64 @@ func TestDataAPIConfigurePublicReadCacheOffAndPublicReadRemoval(t *testing.T) {
 	}
 	if got := strings.Join(removal.calls(), "|"); got != "GET /v1/apps/shop-data/edge-rules|DELETE /v1/edge-rules/r9|DELETE /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ_MAX_AGE|DELETE /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ" {
 		t.Fatalf("removal calls = %s", got)
+	}
+}
+
+func TestDataAPIServerKeyCreateStoresPermissionsBeforeTheHash(t *testing.T) {
+	resetJSONOut(t)
+	server := newSettingsAPI(t)
+	out, restore := captureStdout(t)
+	defer restore()
+	if code := cmdDataAPIServerKey([]string{"create", "shop-data", "--read-only", "--relations", "api.orders,api.customers", "--rpcs", "api.ship_order", "--no-subjects", "--no-restart"}); code != 0 {
+		t.Fatalf("exit = %d: %s", code, out.String())
+	}
+	if got := strings.Join(server.calls(), "|"); got != "GET /v1/apps/shop-data/secrets|PUT /v1/apps/shop-data/secrets/DATA_API_SERVER_KEY_A_PERMISSIONS|PUT /v1/apps/shop-data/secrets/DATA_API_SERVER_KEY_A_SHA256" {
+		t.Fatalf("calls = %s", got)
+	}
+	var stored struct {
+		Value string `json:"value"`
+	}
+	body := server.bodyFor("/DATA_API_SERVER_KEY_A_PERMISSIONS")
+	if err := json.Unmarshal([]byte(body), &stored); err != nil || stored.Value != `{"version":1,"access":"read","relations":["api.orders","api.customers"],"rpcs":["api.ship_order"],"subjects":false}` {
+		t.Fatalf("permissions body = %s (%v)", body, err)
+	}
+	if !strings.Contains(out.String(), `Permissions: {"version":1,"access":"read"`) {
+		t.Fatalf("output = %s", out.String())
+	}
+}
+
+func TestDataAPIServerKeyPermissionValidationAndListing(t *testing.T) {
+	for _, args := range [][]string{
+		{"--relations", "orders"},
+		{"--relations", "api.orders,api.orders"},
+		{"--rpcs", "api.Ship"},
+		{"--rpcs", "ship_order"},
+	} {
+		if _, err := buildDataAPIServerKeyPermissions(false, map[bool]string{true: args[1]}[args[0] == "--relations"], map[bool]string{true: args[1]}[args[0] == "--rpcs"], false); err == nil {
+			t.Fatalf("%v accepted", args)
+		}
+	}
+	if permissions, err := buildDataAPIServerKeyPermissions(false, "", "", false); permissions != nil || err != nil {
+		t.Fatal("no restriction flags must keep full access")
+	}
+	tooMany := make([]string, api.DataAPIServerKeyPermissionsMaxEntries+1)
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("api.t%d", i)
+	}
+	if _, err := buildDataAPIServerKeyPermissions(true, strings.Join(tooMany, ","), "", false); err == nil {
+		t.Fatal("accepted more entries than the canonical bound")
+	}
+	resetJSONOut(t)
+	newSettingsAPI(t,
+		api.AppSecretResponse{Key: "DATA_API_SERVER_KEY_A_SHA256", Scope: api.DefaultEnvScope, UpdatedAt: "2026-10-01T00:00:00Z"},
+		api.AppSecretResponse{Key: "DATA_API_SERVER_KEY_A_PERMISSIONS", Scope: api.DefaultEnvScope},
+		api.AppSecretResponse{Key: "DATA_API_SERVER_KEY_B_PERMISSIONS", Scope: api.DefaultEnvScope})
+	out, restore := captureStdout(t)
+	defer restore()
+	if code := cmdDataAPIServerKey([]string{"list", "shop-data"}); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	if got := out.String(); !strings.Contains(got, "slot a: in use, updated 2026-10-01T00:00:00Z, restricted") || !strings.Contains(got, "slot b: empty") {
+		t.Fatalf("list = %q (orphan permissions without a key restrict nothing)", got)
 	}
 }

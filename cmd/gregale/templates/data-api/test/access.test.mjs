@@ -3,8 +3,8 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import { createHash } from 'node:crypto'
 import { createServer } from '../server.mjs'
-import { runtimeConfig, publicReadConfig, serverKeyConfig, publicReadMaxAge, limits } from '../config.mjs'
-import { selectEmbeddings, clientKey, matchServerKey, serverSubject, unsafePublicRelations, publicReadTarget, publicReadCache } from '../access.mjs'
+import { runtimeConfig, publicReadConfig, serverKeyConfig, serverKeyPermissions, publicReadMaxAge, limits } from '../config.mjs'
+import { selectEmbeddings, clientKey, matchServerKey, serverKeyAllows, serverSubject, unsafePublicRelations, publicReadTarget, publicReadCache } from '../access.mjs'
 
 const keyA = 'gdsk_' + 'A'.repeat(43)
 const keyB = 'gdsk_' + 'b'.repeat(42) + '-'
@@ -101,7 +101,7 @@ const claimsOf = authorization => JSON.parse(Buffer.from(authorization.split(' '
 async function fixture(t, env = {}, verify = async () => ({ sub: 'private-subject', exp: 9999999999, gregale_access: 'server', gregale_server_key: 'a' })) {
   const config = runtimeConfig({ ...baseEnv, DATA_API_PUBLIC_READ: 'api.products,api.categories', DATA_API_SERVER_KEY_A_SHA256: hash(keyA), DATA_API_SERVER_KEY_B_SHA256: hash(keyB), ...env })
   config.fingerprint = 'a'.repeat(64)
-  config.functions = [{ schema: 'api', name: 'save_note' }]
+  config.functions = [{ schema: 'api', name: 'save_note' }, { schema: 'api', name: 'ship_order' }]
   const state = { calls: [], logs: [] }
   const upstream = http.createServer((req, res) => {
     req.resume()
@@ -302,4 +302,75 @@ test('without a freshness setting public reads keep per-origin CORS and no-store
   assert.equal(response.headers['cache-control'], 'no-store')
   assert.equal(response.headers['access-control-allow-origin'], 'https://app.example')
   assert.equal(response.headers.vary, 'Origin')
+})
+
+test('server key permissions are versioned, bounded and only ever narrow access', () => {
+  const parse = value => serverKeyPermissions(JSON.stringify(value), 'P')
+  assert.equal(serverKeyPermissions(undefined, 'P'), null)
+  assert.deepEqual(parse({ version: 1 }), { access: 'write', relations: null, rpcs: null, subjects: true })
+  assert.deepEqual(parse({ version: 1, access: 'read', relations: ['api.orders'], rpcs: ['api.ship_order'], subjects: false }),
+    { access: 'read', relations: [{ schema: 'api', name: 'orders' }], rpcs: [{ schema: 'api', name: 'ship_order' }], subjects: false })
+  for (const value of [{}, { version: 2 }, { version: 1, extra: true }, { version: 1, access: 'admin' }, { version: 1, subjects: 'no' }, { version: 1, relations: [] },
+    { version: 1, relations: ['orders'] }, { version: 1, relations: ['api.orders', 'api.orders'] }, { version: 1, rpcs: ['api.Ship'] },
+    { version: 1, relations: Array.from({ length: limits.serverKeyPermissionsEntries + 1 }, (_, i) => `api.t${i}`) }, []]) {
+    assert.throws(() => parse(value), /Invalid P/, JSON.stringify(value))
+  }
+  assert.throws(() => serverKeyPermissions('{', 'P'), /Invalid P/)
+  assert.throws(() => serverKeyPermissions('x'.repeat(limits.serverKeyPermissionsBytes + 1), 'P'), /Invalid P/)
+  const slots = serverKeyConfig({ DATA_API_SERVER_KEY_A_SHA256: hash(keyA), DATA_API_SERVER_KEY_A_PERMISSIONS: '{"version":1,"access":"read"}', DATA_API_SERVER_KEY_B_PERMISSIONS: 'not even json' })
+  assert.equal(slots.length, 1, 'permissions without a key are ignored, never a startup failure')
+  assert.equal(slots[0].permissions.access, 'read')
+})
+
+test('permission checks cover methods, relations, embeddings, RPCs, subjects and the catalog', () => {
+  const config = runtimeConfig({ ...baseEnv, DATA_API_SCHEMAS: 'api,ops' })
+  const read = serverKeyPermissions('{"version":1,"access":"read","relations":["api.orders","api.customers"],"subjects":false}', 'P')
+  const write = serverKeyPermissions('{"version":1,"rpcs":["api.ship_order"]}', 'P')
+  const allows = (permissions, url, method = 'GET', headers = {}, rpc = null) => serverKeyAllows({ url, method, headers }, permissions, config, rpc)
+  assert.equal(allows(null, '/rest/v1/anything', 'DELETE'), true)
+  assert.equal(allows(read, '/rest/v1/orders?select=id,customers(name)'), true)
+  assert.equal(allows(read, '/rest/v1/orders', 'HEAD'), true)
+  assert.equal(allows(read, '/__gregale/schema'), true)
+  for (const [url, method, headers, rpc, why] of [
+    ['/rest/v1/notes', 'GET', {}, null, 'unlisted relation'],
+    ['/rest/v1/orders?select=*,notes(*)', 'GET', {}, null, 'unlisted embedding'],
+    ['/rest/v1/orders?select=id&select=notes(*)', 'GET', {}, null, 'repeated select'],
+    ['/rest/v1/orders?select="x"(y)', 'GET', {}, null, 'unparseable select'],
+    ['/rest/v1/orders', 'GET', { 'accept-profile': 'ops' }, null, 'other schema'],
+    ['/rest/v1/orders', 'PATCH', {}, null, 'read-only write'],
+    ['/rest/v1/rpc/ship_order', 'POST', {}, { schema: 'api', name: 'ship_order' }, 'read-only RPC without allowlist'],
+    ['/rest/v1/orders', 'GET', { 'x-gregale-subject': 'u1' }, null, 'subjects disabled'],
+    ['/openapi.json', 'GET', {}, null, 'catalog with allowlists'],
+  ]) assert.equal(allows(read, url, method, headers, rpc), false, why)
+  assert.equal(allows(write, '/rest/v1/orders', 'POST'), true, 'write keys without relation lists reach any relation')
+  assert.equal(allows(write, '/rest/v1/rpc/ship_order', 'POST', {}, { schema: 'api', name: 'ship_order' }), true)
+  assert.equal(allows(write, '/rest/v1/rpc/save_note', 'POST', {}, { schema: 'api', name: 'save_note' }), false)
+  assert.equal(allows(write, '/rest/v1/orders', 'GET', { 'x-gregale-subject': 'u1' }), true)
+  assert.equal(allows(write, '/openapi.json'), false)
+  assert.equal(allows(serverKeyPermissions('{"version":1,"access":"read"}', 'P'), '/openapi.json'), true)
+})
+
+test('restricted server keys are refused before admission and logged as restricted', async t => {
+  const { state, send } = await fixture(t, { DATA_API_SERVER_KEY_A_PERMISSIONS: '{"version":1,"access":"read","relations":["api.orders"],"subjects":false}' })
+  const a = { Authorization: `Bearer ${keyA}` }, b = { Authorization: `Bearer ${keyB}` }
+  assert.equal((await send('/rest/v1/orders?select=id', { headers: a })).status, 200)
+  for (const [path, method, headers] of [
+    ['/rest/v1/notes', 'GET', a],
+    ['/rest/v1/orders?select=*,notes(body)', 'GET', a],
+    ['/rest/v1/orders', 'POST', a],
+    ['/rest/v1/rpc/ship_order', 'POST', a],
+    ['/rest/v1/orders', 'GET', { ...a, 'X-Gregale-Subject': 'user-1' }],
+    ['/openapi.json', 'GET', a],
+  ]) {
+    const response = await send(path, { method, headers })
+    assert.equal(response.status, 403, `${method} ${path}`)
+    assert.equal(JSON.parse(response.body).code, 'server_key_permission_denied')
+  }
+  assert.equal(state.calls.length, 1, 'denied requests never reach the engine')
+  assert.equal((await send('/rest/v1/notes', { method: 'POST', headers: b })).status, 200, 'the unrestricted slot keeps full access')
+  const restricted = state.logs.filter(entry => entry.access?.server_key_restricted === true)
+  assert.equal(restricted.length, 7)
+  assert.ok(restricted.every(entry => entry.access.server_key_slot === 'a'))
+  assert.equal(state.logs.find(entry => entry.access?.server_key_slot === 'b').access.server_key_restricted, undefined)
+  assert.doesNotMatch(JSON.stringify(state.logs), /gdsk_|user-1/)
 })

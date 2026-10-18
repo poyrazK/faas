@@ -18,6 +18,35 @@ export function matchServerKey(slots, token) {
   return matched
 }
 
+// Permissions narrow one server-key slot before admission; RLS still applies
+// to whatever they allow. Read-only keys call only explicitly listed RPCs,
+// because a function may write. Keys with allowlists cannot read the full
+// OpenAPI catalog; the fingerprint-only serving contract stays readable.
+export function serverKeyAllows(req, permissions, config, rpc) {
+  if (!permissions) return true
+  if (req.headers['x-gregale-subject'] !== undefined && !permissions.subjects) return false
+  let url
+  try { url = new URL(req.url, 'http://127.0.0.1') } catch { return false }
+  if (url.pathname === '/__gregale/schema') return true
+  if (url.pathname === '/openapi.json') return !permissions.relations && !permissions.rpcs
+  const listed = (list, schema, name) => list.some(entry => entry.schema === schema && entry.name === name)
+  if (rpc) {
+    if (permissions.rpcs) return listed(permissions.rpcs, rpc.schema, rpc.name)
+    return permissions.access === 'write'
+  }
+  const read = ['GET', 'HEAD'].includes(req.method)
+  if (!read && permissions.access !== 'write') return false
+  if (!permissions.relations) return true
+  const schema = req.headers[read ? 'accept-profile' : 'content-profile'] ?? config.schemas[0]
+  let relation
+  try { relation = decodeURIComponent(url.pathname.slice('/rest/v1/'.length)) } catch { return false }
+  if (!listed(permissions.relations, schema, relation)) return false
+  const selects = url.searchParams.getAll('select')
+  if (selects.length > 1) return false
+  const embedded = selects.length ? selectEmbeddings(selects[0]) : []
+  return embedded !== null && embedded.every(name => listed(permissions.relations, schema, name))
+}
+
 // A trusted backend may act for one application subject. Values are opaque.
 export function serverSubject(value) {
   if (value === undefined) return { subject: null }

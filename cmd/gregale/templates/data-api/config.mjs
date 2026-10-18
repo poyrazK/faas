@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 
 // Mirrors pkg/api/limits.go; TestDataAPIRuntimeBounds checks this contract.
-export const limits = Object.freeze({ pool: 2, connectionReportMs: 5000, connectionReportIntervalMs: 15000, connectionReportBytes: 4096, rows: 1000, bodyBytes: 1048576, responseBytes: 16777216, outputBytes: 1048576, queryMs: 15000, lockMs: 5000, relations: 1000, columns: 10000, types: 20000, queuedRequests: 8, admissionWaitMs: 1000, overloadRetrySeconds: 1, healthProbeMs: 2000, healthBytes: 8192, rateLimitDefaultPerSecond: 10, rateLimitDefaultBurst: 20, rateLimitMaxPerSecond: 1000, rateLimitMaxBurst: 1000, rateLimitMaxSubjects: 4096, rateLimitSweepMs: 1000, userConcurrencyMaxSubjects: 4096, userConcurrencyCooldownMs: 15000, publicReadMaxRelations: 64, serverKeySubjectMaxBytes: 255, publicReadMaxAgeSeconds: 3600, cacheTagMaxBytes: 128, cacheTagsMax: 32 })
+export const limits = Object.freeze({ pool: 2, connectionReportMs: 5000, connectionReportIntervalMs: 15000, connectionReportBytes: 4096, rows: 1000, bodyBytes: 1048576, responseBytes: 16777216, outputBytes: 1048576, queryMs: 15000, lockMs: 5000, relations: 1000, columns: 10000, types: 20000, queuedRequests: 8, admissionWaitMs: 1000, overloadRetrySeconds: 1, healthProbeMs: 2000, healthBytes: 8192, rateLimitDefaultPerSecond: 10, rateLimitDefaultBurst: 20, rateLimitMaxPerSecond: 1000, rateLimitMaxBurst: 1000, rateLimitMaxSubjects: 4096, rateLimitSweepMs: 1000, userConcurrencyMaxSubjects: 4096, userConcurrencyCooldownMs: 15000, publicReadMaxRelations: 64, serverKeySubjectMaxBytes: 255, publicReadMaxAgeSeconds: 3600, cacheTagMaxBytes: 128, cacheTagsMax: 32, serverKeyPermissionsBytes: 4096, serverKeyPermissionsEntries: 64 })
 
 export const relationPart = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/
 const schemaPart = /^[a-z][a-z0-9_]{0,62}$/
@@ -29,6 +29,31 @@ export function publicReadMaxAge(value, publicRead) {
   return Number(value)
 }
 
+const functionPart = /^[a-z][a-z0-9_]{0,62}$/
+const permissionFields = ['version', 'access', 'relations', 'rpcs', 'subjects']
+
+// Optional per-slot restrictions. Absent permissions keep full server access.
+// Entries outside the exposed schemas never match, so they only ever deny.
+export function serverKeyPermissions(value, name) {
+  if (value === undefined) return null
+  const invalid = () => { throw new Error(`Invalid ${name}`) }
+  if (typeof value !== 'string' || Buffer.byteLength(value) > limits.serverKeyPermissionsBytes) return invalid()
+  let permissions
+  try { permissions = JSON.parse(value) } catch { return invalid() }
+  if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions) || Object.keys(permissions).some(key => !permissionFields.includes(key)) || permissions.version !== 1 ||
+    (permissions.access !== undefined && !['read', 'write'].includes(permissions.access)) || (permissions.subjects !== undefined && typeof permissions.subjects !== 'boolean')) return invalid()
+  const entries = (list, pattern) => {
+    if (list === undefined) return null
+    if (!Array.isArray(list) || !list.length || list.length > limits.serverKeyPermissionsEntries || new Set(list).size !== list.length) return invalid()
+    return Object.freeze(list.map(entry => {
+      const [schema, object, ...extra] = typeof entry === 'string' ? entry.split('.') : []
+      if (extra.length || !schemaPart.test(schema ?? '') || !pattern.test(object ?? '')) return invalid()
+      return Object.freeze({ schema, name: object })
+    }))
+  }
+  return Object.freeze({ access: permissions.access ?? 'write', relations: entries(permissions.relations, relationPart), rpcs: entries(permissions.rpcs, functionPart), subjects: permissions.subjects ?? true })
+}
+
 // Only SHA-256 hashes of server keys reach the runtime, in two rotation slots.
 export function serverKeyConfig(env) {
   const slots = []
@@ -36,7 +61,8 @@ export function serverKeyConfig(env) {
     const value = env[name]
     if (value === undefined) continue
     if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) throw new Error(`Invalid ${name}`)
-    slots.push(Object.freeze({ slot, hash: Buffer.from(value, 'hex') }))
+    const permissionsName = `DATA_API_SERVER_KEY_${slot.toUpperCase()}_PERMISSIONS`
+    slots.push(Object.freeze({ slot, hash: Buffer.from(value, 'hex'), permissions: serverKeyPermissions(env[permissionsName], permissionsName) }))
   }
   if (slots.length === 2 && slots[0].hash.equals(slots[1].hash)) throw new Error('Server key slots must differ')
   return slots.length ? Object.freeze(slots) : null

@@ -77,6 +77,7 @@ type dataAPIFailureCounts struct {
 	ConcurrencyLimited int `json:"concurrency_limited"`
 	PublicReadDenied   int `json:"public_read_denied"`
 	ServerKeyBrowser   int `json:"server_key_browser"`
+	ServerKeyDenied    int `json:"server_key_permission_denied"`
 }
 type dataAPIDiagnosticsReport struct {
 	Version              int                             `json:"version"`
@@ -289,7 +290,7 @@ func parseDataAPIRequestRecord(content string) (dataAPIRequestRecord, bool, erro
 	if (record.Status == nil && record.Outcome != "aborted") || (record.Status != nil && (*record.Status < 100 || *record.Status > 599)) {
 		return record, true, errors.New("invalid request status")
 	}
-	if record.Code != nil && !dataAPIDiagnosticAllowed(*record.Code, "origin_not_allowed", "not_found", "invalid_path", "method_not_allowed", "token_required", "token_invalid", "read_only_identity", "serving_contract_unavailable", "data_api_unavailable", "data_api_refresh_paused", "data_api_refresh_unavailable", "request_too_large", "response_too_large", "query_timeout", "request_deadline_exceeded", "schema_document_too_large", "schema_contract_mismatch", "upstream_error", "data_api_overloaded", "data_api_rate_limited", "data_api_concurrency_limited", "public_read_not_allowed", "server_key_browser_forbidden") {
+	if record.Code != nil && !dataAPIDiagnosticAllowed(*record.Code, "origin_not_allowed", "not_found", "invalid_path", "method_not_allowed", "token_required", "token_invalid", "read_only_identity", "serving_contract_unavailable", "data_api_unavailable", "data_api_refresh_paused", "data_api_refresh_unavailable", "request_too_large", "response_too_large", "query_timeout", "request_deadline_exceeded", "schema_document_too_large", "schema_contract_mismatch", "upstream_error", "data_api_overloaded", "data_api_rate_limited", "data_api_concurrency_limited", "public_read_not_allowed", "server_key_browser_forbidden", "server_key_permission_denied") {
 		return record, true, errors.New("invalid request code")
 	}
 	if err := validateDataAPIQueryShape(record); err != nil {
@@ -440,6 +441,8 @@ func (c *dataAPIDiagnosticsCollector) observe(content string) bool {
 			c.report.Failures.PublicReadDenied++
 		case "server_key_browser_forbidden":
 			c.report.Failures.ServerKeyBrowser++
+		case "server_key_permission_denied":
+			c.report.Failures.ServerKeyDenied++
 		}
 	}
 	c.report.Access.add(record.Access)
@@ -668,8 +671,8 @@ func writeDataAPIDiagnostics(report dataAPIDiagnosticsReport) error {
 			return err
 		}
 	}
-	if report.Failures.PublicReadDenied > 0 || report.Failures.ServerKeyBrowser > 0 {
-		if _, err := fmt.Fprintf(osStdout, "Access denials: %d public reads outside the allowlist, %d server keys sent from browsers\n", report.Failures.PublicReadDenied, report.Failures.ServerKeyBrowser); err != nil {
+	if report.Failures.PublicReadDenied > 0 || report.Failures.ServerKeyBrowser > 0 || report.Failures.ServerKeyDenied > 0 {
+		if _, err := fmt.Fprintf(osStdout, "Access denials: %d public reads outside the allowlist, %d server keys sent from browsers, %d outside server-key permissions\n", report.Failures.PublicReadDenied, report.Failures.ServerKeyBrowser, report.Failures.ServerKeyDenied); err != nil {
 			return err
 		}
 	}

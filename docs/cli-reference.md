@@ -14968,10 +14968,14 @@ Manage server keys for trusted backends (RLS still applies)
 
 Generate a key, store its hash in a free slot and show the key once
 
-`gregale data-api server-key create [--replace-oldest] [--scope <SCOPE>] [--no-restart] <name>`
+`gregale data-api server-key create [--read-only] [--relations <SCHEMA.RELATION[,...]>] [--rpcs <SCHEMA.FUNCTION[,...]>] [--no-subjects] [--replace-oldest] [--scope <SCOPE>] [--no-restart] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--read-only` | allow only GET and HEAD; RPCs need --rpcs |  |
+| `--relations <SCHEMA.RELATION[,...]>` | relations the key may use, including embeddings |  |
+| `--rpcs <SCHEMA.FUNCTION[,...]>` | approved RPCs the key may call |  |
+| `--no-subjects` | refuse X-Gregale-Subject |  |
 | `--replace-oldest` | replace the older slot when both are in use |  |
 | `--scope <SCOPE>` | environment scope |  |
 | `--no-restart` | store the hash without a fresh restart |  |

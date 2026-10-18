@@ -11233,6 +11233,9 @@ const (
 	DataAPIServerKeySubjectMaxBytes = 255
 	// Edge freshness for canonical anonymous reads, within the gateway cache cap.
 	DataAPIPublicReadMaxAgeSeconds = ResponseCacheMaxAgeMaxSeconds
+	// Per-slot server-key permissions: serialized size and allowlist entries.
+	DataAPIServerKeyPermissionsMaxBytes   = 4096
+	DataAPIServerKeyPermissionsMaxEntries = 64
 	// Single-app projects upload migrations beside the runtime; structural
 	// bounds only, inside the plan's source-archive limit.
 	DataAPISingleAppMigrationsMaxFiles = 4096
