@@ -1,3 +1,5 @@
+//go:build linux
+
 // object-storage-qualify runs disposable local or SSH load and recovery drills.
 package main
 

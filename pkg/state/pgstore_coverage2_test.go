@@ -269,3 +269,31 @@ func TestPg_CoverageInstanceLists(t *testing.T) {
 		t.Fatalf("heartbeats = %+v, %v", got, err)
 	}
 }
+
+// H10-145: the live-only owner listing filters in SQL. A parked row of the
+// same app stays out, and a node that owns nothing lists nothing.
+func TestPg_ListLiveInstancesByNodeID(t *testing.T) {
+	s, ctx, _, app, dep := pgCoverageFixture(t)
+	nodeID := resolveDefaultLocal(t, ctx, s)
+	if err := s.SetAppNodeID(ctx, app.ID, nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateInstance(ctx, app.ID, dep.ID, string(state.StateParked), 256, nodeID, ""); err != nil {
+		t.Fatal(err)
+	}
+	running, err := s.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 256, nodeID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, err := s.ListInstancesByNodeID(ctx, nodeID)
+	if err != nil || len(all) != 2 {
+		t.Fatalf("all instances by node = %d, %v; want 2", len(all), err)
+	}
+	live, err := s.ListLiveInstancesByNodeID(ctx, nodeID)
+	if err != nil || len(live) != 1 || live[0].ID != running.ID || live[0].State != string(state.StateRunning) {
+		t.Fatalf("live instances by node = %+v, %v; want only %s", live, err, running.ID)
+	}
+	if got, err := s.ListLiveInstancesByNodeID(ctx, uuid.NewString()); err != nil || len(got) != 0 {
+		t.Fatalf("live instances for an unknown node = %+v, %v", got, err)
+	}
+}
