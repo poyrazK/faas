@@ -6,7 +6,7 @@ import { acknowledgmentWait } from './event-acknowledgment-callbacks.js';
 import { intentPool, intentScope } from './event-acknowledgment-intent-store.js';
 import { intentWatchEvidence, intentWatchPolicy, type EventAcknowledgmentIntentWatchOptions } from './event-acknowledgment-intent-watch-policy.js';
 import { readIntentWatchHealth } from './event-acknowledgment-intent-watch.js';
-import { validateEventAcknowledgmentIntentCheckpoint, acknowledgeEventAcknowledgmentIntentAlerts, intentCheckpointRules,
+import { validateEventAcknowledgmentIntentCheckpoint, acknowledgeEventAcknowledgmentIntentAlerts, intentCheckpointRules, intentCheckpointVersion,
   type EventAcknowledgmentIntentCheckpoint, type EventAcknowledgmentIntentNotification,
   type EventAcknowledgmentIntentAcknowledgment } from './event-acknowledgment-intent-checkpoint.js';
 import { observeIntentCheckpoint, resetIntentCheckpointProofs, intentCheckpointConfirmation,
@@ -54,7 +54,7 @@ export async function watchEventAcknowledgmentIntentHealthWithCheckpoint(pool: E
   const [account, app] = intentScope(accountId, appId), policy = intentWatchPolicy(options);
   const parent = options.signal, onProgress = options.onProgress, pollAcknowledgments = options.pollAcknowledgments;
   let checkpoint: EventAcknowledgmentIntentCheckpoint = options.resume === undefined ? {
-    kind: 'gregale.node.event-acknowledgment-intent-watch', version: 1, target: { accountId: account, appId: app },
+    kind: 'gregale.node.event-acknowledgment-intent-watch', version: intentCheckpointVersion(policy), target: { accountId: account, appId: app },
     policy, session: randomUUID(), sequence: 0, conditions: intentCheckpointRules(policy).map(rule => ({ ...rule, state: 'unknown' })),
     pending: [], acknowledged: [],
   } : validateEventAcknowledgmentIntentCheckpoint(options.resume);

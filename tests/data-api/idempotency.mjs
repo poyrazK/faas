@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { dataRequest, reconcileMutation } from '../../sdk/data/dist/index.js'
 
-export async function verifyIdempotency({ owner, client, url, userA, userB, makeClient }) {
+export async function verifyIdempotency({ owner, client, url, userA, userB, makeClient, pg, loginURL }) {
   const keys = [], ids = [], tagIDs = []
   const key = () => { const value = randomUUID(); keys.push(value); return value }
   const record = async result => {
@@ -24,6 +25,51 @@ export async function verifyIdempotency({ owner, client, url, userA, userB, make
     assert.equal(receipt.rows.length, 1)
     assert.deepEqual(receipt.rows[0].request, { note_body: 'once-concurrent', tag_names: ['one', 'two'] })
     assert.equal(receipt.rows[0].response.id, original.id)
+    const lookup = (requestKey, body, tags = []) => dataRequest(client.readCreateReceipt(requestKey, body, tags), { timeoutMs: 2000 })
+    const match = body => row => row.subject === userA.subject && row.body === body
+    const read = await lookup(replayKey, 'once-concurrent', ['one', 'two'])
+    assert.deepEqual(reconcileMutation(read, match('once-concurrent')), { outcome: 'confirmed', row: original, status: 200 })
+    const lookupConflict = await lookup(replayKey, 'different', ['one', 'two'])
+    assert.equal(reconcileMutation(lookupConflict, match('different')).outcome, 'payload_conflict')
+    assert.equal(lookupConflict.error.message, 'idempotency_payload_conflict')
+    const bobLookup = makeClient({ url, subject: userB.subject, accessToken: userB.token })
+    assert.deepEqual((await bobLookup.readCreateReceipt(replayKey, 'different', [])).data, [], 'hidden receipts must not reveal payload conflicts')
+    const missingKey = key()
+    assert.equal(reconcileMutation(await lookup(missingKey, 'missing'), match('missing')).reason, 'not_found')
+    assert.equal((await owner.query('SELECT count(*)::integer AS n FROM api.note_create_receipts WHERE request_key=$1', [missingKey])).rows[0].n, 0)
+    const restricted = new pg.Client({ connectionString: loginURL })
+    await restricted.connect()
+    try {
+      await restricted.query('BEGIN READ ONLY')
+      await restricted.query("SELECT set_config('request.jwt.claims',$1,true),set_config('gregale.idempotency_rpc','before_receipt_lookup',true)", [JSON.stringify({ sub: userA.subject })])
+      const readOnly = await restricted.query('SELECT id,subject,body,priority,version FROM api.read_note_create_receipt($1::uuid,$2,$3::text[])', [replayKey, 'once-concurrent', ['one', 'two']])
+      assert.deepEqual(readOnly.rows, [{ id: original.id, subject: original.subject, body: original.body, priority: original.priority, version: original.version }], 'lookup must work in a server-enforced read-only transaction')
+      assert.equal((await restricted.query("SELECT current_setting('gregale.idempotency_rpc',true) AS scope")).rows[0].scope, 'before_receipt_lookup')
+      assert.deepEqual((await restricted.query('SELECT * FROM api.note_create_receipts')).rows, [], 'lookup scope cannot leak to direct table reads')
+      const metadata = await restricted.query("SELECT provolatile,prosecdef,EXISTS(SELECT 1 FROM aclexplode(coalesce(proacl,acldefault('f',proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE') AS public_execute FROM pg_proc WHERE oid='api.read_note_create_receipt(uuid,text,text[])'::regprocedure")
+      assert.equal(metadata.rows[0].provolatile, 's'); assert.equal(metadata.rows[0].prosecdef, false); assert.equal(metadata.rows[0].public_execute, false)
+      await restricted.query('ROLLBACK')
+    } finally { await restricted.end() }
+    // A SELECT must not wait for an uncommitted writer or interpret absence as
+    // failure. After commit, the same lookup confirms the original operation.
+    const inFlightKey = key(), writer = new pg.Client({ connectionString: loginURL })
+    await writer.connect()
+    try {
+      await writer.query('BEGIN ISOLATION LEVEL READ COMMITTED')
+      await writer.query("SELECT set_config('request.jwt.claims',$1,true)", [JSON.stringify({ sub: userA.subject })])
+      const writing = await writer.query('SELECT * FROM api.create_note_with_tags_once($1::uuid,$2,$3::text[])', [inFlightKey, 'once-in-flight', []])
+      const beforeCommit = await lookup(inFlightKey, 'once-in-flight')
+      assert.equal(beforeCommit.error, null)
+      assert.equal(reconcileMutation(beforeCommit, match('once-in-flight')).reason, 'not_found')
+      await writer.query('COMMIT')
+      const committed = await lookup(inFlightKey, 'once-in-flight')
+      assert.equal(committed.data[0].id, writing.rows[0].id)
+      assert.equal(reconcileMutation(committed, match('once-in-flight')).outcome, 'confirmed')
+      await record(committed)
+      await owner.query('DELETE FROM api.note_create_receipts WHERE subject=$1 AND request_key=$2', [userA.subject, inFlightKey])
+      assert.equal(reconcileMutation(await lookup(inFlightKey, 'once-in-flight'), match('once-in-flight')).reason, 'not_found')
+      assert.equal((await owner.query("SELECT count(*)::integer AS n FROM api.notes WHERE subject=$1 AND body='once-in-flight'", [userA.subject])).rows[0].n, 1, 'purged receipt lookup must not recreate the note')
+    } finally { await writer.query('ROLLBACK'); await writer.end() }
     // Snapshot replay preserves the original result after later edits or delete.
     assert.equal((await client.update(original.id, original.version, { body: 'edited later' })).error, null)
     assert.deepEqual((await client.createWithTagsOnce(replayKey, 'once-concurrent', ['one', 'two'])).data, [original])
@@ -60,7 +106,9 @@ export async function verifyIdempotency({ owner, client, url, userA, userB, make
     const lost = await lossy.createWithTagsOnce(lostKey, 'once-lost-response', ['lost'])
     assert.equal(lost.status, 0)
     assert.equal(sends, 1)
-    await record(await client.createWithTagsOnce(lostKey, 'once-lost-response', ['lost']))
+    const recovered = await lookup(lostKey, 'once-lost-response', ['lost'])
+    assert.equal(reconcileMutation(recovered, match('once-lost-response')).outcome, 'confirmed')
+    await record(recovered)
     assert.equal((await owner.query("SELECT count(*)::int AS n FROM api.notes WHERE body='once-lost-response'")).rows[0].n, 1)
     const defaultsKey = key()
     const defaults = await client.createWithTagsOnce(defaultsKey, 'once-default')
@@ -109,6 +157,7 @@ export async function verifyIdempotency({ owner, client, url, userA, userB, make
     assert.equal(nullKey.error.code, '22023')
     assert.equal((await client.remove(original.id)).error, null)
     assert.deepEqual((await client.createWithTagsOnce(replayKey, 'once-concurrent', ['one', 'two'])).data, [original])
+    assert.deepEqual((await lookup(replayKey, 'once-concurrent', ['one', 'two'])).data, [original], 'receipt recovery preserves the original response after the note is deleted')
     assert.equal((await owner.query('SELECT count(*)::int AS n FROM api.notes WHERE id=$1', [original.id])).rows[0].n, 0)
   } finally {
     await owner.query('DELETE FROM api.note_create_receipts WHERE request_key=ANY($1::uuid[])', [keys])

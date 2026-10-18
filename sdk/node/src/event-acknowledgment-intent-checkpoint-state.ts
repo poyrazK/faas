@@ -76,7 +76,7 @@ export function observeIntentCheckpoint(checkpoint: EventAcknowledgmentIntentChe
       confirmations.push(intentCheckpointConfirmation(c, p, local, checkpoint.policy.sustainMs, reason));
       continue;
     }
-    c.value = c.metric === 'due_backlog' ? health!.due : health!.stalled;
+    c.value = c.metric === 'due_backlog' ? health!.due : c.metric === 'stalled_recovery' ? health!.stalled : health!.parked;
     c.observedAt = health!.observedAt;
     const update = apply(checkpoint, c, p, local, at);
     if (update.alert) alerts.push(update.alert);

@@ -16,6 +16,8 @@ export interface EventAcknowledgmentIntentRecoveryPassResult {
   readonly attempts: number;
   readonly confirmed: number;
   readonly unconfirmed: number;
+  /** Known parked outcomes, including expired exhausted claims requiring no callback. */
+  readonly parked: number;
   readonly superseded: number;
   readonly empty: number;
   readonly claimLost: number;

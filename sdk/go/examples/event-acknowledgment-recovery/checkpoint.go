@@ -30,7 +30,7 @@ func WatchRecoveryAlerts(ctx context.Context, db *sql.DB, accountID, appID strin
 	return faas.WatchEventAcknowledgmentIntentHealthWithCheckpoint(ctx, db, accountID, appID,
 		faas.EventAcknowledgmentIntentCheckpointWatchOptions{
 			EventAcknowledgmentIntentWatchOptions: faas.EventAcknowledgmentIntentWatchOptions{
-				DueThreshold: 100, StalledThreshold: 1, Sustain: 30 * time.Second,
+				DueThreshold: 100, StalledThreshold: 1, ParkedThreshold: 1, Sustain: 30 * time.Second,
 			},
 			Resume: resume, PollAcknowledgments: host.Acknowledgments,
 			OnProgress: func(ctx context.Context, progress faas.EventAcknowledgmentIntentCheckpointWatchResult) error {

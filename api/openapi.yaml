@@ -13781,6 +13781,31 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /v1/runtime/data-api/connection-observations:
+    post:
+      tags: [managed_postgres]
+      operationId: reportDataAPIRuntimeConnections
+      summary: Report resident Data API pool configuration
+      description: Private runtime surface. Requires a short-lived gregale:data-api:connections workload assertion for the live instance. Owner API keys and application JWTs are not accepted. Reports are reconciled against current catalog identity and expire within 30 seconds. This does not reserve connections or establish complete demand coverage.
+      x-internal: true
+      security:
+        - dataAPIConnectionsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DataAPIRuntimeConnectionReport' }
+      responses:
+        '204': { description: Observation accepted. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: Observation reporting is unsupported by this catalog adapter.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/runtime/operations/{id}/control:
     get:
       tags:
@@ -56155,6 +56180,11 @@ components:
       in: header
       name: X-Gregale-Operation-Job-Capability
       description: Private capability derived from the current host task lease; injected into the single Job task by schedd.
+    dataAPIConnectionsWorkloadIdentity:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Short-lived Gregale workload identity for audience gregale:data-api:connections, bound to a live Data API instance. Customer API keys cannot publish observations.
     operationsWorkloadIdentity:
       type: http
       scheme: bearer
@@ -68883,7 +68913,7 @@ components:
         postgres_majors: { type: array, items: { type: integer, minimum: 12, maximum: 99 } }
         service_classes: { type: array, items: { type: string, enum: [development, burstable, production] } }
         availability: { type: array, items: { type: string, enum: [single_zone, high_availability] } }
-        credential_access: { type: array, items: { type: string, enum: [read_write, read_only, migration, data_api] } }
+        credential_access: { type: array, items: { type: string, enum: [read_write, read_only, migration, data_api, auth] } }
         scale_to_zero: { type: boolean }
         always_on: { type: boolean }
         pooled_connections: { type: boolean }
@@ -69190,7 +69220,7 @@ components:
         app_id: { type: string, minLength: 1, maxLength: 128 }
         scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
         environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
-        access: { type: string, enum: [read_write, read_only, migration, data_api] }
+        access: { type: string, enum: [read_write, read_only, migration, data_api, auth] }
         credential_generation: { type: integer, format: int64, minimum: 1 }
         rotation_pending: { type: boolean, description: The previous provider credential remains valid until the rolling app runtime refresh completes. }
         state: { type: string, enum: [provisioning, ready, deleting, retiring, failed, deleted] }
@@ -69252,13 +69282,47 @@ components:
         control_headroom: { type: integer, format: int64, minimum: 0 }
         migration_headroom: { type: integer, format: int64, minimum: 0 }
         modeled_peak_connections: { type: integer, format: int64, minimum: 0 }
+        runtime_observations: { $ref: '#/components/schemas/ConnectionBudgetRuntimeObservations' }
+    DataAPIRuntimeConnectionReport:
+      description: Private versioned runtime configuration report. Instance, deployment, node and database placement authority are resolved from workload identity and the catalog, never accepted from this body. observed_at bounds replay; unknown invalidates the previous observation.
+      type: object
+      additionalProperties: false
+      required: [version, binding_id, database_identity, database_generation, credential_generation, role, state, runtime_model, engine_connections, refresh_connections, observed_at]
+      properties:
+        version: { type: integer, enum: [1] }
+        binding_id: { type: string, format: uuid }
+        database_identity: { type: string, pattern: '^[a-f0-9]{64}$', description: 'SHA-256 of backend_fingerprint, a colon and the frozen data_resource_id, from operator configuration.' }
+        database_generation: { type: integer, format: int64, minimum: 1 }
+        credential_generation: { type: integer, format: int64, minimum: 1 }
+        role: { type: string, minLength: 1, maxLength: 63 }
+        state: { type: string, enum: [observed, unknown] }
+        runtime_model: { type: string, enum: [postgrest-14.3-pools-v1] }
+        engine_connections: { type: integer, minimum: 1, maximum: 2 }
+        refresh_connections: { type: integer, minimum: 0, maximum: 1 }
+        observed_at: { type: string, format: date-time }
+    ConnectionBudgetRuntimeObservations:
+      description: Authenticated workload reports of configured resident Data API pools, including the refresh reader. Not live SQL sessions or independent guest attestation. Parked runtimes and future wakes remain estimates; this does not verify Auth or external consumers.
+      type: object
+      required: [state, source, observed_instances, unobserved_instances, parked_instances, configured_connections]
+      properties:
+        state: { type: string, enum: [unknown, partial, observed, not_applicable] }
+        source: { type: string, enum: [workload_report] }
+        observed_instances: { type: integer, format: int64, minimum: 0 }
+        unobserved_instances: { type: integer, format: int64, minimum: 0 }
+        parked_instances: { type: integer, format: int64, minimum: 0 }
+        configured_connections: { type: integer, format: int64, minimum: 0 }
+        checked_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
     ConnectionBudgetCapacity:
-      description: Qualified tenant-usable allocation for the exact database generation and placement. Current adapters leave this unknown.
+      description: Operator-qualified tenant allocation clamped to observed SQL ceilings for the exact database generation and placement. Unknown without fresh evidence; this does not reserve connections or establish complete consumer coverage.
       type: object
       required: [state]
       properties:
         state: { type: string, enum: [unknown, verified] }
-        usable_connections: { type: integer, format: int64, minimum: 1 }
+        usable_connections: { type: integer, format: int64, minimum: 0 }
+        source: { type: string, enum: [provider_api, native_qualification] }
+        checked_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
     ManagedPostgresBindingList:
       description: Workload bindings attached to one managed PostgreSQL database.
       type: object
@@ -69274,7 +69338,7 @@ components:
         app_id: { type: string, minLength: 1, maxLength: 128 }
         scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
         environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
-        access: { type: string, enum: [read_write, read_only, migration, data_api], description: Portable credential mode. Unsupported modes are rejected before a binding is reserved. }
+        access: { type: string, enum: [read_write, read_only, migration, data_api, auth], description: Portable credential mode. Unsupported modes are rejected before a binding is reserved. }
 
     PrepareManagedPostgresCutoverRequest:
       description: Stage source bindings for one app and scope on a ready database restored from that source.
@@ -69396,7 +69460,7 @@ components:
       properties:
         source_binding_id: { type: string, format: uuid }
         environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
-        access: { type: string, enum: [read_write, read_only, migration, data_api] }
+        access: { type: string, enum: [read_write, read_only, migration, data_api, auth] }
         state: { type: string, enum: [pending, sealed, revoked] }
         verified_at: { type: string, format: date-time }
 

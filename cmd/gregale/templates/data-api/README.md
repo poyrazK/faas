@@ -87,6 +87,93 @@ replay. Only the gateway's stable code establishes pre-SQL rejection; generic
 HTTP 429 does not establish rollback. Budgets are per runtime, reset on a cold
 process start, and are not shared across replicas.
 
+### Per-user concurrent requests
+
+Set `DATA_API_USER_CONCURRENCY=1` to cap a verified user's concurrent authenticated
+requests within this runtime. Absent disables the policy. The integer must fit
+the effective admission capacity: one or two normally, only one with coordinated
+refresh. JWT rotation shares slots across REST/RPC and schema/OpenAPI routes.
+Owner configuration is authoritative; caller headers/claims cannot raise it.
+Rate checks run first. Public health and OPTIONS bypass this policy.
+
+Excess calls receive `429 data_api_concurrency_limited`, a request ID, advisory
+`Retry-After` and fixed reason/count metadata before any refresh/readiness/engine
+SQL dispatch. Handler and downstream must both settle before release. Pending
+handlers remain counted after disconnect. Unacknowledged dispatches enter a
+15-second cooldown after both settle; late acknowledgements release only their
+own slot. Completed engine work still counts while downstream streaming is live.
+
+Tracking is bounded at 4,096 subject digests, with lazy expiry and no active-work
+eviction, SQL probes or extra pools. Counts are HTTP admission protection, not
+SQL-session counts or proof SQL has stopped after cooldown. Global FIFO admission
+still applies before identity, so this does not guarantee fair queuing. Replicas
+are independent and process restart clears the local policy state. Update the
+runtime and fresh-restart after changing configuration.
+
+Logs/diagnostics preserve only safe `concurrency_limit` metadata on rejections;
+`failures.concurrency_limited` and historical health findings remain separate from
+request rates and overload. SDK recovery is `concurrency_limited` / `wait`, with
+no automatic replay of mutations or reconciliation of earlier uncertain writes.
+
+### Database lock waits
+
+New managed Data API logins and local development default to 5-second
+`lock_timeout` and 15-second `statement_timeout`. Lock waits are bounded per
+acquisition, not per query or pool wait. Original engine SQLSTATE `55P03` maps to
+SDK `lock_conflict` / `wait` (also possible for NOWAIT); `40P01` maps to
+`deadlock` / `wait` if surfaced. Pinned PostgREST can retry deadlocks inside one
+HTTP request; the SDK does not retry. An uncaught error rolls back the
+failing request's transactional writes, but not external effects, sequences or
+earlier attempts. Use the operation's receipt contract before explicit replay.
+
+Existing bindings need credential rotation, or credential reconciliation of the
+exact legacy policy, followed by fresh SQL sessions. Rebuild alone does not
+upgrade a database role or existing pools. Update generated RPC permission
+tooling to accept both exact policies; its readiness remains an ACL check.
+Trusted functions/session settings can override defaults. See `docs/data-api.md`
+and ADR-1733 for rollout and qualification limits.
+
+### SQL transaction retry deadline
+
+Opt in with `DATA_API_SQL_DEADLINE=1` after owner installation and checks:
+
+```sh
+node sql-deadline.mjs install BINDING_ROLE
+node sql-deadline.mjs check BINDING_ROLE
+```
+
+Use the authorized `MIGRATION_DATABASE_URL`; set `DATA_API_COORDINATED_REFRESH=1`
+on these commands when composing an installed refresh barrier. Rebuild and start
+fresh runtimes after setup. Startup verifies the pinned engine, exact hook bodies,
+protected ownership and grants without installing anything. Every new/rotated
+serving role needs setup before adoption. For managed Neon deadline-only bindings,
+the stable schema owner can run `node sql-deadline.mjs enroll BINDING_ROLE BINDING_UUID`
+after installation, then `check-enrollment BINDING_ROLE BINDING_UUID` to verify the
+approval without writes. Credential preparation verifies the owner-only policy and
+exact protected hooks before granting the replacement login access and publishing
+its secret. Drift rolls back preparation; existing credentials remain available.
+`unenroll BINDING_ROLE BINDING_UUID` removes future automation without revoking
+existing grants. Enrollment is scoped to the binding and provider resource; it
+does not copy RPC permissions, enable runtime settings or install hooks. For
+coordinated refresh, use the shared-gate enrollment described below.
+Installation checks catalog permissions without requiring membership in the
+serving role; startup checks through the actual serving connection.
+
+One gateway-owned admission expiry survives internal SQL retries. Each attempt's
+pre-request hook caps statement/lock timeouts to the remaining budget; refresh
+barrier waits consume that budget too. Existing stricter settings remain. Expired
+hooks return `504 data_api_sql_deadline_exceeded`, SDK `timeout` / `reconcile`;
+main SQL can instead return PostgreSQL cancellation/lock errors or lose the race
+to the HTTP deadline. Invalid contracts fail closed. No SDK retries or extra
+serving pool are added. Disabled mode retains the old engine hook.
+Opt-in disables PostgREST in-database engine configuration loading to prevent
+settings there from replacing the hook; PostgreSQL login defaults still apply.
+
+Stable gateway/database clocks are required. The hook cannot interrupt pool
+acquisition or trusted SQL that overrides timeouts/catches errors, and does not
+roll back external effects or prove HTTP abort stopped SQL. See ADR-1734 and
+`docs/data-api.md` for rollout and recovery guidance.
+
 ### Total request deadline
 
 Authenticated requests have a total 15-second deadline after admission, including
@@ -184,9 +271,50 @@ With `DATA_API_QUERY_SHAPES=1`, use `--sort p95` or `--sort errors` to rank quer
 shapes by total gateway-request latency (including aborts) or failure count.
 The default remains request count. No raw SQL, tokens or payloads are logged.
 
+The runtime also enables the pinned engine's private `Server-Timing` header.
+Dispatched requests log a version 1 `database_timings` object with source
+`postgrest_server_timing`. Its observed `jwt`, `parse`, `plan`, `transaction` and
+`response` phases have millisecond durations and `complete: true`. Transaction
+time includes pool acquisition, session setup, hooks, SQL and result transfer;
+`plan` means engine SQL generation. Separate `sql_execution` and `pool_wait`
+remain `unknown`. Raw engine and caller timing headers are not exposed or logged.
+Absent or invalid engine timing headers and pre-header cancellation/deadlines
+produce unknown observations without durations. Engine phases already complete
+before headers remain complete even if gateway streaming is interrupted.
+Each observation belongs to its request UUID/time and is never cached or reused.
+
+Diagnostics and health report observed, unknown and absent sample coverage,
+fixed unknown reasons and per-phase completed-only percentiles. Empty samples
+stay null, and missing timing coverage does not change SQL readiness. No extra
+SQL connections, queries or sampling are needed. Rebuild existing apps from the
+updated template to enable the header and log fields.
+
 For coordinated schema updates, the owner can install the private barrier with
 `MIGRATION_DATABASE_URL` and `node refresh.mjs install BINDING_ROLE`, then deploy
 all serving runtimes with `DATA_API_COORDINATED_REFRESH=1`. The same tool provides
 `pause`/`resume`; resume needs the CLI-provided verified fingerprint. Keep owner
 credentials and the private refresh token out of the deployed/public client.
 See `docs/data-api.md` for the complete coordinated sync and recovery workflow.
+
+Managed Neon bindings using `api` can run
+`node refresh-rotation.mjs enroll BINDING_ROLE BINDING_UUID` after barrier setup,
+then `check-enrollment BINDING_ROLE BINDING_UUID`. Use the stable schema-owner
+migration connection. Set `DATA_API_SQL_DEADLINE=1` on these commands when the
+login has deadline grants; remove any previous deadline-only enrollment first.
+The shared pause protects all credential generations, with a verified fingerprint
+per login. Preparation validates pinned hooks and catalog permissions, grants only
+approved RPC/refresh/deadline access, and finishes before credential publication.
+Existing pause/resume/check commands handle the shared gate; resume verifies every
+remaining member. Retirement removes old mappings after rolling runtime refresh.
+Catalog drift blocks publication until owner verification. After enrollment, use
+this tool for additional managed bindings; legacy installation cannot replace its
+hooks. Read-only enrollment checks do not modify state or need serving memberships.
+
+Run `node refresh-rotation.mjs preflight BINDING_ROLE BINDING_UUID` with the same
+local migration connection and deadline mode before requesting rotation. It emits
+read-only JSON checks and repair steps for enrollment, hooks, role/grant drift,
+catalog/contracts and login-specific RLS. Unknown or blocked checks exit nonzero.
+The CLI accepts this trusted owner command through `data-api rotation preflight
+NAME --binding UUID --owner-check FILE`; `rotation status` uses public binding
+metadata alone. Neither command starts rotation or approves drift. Passing checks
+remain advisory; provider preparation still validates the full candidate witness.

@@ -35,7 +35,7 @@ func dataAPIHealthPoolFixture(capacity int) string {
 }
 
 func TestDataAPIHealthReportSeparatesCurrentChecksAndRecentFailures(t *testing.T) {
-	for _, scenario := range []string{"healthy", "saturated", "paused", "unready", "engine-exit", "legacy", "redirect", "partial-logs", "logs-unavailable", "deadline", "pool-waiting", "pool-timeouts", "pool-missing", "pool-invalid", "pool-unknown", "budget-unknown", "budget-exceeded"} {
+	for _, scenario := range []string{"healthy", "saturated", "paused", "unready", "engine-exit", "legacy", "redirect", "partial-logs", "logs-unavailable", "deadline", "pool-waiting", "pool-timeouts", "pool-missing", "pool-invalid", "pool-unknown", "budget-unknown", "budget-exceeded", "database-timings"} {
 		t.Run(scenario, func(t *testing.T) {
 			var redirected, reads atomic.Int32
 			target := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { redirected.Add(1) }))
@@ -138,7 +138,15 @@ func TestDataAPIHealthReportSeparatesCurrentChecksAndRecentFailures(t *testing.T
 						_, _ = fmt.Fprint(w, "event: degraded\ndata: {\"private\":\"private-stream-secret\"}\n\n")
 						return
 					}
-					for i, code := range []string{"data_api_overloaded", "query_timeout", "data_api_refresh_paused", "data_api_refresh_unavailable", "response_too_large", "data_api_rate_limited"} {
+					if scenario == "database-timings" {
+						for _, line := range []string{databaseTimingFixture(t, 1, 250, "observed", false), databaseTimingFixture(t, 2, 1000, "missing_header", false), dataAPIDiagnosticFixture(t, 3, "rest", "completed", 200, 1, nil)} {
+							line = strings.ReplaceAll(line, "2026-10-11T10:00:00Z", time.Now().UTC().Format(time.RFC3339Nano))
+							_, _ = fmt.Fprintf(w, "event: log\ndata: %s\n\n", dataAPIDiagnosticEnvelope(t, line))
+						}
+						_, _ = fmt.Fprint(w, "event: end\ndata: {}\n\n")
+						return
+					}
+					for i, code := range []string{"data_api_overloaded", "query_timeout", "data_api_refresh_paused", "data_api_refresh_unavailable", "response_too_large", "data_api_rate_limited", "data_api_concurrency_limited"} {
 						outcome := "unavailable"
 						if i == 0 {
 							outcome = "overloaded"
@@ -156,6 +164,9 @@ func TestDataAPIHealthReportSeparatesCurrentChecksAndRecentFailures(t *testing.T
 						}
 						if code == "data_api_rate_limited" {
 							line = rateLimitDiagnosticFixture(t, i+1, `{"reason":"subject","per_second":10,"burst":20,"retry_after_seconds":1}`)
+						}
+						if code == "data_api_concurrency_limited" {
+							line = concurrencyLimitDiagnosticFixture(t, i+1, `{"reason":"subject","max_concurrent":1,"active":0,"cooling_down":1,"retry_after_seconds":15}`)
 						}
 						line = strings.ReplaceAll(line, "2026-10-11T10:00:00Z", time.Now().UTC().Format(time.RFC3339Nano))
 						_, _ = fmt.Fprintf(w, "event: log\ndata: %s\n\n", dataAPIDiagnosticEnvelope(t, line))
@@ -179,10 +190,16 @@ func TestDataAPIHealthReportSeparatesCurrentChecksAndRecentFailures(t *testing.T
 			if err := json.Unmarshal([]byte(stdout.String()), &report); err != nil {
 				t.Fatalf("report: %v, stdout=%s stderr=%s", err, stdout.String(), stderr())
 			}
-			if (code == 0) != (scenario == "healthy" || scenario == "pool-timeouts") || reads.Load() != 2 || redirected.Load() != 0 {
+			if (code == 0) != (scenario == "healthy" || scenario == "pool-timeouts" || scenario == "database-timings") || reads.Load() != 2 || redirected.Load() != 0 {
 				t.Fatalf("exit=%d reads=%d redirects=%d report=%+v", code, reads.Load(), redirected.Load(), report)
 			}
-			if scenario == "healthy" && (report.Status != "healthy" || len(report.RecentFindings) != 7 || report.Diagnostics.Failures.RefreshPaused != 1 || report.Diagnostics.Failures.RefreshUnavailable != 1 || report.Diagnostics.Failures.ResponseTooLarge != 1 || report.Diagnostics.Failures.RateLimited != 1 || !slices.Contains(report.RecentFindings, "response_limits_observed") || !slices.Contains(report.RecentFindings, "rate_limits_observed")) {
+			if scenario == "database-timings" {
+				timings := report.Diagnostics.DataRequests.DatabaseTimings
+				if report.Partial || report.Status != "healthy" || timings.ObservedRequests != 1 || timings.UnknownRequests != 1 || timings.WithoutTimings != 1 || *timings.ByPhase["transaction"].LatencyMS.P95 != 250 {
+					t.Fatalf("database timing coverage changed current readiness: %+v", report)
+				}
+			}
+			if scenario == "healthy" && (report.Status != "healthy" || len(report.RecentFindings) != 8 || report.Diagnostics.Failures.RefreshPaused != 1 || report.Diagnostics.Failures.RefreshUnavailable != 1 || report.Diagnostics.Failures.ResponseTooLarge != 1 || report.Diagnostics.Failures.RateLimited != 1 || report.Diagnostics.Failures.ConcurrencyLimited != 1 || !slices.Contains(report.RecentFindings, "response_limits_observed") || !slices.Contains(report.RecentFindings, "rate_limits_observed") || !slices.Contains(report.RecentFindings, "user_concurrency_limits_observed")) {
 				t.Fatalf("recent evidence changed current health: %+v", report)
 			}
 			if scenario == "budget-unknown" && (report.Status != "healthy" || !report.Partial || report.ConnectionBudget == nil || report.ConnectionBudget.State != "unknown") {
@@ -211,7 +228,7 @@ func TestDataAPIHealthReportSeparatesCurrentChecksAndRecentFailures(t *testing.T
 					t.Fatal("cumulative counter became a current failure")
 				}
 			}
-			for _, secret := range []string{"private-response-secret", "private-stream-secret", "owner-test-token"} {
+			for _, secret := range []string{"private-response-secret", "private-stream-secret", "owner-test-token", "private-sentinel"} {
 				if strings.Contains(stdout.String()+stderr(), secret) {
 					t.Fatal("health leaked untrusted content")
 				}

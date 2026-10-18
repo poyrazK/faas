@@ -44,8 +44,9 @@ const (
 )
 
 // routeExclude lists spec routes that have no SDK method by design.
-// Mirror logic in cmd/apid/spec_compliance_test.go::routeExclude;
-// keep both in sync.
+// Authentication/transport exceptions apply only to this SDK gate. Routes
+// intentionally absent from OpenAPI also belong in
+// scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
 var routeExclude = map[string]bool{
 	// ADR-202610171453: default-off internal hosting is absent from public OpenAPI/SDK discovery.
 	"DELETE /v1/internal/hosting/sites/{site}":                                     true,
@@ -197,6 +198,9 @@ var routeExclude = map[string]bool{
 	"POST /v1/product-control/customer/{slug}/operations/{id}/cancel":              true,
 	"GET /v1/product-control/customer/{slug}/operations/{id}/artifacts/{artifact}": true,
 	"GET /v1/product-control/portal-core.js":                                       true,
+	// ADR-1730: the generated runtime reports with a short-lived, dedicated
+	// workload assertion. Owner API keys cannot publish these observations.
+	"POST /v1/runtime/data-api/connection-observations": true,
 
 	"GET /v1/account/dpa":                                             true, // public markdown (no Bearer; SDK consumers don't render HTML)
 	"GET /v1/apps/{slug}/tasks/{id}/attach":                           true, // ADR-1037 WebSocket attach; the CLI drives it directly
