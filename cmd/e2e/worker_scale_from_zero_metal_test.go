@@ -177,12 +177,14 @@ func TestWorkerScaleFromZeroMetal(t *testing.T) {
 	}
 	// ADR-1420: the deployment's first boot passed the full characterization
 	// window, so every pool boot after it only has to show its process
-	// started. Before, each worker took the whole window to become RUNNING
-	// and the pool admitted the next one only then.
+	// started. vmmd's wait_ready phase covers the guest boot and that window;
+	// it was about 11 s per worker before. Disk staging (provision) is timed
+	// separately and is not part of this check.
 	for _, w := range append(singles, burst...) {
-		if w.running == 0 || w.running-w.admit >= api.CharacterizationDeadline {
-			t.Errorf("worker %s: RUNNING %s after admission; a proven worker must not wait the %s window",
-				w.instanceID, msOrDash(w.running-w.admit), api.CharacterizationDeadline)
+		waitReady, _ := w.breakdown["wait_ready_ms"].(float64)
+		if wait := time.Duration(waitReady) * time.Millisecond; wait <= 0 || wait >= api.CharacterizationDeadline {
+			t.Errorf("worker %s: waited %s for readiness; a proven worker must not wait the %s window",
+				w.instanceID, msOrDash(wait), api.CharacterizationDeadline)
 		}
 	}
 }

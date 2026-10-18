@@ -34,7 +34,11 @@
      listener, so the boot only has to show that its process started. A
      failed cold boot forgets the deployment, so the next one runs the full
      window and a regression is reported as a startup failure. The set lives
-     in memory; a vmmd restart costs one full window per deployment.
+     in memory; a vmmd restart costs one full window per deployment. vmmd
+     reads the deployment from the boot RPC's correlation metadata, which
+     the deploy prime did not carry, so schedd's cold-boot call now names
+     the app, deployment and instance when its caller has no wake
+     correlation; the prime's boot then proves its deployment.
      Requests, services, jobs and every deployment's first boot on a node
      keep the full window.
 - **Consequences:** A pool's later workers are ready about 1 s after their
@@ -65,5 +69,9 @@
   another account's run going ahead meanwhile. `pkg/fcvm` tests cover the
   boot argument (declared workers only) and which boots prove or forget a
   deployment; `guest/init` tests cover the short window and the kernel
-  argument parsing. The metal test requires every pool boot after the
-  deployment's first to be RUNNING within the full window of its admission.
+  argument parsing; a `pkg/sched` test covers the cold-boot RPC's identity
+  without wake correlation. The metal test requires every pool boot after
+  the deployment's prime to spend less than the full window in vmmd's
+  `wait_ready` phase. On n2 before the prime fix, pool boots of a proven
+  deployment waited 2.0–3.0 s in `wait_ready` (11 s before), and a burst of
+  three was RUNNING at 7.5, 10.6 and 13.9 s (11.9, 23.7 and 35.5 s before).
