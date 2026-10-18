@@ -18,18 +18,20 @@ const (
 // log. A credential is deliberately bound to one logical bucket so duplicate
 // bucket names in different apps cannot become ambiguous at s3.gregale.dev.
 type ObjectS3Credential struct {
-	ID           string
-	AccountID    string
-	BucketID     string
-	AccessKeyID  string
-	SecretSealed []byte
-	KID          string
-	Label        string
-	Permission   string
-	Status       string
-	CreatedAt    time.Time
-	LastUsedAt   *time.Time
-	RevokedAt    *time.Time
+	ID                   string
+	IssuerAccountID      string
+	IssuerAccessRevision int64
+	AccountID            string
+	BucketID             string
+	AccessKeyID          string
+	SecretSealed         []byte
+	KID                  string
+	Label                string
+	Permission           string
+	Status               string
+	CreatedAt            time.Time
+	LastUsedAt           *time.Time
+	RevokedAt            *time.Time
 	// ManagedAppID, ManagedScope and ManagedPrefix are set only for a
 	// compute binding. Empty values preserve the legacy customer-created
 	// credential shape.
@@ -68,7 +70,7 @@ type ObjectS3ComputeBindingCreateRequest struct {
 
 func validObjectS3ComputeBindingCreateRequest(req ObjectS3ComputeBindingCreateRequest) bool {
 	c := req.Credential
-	if !validObjectS3Credential(c) || c.ManagedAppID == "" || req.MaxCredentialsPerBucket < 1 || req.MaxSecretsPerApp < 6 || len(req.Secrets) != 6 {
+	if !validObjectS3Credential(c) || c.ManagedAppID == "" || c.IssuerAccountID != "" || c.IssuerAccessRevision != 0 || req.MaxCredentialsPerBucket < 1 || req.MaxSecretsPerApp < 6 || len(req.Secrets) != 6 {
 		return false
 	}
 	for _, id := range []string{c.ID, c.AccountID, c.BucketID, c.ManagedAppID} {

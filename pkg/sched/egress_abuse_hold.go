@@ -39,12 +39,16 @@ func (e *Engine) escalateEgressAbuse(ctx context.Context, appID string, reason E
 	if err != nil {
 		return fmt.Errorf("sched: egress abuse: load app %s: %w", appID, err)
 	}
-	if !e.noteEgressAbuseRecycle(app.AccountID, e.clock()) {
+	owner, err := state.AppResourceAccount(ctx, e.store, app)
+	if err != nil {
+		return fmt.Errorf("sched: egress abuse: resource owner: %w", err)
+	}
+	if !e.noteEgressAbuseRecycle(owner.ResourceOwnerID(), e.clock()) {
 		return nil
 	}
 	detail := map[string]any{"app": appID, "signal": string(reason), "observed_per_min": observed, "limit": limit,
 		"recycles": api.EgressFanoutHoldRecycles, "window_seconds": api.EgressFanoutHoldWindowSeconds}
-	return e.HoldAccountForAbuse(ctx, app.AccountID, reason.holdReason(), detail)
+	return e.HoldAccountForAbuse(ctx, owner.ResourceOwnerID(), reason.holdReason(), detail)
 }
 
 // noteEgressAbuseRecycle appends a recycle at now and reports whether the
@@ -104,6 +108,14 @@ func (e *Engine) HoldAccountForAbuse(ctx context.Context, accountID, reason stri
 	}
 	var errs []error
 	for _, app := range apps {
+		owner, readErr := state.AppResourceAccount(ctx, e.store, app)
+		if readErr != nil {
+			errs = append(errs, readErr)
+			continue
+		}
+		if owner.ResourceOwnerID() != accountID {
+			continue
+		}
 		if _, parkErr := e.ParkApp(context.WithoutCancel(ctx), app.ID); parkErr != nil {
 			errs = append(errs, fmt.Errorf("park %s: %w", app.ID, parkErr))
 		}

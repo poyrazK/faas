@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apislogs"
 	mwauth "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
@@ -142,7 +143,7 @@ func (h *AppLogsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	inner := mwauth.AccountHandler(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		h.stream(w, r, acct, slug)
 	})
-	chain := h.Auth.RequireScope(api.ScopesReadSurface...)(h.Auth.RequireMFA(inner))
+	chain := h.Auth.RequireScope(api.ScopesReadSurface...)(h.Auth.RequireMFA(appaccess.Wrap(h.Store, h.Auth.Audit, inner)))
 	h.Auth.RequireLimited(chain)(w, r)
 }
 
@@ -226,7 +227,9 @@ func (h *AppLogsHandler) serveAppLogsWithIdentityFollow(ctx_ context.Context, w 
 		apislogs.RenderAppLogsError(w, flusher, err)
 		return
 	}
-	stream, err := sched.StreamAppLogs(ctx_, appID, sinceSeq, sinceWrittenAt, follow, deploymentID, level, grep)
+	streamCtx, cancelStream := context.WithCancel(ctx_)
+	defer cancelStream()
+	stream, err := sched.StreamAppLogs(streamCtx, appID, sinceSeq, sinceWrittenAt, follow, deploymentID, level, grep)
 	if err != nil {
 		// codes.Unimplemented from the stub → "schedd not wired
 		// (dev mode)"; codes.NotFound from a real schedd → "no
@@ -246,8 +249,6 @@ func (h *AppLogsHandler) serveAppLogsWithIdentityFollow(ctx_ context.Context, w 
 	// Derive a cancellable context so the receive goroutine
 	// exits the moment the handler goroutine returns (ctx
 	// cancel, terminal frame, or backstop).
-	streamCtx, cancelStream := context.WithCancel(ctx_)
-	defer cancelStream()
 
 	// Capacity 1 + non-blocking send keeps the follow receive
 	// goroutine from blocking when the SSE writer is slow; a dropped

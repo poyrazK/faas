@@ -69,10 +69,12 @@ func devDebugRoute(h *devDebugTunnel, next http.Handler) http.Handler {
 }
 
 func (h *devDebugTunnel) serve(w http.ResponseWriter, r *http.Request, slug string) {
+	r.SetPathValue("slug", slug)
+	r.Pattern = r.Method + " /v1/apps/{slug}/debug"
 	inner := mwauth.AccountHandler(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		h.attach(w, r, acct, slug)
 	})
-	chain := h.auth.RequireScope(api.ScopesDeployWriteSurface...)(h.auth.RequireMFA(inner))
+	chain := h.auth.RequireScope(api.ScopesDeployWriteSurface...)(h.auth.RequireMFA(wrapControlPlaneAppAccess(h.auth, inner)))
 	h.auth.RequireLimited(chain)(w, r)
 }
 
@@ -121,6 +123,8 @@ func (h *devDebugTunnel) attach(w http.ResponseWriter, r *http.Request, acct sta
 	}
 	conn := devbridge.NewWebSocketConn(socket)
 	defer func() { _ = conn.Close() }()
+	stop := context.AfterFunc(r.Context(), func() { _ = conn.Close() })
+	defer stop()
 	h.log.Info("developer debugger attached", "account_id", acct.ID, "app_id", app.ID, "instance_id", target.InstanceID)
 	if err := h.forward(r.Context(), conn, target); err != nil && r.Context().Err() == nil {
 		h.log.Info("developer debugger session ended", "app_id", app.ID, "err", err)

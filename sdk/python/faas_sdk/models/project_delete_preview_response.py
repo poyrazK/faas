@@ -19,7 +19,7 @@ class ProjectDeletePreviewResponse:
     """Workloads and related resources that remain live when a project is deleted."""
 
     project: ProjectSummaryResponse
-    """Stable account-scoped project list item."""
+    """Project list item with its persisted organization owner."""
     workloads: list[ProjectWorkloadResponse]
     domain_count: int
     env_count: int

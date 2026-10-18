@@ -128,7 +128,7 @@ func TestMCPReadinessDestinationQueues(t *testing.T) {
 							if _, err := pg.pool.Exec(t.Context(), `UPDATE mcp_readiness_incident_events SET destination_deliveries='{}' WHERE id=$1`, c.EventID); err != nil {
 								t.Fatal(err)
 							}
-							f.outbox = NewPgStore(pg.pool)
+							f.outbox = NewPgStore(pg.pool.Pool)
 						}
 						f.claim(now.Add(time.Second), false)
 						finish(c, false)
@@ -237,7 +237,7 @@ func TestMCPReadinessDestinationQueues(t *testing.T) {
 							if _, err := pg.pool.Exec(t.Context(), `UPDATE mcp_readiness_incident_events SET destination_deliveries='{}' WHERE id=$1`, primary.EventID); err != nil {
 								t.Fatal(err)
 							}
-							f.outbox = NewPgStore(pg.pool)
+							f.outbox = NewPgStore(pg.pool.Pool)
 						}
 						f.claim(now, false)
 						finish(primary, false)

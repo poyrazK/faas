@@ -9,12 +9,17 @@ import (
 
 var _ ObjectVersionReferenceStore = (*MemStore)(nil)
 
-func (m *MemStore) RecordObjectVersions(_ context.Context, account, bucket string, items []ObjectVersionIdentity) ([]ObjectVersionIdentity, error) {
+func (m *MemStore) RecordObjectVersions(ctx context.Context, account, bucket string, items []ObjectVersionIdentity) ([]ObjectVersionIdentity, error) {
 	if !validVersionReferences(items) {
 		return nil, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []ObjectVersionIdentity
+		return zero0, err
+	}
+
 	b, ok := m.objectBuckets[bucket]
 	if !ok || b.AccountID != account || b.State != "ready" {
 		return nil, ErrNotFound
@@ -63,12 +68,17 @@ func (m *MemStore) commitObjectVersionLocked(bucket string, v ObjectVersionIdent
 	m.objectVersionObservations[bucket] = m.objectVersionObservations[bucket] || v.ProviderVersionID != "null" || v.DeleteMarker
 }
 
-func (m *MemStore) ResolveObjectVersion(_ context.Context, account, bucket, key, id string) (string, error) {
+func (m *MemStore) ResolveObjectVersion(ctx context.Context, account, bucket, key, id string) (string, error) {
 	if !ValidObjectVersionID(id) || !validVersionReferenceText(key, api.MaxObjectS3ListTextBytes) {
 		return "", ErrNotFound
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 string
+		return zero0, err
+	}
+
 	b, ok := m.objectBuckets[bucket]
 	if !ok || b.AccountID != account || b.State != "ready" {
 		return "", ErrNotFound

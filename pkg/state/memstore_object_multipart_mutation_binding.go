@@ -11,6 +11,11 @@ func (m *MemStore) ReadObjectMultipartMutation(ctx context.Context, u ObjectMult
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketMutation
+		return zero0, err
+	}
+
 	old, ok := m.objectMultipartUploads[u.ID]
 	if !ok || !originalMultipartMutationAuthority(old, u, m.clock()) {
 		return ObjectBucketMutation{}, ErrConflict
