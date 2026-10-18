@@ -74,6 +74,9 @@ const (
 	secretBlockDisposable = "AUTH_SIGNUP_BLOCK_DISPOSABLE"
 	secretSignupAccess    = "AUTH_SIGNUP_ACCESS"
 	secretImpersonation   = "AUTH_IMPERSONATION"
+	secretSessionMaxAge   = "AUTH_SESSION_MAX_AGE_MINUTES"
+	secretSessionIdle     = "AUTH_SESSION_IDLE_MINUTES"
+	secretSingleSession   = "AUTH_SINGLE_SESSION"
 )
 
 // SignupAccessModes are who may sign up: anyone, invited or approved
@@ -179,6 +182,45 @@ type Change struct {
 	// Web3 lists the Web3Chains people may sign in with a wallet from;
 	// empty turns wallet sign-in off.
 	Web3 *[]string
+	// SessionMaxAgeMinutes and SessionIdleMinutes end a session that long
+	// after its sign-in or its last refresh; 0 removes the limit.
+	// SingleSession keeps only each user's most recently refreshed session.
+	SessionMaxAgeMinutes *int
+	SessionIdleMinutes   *int
+	SingleSession        *bool
+}
+
+var sessionLimit = regexp.MustCompile(`^([1-9][0-9]{0,5})([mhd])$`)
+
+// ParseSessionLimit reads a session limit written in minutes (45m), hours
+// (12h) or days (30d), or off (or empty) for none, as minutes.
+func ParseSessionLimit(value string) (int, error) {
+	if value == "" || value == "off" {
+		return 0, nil
+	}
+	match := sessionLimit.FindStringSubmatch(value)
+	if match == nil {
+		return 0, fmt.Errorf("%q is not a duration such as 45m, 12h or 30d, or off", value)
+	}
+	minutes, _ := strconv.Atoi(match[1])
+	minutes *= map[string]int{"m": 1, "h": 60, "d": 24 * 60}[match[2]]
+	if minutes < api.AuthSessionMinMinutes || minutes > api.AuthSessionMaxMinutes {
+		return 0, fmt.Errorf("a session limit must be %s to %s; got %s", FormatSessionLimit(api.AuthSessionMinMinutes), FormatSessionLimit(api.AuthSessionMaxMinutes), value)
+	}
+	return minutes, nil
+}
+
+// FormatSessionLimit writes minutes the way ParseSessionLimit reads them.
+func FormatSessionLimit(minutes int) string {
+	switch {
+	case minutes <= 0:
+		return "off"
+	case minutes%(24*60) == 0:
+		return strconv.Itoa(minutes/(24*60)) + "d"
+	case minutes%60 == 0:
+		return strconv.Itoa(minutes/60) + "h"
+	}
+	return strconv.Itoa(minutes) + "m"
 }
 
 // Captcha is a CAPTCHA provider and its keys; the secret stays in the app.
@@ -350,6 +392,23 @@ func (c Change) Secrets() (map[string]string, []string, error) {
 		for chain, secret := range Web3Chains {
 			set[secret] = strconv.FormatBool(on[chain])
 		}
+	}
+	for _, limit := range []struct {
+		minutes      *int
+		secret, name string
+	}{{c.SessionMaxAgeMinutes, secretSessionMaxAge, "maximum session age"}, {c.SessionIdleMinutes, secretSessionIdle, "session idle timeout"}} {
+		switch {
+		case limit.minutes == nil:
+		case *limit.minutes == 0:
+			unset = append(unset, limit.secret)
+		case *limit.minutes < api.AuthSessionMinMinutes || *limit.minutes > api.AuthSessionMaxMinutes:
+			return nil, nil, fmt.Errorf("%s must be %d to %d minutes, or 0 for none; got %d", limit.name, api.AuthSessionMinMinutes, api.AuthSessionMaxMinutes, *limit.minutes)
+		default:
+			set[limit.secret] = strconv.Itoa(*limit.minutes)
+		}
+	}
+	if c.SingleSession != nil {
+		set[secretSingleSession] = flag(*c.SingleSession)
 	}
 	if c.AnonymousRetentionDays != nil {
 		days := *c.AnonymousRetentionDays

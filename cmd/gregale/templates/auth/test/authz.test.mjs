@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import { once } from 'node:events'
 import { createHash } from 'node:crypto'
-import { createAuthzHandler, hashToken, HTTPError } from '../authz.mjs'
+import { createAuthzHandler, hashToken, HTTPError, sessionLive } from '../authz.mjs'
 import { createServer } from '../server.mjs'
 
 const org = '6f1c1a52-34c0-4a8e-9c55-2f5d7c0e4a11'
@@ -27,8 +27,8 @@ function fakePool(respond) {
   }
 }
 
-async function serve(t, pool, { authenticate = async () => ({ sub: member, session_id: 'session' }), origins = ['https://app.example.test'], invitations, storage, workflows, teamEnabled = false, deleteAccount = null, orgClaims = false } = {}) {
-  const server = createServer({ upstreamPort: 1, authz: createAuthzHandler({ pool, authenticate, origins, invitations, storage, workflows, teamEnabled, deleteAccount, orgClaims }) })
+async function serve(t, pool, { authenticate = async () => ({ sub: member, session_id: 'session' }), origins = ['https://app.example.test'], invitations, storage, workflows, teamEnabled = false, deleteAccount = null, orgClaims = false, sessions = null } = {}) {
+  const server = createServer({ upstreamPort: 1, authz: createAuthzHandler({ pool, authenticate, origins, invitations, storage, workflows, teamEnabled, deleteAccount, orgClaims, sessions }) })
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
   t.after(() => server.close())
@@ -299,4 +299,19 @@ test('chooses the session organization only when organization claims are on', as
   assert.deepEqual(pool.log.filter(q => q.sql.includes('set_active_organization')).map(q => q.args), [[org], [null]])
   assert.equal((await on('POST', '/active-organization', { body: { org: 'acme' } })).status, 400)
   assert.equal((await on('POST', '/active-organization', { body: {} })).status, 400)
+})
+
+test('leaves sessions past the app limits out of the list', async t => {
+  const now = Date.parse('2026-10-18T12:00:00Z')
+  const policy = { maxAgeMinutes: 60, idleMinutes: 30 }
+  const session = (created, active) => ({ created_at: new Date(now - created * 60000).toISOString(), last_active_at: new Date(now - active * 60000).toISOString() })
+  assert.equal(sessionLive(session(50, 10), policy, now), true)
+  assert.equal(sessionLive(session(70, 10), policy, now), false, 'older than the maximum age')
+  assert.equal(sessionLive(session(50, 40), policy, now), false, 'idle too long')
+  assert.equal(sessionLive(session(5000, 5000), null, now), true, 'no limits')
+  const old = { id: 'o', created_at: '2020-01-01T00:00:00Z', last_active_at: '2020-01-01T00:00:00Z', current: false }
+  const mine = { ...old, id: 'm', current: true }
+  const pool = fakePool(sql => sql.includes('list_sessions') ? { rows: [old, mine] } : { rows: [] })
+  const call = await serve(t, pool, { sessions: { maxAgeMinutes: 60, idleMinutes: null } })
+  assert.deepEqual((await call('GET', '/sessions')).body.sessions.map(s => s.id), ['m'], 'the caller\'s own session always shows')
 })

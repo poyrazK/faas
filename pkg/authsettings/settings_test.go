@@ -258,3 +258,31 @@ func TestOrgClaims(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionLimits(t *testing.T) {
+	set, unset, err := Change{SessionMaxAgeMinutes: ptr(43200), SessionIdleMinutes: ptr(0), SingleSession: ptr(true)}.Secrets()
+	if err != nil || !reflect.DeepEqual(set, map[string]string{"AUTH_SESSION_MAX_AGE_MINUTES": "43200", "AUTH_SINGLE_SESSION": "1"}) || !reflect.DeepEqual(unset, []string{"AUTH_SESSION_IDLE_MINUTES"}) {
+		t.Fatalf("set %v unset %v err %v", set, unset, err)
+	}
+	for _, bad := range []int{-1, 14, 525601} {
+		if _, _, err := (Change{SessionIdleMinutes: ptr(bad)}).Secrets(); err == nil {
+			t.Errorf("idle %d accepted", bad)
+		}
+	}
+	for value, want := range map[string]int{"off": 0, "": 0, "15m": 15, "12h": 720, "30d": 43200, "365d": 525600} {
+		if got, err := ParseSessionLimit(value); err != nil || got != want {
+			t.Errorf("ParseSessionLimit(%q) = %d, %v; want %d", value, got, err, want)
+		}
+		if want > 0 && FormatSessionLimit(want) != value {
+			t.Errorf("FormatSessionLimit(%d) = %q, want %q", want, FormatSessionLimit(want), value)
+		}
+	}
+	for _, bad := range []string{"10m", "366d", "1w", "0h", "1.5h", "12"} {
+		if _, err := ParseSessionLimit(bad); err == nil {
+			t.Errorf("ParseSessionLimit(%q) accepted", bad)
+		}
+	}
+	if FormatSessionLimit(90) != "90m" || FormatSessionLimit(0) != "off" {
+		t.Fatal("format")
+	}
+}

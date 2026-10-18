@@ -4786,6 +4786,9 @@ var cliCommands = []cliCommand{
 				{Name: "signup-access", Value: "open|invite|waitlist", Short: "who may sign up: anyone, invited or approved addresses, or those plus a waitlist", ClosedSet: []string{"open", "invite", "waitlist"}},
 				{Name: "impersonation", Value: "on|off", Short: "let the admin key open time-limited sessions as users, for support", ClosedSet: []string{"on", "off"}},
 				{Name: "web3", Value: "ethereum,solana|off", Short: "wallets people may sign in with (Sign-In With Ethereum / Solana)"},
+				{Name: "session-max-age", Value: "DURATION|off", Short: "end sessions this long after sign-in, as 45m, 12h or 30d"},
+				{Name: "session-idle", Value: "DURATION|off", Short: "end sessions not used for this long, as 45m, 12h or 30d"},
+				{Name: "single-session", Value: "on|off", Short: "keep only each user's most recently used session", ClosedSet: []string{"on", "off"}},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 			}, Examples: []string{"gregale auth config shop-auth", "gregale auth config shop-auth --events on", "gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit --mfa on"}},
 			{Name: "providers", Short: "Manage OAuth sign-in providers such as Google or GitHub", Subcommands: []cliSub{
