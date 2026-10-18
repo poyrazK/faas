@@ -169,7 +169,9 @@ func mcpStarterSchemaStatements(t *testing.T) []string {
 	var statements []string
 	for _, declaration := range f.Decls {
 		function, ok := declaration.(*ast.FuncDecl)
-		if !ok || function.Name.Name != "initialize" || function.Body == nil {
+		// The starter migrates its task schema in migrateTaskSchema (#4877
+		// moved it out of the runtime's initialize method).
+		if !ok || function.Name.Name != "migrateTaskSchema" || function.Body == nil {
 			continue
 		}
 		ast.Inspect(function.Body, func(node ast.Node) bool {
