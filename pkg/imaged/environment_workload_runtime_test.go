@@ -13,14 +13,15 @@ import (
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // The shared app can change independently of this already reviewed candidate.
 // Inject a different runtime so the checkpoint path must choose its build from
 // frozen inputs before any layer builder applies its own manifest projection.
 type changedEnvironmentImageRuntimeStore struct {
-	*state.MemStore
-	appID string
+	MemStore *state.MemStore
+	appID    string
 }
 
 func (s changedEnvironmentImageRuntimeStore) AppByID(ctx context.Context, id string) (state.App, error) {
@@ -119,7 +120,7 @@ func TestEnvironmentWorkloadHandoffHoldsEvenWithReleaseCommand(t *testing.T) {
 }
 
 type heldEnvironmentArtifactStore struct {
-	state.Store
+	Store        state.Store
 	deploymentID string
 }
 
@@ -135,7 +136,7 @@ func (s heldEnvironmentArtifactStore) ListDeploymentsForOperator(ctx context.Con
 func TestEnvironmentWorkloadStagedArtifactSurvivesStaleSweep(t *testing.T) {
 	fx := seedReleaseGate(t, true)
 	loop := NewLoop(LoopConfig{Log: silentLogger()})
-	loop.store = heldEnvironmentArtifactStore{Store: fx.store, deploymentID: fx.candidate.ID}
+	loop.store = statetest.NewStore(heldEnvironmentArtifactStore{Store: fx.store, deploymentID: fx.candidate.ID})
 	loop.handler = fx.handler
 	loop.now = func() time.Time { return time.Now().Add(3 * time.Hour) }
 	loop.reconcileStaleDeployments(t.Context())
@@ -213,7 +214,7 @@ func TestEnvironmentWorkloadReviewedIntentReachesHeldImagingArtifact(t *testing.
 		t.Fatal(err)
 	}
 	notifier, builder := &fakeNotifier{}, &fakeBuilder{bytesOut: 4096}
-	handler := New(changedEnvironmentImageRuntimeStore{MemStore: store, appID: app.ID}, notifier, fakePuller{digest: image, cfg: oci.ImageConfig{Cmd: []string{"./image"}}}, builder, "./init", t.TempDir(), silentLogger())
+	handler := New(statetest.NewMem(changedEnvironmentImageRuntimeStore{MemStore: store, appID: app.ID}), notifier, fakePuller{digest: image, cfg: oci.ImageConfig{Cmd: []string{"./image"}}}, builder, "./init", t.TempDir(), silentLogger())
 	payload, _ := json.Marshal(map[string]string{"app_id": app.ID, "to": candidates[0].DeploymentID, "kind": "image"})
 	notification := db.Notification{Channel: db.NotifyEnvironmentWorkloadImage, Payload: string(payload)}
 	for attempt := 0; attempt < 2; attempt++ {

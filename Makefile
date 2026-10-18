@@ -33,7 +33,11 @@ BUILD_CGO_ENABLED ?= 0
 # are unaffected.
 APID_TEST_GCFLAGS ?= '-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-c=1 -dwarf=false'
 GO_TEST_MEMLIMIT ?= $(if $(GOMEMLIMIT),$(GOMEMLIMIT),6GiB)
-GO_TEST = GOMEMLIMIT=$(GO_TEST_MEMLIMIT) $(GO) test $(APID_TEST_GCFLAGS)
+# Test binaries link without DWARF: measured ~75% less link CPU and 15-18%
+# smaller binaries for apidserver and sched. Set GO_TEST_LDFLAGS= to debug a
+# test binary with delve.
+GO_TEST_LDFLAGS ?= -ldflags=-w
+GO_TEST = GOMEMLIMIT=$(GO_TEST_MEMLIMIT) $(GO) test $(APID_TEST_GCFLAGS) $(GO_TEST_LDFLAGS)
 BINDIR  := bin
 # Always use the repository's Ansible configuration.  Ansible only discovers
 # ansible.cfg from the current directory (or its parents); the playbook lives
@@ -293,6 +297,14 @@ test: grafana-mirror-check ## Unit tests — must pass on any machine, no KVM ne
 .PHONY: test-apid
 test-apid: ## apidserver tests with bounded compiler memory (ADR-982); RUN='^TestX' narrows, RACE=1 adds -race
 	$(GO_TEST) -count=1 $(if $(RACE),-race) $(if $(RUN),-run '$(RUN)') ./pkg/apid/apidserver/
+
+.PHONY: test-changed
+test-changed: ## Vet + test only what your change affects (ci-light's selection vs origin/main); RACE=1, BASE=<ref>, VET=importers|0, DRY_RUN=1
+	@GCFLAGS=$(APID_TEST_GCFLAGS) LDFLAGS=$(GO_TEST_LDFLAGS) GOMEMLIMIT=$(GO_TEST_MEMLIMIT) GO=$(GO) bash scripts/test-changed.sh
+
+.PHONY: clean-tmp
+clean-tmp: ## Free disk: remove go-build work dirs idle >2h in $$TMPDIR (left by killed builds); never clears the shared GOCACHE
+	@bash scripts/clean-tmp.sh
 
 .PHONY: test-state-coverage
 test-state-coverage: ## Assert pkg/state coverage ≥ 70% (excluding generated pkg/state/sqlc/**). Needs DATABASE_URL pointing at a reachable Postgres; PgStore tests skip cleanly otherwise.

@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -184,7 +185,7 @@ func TestProducedBaseScanRefusesUncertainRefresh(t *testing.T) {
 	}
 }
 
-type refusingBaseProducerStore struct{ *state.MemStore }
+type refusingBaseProducerStore struct{ MemStore *state.MemStore }
 
 func (s refusingBaseProducerStore) PublishBaseImageProducer(context.Context, state.BaseImageProducerInput) (state.BaseImageProducer, error) {
 	return state.BaseImageProducer{}, errors.New("injected producer publication refusal")
@@ -199,7 +200,7 @@ func TestProducedBaseRebuildInvalidatesOldCompatibilityBeforePublication(t *test
 			}
 			h, store, _, _, ref := verifiedBaseFixture(t, fixtureMode)
 			if mode == "producer publication" {
-				h.store = refusingBaseProducerStore{store}
+				h.store = statetest.NewMem(refusingBaseProducerStore{store})
 			}
 			be, _ := h.storageFor()
 			key := "base/verified.ext4"
