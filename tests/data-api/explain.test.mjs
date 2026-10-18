@@ -52,7 +52,7 @@ test('local explain uses RLS plans, compares indexes and preserves project files
  assert.ok(!JSON.stringify(before).includes('private-marker'))
  assert.ok(before.results[0].suggestions.length)
  const baseline = join(directory, 'before.json'); await writeFile(baseline, JSON.stringify(before))
- await writeFile(join(directory, 'migrations/sql/0011_advisor_index.sql'), before.results[0].suggestions[0].sql)
+ await writeFile(join(directory, 'migrations/sql/0017_advisor_index.sql'), before.results[0].suggestions[0].sql)
  const after = await run(['--baseline', baseline])
  assert.equal(after.status, 'passed')
  assert.ok(after.results[0].comparison.after_cost < after.results[0].comparison.before_cost)
