@@ -323,9 +323,11 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"mcp_oauth_retirements":           CloneSchemaOperational,
 		"service_recovery":                CloneSchemaOperational,
 		// ADR-1522–1530: recovery fences and receipts remain with their source.
-		"instance_snapshot_recovery":    CloneSchemaOperational,
-		"migration_admissions":          CloneSchemaOperational,
-		"migration_sources":             CloneSchemaOperational,
+		"instance_snapshot_recovery": CloneSchemaOperational,
+		"migration_admissions":       CloneSchemaOperational,
+		"migration_sources":          CloneSchemaOperational,
+		// ADR-1344: liveness leases belong to the source compute node.
+		"node_leases":                   CloneSchemaOperational,
 		"node_lifecycle_completions":    CloneSchemaOperational,
 		"operator_node_executions":      CloneSchemaOperational,
 		"operator_park_executions":      CloneSchemaOperational,
