@@ -41,7 +41,7 @@ var monetizationRoutes = []struct{ method, path string }{
 // it returns.
 func TestAPIMonetizationHiddenUntilReleased(t *testing.T) {
 	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "0")
-	e := apidserver.Setup(t, api.PlanPro)
+	e := setupWebhookTest(t, api.PlanPro)
 	apidserver.MustSeedApp(t, e, "shop")
 	for _, route := range monetizationRoutes {
 		for _, authenticated := range []bool{true, false} {
@@ -87,7 +87,7 @@ func TestAPIMonetizationHiddenUntilReleased(t *testing.T) {
 	}
 
 	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1")
-	e = apidserver.Setup(t, api.PlanPro)
+	e = setupWebhookTest(t, api.PlanPro)
 	apidserver.MustSeedApp(t, e, "shop")
 	if res := e.Do(t, http.MethodGet, "/v1/apps/shop/rate-cards", nil, nil); res.Code != http.StatusOK {
 		t.Errorf("released rate cards: %d %s", res.Code, res.Body)
