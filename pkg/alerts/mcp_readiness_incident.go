@@ -23,7 +23,7 @@ func (e *Evaluator) evalMCPReadinessIncident(ctx context.Context, rule state.Ale
 	}
 	paths := e.investigationPaths(ctx, rule)
 	paths.mcpReadiness = statuses
-	payload, _, err := buildPayload(rule, observed, paths)
+	payload, _, err := buildPayload(rule, observed, paths, nil)
 	if err != nil {
 		return
 	}

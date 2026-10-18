@@ -188,6 +188,14 @@
     "kind": "operational"
   },
   {
+    "table": "alert_rule_channels",
+    "columns": [
+      "channel_id",
+      "rule_id"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "alert_rules",
     "columns": [
       "account_id",
@@ -196,6 +204,7 @@
       "comparison",
       "cooldown_minutes",
       "created_at",
+      "custom_metric_name",
       "edge_rule_id",
       "enabled",
       "event_subscription_id",
@@ -210,7 +219,9 @@
       "name",
       "org_id",
       "post_deploy_rollback_window_seconds",
+      "slo_id",
       "state",
+      "synthetic_check_id",
       "threshold",
       "updated_at",
       "webhook_secret_sealed",
@@ -612,6 +623,7 @@
     "table": "app_custom_metrics",
     "columns": [
       "app_id",
+      "kind",
       "name",
       "observed_at",
       "value"
@@ -1167,6 +1179,32 @@
       "app_id",
       "enabled",
       "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "app_slo_hourly",
+    "columns": [
+      "good",
+      "hour",
+      "slo_id",
+      "total"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_slos",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "latency_threshold_ms",
+      "name",
+      "objective_bp",
+      "sli",
+      "updated_at",
+      "window_days"
     ],
     "kind": "configuration"
   },
@@ -7578,6 +7616,25 @@
     "kind": "operational"
   },
   {
+    "table": "notification_channels",
+    "columns": [
+      "account_id",
+      "created_at",
+      "email",
+      "id",
+      "kind",
+      "last_delivered_at",
+      "last_error",
+      "last_error_at",
+      "name",
+      "pagerduty_region",
+      "target_hint",
+      "target_sealed",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "notification_outbox",
     "columns": [
       "attempts",
@@ -11926,6 +11983,36 @@
       "pushed_at"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "synthetic_check_runs",
+    "columns": [
+      "check_id",
+      "error_class",
+      "latency_ms",
+      "ok",
+      "started_at",
+      "status_code"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "synthetic_checks",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "enabled",
+      "expected_status",
+      "id",
+      "interval_seconds",
+      "method",
+      "name",
+      "path",
+      "timeout_ms",
+      "updated_at"
+    ],
+    "kind": "configuration"
   },
   {
     "table": "tenant_hostnames",
