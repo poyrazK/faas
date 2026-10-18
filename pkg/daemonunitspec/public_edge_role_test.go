@@ -53,12 +53,7 @@ func TestPublicEdgeFrontsGatewaydPublicBehindCloudflare(t *testing.T) {
 	}
 
 	tasks := loadYAMLList(t, filepath.Join(root, "deploy", "ansible", "roles", "public_edge", "tasks", "main.yml"))
-	var block string
-	for _, task := range flattenRoleTasks("", tasks) {
-		if args, ok := task.body["ansible.builtin.blockinfile"].(map[string]any); ok {
-			block, _ = args["block"].(string)
-		}
-	}
+	block, _ := publicEdgeManagedBlock(tasks, "# {mark} ANSIBLE MANAGED Gregale public edge")
 	if block == "" {
 		t.Fatal("public_edge lost its managed Caddy block")
 	}
@@ -119,6 +114,78 @@ func TestPublicEdgeFrontsGatewaydPublicBehindCloudflare(t *testing.T) {
 	if strings.Contains(customHost, "CF-Connecting-IP") {
 		t.Errorf("customer-domain site trusts CF-Connecting-IP:\n%s", customHost)
 	}
+}
+
+// ADR-1431: the AI gateway's public host is its own managed block, absent
+// unless enabled, so turning it off removes only that site. It proxies to
+// outboundd's public listener, carries the platform's Origin CA certificate,
+// and answers Cloudflare only once customer domains open 443 to everyone.
+func TestPublicEdgeServesAIGatewayPublicHost(t *testing.T) {
+	root := repoRoot(t)
+	defaults := map[string]any{}
+	body, err := os.ReadFile(filepath.Join(root, "deploy", "ansible", "roles", "public_edge", "defaults", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := yaml.Unmarshal(body, &defaults); err != nil {
+		t.Fatal(err)
+	}
+	if enabled, _ := defaults["faas_ai_gateway_public_enabled"].(bool); enabled {
+		t.Error("the AI gateway public host is on by default")
+	}
+	tasks := loadYAMLList(t, filepath.Join(root, "deploy", "ansible", "roles", "public_edge", "tasks", "main.yml"))
+	block, args := publicEdgeManagedBlock(tasks, "# {mark} ANSIBLE MANAGED Gregale AI gateway public host")
+	if block == "" {
+		t.Fatal("public_edge lost the AI gateway public host block")
+	}
+	if state, _ := args["state"].(string); !strings.Contains(state, "faas_ai_gateway_public_enabled") || !strings.Contains(state, "'absent'") {
+		t.Errorf("the AI gateway host block is not removed when disabled: state %q", state)
+	}
+
+	vars := map[string]any{}
+	for k, v := range defaults {
+		if s, ok := v.(string); ok && !strings.Contains(s, "{{") {
+			vars[k] = v
+		}
+	}
+	vars["faas_ai_gateway_public_host"] = "ai.gregale.dev"
+	text := renderPublicEdgeBlock(t, block, vars)
+	for _, want := range []string{
+		"ai.gregale.dev {",
+		"tls /etc/caddy/tls/cloudflare-origin.pem /etc/caddy/tls/cloudflare-origin.key",
+		"reverse_proxy " + defaults["faas_ai_gateway_public_upstream"].(string),
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("rendered AI gateway host is missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "abort") {
+		t.Errorf("Cloudflare-only AI gateway host aborts connections:\n%s", text)
+	}
+
+	vars["faas_custom_domain_tls"] = true
+	vars["faas_public_edge_cloudflare_cidrs"] = []string{"173.245.48.0/20", "2400:cb00::/32"}
+	text = renderPublicEdgeBlock(t, block, vars)
+	for _, want := range []string{"@direct not remote_ip 173.245.48.0/20 2400:cb00::/32", "abort @direct"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("AI gateway host with customer domains on is missing %q:\n%s", want, text)
+		}
+	}
+}
+
+// publicEdgeManagedBlock returns the block and arguments of the role's
+// blockinfile task with the given marker; the role manages more than one
+// Caddy block.
+func publicEdgeManagedBlock(tasks []any, marker string) (string, map[string]any) {
+	for _, task := range flattenRoleTasks("", tasks) {
+		args, ok := task.body["ansible.builtin.blockinfile"].(map[string]any)
+		if !ok || args["marker"] != marker {
+			continue
+		}
+		block, _ := args["block"].(string)
+		return block, args
+	}
+	return "", nil
 }
 
 // renderPublicEdgeBlock renders the managed Caddy block with ansible's own

@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -66,6 +67,10 @@ type Record struct {
 	Stream              string    `json:"stream"`
 	Line                string    `json:"line"`
 	WrittenAt           time.Time `json:"written_at"`
+	// Attributes are extra string attributes of a structured line, such as
+	// an AI gateway call's OpenTelemetry GenAI attributes (ADR-1340). OTLP
+	// drains add them to the log record's attributes in key order.
+	Attributes map[string]string `json:"attributes,omitempty"`
 	// Environment is the deployment's environment scope. It feeds the
 	// Datadog env tag and is excluded from the established http_json shape.
 	Environment string `json:"-"`
@@ -643,6 +648,14 @@ func makeOTLPPayload(record Record) otlpLogsPayload {
 		if field.value != "" {
 			attrs = append(attrs, otlpKeyValue{Key: field.key, Value: otlpAnyValue{StringValue: field.value}})
 		}
+	}
+	keys := make([]string, 0, len(record.Attributes))
+	for key := range record.Attributes {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		attrs = append(attrs, otlpKeyValue{Key: key, Value: otlpAnyValue{StringValue: record.Attributes[key]}})
 	}
 	return otlpLogsPayload{ResourceLogs: []otlpResourceLogs{{
 		Resource: otlpResource{Attributes: []otlpKeyValue{{Key: "service.name", Value: otlpAnyValue{StringValue: "gregale"}}}},
