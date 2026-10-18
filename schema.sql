@@ -23995,6 +23995,40 @@ UNION
 
 
 --
+-- Name: customer_operation_schedules; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_schedules (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    platform_tenant_id uuid NOT NULL,
+    definition_id uuid NOT NULL,
+    input jsonb NOT NULL,
+    kind text NOT NULL,
+    at timestamp with time zone,
+    cron text DEFAULT ''::text NOT NULL,
+    timezone text DEFAULT ''::text NOT NULL,
+    state text NOT NULL,
+    next_fire_at timestamp with time zone,
+    fires bigint DEFAULT 0 NOT NULL,
+    last_fired_at timestamp with time zone,
+    last_operation_id uuid,
+    last_error text DEFAULT ''::text NOT NULL,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_schedules_check CHECK ((((kind = 'once'::text) AND (at IS NOT NULL) AND (cron = ''::text)) OR ((kind = 'cron'::text) AND (at IS NULL) AND (cron <> ''::text) AND (timezone <> ''::text)))),
+    CONSTRAINT customer_operation_schedules_check1 CHECK ((((state = 'active'::text) = (next_fire_at IS NOT NULL)) OR (state = 'paused'::text))),
+    CONSTRAINT customer_operation_schedules_fires_check CHECK ((fires >= 0)),
+    CONSTRAINT customer_operation_schedules_kind_check CHECK ((kind = ANY (ARRAY['once'::text, 'cron'::text]))),
+    CONSTRAINT customer_operation_schedules_last_error_check CHECK ((octet_length(last_error) <= 512)),
+    CONSTRAINT customer_operation_schedules_state_check CHECK ((state = ANY (ARRAY['active'::text, 'paused'::text, 'completed'::text, 'failed'::text, 'cancelled'::text])))
+);
+
+
+--
 -- Name: customer_operation_stream_leases; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -40056,6 +40090,14 @@ ALTER TABLE ONLY public.customer_operation_result_blobs
 
 
 --
+-- Name: customer_operation_schedules customer_operation_schedules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_schedules
+    ADD CONSTRAINT customer_operation_schedules_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: customer_operation_stream_leases customer_operation_stream_leases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -48079,6 +48121,20 @@ CREATE INDEX customer_operation_result_blobs_cleanup_idx ON public.customer_oper
 --
 
 CREATE INDEX customer_operation_result_blobs_operation_idx ON public.customer_operation_result_blobs USING btree (operation_id);
+
+
+--
+-- Name: customer_operation_schedules_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_schedules_due_idx ON public.customer_operation_schedules USING btree (next_fire_at) WHERE (state = 'active'::text);
+
+
+--
+-- Name: customer_operation_schedules_owner_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_schedules_owner_idx ON public.customer_operation_schedules USING btree (account_id, platform_tenant_id, created_at DESC);
 
 
 --
@@ -60799,6 +60855,38 @@ ALTER TABLE ONLY public.customer_operation_reports
 
 ALTER TABLE ONLY public.customer_operation_reports
     ADD CONSTRAINT customer_operation_reports_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_schedules customer_operation_schedules_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_schedules
+    ADD CONSTRAINT customer_operation_schedules_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_schedules customer_operation_schedules_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_schedules
+    ADD CONSTRAINT customer_operation_schedules_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_schedules customer_operation_schedules_definition_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_schedules
+    ADD CONSTRAINT customer_operation_schedules_definition_id_fkey FOREIGN KEY (definition_id) REFERENCES public.customer_operation_definitions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_schedules customer_operation_schedules_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_schedules
+    ADD CONSTRAINT customer_operation_schedules_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
 
 
 --
