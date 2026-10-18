@@ -7273,6 +7273,7 @@ type PlanWorkload struct {
 	Dockerfile          string              `json:"dockerfile,omitempty"`
 	Image               string              `json:"image,omitempty"`
 	ImageHealthcheck    *ComposeHealthcheck `json:"image_healthcheck,omitempty"`
+	ImageProcess        *ComposeProcess     `json:"image_process,omitempty"`
 	Command             []string            `json:"command"`
 	DependsOn           []string            `json:"depends_on,omitempty"`
 	DependsOnConditions map[string]string   `json:"depends_on_conditions,omitempty"`

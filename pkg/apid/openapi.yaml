@@ -99282,6 +99282,27 @@ components:
         start_period_ns: { type: integer, format: int64, minimum: 0 }
         start_interval_ns: { type: integer, format: int64, minimum: 0 }
         retries: { type: integer, minimum: 0 }
+    ComposeProcess:
+      type: object
+      description: "Compose process overrides for a prebuilt image (ADR-1337). Omitted fields inherit the image's ENTRYPOINT, USER, WORKDIR and stop settings."
+      properties:
+        entrypoint:
+          type: array
+          items: { type: string }
+          description: "Replaces the image ENTRYPOINT and drops its CMD; the Compose command supplies the arguments. An empty array clears the ENTRYPOINT."
+        user:
+          type: string
+          description: "User name or id, optionally with :group, resolved against the image's /etc/passwd and /etc/group."
+        working_dir:
+          type: string
+          description: "Clean absolute working directory."
+        stop_signal:
+          type: string
+          enum: [SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2]
+        stop_grace_period_s:
+          type: integer
+          minimum: 1
+          description: "Seconds between the stop signal and SIGKILL, capped by the plan."
     PlanWorkload:
       description: "One discovered unit of work. Mirrors reposcan.Workload."
       type: object
@@ -99309,6 +99330,9 @@ components:
         image_healthcheck:
           $ref: '#/components/schemas/ComposeHealthcheck'
           description: "Compose healthcheck override for prebuilt image workloads, captured per deployment."
+        image_process:
+          $ref: '#/components/schemas/ComposeProcess'
+          description: "Compose entrypoint, user, working_dir and stop overrides for prebuilt image workloads, captured per deployment."
         command:
           type: array
           items: { type: string }

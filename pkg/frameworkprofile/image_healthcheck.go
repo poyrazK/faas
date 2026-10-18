@@ -3,7 +3,6 @@ package frameworkprofile
 import (
 	"encoding/json"
 	"fmt"
-	"slices"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -17,12 +16,16 @@ type ImageHealthcheck struct {
 	Override *api.ComposeHealthcheck `json:"override"`
 }
 
-func CaptureImageRuntime(command []string, check *api.ComposeHealthcheck) ([]byte, error) {
+func CaptureImageRuntime(command []string, check *api.ComposeHealthcheck, process *api.ComposeProcess) ([]byte, error) {
 	if err := check.Validate(); err != nil {
 		return nil, err
 	}
+	imageCommand, err := newImageCommand(command, process)
+	if err != nil {
+		return nil, err
+	}
 	return json.Marshal(Profile{Version: Version, Framework: "unknown",
-		ImageCommand:     &ImageCommand{Version: ImageCommandVersion, Cmd: slices.Clone(command)},
+		ImageCommand:     imageCommand,
 		ImageHealthcheck: &ImageHealthcheck{Version: ImageHealthcheckVersion, Override: check.Clone()},
 	})
 }

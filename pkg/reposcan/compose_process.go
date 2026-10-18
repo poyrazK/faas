@@ -1,0 +1,239 @@
+package reposcan
+
+import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"math"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/ociidentity"
+)
+
+// composeProcess reads a prebuilt image service's process overrides
+// (ADR-1337): entrypoint, user, working_dir, stop_signal and
+// stop_grace_period. Nil means the service overrides none of them.
+func composeProcess(s composeCandidate, commandSet bool) (*api.ComposeProcess, error) {
+	process := &api.ComposeProcess{}
+	if s.Entrypoint != nil {
+		entrypoint, err := composeEntrypoint(s.Entrypoint)
+		if err != nil {
+			return nil, err
+		}
+		if len(entrypoint) == 0 && !commandSet {
+			return nil, fmt.Errorf("an empty entrypoint clears the image's ENTRYPOINT and CMD; also set command")
+		}
+		process.Entrypoint = &entrypoint
+	}
+	if s.User != nil {
+		user := strings.TrimSpace(fmt.Sprint(s.User))
+		if err := ociidentity.ValidateSpec(user); err != nil || user == "" {
+			return nil, fmt.Errorf("user must be a name or id, optionally with :group")
+		}
+		process.User = user
+	}
+	process.WorkingDir = strings.TrimSpace(s.WorkingDir)
+	if raw := strings.TrimSpace(s.StopSignal); raw != "" {
+		signal := api.CanonicalComposeStopSignal(raw)
+		if signal == "" {
+			return nil, fmt.Errorf("stop_signal %q is not delivered by the platform; use one of %s", raw, strings.Join(api.ComposeStopSignals, ", "))
+		}
+		process.StopSignal = signal
+	}
+	if s.StopGracePeriod != nil {
+		seconds, err := composeGraceSeconds(s.StopGracePeriod)
+		if err != nil {
+			return nil, err
+		}
+		process.StopGracePeriodS = &seconds
+	}
+	if err := process.Validate(); err != nil {
+		return nil, err
+	}
+	if process.IsZero() {
+		return nil, nil
+	}
+	return process, nil
+}
+
+// composeEntrypoint accepts the list form and a plain string of
+// space-separated words. Quoting and shell syntax in the string form would
+// need a shell to interpret, so it is rejected in favour of the list form.
+// An empty string or list clears the image's ENTRYPOINT.
+func composeEntrypoint(value any) ([]string, error) {
+	switch typed := value.(type) {
+	case string:
+		if strings.ContainsAny(typed, "\"'`\\$;|&<>(){}*?\n") {
+			return nil, fmt.Errorf("entrypoint with quoting or shell syntax must use the list form")
+		}
+		return strings.Fields(typed), nil
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			arg, ok := item.(string)
+			if !ok {
+				return nil, fmt.Errorf("entrypoint arguments must be strings")
+			}
+			out = append(out, arg)
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("entrypoint must be a string or argument list")
+	}
+}
+
+// composeGraceSeconds reads a Compose duration ("30s", "1m30s") rounded up
+// to whole seconds, the OCI stop grace period's unit.
+func composeGraceSeconds(value any) (int, error) {
+	raw, ok := value.(string)
+	if !ok {
+		return 0, fmt.Errorf("stop_grace_period must be a duration such as 30s")
+	}
+	duration, err := time.ParseDuration(strings.TrimSpace(raw))
+	if err != nil || duration < time.Second {
+		return 0, fmt.Errorf("stop_grace_period must be a duration of at least 1s, such as 30s")
+	}
+	if duration > api.MaxAppManifestStopGracePeriod {
+		return 0, fmt.Errorf("stop_grace_period must be at most %s", api.MaxAppManifestStopGracePeriod)
+	}
+	return int(math.Ceil(duration.Seconds())), nil
+}
+
+// composeProcessKeys names the process keys a service declares, for the
+// warning on source-built services, where the Dockerfile owns them.
+func composeProcessKeys(s composeCandidate) []string {
+	var keys []string
+	if s.Entrypoint != nil {
+		keys = append(keys, "entrypoint")
+	}
+	if s.User != nil {
+		keys = append(keys, "user")
+	}
+	if strings.TrimSpace(s.WorkingDir) != "" {
+		keys = append(keys, "working_dir")
+	}
+	if strings.TrimSpace(s.StopSignal) != "" {
+		keys = append(keys, "stop_signal")
+	}
+	if s.StopGracePeriod != nil {
+		keys = append(keys, "stop_grace_period")
+	}
+	return keys
+}
+
+// composeEnvFileKeys returns the variable names declared by a service's
+// env_file entries. Values are dropped exactly as for environment: the
+// platform never reads secret values from the source; they are set with
+// `gregale env` or secrets. A file missing from the source (commonly a
+// git-ignored .env) is a warning, not an error.
+func composeEnvFileKeys(fsys fs.FS, value any) ([]string, []string, error) {
+	paths, err := composeEnvFilePaths(value)
+	if err != nil {
+		return nil, nil, err
+	}
+	var keys, warnings []string
+	for _, entry := range paths {
+		clean := normalizeComposeRelativePath(entry.path)
+		if clean == "" || clean == "." || !fs.ValidPath(clean) || strings.HasPrefix(clean, "../") {
+			return nil, nil, fmt.Errorf("env_file %q must be a file inside the source", entry.path)
+		}
+		body, err := readValidFile(fsys, clean)
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrInvalid) {
+			if entry.required {
+				warnings = append(warnings, fmt.Sprintf("env_file %s is not in the source; set its variables with `gregale env set`", clean))
+			}
+			continue
+		}
+		if err != nil {
+			return nil, nil, fmt.Errorf("read env_file %s: %w", clean, err)
+		}
+		fileKeys, err := envFileKeys(body)
+		if err != nil {
+			return nil, nil, fmt.Errorf("env_file %s: %w", clean, err)
+		}
+		keys = append(keys, fileKeys...)
+	}
+	return keys, warnings, nil
+}
+
+type composeEnvFile struct {
+	path     string
+	required bool
+}
+
+func composeEnvFilePaths(value any) ([]composeEnvFile, error) {
+	switch typed := value.(type) {
+	case nil:
+		return nil, nil
+	case string:
+		return []composeEnvFile{{path: typed, required: true}}, nil
+	case []any:
+		out := make([]composeEnvFile, 0, len(typed))
+		for _, item := range typed {
+			switch entry := item.(type) {
+			case string:
+				out = append(out, composeEnvFile{path: entry, required: true})
+			case map[string]any:
+				filePath, _ := entry["path"].(string)
+				required := true
+				if raw, present := entry["required"]; present {
+					flag, ok := raw.(bool)
+					if !ok {
+						return nil, fmt.Errorf("env_file required must be a boolean")
+					}
+					required = flag
+				}
+				if format, _ := entry["format"].(string); format != "" && format != "raw" {
+					return nil, fmt.Errorf("env_file format %q is not supported", format)
+				}
+				out = append(out, composeEnvFile{path: filePath, required: required})
+			default:
+				return nil, fmt.Errorf("env_file entries must be paths or {path, required} mappings")
+			}
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("env_file must be a path or a list")
+	}
+}
+
+// envFileKeys parses Compose env-file lines: KEY=value, KEY alone, blank
+// lines and # comments, with an optional "export " prefix.
+func envFileKeys(body []byte) ([]string, error) {
+	var keys []string
+	for lineNumber, raw := range strings.Split(string(body), "\n") {
+		line := strings.TrimSpace(strings.TrimSuffix(raw, "\r"))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		key, _, _ := strings.Cut(line, "=")
+		key = strings.TrimSpace(key)
+		if composeVariableName.FindString(key) != key || key == "" {
+			return nil, fmt.Errorf("line %d has an invalid variable declaration", lineNumber+1)
+		}
+		keys = append(keys, key)
+	}
+	return keys, nil
+}
+
+// mergeEnvKeys returns the sorted, deduplicated union of environment and
+// env_file keys.
+func mergeEnvKeys(groups ...[]string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, group := range groups {
+		for _, key := range group {
+			if _, dup := seen[key]; dup || key == "" {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, key)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
