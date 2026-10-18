@@ -48,6 +48,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/mcpcatalog"
 	"github.com/onebox-faas/faas/pkg/apid/object"
+	"github.com/onebox-faas/faas/pkg/apid/operatorobs"
 	"github.com/onebox-faas/faas/pkg/apid/receivers"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/auth"
@@ -311,6 +312,16 @@ func resolvePrometheusURL(getenv func(string) string, boxRole role.Role) string 
 	}
 	if boxRole == role.RoleControlPlane {
 		return prometheusURLDefault
+	}
+	return ""
+}
+
+func resolveAlertmanagerURL(getenv func(string) string, boxRole role.Role) string {
+	if value := getenv("FAAS_ALERTMANAGER_URL"); value != "" {
+		return value
+	}
+	if boxRole == role.RoleControlPlane {
+		return "http://127.0.0.1:9094"
 	}
 	return ""
 }
@@ -1851,12 +1862,26 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		resolvePrometheusURL(deps.getenv, cfg.Role),
 		deps.getenv("FAAS_STATUSPAGE_PATH"),
 	)
+	srv.WithAlertmanagerObservability(resolveAlertmanagerURL(deps.getenv, cfg.Role))
 	// ADR-847: synthetic route probes stay off unless the public origin the
 	// probes enter through is configured.
 	if origin := strings.TrimSpace(deps.getenv("FAAS_ROUTE_PROBE_URL")); origin != "" {
 		srv.WithRouteProbes(routeprobe.Client{BaseURL: origin, AppsDomain: cfg.GetAppsDomain(deps.getenv), HTTP: &http.Client{Timeout: api.RouteHealthProbeRequestTimeout}})
 	}
 	go srv.runStatusEvaluator(ctx)
+	buildQueueMetrics := operatorobs.NewBuildQueueMetrics(srv.ops.Registry())
+	queueMetricsCtx, stopQueueMetrics := context.WithCancel(ctx)
+	defer stopQueueMetrics()
+	// Legacy count-only adapters remain observably unavailable; never compose
+	// count and oldest timestamps from separate database snapshots.
+	queueReader, _ := srv.store.(operatorobs.BuildQueueReader)
+	go buildQueueMetrics.Run(queueMetricsCtx, queueReader, log)
+	recoveryMetrics := operatorobs.NewBuildRecoveryMetrics(srv.ops.Registry())
+	recoveryReader, _ := srv.store.(state.BuildRecoveryObservationStore)
+	go recoveryMetrics.Run(queueMetricsCtx, recoveryReader, log)
+	alertMetrics := operatorobs.NewMaintenanceMetrics(srv.ops.Registry())
+	go operatorobs.RunAlertCollector(ctx, srv.store, srv.promqlClient, log, alertMetrics)
+	go operatorobs.RunAlertRetention(ctx, srv.store, log, alertMetrics)
 
 	// G2: load the host age recipient so the secrets PUT handler can seal.
 	// vmmd owns the private half; we only need the public recipient string.

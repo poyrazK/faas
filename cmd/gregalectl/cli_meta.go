@@ -1027,12 +1027,8 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		// Obs-Meta + Trace-IDs Mega-PR / C8 — operator-side
-		// operator observability surfaces. `obs health` reads the
-		// meta-health snapshot, `obs incidents` reads the bounded
-		// cross-resource triage projection, and `obs overview` /
-		// `obs capacity` expose the existing fleet snapshots; all
-		// are read-only and admin/MFA gated by apid.
+		// Operator reads and episode-scoped triage. Mutations use the strict
+		// operator session policy; other reads retain admin bearer support.
 		Name:    dispatchObs,
 		DocSlug: "obs",
 		Short:   "Operator incident inbox, health, fleet overview, and capacity",
@@ -1052,12 +1048,106 @@ var cliCommands = []cliCommand{
 				Flags: []cliFlag{
 					{Name: "type", Short: "filter by deployment|job_run|compute_node|platform_alert"},
 					{Name: "severity", Short: "filter by warning|error|critical"},
+					{Name: "alert-status", Short: "platform alerts: firing|resolved|unknown"},
+					{Name: "acknowledgment", Short: "platform alerts: acknowledged|unacknowledged"},
+					{Name: "ownership", Short: "platform alerts: owned|unowned|mine (mine uses operator session)"},
+					{Name: "snooze", Short: "platform alerts: active|inactive"},
 					{Name: "since", Short: "RFC 3339 lower bound (default last 24h; capped at 7d)"},
 					{Name: "cursor", Short: "opaque next_cursor from a prior page"},
 					{Name: "limit", Short: "maximum incidents (1..200; default 50)"},
 					{Name: "json", Short: "emit structured JSON"},
 					{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"},
 					{Name: "timeout", Short: "HTTP timeout for the apid round-trip (default 10s)"},
+				},
+			},
+
+			{
+				Name: subObsResponseTimes, Short: "Measure retained episode acknowledgment and observed resolution", Flags: []cliFlag{{Name: "since", Short: "activation-cohort lower bound (RFC3339; default 24h, maximum 30d)"}, {Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
+				Name: subObsRecurrence, Short: "Inspect retained alert repeats and observed recovery gaps", Flags: []cliFlag{{Name: "since", Short: "activation-cohort lower bound (RFC3339; default 24h, maximum 30d)"}, {Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
+				Name: subObsCollectionHistory, Short: "Inspect prospective collection outcomes and unknown intervals", Flags: []cliFlag{{Name: "since", Short: "collection-history lower bound (RFC3339; default 24h, maximum 30d)"}, {Name: "details", Short: "include retained diagnostics for recent failed attempts"}, {Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
+				Name: subObsNotificationHealth, Short: "Inspect alert notification pipeline evidence", Flags: []cliFlag{{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
+				Name: subObsRuleHealth, Short: "Inspect current alert-rule evaluation diagnostics", Flags: []cliFlag{{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
+				Name: subObsRuleCoverage, Short: "Compare explicitly selected expected alert definitions", Flags: []cliFlag{{Name: "expected-set", Short: "explicit expected set (unset means unknown)", ClosedSet: []string{"gregale-core-v1", "gregale-full-v1"}}, {Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
+				Name: subObsRecordingCoverage, Short: "Compare expected recording rules and catalog alert references", Flags: []cliFlag{{Name: "expected-set", Short: "explicit expected set (unset means unknown)", ClosedSet: []string{"gregale-core-v1", "gregale-full-v1"}}, {Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			}, {
+				Name: subObsInputHealth, Short: "Inspect critical scrape and telemetry input health", Flags: []cliFlag{{Name: "expected-role", Short: "explicit role expectation (unset means unknown)", ClosedSet: []string{"single-box-v1", "control-plane-v1"}}, {Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
+				Name:  subObsSummary,
+				Short: "Summarize all retained platform alert workload and freshness",
+				Flags: []cliFlag{{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
+				Name:  subObsTriageHistory,
+				Short: "Read retained episode triage actions and receipt coverage",
+				Flags: []cliFlag{
+					{Name: "incident", Short: "platform_alert/episode-id (legacy series aliases resolve on the first page)"},
+					{Name: "limit", Short: "maximum receipts (1..100; default 25)"},
+					{Name: "cursor", Short: "opaque next_cursor from this episode; expires after 15 minutes"},
+					{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"},
+					{Name: "timeout", Short: "HTTP timeout (default 10s)"},
+					{Name: "json", Short: "emit structured JSON"},
+				},
+			},
+			{
+				Name:  subObsTriage,
+				Short: "Acknowledge, claim, or snooze a retained alert episode (operator session + fresh MFA)",
+				Flags: []cliFlag{
+					{Name: "incident", Short: "immutable platform_alert/episode-id"},
+					{Name: "action", Short: "acknowledge|unacknowledge|claim|release|snooze|unsnooze"},
+					{Name: "expected-revision", Short: "revision from evidence (required; 0 for untouched episodes)"},
+					{Name: "until", Short: "RFC 3339 snooze deadline within 24 hours"},
+					{Name: "json", Short: "emit structured JSON"},
+					{Name: "timeout", Short: "total request timeout (default 10s)"},
+				},
+			},
+			{
+				Name:  subObsBundle,
+				Short: "Export sanitized incident evidence, related context, and source health",
+				Flags: []cliFlag{
+					{Name: "incident", Short: "inbox incident ID: type/resource-id"},
+					{Name: "output", Short: "new owner-only JSON file (required; - for stdout)"},
+					{Name: "limit", Short: "maximum related resources (1..100; default 25)"},
+					{Name: "history-limit", Short: "maximum entries per evidence/timeline section (1..100; default 25)"},
+					{Name: "json", Short: "emit JSON file receipt; stdout exports always contain the bundle"},
+					{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"},
+					{Name: "timeout", Short: "total collection timeout (default 30s; maximum 1m)"},
+				},
+			},
+			{
+				Name:  subObsContext,
+				Short: "Inspect current incident exposure and related evidence",
+				Flags: []cliFlag{
+					{Name: "incident", Short: "inbox incident ID: type/resource-id"},
+					{Name: "limit", Short: "maximum related resources (1..100; default 25)"},
+					{Name: "history-limit", Short: "maximum related timeline entries (1..100; default 25)"},
+					{Name: "cursor", Short: "opaque next_cursor from this incident; expires after 15 minutes"},
+					{Name: "json", Short: "emit structured JSON"},
+					{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"},
+					{Name: "timeout", Short: "HTTP timeout (default 10s)"},
+				},
+			},
+			{
+				Name:  subObsEvidence,
+				Short: "Inspect current resource state and bounded incident history",
+				Flags: []cliFlag{
+					{Name: "incident", Short: "inbox incident ID: type/resource-id"},
+					{Name: "limit", Short: "maximum history entries (1..100; default 25)"},
+					{Name: "json", Short: "emit structured JSON"},
+					{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"},
+					{Name: "timeout", Short: "HTTP timeout (default 10s)"},
 				},
 			},
 			{

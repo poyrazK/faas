@@ -710,7 +710,6 @@
   },
   {
     "table": "app_environment_route_budgets",
-    "kind": "configuration",
     "columns": [
       "account_id",
       "app_id",
@@ -722,7 +721,8 @@
       "routes",
       "scope",
       "updated_at"
-    ]
+    ],
+    "kind": "configuration"
   },
   {
     "table": "app_environment_secret_ref_suppressions",
@@ -3637,6 +3637,7 @@
       "input_path",
       "node_name",
       "phase",
+      "phase_started_at",
       "updated_at"
     ],
     "kind": "operational"
@@ -4672,7 +4673,6 @@
   },
   {
     "table": "environment_route_budget_receipts",
-    "kind": "operational",
     "columns": [
       "account_id",
       "app_id",
@@ -4680,7 +4680,8 @@
       "request_hash",
       "request_id",
       "response"
-    ]
+    ],
+    "kind": "operational"
   },
   {
     "table": "environment_workload_graphs",
@@ -10314,6 +10315,71 @@
     "kind": "account_identity"
   },
   {
+    "table": "operator_alert_collection",
+    "columns": [
+      "last_attempt_at",
+      "last_success_at",
+      "singleton"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "operator_alert_collection_outcomes",
+    "columns": [
+      "attempted_at",
+      "diagnostics",
+      "outcome",
+      "reason"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "operator_alert_episodes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "component",
+      "first_seen_at",
+      "id",
+      "last_checked_at",
+      "last_evaluated_at",
+      "last_seen_at",
+      "name",
+      "node_id",
+      "resolved_at",
+      "rule_key",
+      "runbook_url",
+      "series_id",
+      "severity",
+      "started_at",
+      "triage_acknowledged",
+      "triage_owner_id",
+      "triage_revision",
+      "triage_snoozed_until",
+      "triage_updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "operator_alert_retention_health",
+    "columns": [
+      "last_attempt_at",
+      "last_pruned_episodes",
+      "last_success_at",
+      "singleton"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "operator_alert_rule_observations",
+    "columns": [
+      "episode_ids",
+      "evaluated_at",
+      "rule_key"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "operator_intents",
     "columns": [
       "account_id",
@@ -12106,7 +12172,6 @@
   },
   {
     "table": "project_environment_clone_checkpoint_pg_copy_retirements",
-    "kind": "operational",
     "columns": [
       "observation",
       "observation_sha256",
@@ -12116,7 +12181,8 @@
       "retired_at",
       "source_database_id",
       "state"
-    ]
+    ],
+    "kind": "operational"
   },
   {
     "table": "project_environment_clone_checkpoint_pg_credential_retirements",
@@ -14411,21 +14477,6 @@
     "kind": "operational"
   },
   {
-    "table": "worker_recovery",
-    "columns": [
-      "app_id",
-      "claim_token",
-      "failures",
-      "lease_until",
-      "next_attempt_at",
-      "pools",
-      "revision",
-      "status",
-      "updated_at"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "sessions",
     "columns": [
       "account_id",
@@ -14904,6 +14955,21 @@
       "expires_at",
       "provider",
       "received_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "worker_recovery",
+    "columns": [
+      "app_id",
+      "claim_token",
+      "failures",
+      "lease_until",
+      "next_attempt_at",
+      "pools",
+      "revision",
+      "status",
+      "updated_at"
     ],
     "kind": "operational"
   },
