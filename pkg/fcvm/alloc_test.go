@@ -175,3 +175,20 @@ func TestConcurrentAcquireNoCollision(t *testing.T) {
 		t.Fatalf("InUse=%d want %d", a.InUse(), n)
 	}
 }
+
+// Every static-egress slot maps to a host address inside 10.200.0.0/16 that
+// is neither the network address, .0.1, nor the broadcast address.
+func TestStaticEgressHostIPForSlotStaysInsideUsableRange(t *testing.T) {
+	pool := netip.MustParsePrefix(staticEgressPoolBase + "/16")
+	first := staticEgressHostIPForSlot(0)
+	last := staticEgressHostIPForSlot(staticEgressPoolMax - 1)
+	if first != netip.MustParseAddr("10.200.0.2") {
+		t.Fatalf("slot 0 = %s, want 10.200.0.2", first)
+	}
+	if last != netip.MustParseAddr("10.200.255.254") {
+		t.Fatalf("last slot = %s, want 10.200.255.254", last)
+	}
+	if !pool.Contains(last) {
+		t.Fatalf("last slot %s outside %s", last, pool)
+	}
+}
