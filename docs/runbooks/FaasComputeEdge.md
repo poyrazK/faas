@@ -11,6 +11,8 @@ Prometheus discovers both per node through apid HTTP-SD, as the
 `gatewayd-public-edge` and `cloudflared` jobs. These alerts are silent on
 fleets without the edge.
 
+## Symptom
+
 | Alert | Severity | Meaning |
 |---|---|---|
 | `FaasComputeEdgeUnavailable` | page | No edge answers, or no connector holds a tunnel connection, for 2 minutes. App requests through the tunnel fail. |
@@ -45,7 +47,7 @@ curl -fsS http://127.0.0.1:20241/ready
 curl -fsS http://127.0.0.1:9092/metrics | grep gatewayd_public_edge_
 ```
 
-## Act
+## Recover
 
 - **Edge down on one node.** Restart the edge:
   `systemctl restart faas-gatewayd-public-edge`. If it keeps failing, stop

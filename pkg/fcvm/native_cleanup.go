@@ -38,6 +38,9 @@ func (v *JailerVMM) killNative(ctx context.Context, lease Lease) error {
 	if err != nil {
 		return fmt.Errorf("vmm: native process retirement: %w", err)
 	}
+	if err := v.requireNativeProducerRetirement(ctx, record); err != nil {
+		return err
+	}
 	helpers := nativeHostHelperJournal{owner: v.nativeRecovery.journal, groups: v.nativeRecovery.helperGroups}
 	if err := helpers.retireAll(ctx, record); err != nil {
 		return fmt.Errorf("vmm: native host helper retirement: %w", err)
@@ -69,13 +72,6 @@ func (v *JailerVMM) killNative(ctx context.Context, lease Lease) error {
 		case <-ctx.Done():
 			return fmt.Errorf("vmm: native watchdog retirement: %w", ctx.Err())
 		}
-	}
-	if !record.ResourcesRemoved && v.nativeRecovery.generation(lease.Instance) != record.Generation {
-		// Boot/provision/export helpers can outlive daemon death too. Their
-		// durable incarnation/producer frames are not implemented yet. A
-		// pinned Firecracker exit cannot authorize deleting their resources or
-		// recycling their slot. Previously complete receipts remain retryable.
-		return errors.New("native recovery: recovered host helper ownership is not yet attested")
 	}
 	if err := ctx.Err(); err != nil {
 		return err

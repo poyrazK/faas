@@ -42,6 +42,9 @@ func reconcileCheckpointCompensationTx(ctx context.Context, tx pgx.Tx, op Projec
 	if err := q.LockCloneBindingEnvironmentCleanupBorrowers(ctx, tx); err != nil {
 		return out, mapErr(err)
 	}
+	if err := q.LockCloneMCPReadinessEnvironmentCleanupBorrowers(ctx, tx); err != nil {
+		return out, mapErr(err)
+	}
 	in, err := readCheckpointCaptureRetirementTx(ctx, tx, op)
 	if err != nil {
 		return out, checkpointPgCompensationDependencyError(err)

@@ -1520,6 +1520,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := srv.configureOperations(*cfg, deps.getenv); err != nil {
 		return err
 	}
+	if err := srv.configureDataRepair(*cfg, deps.getenv); err != nil {
+		return err
+	}
 	srv.operation.StartOperationNotifications(ctx)
 	srv.configureProductControl(*cfg, deps.getenv)
 	if err := srv.configureFeatureFlags(*cfg, deps.getenv); err != nil {
@@ -2544,10 +2547,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, apidProbe.ReadyFunc())
 	defer notifyStop()
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()
+	// The drain lets a connection faas-apid.socket handed over just before
+	// shutdown deliver its request; net/http drops one it reads after
+	// Shutdown began (ADR-1580).
+	httpDrain := wire.NewHTTPDrain(httpSrv)
 	errc := make(chan error, 1)
 	go func() {
 		log.Info("apid listening", "addr", listenBind)
-		if err := httpSrv.Serve(l); err != nil && err != http.ErrServerClosed {
+		if err := httpDrain.ServeErr(httpSrv.Serve(httpDrain.Listener(l))); err != nil {
 			errc <- err
 		}
 	}()
@@ -2558,7 +2565,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		//nolint:contextcheck // shutdown context must outlive request ctx; detached from caller per net/http contract.
-		_ = httpSrv.Shutdown(shutdownCtx)
+		_ = httpDrain.Shutdown(shutdownCtx, httpSrv)
 		if metricsSrv != nil {
 			//nolint:contextcheck // shutdown context must outlive request ctx; detached from caller per net/http contract.
 			_ = metricsSrv.Shutdown(shutdownCtx)

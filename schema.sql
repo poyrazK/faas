@@ -5739,6 +5739,21 @@ $$;
 
 
 --
+-- Name: customer_operation_backend_identity(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.customer_operation_backend_identity() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$ BEGIN
+ NEW.execution_id := coalesce(NEW.invocation_id, NEW.workflow_run_id, NEW.job_run_id, NEW.data_repair_id);
+ NEW.execution_kind := CASE WHEN NEW.invocation_id IS NOT NULL THEN 'http'
+   WHEN NEW.workflow_run_id IS NOT NULL THEN 'workflow'
+   WHEN NEW.job_run_id IS NOT NULL THEN 'job' ELSE 'data_repair' END;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: customer_operation_subject_immutable(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11365,6 +11380,21 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: guard_data_repair_rehearsal_delete(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_data_repair_rehearsal_delete() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF OLD.phase IN ('queued','running','cleanup','publishing') THEN
+  RAISE EXCEPTION 'repair_rehearsal_cleanup_required' USING ERRCODE='55000';
+ END IF;
+ RETURN OLD;
+END $$;
 
 
 --
@@ -27287,14 +27317,16 @@ CREATE TABLE public.customer_operation_executions (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     workflow_run_id uuid,
     job_run_id uuid,
-    execution_id uuid GENERATED ALWAYS AS (COALESCE(invocation_id, workflow_run_id, job_run_id)) STORED NOT NULL,
-    execution_kind text GENERATED ALWAYS AS (
+    execution_id uuid NOT NULL,
+    execution_kind text NOT NULL,
+    data_repair_id uuid,
+    CONSTRAINT customer_operation_executions_backend_check CHECK (((num_nonnulls(invocation_id, workflow_run_id, job_run_id, data_repair_id) = 1) AND (execution_id = COALESCE(invocation_id, workflow_run_id, job_run_id, data_repair_id)) AND (execution_kind =
 CASE
     WHEN (invocation_id IS NOT NULL) THEN 'http'::text
     WHEN (workflow_run_id IS NOT NULL) THEN 'workflow'::text
-    ELSE 'job'::text
-END) STORED NOT NULL,
-    CONSTRAINT customer_operation_executions_backend_check CHECK (((num_nonnulls(invocation_id, workflow_run_id, job_run_id) = 1) AND (execution_kind = ANY (ARRAY['http'::text, 'workflow'::text, 'job'::text])))),
+    WHEN (job_run_id IS NOT NULL) THEN 'job'::text
+    ELSE 'data_repair'::text
+END) AND ((data_repair_id IS NULL) OR (data_repair_id = operation_id)) AND (execution_kind = ANY (ARRAY['http'::text, 'workflow'::text, 'job'::text, 'data_repair'::text])))),
     CONSTRAINT customer_operation_executions_generation_check CHECK ((generation > 0))
 );
 
@@ -27431,7 +27463,7 @@ CREATE TABLE public.customer_operations (
     account_id uuid NOT NULL,
     app_id uuid NOT NULL,
     platform_tenant_id uuid NOT NULL,
-    definition_id uuid NOT NULL,
+    definition_id uuid,
     current_invocation_id uuid,
     state text NOT NULL,
     record jsonb NOT NULL,
@@ -27443,9 +27475,10 @@ CREATE TABLE public.customer_operations (
     workflow_run_id uuid,
     job_run_id uuid,
     deadline_at timestamp with time zone,
+    data_repair_id uuid,
     CONSTRAINT customer_operation_milestone_count_valid CHECK (((NOT (record ? 'milestone_count'::text)) OR COALESCE(((jsonb_typeof((record -> 'milestone_count'::text)) = 'number'::text) AND ((((record ->> 'milestone_count'::text))::integer >= 0) AND (((record ->> 'milestone_count'::text))::integer <= 64))), false))),
     CONSTRAINT customer_operation_subject_valid CHECK (((NOT (record ? 'subject'::text)) OR COALESCE(((jsonb_typeof((record -> 'subject'::text)) = 'object'::text) AND ((((record -> 'subject'::text) - 'type'::text) - 'id'::text) = '{}'::jsonb) AND (jsonb_typeof(((record -> 'subject'::text) -> 'type'::text)) = 'string'::text) AND (((record -> 'subject'::text) ->> 'type'::text) ~ '^[a-z][a-z0-9-]{0,63}$'::text) AND (jsonb_typeof(((record -> 'subject'::text) -> 'id'::text)) = 'string'::text) AND ((octet_length(((record -> 'subject'::text) ->> 'id'::text)) >= 1) AND (octet_length(((record -> 'subject'::text) ->> 'id'::text)) <= 256)) AND (((record -> 'subject'::text) ->> 'id'::text) !~ '[\x01-\x1f\x7f]'::text)), false))),
-    CONSTRAINT customer_operations_backend_check CHECK (((execution_kind = ANY (ARRAY['http'::text, 'workflow'::text, 'job'::text])) AND (((execution_kind = 'http'::text) AND (current_invocation_id IS NOT NULL) AND (current_execution_id = current_invocation_id)) OR ((execution_kind = ANY (ARRAY['workflow'::text, 'job'::text])) AND (current_invocation_id IS NULL))))),
+    CONSTRAINT customer_operations_backend_check CHECK (COALESCE((((execution_kind = 'http'::text) AND (current_execution_id = current_invocation_id)) OR ((execution_kind = 'workflow'::text) AND (current_execution_id = workflow_run_id)) OR ((execution_kind = 'job'::text) AND (current_execution_id = job_run_id)) OR ((execution_kind = 'data_repair'::text) AND (current_execution_id = data_repair_id) AND (data_repair_id = id))), false)),
     CONSTRAINT customer_operations_check CHECK (((record ->> 'id'::text) = (id)::text)),
     CONSTRAINT customer_operations_check1 CHECK (((record ->> 'state'::text) = state)),
     CONSTRAINT customer_operations_check2 CHECK (((record ->> 'account_id'::text) = (account_id)::text)),
@@ -27453,7 +27486,8 @@ CREATE TABLE public.customer_operations (
     CONSTRAINT customer_operations_check4 CHECK (((record ->> 'platform_tenant_id'::text) = (platform_tenant_id)::text)),
     CONSTRAINT customer_operations_check5 CHECK (((record ->> 'definition_id'::text) = (definition_id)::text)),
     CONSTRAINT customer_operations_check6 CHECK (((record ->> 'current_invocation_id'::text) = (current_invocation_id)::text)),
-    CONSTRAINT customer_operations_execution_family_check CHECK ((num_nonnulls(current_invocation_id, workflow_run_id, job_run_id) = 1)),
+    CONSTRAINT customer_operations_data_repair_check CHECK (COALESCE((((data_repair_id IS NULL) AND (definition_id IS NOT NULL) AND (NOT (record ? 'data_repair'::text))) OR ((data_repair_id IS NOT NULL) AND (definition_id IS NULL) AND (jsonb_typeof((record -> 'data_repair'::text)) = 'object'::text) AND ((record ->> 'data_repair_id'::text) = (data_repair_id)::text))), false)),
+    CONSTRAINT customer_operations_execution_family_check CHECK ((num_nonnulls(current_invocation_id, workflow_run_id, job_run_id, data_repair_id) = 1)),
     CONSTRAINT customer_operations_job_record_check CHECK (((job_run_id IS NULL) OR (NOT ((record ->> 'job_run_id'::text) IS DISTINCT FROM (job_run_id)::text)))),
     CONSTRAINT customer_operations_record_check CHECK ((jsonb_typeof(record) = 'object'::text)),
     CONSTRAINT customer_operations_state_check CHECK ((state = ANY (ARRAY['accepted'::text, 'running'::text, 'waiting'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'requires_reconciliation'::text]))),
@@ -27821,6 +27855,26 @@ CREATE TABLE public.data_api_runtime_connection_observations (
     CONSTRAINT data_api_runtime_connection_observations_check1 CHECK (((expires_at > observed_at) AND (expires_at <= (observed_at + '00:00:30'::interval)))),
     CONSTRAINT data_api_runtime_connection_observations_runtime_model_check CHECK ((runtime_model = 'postgrest-14.3-pools-v1'::text)),
     CONSTRAINT data_api_runtime_connection_observations_state_check CHECK ((state = ANY (ARRAY['observed'::text, 'unknown'::text])))
+);
+
+
+--
+-- Name: data_repair_rehearsals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_repair_rehearsals (
+    id uuid NOT NULL,
+    operation_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    node_id uuid,
+    phase text NOT NULL,
+    cancel_requested boolean DEFAULT false NOT NULL,
+    deadline timestamp with time zone,
+    record jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT data_repair_rehearsals_check CHECK (((jsonb_typeof(record) = 'object'::text) AND ((record ->> 'id'::text) = (id)::text) AND ((record ->> 'operation_id'::text) = (operation_id)::text) AND ((record ->> 'account_id'::text) = (account_id)::text) AND ((record ->> 'phase'::text) = phase))),
+    CONSTRAINT data_repair_rehearsals_check1 CHECK ((((phase = 'queued'::text) AND (node_id IS NULL) AND (deadline IS NULL)) OR (phase = ANY (ARRAY['failed'::text, 'cancelled'::text])) OR ((node_id IS NOT NULL) AND (deadline IS NOT NULL)))),
+    CONSTRAINT data_repair_rehearsals_phase_check CHECK ((phase = ANY (ARRAY['queued'::text, 'running'::text, 'cleanup'::text, 'publishing'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text])))
 );
 
 
@@ -48460,6 +48514,14 @@ ALTER TABLE ONLY public.data_api_runtime_connection_observations
 
 
 --
+-- Name: data_repair_rehearsals data_repair_rehearsals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_repair_rehearsals
+    ADD CONSTRAINT data_repair_rehearsals_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: data_upstream_probes data_upstream_probes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -58611,6 +58673,41 @@ CREATE INDEX customer_workflow_readiness_subscription_owner ON public.customer_w
 
 
 --
+-- Name: data_repair_rehearsals_one_active_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX data_repair_rehearsals_one_active_account ON public.data_repair_rehearsals USING btree (account_id) WHERE (phase = ANY (ARRAY['queued'::text, 'running'::text, 'cleanup'::text, 'publishing'::text]));
+
+
+--
+-- Name: data_repair_rehearsals_one_active_node; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX data_repair_rehearsals_one_active_node ON public.data_repair_rehearsals USING btree (node_id) WHERE (phase = ANY (ARRAY['running'::text, 'cleanup'::text]));
+
+
+--
+-- Name: data_repair_rehearsals_one_active_operation; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX data_repair_rehearsals_one_active_operation ON public.data_repair_rehearsals USING btree (operation_id) WHERE (phase = ANY (ARRAY['queued'::text, 'running'::text, 'cleanup'::text, 'publishing'::text]));
+
+
+--
+-- Name: data_repair_rehearsals_queue; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX data_repair_rehearsals_queue ON public.data_repair_rehearsals USING btree (id) WHERE (phase = 'queued'::text);
+
+
+--
+-- Name: data_repair_rehearsals_recovery; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX data_repair_rehearsals_recovery ON public.data_repair_rehearsals USING btree (node_id, id) WHERE (phase = ANY (ARRAY['running'::text, 'cleanup'::text, 'publishing'::text]));
+
+
+--
 -- Name: data_upstreams_app_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -67074,6 +67171,13 @@ CREATE TRIGGER crons_schedule_revision BEFORE UPDATE ON public.crons FOR EACH RO
 
 
 --
+-- Name: customer_operation_executions customer_operation_backend_identity; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER customer_operation_backend_identity BEFORE INSERT OR UPDATE ON public.customer_operation_executions FOR EACH ROW EXECUTE FUNCTION public.customer_operation_backend_identity();
+
+
+--
 -- Name: customer_operations customer_operation_subject_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -67085,6 +67189,13 @@ CREATE TRIGGER customer_operation_subject_immutable BEFORE UPDATE OF record ON p
 --
 
 CREATE TRIGGER customer_operation_webhook_routing_guard BEFORE INSERT OR UPDATE ON public.customer_operation_webhook_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_customer_operation_webhook_routing();
+
+
+--
+-- Name: data_repair_rehearsals data_repair_rehearsals_require_cleanup; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER data_repair_rehearsals_require_cleanup BEFORE DELETE ON public.data_repair_rehearsals FOR EACH ROW EXECUTE FUNCTION public.guard_data_repair_rehearsal_delete();
 
 
 --
@@ -73938,6 +74049,30 @@ ALTER TABLE ONLY public.data_api_runtime_connection_observations
 
 ALTER TABLE ONLY public.data_api_runtime_connection_observations
     ADD CONSTRAINT data_api_runtime_connection_observations_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_repair_rehearsals data_repair_rehearsals_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_repair_rehearsals
+    ADD CONSTRAINT data_repair_rehearsals_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_repair_rehearsals data_repair_rehearsals_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_repair_rehearsals
+    ADD CONSTRAINT data_repair_rehearsals_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: data_repair_rehearsals data_repair_rehearsals_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_repair_rehearsals
+    ADD CONSTRAINT data_repair_rehearsals_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
 
 
 --
