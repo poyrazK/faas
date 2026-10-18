@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Tenant egress denies the NAT64 prefixes](20261018194214-tenant-egress-deny-nat64.md)
+
 - [Preserve request identity in response caching](20261017214848-response-cache-request-identity.md)
 
 - [Restart-safe Go acknowledgment recovery alerts](20261017182028-go-recovery-alert-checkpoints.md)
