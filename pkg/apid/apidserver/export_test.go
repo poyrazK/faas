@@ -39,6 +39,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
+	"github.com/onebox-faas/faas/pkg/apid/product"
 	"github.com/onebox-faas/faas/pkg/apid/statementinvoices"
 	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
 	"github.com/onebox-faas/faas/pkg/billing"
@@ -1442,6 +1443,12 @@ func (r *server) MountInternalMailNonpaymentDeletion(mux *http.ServeMux, addr st
 
 func (r *server) MountInternalMailQuotaWarning(mux *http.ServeMux, addr string, getenv func(string) string) error {
 	return r.mountInternalMailQuotaWarning(mux, addr, getenv)
+}
+
+func (r *server) ProductControl() *product.Service { return &r.productControl }
+
+func (r *server) ConfigureProductEmail(getenv func(string) string) error {
+	return r.configureProductEmail(getenv)
 }
 
 func (s *server) RehearsalNetworkEnabled() *bool { return &s.rehearsalNetworkEnabled }

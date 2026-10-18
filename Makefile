@@ -560,6 +560,17 @@ e2e-general: ## Focused KVM-free general-path acceptance gate (real daemons + Po
 	@psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc 'select 1' >/dev/null || (echo "Postgres is not reachable; e2e-general refuses a green no-op run" ; exit 1)
 	$(GO) test -race -count=1 -timeout=12m -run '^TestE2E_NormalPath_' ./cmd/e2e/...
 
+.PHONY: e2e-start
+e2e-start: ## Gregale start acceptance: real CLI/daemons/Postgres, simulated build and VM boundary (Linux, no KVM).
+	@test "$$(uname -s)" = Linux || (echo "e2e-start requires Linux terminal support" >&2; exit 1)
+	@command -v python3 >/dev/null 2>&1 || (echo "Python 3 is required for the Start live-runner API contracts" >&2; exit 1)
+	@test -z "$$FAAS_SKIP_PG_TESTS" || (echo "Unset FAAS_SKIP_PG_TESTS; e2e-start refuses a skipped run" >&2; exit 1)
+	@test -z "$$FAAS_E2E_BIN_DIR" || (echo "Unset FAAS_E2E_BIN_DIR; e2e-start builds current daemon binaries" >&2; exit 1)
+	@command -v psql >/dev/null 2>&1 || (echo "psql not on PATH; e2e-start needs reachable PostgreSQL" >&2; exit 1)
+	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL is required for e2e-start" >&2; exit 1)
+	@psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc 'select 1' >/dev/null || (echo "PostgreSQL is unreachable; e2e-start refuses a green no-op run" >&2; exit 1)
+	$(GO) test -race -count=1 -timeout=20m -run '^TestE2E_Start_' ./cmd/e2e/...
+
 .PHONY: e2e-sandbox
 e2e-sandbox: ## Live Paddle sandbox walk (operator-only; PR-P3). Reads secrets from secrets/.env.sandbox — NEVER committed.
 	@test -f secrets/.env.sandbox || (echo "secrets/.env.sandbox missing; create it with FAAS_PADDLE_SANDBOX_API_KEY + FAAS_PADDLE_SANDBOX_WEBHOOK_SECRET from api.sandbox.paddle.com" ; exit 1)
@@ -649,6 +660,15 @@ metal-lima: ## Run metal tests locally on an M3+ Mac via Lima nested KVM (see de
 
 .PHONY: native-m9-acceptance
 .PHONY: native-dev-bridge-acceptance
+.PHONY: native-start-acceptance test-start-native-acceptance
+native-start-acceptance: ## Qualify Start deploy/edit/configuration/recovery and park/wake against a dedicated native fleet
+	@GO="$(GO)" bash scripts/ci/run-native-start-acceptance.sh
+
+test-start-native-acceptance: ## Portable Start live-runner contracts and source detection; no native qualification claim
+	@python3 scripts/ci/start-native_test.py
+	@$(GO) test ./scripts/ci/start-relay -count=1
+	@$(GO) test ./cmd/gregale -run '^TestStartNativeFixtureDetection$$' -count=1
+
 .PHONY: native-scenario-restart-acceptance test-scenario-restart-acceptance test-scenario-dependency-postgres
 native-scenario-restart-acceptance: ## Verify native checkout batches, restart checkpoint matrix, pending recovery, failure/cancellation and cleanup
 	@GO="$(GO)" bash scripts/ci/run-native-scenario-restart-acceptance.sh
@@ -1158,12 +1178,13 @@ sqlc-generate: sqlc ## (re)generate every SQLC package from its queries and sche
 sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be regenerated
 	@set -e; tmp=$$(mktemp -d); \
 	  trap 'rm -rf "$$tmp"' EXIT; \
-	  mkdir -p "$$tmp/pkg/state" "$$tmp/pkg/db" "$$tmp/pkg/managedpostgres/connectionfence" "$$tmp/pkg/managedpostgres/copyinventory" "$$tmp/pkg/managedpostgres/copyroles" "$$tmp/pkg/managedpostgres/copydatabases" "$$tmp/pkg/managedpostgres/copycontents" "$$tmp/pkg/managedpostgres/credentialdelivery"; \
+	  mkdir -p "$$tmp/pkg/state" "$$tmp/pkg/productemail" "$$tmp/pkg/db" "$$tmp/pkg/managedpostgres/connectionfence" "$$tmp/pkg/managedpostgres/copyinventory" "$$tmp/pkg/managedpostgres/copyroles" "$$tmp/pkg/managedpostgres/copydatabases" "$$tmp/pkg/managedpostgres/copycontents" "$$tmp/pkg/managedpostgres/credentialdelivery"; \
 	  cp sqlc.yaml schema.sql "$$tmp/"; \
 	  mkdir -p "$$tmp/pkg/apid/mailoutbox"; \
 	  cp pkg/apid/mailoutbox/queries.sql pkg/apid/mailoutbox/schema.sql "$$tmp/pkg/apid/mailoutbox/"; \
 	  mkdir -p "$$tmp/pkg/internalmail"; \
 	  cp pkg/internalmail/queries.sql pkg/internalmail/retention_queries.sql pkg/internalmail/operations_queries.sql pkg/internalmail/domain_queries.sql pkg/internalmail/control_queries.sql pkg/internalmail/producer_queries.sql pkg/internalmail/timing_queries.sql pkg/internalmail/pacing_queries.sql pkg/internalmail/relay_health_queries.sql pkg/internalmail/reputation_queries.sql pkg/internalmail/event_feed_queries.sql pkg/internalmail/producer_scheduler_queries.sql pkg/internalmail/producer_lifecycle_queries.sql pkg/internalmail/encryption_queries.sql pkg/internalmail/suppression_queries.sql pkg/internalmail/recovery_queries.sql pkg/internalmail/schema.sql "$$tmp/pkg/internalmail/"; \
+	  cp pkg/productemail/queries.sql pkg/productemail/schema.sql "$$tmp/pkg/productemail/"; \
 	  mkdir -p "$$tmp/pkg/ci/db"; \
 	  cp pkg/ci/db/*.sql "$$tmp/pkg/ci/db/"; \
 	  for source_package in pkg/state/realtimettl pkg/state/realtimebulk pkg/state/scenariopg pkg/state/scenarioobj pkg/rehearsalpg/runtime; do \
@@ -1181,7 +1202,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  cp pkg/managedpostgres/copydatabases/queries.sql pkg/managedpostgres/copydatabases/maintenance.sql pkg/managedpostgres/copydatabases/verification.sql pkg/managedpostgres/copydatabases/verification_retries.sql pkg/managedpostgres/copydatabases/schema.sql "$$tmp/pkg/managedpostgres/copydatabases/"; \
 	  cp pkg/managedpostgres/credentialdelivery/probe_queries.sql pkg/managedpostgres/credentialdelivery/probe_schema.sql "$$tmp/pkg/managedpostgres/credentialdelivery/"; \
 	  (cd "$$tmp" && $(SQLC) generate); \
-	  for package in pkg/apid/mailoutbox/sqlc pkg/internalmail/sqlc pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/sqlc pkg/db/migrationsqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc pkg/ci/db/sqlc pkg/state/scenariopg/sqlc pkg/state/scenarioobj/sqlc pkg/rehearsalpg/runtime/sqlc; do \
+	  for package in pkg/apid/mailoutbox/sqlc pkg/internalmail/sqlc pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/sqlc pkg/db/migrationsqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc pkg/ci/db/sqlc pkg/state/scenariopg/sqlc pkg/state/scenarioobj/sqlc pkg/rehearsalpg/runtime/sqlc pkg/productemail/sqlc; do \
 	    diff -r "$$package" "$$tmp/$$package" || \
 	      { echo "sqlc-check: generated $$package is out of sync; run 'make sqlc-generate' and commit the diff"; exit 1; }; \
 	  done

@@ -10,8 +10,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// SourcesForSchema binds the issued public declarations to the target
-// schema. Public execution and every other embedded source retain exact bytes.
+// SourcesForSchema adapts frozen public declarations in the issued allowlist to
+// the target schema. Unqualified declarations already follow search_path.
+// Public execution and every other embedded source retain exact bytes.
 func SourcesForSchema(schema string) fs.FS {
 	if schema == "public" {
 		return FS
