@@ -1,0 +1,64 @@
+---
+- name: internal_mail_service — require explicit secrets before activation
+  ansible.builtin.assert:
+    that:
+      - faas_internal_mail_env_src | length > 0
+      - faas_internal_mail_age_identity_src | length > 0
+    fail_msg: "Internal mail requires an operator-owned environment file and dedicated age identity."
+  when: faas_internal_mail_enabled | bool
+
+- name: internal_mail_service — install optional unit
+  ansible.builtin.copy:
+    src: faas-maild.service
+    dest: /etc/systemd/system/faas-maild.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart internal mail
+
+- name: internal_mail_service — create private configuration directory
+  ansible.builtin.file:
+    path: /etc/faas/secrets/internal-mail
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: internal_mail_service — install operator environment
+  ansible.builtin.copy:
+    src: "{{ faas_internal_mail_env_src }}"
+    dest: /etc/faas/secrets/internal-mail/maild.env
+    owner: root
+    group: root
+    mode: "0400"
+  when: faas_internal_mail_env_src | length > 0
+  no_log: true
+  notify: restart internal mail
+
+- name: internal_mail_service — install dedicated encryption identity
+  ansible.builtin.copy:
+    src: "{{ faas_internal_mail_age_identity_src }}"
+    dest: /etc/faas/secrets/internal-mail/mail.age
+    owner: root
+    group: root
+    mode: "0400"
+  when: faas_internal_mail_age_identity_src | length > 0
+  no_log: true
+  notify: restart internal mail
+
+- name: internal_mail_service — reload unit definition
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: internal_mail_service — install optional Postfix report bridge
+  ansible.builtin.include_tasks: reports.yml
+  when: faas_internal_mail_reports_managed | bool
+
+- name: internal_mail_service — apply explicit activation choice
+  ansible.builtin.systemd_service:
+    name: faas-maild.service
+    enabled: "{{ faas_internal_mail_enabled | bool }}"
+    state: "{{ 'started' if faas_internal_mail_enabled | bool else 'stopped' }}"
+
+- name: internal_mail_service — configure optional aggregate monitoring
+  ansible.builtin.include_tasks: metrics.yml

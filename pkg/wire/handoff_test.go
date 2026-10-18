@@ -69,7 +69,10 @@ func TestHandoffHelperProcess(t *testing.T) {
 	for {
 		select {
 		case <-requests:
-			if _, err := wire.Handoff(ctx, wire.HandoffOptions{}); err != nil {
+			// This fixture exercises socket transfer and draining. Model its
+			// isolated daemon cgroup instead of measuring the shared test runner.
+			opts := wire.HandoffOptionsWithMemoryCheckForTest(func() error { return nil })
+			if _, err := wire.Handoff(ctx, opts); err != nil {
 				fmt.Fprintln(os.Stderr, "hand-off failed; still serving:", err)
 				continue
 			}
