@@ -24,7 +24,9 @@
 #   4. Runs pending DB migrations
 #   5. Restarts all FaaS services
 #
-# The existing ci.yml must pass first (needs: [test] from ci.yml).
+# No CI gate here: the tag passed its pull request's light tier, and the
+# full suite (ci.yml) gates no release
+# (docs/adr/20261018104452-release-decoupled-from-full-ci.md).
 #
 # Per-unit releases (docs/adr/1650-per-unit-control-plane-releases.md):
 # with units_run_id instead of release_tag, the deploy-units job deploys a
@@ -168,9 +170,6 @@ jobs:
       # pkg/daemonunitspec (Entry.Critical) and shipped as
       # deploy/etc/daemons.json; the env lists that used to live here were
       # read by nothing (ADR-143 dead-config sweep).
-    # Only deploy if the CI workflow's test job succeeded.
-    # If ci.yml doesn't exist yet or the test job name differs, remove this.
-    # needs: test
     if: github.repository == 'poyrazK/faas' && inputs.units_run_id == ''
     # Raised from 15 for ADR-580: a changed control-plane contract runs the
     # control-plane roles before activation. An unchanged one costs under a
