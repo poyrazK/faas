@@ -64,19 +64,19 @@ func envHistory(args []string) int {
 		return jsonOut(writeJSON(out))
 	}
 	if out.Guard != nil {
-		fmt.Fprintln(osStdout, configGuardLine(*out.Guard))
+		_, _ = fmt.Fprintln(osStdout, configGuardLine(*out.Guard))
 	}
 	if len(out.Revisions) == 0 {
-		fmt.Fprintln(osStdout, "No config changes recorded yet.")
+		_, _ = fmt.Fprintln(osStdout, "No config changes recorded yet.")
 		return 0
 	}
 	w := tabwriter.NewWriter(osStdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "REV\tWHEN\tCHANGE\tBY\tGUARD")
+	_, _ = fmt.Fprintln(w, "REV\tWHEN\tCHANGE\tBY\tGUARD")
 	for _, r := range out.Revisions {
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", r.Revision, r.CreatedAt, configChangeLabel(r), r.Actor, dashIfEmpty(r.GuardStatus))
+		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", r.Revision, r.CreatedAt, configChangeLabel(r), r.Actor, dashIfEmpty(r.GuardStatus))
 	}
 	_ = w.Flush()
-	fmt.Fprintf(osStdout, "\nRestore variables with `gregale env rollback <rev>`.\n")
+	_, _ = fmt.Fprintf(osStdout, "\nRestore variables with `gregale env rollback <rev>`.\n")
 	return 0
 }
 
@@ -155,7 +155,7 @@ func envRollback(args []string) int {
 		if err != nil {
 			return printErr("Could not read revision", err)
 		}
-		fmt.Fprintf(os.Stderr, "Revision %d (%s, %s) has %d variables: %s\n", revision, configChangeLabel(target.ConfigRevision),
+		_, _ = fmt.Fprintf(os.Stderr, "Revision %d (%s, %s) has %d variables: %s\n", revision, configChangeLabel(target.ConfigRevision),
 			target.CreatedAt, len(target.Variables), strings.Join(sortedKeys(target.Variables), ", "))
 		if !requireTyped(strconv.FormatInt(revision, 10)) {
 			return 1
@@ -182,11 +182,11 @@ func printConfigRollback(out api.ConfigRollbackResponse) {
 		PrintOK(osStdout, "Restored variables of revision %d (set %s; deleted %s).", out.RestoredRevision,
 			dashIfEmpty(strings.Join(out.Set, ", ")), dashIfEmpty(strings.Join(out.Deleted, ", ")))
 		if out.Change != nil && out.Change.Guard != nil {
-			fmt.Fprintf(osStdout, "The config guard watches the next %d minutes of traffic.\n", out.Change.Guard.WindowMinutes)
+			_, _ = fmt.Fprintf(osStdout, "The config guard watches the next %d minutes of traffic.\n", out.Change.Guard.WindowMinutes)
 		}
 	}
 	for _, s := range out.SecretsNotRestored {
-		fmt.Fprintf(osStdout, "  secret %s not restored (revision %d had version %d, now %d); set it with `gregale secrets set`.\n",
+		_, _ = fmt.Fprintf(osStdout, "  secret %s not restored (revision %d had version %d, now %d); set it with `gregale secrets set`.\n",
 			s.Key, out.RestoredRevision, s.TargetVersion, s.CurrentVersion)
 	}
 }
@@ -206,5 +206,5 @@ func printConfigGuardNotice(ctx context.Context, client *Client, app, scope stri
 	if err != nil || time.Since(changed) > 2*time.Minute {
 		return
 	}
-	fmt.Fprintf(osStdout, "Config guard: if the app starts failing with the new values, Gregale restores the previous ones (`gregale env history`).\n")
+	_, _ = fmt.Fprintf(osStdout, "Config guard: if the app starts failing with the new values, Gregale restores the previous ones (`gregale env history`).\n")
 }

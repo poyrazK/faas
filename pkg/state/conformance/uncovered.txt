@@ -138,7 +138,6 @@ DeleteAppLogDrain
 DeleteAppOpenAPIDoc
 DeleteAppRegistryCredential
 DeleteAppSecret
-DeleteAppSecretInScope
 DeleteAppTrustedSigner
 DeleteAppWebhook
 DeleteComputeNode
@@ -505,7 +504,6 @@ RotateOrgAPIKey
 RotateOrgAPIKeyWithProvenance
 RunningInstanceForApp
 SafedeployListPendingRollouts
-SafedeployStampRollout
 ScheduleWorkflowRun
 SetAccountEgressAllowlistExtra
 SetAccountKeyGraceWindow

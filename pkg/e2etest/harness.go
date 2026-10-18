@@ -243,8 +243,12 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *H
 	// See e2eMigrationTarget for the head value and the bump rationale.
 	pgtest.WaitForMigration(t, pool, e2eMigrationTarget, 30*time.Second)
 
+	// apid's rollback precheck verifies the signatures schedd does, so it
+	// gets the same key when schedd runs. This only writes the key: schedd
+	// itself still starts after vmmd (TestStart_BootsVMMDBeforeSchedd).
+	scheddVerifies := which&Schedd != 0
 	if which&APID != 0 {
-		if which&Schedd != 0 {
+		if scheddVerifies {
 			h.ensureSignPub(t)
 		}
 		startAPID(t, h, bin, dbURL, extraEnv...)
