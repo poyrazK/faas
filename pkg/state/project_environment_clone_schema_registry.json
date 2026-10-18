@@ -1184,6 +1184,15 @@
     "kind": "operational"
   },
   {
+    "table": "app_runtime_generations",
+    "columns": [
+      "app_id",
+      "changed_at",
+      "generation"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_scaling_policy_scheduler_status",
     "columns": [
       "app_id",

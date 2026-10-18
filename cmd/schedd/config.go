@@ -204,6 +204,19 @@ type Config struct {
 	// FAAS_FROZEN_TIER_APPS overrides it.
 	FrozenTierApps bool `toml:"frozen_tier_apps"`
 
+	// FrozenFastPath (ADR-1740) thaws a frozen VM from a ticket recorded
+	// when it froze: one runtime-values read beside the vmmd thaw and one
+	// guarded update instead of the ordinary wake path's reads. Off by
+	// default; tickets live in memory, so turning it off takes effect at
+	// once. FAAS_FROZEN_FAST_PATH overrides it.
+	FrozenFastPath bool `toml:"frozen_fast_path"`
+
+	// OwnerCache (ADR-1741) serves a production wake's reads from an in-memory
+	// entry per app, dropped when the app's runtime generation moves
+	// (app_runtime_changed); the admission insert commits only while that
+	// generation holds. Off by default. FAAS_OWNER_CACHE overrides it.
+	OwnerCache bool `toml:"owner_cache"`
+
 	// MigratingWatchdogTickLimit (ADR-067) caps the per-tick
 	// batch of state='migrating' rows the watchdog self-heals.
 	// Zero reverts to api.MigratingWatchdogTickLimit (= 50).
@@ -530,6 +543,22 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("schedd: FAAS_FROZEN_TIER must be a boolean (got %q)", v)
 		}
 		c.FrozenTier = enabled
+	}
+	// ADR-1740: FAAS_FROZEN_FAST_PATH overrides frozen_fast_path.
+	if v := os.Getenv("FAAS_FROZEN_FAST_PATH"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_FROZEN_FAST_PATH must be a boolean (got %q)", v)
+		}
+		c.FrozenFastPath = enabled
+	}
+	// ADR-1741: FAAS_OWNER_CACHE overrides owner_cache.
+	if v := os.Getenv("FAAS_OWNER_CACHE"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_OWNER_CACHE must be a boolean (got %q)", v)
+		}
+		c.OwnerCache = enabled
 	}
 	if v := os.Getenv("FAAS_FROZEN_TIER_APPS"); v != "" {
 		enabled, err := strconv.ParseBool(v)

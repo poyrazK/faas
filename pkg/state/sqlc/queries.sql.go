@@ -1534,6 +1534,19 @@ func (q *Queries) AppRuntimeConfigChangedAtInScope(ctx context.Context, db DBTX,
 	return changed_at, err
 }
 
+const appRuntimeGeneration = `-- name: AppRuntimeGeneration :one
+SELECT generation FROM app_runtime_generations WHERE app_id=$1::uuid
+`
+
+// ADR-1741: the app's runtime generation, which triggers bump in the
+// writer's transaction for every change a wake depends on.
+func (q *Queries) AppRuntimeGeneration(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, appRuntimeGeneration, appID)
+	var generation int64
+	err := row.Scan(&generation)
+	return generation, err
+}
+
 const appendAccountCreditLedgerEntry = `-- name: AppendAccountCreditLedgerEntry :exec
 INSERT INTO credit_ledger (account_id, credit_id, delta_cents, reason, actor, provider, provider_invoice_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -13071,12 +13084,15 @@ SET snapshot_miss_count         = 0,
     snapshot_miss_last_at       = NULL,
     snapshot_miss_backoff_until = NULL
 WHERE id = $1
+  AND (snapshot_miss_count <> 0 OR snapshot_miss_last_at IS NOT NULL OR snapshot_miss_backoff_until IS NOT NULL)
 `
 
 // Called by the recovery arbiter after a successful migrate-or-
 // recreate sweep has restored the destination's snapshot set, OR by
 // the wake flow on a successful cold boot. Resets the counter and
 // clears the backoff_until so future wakes don't short-circuit.
+// A deployment with nothing recorded is left alone: no row version and no
+// update triggers for the common case.
 func (q *Queries) DeploymentClearSnapshotBackoff(ctx context.Context, db DBTX, id pgtype.UUID) error {
 	_, err := db.Exec(ctx, deploymentClearSnapshotBackoff, id)
 	return err
@@ -20252,6 +20268,46 @@ func (q *Queries) FirstCustomerOperationWorkflowEvent(ctx context.Context, db DB
 		&i.Payload,
 		&i.ReceivedAt,
 	)
+	return i, err
+}
+
+const frozenThawBasis = `-- name: FrozenThawBasis :one
+SELECT COALESCE((SELECT g.generation FROM app_runtime_generations g WHERE g.app_id=a.id),0)::bigint AS generation,
+    (a.status='active' AND a.managed_postgres_admission_cutover_id IS NULL
+        AND d.status='live' AND d.traffic_percent>0 AND d.scope IN ('production','default','')
+        AND d.parked_reason IS DISTINCT FROM 'security_scan_regressed'
+        AND (EXISTS (SELECT 1 FROM project_release_sets rs JOIN project_release_members rm ON rm.release_id=rs.id AND rm.app_id=a.id
+                WHERE rs.project_id=a.project_id AND rs.account_id=a.account_id AND rs.environment_slug='production' AND rs.active
+                    AND rm.deployment_id=d.id AND d.scope='production')
+            OR (NOT EXISTS (SELECT 1 FROM project_release_sets rs JOIN project_release_members rm ON rm.release_id=rs.id AND rm.app_id=a.id
+                    WHERE rs.project_id=a.project_id AND rs.account_id=a.account_id AND rs.environment_slug='production' AND rs.active
+                        AND rm.deployment_id IS NOT NULL)
+                AND NOT EXISTS (SELECT 1 FROM deployments o WHERE o.app_id=a.id AND o.id<>d.id AND o.status='live'
+                    AND o.traffic_percent>0 AND o.scope IN ('production','default','')))))::boolean AS selected
+FROM apps a JOIN deployments d ON d.app_id=a.id
+WHERE a.id=$1::uuid AND d.id=$2::uuid
+`
+
+type FrozenThawBasisParams struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+type FrozenThawBasisRow struct {
+	Generation int64
+	Selected   bool
+}
+
+// ADR-1740, ADR-1741: read first when a VM freezes, before the rest of its
+// ticket, so any change after it moves the generation the guarded thaw
+// compares. selected is true when the thaw a ticket would allow is the one
+// the ordinary wake path would choose: the app's active production release
+// pins the deployment, or no release pins the app and the deployment is its
+// only live production-lane deployment with traffic.
+func (q *Queries) FrozenThawBasis(ctx context.Context, db DBTX, arg FrozenThawBasisParams) (FrozenThawBasisRow, error) {
+	row := db.QueryRow(ctx, frozenThawBasis, arg.AppID, arg.DeploymentID)
+	var i FrozenThawBasisRow
+	err := row.Scan(&i.Generation, &i.Selected)
 	return i, err
 }
 
@@ -48087,6 +48143,19 @@ func (q *Queries) LockAppHealthCollection(ctx context.Context, db DBTX, arg Lock
 		&i.NotificationState,
 	)
 	return i, err
+}
+
+const lockAppRuntimeGeneration = `-- name: LockAppRuntimeGeneration :one
+SELECT generation FROM app_runtime_generations WHERE app_id=$1::uuid FOR SHARE
+`
+
+// ADR-1741: an admission insert decided from schedd's owner cache commits
+// only while the app's generation is the one the decision read.
+func (q *Queries) LockAppRuntimeGeneration(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, lockAppRuntimeGeneration, appID)
+	var generation int64
+	err := row.Scan(&generation)
+	return generation, err
 }
 
 const lockAppSecretRuntimeProcess = `-- name: LockAppSecretRuntimeProcess :one
@@ -84774,14 +84843,29 @@ func (q *Queries) SaveReadinessSubscriptionWatches(ctx context.Context, db DBTX,
 	return result.RowsAffected(), nil
 }
 
-const saveRuntimeInstanceConfigProof = `-- name: SaveRuntimeInstanceConfigProof :exec
-INSERT INTO runtime_instance_config_proofs(instance_id,wake_id,node_id,deployment_id,environment_id,scope,secret_fingerprint,config_fingerprint)
-SELECT id,wake_id,node_id,deployment_id,$1::uuid,$2::text,
-    $3::text,$4::text
-FROM instances WHERE id=$5::uuid
-ON CONFLICT(instance_id) DO UPDATE SET wake_id=excluded.wake_id,node_id=excluded.node_id,
-    deployment_id=excluded.deployment_id,environment_id=excluded.environment_id,scope=excluded.scope,
-    secret_fingerprint=excluded.secret_fingerprint,config_fingerprint=excluded.config_fingerprint
+const saveRuntimeInstanceConfigProof = `-- name: SaveRuntimeInstanceConfigProof :one
+WITH proof AS (
+    INSERT INTO runtime_instance_config_proofs(instance_id,wake_id,node_id,deployment_id,environment_id,scope,secret_fingerprint,config_fingerprint)
+    SELECT id,wake_id,node_id,deployment_id,$1::uuid,$2::text,
+        $3::text,$4::text
+    FROM instances WHERE id=$5::uuid
+    ON CONFLICT(instance_id) DO UPDATE SET wake_id=excluded.wake_id,node_id=excluded.node_id,
+        deployment_id=excluded.deployment_id,environment_id=excluded.environment_id,scope=excluded.scope,
+        secret_fingerprint=excluded.secret_fingerprint,config_fingerprint=excluded.config_fingerprint
+    RETURNING deployment_id
+), transition_event AS (
+    INSERT INTO events(actor,kind,subject,data)
+    SELECT 'schedd',$6::text,$5::uuid,$7::jsonb
+    WHERE $6::text IS NOT NULL
+    RETURNING id
+), notification AS (
+    SELECT pg_notify($8::text,$9::text)
+    WHERE $8::text IS NOT NULL
+)
+SELECT EXISTS(SELECT 1 FROM deployments d JOIN proof ON proof.deployment_id=d.id
+        WHERE d.snapshot_miss_count<>0 OR d.snapshot_miss_last_at IS NOT NULL OR d.snapshot_miss_backoff_until IS NOT NULL)::boolean AS snapshot_backoff_recorded,
+    (SELECT count(*) FROM transition_event)::integer AS events_recorded,
+    (SELECT count(*) FROM notification)::integer AS notifications_sent
 `
 
 type SaveRuntimeInstanceConfigProofParams struct {
@@ -84790,17 +84874,40 @@ type SaveRuntimeInstanceConfigProofParams struct {
 	SecretFingerprint string
 	ConfigFingerprint string
 	InstanceID        pgtype.UUID
+	EventKind         pgtype.Text
+	EventData         []byte
+	NotifyChannel     pgtype.Text
+	NotifyPayload     pgtype.Text
 }
 
-func (q *Queries) SaveRuntimeInstanceConfigProof(ctx context.Context, db DBTX, arg SaveRuntimeInstanceConfigProofParams) error {
-	_, err := db.Exec(ctx, saveRuntimeInstanceConfigProof,
+type SaveRuntimeInstanceConfigProofRow struct {
+	SnapshotBackoffRecorded bool
+	EventsRecorded          int32
+	NotificationsSent       int32
+}
+
+// Saves the config proof a publication commits with. A wake's bookkeeping
+// rides in the same statement, so it costs no round trip: the transition
+// event and the instance_changed notification (pg_notify delivers at
+// commit) commit with the publication or not at all. The deployment's
+// snapshot-miss backoff is only reported, never cleared here: the
+// publication holds a share lock on the deployment row, and an update
+// would deadlock concurrent publications of the same deployment.
+func (q *Queries) SaveRuntimeInstanceConfigProof(ctx context.Context, db DBTX, arg SaveRuntimeInstanceConfigProofParams) (SaveRuntimeInstanceConfigProofRow, error) {
+	row := db.QueryRow(ctx, saveRuntimeInstanceConfigProof,
 		arg.EnvironmentID,
 		arg.Scope,
 		arg.SecretFingerprint,
 		arg.ConfigFingerprint,
 		arg.InstanceID,
+		arg.EventKind,
+		arg.EventData,
+		arg.NotifyChannel,
+		arg.NotifyPayload,
 	)
-	return err
+	var i SaveRuntimeInstanceConfigProofRow
+	err := row.Scan(&i.SnapshotBackoffRecorded, &i.EventsRecorded, &i.NotificationsSent)
+	return i, err
 }
 
 const saveServiceRolloutHandoff = `-- name: SaveServiceRolloutHandoff :exec
@@ -87109,6 +87216,127 @@ func (q *Queries) SyntheticCheckRunStats(ctx context.Context, db DBTX, arg Synth
 	row := db.QueryRow(ctx, syntheticCheckRunStats, arg.CheckID, arg.Since)
 	var i SyntheticCheckRunStatsRow
 	err := row.Scan(&i.Runs, &i.OkRuns, &i.P95LatencyMs)
+	return i, err
+}
+
+const thawFrozenInstance = `-- name: ThawFrozenInstance :one
+WITH generation_lock AS (
+    SELECT g.app_id FROM app_runtime_generations g
+    WHERE g.app_id=$1::uuid AND g.generation=$2::bigint
+    FOR SHARE
+), standards AS (
+    SELECT a.id FROM apps a WHERE a.id=$1::uuid AND (a.org_id IS NULL OR EXISTS (
+        SELECT 1 FROM app_application_standards s WHERE s.org_id=a.org_id AND s.app_id=a.id
+            AND (s.exception_expires_at IS NULL OR now()<s.exception_expires_at)))
+), thawed AS (
+    UPDATE instances SET started_at=clock_timestamp(), state='running'
+    WHERE id=$3::uuid AND app_id=$1::uuid
+        AND deployment_id=$4::uuid AND node_id=$5::uuid
+        AND wake_id=$6::uuid AND state='frozen'
+        AND EXISTS (SELECT 1 FROM generation_lock) AND EXISTS (SELECT 1 FROM standards)
+        AND EXISTS (SELECT 1 FROM runtime_instance_config_proofs proof WHERE proof.instance_id=instances.id
+            AND proof.wake_id=instances.wake_id AND proof.node_id=instances.node_id
+            AND proof.deployment_id=instances.deployment_id AND proof.config_fingerprint=$7::text)
+    RETURNING id::text AS id, app_id::text AS app_id, deployment_id::text AS deployment_id,
+        state, coalesce(netns,'')::text AS netns, coalesce(guest_uid,0)::integer AS guest_uid,
+        coalesce(host(host_ip),'')::text AS host_ip, ram_mb, started_at, last_request_at, parked_at,
+        node_id::text AS node_id, wake_id::text AS wake_id, framework_ready_at, tail_count, mode, request_count
+), transition_event AS (
+    INSERT INTO events(actor,kind,subject,data)
+    SELECT 'schedd',$8::text,thawed.id::uuid,$9::jsonb FROM thawed
+    WHERE $8::text IS NOT NULL
+    RETURNING id
+), notification AS (
+    SELECT pg_notify($10::text,$11::text) FROM thawed
+    WHERE $10::text IS NOT NULL
+)
+SELECT thawed.id, thawed.app_id, thawed.deployment_id, thawed.state, thawed.netns, thawed.guest_uid, thawed.host_ip, thawed.ram_mb, thawed.started_at, thawed.last_request_at, thawed.parked_at, thawed.node_id, thawed.wake_id, thawed.framework_ready_at, thawed.tail_count, thawed.mode, thawed.request_count, (SELECT count(*) FROM transition_event)::integer AS events_recorded,
+    (SELECT count(*) FROM notification)::integer AS notifications_sent
+FROM thawed
+`
+
+type ThawFrozenInstanceParams struct {
+	AppID             pgtype.UUID
+	Generation        int64
+	InstanceID        pgtype.UUID
+	DeploymentID      pgtype.UUID
+	NodeID            pgtype.UUID
+	WakeID            pgtype.UUID
+	ConfigFingerprint string
+	EventKind         pgtype.Text
+	EventData         []byte
+	NotifyChannel     pgtype.Text
+	NotifyPayload     pgtype.Text
+}
+
+type ThawFrozenInstanceRow struct {
+	ID                string
+	AppID             string
+	DeploymentID      string
+	State             string
+	Netns             string
+	GuestUid          int32
+	HostIp            string
+	RamMb             int32
+	StartedAt         pgtype.Timestamptz
+	LastRequestAt     pgtype.Timestamptz
+	ParkedAt          pgtype.Timestamptz
+	NodeID            string
+	WakeID            string
+	FrameworkReadyAt  pgtype.Timestamptz
+	TailCount         int32
+	Mode              string
+	RequestCount      int64
+	EventsRecorded    int32
+	NotificationsSent int32
+}
+
+// ADR-1740, ADR-1741: a ticketed thaw's one control-plane round trip. The
+// FROZEN -> RUNNING compare-and-set holds when the app's runtime generation
+// is the one the ticket read: every change the ordinary wake path would have
+// read moves it, in the writer's transaction. The generation row is the only
+// lock taken, FOR SHARE, so a writer bumping it waits for this statement or
+// this statement waits for the writer and then sees the new generation. The
+// config proof must still be the ticket's, and an enrollment exception,
+// which expires with time and moves no generation, must not have expired.
+// The transition event and instance_changed notification commit with it.
+// No row means a guard refused and nothing changed.
+func (q *Queries) ThawFrozenInstance(ctx context.Context, db DBTX, arg ThawFrozenInstanceParams) (ThawFrozenInstanceRow, error) {
+	row := db.QueryRow(ctx, thawFrozenInstance,
+		arg.AppID,
+		arg.Generation,
+		arg.InstanceID,
+		arg.DeploymentID,
+		arg.NodeID,
+		arg.WakeID,
+		arg.ConfigFingerprint,
+		arg.EventKind,
+		arg.EventData,
+		arg.NotifyChannel,
+		arg.NotifyPayload,
+	)
+	var i ThawFrozenInstanceRow
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.State,
+		&i.Netns,
+		&i.GuestUid,
+		&i.HostIp,
+		&i.RamMb,
+		&i.StartedAt,
+		&i.LastRequestAt,
+		&i.ParkedAt,
+		&i.NodeID,
+		&i.WakeID,
+		&i.FrameworkReadyAt,
+		&i.TailCount,
+		&i.Mode,
+		&i.RequestCount,
+		&i.EventsRecorded,
+		&i.NotificationsSent,
+	)
 	return i, err
 }
 

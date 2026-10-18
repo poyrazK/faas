@@ -45,6 +45,9 @@ import (
 // is safe for concurrent use.
 type PgStore struct {
 	pool *orgAccessPool
+	// admission remembers whether the database has the instance admission
+	// functions (ADR-1741).
+	admission *admissionFunctionProbe
 }
 
 // NewPgStore wraps a pool. The pool is owned by the caller; PgStore does not
@@ -54,7 +57,7 @@ func NewPgStore(pool *pgxpool.Pool) *PgStore {
 	if pool == nil {
 		return &PgStore{}
 	}
-	return &PgStore{pool: &orgAccessPool{Pool: pool}}
+	return &PgStore{pool: &orgAccessPool{Pool: pool}, admission: &admissionFunctionProbe{}}
 }
 
 // Ping tests database connectivity through the underlying connection pool.
@@ -17137,6 +17140,13 @@ func (s *PgStore) CreateInstanceWithMode(ctx context.Context, appID, deploymentI
 			return reserveAccountWorker(ctx, tx, appID, deploymentID)
 		}
 	}
+	// ADR-1741: a resident admission without a worker reservation is one
+	// statement when the database has the admission functions.
+	if reserve == nil && IsLive(strings.ToLower(state)) {
+		if inst, handled, err := s.admitWakeInstance(ctx, appID, deploymentID, state, ramMB, nodeID, wakeID, mode); handled {
+			return inst, err
+		}
+	}
 	return s.insertInstanceWithReservations(ctx, nodeID, state, ramMB, reserve, func(q instanceInserter) (Instance, error) {
 		row := q.QueryRow(ctx,
 			`insert into instances (app_id, deployment_id, state, ram_mb, node_id, wake_id, started_at, mode)
@@ -18602,6 +18612,18 @@ func (s *PgStore) ComputeNodeUsedCPUMillicoresByNode(ctx context.Context, nodeID
 		}
 		parsedIDs = append(parsedIDs, parsed)
 	}
+	// The live sum and the migration reservations are independent reads; a
+	// wake's placement waits for both, so they run concurrently (ADR-1741).
+	var (
+		resources     []sqlc.MigrationAdmissionNodeResourcesRow
+		resourcesErr  error
+		resourcesRead = make(chan struct{})
+	)
+	go func() {
+		defer close(resourcesRead)
+		resources, resourcesErr = s.migrationAdmissionResources(ctx, nodeIDs)
+	}()
+	defer func() { <-resourcesRead }()
 	rows, err := s.pool.Query(ctx, `
 		select i.node_id::text,
 		       coalesce(sum(case
@@ -18630,9 +18652,9 @@ func (s *PgStore) ComputeNodeUsedCPUMillicoresByNode(ctx context.Context, nodeID
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("state: iterate compute nodes used_cpu_millicores: %w", err)
 	}
-	resources, err := s.migrationAdmissionResources(ctx, nodeIDs)
-	if err != nil {
-		return nil, err
+	<-resourcesRead
+	if resourcesErr != nil {
+		return nil, resourcesErr
 	}
 	for _, resource := range resources {
 		used[resource.NodeID] += resource.CpuMillicores

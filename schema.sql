@@ -80,6 +80,157 @@ END $$;
 
 
 --
+-- Name: admission_reserve_node(uuid, bigint, integer, boolean, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.admission_reserve_node(p_node_id uuid, p_expected_generation bigint, p_ram_mb integer, p_counts boolean, p_overhead_mb integer) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    node_lifecycle text;
+    node_generation bigint;
+    ceiling_mb bigint;
+    used_mb bigint;
+    resident_mb bigint;
+BEGIN
+    PERFORM node_admission_lock_capacity();
+    SELECT lifecycle::text, lifecycle_generation INTO node_lifecycle, node_generation
+      FROM compute_nodes WHERE id = p_node_id FOR SHARE;
+    IF NOT FOUND OR node_lifecycle NOT IN ('active', 'recovering')
+       OR (p_expected_generation IS NOT NULL AND node_generation <> p_expected_generation) THEN
+        RAISE EXCEPTION 'node placement is stale or not admitting'
+            USING ERRCODE = '23514', CONSTRAINT = 'instance_node_admission_current';
+    END IF;
+    IF NOT p_counts THEN
+        RETURN;
+    END IF;
+    PERFORM pg_advisory_xact_lock(1852793957, hashtext(p_node_id::text));
+    SELECT n.admission_ceiling_mb::bigint,
+           coalesce((SELECT sum(i.ram_mb + p_overhead_mb)
+                       FROM instances i
+                      WHERE i.node_id = n.id
+                        AND i.state IN ('waking','cold_booting','running','draining','warm')), 0)::bigint
+      INTO ceiling_mb, used_mb
+      FROM compute_nodes n WHERE n.id = p_node_id;
+    IF NOT FOUND THEN
+        RETURN;
+    END IF;
+    SELECT (coalesce(sum(greatest(0, i.capacity_ram_mb - i.ram_mb - p.overhead_mb)), 0)
+            + (SELECT ram FROM migration_source_node_usage(p_node_id, true)))::bigint
+      INTO resident_mb
+      FROM instances i
+      CROSS JOIN service_capacity_policy p
+     WHERE p.singleton
+       AND (EXISTS (SELECT 1 FROM migration_admissions r WHERE r.phase = 'committed' AND r.instance_id = i.id
+                       AND r.destination_node_id = i.node_id AND r.destination_wake_id = i.wake_id)
+            OR EXISTS (SELECT 1 FROM migration_sources s WHERE s.phase = 'resumed' AND s.instance_id = i.id
+                       AND s.source_node_id = i.node_id AND s.source_wake_id = i.wake_id))
+       AND i.node_id = p_node_id
+       AND i.state IN ('waking','cold_booting','running','draining','warm');
+    used_mb := used_mb + resident_mb;
+    IF ceiling_mb > 0 AND used_mb + p_ram_mb + p_overhead_mb > ceiling_mb THEN
+        RAISE EXCEPTION 'node RAM headroom exhausted'
+            USING ERRCODE = '23514', CONSTRAINT = 'instance_node_capacity',
+                  DETAIL = format('used_mb=%s admit_mb=%s ceiling_mb=%s', used_mb, p_ram_mb + p_overhead_mb, ceiling_mb);
+    END IF;
+END $$;
+
+
+SET default_table_access_method = heap;
+
+--
+-- Name: instances; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.instances (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid,
+    deployment_id uuid,
+    state text NOT NULL,
+    netns text,
+    guest_uid integer,
+    host_ip inet,
+    ram_mb integer NOT NULL,
+    started_at timestamp with time zone,
+    last_request_at timestamp with time zone,
+    parked_at timestamp with time zone,
+    terminal_at timestamp with time zone,
+    node_id uuid NOT NULL,
+    wake_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    org_id uuid,
+    migrated_from_node_id uuid,
+    migrated_at timestamp with time zone,
+    lease_token text,
+    framework_ready_at timestamp with time zone,
+    tail_count integer DEFAULT 0 NOT NULL,
+    request_count bigint DEFAULT 0 NOT NULL,
+    kind text DEFAULT 'wake'::text NOT NULL,
+    job_id uuid,
+    mode text DEFAULT 'normal'::text NOT NULL,
+    migration_started_at timestamp with time zone,
+    startup_cpu_boost_until timestamp with time zone,
+    exclusive_capture_blocked boolean DEFAULT false NOT NULL,
+    application_standard_boot_token uuid,
+    application_standard_promotion_token uuid,
+    capacity_ram_mb bigint DEFAULT 0 NOT NULL,
+    capacity_cpu_millicores bigint DEFAULT 0 NOT NULL,
+    capacity_vcpu integer DEFAULT 0 NOT NULL,
+    CONSTRAINT instances_app_or_job_chk CHECK ((((kind = ANY (ARRAY['wake'::text, 'build'::text])) AND (app_id IS NOT NULL) AND (job_id IS NULL)) OR ((kind = 'job_task'::text) AND (app_id IS NULL) AND (job_id IS NOT NULL)))),
+    CONSTRAINT instances_capacity_cpu_millicores_check CHECK ((capacity_cpu_millicores >= 0)),
+    CONSTRAINT instances_capacity_ram_mb_check CHECK ((capacity_ram_mb >= 0)),
+    CONSTRAINT instances_capacity_vcpu_check CHECK ((capacity_vcpu >= 0)),
+    CONSTRAINT instances_kind_check CHECK ((kind = ANY (ARRAY['wake'::text, 'build'::text, 'job_task'::text]))),
+    CONSTRAINT instances_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
+    CONSTRAINT instances_mode_check CHECK ((mode = ANY (ARRAY['normal'::text, 'mirror'::text, 'job'::text, 'worker'::text, 'service'::text]))),
+    CONSTRAINT instances_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'parked'::text, 'waking'::text, 'cold_booting'::text, 'running'::text, 'draining'::text, 'snapshotting'::text, 'migrating'::text, 'warm'::text, 'stopped'::text, 'failed'::text, 'evicting_account_deleting'::text, 'frozen'::text])))
+);
+
+
+--
+-- Name: admit_wake_instance(uuid, text, text, integer, uuid, text, text, bigint, boolean, integer, boolean, uuid, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.admit_wake_instance(p_app_id uuid, p_deployment_id text, p_state text, p_ram_mb integer, p_node_id uuid, p_wake_id text, p_mode text, p_expected_generation bigint, p_counts boolean, p_overhead_mb integer, p_bind_recovery boolean, p_snapshot_id uuid, p_guard_generation bigint) RETURNS SETOF public.instances
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    admitted instances%ROWTYPE;
+    bound integer;
+    current_generation bigint;
+BEGIN
+    PERFORM admission_reserve_node(p_node_id, p_expected_generation, p_ram_mb, p_counts, p_overhead_mb);
+    INSERT INTO instances (app_id, deployment_id, state, ram_mb, node_id, wake_id, started_at, mode)
+    VALUES (p_app_id, nullif(p_deployment_id, '')::uuid, p_state, p_ram_mb, p_node_id,
+            CASE WHEN p_wake_id = '' THEN gen_random_uuid() ELSE p_wake_id::uuid END, now(), p_mode)
+    RETURNING * INTO admitted;
+    IF p_bind_recovery THEN
+        INSERT INTO instance_snapshot_recovery (instance_id, wake_id, generation, snapshot_id)
+        SELECT admitted.id, admitted.wake_id, d.snapshot_recovery_generation, p_snapshot_id
+          FROM deployments d JOIN apps a ON a.id = d.app_id
+         WHERE d.id = admitted.deployment_id AND a.status <> 'deleted'
+           AND (p_snapshot_id IS NULL OR EXISTS (
+                SELECT 1 FROM snapshots s WHERE s.id = p_snapshot_id AND s.deployment_id = d.id
+                   AND NOT s.stale AND NOT s.delete_pending AND s.recovery_generation = d.snapshot_recovery_generation))
+        FOR SHARE OF d, a;
+        GET DIAGNOSTICS bound = ROW_COUNT;
+        IF bound <> 1 THEN
+            RAISE EXCEPTION 'snapshot recovery lineage changed before admission'
+                USING ERRCODE = '23514', CONSTRAINT = 'instance_snapshot_recovery_current';
+        END IF;
+    END IF;
+    -- Taken last, after every row lock above (ADR-1741 lock order).
+    IF p_guard_generation IS NOT NULL THEN
+        SELECT generation INTO current_generation FROM app_runtime_generations WHERE app_id = p_app_id FOR SHARE;
+        IF NOT FOUND OR current_generation <> p_guard_generation THEN
+            RAISE EXCEPTION 'app runtime generation moved'
+                USING ERRCODE = '23514', CONSTRAINT = 'app_runtime_generation_current';
+        END IF;
+    END IF;
+    RETURN NEXT admitted;
+END $$;
+
+
+--
 -- Name: adopt_org_async_reservations(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -468,6 +619,157 @@ begin
     perform 1 from apps where id = new.app_id for update;
     return new;
 end;
+$$;
+
+
+--
+-- Name: app_runtime_generation_bump(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_runtime_generation_bump(target uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE next bigint;
+BEGIN
+    IF target IS NULL THEN
+        RETURN;
+    END IF;
+    UPDATE app_runtime_generations SET generation = generation + 1, changed_at = clock_timestamp()
+    WHERE app_id = target RETURNING generation INTO next;
+    IF NOT FOUND THEN
+        INSERT INTO app_runtime_generations AS g (app_id)
+        SELECT target WHERE EXISTS (SELECT 1 FROM apps WHERE id = target)
+        ON CONFLICT (app_id) DO UPDATE SET generation = g.generation + 1, changed_at = clock_timestamp()
+        RETURNING generation INTO next;
+    END IF;
+    IF next IS NOT NULL THEN
+        PERFORM pg_notify('app_runtime_changed', json_build_object('app_id', target, 'generation', next)::text);
+    END IF;
+END;
+$$;
+
+
+--
+-- Name: app_runtime_generation_on_accounts(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_runtime_generation_on_accounts() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE owned uuid;
+BEGIN
+    IF OLD.status IS NOT DISTINCT FROM NEW.status AND OLD.plan IS NOT DISTINCT FROM NEW.plan
+        AND OLD.abuse_hold_at IS NOT DISTINCT FROM NEW.abuse_hold_at
+        AND OLD.overage_cap_cents IS NOT DISTINCT FROM NEW.overage_cap_cents
+        AND OLD.egress_allowlist_extra IS NOT DISTINCT FROM NEW.egress_allowlist_extra
+        AND OLD.deletion_requested_at IS NOT DISTINCT FROM NEW.deletion_requested_at THEN
+        RETURN NULL;
+    END IF;
+    FOR owned IN SELECT id FROM apps WHERE account_id = NEW.id ORDER BY id LOOP
+        PERFORM app_runtime_generation_bump(owned);
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: app_runtime_generation_on_app_row(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_runtime_generation_on_app_row() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' AND (to_jsonb(OLD) - TG_ARGV) = (to_jsonb(NEW) - TG_ARGV) THEN
+        RETURN NULL;
+    END IF;
+    IF TG_OP <> 'INSERT' THEN
+        PERFORM app_runtime_generation_bump(OLD.app_id);
+    END IF;
+    IF TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND NEW.app_id IS DISTINCT FROM OLD.app_id) THEN
+        PERFORM app_runtime_generation_bump(NEW.app_id);
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: app_runtime_generation_on_apps(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_runtime_generation_on_apps() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        INSERT INTO app_runtime_generations (app_id) VALUES (NEW.id) ON CONFLICT (app_id) DO NOTHING;
+        PERFORM pg_notify('app_runtime_changed', json_build_object('app_id', NEW.id, 'generation', 1)::text);
+    ELSIF TG_OP = 'DELETE' THEN
+        PERFORM pg_notify('app_runtime_changed', json_build_object('app_id', OLD.id, 'generation', 0)::text);
+    ELSIF (to_jsonb(OLD) - TG_ARGV) <> (to_jsonb(NEW) - TG_ARGV) THEN
+        PERFORM app_runtime_generation_bump(NEW.id);
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: app_runtime_generation_on_deployment_row(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_runtime_generation_on_deployment_row() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP <> 'INSERT' THEN
+        PERFORM app_runtime_generation_bump((SELECT d.app_id FROM deployments d WHERE d.id = OLD.deployment_id));
+    END IF;
+    IF TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND NEW.deployment_id IS DISTINCT FROM OLD.deployment_id) THEN
+        PERFORM app_runtime_generation_bump((SELECT d.app_id FROM deployments d WHERE d.id = NEW.deployment_id));
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: app_runtime_generation_on_project_environments(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_runtime_generation_on_project_environments() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE member uuid;
+BEGIN
+    IF TG_OP = 'UPDATE' AND OLD.slug IS NOT DISTINCT FROM NEW.slug AND OLD.project_id IS NOT DISTINCT FROM NEW.project_id THEN
+        RETURN NULL;
+    END IF;
+    FOR member IN SELECT id FROM apps WHERE project_id = OLD.project_id ORDER BY id LOOP
+        PERFORM app_runtime_generation_bump(member);
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: app_runtime_generation_on_release_sets(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_runtime_generation_on_release_sets() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE member uuid;
+BEGIN
+    FOR member IN SELECT DISTINCT m.app_id FROM project_release_members m
+        WHERE m.release_id = COALESCE(NEW.id, OLD.id) ORDER BY m.app_id LOOP
+        PERFORM app_runtime_generation_bump(member);
+    END LOOP;
+    RETURN NULL;
+END;
 $$;
 
 
@@ -889,8 +1191,6 @@ CREATE FUNCTION public.apps_streaming_owner_allowed(namespace_id uuid, organizat
  WHERE organization_id IS NULL;
 $$;
 
-
-SET default_table_access_method = heap;
 
 --
 -- Name: apps; Type: TABLE; Schema: public; Owner: -
@@ -8347,54 +8647,6 @@ CREATE TABLE public.environment_workload_qualification_requests (
     CONSTRAINT environment_workload_qualification_requests_resource_check CHECK ((resource ~ '^workload/[a-z0-9][a-z0-9-]*$'::text)),
     CONSTRAINT environment_workload_qualification_requests_worker_id_check CHECK ((octet_length(worker_id) <= 256)),
     CONSTRAINT environment_workload_qualification_reserved_instance_shape CHECK ((((phase = 'queued'::text) AND (reserved_instance_id IS NULL)) OR ((phase = 'claimed'::text) AND (((execution_mode = 'job'::text) AND (reserved_instance_id IS NULL)) OR ((execution_mode <> 'job'::text) AND (reserved_instance_id IS NOT NULL))))))
-);
-
-
---
--- Name: instances; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.instances (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    app_id uuid,
-    deployment_id uuid,
-    state text NOT NULL,
-    netns text,
-    guest_uid integer,
-    host_ip inet,
-    ram_mb integer NOT NULL,
-    started_at timestamp with time zone,
-    last_request_at timestamp with time zone,
-    parked_at timestamp with time zone,
-    terminal_at timestamp with time zone,
-    node_id uuid NOT NULL,
-    wake_id uuid DEFAULT gen_random_uuid() NOT NULL,
-    org_id uuid,
-    migrated_from_node_id uuid,
-    migrated_at timestamp with time zone,
-    lease_token text,
-    framework_ready_at timestamp with time zone,
-    tail_count integer DEFAULT 0 NOT NULL,
-    request_count bigint DEFAULT 0 NOT NULL,
-    kind text DEFAULT 'wake'::text NOT NULL,
-    job_id uuid,
-    mode text DEFAULT 'normal'::text NOT NULL,
-    migration_started_at timestamp with time zone,
-    startup_cpu_boost_until timestamp with time zone,
-    exclusive_capture_blocked boolean DEFAULT false NOT NULL,
-    application_standard_boot_token uuid,
-    application_standard_promotion_token uuid,
-    capacity_ram_mb bigint DEFAULT 0 NOT NULL,
-    capacity_cpu_millicores bigint DEFAULT 0 NOT NULL,
-    capacity_vcpu integer DEFAULT 0 NOT NULL,
-    CONSTRAINT instances_app_or_job_chk CHECK ((((kind = ANY (ARRAY['wake'::text, 'build'::text])) AND (app_id IS NOT NULL) AND (job_id IS NULL)) OR ((kind = 'job_task'::text) AND (app_id IS NULL) AND (job_id IS NOT NULL)))),
-    CONSTRAINT instances_capacity_cpu_millicores_check CHECK ((capacity_cpu_millicores >= 0)),
-    CONSTRAINT instances_capacity_ram_mb_check CHECK ((capacity_ram_mb >= 0)),
-    CONSTRAINT instances_capacity_vcpu_check CHECK ((capacity_vcpu >= 0)),
-    CONSTRAINT instances_kind_check CHECK ((kind = ANY (ARRAY['wake'::text, 'build'::text, 'job_task'::text]))),
-    CONSTRAINT instances_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
-    CONSTRAINT instances_mode_check CHECK ((mode = ANY (ARRAY['normal'::text, 'mirror'::text, 'job'::text, 'worker'::text, 'service'::text]))),
-    CONSTRAINT instances_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'parked'::text, 'waking'::text, 'cold_booting'::text, 'running'::text, 'draining'::text, 'snapshotting'::text, 'migrating'::text, 'warm'::text, 'stopped'::text, 'failed'::text, 'evicting_account_deleting'::text, 'frozen'::text])))
 );
 
 
@@ -21002,6 +21254,76 @@ $$;
 
 
 --
+-- Name: publish_instance_on_generation(uuid, uuid, uuid, uuid, uuid, text, text, text, inet, integer, text, uuid, text, text, text, jsonb, text, text, boolean, text, timestamp with time zone, jsonb, jsonb, boolean, jsonb, jsonb, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.publish_instance_on_generation(p_instance_id uuid, p_app_id uuid, p_deployment_id uuid, p_node_id uuid, p_wake_id uuid, p_expected_state text, p_target_state text, p_netns text, p_host_ip inet, p_guest_uid integer, p_config_fingerprint text, p_environment_id uuid, p_scope text, p_secret_fingerprint text, p_event_kind text, p_event_data jsonb, p_notify_channel text, p_notify_payload text, p_record_receipt boolean, p_receipt_scope text, p_boundary_at timestamp with time zone, p_variables jsonb, p_secret_versions jsonb, p_all_secrets boolean, p_secret_refs jsonb, p_sidecar_secret_versions jsonb, p_guard_generation bigint, OUT published public.instances, OUT snapshot_backoff_recorded boolean) RETURNS record
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    receipts integer;
+    current_generation bigint;
+BEGIN
+    UPDATE instances SET netns = p_netns, host_ip = p_host_ip, guest_uid = p_guest_uid,
+           started_at = clock_timestamp(), state = p_target_state
+     WHERE id = p_instance_id AND app_id = p_app_id AND deployment_id = p_deployment_id
+       AND node_id = p_node_id AND wake_id = p_wake_id AND state = p_expected_state
+       AND p_expected_state NOT IN ('warm', 'frozen')
+    RETURNING * INTO published;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'instance is not in its admitted state'
+            USING ERRCODE = '23514', CONSTRAINT = 'instance_publication_current';
+    END IF;
+    INSERT INTO runtime_instance_config_proofs(instance_id, wake_id, node_id, deployment_id, environment_id, scope,
+                                               secret_fingerprint, config_fingerprint)
+    VALUES (published.id, published.wake_id, published.node_id, published.deployment_id, p_environment_id, p_scope,
+            p_secret_fingerprint, p_config_fingerprint)
+    ON CONFLICT (instance_id) DO UPDATE SET wake_id = excluded.wake_id, node_id = excluded.node_id,
+        deployment_id = excluded.deployment_id, environment_id = excluded.environment_id, scope = excluded.scope,
+        secret_fingerprint = excluded.secret_fingerprint, config_fingerprint = excluded.config_fingerprint;
+    IF p_event_kind IS NOT NULL THEN
+        INSERT INTO events(actor, kind, subject, data) VALUES ('schedd', p_event_kind, p_instance_id, p_event_data);
+    END IF;
+    IF p_notify_channel IS NOT NULL THEN
+        PERFORM pg_notify(p_notify_channel, p_notify_payload);
+    END IF;
+    SELECT EXISTS (SELECT 1 FROM deployments d WHERE d.id = published.deployment_id
+                     AND (d.snapshot_miss_count <> 0 OR d.snapshot_miss_last_at IS NOT NULL
+                          OR d.snapshot_miss_backoff_until IS NOT NULL))
+      INTO snapshot_backoff_recorded;
+    IF p_record_receipt THEN
+        INSERT INTO instance_runtime_config_receipts(instance_id, wake_id, scope, boundary_at, variables, secret_versions,
+                                                     all_secrets, secret_refs, sidecar_secret_versions)
+        SELECT i.id, i.wake_id, d.scope, p_boundary_at, p_variables, p_secret_versions, p_all_secrets, p_secret_refs,
+               p_sidecar_secret_versions
+          FROM instances i JOIN deployments d ON d.id = i.deployment_id
+         WHERE i.id = p_instance_id AND i.wake_id = p_wake_id AND i.state = 'running' AND d.scope = p_receipt_scope
+        FOR UPDATE OF i
+        ON CONFLICT (instance_id) DO UPDATE SET wake_id = excluded.wake_id, scope = excluded.scope,
+            boundary_at = excluded.boundary_at, variables = excluded.variables, secret_versions = excluded.secret_versions,
+            all_secrets = excluded.all_secrets, secret_refs = excluded.secret_refs,
+            sidecar_secret_versions = excluded.sidecar_secret_versions, acknowledged_at = now()
+        WHERE instance_runtime_config_receipts.wake_id <> excluded.wake_id OR
+            (instance_runtime_config_receipts.scope = excluded.scope AND instance_runtime_config_receipts.boundary_at = excluded.boundary_at
+             AND instance_runtime_config_receipts.variables = excluded.variables AND instance_runtime_config_receipts.secret_versions = excluded.secret_versions
+             AND instance_runtime_config_receipts.all_secrets = excluded.all_secrets AND instance_runtime_config_receipts.secret_refs = excluded.secret_refs
+             AND instance_runtime_config_receipts.sidecar_secret_versions = excluded.sidecar_secret_versions);
+        GET DIAGNOSTICS receipts = ROW_COUNT;
+        IF receipts <> 1 THEN
+            RAISE EXCEPTION 'runtime config receipt does not match the instance'
+                USING ERRCODE = '23514', CONSTRAINT = 'instance_runtime_config_receipt_current';
+        END IF;
+    END IF;
+    -- Taken last, after every row lock above (ADR-1741 lock order).
+    SELECT generation INTO current_generation FROM app_runtime_generations WHERE app_id = p_app_id FOR SHARE;
+    IF NOT FOUND OR current_generation <> p_guard_generation THEN
+        RAISE EXCEPTION 'app runtime generation moved'
+            USING ERRCODE = '23514', CONSTRAINT = 'app_runtime_generation_current';
+    END IF;
+END $$;
+
+
+--
 -- Name: purge_inactive_outbound_credential(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -23661,6 +23983,27 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: snapshot_restore_pressure_acquire(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.snapshot_restore_pressure_acquire(p_lock_name text) RETURNS TABLE(locked boolean, node_id text, active bigint)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NOT pg_try_advisory_lock(hashtextextended(p_lock_name, 0)) THEN
+        RETURN QUERY SELECT false, NULL::text, NULL::bigint;
+        RETURN;
+    END IF;
+    DELETE FROM snapshot_restore_pressure_leases WHERE expires_at <= now();
+    RETURN QUERY SELECT true, l.node_id::text, count(*) FROM snapshot_restore_pressure_leases l
+                  WHERE l.expires_at > now() GROUP BY l.node_id;
+    IF NOT FOUND THEN
+        RETURN QUERY SELECT true, NULL::text, NULL::bigint;
+    END IF;
+END $$;
 
 
 --
@@ -26478,6 +26821,18 @@ CREATE TABLE public.app_runtime_config_scope_changes (
     changed_at timestamp with time zone NOT NULL,
     CONSTRAINT app_runtime_config_scope_changes_changed_at_check CHECK ((changed_at >= '1970-01-01 00:00:00+00'::timestamp with time zone)),
     CONSTRAINT app_runtime_config_scope_changes_scope_check CHECK (((scope <> ''::text) AND (length(scope) <= 64)))
+);
+
+
+--
+-- Name: app_runtime_generations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_runtime_generations (
+    app_id uuid NOT NULL,
+    generation bigint DEFAULT 1 NOT NULL,
+    changed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_runtime_generations_generation_check CHECK ((generation > 0))
 );
 
 
@@ -49698,6 +50053,14 @@ ALTER TABLE ONLY public.app_runtime_config_scope_changes
 
 
 --
+-- Name: app_runtime_generations app_runtime_generations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_runtime_generations
+    ADD CONSTRAINT app_runtime_generations_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: app_scaling_policy_scheduler_status app_scaling_policy_scheduler_status_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -69366,6 +69729,125 @@ CREATE TRIGGER app_runtime_config_scope_change_lock_app BEFORE INSERT OR UPDATE 
 
 
 --
+-- Name: accounts app_runtime_generation_accounts; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_accounts AFTER UPDATE ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_accounts();
+
+
+--
+-- Name: app_application_standards app_runtime_generation_application_standards; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_application_standards AFTER INSERT OR DELETE OR UPDATE ON public.app_application_standards FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_app_row('updated_at', 'lease_owner', 'lease_generation', 'lease_until', 'observed_revision', 'observation_checked_at', 'observation_revision');
+
+
+--
+-- Name: apps app_runtime_generation_apps; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_apps AFTER INSERT OR DELETE OR UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_apps('last_scale_out_at', 'last_scale_in_at', 'last_deploy_failed_email_at', 'purge_claimed_at', 'preview_destroy_commented_at');
+
+
+--
+-- Name: app_runtime_config_changes app_runtime_generation_config_changes; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_config_changes AFTER INSERT OR DELETE OR UPDATE ON public.app_runtime_config_changes FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_app_row();
+
+
+--
+-- Name: app_runtime_config_scope_changes app_runtime_generation_config_scope_changes; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_config_scope_changes AFTER INSERT OR DELETE OR UPDATE ON public.app_runtime_config_scope_changes FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_app_row();
+
+
+--
+-- Name: deployments app_runtime_generation_deployments; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_deployments AFTER INSERT OR DELETE OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_app_row('snapshot_miss_count', 'snapshot_miss_last_at', 'snapshot_miss_backoff_until', 'first_wake_at', 'first_5xx_window_ends_at', 'first_5xx_count', 'liveness_restart_count', 'canary_step_started_at', 'runtime_upgrade_routing_token');
+
+
+--
+-- Name: deployment_runtime_environment_owners app_runtime_generation_environment_owners; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_environment_owners AFTER INSERT OR DELETE OR UPDATE ON public.deployment_runtime_environment_owners FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_deployment_row();
+
+
+--
+-- Name: app_envs app_runtime_generation_envs; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_envs AFTER INSERT OR DELETE OR UPDATE ON public.app_envs FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_app_row();
+
+
+--
+-- Name: project_environments app_runtime_generation_project_environments; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_project_environments AFTER DELETE OR UPDATE ON public.project_environments FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_project_environments();
+
+
+--
+-- Name: project_release_members app_runtime_generation_release_members; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_release_members AFTER INSERT OR DELETE OR UPDATE ON public.project_release_members FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_app_row();
+
+
+--
+-- Name: project_release_sets app_runtime_generation_release_sets; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_release_sets AFTER DELETE OR UPDATE ON public.project_release_sets FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_release_sets();
+
+
+--
+-- Name: app_secrets app_runtime_generation_secrets; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_secrets AFTER INSERT OR DELETE OR UPDATE ON public.app_secrets FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_app_row('updated_at', 'delivered_version', 'delivery_status', 'last_delivery_attempt_at', 'last_delivered_at', 'last_delivery_error_code', 'last_delivered_wake_id', 'last_delivered_instance_id', 'last_runtime_reload_version', 'last_runtime_reload_revision', 'last_runtime_reload_projection', 'last_runtime_reload_signal', 'last_runtime_reload_at', 'last_runtime_reload_error_code', 'last_runtime_reload_instance_id');
+
+
+--
+-- Name: deployment_sidecar_layers app_runtime_generation_sidecar_layers; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_sidecar_layers AFTER INSERT OR DELETE OR UPDATE ON public.deployment_sidecar_layers FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_deployment_row();
+
+
+--
+-- Name: project_environment_workload_deployment_specs app_runtime_generation_workload_deployment_specs; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_workload_deployment_specs AFTER INSERT OR DELETE OR UPDATE ON public.project_environment_workload_deployment_specs FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_deployment_row();
+
+
+--
+-- Name: project_environment_workload_heads app_runtime_generation_workload_heads; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_workload_heads AFTER INSERT OR DELETE OR UPDATE ON public.project_environment_workload_heads FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_app_row();
+
+
+--
+-- Name: environment_workload_retirements app_runtime_generation_workload_retirements; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_workload_retirements AFTER INSERT OR DELETE OR UPDATE ON public.environment_workload_retirements FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_app_row();
+
+
+--
+-- Name: project_environment_workload_specs app_runtime_generation_workload_specs; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_workload_specs AFTER INSERT OR DELETE OR UPDATE ON public.project_environment_workload_specs FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_app_row();
+
+
+--
 -- Name: app_secrets app_secret_managed_postgres_owner_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -76087,6 +76569,14 @@ ALTER TABLE ONLY public.app_runtime_config_changes
 
 ALTER TABLE ONLY public.app_runtime_config_scope_changes
     ADD CONSTRAINT app_runtime_config_scope_changes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_runtime_generations app_runtime_generations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_runtime_generations
+    ADD CONSTRAINT app_runtime_generations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

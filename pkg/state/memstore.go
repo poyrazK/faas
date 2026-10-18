@@ -14989,6 +14989,9 @@ func (m *MemStore) CreateInstance(ctx context.Context, appID, deploymentID, stat
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkRuntimeGenerationLocked(ctx); err != nil {
+		return Instance{}, err
+	}
 	if IsLive(strings.ToLower(state)) {
 		if err := m.checkNodeAdmissionLocked(ctx, nodeID); err != nil {
 			return Instance{}, err
@@ -15064,8 +15067,23 @@ func (m *MemStore) CreateInstance(ctx context.Context, appID, deploymentID, stat
 	if err := m.guardInstanceStandardRuntimeLocked(ctx, ins, true); err != nil {
 		return Instance{}, err
 	}
+	// ADR-1741: the admission binds its snapshot-recovery lineage here,
+	// as the PgStore insert does in its transaction.
+	recovery, binding := snapshotRecoveryAdmissionFrom(ctx)
+	var recoveryGeneration int64
+	if binding {
+		recovery.bound = false
+		var err error
+		if recoveryGeneration, err = m.admissionSnapshotRecoveryGenerationLocked(deploymentID, recovery.SnapshotID); err != nil {
+			return Instance{}, err
+		}
+	}
 	m.recordInstanceCapacityLocked(ins)
 	m.instances[ins.ID] = ins
+	if binding {
+		m.recordAdmissionSnapshotRecoveryLocked(ins, recovery.SnapshotID, recoveryGeneration)
+		recovery.bound = true
+	}
 	return ins, nil
 }
 
@@ -15084,6 +15102,9 @@ func (m *MemStore) CreateInstanceWithMode(ctx context.Context, appID, deployment
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkRuntimeGenerationLocked(ctx); err != nil {
+		return Instance{}, err
+	}
 	if IsLive(strings.ToLower(state)) {
 		if err := m.checkNodeAdmissionLocked(ctx, nodeID); err != nil {
 			return Instance{}, err
@@ -15138,8 +15159,23 @@ func (m *MemStore) CreateInstanceWithMode(ctx context.Context, appID, deployment
 	if err := m.guardInstanceStandardRuntimeLocked(ctx, ins, true); err != nil {
 		return Instance{}, err
 	}
+	// ADR-1741: the admission binds its snapshot-recovery lineage here,
+	// as the PgStore insert does in its transaction.
+	recovery, binding := snapshotRecoveryAdmissionFrom(ctx)
+	var recoveryGeneration int64
+	if binding {
+		recovery.bound = false
+		var err error
+		if recoveryGeneration, err = m.admissionSnapshotRecoveryGenerationLocked(deploymentID, recovery.SnapshotID); err != nil {
+			return Instance{}, err
+		}
+	}
 	m.recordInstanceCapacityLocked(ins)
 	m.instances[ins.ID] = ins
+	if binding {
+		m.recordAdmissionSnapshotRecoveryLocked(ins, recovery.SnapshotID, recoveryGeneration)
+		recovery.bound = true
+	}
 	return ins, nil
 }
 

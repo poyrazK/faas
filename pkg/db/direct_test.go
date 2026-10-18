@@ -179,6 +179,7 @@ var sessionScopedAcquire = map[string]string{
 	"pkg/db/migrate_advisory.go":                "session pg_advisory_lock held across statements",
 	"pkg/state/pgstore.go":                      "session pg_advisory_lock for the edge-rule mutation fence",
 	"pkg/state/pgstore_edge_rule_batch_lock.go": "session pg_advisory_lock for all apps in an environment policy batch",
+	"pkg/state/snapshot_restore_pressure_pg.go": "session pg_advisory_lock for the fleet-wide restore-pressure lock, taken with its counts in one call (ADR-1741)",
 }
 
 // pooledAcquireOK records Acquires that are deliberately on the ordinary
