@@ -2,7 +2,7 @@
 
 - Status: accepted for an internal experiment; activation remains disabled.
 - Date: 2026-10-16
-- Builds on: [producer outbox](20261018085141-mail-producer-outbox.md), ADR-982 apid ownership.
+- Builds on: [producer outbox](2026101601-mail-producer-outbox.md), ADR-982 apid ownership.
 
 ## Context
 

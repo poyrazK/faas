@@ -853,7 +853,7 @@ class Run:
     def compatibility_fresh(self, launch, relay, mode):
         before = relay.command(mode, True)
         with launch.open() as terminal:
-            terminal.answer("Choose [1]: ", "1")
+            terminal.expect("Using source " + str(launch.source))
             terminal.expect("temporarily unavailable" if mode == "outage" else "incompatible deployment verification support")
             terminal.wait(1)
             require("App ready" not in terminal.output and "The deployment failed" not in terminal.output,
@@ -975,7 +975,7 @@ class Run:
             history = {row["id"] for row in self.deployments(original.slug)}
             relay.command("healthy", False)
             with launch.open() as terminal:
-                terminal.answer("Choose [1]: ", "1")
+                terminal.expect("Using source " + str(launch.source))
                 terminal.answer("Deploy this app (y/N) [n]: ", "y")
                 accepted = run.accepted(terminal, launch.state, launch.slug, launch.scope, history)
                 baseline = accepted["id"]
@@ -1083,11 +1083,13 @@ class Run:
                     write_fixture(source, previous_marker or current_marker)
                     relay.command("healthy", False)
                     with launch.open() as terminal:
-                        terminal.answer("Choose [1]: ", "1")
                         if previous:
+                            terminal.answer("Choose [1]: ", "1")
                             run.verified(terminal, launch.state, launch.slug, launch.scope, previous, previous_marker)
                             write_fixture(source, current_marker)
                             terminal.answer("Choose [1]: ", "2")
+                        else:
+                            terminal.expect("Using source " + str(source))
                         terminal.expect("Deploy this app (y/N) [n]: ")
                         before = relay.command(fault, False)
                         os.write(terminal.master, b"y\n")
@@ -1227,7 +1229,7 @@ class Run:
         before = {row["id"] for row in self.deployments(slug)}
         marker = self.report["run_id"] + "-" + case + "-v1"
         with Terminal(cli, source, env) as terminal:
-            terminal.answer("Choose [1]: ", "1")
+            terminal.expect("Using source " + str(source))
             terminal.answer("Deploy this app (y/N) [n]: ", "y")
             first = self.accepted(terminal, state, slug, scope, before)
             result["accepted_ids"].append(first["id"])

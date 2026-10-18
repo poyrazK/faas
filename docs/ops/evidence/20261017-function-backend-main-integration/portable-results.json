@@ -1502,6 +1502,23 @@
     "function_host_scheduler_proto_openapi_sdk_unchanged": true,
     "fresh_hosted_current_head_checks": "required",
     "native_physical_acceptance": false,
-    "production_activation": false
+    "production_activation": false,
+    "additional_integrated_main": "88c804c71e75bd69691684a6a736b0306f7b6565",
+    "mail_decisions_adopt_published_main": [
+      "2026101501",
+      "2026101601"
+    ],
+    "internal_ci_recovery_decision_adopts_published_main": "1592",
+    "older_static_hosting_and_data_repair_citations_restored": [
+      "20261015",
+      "20261016"
+    ],
+    "daemon_restart_decision_retained": "20261018074719",
+    "adr_uniqueness": "1812 decisions,1608 distinct,164-entry baseline unchanged",
+    "generated_daemons": "pass",
+    "environment_contract": "pass",
+    "docs_links": "pass",
+    "live_docs_fixture_retry": "pass after selecting repository toolchain and granting local loopback socket permission",
+    "http_documentation_fixtures_passed": 4
   }
 }

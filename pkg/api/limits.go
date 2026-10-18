@@ -12475,7 +12475,7 @@ const CIExecutionCheckSummaryMaxBytes = 8 << 10
 // (ADR-1577, ADR-1586). Each delivery has its own lifetime budget.
 const CICheckRetryMaxGenerations = 3
 
-// Explicit recovery of a retained, never-admitted automatic source (ADR-1580).
+// Explicit recovery of a retained, never-admitted automatic source (ADR-1592).
 const CIAutomationRetryMaxGenerations = 3
 
 // Automatic runs serialize per account, binding and branch (ADR-1581).
@@ -12587,7 +12587,7 @@ const (
 	CIStorageWriterChunkBytes      = 256 << 10
 )
 
-// Internal static hosting (ADR-20261018085140). These caps bound control-plane memory,
+// Internal static hosting (ADR-20261015). These caps bound control-plane memory,
 // publication work, retained artifacts, and the edge kill-switch convergence.
 const (
 	HostingFilesMax                            = 1000

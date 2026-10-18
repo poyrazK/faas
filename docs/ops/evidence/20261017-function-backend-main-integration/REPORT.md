@@ -526,6 +526,16 @@ first affected-unit attempt used the older default Go toolchain and failed
 before executing its end-to-end cases; the rerun uses the repository's pinned
 Go toolchain. Shell fixtures stub remote execution and do not deploy.
 
+Before publication, main `88c804c71e75bd69691684a6a736b0306f7b6565`
+published its own ADR disambiguation. The merge adopts main's mail decision
+names `2026101501`/`2026101601` and internal-CI recovery decision `1592`;
+the earlier timestamp mail names remain only in historical evidence. The
+static-hosting and data-repair references in the limit and environment contract
+are restored to their original `20261015`/`20261016` decisions. The daemon
+restart decision retains `20261018074719`. No published migration is modified.
+ADR uniqueness, generated daemon configuration and environment contracts pass.
+Documentation links and all four local HTTP documentation fixtures pass.
+
 Function host/scheduler sources, protobufs, OpenAPI and SDKs are unchanged from
 the preceding worker-integration head. No assertion, policy or resource limit is
 weakened. Fresh exact-head hosted checks remain required; physical acceptance
