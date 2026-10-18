@@ -15,11 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appstandards"
 )
 
-type standardLocalIntentTestStore interface {
-	standardOperationControlTestStore
-	ApplicationStandardAutomaticMaterializationStore
-	ApplicationStandardLocalIntentStore
-}
+type standardLocalIntentTestStore = contractTestStore
 
 type standardLocalIntentFixture struct {
 	owner                   CreateAccountWithPersonalOrgResult

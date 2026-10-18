@@ -30,8 +30,13 @@ import (
 // waits before advancing to the next stage. A Duration of 0 marks
 // the terminal stage (no further advance; rollout_state flips to
 // `complete` on entry).
+//
+// MinDuration, when positive, is the earliest the stage may advance
+// on conclusive, clean circuit-breaker evidence (ADR-1321); Duration
+// stays the timer for every other case. Zero means timer only.
 type Stage struct {
 	Percent     int
+	MinDuration time.Duration
 	Duration    time.Duration
 	MirrorClean *MirrorCleanCondition
 }
@@ -50,8 +55,8 @@ func (p Preset) TotalSteps() int { return len(p.Stages) }
 
 // AllowedCanaryPresets is the closed set for the canary_preset field
 // on deployments AND the --canary-preset CLI flag. Mirrors the
-// deployments_canary_preset_chk DB constraint at migration 00487
-// (widen from migration 00480 to admit "custom"). Order matches the
+// deployments_canary_preset_chk DB constraint (migration 00518
+// admitted "custom", ADR-1321 "adaptive"). Order matches the
 // catalog above so the dashboard renders the ladder selector in a
 // stable order.
 var AllowedCanaryPresets = []string{
@@ -60,6 +65,7 @@ var AllowedCanaryPresets = []string{
 	"balanced",
 	"aggressive",
 	"1-10-50-100",
+	"adaptive",
 	// "custom" — Stages come from the deployment row's
 	// canary_stages jsonb column rather than the catalog. The
 	// catalog entry has nil Stages so a stray LookupPreset
@@ -144,6 +150,21 @@ var catalog = map[string]Preset{
 		},
 	},
 
+	// "adaptive" — the balanced ladder, paced by evidence (ADR-1321).
+	// A stage advances once the circuit breaker has conclusive, clean
+	// evidence against the serving predecessor, after at least one
+	// minute, and otherwise when its 2-minute timer ends. The default
+	// for production releases (ADR-1446) and for `deploy --safe`.
+	"adaptive": {
+		Name: "adaptive",
+		Stages: []Stage{
+			{Percent: 1, MinDuration: time.Minute, Duration: 2 * time.Minute},
+			{Percent: 10, MinDuration: time.Minute, Duration: 2 * time.Minute},
+			{Percent: 50, MinDuration: time.Minute, Duration: 2 * time.Minute},
+			{Percent: 100, Duration: 0},
+		},
+	},
+
 	// "custom" — Stages come from the deployment row's
 	// canary_stages jsonb column. The catalog entry has nil
 	// Stages because the layout is per-deployment; the apid
@@ -213,6 +234,9 @@ func (p Preset) Validate() error {
 		}
 		if s.Duration < 0 {
 			return fmt.Errorf("canary preset %q stage %d: duration %v is negative", p.Name, i, s.Duration)
+		}
+		if s.MinDuration < 0 || s.MinDuration > s.Duration {
+			return fmt.Errorf("canary preset %q stage %d: min duration %v outside [0, %v]", p.Name, i, s.MinDuration, s.Duration)
 		}
 		if s.MirrorClean != nil {
 			if s.MirrorClean.MinInvocations <= 0 {

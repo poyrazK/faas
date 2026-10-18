@@ -703,6 +703,58 @@ const RollbackOn5xxTelemetryGrace = 2 * time.Minute
 const RollbackOn5xxCheckIntervalSeconds = 15
 const RollbackOn5xxBatchSize = 100
 
+// Post-release watch (ADR-1445). For PostReleaseWatchWindow after a release
+// reaches 100%, apid compares it with its predecessor's traffic in the
+// PostReleaseWatchBaseline before the rollout started, and rolls back a
+// clear 5xx or p95 regression. Plan-independent, like ADR-625.
+const PostReleaseWatchWindow = 30 * time.Minute
+const PostReleaseWatchBaseline = 30 * time.Minute
+const PostReleaseWatchCheckIntervalSeconds = 15
+const PostReleaseWatchBatchSize = 100
+
+// Guarded, reversible config changes (ADR-1451). Each customer write to an
+// app scope's variables or secrets records a revision; apid keeps the newest
+// ConfigRevisionsRetained per scope (plus any watching guard's base). A write
+// opens or joins the scope's config guard. Its window opens on the first
+// new-config request and lasts ConfigGuardWindowMinutes; a guard that sees no
+// new-config traffic within ConfigGuardMaxWait closes as no_traffic. The
+// old-config sample is the ConfigGuardBaseline before the guard opened. The
+// failure bar reuses RollbackOn5xxMinServerErrors / RollbackOn5xxMinErrorPct.
+// Plan-independent, like the first-wake rollback.
+const ConfigRevisionsRetained = 100
+const ConfigRevisionsListMax = 100
+const ConfigGuardWindowMinutes = 10
+const ConfigGuardMaxWait = 24 * time.Hour
+const ConfigGuardBaseline = time.Hour
+const ConfigGuardCheckIntervalSeconds = 15
+const ConfigGuardBatchSize = 50
+
+// Verified rollback outcomes (ADR-1446). apid resolves each plain rollback
+// every RollbackOutcomeCheckInterval: complete once the target serves,
+// failed when it leaves activation without serving or when
+// RollbackOutcomeTimeout passes. The timeout covers a cold-boot activation
+// with the post-readiness smoke; the drill's recovery was under 10 s.
+const RollbackOutcomeCheckInterval = 5 * time.Second
+const RollbackOutcomeTimeout = 10 * time.Minute
+const RollbackOutcomeBatchSize = 100
+
+// CanaryLowTrafficMaxHold bounds how long the canary circuit breaker holds a
+// stage past its dwell time only because too few requests arrived to compare
+// the candidate with its predecessor (ADR-1446). After the bound, the stage
+// advances if no negative evidence was observed: zero candidate 5xx and a
+// readable, zero OOM-kill signal. Unavailable signals still hold indefinitely.
+// Plan-independent: it bounds a wait, it does not price anything.
+const CanaryLowTrafficMaxHold = 5 * time.Minute
+
+// Explained rollout decisions (ADR-1447). A decision record is aggregate-only
+// evidence, bounded so a malformed worker request cannot grow the deployment
+// row or its audit timeline. A held canary records its hold again only after
+// RolloutHoldRefreshInterval unless the hold's rule changes, so a long hold
+// adds at most one audit row per rule per interval.
+const RolloutDecisionMaxBytes = 2048
+const RolloutDecisionSummaryMaxBytes = 256
+const RolloutHoldRefreshInterval = 5 * time.Minute
+
 // Synchronous invoke (POST /v1/apps/{slug}/invoke) long-poll. The wait stays
 // below DefaultClientTimeout so a slow invocation answers with a 504 naming
 // the invocation rather than a client-side "could not reach Gregale".
@@ -10724,16 +10776,30 @@ const (
 // RouteHealthProbeMaxRoutes selectors and RouteHealthProbeRequestsPerMinute
 // requests per route and deployment, only while a canary is in flight.
 // Probe requests are never written to request telemetry or usage.
+//
+// Rounds are claimed once per app and minute. The worker polls every
+// RouteHealthProbePollInterval so a minute's round starts within about
+// that long of the minute (ADR-1321), and a round may take
+// RouteHealthProbeRoundTimeout. The ADR-1446 default probe sends
+// DefaultRouteProbeRequestsPerRound per deployment, the circuit breaker's
+// request floor (canary.CircuitBreakerMinRequests), so one round inside a
+// canary stage is enough evidence.
 const (
 	RouteHealthProbeMaxRoutes         = 5
 	RouteHealthProbeRequestsPerMinute = 10
+	DefaultRouteProbeRequestsPerRound = 20
 	RouteHealthProbeRequestTimeout    = 10 * time.Second
 	RouteHealthProbeChallengeTTL      = 2 * time.Minute
-	RouteHealthProbePollInterval      = time.Minute
+	RouteHealthProbePollInterval      = 15 * time.Second
+	RouteHealthProbeRoundTimeout      = 55 * time.Second
+	RouteHealthProbePruneInterval     = time.Minute
 	RouteHealthProbeRetention         = 24 * time.Hour
 	// A probe window is unknown when at least this share of responses were
 	// 401/403: customer auth gates stay in force for probes.
 	RouteHealthProbeUnauthenticatedShare = 0.5
+	// ReleaseProbePathsMax bounds an app's release_probe_paths (ADR-1449);
+	// a round splits DefaultRouteProbeRequestsPerRound across them.
+	ReleaseProbePathsMax = 3
 )
 
 // ServiceWakeAhead bounds opt-in wake-ahead along measured service edges

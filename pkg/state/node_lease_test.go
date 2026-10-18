@@ -11,10 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type nodeLeaseTestStore interface {
-	state.Store
-	state.NodeLeaseStore
-}
+type nodeLeaseTestStore = contractTestStore
 
 func leaseNode(t *testing.T, store state.Store) state.ComputeNode {
 	t.Helper()

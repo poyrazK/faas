@@ -10,11 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type cloneValueScopeStore interface {
-	state.Store
-	CloneProjectEnvironment(context.Context, state.ProjectEnvironmentClone, api.Limits) (state.ProjectEnvironment, state.ProjectEnvironmentCloneResult, error)
-	state.ProjectEnvironmentCloneValuesStore
-}
+type cloneValueScopeStore = contractTestStore
 
 func TestMemCloneCapturesEffectiveProductionValueScopes(t *testing.T) {
 	testCloneEffectiveProductionValueScopes(t, state.NewMemStore())

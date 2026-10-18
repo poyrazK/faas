@@ -173,6 +173,14 @@ export type UpdateAppRequest = {
    * Set the revision pin window in seconds; zero disables future retention. Omit for no change.
    */
   revision_pin_ttl_seconds?: number | null;
+  /**
+   * Set the default rollout for production releases (ADR-1446, ADR-1450). Omit for no change.
+   */
+  release_policy?: 'safe' | 'fast' | 'immediate';
+  /**
+   * Replace the paths the default rollout probe checks (ADR-1449). An empty list restores /. Omit for no change.
+   */
+  release_probe_paths?: any[] | null;
   min_instances?: number | null;
   /**
    * v4 or v6 CIDR allowlist; empty array clears to chain-default-accept.

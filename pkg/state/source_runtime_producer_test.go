@@ -15,12 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/buildpublisher"
 )
 
-type sourceRuntimeTestStore interface {
-	sourceRootfsTestStore
-	DeploymentRuntimeScanStore
-	DeploymentRuntimeArtifactInputStore
-	BuildExportPublicationHistoryStore
-}
+type sourceRuntimeTestStore = contractTestStore
 
 func sourceRuntimeFixture(t *testing.T, s sourceRuntimeTestStore) (sourceRootfsFixture, SourceBuildRootfs, DeploymentRuntimeProducerInputs) {
 	t.Helper()

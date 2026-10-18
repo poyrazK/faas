@@ -16,12 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type restartTestStore interface {
-	state.Store
-	state.OperatorRestartStore
-	state.AuditEventOutboxStore
-	state.HostPortLeaseStore
-}
+type restartTestStore = contractTestStore
 
 type restartFixture struct {
 	store     restartTestStore

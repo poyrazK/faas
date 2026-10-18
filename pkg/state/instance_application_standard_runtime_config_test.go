@@ -8,12 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-type standardConfigTestStore interface {
-	standardRuntimeCaptureTestStore
-	InstanceApplicationStandardConfigPublisher
-	InstanceApplicationStandardRuntimeReceiptStore
-	RuntimeConfigReceiptStore
-}
+type standardConfigTestStore = contractTestStore
 
 func TestMemApplicationStandardRuntimeConfigPublication(t *testing.T) {
 	standardRuntimeConfigPublication(t, NewMemStore())

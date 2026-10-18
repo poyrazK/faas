@@ -341,24 +341,30 @@ remote secret values or verifying their delivery.
 
 ## Safe production rollouts
 
-For a health-gated production release, use the opt-in safe path:
+A production release of an app that already serves traffic uses the
+adaptive health-gated canary and first-wake 5xx rollback by default
+([ADR-1446](../adr/1446-safe-releases-by-default.md),
+[ADR-1321](../adr/1321-evidence-paced-default-rollouts.md)); see
+[Safe by default](../deploys.md#safe-by-default). To also wait for the
+rollout to reach 100% before the command returns, use the safe path:
 
 ```bash
-gregale deploy --safe
+gregale deploy --rollout safe
 ```
 
-`--safe` selects Gregale's balanced 1% → 10% → 50% → 100% rollout, enables
+`--rollout safe` (formerly `--safe`) selects Gregale's adaptive 1% → 10% → 50% → 100% rollout, where
+each stage advances as soon as the evidence is clean after a minute, enables
 first-wake 5xx auto-rollback, and waits for the rollout to reach 100% traffic
 before returning success. The server's smoke verification, configured health
-gates, and rollback behavior remain the source of truth. Safe rollouts require
-a Pro or Scale plan, and the 5xx rollback protection cannot be disabled on a
-safe deploy.
+gates, and rollback behavior remain the source of truth. Safe rollouts are
+available on every plan, and the 5xx rollback protection cannot be disabled on
+a safe deploy.
 
 Preview the safe-release plan before uploading:
 
 ```bash
-gregale deploy --safe --dry-run
-gregale deploy --safe --dry-run --json | jq '.diff.safe_release'
+gregale deploy --rollout safe --dry-run
+gregale deploy --rollout safe --dry-run --json | jq '.diff.safe_release'
 ```
 
 The preview shows the next rollout step, the actionable alert-gate status,
@@ -375,8 +381,9 @@ gregale alerts add --app APP_ID --name release-errors \
   --webhook-secret-stdin
 ```
 
-The existing deploy default remains unchanged. For an explicitly configured
-canary, a normal deploy returns once the candidate is live; inspect or wait
+The always-on circuit breaker gates every canary even without an alert rule;
+an alert rule adds your own signal on top. Outside a terminal and without `--rollout safe`, a canary deploy
+(defaulted or explicit) returns once the candidate is live; inspect or wait
 for the full rollout with:
 
 ```bash
