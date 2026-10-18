@@ -41,6 +41,7 @@ var hopByHopHeaders = map[string]struct{}{
 // Handler is an explicit request-aware outbound gateway. A request to
 // /i/{integrationID}/path is sent only to that integration's configured origin.
 type Handler struct {
+	SimulationHandler         http.Handler
 	Resolver                  Resolver
 	Backend                   Backend
 	Client                    *http.Client
@@ -172,6 +173,14 @@ func NewHandler(resolver Resolver, backend Backend, client *http.Client) (*Handl
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if principal, ok := relayPrincipalFromContext(r.Context()); ok && principal.rehearsalRunID != "" {
+		if h.SimulationHandler == nil {
+			writeProblem(w, http.StatusServiceUnavailable, "rehearsal_simulation_unavailable", "Rehearsal simulation unavailable", "")
+			return
+		}
+		h.SimulationHandler.ServeHTTP(w, r)
+		return
+	}
 	if r.URL.Path == "/readyz" {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			writeProblem(w, http.StatusMethodNotAllowed, "outbound_method_not_allowed", "Only GET and HEAD are supported for readiness", "")
@@ -669,7 +678,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		dependencySpan.SetStatus(codes.Error, http.StatusText(resp.StatusCode))
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if !responseHeadersWithinBounds(resp.Header, h.MaxResponseHeaderBytes, h.MaxResponseHeaders) {
+	if !responseHeadersWithinBounds(resp.Header, h.MaxResponseHeaderBytes, h.MaxResponseHeaders, resp.Trailer) {
 		h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(upstreamStarted))
 		writeProblem(w, http.StatusBadGateway, "outbound_response_headers_too_large", "Outbound provider response headers exceed the gateway limit", "")
 		return
@@ -717,6 +726,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Add(k, value)
 		}
 	}
+	allowTrailers := r.Method != http.MethodHead && resp.StatusCode >= 200 && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotModified
+	if allowTrailers {
+		declareProviderTrailers(w, resp)
+	}
 	streamController := prepareStreamingResponse(ctx, w, resp.Header.Get("Content-Type"))
 	w.WriteHeader(resp.StatusCode)
 	var downstream io.Writer = w
@@ -727,13 +740,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = streamController.Flush()
 		downstream = &flushingWriter{dst: downstream, flush: streamController.Flush}
 	}
-	if _, err := io.Copy(downstream, resp.Body); err != nil {
+	_, copyErr := io.Copy(downstream, resp.Body)
+	if copyErr == nil && allowTrailers {
+		copyErr = finishProviderTrailers(w, resp, h.MaxResponseHeaderBytes, h.MaxResponseHeaders)
+	}
+	if copyErr != nil {
 		// The provider status is already committed. Returning normally would
 		// mark a truncated chunked response as a complete success. Abort the
 		// downstream stream, as ReverseProxy does on copy failures, so callers
 		// can detect the incomplete response without a second error envelope.
 		h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(upstreamStarted))
-		dependencySpan.RecordError(err)
+		dependencySpan.RecordError(copyErr)
 		dependencySpan.SetStatus(codes.Error, "incomplete provider response")
 		panic(http.ErrAbortHandler)
 	}
@@ -812,9 +829,24 @@ func (h *Handler) callerExecutionIdentity(w http.ResponseWriter, r *http.Request
 	return identity, true, true
 }
 
-func responseHeadersWithinBounds(headers http.Header, maxBytes int64, maxCount int) bool {
+func responseHeadersWithinBounds(headers http.Header, maxBytes int64, maxCount int, trailers ...http.Header) bool {
 	var totalBytes int64
 	var count int
+	for _, trailer := range trailers {
+		for name, values := range trailer {
+			// Announced trailer names have nil values until the body reaches
+			// EOF. Count those declarations as well as populated fields.
+			fields := max(1, len(values))
+			count += fields
+			totalBytes += int64(len(name)) * int64(fields)
+			for _, value := range values {
+				totalBytes += int64(len(value))
+			}
+			if (maxCount > 0 && count > maxCount) || (maxBytes > 0 && totalBytes > maxBytes) {
+				return false
+			}
+		}
+	}
 	for name, values := range headers {
 		for _, value := range values {
 			count++

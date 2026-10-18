@@ -28,9 +28,10 @@ class MCPCatalogObserverConfig:
     timeout_seconds: int = 10
     endpoint: str = "/mcp"
     secret_ref: str | Unset = UNSET
-    """App default-scope secret named secret:NAME; its current value is loaded for each check"""
+    """App secret in the connection environment named secret:NAME; its current value is loaded for each check"""
     oauth: MCPCatalogObserverOAuthConfig | Unset = UNSET
-    """Explicit OAuth refresh grant for one app and role; credentials are app default-scope secret references."""
+    """Explicit OAuth refresh grant for one app and role; credentials are app secret references in the connection
+    environment."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

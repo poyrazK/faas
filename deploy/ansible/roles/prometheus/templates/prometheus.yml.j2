@@ -23,6 +23,7 @@ storage:
 # See docs/runbooks/<AlertName>.md for triage steps per alert.
 rule_files:
   - /etc/prometheus/faas.rules.yml
+  - /etc/prometheus/data_repair.rules.yml
   # ADR-098 §9.A meterd data-upstream alerts (issue #951). The
   # prometheus role's tasks/main.yml drops this file from
   # pkg/promqlrules/data_placement.yaml — single source of truth,

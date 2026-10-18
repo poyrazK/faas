@@ -77,7 +77,12 @@ func newRouteAttemptWriter(dst http.ResponseWriter, target string, canFall bool)
 	return &routeAttemptWriter{dst: dst, header: make(http.Header), target: target, canFall: canFall}
 }
 
-func (w *routeAttemptWriter) Header() http.Header { return w.header }
+func (w *routeAttemptWriter) Header() http.Header {
+	if w.committed {
+		return w.dst.Header()
+	}
+	return w.header
+}
 
 func (w *routeAttemptWriter) WriteHeader(status int) {
 	if w.committed || w.discarded {
@@ -226,13 +231,7 @@ func (h *Handler) serveRoute(w http.ResponseWriter, r *http.Request) {
 		}
 		attempt := routeAttemptRequest(r.WithContext(ctx), target.IntegrationID, attemptPath, attemptQuery, attemptBody, replayable)
 		writer := newRouteAttemptWriter(w, target.IntegrationID, index < len(steps)-1)
-		if translator != nil {
-			translating := newTranslatingWriter(writer, translator)
-			h.ServeHTTP(translating, attempt)
-			translating.finish()
-		} else {
-			h.ServeHTTP(writer, attempt)
-		}
+		h.serveRouteAttempt(writer, attempt, translator)
 		if !writer.discarded {
 			if !writer.committed {
 				writer.WriteHeader(http.StatusOK)
@@ -245,6 +244,27 @@ func (h *Handler) serveRoute(w http.ResponseWriter, r *http.Request) {
 		}
 		h.Metrics.ObserveAIRouteFallback(reason)
 	}
+}
+
+// A retryable response is withheld while another target remains. A stream
+// abort while consuming that discarded response ends only this attempt;
+// the route can still serve a complete response from its next target.
+func (h *Handler) serveRouteAttempt(writer *routeAttemptWriter, attempt *http.Request, translator aiResponseTranslator) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			if recovered == http.ErrAbortHandler && writer.discarded && attempt.Context().Err() == nil { //nolint:errorlint // net/http recognizes this exact panic sentinel.
+				return
+			}
+			panic(recovered)
+		}
+	}()
+	if translator != nil {
+		translating := newTranslatingWriter(writer, translator)
+		h.ServeHTTP(translating, attempt)
+		translating.finish()
+		return
+	}
+	h.ServeHTTP(writer, attempt)
 }
 
 // openAIRoutePath reports whether an openai-format route can translate the

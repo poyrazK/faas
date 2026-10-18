@@ -7,6 +7,7 @@
 -- Evaluation calls settle under their own caller. Additive and replay-safe.
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 ALTER TABLE outbound_ai_usage_daily DROP CONSTRAINT IF EXISTS outbound_ai_usage_daily_caller_chk;
 ALTER TABLE outbound_ai_usage_daily ADD CONSTRAINT outbound_ai_usage_daily_caller_chk

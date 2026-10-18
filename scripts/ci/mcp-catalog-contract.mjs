@@ -30,9 +30,9 @@ for (const [role, scope] of [['reader', 'mcp:tools math:read'], ['writer', 'mcp:
     .setAudience(config.auth.resource).setIssuer(config.auth.issuer).setSubject('fixture-private-identity')
     .setExpirationTime('5m').sign(privateKey);
 }
-const methods = [], calls = [], servers = [];
+const methods = [], events = [], servers = [];
 async function serve(toolScopes) {
-  const { app, handler } = createApp({ ...config, auth: { ...config.auth, tool_scopes: toolScopes } }, { keyResolver: publicKey, log: line => calls.push(line) });
+  const { app, handler } = createApp({ ...config, auth: { ...config.auth, tool_scopes: toolScopes } }, { keyResolver: publicKey, log: line => events.push(JSON.parse(line)) });
   const server = createServer((req, res) => {
     // Observe Express's parsed request after dispatch without consuming its stream.
     res.on('finish', () => { if (req.body?.method) methods.push(req.body.method); });
@@ -126,8 +126,15 @@ try {
   await assert.rejects(workflowGate(normal, 'reader', false, 'outside/reader.lock.json', 0), 'baseline symlinks must not escape the checkout');
   assert.ok(methods.includes('server/discover') && methods.includes('tools/list') && methods.includes('initialize'));
   assert.ok(methods.every(method => ['server/discover', 'initialize', 'notifications/initialized', 'tools/list', 'resources/list', 'resources/templates/list', 'prompts/list'].includes(method)), `unexpected methods: ${methods}`);
-  assert.equal(calls.length, 0, 'catalog gates must never execute a tool callback');
-  console.log('PASS: reader/writer baselines, modern/legacy capture, strict expansion and removal gates; zero tool calls');
+  assert.ok(events.some(event => event.event === 'mcp_protocol_request'), 'catalog traffic must emit protocol observations');
+  assert.equal(events.filter(event => event.event === 'mcp_tool_call').length, 0, 'catalog gates must never execute a tool callback');
+  // A real callback is a positive control for the observation above. Protocol
+  // telemetry is emitted for catalog reads too, so counting every log line
+  // mistakes those reads for executions.
+  await command(['mcp', 'call', '--url', normal, '--tool', 'greet', '--arguments', '{"name":"catalog observation control"}', '--token-env', 'GREG_MCP_FIXTURE_TOKEN', '--json'], 0,
+    { ...process.env, GREG_MCP_FIXTURE_TOKEN: credentials.writer });
+  assert.deepEqual(events.filter(event => event.event === 'mcp_tool_call').map(event => event.tool), ['greet'], 'the observation must detect a real callback');
+  console.log('PASS: reader/writer baselines, modern/legacy capture, strict expansion and removal gates; zero gate tool calls, callback observation verified');
 } finally {
   await Promise.all(servers.map(close => close()));
   await rm(work, { recursive: true, force: true });

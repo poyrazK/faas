@@ -117,7 +117,10 @@ func (s dstSchedule) Next(t time.Time) time.Time {
 	if gap, ok := s.skippedGapFire(t, n); ok {
 		return gap
 	}
-	for i := 0; i < 4 && s.repeatsEarlierWallTime(n); i++ {
+	// A fixed minute range or list can contain every minute in the repeated
+	// hour. Advance past all of them; a fixed iteration count can return a
+	// later duplicate from the same clock change.
+	for s.repeatsEarlierWallTime(n) {
 		next := s.spec.Next(n)
 		if next.IsZero() {
 			return next

@@ -7,6 +7,7 @@
 -- call's tags. Additive and replay-safe.
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS outbound_ai_tag_usage_daily (
     integration_id uuid NOT NULL REFERENCES outbound_integrations(id) ON DELETE CASCADE,

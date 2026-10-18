@@ -318,6 +318,13 @@ Prometheus federation or a shared remote-write backend.
 | Compute metrics scrape health by node | `up{job=~"gatewayd-internal\|promtail-compute"}` | HTTP-SD downstream target reachability |
 | Compute metrics scrape duration by node | `scrape_duration_seconds{job=~"gatewayd-internal\|promtail-compute"}` | HTTP-SD downstream scrape latency |
 
+## Application worker monitoring
+
+The opt-in [prepared Node/Python worker dashboard and alert pack](../../examples/event-acknowledgment-monitoring/README.md)
+covers application worker observations, lease failures and uncertain local
+commits. Import it into the application's monitoring environment; fleet
+provisioning does not install it.
+
 ## Deferred rows
 
 - **Per-app SLO row** — the per-app p95 wake + 5xx rate are too
@@ -329,3 +336,22 @@ Prometheus federation or a shared remote-write backend.
 `docs/faas_implementation_spec.md` §12 lists every dashboard row.
 Renames must update the spec first, then the metric, then this
 dashboard — never the other way around.
+
+## `internal-ci.json` (ADR-1575)
+
+Internal CI operations dashboard, UID `faas-internal-ci`. The existing Grafana
+role provisions its byte-identical mirror. Panels use `faas_ci:*` recording
+rules from the `faas_internal_ci` group in `faas.rules.yml`, which deduplicate
+readable apid/githubd fleet snapshots. Status/count tables query current data;
+missing evidence is Unknown and historical charts preserve gaps.
+
+The dashboard covers read status, configured/observed workers, queues, Check
+and retry backlog, expired leases, global usage/headroom, managed storage bytes
+and bounded worker observations. A fresh disabled path stays quiet even with
+retained work. These are private operational observations; all CI flags ship
+off, and native compute qualification remains a separate gate.
+
+Five internal warning alerts share the
+[CI operations runbook](../../docs/runbooks/FaasInternalCIOperations.md).
+Validate rules, dashboard JSON/mirror and configuration metrics with
+`make test-ci-observability` (`PROMTOOL` can select the pinned local binary).

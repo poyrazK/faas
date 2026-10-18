@@ -171,7 +171,7 @@ SELECT EXISTS(SELECT 1 FROM mcp_oauth_retirements WHERE account_id=sqlc.arg(acco
 AND state='pending') AS busy;
 -- name: MCPOAuthRetirementClientCiphertext :one
 SELECT ciphertext FROM app_secrets WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND key=sqlc.arg(key)::text
-AND scope='default' AND managed_postgres_binding_id IS NULL AND managed_object_storage_credential_id IS NULL AND managed_credential_ref IS NULL;
+AND scope=sqlc.arg(scope)::text AND managed_postgres_binding_id IS NULL AND managed_object_storage_credential_id IS NULL AND managed_credential_ref IS NULL;
 -- name: InstallMCPOAuthRetirement :execrows
 UPDATE mcp_oauth_retirements SET payload=jsonb_set(jsonb_set(payload,'{state}','"installed"'),'{revocation}',sqlc.arg(public_phase)::jsonb)
 WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
@@ -189,7 +189,7 @@ AND views.value->'observer_status'->'oauth_flow'->>'consumed'='true'
 AND (views.value->'observer_status'->'oauth_flow'->>'expires_at')::timestamptz>now()) AS current;
 
 -- name: MCPConnectionHealthBindings :many
-SELECT jsonb_build_object('app_id',a.id,'app_slug',a.slug,'role',v.key,
+SELECT jsonb_build_object('app_id',a.id,'app_slug',a.slug,'role',v.key,'scope',COALESCE(NULLIF(v.value#>>'{config,scope}',''),'default'),
 'observer_state',v.value->'observer_status'->>'state','oauth_state',v.value->'observer_status'->'oauth'->>'state','credential_state',v.value->'oauth_lifecycle'->>'credential_state',
 'guided',COALESCE((v.value->'config'->'observer'->'oauth'->>'guided')::boolean,false),
 'enabled',COALESCE((v.value->'config'->>'enabled')::boolean,false) AND COALESCE((v.value->'config'->'observer'->>'enabled')::boolean,false),
@@ -204,7 +204,7 @@ AND v.value->'config'->'observer'->'oauth' IS NOT NULL AND v.value->'config'->'o
 ORDER BY a.id,health LIMIT sqlc.arg(source_limit)::int;
 
 -- name: MCPConnectionHealthRetirements :many
-SELECT jsonb_build_object('app_id',r.app_id,'app_slug',r.payload->>'app_slug','role',r.payload->>'role',
+SELECT jsonb_build_object('app_id',r.app_id,'app_slug',r.payload->>'app_slug','role',r.payload->>'role','scope',COALESCE(NULLIF(r.payload->>'scope',''),'default'),
 'retirement_id',r.id,'retirement_state',r.state,'retirement_reason',r.payload->>'reason','retain_until',r.retain_until,
 'next_attempt_at',r.next_attempt_at,'app_deleted',a.id IS NULL OR a.status='deleted') AS health
 FROM mcp_oauth_retirements r LEFT JOIN apps a ON a.id=r.app_id AND a.account_id=r.account_id

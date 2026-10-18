@@ -4,6 +4,7 @@
 -- second and rolled up in seconds. Additive and replay-safe.
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 ALTER TABLE outbound_integrations
     ADD COLUMN IF NOT EXISTS ai_allow_unmetered boolean NOT NULL DEFAULT false;

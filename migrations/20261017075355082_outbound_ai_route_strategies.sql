@@ -4,6 +4,7 @@
 -- and a cost route may name a latency target. Additive and replay-safe.
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 ALTER TABLE outbound_ai_routes
     ADD COLUMN IF NOT EXISTS strategy text NOT NULL DEFAULT 'ordered',

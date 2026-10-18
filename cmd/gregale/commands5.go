@@ -777,7 +777,8 @@ const appScaleUsage = "usage: gregale app <slug> scale [--interactive | --plan [
 // Uses the same fs.Visit pattern so 0 is distinguishable from "unset".
 func cmdAppScale(slug string, args []string) int {
 	if hasHelpFlag(args) {
-		PrintUsage(osStdout, appScaleUsage, "apps")
+		command, _ := lookupCliCommand("app")
+		printManifestHelp(osStdout, command, append([]string{slug, "scale"}, args...))
 		return 0
 	}
 	fs := newFlagSet("app scale", flag.ContinueOnError)
@@ -1103,6 +1104,8 @@ func cmdAppDispatch(args []string) int {
 		switch args[1] {
 		case subHealth:
 			return cmdAppHealth(slug, args[2:])
+		case subChanges:
+			return cmdAppChanges(slug, args[2:])
 		case subScale:
 			return cmdAppScale(slug, args[2:])
 		case "costs":

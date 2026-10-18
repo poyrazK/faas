@@ -5,6 +5,7 @@
 -- replay-safe.
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 ALTER TABLE outbound_integrations ADD COLUMN IF NOT EXISTS ai_auto_prompt_cache boolean NOT NULL DEFAULT false;
 

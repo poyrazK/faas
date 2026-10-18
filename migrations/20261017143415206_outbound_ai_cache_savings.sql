@@ -5,6 +5,7 @@
 -- is negative when cache writes outweigh reads. Additive and replay-safe.
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 ALTER TABLE outbound_ai_usage_daily
     ADD COLUMN IF NOT EXISTS cached_requests bigint NOT NULL DEFAULT 0,

@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
@@ -96,6 +97,11 @@ func (p *Provider) ProbeDataAPICredentials(ctx context.Context, id string) (evid
 }
 
 func verifyDataAPIProbe(ctx context.Context, conn, migration *pgx.Conn, owner, fixture string) error {
+	var statementMS, lockMS int
+	if err := conn.QueryRow(ctx, `SELECT (extract(epoch FROM current_setting('statement_timeout')::interval)*1000)::int,
+ (extract(epoch FROM current_setting('lock_timeout')::interval)*1000)::int`).Scan(&statementMS, &lockMS); err != nil || statementMS != api.DataAPIQueryTimeoutMS || lockMS != api.DataAPILockTimeoutMS {
+		return managedpostgres.ErrUnavailable
+	}
 	table := "api." + roleIdentifier(fixture)
 	for _, query := range []string{
 		"CREATE TABLE public." + roleIdentifier(fixture) + " (secret text)",

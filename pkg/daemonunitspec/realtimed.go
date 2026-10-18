@@ -10,17 +10,26 @@ func UnitRealtimed() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description:   "onebox-faas realtimed — managed realtime connection owner",
 		Documentation: "https://gregale.dev/docs/ops/realtime",
-		After:         []string{"faas-cp.slice", "faas-vmmd.service"},
-		Wants:         []string{"faas-cp.slice", "faas-vmmd.service"},
+		// faas-realtimed.socket is opt-in with gatewayd-internal's
+		// (faas_compute_durable_listeners, ADR-1580).
+		After: []string{"faas-cp.slice", "faas-vmmd.service"},
+		Wants: []string{"faas-cp.slice", "faas-vmmd.service"},
 
-		Type:       "simple",
-		User:       "faas",
-		Group:      "faas",
-		ExecStart:  "/opt/faas/current/bin/realtimed",
-		Restart:    "on-failure",
-		RestartSec: "2s",
-		Slice:      FaasCPSlice,
-		MemoryMax:  "512M",
+		// Type=notify lets `systemctl reload` hand off to a second
+		// generation, which becomes the main process once ready (ADR-1580).
+		Type:         "notify",
+		NotifyAccess: "main",
+		ExecReload:   handoffReload,
+		OOMPolicy:    "continue",
+		User:         "faas",
+		Group:        "faas",
+		ExecStart:    "/opt/faas/current/bin/realtimed",
+		Restart:      "on-failure",
+		RestartSec:   "2s",
+		Slice:        FaasCPSlice,
+		MemoryMax:    "512M",
+		// A notify unit pings the watchdog from a live main loop (ADR-190).
+		WatchdogSec: "60s",
 
 		EnvironmentFile: "-/etc/faas/secrets/realtimed/realtimed.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{

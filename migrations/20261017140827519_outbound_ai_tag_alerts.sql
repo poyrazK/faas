@@ -5,6 +5,7 @@
 -- tag. Replay-safe: the check and the index are dropped and created again.
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 ALTER TABLE outbound_ai_budget_alerts ADD COLUMN IF NOT EXISTS tag text;
 
@@ -24,6 +25,8 @@ BEGIN
 END
 $$;
 
+-- migration-lint: allow index-build outbound_ai_budget_alerts: one row per budget threshold crossed per period, and no prod
+-- account has the AI gateway release gate on, so the table is empty there and the build is instant.
 DROP INDEX IF EXISTS outbound_ai_budget_alerts_once_idx;
 CREATE UNIQUE INDEX outbound_ai_budget_alerts_once_idx ON outbound_ai_budget_alerts
     (integration_id, budget, COALESCE(app_id, '00000000-0000-0000-0000-000000000000'::uuid), COALESCE(end_user, ''),

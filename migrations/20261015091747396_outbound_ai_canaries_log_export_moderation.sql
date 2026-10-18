@@ -7,6 +7,7 @@
 -- settle under their own caller. Additive and replay-safe.
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 ALTER TABLE outbound_integrations
     ADD COLUMN IF NOT EXISTS ai_log_export boolean NOT NULL DEFAULT false,

@@ -18,10 +18,12 @@ import (
 
 func cmdDataAPI(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale data-api <create|types|diff|check|refresh|sync|status|health|replay|diagnostics|dev|install|onboard|migration|fixture|explain|verify|transaction>", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api <create|types|diff|check|refresh|sync|status|rotation|health|replay|diagnostics|dev|install|onboard|migration|fixture|explain|verify|transaction>", "data-api")
 		return 1
 	}
 	switch args[0] {
+	case "rotation":
+		return cmdDataAPIRotation(args[1:])
 	case "health":
 		return cmdDataAPIHealth(args[1:])
 	case "transaction":
@@ -59,7 +61,7 @@ func cmdDataAPI(args []string) int {
 	case "sync":
 		return cmdDataAPISync(args[1:])
 	default:
-		return printErr("Unknown Data API command", fmt.Errorf("use create, types, diff, refresh, sync, status, health, replay, diagnostics, check, dev, install, onboard, migration, fixture, explain, verify or transaction"))
+		return printErr("Unknown Data API command", fmt.Errorf("use create, types, diff, refresh, sync, status, rotation, health, replay, diagnostics, check, dev, install, onboard, migration, fixture, explain, verify or transaction"))
 	}
 }
 
@@ -133,7 +135,7 @@ func cmdDataAPICreate(args []string) int {
 	audience := fs.String("audience", "", "required application JWT audience")
 	origins := fs.String("origins", "", "comma-separated allowed browser origins")
 	resume := fs.Bool("resume", false, "resume configuration and deployment of an existing app")
-	authApp := fs.String("auth", "", "Auth app whose tokens to verify (replaces --issuer, --jwks-url and --audience)")
+	authApp := unreleasedStringFlag(fs, "auth", "Auth app whose tokens to verify (replaces --issuer, --jwks-url and --audience)")
 	if err := fs.Parse(normalizeDataAPITypeArgs(args)); err != nil {
 		return 1
 	}
@@ -142,7 +144,7 @@ func cmdDataAPICreate(args []string) int {
 		return printErr("Invalid flags", errors.New("--auth replaces --issuer, --jwks-url and --audience; pass one or the other"))
 	}
 	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || *database == "" || *schema != "api" || api.ValidateScope(*scope) != nil || (*authApp == "" && !explicitIssuer) {
-		PrintUsage(os.Stderr, "usage: gregale data-api create NAME --database DATABASE (--auth AUTH_APP | --issuer HTTPS_URL --jwks-url HTTPS_URL --audience AUDIENCE) [--scope SCOPE] [--origins ORIGINS]", "data-api")
+		PrintUsage(os.Stderr, dataAPICreateUsage(), "data-api")
 		return 1
 	}
 	for _, origin := range strings.Split(*origins, ",") {

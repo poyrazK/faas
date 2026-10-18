@@ -26,6 +26,9 @@ func multipartBeforeRequest(ctx context.Context, r MultipartCompleteRequest) err
 
 func (p *S3) CompleteMultipartWithResult(ctx context.Context, bucket string, r MultipartCompleteRequest, c ObjectWriteConditions) (MultipartCompletionResult, error) {
 	result := MultipartCompletionResult{RecoveryCursor: r.RecoveryCursor}
+	if p.ownedNodeReceipts && (ownedMultipartID(r.SessionID) != r.ProviderUploadID || r.Encryption != nil || !capturedWriteProtection(ctx).Empty()) {
+		return result, ErrConfiguration
+	}
 	if r.Encryption != nil {
 		if err := p.verifyEncryption(*r.Encryption); err != nil {
 			return result, err
@@ -35,10 +38,23 @@ func (p *S3) CompleteMultipartWithResult(ctx context.Context, bucket string, r M
 	if err != nil {
 		return result, err
 	}
+	if p.ownedNodeReceipts && r.Recovering {
+		proof, found, probeErr := p.confirmOwnedMultipart(ctx, bucket, r, c)
+		if found || probeErr != nil {
+			return proof, probeErr
+		}
+	}
 	if err = multipartBeforeRequest(ctx, r); err != nil {
 		return result, err
 	}
 	out, err := p.client.CompleteMultipartUpload(ctx, in, func(o *s3.Options) { o.RetryMaxAttempts = 1 })
+	if err != nil && p.ownedNodeReceipts {
+		proof, found, probeErr := p.confirmOwnedMultipart(ctx, bucket, r, c)
+		if found || probeErr != nil {
+			return proof, probeErr
+		}
+		return result, ErrUnavailable
+	}
 	if err == nil {
 		if out != nil {
 			if response, ok := awsmiddleware.GetRawResponse(out.ResultMetadata).(*smithyhttp.Response); ok && response != nil && response.Response != nil {

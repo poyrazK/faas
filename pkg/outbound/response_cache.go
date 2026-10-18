@@ -29,6 +29,7 @@ type outboundCacheEntry struct {
 	key       string
 	status    int
 	header    http.Header
+	trailer   http.Header
 	body      []byte
 	content   int64
 	storedAt  time.Time
@@ -89,12 +90,16 @@ func (c *outboundResponseCache) key(integrationID, appID string, policyRevision 
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	// Length-prefix the header collections as well as their strings. Empty
+	// field values are valid, so an empty-string terminator would let values
+	// in one header impersonate a separate header, including Authorization.
+	writeCacheKeyPart(mac, strconv.Itoa(len(names)))
 	for _, name := range names {
 		writeCacheKeyPart(mac, name)
+		writeCacheKeyPart(mac, strconv.Itoa(len(headerValues[name])))
 		for _, value := range headerValues[name] {
 			writeCacheKeyPart(mac, value)
 		}
-		writeCacheKeyPart(mac, "")
 	}
 	return hex.EncodeToString(mac.Sum(nil))
 }
@@ -123,8 +128,10 @@ func outboundCacheRequestEligible(req *http.Request, ttlSeconds int) bool {
 }
 
 func requestCacheControlDisablesCaching(header http.Header) bool {
-	if strings.Contains(strings.ToLower(header.Get("Pragma")), "no-cache") {
-		return true
+	for _, value := range header.Values("Pragma") {
+		if strings.Contains(strings.ToLower(value), "no-cache") {
+			return true
+		}
 	}
 	directives := parseCacheControl(header.Values("Cache-Control"))
 	if _, ok := directives["no-store"]; ok {
@@ -153,6 +160,13 @@ func parseCacheControl(values []string) map[string]string {
 			if name == "" {
 				continue
 			}
+			if _, duplicate := directives[name]; duplicate {
+				// A later freshness value cannot override an earlier expiry.
+				// Keep the directive present, but invalidate its argument so
+				// duplicate max-age/s-maxage values cannot produce a fresh hit.
+				directives[name] = ""
+				continue
+			}
 			if hasArgument {
 				argument = strings.Trim(strings.TrimSpace(argument), `"`)
 				directives[name] = argument
@@ -165,7 +179,7 @@ func parseCacheControl(values []string) map[string]string {
 }
 
 func outboundResponseFreshness(resp *http.Response, configuredTTL time.Duration, now time.Time) (time.Duration, time.Duration, bool) {
-	if resp == nil || resp.StatusCode != http.StatusOK || configuredTTL <= 0 || resp.Header == nil || len(resp.Header.Values("Set-Cookie")) != 0 {
+	if resp == nil || resp.StatusCode != http.StatusOK || configuredTTL <= 0 || resp.Header == nil || len(resp.Header.Values("Set-Cookie")) != 0 || len(resp.Trailer.Values("Set-Cookie")) != 0 {
 		return 0, 0, false
 	}
 	for _, value := range resp.Header.Values("Vary") {
@@ -268,13 +282,14 @@ func (c *outboundResponseCache) get(key string, now time.Time) (*http.Response, 
 	return &http.Response{
 		StatusCode:    entry.status,
 		Header:        header,
+		Trailer:       entry.trailer.Clone(),
 		Body:          io.NopCloser(bytes.NewReader(body)),
 		ContentLength: entry.content,
 	}, true
 }
 
 func (c *outboundResponseCache) storeResponse(key string, resp *http.Response, ttlSeconds int, now time.Time, maxHeaderBytes int64, maxHeaders int, maxResponseBytes int64) {
-	if c == nil || key == "" || resp == nil || ttlSeconds <= 0 || !responseHeadersWithinBounds(resp.Header, maxHeaderBytes, maxHeaders) {
+	if c == nil || key == "" || resp == nil || ttlSeconds <= 0 || !responseHeadersWithinBounds(resp.Header, maxHeaderBytes, maxHeaders, resp.Trailer) {
 		return
 	}
 	configuredTTL := time.Duration(ttlSeconds) * time.Second
@@ -313,6 +328,11 @@ func (c *outboundResponseCache) storeResponse(key string, resp *http.Response, t
 	}
 	_ = originalBody.Close()
 	resp.Body = io.NopCloser(bytes.NewReader(body))
+	// Trailers become available only after EOF. They must satisfy the
+	// same metadata budget and cookie privacy rule before publication.
+	if !responseHeadersWithinBounds(resp.Header, maxHeaderBytes, maxHeaders, resp.Trailer) || len(resp.Trailer.Values("Set-Cookie")) != 0 {
+		return
+	}
 	storedAt := time.Now()
 	expiresAt := now.Add(remaining)
 	if !expiresAt.After(storedAt) {
@@ -322,13 +342,14 @@ func (c *outboundResponseCache) storeResponse(key string, resp *http.Response, t
 		key:       key,
 		status:    resp.StatusCode,
 		header:    cacheSafeResponseHeaders(resp.Header),
+		trailer:   providerResponseTrailers(resp),
 		body:      body,
 		content:   resp.ContentLength,
 		storedAt:  now,
 		expiresAt: expiresAt,
 		originAge: originAge,
 	}
-	entry.bytes = int64(len(key)+len(body)+128) + responseHeaderSize(entry.header)
+	entry.bytes = int64(len(key)+len(body)+128) + responseHeaderSize(entry.header) + responseHeaderSize(entry.trailer)
 	c.put(entry)
 }
 
@@ -440,6 +461,9 @@ func cacheSafeResponseHeaders(header http.Header) http.Header {
 func responseHeaderSize(header http.Header) int64 {
 	var size int64
 	for name, values := range header {
+		if len(values) == 0 {
+			size += int64(len(name))
+		}
 		for _, value := range values {
 			size += int64(len(name) + len(value))
 		}

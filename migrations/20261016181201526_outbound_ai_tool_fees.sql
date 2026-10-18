@@ -4,6 +4,7 @@
 -- rollup counts them. Additive and replay-safe.
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 ALTER TABLE outbound_ai_price_entries
     ADD COLUMN IF NOT EXISTS millicents_per_web_search bigint,

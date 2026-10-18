@@ -151,8 +151,17 @@ func (c *cacheWriter) excludeManagedVersionCookie(value string) {
 // same connection).
 func (c *cacheWriter) WriteHeader(code int) {
 	if c.headerOK {
-		// stdlib contract: WriteHeader after a previous WriteHeader
-		// is a no-op. Mirror that here.
+		// A final status has already been chosen.
+		return
+	}
+	if isInformationalStatus(code) {
+		header := c.Header().Clone()
+		for key := range header {
+			if strings.EqualFold(key, "Cache-Tag") {
+				delete(header, key)
+			}
+		}
+		writeInformationalResponse(c.ResponseWriter, code, header)
 		return
 	}
 	c.status = code
@@ -229,7 +238,14 @@ func (c *cacheWriter) Write(b []byte) (int, error) {
 		}
 	}
 	c.wroteBody = true
-	return c.ResponseWriter.Write(b)
+	n, err := c.ResponseWriter.Write(b)
+	if err != nil || n != len(b) {
+		// A failed downstream write can stop the upstream copy early. Never
+		// publish its buffered prefix, even if a later write succeeds.
+		c.buf.Reset()
+		c.bypass = true
+	}
+	return n, err
 }
 
 // Flush forwards so a streaming upstream calling Flush on the
@@ -286,15 +302,8 @@ func (c *cacheWriter) shouldStore() bool {
 	default:
 		return false
 	}
-	if len(c.header.Values("Set-Cookie")) != 0 {
+	if responseForbidsSharedCaching(c.header) {
 		return false
-	}
-	cc := c.header.Get("Cache-Control")
-	if cc != "" {
-		low := strings.ToLower(cc)
-		if strings.Contains(low, "no-store") || strings.Contains(low, "private") {
-			return false
-		}
 	}
 	return c.varyCoveredByKey()
 }

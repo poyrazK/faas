@@ -305,7 +305,75 @@ func finishMCPDeployWithSmoke(ctx context.Context, c *Client, slug, id string, c
 		}
 		receipt["promotion_error"] = protocolErr
 	}
-	if report.OK && pinErr == nil && protocolQualification.Qualified {
+	var readiness []map[string]any
+	ready := true
+	for _, role := range protocolRoles {
+		version := mcphosting.ProtocolVersion
+		var baseline *mcphosting.Contract
+		if role.contract.Version != 0 {
+			baseline = &role.contract
+			version = role.contract.ProtocolVersion
+		}
+		publicProbe, probeErr := mcphosting.NewClient(candidate, role.token, version)
+		if probeErr != nil {
+			ready = false
+			continue
+		}
+		result := mcphosting.CheckReadiness(probeCtx, publicProbe, baseline)
+		readiness = append(readiness, map[string]any{"role": role.Name, "deployment_id": id, "report": result})
+		ready = ready && result.OK
+	}
+	receipt["readiness"] = readiness
+	if !ready {
+		receipt["promotion_error"] = "Public MCP readiness failed; candidate remains unpromoted"
+	}
+	if report.OK && pinErr == nil && protocolQualification.Qualified && ready {
+		deployment, policyErr := c.GetDeployment(ctx, id)
+		var policy api.MCPReadinessPolicy
+		if policyErr == nil {
+			if deployment.Scope == "" || deployment.Scope == api.DefaultEnvScope {
+				policy, policyErr = c.GetMCPReadinessPolicy(ctx, slug)
+			} else {
+				policy, policyErr = c.GetMCPReadinessPolicy(ctx, slug, deployment.Scope)
+			}
+		}
+		if policyErr != nil {
+			ready = false
+			receipt["promotion_error"] = "Platform readiness policy unavailable"
+		} else if policy.Enabled {
+			stored := []api.MCPReadinessEvidence{}
+			for _, required := range policy.Roles {
+				matched := false
+				for _, role := range protocolRoles {
+					if role.Name != required.Name {
+						continue
+					}
+					matched = true
+					token := role.token
+					if required.Monitor.ManagedOAuth() {
+						token = ""
+					}
+					evidence, e := c.ProbeMCPReadiness(ctx, id, required.Name, token)
+					if e != nil || !evidence.Passed || evidence.DeploymentID != id || evidence.Role != required.Name || evidence.PolicyRevision != policy.Revision {
+						ready = false
+						break
+					}
+					stored = append(stored, evidence)
+				}
+				if !matched {
+					ready = false
+				}
+				if !ready {
+					break
+				}
+			}
+			receipt["platform_readiness"] = stored
+			if !ready {
+				receipt["promotion_error"] = "Fresh platform readiness evidence required for every configured role"
+			}
+		}
+	}
+	if report.OK && pinErr == nil && protocolQualification.Qualified && ready {
 		if catalogHealth.Supported && !catalogHealth.Healthy {
 			receipt["promotion_error"] = fmt.Sprintf("catalog health check failed: %s", catalogHealth.Error)
 		} else {

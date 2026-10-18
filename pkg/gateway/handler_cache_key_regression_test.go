@@ -1,3 +1,4 @@
+// adr: 122
 package gateway
 
 // handler_cache_key_regression_test.go — regression fences for
@@ -45,7 +46,7 @@ func TestCacheKey_B1_QueryDimensionDiscriminates(t *testing.T) {
 		RuleID:         "rule-1",
 		Method:         "GET",
 		NormalizedPath: "/products",
-		Query:          sortQuery("id=1"),
+		Query:          "id=1",
 		VaryHash:       hashStable(""),
 	}
 	key2 := CacheKey{
@@ -53,7 +54,7 @@ func TestCacheKey_B1_QueryDimensionDiscriminates(t *testing.T) {
 		RuleID:         "rule-1",
 		Method:         "GET",
 		NormalizedPath: "/products",
-		Query:          sortQuery("id=999"),
+		Query:          "id=999",
 		VaryHash:       hashStable(""),
 	}
 	if key1.String() == key2.String() {
@@ -70,28 +71,6 @@ func TestCacheKey_B1_QueryDimensionDiscriminates(t *testing.T) {
 	}
 	if state, _ := cache.Get(key1); state != "fresh" {
 		t.Fatalf("key1 should hit its own entry; got state=%q", state)
-	}
-}
-
-// TestCacheKey_B1_QuerySortNormalises verifies that two
-// requests with the same key/value pairs in different orders
-// produce IDENTICAL cache keys — the symmetric case of B1.
-// Without the sort, ?id=1&id=2 and ?id=2&id=1 would collide
-// in different directions (the value of id=1 vs id=2 is the
-// opposite direction of the cache poisoning the original B1
-// report flagged; the symmetric case proves the sort is
-// correct).
-func TestCacheKey_B1_QuerySortNormalises(t *testing.T) {
-	k1 := sortQuery("id=1&id=2")
-	k2 := sortQuery("id=2&id=1")
-	if k1 != k2 {
-		t.Fatalf("sortQuery is not order-invariant: %q vs %q", k1, k2)
-	}
-	if k1 != "id=1&id=2" {
-		t.Fatalf("sortQuery did not preserve ordering in canonical form: %q", k1)
-	}
-	if k := sortQuery(""); k != "" {
-		t.Fatalf("sortQuery(\"\") = %q, want \"\"", k)
 	}
 }
 

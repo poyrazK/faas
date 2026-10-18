@@ -7,6 +7,7 @@
 -- and replay-safe.
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 ALTER TABLE outbound_integrations
     ADD COLUMN IF NOT EXISTS ai_response_email text NOT NULL DEFAULT 'off',
