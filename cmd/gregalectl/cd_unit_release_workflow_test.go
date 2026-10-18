@@ -107,9 +107,64 @@ func TestUnitLaneRestartsOnlyPlannedServicesOverTheExpectedRelease(t *testing.T)
 		"unit-release-verify.sh ${release_dir}${specs}",
 		"deployctl rollback --only '${only}'",
 	)
-	for _, forbidden := range []string{"migrate", "converge-control-plane", "kgv rotate", "fleet-seal"} {
+	for _, forbidden := range []string{"converge-control-plane", "kgv rotate", "fleet-seal"} {
 		if strings.Contains(helper, forbidden) {
 			t.Errorf("the unit lanes must leave %q to the full lane", forbidden)
+		}
+	}
+}
+
+// TestUnitLaneMigratesOnlyThroughDeployctl: the data step
+// (docs/adr/20261018084150-unit-lane-expand-migrations.md) stages the signed
+// release's tools/migrate as the overlay's bin/migrate, only when the plan
+// replaces it, and leaves running it to `deployctl deploy`, which migrates
+// before it activates or restarts anything (pkg/deploycontroller:
+// TestDeployActivatesVerifiedRelease, TestDeployStopsBeforeActivationWhenMigrationFails).
+// The helper itself never runs a migration or reaches the database: there is
+// no second migration runner.
+func TestUnitLaneMigratesOnlyThroughDeployctl(t *testing.T) {
+	helper := readRepoFile(t, "scripts", "ci", "unit_deploy.sh")
+	var migrateLines []string
+	for _, line := range strings.Split(helper, "\n") {
+		code := strings.TrimSpace(line)
+		if strings.HasPrefix(code, "#") {
+			continue
+		}
+		for _, forbidden := range []string{"DATABASE_URL", "goose", "psql", "MigrateUp", "migrate -", "/bin/migrate\" ", "bin/migrate;"} {
+			if strings.Contains(code, forbidden) {
+				t.Errorf("unit_deploy.sh runs a migration itself (%q): %s", forbidden, code)
+			}
+		}
+		if strings.Contains(code, "migrate") {
+			migrateLines = append(migrateLines, code)
+		}
+	}
+	want := []string{
+		`if jq -e '.replace["bin/migrate"]' "$plan" >/dev/null; then`,
+		`install -m 0755 "$units/tools/migrate" "$local_stage/bin/migrate"`,
+	}
+	if strings.Join(migrateLines, "\n") != strings.Join(want, "\n") {
+		t.Errorf("unit_deploy.sh may only stage tools/migrate as bin/migrate when the plan replaces it; migrate lines:\n%s",
+			strings.Join(migrateLines, "\n"))
+	}
+	// The staged bin/migrate reaches the release only through the overlay,
+	// which deployctl deploy activates (migrating first) before any unit
+	// is verified or rolled back.
+	orderedIn(t, "unit_deploy.sh stage and activation", helper,
+		`install -m 0755 "$units/tools/migrate" "$local_stage/bin/migrate"`,
+		"deployctl unit-overlay --release-id ${release_id}",
+		"deployctl deploy --only '${only}' --expect-current ${expect} ${release_id}",
+		"unit-release-verify.sh ${release_dir}${specs}",
+	)
+	for _, job := range []struct{ file, name string }{
+		{"cd-controlplane.yml", "deploy-units"},
+		{"cd-edge-node.yml", "deploy"},
+	} {
+		block := jobBlock(t, readWorkflow(t, job.file), job.name)
+		for _, forbidden := range []string{"bin/migrate", "DATABASE_URL", "goose", "migrate -"} {
+			if strings.Contains(block, forbidden) {
+				t.Errorf("%s %s must leave migrations to deployctl deploy: found %q", job.file, job.name, forbidden)
+			}
 		}
 	}
 }

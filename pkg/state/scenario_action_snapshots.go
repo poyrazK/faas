@@ -43,7 +43,7 @@ func finalizeScenarioActionSnapshot(snapshot *api.ScenarioActionSnapshot, summar
 		snapshot.Truncated = true
 	}
 	switch {
-	case summary.pending > 0 || snapshot.PendingSimulationAttempts > 0 || snapshot.PendingRecorderSessions > 0:
+	case summary.pending > 0 || snapshot.PendingSimulationAttempts > 0 || snapshot.PendingRecorderSessions > 0 || snapshot.ManagedWork != nil && snapshot.ManagedWork.Status == "pending":
 		snapshot.Status, snapshot.Reason = "pending", "managed work, simulated requests or recorder closing acknowledgements are still pending"
 		return nil
 	case snapshot.SuspendResume != nil && snapshot.SuspendResume.Status != "complete":
