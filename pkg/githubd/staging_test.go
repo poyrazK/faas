@@ -1,3 +1,4 @@
+// adr: 050
 // staging_test.go — tests for repository staging (issue #432
 // phase 5 review follow-up).
 //
@@ -14,12 +15,10 @@
 //   - happy path: non-empty RootDir rebases entries to "/"
 //   - workspace path: root manifests and sibling packages retain their
 //     repository-relative names
-//   - regular files vs symlinks (skip-symlink is the default; symlinks
-//     are NOT followed via fs.SkipDir behavior because InfoHeader
-//     fails on them)
+//   - an unsupported symlink fixture fails without publishing a partial archive
 //   - missing RootDir under the FS returns an error
 //   - ctx cancellation mid-walk returns ctx.Err() and the partial
-//     tarball is unlinked (the staging caller does this defensively)
+//     temporary tarball is unlinked
 //   - body correctness: re-decode the tarball and verify file bytes
 //     match the input map
 //   - directory entries are present (builderd's detector walks the
@@ -35,7 +34,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"testing/fstest"
 )
@@ -216,30 +214,23 @@ func TestRepackageRootTree_MissingRootDir_ReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatalf("RepackageRootTree on missing rootDir: expected error, got nil")
 	}
-	// The dst must be unlinked (the defer in stageAppSource does
-	// this; the helper itself leaves the file open until Close).
-	// We don't enforce it here because the helper's invariant is
-	// "return error on walk failure", not "unlink on error" —
-	// the caller does the cleanup.
+	if _, err := os.Stat(dst); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("failed repackaging published an archive: %v", err)
+	}
 }
 
 func TestRepackageRootTree_ContextCanceled(t *testing.T) {
-	// Cancellation between files returns ctx.Err(). The
-	// stageAppSource wrapper unlinks the partial tarball in this
-	// case (staging.go:86-89); the helper itself returns the
-	// error and the caller is responsible.
+	// Cancellation between files returns ctx.Err() without publishing an
+	// incomplete archive.
 	src := stagingFixture()
 	dst := filepath.Join(t.TempDir(), "source.tar.gz")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // pre-cancel so the first walk iter observes it
-	if err := RepackageRootTree(ctx, src, "", dst); err == nil {
-		t.Fatalf("RepackageRootTree on pre-cancelled ctx: expected error, got nil")
-	} else if !strings.Contains(err.Error(), context.Canceled.Error()) {
-		// The walk returns ctx.Err() verbatim; the test
-		// asserts the chain propagates it (errors.Is would
-		// also work, but the wrapper in stageAppSource
-		// rewrites the message; keep the assertion loose).
-		t.Logf("RepackageRootTree on cancelled ctx returned: %v (acceptable)", err)
+	if err := RepackageRootTree(ctx, src, "", dst); !errors.Is(err, context.Canceled) {
+		t.Fatalf("RepackageRootTree on canceled ctx: got %v, want context.Canceled", err)
+	}
+	if _, err := os.Stat(dst); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("canceled repackaging published an archive: %v", err)
 	}
 }
 
@@ -283,33 +274,19 @@ func TestRepackageRootTree_SubdirectoriesIncluded(t *testing.T) {
 	}
 }
 
-func TestRepackageRootTree_SymlinkSkipped(t *testing.T) {
-	// Symlinks in the source tree are surfaced via the walk
-	// callback's err argument — the walker descends into them
-	// only if the underlying FS implements Open on the symlink.
-	// The MapFS implementation does not, so the Walk callback
-	// either receives an error (abort) or fs.SkipDir (skip).
-	// Pin the contract: if the helper returns an error, the
-	// partial tarball MUST be unlinked. The wrapper at
-	// staging.go:86-89 enforces this with an explicit
-	// os.Remove; the helper itself is allowed to leave a
-	// partial file behind (the next caller wraps the call).
-	//
-	// This test verifies the wrapper path end-to-end by
-	// exercising the helper and then simulating the wrapper's
-	// cleanup semantics.
+func TestRepackageRootTree_UnsupportedEntryLeavesNoArchive(t *testing.T) {
+	// This FS exposes a nonempty body for a symlink entry, which the tar
+	// writer rejects. The helper must clean up its own partial archive.
 	src := fstest.MapFS{
 		"app.go": &fstest.MapFile{Data: []byte("app\n")},
 		"link":   &fstest.MapFile{Mode: fs.ModeSymlink, Data: []byte("app.go")},
 	}
 	dst := filepath.Join(t.TempDir(), "source.tar.gz")
-	_ = RepackageRootTree(context.Background(), src, "", dst)
-	// Simulate the wrapper's contract: on error, unlink.
-	if _, err := os.Stat(dst); err == nil {
-		_ = os.Remove(dst)
+	if err := RepackageRootTree(context.Background(), src, "", dst); err == nil {
+		t.Fatal("expected the unsupported symlink entry to fail")
 	}
-	if _, err := os.Stat(dst); err == nil {
-		t.Errorf("wrapper should unlink partial tarball on walk error")
+	if _, err := os.Stat(dst); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("failed repackaging published an archive: %v", err)
 	}
 }
 
