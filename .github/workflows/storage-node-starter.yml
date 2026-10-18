@@ -10,7 +10,8 @@ jobs:
   qualify:
     name: managed storage Node (embedded app + gateway journey)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Allow cold race builds to finish the gateway journey and fixture checks.
+    timeout-minutes: 30
     env:
       GOMEMLIMIT: 2GiB
       GOGC: 10
@@ -25,6 +26,8 @@ jobs:
             ~/go/pkg/mod
           key: go-storage-starter-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}
           restore-keys: |
+            go-light-test-2-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-test-3-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-light-test-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-e2e-${{ runner.os }}-
       - uses: actions/setup-go@v7

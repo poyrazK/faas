@@ -115,6 +115,7 @@ jobs:
             ~/go/pkg/mod
           key: setup-go-${{ runner.os }}-x64-ubuntu24-go-pr-restore-only
           restore-keys: |
+            go-light-test-1-${{ runner.os }}-
             setup-go-${{ runner.os }}-x64-ubuntu24-go-
       - name: Native management harness portable checks
         run: |
@@ -197,8 +198,8 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
-      # Restore-only: use the same trusted main race-build cache as the API
-      # contracts job; avoid a separate setup-go cache per pull-request ref.
+      # Restore-only: use main's state shard cache and the legacy API
+      # race-build family; avoid a setup-go cache per pull-request ref.
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore Go build + module cache from main
@@ -209,6 +210,7 @@ jobs:
             ~/go/pkg/mod
           key: go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
+            go-light-test-2-${{ runner.os }}-
             go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-pg-1-${{ runner.os }}-
       - uses: actions/setup-go@v5
@@ -242,7 +244,7 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
-      # Restore-only: read main's non-race `checks` Go cache instead of letting
+      # Restore-only: read main's CLI shard cache instead of letting
       # setup-go save a ~0.8 GB entry per pull-request ref, which evicted main's
       # CI cache families from the 10 GB repository budget.
       - id: cache-date
@@ -255,6 +257,7 @@ jobs:
             ~/go/pkg/mod
           key: go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
+            go-light-test-1-${{ runner.os }}-
             go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-checks-${{ runner.os }}-
       - uses: actions/setup-go@v5
@@ -401,6 +404,7 @@ jobs:
             ~/go/pkg/mod
           key: go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
+            go-light-test-3-${{ runner.os }}-
             go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-pg-1-${{ runner.os }}-
       - uses: actions/setup-go@v5
