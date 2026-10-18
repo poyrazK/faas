@@ -3,6 +3,7 @@ package conformance
 
 import (
 	"errors"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
@@ -12,6 +13,68 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// ADR-590 and ADR-20261017221000: runtime claims are inventoried but never cloned.
+func testWorkerRecoveryCloneInventory(t *testing.T, fx *Fixture) {
+	recoveryWorker(t, fx)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	if _, claimed, err := fx.Store.ClaimWorkerRecovery(fx.Ctx, fx.App.ID, "", "source", uuid.NewString(), now, now.Add(time.Minute)); err != nil || !claimed {
+		t.Fatalf("claim source recovery: %v %v", claimed, err)
+	}
+	before, err := fx.Store.WorkerRecoveryByApp(fx.Ctx, fx.App.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := fx.Store.CreateProject(fx.Ctx, state.Project{AccountID: fx.Account.ID, Slug: "recovery-inventory"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tables, err := state.ProjectEnvironmentCloneSchemaPolicies()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var blockers []state.ProjectEnvironmentCloneCoverageBlocker
+	// PostgreSQL also verifies the migrated catalog; memory has no SQL catalog.
+	if inventory, ok := fx.Store.(state.ProjectEnvironmentCloneSchemaCoverageStore); ok {
+		coverage, err := inventory.ProjectEnvironmentCloneSchemaCoverage(fx.Ctx, fx.Account.ID, project.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !coverage.Known {
+			var unknown []state.ProjectEnvironmentCloneCoverageBlocker
+			for _, blocker := range coverage.Blockers {
+				if blocker.Code != "isolated_strategy_unavailable" && blocker.Code != "isolated_data_strategy_unavailable" {
+					unknown = append(unknown, blocker)
+				}
+			}
+			t.Fatalf("recovery migration blocked environment capture: %+v", unknown)
+		}
+		tables, blockers = coverage.Tables, coverage.Blockers
+	}
+	found := false
+	for _, table := range tables {
+		if table.TableName != "worker_recovery" {
+			continue
+		}
+		found = true
+		want := []string{"app_id", "claim_token", "failures", "lease_until", "next_attempt_at", "pools", "revision", "status", "updated_at"}
+		if table.Kind != state.CloneSchemaOperational || !slices.Equal(table.Columns, want) {
+			t.Fatalf("worker claims must reset rather than become cloned intent: %+v", table)
+		}
+	}
+	if !found {
+		t.Fatal("worker recovery ledger is absent from clone inventory")
+	}
+	for _, blocker := range blockers {
+		if blocker.Table == "worker_recovery" {
+			t.Fatalf("operational ledger requires no copy strategy: %+v", blocker)
+		}
+	}
+	after, err := fx.Store.WorkerRecoveryByApp(fx.Ctx, fx.App.ID)
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatalf("clone inventory mutated source recovery authority: %+v %v", after, err)
+	}
+}
 
 func recoveryWorker(t *testing.T, fx *Fixture) {
 	t.Helper()

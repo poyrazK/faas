@@ -51,6 +51,11 @@ retry timers and one-time startup path.
 
 ## Rollout and evidence
 
+Environment clones inventory `worker_recovery` as operational state. Recovery
+claims, retry deadlines and pool observations remain with their source; cloning
+does not copy them as configuration. The scheduler derives destination pool
+demand from captured environment intent.
+
 Apply the additive migration before upgrading schedd. Older binaries ignore
 the ledger and retain their old retry behavior until upgraded. Rollback leaves
 the additive table in place; do not down-migrate while upgraded schedulers run.
