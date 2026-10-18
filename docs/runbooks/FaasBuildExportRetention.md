@@ -1,5 +1,8 @@
 # FaasBuildExportRetention
 
+For successful builds waiting to enter image preparation, inspect the independent
+backlog and recovery evidence in [FaasBuildImageHandoff.md](FaasBuildImageHandoff.md).
+
 `FaasBuildExportBytesHigh` means completed builder VM exports on a compute
 node remain above the default 8 GiB cap. `FaasBuildExportCleanupFailing` means
 builderd could not inventory, classify, lease, or remove at least one export.

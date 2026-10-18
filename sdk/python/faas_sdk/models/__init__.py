@@ -1941,6 +1941,9 @@ from .get_mcp_readiness_pager_duty_acknowledgements_destination import (
     GetMCPReadinessPagerDutyAcknowledgementsDestination,
 )
 from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
+from .get_obs_input_health_expected_role import GetObsInputHealthExpectedRole
+from .get_obs_recording_coverage_expected_set import GetObsRecordingCoverageExpectedSet
+from .get_obs_rule_coverage_expected_set import GetObsRuleCoverageExpectedSet
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
 from .get_outbound_ai_price_catalog_provider import GetOutboundAIPriceCatalogProvider
 from .get_route_health_investigation_customer_group_by import GetRouteHealthInvestigationCustomerGroupBy
@@ -2850,12 +2853,141 @@ from .object_write_receipt_error_code import ObjectWriteReceiptErrorCode
 from .object_write_receipt_list import ObjectWriteReceiptList
 from .object_write_receipt_operation import ObjectWriteReceiptOperation
 from .object_write_receipt_status import ObjectWriteReceiptStatus
+from .obs_alert_collection_coverage import ObsAlertCollectionCoverage
+from .obs_alert_collection_coverage_scope import ObsAlertCollectionCoverageScope
+from .obs_alert_collection_coverage_state import ObsAlertCollectionCoverageState
+from .obs_alert_collection_failure import ObsAlertCollectionFailure
+from .obs_alert_collection_failure_details import ObsAlertCollectionFailureDetails
+from .obs_alert_collection_failure_diagnostics_state import ObsAlertCollectionFailureDiagnosticsState
+from .obs_alert_collection_failure_reason import ObsAlertCollectionFailureReason
+from .obs_alert_collection_health import ObsAlertCollectionHealth
+from .obs_alert_collection_health_collection_state import ObsAlertCollectionHealthCollectionState
+from .obs_alert_collection_health_state import ObsAlertCollectionHealthState
+from .obs_alert_collection_history import ObsAlertCollectionHistory
+from .obs_alert_collection_history_interval import ObsAlertCollectionHistoryInterval
+from .obs_alert_collection_history_interval_reason import ObsAlertCollectionHistoryIntervalReason
+from .obs_alert_collection_history_interval_state import ObsAlertCollectionHistoryIntervalState
+from .obs_alert_collection_rejection import ObsAlertCollectionRejection
+from .obs_alert_collection_rejection_reason import ObsAlertCollectionRejectionReason
+from .obs_alert_collection_rejection_scope import ObsAlertCollectionRejectionScope
+from .obs_alert_episode import ObsAlertEpisode
+from .obs_alert_episode_observation_state import ObsAlertEpisodeObservationState
+from .obs_alert_recurrence import ObsAlertRecurrence
+from .obs_alert_recurrence_duration import ObsAlertRecurrenceDuration
+from .obs_alert_recurrence_episode import ObsAlertRecurrenceEpisode
+from .obs_alert_recurrence_episode_status import ObsAlertRecurrenceEpisodeStatus
+from .obs_alert_recurrence_gap import ObsAlertRecurrenceGap
+from .obs_alert_recurrence_metrics import ObsAlertRecurrenceMetrics
+from .obs_alert_recurrence_percentile_method import ObsAlertRecurrencePercentileMethod
+from .obs_alert_recurrence_scope import ObsAlertRecurrenceScope
+from .obs_alert_recurrence_series import ObsAlertRecurrenceSeries
+from .obs_alert_recurrence_series_severity import ObsAlertRecurrenceSeriesSeverity
+from .obs_alert_recurrence_totals import ObsAlertRecurrenceTotals
+from .obs_alert_response_aggregate import ObsAlertResponseAggregate
+from .obs_alert_response_coverage import ObsAlertResponseCoverage
+from .obs_alert_response_group import ObsAlertResponseGroup
+from .obs_alert_response_group_severity import ObsAlertResponseGroupSeverity
+from .obs_alert_response_metric import ObsAlertResponseMetric
+from .obs_alert_response_times import ObsAlertResponseTimes
+from .obs_alert_response_times_duration_basis import ObsAlertResponseTimesDurationBasis
+from .obs_alert_response_times_percentile_method import ObsAlertResponseTimesPercentileMethod
+from .obs_alert_response_times_scope import ObsAlertResponseTimesScope
+from .obs_alert_retention_health import ObsAlertRetentionHealth
+from .obs_alert_retention_health_state import ObsAlertRetentionHealthState
+from .obs_alert_suppression import ObsAlertSuppression
+from .obs_alert_suppression_state import ObsAlertSuppressionState
+from .obs_alert_triage import ObsAlertTriage
+from .obs_alert_triage_history import ObsAlertTriageHistory
+from .obs_alert_triage_history_coverage import ObsAlertTriageHistoryCoverage
+from .obs_alert_triage_history_coverage_reason import ObsAlertTriageHistoryCoverageReason
+from .obs_alert_triage_history_coverage_state import ObsAlertTriageHistoryCoverageState
+from .obs_alert_triage_history_entry import ObsAlertTriageHistoryEntry
+from .obs_alert_triage_history_entry_action import ObsAlertTriageHistoryEntryAction
+from .obs_alert_triage_request import ObsAlertTriageRequest
+from .obs_alert_triage_request_action import ObsAlertTriageRequestAction
+from .obs_alert_triage_response import ObsAlertTriageResponse
+from .obs_alert_workload_counts import ObsAlertWorkloadCounts
+from .obs_alert_workload_group import ObsAlertWorkloadGroup
+from .obs_alert_workload_group_severity import ObsAlertWorkloadGroupSeverity
+from .obs_alert_workload_group_status import ObsAlertWorkloadGroupStatus
+from .obs_alert_workload_oldest import ObsAlertWorkloadOldest
+from .obs_alert_workload_oldest_severity import ObsAlertWorkloadOldestSeverity
+from .obs_alert_workload_oldest_status import ObsAlertWorkloadOldestStatus
+from .obs_alert_workload_summary import ObsAlertWorkloadSummary
+from .obs_alert_workload_summary_age_basis import ObsAlertWorkloadSummaryAgeBasis
+from .obs_alert_workload_summary_scope import ObsAlertWorkloadSummaryScope
 from .obs_health_response import ObsHealthResponse
 from .obs_health_response_operator_intent_outcome_missing_total import (
     ObsHealthResponseOperatorIntentOutcomeMissingTotal,
 )
+from .obs_health_response_signals import ObsHealthResponseSignals
 from .obs_health_response_trace_id_completeness_ratio import ObsHealthResponseTraceIdCompletenessRatio
+from .obs_health_signal import ObsHealthSignal
+from .obs_health_signal_reason import ObsHealthSignalReason
+from .obs_health_signal_state import ObsHealthSignalState
+from .obs_input_expectation import ObsInputExpectation
+from .obs_input_expectation_reason import ObsInputExpectationReason
+from .obs_input_expectation_source import ObsInputExpectationSource
+from .obs_input_expectation_state import ObsInputExpectationState
+from .obs_input_health import ObsInputHealth
+from .obs_input_health_available_roles_item import ObsInputHealthAvailableRolesItem
+from .obs_input_health_expected_role import ObsInputHealthExpectedRole
+from .obs_input_health_limitations_item import ObsInputHealthLimitationsItem
+from .obs_input_health_reason import ObsInputHealthReason
+from .obs_input_health_state import ObsInputHealthState
+from .obs_input_job import ObsInputJob
+from .obs_input_job_job import ObsInputJobJob
+from .obs_input_job_state import ObsInputJobState
+from .obs_input_metric import ObsInputMetric
+from .obs_input_metric_counts import ObsInputMetricCounts
+from .obs_input_metric_metric import ObsInputMetricMetric
+from .obs_input_metric_reason import ObsInputMetricReason
+from .obs_input_metric_state import ObsInputMetricState
+from .obs_input_target_counts import ObsInputTargetCounts
+from .obs_input_targets import ObsInputTargets
+from .obs_input_targets_reason import ObsInputTargetsReason
+from .obs_input_targets_state import ObsInputTargetsState
 from .obs_node_operation_preflight import ObsNodeOperationPreflight
+from .obs_notification_api_status import ObsNotificationAPIStatus
+from .obs_notification_api_status_state import ObsNotificationAPIStatusState
+from .obs_notification_health import ObsNotificationHealth
+from .obs_notification_health_signals import ObsNotificationHealthSignals
+from .obs_notification_health_state import ObsNotificationHealthState
+from .obs_notification_integration import ObsNotificationIntegration
+from .obs_notification_integration_integration import ObsNotificationIntegrationIntegration
+from .obs_notification_signal import ObsNotificationSignal
+from .obs_notification_signal_state import ObsNotificationSignalState
+from .obs_notification_signal_window_seconds import ObsNotificationSignalWindowSeconds
+from .obs_recording_alert_reference import ObsRecordingAlertReference
+from .obs_recording_alert_references import ObsRecordingAlertReferences
+from .obs_recording_coverage import ObsRecordingCoverage
+from .obs_recording_coverage_item import ObsRecordingCoverageItem
+from .obs_recording_coverage_limitations_item import ObsRecordingCoverageLimitationsItem
+from .obs_recording_coverage_reason import ObsRecordingCoverageReason
+from .obs_recording_coverage_selection_source import ObsRecordingCoverageSelectionSource
+from .obs_recording_coverage_state import ObsRecordingCoverageState
+from .obs_recording_dependency_mapping import ObsRecordingDependencyMapping
+from .obs_recording_dependency_mapping_state import ObsRecordingDependencyMappingState
+from .obs_rule_coverage import ObsRuleCoverage
+from .obs_rule_coverage_item import ObsRuleCoverageItem
+from .obs_rule_coverage_item_changed_fields_item import ObsRuleCoverageItemChangedFieldsItem
+from .obs_rule_coverage_item_reason import ObsRuleCoverageItemReason
+from .obs_rule_coverage_item_state import ObsRuleCoverageItemState
+from .obs_rule_coverage_limitations_item import ObsRuleCoverageLimitationsItem
+from .obs_rule_coverage_reason import ObsRuleCoverageReason
+from .obs_rule_coverage_selection_source import ObsRuleCoverageSelectionSource
+from .obs_rule_coverage_set import ObsRuleCoverageSet
+from .obs_rule_coverage_set_id import ObsRuleCoverageSetId
+from .obs_rule_coverage_state import ObsRuleCoverageState
+from .obs_rule_coverage_totals import ObsRuleCoverageTotals
+from .obs_rule_health_item import ObsRuleHealthItem
+from .obs_rule_health_item_issues_item import ObsRuleHealthItemIssuesItem
+from .obs_rule_health_item_kind import ObsRuleHealthItemKind
+from .obs_rule_health_item_reported_state import ObsRuleHealthItemReportedState
+from .obs_rule_health_item_state import ObsRuleHealthItemState
+from .obs_rule_health_response import ObsRuleHealthResponse
+from .obs_rule_health_response_state import ObsRuleHealthResponseState
+from .obs_rule_health_totals import ObsRuleHealthTotals
 from .oci_healthcheck_timing import OCIHealthcheckTiming
 from .oidc_exchange_request import OIDCExchangeRequest
 from .oidc_exchange_request_capability import OIDCExchangeRequestCapability
@@ -7387,6 +7519,9 @@ __all__ = (
     "GetGithubRecoveryStatusStatus",
     "GetMCPReadinessPagerDutyAcknowledgementsDestination",
     "GetMirrorRuleSummaryWindow",
+    "GetObsInputHealthExpectedRole",
+    "GetObsRecordingCoverageExpectedSet",
+    "GetObsRuleCoverageExpectedSet",
     "GetOpenAPISpecJSONResponse200",
     "GetOutboundAIPriceCatalogProvider",
     "GetRouteHealthInvestigationCustomerGroupBy",
@@ -8230,10 +8365,139 @@ __all__ = (
     "ObjectWriteReceiptList",
     "ObjectWriteReceiptOperation",
     "ObjectWriteReceiptStatus",
+    "ObsAlertCollectionCoverage",
+    "ObsAlertCollectionCoverageScope",
+    "ObsAlertCollectionCoverageState",
+    "ObsAlertCollectionFailure",
+    "ObsAlertCollectionFailureDetails",
+    "ObsAlertCollectionFailureDiagnosticsState",
+    "ObsAlertCollectionFailureReason",
+    "ObsAlertCollectionHealth",
+    "ObsAlertCollectionHealthCollectionState",
+    "ObsAlertCollectionHealthState",
+    "ObsAlertCollectionHistory",
+    "ObsAlertCollectionHistoryInterval",
+    "ObsAlertCollectionHistoryIntervalReason",
+    "ObsAlertCollectionHistoryIntervalState",
+    "ObsAlertCollectionRejection",
+    "ObsAlertCollectionRejectionReason",
+    "ObsAlertCollectionRejectionScope",
+    "ObsAlertEpisode",
+    "ObsAlertEpisodeObservationState",
+    "ObsAlertRecurrence",
+    "ObsAlertRecurrenceDuration",
+    "ObsAlertRecurrenceEpisode",
+    "ObsAlertRecurrenceEpisodeStatus",
+    "ObsAlertRecurrenceGap",
+    "ObsAlertRecurrenceMetrics",
+    "ObsAlertRecurrencePercentileMethod",
+    "ObsAlertRecurrenceScope",
+    "ObsAlertRecurrenceSeries",
+    "ObsAlertRecurrenceSeriesSeverity",
+    "ObsAlertRecurrenceTotals",
+    "ObsAlertResponseAggregate",
+    "ObsAlertResponseCoverage",
+    "ObsAlertResponseGroup",
+    "ObsAlertResponseGroupSeverity",
+    "ObsAlertResponseMetric",
+    "ObsAlertResponseTimes",
+    "ObsAlertResponseTimesDurationBasis",
+    "ObsAlertResponseTimesPercentileMethod",
+    "ObsAlertResponseTimesScope",
+    "ObsAlertRetentionHealth",
+    "ObsAlertRetentionHealthState",
+    "ObsAlertSuppression",
+    "ObsAlertSuppressionState",
+    "ObsAlertTriage",
+    "ObsAlertTriageHistory",
+    "ObsAlertTriageHistoryCoverage",
+    "ObsAlertTriageHistoryCoverageReason",
+    "ObsAlertTriageHistoryCoverageState",
+    "ObsAlertTriageHistoryEntry",
+    "ObsAlertTriageHistoryEntryAction",
+    "ObsAlertTriageRequest",
+    "ObsAlertTriageRequestAction",
+    "ObsAlertTriageResponse",
+    "ObsAlertWorkloadCounts",
+    "ObsAlertWorkloadGroup",
+    "ObsAlertWorkloadGroupSeverity",
+    "ObsAlertWorkloadGroupStatus",
+    "ObsAlertWorkloadOldest",
+    "ObsAlertWorkloadOldestSeverity",
+    "ObsAlertWorkloadOldestStatus",
+    "ObsAlertWorkloadSummary",
+    "ObsAlertWorkloadSummaryAgeBasis",
+    "ObsAlertWorkloadSummaryScope",
     "ObsHealthResponse",
     "ObsHealthResponseOperatorIntentOutcomeMissingTotal",
+    "ObsHealthResponseSignals",
     "ObsHealthResponseTraceIdCompletenessRatio",
+    "ObsHealthSignal",
+    "ObsHealthSignalReason",
+    "ObsHealthSignalState",
+    "ObsInputExpectation",
+    "ObsInputExpectationReason",
+    "ObsInputExpectationSource",
+    "ObsInputExpectationState",
+    "ObsInputHealth",
+    "ObsInputHealthAvailableRolesItem",
+    "ObsInputHealthExpectedRole",
+    "ObsInputHealthLimitationsItem",
+    "ObsInputHealthReason",
+    "ObsInputHealthState",
+    "ObsInputJob",
+    "ObsInputJobJob",
+    "ObsInputJobState",
+    "ObsInputMetric",
+    "ObsInputMetricCounts",
+    "ObsInputMetricMetric",
+    "ObsInputMetricReason",
+    "ObsInputMetricState",
+    "ObsInputTargetCounts",
+    "ObsInputTargets",
+    "ObsInputTargetsReason",
+    "ObsInputTargetsState",
     "ObsNodeOperationPreflight",
+    "ObsNotificationAPIStatus",
+    "ObsNotificationAPIStatusState",
+    "ObsNotificationHealth",
+    "ObsNotificationHealthSignals",
+    "ObsNotificationHealthState",
+    "ObsNotificationIntegration",
+    "ObsNotificationIntegrationIntegration",
+    "ObsNotificationSignal",
+    "ObsNotificationSignalState",
+    "ObsNotificationSignalWindowSeconds",
+    "ObsRecordingAlertReference",
+    "ObsRecordingAlertReferences",
+    "ObsRecordingCoverage",
+    "ObsRecordingCoverageItem",
+    "ObsRecordingCoverageLimitationsItem",
+    "ObsRecordingCoverageReason",
+    "ObsRecordingCoverageSelectionSource",
+    "ObsRecordingCoverageState",
+    "ObsRecordingDependencyMapping",
+    "ObsRecordingDependencyMappingState",
+    "ObsRuleCoverage",
+    "ObsRuleCoverageItem",
+    "ObsRuleCoverageItemChangedFieldsItem",
+    "ObsRuleCoverageItemReason",
+    "ObsRuleCoverageItemState",
+    "ObsRuleCoverageLimitationsItem",
+    "ObsRuleCoverageReason",
+    "ObsRuleCoverageSelectionSource",
+    "ObsRuleCoverageSet",
+    "ObsRuleCoverageSetId",
+    "ObsRuleCoverageState",
+    "ObsRuleCoverageTotals",
+    "ObsRuleHealthItem",
+    "ObsRuleHealthItemIssuesItem",
+    "ObsRuleHealthItemKind",
+    "ObsRuleHealthItemReportedState",
+    "ObsRuleHealthItemState",
+    "ObsRuleHealthResponse",
+    "ObsRuleHealthResponseState",
+    "ObsRuleHealthTotals",
     "OCIHealthcheckTiming",
     "OIDCExchangeRequest",
     "OIDCExchangeRequestCapability",

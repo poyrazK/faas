@@ -12653,20 +12653,15 @@ func (s *PgStore) SweepStuckRunningBuildsWithIDs(ctx context.Context, threshold 
 
 // QueuedBuildsCount (operator-side observability mega-PR / Commit 7
 // — P5) returns the number of builds currently in 'queued' state
-// across the fleet. Per-node labeling is deferred (builds.target_node_id
-// is not yet a column — adding it is a follow-up migration per the
-// PR-open checklist). Today the gauge is a fleet-total; the operator
-// dashboard renders "X builds in the queue" without per-schedd
-// attribution. A partial index on builds(status='queued') keeps
-// this O(matches) instead of O(table).
+// across the fleet. It excludes running and terminal builds and does not
+// attribute queued builds to a node. A queued-only index supports periodic
+// reads; callers still bound the count with a deadline.
 func (s *PgStore) QueuedBuildsCount(ctx context.Context) (int, error) {
-	var n int
-	if err := s.pool.QueryRow(ctx,
-		`select count(*) from builds where status = 'queued'`,
-	).Scan(&n); err != nil {
+	n, err := sqlc.New().OperatorQueuedBuildsCount(ctx, s.pool)
+	if err != nil {
 		return 0, fmt.Errorf("state: count queued builds: %w", err)
 	}
-	return n, nil
+	return int(n), nil
 }
 
 // ClaimQueuedBuild atomically transitions queued → running via a single

@@ -3746,16 +3746,87 @@ type Querier interface {
 	// one linear chain: a run starts one step attempt at a time.
 	OperationTimelineStepAttempts(ctx context.Context, db DBTX, arg OperationTimelineStepAttemptsParams) ([]OperationTimelineStepAttemptsRow, error)
 	OperationWebhookTenantStatus(ctx context.Context, db DBTX, arg OperationWebhookTenantStatusParams) (OperationWebhookTenantStatusRow, error)
+	OperatorAlertAdvanceRules(ctx context.Context, db DBTX, rules []byte) ([]string, error)
+	OperatorAlertCollection(ctx context.Context, db DBTX) (OperatorAlertCollectionRow, error)
+	OperatorAlertCollectionFailed(ctx context.Context, db DBTX, at pgtype.Timestamptz) error
+	OperatorAlertCollectionFailures(ctx context.Context, db DBTX, arg OperatorAlertCollectionFailuresParams) ([]OperatorAlertCollectionFailuresRow, error)
+	OperatorAlertCollectionLock(ctx context.Context, db DBTX) (OperatorAlertCollectionLockRow, error)
+	OperatorAlertCollectionOutcomes(ctx context.Context, db DBTX, arg OperatorAlertCollectionOutcomesParams) ([]OperatorAlertCollectionOutcomesRow, error)
+	OperatorAlertCollectionSucceeded(ctx context.Context, db DBTX, at pgtype.Timestamptz) error
+	OperatorAlertEpisode(ctx context.Context, db DBTX, id string) (OperatorAlertEpisodeRow, error)
+	OperatorAlertEpisodes(ctx context.Context, db DBTX, arg OperatorAlertEpisodesParams) ([]OperatorAlertEpisodesRow, error)
+	OperatorAlertInsertCollectionOutcome(ctx context.Context, db DBTX, arg OperatorAlertInsertCollectionOutcomeParams) error
+	OperatorAlertPruneCollectionOutcomes(ctx context.Context, db DBTX, arg OperatorAlertPruneCollectionOutcomesParams) error
+	OperatorAlertPruneEpisodes(ctx context.Context, db DBTX, arg OperatorAlertPruneEpisodesParams) (int64, error)
+	OperatorAlertPruneRules(ctx context.Context, db DBTX, arg OperatorAlertPruneRulesParams) error
+	OperatorAlertRecurrenceEpisodes(ctx context.Context, db DBTX, arg OperatorAlertRecurrenceEpisodesParams) ([]OperatorAlertRecurrenceEpisodesRow, error)
+	OperatorAlertResolveMissing(ctx context.Context, db DBTX, arg OperatorAlertResolveMissingParams) error
+	OperatorAlertResponseTimesEpisodes(ctx context.Context, db DBTX, arg OperatorAlertResponseTimesEpisodesParams) ([]OperatorAlertResponseTimesEpisodesRow, error)
+	OperatorAlertResponseTimesReceipts(ctx context.Context, db DBTX, arg OperatorAlertResponseTimesReceiptsParams) ([]OperatorAlertResponseTimesReceiptsRow, error)
+	OperatorAlertRetentionFailed(ctx context.Context, db DBTX, at pgtype.Timestamptz) error
+	OperatorAlertRetentionLock(ctx context.Context, db DBTX) (bool, error)
+	OperatorAlertRetentionStatus(ctx context.Context, db DBTX, cutoff pgtype.Timestamptz) (OperatorAlertRetentionStatusRow, error)
+	OperatorAlertRetentionSucceeded(ctx context.Context, db DBTX, arg OperatorAlertRetentionSucceededParams) error
+	OperatorAlertTriageHistoryCoverage(ctx context.Context, db DBTX, arg OperatorAlertTriageHistoryCoverageParams) (OperatorAlertTriageHistoryCoverageRow, error)
+	OperatorAlertTriageHistoryEntries(ctx context.Context, db DBTX, arg OperatorAlertTriageHistoryEntriesParams) ([]OperatorAlertTriageHistoryEntriesRow, error)
+	OperatorAlertTriageLock(ctx context.Context, db DBTX, id string) (OperatorAlertTriageLockRow, error)
+	OperatorAlertTriageUpdate(ctx context.Context, db DBTX, arg OperatorAlertTriageUpdateParams) (int64, error)
+	OperatorAlertUpsertEpisodes(ctx context.Context, db DBTX, arg OperatorAlertUpsertEpisodesParams) error
+	OperatorAlertWorkloadBuckets(ctx context.Context, db DBTX, arg OperatorAlertWorkloadBucketsParams) ([]OperatorAlertWorkloadBucketsRow, error)
+	// Shared fleet app-task claim queue; no batch cap or owner filter. Keep the
+	// queued admission predicates aligned with ClaimNextUnfencedAppTask. Active
+	// tasks on deleted apps remain visible until teardown/lease recovery completes.
+	OperatorAppTaskSnapshot(ctx context.Context, db DBTX, observedAt pgtype.Timestamptz) ([]OperatorAppTaskSnapshotRow, error)
 	OperatorAuditTraceCoverage(ctx context.Context, db DBTX, since pgtype.Timestamptz) (float64, error)
+	// Same eligibility and owner compatibility as ListBuildsAwaitingImage, without
+	// its recovery batch limit. Checkpointed preparations are active/resumable work,
+	// not unconsumed build handoffs.
+	OperatorBuildImageHandoffSnapshot(ctx context.Context, db DBTX, nodeID string) (OperatorBuildImageHandoffSnapshotRow, error)
+	OperatorBuildRecoverySnapshot(ctx context.Context, db DBTX) (OperatorBuildRecoverySnapshotRow, error)
+	// The API catalog is the single source of named shapes. Unmatched shapes
+	// share one custom bucket, keeping the result bounded as the fleet grows.
+	// Aggregate instances before joining so app reservations are counted once.
+	OperatorCapacityProfiles(ctx context.Context, db DBTX, resourceProfiles []byte) ([]OperatorCapacityProfilesRow, error)
+	// No execution list/page cap. Include disabled and suspended command crons as
+	// separate intentional cohorts. Nonempty ownership matches ListOwnedCrons;
+	// legacy listing also applies Engine.ownsAppDecision's local fallback.
+	OperatorCommandCronObservations(ctx context.Context, db DBTX, arg OperatorCommandCronObservationsParams) ([]OperatorCommandCronObservationsRow, error)
+	OperatorContextAccountExists(ctx context.Context, db DBTX, accountID pgtype.UUID) (bool, error)
+	OperatorContextAppOwner(ctx context.Context, db DBTX, appID pgtype.UUID) (string, error)
+	OperatorContextNodeExists(ctx context.Context, db DBTX, nodeID pgtype.UUID) (bool, error)
+	// Materialize the relationship set once: exact counts do not depend on the
+	// returned page. App scope takes precedence over node scope. No account-wide
+	// expansion and no recursive traversal through a shared node are permitted.
+	OperatorContextResources(ctx context.Context, db DBTX, arg OperatorContextResourcesParams) (OperatorContextResourcesRow, error)
+	OperatorContextRoot(ctx context.Context, db DBTX, arg OperatorContextRootParams) (OperatorContextRootRow, error)
+	// Bound each indexed source per verified target before merging. Account rows
+	// are deliberately excluded: an account match is not incident correlation.
+	OperatorContextTimeline(ctx context.Context, db DBTX, arg OperatorContextTimelineParams) ([]OperatorContextTimelineRow, error)
+	OperatorImagePreparationProgressSnapshot(ctx context.Context, db DBTX, nodeID string) ([]OperatorImagePreparationProgressSnapshotRow, error)
+	// Each branch uses an exact-resource index and is independently bounded before
+	// the merge. Payload references use the partial operator-resource index.
+	OperatorIncidentEvidence(ctx context.Context, db DBTX, arg OperatorIncidentEvidenceParams) ([]OperatorIncidentEvidenceRow, error)
 	OperatorIncidents(ctx context.Context, db DBTX, arg OperatorIncidentsParams) ([]OperatorIncidentsRow, error)
 	OperatorInsertAuditLog(ctx context.Context, db DBTX, arg OperatorInsertAuditLogParams) error
 	OperatorNodeHasLiveInstances(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error)
 	OperatorOverviewActivity(ctx context.Context, db DBTX, auditSince pgtype.Timestamptz) (OperatorOverviewActivityRow, error)
+	OperatorOverviewFailures(ctx context.Context, db DBTX, arg OperatorOverviewFailuresParams) ([]OperatorOverviewFailuresRow, error)
+	// last_request_at retains successful-request evidence, including terminal
+	// instances and deleted apps. It is not an immutable first-ever timestamp.
+	OperatorOverviewFunnel(ctx context.Context, db DBTX, arg OperatorOverviewFunnelParams) (OperatorOverviewFunnelRow, error)
+	OperatorOverviewNodes(ctx context.Context, db DBTX) ([]OperatorOverviewNodesRow, error)
+	OperatorOverviewRateLimited(ctx context.Context, db DBTX, arg OperatorOverviewRateLimitedParams) ([]OperatorOverviewRateLimitedRow, error)
+	OperatorOverviewTotals(ctx context.Context, db DBTX, arg OperatorOverviewTotalsParams) (OperatorOverviewTotalsRow, error)
 	OperatorParkHoldsInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (bool, error)
+	OperatorPostCaptureSnapshot(ctx context.Context, db DBTX, instanceLookback int32) ([]OperatorPostCaptureSnapshotRow, error)
+	OperatorQueuedBuildsCount(ctx context.Context, db DBTX) (int64, error)
+	OperatorQueuedBuildsSnapshot(ctx context.Context, db DBTX) (OperatorQueuedBuildsSnapshotRow, error)
 	OperatorRecentFailureCounts(ctx context.Context, db DBTX, since pgtype.Timestamptz) ([]OperatorRecentFailureCountsRow, error)
 	// Legacy rows are ambiguous even after the old cache's TTL. Never reclaim them here.
 	OperatorRecoveryLegacyKeyExists(ctx context.Context, db DBTX, arg OperatorRecoveryLegacyKeyExistsParams) (bool, error)
 	OperatorRestartDatabaseTime(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
+	OperatorSnapshotPrimeSnapshot(ctx context.Context, db DBTX, arg OperatorSnapshotPrimeSnapshotParams) ([]OperatorSnapshotPrimeSnapshotRow, error)
+	OperatorTenantApps(ctx context.Context, db DBTX, targetAccountID pgtype.UUID) ([]OperatorTenantAppsRow, error)
 	OperatorTenantCounts(ctx context.Context, db DBTX, targetAccountID pgtype.UUID) (OperatorTenantCountsRow, error)
 	OrgByID(ctx context.Context, db DBTX, id pgtype.UUID) (OrgByIDRow, error)
 	OrgByPersonalAccount(ctx context.Context, db DBTX, personalOwnerAccountID pgtype.UUID) (OrgByPersonalAccountRow, error)
