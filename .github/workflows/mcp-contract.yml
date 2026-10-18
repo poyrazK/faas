@@ -222,8 +222,9 @@ jobs:
           GOMAXPROCS: 2
         run: go test -race -p=1 ./pkg/mcphosting ./pkg/gateway ./pkg/api ./pkg/state ./pkg/secretscan ./pkg/apihostingscorecard ./cmd/gregale -run 'TestScopedRouteMonitor|TestScopedTelemetry|TestScopedWorkerObservation|TestWorkerRolloutObservationHTTP|TestReviewedWorkloadRollout|TestMemReviewedRollout|TestPgReviewedRollout|TestMemReviewedServiceRecovery|TestPgReviewedServiceRecovery|TestMemReviewedPinnedServiceReadiness|TestPgReviewedPinnedServiceReadiness|TestReviewedNativeSource|TestReviewedSourceRef|TestSourceRef_|TestReleaseReviewHTTP|TestMemReleaseReview|TestPgReleaseReview|TestMemReviewedNamedStaging|TestPgReviewedNamedStaging|TestMCP|TestStateless|TestClient|TestCall|TestLegacyStateless|TestMirrored|TestConfig|TestOAuth|TestMem_UpdateDeploymentTraffic_Expected|TestNpmIntegrity|TestScanExtractedMCP|TestListTemplates|TestScorecard' -count=1
 
+  # Core contracts and starter qualification use independent runners and
+  # databases; run their cold race builds in parallel.
   starter:
-    needs: go-contracts
     if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     # Cold race builds of the API package precede all three runtime qualifiers.
