@@ -363,6 +363,11 @@ type JobColdBootSpec struct {
 	TaskIndex int
 	// Interactive holds the command until one client attaches (ADR-1330).
 	Interactive *JobInteractive
+	// ImageProcess runs the command with the image's ENV, USER and WORKDIR;
+	// ProcessUser and ProcessWorkdir override USER and WORKDIR (ADR-1335).
+	ImageProcess   bool
+	ProcessUser    string
+	ProcessWorkdir string
 }
 
 // BuildColdBootConfig assembles the Firecracker config for a cold boot. MMDS is

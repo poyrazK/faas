@@ -2826,9 +2826,15 @@ type JobColdBootRequest struct {
 	// Present only for an interactive image run (ADR-1330): the guest holds the
 	// command until one client attaches through AttachAppTask with the token
 	// whose digest is given here.
-	Interactive   *JobInteractiveAttach `protobuf:"bytes,18,opt,name=interactive,proto3" json:"interactive,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Interactive *JobInteractiveAttach `protobuf:"bytes,18,opt,name=interactive,proto3" json:"interactive,omitempty"`
+	// ADR-1335: an image run executes with the image's ENV, USER and WORKDIR,
+	// as Docker does. process_user and process_workdir override USER and
+	// WORKDIR (`gregale run -u/-w`) and are valid only with image_process.
+	ImageProcess   bool   `protobuf:"varint,19,opt,name=image_process,json=imageProcess,proto3" json:"image_process,omitempty"`
+	ProcessUser    string `protobuf:"bytes,20,opt,name=process_user,json=processUser,proto3" json:"process_user,omitempty"`
+	ProcessWorkdir string `protobuf:"bytes,21,opt,name=process_workdir,json=processWorkdir,proto3" json:"process_workdir,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *JobColdBootRequest) Reset() {
@@ -2987,6 +2993,27 @@ func (x *JobColdBootRequest) GetInteractive() *JobInteractiveAttach {
 	return nil
 }
 
+func (x *JobColdBootRequest) GetImageProcess() bool {
+	if x != nil {
+		return x.ImageProcess
+	}
+	return false
+}
+
+func (x *JobColdBootRequest) GetProcessUser() string {
+	if x != nil {
+		return x.ProcessUser
+	}
+	return ""
+}
+
+func (x *JobColdBootRequest) GetProcessWorkdir() string {
+	if x != nil {
+		return x.ProcessWorkdir
+	}
+	return ""
+}
+
 // JobInteractiveAttach is ADR-1330's per-task attach contract.
 type JobInteractiveAttach struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
@@ -3065,7 +3092,11 @@ type JobColdBootResponse struct {
 	// Echoes JobColdBootRequest.interactive (ADR-1330). A vmmd that predates it
 	// leaves this false, and schedd fails the task instead of running the
 	// command without stdin.
-	Interactive   bool `protobuf:"varint,7,opt,name=interactive,proto3" json:"interactive,omitempty"`
+	Interactive bool `protobuf:"varint,7,opt,name=interactive,proto3" json:"interactive,omitempty"`
+	// Echoes JobColdBootRequest.image_process (ADR-1335). A vmmd that predates
+	// it leaves this false, and schedd fails the task instead of running the
+	// command without the image's identity and environment.
+	ImageProcess  bool `protobuf:"varint,8,opt,name=image_process,json=imageProcess,proto3" json:"image_process,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3145,6 +3176,13 @@ func (x *JobColdBootResponse) GetStartHeld() bool {
 func (x *JobColdBootResponse) GetInteractive() bool {
 	if x != nil {
 		return x.Interactive
+	}
+	return false
+}
+
+func (x *JobColdBootResponse) GetImageProcess() bool {
+	if x != nil {
+		return x.ImageProcess
 	}
 	return false
 }
@@ -15246,7 +15284,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x04plan\x18\x04 \x01(\tR\x04plan\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x05 \x01(\tR\taccountId\x12\x17\n" +
-	"\awake_id\x18\x06 \x01(\tR\x06wakeId\"\xab\x06\n" +
+	"\awake_id\x18\x06 \x01(\tR\x06wakeId\"\x9c\a\n" +
 	"\x12JobColdBootRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1d\n" +
 	"\n" +
@@ -15273,14 +15311,17 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x17qualification_execution\x18\x10 \x01(\v26.onebox.faas.vmmd.v1.EnvironmentQualificationExecutionR\x16qualificationExecution\x12@\n" +
 	"\n" +
 	"sealed_env\x18\x11 \x03(\v2!.onebox.faas.vmmd.v1.SealedSecretR\tsealedEnv\x12K\n" +
-	"\vinteractive\x18\x12 \x01(\v2).onebox.faas.vmmd.v1.JobInteractiveAttachR\vinteractive\x1a6\n" +
+	"\vinteractive\x18\x12 \x01(\v2).onebox.faas.vmmd.v1.JobInteractiveAttachR\vinteractive\x12#\n" +
+	"\rimage_process\x18\x13 \x01(\bR\fimageProcess\x12!\n" +
+	"\fprocess_user\x18\x14 \x01(\tR\vprocessUser\x12'\n" +
+	"\x0fprocess_workdir\x18\x15 \x01(\tR\x0eprocessWorkdir\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x8e\x01\n" +
 	"\x14JobInteractiveAttach\x12\x10\n" +
 	"\x03tty\x18\x01 \x01(\bR\x03tty\x12.\n" +
 	"\x13attach_token_sha256\x18\x02 \x01(\fR\x11attachTokenSha256\x124\n" +
-	"\x16attach_timeout_seconds\x18\x03 \x01(\x05R\x14attachTimeoutSeconds\"\xd7\x01\n" +
+	"\x16attach_timeout_seconds\x18\x03 \x01(\x05R\x14attachTimeoutSeconds\"\xfc\x01\n" +
 	"\x13JobColdBootResponse\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x17\n" +
 	"\anode_id\x18\x02 \x01(\tR\x06nodeId\x12\x14\n" +
@@ -15289,7 +15330,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\tguest_uid\x18\x05 \x01(\x05R\bguestUid\x12\x1d\n" +
 	"\n" +
 	"start_held\x18\x06 \x01(\bR\tstartHeld\x12 \n" +
-	"\vinteractive\x18\a \x01(\bR\vinteractive\"4\n" +
+	"\vinteractive\x18\a \x01(\bR\vinteractive\x12#\n" +
+	"\rimage_process\x18\b \x01(\bR\fimageProcess\"4\n" +
 	"\x16ReleaseJobStartRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\"Q\n" +
 	"\x17ReleaseJobStartResponse\x12\x1a\n" +

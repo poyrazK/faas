@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionproto"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/ociidentity"
 	"github.com/onebox-faas/faas/pkg/wakeownershipwire"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc/codes"
@@ -92,8 +93,14 @@ func jobBootRequestFromProto(req *vmmdpb.JobColdBootRequest) (fcvm.JobBootReques
 	if problem != nil {
 		return fcvm.JobBootRequest{}, problem
 	}
+	if problem := validateJobImageProcess(req); problem != nil {
+		return fcvm.JobBootRequest{}, problem
+	}
 	return fcvm.JobBootRequest{
 		Interactive:      interactive,
+		ImageProcess:     req.GetImageProcess(),
+		ProcessUser:      req.GetProcessUser(),
+		ProcessWorkdir:   req.GetProcessWorkdir(),
 		Instance:         req.GetInstance(),
 		AccountID:        req.GetAccountId(),
 		NodeID:           req.GetNodeId(),
@@ -138,6 +145,28 @@ func jobInteractiveFromProto(req *vmmdpb.JobColdBootRequest) (*fcvm.JobInteracti
 		window = min(time.Duration(seconds)*time.Second, fcvm.JobInteractiveMaxAttachTimeout)
 	}
 	return &fcvm.JobInteractive{TTY: in.GetTty(), AttachTimeoutSec: int(window / time.Second)}, nil
+}
+
+// validateJobImageProcess checks ADR-1335's user and workdir overrides, which
+// apply only to an image process.
+func validateJobImageProcess(req *vmmdpb.JobColdBootRequest) *api.Problem {
+	invalid := func(detail string) *api.Problem {
+		return api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid job process", detail)
+	}
+	user, workdir := req.GetProcessUser(), req.GetProcessWorkdir()
+	if !req.GetImageProcess() {
+		if user != "" || workdir != "" {
+			return invalid("process_user and process_workdir require image_process")
+		}
+		return nil
+	}
+	if len(user) > api.ImageRunUserMaxBytes || ociidentity.ValidateSpec(user) != nil {
+		return invalid("process_user is not a valid user[:group]")
+	}
+	if err := api.ValidateImageRunWorkdir(workdir); err != nil {
+		return invalid(err.Error())
+	}
+	return nil
 }
 
 func cloneStringMap(in map[string]string) map[string]string {
