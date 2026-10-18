@@ -20229,6 +20229,94 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/AppNotFound' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
+  /v1/apps/{slug}/issue-compound-alert-policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getIssueCompoundAlertPolicy
+      summary: Read application issue event-compound rules.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current compound policy; an unconfigured app has revision zero and no AND rules.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueCompoundAlertPolicy' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps]
+      operationId: setIssueCompoundAlertPolicy
+      summary: Replace application issue event-compound rules.
+      description: >-
+        Replaces up to ten named AND rules using expected_revision. Both event count and
+        verified distinct customer count must meet their thresholds in the same (now-window, now]
+        retained-event window, optionally scoped to one environment. Active ignores and snoozes
+        suppress admission. Only a new accepted capture inside the window triggers evaluation;
+        retries, configuration changes and expiry alone do not notify. Cooldowns are per rule
+        and canonical issue, survive enable toggles, and reset for changed conditions or timing.
+        Activity, webhook issue.compound_threshold_reached and native Slack admission commit
+        with the capture. Delivery requires an enabled subscription or eligible team destination.
+        Frequency and fixed-window customer-impact policies remain independent.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateIssueCompoundAlertPolicyRequest' }
+      responses:
+        '200':
+          description: Saved compound AND rules and their resulting revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueCompoundAlertPolicy' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409':
+          description: Compound rules changed since the supplied revision; reload and review before retrying.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/issue-compound-alert-policy/preview:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [apps]
+      operationId: previewIssueCompoundAlert
+      summary: Preview an unsaved compound alert rule against retained issue evidence.
+      description: >-
+        Evaluates every draft predicate in one read-only snapshot and resolves merged aliases.
+        Reports current retained counts and cooldown eligibility without a hypothetical new
+        capture, saving, queue admission, receipt mutation or Slack requests. Allowed means
+        rule eligibility only; routing, subscriptions and queue/sender checks still govern delivery.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PreviewIssueCompoundAlertRequest' }
+      responses:
+        '200':
+          description: Draft rule conditions at the observation time.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueCompoundAlertPreview' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/issue-frequency-alert-policy:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -107189,6 +107277,7 @@ components:
               - issue.regressed
               - issue.impact_threshold_reached
               - issue.frequency_threshold_reached
+              - issue.compound_threshold_reached
               - issue.tracker_sync.attention
               - issue.tracker_sync.recovered
               - debug.regression.detected
@@ -108220,6 +108309,7 @@ components:
               - issue.regressed
               - issue.impact_threshold_reached
               - issue.frequency_threshold_reached
+              - issue.compound_threshold_reached
               - issue.tracker_sync.attention
               - issue.tracker_sync.recovered
               - debug.regression.detected
@@ -108398,6 +108488,7 @@ components:
               - issue.regressed
               - issue.impact_threshold_reached
               - issue.frequency_threshold_reached
+              - issue.compound_threshold_reached
               - issue.tracker_sync.attention
               - issue.tracker_sync.recovered
               - debug.regression.detected
@@ -110476,6 +110567,75 @@ components:
         policy_revision: { type: integer, format: int64, minimum: 0 }
         allowed: { type: boolean }
         reason: { type: string, enum: [eligible, environment_excluded, cooldown] }
+        next_eligible_at: { type: string, format: date-time }
+    IssueCompoundAlertRule:
+      description: "Named AND rule requiring event frequency and verified customer impact in one shared window."
+      type: object
+      additionalProperties: false
+      required: [key, enabled, environment, minimum_events, minimum_customers, window_seconds, cooldown_seconds]
+      properties:
+        key: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,47}$', maxLength: 48 }
+        enabled: { type: boolean }
+        environment:
+          type: string
+          maxLength: 63
+          description: Compound-rule environment selector; leave empty to evaluate every issue environment.
+        minimum_events: { type: integer, format: int64, minimum: 1, maximum: 100000 }
+        minimum_customers: { type: integer, format: int64, minimum: 1, maximum: 10000 }
+        window_seconds: { type: integer, format: int64, minimum: 60, maximum: 86400 }
+        cooldown_seconds: { type: integer, format: int64, minimum: 60, maximum: 604800 }
+    IssueCompoundAlertPolicy:
+      description: "Current revision and complete ordered set of application compound-alert rules."
+      type: object
+      additionalProperties: false
+      required: [revision, rules]
+      properties:
+        revision: { type: integer, format: int64, minimum: 0 }
+        rules:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/IssueCompoundAlertRule' }
+    UpdateIssueCompoundAlertPolicyRequest:
+      description: "Replacement compound-alert rules guarded by the expected policy revision."
+      type: object
+      additionalProperties: false
+      required: [expected_revision, rules]
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 0 }
+        rules:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/IssueCompoundAlertRule' }
+    PreviewIssueCompoundAlertRequest:
+      description: An unsaved compound rule and an existing issue to evaluate without notification side effects.
+      type: object
+      additionalProperties: false
+      required: [issue_id, rule]
+      properties:
+        issue_id: { type: string, format: uuid }
+        rule: { $ref: '#/components/schemas/IssueCompoundAlertRule' }
+    IssueCompoundAlertPreview:
+      description: Predicate results and retained shared-window counts from a read-only compound-rule evaluation.
+      type: object
+      additionalProperties: false
+      required: [issue_id, rule_key, environment, policy_revision, window_start, window_end, observed_events, identified_customers, enabled, environment_matches, events_matched, customers_matched, suppressed, cooldown_ready, allowed, reason]
+      properties:
+        issue_id: { type: string, format: uuid }
+        rule_key: { type: string }
+        environment: { type: string }
+        policy_revision: { type: integer, format: int64, minimum: 0 }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        observed_events: { type: integer, format: int64, minimum: 0 }
+        identified_customers: { type: integer, format: int64, minimum: 0 }
+        enabled: { type: boolean }
+        environment_matches: { type: boolean }
+        events_matched: { type: boolean }
+        customers_matched: { type: boolean }
+        suppressed: { type: boolean }
+        cooldown_ready: { type: boolean }
+        allowed: { type: boolean }
+        reason: { type: string, enum: [disabled, environment_excluded, suppressed, event_threshold, customer_threshold, cooldown, eligible] }
         next_eligible_at: { type: string, format: date-time }
     IssueFrequencyAlertRule:
       description: "Named event-frequency threshold with a bounded observation window, cooldown and optional filters."

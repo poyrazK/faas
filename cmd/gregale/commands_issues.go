@@ -15,9 +15,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const issuesCmdUsage = "usage: gregale issues <list|get|assign|resolve|reopen|ignore|merge|split|impact-alert|lifecycle-alerts|ownership-rules|source-maps|compare-releases|bulk|tickets|links|teams|views|codeowners|tokens|create-token|revoke-token> --app <slug> [<issue-id>] [--sort recent|impact] [--min-customers N] [flags]"
+const issuesCmdUsage = "usage: gregale issues <list|get|assign|resolve|reopen|ignore|merge|split|impact-alert|lifecycle-alerts|compound-alerts|ownership-rules|source-maps|compare-releases|bulk|tickets|links|teams|views|codeowners|tokens|create-token|revoke-token> --app <slug> [<issue-id>] [--sort recent|impact] [--min-customers N] [flags]"
 
 func cmdIssues(args []string) int {
+	if len(args) > 0 && args[0] == "compound-alerts" {
+		return cmdIssueCompoundAlerts(args[1:])
+	}
 	if len(args) > 0 && args[0] == "lifecycle-alerts" {
 		return cmdIssueLifecycleAlerts(args[1:])
 	}
