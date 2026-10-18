@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"testing"
 	"time"
 
@@ -82,5 +83,84 @@ func TestPersistentServerReplaysAcrossProcessRestartUntilAck(t *testing.T) {
 	afterAck, err := third.replayRecords()
 	if err != nil || len(afterAck) != 0 {
 		t.Fatalf("replay after durable ACK=%+v err=%v", afterAck, err)
+	}
+}
+
+// ADR-1580: a hand-off's old generation flushes what its sink holds into its
+// own ledger; the generation serving meterd absorbs that ledger with the same
+// event IDs, and absorbing it twice adds nothing.
+func TestAbsorbMovesAnOldGenerationsLedgerWithItsEventIDs(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 18, 9, 0, 0, 0, time.UTC)
+	dir := t.TempDir()
+	oldSink := egresssink.NewEgressSinkWithClock(func() time.Time { return now })
+	old, err := NewPersistentServer(oldSink, nil, dir+"/pending.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldSink.RecordResponseBytes("inst-old", 700)
+	if err := old.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	oldRecords, err := old.replayRecords()
+	if err != nil || len(oldRecords) != 1 {
+		t.Fatalf("old ledger = %+v err=%v", oldRecords, err)
+	}
+
+	newSink := egresssink.NewEgressSinkWithClock(func() time.Time { return now })
+	newSink.RecordResponseBytes("inst-new", 50)
+	next, err := NewPersistentServer(newSink, nil, dir+"/.generation-1/pending.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	added, err := next.Absorb(dir + "/pending.json")
+	if err != nil || added != 1 {
+		t.Fatalf("absorb added %d err=%v, want 1", added, err)
+	}
+	if _, err := os.Stat(dir + "/pending.json"); !os.IsNotExist(err) {
+		t.Fatalf("absorbed ledger still on disk: %v", err)
+	}
+	if added, err := next.Absorb(dir + "/pending.json"); err != nil || added != 0 {
+		t.Fatalf("second absorb added %d err=%v", added, err)
+	}
+	replay, err := next.replayRecords()
+	if err != nil || len(replay) != 2 {
+		t.Fatalf("replay = %+v err=%v", replay, err)
+	}
+	var sawOld bool
+	for _, r := range replay {
+		if r.record.InstanceID == "inst-old" {
+			sawOld = r.eventID == oldRecords[0].eventID && r.record.Bytes == 700
+		}
+	}
+	if !sawOld {
+		t.Fatalf("replay %+v lost the old generation's record or its event ID", replay)
+	}
+	// The absorbed record is durable in the new generation's ledger.
+	reopened, err := NewPersistentServer(nil, nil, dir+"/.generation-1/pending.json")
+	if err != nil || len(reopened.pending) != 2 {
+		t.Fatalf("reopened ledger has %d records err=%v, want 2", len(reopened.pending), err)
+	}
+}
+
+func TestMergeLedgerReturnsRecordsHome(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 18, 9, 0, 0, 0, time.UTC)
+	dir := t.TempDir()
+	sink := egresssink.NewEgressSinkWithClock(func() time.Time { return now })
+	slot, err := NewPersistentServer(sink, nil, dir+"/.generation-1/pending.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink.RecordResponseBytes("inst-1", 9)
+	if err := slot.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := MergeLedger(dir+"/.generation-1/pending.json", dir+"/pending.json", nil); err != nil {
+		t.Fatal(err)
+	}
+	home, err := NewPersistentServer(nil, nil, dir+"/pending.json")
+	if err != nil || len(home.pending) != 1 {
+		t.Fatalf("home ledger has %d records err=%v, want 1", len(home.pending), err)
 	}
 }
