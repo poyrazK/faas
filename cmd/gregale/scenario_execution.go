@@ -60,6 +60,18 @@ func prepareTestRunPlans(scenarios []testPreparedScenario, repeat int) []testRun
 
 func executePreparedTests(client *Client, suite string, scenarios []testPreparedScenario, repeat int, failFast bool, reportPath, junitPath, htmlPath, baselinePath string, recoveryBaselinePaths ...string) int {
 	for _, s := range scenarios {
+		if s.Scenario.CommandExecution != nil && s.Load != nil {
+			return printErr("Invalid contained command recipe", fmt.Errorf("contained commands do not support load overrides"))
+		}
+		profiles := s.Profiles
+		if len(profiles) == 0 {
+			profiles = []string{s.Engine}
+		}
+		for _, p := range profiles {
+			if err := validateTestCommandExecution(s.Scenario, s.Engine, p); err != nil {
+				return printErr("Invalid contained command recipe", err)
+			}
+		}
 		if err := validateTestCampaignGuidanceOptions(s.Scenario, s.Name, s.Profiles, []string{reportPath, junitPath, htmlPath}); err != nil {
 			return printErr("Invalid campaign guidance", err)
 		}
@@ -96,6 +108,7 @@ func runPreparedTestPlans(ctx context.Context, client *Client, suite string, pla
 		if skipReason != "" {
 			now := time.Now().UTC()
 			receipt = testRunReceipt{
+				Behavior: newTestBehaviorEvidence(plan.Prepared.Scenario.Behavior),
 				Scenario: plan.Prepared.Name, Engine: plan.Prepared.Engine, Profile: plan.Profile,
 				Case: plan.Case.Name, Status: "skipped", SkipReason: skipReason, StartedAt: now, FinishedAt: now,
 			}
@@ -211,6 +224,22 @@ func printTestRunResult(receipt testRunReceipt, repeat int) {
 		label += ", app " + receipt.AppSlug
 	}
 	_, _ = fmt.Fprintf(osStdout, "%s: %s (%s)\n", receipt.Scenario, receipt.Status, label)
+	if receipt.Actions != nil && receipt.Actions.Evidence != nil && receipt.Actions.Evidence.Snapshot != nil {
+		if resume := receipt.Actions.Evidence.Snapshot.SuspendResume; resume != nil {
+			for _, p := range resume.Receipts {
+				_, _ = fmt.Fprintf(osStdout, "  suspend/resume %s: %s; VM %s; pause %d ms; readiness %d/%d ms\n", p.Workload, p.State, p.InstanceID, p.PauseMS, p.ResumeMS, resume.Spec.WithinMS)
+			}
+		}
+		if cold := receipt.Actions.Evidence.Snapshot.ColdStart; cold != nil {
+			for _, p := range cold.Preparations {
+				_, _ = fmt.Fprintf(osStdout, "  cold start %s: %s; VM %s → %s; startup %d/%d ms\n", p.Workload, p.State, p.InstanceID, p.BootInstanceID, p.StartupMS, cold.Spec.WithinMS)
+			}
+		}
+		if work := receipt.Actions.Evidence.Snapshot.ManagedWork; work != nil && work.WorkerFault != nil {
+			f := work.WorkerFault
+			_, _ = fmt.Fprintf(osStdout, "  worker termination %s: %s; VM %s → %s; job %s\n", f.Workload, f.State, f.InstanceID, f.RecoveryInstanceID, f.InvocationID)
+		}
+	}
 	if receipt.Minimization != nil {
 		e := receipt.Minimization
 		if e.Duration != nil {

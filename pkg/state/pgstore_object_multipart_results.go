@@ -88,6 +88,9 @@ func (s *PgStore) FinishObjectMultipartCompletion(ctx context.Context, u ObjectM
 	if err = publishObjectEventTx(ctx, tx, out.AccountID, "multipart:"+out.ID, api.ObjectEventCreated, multipartCompletionEvent(out), out.UpdatedAt); err != nil {
 		return ObjectMultipartUpload{}, err
 	}
+	if err = settleMultipartNodeTx(ctx, tx, out); err != nil {
+		return ObjectMultipartUpload{}, err
+	}
 	return out, tx.Commit(ctx)
 }
 

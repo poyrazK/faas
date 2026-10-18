@@ -25,6 +25,8 @@ type nodeSizingReport struct {
 	Role               string `json:"role"`
 	HostMemTotalMB     int    `json:"host_mem_total_mb"`
 	HostCPUs           int    `json:"host_cpus"`
+	TenantCPUs         int    `json:"tenant_cpus"`
+	Edge               bool   `json:"edge"`
 	NonTenantReserveMB int    `json:"non_tenant_reserve_mb"`
 	TenantSliceMaxMB   int    `json:"tenant_slice_max_mb"`
 	TenantBudgetMB     int    `json:"tenant_budget_mb"`
@@ -37,12 +39,16 @@ type nodeSizingReport struct {
 // nodeSizingShape maps a box role onto the reserve shape. Only compute-only
 // drops the control-plane slice; an unknown or single-box role keeps the
 // spec §13 reserve, because under-reserving an unrecognised host is the
-// dangerous direction.
-func nodeSizingShape(r role.Role) api.NodeRoleShape {
-	if r == role.RoleComputeOnly {
-		return api.NodeShapeComputeOnly
+// dangerous direction. A compute-only host that runs the app edge
+// (ADR-1343) also holds back the edge's CPU and RAM.
+func nodeSizingShape(r role.Role, edge bool) api.NodeRoleShape {
+	if r != role.RoleComputeOnly {
+		return api.NodeShapeSingleBox
 	}
-	return api.NodeShapeSingleBox
+	if edge {
+		return api.NodeShapeComputeEdge
+	}
+	return api.NodeShapeComputeOnly
 }
 
 // cmdComputeNodesSizing prints the capacity this host should advertise.
@@ -55,16 +61,23 @@ func cmdComputeNodesSizing(args []string) int {
 	// flag therefore never sees it, so both must be consulted — the same
 	// `*jsonOut || jsonOutput` shape every other gregalectl command uses.
 	jsonOut := fs.Bool("json", false, "emit the machine-readable report")
+	edge := fs.Bool("edge", false, "the host runs the app edge (ADR-1343): hold back its CPU and RAM")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	resolved := role.FromConfig(strings.TrimSpace(*roleFlag), "FAAS_VMMD_ROLE")
+	if *edge && resolved != role.RoleComputeOnly {
+		_, _ = fmt.Fprintf(osStderr, "gregalectl compute-nodes sizing: --edge applies only to a compute-only host, got role %q\n", resolved)
+		return 2
+	}
 	memMB, cpus := hostsize.MemTotalMB(), hostsize.CPUs()
-	sizing := api.DeriveNodeSizingForRole(memMB, cpus, nodeSizingShape(resolved))
+	sizing := api.DeriveNodeSizingForRole(memMB, cpus, nodeSizingShape(resolved, *edge))
 	report := nodeSizingReport{
 		Role:               string(resolved),
 		HostMemTotalMB:     memMB,
 		HostCPUs:           cpus,
+		TenantCPUs:         sizing.TenantCPUs,
+		Edge:               *edge,
 		NonTenantReserveMB: sizing.NonTenantReserveMB,
 		TenantSliceMaxMB:   sizing.TenantSliceMaxMB,
 		TenantBudgetMB:     sizing.TenantBudgetMB,
@@ -82,8 +95,8 @@ func cmdComputeNodesSizing(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "%s\n", body)
 		return 0
 	}
-	_, _ = fmt.Fprintf(osStdout, "role=%s detected=%t host_mem_total_mb=%d host_cpus=%d\n",
-		report.Role, report.Detected, report.HostMemTotalMB, report.HostCPUs)
+	_, _ = fmt.Fprintf(osStdout, "role=%s edge=%t detected=%t host_mem_total_mb=%d host_cpus=%d tenant_cpus=%d\n",
+		report.Role, report.Edge, report.Detected, report.HostMemTotalMB, report.HostCPUs, report.TenantCPUs)
 	_, _ = fmt.Fprintf(osStdout, "non_tenant_reserve_mb=%d tenant_slice_max_mb=%d tenant_budget_mb=%d admission_ceiling_mb=%d vcpu_slots=%d\n",
 		report.NonTenantReserveMB, report.TenantSliceMaxMB, report.TenantBudgetMB, report.AdmissionCeilingMB, report.VCPUSlots)
 	return 0

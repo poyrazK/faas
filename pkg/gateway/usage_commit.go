@@ -145,7 +145,7 @@ func (h *Handler) usageAuditEvidence(r *http.Request, in usageEventInput) *usage
 }
 
 // usageCommit makes a monetized request's usage durable before its response
-// can complete (ADR-1303). It runs once; later calls return the first result.
+// can complete (ADR-1505). It runs once; later calls return the first result.
 type usageCommit struct {
 	h                  *Handler
 	r                  *http.Request
@@ -254,7 +254,7 @@ func usageCommitFrom(ctx context.Context) *usageCommit {
 }
 
 // armUsageCommit holds a monetized request's final response bytes until its
-// usage is durable (ADR-1303). Called just before the request is forwarded;
+// usage is durable (ADR-1505). Called just before the request is forwarded;
 // anonymous and audit-only traffic keeps the observe-time append.
 func (h *Handler) armUsageCommit(r *http.Request, target Target) {
 	holder, _ := r.Context().Value(usageCommitKey{}).(*usageCommitHolder)

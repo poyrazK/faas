@@ -44,9 +44,52 @@ const (
 )
 
 // routeExclude lists spec routes that have no SDK method by design.
-// Mirror logic in cmd/apid/spec_compliance_test.go::routeExclude;
-// keep both in sync.
+// Authentication/transport exceptions apply only to this SDK gate. Routes
+// intentionally absent from OpenAPI also belong in
+// scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
 var routeExclude = map[string]bool{
+	// ADR-202610171453: default-off internal hosting is absent from public OpenAPI/SDK discovery.
+	"DELETE /v1/internal/hosting/sites/{site}":                                     true,
+	"DELETE /v1/internal/hosting/sites/{site}/automation-credentials/{credential}": true,
+	"DELETE /v1/internal/hosting/sites/{site}/domains/{domain}":                    true,
+	"DELETE /v1/internal/hosting/sites/{site}/oidc-trusts/{trust}":                 true,
+	"DELETE /v1/internal/hosting/sites/{site}/previews/{preview}":                  true,
+	"DELETE /v1/internal/hosting/sites/{site}/releases/{release}":                  true,
+	"GET /v1/internal/hosting/capabilities":                                        true,
+	"GET /v1/internal/hosting/sites":                                               true,
+	"GET /v1/internal/hosting/sites/{site}":                                        true,
+	"GET /v1/internal/hosting/sites/{site}/automation-credentials":                 true,
+	"GET /v1/internal/hosting/sites/{site}/ci/{run}":                               true,
+	"GET /v1/internal/hosting/sites/{site}/cleanup":                                true,
+	"GET /v1/internal/hosting/sites/{site}/diagnostics":                            true,
+	"GET /v1/internal/hosting/sites/{site}/domains":                                true,
+	"GET /v1/internal/hosting/sites/{site}/history":                                true,
+	"GET /v1/internal/hosting/sites/{site}/oidc-trusts":                            true,
+	"GET /v1/internal/hosting/sites/{site}/preview-capacity":                       true,
+	"GET /v1/internal/hosting/sites/{site}/previews":                               true,
+	"GET /v1/internal/hosting/sites/{site}/releases":                               true,
+	"GET /v1/internal/hosting/sites/{site}/runs":                                   true,
+	"GET /v1/internal/hosting/sites/{site}/status":                                 true,
+	"GET /v1/internal/hosting/sites/{site}/traffic":                                true,
+	"GET /v1/internal/hosting/usage":                                               true,
+	"POST /v1/internal/hosting/oidc/exchange":                                      true,
+	"POST /v1/internal/hosting/sites":                                              true,
+	"POST /v1/internal/hosting/sites/{site}/automation-credentials":                true,
+	"POST /v1/internal/hosting/sites/{site}/ci-setup":                              true,
+	"POST /v1/internal/hosting/sites/{site}/ci/{run}/cancel":                       true,
+	"POST /v1/internal/hosting/sites/{site}/ci/{run}/preview":                      true,
+	"POST /v1/internal/hosting/sites/{site}/domains":                               true,
+	"POST /v1/internal/hosting/sites/{site}/domains/{domain}/recover":              true,
+	"POST /v1/internal/hosting/sites/{site}/oidc-trusts":                           true,
+	"POST /v1/internal/hosting/sites/{site}/previews":                              true,
+	"POST /v1/internal/hosting/sites/{site}/promotions":                            true,
+	"POST /v1/internal/hosting/sites/{site}/releases":                              true,
+	"POST /v1/internal/hosting/sites/{site}/releases/{release}/finalize":           true,
+	"POST /v1/internal/hosting/sites/{site}/releases/{release}/uploads":            true,
+	"PUT /v1/internal/hosting/sites/{site}/ci/{run}":                               true,
+	"PUT /v1/internal/hosting/sites/{site}/retention":                              true,
+	"PUT /v1/internal/hosting/sites/{site}/suspension":                             true,
+
 	"POST /integrations/slack/actions":                                                  true, // ADR-1497 signed managed Slack actions.
 	"POST /integrations/slack/events":                                                   true, // ADR-1497 signed Slack uninstall/revocation callbacks.
 	"POST /integrations/slack/issues/{app_id}":                                          true, // ADR-1496 Slack-signed provider callback.
@@ -57,34 +100,150 @@ var routeExclude = map[string]bool{
 	"GET /dashboard/apps/{slug}/issues/tracker-review":                                  true, // authenticated browser-only tracker review/notification surface
 	"GET /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync/{link_id}":               true, // authenticated browser-only tracker review/notification surface
 	"POST /dashboard/apps/{slug}/issues/frequency-alerts":                               true, // authenticated browser-only frequency alert form
+	// Browser session and named-CSRF adapters for documented MCP APIs.
+	"POST /dashboard/mcp/apps/{slug}/alerts":                           true,
+	"POST /dashboard/mcp/apps/{slug}/alerts/{id}":                      true,
+	"POST /dashboard/mcp/apps/{slug}/incidents/{id}/attention-actions": true,
+	"POST /dashboard/mcp/apps/{slug}/alerts/{id}/pagerduty":            true,
+	"POST /dashboard/mcp/apps/{slug}/alerts/{id}/reminder-defaults":    true,
+	"POST /dashboard/mcp/apps/{slug}/alerts/{id}/fallback":             true,
+	"POST /dashboard/mcp/apps/{slug}/maintenance":                      true,
+	"POST /dashboard/mcp/apps/{slug}/maintenance/{id}/cancel":          true,
+	"POST /dashboard/mcp/apps/{slug}/notifications/actions":            true,
+	"POST /dashboard/mcp/apps/{slug}/oauth":                            true,
+	"POST /dashboard/mcp/retirements/{id}":                             true,
 
-	"GET /v1/apps/{slug}/entities/connect":         true, // WebSocket frames require the durable-session transport, not Client.do.
-	"GET /v1/apps/{slug}/entities/session-connect": true, // Browser grant subprotocol and Origin authentication, not Bearer HTTP.
+	"GET /v1/apps/{slug}/entities/connect":                                   true, // WebSocket frames require the durable-session transport, not Client.do.
+	"GET /v1/apps/{slug}/entities/session-connect":                           true, // Browser grant subprotocol and Origin authentication, not Bearer HTTP.
+	"GET /v1/apps/{slug}/product/billing/documents":                          true,
+	"GET /v1/apps/{slug}/product/billing/documents/{document}/handoff":       true,
+	"GET /v1/apps/{slug}/product/billing/receipts":                           true,
+	"POST /v1/apps/{slug}/product/onboarding/workspaces":                     true,
+	"POST /v1/apps/{slug}/product/onboarding/preview":                        true,
+	"POST /v1/apps/{slug}/product/onboarding/confirm":                        true,
+	"GET /v1/apps/{slug}/product/onboarding/{onboarding}":                    true,
+	"GET /v1/apps/{slug}/product/team-policy":                                true,
+	"POST /v1/apps/{slug}/product/team-policy/preview":                       true,
+	"PUT /v1/apps/{slug}/product/team-policy":                                true,
+	"GET /v1/product-control/portal-guidance.js":                             true,
+	"GET /v1/product-control/portal-email.js":                                true,
+	"GET /v1/product-control/email/unsubscribe":                              true,
+	"POST /v1/product-control/email/unsubscribe":                             true,
+	"GET /v1/product-control/email-unsubscribe.js":                           true,
+	"GET /v1/apps/{slug}/product/email-opt-outs":                             true,
+	"GET /v1/product-control/customer/{slug}/email-opt-outs":                 true,
+	"POST /v1/product-control/email/resend-events":                           true,
+	"GET /v1/product-control/customer/{slug}/email-preferences":              true,
+	"PUT /v1/product-control/customer/{slug}/email-preferences":              true,
+	"GET /v1/apps/{slug}/product/email-recoveries":                           true,
+	"POST /v1/product-control/customer/{slug}/email-recovery":                true,
+	"GET /v1/product-control/customer/{slug}/email-recoveries":               true,
+	"GET /v1/product-control/customer/{slug}/email-deliveries":               true,
+	"GET /v1/product-control/portal-activity.js":                             true,
+	"GET /v1/product-control/portal-history.js":                              true,
+	"GET /v1/product-control/customer/{slug}/work-history":                   true,
+	"GET /v1/product-control/portal-run.js":                                  true,
+	"GET /v1/product-control/customer/{slug}/operations/{operation}/details": true,
+	"GET /v1/product-control/customer/{slug}/activity":                       true,
+	"GET /v1/product-control/portal-notifications.js":                        true,
+	"GET /v1/product-control/customer/{slug}/notifications":                  true,
+	"GET /v1/product-control/customer/{slug}/account-recovery":               true,
+	"POST /v1/product-control/customer/{slug}/notifications/read":            true,
+	"GET /v1/product-control/portal-help.js":                                 true,
+	"POST /v1/product-control/customer/{slug}/help":                          true,
+	"GET /v1/product-control/customer/{slug}/help":                           true,
+	"GET /v1/product-control/customer/{slug}/help/{request}":                 true,
+	"GET /v1/apps/{slug}/product/help":                                       true,
+	"GET /v1/apps/{slug}/product/help/{request}":                             true,
+	"PUT /v1/apps/{slug}/product/help/{request}":                             true,
+	"GET /v1/product-control/portal-team.js":                                 true,
+	"GET /v1/product-control/customer/{slug}/team":                           true,
+	"POST /v1/product-control/customer/{slug}/team/preview":                  true,
+	"POST /v1/product-control/customer/{slug}/team/confirm":                  true,
+	"GET /v1/product-control/customer/{slug}/team/actions":                   true,
+	"GET /v1/product-control/customer/{slug}/team/actions/{change}":          true,
+	"GET /v1/product-control/portal-plans.js":                                true,
+	"GET /v1/apps/{slug}/product/plan-policy":                                true,
+	"POST /v1/apps/{slug}/product/plan-policy/preview":                       true,
+	"PUT /v1/apps/{slug}/product/plan-policy":                                true,
+	"GET /v1/product-control/customer/{slug}/plans":                          true,
+	"POST /v1/product-control/customer/{slug}/plans/preview":                 true,
+	"POST /v1/product-control/customer/{slug}/plans/confirm":                 true,
+	"GET /v1/product-control/customer/{slug}/plans/changes":                  true,
+	"GET /v1/product-control/customer/{slug}/plans/changes/{change}":         true,
+	"GET /v1/apps/{slug}/product/access":                                     true,
+	"POST /v1/apps/{slug}/product/access/preview":                            true,
+	"PUT /v1/apps/{slug}/product/access":                                     true,
+	"GET /v1/apps/{slug}/product/doctor":                                     true,
+	"GET /v1/apps/{slug}/product/billing/review":                             true,
+	"GET /v1/platform-tenant-self/product/billing":                           true,
+	"GET /v1/product-control/customer/{slug}/billing":                        true,
+	"POST /v1/apps/{slug}/product/billing/credits":                           true,
+	"POST /v1/apps/{slug}/product/billing/documents/{document}/handoff":      true,
+	"POST /v1/apps/{slug}/product/billing/receipts/{operation}/waive":        true,
+	"POST /v1/apps/{slug}/product/billing/statements/finalize":               true,
+	// ADR-1701: internal Product Control pilot; mirror spec compliance exclusions.
+	"POST /v1/platform-tenant-self/product/start":                                  true,
+	"GET /v1/apps/{slug}/product":                                                  true,
+	"PUT /v1/apps/{slug}/product":                                                  true,
+	"GET /v1/apps/{slug}/product/customers":                                        true,
+	"GET /v1/apps/{slug}/product/customers/activity":                               true,
+	"GET /v1/apps/{slug}/product/customers/overview":                               true,
+	"PUT /v1/apps/{slug}/product/customers/{tenant}":                               true,
+	"GET /v1/apps/{slug}/product/usage":                                            true,
+	"GET /v1/apps/{slug}/product/operations/{operation}/explain":                   true,
+	"GET /v1/platform-tenant-self/product":                                         true,
+	"GET /v1/product-control/portal":                                               true,
+	"GET /v1/product-control/portal.js":                                            true,
+	"GET /v1/product-control/portal.css":                                           true,
+	"POST /v1/platform-tenant-self/product/submissions/lookup":                     true,
+	"POST /v1/product-control/customer/{slug}/session":                             true,
+	"POST /v1/product-control/customer/{slug}/session/refresh":                     true,
+	"DELETE /v1/product-control/customer/{slug}/session":                           true,
+	"GET /v1/product-control/customer/{slug}/workspaces":                           true,
+	"GET /v1/product-control/customer/{slug}/guidance":                             true,
+	"GET /v1/product-control/customer/{slug}/product":                              true,
+	"POST /v1/product-control/customer/{slug}/start":                               true,
+	"POST /v1/product-control/customer/{slug}/submissions/lookup":                  true,
+	"GET /v1/product-control/customer/{slug}/operations/{id}":                      true,
+	"GET /v1/product-control/customer/{slug}/operations/{id}/events":               true,
+	"POST /v1/product-control/customer/{slug}/operations/{id}/cancel":              true,
+	"GET /v1/product-control/customer/{slug}/operations/{id}/artifacts/{artifact}": true,
+	"GET /v1/product-control/portal-core.js":                                       true,
+	// ADR-1661: the generated runtime reports with a short-lived, dedicated
+	// workload assertion. Owner API keys cannot publish these observations.
+	"POST /v1/runtime/data-api/connection-observations": true,
 
-	"GET /v1/account/dpa":                                             true, // public markdown (no Bearer; SDK consumers don't render HTML)
-	"GET /v1/apps/{slug}/tasks/{id}/attach":                           true, // ADR-1037 WebSocket attach; the CLI drives it directly
-	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/attach":                true, // ADR-1330 WebSocket attach; the CLI drives it directly
-	"POST /v1/webhooks/stripe":                                        true, // HMAC-signed webhook; outside the Bearer-auth surface
-	"POST /v1/webhooks/resend":                                        true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
-	"POST /v1/hooks/{token}":                                          true, // ADR-212 provider-signed ingress; outside the Bearer-auth SDK
-	"GET /v1/openapi.yaml":                                            true, // metadata
-	"GET /v1/openapi.json":                                            true, // metadata
-	"GET /docs":                                                       true, // anonymous Swagger UI metadata page
-	"GET /v1/internal/metrics/targets":                                true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
-	"GET /v1/internal/metrics/promtail-targets":                       true, // issue #274 — loopback Promtail HTTP-SD endpoint
-	"POST /v1/cli-auth/code":                                          true, // anonymous device-code (CLI uses wrapper)
-	"POST /v1/cli-auth/exchange":                                      true,
-	"GET /status/slo.json":                                            true,
-	"GET /status":                                                     true,
-	"POST /dashboard/apps/{slug}/crons/{id}/policy":                   true, // HTML form, scheduled-work policy editor (ADR-385)
-	"POST /dashboard/jobs/{name}/policy":                              true, // HTML form, scheduled-work policy editor (ADR-385)
-	"POST /dashboard/jobs/{name}/runs/{id}/replay-failed":             true, // HTML form, failed job partition replay (ADR-385)
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync":      true, // ADR-1474: authenticated HTML review/recovery form with named CSRF.
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection": true, // ADR-1474: owner HTML credential form with session MFA and CSRF.
-	"POST /hooks/issue-trackers/linear/{app_id}":                      true, // ADR-1476: raw-body HMAC provider protocol, outside the Bearer-auth DTO/SDK surface.
-	"GET /dashboard/apps/{slug}/issues/slack-routing":                 true, // ADR-1498 owner-only Slack routing editor.
-	"GET /oauth/slack/callback":                                       true, // ADR-1497 owner session and one-use state confirmation.
-	"GET /oauth/linear/callback":                                      true, // ADR-1478: owner session OAuth callback and HTML team picker with PKCE and one-use state.
+	"GET /v1/account/dpa":                                                    true, // public markdown (no Bearer; SDK consumers don't render HTML)
+	"GET /v1/apps/{slug}/tasks/{id}/attach":                                  true, // ADR-1037 WebSocket attach; the CLI drives it directly
+	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/attach":                       true, // ADR-1330 WebSocket attach; the CLI drives it directly
+	"POST /v1/webhooks/stripe":                                               true, // HMAC-signed webhook; outside the Bearer-auth surface
+	"POST /v1/webhooks/resend":                                               true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
+	"POST /v1/hooks/{token}":                                                 true, // ADR-212 provider-signed ingress; outside the Bearer-auth SDK
+	"GET /v1/openapi.yaml":                                                   true, // metadata
+	"GET /v1/openapi.json":                                                   true, // metadata
+	"GET /docs":                                                              true, // anonymous Swagger UI metadata page
+	"GET /v1/internal/metrics/targets":                                       true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
+	"GET /v1/internal/metrics/promtail-targets":                              true, // issue #274 — loopback Promtail HTTP-SD endpoint
+	"POST /v1/cli-auth/code":                                                 true, // anonymous device-code (CLI uses wrapper)
+	"POST /v1/cli-auth/exchange":                                             true,
+	"GET /status/slo.json":                                                   true,
+	"GET /status":                                                            true,
+	"POST /dashboard/apps/{slug}/crons/{id}/policy":                          true, // HTML form, scheduled-work policy editor (ADR-385)
+	"POST /dashboard/jobs/{name}/policy":                                     true, // HTML form, scheduled-work policy editor (ADR-385)
+	"POST /dashboard/jobs/{name}/runs/{id}/replay-failed":                    true, // HTML form, failed job partition replay (ADR-385)
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync":             true, // ADR-1474: authenticated HTML review/recovery form with named CSRF.
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection":        true, // ADR-1474: owner HTML credential form with session MFA and CSRF.
+	"POST /hooks/issue-trackers/linear/{app_id}":                             true, // ADR-1476: raw-body HMAC provider protocol, outside the Bearer-auth DTO/SDK surface.
+	"GET /dashboard/apps/{slug}/issues/lifecycle-alerts":                     true, // ADR-1499: authenticated HTML policy editor; JSON API remains checked.
+	"POST /dashboard/apps/{slug}/issues/lifecycle-alerts":                    true, // ADR-1499: session/MFA/CSRF HTML adapter for public update/preview APIs.
+	"GET /dashboard/apps/{slug}/issues/slack-routing":                        true, // ADR-1498 owner-only Slack routing editor.
+	"GET /oauth/slack/callback":                                              true, // ADR-1497 owner session and one-use state confirmation.
+	"GET /oauth/linear/callback":                                             true, // ADR-1478: owner session OAuth callback and HTML team picker with PKCE and one-use state.
+	"POST /v1/webhooks/mcp-readiness/pagerduty/{id}":                         true, // Provider HMAC authentication, not Bearer HTTP.
+	"POST /v1/webhooks/mcp-readiness/pagerduty/{id}/{destination}":           true, // Destination-scoped provider HMAC ingress (ADR-20261017191529).
+	"POST /dashboard/mcp/apps/{slug}/alerts/{id}/pagerduty-acknowledgements": true, // Named-CSRF browser adapter.
+	"POST /v1/apps/{slug}/otlp/v1/metrics":                                   true, // ADR-745 OTLP/HTTP ingestion; called by OpenTelemetry exporters, not the SDK
 
 	// Issue #555 trace endpoint. Operator-only surface (X-Faas-Trace-Auth
 	// header), not a customer-Bearer-auth endpoint. The SDK does not
@@ -130,6 +289,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/admin/instances/{id}/force-restart":        true, // PR #1105 P2d — operator-only recovery primitive
 	"POST /v1/admin/builds/sweep-stuck":                  true, // PR #1099 P2c — operator-only recovery primitive
 	"GET /v1/admin/ops/jobs/runs":                        true, // operator-only active job-run projection
+	"GET /v1/admin/ops/data-repairs":                     true, // operator-only repair health projection
 	"GET /v1/admin/ops/jobs/runs/{id}":                   true, // operator-only job-run inspection
 	"POST /v1/admin/ops/jobs/runs/{id}/cancel":           true, // operator-only job-run cancellation
 	"GET /v1/admin/ops/deployments":                      true, // operator-only deployment incident projection
@@ -333,6 +493,34 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/source-review":                                             "ReviewSourceRef",
 	"POST /v1/projects/{slug}/environments/{environment}/approval-requests":          "RequestBrowserPromotionApproval",
 	"POST /v1/projects/{slug}/environments/{environment}/approval-requests/exchange": "ExchangeBrowserPromotionApproval",
+	// MCP readiness clients use explicit domain names rather than path-derived names.
+	"GET /v1/apps/{slug}/alerts/{id}/mcp-readiness-pagerduty-acknowledgements":        "GetMCPReadinessPagerDutyAcknowledgements",
+	"PUT /v1/apps/{slug}/alerts/{id}/mcp-readiness-pagerduty-acknowledgements":        "SetMCPReadinessPagerDutyAcknowledgements",
+	"GET /v1/apps/{slug}/alerts/{id}/mcp-readiness-pagerduty-acknowledgements/events": "ListMCPReadinessPagerDutyAcknowledgementEvents",
+	"GET /v1/apps/{slug}/alerts/{id}/mcp-readiness-pagerduty":                         "GetMCPReadinessPagerDuty",
+	"PUT /v1/apps/{slug}/alerts/{id}/mcp-readiness-pagerduty":                         "SetMCPReadinessPagerDuty",
+	"GET /v1/apps/{slug}/alerts/{id}/mcp-readiness-reminder-defaults":                 "GetMCPReadinessReminderDefaults",
+	"PUT /v1/apps/{slug}/alerts/{id}/mcp-readiness-reminder-defaults":                 "SetMCPReadinessReminderDefaults",
+	"GET /v1/apps/{slug}/alerts/{id}/mcp-readiness-fallback":                          "GetMCPReadinessFallback",
+	"PUT /v1/apps/{slug}/alerts/{id}/mcp-readiness-fallback":                          "SetMCPReadinessFallback",
+	"GET /v1/apps/{slug}/mcp-readiness-attention":                                     "ListMCPReadinessAttention",
+	"GET /v1/apps/{slug}/mcp-readiness-incidents":                                     "ListMCPReadinessIncidents",
+	"GET /v1/apps/{slug}/mcp-readiness-incidents/{id}/attention-actions":              "ListMCPReadinessAttentionHistory",
+	"GET /v1/apps/{slug}/mcp-readiness-maintenance":                                   "ListMCPReadinessMaintenance",
+	"GET /v1/apps/{slug}/mcp-readiness-notifications":                                 "ListMCPReadinessNotificationQueues",
+	"GET /v1/apps/{slug}/mcp-readiness-policy":                                        "GetMCPReadinessPolicy",
+	"GET /v1/apps/{slug}/mcp-readiness-policy/diff":                                   "DiffMCPReadinessPolicy",
+	"GET /v1/apps/{slug}/mcp-readiness-policy/history":                                "ListMCPReadinessPolicyHistory",
+	"GET /v1/apps/{slug}/mcp-readiness-policy/history/{revision}":                     "GetMCPReadinessPolicyRevision",
+	"GET /v1/deployments/{id}/mcp-readiness":                                          "GetMCPReadiness",
+	"POST /v1/apps/{slug}/mcp-readiness-incidents/{id}/attention-actions":             "ActMCPReadinessAttention",
+	"POST /v1/apps/{slug}/mcp-readiness-maintenance":                                  "CreateMCPReadinessMaintenance",
+	"POST /v1/apps/{slug}/mcp-readiness-maintenance/{id}/cancel":                      "CancelMCPReadinessMaintenance",
+	"POST /v1/apps/{slug}/mcp-readiness-notifications/actions":                        "ActMCPReadinessNotification",
+	"POST /v1/apps/{slug}/mcp-readiness-policy/history/{revision}/restore":            "RestoreMCPReadinessPolicy",
+	"POST /v1/deployments/{id}/mcp-readiness":                                         "ProbeMCPReadiness",
+	"POST /v1/deployments/{id}/mcp-readiness-overrides":                               "OverrideMCPReadiness",
+	"PUT /v1/apps/{slug}/mcp-readiness-policy":                                        "SetMCPReadinessPolicy",
 
 	// BEGIN managed realtime SDK routes
 	"GET /v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials":                                                   "ListRealtimePublisherCredentials",
@@ -422,6 +610,10 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/entities/session-grants":           "MintDurableEntitySessionGrant",
 	"DELETE /v1/apps/{slug}/entities/session-grants/{grant}": "RevokeDurableEntitySessionGrant",
 
+	// ADR-751: the change timeline reads as one noun, not "apps slug changes".
+	"GET /v1/apps/{slug}/changes": "GetAppChangeTimeline",
+	// ADR-745: hyphenated custom-metrics segment.
+	"GET /v1/apps/{slug}/custom-metrics/{name}/series": "GetCustomMetricSeries",
 	// ADR-1131: the hyphenated path segment has no derivable Go identifier.
 	"GET /v1/service-map": "GetServiceMap",
 	// Profiling routes use domain-specific SDK names and hyphenated segments.
@@ -474,6 +666,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":        "GetIssueSourceMaps",
 	"DELETE /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":     "RetireIssueSourceMaps",
 	"GET /v1/apps/{slug}/issues":                                               "ListIssues",
+	"GET /v1/apps/{slug}/issue-lifecycle-alert-policy":                         "GetIssueLifecycleAlertPolicy",
+	"PUT /v1/apps/{slug}/issue-lifecycle-alert-policy":                         "SetIssueLifecycleAlertPolicy",
+	"POST /v1/apps/{slug}/issue-lifecycle-alert-policy/preview":                "PreviewIssueLifecycleAlert",
 	"GET /v1/apps/{slug}/issue-frequency-alert-policy":                         "GetIssueFrequencyAlertPolicy",
 	"PUT /v1/apps/{slug}/issue-frequency-alert-policy":                         "SetIssueFrequencyAlertPolicy",
 	"GET /v1/apps/{slug}/issue-impact-alert-policy":                            "GetIssueImpactAlertPolicy",
@@ -794,6 +989,15 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/rollouts/recover":                                                               "RecoverRollout",
 	"POST /v1/dev/sessions/{project}/syncs":                                                               "RecordDevSync",
 	"PUT /v1/dev/test-runs/{run_id}":                                                                      "RegisterScenarioTest",
+	"POST /v1/dev/test-runs/{run_id}/actions/seal":                                                        "SealScenarioTestActions",
+	"POST /v1/dev/test-runs/{run_id}/objects":                                                             "CreateScenarioObjects",
+	"POST /v1/dev/test-runs/{run_id}/objects/seal":                                                        "SealScenarioObjects",
+	"DELETE /v1/dev/test-runs/{run_id}/objects":                                                           "DeleteScenarioObjects",
+	"POST /v1/dev/test-runs/{run_id}/postgres":                                                            "CreateScenarioPostgres",
+	"POST /v1/dev/test-runs/{run_id}/postgres/seal":                                                       "SealScenarioPostgres",
+	"DELETE /v1/dev/test-runs/{run_id}/postgres":                                                          "DeleteScenarioPostgres",
+	"POST /v1/dev/test-runs/{run_id}/suspend-resume":                                                      "BeginScenarioSuspendResume",
+	"GET /v1/dev/test-runs/{run_id}/suspend-resume":                                                       "GetScenarioSuspendResume",
 	"DELETE /v1/dev/test-runs/{run_id}":                                                                   "DeleteScenarioTest",
 	"PUT /v1/dev/test-runs/{run_id}/chaos":                                                                "InjectScenarioTestChaos",
 	"DELETE /v1/dev/test-runs/{run_id}/chaos":                                                             "ClearScenarioTestChaos",
@@ -1164,11 +1368,28 @@ var methodRouteMap = map[string]string{
 	// The other 5 entries exist because the SDK names them after the
 	// resource noun (AlertRule) rather than the path placeholder
 	// concatenation (AppsSlugAlerts) — same convention as crons.
-	"GET /v1/apps/{slug}/alerts":                     "ListAlertRules",
-	"POST /v1/apps/{slug}/alerts":                    "CreateAlertRule",
-	"GET /v1/apps/{slug}/alerts/{id}":                "GetAlertRule",
-	"PATCH /v1/apps/{slug}/alerts/{id}":              "UpdateAlertRule",
-	"DELETE /v1/apps/{slug}/alerts/{id}":             "DeleteAlertRule",
+	"GET /v1/apps/{slug}/alerts":         "ListAlertRules",
+	"POST /v1/apps/{slug}/alerts":        "CreateAlertRule",
+	"GET /v1/apps/{slug}/alerts/{id}":    "GetAlertRule",
+	"PATCH /v1/apps/{slug}/alerts/{id}":  "UpdateAlertRule",
+	"DELETE /v1/apps/{slug}/alerts/{id}": "DeleteAlertRule",
+	// ADR-749 notification channels (hyphenated resource).
+	"GET /v1/notification-channels":            "ListNotificationChannels",
+	"POST /v1/notification-channels":           "CreateNotificationChannel",
+	"GET /v1/notification-channels/{id}":       "GetNotificationChannel",
+	"DELETE /v1/notification-channels/{id}":    "DeleteNotificationChannel",
+	"POST /v1/notification-channels/{id}/test": "TestNotificationChannel",
+	// ADR-747 customer SLOs are named after the resource noun.
+	"GET /v1/apps/{slug}/slos":         "ListSLOs",
+	"POST /v1/apps/{slug}/slos":        "CreateSLO",
+	"GET /v1/apps/{slug}/slos/{id}":    "GetSLO",
+	"DELETE /v1/apps/{slug}/slos/{id}": "DeleteSLO",
+	// ADR-748 synthetic checks are named after the resource noun.
+	"GET /v1/apps/{slug}/synthetics":                 "ListSyntheticChecks",
+	"POST /v1/apps/{slug}/synthetics":                "CreateSyntheticCheck",
+	"GET /v1/apps/{slug}/synthetics/{id}":            "GetSyntheticCheck",
+	"PATCH /v1/apps/{slug}/synthetics/{id}":          "UpdateSyntheticCheck",
+	"DELETE /v1/apps/{slug}/synthetics/{id}":         "DeleteSyntheticCheck",
 	"POST /v1/apps/{slug}/alerts/{id}/rotate-secret": "RotateAlertRuleSecret",
 	// ADR-123 PR-D — operator pane for one rule's recent
 	// alert_deliveries rows. ?include_test=true toggles the IsTest
@@ -1535,18 +1756,20 @@ var methodRouteMap = map[string]string{
 	// hyphens (e.g. "DeleteDelayed-tasksId") because the spec path uses
 	// the k8s-style hyphen; the explicit map below drops the hyphen and
 	// conforms to the SDK's flat resource naming.
-	"POST /v1/apps/{slug}/invoke":                    "InvokeApp",
-	"POST /v1/apps/{slug}/invoke/async":              "InvokeAppAsync",
-	"POST /v1/apps/{slug}/entities/invoke":           "InvokeDurableEntity",
-	"GET /v1/apps/{slug}/entities/inspect":           "InspectDurableEntity",
-	"POST /v1/apps/{slug}/entities/retry":            "RetryDurableEntity",
-	"GET /v1/apps/{slug}/entities/export":            "ExportDurableEntity",
-	"POST /v1/apps/{slug}/entities/restore":          "RestoreDurableEntity",
-	"GET /v1/apps/{slug}/entities/backups":           "ListDurableEntityBackups",
-	"GET /v1/apps/{slug}/entities/backups/get":       "GetDurableEntityBackup",
-	"POST /v1/apps/{slug}/entities/restore/preview":  "PreviewDurableEntityRestore",
-	"POST /v1/apps/{slug}/entities/restore/validate": "ValidateDurableEntityRestore",
-	"POST /v1/apps/{slug}/inbox":                     "SendAppMessage",
+	"POST /v1/apps/{slug}/invoke":                                  "InvokeApp",
+	"POST /v1/apps/{slug}/deployments/{deployment}/response-check": "CheckDeploymentResponse",
+	"GET /v1/deployments/response-check/capabilities":              "GetDeploymentResponseCheckCapabilities",
+	"POST /v1/apps/{slug}/invoke/async":                            "InvokeAppAsync",
+	"POST /v1/apps/{slug}/entities/invoke":                         "InvokeDurableEntity",
+	"GET /v1/apps/{slug}/entities/inspect":                         "InspectDurableEntity",
+	"POST /v1/apps/{slug}/entities/retry":                          "RetryDurableEntity",
+	"GET /v1/apps/{slug}/entities/export":                          "ExportDurableEntity",
+	"POST /v1/apps/{slug}/entities/restore":                        "RestoreDurableEntity",
+	"GET /v1/apps/{slug}/entities/backups":                         "ListDurableEntityBackups",
+	"GET /v1/apps/{slug}/entities/backups/get":                     "GetDurableEntityBackup",
+	"POST /v1/apps/{slug}/entities/restore/preview":                "PreviewDurableEntityRestore",
+	"POST /v1/apps/{slug}/entities/restore/validate":               "ValidateDurableEntityRestore",
+	"POST /v1/apps/{slug}/inbox":                                   "SendAppMessage",
 	// ADR-430: pin the hyphenated Commit routes to their typed client methods.
 	"POST /v1/apps/{slug}/commit-sources":                                    "CreateCommitSource",
 	"GET /v1/commit-sources/{source}/publications":                           "ListCommitPublications",

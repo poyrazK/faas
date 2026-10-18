@@ -18,5 +18,5 @@
   - **App consumers only.** Customer-wide (platform tenant) cards cannot price app meters, and gateway plan limits (ADR-953) still count requests. *Superseded for tenants by ADR-1319: tenant cards price app meters, including surface and JWT-rule requests.*
   - **Rollout.** apid must be upgraded before gateways. Events with reported units wait for an apid that acknowledges them.
 - **Rejected alternatives:**
-  - An ingestion API for usage events would decouple counts from requests, but needs its own idempotency, consumer attribution and late-arrival rules. The response already carries the consumer, the minute and exactly-once delivery (ADR-1303).
+  - An ingestion API for usage events would decouple counts from requests, but needs its own idempotency, consumer attribution and late-arrival rules. The response already carries the consumer, the minute and exactly-once delivery (ADR-1505).
   - Parsing token counts from model responses would tie billing to one response format.

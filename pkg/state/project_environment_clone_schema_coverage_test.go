@@ -1,9 +1,14 @@
 // adr: 590
+// adr: 1576 — CI configuration needs a strategy; execution authority stays with its source.
 // adr: 623 — pending resize intents belong only to their original database.
 // adr: 738
 // adr: 694
 // adr: 695
 // adr: 708
+// adr: 1701 — commercial configuration needs isolation; user email consent is not copied.
+// adr: 749 — notification channels and rule bindings are customer configuration.
+// adr: 747 — SLO definitions are configuration; hourly rollups are operational.
+// adr: 748 — synthetic check definitions are configuration; runs are operational.
 package state
 
 import (
@@ -18,6 +23,65 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
+		// Rehearsal fixtures, leases and sealed run evidence remain with their source.
+		"scenario_cold_preparations":          CloneSchemaOperational,
+		"scenario_command_networks":           CloneSchemaOperational,
+		"scenario_managed_work":               CloneSchemaOperational,
+		"scenario_object_fixtures":            CloneSchemaOperational,
+		"scenario_postgres_fixtures":          CloneSchemaOperational,
+		"scenario_recorder_requests":          CloneSchemaOperational,
+		"scenario_recorder_sessions":          CloneSchemaOperational,
+		"scenario_simulation_attempts":        CloneSchemaOperational,
+		"scenario_suspend_resumes":            CloneSchemaOperational,
+		"scenario_test_action_policies":       CloneSchemaOperational,
+		"scenario_worker_faults":              CloneSchemaOperational,
+		"product_control_heads":               CloneSchemaConfiguration,
+		"product_control_revisions":           CloneSchemaConfiguration,
+		"product_control_customers":           CloneSchemaConfiguration,
+		"product_control_help_requests":       CloneSchemaData,
+		"product_control_email_subscriptions": CloneSchemaIdentity,
+		"product_control_receipts":            CloneSchemaOperational,
+		"product_control_billing_documents":   CloneSchemaOperational,
+		// CI configuration stays scoped; execution authority remains at its source.
+		"ci_automation_event_retries": CloneSchemaOperational,
+		"ci_automation_branches":      CloneSchemaOperational,
+		"ci_automation_pull_requests": CloneSchemaOperational,
+		"ci_automation_events":        CloneSchemaOperational,
+		"ci_automation_path_checks":   CloneSchemaOperational,
+		"ci_source_check_retries":     CloneSchemaOperational,
+		"ci_automation_policies":      CloneSchemaConfiguration,
+		"ci_dispatch_budget":          CloneSchemaOperational,
+		"ci_execution_archives":       CloneSchemaOperational,
+		"ci_execution_check_retries":  CloneSchemaOperational,
+		"ci_execution_checks":         CloneSchemaOperational,
+		"ci_execution_profiles":       CloneSchemaConfiguration,
+		"ci_executions":               CloneSchemaOperational,
+		"ci_github_bindings":          CloneSchemaConfiguration,
+		"ci_github_checks":            CloneSchemaOperational,
+		"ci_github_triggers":          CloneSchemaOperational,
+		"ci_job_attempts":             CloneSchemaOperational,
+		"ci_job_runtime":              CloneSchemaOperational,
+		"ci_job_runtime_objects":      CloneSchemaOperational,
+		"ci_managed_objects":          CloneSchemaOperational,
+		"ci_pipeline_revisions":       CloneSchemaConfiguration,
+		"ci_run_events":               CloneSchemaOperational,
+		"ci_runs":                     CloneSchemaOperational,
+		"ci_storage_budget":           CloneSchemaOperational,
+		"ci_worker_health":            CloneSchemaOperational,
+		// ADR-202610171453: inventory internal hosting without copying identity or serving state.
+		"hosting_sites":                                 CloneSchemaConfiguration,
+		"hosting_domains":                               CloneSchemaConfiguration,
+		"hosting_retention_policies":                    CloneSchemaConfiguration,
+		"hosting_releases":                              CloneSchemaData,
+		"hosting_automation_credentials":                CloneSchemaIdentity,
+		"hosting_oidc_trusts":                           CloneSchemaIdentity,
+		"hosting_domain_claims":                         CloneSchemaIdentity,
+		"hosting_ci_runs":                               CloneSchemaOperational,
+		"hosting_previews":                              CloneSchemaOperational,
+		"hosting_promotion_events":                      CloneSchemaOperational,
+		"hosting_route_publications":                    CloneSchemaOperational,
+		"app_issue_lifecycle_alert_policies":            CloneSchemaConfiguration,
+		"issue_lifecycle_alert_receipts":                CloneSchemaOperational,
 		"workflow_automation_live_baseline_promotions":  CloneSchemaOperational,
 		"workflow_automation_live_baseline_retirements": CloneSchemaOperational,
 		"workflow_automation_live_suites":               CloneSchemaOperational,
@@ -89,6 +153,16 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"financial_price_snapshots":                CloneSchemaIdentity,
 		"financial_evidence_coverage":              CloneSchemaOperational,
 		"financial_sampling_windows":               CloneSchemaOperational,
+		"notification_channels":                    CloneSchemaConfiguration,
+		"alert_rule_channels":                      CloneSchemaConfiguration,
+		"app_slos":                                 CloneSchemaConfiguration,
+		"app_slo_hourly":                           CloneSchemaOperational,
+		"synthetic_checks":                         CloneSchemaConfiguration,
+		"synthetic_check_runs":                     CloneSchemaOperational,
+
+		// Capacity and runtime observations are source-bound, expiring evidence.
+		"managed_postgres_connection_capacity":     CloneSchemaOperational,
+		"data_api_runtime_connection_observations": CloneSchemaOperational,
 
 		"object_bucket_encryption":                           CloneSchemaConfiguration,
 		"object_bucket_lifecycle":                            CloneSchemaConfiguration,
@@ -108,6 +182,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"object_s3_copy_source_epochs":                       CloneSchemaConfiguration,
 		"object_version_references":                          CloneSchemaData,
 		"object_deletions":                                   CloneSchemaOperational,
+		"object_node_settlement_outbox":                      CloneSchemaOperational, // ADR-1562: source delivery authority.
 		"object_lifecycle_scans":                             CloneSchemaOperational,
 		"object_storage_capacity_reconciliations":            CloneSchemaOperational,
 		"object_storage_multipart_part_grants":               CloneSchemaOperational,
@@ -208,8 +283,17 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"mcp_catalog_monitors":            CloneSchemaOperational,
 		"mcp_oauth_retirements":           CloneSchemaOperational,
 		"service_recovery":                CloneSchemaOperational,
-		"service_capacity_policy":         CloneSchemaPlatform,
-		"accounts":                        CloneSchemaIdentity, "orgs": CloneSchemaIdentity, "api_keys": CloneSchemaIdentity,
+		// ADR-1522–1530: recovery fences and receipts remain with their source.
+		"instance_snapshot_recovery":    CloneSchemaOperational,
+		"migration_admissions":          CloneSchemaOperational,
+		"migration_sources":             CloneSchemaOperational,
+		"node_lifecycle_completions":    CloneSchemaOperational,
+		"operator_node_executions":      CloneSchemaOperational,
+		"operator_park_executions":      CloneSchemaOperational,
+		"operator_recovery_submissions": CloneSchemaOperational,
+		"operator_restart_executions":   CloneSchemaOperational,
+		"service_capacity_policy":       CloneSchemaPlatform,
+		"accounts":                      CloneSchemaIdentity, "orgs": CloneSchemaIdentity, "api_keys": CloneSchemaIdentity,
 		"egress_policy": CloneSchemaPlatform, "compute_nodes": CloneSchemaPlatform,
 
 		"project_release_sets": CloneSchemaConfiguration,
@@ -256,6 +340,32 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 	fresh, err := ProjectEnvironmentCloneSchemaPolicies()
 	if err != nil || fresh[0].Kind == "changed" || fresh[0].Columns[0] == "changed" {
 		t.Fatalf("caller changed capture registry: %v", err)
+	}
+}
+
+func TestHostingCloneInventoryRetainsCopyStrategyBlockers(t *testing.T) {
+	// adr: 202610171453 — known schema does not qualify hosting configuration or artifact cloning.
+	policies, err := ProjectEnvironmentCloneSchemaPolicies()
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := cloneSchemaCoverage(policies)
+	if err != nil || !report.Known {
+		t.Fatal("registered schema must be known", report, err)
+	}
+	wanted := map[string]string{
+		"hosting_sites":              "isolated_strategy_unavailable",
+		"hosting_domains":            "isolated_strategy_unavailable",
+		"hosting_retention_policies": "isolated_strategy_unavailable",
+		"hosting_releases":           "isolated_data_strategy_unavailable",
+	}
+	for _, blocker := range report.Blockers {
+		if wanted[blocker.Table] == blocker.Code {
+			delete(wanted, blocker.Table)
+		}
+	}
+	if len(wanted) != 0 {
+		t.Fatal("hosting copy strategies became implicitly available", wanted)
 	}
 }
 

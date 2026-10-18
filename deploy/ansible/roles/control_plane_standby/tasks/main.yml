@@ -1,0 +1,6 @@
+---
+# control_plane_standby (ADR-1344 §8). As a plain role it stages the
+# primary's control-plane files on the standby (sync.yml); the takeover
+# playbook runs takeover.yml after a promotion.
+- name: control_plane_standby — stage the primary's control-plane files
+  ansible.builtin.import_tasks: sync.yml

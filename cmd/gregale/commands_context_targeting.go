@@ -44,6 +44,10 @@ func projectTargeting(context localProjectContext, path, configPath string, conn
 			overview.Notes = append(overview.Notes, "App-scoped commands need an explicit app or a link with --app; no workload is inferred here.")
 			overview.NextCommand = recoveryCLI() + " projects info " + recoveryArgument(context.Project)
 		}
+		if context.Project == "" {
+			overview.AppSource = "saved standalone app"
+			overview.Notes = append(overview.Notes, "This app has no saved project. Use context set --app to change it, or unlink to remove the default.")
+		}
 		if context.Environment == "" {
 			overview.EnvironmentSource = "command default"
 			overview.Notes = append(overview.Notes, "No environment is linked. Scoped secrets use default; other commands use their own defaults. A connection profile is not a project environment.")

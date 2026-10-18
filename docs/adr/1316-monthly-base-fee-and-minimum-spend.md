@@ -9,8 +9,8 @@
     - The minimum top-up is the minimum less the month's usage charge, never below zero.
   - **Adjustments.** A revision bills the base fee only if no finalized revision has. Its minimum fee is the change in top-up, which is negative when late usage covers part of the minimum already billed. Usage added and top-up removed balance, so a revision's total never falls below zero.
   - **Whole months.** Statements of a period that a card with fees prices must cover one UTC calendar month, as for tiers (ADR-951).
-  - **Idle consumers.** Billing runs (ADR-1301) also bill consumers without usage in apps whose cards charge fees. They include every consumer created before the month ends and not revoked before it starts. A statement whose total is zero is recorded and not exported.
-  - **Exports.** Each fee becomes its own invoice item: "Monthly base fee", or "Minimum monthly spend top-up". Paddle and Lago receive one summary item when a negative top-up appears, as for other negative lines (ADR-1305).
+  - **Idle consumers.** Billing runs (ADR-1503) also bill consumers without usage in apps whose cards charge fees. They include every consumer created before the month ends and not revoked before it starts. A statement whose total is zero is recorded and not exported.
+  - **Exports.** Each fee becomes its own invoice item: "Monthly base fee", or "Minimum monthly spend top-up". Paddle and Lago receive one summary item when a negative top-up appears, as for other negative lines (ADR-1507).
 - **Why:** Most API plans combine a subscription with usage ("€49 a month including 100,000 requests, then €0.0005 each") or commit customers to a minimum. Cards could only price usage, so operators had to bill subscriptions outside Gregale.
 - **Consequences:**
   - **No proration.** A consumer created mid-month pays the full base fee and minimum for that month; a revoked consumer pays for each month it existed in. Operators wanting proration use a trial or a free card for the first month.

@@ -9,14 +9,17 @@ StartLimitBurst=5
 
 [Service]
 Type=notify
+NotifyAccess=main
 User=faas-apid
 Group=faas
 ExecStart=/opt/faas/current/bin/apid --config /etc/faas/apid.toml
+ExecReload=/bin/kill -USR2 $MAINPID
 Restart=on-failure
 RestartSec=2s
 WatchdogSec=90s
 Slice=faas-cp.slice
 MemoryMax=256M
+OOMPolicy=continue
 CapabilityBoundingSet=
 AmbientCapabilities=
 EnvironmentFile=/etc/faas/sealed.env
@@ -37,6 +40,18 @@ Environment=FAAS_DPA_PATH=/etc/faas/dpa.md
 Environment=FAAS_REALTIME_SOCKET=/run/faas/realtimed.sock
 Environment=FAAS_APP_TASK_API_ENABLED=0
 Environment=FAAS_EXECUTION_API_ENABLED=0
+Environment=FAAS_CI_INTERNAL_ENABLED=0
+Environment=FAAS_CI_INTERNAL_ACCOUNTS=
+Environment=FAAS_CI_GITHUB_ENABLED=0
+Environment=FAAS_CI_GITHUB_CHECKS_ENABLED=0
+Environment=FAAS_CI_EXECUTION_CHECKS_ENABLED=0
+Environment=FAAS_CI_AUTOMATION_ENABLED=0
+Environment=FAAS_CI_DISPATCH_ENABLED=0
+Environment=FAAS_CI_WORKER_ENABLED=0
+Environment=FAAS_CI_TRANSPORT_ENABLED=0
+Environment=FAAS_CI_RETENTION_ENABLED=0
+Environment=FAAS_CI_GCS_BUCKET=
+Environment=FAAS_CI_RUNTIME_URL=
 Environment=FAAS_WORKFLOWS_ENABLED=1
 LoadCredential=faas_session_key:/etc/faas/secrets/session.key
 LoadCredential=faas_host_age_identity:/etc/faas/secrets/host.age

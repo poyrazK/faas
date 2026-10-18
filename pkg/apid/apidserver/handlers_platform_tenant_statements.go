@@ -101,7 +101,7 @@ func (s *server) createPlatformTenantStatement(w http.ResponseWriter, r *http.Re
 
 // draftPlatformTenantStatement snapshots the period's tenant-attributed
 // usage (ADR-238). Unchanged usage replays the latest revision (created is
-// false). The handler and billing runs (ADR-1301) share it.
+// false). The handler and billing runs (ADR-1503) share it.
 func (s *server) draftPlatformTenantStatement(ctx context.Context, acct state.Account, tenantID string,
 	store state.PlatformTenantStatementStore, start, end time.Time) (state.PlatformTenantStatement, bool, error) {
 	plan, err := store.PlanPlatformTenantStatement(ctx, acct.ID, tenantID, start, end)
@@ -401,7 +401,7 @@ func (s *server) finalizePlatformTenantStatement(w http.ResponseWriter, r *http.
 }
 
 // finalizeTenantStatement freezes a tenant statement and audits the first
-// finalization. The handler and billing runs (ADR-1301) share it.
+// finalization. The handler and billing runs (ADR-1503) share it.
 func (s *server) finalizeTenantStatement(ctx context.Context, acct state.Account, tenantID string,
 	store state.PlatformTenantStatementStore, statementID string) (state.PlatformTenantStatement, error) {
 	statement, changed, err := store.FinalizePlatformTenantStatement(ctx, acct.ID, tenantID, statementID)

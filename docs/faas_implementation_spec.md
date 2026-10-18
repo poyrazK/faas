@@ -393,7 +393,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 
 - **Hard bypass on authed requests (the load-bearing safety property).** A request with `Authorization` header or a session cookie MUST bypass the cache entirely — never stored, never served. This is correct-by-construction: an unauthed populate cannot leak to an authed request because authed responses are never stored in the first place. The `vary_on` closed vocabulary is `Accept-Language | Accept-Encoding | query` — `Authorization` is deliberately NOT a vary dimension; it is a hard bypass. Per-principal caching is a follow-on ADR (deferred, ADR-122 §Out of scope).
 - **Cacheability predicate (deny-by-default).** Store only when ALL hold: `method ∈ {GET, HEAD}`; request has no `Authorization` header AND no session cookie; response status ∈ {200, 203, 300, 301, 308, 404, 410}; response has no `Set-Cookie`; response lacks `Cache-Control: no-store|private`; body ≤ per-entry cap (`ResponseCachePerEntryMaxBytes = 1 MiB`); no concurrent in-flight write to the same key. A `Cache-Control: no-store` / `private` from the origin is an absolute veto — the app always wins over a platform-level rule.
-- **Cache key.** `appID | ruleID | method | normalizedPath | sha256(sorted(vary_on header values)) | sortedQuery`. NOT bound to `deploymentID` in v1 — deploy invalidation is wired via `NotifyAppChanged → InvalidateByApp` (the `cacheRuleSnapshot.DeploymentID` slot is reserved for a follow-on). `appID` isolation prevents cross-tenant leakage when two apps share a path glob (e2e unit pin: `TestCacheSecurity_6_AppIsolation`).
+- **Cache key.** `appID | ruleID | deploymentID | method | normalizedPath | rawPath | rawQuery | forceQuery | sha256(host + vary_on values)`. Query order, path escaping and an explicit empty query delimiter remain distinct; methods are case-sensitive. Decoded `normalizedPath` still controls rule matching and path purges. The deployment dimension holds a resolved rollout/revision cohort when available; unkeyed traffic uses app invalidation on deploy. `appID` and host isolation prevent cross-app or cross-host serving. [ADR-20261017214848](adr/20261017214848-response-cache-request-identity.md) replaces the earlier sorted-query identity, and a versioned encoding isolates older shared entries.
 - **Store: local L1 plus optional distributed L2.** `sync.Mutex` + `container/list` LRU + byte ceiling forms the always-available 64 MiB per-gateway L1. Setting `FAAS_GATEWAY_RESPONSE_CACHE_REDIS_URL` attaches a TTL-bound Redis L2 shared by gateway instances. Redis is never authoritative: connection or operation failure falls through to L1/origin, and no cache error may fail a request. Entries are not persisted to Postgres or gateway disks. App/rule/deploy invalidations and `gregale cache purge` evict both tiers.
 - **Stale while revalidate (ADR-214).** `stale_while_revalidate_seconds` is optional and capped at 300 seconds. After freshness expires, the gateway returns the cached response immediately with `x-faas-cache: stale-while-revalidate` and `Warning: 110`, then refreshes the exact key in a detached, singleflight-coalesced request. A zero value disables this behavior.
 - **Serve stale on failure (ADR-122 §Decision).** Retain entries past `max_age` for `stale_if_error` (capped at 5 min at the apid validator; a rule with `stale_if_error == 0` disables stale-on-error). Serve stale ONLY on a genuine origin failure (`gate.Wait` wake failure or upstream 5xx/timeout), never on a cache miss. Stamps `Warning: 110 - "Response is Stale"` per RFC 7234 §5.5.2 and a platform-internal `X-From-Cache: stale` debug surface. `outcome="stale_if_error_served"` is its own metric label so stale hits are never conflated with fresh hits in the hit-rate number (the dashboard surfaces stale serves separately so operators see when their cache is being relied on as a fallback).
@@ -577,7 +577,7 @@ The runner's HTTP listener (`http.ListenAndServe` on `:8080`) dispatches each ac
 - **Go `net/http`** — a Go handler achieves the bound.
 - **Synchronous subprocess-per-request** (e.g. a Python `read-stdin → write-stdout` script) — does NOT achieve the bound; one subprocess handles one request at a time regardless of the listener's goroutine count.
 
-Generated Node and Python adapters use a persistent interpreter pool. Each adapter pool permits at most four active or idle workers (`api.FunctionInterpreterMaxWorkers`); excess requests wait for a reusable worker within their invocation deadline. This bounds process startup and memory pressure during bursts. Cancellation removes only the affected worker when necessary. Custom adapters without the persistent protocol retain subprocess-per-request execution. The advertised `concurrency_per_vm` bound remains the HTTP listener's fan-out; interpreter parallelism and the per-app live-VM cap are separate limits. Existing function images must be rebuilt to receive runner changes. Each scheduler verifies the live deployment layers of the apps it owns in the background, at startup and again every minute so apps re-homed to it after a restart or newly deployed are covered, using two workers and a two-minute per-layer deadline; a failed layer is retried after five minutes (`api.AttestationWarmWorkers`, `api.AttestationWarmLayerTimeout`, `api.AttestationWarmInterval`, `api.AttestationWarmRetryBackoff`). This primes the existing successful-verification cache without starting VMs; concurrent verifications of one layer share a single read and hash (`api.LayerVerifyTimeout`). Failed artifacts retain the normal fail-closed verification on wake; a tenant artifact failure does not block unrelated valid deployments.
+Generated Node and Python adapters use a persistent interpreter pool. Each adapter pool permits at most four active or idle workers (`api.FunctionInterpreterMaxWorkers`); excess requests wait for a reusable worker within their invocation deadline. This bounds process startup and memory pressure during bursts. Cancellation removes only the affected worker when necessary. Custom adapters without the persistent protocol retain subprocess-per-request execution. An app may set `function_concurrency` (ADR-1342), up to its plan's `concurrency_per_vm`: imaged stamps `FAAS_FUNCTION_CONCURRENCY` on the function deployment, the adapter advertises that many slots in its ready handshake, and the pool multiplexes requests over each worker by a `__faas_id` the adapter echoes on every response line, starting another worker only when every slot is busy. Python runs `async def` handlers as asyncio tasks and sync handlers on a thread pool, acknowledging a sync request's cancel once its handler returns. An abandoned request is cancelled with `{"__faas_cancel": id}` rather than killing its worker; a worker that does not acknowledge within 5 s is restarted. The advertised `concurrency_per_vm` bound remains the HTTP listener's fan-out; interpreter parallelism and the per-app live-VM cap are separate limits. Existing function images must be rebuilt to receive runner changes. Each scheduler verifies the live deployment layers of the apps it owns in the background, at startup and again every minute so apps re-homed to it after a restart or newly deployed are covered, using two workers and a two-minute per-layer deadline; a failed layer is retried after five minutes (`api.AttestationWarmWorkers`, `api.AttestationWarmLayerTimeout`, `api.AttestationWarmInterval`, `api.AttestationWarmRetryBackoff`). This primes the existing successful-verification cache without starting VMs; concurrent verifications of one layer share a single read and hash (`api.LayerVerifyTimeout`). Failed artifacts retain the normal fail-closed verification on wake; a tenant artifact failure does not block unrelated valid deployments.
 
 The runner-level concurrency claim is pinned by `guest/runners/internal/runnerparity/concurrency_test.go::TestRunner_HandleIsConcurrent` — 20 parallel GETs against a slow handler complete in ~1× handler-sleep, not 20× (the serialized floor). A regression to single-threaded accept would surface there.
 
@@ -1891,6 +1891,11 @@ last successful live response (or returns 204). `head_wakes` is the
 per-app opt-in for the legacy wake behaviour. These responses do not
 create instance transitions or `usage_minutes` rows.
 
+The parked HEAD header cache excludes requests carrying Authorization or
+application cookies, and responses carrying Set-Cookie or Cache-Control
+`private`/`no-store`. Response-header rules cannot erase the origin's privacy
+veto. An ineligible response leaves the last safe public headers intact.
+
 | Metric name | Labels | Producer | Semantics |
 |---|---|---|---|
 | `gateway_edge_answered_total` | `kind` | `pkg/gateway/metrics.go::ObserveEdgeAnswered` | Counter of gateway answers that bypass an app instance. `kind` is closed to `favicon`, `robots`, and `head`; edge answers are telemetry-only and never billed as resident compute. |
@@ -1929,6 +1934,8 @@ request therefore does not create an instance transition or resident usage.
 | headroom (inside tenant slice, above admission line) | ≈ 8.4 GB | tenant spike absorption and restore safety margin; builder VMs do not borrow from this slice |
 
 `memory.max` on each slice makes the ledger real: a control-plane leak OOMs the control plane, never tenants — and vice versa.
+
+A multi-box compute host derives its own slice from the same arithmetic with a smaller reserve (`ComputeNodeDaemonReserveMB` + `BuilderSlotReserveMB`, `pkg/api/limits.go`). A compute host that runs the app edge (ADR-1343) reserves `ComputeEdgeDaemonReserveMB` (256 MB) more, and registers its CPUs less `ComputeEdgeCPUHoldbackMillicores` (1,000, rounded up to whole CPUs) for tenant admission.
 
 The per-VM request-concurrency bound (`concurrency_per_vm`, issue #559) is independent of the RAM ledger — a customer's `concurrency_per_vm` ceiling is the platform-advertised listener-level bound (Free 4 / Hobby 5 / Pro 25 / Scale 80), set by plan tier rather than by VM RAM. See §4.9.1 for the runner-level concurrency model.
 
@@ -2839,3 +2846,177 @@ Readiness follow-up queue (ADR-519): account and customer readers can aggregate 
 
 
 Readiness due reminders (ADR-519): one durable marker per original notification/normalized deadline is published by a separate apid worker, with a 100-reminder batch budget, 30-second polling interval and 10-second publication timeout. Retries and restarts preserve stable reminder identity. Coordination edits and publication serialize on the notification row; rescheduling or clearing retires the marker, while unchanged deadlines preserve it. Follow-up queue reads expose optional reminder metadata, filtered due-reminder counts and reminder-only selection under existing account/customer/environment authorization. Dashboard counts and the reminder view link to original notifications and current evidence. Reminders share source notification retention and do not advance inbox sequences, mutate application evidence or authorize execution. No new migration is required.
+
+
+## Operator cold-boot recovery (ADR-1523, 2026-10-17)
+
+A claimed `force_cold_boot` advances the deployment snapshot recovery generation,
+invalidates both tiers and their replicas, clears snapshot-miss backoff, saves
+its exact IDs and generation, completes the intent and enqueues its outcome in
+one transaction. Replays return the original receipt after outbox pruning.
+Wake and prime bind immutable instance/wake lineage before vmmd dispatch;
+publication and warm/frozen promotion require the current generation. Delayed
+captures and late readiness cannot turn a pre-recovery process into a fresh
+source. Running processes remain serving; new boots use rootfs until a capture
+of the new generation is published. Generation zero preserves legacy behavior.
+See [ADR-1523](adr/1523-durable-operator-cold-boot-recovery.md) and its
+[recovery/rollout guide](ops/operator-cold-boot-recovery.md). Native KVM and leak
+qualification remains pending.
+
+## Operator restart execution recovery (ADR-1522, 2026-10-17)
+
+For `force_restart` operator intents, schedd commits the original instance, node,
+wake, vmmd generation and exact snapshot invalidation before authorizing teardown.
+Vmmd alone records physical acknowledgement. Schedd atomically commits the proven
+STOPPED transition, command outcome and audit handoff; it releases admission after
+commit. Started work without an acknowledgement is `outcome_unknown` and cannot
+be redispatched automatically. Late physical evidence permits completion only
+against the original target. See [ADR-1522](adr/1522-recoverable-operator-restart-execution.md)
+and its [operator guide](ops/operator-restart-recovery.md) for the protocol, limits
+and coordinated rollout. Native lifecycle qualification remains required.
+
+## Operator recovery submission receipts (ADR-1524, 2026-10-17)
+
+Force-restart, force-park and force-cold-boot HTTP acceptance commits the intent,
+original response bytes and attributed request audit handoff in one transaction.
+Actor-scoped request keys bind the action, requested target and normalized reason.
+Matching retries replay before mutable target validation; changed parameters
+return 409. Receipts have no TTL and survive audit queue pruning. Every request,
+including replay, retains MFA, admin scope, operator allowlist, recent session
+step-up and origin checks. gregalectl exposes --request-key and instances wait
+--intent-id. See [ADR-1524](adr/1524-durable-operator-recovery-submissions.md) and
+its [upgrade and retry guide](ops/operator-recovery-submissions.md) for the
+legacy request boundary and coordinated API rollout.
+
+### ADR-1525 operator force-park execution
+
+Asynchronous `force_park` intents follow
+[ADR-1525](adr/1525-recoverable-operator-park-execution.md): claim-fenced immutable
+VM generation plans, explicit fresh-traffic cancellation, generation-bound
+capture/stop, durable cleanup evidence, and atomic terminal state, intent, audit
+and snapshot publication handoff. PARKED requires capture plus confirmed cleanup;
+STOPPED reports `cold_boot_required`. Started effects without receipts remain
+`outcome_unknown` and are never automatically repeated. Admission is released
+after the completion commit. Native lifecycle and leak qualification remain a
+rollout gate; see [operator park recovery](ops/operator-park-recovery.md).
+
+
+## Atomic operator node maintenance (ADR-1526, 2026-10-17)
+
+Schedd executes node drain, force-drain, activation and retirement intents in one
+transaction with current-claim validation, node lifecycle/precondition checks,
+an immutable execution receipt, terminal result and durable outcome audit handoff.
+Retries return the original receipt before inspecting current node lifecycle;
+reclaimed workers cannot mutate or complete. A successful drain intent acknowledges
+the lifecycle request; the recovery controller separately completes evacuation.
+Retirement rechecks live instances and protects default-local; retired nodes
+cannot be revived by force-drain. Unfinished legacy node intents are quarantined
+as outcome_unknown during coordinated upgrade. See
+[ADR-1526](adr/1526-atomic-operator-node-maintenance.md) and the
+[rollout guide](ops/operator-node-maintenance.md).
+
+## Generation-fenced node completion (ADR-1527, 2026-10-17)
+
+RecoveryRunner captures the node's separate lifecycle generation before a sweep.
+The database owns this positive generation and advances it on lifecycle or drain/
+recovery initiation changes. Completion validates that cycle and current remaining
+work under the capacity-policy lock before the node lock, then commits the target
+lifecycle, immutable receipt and completion audit handoff together. Drain reaches
+maintenance only with zero resident rows, including warm/frozen; recovery retains
+its existing migrating/snapshotting exclusion and healthy local-running behavior.
+Legacy unfenced completion writes are rejected. Retries return the original receipt
+before inspecting mutable node state, even after node deletion or audit retention.
+Completion persistence is database-only and does not expand migration/recreation
+RPC behavior. ADR-1528 below adds transactional fencing to later admissions.
+
+Old schedulers must be quiesced during the coordinated migration. Existing nodes
+begin at generation 1 without invented historical receipts; advanced generations
+and completion receipts block downgrade. See
+[ADR-1527](adr/1527-generation-fenced-node-completion.md) and the
+[node completion guide](ops/node-lifecycle-completion.md).
+
+## Node admission generation fencing (ADR-1528, 2026-10-17)
+
+Placement carries the selected node's lifecycle generation through instance
+creation and migration destination ownership. The admitting transaction takes the
+capacity-policy lock before the node and reservation locks, requires an active or
+recovering node, and validates the captured generation. Its node share lock holds
+that decision stable through commit. Disabled capacity protection retains shared
+policy locking. Existing operation/qualification authority locks keep their order.
+
+A database trigger guards every resident insert, destination change and
+nonresident-to-resident transition. Existing residents may continue transitions
+on the same node during maintenance so publication and cleanup can finish. Direct
+calls without a placement binding perform a fresh lifecycle check; cached scheduler
+decisions also require their original generation, including after a node returns
+to active in a later cycle.
+
+Wake, prime and warm-fill admission retry definite stale-placement refusals at
+most three times, select current database inventory and release failed restore
+pressure. Job retries release their preclaimed lease and ledger slot while leaving
+the task queued. Uncertain writes do not authorize replay. Qualification flows
+retain their private-node restrictions. Migration validates its destination before
+pausing the source and again at ownership commit, then uses existing durable
+resolution and adopted-VM cleanup on refusal. ADR-1529 below adds a durable
+destination reservation before the VM RPC; native migration qualification remains required.
+
+Quiesce old admission/job/migration/recovery dispatchers for the coordinated
+migration and inspect historical resident inventory before removing a host.
+See [ADR-1528](adr/1528-node-admission-generation-fencing.md) and the
+[admission rollout guide](ops/node-admission-fencing.md).
+
+## Durable incoming migration reservations (ADR-1529, 2026-10-17)
+
+Schedd persists destination generation, both node/wake identities, source lease,
+snapshot keys, resource bounds, request digest and deadline before adoption.
+Pending reservations consume destination RAM/CPU/vCPU and protected fleet
+headroom, and block maintenance completion, retirement and destination deletion.
+Ordinary admission shares their transactional capacity guard.
+
+An atomic reserved-to-adopting transition grants one physical dispatch. Unknown
+dispatches retain capacity; acknowledged requests replay their original response.
+The destination uses an fsynced incoming journal and per-instance lock shared by
+native preparation and retirement. Physical generation binding precedes launch
+effects. Cleanup revokes delayed creation and requires original generation exit
+and resource-removal proof; missing/corrupt evidence or a replacement generation
+cannot authorize cleanup acknowledgement.
+
+Ownership and runtime-input publication validate the adopted reservation and
+consume it in one transaction. Admitted resource floors remain on the resident
+instance, and placement/RAM admission retain any charge above legacy row values.
+Cleanup fences a late commit. Source resume, lease
+replacement/deletion and watchdog transitions retain unresolved attempts. Expiry
+only schedules bounded destination reconciliation; it never releases capacity.
+Internal adoption/retirement RPCs carry admission authority. Production dispatchers
+and registered receivers refuse missing durable ownership support.
+
+Upgrade schedd and vmmd together after settling historical handoffs. Preserve
+native journals and retained receipts. Native migration, daemon/process-death and
+leak qualification remains a deployment gate. See
+[ADR-1529](adr/1529-durable-inbound-migration-reservations.md) and the
+[migration recovery guide](ops/inbound-migration-reservations.md).
+
+## Durable migration source retirement (ADR-1530, 2026-10-17)
+
+Before source capture, registered vmmd binds its lease to the source node/wake,
+native generation and original physical lease digest. A durable source record
+captures RAM/CPU/vCPU bounds. Ownership commit atomically marks that source
+retiring. Its physical resources remain charged after the routing row moves,
+including ordinary/incoming admission and protected fleet capacity. Matching
+original live rows count once. Pending source records and source leases block
+maintenance completion, retirement and node deletion.
+
+Cleanup requires original native revocation, exit and resource-removal proof.
+Private fsynced source receipts survive daemon replacement and are replayed
+without touching later VM generations. Ordinary preparation retains old cleanup
+proof before replacing its native frame. Source resume and retirement require their matching durable authority. Only a
+running or draining source owner can resume; parked rollbacks retire their
+original physical VM. Delayed capture cannot follow a terminal source receipt.
+
+Source reconciliation runs at startup and in bounded sweeps, including committed
+retirements whose lease has not expired. Failed cleanup or acknowledgement retains
+durable authority; expiry never releases it. Upgrade both sides together after
+settling historical handoffs, preserve journals and receipts, and qualify native
+migration/process-death/leak behavior before deployment. See
+[ADR-1530](adr/1530-durable-migration-source-retirement.md) and the
+[source retirement guide](ops/migration-source-retirement.md).

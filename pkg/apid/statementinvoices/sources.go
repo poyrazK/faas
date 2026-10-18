@@ -17,7 +17,7 @@ func notFinalizedProblem() *api.Problem {
 }
 
 // ExportAppConsumerStatement exports a finalized app consumer statement as
-// an invoice in the account's billing provider (ADR-1300, ADR-1305).
+// an invoice in the account's billing provider (ADR-1502, ADR-1507).
 func (s *Service) ExportAppConsumerStatement(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	exports, ok := s.statementInvoiceStore(w, acct)
 	if !ok {
@@ -39,7 +39,7 @@ func (s *Service) ExportAppConsumerStatement(w http.ResponseWriter, r *http.Requ
 }
 
 // ExportAppConsumer exports a finalized app consumer statement to provider
-// without an HTTP request; billing runs (ADR-1301) use it. An empty customer
+// without an HTTP request; billing runs (ADR-1503) use it. An empty customer
 // uses the consumer's external_ref.
 func (s *Service) ExportAppConsumer(ctx context.Context, acct state.Account, consumer state.APIConsumer,
 	statement state.APIConsumerUsageStatement, provider, customer string) (state.StatementInvoiceExport, *api.Problem) {
@@ -158,7 +158,7 @@ func (s *Service) writeStatementInvoiceExport(w http.ResponseWriter, r *http.Req
 }
 
 // ExportPlatformTenantStatement exports a finalized cross-app statement as
-// an invoice in the account's billing provider (ADR-1300, ADR-1305).
+// an invoice in the account's billing provider (ADR-1502, ADR-1507).
 func (s *Service) ExportPlatformTenantStatement(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	exports, ok := s.statementInvoiceStore(w, acct)
 	if !ok {
@@ -195,7 +195,7 @@ func (s *Service) ExportPlatformTenantStatement(w http.ResponseWriter, r *http.R
 }
 
 // ExportPlatformTenant exports a finalized platform tenant statement to
-// provider without an HTTP request; billing runs (ADR-1301) use it. An empty
+// provider without an HTTP request; billing runs (ADR-1503) use it. An empty
 // customer uses the tenant's external_ref.
 func (s *Service) ExportPlatformTenant(ctx context.Context, acct state.Account, tenant state.PlatformTenant,
 	statement state.PlatformTenantStatement, provider, customer string) (state.StatementInvoiceExport, *api.Problem) {

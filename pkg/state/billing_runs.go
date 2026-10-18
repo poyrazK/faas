@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// Billing run vocabulary (ADR-1301).
+// Billing run vocabulary (ADR-1503).
 const (
 	BillingRunSourceAppConsumers    = "app_consumers"
 	BillingRunSourcePlatformTenants = "platform_tenants"
@@ -75,7 +75,7 @@ type BillingRun struct {
 	StartedAt    *time.Time
 	CompletedAt  *time.Time
 	// NotifiedAt is when the account was told about the completed run
-	// (ADR-1302).
+	// (ADR-1504).
 	NotifiedAt *time.Time
 	Counts     map[string]int
 }
@@ -100,7 +100,7 @@ type BillingRunItem struct {
 	Attempts         int
 	NextAttemptAt    time.Time
 	UpdatedAt        time.Time
-	// PaymentStatus is read from the statement's invoice export (ADR-1302).
+	// PaymentStatus is read from the statement's invoice export (ADR-1504).
 	PaymentStatus string
 }
 
@@ -587,7 +587,7 @@ func (m *MemStore) StartScheduledBillingRun(_ context.Context, schedule BillingR
 }
 
 // BillingRunNotificationStore records which completed runs the account was
-// told about (ADR-1302).
+// told about (ADR-1504).
 type BillingRunNotificationStore interface {
 	// ListBillingRunsToNotify returns completed runs not yet notified,
 	// oldest completion first.

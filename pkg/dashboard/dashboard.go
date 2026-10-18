@@ -1469,10 +1469,14 @@ type AppCostOverviewRow struct {
 
 // AppDetailData combines the bits the app detail page renders.
 type AppDetailData struct {
+	ProductControlURL  string
 	ProfilingAvailable bool
-	App                AppListItem
-	Manifest           ManifestView
-	AppCosts           *AppCostsView
+	// ApplicationAuth shows the application Auth screens' link, a dark
+	// launch (api.ApplicationAuthEnabled).
+	ApplicationAuth bool
+	App             AppListItem
+	Manifest        ManifestView
+	AppCosts        *AppCostsView
 	// RefreshQuery preserves the selected app-detail filters when an SSE
 	// event refreshes the page content.
 	RefreshQuery     string
@@ -1550,6 +1554,12 @@ type AppDetailData struct {
 	// card uses. The window is echoed via SLODuration so the
 	// page's window-selector tab strip knows which tab is active.
 	SLOApp *views.AppSLOView
+	// CustomSLOs are the app's ADR-747 SLOs with their budget position;
+	// nil skips the "Your SLOs" table.
+	CustomSLOs []views.CustomSLOView
+	// SyntheticChecks are the app's ADR-748 checks with recent results;
+	// nil skips the "Synthetic checks" table.
+	SyntheticChecks []views.SyntheticCheckView
 	// SLODuration is the page-level helper that surfaces the
 	// current SLO window ("1h" / "24h" / "7d") and the as-of
 	// timestamp. The template uses the window to mark the
@@ -2075,6 +2085,17 @@ type AlertDetailData struct {
 	// down to rule.AppID == app.ID || rule.AppID == "" — the same
 	// visibility filter the public API uses (handlers_alerts.go).
 	Rules []AlertItem
+	// Channels are the account's ADR-749 notification channels with their
+	// last delivery outcome; empty hides the table.
+	Channels []AlertChannelItem
+}
+
+// AlertChannelItem is one row of the dashboard's "Notification channels"
+// table. Fields are pre-formatted at the handler edge.
+type AlertChannelItem struct {
+	Name, Kind, Target string
+	LastResult         string // "delivered 3m ago", "failed 1h ago: …", "never used"
+	LastClass          string // "ok" | "bad" | "dim"
 }
 
 // AlertItem is one row on the dashboard's "Alerts" panel. RecentDeliveries
@@ -2091,6 +2112,9 @@ type AlertItem struct {
 	// the template stays a pure renderer. Empty until LastFiredAt
 	// goes non-zero.
 	LastFiredAtLabel string
+	// DeliversTo names the rule's destinations: "webhook" and/or its
+	// notification channel names (ADR-749).
+	DeliversTo string
 }
 
 // AlertPresetItem is one card on the dashboard's "Alert presets"
@@ -3385,10 +3409,10 @@ type AuthCapabilitiesView struct {
 	GitHubEnabled bool
 }
 
-// AdminData is the operator-only dashboard payload. It currently carries the
-// durable TLS cutover state so an operator can see that a rollback was tested
-// without losing the context when the edge returns to its normal state.
+// AdminData carries operator-only repair health and durable TLS cutover state.
 type AdminData struct {
+	RepairHealth        *api.DataRepairHealth
+	RepairHealthError   string
 	TLSCutover          TLSCutoverState
 	TLSCutoverStateFile string
 	TLSCutoverPresent   bool

@@ -173,6 +173,29 @@ class PostgresTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await self.restore(client)).status_code, 204)
                 self.assertEqual((await client.get("/healthz")).status_code, 200)
 
+    async def test_before_checkpoint_closes_every_server_session_and_restore_reconnects(self):
+        async def sessions():
+            cursor = await self.database_admin.execute("SELECT count(*) FROM pg_stat_activity WHERE usename = %s", (self.runtime,))
+            return (await cursor.fetchone())[0]
+        app = create_app(self.database)
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app, client=("127.0.0.1", 1)), base_url="http://example") as client:
+                async def checkpoint():
+                    return await client.post("/internal/before-checkpoint", headers={"X-Faas-Before-Checkpoint": "1"})
+                self.assertEqual((await client.get("/healthz")).status_code, 200)
+                self.assertGreater(await sessions(), 0, "the pool keeps an idle session after a request")
+                self.assertEqual((await checkpoint()).status_code, 204)
+                async with asyncio.timeout(3):
+                    while await sessions():
+                        await asyncio.sleep(0.01)
+                self.assertTrue(self.pools[0].closed)
+                self.assertEqual((await client.get("/healthz")).status_code, 503)
+                self.assertEqual((await checkpoint()).status_code, 204)  # A retried capture finds it drained.
+                self.assertEqual(await sessions(), 0)
+                self.assertEqual((await self.restore(client)).status_code, 204)
+                self.assertEqual(self.db.generation, 1)
+                self.assertEqual((await client.get("/healthz")).status_code, 200)
+
     async def test_restore_queued_and_active_validation_timeouts_are_fenced(self):
         app = create_app(self.database)
         async with app.router.lifespan_context(app):

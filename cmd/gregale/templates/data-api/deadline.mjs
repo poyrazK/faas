@@ -5,6 +5,7 @@ import { markDeadline, markPhase } from './logging.mjs'
 // streaming. A socket inactivity timeout alone can be extended by every chunk.
 export function createDeadline(req, res, expire) {
   const started = performance.now(), controller = new AbortController()
+  const expiresAt = Date.now() + limits.queryMs
   let phase = 'verification', dispatched = false, stopped = false, timer
   markPhase(res, phase)
   function stop() {
@@ -37,7 +38,7 @@ export function createDeadline(req, res, expire) {
   res.once('finish', stop)
   res.once('close', stop)
   arm()
-  return { signal: controller.signal, check,
+  return { signal: controller.signal, check, expiresAt,
     enter(value) { if (!check()) return false; phase = value; markPhase(res, value); return true },
     dispatch() { if (!check()) return false; dispatched = true; return true },
   }

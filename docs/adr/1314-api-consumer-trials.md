@@ -6,7 +6,7 @@
   - **Starting.** `POST …/consumers` takes `trial_days` (1–365), and `PUT /v1/apps/{slug}/consumers/{id}/trial` takes `days` or `ends_at`. A new trial starts at the next UTC minute.
   - **Changing.** `PUT` on a running trial moves its end, never before the next minute. `DELETE` ends a running trial at the next minute, or removes one that has not started. A consumer whose trial has ended cannot get another (409).
   - **Pricing.** A trial minute is priced by the card in force at zero, with zero charged units. It is marked `trial` in statements and quotes. Trial units count toward no monthly allowance, tier position or volume total (ADR-950, ADR-951, ADR-1309), so the paid month starts counting after the trial.
-  - **Where it applies.** Statements, quotes, spend caps (ADR-1306) and self-service (ADR-1304) share the trial through the consumer's quote options. Plan limits enforced at the gateway (ADR-953) still apply during a trial.
+  - **Where it applies.** Statements, quotes, spend caps (ADR-1306) and self-service (ADR-1506) share the trial through the consumer's quote options. Plan limits enforced at the gateway (ADR-953) still apply during a trial.
 - **Why:** API businesses let new customers try the API before paying. Without trials, operators had to grant prepaid credit (ADR-1306) or create a free card and swap it out, which also changes the price for everyone else.
 - **Consequences:**
   - **Never retroactive.** Trials only start or end at the next minute, so a minute a finalized statement billed never changes price, and no revision needs a credit.

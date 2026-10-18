@@ -24,8 +24,13 @@ func TestMigrationTracker_PutNewEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got != m {
-		t.Errorf("get returned %p, want same pointer %p", got, m)
+	if *got != *m {
+		t.Errorf("get returned %+v, want %+v", got, m)
+	}
+	got.memKey = "caller-local"
+	again, err := tr.get("inst-1", "tok")
+	if err != nil || again.memKey != "" {
+		t.Fatal("caller mutated the shared tracker entry", err)
 	}
 }
 

@@ -5243,6 +5243,7 @@ func (h *Handler) setupStreamingWriter(w http.ResponseWriter, rec *statusRecorde
 	cw := &capWriter{
 		ResponseWriter: w,
 		cap:            cap,
+		headResponse:   rec.request != nil && rec.request.Method == http.MethodHead,
 		onCap: func() {
 			api.WriteProblem(w, api.NewProblem(http.StatusRequestEntityTooLarge, api.CodeStreamingNotAvailable,
 				"streaming response exceeded plan cap",
@@ -5277,13 +5278,14 @@ func (h *Handler) setupStreamingWriter(w http.ResponseWriter, rec *statusRecorde
 // (signature changed in #996 review-fix cycle to take cap int64)
 // so the upstream LimitReader fires at cap+1 bytes. Issue #995
 // Phase 2 / ADR-121.
-func (h *Handler) setupBufferedCapWriter(w http.ResponseWriter, app App, cap int64) http.ResponseWriter {
+func (h *Handler) setupBufferedCapWriter(w http.ResponseWriter, method string, app App, cap int64) http.ResponseWriter {
 	if cap <= 0 {
 		return w
 	}
 	cw := &capWriter{
 		ResponseWriter: w,
 		cap:            cap,
+		headResponse:   method == http.MethodHead,
 		onCap: func() {
 			api.WriteProblem(w, api.NewProblem(http.StatusRequestEntityTooLarge, api.CodeResponseTooLarge,
 				"response exceeded plan cap",
@@ -5320,6 +5322,9 @@ type capWriter struct {
 	written  int64
 	onCap    func()
 	disabled *atomic.Bool
+	// HEAD's Content-Length describes the representation a GET would return,
+	// not bytes in this response, so it cannot trigger the body-size guard.
+	headResponse bool
 	// onWarn fires at 80% / 95% of cap and on exceeded (issue
 	// #995 Phase 4 / ADR-121). bucket is the closed-set label
 	// the caller passes to the metrics counter: ∈
@@ -5392,20 +5397,9 @@ func (c *capWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
-// WriteHeader is the buffered-cap path's primary hook. By the time
-// the upstream proxy calls Write(body), it has already issued
-// WriteHeader(200), and api.WriteProblem's WriteHeader(413) silently
-// no-ops on httptest.ResponseRecorder (and writes a warning
-// "superfluous header" to logs in production). The fix: install a
-// pre-header guard via the wrapper's WriteHeader — if any prior
-// Write has crossed the cap, refuse with 413 BEFORE the upstream
-// headers reach the wire.
-//
-// The first call to WriteHeader here is always a pass-through
-// (we haven't seen any body bytes yet); the cap check on this
-// surface is purely a defence-in-depth net for an edge case where
-// the upstream's headers themselves exceed the cap (rare;
-// header-size cap is enforced at the http.Server layer).
+// WriteHeader rejects an announced oversized body before its status and
+// headers reach the client. Bodyless responses are exempt: in particular,
+// Content-Length on HEAD and 304 describes representation metadata.
 func (c *capWriter) WriteHeader(statusCode int) {
 	if c.disabled.Load() {
 		// The cap already fired; refuse to acknowledge further
@@ -5417,7 +5411,8 @@ func (c *capWriter) WriteHeader(statusCode int) {
 	// larger than the cap used to go out as a 2xx with the full
 	// Content-Length and then stop mid-body, which a client sees only as a
 	// truncated transfer. Refuse it before the headers are written.
-	if c.cap > 0 && statusCode >= http.StatusOK {
+	if c.cap > 0 && !c.headResponse && statusCode >= http.StatusOK &&
+		statusCode != http.StatusNoContent && statusCode != http.StatusNotModified {
 		if n, err := strconv.ParseInt(c.Header().Get("Content-Length"), 10, 64); err == nil && n > c.cap {
 			if c.disabled.CompareAndSwap(false, true) {
 				for _, k := range []string{"Content-Length", "Content-Encoding", "Content-Range", "Etag", "Last-Modified", "Accept-Ranges"} {
@@ -5683,12 +5678,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// statusRecorder creation so even panic-recovered paths keep
 	// the drain balanced.
 	defer h.serveHTTPWithDrain()()
+	// Stream forwarders end SSE and upgraded sessions when shutdown begins.
+	r = r.WithContext(drain.WithShutdownNotice(r.Context(), h.drain))
 
 	// Status-class capture (used for metrics + slog). Doesn't buffer the body
 	// or alter the headers — strictly observability.
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK, request: r}
 	w = rec
-	// ADR-1303: the commit is armed once a monetized request is about to be
+	// ADR-1505: the commit is armed once a monetized request is about to be
 	// forwarded; at exit it completes or aborts the response.
 	rec.usage = &usageCommitHolder{rec: rec}
 	r = r.WithContext(withUsageCommitHolder(r.Context(), rec.usage))
@@ -6503,13 +6500,14 @@ haveApp:
 		writeCrawlerPolicyResponse(w, "cached")
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
-	} else if !deploymentSmoke && rule != nil && h.responseCache != nil && r.Header.Get("Authorization") == "" && !hasSessionCookie(r) && (r.Method == "GET" || r.Method == "HEAD") {
+	} else if !deploymentSmoke && rule != nil && h.responseCache != nil && !hasCacheCredentials(r) && (r.Method == "GET" || r.Method == "HEAD") {
 		// Stash the matched rule before installing the cache writer so a
 		// follower can replay an eligible stale entry without creating a
 		// store-skipped capture. The wake leader continues to the origin;
 		// its normal cache writer refreshes this entry after the instance is
 		// ready.
-		r = r.WithContext(withCacheRuleContextForDeployment(r.Context(), rule, app.ID, versionDeploymentID, r.Method, r.URL.Path, sortQuery(r.URL.RawQuery), computeVaryHash(r, rule.VaryOn)))
+		key := responseCacheKeyForRequest(r, app.ID, versionDeploymentID, rule)
+		r = r.WithContext(withCacheKeyContext(r.Context(), rule, key))
 		wakeInFlight := h.gate != nil && h.gate.Inflight(app.ID)
 		if wakeInFlight {
 			if served, _ := h.tryServeStaleWhileWaking(w, r, app, rec); served {
@@ -6534,16 +6532,12 @@ haveApp:
 		cw.excludeManagedCookie(managedReleaseContextSetCookie)
 		w = cw
 		defer func() {
-			if cw.shouldStore() && (versionDeploymentID == "" || servedDeploymentID == versionDeploymentID) {
-				key := CacheKey{
-					AppID:          app.ID,
-					DeploymentID:   versionDeploymentID,
-					RuleID:         rule.ID,
-					Method:         r.Method,
-					NormalizedPath: r.URL.Path,
-					Query:          sortQuery(r.URL.RawQuery),
-					VaryHash:       computeVaryHash(r, rule.VaryOn),
-				}
+			// Proxy aborts unwind through this defer after a partial body has
+			// been written. Preserve the abort without caching those bytes.
+			if failure := recover(); failure != nil {
+				panic(failure)
+			}
+			if r.Context().Err() == nil && cw.shouldStore() && (versionDeploymentID == "" || servedDeploymentID == versionDeploymentID) {
 				cw.servedDeploymentID = servedDeploymentID
 				cw.finishCacheCapture(h.responseCache, key, time.Now())
 			} else {
@@ -7554,7 +7548,7 @@ haveApp:
 		// returns ErrHandlerTimeout is the hardening path firing
 		// (see pkg/gateway/buffered_cap_test.go).
 		planCap := app.Plan.MaxResponseBodyBytes()
-		capped := h.setupBufferedCapWriter(w, app, planCap)
+		capped := h.setupBufferedCapWriter(w, r.Method, app, planCap)
 		// ADR-124: per-app wire-protocol selector on the
 		// buffered path. Same observability-only contract as
 		// the streaming stamp above — the forwarder reads
@@ -7586,7 +7580,7 @@ haveApp:
 		// capWriter before the proxy runs. See the proxyByNode
 		// branch above for the onCap-vs-connection-reset contract.
 		planCap := app.Plan.MaxResponseBodyBytes()
-		capped := h.setupBufferedCapWriter(w, app, planCap)
+		capped := h.setupBufferedCapWriter(w, r.Method, app, planCap)
 		h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
 				h.proxyFor(tgt.NodeID, planCap).ServeHTTP(w, req)
@@ -7901,7 +7895,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 			}
 			platformFailure := platformFailureUnbillable(r, status)
 			if commit := usageCommitFrom(r.Context()); commit != nil {
-				// ADR-1303: the response's completion already waited for (or
+				// ADR-1505: the response's completion already waited for (or
 				// is aborted by) this event; never append it twice.
 				row.EventID = commit.eventID
 				_ = commit.commit(status, commit.writtenBytes())
@@ -8391,6 +8385,9 @@ type statusRecorder struct {
 	request     *http.Request
 	Bytes       int64
 	ContentType string
+	// Retain the origin's privacy veto before response-header rules can
+	// remove it. The parked HEAD cache is shared with anonymous callers.
+	headCachePrivate bool
 
 	// headerOps (ADR-089 / issue #561 PR 4) is the per-request
 	// list of EdgeRuleHeaderOp mutations a kind=headers rule
@@ -8414,9 +8411,8 @@ type statusRecorder struct {
 	lastFlushedBytes int64
 	flushBytes       int64
 	flushInterval    time.Duration
-	// firstFlush gates the one-shot write-deadline install that
-	// happens on the first flush after WriteHeader. True until the
-	// first flush fires.
+	// firstFlush sends the first chunk immediately, independently of the
+	// byte/time batching thresholds and whether a write deadline is enabled.
 	firstFlush bool
 	// writeDeadline is the per-flush deadline installed via
 	// http.ResponseController.SetWriteDeadline on the first flush
@@ -8441,7 +8437,7 @@ type statusRecorder struct {
 	// after (or while) the source response is being written.
 	mirrorSourceCapture *mirrorSourceCapture
 
-	// usage holds a monetized request's usage commit (ADR-1303): the bytes
+	// usage holds a monetized request's usage commit (ADR-1505): the bytes
 	// that complete the response wait until its usage is durable.
 	usage *usageCommitHolder
 }
@@ -8478,7 +8474,10 @@ func (s *statusRecorder) installFlushHook(flusher http.Flusher, onFlush func(int
 	s.streaming = true
 }
 
-func (s *statusRecorder) WriteHeader(code int) {
+// prepareResponseHeaders applies metadata and edge rules before an explicit
+// status, an implicit body write, or a flush commits the response. It does not
+// write to the client: a completing write or flush still needs durable usage.
+func (s *statusRecorder) prepareResponseHeaders(code int) {
 	if !s.wroteHeader {
 		s.status = code
 		s.wroteHeader = true
@@ -8490,6 +8489,7 @@ func (s *statusRecorder) WriteHeader(code int) {
 		// reading it here is race-free relative to the underlying
 		// ResponseWriter.
 		s.ContentType = s.ResponseWriter.Header().Get("Content-Type")
+		s.headCachePrivate = responseForbidsSharedCaching(s.Header())
 		// ADR-089 / issue #561 PR 4: apply any EdgeRuleHeaderOp
 		// mutations the applyEdgeRuleHeaders helper installed
 		// BEFORE the status code is committed. The ops run in
@@ -8510,8 +8510,24 @@ func (s *statusRecorder) WriteHeader(code int) {
 	if s.deploymentSmoke {
 		s.Header().Set("Cache-Control", "no-store")
 	}
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	if !s.wroteHeader && isInformationalStatus(code) {
+		header := s.Header().Clone()
+		for _, op := range s.headerOps {
+			applyHeaderOp(header, op)
+		}
+		header.Del(preAuthTargetHeader)
+		if s.deploymentSmoke {
+			header.Set("Cache-Control", "no-store")
+		}
+		writeInformationalResponse(s.ResponseWriter, code, header)
+		return
+	}
+	s.prepareResponseHeaders(code)
 	if code == http.StatusSwitchingProtocols && !s.commitUsage(s.Bytes) {
-		// ADR-1303: an upgrade completes the request; without durable
+		// ADR-1505: an upgrade completes the request; without durable
 		// usage the client gets a refusal instead of a session.
 		s.ResponseWriter.WriteHeader(http.StatusServiceUnavailable)
 		return
@@ -8578,17 +8594,7 @@ func (s *statusRecorder) installHeaderOps(ops []EdgeRuleHeaderOp) {
 
 // lgtm[go/reflected-xss] false-positive: statusRecorder is a pass-through; every caller writes application/json, application/problem+json (api.WriteProblem at :326/:335/:366/:384/:906/:911/:914) or proxies to a Firecracker guest rendered via html/template. See statusRecorder doc-comment.
 func (s *statusRecorder) Write(b []byte) (int, error) {
-	if s.deploymentSmoke {
-		s.Header().Set("Cache-Control", "no-store")
-	}
-	if !s.wroteHeader {
-		// First Write with no explicit WriteHeader → 200.
-		s.status = http.StatusOK
-		s.wroteHeader = true
-		s.mirrorSourceCapture.writeHeader(http.StatusOK)
-		s.capturePreAuthTargetHeader()
-		s.noteUsageLength(http.StatusOK)
-	}
+	s.prepareResponseHeaders(http.StatusOK)
 	if commit := s.usage.armed(); commit != nil && commit.completes(s.Bytes, int64(len(b))) && !s.commitUsage(s.Bytes+int64(len(b))) {
 		return 0, errUsageNotDurable
 	}
@@ -8619,6 +8625,9 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 // Nil-safe: returns instantly if the recorder is on the buffered
 // path (no flusher installed).
 func (s *statusRecorder) Flush() {
+	if s.flusher != nil || strings.HasPrefix(strings.ToLower(s.contentTypeOrHeader()), "application/grpc") {
+		s.prepareResponseHeaders(http.StatusOK)
+	}
 	if s.deploymentSmoke {
 		s.Header().Set("Cache-Control", "no-store")
 	}
@@ -8695,25 +8704,17 @@ func flushEveryWrite(contentType string) bool {
 // to the wire. Called from maybeFlush (periodic triggers), Flush
 // (explicit upstream call), and finalFlush (residual capture).
 func (s *statusRecorder) doFlush() {
+	s.prepareResponseHeaders(http.StatusOK)
 	if commit := s.usage.armed(); commit != nil && commit.completes(s.Bytes, 0) && !s.commitUsage(s.Bytes) {
 		return
 	}
-	if s.firstFlush && s.writeDeadline > 0 {
-		// Install the per-flush write deadline on the very first
-		// flush. http.ResponseController is the post-Go-1.20 way
-		// to set a write deadline on a ResponseWriter without
-		// touching the underlying net/http internals; if the
-		// controller is unavailable (e.g. the wrapped writer
-		// predates Go 1.20), the deadline is silently skipped and
-		// the http.Server.WriteTimeout safety net applies. We
-		// don't error-out because production is on Go 1.23 per
-		// CLAUDE.md, but the nil-check keeps the unit tests on
-		// older httptest.NewRecorder paths honest.
-		if rc := http.NewResponseController(s.ResponseWriter); rc != nil {
-			_ = rc.SetWriteDeadline(time.Now().Add(s.writeDeadline))
-		}
-		s.firstFlush = false
+	if s.writeDeadline > 0 {
+		// Renew the write window on every flush (ADR-047). A deadline set
+		// only once cuts off a healthy stream even while it makes progress.
+		// Writers without deadline support retain the server's safety net.
+		_ = http.NewResponseController(s.ResponseWriter).SetWriteDeadline(time.Now().Add(s.writeDeadline))
 	}
+	s.firstFlush = false
 	if s.onFlush != nil {
 		s.onFlush(s.Bytes)
 	}

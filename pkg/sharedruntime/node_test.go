@@ -90,3 +90,20 @@ func TestClassifyNode(t *testing.T) {
 		})
 	}
 }
+
+func TestDroppableOutsideApp(t *testing.T) {
+	for name, want := range map[string]bool{
+		"mise/installs/node/24.1.0/bin/node":  true,
+		"usr/local/bin/mise":                  true,
+		"etc/mise/config.toml":                true,
+		"root/.local/state/mise/x":            true,
+		"root/.cache/npm/_cacache/x":          true,
+		"usr/lib/x86_64-linux-gnu/libvips.so": false,
+		"etc/passwd":                          false,
+		"misery/file":                         false,
+	} {
+		if got := DroppableOutsideApp(name); got != want {
+			t.Errorf("%s: %v, want %v", name, got, want)
+		}
+	}
+}

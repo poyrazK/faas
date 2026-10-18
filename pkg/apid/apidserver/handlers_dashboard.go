@@ -99,6 +99,8 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 		switch {
 		case path == "/dashboard/" || path == "/dashboard":
 			s.renderIndex(w, r, log, acct)
+		case path == "/dashboard/mcp":
+			s.renderMCPOperations(w, r, log, acct)
 		case path == "/dashboard/apps":
 			s.renderAppsList(w, r, log, acct)
 		case path == "/dashboard/app-costs":
@@ -512,14 +514,7 @@ func (s *server) appListItem(ctx context.Context, app state.App, latest map[stri
 // retired apps.gregale.dev setting as a safety net so stale configuration
 // cannot put a legacy hostname back into customer-facing URLs.
 func appHostForDomain(slug, domain string) string {
-	domain = strings.Trim(strings.TrimSpace(domain), ".")
-	if domain == domainUnset || domain == "apps.gregale.dev" {
-		domain = "gregale.dev"
-	}
-	if domain == "" {
-		return slug
-	}
-	return slug + "." + domain
+	return api.AppHostname(slug, domain)
 }
 
 // appURLForDomain returns the HTTPS customer URL for an app or preview slug.
@@ -919,7 +914,9 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 	operational := s.appOperationalSummary(ctx, acct, app)
 	appCosts := s.dashboardAppCosts(ctx, log, acct, app, costMonth, costMonthNotice)
 	page := dashboard.Page{Title: app.Slug, Body: "app_detail", Account: dashboardAccountView(view, appCount), Data: dashboard.AppDetailData{
+		ProductControlURL:  s.productControlConsoleURL(app.Slug),
 		ProfilingAvailable: s.profileBackend != nil && api.MustLimitsFor(acct.Plan).Profiling.Enabled,
+		ApplicationAuth:    api.ApplicationAuthEnabled(acct.ID),
 		Operational:        &operational,
 		App:                appRow,
 		AppCosts:           appCosts,
@@ -964,7 +961,9 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		// / "7d" closed set; invalid → default). The stamp echoes the
 		// active window so the template's window-selector tab strip
 		// can mark the current tab.
-		SLOApp: s.fetchDashboardSLO(ctx, log, app, acct, resolveSLOWindow(r)),
+		SLOApp:          s.fetchDashboardSLO(ctx, log, app, acct, resolveSLOWindow(r)),
+		CustomSLOs:      s.fetchDashboardCustomSLOs(ctx, app, acct),
+		SyntheticChecks: s.fetchDashboardSyntheticChecks(ctx, app, acct),
 		SLODuration: views.SLOStamp{
 			Window: resolveSLOWindow(r),
 			AsOf:   time.Now().UTC().Format(time.RFC3339Nano),
@@ -1212,9 +1211,10 @@ func (s *server) fetchDashboardAlerts(ctx context.Context, log *slog.Logger, acc
 			}
 		}
 		item.RecentDeliveries = deliveries
+		item.DeliversTo = s.ruleDestinations(ctx, rule)
 		items = append(items, item)
 	}
-	return &dashboard.AlertDetailData{Rules: items}
+	return &dashboard.AlertDetailData{Rules: items, Channels: s.dashboardAlertChannels(ctx, acct, now)}
 }
 
 // fetchDashboardPresets returns the per-app alert-preset catalog

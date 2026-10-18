@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"golang.org/x/net/http2"
+
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 func TestGuestServiceHTTPPortsShareHandlerAndTransport(t *testing.T) {
@@ -26,9 +28,10 @@ func TestGuestServiceHTTPPortsShareHandlerAndTransport(t *testing.T) {
 		return listener, err
 	}
 	var servers []*http.Server
-	add := func(server *http.Server) {
+	add := func(server *http.Server) *wire.HTTPDrain {
 		servers = append(servers, server)
 		t.Cleanup(func() { _ = server.Close() })
+		return wire.NewHTTPDrain(server)
 	}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Test-Identity") != "allowed" {
@@ -106,7 +109,7 @@ func TestGuestServiceHTTPPortsShareHandlerAndTransport(t *testing.T) {
 func TestGuestServiceHTTPPortBindFailureRejectsStartup(t *testing.T) {
 	deps := defaultDeps()
 	deps.listen = func(_, addr string) (net.Listener, error) { return nil, errors.New("port occupied") }
-	err := startGuestServiceHTTPListeners(deps, "10.100.0.1:10080", http.NotFoundHandler(), func(*http.Server) {}, make(chan error, 2), discardLogger())
+	err := startGuestServiceHTTPListeners(deps, "10.100.0.1:10080", http.NotFoundHandler(), wire.NewHTTPDrain, make(chan error, 2), discardLogger())
 	if err == nil || !strings.Contains(err.Error(), "10081") || !strings.Contains(err.Error(), "port occupied") {
 		t.Fatalf("bind failure = %v; want canonical listener startup failure", err)
 	}

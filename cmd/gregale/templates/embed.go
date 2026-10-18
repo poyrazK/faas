@@ -91,10 +91,12 @@ var Names = []string{
 }
 
 // unlisted templates stay embedded and materializable by name but are left
-// out of customer discovery: `gregale init --list`, completions and
-// unknown-template hints. durable-entity-node scaffolds the operator-only
-// durable entity preview (ADR-712).
-var unlisted = map[string]bool{"durable-entity-node": true}
+// out of customer discovery: `gregale init --list`, completions,
+// unknown-template hints and the dashboard catalog. durable-entity-node
+// scaffolds the operator-only durable entity preview (ADR-712); auth is
+// application Auth, a dark launch (ADR-1190) that `gregale auth create`
+// materializes.
+var unlisted = map[string]bool{"durable-entity-node": true, "auth": true}
 
 // ListedNames returns Names without unlisted templates, in catalog order.
 func ListedNames() []string {

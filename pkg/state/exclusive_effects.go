@@ -27,8 +27,9 @@ type OperationEffectDeliveryStore interface {
 }
 
 type exclusiveStoredEffect struct {
-	Effect exclusivework.Effect
-	Record api.OperationEffectRecord
+	ReceiverSHA256 string
+	Effect         exclusivework.Effect
+	Record         api.OperationEffectRecord
 }
 
 func operationEffectDestinationMatches(op ExclusiveOperation, hook AppWebhook) bool {

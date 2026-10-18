@@ -313,7 +313,7 @@ func (s *server) getAPIConsumerUsageQuote(w http.ResponseWriter, r *http.Request
 // quoteConsumerUsage prices a consumer's usage in [since, until) exactly as
 // statements do (ADR-950–953): earlier usage in since's month consumes the
 // monthly allowance first. The quote endpoint and consumer billing
-// self-service (ADR-1304) share it.
+// self-service (ADR-1506) share it.
 func (s *server) quoteConsumerUsage(ctx context.Context, accountID, appID, consumerID string, since, until time.Time) (billing.APIConsumerUsageQuote, error) {
 	usageStore, okUsage := s.store.(state.ConsumerUsageStore)
 	cardsStore, okCards := s.store.(state.APIConsumerRateCardStore)

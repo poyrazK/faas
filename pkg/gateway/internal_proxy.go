@@ -31,12 +31,14 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"net/netip"
@@ -477,7 +479,8 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		p.serveUpgrade(w, r)
 		return
 	}
-	streamCtx, detachBudget, touch, cancelStream := newStreamSession(r.Context(), 0, streamIdleTimeout)
+	// The shutdown notice lets a gateway restart end an SSE stream cleanly.
+	streamCtx, detachBudget, touch, cancelStream := newStreamSession(drain.WithShutdownNotice(r.Context(), p.Drain), 0, streamIdleTimeout)
 	defer cancelStream()
 	outReq := r.Clone(streamCtx)
 	outReq.URL.Scheme = p.Target.Scheme
@@ -543,7 +546,15 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	// gate verifies it. There is no scenario where a customer
 	// header survives the public hop AND leaks into the gate.
 	outReq.Header.Set("X-Forwarded-Proto", proto)
-	if outReq.Body != nil {
+	if err := makeBodyReplayable(outReq); err != nil {
+		if errors.Is(err, context.Canceled) && r.Context().Err() != nil {
+			return
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest,
+			api.CodeBadRequest, "Could not read request body", "the request body ended before its Content-Length"))
+		return
+	}
+	if outReq.Body != nil && outReq.GetBody == nil {
 		outReq.Body = &activityReadCloser{ReadCloser: outReq.Body, activity: touch}
 	}
 	// RoundTrip runs on a detachable stream context (issue #687). The
@@ -607,11 +618,12 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	// leak that to the customer.
 	encodeOriginStatus := edgeTransportStatus(r, resp.StatusCode)
 	customerOwned := httpsec.SurfaceFrom(r.Context()).CustomerOwned()
+	// H2 can expose trailer declarations only in the header map. Retain
+	// them so this hop can announce its own trailers after stripping.
+	trailerDeclarations := resp.Header.Values("Trailer")
+	stripHopByHopInPlace(resp.Header)
 	replacedStatic := map[string]bool{}
 	for k, vv := range resp.Header {
-		if isHopByHop(k) {
-			continue
-		}
 		// On Gregale-owned hosts the outer middleware is the only wire
 		// owner for these headers; copying an inner copy would duplicate
 		// policy values. On customer hosts the app's value replaces the
@@ -694,7 +706,7 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	for name := range resp.Trailer {
 		announce(name)
 	}
-	for _, value := range resp.Header.Values("Trailer") {
+	for _, value := range trailerDeclarations {
 		for _, name := range strings.Split(value, ",") {
 			announce(strings.TrimSpace(name))
 		}
@@ -730,6 +742,11 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	if isLongLivedResponse(resp.StatusCode, resp.Header) {
 		detachBudget()
 		touch()
+		if isEventStream(resp.Header) {
+			// Ends as a clean close (the copy sees context.Canceled); the
+			// EventSource reconnects to the replacement process.
+			drain.EndOnShutdown(streamCtx, cancelStream)
+		}
 	}
 	if _, err := copyResponseBodyWithActivity(streamCtx, w, resp.Body, touch); err != nil && !errors.Is(err, context.Canceled) {
 		p.logger().Warn("internal body copy failed",
@@ -773,6 +790,13 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 // §6.1) from h in place. Avoids the double-alloc of Clone +
 // rebuild.
 func stripHopByHopInPlace(h http.Header) {
+	// Connection's options name additional hop-specific fields. Read all
+	// values before removing Connection itself (RFC 9110 §7.6.1).
+	for _, value := range h.Values("Connection") {
+		for _, name := range strings.Split(value, ",") {
+			h.Del(strings.TrimSpace(name))
+		}
+	}
 	for k := range h {
 		if isHopByHop(k) {
 			delete(h, k)
@@ -942,6 +966,42 @@ func (r *activityReadCloser) Read(p []byte) (int, error) {
 		r.activity()
 	}
 	return n, err
+}
+
+// makeBodyReplayable buffers a small request body of known length and sets
+// GetBody, so the HTTP/2 transport can resend a request that crossed
+// gatewayd-internal's graceful-restart GOAWAY. Streams above the GOAWAY's
+// last stream ID were never processed, so the resend cannot duplicate work.
+func makeBodyReplayable(req *http.Request) error {
+	if req.ContentLength == 0 {
+		// No body: a nil Body is what lets the transport resend the request
+		// (httputil.ReverseProxy does the same). Wrapping http.NoBody made
+		// even GETs unretryable.
+		req.Body = nil
+		return nil
+	}
+	if req.Body == nil || req.GetBody != nil || req.ContentLength < 0 ||
+		req.ContentLength > api.InternalHopReplayableBodyBytes {
+		return nil
+	}
+	body := make([]byte, req.ContentLength)
+	_, err := io.ReadFull(req.Body, body)
+	_ = req.Body.Close()
+	if err != nil {
+		return fmt.Errorf("read %d-byte request body: %w", req.ContentLength, err)
+	}
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
+	return nil
+}
+
+// isEventStream reports a server-sent events response, which its client
+// reopens on its own (with Last-Event-ID) when the stream ends.
+func isEventStream(h http.Header) bool {
+	mediaType, _, err := mime.ParseMediaType(h.Get("Content-Type"))
+	return err == nil && mediaType == "text/event-stream"
 }
 
 func isLongLivedResponse(statusCode int, h http.Header) bool {

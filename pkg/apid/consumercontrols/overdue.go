@@ -143,7 +143,7 @@ func (s *Service) Start(ctx context.Context, log *slog.Logger) {
 }
 
 // SyncOverdueOnce places and lifts consumer and tenant holds from the
-// exported invoices' payment status (ADR-1302) and audits each change.
+// exported invoices' payment status (ADR-1504) and audits each change.
 func (s *Service) SyncOverdueOnce(ctx context.Context) error {
 	return errors.Join(s.syncConsumerOverdueOnce(ctx), s.syncTenantOverdueOnce(ctx))
 }

@@ -12,6 +12,7 @@
     "release": "node migrations/release.mjs",
     "test": "node --test test/*.test.mjs",
     "receipts:cleanup": "node migrations/cleanup-receipts.mjs",
+    "receipts:diagnostics": "node migrations/receipt-diagnostics.mjs",
     "rpc:permissions": "node migrations/rpc-permissions.mjs"
   },
   "dependencies": {

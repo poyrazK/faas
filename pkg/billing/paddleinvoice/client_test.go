@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// adr: 1305 — transactions are manual, address-less drafts with
+// adr: 1507 — transactions are manual, address-less drafts with
 // custom_data; retries find them; billed transactions report a due date.
 func TestPaddleTransactions(t *testing.T) {
 	var created map[string]any

@@ -31,6 +31,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -49,6 +50,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched/instancestats"
 	"github.com/onebox-faas/faas/pkg/sched/prewarm"
 	"github.com/onebox-faas/faas/pkg/sched/recentload"
+	"github.com/onebox-faas/faas/pkg/sched/repairhealth"
 	"github.com/onebox-faas/faas/pkg/sched/scaleup"
 	"github.com/onebox-faas/faas/pkg/sched/targets"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
@@ -574,6 +576,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	ledger := sched.NewNodeLedger()
 	ops := wire.NewOpsMetrics("schedd")
+	repairHealth := &repairhealth.Collector{Store: store, Metrics: repairhealth.NewMetrics(ops.Registry(), ops.MetricPrefix()), Log: log}
+	go repairHealth.Run(ctx)
 	wire.BootStamps(ctx, "schedd", ops)
 	wire.RegisterDefaultOps(ops)
 	// ADR-190 follow-up: export this pool's live statistics so the
@@ -960,6 +964,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("schedd jobs dispatch disabled — set FAAS_JOBS_DISPATCH=1 to enable (Mega-1 cluster-wide gate)")
 	}
 	engine.WithJobVmmClient(vmmRouter).WithJobExitWaiter(vmmRouter)
+	engine.WithCIJobsRuntime(ci.NewPostgresStore(pool), ci.ConfigFromEnv(os.Getenv), os.Getenv(ci.RuntimeURLEnv))
 	if leaser := sched.NewPgLeaserFromPool(pool, ownerNodeID, nil); leaser != nil {
 		engine.WithJobLeaser(sched.AdaptJobLeaser(leaser))
 	}
@@ -969,6 +974,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := engine.SeedLedger(ctx); err != nil {
 		seedLedgerReady = false
 		log.Warn("seed ledger", "err", err)
+	}
+	if err := engine.SeedDataRepairRehearsals(ctx); err != nil {
+		return fmt.Errorf("schedd: seed repair rehearsal capacity: %w", err)
+	}
+	if err := startDataRepairRehearsals(ctx, engine, store, vmmRouter, ownerNodeID, seedLedgerReady, log); err != nil {
+		return err
 	}
 	qualificationDispatchValue := os.Getenv("FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_DISPATCH")
 	qualificationDispatchRequested := environmentQualificationDispatchEnabled(qualificationDispatchValue)
@@ -1029,6 +1040,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("schedd: listen %s: %w", listenTarget, err)
 	}
+	// faas-schedd.socket keeps the listener open across restarts; it must
+	// carry only the address schedd serves (listen_addr / socket_path).
+	if err := wire.RequireInheritedListenersClaimed("schedd"); err != nil {
+		_ = lis.Close()
+		return err
+	}
 	// Issue #571 PR-A2: /readyz probe (PG ping + gRPC bound).
 	// Probe construction is platform-portable — pool may be nil
 	// in unit tests that don't wire a real pgxpool; the probe
@@ -1043,9 +1060,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// so a panic during the ~465 lines of setup below cannot
 	// leave /readyz reporting ready while no gRPC server is
 	// actually running (PR #1091 review Finding 5).
-	gsrv := grpc.NewServer(append(
+	// Gateways' warm-hint and log streams and vmmd's capacity reports stay
+	// open indefinitely; the drain ends them at shutdown so GracefulStop
+	// waits only for unary RPCs and the replacement starts sooner.
+	streamDrain := wire.NewStreamDrain()
+	gsrv := grpc.NewServer(append(append(
 		wire.ServerCredsOrEmpty(serverTLS),
-		wire.TraceServerOptions()...,
+		wire.TraceServerOptions()...),
+		streamDrain.ServerOption(),
 	)...)
 	// scheddgrpc.New(gsrv) is called after the instancestats.Reader
 	// is constructed below, so the server can serve
@@ -2446,6 +2468,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer stopCancel()
+	streamDrain.Begin()
 	//nolint:contextcheck // shutdown must outlive the canceled daemon context.
 	stopGRPCServer(stopCtx, gsrv)
 	if httpSrv != nil {
