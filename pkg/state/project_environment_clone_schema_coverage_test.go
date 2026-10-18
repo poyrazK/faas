@@ -5,6 +5,7 @@
 // adr: 694
 // adr: 695
 // adr: 708
+// adr: 1701 — commercial configuration needs isolation; user email consent is not copied.
 package state
 
 import (
@@ -42,6 +43,13 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"scenario_worker_faults":        CloneSchemaOperational,
 		"exclusive_work_effects":        CloneSchemaOperational,
 
+		"product_control_heads":               CloneSchemaConfiguration,
+		"product_control_revisions":           CloneSchemaConfiguration,
+		"product_control_customers":           CloneSchemaConfiguration,
+		"product_control_help_requests":       CloneSchemaData,
+		"product_control_email_subscriptions": CloneSchemaIdentity,
+		"product_control_receipts":            CloneSchemaOperational,
+		"product_control_billing_documents":   CloneSchemaOperational,
 		// CI configuration stays scoped; execution authority remains at its source.
 		"ci_automation_event_retries": CloneSchemaOperational,
 		"ci_automation_branches":      CloneSchemaOperational,

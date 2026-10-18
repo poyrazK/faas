@@ -150,6 +150,7 @@ type MemStore struct {
 	migrationCutovers                          map[string]MigrationCutoverRecord
 	projectMigrations                          map[string]ProjectMigrationRecord
 	publicBuildURLs                            map[string]map[string]string
+	productData                                *productMemory
 	scenarioManagedWork                        map[string]scenarioManagedJob
 	scenarioWorkerFaults                       map[string]rehearsalwork.WorkerFault
 	scenarioColdPreparations                   map[string]rehearsalcold.Preparation

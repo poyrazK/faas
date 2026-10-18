@@ -34,6 +34,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 )
 
@@ -106,6 +107,18 @@ func NewResendSender(cfg ResendConfig) (Sender, error) {
 // (with %w) so callers can errors.Is against ErrTransient to decide
 // whether to retry.
 func (s *ResendSender) Send(ctx context.Context, msg Message) error {
+	_, err := s.send(ctx, msg, false)
+	return err
+}
+
+// SendWithReceipt requires the provider's message UUID for authenticated event
+// correlation. Ambiguous success is retried with the original idempotency key.
+// Send keeps its existing error-only contract for other platform mail streams.
+func (s *ResendSender) SendWithReceipt(ctx context.Context, msg Message) (string, error) {
+	return s.send(ctx, msg, true)
+}
+
+func (s *ResendSender) send(ctx context.Context, msg Message, receipt bool) (string, error) {
 	body, err := json.Marshal(ResendRequest{
 		From:    s.cfg.From,
 		To:      msg.To,
@@ -120,12 +133,12 @@ func (s *ResendSender) Send(ctx context.Context, msg Message) error {
 		Headers: msg.Headers,
 	})
 	if err != nil {
-		return fmt.Errorf("mail: resend: marshal: %w", err)
+		return "", fmt.Errorf("mail: resend: marshal: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		s.cfg.BaseURL+"/emails", bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("mail: resend: new request: %w", err)
+		return "", fmt.Errorf("mail: resend: new request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+s.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
@@ -147,12 +160,24 @@ func (s *ResendSender) Send(ctx context.Context, msg Message) error {
 	if err != nil {
 		// Network errors are transient by definition (caller can
 		// retry on a fresh transport).
-		return &TransientError{Err: fmt.Errorf("mail: resend: do: %w", err)}
+		return "", &TransientError{Err: fmt.Errorf("mail: resend: do: %w", err)}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	rawBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		providerID := ""
+		if receipt {
+			var accepted struct {
+				ID string `json:"id"`
+			}
+			idErr := json.Unmarshal(rawBody, &accepted)
+			parsed, parseErr := uuid.Parse(accepted.ID)
+			if idErr != nil || parseErr != nil || parsed == uuid.Nil || parsed.String() != accepted.ID {
+				return "", &TransientError{Err: fmt.Errorf("mail: resend: accepted response lacks a valid message receipt")}
+			}
+			providerID = accepted.ID
+		}
 		// CodeQL go/log-injection (CWE-117): msg.To + msg.Subject are
 		// caller-supplied (constructed from account.Email / templated
 		// subject by the dunning + quota-warning senders). Sanitize
@@ -164,7 +189,7 @@ func (s *ResendSender) Send(ctx context.Context, msg Message) error {
 		}
 		s.cfg.Log.Info("mail.resend.ok",
 			"to", to, "subject", logsanitize.Field(msg.Subject), "status", resp.StatusCode)
-		return nil
+		return providerID, nil
 	}
 	var rerr resendError
 	_ = json.Unmarshal(rawBody, &rerr)
@@ -183,9 +208,9 @@ func (s *ResendSender) Send(ctx context.Context, msg Message) error {
 		if ra := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()); ra > 0 {
 			te.RetryAfter = ra
 		}
-		return fmt.Errorf("mail: resend: %s: %w", detail, te)
+		return "", fmt.Errorf("mail: resend: %s: %w", detail, te)
 	}
-	return fmt.Errorf("mail: resend: %d: %s", resp.StatusCode, detail)
+	return "", fmt.Errorf("mail: resend: %d: %s", resp.StatusCode, detail)
 }
 
 // parseRetryAfter interprets an RFC 7231 §7.1.3 Retry-After header.
