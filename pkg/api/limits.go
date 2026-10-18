@@ -21,6 +21,16 @@ import (
 	"time"
 )
 
+// Email verification keeps its existing 24-hour, single-use credential policy.
+const (
+	EmailVerificationTTL        = 24 * time.Hour
+	EmailVerificationTokenBytes = 32
+	PasswordResetTTL            = 15 * time.Minute
+	PasswordResetTokenBytes     = 32
+	MagicLinkTTL                = 15 * time.Minute
+	MagicLinkTokenBytes         = 32
+)
+
 // Product Control internal contract bounds. Customer quotas are explicit grants.
 const (
 	ProductControlMaxFeatures                             = 32
@@ -1399,6 +1409,8 @@ const (
 	// CertIssuanceFailedAfter is the sustained failure window before the
 	// platform raises the customer-facing certificate issuance alert.
 	CertIssuanceFailedAfter = 15 * time.Minute
+	// AccountDeletionGraceDays preserves the self-service account restore window.
+	AccountDeletionGraceDays = 30
 	// AppDeleteGraceDays is the restore window for customer app deletes.
 	// App metadata and deployment artifacts remain available during this
 	// period, after which the grace sweeper permanently removes the app.
@@ -6621,8 +6633,24 @@ const (
 	// before failing over to another node (ADR-1580). Override with
 	// FAAS_COMPUTE_GATEWAY_RESTART_WAIT.
 	ComputeGatewayRestartWaitSeconds = 3
-	ReplicaHeartbeatIntervalSeconds  = 5
-	WarmHintCacheSize                = 1000
+	// Two-generation hand-off (ADR-1580). A hand-off starts the new release
+	// beside the running one on the same listening sockets; the old generation
+	// stops accepting and finishes what it holds.
+	//
+	// HandoffDrainMaxSeconds bounds the old generation's lifetime. It covers
+	// CustomerRequestEnvelopeTimeout (about 25 minutes), so every bounded
+	// request finishes; SSE and WebSocket sessions still open
+	// GatewayDrainGraceSeconds before the bound end so their clients reconnect.
+	HandoffDrainMaxSeconds = 1800
+	// HandoffReadyTimeoutSeconds bounds the successor's start-up. A successor
+	// that is not ready by then is stopped and the old generation keeps serving.
+	HandoffReadyTimeoutSeconds = 120
+	// HandoffMaxMemoryPercent refuses a hand-off while the unit's cgroup uses
+	// more than this share of its MemoryMax: both generations share the
+	// cgroup, so the old one must leave room for a second steady state.
+	HandoffMaxMemoryPercent         = 45
+	ReplicaHeartbeatIntervalSeconds = 5
+	WarmHintCacheSize               = 1000
 	// ServiceRouteConvergenceTimeoutSeconds bounds one routing-generation
 	// acknowledgement round. A timeout does not retire the predecessor; the
 	// scheduler leaves it serving and retries reconciliation.

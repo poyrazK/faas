@@ -71,6 +71,7 @@ var DaemonMaxConnections = map[string]int32{
 	"githubd":     3,
 	"outboundd":   2,
 	"s3-gatewayd": 2,
+	"maild":       2,
 }
 
 // DaemonMaxConnectionsNotifyHubDisabled is the budget used when
@@ -117,6 +118,7 @@ var DaemonMaxConnectionsNotifyHubDisabled = map[string]int32{
 	"githubd":     3,
 	"outboundd":   2,
 	"s3-gatewayd": 2,
+	"maild":       2,
 }
 
 const defaultMaxConnections int32 = 4
