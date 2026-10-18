@@ -72,6 +72,8 @@ from .advance_automation_live_suite_request import AdvanceAutomationLiveSuiteReq
 from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
 from .alert_delivery_response import AlertDeliveryResponse
+from .alert_delivery_response_readiness_destination import AlertDeliveryResponseReadinessDestination
+from .alert_delivery_response_readiness_failover_reason import AlertDeliveryResponseReadinessFailoverReason
 from .alert_delivery_response_status import AlertDeliveryResponseStatus
 from .alert_preset_response import AlertPresetResponse
 from .alert_preset_response_category import AlertPresetResponseCategory
@@ -651,6 +653,8 @@ from .cancel_deployment_request import CancelDeploymentRequest
 from .cancel_deployment_request_reason import CancelDeploymentRequestReason
 from .cancel_deployment_response_200 import CancelDeploymentResponse200
 from .cancel_event_execution_lineage_retry_job_request import CancelEventExecutionLineageRetryJobRequest
+
+from .cancel_mcp_readiness_maintenance_request import CancelMCPReadinessMaintenanceRequest
 from .cancel_pending_work_request import CancelPendingWorkRequest
 from .cancel_pending_work_response import CancelPendingWorkResponse
 from .capabilities_response import CapabilitiesResponse
@@ -856,6 +860,7 @@ from .create_managed_realtime_endpoint_request_auth_mode import CreateManagedRea
 from .create_managed_realtime_endpoint_request_auth_required_claims import (
     CreateManagedRealtimeEndpointRequestAuthRequiredClaims,
 )
+from .create_mcp_readiness_maintenance_request import CreateMCPReadinessMaintenanceRequest
 from .create_mirror_rule_request import CreateMirrorRuleRequest
 from .create_native_issue_ticket_request import CreateNativeIssueTicketRequest
 from .create_native_linear_issue_ticket_request import CreateNativeLinearIssueTicketRequest
@@ -1879,6 +1884,9 @@ from .get_event_consumer_execution_health_window import GetEventConsumerExecutio
 from .get_event_consumer_health_window import GetEventConsumerHealthWindow
 from .get_exclusive_operation_trigger_binding_source import GetExclusiveOperationTriggerBindingSource
 from .get_github_recovery_status_status import GetGithubRecoveryStatusStatus
+from .get_mcp_readiness_pager_duty_acknowledgements_destination import (
+    GetMCPReadinessPagerDutyAcknowledgementsDestination,
+)
 from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
 from .get_outbound_ai_price_catalog_provider import GetOutboundAIPriceCatalogProvider
@@ -2506,6 +2514,101 @@ from .mcp_policy_convergence_snapshot_state import MCPPolicyConvergenceSnapshotS
 from .mcp_probe_rpc_request import MCPProbeRPCRequest
 from .mcp_probe_rpc_request_method import MCPProbeRPCRequestMethod
 from .mcp_probe_rpc_request_params import MCPProbeRPCRequestParams
+from .mcp_readiness_acknowledgement import MCPReadinessAcknowledgement
+from .mcp_readiness_acknowledgement_source import MCPReadinessAcknowledgementSource
+from .mcp_readiness_attention_action import MCPReadinessAttentionAction
+from .mcp_readiness_attention_action_action import MCPReadinessAttentionActionAction
+from .mcp_readiness_attention_history import MCPReadinessAttentionHistory
+from .mcp_readiness_attention_page import MCPReadinessAttentionPage
+from .mcp_readiness_attention_receipt import MCPReadinessAttentionReceipt
+from .mcp_readiness_attention_receipt_action import MCPReadinessAttentionReceiptAction
+from .mcp_readiness_attention_receipt_source import MCPReadinessAttentionReceiptSource
+from .mcp_readiness_check import MCPReadinessCheck
+from .mcp_readiness_check_status import MCPReadinessCheckStatus
+from .mcp_readiness_delivery_routing import MCPReadinessDeliveryRouting
+from .mcp_readiness_delivery_routing_failover_reason import MCPReadinessDeliveryRoutingFailoverReason
+from .mcp_readiness_delivery_routing_last_destination import MCPReadinessDeliveryRoutingLastDestination
+from .mcp_readiness_destination_delivery import MCPReadinessDestinationDelivery
+from .mcp_readiness_destination_delivery_destination import MCPReadinessDestinationDeliveryDestination
+from .mcp_readiness_destination_delivery_provider import MCPReadinessDestinationDeliveryProvider
+from .mcp_readiness_destination_delivery_provider_status import MCPReadinessDestinationDeliveryProviderStatus
+from .mcp_readiness_destination_delivery_status import MCPReadinessDestinationDeliveryStatus
+from .mcp_readiness_destination_queue import MCPReadinessDestinationQueue
+from .mcp_readiness_destination_queue_destination import MCPReadinessDestinationQueueDestination
+from .mcp_readiness_destination_queue_failure_kind import MCPReadinessDestinationQueueFailureKind
+from .mcp_readiness_destination_queue_provider import MCPReadinessDestinationQueueProvider
+from .mcp_readiness_destination_queue_state import MCPReadinessDestinationQueueState
+from .mcp_readiness_evidence import MCPReadinessEvidence
+from .mcp_readiness_fallback_policy import MCPReadinessFallbackPolicy
+from .mcp_readiness_fallback_policy_integration_key_masked import MCPReadinessFallbackPolicyIntegrationKeyMasked
+from .mcp_readiness_fallback_policy_provider import MCPReadinessFallbackPolicyProvider
+from .mcp_readiness_fallback_policy_region import MCPReadinessFallbackPolicyRegion
+from .mcp_readiness_incident_attention import MCPReadinessIncidentAttention
+from .mcp_readiness_incident_attention_reminder_policy_source import MCPReadinessIncidentAttentionReminderPolicySource
+from .mcp_readiness_incident_attention_state import MCPReadinessIncidentAttentionState
+from .mcp_readiness_incident_event import MCPReadinessIncidentEvent
+from .mcp_readiness_incident_event_delivery_status import MCPReadinessIncidentEventDeliveryStatus
+from .mcp_readiness_incident_event_event import MCPReadinessIncidentEventEvent
+from .mcp_readiness_incident_event_incident_status import MCPReadinessIncidentEventIncidentStatus
+from .mcp_readiness_incident_event_notification_reason import MCPReadinessIncidentEventNotificationReason
+from .mcp_readiness_incident_event_suppression_reason import MCPReadinessIncidentEventSuppressionReason
+from .mcp_readiness_incident_timeline import MCPReadinessIncidentTimeline
+from .mcp_readiness_maintenance_page import MCPReadinessMaintenancePage
+from .mcp_readiness_maintenance_window import MCPReadinessMaintenanceWindow
+from .mcp_readiness_monitor_config import MCPReadinessMonitorConfig
+from .mcp_readiness_monitor_config_oauth_connections import MCPReadinessMonitorConfigOauthConnections
+from .mcp_readiness_monitor_observation import MCPReadinessMonitorObservation
+from .mcp_readiness_monitor_status import MCPReadinessMonitorStatus
+from .mcp_readiness_monitor_status_recovery_action import MCPReadinessMonitorStatusRecoveryAction
+from .mcp_readiness_monitor_status_state import MCPReadinessMonitorStatusState
+from .mcp_readiness_notification_action import MCPReadinessNotificationAction
+from .mcp_readiness_notification_action_action import MCPReadinessNotificationActionAction
+from .mcp_readiness_notification_action_destination import MCPReadinessNotificationActionDestination
+from .mcp_readiness_notification_queue import MCPReadinessNotificationQueue
+from .mcp_readiness_notification_queue_failure_kind import MCPReadinessNotificationQueueFailureKind
+from .mcp_readiness_notification_queue_state import MCPReadinessNotificationQueueState
+from .mcp_readiness_notification_queues import MCPReadinessNotificationQueues
+from .mcp_readiness_notification_receipt import MCPReadinessNotificationReceipt
+from .mcp_readiness_notification_receipt_action import MCPReadinessNotificationReceiptAction
+from .mcp_readiness_notification_receipt_destination import MCPReadinessNotificationReceiptDestination
+from .mcp_readiness_o_auth_connection import MCPReadinessOAuthConnection
+from .mcp_readiness_override import MCPReadinessOverride
+from .mcp_readiness_override_request import MCPReadinessOverrideRequest
+from .mcp_readiness_pager_duty_acknowledgement_event import MCPReadinessPagerDutyAcknowledgementEvent
+from .mcp_readiness_pager_duty_acknowledgement_event_action import MCPReadinessPagerDutyAcknowledgementEventAction
+from .mcp_readiness_pager_duty_acknowledgement_event_destination import (
+    MCPReadinessPagerDutyAcknowledgementEventDestination,
+)
+from .mcp_readiness_pager_duty_acknowledgement_event_outcome import MCPReadinessPagerDutyAcknowledgementEventOutcome
+from .mcp_readiness_pager_duty_acknowledgement_event_region import MCPReadinessPagerDutyAcknowledgementEventRegion
+from .mcp_readiness_pager_duty_acknowledgement_events import MCPReadinessPagerDutyAcknowledgementEvents
+from .mcp_readiness_pager_duty_acknowledgement_hold import MCPReadinessPagerDutyAcknowledgementHold
+from .mcp_readiness_pager_duty_acknowledgement_hold_destination import (
+    MCPReadinessPagerDutyAcknowledgementHoldDestination,
+)
+from .mcp_readiness_pager_duty_acknowledgement_hold_region import MCPReadinessPagerDutyAcknowledgementHoldRegion
+from .mcp_readiness_pager_duty_acknowledgement_policy import MCPReadinessPagerDutyAcknowledgementPolicy
+from .mcp_readiness_pager_duty_acknowledgement_policy_destination import (
+    MCPReadinessPagerDutyAcknowledgementPolicyDestination,
+)
+from .mcp_readiness_pager_duty_acknowledgement_policy_region import MCPReadinessPagerDutyAcknowledgementPolicyRegion
+from .mcp_readiness_pager_duty_acknowledgement_policy_signing_secret_masked import (
+    MCPReadinessPagerDutyAcknowledgementPolicySigningSecretMasked,
+)
+from .mcp_readiness_pager_duty_policy import MCPReadinessPagerDutyPolicy
+from .mcp_readiness_pager_duty_policy_integration_key_masked import MCPReadinessPagerDutyPolicyIntegrationKeyMasked
+from .mcp_readiness_pager_duty_policy_region import MCPReadinessPagerDutyPolicyRegion
+from .mcp_readiness_policy import MCPReadinessPolicy
+from .mcp_readiness_policy_change import MCPReadinessPolicyChange
+from .mcp_readiness_policy_diff import MCPReadinessPolicyDiff
+from .mcp_readiness_policy_history import MCPReadinessPolicyHistory
+from .mcp_readiness_probe_request import MCPReadinessProbeRequest
+from .mcp_readiness_reminder_defaults import MCPReadinessReminderDefaults
+from .mcp_readiness_reminder_policy import MCPReadinessReminderPolicy
+from .mcp_readiness_role import MCPReadinessRole
+from .mcp_readiness_role_catalog_format import MCPReadinessRoleCatalogFormat
+from .mcp_readiness_role_protocol_version import MCPReadinessRoleProtocolVersion
+from .mcp_readiness_snapshot import MCPReadinessSnapshot
 from .mcp_resource_policy import MCPResourcePolicy
 from .mcp_resource_policy_prompt_scopes_type_0 import MCPResourcePolicyPromptScopesType0
 from .mcp_resource_policy_resource_scopes_type_0 import MCPResourcePolicyResourceScopesType0
@@ -4185,6 +4288,7 @@ from .resolved_execution_limits import ResolvedExecutionLimits
 from .resource_profile import ResourceProfile
 from .restore_automation_revision_request import RestoreAutomationRevisionRequest
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
+from .restore_mcp_readiness_policy_request import RestoreMCPReadinessPolicyRequest
 from .resume_automation_failure_pause_request import ResumeAutomationFailurePauseRequest
 from .resume_workflow_run_request import ResumeWorkflowRunRequest
 from .retire_automation_live_baseline_request import RetireAutomationLiveBaselineRequest
@@ -4688,6 +4792,17 @@ from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_environment_route_budgets_request import SetEnvironmentRouteBudgetsRequest
 from .set_environment_route_budgets_scope import SetEnvironmentRouteBudgetsScope
 from .set_grace_window_request import SetGraceWindowRequest
+from .set_mcp_readiness_fallback_request import SetMCPReadinessFallbackRequest
+from .set_mcp_readiness_fallback_request_provider import SetMCPReadinessFallbackRequestProvider
+from .set_mcp_readiness_fallback_request_region import SetMCPReadinessFallbackRequestRegion
+from .set_mcp_readiness_pager_duty_acknowledgements_request import SetMCPReadinessPagerDutyAcknowledgementsRequest
+from .set_mcp_readiness_pager_duty_acknowledgements_request_destination import (
+    SetMCPReadinessPagerDutyAcknowledgementsRequestDestination,
+)
+from .set_mcp_readiness_pager_duty_request import SetMCPReadinessPagerDutyRequest
+from .set_mcp_readiness_pager_duty_request_region import SetMCPReadinessPagerDutyRequestRegion
+from .set_mcp_readiness_policy_request import SetMCPReadinessPolicyRequest
+from .set_mcp_readiness_reminder_defaults_request import SetMCPReadinessReminderDefaultsRequest
 from .set_object_bucket_access_grant_request import SetObjectBucketAccessGrantRequest
 from .set_object_bucket_access_grant_request_permission import SetObjectBucketAccessGrantRequestPermission
 from .set_object_s3_copy_source_request import SetObjectS3CopySourceRequest
@@ -5330,6 +5445,8 @@ __all__ = (
     "AdvanceCanaryRequest",
     "AfterRestoreHook",
     "AlertDeliveryResponse",
+    "AlertDeliveryResponseReadinessDestination",
+    "AlertDeliveryResponseReadinessFailoverReason",
     "AlertDeliveryResponseStatus",
     "AlertPresetResponse",
     "AlertPresetResponseCategory",
@@ -5901,6 +6018,8 @@ __all__ = (
     "CancelDeploymentRequestReason",
     "CancelDeploymentResponse200",
     "CancelEventExecutionLineageRetryJobRequest",
+
+    "CancelMCPReadinessMaintenanceRequest",
     "CancelPendingWorkRequest",
     "CancelPendingWorkResponse",
     "CapabilitiesResponse",
@@ -6092,6 +6211,7 @@ __all__ = (
     "CreateManagedRealtimeEndpointRequestAuthAlgorithmsItem",
     "CreateManagedRealtimeEndpointRequestAuthMode",
     "CreateManagedRealtimeEndpointRequestAuthRequiredClaims",
+    "CreateMCPReadinessMaintenanceRequest",
     "CreateMirrorRuleRequest",
     "CreateNativeIssueTicketRequest",
     "CreateNativeLinearIssueTicketRequest",
@@ -7065,6 +7185,7 @@ __all__ = (
     "GetEventConsumerHealthWindow",
     "GetExclusiveOperationTriggerBindingSource",
     "GetGithubRecoveryStatusStatus",
+    "GetMCPReadinessPagerDutyAcknowledgementsDestination",
     "GetMirrorRuleSummaryWindow",
     "GetOpenAPISpecJSONResponse200",
     "GetOutboundAIPriceCatalogProvider",
@@ -7640,6 +7761,93 @@ __all__ = (
     "MCPProbeRPCRequest",
     "MCPProbeRPCRequestMethod",
     "MCPProbeRPCRequestParams",
+    "MCPReadinessAcknowledgement",
+    "MCPReadinessAcknowledgementSource",
+    "MCPReadinessAttentionAction",
+    "MCPReadinessAttentionActionAction",
+    "MCPReadinessAttentionHistory",
+    "MCPReadinessAttentionPage",
+    "MCPReadinessAttentionReceipt",
+    "MCPReadinessAttentionReceiptAction",
+    "MCPReadinessAttentionReceiptSource",
+    "MCPReadinessCheck",
+    "MCPReadinessCheckStatus",
+    "MCPReadinessDeliveryRouting",
+    "MCPReadinessDeliveryRoutingFailoverReason",
+    "MCPReadinessDeliveryRoutingLastDestination",
+    "MCPReadinessDestinationDelivery",
+    "MCPReadinessDestinationDeliveryDestination",
+    "MCPReadinessDestinationDeliveryProvider",
+    "MCPReadinessDestinationDeliveryProviderStatus",
+    "MCPReadinessDestinationDeliveryStatus",
+    "MCPReadinessDestinationQueue",
+    "MCPReadinessDestinationQueueDestination",
+    "MCPReadinessDestinationQueueFailureKind",
+    "MCPReadinessDestinationQueueProvider",
+    "MCPReadinessDestinationQueueState",
+    "MCPReadinessEvidence",
+    "MCPReadinessFallbackPolicy",
+    "MCPReadinessFallbackPolicyIntegrationKeyMasked",
+    "MCPReadinessFallbackPolicyProvider",
+    "MCPReadinessFallbackPolicyRegion",
+    "MCPReadinessIncidentAttention",
+    "MCPReadinessIncidentAttentionReminderPolicySource",
+    "MCPReadinessIncidentAttentionState",
+    "MCPReadinessIncidentEvent",
+    "MCPReadinessIncidentEventDeliveryStatus",
+    "MCPReadinessIncidentEventEvent",
+    "MCPReadinessIncidentEventIncidentStatus",
+    "MCPReadinessIncidentEventNotificationReason",
+    "MCPReadinessIncidentEventSuppressionReason",
+    "MCPReadinessIncidentTimeline",
+    "MCPReadinessMaintenancePage",
+    "MCPReadinessMaintenanceWindow",
+    "MCPReadinessMonitorConfig",
+    "MCPReadinessMonitorConfigOauthConnections",
+    "MCPReadinessMonitorObservation",
+    "MCPReadinessMonitorStatus",
+    "MCPReadinessMonitorStatusRecoveryAction",
+    "MCPReadinessMonitorStatusState",
+    "MCPReadinessNotificationAction",
+    "MCPReadinessNotificationActionAction",
+    "MCPReadinessNotificationActionDestination",
+    "MCPReadinessNotificationQueue",
+    "MCPReadinessNotificationQueueFailureKind",
+    "MCPReadinessNotificationQueues",
+    "MCPReadinessNotificationQueueState",
+    "MCPReadinessNotificationReceipt",
+    "MCPReadinessNotificationReceiptAction",
+    "MCPReadinessNotificationReceiptDestination",
+    "MCPReadinessOAuthConnection",
+    "MCPReadinessOverride",
+    "MCPReadinessOverrideRequest",
+    "MCPReadinessPagerDutyAcknowledgementEvent",
+    "MCPReadinessPagerDutyAcknowledgementEventAction",
+    "MCPReadinessPagerDutyAcknowledgementEventDestination",
+    "MCPReadinessPagerDutyAcknowledgementEventOutcome",
+    "MCPReadinessPagerDutyAcknowledgementEventRegion",
+    "MCPReadinessPagerDutyAcknowledgementEvents",
+    "MCPReadinessPagerDutyAcknowledgementHold",
+    "MCPReadinessPagerDutyAcknowledgementHoldDestination",
+    "MCPReadinessPagerDutyAcknowledgementHoldRegion",
+    "MCPReadinessPagerDutyAcknowledgementPolicy",
+    "MCPReadinessPagerDutyAcknowledgementPolicyDestination",
+    "MCPReadinessPagerDutyAcknowledgementPolicyRegion",
+    "MCPReadinessPagerDutyAcknowledgementPolicySigningSecretMasked",
+    "MCPReadinessPagerDutyPolicy",
+    "MCPReadinessPagerDutyPolicyIntegrationKeyMasked",
+    "MCPReadinessPagerDutyPolicyRegion",
+    "MCPReadinessPolicy",
+    "MCPReadinessPolicyChange",
+    "MCPReadinessPolicyDiff",
+    "MCPReadinessPolicyHistory",
+    "MCPReadinessProbeRequest",
+    "MCPReadinessReminderDefaults",
+    "MCPReadinessReminderPolicy",
+    "MCPReadinessRole",
+    "MCPReadinessRoleCatalogFormat",
+    "MCPReadinessRoleProtocolVersion",
+    "MCPReadinessSnapshot",
     "MCPResourcePolicy",
     "MCPResourcePolicyPromptScopesType0",
     "MCPResourcePolicyResourceScopesType0",
@@ -9151,6 +9359,7 @@ __all__ = (
     "ResourceProfile",
     "RestoreAutomationRevisionRequest",
     "RestoreManagedPostgresDatabaseRequest",
+    "RestoreMCPReadinessPolicyRequest",
     "ResumeAutomationFailurePauseRequest",
     "ResumeWorkflowRunRequest",
     "RetireAutomationLiveBaselineRequest",
@@ -9644,6 +9853,15 @@ __all__ = (
     "SetEnvironmentRouteBudgetsRequest",
     "SetEnvironmentRouteBudgetsScope",
     "SetGraceWindowRequest",
+    "SetMCPReadinessFallbackRequest",
+    "SetMCPReadinessFallbackRequestProvider",
+    "SetMCPReadinessFallbackRequestRegion",
+    "SetMCPReadinessPagerDutyAcknowledgementsRequest",
+    "SetMCPReadinessPagerDutyAcknowledgementsRequestDestination",
+    "SetMCPReadinessPagerDutyRequest",
+    "SetMCPReadinessPagerDutyRequestRegion",
+    "SetMCPReadinessPolicyRequest",
+    "SetMCPReadinessReminderDefaultsRequest",
     "SetObjectBucketAccessGrantRequest",
     "SetObjectBucketAccessGrantRequestPermission",
     "SetObjectS3CopySourceRequest",
