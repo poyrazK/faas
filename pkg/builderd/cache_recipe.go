@@ -36,6 +36,9 @@ type BuildCacheRecipe struct {
 	// production-shaped builds of the same source. Omitted when empty, so
 	// every existing recipe key is unchanged.
 	DevWatchCommand string `json:"dev_watch_command,omitempty"`
+	// DevWatchHost is baked into the watch-mode image's environment, so two
+	// developer apps with the same source never share one image.
+	DevWatchHost string `json:"dev_watch_host,omitempty"`
 }
 
 const (

@@ -69,7 +69,7 @@ const deploymentRowFmt = "%-32s %-32s %-12s %-10s %s\n"
 // `--wide` (`-w`) toggles this layout in cmdDeployments; the default
 // table stays the old 5-column shape so existing scripts / dashboard
 // scrapers don't break.
-const deploymentRowFmtWide = "%-32s %-32s %-12s %-10s %-16s %-6s %-24s %-41s %s\n"
+const deploymentRowFmtWide = "%-32s %-6s %-32s %-12s %-10s %-16s %-6s %-24s %-41s %s\n"
 
 // renderDeploymentRow writes one deployment row to w. The fmt.Printf
 // inside writes to os.Stdout by default; tests that need the rendered
@@ -106,8 +106,14 @@ func renderDeploymentRowWide(w io.Writer, d api.DeploymentResponse) {
 	if reason == "" {
 		reason = "-"
 	}
+	// ADR-198: the revision is what rollback --to and deploys show take;
+	// without it the list gave no way to map vN to a row.
+	revision := "-"
+	if d.Revision > 0 {
+		revision = fmt.Sprintf("v%d", d.Revision)
+	}
 	_, _ = fmt.Fprintf(w, deploymentRowFmtWide,
-		d.ID, d.AppID, d.Status, d.Kind, by, pr, tag, reason, d.CreatedAt)
+		d.ID, revision, d.AppID, d.Status, d.Kind, by, pr, tag, reason, d.CreatedAt)
 }
 
 // truncateReason returns s truncated to max runes with "…" appended
@@ -158,7 +164,7 @@ func cmdDeployments(args []string) int {
 	// for ops; matches the awk-flavoured shape other CLI list commands
 	// use (e.g. `kubectl get pods -w` watch flag — semantically
 	// different but the user mental model is "show me more").
-	wide := fs.Bool("wide", false, "include annotation columns (by / pr / tag / reason)")
+	wide := fs.Bool("wide", false, "include the revision (vN) and annotation columns (by / pr / tag / reason)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -354,6 +360,10 @@ func cmdDeployment(args []string) int {
 		return cmdDeploymentSummary(args[1:])
 	case "wait":
 		return cmdDeploymentWait(args[1:])
+	case "get":
+		// inspect and deploy recovery hints print `deployment get <id>`;
+		// it is the explicit spelling of the default read (H10-6).
+		return cmdDeploymentGet(args[1:])
 	}
 	return cmdDeploymentGet(args)
 }

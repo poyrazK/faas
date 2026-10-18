@@ -10,6 +10,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.environment_git_ops_change import EnvironmentGitOpsChange
+    from ..models.environment_workload_retirement_impact import EnvironmentWorkloadRetirementImpact
 
 
 T = TypeVar("T", bound="EnvironmentGitOpsPlan")
@@ -27,6 +28,9 @@ class EnvironmentGitOpsPlan:
     plan_hash: str
     changes: list[EnvironmentGitOpsChange]
     blocking_reasons: list[str]
+    retirement_impacts: list[EnvironmentWorkloadRetirementImpact] | Unset = UNSET
+    """Informational review-time work counts; counts do not authorize deletion or prevent busy workloads from
+    retiring. Original identities and configuration remain protected by the plan hash."""
     commit_sha: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -50,6 +54,13 @@ class EnvironmentGitOpsPlan:
 
         blocking_reasons = self.blocking_reasons
 
+        retirement_impacts: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.retirement_impacts, Unset):
+            retirement_impacts = []
+            for retirement_impacts_item_data in self.retirement_impacts:
+                retirement_impacts_item = retirement_impacts_item_data.to_dict()
+                retirement_impacts.append(retirement_impacts_item)
+
         commit_sha = self.commit_sha
 
         field_dict: dict[str, Any] = {}
@@ -66,6 +77,8 @@ class EnvironmentGitOpsPlan:
                 "blocking_reasons": blocking_reasons,
             }
         )
+        if retirement_impacts is not UNSET:
+            field_dict["retirement_impacts"] = retirement_impacts
         if commit_sha is not UNSET:
             field_dict["commit_sha"] = commit_sha
 
@@ -74,6 +87,7 @@ class EnvironmentGitOpsPlan:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.environment_git_ops_change import EnvironmentGitOpsChange
+        from ..models.environment_workload_retirement_impact import EnvironmentWorkloadRetirementImpact
 
         d = dict(src_dict)
         manager = d.pop("manager")
@@ -97,6 +111,15 @@ class EnvironmentGitOpsPlan:
 
         blocking_reasons = cast(list[str], d.pop("blocking_reasons"))
 
+        _retirement_impacts = d.pop("retirement_impacts", UNSET)
+        retirement_impacts: list[EnvironmentWorkloadRetirementImpact] | Unset = UNSET
+        if _retirement_impacts is not UNSET:
+            retirement_impacts = []
+            for retirement_impacts_item_data in _retirement_impacts:
+                retirement_impacts_item = EnvironmentWorkloadRetirementImpact.from_dict(retirement_impacts_item_data)
+
+                retirement_impacts.append(retirement_impacts_item)
+
         commit_sha = d.pop("commit_sha", UNSET)
 
         environment_git_ops_plan = cls(
@@ -108,6 +131,7 @@ class EnvironmentGitOpsPlan:
             plan_hash=plan_hash,
             changes=changes,
             blocking_reasons=blocking_reasons,
+            retirement_impacts=retirement_impacts,
             commit_sha=commit_sha,
         )
 

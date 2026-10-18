@@ -6,7 +6,14 @@ import { options } from '../migrations/cleanup-receipts.mjs'
 
 test('receipt cleanup defaults to preview and requires explicit bounded UTC options', () => {
   const before = '2026-01-01T00:00:00.000Z'
-  assert.deepEqual(options(['--before', before]), { before, apply: false, batchSize: 100, maxBatches: 1 })
+  assert.deepEqual(options(['--before', before]), { before, apply: false, batchSize: 100, maxBatches: 1, contract: 'v1', receiptKind: 'create' })
+  assert.equal(options(['--before', before, '--contract', 'v2', '--receipt-kind', 'mutation']).receiptKind, 'mutation')
+  assert.throws(() => options(['--before', before, '--receipt-kind', 'mutation']))
+  assert.equal(options(['--before', before, '--contract', 'v2', '--receipt-kind', 'batch']).receiptKind, 'batch')
+  assert.throws(() => options(['--before', before, '--receipt-kind', 'batch']))
+  assert.throws(() => options(['--before', before, '--contract', 'v2', '--receipt-kind', 'other']))
+  assert.equal(options(['--before', before, '--contract', 'v2']).contract, 'v2')
+  assert.throws(() => options(['--before', before, '--contract', 'v3']))
   assert.equal(options(['--before', before, '--apply', '--batch-size', '2', '--max-batches', '3']).apply, true)
   for (const args of [[], ['--before', '2026-02-30T00:00:00.000Z'], ['--before', before, '--batch-size', '0'], ['--before', before, '--max-batches', '1.5'], ['--before', before, '--unknown'], ['--before', before, '--before', before], ['--before', before, '--apply', '--apply']]) assert.throws(() => options(args))
 })

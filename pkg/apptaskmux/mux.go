@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"io"
 	"sync"
+
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 const (
@@ -58,10 +60,7 @@ func (w *Writer) EOF(stream uint32) error { return w.write(FrameEOF, stream, nil
 
 // Close aborts a stream in both directions.
 func (w *Writer) Close(stream uint32, reason string) error {
-	if len(reason) > 256 {
-		reason = reason[:256]
-	}
-	return w.write(FrameClose, stream, []byte(reason))
+	return w.write(FrameClose, stream, []byte(safetext.Truncate(reason, 256)))
 }
 
 // Data sends payload on a stream, split into MaxPayload frames.

@@ -1,0 +1,19 @@
+version: 1
+scenarios:
+  customer-export:
+    project: behavior-export
+    source: .
+    command: [node, run.mjs]
+    simulation: [node, run.mjs]
+    timeout: 30s
+    behavior:
+      version: 1
+      fixtures: [fixture.json]
+      observers: [observe.mjs, run.mjs]
+      observations:
+        - key: export.response
+          kind: http
+        - key: export.report
+          kind: object
+        - key: notification.successful_deliveries
+          kind: delivery

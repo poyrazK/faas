@@ -6,19 +6,17 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
 const ownerLogin = "gregale_owner"
 
 type credentialRole struct {
-	name, schemaOwner, marker, scope, database, legacy string
-	access                                             managedpostgres.CredentialAccess
+	name, schemaOwner, authOwner, marker, scope, database, legacy, bindingID string
+	access                                                                   managedpostgres.CredentialAccess
 }
 
 type credentialRoleManager interface {
@@ -45,10 +43,13 @@ func (p *Provider) credentialRole(request managedpostgres.CredentialRequest) cre
 		prefix = "gregale_api_"
 	case managedpostgres.CredentialMigration:
 		prefix = "gregale_mig_"
+	case managedpostgres.CredentialAuth:
+		prefix = "gregale_auth_"
 	}
 	return credentialRole{name: prefix + hex.EncodeToString(identity[:20]), schemaOwner: "gregale_schema_" + hex.EncodeToString(owner[:16]),
-		scope: hex.EncodeToString(scope[:20]), marker: "gregale:credential:v1:" + hex.EncodeToString(scope[:20]) + ":" + string(request.Access),
-		database: p.databaseName, access: request.Access, legacy: p.roleName(request.ProviderResourceID, request.IdentityKey)}
+		authOwner: "gregale_authowner_" + hex.EncodeToString(owner[:16]), scope: hex.EncodeToString(scope[:20]),
+		marker:   "gregale:credential:v1:" + hex.EncodeToString(scope[:20]) + ":" + string(request.Access),
+		database: p.databaseName, access: request.Access, legacy: p.roleName(request.ProviderResourceID, request.IdentityKey), bindingID: request.BindingID}
 }
 
 func (m *sqlCredentialRoles) connection(ctx context.Context, material managedpostgres.CredentialMaterial) (*pgx.Conn, error) {
@@ -103,6 +104,11 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 	if err := initializeCredentialSchema(ctx, tx, role); err != nil {
 		return err
 	}
+	if role.access == managedpostgres.CredentialAuth {
+		if err := ensureAuthOwner(ctx, tx, role); err != nil {
+			return err
+		}
+	}
 	info, err := credentialRoleInfo(ctx, tx, role.name)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
@@ -128,9 +134,23 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 			}
 		}
 		if role.access == managedpostgres.CredentialDataAPI {
-			if _, err := tx.Exec(ctx, "ALTER ROLE "+roleIdentifier(role.name)+" SET statement_timeout = "+strconv.Itoa(api.DataAPIQueryTimeoutMS)); err != nil {
+			if err := configureDataAPILogin(ctx, tx, role); err != nil {
 				return err
 			}
+		}
+		if role.access == managedpostgres.CredentialAuth {
+			if err := configureAuthLogin(ctx, tx, role); err != nil {
+				return err
+			}
+		}
+		info, err = credentialRoleInfo(ctx, tx, role.name)
+		if err != nil {
+			return err
+		}
+	}
+	if info.matchesLegacyDataAPI(role) {
+		if err := configureDataAPILogin(ctx, tx, role); err != nil {
+			return err
 		}
 		info, err = credentialRoleInfo(ctx, tx, role.name)
 		if err != nil {
@@ -196,6 +216,17 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 		if err := ensureDataAPICredential(ctx, tx, role); err != nil {
 			return err
 		}
+		if err := prepareRefreshRotationCredential(ctx, tx, role); err != nil {
+			return err
+		}
+		if err := prepareSQLDeadlineCredential(ctx, tx, role); err != nil {
+			return err
+		}
+	}
+	if role.access == managedpostgres.CredentialAuth {
+		if err := verifyAuthCredential(ctx, tx, role); err != nil {
+			return err
+		}
 	}
 	return tx.Commit(ctx)
 }
@@ -203,6 +234,7 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 // Read-only is a privilege contract, not a client-overridable transaction setting.
 // Reject observed direct, column, PUBLIC, function, and future-object write grants.
 // These statements run against the external customer database, not Gregale's catalog.
+// The one exception is an ADR-1190 authorization helper (authHelperSQL).
 func verifyReadOnlyRole(ctx context.Context, tx pgx.Tx, name string) error {
 	var unsafe bool
 	err := tx.QueryRow(ctx, `SELECT
@@ -214,7 +246,8 @@ func verifyReadOnlyRole(ctx context.Context, tx pgx.Tx, name string) error {
  OR has_any_column_privilege($1,c.oid,'INSERT,UPDATE,REFERENCES')))
  OR (c.relkind='S' AND has_sequence_privilege($1,c.oid,'USAGE,UPDATE'))))
  OR EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
- WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND p.prosecdef AND has_function_privilege($1,p.oid,'EXECUTE'))
+ WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND p.prosecdef AND has_function_privilege($1,p.oid,'EXECUTE')
+ AND NOT `+authHelperSQL+`)
  OR EXISTS (SELECT 1 FROM pg_default_acl d, LATERAL aclexplode(d.defaclacl) a
  WHERE a.grantee IN (0,(SELECT oid FROM pg_roles WHERE rolname=$1))
  AND ((d.defaclobjtype='r' AND a.privilege_type IN ('INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'))
@@ -254,7 +287,10 @@ func (i sqlRoleInfo) matches(role credentialRole) bool {
 		return len(i.memberships) == 1 && i.memberships[0] == role.schemaOwner && len(i.configuration) == 1 && i.configuration[0] == "role="+role.schemaOwner
 	}
 	if role.access == managedpostgres.CredentialDataAPI {
-		return len(i.memberships) == 0 && len(i.configuration) == 1 && i.configuration[0] == "statement_timeout="+strconv.Itoa(api.DataAPIQueryTimeoutMS)
+		return len(i.memberships) == 0 && sameSettings(i.configuration, dataAPILoginSettings())
+	}
+	if role.access == managedpostgres.CredentialAuth {
+		return len(i.memberships) == 1 && i.memberships[0] == role.authOwner && sameSettings(i.configuration, authLoginSettings(role))
 	}
 	return len(i.memberships) == 0 && len(i.configuration) == 0
 }
@@ -376,6 +412,9 @@ func revokeCredentialRole(ctx context.Context, conn *pgx.Conn, role credentialRo
 	// CREATEROLE owner. DROP OWNED requires SET membership. This grant is
 	// confined to the guarded retirement transaction: DROP ROLE removes it,
 	// and any failure rolls it back. Plain GRANT also supports PostgreSQL 14/15.
+	if err := retireRefreshRotationMember(ctx, tx, role); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, "GRANT "+roleIdentifier(role.name)+" TO CURRENT_USER"); err != nil {
 		return err
 	}
@@ -398,7 +437,7 @@ func (m *sqlCredentialRoles) RestrictInherited(ctx context.Context, material man
 	}
 	defer func() { _ = conn.Close(ctx) }()
 	rows, err := conn.Query(ctx, `SELECT rolname::text FROM pg_roles WHERE rolcanlogin
- AND rolname ~ '^gregale_(rt_|ro_|mig_)?[0-9a-f]{40}$'
+ AND rolname ~ '^gregale_(rt_|ro_|mig_|api_|auth_)?[0-9a-f]{40}$'
  AND COALESCE(shobj_description(oid, 'pg_authid'), '') NOT LIKE $1`, "gregale:credential:v1:"+scope+":%")
 	if err != nil {
 		return err

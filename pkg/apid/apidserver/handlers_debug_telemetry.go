@@ -28,6 +28,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/debugcompare"
 	"github.com/onebox-faas/faas/pkg/debugger"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -737,6 +738,78 @@ type debugDependencyHistoryAggregate struct {
 	dependencyKind string
 	name           string
 	debugDependencyHistoryRollup
+	// queries breaks a database dependency down by normalized query
+	// pattern; at most debugDependencyQueryMaxPatterns distinct patterns.
+	queries          map[string]*debugDependencyHistoryRollup
+	queriesTruncated bool
+}
+
+// debugDependencyQueryMaxPatterns bounds the query patterns tracked per
+// dependency; debugDependencyQueryMaxOutput bounds those returned.
+const (
+	debugDependencyQueryMaxPatterns = 16
+	debugDependencyQueryMaxOutput   = 5
+)
+
+// addQuerySample files a database span's sample under its query pattern.
+func (a *debugDependencyHistoryAggregate) addQuerySample(statement string, sample debugDependencyHistorySample, isCurrent bool) {
+	pattern := debugger.QueryPattern(statement)
+	if pattern == "" {
+		return
+	}
+	rollup := a.queries[pattern]
+	if rollup == nil {
+		if len(a.queries) >= debugDependencyQueryMaxPatterns {
+			a.queriesTruncated = true
+			return
+		}
+		if a.queries == nil {
+			a.queries = make(map[string]*debugDependencyHistoryRollup)
+		}
+		rollup = &debugDependencyHistoryRollup{}
+		a.queries[pattern] = rollup
+	}
+	addDebugDependencyHistorySample(rollup, sample, isCurrent)
+}
+
+// queryItems summarizes the query breakdown, regressions first, then by
+// current p95 and calls.
+func (a *debugDependencyHistoryAggregate) queryItems() ([]api.DebugDependencyQueryItem, bool) {
+	if len(a.queries) == 0 {
+		return nil, false
+	}
+	out := make([]api.DebugDependencyQueryItem, 0, len(a.queries))
+	for pattern, rollup := range a.queries {
+		metrics := summarizeDebugDependencyHistory(rollup)
+		out = append(out, api.DebugDependencyQueryItem{
+			Pattern: pattern, Calls: rollup.calls, ErrorCalls: rollup.errors,
+			P95MS: metrics.p95MS, BaselineP95MS: metrics.baselineP95MS, CurrentP95MS: metrics.currentP95MS,
+			RegressionFactor: metrics.regressionFactor, Regression: metrics.regression,
+			BaselineErrorRatePct: metrics.baselineErrorRatePct, CurrentErrorRatePct: metrics.currentErrorRatePct,
+			FailureRegression: metrics.failureRegression, TopErrorType: metrics.topErrorType,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Regression != out[j].Regression {
+			return out[i].Regression
+		}
+		if out[i].FailureRegression != out[j].FailureRegression {
+			return out[i].FailureRegression
+		}
+		if out[i].CurrentP95MS != out[j].CurrentP95MS {
+			return out[i].CurrentP95MS > out[j].CurrentP95MS
+		}
+		if out[i].Calls != out[j].Calls {
+			return out[i].Calls > out[j].Calls
+		}
+		return out[i].Pattern < out[j].Pattern
+	})
+	truncated := a.queriesTruncated
+	if len(out) > debugDependencyQueryMaxOutput {
+		out = out[:debugDependencyQueryMaxOutput]
+		truncated = true
+	}
+	return out, truncated
 }
 
 type debugDependencyImpactAggregate struct {
@@ -836,6 +909,9 @@ func buildDebugDependencyRollup(rows []sqlc.ListRequestTelemetryDependencySpansR
 			}
 			if aggregate != nil {
 				addDebugDependencyHistorySample(&aggregate.debugDependencyHistoryRollup, sample, isCurrent)
+				if span.DBStatement != "" {
+					aggregate.addQuerySample(span.DBStatement, sample, isCurrent)
+				}
 			}
 
 			from := debugDependencyRootSegment()
@@ -892,6 +968,7 @@ func buildDebugDependencyRollup(rows []sqlc.ListRequestTelemetryDependencySpansR
 			FailureRegression:      metrics.failureRegression,
 			TopErrorType:           metrics.topErrorType,
 		})
+		out[len(out)-1].Queries, out[len(out)-1].QueriesTruncated = aggregate.queryItems()
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Regression != out[j].Regression {
@@ -1331,44 +1408,40 @@ func (s *server) debugTelemetryGetHandler(w http.ResponseWriter, r *http.Request
 	// The gateway/apid hosts can differ by a small NTP skew; the journal RPC
 	// accepts up to one minute of future skew, so its matching window must too.
 	receivedUntil := now.Add(time.Minute)
-	if journalStore, ok := s.store.(state.RequestIDJournalReader); ok {
-		journal, journalErr := journalStore.FindRequestIDJournalByAppAndIdentifier(
-			r.Context(), acct.ID, app.ID, identifier, receivedFrom, receivedUntil, now,
-		)
-		if journalErr == nil {
-			if journal.TraceID != "" {
-				row, telemetryErr := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
-					AppID:         stringToPgUUID(app.ID),
-					Identifier:    journal.TraceID,
-					ReceivedFrom:  pgtype.Timestamptz{Time: receivedFrom, Valid: true},
-					ReceivedUntil: pgtype.Timestamptz{Time: receivedUntil, Valid: true},
-				})
-				if telemetryErr == nil {
-					item := debugTelemetryGetRowToItem(row)
-					item.RequestID = identifier
-					writeJSON(w, http.StatusOK, item)
-					return
-				}
-				if !errors.Is(telemetryErr, pgx.ErrNoRows) {
-					api.WriteProblem(w, api.ErrCapacity("get request telemetry"))
-					return
-				}
+	journal, found, journalErr := s.findDebugRequestJournal(r.Context(), acct.ID, app.ID, identifier, receivedFrom, now)
+	if journalErr != nil {
+		api.WriteProblem(w, api.ErrCapacity("get request ID journal"))
+		return
+	}
+	if found {
+		if journal.TraceID != "" {
+			row, telemetryErr := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
+				AppID:         stringToPgUUID(app.ID),
+				Identifier:    journal.TraceID,
+				ReceivedFrom:  pgtype.Timestamptz{Time: receivedFrom, Valid: true},
+				ReceivedUntil: pgtype.Timestamptz{Time: receivedUntil, Valid: true},
+			})
+			if telemetryErr == nil {
+				item := debugTelemetryGetRowToItem(row)
+				item.RequestID = identifier
+				writeJSON(w, http.StatusOK, item)
+				return
 			}
-			item := api.DebugTelemetryRequestItem{
-				RequestID: identifier, EvidenceStatus: "request_id_only",
-				ReceivedAt: journal.ReceivedAt.UTC().Format(time.RFC3339Nano),
+			if !errors.Is(telemetryErr, pgx.ErrNoRows) {
+				api.WriteProblem(w, api.ErrCapacity("get request telemetry"))
+				return
 			}
-			if journal.TraceID != "" {
-				traceID := journal.TraceID
-				item.TraceID = &traceID
-			}
-			writeJSON(w, http.StatusOK, item)
-			return
 		}
-		if !errors.Is(journalErr, pgx.ErrNoRows) {
-			api.WriteProblem(w, api.ErrCapacity("get request ID journal"))
-			return
+		item := api.DebugTelemetryRequestItem{
+			RequestID: identifier, EvidenceStatus: "request_id_only",
+			ReceivedAt: journal.ReceivedAt.UTC().Format(time.RFC3339Nano),
 		}
+		if journal.TraceID != "" {
+			traceID := journal.TraceID
+			item.TraceID = &traceID
+		}
+		writeJSON(w, http.StatusOK, item)
+		return
 	}
 	row, err := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
 		AppID:         stringToPgUUID(app.ID),
@@ -1412,12 +1485,7 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 	}
 	now := time.Now().UTC()
 	retention := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
-	row, err := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
-		AppID:         stringToPgUUID(app.ID),
-		Identifier:    identifier,
-		ReceivedFrom:  pgtype.Timestamptz{Time: now.Add(-retention), Valid: true},
-		ReceivedUntil: pgtype.Timestamptz{Time: now, Valid: true},
-	})
+	row, err := s.getDebugRequestTelemetry(r.Context(), acct.ID, app.ID, identifier, now.Add(-retention), now, now)
 	if errors.Is(err, pgx.ErrNoRows) {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found"))
 		return
@@ -2291,6 +2359,7 @@ func debugRegressionRowToItem(row sqlc.ListActiveRegressionsByAppRow) api.DebugR
 		}
 	}
 	item.SuspectedDependency = parseSuspectedDependency(row.SuspectedDependency)
+	applyDebugRegressionSignal(&item, row.Kind, row.ErrorRatePct, row.ErrorRateBasePct, row.ErrorCount)
 	return item
 }
 
@@ -2321,7 +2390,7 @@ func formatFloat2(v float64) string {
 // shared time window. Body shape: DebugCompareRequest (source,
 // mirror deployment_ids + optional route filter + optional
 // window bounds). Returns DebugCompareResponse with one row per
-// route that shipped traffic in both deployments.
+// route with retained telemetry in either deployment.
 //
 // PR-B composes two PR-A queries (RequestTelemetryBaselineP95ByRoute)
 // in Go — the CTE-on-CTE shape trips sqlc v1.31's parser (the
@@ -2343,78 +2412,15 @@ func (s *server) debugCompareHandler(w http.ResponseWriter, r *http.Request, acc
 		api.WriteProblem(w, api.ErrValidation("invalid compare body"))
 		return
 	}
-	if _, err := uuid.Parse(req.Source); err != nil {
-		api.WriteProblem(w, api.ErrValidation("source must be a deployment id"))
+	out, problem := debugcompare.Build(r.Context(), app.ID, req, limits.DebugTelemetryRetentionDays, time.Now().UTC(),
+		func(ctx context.Context, deploymentID string, from, until time.Time, route string) (map[string]debugcompare.Stats, error) {
+			return s.fetchRouteStats(ctx, app.ID, stringToPgUUID(deploymentID), from, until, route)
+		})
+	if problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
-	if _, err := uuid.Parse(req.Mirror); err != nil {
-		api.WriteProblem(w, api.ErrValidation("mirror must be a deployment id"))
-		return
-	}
-	// Default window: last 1h. Clamp to plan retention.
-	sinceDur := parseDebugSinceFromString(req.Since, 1*time.Hour)
-	capDur := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
-	if capDur > 0 && sinceDur > capDur {
-		sinceDur = capDur
-	}
-	until := time.Now().UTC()
-	if req.Until != "" {
-		if t, err := time.Parse(time.RFC3339, req.Until); err == nil {
-			until = t.UTC()
-		}
-	}
-	from := until.Add(-sinceDur)
-	srcID := stringToPgUUID(req.Source)
-	mirID := stringToPgUUID(req.Mirror)
-
-	// Fetch both distributions. Both calls share one index scan
-	// over request_telemetry_app_dep_received_idx — four
-	// aggregates (p50/p95/p99/represented request count) in a
-	// single pass (Debugger UX v1 stage 3 sqlc rewrite; PR-B
-	// minimum was p95-only and
-	// walked client-side for the others).
-	srcStats, err := s.fetchRouteStats(r.Context(), app.ID, srcID, from, until, req.Route)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("compare source"))
-		return
-	}
-	mirStats, err := s.fetchRouteStats(r.Context(), app.ID, mirID, from, until, req.Route)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("compare mirror"))
-		return
-	}
-	// Merge: union of routes; missing entries render zero stats.
-	// A missing side means zero rows in the window — DO NOT
-	// synthesize percentiles from the other side. Test (b) in
-	// handlers_debug_telemetry_compare_test.go asserts the
-	// N=0/percentiles=0 contract.
-	routes := make(map[string]api.DebugCompareRouteStats, len(srcStats)+len(mirStats))
-	for route, s := range srcStats {
-		routes[route] = api.DebugCompareRouteStats{
-			Route:     route,
-			SourceP50: s.P50, SourceP95: s.P95, SourceP99: s.P99, SourceN: s.N,
-		}
-	}
-	for route, m := range mirStats {
-		existing := routes[route]
-		existing.Route = route
-		existing.MirrorP50 = m.P50
-		existing.MirrorP95 = m.P95
-		existing.MirrorP99 = m.P99
-		existing.MirrorN = m.N
-		routes[route] = existing
-	}
-	// Stable ordering for deterministic dashboard rendering.
-	out := make([]api.DebugCompareRouteStats, 0, len(routes))
-	for _, v := range routes {
-		out = append(out, v)
-	}
-	sortRouteStats(out)
-	writeJSON(w, http.StatusOK, api.DebugCompareResponse{
-		Source: req.Source,
-		Mirror: req.Mirror,
-		Routes: out,
-	})
+	writeJSON(w, http.StatusOK, out)
 }
 
 // routeStats is the per-route aggregate used by the compare
@@ -2423,12 +2429,7 @@ func (s *server) debugCompareHandler(w http.ResponseWriter, r *http.Request, acc
 // from a single index scan; this struct mirrors that shape so
 // the dashboard can render the full latency distribution
 // alongside the represented request count.
-type routeStats struct {
-	P50 int
-	P95 int
-	P99 int
-	N   int64
-}
+type routeStats = debugcompare.Stats
 
 // fetchRouteStats reads the per-route p50/p95/p99 + represented request count
 // for a single deployment in the window. The shape mirrors the
@@ -2465,19 +2466,6 @@ func (s *server) fetchRouteStats(ctx context.Context, appID string, deploymentID
 		}
 	}
 	return out, nil
-}
-
-// sortRouteStats sorts by route name (stable, deterministic
-// output for dashboard diffing).
-func sortRouteStats(stats []api.DebugCompareRouteStats) {
-	// insertion sort — the slice is typically <100 routes
-	for i := 1; i < len(stats); i++ {
-		j := i
-		for j > 0 && stats[j-1].Route > stats[j].Route {
-			stats[j-1], stats[j] = stats[j], stats[j-1]
-			j--
-		}
-	}
 }
 
 // parseDebugSinceFromString is a variant of parseDebugSince that

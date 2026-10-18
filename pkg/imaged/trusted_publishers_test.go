@@ -45,6 +45,17 @@ func trustedSignerApp(t *testing.T, store *state.MemStore) state.App {
 	return app
 }
 
+func seedTestTrustedPublisher(t *testing.T, store *state.MemStore, app state.App, name string, key *ecdsa.PrivateKey) {
+	t.Helper()
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.UpsertAppTrustedSigner(t.Context(), app.AccountID, app.ID, name, der, app.AccountID); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func publisherDER(t *testing.T) (*ecdsa.PrivateKey, []byte) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

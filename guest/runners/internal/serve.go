@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"strconv"
 	"time"
 
 	"github.com/onebox-faas/faas/guest/runners/internal/workerpool"
@@ -29,13 +28,7 @@ const HandlerTimeout = 30 * time.Second
 // HandlerTimeout, so existing functions keep their 30 s, and never more than
 // the longest plan budget.
 func invocationTimeout(h http.Header) time.Duration {
-	timeout := HandlerTimeout
-	if ms, err := strconv.ParseInt(h.Get(api.DeadlineHeader), 10, 64); err == nil && ms > 0 {
-		if forwarded := time.Duration(ms) * time.Millisecond; forwarded > timeout {
-			timeout = forwarded
-		}
-	}
-	return min(timeout, api.RequestBudgetPlanMax)
+	return api.GuestDeadline(h.Get(api.DeadlineHeader), HandlerTimeout)
 }
 
 // Envelope is the §4.9 request a runner sends its handler, extended with the
@@ -50,6 +43,9 @@ type Envelope struct {
 	// handler registers on TailPipePath; 0 disables the tail.
 	WaitUntilSec int    `json:"wait_until_sec"`
 	TailPipePath string `json:"tail_pipe_path,omitempty"`
+	// LifecycleHook is derived from the socket peer and guest-init's marker,
+	// never from the request body or a forwarded client address.
+	LifecycleHook string `json:"lifecycle_hook,omitempty"`
 }
 
 // Response frames (ADR-999). A line without a frame is a complete §4.9
@@ -96,13 +92,14 @@ func Serve(w http.ResponseWriter, r *http.Request, cfg ServeConfig) {
 	body, _ := io.ReadAll(r.Body)
 	_ = r.Body.Close()
 	env := Envelope{
-		Method:       r.Method,
-		Path:         r.URL.Path,
-		Headers:      RequestHeaders(r.Header),
-		Query:        r.URL.RawQuery,
-		BodyB64:      base64.StdEncoding.EncodeToString(body),
-		WaitUntilSec: cfg.WaitUntilSec,
-		TailPipePath: cfg.TailPipePath,
+		Method:        r.Method,
+		Path:          r.URL.Path,
+		Headers:       RequestHeaders(r.Header),
+		Query:         r.URL.RawQuery,
+		BodyB64:       base64.StdEncoding.EncodeToString(body),
+		WaitUntilSec:  cfg.WaitUntilSec,
+		TailPipePath:  cfg.TailPipePath,
+		LifecycleHook: lifecycleHook(r),
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), invocationTimeout(r.Header))
 	defer cancel()

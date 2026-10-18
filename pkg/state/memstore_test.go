@@ -5054,6 +5054,7 @@ func memstoreSeedLiveSibling(t *testing.T, m *MemStore, ctx context.Context, pri
 	m.deployments[priorDepID] = prior
 	sibling := m.deployments[newDep.ID]
 	sibling.Status = DeployLive
+	sibling.Scope = prior.Scope
 	sibling.TrafficPercent = 100
 	m.deployments[newDep.ID] = sibling
 	m.mu.Unlock()

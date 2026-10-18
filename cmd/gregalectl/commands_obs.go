@@ -421,6 +421,9 @@ func fetchObsSnapshot(command, path, token string, timeout time.Duration) ([]byt
 }
 
 func writeObsIncidentsHuman(w io.Writer, response api.ObsIncidentListResponse) {
+	if len(response.UnavailableSources) > 0 {
+		_, _ = fmt.Fprintf(w, "unavailable_sources=%s (incident snapshot is incomplete)\n", strings.Join(response.UnavailableSources, ","))
+	}
 	_, _ = fmt.Fprintf(w, "incidents=%d since=%s type=%s severity=%s limit=%d since_clamped=%t\n",
 		len(response.Items), response.Since.UTC().Format(time.RFC3339), response.Type, response.Severity,
 		response.Limit, response.SinceClamped)

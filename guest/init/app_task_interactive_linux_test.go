@@ -171,10 +171,18 @@ func TestInteractiveHangupKillsProcessGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 	pid := strings.TrimSpace(string(raw))
-	if _, err := os.Stat("/proc/" + pid); err == nil {
-		if status, _ := os.ReadFile("/proc/" + pid + "/stat"); !strings.Contains(string(status), ") Z ") {
+	// The session ends once its shell exits; the group's hang-up reaches the
+	// background child asynchronously, so give it a moment to land.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		status, err := os.ReadFile("/proc/" + pid + "/stat")
+		if err != nil || strings.Contains(string(status), ") Z ") {
+			return
+		}
+		if time.Now().After(deadline) {
 			t.Fatalf("background child %s survived the hang-up", pid)
 		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

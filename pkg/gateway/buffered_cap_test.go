@@ -170,11 +170,11 @@ func TestSetupBufferedCapWriter_AtCap_200(t *testing.T) {
 func TestSetupBufferedCapWriter_ZeroCap_NoOp(t *testing.T) {
 	h := NewHandlerWith(&fakeBackend{}, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
 	rec := httptest.NewRecorder()
-	out := h.setupBufferedCapWriter(rec, App{ID: "x", Plan: api.PlanFree}, 0)
+	out := h.setupBufferedCapWriter(rec, http.MethodGet, App{ID: "x", Plan: api.PlanFree}, 0)
 	if out != rec {
 		t.Errorf("setupBufferedCapWriter(0) returned a wrapper, want identity")
 	}
-	out = h.setupBufferedCapWriter(rec, App{ID: "x", Plan: api.PlanFree}, -1)
+	out = h.setupBufferedCapWriter(rec, http.MethodGet, App{ID: "x", Plan: api.PlanFree}, -1)
 	if out != rec {
 		t.Errorf("setupBufferedCapWriter(-1) returned a wrapper, want identity")
 	}

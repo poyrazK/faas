@@ -4,6 +4,7 @@ import importlib.util
 import io
 import pathlib
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -74,40 +75,80 @@ class SelectTest(unittest.TestCase):
         self.assertTrue(everything)
 
 
-class ShardTest(unittest.TestCase):
-    def test_apid_uses_its_own_postgres_service_shards(self):
-        dirs = ["pkg/apid/apidserver", "pkg/state", "pkg/api", "pkg/sched"]
-        for count in (6, 9):
-            with self.subTest(count=count):
-                shards = [ap.shard(dirs, i, count) for i in range(1, count + 1)]
-                self.assertEqual(shards[3:], [["pkg/apid/apidserver"]] * (count - 3))
-                self.assertEqual(shards[:3], [
-                    [d for d in ap.shard(dirs, i, 3) if d != "pkg/apid/apidserver"]
-                    for i in range(1, 4)
-                ])
-                self.assertEqual(sorted(d for s in shards[:3] for d in s),
-                                 sorted(d for d in dirs if d not in {"pkg/state", "pkg/apid/apidserver"}))
-                self.assertNotIn("pkg/apid/apidserver", [d for s in shards[:3] for d in s])
+class TextContractTest(unittest.TestCase):
+    """Tests that read workflows and scripts as text run when those change."""
 
-    def test_shards_partition_the_set_deterministically(self):
-        dirs = [f"pkg/p{i}" for i in range(20)] + ["cmd/gregale"]
+    PKGS = dict(PKGS, **{"cmd/gregalectl": {"path": f"{M}/cmd/gregalectl", "imports": set()}})
+    INPUTS = {"cmd/gregalectl": {".github/workflows/", "scripts/ci/unit_deploy.sh", "deploy/ansible/roles/"}}
+
+    def test_cases(self):
+        cases = [
+            # name, changed paths, selected
+            ("a script the contract reads", ["scripts/ci/unit_deploy.sh"], ["cmd/gregalectl"]),
+            ("a workflow", [".github/workflows/cd-controlplane.yml"], ["cmd/gregalectl"]),
+            ("a role file", ["deploy/ansible/roles/postgres/tasks/main.yml"], ["cmd/gregalectl"]),
+            ("a script nobody reads", ["scripts/ci/slo_gate.py"], []),
+            ("a sibling with a shared prefix", ["scripts/ci/unit_deploy.sh.orig"], []),
+        ]
+        for name, paths, want in cases:
+            with self.subTest(name):
+                _, changed, _, test = ap.select(paths, self.PKGS, self.INPUTS)
+                self.assertEqual(changed, want)
+                self.assertEqual(test, want)
+
+    def test_literal_path(self):
+        self.assertEqual(ap.literal_path(['"scripts"', '"ci"', '"unit_deploy.sh"']), "scripts/ci/unit_deploy.sh")
+        self.assertEqual(ap.literal_path(['"deploy"', '"roles"', "role", '"main.yml"']), "deploy/roles/")
+        self.assertEqual(ap.literal_path(['"roles"', '"*"', '"x"']), "roles/")
+        self.assertEqual(ap.literal_path(["name"]), "")
+
+    def test_inputs_are_read_from_the_tests(self):
+        with tempfile.TemporaryDirectory() as root:
+            pkg = pathlib.Path(root, "cmd", "tool")
+            pkg.mkdir(parents=True)
+            (pkg / "x_test.go").write_text(
+                'package main\n'
+                'func a() { readRepoFile(t, "scripts", "ci", "unit_deploy.sh") }\n'
+                'func b() { readWorkflow(t, "release-units.yml"); readWorkflow(t, name) }\n'
+                'func c() { os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "roles", role, "main.yml")) }\n'
+                'func d() { filepath.Join(repoRoot, "deploy", "manifest", "x.yaml"); filepath.Join(dir, "tmp.txt") }\n'
+                'func e() { filepath.Join("..", "testdata", "x") }\n')
+            self.assertEqual(ap.text_inputs("cmd/tool", root), {
+                "scripts/ci/unit_deploy.sh", ".github/workflows/release-units.yml", ".github/workflows/",
+                "deploy/ansible/roles/", "deploy/manifest/x.yaml"})
+
+    def test_gregalectl_reads_the_unit_lane_scripts(self):
+        # The regression: a change to these scripts must run cmd/gregalectl.
+        inputs = ap.text_inputs("cmd/gregalectl", str(pathlib.Path(__file__).parents[2]))
+        for path in ("scripts/ci/unit_deploy.sh", "scripts/ci/verify_unit_release.sh",
+                     ".github/workflows/release-units.yml", ".github/workflows/cd-edge-units.yml"):
+            with self.subTest(path):
+                self.assertTrue(ap.reads(path, inputs), path)
+
+
+class ShardTest(unittest.TestCase):
+    def test_shards_partition_the_race_packages_deterministically(self):
+        dirs = [f"pkg/p{i}" for i in range(20)] + ["pkg/sched"]
         shards = [ap.shard(dirs, i, 3) for i in (1, 2, 3)]
         flat = sorted(d for s in shards for d in s)
         self.assertEqual(flat, sorted(dirs))
         self.assertEqual(shards, [ap.shard(dirs, i, 3) for i in (1, 2, 3)])
 
-    def test_heaviest_package_gets_a_shard_to_itself(self):
-        dirs = ["cmd/gregale", "pkg/x", "pkg/y"]
+    def test_selective_packages_are_never_assigned_for_race_runs(self):
+        dirs = ["pkg/apid/apidserver", "pkg/state", "cmd/gregale", "pkg/x"]
         shards = [ap.shard(dirs, i, 3) for i in (1, 2, 3)]
-        self.assertIn(["cmd/gregale"], shards)
-
-    def test_split_packages_are_never_assigned_whole(self):
-        # API and state tests run by name across every shard instead.
-        shards = [ap.shard(["pkg/apid/apidserver", "pkg/state", "pkg/x"], i, 3)
-                  for i in (1, 2, 3)]
         self.assertEqual([d for s in shards for d in s], ["pkg/x"])
-        for pkg in ("pkg/apid/apidserver", "pkg/state"):
-            self.assertIn(pkg, ap.SPLIT_PACKAGES)
+
+    def test_race_packages_avoid_shards_carrying_a_selective_package(self):
+        # apidserver occupies shard 3, so the single race package lands on 1.
+        shards = [ap.shard(["pkg/apid/apidserver", "pkg/x"], i, 3) for i in (1, 2, 3)]
+        self.assertEqual(shards, [["pkg/x"], [], []])
+        shards = [ap.shard(["cmd/gregale", "pkg/state", "pkg/x"], i, 3) for i in (1, 2, 3)]
+        self.assertEqual(shards, [[], [], ["pkg/x"]])
+
+    def test_each_selective_package_has_its_own_shard(self):
+        pinned = sorted(ap.SELECTIVE_SHARD.values())
+        self.assertEqual(pinned, [1, 2, 3])
 
 
 class CommandTest(unittest.TestCase):
@@ -120,23 +161,29 @@ class CommandTest(unittest.TestCase):
             ap.main()
         return output.getvalue().split()
 
-    def test_split_command_selects_only_affected_large_packages(self):
-        for paths, want in [
-            (["pkg/apid/apidserver/handler_test.go"], ["./pkg/apid/apidserver"]),
-            (["pkg/state/store_test.go"], ["./pkg/state"]),
-            (["pkg/apid/apidserver/handler_test.go", "pkg/state/store_test.go"], ["./pkg/apid/apidserver", "./pkg/state"]),
-            (["pkg/util/helper.go"], []),
+    def test_selective_command_returns_the_package_pinned_to_the_shard(self):
+        for paths, shard, want in [
+            (["pkg/apid/apidserver/handler_test.go"], ap.SELECTIVE_SHARD["pkg/apid/apidserver"], ["./pkg/apid/apidserver"]),
+            (["pkg/apid/apidserver/handler_test.go"], ap.SELECTIVE_SHARD["pkg/state"], []),
+            (["pkg/state/store_test.go"], ap.SELECTIVE_SHARD["pkg/state"], ["./pkg/state"]),
+            (["pkg/util/helper.go"], 3, []),
         ]:
-            with self.subTest(paths=paths):
-                self.assertEqual(self.run_command("split", paths), want)
+            with self.subTest(paths=paths, shard=shard):
+                self.assertEqual(self.run_command("selective", paths, shard), want)
 
-    def test_standard_and_name_split_commands_cover_selected_packages_once(self):
+    def test_pinned_command_names_each_shard_owner_without_a_change(self):
+        owners = [self.run_command("pinned", [], i) for i in (1, 2, 3)]
+        self.assertEqual(sorted(p for o in owners for p in o),
+                         sorted("./" + d for d in ap.SELECTIVE_SHARD))
+        self.assertTrue(all(len(o) == 1 for o in owners))
+
+    def test_race_and_selective_commands_cover_selected_packages_once(self):
         paths = ["pkg/apid/apidserver/handler_test.go", "pkg/state/store_test.go", "pkg/util/helper.go"]
-        ordinary = [p for i in (1, 2, 3) for p in self.run_command("test", paths, i)]
-        large = self.run_command("split", paths)
-        self.assertEqual(sorted(ordinary), ["./pkg/util", "./tests/property"])
-        self.assertEqual(large, ["./pkg/apid/apidserver", "./pkg/state"])
-        self.assertEqual(len(ordinary + large), len(set(ordinary + large)))
+        race = [p for i in (1, 2, 3) for p in self.run_command("test", paths, i)]
+        selective = [p for i in (1, 2, 3) for p in self.run_command("selective", paths, i)]
+        self.assertEqual(sorted(race), ["./pkg/util", "./tests/property"])
+        self.assertEqual(sorted(selective), ["./pkg/apid/apidserver", "./pkg/state"])
+        self.assertEqual(len(race + selective), len(set(race + selective)))
 
 
 if __name__ == "__main__":

@@ -118,7 +118,7 @@ func (s *BindingService) CreateWithResult(ctx context.Context, request CreateBin
 	}
 	if request.AccountID == "" || request.DatabaseID == "" || request.AppID == "" ||
 		!validBindingScope(request.Scope) || !validEnvironmentKey(request.EnvironmentKey) ||
-		(request.Access != CredentialReadWrite && request.Access != CredentialReadOnly && request.Access != CredentialMigration && request.Access != CredentialDataAPI) {
+		!request.Access.Known() {
 		return Binding{}, false, ErrInvalid
 	}
 	if !s.provisioningAllowed(ctx, request.AccountID) {
@@ -453,6 +453,7 @@ func bindingCredentialRequestForGeneration(binding Binding, providerResourceID s
 	identityKey := bindingCredentialIdentity(binding)
 	return CredentialRequest{
 		ProviderResourceID: providerResourceID,
+		BindingID:          binding.ID,
 		IdentityKey:        identityKey,
 		Access:             binding.Access,
 		IdempotencyKey:     "credentials-" + identityKey,

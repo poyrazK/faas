@@ -21,6 +21,9 @@ import (
 // capture costs one cold boot, while publishing a stale one silently keeps a
 // credential the customer asked to replace.
 func (e *Engine) runtimeConfigStale(ctx context.Context, ins state.Instance) bool {
+	if fresh, err := e.snapshotRecoveryFresh(ctx, ins.ID); err != nil || !fresh {
+		return true
+	}
 	deployment, err := e.store.DeploymentByID(ctx, ins.DeploymentID)
 	if err != nil || deployment.AppID != ins.AppID {
 		return true

@@ -139,7 +139,14 @@ func (e *Engine) observeServiceReplicaStatus(ctx context.Context, app state.App,
 	}
 	desired := 0
 	if instanceModeForApp(app) == string(state.InstanceModeService) {
-		desired = desiredServiceReplicas(app.Manifest)
+		targets, err := e.serviceReplicaTargets(ctx, app, deployments)
+		if err != nil {
+			e.log.Warn("sched: observe deployed service targets", "app", app.ID, "err", err)
+			return
+		}
+		for _, target := range targets {
+			desired += target
+		}
 	}
 	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
 	if err != nil {
@@ -370,13 +377,63 @@ func (e *Engine) serviceReplicaTargets(ctx context.Context, app state.App, deplo
 	}
 
 	targets := make(map[string]int, len(deployments))
-	desired := desiredServiceReplicas(app.Manifest)
 	for _, scoped := range byScope {
+		deployedApp, active, err := e.serviceReplicaTargetApp(ctx, app, scoped)
+		if err != nil {
+			return nil, err
+		}
+		desired := 0
+		if active && instanceModeForApp(deployedApp) == string(state.InstanceModeService) {
+			desired = desiredServiceReplicas(deployedApp.Manifest)
+		}
 		for deploymentID, target := range allocateServiceReplicaTargets(scoped, desired) {
 			targets[deploymentID] = target
 		}
 	}
+
+	// Temporary graph staging and active graph members keep their exact targets
+	// without reducing the traffic-weight allocation of serving generations.
+	if store, ok := e.store.(state.ProjectReleaseStagingStore); ok {
+		readiness, err := store.ServiceReleaseReadinessTargets(ctx, app.ID)
+		if err != nil {
+			return nil, err
+		}
+		for id, desired := range readiness {
+			if _, managed := targets[id]; managed && desired > targets[id] {
+				targets[id] = desired
+			}
+		}
+	}
 	return targets, nil
+}
+
+// Select the deployed settings through the same active release/traffic lane
+// as wakes. A newer dark generation or desired head cannot replace them.
+func (e *Engine) serviceReplicaTargetApp(ctx context.Context, app state.App, deployments []state.Deployment) (state.App, bool, error) {
+	scope := normalizedDeploymentScope(deployments[0].Scope)
+	selected, err := state.ResolveEnvironmentDeployment(ctx, e.store, app.ID, scope)
+	if errors.Is(err, state.ErrNotFound) {
+		// Retain the established repair fallback for all-zero legacy traffic.
+		for _, deployment := range deployments {
+			if deployment.TrafficPercent > 0 {
+				return state.App{}, false, err
+			}
+		}
+		selected, err = deployments[0], nil
+	}
+	if err != nil {
+		return state.App{}, false, err
+	}
+	if normalizedDeploymentScope(selected.Scope) != scope {
+		return state.App{}, false, nil // The other production alias owns traffic.
+	}
+	for _, deployment := range deployments {
+		if deployment.ID == selected.ID {
+			resolved, err := state.ResolveAppForDeployment(ctx, e.store, app, deployment)
+			return resolved, true, err
+		}
+	}
+	return state.App{}, false, state.ErrConflict
 }
 
 func serviceRolloutScope(dep state.Deployment) string {
@@ -556,6 +613,22 @@ func (e *Engine) drainDeploymentInstances(ctx context.Context, deploymentID stri
 		case state.StateWaking, state.StateColdBooting:
 			if err := e.timedDestroy(context.WithoutCancel(ctx), fresh.NodeID, fresh.ID, DestroyTimeout); err != nil {
 				e.log.Warn("sched: destroy superseded deployment wake", "instance", fresh.ID, "deployment", deploymentID, "err", err)
+				continue
+			}
+			e.ledger.Release(fresh.ID)
+			e.transition(ctx, fresh.ID, fresh.AppID, state.StateStopped)
+		case state.StateFrozen:
+			// ADR-1151: a frozen VM of a superseded deployment is never
+			// thawed again. Park it while its snapshot is kept, stop it
+			// when the snapshot goes too.
+			if preserveSnapshot {
+				if err := e.ParkFrozen(ctx, fresh.ID, "superseded"); err != nil {
+					e.log.Warn("sched: park superseded frozen instance", "instance", fresh.ID, "deployment", deploymentID, "err", err)
+				}
+				continue
+			}
+			if err := e.timedDestroy(context.WithoutCancel(ctx), fresh.NodeID, fresh.ID, DestroyTimeout); err != nil {
+				e.log.Warn("sched: destroy superseded frozen instance", "instance", fresh.ID, "deployment", deploymentID, "err", err)
 				continue
 			}
 			e.ledger.Release(fresh.ID)
@@ -1059,6 +1132,9 @@ func (e *Engine) ReconcileServiceDeployment(ctx context.Context, deploymentID st
 // every live deployment of an app. Steady-state surplus is parked before a
 // deficit is admitted. Active rollout scopes are handled separately above and
 // never park healthy predecessor capacity merely to make candidate headroom.
+type serviceAllocationRecheckKey struct{}
+type serviceGraphAdmissionKey struct{}
+
 func (e *Engine) reconcileServiceAppOnce(ctx context.Context, appID string) error {
 	app, err := e.store.AppByID(ctx, appID)
 	if err != nil {
@@ -1115,6 +1191,10 @@ func (e *Engine) reconcileServiceAppOnce(ctx context.Context, appID string) erro
 			targets[dep.ID] = 0
 		}
 	}
+	admissions, err := e.serviceAdmissionOrder(ctx, app, deployments)
+	if err != nil {
+		return err
+	}
 	// First release capacity from generations above their allocation.
 	for _, dep := range deployments {
 		target, ok := targets[dep.ID]
@@ -1125,17 +1205,51 @@ func (e *Engine) reconcileServiceAppOnce(ctx context.Context, appID string) erro
 			return err
 		}
 	}
-	// Then fill deficits with the capacity made available above.
-	for _, dep := range deployments {
+	// Restore current routing before allocating spare capacity to candidates.
+	for _, dep := range admissions {
 		target, ok := targets[dep.ID]
 		if !ok {
 			continue
 		}
-		if err := e.convergeServiceReplicasToTarget(ctx, dep.ID, target, true); err != nil {
+		if err := e.convergeServiceReplicasToTarget(context.WithValue(ctx, serviceAllocationRecheckKey{}, true), dep.ID, target, true); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// Current graph recipients and weighted routes outrank temporary staging. A
+// failed serving replica must not lose its replacement slot to a newer dark
+// candidate after a scheduler restart or infrastructure failure.
+func (e *Engine) serviceAdmissionOrder(ctx context.Context, app state.App, deployments []state.Deployment) ([]state.Deployment, error) {
+	priority := map[string]int{}
+	scopes := map[string]bool{}
+	for _, dep := range deployments {
+		priority[dep.ID] = 2
+		if dep.TrafficPercent > 0 {
+			priority[dep.ID] = 1
+		}
+		scopes[normalizedDeploymentScope(dep.Scope)] = true
+	}
+	if reader, ok := e.store.(state.ProjectReleaseSetReader); ok && app.ProjectID != "" {
+		for scope := range scopes {
+			release, err := reader.ActiveProjectReleaseSet(ctx, app.AccountID, app.ProjectID, scope)
+			if errors.Is(err, state.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			for _, member := range release.Members {
+				if member.AppID == app.ID {
+					priority[member.DeploymentID] = 0
+				}
+			}
+		}
+	}
+	out := append([]state.Deployment(nil), deployments...)
+	sort.SliceStable(out, func(i, j int) bool { return priority[out[i].ID] < priority[out[j].ID] })
+	return out, nil
 }
 
 func (e *Engine) convergeServiceReplicas(ctx context.Context, deploymentID string) {
@@ -1253,7 +1367,34 @@ func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deployment
 	// chooser sees current fleet headroom so replicas spread across the
 	// available nodes.
 	ctx = withServiceReplicaPlacementSpread(ctx)
+	if store, ok := e.store.(state.ProjectReleaseStagingStore); ok {
+		readiness, err := store.ServiceReleaseReadinessTargets(ctx, app.ID)
+		if err != nil {
+			return err
+		}
+		if readiness[deploymentID] > 0 {
+			ctx = context.WithValue(ctx, serviceGraphAdmissionKey{}, true)
+		}
+	}
 	for status.managed() < desired {
+		// Re-read before each admission: cancellation, expiry or graph changes
+		// during a slow boot cannot authorize another staged replica.
+		if serviceMode && ctx.Value(serviceAllocationRecheckKey{}) == true && !state.IsServiceRollout(dep) {
+			live, err := e.store.LiveDeployments(ctx, app.ID)
+			if err != nil {
+				return err
+			}
+			current, err := e.serviceReplicaTargets(ctx, app, live)
+			if err != nil {
+				return err
+			}
+			if current[deploymentID] < desired {
+				desired = current[deploymentID]
+			}
+			if status.managed() >= desired {
+				break
+			}
+		}
 		result, admitErr := e.AdmitInstanceForDeployment(
 			ctx, dep.AppID, dep.ID, dep.Scope, TriggerServiceReplica,
 		)
@@ -1278,17 +1419,22 @@ func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deployment
 	return nil
 }
 
-// scheduleWorkerReconcile restores the worker allocation after an
-// infrastructure failure without coupling explicit StopInstance calls to an
-// automatic restart. Customer-requested stops remain stops; dead-node,
-// liveness, and deployment lifecycle paths call this helper explicitly. The
-// app-scoped reconciler derives a queue-backed pool target when configured and
-// otherwise preserves the singleton contract.
+// scheduleWorkerReconcile submits an event-driven worker recovery pass.
+// Periodic recovery also maintains the configured pool target. Parking the
+// app or reducing desired demand, rather than stopping an individual replica,
+// changes the target that recovery maintains.
 func (e *Engine) scheduleWorkerReconcile(ctx context.Context, deploymentID string) {
 	if e == nil || e.store == nil || deploymentID == "" {
 		return
 	}
-	go e.ReconcileWorkerDeployment(detachedServiceContext(ctx), deploymentID)
+	lookupCtx, cancel := context.WithTimeout(detachedServiceContext(ctx), 5*time.Second)
+	defer cancel()
+	dep, err := e.store.DeploymentByID(lookupCtx, deploymentID)
+	if err != nil {
+		e.log.Warn("sched: load worker recovery deployment", "deployment", deploymentID, "err", err)
+		return
+	}
+	e.scheduleWorkerAppReconcile(ctx, dep.AppID)
 }
 
 // ReconcileWorkerDeployment resolves the app for an instance/deployment

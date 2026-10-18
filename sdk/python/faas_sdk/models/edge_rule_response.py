@@ -53,7 +53,8 @@ class EdgeRuleResponse:
     account_id: str
     app_id: str
     match_host: str
-    """Host glob. `*` matches any; `*.example.com` matches any subdomain."""
+    """Host glob. `*` matches any; `*.example.com` matches any subdomain; `@app` (ADR-1191) covers every hostname
+    the rule's app serves, including custom domains added later."""
     match_path: str
     """Path glob. Trailing `*` matches anything beneath."""
     match_methods: list[str]

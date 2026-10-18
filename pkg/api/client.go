@@ -958,18 +958,119 @@ func (c *Client) DeleteDevSessionsProject(ctx context.Context, project string, w
 // RegisterScenarioTest gives a run's developer sessions a private service
 // namespace before source deployment. Registration is create-only.
 func (c *Client) RegisterScenarioTest(ctx context.Context, runID string, req RegisterScenarioTestRequest) error {
-	return c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID, req, nil)
+	if req.CommandVersion != 0 && (req.CommandVersion != 1 || req.Simulation == nil) {
+		return errors.New("contained commands require protocol version 1 and simulation enrollment")
+	}
+	if req.NetworkMode != "" && (req.NetworkMode != "contained" || req.WebhookMode != "capture") {
+		return errors.New("contained rehearsal networking requires capture mode")
+	}
+	if req.ActionEvidenceVersion != 0 && ((req.ActionEvidenceVersion != ScenarioActionSnapshotVersion && req.ActionEvidenceVersion != ScenarioSimulationSnapshotVersion) || req.WebhookMode != "capture") {
+		return errors.New("sealed action evidence requires capture mode and a supported evidence version")
+	}
+	simulationDigest := ""
+	if req.Simulation != nil {
+		if req.NetworkMode != "contained" || req.WebhookMode != "capture" || req.ActionEvidenceVersion != ScenarioSimulationSnapshotVersion {
+			return errors.New("simulation requires contained networking and action evidence version 2")
+		}
+		names := make([]string, 0, len(req.Members))
+		for _, m := range req.Members {
+			names = append(names, m.Workload)
+		}
+		_, digest, err := NormalizeScenarioSimulationPlan(*req.Simulation, names)
+		if err != nil {
+			return err
+		}
+		simulationDigest = digest
+	} else if req.ActionEvidenceVersion == ScenarioSimulationSnapshotVersion {
+		return errors.New("action evidence version 2 requires simulation fixtures")
+	}
+	_, resumeDigest, err := ScenarioSuspendResumeEnrollment(req)
+	if err != nil {
+		return err
+	}
+	_, coldDigest, err := ScenarioColdStartEnrollment(req)
+	if err != nil {
+		return err
+	}
+	workDigest, err := validateScenarioManagedWorkEnrollment(req)
+	if err != nil {
+		return err
+	}
+	path := "/v1/dev/test-runs/" + runID
+	if req.WebhookMode == "" {
+		return c.do(ctx, "PUT", path, req, nil)
+	}
+	var out RegisterScenarioTestResponse
+	if err := c.do(ctx, "PUT", path, req, &out); err != nil {
+		return err
+	}
+	if out.SuspendResumeSHA256 != resumeDigest {
+		return errors.New("server did not acknowledge the exact suspend/resume plan")
+	}
+	if out.ColdStartSHA256 != coldDigest {
+		return errors.New("server did not acknowledge the exact cold-start plan")
+	}
+	if out.ManagedWorkSHA256 != workDigest {
+		return errors.New("server did not acknowledge the exact managed-work plan")
+	}
+	if req.CommandVersion != 0 && out.CommandVersion != req.CommandVersion {
+		return errors.New("server did not acknowledge contained command execution")
+	}
+	if req.Simulation != nil && out.RecorderVersion != 1 {
+		return errors.New("server did not acknowledge durable rehearsal recorder support")
+	}
+	if out.SimulationSHA256 != simulationDigest {
+		return errors.New("server did not acknowledge the exact rehearsal simulation fixtures")
+	}
+	if out.NetworkMode != req.NetworkMode {
+		return errors.New("server did not acknowledge the requested rehearsal network containment")
+	}
+	if out.PolicyVersion != 1 || out.WebhookMode != req.WebhookMode {
+		return errors.New("server did not acknowledge the requested rehearsal webhook capture policy")
+	}
+	if req.ActionEvidenceVersion != 0 && out.ActionEvidenceVersion != req.ActionEvidenceVersion {
+		return errors.New("server did not acknowledge the requested sealed action evidence version")
+	}
+	return nil
 }
 
 // InjectScenarioTestChaos installs bounded HTTP and TCP faults for one isolated run.
 func (c *Client) InjectScenarioTestChaos(ctx context.Context, runID string, req InjectScenarioTestChaosRequest) (InjectScenarioTestChaosResponse, error) {
 	var out InjectScenarioTestChaosResponse
-	return out, c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID+"/chaos", req, &out)
+	return out, retryScenarioControl(ctx, func() error {
+		out = InjectScenarioTestChaosResponse{}
+		return c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID+"/chaos", req, &out)
+	})
 }
 
 // ClearScenarioTestChaos removes the active fault plan from a live scenario run.
 func (c *Client) ClearScenarioTestChaos(ctx context.Context, runID string) error {
-	return c.do(ctx, "DELETE", "/v1/dev/test-runs/"+runID+"/chaos", nil, nil)
+	return retryScenarioControl(ctx, func() error {
+		return c.do(ctx, "DELETE", "/v1/dev/test-runs/"+runID+"/chaos", nil, nil)
+	})
+}
+
+// scenarioControlRetryDelay is the first wait before retrying a scenario
+// chaos call; tests shorten it.
+var scenarioControlRetryDelay = time.Second
+
+// retryScenarioControl retries the scenario chaos calls after a transport
+// failure, up to three attempts. Both replace or remove the run's whole plan,
+// so a repeat is safe. On production-us a cold `gregale test` run failed
+// because one PUT met a connection reset at the edge (hunt #10).
+func retryScenarioControl(ctx context.Context, call func() error) error {
+	for attempt := 1; ; attempt++ {
+		err := call()
+		var apiErr *APIError
+		if err == nil || attempt == 3 || errors.As(err, &apiErr) || !strings.Contains(err.Error(), "could not reach the API") {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return errors.Join(err, ctx.Err())
+		case <-time.After(time.Duration(attempt) * scenarioControlRetryDelay):
+		}
+	}
 }
 
 // ScenarioTestChaosMatches returns bounded per-rule match counts for the
@@ -1051,7 +1152,8 @@ func (c *Client) RetryDeploymentFromStage(ctx context.Context, id, fromStage str
 // GetDeployment returns a deployment by ID.
 func (c *Client) GetDeployment(ctx context.Context, id string) (DeploymentResponse, error) {
 	var out DeploymentResponse
-	return out, c.do(ctx, "GET", "/v1/deployments/"+id, nil, &out)
+	err := c.do(ctx, "GET", "/v1/deployments/"+id, nil, &out)
+	return out, err
 }
 
 // GetLatestAppDeployment returns the newest deployment for one app. A 404
@@ -1474,7 +1576,8 @@ func (c *Client) Diff(ctx context.Context, slug string, req DiffRequest) (DiffRe
 // GetApp returns the app metadata for a slug.
 func (c *Client) GetApp(ctx context.Context, slug string) (AppResponse, error) {
 	var out AppResponse
-	return out, c.do(ctx, "GET", "/v1/apps/"+slug, nil, &out)
+	err := c.do(ctx, "GET", "/v1/apps/"+slug, nil, &out)
+	return out, err
 }
 
 // GetAppsSlugPolicyStatus reports gateway application of app-cache changes,
@@ -1492,6 +1595,22 @@ func (c *Client) GetAppsSlugPolicyStatus(ctx context.Context, slug string, wait 
 		path += "?wait=" + url.QueryEscape(wait.String())
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetAppsSlugFleetEdgePolicyStatus includes cross-app wildcard mutations in
+// the edge-rule revision. Other response components retain their usual scope.
+func (c *Client) GetAppsSlugFleetEdgePolicyStatus(ctx context.Context, slug string) (RuntimePolicyStatusResponse, error) {
+	var out RuntimePolicyStatusResponse
+	err := c.do(ctx, "GET", "/v1/apps/"+slug+"/policy/status?edge_rules_scope=fleet", nil, &out)
+	return out, err
+}
+
+// GetAppsSlugAccountEdgePolicyStatus covers all app-owned rules of the
+// authenticated app's account, with a conservative unknown-history floor.
+func (c *Client) GetAppsSlugAccountEdgePolicyStatus(ctx context.Context, slug string) (RuntimePolicyStatusResponse, error) {
+	var out RuntimePolicyStatusResponse
+	err := c.do(ctx, "GET", "/v1/apps/"+slug+"/policy/status?edge_rules_scope=account", nil, &out)
+	return out, err
 }
 
 // UpdateApp applies a partial update to an app.
@@ -2290,9 +2409,10 @@ func (c *Client) RollbackToWithRuleAndIdempotencyKey(ctx context.Context, slug, 
 // (migrations/00477_deployment_audit.sql).
 func (c *Client) ListDeploymentAudit(ctx context.Context, deploymentID string, limit int) (ListDeploymentAuditResponse, error) {
 	var out ListDeploymentAuditResponse
-	return out, c.do(ctx, "GET",
+	err := c.do(ctx, "GET",
 		fmt.Sprintf("/v1/deployments/%s/audit?limit=%d", deploymentID, limit),
 		nil, &out)
+	return out, err
 }
 
 // UpdateDeploymentTraffic stamps the per-deployment traffic-split
@@ -2318,9 +2438,14 @@ func (c *Client) PatchDeploymentsIdTraffic(ctx context.Context, id string, perce
 // sibling still owns all production traffic at the transaction boundary.
 // An empty servingID requires no live sibling with positive traffic.
 func (c *Client) PatchDeploymentTrafficIfServing(ctx context.Context, id string, percent int, servingID string) (DeploymentResponse, error) {
+	return c.PatchDeploymentTrafficIfServingWithMCPAccess(ctx, id, percent, servingID, nil)
+}
+
+// PatchDeploymentTrafficIfServingWithMCPAccess atomically fences serving and stored access policy.
+func (c *Client) PatchDeploymentTrafficIfServingWithMCPAccess(ctx context.Context, id string, percent int, servingID string, policy *MCPAccessPolicyExpectation) (DeploymentResponse, error) {
 	var out DeploymentResponse
-	return out, c.do(ctx, "PATCH", "/v1/deployments/"+id+"/traffic",
-		UpdateDeploymentTrafficRequest{TrafficPercent: percent, ExpectedServingDeploymentID: &servingID}, &out)
+	err := c.do(ctx, "PATCH", "/v1/deployments/"+id+"/traffic", UpdateDeploymentTrafficRequest{TrafficPercent: percent, ExpectedServingDeploymentID: &servingID, ExpectedMCPAccessPolicy: policy}, &out)
+	return out, err
 }
 
 // AdvanceCanary advances exactly one persisted canary step. APID resolves
@@ -2806,6 +2931,14 @@ func (c *Client) CreateJobRun(ctx context.Context, name string, req CreateJobRun
 	return out, c.do(ctx, "POST", "/v1/jobs/"+name+"/runs", req, &out)
 }
 
+// CreateImageRun starts a one-task run from an OCI image (ADR-1161). A
+// "pulling" status means the image is still being prepared; call again once
+// GetJob reports the runner job's image ready.
+func (c *Client) CreateImageRun(ctx context.Context, req CreateImageRunRequest) (ImageRunResponse, error) {
+	var out ImageRunResponse
+	return out, c.do(ctx, http.MethodPost, "/v1/image-runs", req, &out)
+}
+
 // SubmitExclusiveJobOperation admits a JobRun to an account-scoped policy.
 // Idempotency-Key makes retries safe when the response is lost.
 func (c *Client) SubmitExclusiveJobOperation(ctx context.Context, name string, request ExclusiveJobOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
@@ -3197,7 +3330,8 @@ func (c *Client) ListCronRuns(ctx context.Context, id, before string, limit int)
 // per-account / per-app cap trips return 403 plan_alert_rule_quota.
 func (c *Client) ListAlertRules(ctx context.Context, slug string) ([]AlertRuleResponse, error) {
 	var out []AlertRuleResponse
-	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/alerts", nil, &out)
+	err := c.do(ctx, "GET", "/v1/apps/"+slug+"/alerts", nil, &out)
+	return out, err
 }
 
 // CreateAlertRule pins a metric to a threshold + comparison + window
@@ -4147,10 +4281,9 @@ func (c *Client) RotateDeployToken(ctx context.Context, slug, id string, req Rot
 // reads it as a forward narrative (queue_accepted → admitted →
 // boot_started → boot_completed → readiness_200 → proxy_first_byte).
 //
-// since is an RFC 3339 timestamp; rows strictly older are skipped
-// (the dashboard's "load older" infinite-scroll). limit is bounded
-// server-side at 1000; values larger are silently capped per the
-// same convention as ListSecrets / ListAuditEvents.
+// since is an exclusive RFC3339 lower bound (at > since). The legacy
+// timestamp hint can skip equal-time events; use ListWakeTimelinePage for
+// keyset continuation. limit is bounded to 1..1000; larger values are rejected.
 //
 // Cross-account visibility is enforced server-side: the slug must
 // resolve to the caller's account, and each row's data.app_id is
@@ -4662,8 +4795,14 @@ func (c *Client) DeleteAppRegistryCredential(ctx context.Context, slug, registry
 // ListSecrets/SetSecret/UnsetSecret which the gate tolerates as
 // pre-existing helpers — new surfaces follow MethodResource).
 func (c *Client) GetAppsSlugEnv(ctx context.Context, slug string) (AppEnvListResponse, error) {
+	return c.GetAppsSlugEnvWithScope(ctx, slug, "")
+}
+
+// GetAppsSlugEnvWithScope lists runtime variable names in one scope. Empty
+// scope preserves the default endpoint; values are never returned.
+func (c *Client) GetAppsSlugEnvWithScope(ctx context.Context, slug, scope string) (AppEnvListResponse, error) {
 	var out AppEnvListResponse
-	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/env", nil, &out)
+	return out, c.do(ctx, "GET", c.scopeQuery("/v1/apps/"+slug+"/env", scope), nil, &out)
 }
 func (c *Client) PutAppsSlugEnvKey(ctx context.Context, slug, key, value string) error {
 	return c.do(ctx, "PUT", "/v1/apps/"+slug+"/env/"+key,

@@ -159,15 +159,45 @@ func MatchEdgeRuleKindPath(kind, glob, requestPath string) (bool, error) {
 	return MatchEdgeRulePath(glob, requestPath)
 }
 
+// EdgeRuleAppHosts is the reserved match_host that covers every hostname
+// the rule's own app serves: its platform host and its custom domains,
+// including ones added later (ADR-1191). It is not a host pattern; the
+// gateway attaches such rules to whichever hosts resolve to the rule's app.
+const EdgeRuleAppHosts = "@app"
+
+// ValidateEdgeRuleMatchHost checks a match_host: 1..253 bytes, and the "@"
+// prefix is reserved for EdgeRuleAppHosts.
+func ValidateEdgeRuleMatchHost(host string) *Problem {
+	if host == "" || len(host) > 253 {
+		return ErrValidation("match_host must be 1..253 chars")
+	}
+	if strings.HasPrefix(host, "@") && !IsEdgeRuleAppHosts(host) {
+		return ErrValidation(`match_host may not start with "@" except "@app" (every host the app serves)`)
+	}
+	return nil
+}
+
+// IsEdgeRuleAppHosts reports whether pattern is the app-wide match_host.
+func IsEdgeRuleAppHosts(pattern string) bool {
+	return strings.EqualFold(strings.TrimSpace(pattern), EdgeRuleAppHosts)
+}
+
 // EdgeRuleHostMatches reports whether a rule's match_host pattern ("*",
 // "*.example.com", an exact host, or another path.Match glob) covers host,
 // case-insensitively. It mirrors the store's LIKE translation; the gateway
-// cache invalidation and the trace simulator share it.
+// cache invalidation and the trace simulator share it. The app-wide pattern
+// (EdgeRuleAppHosts) reports true for every host: callers that see one have
+// already scoped the rule to the request's app (the gateway merges only the
+// serving app's app-wide rules; the trace simulator runs per app), and cache
+// invalidation must treat it as covering any host.
 func EdgeRuleHostMatches(pattern, host string) bool {
 	pattern = strings.ToLower(strings.TrimSpace(pattern))
 	host = strings.ToLower(strings.TrimSpace(host))
 	if pattern == "" || host == "" {
 		return false
+	}
+	if pattern == EdgeRuleAppHosts {
+		return true
 	}
 	ok, err := path.Match(pattern, host)
 	return err == nil && ok

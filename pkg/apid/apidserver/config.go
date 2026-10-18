@@ -38,6 +38,11 @@ import (
 // many tools; pinning it here makes the daemon's config story
 // explicit).
 type Config struct {
+	ProductControlEnabled bool `toml:"product_control_enabled"`
+	// Empty keeps managed selective repair admission closed.
+	DataRepairBindingsPath          string `toml:"data_repair_bindings_path"`
+	EventAcknowledgmentWriterSlot   string `toml:"event_acknowledgment_writer_slot"`
+	EventAcknowledgmentWriterRoster string `toml:"event_acknowledgment_writer_roster"`
 	// Empty preview policy path keeps admission closed. No boolean/env override.
 	OperationsPreviewPolicyPath string `toml:"operations_preview_policy_path"`
 	// Runtime trust remains available independently of new admission.
@@ -48,8 +53,17 @@ type Config struct {
 	FlagsEnabled            bool   `toml:"flags_enabled"`
 	FlagsWorkloadJWKSPath   string `toml:"flags_workload_jwks_path"`
 	FlagsWorkloadIssuer     string `toml:"flags_workload_issuer"`
+	// WorkloadJWKSPath is the cluster workload-identity JWKS (ADR-1141):
+	// queue leases verify against it, and Flags and Operations use it when
+	// their own trust settings are empty.
+	WorkloadJWKSPath string `toml:"workload_jwks_path"`
+	WorkloadIssuer   string `toml:"workload_issuer"`
 	// AIGatewayEnabled opens the AI gateway APIs (ADR-991); off by default.
 	AIGatewayEnabled bool `toml:"ai_gateway_enabled"`
+	// AIGatewayAccounts limits the AI gateway to these account IDs during a
+	// staged preview rollout (ADR-998); empty or "*" admits every entitled
+	// account. FAAS_AI_GATEWAY_ACCOUNTS overrides it.
+	AIGatewayAccounts []string `toml:"ai_gateway_accounts"`
 	// ListenAddr is the loopback bind address for the customer-facing
 	// REST API + dashboard. Defaults to 127.0.0.1:8081 (legacy single-
 	// box default; gatewayd-public reverse-proxies 0.0.0.0:443 in
@@ -230,6 +244,7 @@ func LoadConfig(path string) (*Config, error) {
 			// TOML default. role.FromConfig falls back to
 			// RoleSingleBox when the env is unset.
 			c.Role = role.FromConfig(string(c.Role), "FAAS_APID_ROLE")
+			c.overlayEventAcknowledgmentWriterEnv()
 			return c, nil
 		}
 		return nil, fmt.Errorf("apid: read %q: %w", path, err)
@@ -253,6 +268,7 @@ func LoadConfig(path string) (*Config, error) {
 	// control_plane_service/templates/99-faas-node-name.conf.j2)
 	// can override the TOML node_name on every control-plane box.
 	// Empty keeps the TOML value (single-box dev back-compat).
+	c.overlayEventAcknowledgmentWriterEnv()
 	if v := os.Getenv("FAAS_NODE_NAME"); v != "" {
 		c.NodeName = v
 	}
@@ -648,4 +664,13 @@ func (c *Config) LoadGithubdTLSWithPrefixAndVerifierAndReload(v wire.NodeVerifie
 		return nil, nil
 	}
 	return wire.LoadClientTLSConfigWithPrefixAndVerifierAndReload("githubd_", c.GithubdClientTLSCertPath, c.GithubdClientTLSKeyPath, c.GithubdClientTLSCAPath, v, reload)
+}
+
+func (c *Config) overlayEventAcknowledgmentWriterEnv() {
+	if v := os.Getenv("FAAS_EVENT_ACK_WRITER_SLOT"); v != "" {
+		c.EventAcknowledgmentWriterSlot = v
+	}
+	if v := os.Getenv("FAAS_EVENT_ACK_WRITER_ROSTER"); v != "" {
+		c.EventAcknowledgmentWriterRoster = v
+	}
 }

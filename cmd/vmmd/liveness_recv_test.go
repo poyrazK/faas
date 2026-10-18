@@ -718,3 +718,26 @@ func TestLivenessRecv_FirecrackerVsockHandshake(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// H10-23: 404 counts as alive only for a TCP-readiness image probed on the
+// plan-default path; every other status keeps its outcome.
+func TestClassifyLivenessStatus(t *testing.T) {
+	for _, tc := range []struct {
+		status          int
+		notFoundIsAlive bool
+		want            string
+	}{
+		{200, false, livenessOutcomeOK},
+		{204, true, livenessOutcomeOK},
+		{404, true, livenessOutcomeOK},
+		{404, false, livenessOutcomeNon200},
+		{500, true, livenessOutcomeNon200},
+		{503, true, livenessOutcomeNon200},
+		{401, true, livenessOutcomeUnauthorized},
+		{403, false, livenessOutcomeUnauthorized},
+	} {
+		if got := classifyLivenessStatus(tc.status, tc.notFoundIsAlive); got != tc.want {
+			t.Errorf("classifyLivenessStatus(%d, %v) = %s, want %s", tc.status, tc.notFoundIsAlive, got, tc.want)
+		}
+	}
+}

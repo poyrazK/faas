@@ -136,12 +136,14 @@ func (w *AIReplayWorker) ProcessOne(ctx context.Context) (bool, error) {
 	sourceText := extractOutputText(job.ResponseBody, job.ResponseContentType)
 	source, err := w.Handler.Resolver.Integration(ctx, job.IntegrationID)
 	if err != nil {
+		w.Handler.Metrics.ObserveAIReplay(api.OutboundAIReplayFailed)
 		return true, w.Store.FinishAIReplay(ctx, job, sourceText, nil, "source_unavailable")
 	}
 	results := make([]AIReplayResult, 0, len(job.Targets))
 	for _, target := range job.Targets {
 		results = append(results, w.replayTarget(ctx, job, source, target))
 	}
+	w.Handler.Metrics.ObserveAIReplay(api.OutboundAIReplayDone)
 	return true, w.Store.FinishAIReplay(ctx, job, sourceText, results, "")
 }
 

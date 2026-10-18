@@ -37,6 +37,26 @@ func isWorkerApp(a api.AppResponse) bool {
 	return false
 }
 
+// workerReplicaBounds mirrors schedd's worker target
+// (pkg/sched/worker_scope.go workerReplicaTargetForScope): a worker that
+// declares no worker_replicas keeps one replica and may grow to the app's
+// max_concurrency, capped by scaling.max_instances; a declared min replaces
+// the floor and a declared max above zero lowers the ceiling. The plan's
+// per-account worker cap applies on top across all workers.
+func workerReplicaBounds(a api.AppResponse) (int, int) {
+	lo, hi := 1, a.MaxConcurrency
+	if p := a.ScalingPolicy; p != nil && p.MaxInstances > 0 && (hi <= 0 || p.MaxInstances < hi) {
+		hi = p.MaxInstances
+	}
+	if r := a.Manifest.WorkerReplicas; r != nil {
+		lo = max(r.Min, 0)
+		if r.Max > 0 && (hi <= 0 || r.Max < hi) {
+			hi = r.Max
+		}
+	}
+	return lo, hi
+}
+
 // WorkerPoolSummary describes one worker pool in list output.
 type WorkerPoolSummary struct {
 	Slug         string  `json:"slug"`
@@ -162,9 +182,8 @@ func cmdWorkersList(args []string) int {
 			Metric:     "queue_lag",
 			StopSignal: "SIGTERM",
 		}
+		summary.MinReplicas, summary.MaxReplicas = workerReplicaBounds(a)
 		if a.Manifest.WorkerReplicas != nil {
-			summary.MinReplicas = a.Manifest.WorkerReplicas.Min
-			summary.MaxReplicas = a.Manifest.WorkerReplicas.Max
 			if a.Manifest.WorkerReplicas.Metric != "" {
 				summary.Metric = a.Manifest.WorkerReplicas.Metric
 			}
@@ -297,9 +316,8 @@ func cmdWorkersStatus(args []string) int {
 	if app.Manifest.RestartPolicy != "" {
 		status.Restart = app.Manifest.RestartPolicy
 	}
+	status.MinReplicas, status.MaxReplicas = workerReplicaBounds(app)
 	if app.Manifest.WorkerReplicas != nil {
-		status.MinReplicas = app.Manifest.WorkerReplicas.Min
-		status.MaxReplicas = app.Manifest.WorkerReplicas.Max
 		if app.Manifest.WorkerReplicas.Metric != "" {
 			status.Metric = app.Manifest.WorkerReplicas.Metric
 		}

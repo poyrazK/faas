@@ -44,3 +44,29 @@ func TestValidateAIGatewayRefusesOperatorAIIntegrationsWhileOff(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// adr: 998 — the staged rollout list comes from TOML, and
+// FAAS_AI_GATEWAY_ACCOUNTS replaces it.
+func TestAIGatewayRolloutConfig(t *testing.T) {
+	listed, override := "6f2c1d3e-1a2b-4c5d-8e9f-0a1b2c3d4e5f", "9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d"
+	cfg := Config{AIGatewayAccounts: []string{listed}}
+	rollout, err := cfg.AIGatewayRollout(func(string) string { return "" })
+	if err != nil || !rollout.Allows(listed) || rollout.Allows(override) {
+		t.Fatalf("TOML rollout = %v, %v", rollout, err)
+	}
+	rollout, err = cfg.AIGatewayRollout(func(name string) string {
+		if name == "FAAS_AI_GATEWAY_ACCOUNTS" {
+			return override
+		}
+		return ""
+	})
+	if err != nil || rollout.Allows(listed) || !rollout.Allows(override) {
+		t.Fatalf("overridden rollout = %v, %v", rollout, err)
+	}
+	if rollout, err := (&Config{}).AIGatewayRollout(nil); err != nil || rollout != nil {
+		t.Fatalf("an unset rollout = %v, %v", rollout, err)
+	}
+	if _, err := (&Config{AIGatewayAccounts: []string{"acme"}}).AIGatewayRollout(nil); err == nil {
+		t.Fatal("a rollout entry that is not a UUID was accepted")
+	}
+}

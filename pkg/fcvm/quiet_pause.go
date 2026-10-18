@@ -106,9 +106,10 @@ func quietPauseAfterFor(req WakeRequest, qualificationOnly bool) time.Duration {
 }
 
 // quietEligibleLocked reports whether a live instance may be quiet-paused
-// now. The caller holds m.mu.
+// now. A frozen instance (ADR-1151) is already paused, and its pause belongs
+// to Freeze and Thaw. The caller holds m.mu.
 func (m *Manager) quietEligibleLocked(id string, inst *Instance) bool {
-	if inst == nil || inst.QuietPauseAfter <= 0 || inst.Paused || inst.IsJob ||
+	if inst == nil || inst.QuietPauseAfter <= 0 || inst.Paused || inst.Frozen || inst.IsJob ||
 		inst.ExecutionOnly || inst.AppTaskOnly || inst.QualificationOnly || inst.TailCount > 0 {
 		return false
 	}
@@ -273,10 +274,11 @@ func (m *Manager) quietPauseOne(ctx context.Context, c quietCandidate, now time.
 }
 
 // QuietResume resumes a quiet-paused instance and returns once its vCPUs
-// run. It is a no-op for an instance that is not paused. Callers mark
-// activity (or register their instance flight) before calling it. The
-// resume outlives the caller's cancellation: a half-done resume would
-// leave the next request to find the guest still paused.
+// run. It is a no-op for an instance that is not paused, and for a frozen
+// one (ADR-1151): only Thaw resumes a frozen guest, after schedd admits it.
+// Callers mark activity (or register their instance flight) before calling
+// it. The resume outlives the caller's cancellation: a half-done resume
+// would leave the next request to find the guest still paused.
 func (m *Manager) QuietResume(ctx context.Context, instance string) error {
 	st := m.quietStateIfAny(instance)
 	if st == nil || !st.paused.Load() {
@@ -290,8 +292,9 @@ func (m *Manager) QuietResume(ctx context.Context, instance string) error {
 	m.mu.Lock()
 	inst := m.live[instance]
 	var lease Lease
+	frozen := false
 	if inst != nil {
-		lease = inst.Lease
+		lease, frozen = inst.Lease, inst.Frozen
 	}
 	m.mu.Unlock()
 	if inst == nil || inst != st.inst {
@@ -300,9 +303,15 @@ func (m *Manager) QuietResume(ctx context.Context, instance string) error {
 		st.paused.Store(false)
 		return nil
 	}
+	if frozen {
+		return nil
+	}
 	started := time.Now()
 	resumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), quietVMMTimeout)
-	err := m.vmm.ResumeVM(resumeCtx, lease)
+	err := m.ensureRehearsalNetwork(resumeCtx, inst)
+	if err == nil {
+		err = m.vmm.ResumeVM(resumeCtx, lease)
+	}
 	cancel()
 	if err != nil {
 		m.quietMetrics.observeResumeError()

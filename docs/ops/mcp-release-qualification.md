@@ -20,12 +20,6 @@ stored evidence.
 | `tasks_restart_replicas` | Create a task, kill/restart its worker, resume with two replicas, fence the stale lease, and retrieve the result only as its owner. Include final-attempt input resume. |
 | `tasks_scale_from_zero` | CI proves the Gregale control-plane path from zero to four MCP workers and back using fresh task-backlog metrics. The staging runner requires a distinct linked observer app with an always-on running replica, a fresh observer heartbeat, a fresh zero metric and zero worker replicas before enqueue, then observes a fresh positive backlog, worker start, task completion, a fresh zero metric and return to zero. |
 
-| `oauth_chatgpt_login` | Connect in ChatGPT through the selected real OAuth provider: discovery, PKCE, resource audience, consent, valid request and rejection after expiry. |
-| `oauth_codex_login` | Repeat the real provider flow in Codex and record provider/client versions. |
-| `official_sdk_interop` | Run modern and legacy discovery and harmless live progress using the pinned official SDK client. |
-| `tasks_restart_replicas` | Create a task, kill/restart its worker, resume with two replicas, fence the stale lease, and retrieve the result only as its owner. Include final-attempt input resume. |
-| `tasks_scale_from_zero` | Keep a separate observer running, start with zero worker replicas, admit work, observe worker creation and completion, then return to zero. |
-
 Reject a candidate with bad protocol behavior or a widened reader catalog and
 record the previous serving revision still at 100%. Repeat promotion with a
 concurrent serving revision change and record the 409 without a traffic write.

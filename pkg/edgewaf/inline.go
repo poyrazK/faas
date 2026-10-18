@@ -22,17 +22,22 @@ var inlineRuleFiles = []string{"901", "913", "921", "930", "931", "932", "941", 
 // off, so phase 2 evaluates headers, URI and query arguments without reading
 // the body, which is still streaming to the proxy.
 func compileInline() (coraza.WAF, error) {
+	return compileInlineWith(engine)
+}
+
+func compileInlineWith(opts engineOptions) (coraza.WAF, error) {
 	var rules strings.Builder
 	for _, n := range inlineRuleFiles {
 		fmt.Fprintf(&rules, "Include @owasp_crs/REQUEST-%s-*.conf\n", n)
 	}
 	directives := fmt.Sprintf(`Include @coraza.conf-recommended
+%s
 Include @crs-setup.conf.example
 SecAction "id:900000,phase:1,pass,t:none,nolog,setvar:tx.blocking_paranoia_level=1"
 %sSecRuleEngine DetectionOnly
 SecAuditEngine Off
 SecRequestBodyAccess Off
-SecResponseBodyAccess Off`, rules.String())
+SecResponseBodyAccess Off`, opts.directive(), rules.String())
 	waf, err := coraza.NewWAF(coraza.NewWAFConfig().WithRootFS(coreruleset.FS).WithDirectives(directives))
 	if err != nil {
 		return nil, fmt.Errorf("compile in-path OWASP CRS rule set: %w", err)
@@ -82,7 +87,7 @@ func (i *Inspector) CheckInline(s gateway.WAFSample) gateway.WAFInlineResult {
 	case err != nil:
 		out.Outcome = gateway.WAFInlineError
 	case res.Detected:
-		out.Outcome, out.RuleIDs, out.Categories = gateway.WAFInlineDetected, res.RuleIDs, res.Categories
+		out.Outcome, out.RuleIDs, out.Categories, out.Score = gateway.WAFInlineDetected, res.RuleIDs, res.Categories, res.Score
 	default:
 		out.Outcome = gateway.WAFInlineClean
 	}

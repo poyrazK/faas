@@ -6,6 +6,8 @@ import (
 	"fmt"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
+	"github.com/onebox-faas/faas/pkg/rehearsalrecorder"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -44,6 +46,9 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	if app.AccountID != request.AccountID || app.Status == state.AppDeleted {
 		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
 	}
+	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
+		return ResolvedAppTaskRuntime{}, err
+	}
 	dep, err := e.store.DeploymentByID(ctx, request.DeploymentID)
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task deployment: %w", err)
@@ -79,18 +84,33 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		PreferredNodeID: app.NodeID,
 	})
 	if err != nil {
-		return ResolvedAppTaskRuntime{}, err
+		return ResolvedAppTaskRuntime{}, withAppTaskStage("placement", err)
 	}
 	if err := e.verifyPrimeLayer(ctx, app.ID, request.ArtifactKey); err != nil {
-		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task artifact: %w", err)
+		return ResolvedAppTaskRuntime{}, withAppTaskStage("prime_layer", fmt.Errorf("sched: resolve app task artifact: %w", err))
 	}
 	task, err := e.store.AppTaskByID(ctx, request.AccountID, request.AppID, request.ID)
 	if err != nil || task.DeploymentID != dep.ID || task.Kind != request.Kind {
 		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
 	}
+	runID, err := e.rehearsalNetworkRun(ctx, app.ID)
+	if err != nil {
+		return ResolvedAppTaskRuntime{}, err
+	}
+	if runID != "" || rehearsalcommand.IsCommand(task.Command) {
+		store, ok := e.store.(interface {
+			ScenarioRehearsalCommand(context.Context, rehearsalrecorder.Identity) (rehearsalcommand.Spec, error)
+		})
+		if !ok || runID == "" {
+			return ResolvedAppTaskRuntime{}, errors.New("contained command policy unavailable")
+		}
+		if _, err := store.ScenarioRehearsalCommand(ctx, rehearsalrecorder.Identity{AccountID: app.AccountID, AppID: app.ID, RunID: runID, InstanceID: request.ID, DeploymentID: dep.ID}); err != nil {
+			return ResolvedAppTaskRuntime{}, err
+		}
+	}
 	runtimeValues, err := e.loadRuntimeDeploymentValuesForTask(ctx, app, dep, task.Kind == state.AppTaskKindRelease)
 	if err != nil {
-		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task sealed env: %w", err)
+		return ResolvedAppTaskRuntime{}, withAppTaskStage("sealed_env", fmt.Errorf("sched: resolve app task sealed env: %w", err))
 	}
 	apiEnv, err := appendEnvironmentGitOpsServiceBindings(runtimeValues.APIEnv, runtimeValues.MainSecrets.Entries, dep)
 	if err != nil {
@@ -98,12 +118,13 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
-	pinnedBase, err := e.artifactBaseKey(ctx, app, request.ArtifactKey)
+	pinnedBase, err := e.deploymentBaseKey(ctx, app, dep, request.ArtifactKey)
 	if err != nil {
-		return ResolvedAppTaskRuntime{}, err
+		return ResolvedAppTaskRuntime{}, withAppTaskStage("base_layer", err)
 	}
 	spec := AppSpec{
-		BaseKey: pinnedBase, LayerKey: request.ArtifactKey,
+		RehearsalRunID: runID,
+		BaseKey:        pinnedBase, LayerKey: request.ArtifactKey,
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
 		CPUMillicores: int32(effectiveAppCPUMillicores(app)), EgressMbit: int32(limits.EgressMbit),
 		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan), ExecutionMode: executionModeForApp(app),
@@ -131,11 +152,26 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		NodeCeilingMB: placement.CeilingMB, VCPUBudget: placement.VCPUBudget,
 		CPUBudgetMillicores: placement.CPUBudgetMillicores,
 	}); err != nil {
-		return ResolvedAppTaskRuntime{}, err
+		return ResolvedAppTaskRuntime{}, withAppTaskStage("admission", err)
+	}
+	var publish func(context.Context, *AppTaskRestoreOutcome) error
+	if runID != "" {
+		publisher, ok := e.store.(interface {
+			RecordScenarioCommandNetwork(context.Context, rehearsalrecorder.Identity, string, string, string) error
+		})
+		if !ok || task.LeaseToken == nil {
+			e.ledger.Release(request.ID)
+			return ResolvedAppTaskRuntime{}, errors.New("contained command network publisher unavailable")
+		}
+		identity := rehearsalrecorder.Identity{AccountID: app.AccountID, AppID: app.ID, RunID: runID, InstanceID: request.ID, DeploymentID: dep.ID}
+		publish = func(ctx context.Context, out *AppTaskRestoreOutcome) error {
+			return publisher.RecordScenarioCommandNetwork(ctx, identity, placement.NodeID, *task.LeaseToken, out.HostIP)
+		}
 	}
 	return ResolvedAppTaskRuntime{
-		NodeID: placement.NodeID,
-		Spec:   AppTaskRestoreSpec{Instance: request.ID, DeploymentID: dep.ID, App: spec},
+		publish: publish,
+		NodeID:  placement.NodeID,
+		Spec:    AppTaskRestoreSpec{Instance: request.ID, DeploymentID: dep.ID, App: spec},
 		release: func() {
 			e.ledger.Release(request.ID)
 		},

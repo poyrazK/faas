@@ -45,6 +45,8 @@ type Inspector struct {
 	budgetMu sync.Mutex
 	budgets  budgets
 
+	events gateway.WAFEventRecorder
+
 	inlineSlots   chan struct{}
 	inlineMu      sync.Mutex
 	inlineBudgets budgets
@@ -80,6 +82,13 @@ func New(obs Observer, log *slog.Logger) *Inspector {
 		inlineSlots:   make(chan struct{}, api.EdgeWAFInlineConcurrency),
 		inlineBudgets: newBudgets(inlineRate),
 	}
+}
+
+// WithEventRecorder makes off-path detections security events (ADR-831
+// amendment 5). Call before Run; nil keeps them metrics and logs only.
+func (i *Inspector) WithEventRecorder(r gateway.WAFEventRecorder) *Inspector {
+	i.events = r
+	return i
 }
 
 // Run starts api.EdgeWAFWorkers workers and blocks until ctx is done.
@@ -171,6 +180,10 @@ func (i *Inspector) inspect(s gateway.WAFSample) time.Duration {
 	}
 	for _, id := range res.RuleIDs {
 		i.obs.ObserveWAFRuleMatch(s.AppID, id)
+	}
+	if i.events != nil && i.events.SampleEdgeRuleDetection(s.RuleID) {
+		i.events.RecordEdgeRuleEvent(gateway.NewWAFDetectionEvent(s, gateway.EdgeRuleEventDetected,
+			gateway.WAFDetection{RuleIDs: res.RuleIDs, Categories: res.Categories, Score: res.Score}, i.now()))
 	}
 	// Never log header values, the query string, or matched data: they can
 	// carry customer secrets. Rule IDs and categories are enough to tune.

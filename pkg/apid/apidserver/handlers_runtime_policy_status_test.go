@@ -3,20 +3,24 @@ package apidserver_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type runtimePolicyStatusTestStore struct {
-	state.Store
+	queriedEdgeAccountID string
+	Store                state.Store
 	desired              int64
 	requestPolicyDesired int64
 	edgeRulesDesired     int64
@@ -223,7 +227,7 @@ func TestGetRuntimePolicyStatusWaitsForGatewayApplication(t *testing.T) {
 		cpuNodes:      []state.AppCPUPolicyNodeState{{NodeName: "vm-a", DesiredRevision: 4, AppliedRevision: 3, ObservedAt: time.Now().UTC()}},
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := apidserver.NewServerWithDeps(store, log, "gregale.dev", &apidserver.CaptureNotifier{}, "", apidserver.NoopMailer{}, apidserver.StubGithubdClient{}, nil, nil, 0, "")
+	srv := apidserver.NewServerWithDeps(statetest.NewStore(store), log, "gregale.dev", &apidserver.CaptureNotifier{}, "", apidserver.NoopMailer{}, apidserver.StubGithubdClient{}, nil, nil, 0, "")
 	req := httptest.NewRequest(http.MethodGet, "/v1/apps/"+app.Slug+"/policy/status?wait=1s", nil)
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	rec := httptest.NewRecorder()
@@ -238,4 +242,68 @@ func TestGetRuntimePolicyStatusWaitsForGatewayApplication(t *testing.T) {
 	if response.AppID != app.ID || response.DesiredRevision != 42 || response.State != "active" || response.AppliedGateways != 1 || response.RequestPolicy.State != "active" || response.RequestPolicy.DesiredRevision != 42 || response.EdgeRules.State != "active" || response.CorsPresets.State != "active" || response.CorsPresets.Scope != "account" || response.ResponseCache.State != "active" || response.ResponseCache.DesiredRevision != 21 || response.EgressAllowlist.State != "active" || response.EgressAllowlist.AppliedNodes != 1 || response.CPULimit.State != "active" || response.CPULimit.AppliedNodes != 1 || response.SchedulerScaling.State != "active" || response.SchedulerScaling.ObservedRevision != 3 || store.queriedAccountID != acct.ID || store.reads < 2 {
 		t.Fatalf("response = %+v, reads = %d; want active after polling", response, store.reads)
 	}
+	for _, query := range []string{"edge_rules_scope=fleet", "edge_rules_scope=account", "edge_rules_scope=invalid"} {
+		req := httptest.NewRequest(http.MethodGet, "/v1/apps/"+app.Slug+"/policy/status?"+query, nil)
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		if query == "edge_rules_scope=invalid" {
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("invalid scope status %d", rec.Code)
+			}
+			continue
+		}
+		var fleet api.RuntimePolicyStatusResponse
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &fleet) != nil {
+			t.Fatalf("fleet status %d: %s", rec.Code, rec.Body.String())
+		}
+		expectedScope := "fleet"
+		if query == "edge_rules_scope=account" {
+			expectedScope = "account"
+			if store.queriedEdgeAccountID != acct.ID || fleet.EdgeRules.LegacyFleetRevision != 7 {
+				t.Fatalf("account scope not bound to app owner: %+v", fleet.EdgeRules)
+			}
+		}
+		if fleet.EdgeRules.Scope != expectedScope || fleet.EdgeRules.DesiredRevision != store.edgeRulesDesired+1 || fleet.EdgeRules.State != "pending" {
+			t.Fatalf("cross-app mutation was skipped: %+v", fleet.EdgeRules)
+		}
+	}
+
+	monitored := &mcpRuntimePolicyStatusStore{runtimePolicyStatusTestStore: store}
+	monitoredServer := apidserver.NewServerWithDeps(statetest.NewStore(monitored), log, "gregale.dev", &apidserver.CaptureNotifier{}, "", apidserver.NoopMailer{}, apidserver.StubGithubdClient{}, nil, nil, 0, "")
+	for _, signal := range []string{"pending", "active", "unknown"} {
+		monitored.signal = signal
+		req := httptest.NewRequest(http.MethodGet, "/v1/apps/"+app.Slug+"/policy/status?edge_rules_scope=account", nil)
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		rec := httptest.NewRecorder()
+		monitoredServer.Handler().ServeHTTP(rec, req)
+		var body api.RuntimePolicyStatusResponse
+		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &body) != nil || body.MCPConvergence == nil || body.MCPConvergence.State != signal || monitored.accountID != acct.ID || monitored.appID != app.ID || strings.Contains(rec.Body.String(), "PRIVATE_ERROR") {
+			t.Fatalf("incorrect MCP monitoring projection: %s", rec.Body.String())
+		}
+	}
+}
+
+type mcpRuntimePolicyStatusStore struct {
+	*runtimePolicyStatusTestStore
+	signal, accountID, appID string
+}
+
+func (s *mcpRuntimePolicyStatusStore) MCPPolicyConvergenceSnapshot(_ context.Context, accountID, appID string) (api.MCPPolicyConvergenceSnapshot, error) {
+	s.accountID = accountID
+	s.appID = appID
+	if s.signal == "unknown" {
+		return api.MCPPolicyConvergenceSnapshot{}, errors.New("PRIVATE_ERROR")
+	}
+	return api.MCPPolicyConvergenceSnapshot{State: s.signal, CapturedAt: time.Now().UTC(), DesiredRevision: 42, ServingGateways: 2, UnconvergedGateways: 1}, nil
+}
+
+// A mutation owned by another app still advances the fleet requirement.
+func (s *runtimePolicyStatusTestStore) LatestEdgeRuleChangeID(context.Context) (int64, error) {
+	return s.edgeRulesDesired + 1, nil
+}
+
+func (s *runtimePolicyStatusTestStore) LatestAccountEdgeRulePolicyPosition(_ context.Context, accountID string) (state.EdgeRulePolicyPosition, error) {
+	s.queriedEdgeAccountID = accountID
+	return state.EdgeRulePolicyPosition{DesiredRevision: s.edgeRulesDesired + 1, LegacyFleetRevision: 7}, nil
 }

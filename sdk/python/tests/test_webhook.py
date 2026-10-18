@@ -143,3 +143,18 @@ def test_generated_sdk_supports_workflow_finished_subscription_and_payload() -> 
     assert payload.app_id == UUID("00000000-0000-0000-0000-000000000001")
     assert payload.status == "succeeded"
     assert payload.to_dict()["resume_count"] == 0
+
+
+def test_tracker_sync_notification_event_filters_round_trip() -> None:
+    from typing import get_args
+
+    from faas_sdk.models.create_app_webhook_request_event_filter_item import (
+        CreateAppWebhookRequestEventFilterItem,
+    )
+
+    events = ["issue.tracker_sync.attention", "issue.tracker_sync.recovered"]
+    assert all(event in get_args(CreateAppWebhookRequestEventFilterItem) for event in events)
+    subscription = CreateAppWebhookRequest.from_dict(
+        {"target_url": "https://example.com/sync", "webhook_secret": "secret", "event_filter": events}
+    )
+    assert subscription.to_dict()["event_filter"] == events

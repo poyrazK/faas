@@ -41,6 +41,13 @@ instances, cold fallback, redeployment, or node failure. The ephemeral disk
 allowance includes application content and filesystem overhead, rather than
 guaranteeing that amount of free scratch space; see [ADR-158](adr/158-ephemeral-disk-boundary.md).
 
+While an image is assembled, its layers may write at most twice the plan's
+ephemeral disk allowance in file content (`LayerExtractionBudgetMultiple`).
+Content that a later layer replaces or deletes still counts toward this
+budget. An image that exceeds it fails with `app_layer_too_large` before
+assembly finishes. A registry blob download may wait up to 60 seconds for
+headers or for its next bytes, and may take up to 30 minutes in total.
+
 Direct OCI images use TCP listener readiness by default; Gregale does not
 invent a `/healthz` endpoint that the image never declared. An explicit
 deployment health-path override selects HTTP readiness instead.
@@ -206,9 +213,9 @@ Explicit rollback retains its existing behavior. See
 
 | Concern | Current contract | Qualification boundary |
 |---|---|---|
-| Image platform | Linux/amd64; compatible child selected from an OCI or Docker index | Other architectures and operating systems are rejected. |
-| Process | Image ENTRYPOINT + CMD, environment, working directory, and user | Metadata inspection cannot prove executables or users exist in the layers. Numeric or named `USER user:group` is preserved; explicit missing identities fail launch. Supplementary memberships are not imported. |
-| Main listener | Explicit deployment port, otherwise one exposed TCP port, otherwise 8080 | Multiple TCP declarations do not select the main port. Bind to `0.0.0.0`. |
+| Image platform | Linux/amd64; compatible child selected from an OCI or Docker index. A lone child without a platform annotation is selected and its config's platform checked. | Other architectures and operating systems are rejected. |
+| Process | Image ENTRYPOINT + CMD, environment, working directory, and user. As under Docker, an image without `USER` runs as root, and a numeric UID absent from the image's passwd runs with GID 0 ([ADR-1239](adr/1239-docker-compatible-image-process-identity.md)). Root-owned image files stay root-owned in the guest. | Metadata inspection cannot prove executables or users exist in the layers. Numeric or named `USER user:group` is preserved; explicit missing identities fail launch. Supplementary memberships are not imported. Redeploy to pick up root ownership for artifacts built before ADR-1239. |
+| Main listener | Explicit deployment port, otherwise one exposed TCP port, otherwise 8080. Port 80 is supported: when a workload in the VM declares it, the in-guest metadata endpoint moves from `169.254.169.254:80` to `169.254.169.254:8775`. | Multiple TCP declarations do not select the main port. Bind to `0.0.0.0`. Read the metadata URLs from `FAAS_EVENT_PUBLISH_ENDPOINT`, `FAAS_METADATA_ENV_ENDPOINT` and `FAAS_SECRETS_RELOAD_ACK_ENDPOINT` instead of hardcoding the address. |
 | Additional listeners | Declared TCP listeners use `<slug>--port-<name>.<apps-domain>` selectors through the gateway | These are HTTP gateway selectors. Raw TCP uses separately configured app-owned listeners; UDP uses the separate opt-in listener service below. |
 | Raw TCP ingress | Opt-in public edge binds stable app-owned TCP listener ports and forwards bytes through admission and vmmd; optional per-listener TLS termination | Disabled by default; requires gateway/firewall rollout. TLS defaults to passthrough; termination requires verified app-owned hostname and provisioned edge bundle. Native TLS acceptance remains pending. See [rollout](ops/tcp-ingress.md). |
 | Private TCP between services | Same-account services dial `<name>.svc.gregale:<port>` on any declared TCP listener or the serving port; compose `expose:` declares internal-only listeners (ADR-576) | Node-level rollout; until enabled, service names answer HTTP only. Internal listeners never get public selectors or raw TCP listeners. Ports 10080, 10081 and 443 stay on the HTTP mesh. See [networking](networking.md#private-tcp-between-services). |

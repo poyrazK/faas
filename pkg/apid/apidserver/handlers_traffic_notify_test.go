@@ -97,7 +97,7 @@ func TestPatchDeploymentTraffic_EmitsTrafficNotify(t *testing.T) {
 	// to redistribute the residual across (Σ=100 contract).
 	depB, err := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:def",
-		Status: state.DeployPending, Scope: "traffic-b",
+		Status: state.DeployPending, Scope: api.DefaultEnvScope, TrafficPercent: 50, TrafficPercentExplicit: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment (B): %v", err)
@@ -209,10 +209,10 @@ func TestPatchDeploymentTraffic_AllowsFreePlan_Notifies(t *testing.T) {
 	if err := store.MarkDeploymentLive(context.Background(), dep.ID); err != nil {
 		t.Fatalf("MarkDeploymentLive: %v", err)
 	}
-	// Second live row in its own scope, so 25/75 is a legal split.
+	// Explicit partial activation keeps both rows live in the same scope.
 	depB, err := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:abc",
-		Status: state.DeployPending, Scope: "traffic-free-b",
+		Status: state.DeployPending, Scope: api.DefaultEnvScope, TrafficPercent: 50, TrafficPercentExplicit: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment (B): %v", err)
@@ -314,7 +314,7 @@ func TestPatchDeploymentTrafficRejectsActiveCanary(t *testing.T) {
 	}
 	candidate, err := e.store.CreateDeployment(t.Context(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:active-canary",
-		Status: state.DeployPending, Scope: "canary", CanaryPreset: "balanced",
+		Status: state.DeployPending, Scope: api.DefaultEnvScope, CanaryPreset: "balanced",
 		CanaryTotalSteps: 4, CanaryStep: 0, RolloutState: "pending", TrafficPercent: 1,
 	})
 	if err != nil {

@@ -47,7 +47,8 @@ const jobSelectCols = `id, account_id, kind, name, image_ref, ram_mb, task_timeo
        coalesce(image_materialization_error, ''),
        image_materialized_at, image_materialization_attempts,
        image_materialization_next_attempt_at, coalesce(cron_schedule, ''),
-       cron_timezone, last_scheduled_at, schedule_policy, failure_rules, schedule_revision`
+       cron_timezone, last_scheduled_at, schedule_policy, failure_rules, schedule_revision,
+       coalesce(image_entrypoint, '{}'), coalesce(image_cmd, '{}'), image_entrypoint is not null`
 
 // jobRunSelectCols is the canonical column order for job_runs.
 // Includes dead_letter_count (00574). ORDER BY id keeps the contract
@@ -99,7 +100,8 @@ func scanJobCols(scan func(...any) error) (Job, error) {
 		&j.ImageStorageKey, &j.ImageMaterializationStatus,
 		&j.ImageMaterializationError, &j.ImageMaterializedAt,
 		&j.ImageMaterializationAttempts, &j.ImageMaterializationNextAttemptAt,
-		&j.CronSchedule, &j.CronTimezone, &j.LastScheduledAt, &j.SchedulePolicy, &j.FailureRules, &j.ScheduleRevision); err != nil {
+		&j.CronSchedule, &j.CronTimezone, &j.LastScheduledAt, &j.SchedulePolicy, &j.FailureRules, &j.ScheduleRevision,
+		&j.ImageEntrypoint, &j.ImageCmd, &j.ImageConfigRecorded); err != nil {
 		return Job{}, err
 	}
 	if len(envOverrides) > 0 {
@@ -284,7 +286,7 @@ func (s *PgStore) JobGetByName(ctx context.Context, accountID, name string) (Job
 func (s *PgStore) JobListByAccount(ctx context.Context, accountID string, limit, offset int) ([]Job, error) {
 	rows, err := s.pool.Query(ctx,
 		`select `+jobSelectCols+` from jobs
-		 where account_id = $1::uuid and status <> 'deleted'
+		 where account_id = $1::uuid and status <> 'deleted' and kind <> 'image_run'
 		 order by created_at desc
 		 limit $2 offset $3`,
 		accountID, limit, offset)
@@ -355,6 +357,8 @@ func (s *PgStore) JobUpdate(ctx context.Context, id string, command []string, im
 		   image_materialization_next_attempt_at = case when $3 is null then image_materialization_next_attempt_at else null end,
 		   image_materialization_lease_owner = case when $3 is null then image_materialization_lease_owner else null end,
 		   image_materialization_lease_until = case when $3 is null then image_materialization_lease_until else null end,
+		   image_entrypoint = case when $3 is null then image_entrypoint else null end,
+		   image_cmd       = case when $3 is null then image_cmd else null end,
 		   ram_mb          = coalesce($4,          ram_mb),
 		   task_timeout_s  = coalesce($5,          task_timeout_s),
 		   max_parallelism = coalesce($6,          max_parallelism),
@@ -417,6 +421,8 @@ func (s *PgStore) JobUpdateWithSchedule(ctx context.Context, id string, command 
 		   image_materialization_next_attempt_at = case when $3 is null then image_materialization_next_attempt_at else null end,
 		   image_materialization_lease_owner = case when $3 is null then image_materialization_lease_owner else null end,
 		   image_materialization_lease_until = case when $3 is null then image_materialization_lease_until else null end,
+		   image_entrypoint = case when $3 is null then image_entrypoint else null end,
+		   image_cmd       = case when $3 is null then image_cmd else null end,
 		   ram_mb          = coalesce($4,          ram_mb),
 		   task_timeout_s  = coalesce($5,          task_timeout_s),
 		   max_parallelism = coalesce($6,          max_parallelism),
@@ -786,7 +792,7 @@ func (s *PgStore) JobSoftDelete(ctx context.Context, id string) (deleted bool, h
 func (s *PgStore) JobCountByAccount(ctx context.Context, accountID string) (int, error) {
 	var count int
 	err := s.pool.QueryRow(ctx,
-		`select count(*) from jobs where account_id = $1::uuid and status <> 'deleted'`,
+		`select count(*) from jobs where account_id = $1::uuid and status <> 'deleted' and kind <> 'image_run'`,
 		accountID,
 	).Scan(&count)
 	if err != nil {
@@ -876,6 +882,9 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 	}
 	if len(inputs) > 0 && len(inputs) != tasks {
 		return JobRun{}, nil, fmt.Errorf("state: input count %d must equal tasks %d", len(inputs), tasks)
+	}
+	if err := validateJobRunAttach(opts, tasks, retryMaxOverride); err != nil {
+		return JobRun{}, nil, err
 	}
 	manifestVersion, inputDigest := jobInputDigest(inputs)
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -970,6 +979,9 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 	if fanoutErr != nil {
 		return JobRun{}, nil, fmt.Errorf("state: fan out tasks for run %s: %w", run.ID, fanoutErr)
 	}
+	if err := insertJobRunAttach(ctx, tx, run.ID, opts.Attach); err != nil {
+		return JobRun{}, nil, err
+	}
 
 	// 3. Read the fanned-out tasks back so the caller can echo them.
 	//    Sorted by task_index so the slice is deterministic.
@@ -997,6 +1009,12 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 // and creates a linked run. The current image must resolve to the same digest
 // so replay never silently runs the old command against different bits.
 func (s *PgStore) JobRunReplayFailed(ctx context.Context, sourceRunID, accountID string) (JobRun, []JobTask, error) {
+	if owned, err := s.ciJobRunOwned(ctx, accountID, sourceRunID); err != nil || owned {
+		if err == nil {
+			err = ErrConflict
+		}
+		return JobRun{}, nil, err
+	}
 	if owned, err := sqlc.New().CustomerOperationJobOwned(ctx, s.pool, mustPgUUID(sourceRunID)); err != nil || owned {
 		if err == nil {
 			err = ErrConflict
@@ -1014,6 +1032,16 @@ func (s *PgStore) JobRunReplayFailed(ctx context.Context, sourceRunID, accountID
 		return JobRun{}, nil, err
 	}
 	if source.FinishedAt == nil {
+		return JobRun{}, nil, ErrConflict
+	}
+	// An interactive run (ADR-1330) is not replayed: a replay would run the
+	// command again with no client attached.
+	var interactive bool
+	if err := tx.QueryRow(ctx, `select exists(select 1 from job_run_attach_sessions where run_id = $1::uuid)`,
+		sourceRunID).Scan(&interactive); err != nil {
+		return JobRun{}, nil, err
+	}
+	if interactive {
 		return JobRun{}, nil, ErrConflict
 	}
 	job, err := scanJob(tx.QueryRow(ctx, `select `+jobSelectCols+` from jobs
@@ -1783,6 +1811,11 @@ func (s *PgStore) CreateAndClaimJobInstance(ctx context.Context, instanceID, job
 	if err := lockJobRunExclusiveOwner(ctx, tx, runID); err != nil {
 		return Instance{}, fmt.Errorf("state: lock exclusive owner for job run %s: %w", runID, err)
 	}
+	if IsLive(instanceState) {
+		if err := checkNodeAdmissionDB(ctx, tx, computeNodeID); err != nil {
+			return Instance{}, err
+		}
+	}
 
 	var accountID, planName string
 	var runParallelism int
@@ -2007,6 +2040,12 @@ func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskInd
 //
 // Returns ErrNotFound when (run_id, task_index) does not resolve.
 func (s *PgStore) JobTaskRetry(ctx context.Context, runID string, taskIndex int, nextAttemptAt time.Time) error {
+	if blocked, err := s.ciJobRetryBlocked(ctx, runID); err != nil || blocked {
+		if err == nil {
+			err = ErrConflict
+		}
+		return err
+	}
 	if owned, err := sqlc.New().CustomerOperationJobOwned(ctx, s.pool, mustPgUUID(runID)); err != nil || owned {
 		if err == nil {
 			err = ErrConflict
@@ -2020,6 +2059,15 @@ func (s *PgStore) JobTaskRetry(ctx context.Context, runID string, taskIndex int,
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after commit
 	if err := lockJobRunExclusiveOwner(ctx, tx, runID); err != nil {
 		return err
+	}
+	// ADR-1330: a retry would run the command again with no client attached.
+	var interactive bool
+	if err := tx.QueryRow(ctx, `select exists(select 1 from job_run_attach_sessions where run_id = $1::uuid)`,
+		runID).Scan(&interactive); err != nil {
+		return fmt.Errorf("state: retry task (%s, %d): %w", runID, taskIndex, err)
+	}
+	if interactive {
+		return ErrConflict
 	}
 	tag, err := tx.Exec(ctx,
 		`update job_tasks set
@@ -2072,6 +2120,11 @@ func (s *PgStore) JobTaskRetry(ctx context.Context, runID string, taskIndex int,
 // while the task remains at attempt 1, and a late boot failure must not touch
 // a replacement attempt or a task already settled by exit/cancellation.
 func (s *PgStore) JobTaskFailBoot(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken string, retryMax int, nextAttemptAt time.Time, errorMessage string) (bool, error) {
+	if owned, err := s.ciJobRetryBlocked(ctx, runID); err != nil {
+		return false, err
+	} else if owned {
+		retryMax = 0
+	}
 	if owned, err := sqlc.New().CustomerOperationJobOwned(ctx, s.pool, mustPgUUID(runID)); err != nil {
 		return false, err
 	} else if owned {
@@ -2248,6 +2301,11 @@ func (s *PgStore) JobTaskFindStuck(ctx context.Context, ttl time.Duration) ([]Jo
 // JobTaskReapClaimed is a fenced, atomic retry/dead-letter transition.
 // Expiry is checked again so a heartbeat after JobTaskFindStuck wins safely.
 func (s *PgStore) JobTaskReapClaimed(ctx context.Context, runID string, taskIndex int, leaseToken string, cutoff time.Time, retryMax int, nextAttemptAt time.Time) (bool, error) {
+	if owned, err := s.ciJobRetryBlocked(ctx, runID); err != nil {
+		return false, err
+	} else if owned {
+		retryMax = 0
+	}
 	if owned, err := sqlc.New().CustomerOperationJobOwned(ctx, s.pool, mustPgUUID(runID)); err != nil {
 		return false, err
 	} else if owned {

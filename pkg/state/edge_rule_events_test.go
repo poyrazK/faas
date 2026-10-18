@@ -48,3 +48,30 @@ func TestMemStoreEdgeRuleEvents(t *testing.T) {
 		t.Fatalf("pruned %d, want 3", n)
 	}
 }
+
+// ADR-831 amendment 5: kind=waf detections are events with WAF detail.
+func TestMemStoreEdgeRuleEventsWAFDetail(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemStore()
+	at := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	ids := []int{942100, 942190}
+	if err := m.RecordEdgeRuleEvents(ctx, []EdgeRuleEvent{
+		{RuleID: "waf", AppID: "app", OccurredAt: at, Outcome: EdgeRuleEventBlocked, WAFRuleIDs: ids, WAFCategories: []string{"sqli"}, WAFScore: 10},
+		{RuleID: "waf", AppID: "app", OccurredAt: at.Add(-time.Minute), Outcome: EdgeRuleEventDetected},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ids[0] = 1 // the store keeps its own copy
+	blocked, _ := m.ListEdgeRuleEvents(ctx, EdgeRuleEventQuery{AppID: "app", Outcome: EdgeRuleEventBlocked, Limit: 10})
+	if len(blocked) != 1 || blocked[0].WAFScore != 10 || len(blocked[0].WAFRuleIDs) != 2 || blocked[0].WAFRuleIDs[0] != 942100 || blocked[0].WAFCategories[0] != "sqli" {
+		t.Fatalf("blocked = %+v", blocked)
+	}
+	for outcome, want := range map[string]bool{
+		EdgeRuleHitMatched: true, EdgeRuleHitLogged: true, EdgeRuleEventDetected: true,
+		EdgeRuleEventWarned: true, EdgeRuleEventBlocked: true, "denied": false, "": false,
+	} {
+		if got := IsEdgeRuleEventOutcome(outcome); got != want {
+			t.Errorf("IsEdgeRuleEventOutcome(%q) = %v, want %v", outcome, got, want)
+		}
+	}
+}

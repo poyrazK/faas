@@ -49,11 +49,13 @@ func cmdRoutes(args []string) int {
 			return cmdRoutesStatus(args[1:])
 		case "advise":
 			return cmdRoutesAdvise(args[1:])
+		case "awake":
+			return cmdRoutesAwake(args[1:])
 		case "priority":
 			return cmdRoutesPriority(args[1:])
 		}
 	}
-	PrintUsage(osStderr, "usage: gregale routes <status|advise|priority|requirements|gate|health|monitor|check|results|plan|apply|impact|contract|lifecycle|sunsets|migration> [slug] [flags]", "cli")
+	PrintUsage(osStderr, "usage: gregale routes <status|advise|awake|priority|requirements|gate|health|monitor|check|results|plan|apply|impact|contract|lifecycle|sunsets|migration> [slug] [flags]", "cli")
 	return 1
 }
 

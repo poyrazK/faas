@@ -191,7 +191,9 @@ func buildManifestForRequest(req VMRequest, timeoutSec int) (api.BuildManifest, 
 		Runtime:         req.Runtime,
 		RuntimeBaseRef:  req.RuntimeBaseRef,
 		Function:        req.Function,
+		SharedRuntime:   req.SharedRuntime,
 		DevWatchCommand: req.DevWatchCommand,
+		DevWatchHost:    req.DevWatchHost,
 		DependencyCache: req.DependencyCacheKey != "",
 		KeepWarm:        req.KeepWarm,
 		TimeoutSec:      timeoutSec,
@@ -676,6 +678,8 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 		res.BuildkitVer = done.BuildkitVersion
 		res.RailpackVer = done.RailpackVersion
 		res.DevPatch = done.DevPatch
+		res.SharedRuntime = done.SharedRuntime
+		res.DependencyCacheUnchanged = done.DependencyCacheUnchanged
 	} else if exitCode == 0 {
 		// A clean host exit alone does not prove that a customer build ran.
 		exitCode = -1
@@ -685,9 +689,22 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 		if h.DependencyCacheKey != "" {
 			cachePath, pathErr := dependencyCachePath(d.driveDir, h.DependencyCacheKey)
 			cacheSource := filepath.Join(h.ExportDir, "build", "out", "cache")
-			if pathErr != nil {
+			switch {
+			case pathErr != nil:
 				res.DependencyCacheStoreError = pathErr.Error()
-			} else {
+			case res.DependencyCacheUnchanged:
+				// The guest kept the imported cache: nothing was exported, and
+				// the stored generation is still the right one. Refresh its
+				// age so the TTL sweep keeps it.
+				now := time.Now()
+				d.dependencyCacheMu.Lock()
+				touchErr := os.Chtimes(cachePath, now, now)
+				d.dependencyCacheMu.Unlock()
+				_ = os.RemoveAll(cacheSource)
+				if touchErr != nil {
+					res.DependencyCacheStoreError = touchErr.Error()
+				}
+			default:
 				d.dependencyCacheMu.Lock()
 				cacheErr := publishDependencyCache(cacheSource, cachePath, dependencyCacheMaxBytes)
 				if cacheErr == nil {

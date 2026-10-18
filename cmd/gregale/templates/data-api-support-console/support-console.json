@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "resources": [
+    {
+      "id": "cases",
+      "label": "Support cases",
+      "table": "support_cases",
+      "columns": [
+        "tenant",
+        "id",
+        "title",
+        "status"
+      ],
+      "keys": [
+        "tenant",
+        "id"
+      ],
+      "search": "title",
+      "filter": {
+        "column": "status",
+        "values": [
+          "open",
+          "closed"
+        ]
+      },
+      "relationships": [
+        {
+          "id": "replies",
+          "label": "Replies",
+          "target": "replies",
+          "from": [
+            "tenant",
+            "id"
+          ],
+          "to": [
+            "tenant",
+            "case_id"
+          ]
+        }
+      ],
+      "labels": {
+        "tenant": "Account",
+        "id": "Case #",
+        "title": "Title",
+        "status": "Status"
+      }
+    },
+    {
+      "id": "replies",
+      "label": "Case replies",
+      "table": "support_replies",
+      "columns": [
+        "tenant",
+        "id",
+        "case_id",
+        "body"
+      ],
+      "keys": [
+        "tenant",
+        "id"
+      ],
+      "search": "body",
+      "relationships": [],
+      "labels": {
+        "tenant": "Account",
+        "id": "Reply #",
+        "case_id": "Case #",
+        "body": "Message"
+      }
+    }
+  ],
+  "views": [
+    {
+      "name": "Open cases",
+      "resource": "cases",
+      "search": "",
+      "filter": "open",
+      "sort": "id",
+      "direction": "asc"
+    }
+  ]
+}

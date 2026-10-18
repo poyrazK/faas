@@ -59,6 +59,9 @@ func (m *MemStore) PreviewWorkflowRecoveryPolicyChange(ctx context.Context, acco
 		out.InspectedJobs++
 		addRecoveryPolicyChangeCandidates(&out, job.Job, candidates, &budget)
 	}
+	if err := m.previewInitialPolicyChangeLocked(ctx, account, app, &out, &budget, last); err != nil {
+		return out, err
+	}
 	if err := ctx.Err(); err != nil {
 		return out, err
 	}
@@ -66,6 +69,17 @@ func (m *MemStore) PreviewWorkflowRecoveryPolicyChange(ctx context.Context, acco
 }
 func (m *MemStore) recoveryPolicyChangeBudgetLocked(app string, now time.Time) recoveryPolicyBudget {
 	b := recoveryPolicyBudget{Existing: map[string]bool{}}
+	for _, r := range m.initialRecoveryReviews {
+		if !sameMemUUID(r.AppID, app) {
+			continue
+		}
+		if r.PreparedAt.After(b.Last) {
+			b.Last = r.PreparedAt
+		}
+		if r.PreparedAt.After(now.Add(-time.Hour)) {
+			b.Hourly++
+		}
+	}
 	p := m.recoveryPolicies[canonicalMemUUID(app)]
 	if p == nil {
 		return b

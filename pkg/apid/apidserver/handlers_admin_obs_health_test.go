@@ -138,10 +138,9 @@ func TestObsHealthHandler_PrometheusNoActivityIsAvailable(t *testing.T) {
 		t.Fatalf("AuditLogCoverageRatio5m = %v, want 1.0", resp.AuditLogCoverageRatio5m)
 	}
 	want := []string{
-		`sum(increase(audit_log_write_total[5m])) or vector(0)`,
-		`sum(increase(audit_log_write_failures_total[5m])) or vector(0)`,
-		`sum(audit_log_coverage_ratio_5m) or vector(1)`,
-		`count(ALERTS{alertstate="firing"}) or vector(0)`,
+		`sum(increase(apid_audit_log_write_total[5m]))`,
+		`sum(increase(apid_audit_log_write_failures_total[5m]))`,
+		`count(ALERTS{alertstate="firing",alertname!="FaasWatchdog",severity!="info"}) or vector(0)`,
 	}
 	if len(queries) != len(want) {
 		t.Fatalf("PromQL query count = %d, want %d (%v)", len(queries), len(want), queries)

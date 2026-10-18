@@ -10,6 +10,7 @@
 //   - pki init|status|rotate         — local-dev PKI bootstrap
 //   - sign-keys init|rotate|status   — cosign sign keypair (local fs)
 //   - node-key init|rotate|status    — per-node CapacityReport keypair
+//   - workload-identity init|rotate|status — cluster workload-identity key + JWKS
 //   - backup init|unseal-archive-creds|unseal-rclone — backup creds
 //   - secrets init|rotate|status|stamp               — post-bootstrap secrets
 //   - trusted-publishers stays in `gregale` (admin API surface; see
@@ -52,16 +53,18 @@ Commands:
   pki          Operator local-dev PKI bootstrap (pki init|status|rotate)
   sign-keys    Provision the cosign sign keypair (sign-keys init|rotate|status; --sign-key / --verify-key)
   node-key     Provision the per-node CapacityReport signing keypair (node-key init|rotate|status)
+  workload-identity  Provision the cluster workload-identity signing key and JWKS (workload-identity init|rotate|status)
   backup       Operator rclone / archive credentials (backup init|unseal-archive-creds|unseal-rclone)
   secrets      Post-bootstrap secrets init (secrets init|rotate|status|stamp; PR-X / issue #911 / ADR-110)
   artifact     Publish or verify release-pinned shared artifacts (artifact publish|verify)
   compute-nodes  Compute-node state and release readiness (add|list|show|release-status|drain|activate|retire)
-  instances    Authenticated instance recovery (force-park|force-cold-boot|force-restart)
+  instances    Authenticated instance recovery (force-park|force-cold-boot|force-restart|wait)
   accounts     Authenticated tenant support and lifecycle controls (list|show|360|activity|suspend|restore|revoke-sessions)
   billing      Operator billing catalog, reconciliation, and webhook diagnostics
   config       Inspect and safely change hot runtime configuration (list|show|history|set|rollback)
   audit        Correlate operator intents and events by trace ID (audit trace)
   builds       Authenticated recovery for stuck builds (builds sweep-stuck)
+  ci           Internal CI planning and metadata (compute disabled)
   jobs         Cross-account job-run diagnosis and guarded cancellation (active|inspect|cancel)
   deployments  Cross-account deployment diagnosis and guarded retry/cancellation (active|inspect|cancel|retry)
   deploy        Provider-neutral node adoption + fleet topology tools (deploy claim|fleet-bundle|prepare-node|join-node|join-fleet|rollback-node|add-node)
@@ -168,6 +171,10 @@ func run(args []string) int {
 		// /etc/faas/secrets/vmmd/{node.key (0400), node.pub (0444)}
 		// and prints the key_id at init time.
 		return cmdNodeKey(args[1:])
+	case dispatchWorkloadIdentity:
+		// ADR-1141 — cluster workload-identity key, key id and JWKS,
+		// written to a local directory Ansible distributes.
+		return cmdWorkloadIdentity(args[1:])
 	case dispatchBackup:
 		// Operator rclone config + log-archive credentials. cmdBackup
 		// fans to init / unseal-rclone / unseal-archive-creds. Local
@@ -251,6 +258,8 @@ func run(args []string) int {
 		return cmdGithubDispatch(args[1:])
 	case "status":
 		return cmdStatusDispatch(args[1:])
+	case "ci":
+		return cmdCIDispatch(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "gregalectl: unknown command %q\nRun 'gregalectl help' for usage.\n", args[0])
 		return 1

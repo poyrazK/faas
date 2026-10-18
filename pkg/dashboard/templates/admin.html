@@ -31,6 +31,32 @@
 
   <main>
     <h1>{{.Title}}</h1>
+    <section aria-labelledby="repair-health-title">
+      <h2 id="repair-health-title">Data repair health</h2>
+      {{if .Data.RepairHealthError}}
+        <aside class="banner" role="status">{{.Data.RepairHealthError}}</aside>
+      {{else if .Data.RepairHealth}}
+        {{with .Data.RepairHealth}}
+          <p class="muted">Observed {{.ObservedAt}}. <a href="/dashboard/admin">Refresh</a> · <a href="/v1/admin/ops/data-repairs">JSON view</a> · <a href="https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDataRepairStuck.md">Recovery runbook</a></p>
+          <p><strong>{{.HeldSlots}} held slots</strong> · {{.HeldMemoryMB}} MiB reserved · {{.HeldVCPUs}} vCPUs reserved · {{.UnavailableTasks}} tasks on unavailable nodes.</p>
+          <table>
+            <thead><tr><th>Phase</th><th>Active</th><th>Oldest phase age (seconds)</th><th>Warning age (seconds)</th></tr></thead>
+            <tbody>{{range .Phases}}<tr><td>{{.Phase}}</td><td>{{.Count}}</td><td>{{.OldestAgeSeconds}}</td><td>{{.WarnAfterSeconds}}</td></tr>{{end}}</tbody>
+          </table>
+          {{range .Items}}
+            <article>
+              <h3>{{.Phase}}{{if .NeedsAttention}} — Needs attention{{end}}</h3>
+              <p>Operation / plan: <code>{{.OperationID}}</code>{{if .TaskID}} · Task: <code>{{.TaskID}}</code>{{end}}</p>
+              <p>Account: <code>{{.AccountID}}</code> · App: <code>{{.AppID}}</code>{{if .NodeID}} · Original node: <code>{{.NodeID}}</code> ({{.NodeStatus}}){{end}}</p>
+              <p>Phase age: {{.AgeSeconds}} seconds · Capacity held: {{if .CapacityHeld}}{{.HeldMemoryMB}} MiB / {{.HeldVCPUs}} vCPU{{else}}no{{end}}{{if .CancelRequested}} · Cancellation requested{{end}}{{if .FailureCode}} · Reason: <code>{{.FailureCode}}</code>{{end}}</p>
+              <p>{{.RecoveryGuidance}}</p>
+            </article>
+          {{else}}<p>No active repairs on this page.</p>{{end}}
+          {{if .NextCursor}}<p><a href="/dashboard/admin?cursor={{urlquery .NextCursor}}&amp;limit={{.Limit}}">Next repairs</a></p>{{end}}
+          <p class="muted">Counts cover all active repairs. Details are paginated. This view does not apply repairs, release reservations, or remove journals.</p>
+        {{end}}
+      {{end}}
+    </section>
     {{if .Data.TLSCutoverPresent}}
       {{if eq .Data.TLSCutover.State "rolled_back"}}
         <aside class="banner ok" role="status">

@@ -273,6 +273,10 @@ func TestCronAddHumanOutputNamesTheID(t *testing.T) {
 	if !strings.Contains(stdout.String(), "id: "+jsonMutationCronID) || !strings.Contains(stdout.String(), "gregale crons run "+jsonMutationCronID) {
 		t.Fatalf("cron add output does not name the new id:\n%s", stdout.String())
 	}
+	// H10-14: HTTP crons fire POST; a GET-only route 404ed on every run.
+	if !strings.Contains(stdout.String(), "Cron scheduled: 0 * * * * POST /tick") {
+		t.Fatalf("cron add output does not name the POST method:\n%s", stdout.String())
+	}
 }
 
 func TestJSONMutations_InitReceipt(t *testing.T) {

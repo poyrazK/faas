@@ -10,6 +10,7 @@ in [Blocker: licensing](#blocker-licensing).
 | Go | `github.com/poyrazK/faas/sdk/go` | `faas` | needs a `sdk/go/vX.Y.Z` tag |
 | Node | `@gregale/sdk-node` | `@gregale/sdk-node` | npm scope `@gregale` unregistered |
 | Data API | `@gregale/data` | `@gregale/data` | source package in `sdk/data`; not published |
+| Application Auth | `@gregale/auth` | `@gregale/auth` | source package in `sdk/auth`; not published |
 | Python | `gregale-sdk` | `faas_sdk` | PyPI project unregistered |
 
 ## What was broken

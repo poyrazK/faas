@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Optional loopback callback that must succeed after snapshot restore before the instance becomes ready.
+ * Optional loopback callback that must succeed after snapshot restore, or after a frozen instance resumes, before the instance becomes ready.
  */
 export type AfterRestoreHook = {
   /**

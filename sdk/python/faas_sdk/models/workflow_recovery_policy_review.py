@@ -13,6 +13,10 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.workflow_recovery_policy import WorkflowRecoveryPolicy
     from ..models.workflow_recovery_policy_decision import WorkflowRecoveryPolicyDecision
+    from ..models.workflow_recovery_policy_review_evidence_repairs import WorkflowRecoveryPolicyReviewEvidenceRepairs
+    from ..models.workflow_recovery_policy_review_parent_evidence_repairs import (
+        WorkflowRecoveryPolicyReviewParentEvidenceRepairs,
+    )
     from ..models.workflow_recovery_response_plan import WorkflowRecoveryResponsePlan
     from ..models.workflow_recovery_review_automatic_execution import WorkflowRecoveryReviewAutomaticExecution
     from ..models.workflow_recovery_review_completion_notification import WorkflowRecoveryReviewCompletionNotification
@@ -35,11 +39,15 @@ class WorkflowRecoveryPolicyReview:
     job_id: UUID
     policy_version: int
     policy: WorkflowRecoveryPolicy
-    """Explicit app recovery policy. Preview prepares plans only. Opt-in automatic_retry requires saved_failure
-    only and explicit failure statuses and execution limits. Resume count caps the absolute generation; preparation
-    and execution budgets are separate. Cancellation remains manual."""
+    """Explicit app recovery policy. Preview prepares parent-job plans and worker-discovered initial-failure
+    reviews. initial_failure requires explicit failure statuses. Opt-in automatic_retry requires saved_failure only;
+    automatic_initial requires initial_failure only. Both require explicit workflow and failure-status filters and
+    execution limits. Resume count caps the absolute generation; preparation and execution budgets are separate.
+    Cancellation remains manual."""
     observed_at: datetime.datetime
     decisions: list[WorkflowRecoveryPolicyDecision]
+    parent_evidence_repairs: WorkflowRecoveryPolicyReviewParentEvidenceRepairs | Unset = UNSET
+    evidence_repairs: WorkflowRecoveryPolicyReviewEvidenceRepairs | Unset = UNSET
     automatic_execution: WorkflowRecoveryReviewAutomaticExecution | Unset = UNSET
     """Automatic retry execution records for the frozen review plan. Manual application is recorded through the
     existing keyed child receipts and is not charged to automatic execution budgets."""
@@ -75,6 +83,14 @@ class WorkflowRecoveryPolicyReview:
             decisions_item = decisions_item_data.to_dict()
             decisions.append(decisions_item)
 
+        parent_evidence_repairs: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.parent_evidence_repairs, Unset):
+            parent_evidence_repairs = self.parent_evidence_repairs.to_dict()
+
+        evidence_repairs: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.evidence_repairs, Unset):
+            evidence_repairs = self.evidence_repairs.to_dict()
+
         automatic_execution: dict[str, Any] | Unset = UNSET
         if not isinstance(self.automatic_execution, Unset):
             automatic_execution = self.automatic_execution.to_dict()
@@ -108,6 +124,10 @@ class WorkflowRecoveryPolicyReview:
                 "decisions": decisions,
             }
         )
+        if parent_evidence_repairs is not UNSET:
+            field_dict["parent_evidence_repairs"] = parent_evidence_repairs
+        if evidence_repairs is not UNSET:
+            field_dict["evidence_repairs"] = evidence_repairs
         if automatic_execution is not UNSET:
             field_dict["automatic_execution"] = automatic_execution
         if plan is not UNSET:
@@ -125,6 +145,12 @@ class WorkflowRecoveryPolicyReview:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.workflow_recovery_policy import WorkflowRecoveryPolicy
         from ..models.workflow_recovery_policy_decision import WorkflowRecoveryPolicyDecision
+        from ..models.workflow_recovery_policy_review_evidence_repairs import (
+            WorkflowRecoveryPolicyReviewEvidenceRepairs,
+        )
+        from ..models.workflow_recovery_policy_review_parent_evidence_repairs import (
+            WorkflowRecoveryPolicyReviewParentEvidenceRepairs,
+        )
         from ..models.workflow_recovery_response_plan import WorkflowRecoveryResponsePlan
         from ..models.workflow_recovery_review_automatic_execution import WorkflowRecoveryReviewAutomaticExecution
         from ..models.workflow_recovery_review_completion_notification import (
@@ -152,6 +178,22 @@ class WorkflowRecoveryPolicyReview:
             decisions_item = WorkflowRecoveryPolicyDecision.from_dict(decisions_item_data)
 
             decisions.append(decisions_item)
+
+        _parent_evidence_repairs = d.pop("parent_evidence_repairs", UNSET)
+        parent_evidence_repairs: WorkflowRecoveryPolicyReviewParentEvidenceRepairs | Unset
+        if isinstance(_parent_evidence_repairs, Unset):
+            parent_evidence_repairs = UNSET
+        else:
+            parent_evidence_repairs = WorkflowRecoveryPolicyReviewParentEvidenceRepairs.from_dict(
+                _parent_evidence_repairs
+            )
+
+        _evidence_repairs = d.pop("evidence_repairs", UNSET)
+        evidence_repairs: WorkflowRecoveryPolicyReviewEvidenceRepairs | Unset
+        if isinstance(_evidence_repairs, Unset):
+            evidence_repairs = UNSET
+        else:
+            evidence_repairs = WorkflowRecoveryPolicyReviewEvidenceRepairs.from_dict(_evidence_repairs)
 
         _automatic_execution = d.pop("automatic_execution", UNSET)
         automatic_execution: WorkflowRecoveryReviewAutomaticExecution | Unset
@@ -196,6 +238,8 @@ class WorkflowRecoveryPolicyReview:
             policy=policy,
             observed_at=observed_at,
             decisions=decisions,
+            parent_evidence_repairs=parent_evidence_repairs,
+            evidence_repairs=evidence_repairs,
             automatic_execution=automatic_execution,
             plan=plan,
             review_decision=review_decision,

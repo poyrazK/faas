@@ -14,7 +14,7 @@ func SelectAppSecretsForDelivery(rows []AppSecret, requested map[string]string, 
 		migration := false
 		if row.ManagedPostgresBindingID != "" {
 			switch row.ManagedPostgresAccess {
-			case "read_write", "read_only", "data_api":
+			case "read_write", "read_only", "data_api", "auth":
 			case "migration":
 				migration = true
 			default:

@@ -155,8 +155,12 @@ type ArchiveLogsHandler struct {
 	// can swap it without rebuilding the client.
 	Bucket string
 	Store  state.Store
-	Log    *slog.Logger
-	Ops    *wire.OpsMetrics
+	// Scope proves an instance's archive belongs to the requested app.
+	// Archive objects are keyed by instance alone, so a nil Scope refuses
+	// every read.
+	Scope state.LogArchiveScopeStore
+	Log   *slog.Logger
+	Ops   *wire.OpsMetrics
 
 	// Backstop is the SSE stream idle timeout. 0 = use the
 	// production default (10 minutes, mirroring
@@ -341,6 +345,19 @@ func (h *ArchiveLogsHandler) withinRetention(plan api.Plan, day string) bool {
 // exceeds the stdlib heap budget; the wire shape stays the
 // same.
 func (h *ArchiveLogsHandler) serveArchiveWithAccount(ctx_ context.Context, w http.ResponseWriter, flusher http.Flusher, appID, accountID, instance, day string) {
+	switch owned, err := h.instanceInScope(ctx_, accountID, appID, instance, day); {
+	case err != nil:
+		if h.Log != nil {
+			h.Log.Warn("logarchive.readback.scope_error", "app", appID, "err", err)
+		}
+		renderArchiveTerminal(w, flusher, archiveReasonDegraded)
+		return
+	case !owned:
+		// Same terminal as an absent object, so the route cannot be used
+		// to learn which instance IDs exist.
+		renderArchiveTerminal(w, flusher, archiveReasonMissing)
+		return
+	}
 	key := archiveObjectKey(instance, day)
 	identity := resolveRuntimeLogIdentity(ctx_, h.Store, scheddgrpc.LogFrame{InstanceID: instance}, accountID, appID, "", make(map[string]api.PlatformIdentity))
 	backstop := h.Backstop
@@ -430,6 +447,20 @@ func (h *ArchiveLogsHandler) serveArchiveWithAccount(ctx_ context.Context, w htt
 		}
 	}
 	renderArchiveTerminal(w, flusher, archiveReasonComplete)
+}
+
+// instanceInScope reports whether the instance's archived logs for day belong
+// to the app. The billing window spans the day before and after so lines
+// spooled near midnight still match.
+func (h *ArchiveLogsHandler) instanceInScope(ctx context.Context, accountID, appID, instance, day string) (bool, error) {
+	if h.Scope == nil {
+		return false, nil
+	}
+	start, err := time.Parse("2006-01-02", day)
+	if err != nil {
+		return false, fmt.Errorf("parse archive date %q: %w", day, err)
+	}
+	return h.Scope.InstanceLogsOwnedByApp(ctx, accountID, appID, instance, start.AddDate(0, 0, -1), start.AddDate(0, 0, 2))
 }
 
 // archiveObjectKey mirrors pkg/logarchive.Shipper.bucketKey's

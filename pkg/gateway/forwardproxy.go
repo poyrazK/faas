@@ -76,7 +76,7 @@ func isSyntheticInvocation(ctx context.Context) bool {
 func guestReceivesFaasHeader(ctx context.Context, name string) bool {
 	return isTrustedServiceCallerAssertion(ctx, name) ||
 		strings.EqualFold(name, api.InvocationIDHeader) ||
-		(isSyntheticInvocation(ctx) && (strings.EqualFold(name, api.InvocationSourceHeader) || api.IsWorkflowStepHeader(name))) ||
+		(isSyntheticInvocation(ctx) && (strings.EqualFold(name, api.InvocationSourceHeader) || api.IsInvocationAttemptHeader(name) || api.IsWorkflowStepHeader(name))) ||
 		api.IsGuestIdentityHeader(name) ||
 		api.IsOutboundWebhookHeader(name) ||
 		strings.EqualFold(name, wire.ClientIPHeader)
@@ -137,19 +137,17 @@ var hopByHopHeaders = []string{
 	"Proxy-Authenticate",
 	"Proxy-Authorization",
 	"Te",
+	"Trailer",
 	"Trailers",
 	"Transfer-Encoding",
 	"Upgrade",
 }
 
-// stripHopByHop drops the headers above from h in place. We mutate a
-// shallow copy so the inbound request (already observed by middleware
-// that reads headers) is not surprised by a missing field.
+// stripHopByHop removes fixed hop-by-hop headers and Connection options
+// from a clone, leaving the inbound request's headers intact.
 func stripHopByHop(h http.Header) http.Header {
 	out := h.Clone()
-	for _, k := range hopByHopHeaders {
-		out.Del(k)
-	}
+	stripHopByHopInPlace(out)
 	return out
 }
 
@@ -310,7 +308,7 @@ func fwdOnceWithEvents(w http.ResponseWriter, r *http.Request, nodes NodeClientL
 
 	cli, closer, ok := nodes.ClientFor(r.Context(), t.NodeID)
 	if !ok {
-		markStaleTarget(r.Context())
+		markUndeliveredTarget(r.Context())
 		writeForwarderProblem(w, http.StatusServiceUnavailable)
 		return
 	}
@@ -395,7 +393,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		}
 		responseStatus := http.StatusBadGateway
 		if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
-			markStaleTarget(r.Context())
+			markUndeliveredTargetErr(r.Context(), err)
 			responseStatus = http.StatusServiceUnavailable
 		}
 		log.Error("gateway: forwarder stream open failed",
@@ -467,7 +465,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			return
 		}
 		if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
-			markStaleTarget(r.Context())
+			markStaleTargetErr(r.Context(), err)
 		}
 		log.Error("gateway: forwarder stream init send failed",
 			"node", t.NodeID, "err", err.Error())
@@ -563,14 +561,14 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				// transport error, matching the public edge's
 				// mid-body failure handling (internal_proxy.go).
 				if st, ok := status.FromError(err); ok && (st.Code() == codes.Unavailable || st.Code() == codes.NotFound) {
-					markStaleTarget(r.Context())
+					markStaleTargetErr(r.Context(), err)
 				}
 				log.Warn("gateway: forwarder stream failed after response commit; aborting",
 					"node", t.NodeID, "err", err.Error())
 				panic(http.ErrAbortHandler)
 			}
 			if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
-				markStaleTarget(r.Context())
+				markStaleTargetErr(r.Context(), err)
 				log.Warn("gateway: forwarder stream Unavailable; surfacing 503",
 					"node", t.NodeID)
 				writeForwarderProblem(w, http.StatusServiceUnavailable)
@@ -579,7 +577,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
 				// The routed instance has no VM on its node. Say so: a row the
 				// scheduler still calls RUNNING otherwise answers 503 silently.
-				markStaleTarget(r.Context())
+				// vmmd answers NotFound before dialing the guest bridge, so no
+				// guest saw this request (ADR-1133).
+				markUndeliveredTarget(r.Context())
 				log.Warn("gateway: forwarder target not found on node; surfacing 503",
 					"node", t.NodeID, "instance", t.InstanceID)
 				writeForwarderProblem(w, http.StatusServiceUnavailable)
@@ -593,8 +593,17 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		if init := frame.GetInit(); init != nil && !wroteHeader {
 			recordForwardedFirstByte(r.Context())
 			stampDeploymentSmokeResponse(r.Context(), w.Header())
+			// Connection can nominate headers appearing anywhere in the
+			// frame, so filter the complete block before forwarding fields.
+			responseHeaders := make(http.Header, len(init.GetHeaders()))
 			for _, h := range init.GetHeaders() {
-				forwardedResponseHeader(r.Context(), w.Header(), h.GetName(), h.GetValue())
+				responseHeaders.Add(h.GetName(), h.GetValue())
+			}
+			stripHopByHopInPlace(responseHeaders)
+			for name, values := range responseHeaders {
+				for _, value := range values {
+					forwardedResponseHeader(r.Context(), w.Header(), name, value)
+				}
 			}
 			for _, trailer := range init.GetTrailers() {
 				if name := strings.TrimSpace(trailer.GetName()); name != "" {
@@ -614,6 +623,12 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// 3/30-second request budget.
 			if init.GetStatus() >= http.StatusOK && init.GetStatus() < http.StatusBadRequest {
 				detachBudget()
+				if isEventStream(w.Header()) {
+					// An EventSource reconnects with Last-Event-ID, so a
+					// gateway restart ends it cleanly below rather than
+					// holding the drain open.
+					drain.EndOnShutdown(ctx, cancel)
+				}
 			}
 			if grpcDuplex {
 				flushSafe(w)
@@ -920,7 +935,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			}
 			if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
 				wsOutcome = WSOutcomeUpstreamUnavailable
-				markStaleTarget(r.Context())
+				markStaleTargetErr(r.Context(), err)
 				log.Warn("gateway: raw forwarder stream Unavailable; surfacing 503",
 					"node", t.NodeID)
 				writeForwarderProblem(w, http.StatusServiceUnavailable)
@@ -970,6 +985,11 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				// request budget; the raw session remains bounded by activity,
 				// the 24-hour ceiling, and client cancellation.
 				detachBudget()
+			}
+			if upgraded {
+				// WebSocket clients reconnect; a restart closes the session
+				// now instead of holding the drain for its whole grace.
+				drain.EndOnShutdown(ctx, cancel)
 			}
 			touch()
 			// Mirror fwdStreamOnceWithEvents: emit
@@ -1259,7 +1279,7 @@ func ForwardingRawReverseProxyWithEventsAndDrain(nodes NodeClientLookup, log *sl
 				done = tracker.Begin("upgrade")
 			}
 			defer done()
-			ctx := contextWithProxyStart(r.Context(), time.Now())
+			ctx := drain.WithShutdownNotice(contextWithProxyStart(r.Context(), time.Now()), tracker)
 			cli, closer, ok := nodes.ClientFor(r.Context(), t.NodeID)
 			if !ok {
 				markStaleTarget(r.Context())

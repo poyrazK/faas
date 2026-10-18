@@ -292,6 +292,9 @@ func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, 
 		"x-gregale-event-subscription-id": row.ID,
 	}
 	if acceptanceID > 0 {
+		if row.AcknowledgmentLeaseSeconds > 0 {
+			eventHeaders["x-gregale-event-acknowledgment-lease-seconds"] = strconv.Itoa(row.AcknowledgmentLeaseSeconds)
+		}
 		eventHeaders["x-gregale-event-acceptance-id"] = strconv.FormatInt(acceptanceID, 10)
 	}
 	headers, err := json.Marshal(pkgtrace.MergeHeaderMap(
@@ -452,6 +455,11 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 	}
 	l.runEventHistoryPrune(ctx, now)
 	if now.Sub(l.eventFanoutLastPrune) >= 10*time.Second {
+		if commands, ok := l.engine.store.(state.EventSubscriptionCapacityCommandRetentionStore); ok {
+			if _, err := commands.PruneEventSubscriptionCapacityCommands(ctx, now); err != nil && l.log != nil {
+				l.log.Warn("sched: prune capacity command receipts failed", "err", err)
+			}
+		}
 		if retention, ok := l.engine.store.(state.PublishedEventRetentionStore); ok {
 			if _, err := retention.PruneDeliveredPublishedEvents(ctx, now.Add(-state.PublishedEventIdentityRetention), 5000); err != nil {
 				if l.log != nil {

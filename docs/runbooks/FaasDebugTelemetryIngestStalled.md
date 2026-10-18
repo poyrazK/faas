@@ -5,15 +5,17 @@ Metrics: `gatewayd_public_otel_spans_ingested_total{outcome="inserted"}`
 (counter, single label `outcome` ∈ {inserted, rate_limited,
 db_error, shape_invalid}).
 ADR: ADR-127 PR-D (production debugger OTel spans writer).
-Severity: warn on `FaasDebugTelemetryIngestStalled` (no `inserted`
-outcome for 15m with 15m debounce). Warn, not page — the
-customer's app keeps running; only the debugger's OTel summary
-view is going dark.
+Severity: warn on `FaasDebugTelemetryIngestStalled` (`db_error`
+outcomes and no `inserted` outcome over 10m, held for 15m). Warn, not
+page — the customer's app keeps running; only the debugger's OTel
+summary view is going dark. An idle endpoint (no exports at all) and
+customer-side `rate_limited` / `shape_invalid` outcomes do not fire it.
 
 ## Symptom
 
-`gatewayd-public`'s `POST /v1/otel/v1/traces` endpoint has not
-recorded a single `inserted` outcome for ≥15 minutes. The OTLP
+`gatewayd-public`'s `POST /v1/otel/v1/traces` endpoint is receiving
+spans, every write fails with `db_error`, and no `inserted` outcome
+has been recorded for ≥15 minutes. The OTLP
 writer (ADR-127 PR-D) ships customer OTel spans through a
 30s-coalesce-then-flush loop into
 `request_telemetry.spans_summary jsonb`. A stall means the

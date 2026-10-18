@@ -1,8 +1,11 @@
 package managedpostgres
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -156,5 +159,62 @@ func TestRetryDelayIsBounded(t *testing.T) {
 	}
 	if got := retryDelay(ErrUnsupported, 1); got != time.Hour {
 		t.Fatalf("unsupported retry = %s", got)
+	}
+}
+
+// TestReconcilerLogsWhyADatabaseIsDeferred pins the production-us live test
+// (2026-10-14): a restore stuck in provisioning retried silently and apid
+// logged nothing. A deferred or provider-contended database logs its sentinel
+// and any adapter-authored reason, never the provider's raw error text.
+func TestReconcilerLogsWhyADatabaseIsDeferred(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		providerErr error
+		want        error
+		message     string
+		reason      string
+		count       func(ReconcileSummary) int
+	}{
+		{name: "raw error", providerErr: errors.New("provider token must never persist"), want: ErrUnavailable,
+			message: "managed postgres reconciliation deferred", count: func(s ReconcileSummary) int { return s.Deferred }},
+		{name: "deferred reason", providerErr: Reasonf(errors.New("provider token must never persist"), "historical point: read LSN"), want: ErrUnavailable,
+			message: "managed postgres reconciliation deferred", reason: "historical point: read LSN", count: func(s ReconcileSummary) int { return s.Deferred }},
+		{name: "lineage conflict", providerErr: Reasonf(ErrConflict, "restore branch parent LSN 0/2 does not match the requested point's LSN 0/1"), want: ErrConflict,
+			message: "managed postgres reconciliation contended", reason: "restore branch parent LSN 0/2 does not match the requested point's LSN 0/1", count: func(s ReconcileSummary) int { return s.Contended }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady, provisionErr: tc.providerErr}
+			store := NewMemoryStore()
+			now := time.Date(2026, 9, 5, 22, 30, 0, 0, time.UTC)
+			service, err := NewService(testRegistry(t, provider, nil), store, ServiceOptions{
+				Now: func() time.Time { return now }, NewID: uuid.NewString, NewLeaseToken: uuid.NewString,
+				LeaseDuration: 2 * time.Minute, ProviderTimeout: time.Second, ProvisioningEnabled: func() bool { return true },
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = service.Create(context.Background(), CreateRequest{AccountID: "account-a", Name: "private", Spec: testSpec()})
+			if !errors.Is(err, tc.want) || err.Error() != tc.want.Error() {
+				t.Fatalf("Create error = %q, want the bare %q", err, tc.want)
+			}
+			var logs bytes.Buffer
+			reconciler, err := NewReconciler(service, ReconcilerOptions{
+				Interval: time.Second, Now: func() time.Time { return now }, IncludeProvisioning: func() bool { return true },
+				Logger: slog.New(slog.NewJSONHandler(&logs, nil)),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			now = now.Add(time.Minute)
+			if summary, err := reconciler.Sweep(context.Background()); err != nil || tc.count(summary) != 1 {
+				t.Fatalf("sweep: %+v %v", summary, err)
+			}
+			if !strings.Contains(logs.String(), tc.message) || !strings.Contains(logs.String(), tc.want.Error()) || !strings.Contains(logs.String(), tc.reason) {
+				t.Fatalf("reason not logged: %s", logs.String())
+			}
+			if strings.Contains(logs.String(), "provider token") {
+				t.Fatalf("raw provider error logged: %s", logs.String())
+			}
+		})
 	}
 }

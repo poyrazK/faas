@@ -13,7 +13,10 @@ T = TypeVar("T", bound="AfterRestoreHook")
 
 @_attrs_define
 class AfterRestoreHook:
-    """Optional loopback callback that must succeed after snapshot restore before the instance becomes ready."""
+    """Optional loopback callback that must succeed after snapshot restore, or after a frozen instance resumes, before the
+    instance becomes ready.
+
+    """
 
     path: str | Unset = UNSET
     """Absolute path on the app's loopback HTTP listener. Called with POST after restore, before readiness."""

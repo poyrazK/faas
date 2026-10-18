@@ -19,3 +19,18 @@ void [data, bad]
 cursorPage(db.from('notes').select().single(), { order, size: 2 })
 // @ts-expect-error Pagination must not mutate data.
 cursorPage(db.from('notes').delete().select(), { order, size: 2 })
+
+import { createCursorPager } from '../src/index.js'
+const pager = await createCursorPager({ key: new Uint8Array(32) })
+const scope = { identity: 'trusted-alice', schemaFingerprint: 'a'.repeat(64) }
+const opaque = await pager.page(db.from('notes').select('id,body,comments(id)'), { order, size: 20, scope })
+const opaqueData: typeof opaque.result.data = [{ id: 1, body: 'hi', comments: [{ id: 2 }] }]
+// @ts-expect-error Cursor ordering columns must be included in the projection.
+await pager.page(db.from('notes').select('id'), { order, size: 20, scope })
+// @ts-expect-error Cursor ordering must refer to schema columns.
+await pager.page(db.from('notes').select(), { order: [{ column: 'missing', unique: true }], size: 20, scope })
+// @ts-expect-error Opaque cursors are strings, not raw value arrays.
+await pager.page(db.from('notes').select('id,body'), { order, size: 20, scope, after })
+// @ts-expect-error Opaque pagination must not mutate data.
+await pager.page(db.from('notes').delete().select('id,body'), { order, size: 20, scope })
+void opaqueData

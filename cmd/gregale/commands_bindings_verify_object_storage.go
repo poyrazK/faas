@@ -60,10 +60,6 @@ func runObjectStorageBindingProbeWithWrite(ctx context.Context, client bindingIn
 	return exitCode
 }
 
-func executeObjectStorageBindingProbe(ctx context.Context, client serviceBindingProbeClient, slug, prefix string, pollInterval, waitTimeout time.Duration) (api.ObjectStorageBindingProbeReport, api.AppTaskResponse, string, int, error) {
-	return executeObjectStorageBindingProbeMode(ctx, client, slug, prefix, "", pollInterval, waitTimeout)
-}
-
 func executeObjectStorageBindingProbeMode(ctx context.Context, client serviceBindingProbeClient, slug, prefix, mode string, pollInterval, waitTimeout time.Duration) (api.ObjectStorageBindingProbeReport, api.AppTaskResponse, string, int, error) {
 	report := newObjectStorageBindingProbeReport(slug, prefix)
 	command := []string{api.AppTaskObjectStorageBindingProbeCommand, prefix}
@@ -91,7 +87,7 @@ func executeObjectStorageBindingProbeMode(ctx context.Context, client serviceBin
 	for !task.Status.Terminal() {
 		select {
 		case <-waitContext.Done():
-			if errors.Is(interruptContext.Err(), context.Canceled) {
+			if bindingProbeAutoCancel(ctx) && errors.Is(interruptContext.Err(), context.Canceled) {
 				cancelContext, cancelRequest := context.WithTimeout(context.WithoutCancel(ctx), bindingProbeCancelTimeout)
 				defer cancelRequest()
 				cancelled, cancelErr := client.CancelAppTask(cancelContext, slug, task.ID)

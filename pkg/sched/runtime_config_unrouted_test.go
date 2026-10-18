@@ -72,3 +72,43 @@ func TestRefreshRuntimeConfigRetiresUnroutedDeploymentInsteadOfReplacingIt(t *te
 		}
 	}
 }
+
+// H10-39: after scale-out to three instances, lowering max_concurrency to 1
+// left three serving instances against a ceiling of two (max plus the
+// rollout grant). Every replacement boot was refused and the restart retried
+// forever. Surplus predecessors are now retired first.
+func TestRefreshRuntimeConfigRetiresSurplusAboveLoweredConcurrency(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, serving := seedApp(t, store, api.PlanPro, 256, 3)
+	vmm := &fakeVMM{}
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	var old []string
+	for range 3 {
+		res, err := engine.admitAndDispatchWithOptions(t.Context(), app.ID, serving.ID, "normal", TriggerAppWake, true, true)
+		if err != nil || res.InstanceID == "" {
+			t.Fatalf("scale-out admission: %+v, %v", res, err)
+		}
+		old = append(old, res.InstanceID)
+	}
+	lowered := 1
+	if _, err := store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{MaxConcurrency: &lowered}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.InvalidateAppSnapshots(t.Context(), store, app.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := engine.RefreshRuntimeConfig(t.Context(), app.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("RefreshRuntimeConfig over the lowered cap: %v", err)
+	}
+	if out.Instance == nil || out.Instance.DeploymentID != serving.ID {
+		t.Fatalf("refreshed instance = %+v; want a fresh serving instance", out.Instance)
+	}
+	for _, id := range old {
+		instance, err := store.InstanceByID(t.Context(), id)
+		if err != nil || runtimeConfigResident(instance) {
+			t.Fatalf("predecessor %s = %+v, %v; want retired", id, instance, err)
+		}
+	}
+}

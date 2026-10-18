@@ -116,19 +116,21 @@ var AllowedAppWebhookEvents = []string{
 	"routes.requirements.recovered",
 	"routes.health.blocked", "routes.health.resumed", "routes.health.aborted",
 	"routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered",
-	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached",
+	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "issue.frequency_threshold_reached", "issue.tracker_sync.attention", "issue.tracker_sync.recovered",
 	"workflow.finished", "automation.paused",
 	"event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "event_recovery.execution_finished",
 	"event_recovery.execution_attention",
 	"automation.recovery_review_ready", "automation.recovery_review_finished",
-	"automation.recovery_policy_paused", "automation.recovery_queue_blocked",
+	"automation.recovery_polling_status", "automation.recovery_policy_paused", "automation.recovery_queue_blocked",
 	"automation.recovery_health_alert", "automation.recovery_health_recovered",
 }
 
 // Account receivers intentionally cannot use the app-level all-events
-// wildcard. Their filter is a non-empty subset of these release events.
+// wildcard. Their filter is a non-empty subset of these account release and
+// environment events.
 var AllowedAccountReleaseWebhookEvents = []string{
 	"deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted",
+	"environment.gitops.changed",
 }
 
 // DeploymentLiveWebhookPayload is the payload stored for a deployment.live
@@ -244,6 +246,10 @@ type APIConsumerUsageStatementFinalizedWebhookPayload struct {
 	Buckets          []APIConsumerUsageStatementBucketResponse `json:"buckets"`
 	AsOf             string                                    `json:"as_of"`
 	FinalizedAt      time.Time                                 `json:"finalized_at"`
+	// Prepaid credit drawn at finalization and what is left to bill
+	// (ADR-1306).
+	CreditAppliedMillicents int64 `json:"credit_applied_millicents"`
+	AmountDueMillicents     int64 `json:"amount_due_millicents"`
 }
 
 // PlatformTenantStatementFinalizedWebhookPayload is the cross-app billing
@@ -411,7 +417,7 @@ type UpdateAppWebhookRequest struct {
 }
 
 // Account routes use the same write fields but require a non-empty subset of
-// release events. Keeping separate DTOs makes that contract explicit in the
+// account events. Keeping separate DTOs makes that contract explicit in the
 // OpenAPI and typed clients.
 type CreateAccountReleaseWebhookRequest struct {
 	TargetURL      string   `json:"target_url"`

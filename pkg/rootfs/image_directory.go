@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 // mkdirImageDirectories preserves the requested mode on newly created image
@@ -43,8 +44,11 @@ func mkdirImageDirectories(path string, mode os.FileMode) error {
 	return chmodImageDirectory(path, mode)
 }
 
+// chmodImageDirectory refuses to follow a symlink at path. Image symlink
+// targets are guest-side strings that can name host directories, and imaged
+// holds CAP_FOWNER, so following one would change a host directory's mode.
 func chmodImageDirectory(path string, mode os.FileMode) error {
-	dir, err := os.Open(path) //nolint:forbidigo // Image staging containment is validated before this directory-only metadata operation; no file contents are read.
+	dir, err := os.OpenFile(path, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return err
 	}

@@ -38,6 +38,9 @@ type GCSStorageBackend struct {
 	bucket              string
 	store               gcsArtifactStore
 	snapshotCompression string
+	// sparseExtents writes compressed artifacts handed over as files in the
+	// extent encoding (ADR-1135). Readers accept it either way.
+	sparseExtents bool
 }
 
 type gcsArtifact struct {
@@ -109,6 +112,14 @@ func validateGCSBucket(bucket string) error {
 // Bucket returns the configured bucket name for startup diagnostics.
 func (g *GCSStorageBackend) Bucket() string { return g.bucket }
 
+// WithSparseExtents makes Put write the extent encoding (ADR-1135) for
+// compressed artifacts it receives as regular files. Enable it only once
+// every reader of the bucket accepts that encoding.
+func (g *GCSStorageBackend) WithSparseExtents(enabled bool) *GCSStorageBackend {
+	g.sparseExtents = enabled
+	return g
+}
+
 func (g *GCSStorageBackend) Put(ctx context.Context, key string, r io.Reader) error {
 	if err := validateKey(key); err != nil {
 		return err
@@ -119,7 +130,17 @@ func (g *GCSStorageBackend) Put(ctx context.Context, key string, r io.Reader) er
 
 	metadata := map[string]string{}
 	if (g.snapshotCompression == snapshotCompressionZstd && isSnapshotMemoryKey(key)) || isSnapshotDriveKey(key) || isRootfsFilesystemKey(key) {
-		path, _, uncompressedSize, err := compressRemoteArtifact(ctx, "gcs", "faas-gcs-artifact-*.zst", key, r)
+		encoding := snapshotCompressionZstd
+		var path string
+		var uncompressedSize int64
+		var err error
+		f, size, isFile := extentSource(r)
+		if g.sparseExtents && isFile {
+			encoding, uncompressedSize = encodingZstdExtents, size
+			path, err = compressExtentArtifact(ctx, "gcs", "faas-gcs-artifact-*.zst", key, f, size)
+		} else {
+			path, _, uncompressedSize, err = compressRemoteArtifact(ctx, "gcs", "faas-gcs-artifact-*.zst", key, r)
+		}
 		if err != nil {
 			return err
 		}
@@ -129,7 +150,7 @@ func (g *GCSStorageBackend) Put(ctx context.Context, key string, r io.Reader) er
 			return fmt.Errorf("storage: gcs put %q: open compressed spool: %w", key, err)
 		}
 		defer func() { _ = file.Close() }()
-		metadata[gcsEncodingMetadata] = snapshotCompressionZstd
+		metadata[gcsEncodingMetadata] = encoding
 		metadata[gcsUncompressedSizeMetadata] = strconv.FormatInt(uncompressedSize, 10)
 		r = file
 	}
@@ -167,6 +188,18 @@ func (g *GCSStorageBackend) Get(ctx context.Context, key string) (io.ReadCloser,
 			return nil, fmt.Errorf("storage: gcs get %q: start zstd decoder: %w", key, decodeErr)
 		}
 		return &decodedBlobReadCloser{decoder: decoder, source: artifact.body, expectedSize: expectedSize}, nil
+	case encodingZstdExtents:
+		rawSize := artifact.metadata[gcsUncompressedSizeMetadata]
+		expectedSize, parseErr := strconv.ParseInt(rawSize, 10, 64)
+		if parseErr != nil || expectedSize < 0 {
+			_ = artifact.body.Close()
+			return nil, fmt.Errorf("storage: gcs get %q: invalid extent logical size %q", key, rawSize)
+		}
+		reader, err := newExtentReadCloser(artifact.body, expectedSize)
+		if err != nil {
+			return nil, fmt.Errorf("storage: gcs get %q: %w", key, err)
+		}
+		return reader, nil
 	default:
 		_ = artifact.body.Close()
 		return nil, fmt.Errorf("storage: gcs get %q: unsupported object encoding %q", key, encoding)

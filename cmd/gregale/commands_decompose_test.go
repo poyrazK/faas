@@ -1573,3 +1573,36 @@ func TestCmdDeployTarball_DoctorStrict_JSON(t *testing.T) {
 		t.Errorf("envelope must carry the stateless_only_violation finding; got %+v", env.Doctor)
 	}
 }
+
+// H10-2: a compose project redeployed from a directory whose name differs
+// from the compose `name:` tried to claim the project's apps for a new
+// project, and the refusal said only "over-quota or unsupported".
+func TestComposeProjectName(t *testing.T) {
+	dir := t.TempDir()
+	if got := composeProjectName(dir); got != "" {
+		t.Fatalf("no compose file: got %q, want empty", got)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte("name: h9p\nservices:\n  web:\n    build: ./web\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := composeProjectName(dir); got != "h9p" {
+		t.Fatalf("composeProjectName = %q, want h9p", got)
+	}
+	other := t.TempDir()
+	if err := os.WriteFile(filepath.Join(other, "docker-compose.yml"), []byte("services:\n  web:\n    image: nginx\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := composeProjectName(other); got != "" {
+		t.Fatalf("unnamed compose: got %q, want empty", got)
+	}
+}
+
+func TestPlanBlockedErrorNamesReasons(t *testing.T) {
+	reason := `workload "h9p-back" conflicts with existing app slug "h9p-back" outside this project member`
+	if got := planBlockedError(api.PlanResponse{CanApplyReasons: []string{reason}}).Error(); got != reason {
+		t.Fatalf("planBlockedError = %q, want the plan's reason", got)
+	}
+	if got := planBlockedError(api.PlanResponse{}).Error(); !strings.Contains(got, "over-quota") {
+		t.Fatalf("no reasons: got %q, want the generic fallback", got)
+	}
+}

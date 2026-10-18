@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -102,6 +103,7 @@ type inspectAPISummary struct {
 
 type inspectDataSummary struct {
 	Available     bool     `json:"available"`
+	NotOffered    string   `json:"not_offered,omitempty"`
 	Upstreams     int      `json:"upstreams"`
 	UpstreamQuota int      `json:"upstream_quota"`
 	Kinds         []string `json:"kinds"`
@@ -148,6 +150,7 @@ type inspectSummaryInputs struct {
 	UpstreamCount        int
 	UpstreamQuota        int
 	UpstreamsErr         error
+	UpstreamsOff         string // why data placement is not offered; "" when it is
 	Alerts               []api.AlertRuleResponse
 	AlertsErr            error
 	Operational          *api.AppOperationalSummary
@@ -209,6 +212,7 @@ func loadInspectSummaryInputs(ctx context.Context, client *Client, app api.AppRe
 	go func() {
 		defer wg.Done()
 		out.Upstreams, out.UpstreamCount, out.UpstreamQuota, out.UpstreamsErr = client.ListAppDataUpstreamsWithQuota(ctx, app.Slug, "")
+		out.UpstreamsOff, out.UpstreamsErr = upstreamsNotOffered(out.UpstreamsErr)
 	}()
 	go func() {
 		defer wg.Done()
@@ -395,8 +399,25 @@ func inspectOpenAPI(raw []byte) inspectAPISummary {
 	return summary
 }
 
+// upstreamsNotOffered separates "data placement is not offered here" from a
+// failed read. On a cluster with the feature off, every inspect headline was
+// "Incomplete information … current health is not established" (H10-7).
+func upstreamsNotOffered(err error) (string, error) {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return "", err
+	}
+	switch apiErr.Problem.Code {
+	case api.CodeDataUpstreamsDisabled:
+		return "not enabled on this cluster", nil
+	case api.CodePlanDataUpstreamsNotAllowed:
+		return "not included in this plan", nil
+	}
+	return "", err
+}
+
 func inspectData(in inspectSummaryInputs) inspectDataSummary {
-	out := inspectDataSummary{Available: in.UpstreamsErr == nil, Upstreams: in.UpstreamCount, UpstreamQuota: in.UpstreamQuota, Kinds: []string{}}
+	out := inspectDataSummary{Available: in.UpstreamsErr == nil && in.UpstreamsOff == "", NotOffered: in.UpstreamsOff, Upstreams: in.UpstreamCount, UpstreamQuota: in.UpstreamQuota, Kinds: []string{}}
 	seen := map[string]bool{}
 	for _, upstream := range in.Upstreams {
 		kind := string(upstream.Kind)
@@ -651,6 +672,8 @@ func renderInspectSignals(w io.Writer, summary inspectSummary) {
 			kinds = strings.Join(summary.Data.Kinds, ", ")
 		}
 		_, _ = fmt.Fprintf(w, "  data:      %d/%d upstreams · %s\n", summary.Data.Upstreams, summary.Data.UpstreamQuota, kinds)
+	} else if summary.Data.NotOffered != "" {
+		_, _ = fmt.Fprintf(w, "  data:      %s\n", summary.Data.NotOffered)
 	} else {
 		_, _ = fmt.Fprintln(w, "  data:      unavailable")
 	}

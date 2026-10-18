@@ -56,7 +56,10 @@ scenarios:
           duration: 8s
           streams:
             - {name: dependency, requests: [dependency-probe], rate: 4, vus: 4}
-            - {name: health, requests: [health], rate: 5, vus: 2}
+            # The schedule pauses every stream at each phase change until in-flight
+            # requests finish (up to the dependency deadline). Six VUs absorb a
+            # pause of about a second at this rate without dropping arrivals.
+            - {name: health, requests: [health], rate: 5, vus: 6}
           thresholds: {error_rate: 1}
           chaos_schedule:
             - {name: baseline, duration: 2s, assertions: [health-stays-responsive, successful-deadline]}

@@ -25,11 +25,80 @@ func NewPostgresResolver(pool *pgxpool.Pool) (*PostgresResolver, error) {
 	return &PostgresResolver{pool: pool}, nil
 }
 
+// Integration reads the integration, its app attachments and bindings, and
+// its current AI price list in one pipelined round trip (ADR-1120).
 func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integration, error) {
 	integrationID, err := uuid.Parse(id)
 	if err != nil {
 		return Integration{}, ErrIntegrationNotFound
 	}
+	batch := &pgx.Batch{}
+	batch.Queue(integrationPolicySQL, integrationID)
+	batch.Queue(integrationAppsSQL, integrationID)
+	batch.Queue(currentAIPricesSQL, integrationID)
+	results := r.pool.SendBatch(ctx, batch)
+	integration, err := scanIntegration(id, results)
+	if closeErr := results.Close(); err == nil && closeErr != nil {
+		return Integration{}, closeErr
+	}
+	return integration, err
+}
+
+const integrationPolicySQL = `
+	SELECT integration.account_id, integration.name, account.plan, integration.origin, integration.token_hash,
+	       integration.rate_per_second, integration.burst, integration.max_in_flight,
+	       integration.request_timeout_ms, integration.max_retries, integration.response_cache_ttl_seconds,
+	       integration.circuit_breaker_failure_threshold, integration.circuit_breaker_open_seconds,
+	       integration.retry_budget_per_minute,
+	       integration.updated_at, integration.enabled, integration.provider_auth_mode,
+	       integration.credential_source, integration.allowed_methods,
+	       integration.allowed_path_prefixes, integration.owner_kind,
+	       COALESCE(integration.daily_request_limit, 0),
+	       COALESCE(integration.ai_provider, ''), COALESCE(integration.ai_daily_token_limit, 0),
+	       COALESCE(integration.ai_daily_cost_limit_millicents, 0), COALESCE(integration.ai_monthly_cost_limit_millicents, 0),
+	       integration.ai_request_log_enabled,
+	       COALESCE(integration.ai_user_daily_token_limit, 0), COALESCE(integration.ai_user_daily_cost_limit_millicents, 0),
+	       integration.ai_request_log_content, integration.ai_content_email, integration.ai_content_payment_card,
+	       integration.ai_content_iban, integration.ai_content_secret, integration.ai_content_blocked_terms
+	  FROM outbound_integrations integration
+	  JOIN accounts account ON account.id = integration.account_id
+	 WHERE integration.id = $1`
+
+// integrationAppsSQL lists the operator attachments and, for a managed
+// integration, the customer bindings of the integration's own account.
+const integrationAppsSQL = `
+	SELECT attachment.app_id::text, NULL::text[], NULL::text[], true, NULL::bigint, NULL::bigint,
+	       NULL::bigint, NULL::bigint, NULL::text[], NULL::bigint
+	  FROM outbound_integration_apps attachment
+	  JOIN outbound_integrations integration ON integration.id = attachment.integration_id
+	  JOIN apps app ON app.id = attachment.app_id
+	 WHERE attachment.integration_id = $1 AND app.account_id = integration.account_id AND app.status <> 'deleted'
+	UNION ALL
+	SELECT binding.app_id::text, binding.allowed_methods, binding.allowed_path_prefixes, false, binding.daily_request_limit,
+	       binding.ai_daily_token_limit, binding.ai_requests_per_minute::bigint, binding.ai_tokens_per_minute,
+	       binding.ai_allowed_models, binding.ai_max_output_tokens::bigint
+	  FROM outbound_app_bindings binding
+	  JOIN outbound_integrations integration ON integration.id = binding.integration_id
+	  JOIN apps app ON app.id = binding.app_id
+	 WHERE binding.integration_id = $1 AND binding.account_id = integration.account_id
+	   AND app.account_id = integration.account_id AND app.status <> 'deleted'
+	   AND integration.provider_auth_mode = 'managed'`
+
+// currentAIPricesSQL loads the newest price list already in effect (ADR-990).
+const currentAIPricesSQL = `
+	SELECT entry.model_prefix, entry.input_millicents_per_mtok, entry.cached_input_millicents_per_mtok,
+	       entry.cache_write_millicents_per_mtok, entry.output_millicents_per_mtok,
+	       entry.input_image_millicents_per_mtok, entry.output_image_millicents_per_mtok, entry.millicents_per_image,
+	       entry.millicents_per_audio_minute, entry.millicents_per_million_characters
+	  FROM outbound_ai_price_entries entry
+	 WHERE entry.price_list_id = (
+	       SELECT list.id FROM outbound_ai_price_lists list
+	        WHERE list.integration_id = $1 AND list.effective_from <= now()
+	        ORDER BY list.effective_from DESC, list.created_at DESC
+	        LIMIT 1)`
+
+// scanIntegration reads the batch's results in the order they were queued.
+func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 	var origin string
 	var accountID uuid.UUID
 	var name string
@@ -51,25 +120,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	var aiRequestLogEnabled, aiRequestLogContent bool
 	var contentPolicy api.OutboundAIContentPolicy
 	var aiUserTokenLimitValue, aiUserCostLimitValue int64
-	err = r.pool.QueryRow(ctx, `
-		SELECT integration.account_id, integration.name, account.plan, integration.origin, integration.token_hash,
-		       integration.rate_per_second, integration.burst, integration.max_in_flight,
-		       integration.request_timeout_ms, integration.max_retries, integration.response_cache_ttl_seconds,
-		       integration.circuit_breaker_failure_threshold, integration.circuit_breaker_open_seconds,
-		       integration.retry_budget_per_minute,
-		       integration.updated_at, integration.enabled, integration.provider_auth_mode,
-		       integration.credential_source, integration.allowed_methods,
-		       integration.allowed_path_prefixes, integration.owner_kind,
-		       COALESCE(integration.daily_request_limit, 0),
-		       COALESCE(integration.ai_provider, ''), COALESCE(integration.ai_daily_token_limit, 0),
-		       COALESCE(integration.ai_daily_cost_limit_millicents, 0), COALESCE(integration.ai_monthly_cost_limit_millicents, 0),
-		       integration.ai_request_log_enabled,
-		       COALESCE(integration.ai_user_daily_token_limit, 0), COALESCE(integration.ai_user_daily_cost_limit_millicents, 0),
-		       integration.ai_request_log_content, integration.ai_content_email, integration.ai_content_payment_card,
-		       integration.ai_content_iban, integration.ai_content_secret, integration.ai_content_blocked_terms
-		  FROM outbound_integrations integration
-		  JOIN accounts account ON account.id = integration.account_id
-		 WHERE integration.id = $1`, integrationID).
+	err := results.QueryRow().
 		Scan(&accountID, &name, &plan, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &maxRetries, &responseCacheTTLSeconds,
 			&circuitBreakerFailureThreshold, &circuitBreakerOpenSeconds, &retryBudgetPerMinute, &policyUpdatedAt, &enabled, &providerAuthMode,
 			&credentialSource, &allowedMethods, &allowedPathPrefixes, &ownerKind, &dailyRequestLimitValue,
@@ -121,21 +172,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		circuitBreakerOpenSeconds = policy.CircuitBreakerOpenSeconds
 		retryBudgetPerMinute = policy.RetryBudgetPerMinute
 	}
-	rows, err := r.pool.Query(ctx, `
-		SELECT attachment.app_id::text, NULL::text[], NULL::text[], true, NULL::bigint, NULL::bigint,
-		       NULL::bigint, NULL::bigint, NULL::text[], NULL::bigint
-		  FROM outbound_integration_apps attachment
-		  JOIN apps app ON app.id = attachment.app_id
-		 WHERE attachment.integration_id = $1 AND app.account_id = $3 AND app.status <> 'deleted'
-		UNION ALL
-		SELECT binding.app_id::text, binding.allowed_methods, binding.allowed_path_prefixes, false, binding.daily_request_limit,
-		       binding.ai_daily_token_limit, binding.ai_requests_per_minute::bigint, binding.ai_tokens_per_minute,
-		       binding.ai_allowed_models, binding.ai_max_output_tokens::bigint
-		  FROM outbound_app_bindings binding
-		  JOIN apps app ON app.id = binding.app_id
-		 WHERE binding.integration_id = $1 AND binding.account_id = $3
-		   AND app.account_id = $3 AND app.status <> 'deleted'
-		   AND $2 = 'managed'`, integrationID, providerAuthMode, accountID)
+	rows, err := results.Query()
 	if err != nil {
 		return Integration{}, err
 	}
@@ -187,11 +224,16 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		return Integration{}, err
 	}
 	rows.Close()
-	var prices []AIPrice
-	if aiProvider != "" {
-		if prices, err = r.currentAIPrices(ctx, integrationID); err != nil {
-			return Integration{}, err
-		}
+	priceRows, err := results.Query()
+	if err != nil {
+		return Integration{}, err
+	}
+	prices, err := scanAIPrices(priceRows)
+	if err != nil {
+		return Integration{}, err
+	}
+	if aiProvider == "" {
+		prices = nil
 	}
 	i := Integration{ID: id, AccountID: accountID.String(), Name: name, Origin: u, TokenHash: hash, AppIDs: apps,
 		OperatorAppIDs: operatorApps, BindingAppIDs: bindingApps, CustomerAppRoutes: customerRoutes,
@@ -209,6 +251,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		AllowedPathPrefixes: allowedPathPrefixes, Enabled: true, AIProvider: aiProvider,
 		BindingDailyAITokenLimits: bindingDailyAITokenLimits, AIPrices: prices,
 		BindingAIGuardrails: bindingAIGuardrails, AIRequestLogEnabled: aiRequestLogEnabled, AIRequestLogContent: aiRequestLogContent,
+		AccountPlan:       api.Plan(plan),
 		AIContentPolicy:   contentPolicy,
 		DailyAITokenLimit: positiveLimit(aiDailyTokenLimitValue), DailyAICostLimit: positiveLimit(aiDailyCostLimitValue),
 		MonthlyAICostLimit: positiveLimit(aiMonthlyCostLimitValue), AIUserDailyTokenLimit: positiveLimit(aiUserTokenLimitValue),
@@ -219,22 +262,8 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	return i, nil
 }
 
-// currentAIPrices loads the newest price list already in effect (ADR-990).
-func (r *PostgresResolver) currentAIPrices(ctx context.Context, integrationID uuid.UUID) ([]AIPrice, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT entry.model_prefix, entry.input_millicents_per_mtok, entry.cached_input_millicents_per_mtok,
-		       entry.cache_write_millicents_per_mtok, entry.output_millicents_per_mtok,
-		       entry.input_image_millicents_per_mtok, entry.output_image_millicents_per_mtok, entry.millicents_per_image,
-		       entry.millicents_per_audio_minute, entry.millicents_per_million_characters
-		  FROM outbound_ai_price_entries entry
-		 WHERE entry.price_list_id = (
-		       SELECT list.id FROM outbound_ai_price_lists list
-		        WHERE list.integration_id = $1 AND list.effective_from <= now()
-		        ORDER BY list.effective_from DESC, list.created_at DESC
-		        LIMIT 1)`, integrationID)
-	if err != nil {
-		return nil, err
-	}
+// scanAIPrices reads the current price list's entries.
+func scanAIPrices(rows pgx.Rows) ([]AIPrice, error) {
 	defer rows.Close()
 	entries := make([]api.OutboundAIPriceEntry, 0)
 	for rows.Next() {

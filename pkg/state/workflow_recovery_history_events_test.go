@@ -257,10 +257,25 @@ func TestWorkflowRecoveryDurableHistoryAtomicFailures(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
+				if kind == "retry_transition" {
+					// The next failed poll must capture an alert. Earlier failures
+					// only retain bounded polling backoff after rolling back work.
+					failure := nextAutomaticPollingFailure(nil, "invalid_polling_data", now)
+					failure.Attempts = api.WorkflowRecoveryPollingAlertAttempts - 1
+					raw, e := json.Marshal(failure)
+					if e != nil {
+						t.Fatal(e)
+					}
+					if _, e = pg.pool.Exec(ctx, "UPDATE workflow_recovery_policies SET automatic_poll_failure=$2 WHERE app_id=$1::uuid", app.ID, raw); e != nil {
+						t.Fatal(e)
+					}
+				}
 				before := policyChangeEvidence(t, s, app.ID)
 				count := len(durableRecoveryEvents(t, s, app.ID))
 				// An append failure must roll back policy replacement, child admission and incident state.
-				constraint := map[string]string{"policy_changed": "CHECK(entry->>'kind'<>'policy_changed' OR (entry->>'policy_version')::bigint=1)", "retry_transition": "CHECK(entry->>'kind'<>'retry_transition')", "health_opened": "CHECK(entry->>'kind'<>'health_opened')", "candidates_observed": "CHECK(entry->>'kind'<>'candidates_observed') NOT VALID"}[kind]
+				// Retry polling may retain a failure alert after rolling back its work.
+				// Reject that audit append too: without either audit the entire poll must roll back.
+				constraint := map[string]string{"policy_changed": "CHECK(entry->>'kind'<>'policy_changed' OR (entry->>'policy_version')::bigint=1)", "retry_transition": "CHECK(entry->>'kind' NOT IN ('retry_transition','polling_failed'))", "health_opened": "CHECK(entry->>'kind'<>'health_opened')", "candidates_observed": "CHECK(entry->>'kind'<>'candidates_observed') NOT VALID"}[kind]
 				if _, err = pg.pool.Exec(ctx, "ALTER TABLE workflow_recovery_history_events ADD CONSTRAINT durable_failure_test "+constraint); err != nil {
 					t.Fatal(err)
 				}

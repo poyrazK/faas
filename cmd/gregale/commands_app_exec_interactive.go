@@ -63,12 +63,8 @@ type interactiveAppExec struct {
 }
 
 func runInteractiveAppExec(ctx context.Context, exec interactiveAppExec) int {
-	stdinFile, _ := osStdin.(*os.File)
-	stdinIsTTY := stdinFile != nil && term.IsTerminal(int(stdinFile.Fd()))
-	if exec.request.TTY && !stdinIsTTY {
-		PrintWarn(osStderr, "stdin is not a terminal; continuing without a remote tty")
-		exec.request.TTY = false
-	}
+	stdinFile, tty := interactiveStdin(exec.request.TTY)
+	exec.request.TTY = tty
 	task, err := exec.client.CreateAppTask(ctx, exec.slug, exec.request)
 	if err != nil {
 		return printErr("Interactive session submission failed", err)
@@ -87,9 +83,26 @@ func runInteractiveAppExec(ctx context.Context, exec interactiveAppExec) int {
 		return printErr("Could not attach to the session", err)
 	}
 	defer func() { _ = conn.Close() }()
+	return relayAttachedSession(ctx, conn, exec.request.TTY, stdinFile)
+}
 
+// interactiveStdin returns stdin and whether the session can use a remote
+// tty, which needs a terminal on this side.
+func interactiveStdin(tty bool) (*os.File, bool) {
+	stdinFile, _ := osStdin.(*os.File)
+	if tty && (stdinFile == nil || !term.IsTerminal(int(stdinFile.Fd()))) {
+		PrintWarn(osStderr, "stdin is not a terminal; continuing without a remote tty")
+		return stdinFile, false
+	}
+	return stdinFile, tty
+}
+
+// relayAttachedSession runs an attached ADR-1037 session to its end and
+// returns the exit code: the remote command's, 1 for a failure without one,
+// 255 for a broken connection and 130 for an interrupt.
+func relayAttachedSession(ctx context.Context, conn *websocket.Conn, tty bool, stdinFile *os.File) int {
 	restore := func() {}
-	if exec.request.TTY {
+	if tty {
 		state, rawErr := term.MakeRaw(int(stdinFile.Fd()))
 		if rawErr != nil {
 			return printErr("Could not put the terminal in raw mode", rawErr)
@@ -97,7 +110,7 @@ func runInteractiveAppExec(ctx context.Context, exec interactiveAppExec) int {
 		var once sync.Once
 		restore = func() { once.Do(func() { _ = term.Restore(int(stdinFile.Fd()), state) }) }
 	}
-	terminal, sessionErr := pumpAppTaskAttach(ctx, conn, exec.request.TTY, stdinFile)
+	terminal, sessionErr := pumpAppTaskAttach(ctx, conn, tty, stdinFile)
 	restore()
 	if errors.Is(sessionErr, context.Canceled) {
 		// Disconnecting ends the remote session; the server records it.
@@ -118,14 +131,20 @@ func runInteractiveAppExec(ctx context.Context, exec interactiveAppExec) int {
 }
 
 // dialAppTaskAttach waits for the task VM and opens the attach WebSocket.
-// 409 means the VM is still starting; anything else is final.
-func dialAppTaskAttach(ctx context.Context, client *api.Client, slug string, task api.AppTaskResponse, tty bool, stdin *os.File) (*websocket.Conn, error) {
+func dialAppTaskAttach(ctx context.Context, client *api.Client, _ string, task api.AppTaskResponse, tty bool, stdin *os.File) (*websocket.Conn, error) {
+	return dialAttach(ctx, client, *task.Attach, tty, stdin)
+}
+
+// dialAttach opens an attach WebSocket (ADR-1037, ADR-1330). 409 means the
+// VM is still starting and is retried until ctx ends; anything else is
+// final.
+func dialAttach(ctx context.Context, client *api.Client, attach api.AppTaskAttachInfo, tty bool, stdin *os.File) (*websocket.Conn, error) {
 	base, err := url.Parse(client.BaseURL())
 	if err != nil {
 		return nil, fmt.Errorf("invalid API URL: %w", err)
 	}
 	target := *base
-	target.Path = strings.TrimRight(base.Path, "/") + task.Attach.Path
+	target.Path = strings.TrimRight(base.Path, "/") + attach.Path
 	switch target.Scheme {
 	case "https":
 		target.Scheme = "wss"
@@ -140,7 +159,7 @@ func dialAppTaskAttach(ctx context.Context, client *api.Client, slug string, tas
 			target.RawQuery = query.Encode()
 		}
 	}
-	headers := http.Header{api.AppTaskAttachTokenHeader: []string{task.Attach.Token}}
+	headers := http.Header{api.AppTaskAttachTokenHeader: []string{attach.Token}}
 	if token := client.Token(); token != "" {
 		headers.Set("Authorization", "Bearer "+token)
 	}

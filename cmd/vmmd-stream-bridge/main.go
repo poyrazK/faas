@@ -127,12 +127,29 @@ import (
 // Past 30s the gateway has already-abandoned the wake.
 const dialTimeout = 30 * time.Second
 
-// readHeaderTimeout caps how long we wait for the guest's first
+// readHeaderTimeout is the shortest wait for the guest's first
 // response byte (the HTTP/1.1 status line + headers) after the
-// H2C request lands. Applied only to the head read; the body
-// io.Copy that follows runs with no conn deadline so SSE / WS /
-// long-poll responses can stream past 30 s.
-const readHeaderTimeout = 30 * time.Second
+// H2C request lands. A request carrying the gateway's
+// X-Faas-Deadline-Ms waits as long as the guest may run
+// (guestHeaderWait, ADR-1150/ADR-1180). Applied only to the head
+// read; the body io.Copy that follows runs with no conn deadline so
+// SSE / WS / long-poll responses can stream past it. A var so tests
+// can shorten it.
+var readHeaderTimeout = 30 * time.Second
+
+// guestHeaderWait is how long the bridge waits for the guest's
+// response headers: the request's X-Faas-Deadline-Ms, never less
+// than readHeaderTimeout and never more than the longest plan
+// budget. A fixed 30 s cut every function that answered once after
+// running longer than that.
+func guestHeaderWait(headers []headerEntry) time.Duration {
+	for _, h := range headers {
+		if strings.EqualFold(h.Name, api.DeadlineHeader) {
+			return api.GuestDeadline(h.Value, readHeaderTimeout)
+		}
+	}
+	return readHeaderTimeout
+}
 
 // defaultSessionDeadline is the wall-clock ceiling for a streaming
 // session; matches rawStreamSessionDeadline in pkg/gateway/forwardproxy.go.
@@ -460,8 +477,14 @@ func handleH1Stream(w http.ResponseWriter, r *http.Request, guestIP string, gues
 		transport = newGuestH1Transport(guestIP, guestPort)
 	}
 
+	// The pooled transport's ResponseHeaderTimeout is only the outer
+	// cap; this request waits for its own guestHeaderWait. The timer
+	// stops once headers arrive, so the body streams on.
+	roundTripCtx, cancelRoundTrip := context.WithCancel(ctx)
+	defer cancelRoundTrip()
+	headerTimer := time.AfterFunc(guestHeaderWait(extraHeaders), cancelRoundTrip)
 	outboundURL := "http://" + net.JoinHostPort(guestIP, strconv.FormatUint(uint64(guestPort), 10)) + url
-	outboundReq, err := newGuestRequest(ctx, method, outboundURL, r)
+	outboundReq, err := newGuestRequest(roundTripCtx, method, outboundURL, r)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("build outbound request: %v", err), http.StatusBadGateway)
 		return
@@ -484,6 +507,7 @@ func handleH1Stream(w http.ResponseWriter, r *http.Request, guestIP string, gues
 	outboundReq.Host = sanitizeCRLF(host)
 
 	resp, err := transport.RoundTrip(outboundReq)
+	headerTimer.Stop()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("guest h1 roundtrip: %v", err), http.StatusBadGateway)
 		return
@@ -546,7 +570,7 @@ func handleH1StreamLegacy(w http.ResponseWriter, r *http.Request, ctx context.Co
 		bodyErr <- writeChunkedBody(conn, r.Body)
 	}()
 
-	_ = conn.SetReadDeadline(time.Now().Add(readHeaderTimeout))
+	_ = conn.SetReadDeadline(time.Now().Add(guestHeaderWait(extraHeaders)))
 	br := newBufioReader(conn)
 	resp, err := http.ReadResponse(br, r)
 	_ = conn.SetReadDeadline(time.Time{})

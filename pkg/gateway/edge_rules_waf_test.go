@@ -143,9 +143,11 @@ func (f *fakeWAFInline) CheckInline(s WAFSample) WAFInlineResult {
 
 func TestApplyEdgeRuleWAFInline(t *testing.T) {
 	detected := WAFInlineResult{Outcome: WAFInlineDetected, RuleIDs: []int{913100}, Categories: []string{"scanner"}, Seconds: 0.001}
+	clean := WAFInlineResult{Outcome: WAFInlineClean}
 	for _, tc := range []struct {
 		name        string
 		mode        string
+		body        string
 		verdict     WAFInlineResult
 		wantChecks  int
 		wantHandled bool
@@ -155,7 +157,11 @@ func TestApplyEdgeRuleWAFInline(t *testing.T) {
 	}{
 		{name: "block detected", mode: "block", verdict: detected, wantChecks: 1, wantHandled: true, wantStatus: http.StatusForbidden},
 		{name: "warn detected", mode: "warn", verdict: detected, wantChecks: 1, wantStatus: http.StatusOK, wantWarning: true},
-		{name: "block clean", mode: "block", verdict: WAFInlineResult{Outcome: WAFInlineClean}, wantChecks: 1, wantStatus: http.StatusOK, wantSample: true},
+		// A clean in-path check already covered a bodiless request's
+		// headers and URI, so only requests with a body are sampled.
+		{name: "block clean without body", mode: "block", verdict: clean, wantChecks: 1, wantStatus: http.StatusOK},
+		{name: "warn clean without body", mode: "warn", verdict: clean, wantChecks: 1, wantStatus: http.StatusOK},
+		{name: "block clean with body", mode: "block", body: `{"q":1}`, verdict: clean, wantChecks: 1, wantStatus: http.StatusOK, wantSample: true},
 		{name: "block skipped fails open", mode: "block", verdict: WAFInlineResult{Outcome: WAFInlineSkipped}, wantChecks: 1, wantStatus: http.StatusOK, wantSample: true},
 		{name: "block error fails open", mode: "block", verdict: WAFInlineResult{Outcome: WAFInlineError}, wantChecks: 1, wantStatus: http.StatusOK, wantSample: true},
 		{name: "observe never checks in-path", mode: "observe", verdict: detected, wantChecks: 0, wantStatus: http.StatusOK, wantSample: true},
@@ -164,7 +170,11 @@ func TestApplyEdgeRuleWAFInline(t *testing.T) {
 			inline := &fakeWAFInline{result: tc.verdict}
 			rule := &EdgeRuleWAFResolved{ID: "rule-1", AccountID: "acct-1", ParanoiaLevel: 1, AnomalyThreshold: 5, Mode: tc.mode}
 			h := &Handler{edgeRules: wafRuleMatcher{rule: rule}, wafInspector: &recordingWAFInspector{}, wafInline: inline}
-			r := httptest.NewRequest(http.MethodGet, "http://app.example.test/admin/", nil)
+			method, body := http.MethodGet, io.Reader(nil)
+			if tc.body != "" {
+				method, body = http.MethodPost, strings.NewReader(tc.body)
+			}
+			r := httptest.NewRequest(method, "http://app.example.test/admin/", body)
 			w := httptest.NewRecorder()
 			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK, request: r}
 			handled, submit := h.applyEdgeRuleWAF(rec, r, App{ID: "app-1", AccountID: "acct-1"}, rec)

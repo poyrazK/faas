@@ -12,6 +12,14 @@
 //	                                development server, which reloads it
 //	                                itself; the edit is served by the same
 //	                                instance before the second build is live
+//
+// The fixture's server behaves like Vite's default: it listens on
+// 127.0.0.1:5173, not on the runtime port, and answers 403 to a Host header
+// it was not told about. It is reachable only because guest-init bridges the
+// runtime port to it in a watch-mode image, and serves the environment's
+// hostname only because the image carries it in GREGALE_DEV_HOST and Vite's
+// allowed-hosts variable. The second build changes no dependency input, so
+// it keeps the dependency cache instead of exporting it again.
 package e2e_test
 
 import (
@@ -34,7 +42,10 @@ const devWatchWorkspace = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 
 // devWatchFixture is a Node app with a build script, which ADR-740 alone
 // never live-patches (build_command). Its dev script is node --watch, the
-// smallest development server that reloads edited files without help.
+// smallest development server that reloads edited files without help. Like
+// Vite, it listens on 127.0.0.1:5173 unless given --host and refuses Host
+// headers other than IP literals, localhost and
+// __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS.
 func devWatchFixture(t *testing.T, body string) []byte {
 	t.Helper()
 	const pkgJSON = `{"name":"faas-dev-watch","version":"1.0.0","private":true,"engines":{"node":"22"},
@@ -42,10 +53,26 @@ func devWatchFixture(t *testing.T, body string) []byte {
 "dependencies":{}}
 `
 	indexJS := `const http = require('http');
+const hostFlag = process.argv.indexOf('--host');
+const listenHost = hostFlag >= 0 ? process.argv[hostFlag + 1] : '127.0.0.1';
+const allowed = (process.env.__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS || '').split(',').filter(Boolean);
+const hostAllowed = (header) => {
+  const name = (header || '').replace(/:[0-9]+$/, '');
+  return name === 'localhost' || /^[0-9.]+$/.test(name) || name.startsWith('[') || allowed.includes(name);
+};
 http.createServer((req, res) => {
+  if (!hostAllowed(req.headers.host)) {
+    res.writeHead(403, {'content-type': 'text/plain'});
+    res.end('Blocked request. This host is not allowed.\n');
+    return;
+  }
   res.writeHead(200, {'content-type': 'text/plain'});
+  if (req.url === '/dev-host') {
+    res.end((process.env.GREGALE_DEV_HOST || '') + '\n');
+    return;
+  }
   res.end(req.url === '/healthz' ? 'ready\n' : '` + body + `\n');
-}).listen(3000, () => console.log('dev watch fixture listening on :3000'));
+}).listen(5173, listenHost, () => console.log('dev watch fixture listening on ' + listenHost + ':5173'));
 `
 	return buildTarGz(t, map[string]string{"package.json": pkgJSON, "index.js": indexJS})
 }
@@ -54,7 +81,12 @@ http.createServer((req, res) => {
 // only runs behind the developer environment's authentication.
 func devWatchGet(t *testing.T, h *e2etest.Harness, host, key string) (string, int) {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, gatewayAppURL(h, ""), nil)
+	return devWatchGetPath(t, h, host, key, "")
+}
+
+func devWatchGetPath(t *testing.T, h *e2etest.Harness, host, key, path string) (string, int) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, gatewayAppURL(h, "")+strings.TrimPrefix(path, "/"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,8 +170,14 @@ func TestDevWatchMetal(t *testing.T) {
 		if !verbatim || !watch {
 			t.Fatalf("build provenance verbatim=%t watch=%t, want a verbatim watch build of an app with a build script", verbatim, watch)
 		}
+		// Reaching a server on 127.0.0.1:5173 at all proves the runtime-port
+		// bridge; 200 rather than 403 proves the gateway's Host reached a
+		// server that was told to accept it.
 		if body, code := devWatchGet(t, h, host, key); code != http.StatusOK || body != "dev watch v1" {
 			t.Fatalf("app probe = %d %q, want 200 v1", code, body)
+		}
+		if body, code := devWatchGetPath(t, h, host, key, "/dev-host"); code != http.StatusOK || body != host {
+			t.Fatalf("GREGALE_DEV_HOST = %d %q, want %q", code, body, host)
 		}
 	})
 
@@ -181,6 +219,24 @@ func TestDevWatchMetal(t *testing.T) {
 		if err := pool.QueryRow(ctx, `select count(*) from instances where app_id = $1 and deployment_id = $2 and state = 'running'`,
 			session.App.ID, first.ID).Scan(&instances); err != nil || instances != 1 {
 			t.Fatalf("running instances of the watch build = %d, %v; want the patched instance still serving", instances, err)
+		}
+	})
+	t.Run("unchanged-dependencies-keep-cache", func(t *testing.T) {
+		wctx, cancel := context.WithTimeout(ctx, sourceDeployCtxTimeout())
+		defer cancel()
+		if _, _, err := e2etest.WaitForSourceDeployment(wctx, t, pool, second.ID, e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling); err != nil {
+			t.Fatalf("second watch build did not go live: %v", err)
+		}
+		var buildLog string
+		if err := pool.QueryRow(ctx, `select coalesce(string_agg(line, '' order by seq), '') from deployment_logs where deployment_id = $1 and stream = 'build'`,
+			second.ID).Scan(&buildLog); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(buildLog, "dependencies unchanged — kept the dependency cache") {
+			t.Fatalf("second build did not keep the dependency cache; build log:\n%s", buildLog)
+		}
+		if body, code := devWatchGet(t, h, host, key); code != http.StatusOK || body != "dev watch v2" {
+			t.Fatalf("second watch build probe = %d %q, want 200 v2", code, body)
 		}
 	})
 }

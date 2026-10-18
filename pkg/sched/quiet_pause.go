@@ -6,21 +6,34 @@ import (
 )
 
 // quietPauseAfterMS is the ADR-1151 quiet pause delay schedd asks vmmd for.
-// The first release covers function apps that serve HTTP, woken as
-// ordinary instances: their contract is request-driven, as on AWS Lambda,
-// so pausing between requests changes the least for them. Workers,
-// services, mirror instances and private-network peers (their traffic
-// bypasses vmmd's forward path) keep running between requests. vmmd
-// applies quiet pause only where its own quiet_pause switch is on.
+// It applies to apps whose declared pause is between_requests, the default
+// for functions: their contract is request-driven, as on AWS Lambda, so
+// pausing between requests changes the least for them. Any other app opts
+// in by declaring it. vmmd applies quiet pause only where its own
+// quiet_pause switch is on.
 func quietPauseAfterMS(app state.App, mode string, privateNetworkID string) int64 {
-	if app.Type != state.AppTypeFunction || privateNetworkID != "" {
+	if !pauseTierWorkload(app, mode, privateNetworkID) {
 		return 0
 	}
-	if app.WorkloadClass != "" && app.WorkloadClass != state.WorkloadClassHTTP {
-		return 0
-	}
-	if mode != "" && mode != string(state.InstanceModeNormal) {
+	if api.EffectivePause(app.Manifest.Pause, app.Type == state.AppTypeFunction) != api.PauseBetweenRequests {
 		return 0
 	}
 	return api.QuietPauseAfterMillis
+}
+
+// pauseTierWorkload reports whether the pause tiers may pause an instance
+// at all (ADR-1151): a request-serving workload woken as an ordinary
+// instance. Workers, services, jobs and mirror instances keep running, and
+// private-network peers stay awake because their traffic bypasses vmmd's
+// forward path.
+func pauseTierWorkload(app state.App, mode, privateNetworkID string) bool {
+	if privateNetworkID != "" {
+		return false
+	}
+	switch app.WorkloadClass {
+	case "", state.WorkloadClassHTTP, state.WorkloadClassGraphQL, state.WorkloadClassGRPC:
+	default:
+		return false
+	}
+	return mode == "" || mode == string(state.InstanceModeNormal)
 }

@@ -227,6 +227,8 @@ func hostWithoutPort(rawHost string) string {
 func isComputeOwnedGatewayPath(path string) bool {
 	return isComputeOwnedLogsPath(path) ||
 		api.IsAppTaskAttachPath(path) ||
+		api.IsJobTaskLogStreamPath(path) ||
+		api.IsJobTaskAttachPath(path) ||
 		path == "/v1/synthesize" ||
 		path == "/v1/invocations:dispatch" ||
 		path == "/v1/invocations:dispatch_batch"

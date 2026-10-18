@@ -1,0 +1,11 @@
+# {{ ansible_managed }} — host_hardening role (spec §11, ADR-143).
+# Unattended security upgrades must not restart stateful services. On
+# 2026-10-15 a libsystemd upgrade made needrestart restart PostgreSQL on the
+# control plane at 07:01 UTC, mid-rollout: every daemon lost its database for
+# 12 s and three compute daemons failed their restart (H10-79). These services
+# pick up upgraded libraries at the next operator restart or release rollout.
+$nrconf{override_rc}{qr(^postgresql)} = 0;
+$nrconf{override_rc}{qr(^pgbouncer)} = 0;
+$nrconf{override_rc}{qr(^caddy)} = 0;
+$nrconf{override_rc}{qr(^faas-)} = 0;
+$nrconf{override_rc}{qr(^gregale-)} = 0;

@@ -569,6 +569,9 @@ func ValidateEdgeRuleBody(req *api.CreateEdgeRuleRequest, plan api.Plan) *api.Pr
 	if len(req.MatchHost) > 253 {
 		return api.ErrValidation(fmt.Sprintf("match_host exceeds 253 chars (got %d)", len(req.MatchHost)))
 	}
+	if prob := api.ValidateEdgeRuleMatchHost(req.MatchHost); prob != nil {
+		return prob
+	}
 	if !strings.HasPrefix(req.MatchPath, "/") {
 		return api.ErrValidation("match_path must start with '/'")
 	}
@@ -907,8 +910,8 @@ func (s *Service) UpdateEdgeRule(w http.ResponseWriter, r *http.Request, acct st
 	}
 	// Validate the optional fields if present.
 	if req.MatchHost != nil {
-		if *req.MatchHost == "" || len(*req.MatchHost) > 253 {
-			api.WriteProblem(w, api.ErrValidation("match_host must be 1..253 chars"))
+		if prob := api.ValidateEdgeRuleMatchHost(*req.MatchHost); prob != nil {
+			api.WriteProblem(w, prob)
 			return
 		}
 	}

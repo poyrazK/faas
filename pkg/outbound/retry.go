@@ -120,12 +120,7 @@ func canRetryRequest(req *http.Request) bool {
 	if req.Method != http.MethodGet && req.Method != http.MethodHead && !replayablePost {
 		return false
 	}
-	for _, name := range []string{"X-HTTP-Method-Override", "X-Method-Override", "X-HTTP-Method"} {
-		if req.Header.Get(name) != "" {
-			return false
-		}
-	}
-	if req.URL != nil && req.URL.Query().Has("_method") {
+	if hasMethodOverride(req) {
 		return false
 	}
 	return replayablePost || req.Body == nil || req.Body == http.NoBody

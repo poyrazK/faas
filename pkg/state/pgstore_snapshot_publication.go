@@ -88,6 +88,16 @@ func (s *PgStore) PublishSnapshotIfRuntimeFresh(ctx context.Context, snap Snapsh
 	} else if required || changed && !sourceStartedAt.After(changedAt) {
 		return Snapshot{}, ErrSnapshotRuntimeStale
 	}
+	if err := checkStandardSnapshotRuntimeFresh(ctx, tx, snap, sourceInstanceID, sourceStartedAt); err != nil {
+		return Snapshot{}, err
+	}
+	generation, err := q.SnapshotRecoveryPublicationGeneration(ctx, tx, sqlc.SnapshotRecoveryPublicationGenerationParams{
+		DeploymentID: mustPgUUID(snap.DeploymentID), InstanceID: mustPgUUID(sourceInstanceID),
+	})
+	if err != nil {
+		return Snapshot{}, snapshotPublicationOwnerError(err)
+	}
+	snap.RecoveryGeneration = generation
 	stored, err := createSnapshotWithQuerier(ctx, tx, snap)
 	if err != nil {
 		return Snapshot{}, err

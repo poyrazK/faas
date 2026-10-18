@@ -26,9 +26,21 @@ off-host recovery source.
   the recovery boundary from the oldest retained basebackup, copies every
   deletion candidate off-host, verifies the bytes, and only then removes
   local WAL preceding that boundary.
-- **RPO in steady state**: bounded by `archive_command` latency,
-  typically 5-30 s. A failed rclone push still produces a
-  successful local archive, so PG WAL recycling is never blocked.
+- **RPO in steady state**: `archive_timeout = 60s` (ADR-1344) forces a
+  WAL segment switch at least once a minute, so the off-host copy is at
+  most about a minute plus the push time behind. Before that setting a
+  quiet server could hold committed WAL in an unfinished segment
+  indefinitely. A failed rclone push still produces a successful local
+  archive, so PG WAL recycling is never blocked; the hourly prune copies
+  the gap off-host later, and `PgWalOffHostPushStale` fires if no push
+  has succeeded for 15 minutes.
+- **Archiving health**: `faas-postgres-connection-metrics` exports
+  `pg_stat_archiver` (`faas_postgres_wal_*`) and the time of the last
+  successful off-host push
+  (`faas_postgres_offhost_wal_last_success_timestamp_seconds`, from the
+  `/var/lib/pgsql/archive/.offhost-last-success` marker that
+  `archive_command` touches). `PgWalArchiveStalled` fires when no segment
+  has been archived locally for ten minutes.
 
 ## Preconditions
 
@@ -144,7 +156,7 @@ one `sed` rewrite.
 
 | Symptom | Page? | First action |
 |---|---|---|
-| basebackup timestamp missing or older than 26h | yes (page) | inspect `faas-pg-basebackup-push.service`; check the configured rclone identity and destination |
+| basebackup timestamp missing or older than 26h | warn (ADR-1236; review the warn route daily) | inspect `faas-pg-basebackup-push.service`; check the configured rclone identity and destination |
 | WAL prune timestamp missing or older than 2h | warn | run the dry-run below and inspect `faas-pg-wal-prune.service` |
 | local WAL exceeds 20 GiB | warn | verify off-host reachability and the retained basebackup boundary |
 | `archive_command` line shows old `cp` | warn | the operator has not converged the PostgreSQL role; re-run the control-plane bootstrap target |

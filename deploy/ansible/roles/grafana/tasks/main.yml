@@ -414,6 +414,23 @@
     - restart grafana-server
     - reload grafana provisioning
 
+- name: grafana — provision remaining operator dashboards
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ gv_dashboards_dir }}/{{ item }}"
+    owner: grafana
+    group: grafana
+    mode: "0640"
+  loop:
+    - top-tenants.json
+    - internal-ci.json
+    - edge-rules.json
+    - durable-entities.json
+    - frozen-tier.json
+  notify:
+    - restart grafana-server
+    - reload grafana provisioning
+
 - name: grafana — install systemd unit
   ansible.builtin.template:
     src: grafana-server.service.j2

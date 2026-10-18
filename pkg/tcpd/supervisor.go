@@ -57,6 +57,10 @@ type supervisedListener struct {
 	route    Route
 	listener net.Listener
 	cancel   context.CancelFunc
+	// done closes when the port's Server stops serving. A server that
+	// stops on its own (an accept error it cannot recover from) is rebound
+	// on the next refresh instead of leaving the port dead.
+	done chan struct{}
 }
 
 // Serve runs the listener reconciliation loop until ctx is canceled.
@@ -178,7 +182,13 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 
 		mu.Lock()
 		for port, entry := range listeners {
-			if route, keep := desired[port]; !keep || route != entry.route {
+			stopped := false
+			select {
+			case <-entry.done:
+				stopped = true
+			default:
+			}
+			if route, keep := desired[port]; !keep || route != entry.route || stopped {
 				delete(listeners, port)
 				entry.cancel()
 				_ = entry.listener.Close()
@@ -195,7 +205,12 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 			}
 			listener, err := s.Listen("tcp", net.JoinHostPort(s.BindHost, strconv.Itoa(port)))
 			if err != nil {
-				return fmt.Errorf("bind TCP listener %d: %w", port, err)
+				// One unbindable port must not keep every other listener
+				// down, or fail gatewayd-public's startup. Retry next refresh.
+				if s.OnError != nil {
+					s.OnError(fmt.Errorf("bind TCP listener %d: %w", port, err))
+				}
+				continue
 			}
 			childCtx, cancel := context.WithCancel(serveCtx)
 			server := &Server{
@@ -215,12 +230,14 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 					}
 				},
 			}
+			done := make(chan struct{})
 			mu.Lock()
-			listeners[port] = supervisedListener{listener: listener, cancel: cancel, route: route}
+			listeners[port] = supervisedListener{listener: listener, cancel: cancel, route: route, done: done}
 			mu.Unlock()
 			servers.Add(1)
 			go func(port int, route Route, srv *Server, childCtx context.Context) {
 				defer servers.Done()
+				defer close(done)
 				if err := srv.Serve(childCtx); err != nil && childCtx.Err() == nil && s.OnError != nil && !isDraining() {
 					s.OnError(fmt.Errorf("serve TCP port %d (%s): %w", port, route.ListenerName, err))
 				}

@@ -101,8 +101,9 @@ func (s *server) recordDevPatchSource(ctx context.Context, app state.App, deploy
 	if !ok {
 		return
 	}
+	watch := devloop.LoadWatch(ctx, s.store, app.ID) != nil
 	if !plan.inspect {
-		s.devLoopMetrics.ObservePatchPlan(devloop.PatchUninspected, "")
+		s.devLoopMetrics.ObservePatchPlan(devloop.PatchUninspected, "", watch)
 		return
 	}
 	if err := store.RecordDevSourceManifest(ctx, state.DevSourceManifest{
@@ -115,21 +116,21 @@ func (s *server) recordDevPatchSource(ctx context.Context, app state.App, deploy
 	case plan.preview == nil:
 		return
 	case !plan.preview.Eligible:
-		s.devLoopMetrics.ObservePatchPlan(devloop.PatchIneligible, plan.preview.Reason)
+		s.devLoopMetrics.ObservePatchPlan(devloop.PatchIneligible, plan.preview.Reason, watch)
 		return
 	case plan.preview.ChangedPaths == 0:
-		s.devLoopMetrics.ObservePatchPlan(devloop.PatchNoChanges, "")
+		s.devLoopMetrics.ObservePatchPlan(devloop.PatchNoChanges, "", watch)
 		return
 	case !devPatchDeliveryEnabled():
-		s.devLoopMetrics.ObservePatchPlan(devloop.PatchDeliveryDisabled, "")
+		s.devLoopMetrics.ObservePatchPlan(devloop.PatchDeliveryDisabled, "", watch)
 		return
 	}
 	if err := s.publishDevPatch(ctx, store, app, sourcePath, sourceRoot, plan); err != nil {
 		s.log.Warn("developer live patch not published", "app_id", app.ID, "error", err)
-		s.devLoopMetrics.ObservePatchPlan(devloop.PatchPublishFailed, "")
+		s.devLoopMetrics.ObservePatchPlan(devloop.PatchPublishFailed, "", watch)
 		return
 	}
-	s.devLoopMetrics.ObservePatchPlan(devloop.PatchPublished, "")
+	s.devLoopMetrics.ObservePatchPlan(devloop.PatchPublished, "", watch)
 }
 
 func (s *server) publishDevPatch(ctx context.Context, store state.DevSourcePatchStore, app state.App, sourcePath, sourceRoot string, plan devPatchPlan) error {

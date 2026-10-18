@@ -473,9 +473,17 @@ func cmdTriggersRecords(args []string) int {
 		return 0
 	}
 	for _, record := range resp.Records {
-		_, _ = fmt.Fprintf(osStdout, "%-36s %-12s attempts=%-3d item=%s\n", record.ID, record.State, record.Attempts, record.ItemIdentifier)
+		_, _ = fmt.Fprintln(osStdout, triggerRecordLine(record))
 	}
 	return 0
+}
+
+// triggerRecordLine renders one record. A record's attempts count only the
+// deliveries that failed (it dead-letters when that count reaches
+// max_attempts), so a record delivered on its first try has 0; the label
+// says so rather than reading as "never attempted".
+func triggerRecordLine(record api.TriggerRecord) string {
+	return fmt.Sprintf("%-36s %-12s failed_attempts=%-3d item=%s", record.ID, record.State, record.Attempts, record.ItemIdentifier)
 }
 
 func cmdTriggersRecordAction(args []string, retry bool) int {

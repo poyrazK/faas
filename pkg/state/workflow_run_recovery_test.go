@@ -165,9 +165,21 @@ func TestWorkflowRunRecoveryConcurrentJobs(t *testing.T) {
 		run, app := seedResumeRun(t, store, simpleResumeSpec())
 		failResumeRun(t, store, run, "send")
 		recovery := store.(EventRecoveryStore)
+		// Initial recovery admission rejects duplicate jobs. Exercise competing
+		// worker claims on a later generation, retaining the same one-resume fence.
+		if _, err := recovery.CreateEventRecovery(ctx, app.AccountID, app.ID, api.EventRecoveryRequest{RequestID: uuid.NewString(), WorkflowRuns: &api.WorkflowRunRecoveryPlan{Name: run.WorkflowName, Runs: []api.WorkflowRunRecoveryTarget{{RunID: run.ID}}}}); err != nil {
+			t.Fatal(err)
+		}
+		if did, err := recovery.ProcessNextEventRecovery(ctx, time.Now().UTC()); err != nil || !did {
+			t.Fatalf("initial recovery %v %v", did, err)
+		}
+		if _, err := store.ClaimNextDueWorkflowRun(ctx); err != nil {
+			t.Fatal(err)
+		}
+		failResumeRun(t, store, run, "send")
 		jobs := []string{}
 		for i := 0; i < 2; i++ {
-			job, err := recovery.CreateEventRecovery(ctx, app.AccountID, app.ID, api.EventRecoveryRequest{RequestID: uuid.NewString(), WorkflowRuns: &api.WorkflowRunRecoveryPlan{Name: run.WorkflowName, Runs: []api.WorkflowRunRecoveryTarget{{RunID: run.ID}}}})
+			job, err := recovery.CreateEventRecovery(ctx, app.AccountID, app.ID, api.EventRecoveryRequest{RequestID: uuid.NewString(), WorkflowRuns: &api.WorkflowRunRecoveryPlan{Name: run.WorkflowName, Runs: []api.WorkflowRunRecoveryTarget{{RunID: run.ID, ExpectedResumeCount: 1}}}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -203,7 +215,7 @@ func TestWorkflowRunRecoveryConcurrentJobs(t *testing.T) {
 			t.Fatalf("queued=%d skipped=%d", queued, skipped)
 		}
 		records, err := store.(WorkflowResumeStore).ListWorkflowResumes(ctx, run.ID)
-		if err != nil || len(records) != 1 {
+		if err != nil || len(records) != 2 {
 			t.Fatalf("resumes=%+v %v", records, err)
 		}
 	})

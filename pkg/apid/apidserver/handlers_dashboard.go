@@ -99,6 +99,8 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 		switch {
 		case path == "/dashboard/" || path == "/dashboard":
 			s.renderIndex(w, r, log, acct)
+		case path == "/dashboard/mcp":
+			s.renderMCPOperations(w, r, log, acct)
 		case path == "/dashboard/apps":
 			s.renderAppsList(w, r, log, acct)
 		case path == "/dashboard/app-costs":
@@ -512,14 +514,7 @@ func (s *server) appListItem(ctx context.Context, app state.App, latest map[stri
 // retired apps.gregale.dev setting as a safety net so stale configuration
 // cannot put a legacy hostname back into customer-facing URLs.
 func appHostForDomain(slug, domain string) string {
-	domain = strings.Trim(strings.TrimSpace(domain), ".")
-	if domain == domainUnset || domain == "apps.gregale.dev" {
-		domain = "gregale.dev"
-	}
-	if domain == "" {
-		return slug
-	}
-	return slug + "." + domain
+	return api.AppHostname(slug, domain)
 }
 
 // appURLForDomain returns the HTTPS customer URL for an app or preview slug.
@@ -919,7 +914,9 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 	operational := s.appOperationalSummary(ctx, acct, app)
 	appCosts := s.dashboardAppCosts(ctx, log, acct, app, costMonth, costMonthNotice)
 	page := dashboard.Page{Title: app.Slug, Body: "app_detail", Account: dashboardAccountView(view, appCount), Data: dashboard.AppDetailData{
+		ProductControlURL:  s.productControlConsoleURL(app.Slug),
 		ProfilingAvailable: s.profileBackend != nil && api.MustLimitsFor(acct.Plan).Profiling.Enabled,
+		ApplicationAuth:    api.ApplicationAuthEnabled(acct.ID),
 		Operational:        &operational,
 		App:                appRow,
 		AppCosts:           appCosts,
@@ -964,7 +961,9 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		// / "7d" closed set; invalid → default). The stamp echoes the
 		// active window so the template's window-selector tab strip
 		// can mark the current tab.
-		SLOApp: s.fetchDashboardSLO(ctx, log, app, acct, resolveSLOWindow(r)),
+		SLOApp:          s.fetchDashboardSLO(ctx, log, app, acct, resolveSLOWindow(r)),
+		CustomSLOs:      s.fetchDashboardCustomSLOs(ctx, app, acct),
+		SyntheticChecks: s.fetchDashboardSyntheticChecks(ctx, app, acct),
 		SLODuration: views.SLOStamp{
 			Window: resolveSLOWindow(r),
 			AsOf:   time.Now().UTC().Format(time.RFC3339Nano),
@@ -1212,9 +1211,10 @@ func (s *server) fetchDashboardAlerts(ctx context.Context, log *slog.Logger, acc
 			}
 		}
 		item.RecentDeliveries = deliveries
+		item.DeliversTo = s.ruleDestinations(ctx, rule)
 		items = append(items, item)
 	}
-	return &dashboard.AlertDetailData{Rules: items}
+	return &dashboard.AlertDetailData{Rules: items, Channels: s.dashboardAlertChannels(ctx, acct, now)}
 }
 
 // fetchDashboardPresets returns the per-app alert-preset catalog
@@ -1526,9 +1526,9 @@ func (s *server) renderBilling(w http.ResponseWriter, r *http.Request, log *slog
 		// also correctly handles shorter months.
 		lastInvDate = li.PeriodEnd.UTC().Format("2006-01-02")
 		lastInvStatus = li.Status
-		lastInvTotal = formatCentsEuros(li.TotalCents)
-		// Stripe stores currency as lowercase ISO 4217 ("eur");
-		// display it as "EUR" to match the receipt the customer
+		lastInvTotal = formatInvoiceCents(li.TotalCents)
+		// Providers store currency as lowercase ISO 4217 ("usd");
+		// display it as "USD" to match the receipt the customer
 		// sees in their portal.
 		lastInvCcy = strings.ToUpper(li.Currency)
 	}
@@ -1657,7 +1657,7 @@ func (s *server) renderPricing(w http.ResponseWriter, r *http.Request, log *slog
 		l := api.MustLimitsFor(p)
 		plans = append(plans, dashboard.PricingPlanView{
 			Plan:                    string(p),
-			PriceFormatted:          formatPriceEuros(l.PriceMillicents),
+			PriceFormatted:          formatPlanPrice(l.PriceMillicents),
 			Highlighted:             p == acct.Plan,
 			DeployedApps:            l.DeployedApps,
 			MaxConcurrency:          l.MaxConcurrency,
@@ -1713,7 +1713,7 @@ func (s *server) renderInvoices(w http.ResponseWriter, r *http.Request, log *slo
 			Provider:       inv.Provider,
 			Status:         inv.Status,
 			Period:         inv.PeriodEnd.Format("2006-01"),
-			TotalFormatted: formatCentsEuros(inv.TotalCents),
+			TotalFormatted: formatInvoiceCents(inv.TotalCents),
 			Currency:       inv.Currency,
 			PDFAvailable:   inv.PDFAvailable,
 		})
@@ -1762,36 +1762,23 @@ func parseInvoiceBefore(raw string) time.Time {
 	return time.Time{}
 }
 
-// formatPriceEuros converts integer millicents (1 cent = 1000
-// millicents) into the dashboard's "€X.YY" string, or "Free" when
-// the price is zero. This is the only place float math on money
-// happens — at the human display edge (CLAUDE.md Money).
-func formatPriceEuros(millicents int64) string {
+// formatPlanPrice converts integer millicents (1 cent = 1000
+// millicents) into the dashboard's "$X.YY" string in the billing
+// currency, or "Free" when the price is zero.
+func formatPlanPrice(millicents int64) string {
 	if millicents == 0 {
 		return "Free"
 	}
-	cents := millicents / 1000
-	euros := cents / 100
-	rem := cents % 100
-	if rem < 0 {
-		rem = -rem
-	}
-	return fmt.Sprintf("€%d.%02d", euros, rem)
+	return api.FormatBillingCents(millicents / api.MillicentsPerCent)
 }
 
-// formatCentsEuros converts integer cents (the invoice total unit)
-// into the dashboard's "€X.YY" string. Distinct from
-// formatPriceEuros (which takes millicents and collapses €0 to
-// "Free" for the pricing page). formatCentsEuros is for invoice
-// rows where €0 means "a real €0 invoice" (refund / void / draft)
-// and must display as "€0.00", not as "Free".
-func formatCentsEuros(cents int64) string {
-	euros := cents / 100
-	rem := cents % 100
-	if rem < 0 {
-		rem = -rem
-	}
-	return fmt.Sprintf("€%d.%02d", euros, rem)
+// formatInvoiceCents converts integer cents (the invoice total unit)
+// into the dashboard's "$X.YY" string. Distinct from formatPlanPrice
+// (which takes millicents and collapses $0 to "Free" for the pricing
+// page): an invoice row at $0 is a real refund, void or draft and must
+// display as "$0.00", not as "Free".
+func formatInvoiceCents(cents int64) string {
+	return api.FormatBillingCents(cents)
 }
 
 // renderAccount renders /dashboard/account — API keys (list + create

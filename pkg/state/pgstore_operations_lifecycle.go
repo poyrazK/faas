@@ -54,6 +54,9 @@ func operationForInvocationTx(ctx context.Context, tx pgx.Tx, invocationID strin
 }
 
 func operationSaveTx(ctx context.Context, tx pgx.Tx, op Operation, event api.OperationEvent) error {
+	if err := settleProductOperationTx(ctx, tx, op); err != nil {
+		return err
+	}
 	// Native Jobs retain their own image snapshot. Host outcome settlement
 	// must remain possible after the app is tombstoned, while parent purge
 	// waits for the claimed task to close. Admission still pins app code.
@@ -90,13 +93,15 @@ func operationClaimTx(ctx context.Context, tx pgx.Tx, inv Invocation) (Invocatio
 	if err != nil || !exists {
 		return inv, err
 	}
-	capability, event, err := operationClaim(&op, inv, time.Now().UTC())
+	now := time.Now().UTC()
+	capability, event, err := operationClaim(&op, inv, now)
 	if err != nil {
 		return Invocation{}, err
 	}
 	if err := operationSaveTx(ctx, tx, op, event); err != nil {
 		return Invocation{}, err
 	}
+	inv.DeadlineAt = operationClaimDeadline(op, inv, now)
 	return operationExecutionHeaders(inv, op, def, capability), nil
 }
 
@@ -105,9 +110,16 @@ func operationTransitionTx(ctx context.Context, tx pgx.Tx, inv Invocation, uncer
 	if err != nil || !exists {
 		return err
 	}
-	event, err := operationInvocationTransition(&op, inv, def, limits, uncertain, time.Now().UTC())
+	now := time.Now().UTC()
+	event, err := operationInvocationTransition(&op, inv, def, limits, uncertain, now)
 	if err != nil {
 		return err
+	}
+	if operationRetryCancelled(op, inv) {
+		id, _ := operationUUID(inv.ID)
+		if err := sqlc.New().CancelCustomerOperationExecution(ctx, tx, sqlc.CancelCustomerOperationExecutionParams{ID: id, Now: pgtype.Timestamptz{Time: now, Valid: true}}); err != nil {
+			return err
+		}
 	}
 	if op.State.Terminal() {
 		if err := operationCompletionTx(ctx, tx, &op, def); err != nil {

@@ -95,6 +95,25 @@ func IsAppTaskAttachPath(p string) bool {
 	return len(parts) == 4 && parts[0] != "" && parts[1] == "tasks" && parts[2] != "" && parts[3] == "attach"
 }
 
+// JobTaskAttachPath is the gateway endpoint for one interactive image run's
+// task (ADR-1330). The session uses this file's wire contract.
+func JobTaskAttachPath(jobName, runID string, taskIndex int) string {
+	return "/v1/jobs/" + url.PathEscape(jobName) + "/runs/" + url.PathEscape(runID) +
+		"/tasks/" + strconv.Itoa(taskIndex) + "/attach"
+}
+
+// IsJobTaskAttachPath matches /v1/jobs/{name}/runs/{id}/tasks/{idx}/attach
+// exactly. The gateways route it to the compute-owned attach handler.
+func IsJobTaskAttachPath(p string) bool {
+	const prefix = "/v1/jobs/"
+	if !strings.HasPrefix(p, prefix) {
+		return false
+	}
+	parts := strings.Split(p[len(prefix):], "/")
+	return len(parts) == 6 && parts[0] != "" && parts[1] == "runs" && parts[2] != "" &&
+		parts[3] == "tasks" && parts[4] != "" && parts[5] == "attach"
+}
+
 // AppTaskAttachTerminalMessage is the final server message of a session.
 type AppTaskAttachTerminalMessage struct {
 	Status   AppTaskStatus   `json:"status"`

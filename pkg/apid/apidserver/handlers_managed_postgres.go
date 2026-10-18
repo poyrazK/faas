@@ -41,6 +41,14 @@ func managedPostgresProblem(w http.ResponseWriter, err error) {
 	if errors.Is(err, managedpostgres.ErrUnavailable) {
 		problem = problem.WithDocs("https://gregale.dev/docs/managed-postgres")
 	}
+	// Without a server hint the CLI fell back to its generic 403 advice to
+	// check credentials, which cannot help with a plan entitlement or quota.
+	switch {
+	case errors.Is(err, managedpostgres.ErrNotInPlan):
+		problem = problem.WithHint("Choose what your plan includes (gregale postgres capabilities) or upgrade the plan.").WithDocs("https://gregale.dev/docs/plans")
+	case errors.Is(err, managedpostgres.ErrQuotaExceeded):
+		problem = problem.WithHint("Delete a database you no longer need or upgrade the plan.").WithDocs("https://gregale.dev/docs/plans")
+	}
 	api.WriteProblem(w, problem)
 }
 
@@ -84,7 +92,7 @@ func managedPostgresSpecFromRequest(req api.CreateManagedPostgresDatabaseRequest
 		scaleToZero = *req.ScaleToZero
 	}
 	if !scaleToZero && !limits.AlwaysOnAllowed {
-		return managedpostgres.Spec{}, managedpostgres.ErrQuotaExceeded
+		return managedpostgres.Spec{}, managedpostgres.ErrNotInPlan
 	}
 	storage := req.StorageLimitBytes
 	if storage == 0 {
@@ -98,8 +106,15 @@ func managedPostgresSpecFromRequest(req api.CreateManagedPostgresDatabaseRequest
 	if spec.PostgresMajor == 0 {
 		spec.PostgresMajor = 16
 	}
-	if !managedPostgresPlanAllows(limits, spec) || storage > limits.StorageLimitBytes || restoreWindow > limits.RestoreWindowSeconds {
-		return managedpostgres.Spec{}, managedpostgres.ErrQuotaExceeded
+	// Name the entitlement that refused the request; a bare "quota exceeded"
+	// read like usage and sent customers to check credentials (hunt #10).
+	switch {
+	case !managedPostgresPlanAllows(limits, spec):
+		return managedpostgres.Spec{}, managedpostgres.ErrNotInPlan
+	case storage > limits.StorageLimitBytes:
+		return managedpostgres.Spec{}, fmt.Errorf("%w: storage limit %d bytes is over the plan's %d", managedpostgres.ErrQuotaExceeded, storage, limits.StorageLimitBytes)
+	case restoreWindow > limits.RestoreWindowSeconds:
+		return managedpostgres.Spec{}, fmt.Errorf("%w: restore window %d s is over the plan's %d s", managedpostgres.ErrQuotaExceeded, restoreWindow, limits.RestoreWindowSeconds)
 	}
 	if err := spec.Validate(); err != nil {
 		return managedpostgres.Spec{}, err
@@ -417,6 +432,11 @@ func (s *server) createManagedPostgresBinding(w http.ResponseWriter, r *http.Req
 	app, err := s.store.AppByID(r.Context(), req.AppID)
 	if err != nil || app.AccountID != acct.ID {
 		s.notFound(w, "app not found")
+		return
+	}
+	// Application Auth is a dark launch: without it the mode is unknown.
+	if managedpostgres.CredentialAccess(req.Access) == managedpostgres.CredentialAuth && !api.ApplicationAuthEnabled(acct.ID) {
+		managedPostgresProblem(w, managedpostgres.ErrInvalid)
 		return
 	}
 	binding, err := s.managedPostgresBindings.Create(r.Context(), managedpostgres.CreateBindingRequest{AccountID: acct.ID, DatabaseID: r.PathValue("id"), AppID: req.AppID, Scope: req.Scope, EnvironmentKey: req.EnvironmentKey, Access: managedpostgres.CredentialAccess(req.Access)})

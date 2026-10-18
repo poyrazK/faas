@@ -124,7 +124,7 @@ export async function verifyBrowserCORS({ origins, url, token, expired, subject,
       document.querySelector('[name=tags]').value = 'one,,two';
       document.querySelector('#note-form').requestSubmit();
       await new Promise(resolve => setTimeout(resolve, 50));
-      return { body: document.querySelector('#body-error').textContent, tags: document.querySelector('#tags-error').textContent, tokenCleared: document.querySelector('[name=token]').value === '' };
+      return { body: document.querySelector('#insert-body-error').textContent, tags: document.querySelector('#tags-error').textContent, tokenCleared: document.querySelector('[name=token]').value === '' };
     })()`)
     assert.equal(invalidForm.body, 'Enter a note body.')
     assert.equal(invalidForm.tags, 'Enter a name for each tag; remove extra commas.')
@@ -150,8 +150,10 @@ export async function verifyBrowserCORS({ origins, url, token, expired, subject,
       let lose = true;
       globalThis.fetch = async (url, init) => {
         const response = await originalFetch(url, init);
-        if (String(url).includes('/rpc/create_note_with_tags_once')) {
-          payloads.push(init.body);
+        const path = new URL(String(url), location.href).pathname;
+        if (path === '/rest/v1/rpc/read_note_create_receipt_v2') payloads.push({ path: path.split('/').at(-1), body: JSON.parse(init.body) });
+        if (path === '/rest/v1/rpc/create_note_with_tags_once_v2') {
+          payloads.push({ path: path.split('/').at(-1), body: JSON.parse(init.body) });
           if (lose) { lose = false; await response.arrayBuffer(); throw new TypeError('test response lost after commit'); }
         }
         return response;
@@ -167,12 +169,13 @@ export async function verifyBrowserCORS({ origins, url, token, expired, subject,
         document.querySelector('[name=body]').value = 'must not change pending payload';
         document.querySelector('#recover-note').click();
         for (let i = 0; i < 200 && document.querySelector('#save-note').disabled; i++) await new Promise(resolve => setTimeout(resolve, 20));
-        return { pending, callsBeforeRecovery, calls: payloads.length, samePayload: payloads[0] === payloads[1], message: document.querySelector('#note-result').textContent, tokenCleared: document.querySelector('[name=token]').value === '', recoveryHidden: document.querySelector('#recover-note').hidden };
+        return { pending, callsBeforeRecovery, calls: payloads.length, paths: payloads.map(call => call.path), samePayload: payloads[0].body.idempotency_key === payloads[1].body.idempotency_key && payloads[0].body.note_body === payloads[1].body.note_body && JSON.stringify(payloads[0].body.tag_names) === JSON.stringify(payloads[1].body.tag_names), message: document.querySelector('#note-result').textContent, tokenCleared: document.querySelector('[name=token]').value === '', recoveryHidden: document.querySelector('#recover-note').hidden };
       } finally { globalThis.fetch = originalFetch; }
     })()`)
     assert.equal(recoveryForm.pending, true)
     assert.equal(recoveryForm.callsBeforeRecovery, 1)
     assert.equal(recoveryForm.calls, 2)
+    assert.deepEqual(recoveryForm.paths, ['create_note_with_tags_once_v2', 'read_note_create_receipt_v2'])
     assert.equal(recoveryForm.samePayload, true)
     assert.match(recoveryForm.message, /^Saved note \d+: browser pending form$/)
     assert.equal(recoveryForm.tokenCleared, true)

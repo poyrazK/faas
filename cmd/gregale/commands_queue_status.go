@@ -22,11 +22,15 @@ type queueStatusClient interface {
 // nested values deliberately preserve the existing API contracts so scripts
 // can move from the CLI to the SDK without translating fields.
 type queueStatusReport struct {
-	AppSlug       string                           `json:"app_slug"`
-	Health        string                           `json:"health"`
-	Queue         api.QueueStateResponse           `json:"queue"`
-	ScalingPolicy *api.ScalingPolicy               `json:"scaling_policy,omitempty"`
-	Bindings      []api.QueueBindingStatusResponse `json:"bindings"`
+	AppSlug       string                 `json:"app_slug"`
+	Health        string                 `json:"health"`
+	Queue         api.QueueStateResponse `json:"queue"`
+	ScalingPolicy *api.ScalingPolicy     `json:"scaling_policy,omitempty"`
+	// MinInstances and MaxConcurrency are the app's own bounds, which a
+	// scaling policy's zero min/max fall back to.
+	MinInstances   int                              `json:"min_instances"`
+	MaxConcurrency int                              `json:"max_concurrency"`
+	Bindings       []api.QueueBindingStatusResponse `json:"bindings"`
 }
 
 func collectQueueStatus(ctx context.Context, client queueStatusClient, slug string) (queueStatusReport, error) {
@@ -52,11 +56,13 @@ func collectQueueStatus(ctx context.Context, client queueStatusClient, slug stri
 		statuses = append(statuses, status)
 	}
 	return queueStatusReport{
-		AppSlug:       slug,
-		Health:        queueStatusHealth(statuses),
-		Queue:         queue,
-		ScalingPolicy: app.ScalingPolicy,
-		Bindings:      statuses,
+		AppSlug:        slug,
+		Health:         queueStatusHealth(statuses),
+		Queue:          queue,
+		ScalingPolicy:  app.ScalingPolicy,
+		MinInstances:   app.MinInstances,
+		MaxConcurrency: app.MaxConcurrency,
+		Bindings:       statuses,
 	}, nil
 }
 
@@ -127,9 +133,10 @@ func renderQueueStatus(report queueStatusReport) {
 	if report.Queue.OldestPendingAgeSeconds != nil {
 		_, _ = fmt.Fprintf(osStdout, "oldest_age: %ds\n", *report.Queue.OldestPendingAgeSeconds)
 	}
-	if report.ScalingPolicy != nil {
-		_, _ = fmt.Fprintf(osStdout, "scaling:    min=%d max=%d", report.ScalingPolicy.MinInstances, report.ScalingPolicy.MaxInstances)
-		if target := report.ScalingPolicy.Target; target != nil {
+	if report.ScalingPolicy != nil || report.MaxConcurrency > 0 {
+		_, _ = fmt.Fprintf(osStdout, "scaling:    %s", queueScalingBounds(report))
+		if report.ScalingPolicy != nil && report.ScalingPolicy.Target != nil {
+			target := report.ScalingPolicy.Target
 			_, _ = fmt.Fprintf(osStdout, " target=%s:%g", target.Metric, target.Value)
 		}
 		_, _ = fmt.Fprintln(osStdout)
@@ -161,4 +168,21 @@ func queueEnvironmentLabel(environment string) string {
 		return "shared"
 	}
 	return environment
+}
+
+// queueScalingBounds renders the bounds the app scales between. A scaling
+// policy's 0 min or max means "not set"; printing it raw read "min=0 max=0"
+// for a consumer that can run max_concurrency instances (H10-75).
+func queueScalingBounds(report queueStatusReport) string {
+	minInstances, maxInstances := report.MinInstances, 0
+	if p := report.ScalingPolicy; p != nil {
+		if p.MinInstances > 0 {
+			minInstances = p.MinInstances
+		}
+		maxInstances = p.MaxInstances
+	}
+	if maxInstances > 0 {
+		return fmt.Sprintf("min=%d max=%d", minInstances, maxInstances)
+	}
+	return fmt.Sprintf("min=%d max=%d (max_concurrency)", minInstances, report.MaxConcurrency)
 }

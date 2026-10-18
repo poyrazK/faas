@@ -9,20 +9,21 @@ import (
 )
 
 type memWorkflowRecoveryPolicy struct {
-	History         []memRecoveryHistoryEvent
-	HistorySequence int64
-	HealthIncident  *api.WorkflowRecoveryHealthIncident
-	NextHealth      time.Time
-	BlockedNext     map[string]time.Time
-	Controls        []memRecoveryPolicyControl
-	Charges         map[string]time.Time
-	NextExecute     time.Time
-	Executions      map[string]*api.WorkflowRecoveryAutomaticAction
-	Response        api.WorkflowRecoveryPolicyResponse
-	Next            time.Time
-	Cursor          string
-	Reviews         map[string][]byte
-	Notifications   map[string]*memRecoveryReviewNotification
+	History              []memRecoveryHistoryEvent
+	HistorySequence      int64
+	HealthIncident       *api.WorkflowRecoveryHealthIncident
+	NextHealth           time.Time
+	BlockedNext          map[string]time.Time
+	Controls             []memRecoveryPolicyControl
+	Charges              map[string]time.Time
+	NextExecute          time.Time
+	Executions           map[string]*api.WorkflowRecoveryAutomaticAction
+	Response             api.WorkflowRecoveryPolicyResponse
+	Next                 time.Time
+	Cursor               string
+	InitialFailureCursor string
+	Reviews              map[string][]byte
+	Notifications        map[string]*memRecoveryReviewNotification
 }
 
 func (m *MemStore) GetWorkflowRecoveryPolicy(ctx context.Context, account, app string) (api.WorkflowRecoveryPolicyResponse, error) {
@@ -73,11 +74,12 @@ func (m *MemStore) SetWorkflowRecoveryPolicy(ctx context.Context, account, app s
 	now := time.Now().UTC()
 	actor := recoveryAuditActor(ctx, "policy_updated")
 	lastEvaluation := p.Response.LastEvaluationAt
-	p.Response = api.WorkflowRecoveryPolicyResponse{AppID: app, Version: version + 1, Policy: recoveryPolicyClone(req.Policy), UpdatedAt: now, ActorKind: actor.Kind, ActorID: actor.ID, Status: "disabled", LastEvaluationAt: lastEvaluation}
+	notification := p.Response.PollingNotification
+	p.Response = api.WorkflowRecoveryPolicyResponse{AppID: app, Version: version + 1, Policy: recoveryPolicyClone(req.Policy), UpdatedAt: now, ActorKind: actor.Kind, ActorID: actor.ID, Status: "disabled", LastEvaluationAt: lastEvaluation, PollingNotification: notification}
 	if req.Policy.Enabled {
 		p.Response.Status = "monitoring"
 	}
-	if req.Policy.Mode == "automatic_retry" {
+	if api.WorkflowRecoveryPolicyAutomaticMode(req.Policy.Mode) {
 		p.Response.AutomaticExecution = &api.WorkflowRecoveryPolicyAutomaticExecution{}
 	}
 	p.NextExecute = now
@@ -90,6 +92,7 @@ func (m *MemStore) SetWorkflowRecoveryPolicy(ctx context.Context, account, app s
 	}
 	p.Next = now
 	p.Cursor = ""
+	p.InitialFailureCursor = ""
 	if m.recoveryPolicies == nil {
 		m.recoveryPolicies = map[string]*memWorkflowRecoveryPolicy{}
 	}
@@ -165,12 +168,20 @@ func (m *MemStore) GetWorkflowRecoveryPolicyReview(ctx context.Context, account,
 	m.decorateRecoveryReviewNotificationLocked(p, &out)
 	return out, nil
 }
-func (m *MemStore) ProcessNextWorkflowRecoveryPolicy(ctx context.Context, now time.Time) (bool, error) {
+func (m *MemStore) ProcessNextWorkflowRecoveryPolicy(ctx context.Context, now time.Time) (worked bool, retErr error) {
 	if now.IsZero() {
 		return false, ErrEventRecoveryQuery
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	var failures []string
+	var account, appID string
+	var version int64
+	defer func() {
+		m.mu.Unlock()
+		if retErr == nil && worked {
+			retErr = prepareInitialPolicyReviews(ctx, m, account, appID, version, failures)
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -213,6 +224,17 @@ func (m *MemStore) ProcessNextWorkflowRecoveryPolicy(ctx context.Context, now ti
 					budget.Hourly++
 				}
 			}
+		}
+	}
+	for _, r := range m.initialRecoveryReviews {
+		if !sameMemUUID(r.AppID, app.ID) {
+			continue
+		}
+		if r.PreparedAt.After(budget.Last) {
+			budget.Last = r.PreparedAt
+		}
+		if r.PreparedAt.After(now.Add(-time.Hour)) {
+			budget.Hourly++
 		}
 	}
 	jobs := []*memEventRecoveryJob{}
@@ -319,5 +341,20 @@ func (m *MemStore) ProcessNextWorkflowRecoveryPolicy(ctx context.Context, now ti
 	p.Next = now.Add(api.WorkflowRecoveryPolicyPollInterval)
 	p.Response.LastEvaluationAt = &now
 	p.Response.Status = status
+	account, appID, version = app.AccountID, app.ID, p.Response.Version
+	if initialPolicyPreparationEnabled(p.Response.Policy) {
+		for _, e := range m.workflowFailureEvidence[canonicalMemUUID(app.ID)] {
+			if e.ResumeCount == 0 && e.ID > p.InitialFailureCursor && !e.ObservedAt.After(now) && e.ObservedAt.After(now.Add(-api.WorkflowRecoveryFailureRetention)) && recoveryPolicyHas(p.Response.Policy.WorkflowNames, e.Workflow) && recoveryPolicyHas(p.Response.Policy.FailureStatuses, e.FailureStatus) {
+				if _, exists := m.initialRecoveryReviews[initialReviewID(app.ID, e.ID, p.Response.Version)]; !exists {
+					failures = append(failures, e.ID)
+				}
+			}
+		}
+		sort.Strings(failures)
+		if len(failures) > api.WorkflowRecoveryPolicyJobsPerPoll {
+			failures = failures[:api.WorkflowRecoveryPolicyJobsPerPoll]
+		}
+		p.InitialFailureCursor = initialPolicyNextCursor(failures)
+	}
 	return true, nil
 }

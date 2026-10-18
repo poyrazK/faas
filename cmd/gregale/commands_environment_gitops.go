@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const environmentGitOpsUsage = "usage: gregale projects environments gitops <status|bind|rebind|unbind|review|approve|adoption-preview|adopt|controls|override|remove-override> <project> <environment> [flags]"
+const environmentGitOpsUsage = "usage: gregale projects environments gitops <status|bind|rebind|unbind|review|plan|approve|adoption-preview|adopt|controls|override|remove-override> <project> <environment> [flags]"
 
 func cmdProjectsEnvironmentGitOps(args []string) int {
 	if len(args) == 0 {
@@ -30,6 +30,8 @@ func cmdProjectsEnvironmentGitOps(args []string) int {
 		return cmdEnvironmentGitOpsBindingLifecycle(args[0], args[1:])
 	case "review":
 		return cmdEnvironmentGitOpsReview(args[1:])
+	case "plan":
+		return cmdEnvironmentGitOpsPlan(args[1:])
 	case "approve", "adopt":
 		return cmdEnvironmentGitOpsReviewedAction(args[0], args[1:])
 	case "controls":

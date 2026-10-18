@@ -139,10 +139,11 @@ func startTCPIngress(ctx context.Context, log *slog.Logger, store *state.PgStore
 	serveReady := make(chan struct{})
 	serveResult := make(chan error, 1)
 	supervisor := &tcpd.Supervisor{
+		Listen:                   wire.ListenInherited, // a hand-off passes the listeners on
 		BindHost:                 envOr("FAAS_TCPD_BIND_HOST", "0.0.0.0"),
 		Source:                   store,
-		Routes:                   tcpd.ListenerStoreResolver{Store: store},
-		Targets:                  &tcpd.StoreTargetResolver{Instances: store, Admitter: sched},
+		Routes:                   tcpd.NewCachedRouteResolver(tcpd.ListenerStoreResolver{Store: store}, api.RawTCPLookupCacheTTL),
+		Targets:                  &tcpd.StoreTargetResolver{Instances: tcpd.NewCachedInstanceSource(store, api.RawTCPLookupCacheTTL), Admitter: sched},
 		Forwarder:                gateway.TCPForwarder{Nodes: nodes, MaxBytes: maxBytes, IdleTimeout: idleTimeout, Metrics: metrics},
 		RefreshInterval:          refreshInterval,
 		MaxConnections:           maxConnections,

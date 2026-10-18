@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 type environmentGitSourcePoll struct {
@@ -102,5 +104,5 @@ func (m *MemStore) FinishEnvironmentGitSourcePoll(_ context.Context, lease Envir
 		memory.source.SourceCommitSHA, memory.source.SourceDefinitionDigest, memory.source.SourceVerifiedAt = result.CommitSHA, result.Digest, &verified
 	}
 	memory.poll = environmentGitSourcePoll{NextPollAt: next.UTC()}
-	return nil
+	return m.environmentGitNotificationLocked(memory, "source", environmentGitSourceNotificationStatus(result.ErrorCode), "", result.ErrorCode, api.EnvironmentGitOpsPlan{CommitSHA: result.CommitSHA}, now)
 }

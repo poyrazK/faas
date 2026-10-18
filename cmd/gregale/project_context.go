@@ -13,12 +13,25 @@ import (
 )
 
 const (
-	projectContextDirName  = ".gregale"
-	projectContextFileName = "project.json"
-	projectContextVersion  = 1
+	projectContextDirName    = ".gregale"
+	projectContextFileName   = "project.json"
+	projectContextVersion    = 1
+	standaloneContextVersion = 2
 )
 
 var errProjectContextNotFound = errors.New("no linked Gregale project context")
+
+// Set only by TestMain: tests must neither inherit nor overwrite a developer's
+// checkout context when their temporary directories have linked ancestors.
+var testOnlyProjectContextRoot string
+
+func projectContextRootAllowed(path string) bool {
+	if testOnlyProjectContextRoot == "" {
+		return true
+	}
+	rel, err := filepath.Rel(testOnlyProjectContextRoot, path)
+	return err == nil && (rel == "." || filepath.IsLocal(rel))
+}
 
 // localProjectContext is deliberately non-secret. It identifies the remote
 // project and, when a project has one or an explicitly selected workload, the
@@ -27,15 +40,17 @@ var errProjectContextNotFound = errors.New("no linked Gregale project context")
 // without carrying the last project's target across directories.
 type localProjectContext struct {
 	Version     int    `json:"version"`
-	Project     string `json:"project"`
+	Project     string `json:"project,omitempty"`
 	App         string `json:"app,omitempty"`
 	Environment string `json:"environment,omitempty"`
 }
 
 type projectContextReceipt struct {
-	Context    localProjectContext `json:"context"`
-	Path       string              `json:"path"`
-	Connection *connectionContext  `json:"connection,omitempty"`
+	Context      localProjectContext       `json:"context"`
+	Path         string                    `json:"path"`
+	Connection   *connectionContext        `json:"connection,omitempty"`
+	Targeting    *projectTargetingOverview `json:"targeting,omitempty"`
+	Verification *contextVerification      `json:"verification,omitempty"`
 }
 
 func projectContextPath(root string) string {
@@ -55,6 +70,9 @@ func findProjectContext(start string) (localProjectContext, string, error) {
 		abs = filepath.Dir(abs)
 	}
 	for {
+		if !projectContextRootAllowed(abs) {
+			return localProjectContext{}, "", errProjectContextNotFound
+		}
 		path := projectContextPath(abs)
 		b, readErr := os.ReadFile(path)
 		if readErr == nil {
@@ -81,8 +99,16 @@ func findProjectContext(start string) (localProjectContext, string, error) {
 }
 
 func (c localProjectContext) validate() error {
+	// Version 2 adds standalone apps. Older CLIs refuse it instead of
+	// silently deriving a different target; project links retain version 1.
+	if c.Version == standaloneContextVersion {
+		if c.Project != "" || c.Environment != "" || !api.ValidAppSlug(c.App) {
+			return errors.New("standalone context requires an app and no project or environment; use gregale unlink to clear it or gregale link to select a project")
+		}
+		return nil
+	}
 	if c.Version != projectContextVersion {
-		return fmt.Errorf("unsupported version %d (supported: %d)", c.Version, projectContextVersion)
+		return fmt.Errorf("unsupported version %d (supported: 1 and 2)", c.Version)
 	}
 	if !api.ValidProjectSlug(c.Project) {
 		return fmt.Errorf("project %q is not a valid project slug", c.Project)
@@ -102,7 +128,7 @@ func projectContextRoot(start string) (string, error) {
 	} else if !errors.Is(err, errProjectContextNotFound) {
 		return "", err
 	}
-	if root, err := gitRootFromCwd(start); err == nil {
+	if root, err := gitRootFromCwd(start); err == nil && projectContextRootAllowed(root) {
 		return root, nil
 	}
 	return filepath.Abs(start)
@@ -228,7 +254,14 @@ func resolveEnvironmentFlagOrContext(explicit string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	context, _, err := linkedProjectContext(cwd)
+	return resolveEnvironmentFromContext(explicit, cwd)
+}
+
+func resolveEnvironmentFromContext(explicit, sourceDir string) (string, error) {
+	if explicit != "" {
+		return explicit, nil
+	}
+	context, _, err := linkedProjectContext(sourceDir)
 	if errors.Is(err, errProjectContextNotFound) {
 		return "", nil
 	}
@@ -284,7 +317,11 @@ func renderProjectContext(w io.Writer, receipt projectContextReceipt) {
 		_ = writeJSON(receipt)
 		return
 	}
-	_, _ = fmt.Fprintf(w, "Project:     %s\n", receipt.Context.Project)
+	if receipt.Context.Project == "" {
+		_, _ = fmt.Fprintln(w, "Project:     (standalone app)")
+	} else {
+		_, _ = fmt.Fprintf(w, "Project:     %s\n", receipt.Context.Project)
+	}
 	if receipt.Context.App != "" {
 		_, _ = fmt.Fprintf(w, "App:         %s\n", receipt.Context.App)
 	} else {
@@ -299,7 +336,7 @@ func renderProjectContext(w io.Writer, receipt projectContextReceipt) {
 func linkedDefaultAppName(start string) (string, error) {
 	app, err := linkedAppSlug(start)
 	if errors.Is(err, errProjectContextNotFound) {
-		return deriveName(), nil
+		return sanitizeSlug(filepath.Base(start)), nil
 	}
 	if err != nil {
 		return "", err

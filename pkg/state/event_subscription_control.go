@@ -40,9 +40,21 @@ func getSubscriptionControl(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, 
 		return out, err
 	}
 	if err == nil {
+		stamp, clockErr := q.EventSubscriptionRateClock(ctx, db)
+		if clockErr != nil {
+			return out, clockErr
+		}
+		status, _, _ := subscriptionRateSQL(row, timeFromPgtype(stamp))
+		out.RateLimit = &status
 		out.Paused = row.Paused
 		out.RatePerSecond = int(row.RatePerSecond)
 		out.UpdatedAt = timestamptzToTimePtr(row.UpdatedAt)
+	}
+	if err == nil {
+		out.MaxPendingDeliveries = int(row.MaxPendingDeliveries)
+	}
+	if err = populateEventSubscriptionCapacity(ctx, q, db, account, app, sub, &out); err != nil {
+		return out, err
 	}
 	breaker, err := readCircuit(ctx, q, db, account, app, sub)
 	if err != nil {
@@ -67,18 +79,23 @@ func (s *PgStore) GetEventSubscriptionDeliveryControl(ctx context.Context, accou
 	if err := validSubscriptionControlIDs(account, app, sub); err != nil {
 		return api.EventSubscriptionDeliveryControl{}, err
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return api.EventSubscriptionDeliveryControl{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
-	if _, err = q.EventSubscriptionControlTarget(ctx, tx, sqlc.EventSubscriptionControlTargetParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), SubscriptionID: mustPgUUID(sub)}); errors.Is(err, pgx.ErrNoRows) {
+	if _, err = q.EventConsumerPressureTarget(ctx, tx, sqlc.EventConsumerPressureTargetParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), SubscriptionID: mustPgUUID(sub)}); errors.Is(err, pgx.ErrNoRows) {
 		return api.EventSubscriptionDeliveryControl{}, ErrNotFound
 	} else if err != nil {
 		return api.EventSubscriptionDeliveryControl{}, err
 	}
+	now := time.Now().UTC()
 	out, err := getSubscriptionControl(ctx, q, tx, account, app, sub)
+	if err != nil {
+		return out, err
+	}
+	out.CapacityCommandBudget, err = readCapacityCommandBudget(ctx, q, tx, account, app, sub, now)
 	if err != nil {
 		return out, err
 	}
@@ -139,7 +156,11 @@ func eventSubscriptionGateTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, p 
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	now := time.Now().UTC()
+	stamp, err := q.EventSubscriptionRateClock(ctx, tx)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	now := timeFromPgtype(stamp)
 	until := timeFromPgtype(row.WindowStartedAt).Add(time.Second)
 	if row.Paused {
 		return "subscription_paused", now.Add(api.EventSubscriptionControlRetryDelay), nil
@@ -147,11 +168,20 @@ func eventSubscriptionGateTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, p 
 	if reason, next := circuitAdmissionReason(r, p.claim, time.Now().UTC()); reason != "" {
 		return reason, next, nil
 	}
+	rateStatus, credit, anchor := subscriptionRateSQL(row, now)
+	if rateStatus.RateLimited {
+		return "subscription_rate_limited", subscriptionRateRetry(now, *rateStatus.NextAvailableAt), nil
+	}
 	if row.RatePerSecond > 0 {
 		if row.WindowCount >= row.RatePerSecond && until.After(now) {
 			return "subscription_rate_limited", until, nil
 		}
 		if err = q.EventSubscriptionControlUsePermit(ctx, tx, sqlc.EventSubscriptionControlUsePermitParams{SubscriptionID: row.SubscriptionID, NowAt: pgtypeFromTime(now)}); err != nil {
+			return "", time.Time{}, err
+		}
+	}
+	if row.RateEnabled {
+		if err = q.EventSubscriptionRateConsume(ctx, tx, sqlc.EventSubscriptionRateConsumeParams{SubscriptionID: row.SubscriptionID, CreditMs: credit - row.RateIntervalMs, RefilledAt: pgtypeFromTime(anchor)}); err != nil {
 			return "", time.Time{}, err
 		}
 	}
@@ -162,14 +192,18 @@ func eventSubscriptionControlProgress(previous PublishedEventRecipientProgress, 
 }
 
 type memEventSubscriptionControl struct {
-	AccountID   string
-	AppID       string
-	Paused      bool
-	Rate        int
-	WindowAt    time.Time
-	WindowCount int
-	PausedAt    time.Time
-	UpdatedAt   time.Time
+	RateEnabled                                                         bool
+	RateIntervalMS, RateBurst, RateCreditMS, RateRevision, RateSequence int64
+	RateRefilledAt                                                      time.Time
+	MaxPendingDeliveries                                                int
+	AccountID                                                           string
+	AppID                                                               string
+	Paused                                                              bool
+	Rate                                                                int
+	WindowAt                                                            time.Time
+	WindowCount                                                         int
+	PausedAt                                                            time.Time
+	UpdatedAt                                                           time.Time
 }
 
 func (m *MemStore) eventSubscriptionControlTargetLocked(account, app, sub string) bool {
@@ -188,11 +222,17 @@ func (m *MemStore) eventSubscriptionControlTargetLocked(account, app, sub string
 func (m *MemStore) eventSubscriptionControlResponseLocked(account, app, sub string) api.EventSubscriptionDeliveryControl {
 	out := api.EventSubscriptionDeliveryControl{SubscriptionID: canonicalMemUUID(sub), AppID: canonicalMemUUID(app)}
 	if c := m.eventSubscriptionControls[out.SubscriptionID]; c != nil && sameMemUUID(c.AccountID, account) && sameMemUUID(c.AppID, app) {
+		status, _, _ := subscriptionRateMem(c, time.Now().UTC())
+		out.RateLimit = &status
 		out.Paused = c.Paused
+		out.MaxPendingDeliveries = c.MaxPendingDeliveries
 		out.RatePerSecond = c.Rate
 		t := c.UpdatedAt
 		out.UpdatedAt = &t
 	}
+	limits := m.eventDeliveryLimitsLocked(account)
+	out.EffectiveMaxPendingDeliveries = effectiveEventConsumerCapacity(limits.PerConsumer, out.MaxPendingDeliveries)
+	out.LiveDeliveries, _, _ = m.eventDeliveryCountsLocked(eventDeliverySlot{account, app, canonicalMemUUID(sub)}, nil)
 	if breaker := m.eventCircuitBreakers[out.SubscriptionID]; breaker != nil {
 		status := circuitResponse(sub, breaker, out.Paused, time.Now().UTC())
 		out.CircuitBreaker = &status
@@ -235,7 +275,11 @@ func (m *MemStore) GetEventSubscriptionDeliveryControl(ctx context.Context, acco
 	if !m.eventSubscriptionControlTargetLocked(account, app, sub) {
 		return api.EventSubscriptionDeliveryControl{}, ErrNotFound
 	}
-	return m.eventSubscriptionControlResponseLocked(account, app, sub), nil
+	now := time.Now().UTC()
+	out := m.eventSubscriptionControlResponseLocked(account, app, sub)
+	var err error
+	out.CapacityCommandBudget, err = m.capacityCommandBudgetLocked(ctx, account, app, sub, now)
+	return out, err
 }
 func (m *MemStore) SetEventSubscriptionDeliveryControl(ctx context.Context, account, app, sub string, paused bool, rate int) (api.EventSubscriptionDeliveryControl, error) {
 	if err := ctx.Err(); err != nil {
@@ -295,6 +339,10 @@ func (m *MemStore) eventSubscriptionWaitingReasonLocked(account, app, sub string
 			return reason
 		}
 	}
+	status, _, _ := subscriptionRateMem(c, now)
+	if status.RateLimited {
+		return "subscription_rate_limited"
+	}
 	if c.Rate > 0 && c.WindowCount >= c.Rate && c.WindowAt.Add(time.Second).After(now) {
 		return "subscription_rate_limited"
 	}
@@ -323,6 +371,14 @@ func (m *MemStore) eventSubscriptionGateLocked(p eventAdmissionPlan) (string, ti
 	}
 	if reason == "subscription_rate_limited" {
 		return reason, c.WindowAt.Add(time.Second)
+	}
+	status, credit, anchor := subscriptionRateMem(c, now)
+	if status.RateLimited {
+		return "subscription_rate_limited", subscriptionRateRetry(now, *status.NextAvailableAt)
+	}
+	if c != nil && c.RateEnabled {
+		c.RateCreditMS = credit - c.RateIntervalMS
+		c.RateRefilledAt = anchor
 	}
 	if c != nil && c.Rate > 0 {
 		if !c.WindowAt.Add(time.Second).After(now) {

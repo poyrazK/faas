@@ -110,7 +110,7 @@ func TestNativeQualificationRestoreDistinctBindingAndRetirement(t *testing.T) {
 	producer := nativeQualificationRestoreContext(ctx, r)
 	j.incoming.owner.writeRecord = func(path string, physical nativeLaunchRecord) error {
 		bound, err := j.read(frame.InstanceID)
-		if err != nil || bound.NativeGeneration != physical.Generation || bound.Capture != r.Capture || !sameNativePhysicalLease(bound.NativeLease, lease) {
+		if err != nil || bound.NativeGeneration != physical.Generation || !bound.Capture.Equal(r.Capture) || !sameNativePhysicalLease(bound.NativeLease, lease) {
 			t.Fatal("physical publication preceded durable restore binding", err)
 		}
 		return writeNativeLaunchRecord(path, physical)
@@ -120,7 +120,7 @@ func TestNativeQualificationRestoreDistinctBindingAndRetirement(t *testing.T) {
 	}
 	j.incoming.owner.writeRecord = nil
 	bound, err := j.read(frame.InstanceID)
-	if err != nil || bound.NativeGeneration == r.Generation || bound.NativeGeneration == r.Capture.NativeGeneration || bound.Capture != r.Capture {
+	if err != nil || bound.NativeGeneration == r.Generation || bound.NativeGeneration == r.Capture.NativeGeneration || !bound.Capture.Equal(r.Capture) {
 		t.Fatal("target borrowed capture generation or evidence", err)
 	}
 	if err := j.incoming.owner.prepare(producer, lease); err == nil {
@@ -379,7 +379,7 @@ func TestNativeQualificationRestoreStrictPrivateJournal(t *testing.T) {
 		t.Fatal(err)
 	}
 	var roundtrip nativeQualificationRestoreRecord
-	if err := json.Unmarshal(data, &roundtrip); err != nil || roundtrip.Execution != r.Execution || roundtrip.Capture != r.Capture ||
+	if err := json.Unmarshal(data, &roundtrip); err != nil || roundtrip.Execution != r.Execution || !roundtrip.Capture.Equal(r.Capture) ||
 		roundtrip.Generation != r.Generation || !roundtrip.AcceptedAt.Equal(r.AcceptedAt) || !roundtrip.Deadline.Equal(r.Deadline) {
 		t.Fatal("restore profile lost original target identity", err)
 	}

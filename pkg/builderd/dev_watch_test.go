@@ -9,7 +9,7 @@ import (
 )
 
 // adr: 1170 — only developer apps build watch-mode images.
-func TestDevWatchCommandOnlyForDeveloperApps(t *testing.T) {
+func TestDevWatchOnlyForDeveloperApps(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
 	acct, err := store.CreateAccount(ctx, "watch@example.com", api.PlanPro)
@@ -22,23 +22,23 @@ func TestDevWatchCommandOnlyForDeveloperApps(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := store.SetDevWatchCommand(ctx, app.ID, "npm run dev"); err != nil {
+		if err := store.SetDevWatch(ctx, app.ID, state.DevWatchSetting{Command: "npm run dev", Host: slug + ".gregale.dev"}); err != nil {
 			t.Fatal(err)
 		}
 		return app
 	}
 	for _, tc := range []struct {
 		app  state.App
-		want string
+		want state.DevWatchSetting
 	}{
-		{mk("watch-dev", "api", 0, state.AppTypeApp), "npm run dev"},
-		{mk("watch-prod", "", 0, state.AppTypeApp), ""},
-		{mk("watch-pr", "api", 7, state.AppTypeApp), ""},
-		{mk("watch-fn", "api", 0, state.AppTypeFunction), ""},
+		{mk("watch-dev", "api", 0, state.AppTypeApp), state.DevWatchSetting{Command: "npm run dev", Host: "watch-dev.gregale.dev"}},
+		{mk("watch-prod", "", 0, state.AppTypeApp), state.DevWatchSetting{}},
+		{mk("watch-pr", "api", 7, state.AppTypeApp), state.DevWatchSetting{}},
+		{mk("watch-fn", "api", 0, state.AppTypeFunction), state.DevWatchSetting{}},
 	} {
-		got, err := devWatchCommand(ctx, store, tc.app)
+		got, err := devWatch(ctx, store, tc.app)
 		if err != nil || got != tc.want {
-			t.Fatalf("%s: watch command = %q, %v; want %q", tc.app.Slug, got, err, tc.want)
+			t.Fatalf("%s: watch mode = %+v, %v; want %+v", tc.app.Slug, got, err, tc.want)
 		}
 	}
 }
@@ -57,6 +57,11 @@ func TestBuildCacheRecipeSeparatesWatchImages(t *testing.T) {
 	}
 	if plain == watchKey {
 		t.Fatal("a watch-mode build shares the production build's cache key")
+	}
+	otherApp := watched
+	otherApp.DevWatchHost = "other.gregale.dev"
+	if k, _ := otherApp.key(); k == watchKey {
+		t.Fatal("watch-mode images for two hostnames share a cache key")
 	}
 	// An empty command must not change existing keys.
 	again := base

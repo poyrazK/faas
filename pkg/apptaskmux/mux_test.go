@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // startEcho listens on loopback and echoes each connection upper-cased.
@@ -185,3 +186,24 @@ func TestServeRejectsTooManyStreams(t *testing.T) {
 type writerFunc func([]byte) (int, error)
 
 func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+// TestCloseReasonStaysValidUTF8 pins the 256-byte close-reason bound to a
+// rune boundary: a byte-slice cut splits a multi-byte character, and the
+// invalid UTF-8 is rejected wherever the reason is stored as text.
+func TestCloseReasonStaysValidUTF8(t *testing.T) {
+	var buf bytes.Buffer
+	reason := strings.Repeat("é", 200) // 400 bytes; byte 256 falls inside a rune
+	if err := NewWriter(&buf).Close(7, reason); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	frame, err := NewReader(&buf).Next()
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if frame.Type != FrameClose || frame.Stream != 7 {
+		t.Fatalf("frame = type %d stream %d, want close on 7", frame.Type, frame.Stream)
+	}
+	if len(frame.Payload) > 256 || !utf8.Valid(frame.Payload) {
+		t.Fatalf("close reason is %d bytes, valid UTF-8 %v; want <= 256 and valid", len(frame.Payload), utf8.Valid(frame.Payload))
+	}
+}

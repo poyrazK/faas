@@ -38,7 +38,7 @@ func TestInvoiceRefreshPaddleIdentityAndFacts(t *testing.T) {
 	defer srv.Close()
 	p := &Provider{apiKey: "test-key", invoiceBaseURL: srv.URL, invoiceHTTPClient: srv.Client()}
 	acct := state.Account{ID: "account", ProviderCustomerID: "ctm_invoice"}
-	inv := state.Invoice{AccountID: acct.ID, Provider: "paddle", ProviderInvoiceID: "inv_invoice", ProviderChargeID: "txn_invoice", Currency: "eur", TotalCents: 1190, TaxCents: 190}
+	inv := state.Invoice{AccountID: acct.ID, Provider: "paddle", ProviderInvoiceID: "inv_invoice", ProviderChargeID: "txn_invoice", Currency: "usd", TotalCents: 1190, TaxCents: 190}
 	d, err := p.FetchInvoiceDetails(t.Context(), acct, inv)
 	if err != nil {
 		t.Fatal(err)
@@ -53,7 +53,7 @@ func TestInvoiceRefreshPaddleIdentityAndFacts(t *testing.T) {
 	for _, tc := range []struct {
 		key   string
 		value any
-	}{{"customer_id", "ctm_foreign"}, {"invoice_id", "inv_foreign"}, {"id", "txn_foreign"}, {"currency_code", "USD"}} {
+	}{{"customer_id", "ctm_foreign"}, {"invoice_id", "inv_foreign"}, {"id", "txn_foreign"}, {"currency_code", "EUR"}} {
 		old := data[tc.key]
 		data[tc.key] = tc.value
 		if _, err := p.FetchInvoiceDetails(t.Context(), acct, inv); !errors.Is(err, billing.ErrInvoiceSourceMismatch) {

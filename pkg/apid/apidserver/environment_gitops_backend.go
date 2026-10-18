@@ -74,6 +74,13 @@ func (s *server) lockGitOpsEdgeApps(ctx context.Context, apps []string) (func(co
 }
 
 func (b *environmentGitOpsBackend) Apply(ctx context.Context, lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) ([]environmentgitops.Step, error) {
+	if retirement, ok := b.intent.(state.EnvironmentGitOpsWorkloadRetirementStore); ok {
+		steps, err := retirement.BeginEnvironmentGitOpsWorkloadRetirements(ctx, lease, plan)
+		if err != nil || len(steps) > 0 {
+			return steps, err
+		}
+	}
+
 	if creator, ok := b.intent.(state.EnvironmentGitOpsWorkloadCreationStore); ok {
 		steps, err := creator.PrepareEnvironmentGitOpsWorkloads(ctx, lease, plan)
 		if err != nil || len(steps) != 0 {
@@ -216,6 +223,9 @@ func (b *environmentGitOpsBackend) applyEffect(ctx context.Context, lease state.
 func (b *environmentGitOpsBackend) RecoverEffects(ctx context.Context, lease state.EnvironmentGitOpsLease) error {
 	if lease.Source.Spec.Mode != "enforce" {
 		return nil
+	}
+	if _, err := b.reconcileWorkloadRetirements(ctx, lease); err != nil {
+		return err
 	}
 	if err := b.recoverRuntime(ctx, lease); err != nil {
 		return err

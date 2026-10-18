@@ -676,6 +676,9 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, req requestCont
 		writeS3Error(w, http.StatusBadRequest, "EntityTooLarge", "Your proposed upload exceeds the maximum allowed object size for a single PUT.", r.URL.Path, req.requestID)
 		return
 	}
+	if req.credential.URL == nil && !h.checkWritePressure(w, r, req, "put", r.ContentLength) {
+		return
+	}
 	file, cleanup, ok := h.stageUpload(w, r, req)
 	if !ok {
 		return
@@ -972,6 +975,30 @@ func (h *Handler) closeResponseBody(body io.Closer, requestID string) {
 	}
 }
 
+// keepEdgeFromRewritingHTML marks HTML object responses Cache-Control:
+// no-transform on the CDN-proxied profile. Behind Cloudflare a text/html GET
+// otherwise came back with the bot-detection script appended (H9-S161: a
+// 116-byte object served as 1,054 bytes); the edge leaves no-transform bodies
+// alone. The stored directives are kept and only no-transform is added.
+func keepEdgeFromRewritingHTML(headers http.Header, profile string) {
+	mediaType, _, _ := strings.Cut(headers.Get("Content-Type"), ";")
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+	if profile != "proxied" || mediaType != "text/html" && mediaType != "application/xhtml+xml" {
+		return
+	}
+	value := strings.TrimSpace(headers.Get("Cache-Control"))
+	for _, directive := range strings.Split(value, ",") {
+		if strings.EqualFold(strings.TrimSpace(directive), "no-transform") {
+			return
+		}
+	}
+	if value == "" {
+		headers.Set("Cache-Control", "no-transform")
+		return
+	}
+	headers.Set("Cache-Control", value+", no-transform")
+}
+
 func copyObjectHeaders(dst, src http.Header) {
 	for _, name := range []string{"Accept-Ranges", "Cache-Control", "Content-Disposition", "Content-Encoding", "Content-Language", "Content-Length", "Content-Range", "Content-Type", "ETag", "Expires", "Last-Modified", "X-Amz-Checksum-Crc32", "X-Amz-Checksum-Crc32c", "X-Amz-Checksum-Crc64nvme", "X-Amz-Checksum-Sha1", "X-Amz-Checksum-Sha256", "X-Amz-Checksum-Type"} {
 		if value := src.Get(name); value != "" {
@@ -1091,6 +1118,7 @@ func (h *Handler) writeGatewayRead(w http.ResponseWriter, r *http.Request, req r
 	if response.StatusCode == http.StatusNotModified || response.StatusCode == http.StatusPreconditionFailed {
 		copyObjectHeaders(w.Header(), response.Header)
 		setURLDownloadHeaders(w.Header(), r, req)
+		keepEdgeFromRewritingHTML(w.Header(), h.registry.Transfer.Profile)
 		w.Header().Del("Content-Length")
 		w.WriteHeader(response.StatusCode)
 		return
@@ -1111,6 +1139,7 @@ func (h *Handler) writeGatewayRead(w http.ResponseWriter, r *http.Request, req r
 	}
 	copyObjectHeaders(w.Header(), response.Header)
 	setURLDownloadHeaders(w.Header(), r, req)
+	keepEdgeFromRewritingHTML(w.Header(), h.registry.Transfer.Profile)
 	writeEncryptionHeaders(w.Header(), encryption)
 	w.WriteHeader(response.StatusCode)
 	if r.Method == http.MethodGet {

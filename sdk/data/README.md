@@ -360,6 +360,165 @@ no generic retry wrapper or HTTP header can make arbitrary mutations idempotent.
 The database transaction enforces the guarantee. See the example for permissions,
 receipt retention and limitations on external side effects.
 
+### Read-only mutation recovery
+
+Use an application's receipt lookup RPC to check a pending operation before
+deciding whether to retry its write. The starter's append-only
+`0011_note_receipt_lookup.sql` migration installs `read_note_create_receipt`;
+apply the normal owner RPC permission workflow, refresh the API and regenerate
+types. The idempotent-order example similarly adds `read_order_receipt`.
+These authenticated RPCs derive identity from request claims, compare the original
+key and payload, and return the stored original response without executing a write.
+
+Given a pending note saved before the first attempt, use the same API and signed-in
+identity and retain its original key, body and tag array:
+
+```ts
+import { dataRequest, reconcileMutation } from '@gregale/data'
+
+const response = await dataRequest(
+  db.rpc('read_note_create_receipt', {
+    idempotency_key: pending.key,
+    note_body: pending.body,
+    tag_names: pending.tags,
+  }).select('id,body,subject'),
+  { timeoutMs: 5000, signal },
+)
+const recovery = reconcileMutation(response, row =>
+  row.subject === pending.subject && row.body === pending.body,
+)
+if (recovery.outcome === 'confirmed') {
+  showSavedNote(recovery.row.id)
+} else {
+  // Keep the pending key/payload. Review conflicts or check again explicitly.
+}
+```
+
+`reconcileMutation` classifies a completed lookup; it executes no query, polling
+or retry. Its synchronous predicate binds the returned receipt to the original
+operation and preserves projected row types. Confirm only the same API, subject,
+tenant where applicable, key and full payload. The SQL lookup compares payload
+fields that are not part of the returned projection. Use `validateRpcResponse`
+first when the application also requires runtime response validation.
+
+Results are `confirmed` with `row`, `payload_conflict` with the original error,
+or `unresolved` with `reason` (`not_found`, `request_failed`, `invalid_receipt`,
+`replay_expired`).
+Status is preserved, as are request errors on unresolved failures. Malformed,
+multiple or mismatched rows and predicate exceptions cannot confirm the write;
+rejected data and predicate exceptions are omitted. Conflict classification
+requires HTTP 409, `PT409` and `idempotency_payload_conflict` exactly.
+
+No visible receipt can mean uncommitted work, a hidden operation or a purged
+receipt. It never proves rollback and does not authorize a new write. Keep retry
+explicit. For legacy contracts, purging ends the guarantee for that key and a
+replay can create a duplicate. Confirmation describes the original committed
+response, even if the business row was subsequently edited or deleted.
+
+### Opt-in v2 replay expiry
+
+The starter's `0012_note_replay_expiry.sql` adds
+`create_note_with_tags_once_v2` and `read_note_create_receipt_v2`. Apply the
+migration, owner RPC grants and schema refresh, then regenerate types before
+using these functions. Legacy functions keep their original retention contract.
+
+```ts
+import { createReplayKeyV2, classifyDataError, dataRequest } from '@gregale/data'
+
+// Save this entire operation under its original API and identity before sending.
+const pending = {
+  contract: 'v2', subject: session.subject,
+  key: createReplayKeyV2(), body: 'hello', tags: ['work'],
+}
+const result = await dataRequest(db.rpc('create_note_with_tags_once_v2', {
+  idempotency_key: pending.key, note_body: pending.body, tag_names: pending.tags,
+}), { timeoutMs: 5000 })
+if (classifyDataError(result.error, { status: result.status })?.category === 'replay_expired') {
+  // Keep pending. Check the original receipt or resolve through business review.
+  // Never generate a replacement key automatically.
+}
+```
+
+Keys are UUIDv7 values using the client clock and Web Crypto randomness. V2 uses
+the key's embedded timestamp plus **24 hours**, allowing at most **five minutes**
+of future clock skew. Server wall time decides expiry, including after lock
+waits; a slow client clock shortens the available window. Client timestamps are
+not trusted to assert when an operation actually began. Preserve the exact key:
+changing its timestamp or contract version creates another operation namespace.
+
+Expired writes return HTTP 410, `PT410`, `idempotency_key_expired`, even after
+receipt cleanup. `classifyDataError` exposes `replay_expired` with `reconcile`
+guidance. The v2 lookup can still confirm a retained expired receipt; if missing,
+the exact expiry response becomes `unresolved` / `replay_expired`. Expiry cannot
+prove whether an earlier attempt committed. No helper retries or replaces keys.
+Invalid UUID versions/variants return `PT400` / `idempotency_key_invalid`, and
+timestamps beyond the clock allowance return `PT400` / `idempotency_key_in_future`.
+
+The migration cleanup tool accepts `--contract v2` and deletes only receipts whose
+key deadline has closed. Keep the fixed v2 window unchanged; a longer policy needs
+a new version to avoid reviving purged keys. The guarantee covers this SQL
+contract under an accurate database clock and retained database history. Owner
+schema changes, restores that lose receipts and external effects need separate
+recovery policies.
+
+### Versioned updates and deletes
+
+The starter's `0013_note_mutation_receipts.sql` adds opt-in conditional writes
+`update_note_once_v2` and `delete_note_once_v2`. Both require a UUIDv7 operation
+key, note ID and expected version. Update additionally accepts `note_patch` with
+only non-null `body` text and/or integer `priority`. Apply migrations and owner
+RPC permissions, refresh the API, regenerate types and install the paired SDK.
+
+```ts
+import { classifyVersionedMutation, createReplayKeyV2, dataRequest, reconcileMutation } from '@gregale/data'
+
+// Persist args and original API/identity/contract/action before the first send.
+const subject = session.subject
+const args = {
+  idempotency_key: createReplayKeyV2(), note_id: note.id,
+  expected_version: note.version, note_patch: { body: 'edited' },
+}
+const matches = (row: { id: number; subject: string; version: number; body: string }) =>
+  row.id === args.note_id && row.subject === subject &&
+  row.version === args.expected_version + 1 && row.body === args.note_patch.body
+const response = await dataRequest(
+  db.rpc('update_note_once_v2', args).select('id,subject,version,body'),
+  { timeoutMs: 5000 },
+)
+const outcome = classifyVersionedMutation(response, matches)
+
+// For an uncertain write, check the original receipt explicitly.
+const read = await dataRequest(
+  db.rpc('read_note_update_receipt_v2', args).select('id,subject,version,body'),
+  { timeoutMs: 5000 },
+)
+const recovery = reconcileMutation(read, matches)
+```
+
+`classifyVersionedMutation` classifies a completed write result, without executing
+or retrying anything. Its synchronous predicate preserves selected types and
+binds the snapshot to the original operation. Outcomes are `applied` with the
+original row, `version_conflict`, `payload_conflict`, or `unresolved` with the
+existing reconciliation reasons. Only HTTP 409 / `PT409` /
+`idempotency_version_conflict` becomes `version_conflict`; generic conflicts do
+not acquire this meaning. Original errors/status are preserved. An empty success
+result stays unresolved. Expiry remains unresolved with reason `replay_expired`.
+
+For delete, call `delete_note_once_v2` and recover with
+`read_note_delete_receipt_v2`, using key, note ID and expected version. Its receipt
+contains the deleted snapshot with that same version. Update returns the stored
+post-update version. Both lookups are read-only and remain useful after subsequent
+edits/deletion; replay returns the saved response without reapplying the mutation.
+
+Stale, absent and RLS-hidden rows share the version-conflict response. Failed
+mutations leave no success receipt and reserve no key. A conflict alone cannot
+confirm an earlier uncertain write. Preserve the original operation and never
+automatically replace its key or expected version. Updates/deletes share a key
+namespace, independent of creation; changing action, target, version or patch for
+a successful key returns a payload conflict. The fixed v2 expiry/cleanup contract
+also applies. Full setup and maintenance are documented in
+[Data API recovery](../../docs/data-api.md#versioned-update-and-delete-recovery).
+
 ### Bulk mutations with partial results
 
 ```ts
@@ -407,12 +566,17 @@ retries explicitly.
 | --- | --- | --- |
 | `unique_violation` | SQLSTATE `23505` | `change_input` |
 | `foreign_key_violation` | SQLSTATE `23503` | `change_input` |
+| `lock_conflict` | SQLSTATE `55P03` | `wait` |
+| `deadlock` | SQLSTATE `40P01` | `wait` |
 | `authentication` | `token_required`, `token_invalid`, `PGRST301`–`PGRST303`, HTTP 401 | `authenticate` |
 | `permission_denied` | SQLSTATE `42501`, `origin_not_allowed`, HTTP 403 | `check_permissions` |
 | `contract_mismatch` | `schema_contract_mismatch` | `refresh_contract` |
-| `timeout` | `request_timeout`, `query_timeout`, HTTP 504 | `reconcile` |
+| `timeout` | `request_timeout`, `query_timeout`, `request_deadline_exceeded`, `data_api_sql_deadline_exceeded`, HTTP 504 | `reconcile` |
 | `cancelled` | `request_cancelled`, SQLSTATE `57014` | `reconcile` |
-| `unavailable` | `data_api_unavailable`, `serving_contract_unavailable`, `data_api_refresh_unavailable`, HTTP 503 | `check_service` |
+| `response_too_large` | `response_too_large` | `reconcile` |
+| `rate_limited` | `data_api_rate_limited`, HTTP 429 | `wait` |
+| `concurrency_limited` | `data_api_concurrency_limited` | `wait` |
+| `unavailable` | `data_api_unavailable`, `data_api_overloaded`, `serving_contract_unavailable`, `data_api_refresh_unavailable`, HTTP 503 | `check_service` |
 | `no_response` | Status 0 with no recognized code | `reconcile` |
 | `unknown` | Other errors | `inspect` |
 
@@ -424,13 +588,63 @@ Native exceptions without a recognized code or supplied status remain unknown;
 use `dataRequest()` for stable deadline/cancellation codes.
 
 Recovery values are suggestions, not instructions to retry. Timeouts,
-cancellation, missing responses, and service failures do not prove a mutation
+cancellation, response-size limits, missing responses, and service failures do not prove a mutation
 rolled back. Reconcile writes or use an application-owned idempotency contract
 before replaying them. `refresh_contract` means review the rollout and regenerate
 appropriate client types; it does not automatically change a pinned fingerprint.
 An empty RLS-filtered result is not a permission error. The preserved original
 error and its code can contain application or database information: use curated
 UI messages and do not blindly log or display the classification object.
+
+New managed Data API logins default to a five-second lock timeout and retain the
+15-second statement timeout. `55P03` also covers NOWAIT refusal, so the category
+does not prove which lock policy fired. An uncaught contention error rolls back
+the failing request's transaction, including earlier transactional RPC writes;
+sequences and external effects are excluded. It cannot establish whether an
+earlier attempt committed. Wait and review the whole operation before explicit
+retry, using its idempotency/receipt contract when needed. Normal and throwing
+CRUD/RPC errors keep their original code and private details; neither category
+causes automatic replay. Existing roles and open pools require the documented
+credential-policy upgrade and reconnect workflow; an SDK update does not alter
+SQL defaults. Pinned PostgREST 14.3 already retries deadlocks and serialization
+failures within its SQL transaction machinery. A deadlock may resolve and return
+success from a single HTTP request; the SDK classification applies if `40P01`
+actually reaches the caller and does not disable or extend engine retries.
+
+An owner can opt the updated runtime into SQL deadlines across internal transaction
+retries after installing the matching database hooks. The fixed gateway expiry
+caps each attempt's remaining SQL budget. A hook that observes expiry returns
+`data_api_sql_deadline_exceeded`, classified as `timeout` / `reconcile`, including
+`throwOnError()` errors. A main statement interrupted by PostgreSQL can instead
+return `57014`; its category remains `cancelled`. An invalid/missing hook contract
+is a server setup failure, not evidence of mutation success. The SDK adds no retry
+or database installation behavior. Review the original operation/receipt before
+explicit replay; HTTP cancellation alone cannot establish SQL completion.
+
+The updated runtime limits normal REST/RPC bodies to 16 MiB, independently of
+row count. Known oversized lengths return `502 response_too_large`; overflow
+after headers closes the incomplete body and can instead produce status 0 /
+`no_response`. Generic HTTP 502 errors remain `unknown`. Use `onResponse` to
+retain the header request ID before body consumption and correlate gateway logs.
+Reduce future projections/page sizes or RPC output, and reconcile writes before
+replay: SQL can commit before the result is rejected. The SDK adds no retries.
+
+Optional gateway user-rate limits return `429 data_api_rate_limited` with
+`Retry-After: 1`. Budgets follow verified subjects across token rotation and
+routes, and are local to each runtime. The stable gateway code establishes a
+rejection before SQL dispatch; generic HTTP 429 alone does not. Recovery `wait`
+means defer the next request decision; it adds no timers or automatic retries,
+including for ordinary GET/POST queries and `throwOnError()`. Preserve uncertain
+write reconciliation when the error comes from another service or SQL.
+
+Optional `DATA_API_USER_CONCURRENCY` limits concurrent authenticated requests per
+verified subject within one runtime. Rejections use
+`429 data_api_concurrency_limited`, classified as `concurrency_limited` / `wait`.
+Their `Retry-After` is advisory (one second for active work, up to 15 for uncertain
+dispatch cooldown). The rejected call did not reach SQL, but an earlier call may
+still be running or may have committed after cancellation. Review that earlier
+outcome separately. The SDK adds no retries, timers or automatic mutation replay;
+generic HTTP 429 continues to fall back to `rate_limited`.
 
 ### Validate RPC arguments at runtime
 
@@ -545,3 +759,132 @@ another write; never automatically replay on a validation failure. Raw request
 failure results may still contain private database errors. Use curated UI messages.
 The helper does not mutate the original response itself, but parsers receive its
 data by reference and are responsible for any mutation they perform.
+
+### Encrypted continuation tokens for server routes
+
+Existing `cursorPage`/`cursorFrom` helpers use raw ordering values. For routes that
+accept an untrusted continuation token, use `createCursorPager` on the server:
+
+```ts
+import { createCursorPager } from '@gregale/data'
+
+// Load a stable 32-byte random key from server-side configuration. Never send it
+// to a browser or commit it. Reuse the pager across requests on this server.
+const pager = await createCursorPager({ key: cursorKeyBytes, ttlMs: 15 * 60_000, maxPageSize: 100 })
+const order = [
+  { column: 'created_at' },
+  { column: 'id', unique: true },
+] as const
+
+// Derive scope from verified application identity/tenant/permission claims.
+const page = await pager.page(
+  db.from('orders').select('id,created_at,total').eq('team_id', authenticatedTeamId),
+  {
+    order, size: 50,
+    scope: { identity: trustedIdentityScope, schemaFingerprint: currentSchemaFingerprint },
+    after: incomingContinuation,
+  },
+)
+// Return page.result and page.nextCursor to the caller. API errors remain in result.
+```
+
+Ordering columns must appear in the selected projection and have scalar types.
+A single primary key works with `[{ column: 'id', unique: true }]`; timestamp-plus-ID
+ordering uses the example above. The final column must actually be non-null and
+unique within the filtered result. The helper validates the declaration and values,
+but does not inspect database constraints. Use a fresh GET array query with no root
+order, limit, offset or range applied beforehand. Nested projection types are preserved.
+
+Tokens use authenticated AES-GCM encryption with fresh random nonces. They bind the
+actual query endpoint, schema, filter/projection parameters, ordering, page size,
+identity scope and schema fingerprint. Refreshing a JWT need not change the scope;
+include tenant and relevant permission/version claims in a server-derived scope.
+Create the data client with `expectedSchemaFingerprint` matching the scope so the
+gateway also rejects schema changes before executing a read. The scope alone does
+not detect an unannounced gateway migration. The helper does not authenticate callers,
+read claims from JWTs or replace RLS.
+Keep the key exclusively on trusted servers. A browser should submit issued tokens
+to your route; browser-only clients can continue using the raw keyset helpers.
+
+The default TTL is 15 minutes (maximum one day), and default maximum page size is
+999. One additional row is fetched to determine continuation within Gregale's
+1,000-row response cap. Each page returns at most the requested size, with
+`nextCursor`, `previousCursor`, `hasMore` and `direction`. `hasMore` describes the
+current traversal direction. `before` returns nearest preceding rows in reverse
+order, as with `cursorPage`; use `previousCursor` to continue backward and reverse
+rows for normal display. Empty/error results return no continuations. First forward
+pages have no previous cursor. Continuations describe boundaries, not guaranteed
+nonempty pages if records are subsequently deleted.
+
+Malformed/tampered tokens fail with `CursorPaginationError.code = 'invalid_cursor'`.
+Expired tokens use `expired_cursor`; changed query, scope, ordering, page size or
+schema uses `incompatible_cursor`. These failures occur before query execution.
+Invalid options or malformed successful responses have separate codes. Key rotation
+invalidates existing tokens; restart pagination rather than attempting an automatic
+fallback. Tokens are bounded to 16 KiB and ordering to 16 columns. Cursor values
+and filters are not exposed in plaintext tokens. Pagination does not provide a
+snapshot across requests, and changing ordered values can still move rows between
+pages. Index the filter and ordering columns and review plans with representative data.
+
+### Validating atomic batch receipts
+
+For the starter's opt-in v2 batch RPC, use its `prepareNoteBatch` and
+`noteBatchMatches` helpers with the paired generated types. `classifyVersionedMutation`
+and `reconcileMutation` accept synchronous type guards, so validating the entire
+one-row envelope narrows its nested JSON to typed ordered snapshots. Every item
+must match before the result becomes `applied` or `confirmed`; classify completed
+responses only. These helpers send no requests or retries.
+
+The explicit RPC commits 1–100 distinct note updates/deletes atomically and
+stores one receipt; SDK `bulkMutations` retains its separate-request semantics.
+Retain the original API, identity, key, contract and ordered operation array for
+read-only recovery. Expiry, absence and conflicts cannot alone resolve an earlier
+uncertain request. See the [batch contract and example](../../docs/data-api.md#atomic-note-batch-recovery).
+
+### Durable mutation journals
+
+`createMutationJournal` optionally saves an original prepared operation through
+an application-supplied atomic store and synchronous lossless parser. Provide
+its exact API URL, optional schema fingerprint, subject, tenant (or null), and
+contract. Operations must include that context, one canonical UUIDv7 `key` and
+the complete captured payload. The parser must return identical canonical JSON;
+restoration cannot silently drop fields or replace a key. The generated v2
+transaction client supplies this parser and an easier persistent wrapper.
+
+Use `createIndexedDBMutationStore({databaseName:'my-app-data-mutations'})` in a
+browser to opt into a dedicated, bounded store with strict transaction durability.
+It opens lazily. `journal.prepare(slot,operation)` inserts only into an empty
+stable slot. `journal.load(slot)` validates and freezes saved data without a
+request. `journal.dispatch(entry,send)` commits uncertainty before invoking the
+explicit callback once, returning its new `entry` and original `response`.
+Competing tabs cannot claim the same prepared revision. Storage failures prevent
+sending; callback errors leave the uncertain operation available through load.
+
+`journal.reconcile(entry,response,matches)` classifies a completed response using
+the existing receipt contract/type guard. `journal.recover(entry,lookup,matches)`
+explicitly calls a receipt-read callback and classifies it. Neither performs
+retries or key replacement. They return `result`, `entry` and `persistence`:
+`saved`, `unchanged`, `conflict` or `storage_failed`. Proven server success remains
+in `result` even if a local confirmation marker cannot be committed. Empty,
+expired, conflicting and malformed receipts keep the original operation.
+
+Only `journal.removeConfirmed(entry)` explicitly removes local records, with
+an atomic revision check. It cannot clear uncertainty or delete newer work from
+a reused slot. Handles belong to one journal instance; load new ones after
+restart. API/identity/tenant/contract/fingerprint mismatches and invalid records
+fail closed without returning or changing the saved operation.
+
+Default bounds: 100 IndexedDB records, 8 MiB stored values, 1 MiB per record,
+256 UTF-8 bytes per slot/database name and JSON depth 64. Count/byte budgets may
+be lowered. No automatic pruning, background polling or fallback storage is
+introduced. Applications intentionally persist payloads; their parser should
+allow only the prepared operation and exclude credentials/request options.
+Origin storage must remain available for recovery; clearing/evicting it or losing
+the device removes that local copy. A custom `MutationJournalStore` must implement
+durable atomic `compareExchange(slot,expected,next)` across its users; separate
+localStorage reads/writes do not provide that guarantee.
+
+Errors use `MutationJournalError.code` with curated messages: storage_unavailable,
+storage_full, conflict, invalid_record, invalid_operation, context_mismatch,
+invalid_entry, not_prepared and not_confirmed. Original storage/parser exceptions
+and rejected payloads are omitted. See the [generated v2 integration](../../docs/data-api.md#durable-pending-operation-recovery).

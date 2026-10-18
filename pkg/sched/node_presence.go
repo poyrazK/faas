@@ -127,6 +127,10 @@ type staleInstanceStore interface {
 	FailRunningInstanceIfOwnedByNode(ctx context.Context, id, nodeID string, terminalAt time.Time) error
 }
 
+// nodeInventoryRunningLimit bounds one reconciliation read. A node runs far
+// fewer instances; a truncated read only repairs the rows it returned.
+const nodeInventoryRunningLimit = 4096
+
 // NodeInventoryEnforceEnv controls canary enablement independently of the
 // older metric-based divergence sweep, which remains report-only by default.
 const NodeInventoryEnforceEnv = "FAAS_SCHEDD_NODE_INVENTORY_ENFORCE"
@@ -152,9 +156,16 @@ func (e *Engine) ObserveNodeInventory(ctx context.Context, inventory NodeInstanc
 		return
 	}
 
+	if nodeID == "" {
+		return
+	}
 	checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	instances, err := e.store.ListInstancesOnNodeID(checkCtx, nodeID)
+	// Only RUNNING rows can be repaired. Listing every instance the node
+	// ever hosted read 21,067 rows on production-us after a boot loop and
+	// missed the 2 s deadline on every report, so this repair never ran
+	// (hunt #10).
+	instances, err := e.store.ListLiveInstancesOnNode(checkCtx, nodeID, nodeInventoryRunningLimit)
 	if err != nil {
 		e.log.Warn("sched: stale-instance reconciliation list failed",
 			"node_id", nodeID, "err", err)
@@ -165,7 +176,17 @@ func (e *Engine) ObserveNodeInventory(ctx context.Context, inventory NodeInstanc
 	retry := false
 	reconciled := 0
 	attempted := 0
+	var frozenGone []string
 	for _, ins := range instances {
+		if ins.State == string(state.StateFrozen) {
+			// ADR-1151: a frozen VM missing from the node's signed inventory
+			// is gone (vmmd or the node restarted). Its deployment has a
+			// snapshot, so parking the row is safe even if the VM survived.
+			if _, present := observation.reported[ins.ID]; !present {
+				frozenGone = append(frozenGone, ins.ID)
+			}
+			continue
+		}
 		if ins.State != string(state.StateRunning) {
 			continue
 		}
@@ -268,6 +289,12 @@ func (e *Engine) ObserveNodeInventory(ctx context.Context, inventory NodeInstanc
 		retry = true
 		e.log.Warn("sched: stale-instance reconciliation update failed",
 			"instance_id", ins.ID, "node_id", nodeID, "err", err)
+	}
+	for _, id := range frozenGone {
+		if err := e.ParkFrozen(checkCtx, id, "node_restart"); err != nil {
+			retry = true
+			e.log.Warn("sched: park frozen instance missing from inventory", "instance_id", id, "node_id", nodeID, "err", err)
+		}
 	}
 	if !retry {
 		e.nodePresence.markReconciled(nodeID, observation.fingerprint)

@@ -49,7 +49,7 @@ func (m *MemStore) ProcessNextWorkflowRecoveryAutomaticPolicy(ctx context.Contex
 	policies := []*memWorkflowRecoveryPolicy{}
 	for _, p := range m.recoveryPolicies {
 		app, ok := m.eventSubscriptionAppLocked(p.Response.AppID)
-		if ok && app.Status != AppDeleted && p.Response.Policy.Enabled && p.Response.Policy.Mode == "automatic_retry" && p.Response.AutomaticExecution != nil && p.Response.AutomaticExecution.PausedAt == nil && !p.NextExecute.After(now) {
+		if ok && app.Status != AppDeleted && p.Response.Policy.Enabled && api.WorkflowRecoveryPolicyAutomaticMode(p.Response.Policy.Mode) && p.Response.AutomaticExecution != nil && p.Response.AutomaticExecution.PausedAt == nil && !p.NextExecute.After(now) {
 			policies = append(policies, p)
 		}
 	}
@@ -64,16 +64,19 @@ func (m *MemStore) ProcessNextWorkflowRecoveryAutomaticPolicy(ctx context.Contex
 		return false, nil
 	}
 	p := policies[0]
-	if err := (api.SetWorkflowRecoveryPolicyRequest{Policy: p.Response.Policy}).Validate(); err != nil {
+	if err := validateAutomaticPollingMemLocked(m, p); err != nil {
+		did, e := m.deferAutomaticPollingMem(p, err, now)
 		m.mu.Unlock()
-		return false, fmt.Errorf("validate automatic policy authority: %w", err)
+		return did, e
+	}
+	ctx = automaticRecoveryActor(ctx, p.Response)
+	if p.Response.Policy.Mode == "automatic_initial" {
+		now = now.UTC().Truncate(time.Microsecond)
 	}
 	app, _ := m.eventSubscriptionAppLocked(p.Response.AppID)
-	p.NextExecute = now.Add(api.WorkflowRecoveryPolicyPollInterval)
-	for id, at := range p.Charges {
-		if !at.After(now.Add(-time.Duration(api.WorkflowRecoveryPolicyMaxCooldownSeconds) * time.Second)) {
-			delete(p.Charges, id)
-		}
+	if r := m.initialAutomaticOutstandingLocked(app.ID); r != nil {
+		defer m.mu.Unlock()
+		return m.runAutomaticPollingMemLocked(ctx, p, app, now, func() error { return m.processInitialAutomaticResultLocked(ctx, p, app, *r, now) })
 	}
 	var outstanding *api.WorkflowRecoveryAutomaticAction
 	var retained api.WorkflowRecoveryPolicyReview
@@ -107,30 +110,42 @@ func (m *MemStore) ProcessNextWorkflowRecoveryAutomaticPolicy(ctx context.Contex
 		if p.Response.Version != version || !p.Response.UpdatedAt.Equal(updatedAt) || p.Response.AutomaticExecution.PausedAt != nil || p.Executions[e.ActionID] != outstanding || outstanding.Result != nil {
 			return true, nil
 		}
-		m.recordRecoveryEvaluationLocked(p, outstanding, reason, now, result)
-		if err != nil || result == nil {
-			if chosen, _ := recoveryAutomaticPendingMem(p); chosen != nil {
-				m.recordRecoveryEvaluationLocked(p, chosen, "outstanding_retry", now, nil)
-			}
-			return true, nil
+		if err != nil {
+			return m.deferAutomaticPollingMem(p, err, now)
 		}
-		outstanding.Result = recoveryPolicyClone(result)
-		p.NextExecute = now
-		if retained.PolicyVersion == version && recoveryAutomaticRecordFailure(&p.Response, *result, now) {
-			if err = m.enqueueAutomaticRecoveryPauseLocked(app.AccountID, app.Slug, p.Response); err != nil {
-				return false, err
+		return m.runAutomaticPollingMemLocked(ctx, p, app, now, func() error {
+			m.recordRecoveryEvaluationLocked(p, outstanding, reason, now, result)
+			if result == nil {
+				if chosen, _ := recoveryAutomaticPendingMem(p); chosen != nil {
+					m.recordRecoveryEvaluationLocked(p, chosen, "outstanding_retry", now, nil)
+				}
+				return nil
 			}
-		}
-		return true, nil
+			outstanding.Result = recoveryPolicyClone(result)
+			p.NextExecute = now
+			if retained.PolicyVersion == version && recoveryAutomaticRecordFailure(&p.Response, *result, now) {
+				if err = m.enqueueAutomaticRecoveryPauseLocked(app.AccountID, app.Slug, p.Response); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
 	}
 	defer m.mu.Unlock()
-	return true, m.executeAutomaticRecoveryPendingLocked(ctx, p, app, now)
+	if p.Response.Policy.Mode == "automatic_initial" {
+		return m.runAutomaticPollingMemLocked(ctx, p, app, now, func() error { return m.executeInitialAutomaticPendingLocked(ctx, p, app, now) })
+	}
+	return m.runAutomaticPollingMemLocked(ctx, p, app, now, func() error { return m.executeAutomaticRecoveryPendingLocked(ctx, p, app, now) })
 }
 func (m *MemStore) executeAutomaticRecoveryPendingLocked(ctx context.Context, p *memWorkflowRecoveryPolicy, app App, now time.Time) (err error) {
 	chosen, review := recoveryAutomaticPendingMem(p)
 	hourly := 0
 	last := time.Time{}
+	charges := m.initialAutomaticChargesLocked(app.ID)
 	for _, at := range p.Charges {
+		charges = append(charges, at)
+	}
+	for _, at := range charges {
 		if at.After(now.Add(-time.Hour)) {
 			hourly++
 		}

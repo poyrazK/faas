@@ -70,7 +70,7 @@ func mustMarshalJSON(yamlBytes []byte) []byte {
 
 func openAPIJSONBytes() []byte {
 	openapiJSONOnce.Do(func() {
-		openapiJSON = mustMarshalJSON(openapiYAML)
+		openapiJSON = mustMarshalJSON(PublicOpenAPIYAML())
 	})
 	return openapiJSON
 }
@@ -85,12 +85,13 @@ func OpenAPIJSONSHA256() string {
 
 // ServeOpenAPISpec handles GET /v1/openapi.yaml. Anonymous; emits
 // application/yaml with a short Cache-Control so SDK codegen caches
-// don't pin a stale spec.
+// don't pin a stale spec. Serves PublicOpenAPIYAML, which omits
+// operator-only preview routes.
 func ServeOpenAPISpec(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=300")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(openapiYAML)
+	_, _ = w.Write(PublicOpenAPIYAML())
 }
 
 // ServeOpenAPISpecJSON handles GET /v1/openapi.json. Anonymous; serves

@@ -8,6 +8,7 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.debug_regression_item_kind import DebugRegressionItemKind, check_debug_regression_item_kind
 from ..models.debug_regression_item_state import DebugRegressionItemState, check_debug_regression_item_state
 from ..types import UNSET, Unset
 
@@ -27,18 +28,31 @@ class DebugRegressionItem:
     p95_ms: int
     p95_base_ms: int
     affected_count: int
+    """Requests slower than the latency threshold; for an errors-only observation, the failed requests."""
     regression_factor: str
-    """Decimal string with up to 2 places, NUMERIC(5,2)."""
+    """Decimal string with up to 2 places, NUMERIC(5,2). Latency inflation; 1.00 for an errors-only observation
+    whose p95 did not rise."""
     first_detected_at: datetime.datetime
     last_detected_at: datetime.datetime
     state: DebugRegressionItemState
+    kind: DebugRegressionItemKind | Unset = UNSET
+    """Which signal regressed (absent from servers before error-rate detection, meaning latency): latency (p95 at
+    least 1.2x baseline across at least 100 slower requests), errors (the share of HTTP 5xx responses rose at least
+    5 percentage points and 2x, with at least 10 failed and 50 total requests on each side), or both."""
+    error_rate_pct: float | Unset = UNSET
+    """Share of HTTP 5xx responses on the regressed deployment's route."""
+    error_rate_base_pct: float | Unset = UNSET
+    """Share of HTTP 5xx responses on the previous deployment's route."""
+    error_count: int | Unset = UNSET
+    """HTTP 5xx responses on the regressed deployment's route in the detection window."""
     acknowledged_at: datetime.datetime | Unset = UNSET
     dismissed_until: datetime.datetime | Unset = UNSET
     resolved_at: datetime.datetime | Unset = UNSET
     suspected_dependency: DebugSuspectedDependency | Unset = UNSET
-    """The classified dependency most likely behind this route regression (ADR-958): the one whose p95 regressed
-    most between the previous and the regressed deployment, else one that started failing more often. Bounded and
-    redacted; also sent in debug.regression.* webhooks."""
+    """The classified dependency most likely behind this route regression (ADR-958): for a latency regression the
+    one whose p95 regressed most between the previous and the regressed deployment, else one that started failing
+    more often; an errors-only regression checks failing dependencies first. Bounded and redacted; also sent in
+    debug.regression.* webhooks."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -59,6 +73,16 @@ class DebugRegressionItem:
         last_detected_at = self.last_detected_at.isoformat()
 
         state: str = self.state
+
+        kind: str | Unset = UNSET
+        if not isinstance(self.kind, Unset):
+            kind = self.kind
+
+        error_rate_pct = self.error_rate_pct
+
+        error_rate_base_pct = self.error_rate_base_pct
+
+        error_count = self.error_count
 
         acknowledged_at: str | Unset = UNSET
         if not isinstance(self.acknowledged_at, Unset):
@@ -91,6 +115,14 @@ class DebugRegressionItem:
                 "state": state,
             }
         )
+        if kind is not UNSET:
+            field_dict["kind"] = kind
+        if error_rate_pct is not UNSET:
+            field_dict["error_rate_pct"] = error_rate_pct
+        if error_rate_base_pct is not UNSET:
+            field_dict["error_rate_base_pct"] = error_rate_base_pct
+        if error_count is not UNSET:
+            field_dict["error_count"] = error_count
         if acknowledged_at is not UNSET:
             field_dict["acknowledged_at"] = acknowledged_at
         if dismissed_until is not UNSET:
@@ -124,6 +156,19 @@ class DebugRegressionItem:
         last_detected_at = datetime.datetime.fromisoformat(d.pop("last_detected_at"))
 
         state = check_debug_regression_item_state(d.pop("state"))
+
+        _kind = d.pop("kind", UNSET)
+        kind: DebugRegressionItemKind | Unset
+        if isinstance(_kind, Unset):
+            kind = UNSET
+        else:
+            kind = check_debug_regression_item_kind(_kind)
+
+        error_rate_pct = d.pop("error_rate_pct", UNSET)
+
+        error_rate_base_pct = d.pop("error_rate_base_pct", UNSET)
+
+        error_count = d.pop("error_count", UNSET)
 
         _acknowledged_at = d.pop("acknowledged_at", UNSET)
         acknowledged_at: datetime.datetime | Unset
@@ -163,6 +208,10 @@ class DebugRegressionItem:
             first_detected_at=first_detected_at,
             last_detected_at=last_detected_at,
             state=state,
+            kind=kind,
+            error_rate_pct=error_rate_pct,
+            error_rate_base_pct=error_rate_base_pct,
+            error_count=error_count,
             acknowledged_at=acknowledged_at,
             dismissed_until=dismissed_until,
             resolved_at=resolved_at,

@@ -74,13 +74,13 @@ ORDER BY created_at DESC
 LIMIT 1;
 
 -- name: UpsertDevWatchSetting :exec
--- ADR-1170: a developer environment's watch-mode command.
-INSERT INTO dev_watch_settings (app_id, command)
-VALUES (sqlc.arg(app_id)::uuid, sqlc.arg(command)::text)
-ON CONFLICT (app_id) DO UPDATE SET command = EXCLUDED.command, updated_at = now();
+-- ADR-1170: a developer environment's watch-mode command and public hostname.
+INSERT INTO dev_watch_settings (app_id, command, host)
+VALUES (sqlc.arg(app_id)::uuid, sqlc.arg(command)::text, sqlc.arg(host)::text)
+ON CONFLICT (app_id) DO UPDATE SET command = EXCLUDED.command, host = EXCLUDED.host, updated_at = now();
 
 -- name: DeleteDevWatchSetting :exec
 DELETE FROM dev_watch_settings WHERE app_id = sqlc.arg(app_id)::uuid;
 
 -- name: GetDevWatchSetting :one
-SELECT command FROM dev_watch_settings WHERE app_id = sqlc.arg(app_id)::uuid;
+SELECT command, host FROM dev_watch_settings WHERE app_id = sqlc.arg(app_id)::uuid;

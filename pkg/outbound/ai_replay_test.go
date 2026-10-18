@@ -64,6 +64,7 @@ func TestReplayWorkerComparesTargets(t *testing.T) {
 			t.Fatal(err)
 		}
 		i.AccountID, i.OwnerKind, i.ProviderAuthMode, i.CredentialSource = accountID, IntegrationOwnerCustomer, ProviderAuthManaged, CredentialSourceCustomerSealed
+		i.AccountPlan = api.PlanPro
 		i.AllowedMethods, i.AllowedPathPrefixes, i.AIProvider = []string{http.MethodPost}, []string{"/v1"}, provider
 		return i
 	}

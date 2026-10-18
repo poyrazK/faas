@@ -140,7 +140,8 @@ func TestPortableHelloImageRetainsBodyAndForeignBase(t *testing.T) {
 	if err := json.Unmarshal(img.configBytes, &cfg); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := oci.LayersAboveBase([]string{helloLayerDiffID}, cfg.RootFS.DiffIDs); !errors.Is(err, oci.ErrLayersNotAboveBase) {
+	foreign, _ := BaseLayerImage("library/foreign", "foreign base")
+	if _, err := oci.LayersAboveBase([]string{fixtureLayerDiffID(foreign.layerBlobs[0].bytes)}, cfg.RootFS.DiffIDs); !errors.Is(err, oci.ErrLayersNotAboveBase) {
 		t.Fatalf("portable fixture does not force full-rootfs: %v", err)
 	}
 	zr, err := gzip.NewReader(bytes.NewReader(img.layerBlobs[0].bytes))

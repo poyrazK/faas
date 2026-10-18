@@ -2,18 +2,48 @@ package state
 
 import (
 	"context"
-	"net/netip"
+	"errors"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // The original environment, app, deployment, instance and retained pins stay
 // locked through the runtime/state CAS. Deletion cannot slip between the
-// ownership check and publishing a paused or routable instance.
+// ownership check and publishing a paused or routable instance. A busy
+// application-standard fence replays the whole transaction: the VM has
+// already booted, and discarding it for a millisecond collision wastes it.
 func (s *PgStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeInstancePublication) (Instance, error) {
 	if err := validateRuntimeInstancePublication(p); err != nil {
 		return Instance{}, err
 	}
+	return retryRuntimeAdmissionBusy(ctx, func() (Instance, error) {
+		return s.publishOwnedInstanceRuntimeOnce(ctx, p)
+	})
+}
+
+// RuntimePublicationOutcomeUnknown reports whether a failed publication may
+// still have committed. A refusal from the database or the store rolled the
+// whole transaction back, so only a deadline or transport failure can hide a
+// commit whose acknowledgment was lost.
+func RuntimePublicationOutcomeUnknown(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return false
+	}
+	for _, refused := range []error{ErrConflict, ErrNotFound, ErrInvalidArgument, ErrApplicationStandardRuntimeStale,
+		ErrApplicationStandardsPending, ErrApplicationStandardRuntimeBusy} {
+		if errors.Is(err, refused) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *PgStore) publishOwnedInstanceRuntimeOnce(ctx context.Context, p RuntimeInstancePublication) (Instance, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Instance{}, err
@@ -22,19 +52,22 @@ func (s *PgStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeInst
 	if err := runtimeAppConfigFenceDB(ctx, tx, p); err != nil {
 		return Instance{}, err
 	}
+	if p.ExpectedState == string(StateWarm) || p.ExpectedState == string(StateFrozen) {
+		fresh, err := sqlc.New().InstanceSnapshotRecoveryFresh(ctx, tx, mustPgUUID(p.InstanceID))
+		if err != nil {
+			return Instance{}, mapErr(err)
+		}
+		if !fresh {
+			return Instance{}, ErrConflict
+		}
+	}
 	acceptance, err := prepareRuntimeUpgradeAcceptanceDB(ctx, tx, p)
 	if err != nil {
 		return Instance{}, err
 	}
-	address, _ := netip.ParseAddr(p.HostIP) // validated before opening the transaction
-	row, err := sqlc.New().PublishOwnedInstanceRuntime(ctx, tx, sqlc.PublishOwnedInstanceRuntimeParams{
-		InstanceID: mustPgUUID(p.InstanceID), AppID: mustPgUUID(p.AppID), DeploymentID: mustPgUUID(p.Fence.DeploymentID),
-		NodeID: mustPgUUID(p.NodeID), WakeID: mustPgUUID(p.WakeID), ExpectedState: p.ExpectedState, TargetState: p.targetState(),
-		Netns: p.Netns, HostIp: address, GuestUid: int32(p.GuestUID),
-		ConfigFingerprint: p.ConfigFence.Fingerprint,
-	})
+	instance, err := publishOwnedRuntimeRow(ctx, tx, p)
 	if err != nil {
-		return Instance{}, runtimeSecretFenceError(err)
+		return Instance{}, err
 	}
 	if err := sqlc.New().SaveRuntimeInstanceConfigProof(ctx, tx, sqlc.SaveRuntimeInstanceConfigProofParams{
 		InstanceID: mustPgUUID(p.InstanceID), EnvironmentID: mustPgUUID(p.Fence.EnvironmentID), Scope: p.Fence.Scope,
@@ -55,7 +88,7 @@ func (s *PgStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeInst
 	if err := tx.Commit(ctx); err != nil {
 		return Instance{}, err
 	}
-	return instanceFromRuntimePublication(row), nil
+	return instance, nil
 }
 
 func (s *PgStore) InstanceRuntimeConfigFence(ctx context.Context, accountID, appID, instanceID string) (RuntimeAppConfigFence, error) {

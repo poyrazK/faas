@@ -6,7 +6,11 @@
  * Fresh serving-gateway status for a policy component with explicit scope. Its desired revision is meaningful within that component's ledger or filtered projection.
  */
 export type RuntimePolicyComponentStatus = {
-  scope?: 'app' | 'account';
+  /**
+   * Unknown historical ownership requires replay through this fleet-wide position; later known unrelated mutations do not raise it.
+   */
+  legacy_fleet_revision?: number;
+  scope?: 'app' | 'account' | 'fleet';
   desired_revision: number;
   state: 'active' | 'pending' | 'unverified';
   serving_gateways: number;

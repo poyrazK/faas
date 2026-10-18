@@ -1145,12 +1145,29 @@ func normalizeDebugFlagArgs(args []string, valueFlags map[string]bool) (flagArgs
 
 func renderDebugRegressionsTable(w io.Writer, resp api.DebugRegressionsResponse) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "DEPLOYMENT\tROUTE\tSTATE\tFACTOR\tP95_MS\tP95_BASE_MS\tAFFECTED\tLAST_DETECTED\tSUSPECTED")
+	_, _ = fmt.Fprintln(tw, "DEPLOYMENT\tROUTE\tKIND\tSTATE\tFACTOR\tP95_MS\tP95_BASE_MS\tERRORS\tAFFECTED\tLAST_DETECTED\tSUSPECTED")
 	for _, r := range resp.Regressions {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\n",
-			r.DeploymentID, r.Route, r.State, r.Factor, r.P95MS, r.P95BaseMS, r.AffectedCount, r.LastDetectedAt, formatSuspectedDependency(r.SuspectedDependency))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%d\t%s\t%s\n",
+			r.DeploymentID, r.Route, regressionKind(r.Kind), r.State, r.Factor, r.P95MS, r.P95BaseMS, formatRegressionErrors(r), r.AffectedCount, r.LastDetectedAt, formatSuspectedDependency(r.SuspectedDependency))
 	}
 	_ = tw.Flush()
+}
+
+// regressionKind reads an absent kind (an older server) as latency.
+func regressionKind(kind string) string {
+	if kind == "" {
+		return "latency"
+	}
+	return kind
+}
+
+// formatRegressionErrors renders the 5xx share before→after the deployment
+// (`0→12.5%`) for observations that include the error signal, else "-".
+func formatRegressionErrors(r api.DebugRegressionItem) string {
+	if r.Kind != "errors" && r.Kind != "latency_and_errors" {
+		return "-"
+	}
+	return fmt.Sprintf("%s→%s%%", strconv.FormatFloat(r.ErrorRateBasePct, 'f', -1, 64), strconv.FormatFloat(r.ErrorRatePct, 'f', -1, 64))
 }
 
 // formatSuspectedDependency renders `postgresql "SELECT orders" 82→191ms`

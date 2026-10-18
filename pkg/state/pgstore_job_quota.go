@@ -34,7 +34,7 @@ func (s *PgStore) JobCreateIfUnderQuota(ctx context.Context, accountID, name, ki
 
 	var count int
 	if err := tx.QueryRow(ctx,
-		`select count(*) from jobs where account_id = $1::uuid and status <> 'deleted'`, accountID).Scan(&count); err != nil {
+		`select count(*) from jobs where account_id = $1::uuid and status <> 'deleted' and kind <> 'image_run'`, accountID).Scan(&count); err != nil {
 		return Job{}, fmt.Errorf("state: count jobs for account %s: %w", accountID, err)
 	}
 	if count >= limit {
@@ -83,7 +83,7 @@ func (s *PgStore) JobCreateScheduledIfUnderQuota(ctx context.Context, job Job, l
 	}
 	var count int
 	if err := tx.QueryRow(ctx,
-		`select count(*) from jobs where account_id = $1::uuid and status <> 'deleted'`, job.AccountID).Scan(&count); err != nil {
+		`select count(*) from jobs where account_id = $1::uuid and status <> 'deleted' and kind <> 'image_run'`, job.AccountID).Scan(&count); err != nil {
 		return Job{}, fmt.Errorf("state: count jobs for account %s: %w", job.AccountID, err)
 	}
 	if count >= limit {

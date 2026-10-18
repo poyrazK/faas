@@ -29,10 +29,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -50,6 +52,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/reposcan"
+	"github.com/onebox-faas/faas/pkg/sourcecontext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -250,7 +253,7 @@ func toPlanWorkload(w reposcan.Workload) api.PlanWorkload {
 
 		Class:      string(w.Class),
 		Schedule:   w.Schedule,
-		Ports:      w.Ports,
+		Ports:      append([]int{}, w.Ports...),
 		EnvKeys:    w.EnvKeys,
 		Source:     w.Source,
 		Tier:       w.Tier.String(),
@@ -888,7 +891,7 @@ type planCron struct {
 }
 
 func projectWorkloadCrons(workloads []reposcan.Workload) []planCron {
-	var crons []planCron
+	crons := make([]planCron, 0)
 	for _, workload := range workloads {
 		for _, schedule := range workload.CronSchedules() {
 			crons = append(crons, planCron{
@@ -984,6 +987,15 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			out = append(out, res)
 			continue
 		}
+		// New services install their pinned company intent before staging or
+		// consuming deploy rate. The ordinary deployment fence still applies.
+		var standardError string
+		app, standardError = s.prepareProjectApplicationStandard(ctx, app)
+		if standardError != "" {
+			res.Error = standardError
+			out = append(out, res)
+			continue
+		}
 		workload := workloadByName[strings.ToLower(app.WorkloadName)]
 		kind := state.DeploymentKindTarball
 		if app.Manifest.BuildDockerfile != "" {
@@ -993,7 +1005,14 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// RootDir doesn't exist in the extracted tree — a reposcan
 		// bug) is logged and recorded; the apply continues for the
 		// other apps.
-		staged, bytes, stageErr := s.stageApplyTarball(ctx, scanDir, acct.ID, project.ID, app)
+		// sourceApp is the app as the staged archive sees it: a Compose
+		// build context is staged as the archive root (H10-25).
+		sourceApp := app
+		composeContext := composeDockerBuildContext(scanDir, workload, app)
+		if composeContext {
+			sourceApp.RootDir = ""
+		}
+		staged, bytes, stageErr := s.stageApplyTarball(ctx, scanDir, acct.ID, project.ID, app, composeContext)
 		if stageErr != nil {
 			// Surface a generic message on the wire — the
 			// full error (which includes operator paths
@@ -1024,7 +1043,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			command: append([]string(nil), workload.ReleaseCommand...),
 			shell:   workload.ReleaseCommandShell,
 		}
-		manifest, manifestProblem := loadSourceRefManifest(staged, app, acct.Plan)
+		manifest, manifestProblem := loadSourceRefManifest(staged, sourceApp, acct.Plan)
 		if manifestProblem != nil {
 			_ = os.Remove(staged)
 			res.Error = "operation or release declaration invalid"
@@ -1039,7 +1058,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// reposcan (web first, otherwise deterministic process order).
 		if len(workloads) == 1 {
 			var releaseProblem *api.Problem
-			releaseCommand, releaseProblem = resolveSourceReleaseCommand(staged, app, manifest)
+			releaseCommand, releaseProblem = resolveSourceReleaseCommand(staged, sourceApp, manifest)
 			if releaseProblem != nil {
 				_ = os.Remove(staged)
 				res.Error = "release declaration invalid (server logs carry the detail)"
@@ -1065,7 +1084,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			FullRootfsAllowAuto:       api.FullRootfsAllowAutoDefault[acct.Plan],
 			SourcePath:                staged,
 			SourceBytes:               bytes,
-			SourceRoot:                app.RootDir,
+			SourceRoot:                sourceApp.RootDir,
 			Scope:                     environment,
 			DockerfilePath:            app.Manifest.BuildDockerfile,
 			FunctionRuntime:           functionRuntimeForApp(app),
@@ -1122,6 +1141,32 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 	return out
 }
 
+// composeDockerBuildContext reports whether app.RootDir is a Compose service's
+// Docker build context (ADR-1288). Workspace and convention Dockerfiles keep
+// the repository context so they can COPY root lockfiles (ADR-144), but
+// Compose declares the context explicitly: with the repository as context,
+// `build: ./web` plus `COPY server.js .` failed with "/server.js: not found"
+// on prod (H10-25). The rule is per workload: a Dockerfile workload that the
+// scanner found beside the Compose file, not in it, keeps the repository even
+// though the project's scan source is compose. Only a Dockerfile build
+// changes; a context the builder detects from language markers keeps the
+// repository for workspace lockfiles.
+func composeDockerBuildContext(scanDir string, workload reposcan.Workload, app state.App) bool {
+	if workload.DetectedBy.Detector != reposcan.DetectorCompose || app.Manifest.ProjectImage != "" {
+		return false
+	}
+	root, err := sourcecontext.EffectiveRoot(app.RootDir)
+	if err != nil || root == sourcecontext.DefaultRoot {
+		return false
+	}
+	dockerfile := app.Manifest.BuildDockerfile
+	if dockerfile == "" {
+		dockerfile = "Dockerfile"
+	}
+	info, err := fs.Stat(os.DirFS(scanDir), path.Join(root, dockerfile))
+	return err == nil && info.Mode().IsRegular()
+}
+
 // orderAppsByWorkload keeps build enqueueing aligned with the Compose graph.
 // Reconcile has already validated the graph; the fallback preserves the
 // caller's order if a future scan source bypasses that validation.
@@ -1159,8 +1204,12 @@ func orderAppsByWorkload(apps []state.App, order []string) []state.App {
 // gzip-tar encoder githubd uses for push-triggered builds. The full
 // extracted tree is retained for every workload; SourceRoot carries the
 // effective build context separately.
+//
+// composeContext stages only app.RootDir, rebased to the archive root:
+// Compose resolves `build: ./web` with ./web as the Docker build context, so
+// the service's Dockerfile copies its files relative to that directory.
 func (s *server) stageApplyTarball(
-	ctx context.Context, scanDir, accountID, projectID string, app state.App,
+	ctx context.Context, scanDir, accountID, projectID string, app state.App, composeContext bool,
 ) (string, int64, error) {
 	dir := filepath.Join(spoolRoot(), "projects", accountID, projectID)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
@@ -1170,7 +1219,11 @@ func (s *server) stageApplyTarball(
 	if err := githubd.ValidateRootDir(os.DirFS(scanDir), app.RootDir); err != nil {
 		return "", 0, fmt.Errorf("validate source root: %w", err)
 	}
-	if err := githubd.RepackageRepositoryTree(ctx, os.DirFS(scanDir), dst); err != nil {
+	repackage := func() error { return githubd.RepackageRepositoryTree(ctx, os.DirFS(scanDir), dst) }
+	if composeContext {
+		repackage = func() error { return githubd.RepackageRootTree(ctx, os.DirFS(scanDir), app.RootDir, dst) }
+	}
+	if err := repackage(); err != nil {
 		_ = os.Remove(dst)
 		return "", 0, fmt.Errorf("repackage: %w", err)
 	}

@@ -15,6 +15,29 @@
     daemon_reload: true
   listen:
     - restart faas-gatewayd-internal
+    - restart faas-gatewayd-internal listeners
+
+# Moves each daemon on or off its durable socket, or onto a changed
+# ListenStream=: stop the service and its socket (the old process releases
+# the address), then start the service, whose Wants= drop-in starts the
+# socket first when durable listeners are on. Units with neither the drop-in
+# nor an active socket are left alone; a stopped service stays stopped.
+- name: gatewayd_internal_service — move daemons onto their configured listeners
+  ansible.builtin.shell: |
+    set -eu
+    for unit in faas-realtimed faas-gatewayd-internal; do
+      if [ -e "/etc/systemd/system/$unit.service.d/50-faas-durable-listener.conf" ] || systemctl is-active --quiet "$unit.socket"; then
+        if systemctl is-active --quiet "$unit.service"; then
+          systemctl stop "$unit.service" "$unit.socket"
+          systemctl start "$unit.service"
+        else
+          systemctl stop "$unit.socket"
+        fi
+      fi
+    done
+  changed_when: true
+  listen: restart faas-gatewayd-internal listeners
+  when: not (faas_join_defer_service_handlers | default(false) | bool)
 
 - name: gatewayd_internal_service — try-restart faas-gatewayd-internal
   ansible.builtin.command: systemctl try-restart faas-gatewayd-internal.service  # noqa: command-instead-of-module (systemd module has no try-restart)

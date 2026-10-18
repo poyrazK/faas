@@ -601,6 +601,11 @@ func (s *server) injectPlatformTenantSelfWorkflowEvent(w http.ResponseWriter, r 
 }
 
 func (s *server) injectWorkflowEventForRun(w http.ResponseWriter, r *http.Request, run *state.WorkflowRun) {
+	// ADR-1197: an operation's history must see every event it receives.
+	if s.refuseOperationWorkflowControl(w, r, run, "operation_signal_required", "Use the operation signal API",
+		"this run belongs to a customer operation; deliver events through the operation's signals endpoint") {
+		return
+	}
 	var req api.InjectWorkflowEventRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.ErrValidation("invalid JSON body"))
@@ -759,6 +764,9 @@ func (s *server) completePlatformTenantSelfWorkflowCallback(w http.ResponseWrite
 }
 
 func (s *server) completeWorkflowCallbackForRun(w http.ResponseWriter, r *http.Request, run *state.WorkflowRun) {
+	if s.refuseOperationWorkflowCallback(w, r, run) {
+		return
+	}
 	callbacks, err := workflowCallbackSpecs(run)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("workflow definition snapshot is invalid"))
@@ -890,4 +898,30 @@ func (s *server) retryWorkflowStep(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	writeJSON(w, http.StatusOK, workflowRunResponse(run))
+}
+
+// refuseOperationWorkflowCallback keeps operation approvals on their own
+// decision path (ADR-1194): a generic callback could forge the decision and
+// would record no approver.
+func (s *server) refuseOperationWorkflowCallback(w http.ResponseWriter, r *http.Request, run *state.WorkflowRun) bool {
+	return s.refuseOperationWorkflowControl(w, r, run, "operation_approval_required", "Use the operation approval API",
+		"this run belongs to a customer operation; decide its approvals through the operation's approvals endpoint")
+}
+
+// refuseOperationWorkflowControl keeps native workflow controls off runs that
+// an Operation owns, naming the operation route to use instead.
+func (s *server) refuseOperationWorkflowControl(w http.ResponseWriter, r *http.Request, run *state.WorkflowRun, code, title, detail string) bool {
+	adapter, ok := s.store.(state.WorkflowOperationStore)
+	if !ok {
+		return false
+	}
+	_, linked, err := adapter.OperationForWorkflowRun(r.Context(), run.ID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not resolve the workflow run's operation"))
+		return true
+	}
+	if linked {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, code, title, detail))
+	}
+	return linked
 }

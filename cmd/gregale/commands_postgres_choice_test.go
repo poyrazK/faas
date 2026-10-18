@@ -46,4 +46,15 @@ func TestPostgresCommandsNameInvalidChoices(t *testing.T) {
 			}
 		})
 	}
+	// The auth mode of application Auth, a dark launch, is listed only
+	// while Auth is turned on in the CLI.
+	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "1")
+	t.Setenv("FAAS_API", "http://127.0.0.1:1")
+	var stderr bytes.Buffer
+	_ = captureStderrSwap(t, &stderr, func() int {
+		return cmdPostgresAttach([]string{"orders", "api", "--scope", "production", "--access", "admin"})
+	})
+	if !strings.Contains(stderr.String(), `(want read_write|read_only|migration|data_api|auth)`) {
+		t.Fatalf("with Auth on, stderr = %q", stderr.String())
+	}
 }

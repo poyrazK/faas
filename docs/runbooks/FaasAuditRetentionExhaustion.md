@@ -6,7 +6,7 @@ Metrics: `apid_audit_events_deleted_total` (counter),
 `apid_audit_events_volume_total{kind_prefix}` (counter, labelled).
 ADR: ADR-075 (90-day retention floor) + ADR-091 Amendment 2 (D20.3
 SLO + observability, PR-B residual).
-Severity: page on `audit_events_deleted` absent AND table growing.
+Severity: warn (ADR-1236) on `audit_events_deleted` absent AND table growing.
 
 ## Symptom
 

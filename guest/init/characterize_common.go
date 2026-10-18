@@ -12,8 +12,11 @@ package main
 
 import (
 	"bufio"
+	"encoding/hex"
 	"fmt"
+	"net"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -31,6 +34,10 @@ func containsNat(data []byte) bool {
 	return false
 }
 
+// procNetInodeColumn is the inode's position in a /proc/net/tcp{,6} row:
+// sl local_address rem_address st tx:rx tr:tm->when retrnsmt uid timeout inode.
+const procNetInodeColumn = 9
+
 // scanListeningFile parses one /proc/net/tcp{,6} for the first
 // LISTEN entry (state 0A) whose inode is in `owned`. Returns
 // (port, "ip:port", true) on hit. /proc/net/tcp format:
@@ -38,48 +45,72 @@ func containsNat(data []byte) bool {
 //	sl  local_address:port  rem_address  st  tx_queue:rx_queue  ...
 //	0:  0100007F:1F90 00000000:0000 0A ...
 //
-// Each hex digit pair = one address byte.
+// The address is printed in host byte order (hexIPToString).
 //
 // Lives here (no build tag) so the parser is unit-tested on every
 // platform with a temp-file fixture — the linux-only thing is the
 // path passed in.
-// procNetInodeColumn is the inode's position in a /proc/net/tcp{,6} row:
-// sl local_address rem_address st tx:rx tr:tm->when retrnsmt uid timeout inode.
-const procNetInodeColumn = 9
-
 func scanListeningFile(path string, owned map[uint64]struct{}) (int, string, bool) {
+	port, addr, ok, _ := scanListeningFileFor(path, owned, 0)
+	return port, addr, ok
+}
+
+// scanListeningFileFor returns the owned LISTEN entry on port want when there
+// is one, else the first owned LISTEN entry; exact reports the former. An app
+// with a second listener (a raw TCP or metrics port) used to be characterized
+// on whichever socket /proc listed first, and portnorm then redirected the
+// expected HTTP port to that listener (H10-56).
+func scanListeningFileFor(path string, owned map[uint64]struct{}, want int) (port int, addr string, ok, exact bool) {
+	sockets := scanListenSockets(path, owned)
+	if len(sockets) == 0 {
+		return 0, "", false, false
+	}
+	pick := sockets[0]
+	for _, socket := range sockets {
+		if want > 0 && socket.Port == want {
+			pick, exact = socket, true
+			break
+		}
+	}
+	// JoinHostPort brackets IPv6 ("[::1]:5173"), which the host's
+	// loopback check (pkg/fcvm loopbackBindProblem) can parse.
+	return pick.Port, net.JoinHostPort(pick.IP.String(), strconv.Itoa(pick.Port)), true, exact
+}
+
+// listenSocket is one LISTEN socket of the app's process tree.
+type listenSocket struct {
+	IP   net.IP
+	Port int
+}
+
+// scanListenSockets returns every LISTEN entry (state 0A) of one
+// /proc/net/tcp{,6} whose inode is in owned, in file order. The ADR-741
+// debugger listener is never the app's, so it is left out.
+func scanListenSockets(path string, owned map[uint64]struct{}) []listenSocket {
 	//nolint:forbidigo // /proc/net/tcp{,6} is a vetted kernel path inside the
 	// guest; the customer-path guard (openCustomerFile) is for host daemons
 	// reading customer bytes — this reads in-guest kernel state only.
 	f, err := os.Open(path)
 	if err != nil {
-		return 0, "", false
+		return nil
 	}
 	defer func() { _ = f.Close() }()
+	var out []listenSocket
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
-		line := sc.Text()
-		fields := strings.Fields(line)
-		if len(fields) < 10 {
-			continue
-		}
-		if fields[3] != "0A" { // not LISTEN
+		fields := strings.Fields(sc.Text())
+		if len(fields) < 10 || fields[3] != "0A" { // not LISTEN
 			continue
 		}
 		// fields[1] = local_address:port (hex)
-		localHex := fields[1]
-		colon := strings.IndexByte(localHex, ':')
-		if colon < 0 {
+		ipHex, portHex, found := strings.Cut(fields[1], ":")
+		if !found {
 			continue
 		}
-		ipHex := localHex[:colon]
-		portHex := localHex[colon+1:]
 		var port uint16
 		if _, sErr := fmt.Sscanf(portHex, "%x", &port); sErr != nil {
 			continue
 		}
-		// inode is the LAST field (kernel writes it after all the
-		// rx/tx queues + uid/tgid columns). Trim trailing text
 		// The inode is column 9 (sl local rem st tx:rx tr:tm retrnsmt uid
 		// timeout INODE ...). It is NOT the last field: a real row carries ref,
 		// pointer and timer columns after it, so reading the last field matched a
@@ -97,11 +128,9 @@ func scanListeningFile(path string, owned map[uint64]struct{}) (int, string, boo
 		if devDebugActive.Load() && int(port) == api.DevDebugNodePort {
 			continue
 		}
-		ip := hexIPToString(ipHex)
-		addr := fmt.Sprintf("%s:%d", ip, port)
-		return int(port), addr, true
+		out = append(out, listenSocket{IP: net.ParseIP(hexIPToString(ipHex)), Port: int(port)})
 	}
-	return 0, "", false
+	return out
 }
 
 // scanEstablishedFile parses one /proc/net/tcp{,6} for the count of
@@ -148,28 +177,21 @@ func scanEstablishedFile(path string, owned map[uint64]struct{}) int {
 	return n
 }
 
-// hexIPToString flips 8 hex chars (4 bytes for tcp, 16 hex for tcp6)
-// into dotted-decimal (v4) or colon-hex (v6). Kept conservative;
-// the host re-derives the class anyway so a malformed address here
-// is logged but doesn't fail the boot.
+// hexIPToString decodes a /proc/net/tcp{,6} address: 8 hex chars for IPv4,
+// 32 for IPv6. The kernel prints each 32-bit word in host byte order
+// (little-endian on the x86_64 guest), so "0100007F" is 127.0.0.1 and
+// "00000000000000000000000001000000" is ::1. Anything malformed falls back
+// to 127.0.0.1; the host re-derives the class, so this never fails a boot.
 func hexIPToString(h string) string {
-	// Parse a hex-by-hex reverse byte string ("0100007F" → "127.0.0.1").
-	if len(h) == 8 {
-		var b [4]byte
-		for i := 0; i < 4; i++ {
-			var v uint8
-			_, err := fmt.Sscanf(h[2*i:2*i+2], "%x", &v)
-			if err != nil {
-				return "127.0.0.1"
-			}
-			b[i] = v
-		}
-		// Stored little-endian in /proc/net/tcp — reverse.
-		return fmt.Sprintf("%d.%d.%d.%d", b[3], b[2], b[1], b[0])
+	raw, err := hex.DecodeString(h)
+	if err != nil || (len(raw) != net.IPv4len && len(raw) != net.IPv6len) {
+		return "127.0.0.1"
 	}
-	// IPv6 kept terse — full expansion is verbose and the host only
-	// really needs the first listener.
-	return "::1"
+	ip := make(net.IP, len(raw))
+	for w := 0; w < len(raw); w += 4 {
+		ip[w], ip[w+1], ip[w+2], ip[w+3] = raw[w+3], raw[w+2], raw[w+1], raw[w]
+	}
+	return ip.String()
 }
 
 // truncateLog returns at most n bytes of s. Used by the log_tail
@@ -196,9 +218,9 @@ func truncateLog(s string, n int) string {
 // on linux. On non-linux builds, pid > 0 always returns
 // (0, "", false) — there is no /proc to walk, and the caller
 // polls until deadline.
-func probeListening(pid int) (int, string, bool) {
+func probeListening(pid, want int) (int, string, bool) {
 	if pid <= 0 {
 		return 0, "", false
 	}
-	return probeListeningLinux(pid)
+	return probeListeningLinux(pid, want)
 }

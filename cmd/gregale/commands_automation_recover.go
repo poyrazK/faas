@@ -15,6 +15,7 @@ import (
 )
 
 type automationRecoverySelection struct {
+	FailureEvidenceID   string `json:"failure_evidence_id,omitempty"`
 	ParentPosition      int64  `json:"parent_position,omitempty"`
 	ID                  string `json:"id"`
 	ExpectedResumeCount int    `json:"expected_resume_count"`

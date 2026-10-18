@@ -27,6 +27,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/extension"
+	"github.com/onebox-faas/faas/pkg/overlaymetadata"
 	"golang.org/x/sys/unix"
 )
 
@@ -63,6 +64,7 @@ const (
 	modeJob
 	modeExecution
 	modeAppTask
+	modeDataRepair
 )
 
 // main is guest PID 1. Any fatal error here panics the VM (panic=1 in boot args
@@ -71,6 +73,10 @@ func main() {
 	// A re-executed copy-out child (ADR-1037) never boots.
 	if len(os.Args) > 0 && os.Args[0] == appTaskCopyOutHelperArg0 && os.Getpid() != 1 {
 		os.Exit(runCopyOutHelper(os.Args[1:]))
+	}
+	// Nor does the builder's dependency-cache check, run by the build shell.
+	if os.Getenv(dependencyInputsHelperEnv) == dependencyInputsHelperValue && os.Getpid() != 1 {
+		os.Exit(runDependencyCacheInputs(railpackFrontendRef, os.Args[1:], os.Stdout))
 	}
 	if err := boot(); err != nil {
 		fmt.Fprintf(os.Stderr, "guest-init: %v\n", err)
@@ -107,6 +113,9 @@ func boot() error {
 		return err
 	}
 	guestStage(fmt.Sprintf("mode-%d", mode))
+	if mode == modeDataRepair {
+		return runDataRepairGuest(slog.Default())
+	}
 	var extensionHooks *extensionLifecycle
 	var afterRestore atomic.Pointer[afterRestoreRuntime]
 	if mode == modeApp {
@@ -420,6 +429,9 @@ func boot() error {
 	// fails the deploy — that's worse than today's opaque "guest
 	// not ready after 30s" path).
 	go runCharacterizationForSup(supRef, manifest)
+	// ADR-1170: a watch-mode development server may listen on another port
+	// or on localhost only; bridge the runtime port to it.
+	go runDevWatchBridge(supRef.LastAppPID, manifest.EffectivePort(), slog.Default())
 	// M-2 / //code-review PR #1202 finding #7: a single boot-scoped
 	// cancellable context is shared between the HEALTHCHECK poll
 	// goroutine and the PID 1 signal-handler loop so both observe
@@ -548,6 +560,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	// ADR-1170: a watch-mode developer image runs a development server that
 	// reloads patched files itself.
 	devWatchActive.Store(devDebugEnvValue(env, api.DevWatchEnv) == "1")
+	env = stampDevWatchEnv(env, devWatchActive.Load())
 	// exec.Command resolves a bare argv[0] immediately using guest-init's
 	// own PATH. Direct OCI images expect Docker semantics: resolution uses
 	// the image's PATH. Resolve against the mounted image after pivot_root,
@@ -728,6 +741,19 @@ func errorKind(err error) string {
 // fs.FS rejects absolute paths, and the real os.DirFS("/") used
 // at boot happily accepts the relative form on Linux.
 func decideMode(fsys fs.FS) (bootMode, api.BuildManifest, error) {
+	if data, err := fs.ReadFile(fsys, dataRepairManifestRelativePath); err == nil {
+		if err = validateDataRepairManifest(data); err != nil {
+			return modeDataRepair, api.BuildManifest{}, err
+		}
+		for _, other := range []string{appTaskManifestRelativePath, executionManifestRelativePath, "etc/faas/job.json", "etc/faas/build.json"} {
+			if _, err = fs.Stat(fsys, other); !errors.Is(err, fs.ErrNotExist) {
+				return modeDataRepair, api.BuildManifest{}, errors.New("conflicting repair guest mode")
+			}
+		}
+		return modeDataRepair, api.BuildManifest{}, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return modeDataRepair, api.BuildManifest{}, err
+	}
 	if data, err := fs.ReadFile(fsys, appTaskManifestRelativePath); err == nil {
 		if markerErr := validateAppTaskManifest(data); markerErr != nil {
 			return modeAppTask, api.BuildManifest{}, fmt.Errorf("invalid app task manifest: %w", markerErr)
@@ -1253,6 +1279,7 @@ func runBuildOnce(m api.BuildManifest) error {
 		case removed:
 			fmt.Fprintf(os.Stderr, "guest-init: dependency cache exceeded %d bytes and was discarded\n", api.MaxExportedLayerBytes)
 		}
+		finishDependencyCacheInputs(m.OutDir)
 	}
 	fmt.Printf("guest-init: build command finished, err=%v, output bytes=%d\n", err, buf.Len())
 	if buf.Len() > 0 {
@@ -1568,7 +1595,10 @@ func prepareRailpackConfig(m api.BuildManifest) (func() error, error) {
 	// Alpine runner bases and base-minimal cannot execute Railpack's default
 	// apt install phase. Preserve an explicit customer list, but make the
 	// platform default empty for musl runtimes and minimal scratch bases.
-	if isAlpineRuntime(m.Runtime) || m.Runtime == "" || strings.Contains(m.RuntimeBaseRef, "base-minimal") {
+	// A shared runner base ships the libraries Railpack's default apt step
+	// installs (libatomic1), and system packages outside /app keep an app
+	// off the /app-only layer (H10-140).
+	if isAlpineRuntime(m.Runtime) || m.Runtime == "" || m.SharedRuntime || strings.Contains(m.RuntimeBaseRef, "base-minimal") {
 		if _, ok := deploy["aptPackages"]; !ok {
 			deploy["aptPackages"] = []any{}
 		}
@@ -1744,11 +1774,18 @@ func buildArgv(m api.BuildManifest) []string {
 	if m.DependencyCacheImport {
 		build += " --import-cache " + shellQuote("type=local,src=/build/cache")
 	}
-	if m.DependencyCache {
-		build += " --export-cache " + shellQuote("type=local,dest=/build/out/cache,mode=max")
+	output := " --output type=oci,dest=" + shellQuote(filepath.Join(m.OutDir, "image.tar")) + " --progress plain"
+	if !m.DependencyCache {
+		return []string{"/bin/sh", "-c", "set -x; " + prepare + " && exec " + build + output}
 	}
-	build += " --output type=oci,dest=" + shellQuote(filepath.Join(m.OutDir, "image.tar")) + " --progress plain"
-	return []string{"/bin/sh", "-c", "set -x; " + prepare + " && exec " + build}
+	// "$@" carries --export-cache. Once the plan exists, a re-executed
+	// guest-init (runDependencyCacheInputs) answers "keep" when the imported
+	// cache came from the same plan and install inputs; anything else exports.
+	check := dependencyInputsHelperEnv + "=" + dependencyInputsHelperValue + " /proc/1/exe " + strings.Join([]string{
+		shellQuote(planPath), shellQuote(m.Workdir), shellQuote("/build/cache"), shellQuote(m.OutDir),
+	}, " ")
+	choose := `case "$(` + check + `)" in keep) set -- ;; *) set -- --export-cache ` + shellQuote("type=local,dest=/build/out/cache,mode=max") + " ;; esac"
+	return []string{"/bin/sh", "-c", "set -x; " + prepare + " && " + choose + " && exec " + build + ` "$@"` + output}
 }
 
 func manifestBuildContext(m api.BuildManifest) string {
@@ -2011,8 +2048,10 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 		RailpackVersion: railpackVersion,
 	}
 	if runErr == nil {
+		done.DependencyCacheUnchanged = m.DependencyCache && dependencyCacheKept(m.OutDir)
 		sourceMap, watchErr := devWatchSourceMap(m, buildDevPatchSourceMap(m, readBuildPlan))
 		done.DevPatch = sourceMap
+		done.SharedRuntime = buildSharedRuntimeVerdict(m, readBuildPlan)
 		if watchErr != nil {
 			done.ExitCode, done.FailureClass = buildExitStatus(watchErr)
 			done.LogTail = tailOf([]byte(logTail+"\n"+watchErr.Error()+"\n"), m.LogTailBytes)
@@ -2146,7 +2185,16 @@ func assembleOverlay() (string, error) {
 			return "", err
 		}
 	}
-	opts := "lowerdir=/" +
+	lower, err := overlaymetadata.GuestLowerDirectory(layerMount+"/upper", "/", layerMount+"/empty-lower")
+	if err != nil {
+		return "", fmt.Errorf("inspect app root opacity: %w", err)
+	}
+	if lower != "/" {
+		if err := overlaymetadata.EnsureEmptyLowerDirectory(lower); err != nil {
+			return "", fmt.Errorf("prepare opaque root lower: %w", err)
+		}
+	}
+	opts := "lowerdir=" + lower +
 		",upperdir=" + layerMount + "/upper" +
 		",workdir=" + layerMount + "/work"
 	if err := syscall.Mount("overlay", newRoot, "overlay", 0, opts); err != nil {

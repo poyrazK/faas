@@ -206,6 +206,15 @@ The suspected dependency prefers a latency regression and otherwise names a
 failure regression. It gains `reason` (`latency`/`failures`), error rates and
 `error_type`. Route regression detection itself stays latency-only.
 
+**Query patterns (amendment, 2026-10-14).** A database dependency's rollup
+item carries `queries`: up to 5 normalized query patterns (16 tracked per
+dependency), each with the same latency and failure comparison as the
+dependency. Patterns are derived from the already-redacted statement with
+placeholders, `IN` lists and multi-row `VALUES` folded, and are bounded to
+256 bytes. The dependency identity used by rollups and critical paths is
+unchanged. The suspected dependency gains `query`, the pattern that
+regressed, and the synthesis names it.
+
 ## Consequences
 
 - Opted-in managed-runtime apps get DB, cache and HTTP client spans on the

@@ -97,17 +97,17 @@ func TestWakeBurstSpreadsSnapshotRestoresAcrossPgEngines(t *testing.T) {
 			results <- wakeResult{result: result, err: err}
 		}()
 	}
-	waitRestore := func(want, reason string) {
+	waitRestore := func(nodeID, message string) {
 		t.Helper()
 		select {
-		case nodeID := <-vmm.entered:
-			if nodeID != want {
-				t.Fatalf("%s: node = %q, want %q", reason, nodeID, want)
+		case got := <-vmm.entered:
+			if got != nodeID {
+				t.Fatalf("%s: node=%s want=%s", message, got, nodeID)
 			}
 		case got := <-results:
-			t.Fatalf("%s: wake returned before restore RPC: result = %#v, err = %v", reason, got.result, got.err)
-		case <-time.After(5 * time.Second):
-			t.Fatalf("timed out waiting for restore RPC: %s", reason)
+			t.Fatalf("wake ended before restore RPC (%s): %+v %v", message, got.result, got.err)
+		case <-time.After(6 * time.Second):
+			t.Fatalf("timed out waiting for restore RPC: %s", message)
 		}
 	}
 

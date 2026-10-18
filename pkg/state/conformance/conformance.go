@@ -80,6 +80,7 @@ func Run(t *testing.T, open Open) {
 		{"vmmd_upsert_preserves_operator_state", testVmmdUpsertPreservesOperatorState},
 		{"deployment_live_pointer_swaps_atomically", testDeploymentLivePointer},
 		{"github_deployment_promotion_fences_stale_revisions", testGitHubDeploymentPromotionFence},
+		{"github_installation_ownership_is_exclusive", testGitHubInstallationOwnership},
 		{"git_driven_deployment_promotion_is_scope_and_revision_fenced", testGitDrivenDeploymentPromotionFence},
 		{"image_deployment_promotion_is_scope_and_revision_fenced", testImageDeploymentPromotionFence},
 		{"image_runtime_profile_is_persisted_before_prime", testImageRuntimeProfile},
@@ -87,11 +88,22 @@ func Run(t *testing.T, open Open) {
 		{"service_rollout_abort_handoff_is_durable", testServiceRolloutAbortHandoff},
 		{"service_recovery_claim_and_retry_are_durable", testServiceRecoveryClaims},
 		{"service_recovery_candidates_are_active_owned_and_bounded", testServiceRecoveryCandidates},
+		{"worker_recovery_claim_and_retry_are_durable", testWorkerRecoveryClaims},
+		{"worker_recovery_observations_are_fenced_and_copied", testWorkerRecoveryObservations},
+		{"worker_recovery_diagnostics_are_owned_fresh_and_eligible", testWorkerRecoveryDiagnostics},
+		{"worker_recovery_candidates_are_active_owned_and_bounded", testWorkerRecoveryCandidates},
+		{"worker_recovery_discovers_captured_environments", testWorkerRecoveryCapturedEnvironment},
+		{"worker_recovery_discovers_unfinished_mode_cleanup", testWorkerRecoveryModeCleanup},
+		{"worker_recovery_clone_inventory_preserves_runtime_authority", testWorkerRecoveryCloneInventory},
+		{"mcp_readiness_clone_inventory_requires_isolation_and_resets_runtime", testMCPReadinessCloneInventory},
 		{"ownership_recovery_pages_are_scoped_exclusive_and_bounded", testOwnershipRecoveryPages},
 		{"ownership_recovery_transfer_fences_health_cooldown_and_peers", testOwnershipRecoveryTransfer},
+		{"scenario_rehearsal_reads_for_unenrolled_app", testScenarioRehearsalReadsForUnenrolledApp},
 		{"usage_rollup_merges_minutes", testUsageRollup},
+		{"archived_logs_are_scoped_to_the_owning_app", testInstanceLogsOwnedByApp},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
 		{"live_state_readers_count_running_instances", testLiveStateReaders},
+		{"live_instances_by_node_are_the_nodes_live_rows", testLiveInstancesByNode},
 		{"frozen_instance_holds_ram_without_concurrency", testFrozenInstanceState},
 		{"beta_first_success_includes_parked_instances", testBetaFirstSuccess},
 		{"account_credits_issue_list_and_consume", testAccountCredits},
@@ -186,10 +198,14 @@ func Run(t *testing.T, open Open) {
 		{"app_deletion_claim_closes_restore_window", testAppDeletionClaim},
 		{"preview_lifecycle_is_scoped_and_reclaimable", testPreviewLifecycle},
 		{"scenario_test_namespace_is_scoped_and_reaped", testScenarioTestNamespace},
+		{"scenario_action_policy_readers_retain_isolation_after_cleanup", testScenarioActionPolicyReaders},
 		{"mcp_compatibility_snapshots_and_recovery_leases_are_fenced", testMCPCompatibilityAndRecovery},
 		{"preview_teardown_claim_fences_reopen", testPreviewTeardownClaim},
 		{"pr_preview_lease_reopens_and_renews", testPRPreviewLease},
 		{"terminal_job_task_retains_logs", testJobTaskTerminalLogs},
+		{"job_task_log_target_is_scoped_and_tracks_the_instance", testJobTaskLogTarget},
+		{"job_run_attach_session_is_atomic_scoped_and_never_replayed", testJobRunAttach},
+		{"image_run_runner_jobs_are_cached_hidden_and_evicted", testImageRunJobs},
 		{"exclusive_operation_work_history_is_account_scoped", testExclusiveOperationWorkHistory},
 		{"job_boot_failures_obey_retry_budget_and_fence_late_exits", testJobBootFailureBudget},
 		{"stale_job_task_reap_is_fenced_and_obeys_retry_budget", testJobTaskReapClaimed},
@@ -1838,7 +1854,7 @@ func testInvoiceRefunds(t *testing.T, fx *Fixture) {
 		TotalCents:        1000,
 		AmountPaidCents:   1000,
 		Plan:              api.PlanPro,
-		Currency:          "eur",
+		Currency:          api.BillingCurrencyLower,
 	}); err != nil {
 		t.Fatalf("UpsertInvoice: %v", err)
 	}
@@ -1967,7 +1983,7 @@ func testInvoiceHistoryImport(t *testing.T, fx *Fixture) {
 		Number:            "HISTORY-001", Status: "paid",
 		PeriodStart: now.Add(-30 * 24 * time.Hour), PeriodEnd: now,
 		SubtotalCents: 900, TaxCents: 100, TotalCents: 1000, AmountPaidCents: 1000,
-		Plan: state.InvoicePlanUnknown, Currency: "eur", PDFAvailable: true,
+		Plan: state.InvoicePlanUnknown, Currency: api.BillingCurrencyLower, PDFAvailable: true,
 		Details: &state.InvoiceDetails{PaymentTerms: "Net 30"},
 	}
 
@@ -2013,7 +2029,7 @@ func testInvoiceDetailRefresh(t *testing.T, fx *Fixture) {
 		ProviderInvoiceID: "refresh-" + uuid.NewString(),
 		Status:            "paid", PeriodStart: now.Add(-30 * 24 * time.Hour), PeriodEnd: now,
 		SubtotalCents: 1000, TotalCents: 1000, AmountPaidCents: 1000,
-		Plan: api.PlanPro, Currency: "eur",
+		Plan: api.PlanPro, Currency: api.BillingCurrencyLower,
 	}
 	if err := fx.Store.UpsertInvoice(fx.Ctx, inv); err != nil {
 		t.Fatalf("UpsertInvoice: %v", err)
@@ -3956,6 +3972,18 @@ func testLiveStateReaders(t *testing.T, fx *Fixture) {
 	}
 	if capRAM != wantRAM {
 		t.Errorf("OperatorCapacity RAM total = %d, want %d", capRAM, wantRAM)
+	}
+	if err := fx.Store.SetAppNodeID(fx.Ctx, fx.App.ID, fx.Node.ID); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := fx.Store.ListLiveInstancesByNodeID(fx.Ctx, fx.Node.ID); err != nil || len(rows) != wantLive {
+		t.Errorf("owned live instances = %d, %v; want %d without parked history", len(rows), err, wantLive)
+	}
+	if rows, err := fx.Store.ListInstancesByNodeID(fx.Ctx, fx.Node.ID); err != nil || len(rows) != wantLive+1 {
+		t.Errorf("owned history = %d, %v; want %d including parked history", len(rows), err, wantLive+1)
+	}
+	if rows, err := fx.Store.ListLiveInstancesByNodeID(fx.Ctx, uuid.NewString()); err != nil || len(rows) != 0 {
+		t.Errorf("another node received owned live instances: %+v, %v", rows, err)
 	}
 }
 

@@ -39,6 +39,12 @@ metrics_addr = "127.0.0.1:9108"
 # ai_provider and AI routes are refused. Turn it on together with apid's
 # ai_gateway_enabled; FAAS_AI_GATEWAY_ENABLED=1 overrides this setting.
 # ai_gateway_enabled = false
+#
+# ADR-998 staged preview rollout: customer AI integrations of other accounts
+# are refused; empty or "*" admits every account whose plan includes the AI
+# gateway. Keep it equal to apid's ai_gateway_accounts.
+# FAAS_AI_GATEWAY_ACCOUNTS (comma-separated) overrides this setting.
+# ai_gateway_accounts = ["00000000-0000-0000-0000-000000000000"]
 
 # Required for managed integrations, including integrations customers create
 # through the API. Install a

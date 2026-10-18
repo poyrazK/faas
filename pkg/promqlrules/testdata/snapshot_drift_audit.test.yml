@@ -28,7 +28,7 @@ tests:
         alertname: FaasSnapshotDriftAuditStale
         exp_alerts:
           - exp_labels:
-              severity: page
+              severity: warn
               component: schedd
               family: snapshot_integrity
               public_status: degraded

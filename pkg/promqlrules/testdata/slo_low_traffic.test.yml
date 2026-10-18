@@ -80,7 +80,7 @@ tests:
         alertname: FaasApiAvailabilityLow
         exp_alerts:
           - exp_labels:
-              severity: page
+              severity: warn
               component: gatewayd-internal
               family: api_availability
             exp_annotations:
@@ -106,7 +106,7 @@ tests:
         alertname: FaasApiAvailabilityLow
         exp_alerts:
           - exp_labels:
-              severity: page
+              severity: warn
               component: gatewayd-internal
               family: api_availability
             exp_annotations:

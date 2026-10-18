@@ -6,6 +6,9 @@
  * One row of the drill-down page (ADR-096 / PR-B).
  */
 export type AppErrorRequestItem = {
+  /**
+   * Public x-faas-request-id of the failed request; GET /v1/apps/{slug}/debug/requests/{request_id}/evidence opens its debugger evidence while the request is retained.
+   */
   request_id: string;
   received_at: string;
   route: string;

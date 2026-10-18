@@ -1760,28 +1760,29 @@ func TestRecordDaemonRestart_PreInstantiationCartesian(t *testing.T) {
 //   - daemon_ready{daemon} — 0 until MarkReady, 1 after.
 //   - daemon_ready_reason{daemon,reason} — one-hot bounded reason class.
 //
-// The constructor pre-instantiates every row at value=1 (for
-// build_info) / 0 (for uptime + ready). The test verifies the
-// shape and the accessors' effect on the body.
+// The constructor pre-instantiates the daemon's own row at value=1
+// (for build_info) / 0 (for uptime + ready); a production daemon does
+// not pre-create rows for the other daemon names. The test verifies
+// the shape and the accessors' effect on the body.
 func TestDaemon_BuildInfo_Uptime_Ready(t *testing.T) {
 	m := wire.NewOpsMetrics("vmmd")
 	body := render(t, m)
-	for _, daemon := range []string{
-		"apid", "gatewayd-public", "gatewayd-internal", "schedd",
-		"vmmd", "imaged", "meterd", "builderd", "outboundd", "gregale", "other",
-	} {
-		// Build info: 1 per closed daemon.
+	if strings.Contains(body, `vmmd_daemon_ready{daemon="apid"}`) {
+		t.Errorf("vmmd pre-created a readiness row for apid in:\n%s", body)
+	}
+	for _, daemon := range []string{"vmmd"} {
+		// Build info: 1 for the daemon itself.
 		wantInfo := fmt.Sprintf(`vmmd_daemon_build_info{build_time=%q,daemon=%q,git_sha=%q,version=%q} 1`,
 			wire.BuildTime, daemon, wire.GitSHA, wire.Version)
 		if !strings.Contains(body, wantInfo) {
 			t.Errorf("missing pre-instantiated build-info row %q in:\n%s", wantInfo, body)
 		}
-		// Uptime: 0 per closed daemon.
+		// Uptime: 0 before the first tick.
 		wantUptime := fmt.Sprintf(`vmmd_daemon_uptime_seconds{daemon=%q} 0`, daemon)
 		if !strings.Contains(body, wantUptime) {
 			t.Errorf("missing pre-instantiated uptime row %q in:\n%s", wantUptime, body)
 		}
-		// Ready: 0 per closed daemon (MarkReady flips to 1).
+		// Ready: 0 until MarkReady flips it to 1.
 		wantReady := fmt.Sprintf(`vmmd_daemon_ready{daemon=%q} 0`, daemon)
 		if !strings.Contains(body, wantReady) {
 			t.Errorf("missing pre-instantiated ready row %q in:\n%s", wantReady, body)

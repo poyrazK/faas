@@ -29,6 +29,10 @@ func (s *Service) writeEventRecovery(w http.ResponseWriter, r *http.Request, sta
 		return
 	}
 	switch {
+	case errors.Is(err, state.ErrWorkflowRecoveryEvidenceBlocked):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Recovery evidence blocked", err.Error()))
+	case errors.Is(err, state.ErrWorkflowInitialReviewBlocked):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Initial recovery review blocked", err.Error()))
 	case errors.Is(err, state.ErrEventRecoveryChanged):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeEventRecoveryChanged, "Recovery plan changed", "selected workflow recovery targets are no longer available"))
 	case errors.Is(err, state.ErrWorkflowRecoveryReviewConflict):

@@ -43,64 +43,156 @@ func (s *PgStore) ProcessNextWorkflowRecoveryAutomaticPolicy(ctx context.Context
 	if err != nil {
 		return false, fmt.Errorf("claim automatic recovery policy: %w", err)
 	}
-	p, err := pgPolicyResponse(uuidString(row.AppID), row.Version, row.Policy, row.UpdatedAt, row.ActorKind, row.ActorID, row.LastEvaluatedAt, row.Status, row.AutomaticFailures, row.AutomaticPausedAt, row.AutomaticPauseReason)
+	work, err := tx.Begin(ctx)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("begin automatic polling savepoint: %w", err)
+	}
+	var alertFailure *api.WorkflowRecoveryAutomaticPollingFailure
+	err = processAutomaticPolicyTx(ctx, s, q, work, row, now)
+	if err == nil {
+		if err = work.Commit(ctx); err != nil {
+			return false, fmt.Errorf("commit automatic polling savepoint: %w", err)
+		}
+	} else {
+		code := automaticPollingFailureCode(err)
+		if code == "" || ctx.Err() != nil {
+			return false, err
+		}
+		if rollbackErr := work.Rollback(ctx); rollbackErr != nil {
+			return false, fmt.Errorf("rollback automatic polling: %w", rollbackErr)
+		}
+		var previous *api.WorkflowRecoveryAutomaticPollingFailure
+		if len(row.AutomaticPollFailure) > 0 {
+			if decodeErr := json.Unmarshal(row.AutomaticPollFailure, &previous); decodeErr != nil {
+				return false, fmt.Errorf("decode automatic polling backoff: %w", decodeErr)
+			}
+		}
+		failure := nextAutomaticPollingFailure(previous, code, now)
+		alertFailure = failure
+		raw, encodeErr := json.Marshal(failure)
+		if encodeErr != nil {
+			return false, fmt.Errorf("encode automatic polling failure: %w", encodeErr)
+		}
+		if err = q.WorkflowRecoveryAutomaticPolicyFailure(ctx, tx, sqlc.WorkflowRecoveryAutomaticPolicyFailureParams{AppID: row.AppID, Failure: raw, NextAt: pgtypeFromTime(failure.RetryAt)}); err != nil {
+			return false, fmt.Errorf("defer automatic polling: %w", err)
+		}
+	}
+	previousNotification, decodeErr := pollingNotificationFromRaw(row.AutomaticPollNotification)
+	if decodeErr != nil {
+		return false, decodeErr
+	}
+	code := ""
+	attempts := int64(0)
+	var retry *time.Time
+	if alertFailure != nil {
+		code = alertFailure.Code
+		attempts = alertFailure.Attempts
+		retry = &alertFailure.RetryAt
+	}
+	app := App{ID: uuidString(row.AppID), AccountID: uuidString(row.AccountID), Slug: row.Slug}
+	notification, captureErr := capturePollingAlertTx(ctx, q, tx, app, pollingAlertTransition(app, "automatic_policy", "", row.Version, code, attempts, retry, previousNotification, now))
+	if captureErr != nil {
+		return false, captureErr
+	}
+	if notification != nil {
+		encoded, e := json.Marshal(notification)
+		if e != nil {
+			return false, fmt.Errorf("encode polling receipt: %w", e)
+		}
+		if e = q.WorkflowRecoveryAutomaticPollingNotificationSave(ctx, tx, sqlc.WorkflowRecoveryAutomaticPollingNotificationSaveParams{AppID: row.AppID, Notification: encoded}); e != nil {
+			return false, fmt.Errorf("save polling receipt: %w", e)
+		}
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit automatic polling: %w", err)
+	}
+	return true, nil
+}
+
+func processAutomaticPolicyTx(ctx context.Context, s *PgStore, q *sqlc.Queries, tx pgx.Tx, row sqlc.WorkflowRecoveryAutomaticPolicyClaimRow, now time.Time) error {
+	p, err := pgPolicyResponse(uuidString(row.AppID), row.Version, row.Policy, row.UpdatedAt, row.ActorKind, row.ActorID, row.LastEvaluatedAt, row.Status, row.AutomaticFailures, row.AutomaticPausedAt, row.AutomaticPauseReason, row.AutomaticPollFailure, row.AutomaticPollNotification)
+	if err != nil {
+		return err
 	}
 	if err = (api.SetWorkflowRecoveryPolicyRequest{Policy: p.Policy}).Validate(); err != nil {
-		return false, fmt.Errorf("validate automatic policy authority: %w", err)
+		return fmt.Errorf("%w: %w", errAutomaticPolicyAuthority, err)
+	}
+	if p.Policy.Mode == "automatic_initial" {
+		now = now.UTC().Truncate(time.Microsecond)
 	}
 	if err = q.WorkflowRecoveryAutomaticObsolete(ctx, tx, sqlc.WorkflowRecoveryAutomaticObsoleteParams{AppID: row.AppID, PolicyVersion: p.Version}); err != nil {
-		return false, fmt.Errorf("suppress old automatic plans: %w", err)
+		return fmt.Errorf("suppress old automatic plans: %w", err)
 	}
 	if err = q.WorkflowRecoveryAutomaticChargesPrune(ctx, tx, sqlc.WorkflowRecoveryAutomaticChargesPruneParams{AppID: row.AppID, BeforeAt: pgtypeFromTime(now.Add(-time.Duration(api.WorkflowRecoveryPolicyMaxCooldownSeconds) * time.Second))}); err != nil {
-		return false, fmt.Errorf("prune automatic execution charges: %w", err)
+		return fmt.Errorf("prune automatic execution charges: %w", err)
 	}
+	ctx = automaticRecoveryActor(ctx, p)
 	nextAt := now.Add(api.WorkflowRecoveryPolicyPollInterval)
+	initial, initialErr := q.WorkflowInitialAutomaticOutstanding(ctx, tx, row.AppID)
+	if initialErr == nil {
+		if err = processInitialAutomaticResultTx(ctx, q, tx, &p, uuidString(row.AccountID), row.Slug, initial, now); err != nil {
+			return err
+		}
+		if err = q.WorkflowRecoveryAutomaticPolicyAdvance(ctx, tx, sqlc.WorkflowRecoveryAutomaticPolicyAdvanceParams{AppID: row.AppID, NextAt: pgtypeFromTime(nextAt), Failures: int32(p.AutomaticExecution.ConsecutiveFailures), PausedAt: recoveryAutomaticPausedTime(p), PauseReason: p.AutomaticExecution.PauseReason}); err != nil {
+			return fmt.Errorf("advance initial recovery policy: %w", err)
+		}
+		return nil
+	}
+	if !errors.Is(initialErr, pgx.ErrNoRows) {
+		return fmt.Errorf("read outstanding initial recovery: %w", initialErr)
+	}
+
 	outstanding, err := q.WorkflowRecoveryAutomaticOutstanding(ctx, tx, row.AppID)
 	if err == nil {
 		e := api.WorkflowRecoveryAutomaticAction{ActionID: uuidString(outstanding.ActionID), Position: outstanding.Position, ChildJobID: uuidString(outstanding.ChildJobID)}
 		result, reason, checkErr := recoveryAutomaticEvaluationResult(ctx, s, uuidString(row.AccountID), p.AppID, uuidString(outstanding.ReviewID), e, now)
+		if checkErr != nil {
+			return checkErr
+		}
 		if err = recordAutomaticEvaluation(ctx, q, tx, outstanding.ActionID, outstanding.LastEvaluation, reason, now, result); err != nil {
-			return false, err
+			return err
 		}
 		if result == nil {
 			pending, pendingErr := q.WorkflowRecoveryAutomaticPending(ctx, tx, sqlc.WorkflowRecoveryAutomaticPendingParams{AppID: row.AppID, PolicyVersion: p.Version})
 			if pendingErr == nil {
 				if err = recordAutomaticEvaluation(ctx, q, tx, pending.ActionID, pending.LastEvaluation, "outstanding_retry", now, nil); err != nil {
-					return false, err
+					return err
 				}
 			} else if !errors.Is(pendingErr, pgx.ErrNoRows) {
-				return false, fmt.Errorf("read automatic retry waiting for slot: %w", pendingErr)
+				return fmt.Errorf("read automatic retry waiting for slot: %w", pendingErr)
 			}
 		}
 		if checkErr == nil && result != nil {
 			raw, e := automaticRecoveryRawResult(result)
 			if e != nil {
-				return false, e
+				return e
 			}
 			if e = q.WorkflowRecoveryAutomaticResult(ctx, tx, sqlc.WorkflowRecoveryAutomaticResultParams{ActionID: outstanding.ActionID, Result: raw}); e != nil {
-				return false, fmt.Errorf("retain automatic retry result: %w", e)
+				return fmt.Errorf("retain automatic retry result: %w", e)
 			}
 			nextAt = now
 			if outstanding.PolicyVersion == p.Version && recoveryAutomaticRecordFailure(&p, *result, now) {
 				if e = enqueueAutomaticRecoveryPause(ctx, q, tx, row.AccountID, p, row.Slug); e != nil {
-					return false, e
+					return e
 				}
 			}
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return false, fmt.Errorf("read outstanding automatic retry: %w", err)
+		return fmt.Errorf("read outstanding automatic retry: %w", err)
 	} else {
-		nextAt, err = executeAutomaticRecoveryPending(ctx, s, q, tx, row.AccountID, p, now)
+		if p.Policy.Mode == "automatic_initial" {
+			err = executeInitialAutomaticPendingTx(ctx, q, tx, p, uuidString(row.AccountID), now)
+		} else {
+			nextAt, err = executeAutomaticRecoveryPending(ctx, s, q, tx, row.AccountID, p, now)
+		}
 		if err != nil {
-			return false, err
+			return err
 		}
 	}
 	if err = q.WorkflowRecoveryAutomaticPolicyAdvance(ctx, tx, sqlc.WorkflowRecoveryAutomaticPolicyAdvanceParams{AppID: row.AppID, NextAt: pgtypeFromTime(nextAt), Failures: int32(p.AutomaticExecution.ConsecutiveFailures), PausedAt: recoveryAutomaticPausedTime(p), PauseReason: p.AutomaticExecution.PauseReason}); err != nil {
-		return false, fmt.Errorf("advance automatic recovery policy: %w", err)
+		return fmt.Errorf("advance automatic recovery policy: %w", err)
 	}
-	return true, tx.Commit(ctx)
+	return nil
 }
 func recoveryAutomaticPausedTime(p api.WorkflowRecoveryPolicyResponse) pgtype.Timestamptz {
 	if p.AutomaticExecution.PausedAt == nil {

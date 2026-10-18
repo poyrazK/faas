@@ -9,6 +9,7 @@ package devpatch
 
 import (
 	"encoding/json"
+	"fmt"
 	"path"
 	"sort"
 	"strings"
@@ -192,6 +193,56 @@ func ClassifyRailpackPlan(data []byte) api.DevPatchSourceMap {
 		ImageDir:     api.DevPatchImageDir,
 		RebuildPaths: paths,
 	}
+}
+
+// RailpackInstallInputs lists the local files a Railpack plan's steps read
+// before the full source arrives: the manifests, lockfiles and config the
+// install steps copy in, plus alwaysRebuild. Unlike ClassifyRailpackPlan's
+// RebuildPaths it answers for every readable plan, including plans with a
+// build command. A build whose plan and these files are unchanged installs
+// exactly what the previous build installed.
+func RailpackInstallInputs(data []byte) ([]string, error) {
+	var plan railpackPlan
+	if err := json.Unmarshal(data, &plan); err != nil {
+		return nil, fmt.Errorf("devpatch: read railpack plan: %w", err)
+	}
+	inputs := map[string]bool{}
+	for _, name := range alwaysRebuild {
+		inputs[name] = true
+	}
+	carriesSource := make(map[string]bool, len(plan.Steps))
+	for _, step := range plan.Steps {
+		source := false
+		for _, input := range step.Inputs {
+			switch {
+			case input.Local && input.includesAll():
+				source = true
+			case input.Local:
+				for _, include := range input.Include {
+					inputs[strings.TrimPrefix(path.Clean(include), "/app/")] = true
+				}
+			case input.Step != "" && carriesSource[input.Step] && input.includesAll():
+				source = true
+			}
+		}
+		if source {
+			carriesSource[step.Name] = true
+			continue
+		}
+		for _, command := range step.Commands {
+			if src, ok := localCopySource(command); ok {
+				inputs[src] = true
+			}
+		}
+	}
+	paths := make([]string, 0, len(inputs))
+	for p := range inputs {
+		if p != "" && p != "." {
+			paths = append(paths, p)
+		}
+	}
+	sort.Strings(paths)
+	return paths, nil
 }
 
 // Change is one source path a developer sync added, modified or deleted,

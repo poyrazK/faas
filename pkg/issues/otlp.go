@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -41,9 +43,30 @@ func ExtractOTLP(raw []byte, signal string) ([]api.IssueEvent, error) {
 		}
 		event := api.IssueEvent{OccurredAt: time.Unix(0, int64(nanos)).UTC(), ExceptionType: typ, Message: values["exception.message"], StackTrace: values["exception.stacktrace"], TraceID: hex.EncodeToString(trace), SpanID: hex.EncodeToString(span), RequestID: values["gregale.request_id"], InvocationID: values["gregale.invocation_id"], SourceKind: "exception"}
 		event.GroupingStrategy = values["gregale.issue.grouping_strategy"]
+		event.SymbolicationStrategy = values["gregale.issue.symbolication_strategy"]
 		event.FrameOrder = values["gregale.issue.frame_order"]
 		event.ErrorCode = values["gregale.issue.error_code"]
 		event.FingerprintOverride = values["gregale.issue.fingerprint_override"]
+		for key, value := range values {
+			if tag, ok := strings.CutPrefix(key, "gregale.issue.tag."); ok {
+				if event.Tags == nil {
+					event.Tags = map[string]string{}
+				}
+				event.Tags[tag] = value
+			}
+		}
+		if raw := values["gregale.issue.breadcrumbs"]; raw != "" {
+			if err := json.Unmarshal([]byte(raw), &event.Breadcrumbs); err != nil {
+				return errors.New("invalid issue breadcrumbs JSON")
+			}
+		}
+		if raw := values["gregale.issue.breadcrumbs_dropped"]; raw != "" {
+			value, err := strconv.Atoi(raw)
+			if err != nil {
+				return errors.New("invalid dropped breadcrumb count")
+			}
+			event.BreadcrumbsDropped = value
+		}
 		identity, _ := json.Marshal(event)
 		event.EventID = uuid.NewSHA1(uuid.NameSpaceOID, identity).String()
 		if explicit := values["gregale.issue.event_id"]; explicit != "" {

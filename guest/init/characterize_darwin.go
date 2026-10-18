@@ -7,6 +7,6 @@
 // the symbol to exist.
 package main
 
-func probeListeningLinux(pid int) (int, string, bool) {
+func probeListeningLinux(pid, want int) (int, string, bool) {
 	return 0, "", false
 }

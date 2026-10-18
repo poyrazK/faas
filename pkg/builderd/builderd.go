@@ -27,8 +27,10 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/buildpublisher"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/markers"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -149,6 +151,7 @@ type Config struct {
 
 // Builderd is the orchestrator. It is the cmd/builderd main loop.
 type Builderd struct {
+	buildPublisher buildpublisher.Signer
 	validatorBuild func(context.Context, string, string, string, string) error
 	store          state.Store
 	notif          Notifier
@@ -503,7 +506,11 @@ type BuildResult struct {
 	RailpackVer       string
 	BuilderBaseDigest string
 	RuntimeBaseRef    string
-	DevPatch          *api.DevPatchSourceMap
+	// Runtime is the runtime the artifact was built FROM: the app's own, or
+	// the shared runner base it was built on (H10-140). The export claim
+	// signs it.
+	Runtime  string
+	DevPatch *api.DevPatchSourceMap
 }
 
 // ProcessOne claims the next queued build (or processes the buildID passed in
@@ -831,13 +838,29 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, build, state.FailureInfra, "resolve runtime base: "+baseErr.Error(), buildStart)
 		return BuildResult{}, baseErr
 	}
-	watchCommand, watchErr := devWatchCommand(ctx, b.store, app)
+	// The runner base reaches imaged through the signed export claim, or, on
+	// a node without a build publisher, through this build's provenance.
+	nodeSpec := ""
+	if fw == FrameworkNode {
+		nodeSpec = markers.NodeVersionSpecAtRoot(dep.SourcePath, dep.SourceRoot)
+	}
+	sharedRuntime := sharedSourceAppRuntime(app, fw, nodeSpec, dockerfilePath, os.Getenv)
+	if sharedRuntime != "" {
+		ref, refErr := resolveBuildRuntimeBaseRef(sharedRuntime, fw, os.Getenv)
+		if refErr != nil {
+			b.markFailed(ctx, build, state.FailureInfra, "resolve shared runtime base: "+refErr.Error(), buildStart)
+			return BuildResult{}, refErr
+		}
+		runtimeName, runtimeBaseRef = sharedRuntime, ref
+		b.emitBuildLog(ctx, build.ID, "building on the shared "+sharedRuntime+" runtime base\n")
+	}
+	watch, watchErr := devWatch(ctx, b.store, app)
 	if watchErr != nil {
 		b.markFailed(ctx, build, state.FailureInfra, "load developer watch mode: "+watchErr.Error(), buildStart)
 		return BuildResult{}, watchErr
 	}
-	if watchCommand != "" {
-		b.emitBuildLog(ctx, build.ID, "watch mode: building a development image that starts "+watchCommand+"\n")
+	if watch.Command != "" {
+		b.emitBuildLog(ctx, build.ID, "watch mode: building a development image that starts "+watch.Command+"\n")
 	}
 
 	// The cache recipe includes the selected member as well as the complete
@@ -851,7 +874,8 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		DockerfilePath: dockerfilePath,
 		Framework:      fw, Plan: acct.Plan, RuntimeBaseRef: runtimeBaseRef,
 		Function:        app.Type == state.AppTypeFunction,
-		DevWatchCommand: watchCommand,
+		DevWatchCommand: watch.Command,
+		DevWatchHost:    watch.Host,
 	}
 	buildEnvironment, cacheAvailable := b.resolveBuildEnvironment()
 	if cacheAvailable {
@@ -881,7 +905,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		completed, completeErr := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,
 			BuildResult{BuildID: build.ID, LayerPath: cached.Path, LayerBytes: cached.Bytes, CacheHit: true,
 				BuildkitVer: cached.Toolchain.BuildkitVer, RailpackVer: cached.Toolchain.RailpackVer,
-				BuilderBaseDigest: buildEnvironment.BaseDigest, RuntimeBaseRef: runtimeBaseRef,
+				BuilderBaseDigest: buildEnvironment.BaseDigest, RuntimeBaseRef: runtimeBaseRef, Runtime: runtimeName,
 				DevPatch: cached.Toolchain.DevPatch}, buildStart)
 		if completeErr != nil || completed.BuildID == "" {
 			b.cache.ReleaseLease(cached.Path)
@@ -951,7 +975,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		Runtime:            runtimeName,
 		RuntimeBaseRef:     runtimeBaseRef,
 		Function:           app.Type == state.AppTypeFunction,
-		DevWatchCommand:    watchCommand,
+		SharedRuntime:      sharedRuntime != "",
+		DevWatchCommand:    watch.Command,
+		DevWatchHost:       watch.Host,
 		DependencyCacheKey: dependencyCacheKey,
 		LogPath:            dep.LogPath,
 		RAMMB:              api.BuildVMRAMMB,
@@ -1125,11 +1151,16 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if out.DependencyCacheStoreError != "" {
 		b.log.Warn("builderd: dependency cache store failed (continuing)", "build", build.ID, "err", out.DependencyCacheStoreError)
 		b.emitBuildLog(ctx, build.ID, "dependency cache could not be saved — the next build may reinstall dependencies\n")
+	} else if out.DependencyCacheUnchanged {
+		b.emitBuildLog(ctx, build.ID, "dependencies unchanged — kept the dependency cache for the next build\n")
 	} else if out.DependencyCacheStored {
 		b.emitBuildLog(ctx, build.ID, "dependency cache saved for the next build\n")
 	}
 	if tail := boundedGuestBuildLogTail(out.LogTail); tail != "" {
 		b.emitBuildLog(ctx, build.ID, "[guest build output]\n"+tail+"\n")
+	}
+	if line := sharedRuntimeBuildLog(out.SharedRuntime); line != "" && out.ExitCode == 0 {
+		b.emitBuildLog(ctx, build.ID, line)
 	}
 	if out.ExitCode != 0 {
 		// Prefer the failure class the guest-init captured in build-done.json
@@ -1214,7 +1245,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	result, err := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,
 		BuildResult{BuildID: build.ID, LayerPath: out.OCIImage, LayerBytes: artifactBytes,
 			BuildkitVer: out.BuildkitVer, RailpackVer: out.RailpackVer,
-			BuilderBaseDigest: buildEnvironment.BaseDigest, RuntimeBaseRef: runtimeBaseRef,
+			BuilderBaseDigest: buildEnvironment.BaseDigest, RuntimeBaseRef: runtimeBaseRef, Runtime: runtimeName,
 			DevPatch: out.DevPatch}, buildStart)
 	if err != nil || result.BuildID == "" {
 		return result, err
@@ -1524,6 +1555,13 @@ func (b *Builderd) recordBuilderUsage(ctx context.Context, buildID string, build
 // completeBuild commits the claim, artifact and provenance before publishing
 // any success signal. imaged polls the committed records if NOTIFY is lost.
 func (b *Builderd) completeBuild(ctx context.Context, build state.Build, dep state.Deployment, app state.App, acct state.Account, srcSHA, frameworkVer string, result BuildResult, buildStart time.Time) (BuildResult, error) {
+	if err := b.publishBuildExport(ctx, build, dep, app, srcSHA, result); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return BuildResult{}, nil
+		}
+		b.markFailed(ctx, build, state.FailureInfra, "approved build publication unavailable", buildStart)
+		return BuildResult{}, fmt.Errorf("builderd: approved build publication: %w", err)
+	}
 	prov := state.BuildProvenance{
 		BuildID: build.ID, SourceSHA256: srcSHA, SourceURL: dep.SourceURL,
 		CommitSHA: dep.CommitSHA, Plan: string(acct.Plan), BuilderNodeID: b.builderNodeID,

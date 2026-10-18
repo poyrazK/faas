@@ -2,6 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-10-07
+- **Amended by:** ADR-1259 (a recorded verification replaces re-mapping after the first proof; a mismatch before it is "not proven yet")
 
 ## Context
 

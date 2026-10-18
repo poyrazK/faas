@@ -2,6 +2,23 @@
   "version": 1,
   "gates": [
     {
+      "id": "ai-gateway-preview",
+      "name": "AI gateway preview qualification",
+      "category": "reliability",
+      "description": "An entitled account in the staged rollout calls its provider through the relay with redaction, settlement, cost and a hard daily cap; every forwarded call settles its usage, Postgres or provider failures fail closed or cost nothing, and closing the release gate is the rollback (ADR-998).",
+      "capabilities": ["ai-gateway"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/outbound/ai_gateway_acceptance_test.go::TestAIGatewayPreviewAcceptance"},
+        {"kind": "test", "locator": "pkg/outbound/ai_gateway_drills_test.go::TestAIGatewayFailureDrills"},
+        {"kind": "test", "locator": "pkg/outbound/ai_rollout_test.go::TestAIGatewayEntitlementFollowsTheRegistry"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_outbound_ai_rollout_test.go::TestAIGatewayRolloutAndPlan"},
+        {"kind": "test", "locator": "cmd/outboundd/ai_gateway_gate_test.go::TestAIGatewayRolloutConfig"},
+        {"kind": "runbook", "locator": "docs/runbooks/FaasAIGateway.md"},
+        {"kind": "runbook", "locator": "docs/ai-gateway.md"}
+      ]
+    },
+    {
       "id": "api-contract-preview",
       "name": "Declared contract and effective policy preview",
       "category": "security",
@@ -25,7 +42,8 @@
       "evidence": [
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_consumer_usage_statements_test.go::TestAPIConsumerUsageStatementSnapshotAndFinalize"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_consumer_completeness_test.go::TestAPIConsumerUsageCompletenessEndpoint"},
-        {"kind": "test", "locator": "pkg/billing/api_consumer_completeness_test.go::TestCheckAPIConsumerUsageCompleteness"}
+        {"kind": "test", "locator": "pkg/billing/api_consumer_completeness_test.go::TestCheckAPIConsumerUsageCompleteness"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/billing_runs_test.go::TestBillingRunExportsEveryCustomer"}
       ]
     },
     {
@@ -257,6 +275,18 @@
         {"kind": "test", "locator": "cmd/e2e/service_mesh_e2e_test.go::TestE2E_ServiceMesh_StampsTargetProtocol"},
         {"kind": "test", "locator": "cmd/e2e/service_mesh_e2e_test.go::TestE2E_ServiceMesh_AccessBoundaries"},
         {"kind": "test", "locator": "cmd/gatewayd-internal/backend_test.go::TestPgRouter_InternalAppIsNotPubliclyRouted"}
+      ]
+    },
+    {
+      "id": "slo-and-synthetic-signal",
+      "name": "SLO budgets and synthetic checks",
+      "category": "observability",
+      "description": "Customer SLO budgets are computed from the recorded hourly attainment, and synthetic checks record every run's outcome, status and latency.",
+      "capabilities": ["custom-slos", "synthetic-checks"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_slo_status_test.go::TestGetSLOReportsBudgetFromHourlyRows"},
+        {"kind": "test", "locator": "pkg/synthetics/runner_test.go::TestRunOnceRecordsOutcomes"}
       ]
     },
     {

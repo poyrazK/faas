@@ -1063,6 +1063,9 @@ func handleDeploymentRouteInvalidation(ctx context.Context, inv invalidator, raw
 		log.Warn("gatewayd: bad deployment_route_changed payload", "err", err)
 		return db.DeploymentRouteChangedPayload{}, false
 	}
+	if admission, ok := inv.(interface{ InvalidateWorkloadAdmission(string) }); ok {
+		admission.InvalidateWorkloadAdmission(payload.AppID)
+	}
 	inv.InvalidateResponseCacheByApp(payload.AppID)
 	// Load the candidate target before publishing its 100% weight into this
 	// process. Reversing this order creates a small 503 window when the old
@@ -1219,9 +1222,19 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 					log.Warn("gatewayd: reconcile running instance", "app_id", p.AppID, "instance_id", p.InstanceID, "err", err)
 				}
 			}
-		case "stopped", "failed", "parked", "snapshotting", "migrating", "draining", "frozen":
+		case "frozen":
 			// A frozen VM (ADR-1151) is paused: the next request must go
 			// through schedd, which thaws it, never straight to the guest.
+			// The thaw brings back the same instance ID, so the route is
+			// withdrawn without the stale-target quarantine.
+			if w, ok := inv.(interface {
+				WithdrawInstance(appID, instanceID string)
+			}); ok {
+				w.WithdrawInstance(p.AppID, p.InstanceID)
+			} else {
+				inv.EvictInstance(p.AppID, p.InstanceID)
+			}
+		case "stopped", "failed", "parked", "snapshotting", "migrating", "draining":
 			inv.EvictInstance(p.AppID, p.InstanceID)
 		}
 	case db.NotifyAppChanged:

@@ -81,6 +81,10 @@ func (r *statusRecorder) WriteHeader(code int) {
 	if r.wroteHeader {
 		return
 	}
+	if code >= 100 && code < 200 && code != http.StatusSwitchingProtocols {
+		r.ResponseWriter.WriteHeader(code)
+		return
+	}
 	r.status = code
 	r.wroteHeader = true
 	r.ResponseWriter.WriteHeader(code)
@@ -89,6 +93,7 @@ func (r *statusRecorder) WriteHeader(code int) {
 // lgtm[go/reflected-xss] false-positive: statusRecorder is a pass-through; the 429 path uses api.WriteProblemForRequest, and the success path forwards to next.ServeHTTP. See statusRecorder doc-comment.
 func (r *statusRecorder) Write(p []byte) (int, error) {
 	if !r.wroteHeader {
+		r.status = http.StatusOK
 		r.wroteHeader = true
 	}
 
@@ -96,11 +101,17 @@ func (r *statusRecorder) Write(p []byte) (int, error) {
 	return r.ResponseWriter.Write(p)
 }
 
+// Unwrap preserves response-controller deadlines for streams and uploads.
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
 // Flush forwards to the underlying ResponseWriter if it implements
-// http.Flusher. Returns false otherwise (which is fine — non-flushable
-// writers like the test recorder still work, they just don't stream).
+// http.Flusher, recording the implicit 200 when headers have not been sent.
 func (r *statusRecorder) Flush() {
 	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		if !r.wroteHeader {
+			r.status = http.StatusOK
+			r.wroteHeader = true
+		}
 		f.Flush()
 	}
 }

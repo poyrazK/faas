@@ -205,7 +205,7 @@
     {
       "id": 5,
       "type": "timeseries",
-      "title": "Edit-to-live, rebuild path (p50 / p95)",
+      "title": "Edit-to-live by watch mode (p50 / p95)",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -219,8 +219,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(apid_dev_sync_edit_to_live_seconds_bucket{status=\"live\"}[1h])))",
-          "legendFormat": "p50",
+          "expr": "histogram_quantile(0.5, sum by (le, watch) (rate(apid_dev_sync_edit_to_live_seconds_bucket{status=\"live\"}[1h])))",
+          "legendFormat": "p50 watch={{watch}}",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -228,8 +228,8 @@
         },
         {
           "refId": "B",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(apid_dev_sync_edit_to_live_seconds_bucket{status=\"live\"}[1h])))",
-          "legendFormat": "p95",
+          "expr": "histogram_quantile(0.95, sum by (le, watch) (rate(apid_dev_sync_edit_to_live_seconds_bucket{status=\"live\"}[1h])))",
+          "legendFormat": "p95 watch={{watch}}",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -242,7 +242,7 @@
         },
         "overrides": []
       },
-      "description": "CLI-reported save to live for syncs that built and deployed."
+      "description": "CLI-reported save to live for syncs that built and deployed. watch=\"true\" is a watch-mode environment (ADR-1170): its edits reach the development server as live patches, so compare it with the rebuild path."
     },
     {
       "id": 6,
@@ -303,8 +303,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (outcome) (increase(apid_dev_patch_plans_total[1h]))",
-          "legendFormat": "{{outcome}}",
+          "expr": "sum by (outcome, watch) (increase(apid_dev_patch_plans_total[1h]))",
+          "legendFormat": "{{outcome}} watch={{watch}}",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -380,8 +380,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.95, sum by (le, phase) (rate(apid_dev_sync_phase_seconds_bucket{status=\"completed\"}[1h])))",
-          "legendFormat": "{{phase}}",
+          "expr": "histogram_quantile(0.95, sum by (le, phase, watch) (rate(apid_dev_sync_phase_seconds_bucket{status=\"completed\"}[1h])))",
+          "legendFormat": "{{phase}} watch={{watch}}",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"

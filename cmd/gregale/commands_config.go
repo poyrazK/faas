@@ -210,8 +210,7 @@ func normalizeConfigKey(raw string) string {
 func cmdConfig(args []string) int {
 	parent, _ := lookupCliCommand("config")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale config <get|set|list> ...", "config")
-		return 1
+		return cmdConfigList(nil)
 	}
 	switch args[0] {
 	case "list":

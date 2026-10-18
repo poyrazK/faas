@@ -61,7 +61,9 @@ type memoryState struct {
 	aiRequestLog       []AIUsageRecord
 	// contentCaptures counts today's captured calls (ADR-996).
 	contentCaptures int
-	initialized     bool
+	// settledLeases keys today's settlements (ADR-1120).
+	settledLeases map[string]struct{}
+	initialized   bool
 }
 
 // memoryAIRequestLogMax bounds the in-process request log.
@@ -255,12 +257,22 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 	id := uuid.NewString()
 	state.leases[id] = memoryLease{expiresAt: now.Add(ttl), bindingApp: spec.BindingAppID, endUser: spec.AIEndUser,
 		reservedTokens: reserve.tokens, reservedCost: reserve.cost}
-	return Decision{
+	decision := Decision{
 		Granted: true, LeaseID: id, RequestTimeout: ttl,
 		CircuitBreakerFailureThreshold: spec.CircuitBreakerFailureThreshold,
 		CircuitBreakerOpenSeconds:      spec.CircuitBreakerOpenSeconds,
 		RetryBudgetPerMinute:           spec.RetryBudgetPerMinute,
-	}, nil
+		CircuitClosed:                  spec.CircuitBreakerFailureThreshold > 0 && state.circuitOpenUntil.IsZero(),
+	}
+	// ADR-1120: the cooldown as admission sees it, like the Postgres backend.
+	if state.providerCooldownRevision == spec.PolicyRevision {
+		gate := ProviderCooldownDecision{Allowed: true}
+		if state.providerCooldownUntil.After(now) {
+			gate = ProviderCooldownDecision{RetryAfter: state.providerCooldownUntil.Sub(now)}
+		}
+		decision.ProviderGate = &gate
+	}
+	return decision, nil
 }
 
 func (b *MemoryBackend) ConsumeRetryToken(ctx context.Context, integrationID string, retryBudgetPerMinute int) (bool, error) {
@@ -501,6 +513,7 @@ func (s *memoryState) rollDay(today string) {
 		s.aiUsage = make(map[memoryAIUsageKey]AIUsageTotals)
 		s.userUsage = make(map[string]AIUserUsageTotals)
 		s.contentCaptures = 0
+		s.settledLeases = nil
 		return
 	}
 	if s.userUsage == nil {
@@ -542,6 +555,20 @@ func (b *MemoryBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsageR
 	}
 	utcNow := b.now().UTC()
 	state.rollDay(utcNow.Format("2006-01-02"))
+	if record.LeaseID != "" {
+		// ADR-1120: the lease keys the settlement and leaves with it.
+		if _, settled := state.settledLeases[record.LeaseID]; settled {
+			return nil, nil
+		}
+		if state.settledLeases == nil {
+			state.settledLeases = make(map[string]struct{})
+		}
+		state.settledLeases[record.LeaseID] = struct{}{}
+		delete(state.leases, record.LeaseID)
+		if state.circuitProbeLease == record.LeaseID {
+			state.circuitProbeLease = ""
+		}
+	}
 	before := aiBudgetState{dailyTokens: state.dailyAITokenCount, bindingTokens: state.bindingAITokenCounts[record.Caller],
 		dailyCost: state.dailyAICost, monthlyCost: state.monthlyAICost}
 	state.dailyAITokenCount += record.Usage.BudgetTokens()

@@ -544,6 +544,10 @@ func (f *fakeVmmdClient) PauseAndSnapshot(context.Context, *vmmdpb.PauseAndSnaps
 	panic("PauseAndSnapshot: not stubbed")
 }
 
+func (f *fakeVmmdClient) CaptureAdmittedRuntime(context.Context, *vmmdpb.CaptureAdmittedRuntimeRequest, ...grpc.CallOption) (*vmmdpb.CaptureAdmittedRuntimeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "admitted capture is not used by gateway tests")
+}
+
 // WaitBuilderReady and DeleteWarmSnapshot belong to builderd's warm-builder
 // handoff path. The gateway forwarder never invokes them, but the generated
 // vmmd client requires both methods on every test fake.
@@ -564,6 +568,12 @@ func (f *fakeVmmdClient) WarmSnapshot(context.Context, *vmmdpb.WarmSnapshotReque
 }
 func (f *fakeVmmdClient) ResumeWarmInstance(context.Context, *vmmdpb.ResumeWarmInstanceRequest, ...grpc.CallOption) (*vmmdpb.ResumeWarmInstanceResponse, error) {
 	panic("ResumeWarmInstance: not stubbed")
+}
+func (f *fakeVmmdClient) FreezeInstance(context.Context, *vmmdpb.FreezeInstanceRequest, ...grpc.CallOption) (*vmmdpb.FreezeInstanceResponse, error) {
+	panic("FreezeInstance: not stubbed")
+}
+func (f *fakeVmmdClient) ThawInstance(context.Context, *vmmdpb.ThawInstanceRequest, ...grpc.CallOption) (*vmmdpb.ThawInstanceResponse, error) {
+	panic("ThawInstance: not stubbed")
 }
 func (f *fakeVmmdClient) Destroy(context.Context, *vmmdpb.DestroyRequest, ...grpc.CallOption) (*vmmdpb.DestroyResponse, error) {
 	panic("Destroy: not stubbed")
@@ -1370,64 +1380,6 @@ func TestForwardingReverseProxy_StreamOtherErrorIs502(t *testing.T) {
 	if lookup.closed != 1 {
 		t.Errorf("closer calls = %d, want 1", lookup.closed)
 	}
-}
-
-// TestStripHopByHop is a focused unit test for the header-stripping
-// function. It catches the easy mistake of forgetting a header (e.g.
-// Transfer-Encoding when the inbound used chunked) before a
-// real-world client trips over it.
-func TestStripHopByHop(t *testing.T) {
-	in := http.Header{}
-	in.Set("Connection", "close")
-	in.Set("Keep-Alive", "timeout=5")
-	in.Set("Transfer-Encoding", "chunked")
-	in.Set("Upgrade", "h2c")
-	in.Set("Proxy-Authenticate", "Basic realm=x")
-	in.Set("Proxy-Authorization", "Basic xyz")
-	in.Set("Te", "trailers")
-	in.Set("Trailers", "X-Some-Trailer")
-	in.Set("X-Custom", "keep")
-	in.Set("Authorization", "keep")
-
-	out := stripHopByHopTest(in)
-	for _, k := range []string{
-		"Connection", "Keep-Alive", "Transfer-Encoding", "Upgrade",
-		"Proxy-Authenticate", "Proxy-Authorization", "Te", "Trailers",
-	} {
-		if out.Get(k) != "" {
-			t.Errorf("hop-by-hop header %q leaked: %q", k, out.Get(k))
-		}
-	}
-	if out.Get("X-Custom") != "keep" {
-		t.Errorf("X-Custom lost")
-	}
-	if out.Get("Authorization") != "keep" {
-		t.Errorf("Authorization lost")
-	}
-}
-
-// stripHopByHopTest is a thin shim into the gateway package so we
-// can unit-test it without exporting the production symbol.
-func stripHopByHopTest(h http.Header) http.Header {
-	return stripHopByHopImpl(h)
-}
-
-// indirection so the package symbol isn't pulled into the test file
-// unless the production code re-exports it. For now we just take the
-// local copy; future refactors can swap to a public symbol without
-// changing the tests.
-//
-// (This keeps the test pass even if the gateway package decides to
-// keep stripHopByHop unexported forever.)
-func stripHopByHopImpl(h http.Header) http.Header {
-	out := h.Clone()
-	for _, k := range []string{
-		"Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization",
-		"Te", "Trailers", "Transfer-Encoding", "Upgrade",
-	} {
-		out.Del(k)
-	}
-	return out
 }
 
 // TestForwardingReverseProxyWithEvents_EmitsProxyFirstByte pins the

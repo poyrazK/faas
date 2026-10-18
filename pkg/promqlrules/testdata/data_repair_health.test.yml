@@ -1,0 +1,264 @@
+# Durable repair health: stalls, safe recovery signals, stale reads and scheduler replicas.
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/data_repair.rules.yml
+evaluation_interval: 30s
+tests:
+- name: empty fresh observation stays quiet even at epoch-zero phase clocks
+  interval: 30s
+  input_series:
+  - series: schedd_data_repair_health_last_success_timestamp_seconds{job="schedd",instance="scheduler-a"}
+    values: 1+30x30
+  - series: schedd_data_repair_oldest_phase_timestamp_seconds{job="schedd",instance="scheduler-a",phase="cleanup"}
+    values: '0x30'
+  - series: schedd_data_repair_phase_warn_after_seconds{job="schedd",instance="scheduler-a",phase="cleanup"}
+    values: 60x30
+  - series: schedd_data_repair_phase_count{job="schedd",instance="scheduler-a",phase="outcome_unknown"}
+    values: '0x30'
+  - series: schedd_data_repair_unavailable_tasks{job="schedd",instance="scheduler-a"}
+    values: '0x30'
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: FaasDataRepairStalled
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasDataRepairNodeUnavailable
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasDataRepairOutcomeUnknown
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasDataRepairHealthStale
+    exp_alerts: []
+- name: cleanup stall and unavailable original node fire and resolve after retirement
+  interval: 30s
+  input_series:
+  - series: schedd_data_repair_health_last_success_timestamp_seconds{job="schedd",instance="scheduler-a"}
+    values: 1+30x30
+  - series: schedd_data_repair_oldest_phase_timestamp_seconds{job="schedd",instance="scheduler-a",phase="cleanup"}
+    values: 1x10 0x20
+  - series: schedd_data_repair_phase_warn_after_seconds{job="schedd",instance="scheduler-a",phase="cleanup"}
+    values: 60x30
+  - series: schedd_data_repair_unavailable_tasks{job="schedd",instance="scheduler-a"}
+    values: 1x10 0x20
+  alert_rule_test:
+  - eval_time: 1m
+    alertname: FaasDataRepairStalled
+    exp_alerts: []
+  - eval_time: 3m
+    alertname: FaasDataRepairStalled
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: data_repair
+        public_status: internal
+        phase: cleanup
+      exp_annotations:
+        summary: Data repair is stalled in cleanup
+        description: Inspect the operator repair health view and original task. Phase age survives retries. Preserve cleanup reservations and original journals; an expired deadline never authorizes another VM.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDataRepairStuck.md
+  - eval_time: 6m
+    alertname: FaasDataRepairStalled
+    exp_alerts: []
+  - eval_time: 1m
+    alertname: FaasDataRepairNodeUnavailable
+    exp_alerts: []
+  - eval_time: 3m
+    alertname: FaasDataRepairNodeUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: data_repair
+        public_status: internal
+      exp_annotations:
+        summary: Data repair retains capacity on an unavailable node
+        description: At least one running or cleanup task has an unavailable, missing, retired or stale-heartbeat node. Restore access to its original journals and retire the original attempt; node loss is not cleanup proof.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDataRepairStuck.md
+  - eval_time: 6m
+    alertname: FaasDataRepairNodeUnavailable
+    exp_alerts: []
+- name: replicas observe the same young fleet work without adding ages
+  interval: 30s
+  input_series:
+  - series: schedd_data_repair_health_last_success_timestamp_seconds{job="schedd",instance="scheduler-a"}
+    values: 1+30x30
+  - series: schedd_data_repair_health_last_success_timestamp_seconds{job="schedd",instance="scheduler-b"}
+    values: 1+30x30
+  - series: schedd_data_repair_oldest_phase_timestamp_seconds{job="schedd",instance="scheduler-a",phase="cleanup"}
+    values: -50+30x30
+  - series: schedd_data_repair_oldest_phase_timestamp_seconds{job="schedd",instance="scheduler-b",phase="cleanup"}
+    values: -50+30x30
+  - series: schedd_data_repair_phase_warn_after_seconds{job="schedd",instance="scheduler-a",phase="cleanup"}
+    values: 60x30
+  - series: schedd_data_repair_phase_warn_after_seconds{job="schedd",instance="scheduler-b",phase="cleanup"}
+    values: 60x30
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: FaasDataRepairStalled
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasDataRepairNodeUnavailable
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasDataRepairOutcomeUnknown
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasDataRepairHealthStale
+    exp_alerts: []
+- name: stale replica cannot report a current stall or capacity failure
+  interval: 30s
+  input_series:
+  - series: schedd_data_repair_health_last_success_timestamp_seconds{job="schedd",instance="scheduler-a"}
+    values: 1+30x30
+  - series: schedd_data_repair_oldest_phase_timestamp_seconds{job="schedd",instance="scheduler-a",phase="cleanup"}
+    values: '0x30'
+  - series: schedd_data_repair_phase_warn_after_seconds{job="schedd",instance="scheduler-a",phase="cleanup"}
+    values: 60x30
+  - series: schedd_data_repair_health_last_success_timestamp_seconds{job="schedd",instance="scheduler-b"}
+    values: 1x30
+  - series: schedd_data_repair_oldest_phase_timestamp_seconds{job="schedd",instance="scheduler-b",phase="cleanup"}
+    values: 1x30
+  - series: schedd_data_repair_phase_warn_after_seconds{job="schedd",instance="scheduler-b",phase="cleanup"}
+    values: 60x30
+  - series: schedd_data_repair_unavailable_tasks{job="schedd",instance="scheduler-b"}
+    values: 1x30
+  - series: schedd_data_repair_phase_count{job="schedd",instance="scheduler-b",phase="outcome_unknown"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: FaasDataRepairStalled
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasDataRepairNodeUnavailable
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasDataRepairOutcomeUnknown
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasDataRepairHealthStale
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: data_repair
+        public_status: internal
+        job: schedd
+        instance: scheduler-b
+      exp_annotations:
+        summary: Data repair health observations are unavailable
+        description: Check schedd and its primary database read path. Previous gauges are retained on errors and must not be interpreted as a current healthy queue or zero capacity.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDataRepairStuck.md
+- name: unknown apply receipt needs reconciliation without a rehearsal VM reservation
+  interval: 30s
+  input_series:
+  - series: schedd_data_repair_health_last_success_timestamp_seconds{job="schedd",instance="scheduler-a"}
+    values: 1+30x30
+  - series: schedd_data_repair_phase_count{job="schedd",instance="scheduler-a",phase="outcome_unknown"}
+    values: 1x8 0x22
+  - series: schedd_data_repair_oldest_phase_timestamp_seconds{job="schedd",instance="scheduler-a",phase="outcome_unknown"}
+    values: 1x30
+  - series: schedd_data_repair_capacity_held{job="schedd",instance="scheduler-a",resource="slots"}
+    values: '0x30'
+  alert_rule_test:
+  - eval_time: 30s
+    alertname: FaasDataRepairOutcomeUnknown
+    exp_alerts: []
+  - eval_time: 2m
+    alertname: FaasDataRepairOutcomeUnknown
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: data_repair
+        public_status: internal
+      exp_annotations:
+        summary: Data repair apply outcome requires reconciliation
+        description: Inspect the original application executor plan and saved repair receipt. Reuse the original repair operation ID; a lost response or missing receipt does not prove rollback.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDataRepairStuck.md
+  - eval_time: 6m
+    alertname: FaasDataRepairOutcomeUnknown
+    exp_alerts: []
+  - eval_time: 2m
+    alertname: FaasDataRepairStalled
+    exp_alerts: []
+  - eval_time: 2m
+    alertname: FaasDataRepairNodeUnavailable
+    exp_alerts: []
+- name: failed reads become stale while retained gauges do not fabricate current evidence
+  interval: 30s
+  input_series:
+  - series: schedd_data_repair_health_last_success_timestamp_seconds{job="schedd",instance="scheduler-a"}
+    values: 1x30
+  - series: schedd_data_repair_oldest_phase_timestamp_seconds{job="schedd",instance="scheduler-a",phase="cleanup"}
+    values: 1x30
+  - series: schedd_data_repair_phase_warn_after_seconds{job="schedd",instance="scheduler-a",phase="cleanup"}
+    values: 60x30
+  - series: schedd_data_repair_unavailable_tasks{job="schedd",instance="scheduler-a"}
+    values: 1x30
+  - series: schedd_data_repair_phase_count{job="schedd",instance="scheduler-a",phase="outcome_unknown"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: FaasDataRepairHealthStale
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasDataRepairHealthStale
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: data_repair
+        public_status: internal
+        job: schedd
+        instance: scheduler-a
+      exp_annotations:
+        summary: Data repair health observations are unavailable
+        description: Check schedd and its primary database read path. Previous gauges are retained on errors and must not be interpreted as a current healthy queue or zero capacity.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDataRepairStuck.md
+  - eval_time: 5m
+    alertname: FaasDataRepairStalled
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasDataRepairNodeUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasDataRepairOutcomeUnknown
+    exp_alerts: []
+- name: no successful observation is unavailable from startup
+  interval: 30s
+  input_series:
+  - series: schedd_data_repair_health_last_success_timestamp_seconds{job="schedd",instance="scheduler-a"}
+    values: '0x30'
+  - series: schedd_data_repair_oldest_phase_timestamp_seconds{job="schedd",instance="scheduler-a",phase="cleanup"}
+    values: 1x30
+  - series: schedd_data_repair_phase_warn_after_seconds{job="schedd",instance="scheduler-a",phase="cleanup"}
+    values: 60x30
+  - series: schedd_data_repair_unavailable_tasks{job="schedd",instance="scheduler-a"}
+    values: 1x30
+  - series: schedd_data_repair_phase_count{job="schedd",instance="scheduler-a",phase="outcome_unknown"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: FaasDataRepairHealthStale
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: data_repair
+        public_status: internal
+        job: schedd
+        instance: scheduler-a
+      exp_annotations:
+        summary: Data repair health observations are unavailable
+        description: Check schedd and its primary database read path. Previous gauges are retained on errors and must not be interpreted as a current healthy queue or zero capacity.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDataRepairStuck.md
+  - eval_time: 3m
+    alertname: FaasDataRepairStalled
+    exp_alerts: []
+  - eval_time: 3m
+    alertname: FaasDataRepairNodeUnavailable
+    exp_alerts: []
+  - eval_time: 3m
+    alertname: FaasDataRepairOutcomeUnknown
+    exp_alerts: []

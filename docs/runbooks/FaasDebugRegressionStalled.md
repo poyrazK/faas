@@ -4,7 +4,7 @@ Source: `deploy/ansible/roles/prometheus/files/faas.rules.yml`.
 Metrics: `apid_debug_regression_oldest_pass_seconds` (gauge),
 `apid_debug_regression_skipped_flag_disabled_total` (counter).
 ADR: ADR-127 PR-B (production debugger consumer surface).
-Severity: page on `FaasDebugRegressionStalled` (≥26m without a
+Severity: warn (ADR-1236) on `FaasDebugRegressionStalled` (≥26m without a
 successful pass). Info on `FaasDebugRegressionDisabledByOperator`
 (operator has explicitly turned the regression cron off via
 `FAAS_REQUEST_TELEMETRY_ENABLED` — no page, just an annotation

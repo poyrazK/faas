@@ -27,19 +27,21 @@ type envPushPreviewFinding struct {
 }
 
 type envPushPreview struct {
-	App                 string                  `json:"app_slug"`
-	Scope               string                  `json:"scope"`
-	DryRun              bool                    `json:"dry_run"`
-	CanPush             bool                    `json:"can_push"`
-	Changes             []envPushPreviewChange  `json:"changes"`
-	Findings            []envPushPreviewFinding `json:"scan_findings"`
-	Blockers            []string                `json:"blockers"`
-	CurrentCount        int                     `json:"current_secret_count"`
-	ProjectedCount      int                     `json:"projected_secret_count"`
-	Quota               int                     `json:"secret_quota"`
-	ApplyMode           string                  `json:"apply_mode"`
-	WaitForAckRequested bool                    `json:"wait_for_ack_requested,omitempty"`
-	WaitTimeout         string                  `json:"wait_timeout,omitempty"`
+	Preview             *cliPreviewSummary        `json:"preview,omitempty"`
+	App                 string                    `json:"app_slug"`
+	Scope               string                    `json:"scope"`
+	DryRun              bool                      `json:"dry_run"`
+	CanPush             bool                      `json:"can_push"`
+	Changes             []envPushPreviewChange    `json:"changes"`
+	Findings            []envPushPreviewFinding   `json:"scan_findings"`
+	Blockers            []string                  `json:"blockers"`
+	CurrentCount        int                       `json:"current_secret_count"`
+	ProjectedCount      int                       `json:"projected_secret_count"`
+	Quota               int                       `json:"secret_quota"`
+	ApplyMode           string                    `json:"apply_mode"`
+	WaitForAckRequested bool                      `json:"wait_for_ack_requested,omitempty"`
+	WaitTimeout         string                    `json:"wait_timeout,omitempty"`
+	Requirements        *envRequiredConfiguration `json:"requirements"`
 }
 
 func previewEnvPush(app, scope string, pairs []secretsPair, origin string, mode secretScanMode, restart bool, waitOptions ...secretSetWaitOptions) int {
@@ -49,6 +51,10 @@ func previewEnvPush(app, scope string, pairs []secretsPair, origin string, mode 
 	scope = scopeOrDefault(scope)
 	if problem := api.ValidateScope(scope); problem != nil {
 		return printErr("Invalid scope", errors.New(problem.Detail))
+	}
+	required, requiredFile, err := envPushRequiredKeys()
+	if err != nil {
+		return printErr("Could not read required secret declaration", err)
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -140,12 +146,21 @@ func previewEnvPush(app, scope string, pairs []secretsPair, origin string, mode 
 	if preview.ProjectedCount > preview.CurrentCount && preview.ProjectedCount > preview.Quota {
 		preview.Blockers = append(preview.Blockers, "Projected secret count exceeds the app quota across all scopes.")
 	}
+	preview.Requirements = evaluateEnvRequiredKeys(required, requiredFile, scope, pairs, dropped, list, limits.SecretValueMaxBytes)
+	if len(preview.Requirements.Missing) > 0 {
+		preview.Blockers = append(preview.Blockers, "Required secret keys would remain missing; fill the missing required names before uploading.")
+	}
+	if len(preview.Requirements.Empty) > 0 {
+		preview.Blockers = append(preview.Blockers, "Required secret keys have empty proposed values; fill these placeholders before uploading.")
+	}
 	preview.CanPush = len(preview.Blockers) == 0
+	preview.Preview = newCLIPreview("remote metadata comparison", app, scope, "proposed secret keys (values hidden)", "", "Remote values are not compared; key presence does not verify values or runtime delivery.")
 	if jsonOutput {
 		if code := jsonOut(writeJSON(preview)); code != 0 {
 			return code
 		}
 	} else {
+		renderCLIPreview(osStdout, preview.Preview)
 		PrintProgress(osStdout, "Env push preview: app=%s; scope=%s (values hidden)", app, scope)
 		for _, change := range preview.Changes {
 			_, _ = fmt.Fprintf(osStdout, "  %s  %s\n", change.Action, change.Key)
@@ -154,6 +169,7 @@ func previewEnvPush(app, scope string, pairs []secretsPair, origin string, mode 
 			_, _ = fmt.Fprintf(osStdout, "  Scan: pair %d, %s (%s, %s)\n", finding.Pair, finding.Key, finding.Provider, finding.Severity)
 		}
 		PrintProgress(osStdout, "Secrets across all scopes: %d -> %d / %d", preview.CurrentCount, preview.ProjectedCount, preview.Quota)
+		renderEnvRequiredConfiguration(preview.Requirements)
 		if restart {
 			PrintProgress(osStdout, "Apply after upload: fresh app restart.")
 		} else {

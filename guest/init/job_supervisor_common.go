@@ -87,6 +87,16 @@ type JobManifest struct {
 	StartHeld           bool              `json:"start_held,omitempty"`
 	VsockJobExitPort    int               `json:"vsock_job_exit_port,omitempty"`
 	VsockJobExitMsgType int               `json:"vsock_job_exit_msg_type,omitempty"`
+	// Interactive mirrors pkg/fcvm/job_vmm.go::JobInteractive (ADR-1330).
+	Interactive *JobInteractive `json:"interactive,omitempty"`
+}
+
+// JobInteractive holds the command until one attached session arrives on the
+// app-task session port within AttachTimeoutSec, then runs it with the
+// session's terminal (TTY) or pipes as stdio.
+type JobInteractive struct {
+	TTY              bool `json:"tty,omitempty"`
+	AttachTimeoutSec int  `json:"attach_timeout_s"`
 }
 
 // JobExitPayload is the JSON the supervisor writes via vsock STREAM

@@ -364,6 +364,11 @@ func TestCmdStatus_DegradedSource(t *testing.T) {
 	if !strings.Contains(stdout.String(), "degraded") {
 		t.Errorf("degraded source should be visible: %q", stdout.String())
 	}
+	// H10-46: a missing p95 is not proof that nothing woke; the query needs
+	// 20 wakes in 30 minutes.
+	if !strings.Contains(stdout.String(), "fewer than 20 wakes in the last 30 min") {
+		t.Errorf("missing p95 should name its threshold: %q", stdout.String())
+	}
 }
 
 // TestCmdStatus_JSONEmitsRawSnapshot covers issue #63 §2: the --json
@@ -1692,11 +1697,15 @@ func TestCmdAppsDispatch_LsAlias(t *testing.T) {
 	defer sink.Close()
 	t.Setenv("FAAS_API", sink.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if code := run([]string{"apps", "ls"}); code != 0 {
-		t.Errorf("run(apps ls) = %d, want 0", code)
-	}
-	if !hit {
-		t.Errorf("apps ls did not hit /v1/apps")
+	// H10-24: `projects list` spells it `list`; `apps list` printed usage.
+	for _, verb := range []string{"ls", "list"} {
+		hit = false
+		if code := run([]string{"apps", verb}); code != 0 {
+			t.Errorf("run(apps %s) = %d, want 0", verb, code)
+		}
+		if !hit {
+			t.Errorf("apps %s did not hit /v1/apps", verb)
+		}
 	}
 }
 
@@ -2051,19 +2060,22 @@ func TestMCPGoTarGzContainsMaterializedSourcesAndModule(t *testing.T) {
 
 func TestTemplates_MaterializeContainsExpectedFiles(t *testing.T) {
 	cases := map[string][]string{
-		"hello-node":         {"handler.js", "package.json", "README.md"},
-		"hello-python":       {"handler.py", "requirements.txt", "README.md"},
-		"hello-go":           {"main.go", "README.md"},
-		"cron-example":       {"handler.js", "package.json", "README.md"},
-		"function-node":      {"handler.js", "package.json", "README.md"},
-		"function-python":    {"handler.py", "requirements.txt", "README.md"},
-		"function-go":        {"handler.go", "README.md"},
-		"function-node24":    {"handler.js", "package.json", "README.md"},
-		"function-python313": {"handler.py", "requirements.txt", "README.md"},
-		"function-rust":      {"Dockerfile", "Cargo.toml", "Cargo.lock", "src/main.rs", "gregale.yaml", "README.md"},
-		"mcp-go":             {"main.go", "auth.go", "tasks.go", "go.mod", "go.sum", "gregale-mcp.json", "gregale.yaml", "README.md"},
-		"mcp-python":         {"server.py", "auth.py", "tasks.py", "requirements.txt", "test_server.py", "gregale-mcp.json", "gregale.yaml", "README.md"},
-		"secret-reload-node": {"handler.js", "secret-reload.js", "secret-reload.test.js", "package.json", "package-lock.json", "Dockerfile", "README.md"},
+		"hello-node":               {"handler.js", "package.json", "README.md"},
+		"hello-python":             {"handler.py", "requirements.txt", "README.md"},
+		"hello-go":                 {"main.go", "README.md"},
+		"cron-example":             {"handler.js", "package.json", "README.md"},
+		"function-node":            {"handler.js", "package.json", "README.md"},
+		"function-python":          {"handler.py", "requirements.txt", "README.md"},
+		"function-go":              {"handler.go", "README.md"},
+		"function-node24":          {"handler.js", "package.json", "README.md"},
+		"function-python313":       {"handler.py", "requirements.txt", "README.md"},
+		"function-rust":            {"Dockerfile", "Cargo.toml", "Cargo.lock", "src/main.rs", "gregale.yaml", "README.md"},
+		"mcp-go":                   {"main.go", "auth.go", "tasks.go", "go.mod", "go.sum", "gregale-mcp.json", "gregale.yaml", "README.md"},
+		"mcp-python":               {"server.py", "auth.py", "tasks.py", "requirements.txt", "test_server.py", "gregale-mcp.json", "gregale.yaml", "README.md"},
+		"rest-api-postgres-python": {"handler.py", "database.py", "app.py", "migrate.py", "schema.sql", "gregale.yaml", "Dockerfile", "requirements.txt", "runtime/__init__.py", "runtime/_binding_client_runtime.py", "runtime/async_secret_reload_runtime.py", "runtime/async_postgres_pool_runtime.py", "README.md"},
+		"object-storage-python":    {"handler.py", "storage.py", "app.py", "gregale.yaml", "Dockerfile", "requirements.txt", "runtime/__init__.py", "runtime/_binding_client_runtime.py", "runtime/_async_binding_client_runtime.py", "runtime/async_secret_reload_runtime.py", "runtime/async_object_storage_runtime.py", "README.md"},
+		"object-storage-node":      {"app.mjs", "server.mjs", "gregale.yaml", "Dockerfile", "package.json", "package-lock.json", "runtime/binding-client-runtime.js", "runtime/object-storage-runtime.js", "runtime/secret-reload-runtime.js", "README.md"},
+		"secret-reload-node":       {"handler.js", "database.js", "runtime/postgres-pool-runtime.js", "runtime/binding-client-runtime.js", "runtime/secret-reload-runtime.js", "secret-reload.test.js", "package.json", "package-lock.json", "Dockerfile", "README.md"},
 	}
 	for name, want := range cases {
 		t.Run(name, func(t *testing.T) {

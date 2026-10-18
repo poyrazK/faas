@@ -93,7 +93,7 @@ test('computed relationships and RPC projections match typed PostgREST, RLS, gra
     INSERT INTO api.invoices VALUES('alice',101,1,42),('alice',102,1,84),('alice',103,1,999),('bob',101,1,24)`)
   const loginURL = new URL(ownerURL); loginURL.username = role; loginURL.password = 'test-only'
   const snapshot = await inspect(loginURL.toString(), ['api'])
-  assert.equal(snapshot.version, 3)
+  assert.equal(snapshot.version, 4)
   assert.deepEqual(snapshot.functions.map(f => f.name), ['invoice_history', 'invoice_summary', 'latest_card_invoice', 'latest_invoice', 'related_orders', 'search_invoices'])
   assert.deepEqual(snapshot.functions.find(f => f.name === 'latest_invoice').setof, { from: 'orders', to: 'invoices', one_to_one: true })
   assert.deepEqual(snapshot.functions.find(f => f.name === 'search_invoices').setof, { from: '', to: 'invoices', one_to_one: false })

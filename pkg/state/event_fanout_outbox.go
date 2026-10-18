@@ -43,10 +43,11 @@ type PublishedEventWork struct {
 // PublishedEventRecipient is an immutable source/type candidate captured when
 // the event was accepted. The data filter is evaluated by the scheduler.
 type PublishedEventRecipient struct {
-	SchemaVersions      []string                     `json:"schema_versions,omitempty"`
-	DeliveryAgeOverride bool                         `json:"delivery_age_override,omitempty"`
-	RoutingRetryPolicy  *api.EventRoutingRetryPolicy `json:"routing_retry_policy,omitempty"`
-	WebhookEndpointID   string                       `json:"webhook_endpoint_id,omitempty"`
+	AcknowledgmentLeaseSeconds int                          `json:"acknowledgment_lease_seconds,omitempty"`
+	SchemaVersions             []string                     `json:"schema_versions,omitempty"`
+	DeliveryAgeOverride        bool                         `json:"delivery_age_override,omitempty"`
+	RoutingRetryPolicy         *api.EventRoutingRetryPolicy `json:"routing_retry_policy,omitempty"`
+	WebhookEndpointID          string                       `json:"webhook_endpoint_id,omitempty"`
 	// WebhookProvider preserves provider-specific event-source identity in the
 	// immutable fanout snapshot. Empty legacy values mean Stripe.
 	WebhookProvider InboundWebhookProvider `json:"webhook_provider,omitempty"`
@@ -658,7 +659,7 @@ func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byt
 	for _, row := range candidates {
 		recipient := PublishedEventRecipient{ID: row.ID, AccountID: row.AccountID,
 			AppID: row.AppID, Source: row.Source, Type: row.Type, Filter: bytes.Clone(row.Filter),
-			SchemaVersions: append([]string(nil), row.SchemaVersions...), WorkSnapshotCaptured: true, RoutingRetryPolicy: cloneEventRoutingRetryPolicy(row.RoutingRetryPolicy)}
+			AcknowledgmentLeaseSeconds: row.AcknowledgmentLeaseSeconds, SchemaVersions: append([]string(nil), row.SchemaVersions...), WorkSnapshotCaptured: true, RoutingRetryPolicy: cloneEventRoutingRetryPolicy(row.RoutingRetryPolicy)}
 		if binding, ok := m.eventWorkBindings[row.ID]; ok {
 			recipient.Work = &PublishedEventWorkBindingSnapshot{
 				PolicyName: binding.PolicyName, KeySelector: binding.KeySelector,

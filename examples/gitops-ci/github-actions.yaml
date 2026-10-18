@@ -1,0 +1,24 @@
+name: Gregale GitOps plan
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  gitops-plan:
+    runs-on: [self-hosted, gregale-cli]
+    steps:
+      - name: Preview the candidate definition
+        env:
+          FAAS_API: ${{ vars.GREGALE_API }}
+          FAAS_TOKEN: ${{ secrets.GREGALE_PLAN_TOKEN }}
+          GREGALE_PROJECT: ${{ vars.GREGALE_PROJECT }}
+          GREGALE_ENVIRONMENT: ${{ vars.GREGALE_ENVIRONMENT }}
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set +e
+          gregale projects environments gitops plan "$GREGALE_PROJECT" "$GREGALE_ENVIRONMENT" \
+            --commit "$CANDIDATE_SHA" --format markdown --fail-on-blocked > gitops-plan.md
+          plan_exit=$?
+          set -e
+          cat gitops-plan.md >> "$GITHUB_STEP_SUMMARY"
+          exit "$plan_exit"

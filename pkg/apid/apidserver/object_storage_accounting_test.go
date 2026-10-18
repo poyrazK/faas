@@ -79,23 +79,24 @@ func (*objectStorageBillingStatusProvider) ObjectStorageLineItemPolicy() (billin
 	}, true
 }
 
-func (*objectStorageBillingStatusProvider) PublishObjectStorageLineItem(context.Context, state.ObjectStorageBillingRecord) error {
+func (*objectStorageBillingStatusProvider) PublishObjectStorageLineItem(context.Context, state.ObjectStorageBillingRecord, int64) error {
 	return nil
 }
 
-func TestValidateObjectStorageBillingSetupRequiresEURPricing(t *testing.T) {
+// adr: 1350 — object-storage charges use the billing currency.
+func TestValidateObjectStorageBillingSetupRequiresBillingCurrency(t *testing.T) {
 	provider := &objectStorageBillingStatusProvider{}
 	if err := object.ValidateObjectStorageBillingSetup(provider, nil); err == nil || !strings.Contains(err.Error(), "requires object-storage pricing") {
 		t.Fatalf("missing pricing error = %v", err)
 	}
 	registry := objectRegistry(t, &fakeObjectProvider{}, &fakeObjectProvider{}, "external")
-	registry.Pricing = &api.ObjectStoragePricing{Currency: "USD"}
-	if err := object.ValidateObjectStorageBillingSetup(provider, registry); err == nil || !strings.Contains(err.Error(), "requires EUR") {
-		t.Fatalf("USD pricing error = %v", err)
-	}
 	registry.Pricing = &api.ObjectStoragePricing{Currency: "EUR"}
-	if err := object.ValidateObjectStorageBillingSetup(provider, registry); err != nil {
+	if err := object.ValidateObjectStorageBillingSetup(provider, registry); err == nil || !strings.Contains(err.Error(), "requires "+api.BillingCurrency) {
 		t.Fatalf("EUR pricing error = %v", err)
+	}
+	registry.Pricing = &api.ObjectStoragePricing{Currency: api.BillingCurrency}
+	if err := object.ValidateObjectStorageBillingSetup(provider, registry); err != nil {
+		t.Fatalf("%s pricing error = %v", api.BillingCurrency, err)
 	}
 }
 
@@ -198,5 +199,34 @@ func TestObjectStorageInventoryPublishesOnlyCompleteScans(t *testing.T) {
 				t.Fatal("partial scan published", u, outcome)
 			}
 		})
+	}
+}
+
+// TestBucketCreationWakesInventorySweep pins H10-129: on production-us the
+// first upload after `gregale add bucket` was refused as
+// object_storage_usage_stale until the minute-long inventory sweep reached
+// the new bucket. Creation now wakes the sweep.
+func TestBucketCreationWakesInventorySweep(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	createApp(t, e, "inventory-wake")
+	e.s.WithObjectStorage(objectRegistry(t, &fakeObjectProvider{}, &fakeObjectProvider{}, "external"))
+	setS3Flag(t, e, true)
+	select {
+	case <-e.s.object.InventoryWake:
+		t.Fatal("inventory sweep woken before any bucket was created")
+	default:
+	}
+	bucketResponse(t, e.do(t, "POST", "/v1/apps/inventory-wake/buckets", map[string]any{"name": "assets"}, nil), 201)
+	select {
+	case <-e.s.object.InventoryWake:
+	default:
+		t.Fatal("bucket creation did not wake the inventory sweep")
+	}
+	// A retried create of the same bucket provisions nothing new.
+	bucketResponse(t, e.do(t, "POST", "/v1/apps/inventory-wake/buckets", map[string]any{"name": "assets"}, nil), 200)
+	select {
+	case <-e.s.object.InventoryWake:
+		t.Fatal("retried create woke the sweep again")
+	default:
 	}
 }

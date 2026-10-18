@@ -337,3 +337,95 @@ func TestRenderDeploymentReleaseSummary_MidCanaryOffersAbort(t *testing.T) {
 		t.Fatalf("mid-canary summary still offers a rollback past the serving release:\n%s", got)
 	}
 }
+
+// H10-10: after rollback v2→v1, deploying v3 at 50% printed
+// `rollback --to v2`, a release nobody served.
+func TestRenderDeploymentReleaseSummary_TrafficSplitOffersPromote(t *testing.T) {
+	var out bytes.Buffer
+	renderDeploymentReleaseSummary(&out, api.DeploymentSummaryResponse{
+		Deployment: api.DeploymentResponse{ID: "d3", Revision: 3, Status: statusLive, TrafficPercent: 50},
+		Previous:   &api.DeploymentResponse{ID: "d2", Revision: 2, Status: "superseded"},
+	}, "h10-hello-node")
+	got := out.String()
+	if !strings.Contains(got, "Undo split: gregale traffic status h10-hello-node, then gregale traffic promote --app h10-hello-node") {
+		t.Fatalf("split summary lacks the promote hint:\n%s", got)
+	}
+	if strings.Contains(got, "rollback h10-hello-node --to") || strings.Contains(got, "Rollback: unavailable") {
+		t.Fatalf("split summary offers a plain rollback:\n%s", got)
+	}
+	out.Reset()
+	renderDeploymentReleaseSummary(&out, api.DeploymentSummaryResponse{
+		Deployment: api.DeploymentResponse{ID: "d3", Revision: 3, Status: statusLive, TrafficPercent: 50},
+		Previous:   &api.DeploymentResponse{ID: "d1", Revision: 1, Status: statusLive, TrafficPercent: 50},
+	}, "h10-hello-node")
+	if got := out.String(); !strings.Contains(got, "Undo split: gregale traffic promote --app h10-hello-node --deployment v1") {
+		t.Fatalf("split summary with a live previous release lacks its exact promote command:\n%s", got)
+	}
+}
+
+// H10-137: a worker or job never answers requests, so its deploy output must
+// not offer a URL, the scale-to-zero note or the bearer-auth hint.
+func TestRenderSuccessfulDeploymentForNoHTTPModes(t *testing.T) {
+	tests := []struct {
+		name    string
+		mode    string
+		want    []string
+		notWant []string
+	}{
+		{
+			name:    "request app",
+			want:    []string{"Deployed v1. https://my-app.gregale.dev", "scales to zero when idle", "Authorization: Bearer"},
+			notWant: []string{"does not serve HTTP"},
+		},
+		{
+			name:    "worker",
+			mode:    api.ExecutionModeWorker,
+			want:    []string{"Deployed v1.\n", "Your worker runs continuously; it does not serve HTTP.", "gregale logs my-app"},
+			notWant: []string{"https://my-app.gregale.dev", "scales to zero", "Authorization: Bearer"},
+		},
+		{
+			name:    "job",
+			mode:    api.ExecutionModeJob,
+			want:    []string{"Deployed v1.\n", "Your job runs to completion when triggered"},
+			notWant: []string{"https://my-app.gregale.dev", "scales to zero", "Authorization: Bearer"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/v1/deployments/d1":
+					_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "a1", Status: statusLive, Revision: 1})
+				case "/v1/apps/my-app":
+					_ = json.NewEncoder(w).Encode(api.AppResponse{
+						Slug: "my-app", CanonicalURL: "https://my-app.gregale.dev", RequireAuthn: true,
+						Manifest: api.AppManifest{ExecutionMode: tt.mode},
+					})
+				default:
+					http.Error(w, "not found", http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+
+			var out bytes.Buffer
+			oldOut := osStdout
+			osStdout = &out
+			defer func() { osStdout = oldOut }()
+
+			if code := renderSuccessfulDeployment(context.Background(), api.NewClient(srv.URL, "fp_live_x"), api.DeploymentResponse{ID: "d1", Status: statusLive, Revision: 1}, "my-app"); code != 0 {
+				t.Fatalf("renderSuccessfulDeployment exit = %d, want 0", code)
+			}
+			got := out.String()
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("output missing %q\nfull output:\n%s", want, got)
+				}
+			}
+			for _, notWant := range tt.notWant {
+				if strings.Contains(got, notWant) {
+					t.Errorf("output contains %q\nfull output:\n%s", notWant, got)
+				}
+			}
+		})
+	}
+}

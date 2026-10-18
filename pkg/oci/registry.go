@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -52,6 +53,15 @@ type RegistryClient struct {
 	// after every option has run, so the result no longer depends on the
 	// order WithTimeout and WithHTTPClient were passed in.
 	timeout time.Duration
+	// blobHC streams blob bodies without hc's total deadline, which would
+	// also bound reading the body and fail any layer that takes longer than
+	// the timeout to download and extract. Its transport bounds the wait for
+	// response headers; stallGuardBody bounds each body read; and
+	// api.OCIBlobTransferMaxSeconds caps the whole transfer. Nil when hc's
+	// transport cannot be cloned; blob requests then keep hc's deadline.
+	blobHC *http.Client
+	// stallTimeout is the longest one blob body read may wait for data.
+	stallTimeout time.Duration
 }
 
 // compile-time assertion the client satisfies the puller seam imaged consumes.
@@ -209,6 +219,37 @@ func (c *RegistryClient) resolveHTTPClient() {
 		// Never leave a registry client without a deadline.
 		c.hc.Timeout = time.Duration(api.OCIPullTimeoutSeconds) * time.Second
 	}
+	c.stallTimeout = c.hc.Timeout
+	c.blobHC = blobClient(c.hc)
+}
+
+// blobClient derives the blob-streaming client from hc: no total deadline,
+// with hc's timeout applied to the TLS handshake and the response headers.
+// It returns nil for a transport it cannot clone.
+func blobClient(hc *http.Client) *http.Client {
+	var tr *http.Transport
+	switch t := hc.Transport.(type) {
+	case nil:
+		base, ok := http.DefaultTransport.(*http.Transport)
+		if !ok {
+			return nil
+		}
+		tr = base.Clone()
+	case *http.Transport:
+		tr = t.Clone()
+	default:
+		return nil
+	}
+	if tr.ResponseHeaderTimeout == 0 {
+		tr.ResponseHeaderTimeout = hc.Timeout
+	}
+	if tr.TLSHandshakeTimeout == 0 {
+		tr.TLSHandshakeTimeout = hc.Timeout
+	}
+	clone := *hc
+	clone.Transport = tr
+	clone.Timeout = 0
+	return &clone
 }
 
 // manifestAccept lists the manifest media types we can resolve a digest from.
@@ -507,12 +548,16 @@ func parseImageConfig(b []byte) (ImageConfig, error) {
 // callers that don't thread auth continue to work via the
 // nil-delegating wrapper above.
 func (c *RegistryClient) fetchManifestJSONWithAuth(ctx context.Context, url string, auth *BasicAuth) ([]byte, string, error) {
+	return c.fetchManifestJSONWithAuthLimit(ctx, url, auth, api.OCIManifestMaxBytes)
+}
+
+func (c *RegistryClient) fetchManifestJSONWithAuthLimit(ctx context.Context, url string, auth *BasicAuth, maxBytes int64) ([]byte, string, error) {
 	resp, err := c.getManifest(ctx, url, "")
 	if err != nil {
 		return nil, "", err
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
-		ch := parseChallenge(resp.Header.Get("Www-Authenticate"))
+		ch := parseChallenge(strings.Join(resp.Header.Values("Www-Authenticate"), ", "))
 		_ = resp.Body.Close()
 		token, err := c.fetchToken(ctx, ch, auth)
 		if err != nil {
@@ -531,9 +576,12 @@ func (c *RegistryClient) fetchManifestJSONWithAuth(ctx context.Context, url stri
 		}
 		return nil, "", fmt.Errorf("oci: manifest returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
 		return nil, "", fmt.Errorf("oci: read manifest: %w", err)
+	}
+	if int64(len(body)) > maxBytes {
+		return nil, "", fmt.Errorf("%w: manifest exceeds size limit", ErrImageManifestInvalid)
 	}
 	return body, resp.Header.Get("Content-Type"), nil
 }
@@ -551,7 +599,14 @@ func (c *RegistryClient) fetchBlobWithAuth(ctx context.Context, r Reference, dig
 		return nil, err
 	}
 	defer func() { _ = rc.Close() }()
-	return io.ReadAll(io.LimitReader(rc, 1<<20)) // 1 MiB cap — config blobs are tiny
+	body, err := io.ReadAll(io.LimitReader(rc, api.OCIConfigMaxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > api.OCIConfigMaxBytes {
+		return nil, fmt.Errorf("%w: config exceeds size limit", ErrImageManifestInvalid)
+	}
+	return body, nil
 }
 
 // fetchBlobStream opens a blob as a streaming ReadCloser. The caller is
@@ -598,7 +653,7 @@ func (c *RegistryClient) openBlobNetworkWithAuth(ctx context.Context, r Referenc
 		return "", nil, err
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
-		ch := parseChallenge(resp.Header.Get("Www-Authenticate"))
+		ch := parseChallenge(strings.Join(resp.Header.Values("Www-Authenticate"), ", "))
 		_ = resp.Body.Close()
 		token, err := c.fetchToken(ctx, ch, auth)
 		if err != nil {
@@ -618,6 +673,26 @@ func (c *RegistryClient) openBlobNetworkWithAuth(ctx context.Context, r Referenc
 }
 
 func (c *RegistryClient) getBlob(ctx context.Context, url, token string) (*http.Response, error) {
+	if c.blobHC == nil {
+		return c.getBlobWith(ctx, c.hc, url, token)
+	}
+	stallCtx, stall := context.WithCancelCause(ctx)
+	transferCtx, cancelTransfer := context.WithTimeoutCause(stallCtx,
+		time.Duration(api.OCIBlobTransferMaxSeconds)*time.Second, errBlobTransferTimeout)
+	release := func() {
+		cancelTransfer()
+		stall(nil)
+	}
+	resp, err := c.getBlobWith(transferCtx, c.blobHC, url, token)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	resp.Body = newStallGuard(resp.Body, transferCtx, c.stallTimeout, stall, release)
+	return resp, nil
+}
+
+func (c *RegistryClient) getBlobWith(ctx context.Context, hc *http.Client, url, token string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("oci: build blob request: %w", err)
@@ -626,7 +701,7 @@ func (c *RegistryClient) getBlob(ctx context.Context, url, token string) (*http.
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := c.doPullRequest(ctx, req)
+	resp, err := c.doPullRequestWith(ctx, hc, req)
 	if err != nil {
 		return nil, fmt.Errorf("oci: fetch blob: %w", err)
 	}
@@ -666,7 +741,7 @@ func (c *RegistryClient) resolveDigestWithAuth(ctx context.Context, r Reference,
 	}
 	// A 401 carries the token challenge: fetch a bearer token and retry once.
 	if resp.StatusCode == http.StatusUnauthorized {
-		ch := parseChallenge(resp.Header.Get("Www-Authenticate"))
+		ch := parseChallenge(strings.Join(resp.Header.Values("Www-Authenticate"), ", "))
 		_ = resp.Body.Close()
 		token, err := c.fetchToken(ctx, ch, auth)
 		if err != nil {
@@ -734,14 +809,21 @@ func (c *RegistryClient) getManifest(ctx context.Context, url, token string) (*h
 // them; holding slots until Close would deadlock images with more layers than
 // the configured concurrency.
 func (c *RegistryClient) doPullRequest(ctx context.Context, req *http.Request) (*http.Response, error) {
-	if c == nil || c.hc == nil {
+	if c == nil {
+		return nil, errors.New("oci: registry client is not initialized")
+	}
+	return c.doPullRequestWith(ctx, c.hc, req)
+}
+
+func (c *RegistryClient) doPullRequestWith(ctx context.Context, hc *http.Client, req *http.Request) (*http.Response, error) {
+	if c == nil || hc == nil {
 		return nil, errors.New("oci: registry client is not initialized")
 	}
 	for attempt := 0; ; attempt++ {
 		if err := c.acquirePullSlot(ctx); err != nil {
 			return nil, err
 		}
-		resp, err := c.hc.Do(req.Clone(ctx))
+		resp, err := hc.Do(req.Clone(ctx))
 		if err != nil {
 			c.releasePullSlot()
 			if attempt >= c.pullRetries || !retryablePullError(err) {
@@ -836,7 +918,15 @@ func retryablePullError(err error) bool {
 // underlying Basic Auth value cannot leak through slog / RFC 7807
 // error surfaces.
 func (c *RegistryClient) fetchToken(ctx context.Context, ch authChallenge, auth *BasicAuth) (string, error) {
-	tok, err := FetchToken(ctx, c.hc, c.ua, newAuthChallenge(ch), auth)
+	challenge := newAuthChallenge(ch)
+	if auth != nil && c.scheme == "https" {
+		// The registry chooses the realm. Never let it downgrade the
+		// customer's Basic credential to a cleartext request.
+		if realm, err := url.Parse(challenge.Realm()); err != nil || !strings.EqualFold(realm.Scheme, "https") {
+			return "", errors.New("oci: registry token realm must use https to receive credentials")
+		}
+	}
+	tok, err := FetchToken(ctx, c.hc, c.ua, challenge, auth)
 	if err != nil {
 		return "", scrubAuthFromError(err, auth)
 	}

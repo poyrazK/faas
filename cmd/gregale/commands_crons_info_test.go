@@ -38,7 +38,14 @@ func makeCronResponse() api.CronResponse {
 
 func TestCmdCronsInfo_HappyPath(t *testing.T) {
 	var gotMethod, gotPath string
+	var runsRead bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// crons info also reads the recent runs (H10-70); pin the cron read.
+		if r.URL.Path == "/v1/crons/"+cronsInfoID+"/runs" {
+			runsRead = true
+			_ = json.NewEncoder(w).Encode(api.ListCronRunsResponse{})
+			return
+		}
 		gotMethod = r.Method
 		gotPath = r.URL.Path
 		_ = json.NewEncoder(w).Encode(makeCronResponse())
@@ -61,6 +68,9 @@ func TestCmdCronsInfo_HappyPath(t *testing.T) {
 	}
 	if gotPath != "/v1/crons/"+cronsInfoID {
 		t.Errorf("path = %q, want /v1/crons/<id>", gotPath)
+	}
+	if !runsRead {
+		t.Error("crons info did not read the recent runs")
 	}
 	body := stdout.String()
 	// Each identity + field column must surface in the rendered block.

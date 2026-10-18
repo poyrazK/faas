@@ -93,6 +93,13 @@ func RunJob(log *slog.Logger) error {
 			LeaseToken: manifest.LeaseToken,
 		}, log)
 	}
+	if manifest.Interactive != nil {
+		if manifest.StartHeld || manifest.Interactive.AttachTimeoutSec <= 0 {
+			log.Error("runJob: invalid interactive manifest")
+			return shipAndPoweroff(JobExitPayload{ExitCode: 75, ErrorClass: "infra", LeaseToken: manifest.LeaseToken}, log)
+		}
+		return runInteractiveJob(*manifest, buildEnvForJobWithSecrets(*manifest, secrets), log)
+	}
 	if manifest.StartHeld {
 		control, err := listenJobStartGate(log)
 		if err != nil {
@@ -147,6 +154,45 @@ func superviseJobCommandWithOutput(m JobManifest, env []string, grace time.Durat
 }
 
 func superviseJobCommandWithSignals(m JobManifest, env []string, grace time.Duration, log *slog.Logger, stdout, stderr io.Writer, controlSignals chan os.Signal) JobExitPayload {
+	// The guest's stdout and stderr are inherited by guest-init from the
+	// serial console. vmmd already routes that console into the per-instance
+	// customer log ring, so inheriting both streams makes job output available
+	// through the normal logs API. Keep the streams separate here only until
+	// they cross the guest console boundary; the host deliberately merges them
+	// in arrival order, matching the app-runtime log contract.
+	return superviseJobCommandWithStdio(m, env, grace, log, consoleJobStdio{stdout: stdout, stderr: stderr}, controlSignals)
+}
+
+// jobStdio wires a job command's standard streams: attach before Start,
+// started after a successful Start, and finish once supervision ends (also
+// after a failed Start) to release descriptors and drain output.
+type jobStdio interface {
+	attach(cmd *exec.Cmd) error
+	started()
+	finish()
+}
+
+// consoleJobStdio is the batch task's stdio: no stdin, output to the console.
+type consoleJobStdio struct {
+	stdout, stderr io.Writer
+}
+
+func (c consoleJobStdio) attach(cmd *exec.Cmd) error {
+	cmd.Stdout, cmd.Stderr = c.stdout, c.stderr
+	if cmd.Stdout == nil {
+		cmd.Stdout = io.Discard
+	}
+	if cmd.Stderr == nil {
+		cmd.Stderr = io.Discard
+	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	return nil
+}
+
+func (consoleJobStdio) started() {}
+func (consoleJobStdio) finish()  {}
+
+func superviseJobCommandWithStdio(m JobManifest, env []string, grace time.Duration, log *slog.Logger, stdio jobStdio, controlSignals chan os.Signal) JobExitPayload {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -161,21 +207,16 @@ func superviseJobCommandWithSignals(m JobManifest, env []string, grace time.Dura
 
 	cmd := exec.Command(m.Command[0], m.Command[1:]...)
 	cmd.Env = env
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	// The guest's stdout and stderr are inherited by guest-init from the
-	// serial console. vmmd already routes that console into the per-instance
-	// customer log ring, so inheriting both streams makes job output available
-	// through the normal logs API. Keep the streams separate here only until
-	// they cross the guest console boundary; the host deliberately merges them
-	// in arrival order, matching the app-runtime log contract.
-	if stdout == nil {
-		stdout = io.Discard
+	defer stdio.finish()
+	if err := stdio.attach(cmd); err != nil {
+		log.Error("runJob: attach command stdio", "err", err)
+		return JobExitPayload{
+			ExitCode:           126,
+			ErrorClass:         "infra",
+			LeaseToken:         m.LeaseToken,
+			FinishedAtUnixNano: time.Now().UnixNano(),
+		}
 	}
-	if stderr == nil {
-		stderr = io.Discard
-	}
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
 		log.Error("runJob: os/exec start", "err", err, "command", m.Command[0])
 		exitCode := int32(126)
@@ -189,6 +230,7 @@ func superviseJobCommandWithSignals(m JobManifest, env []string, grace time.Dura
 			FinishedAtUnixNano: time.Now().UnixNano(),
 		}
 	}
+	stdio.started()
 
 	waitCh := make(chan jobWaitResult, 1)
 	go func() { waitCh <- waitJobCommand(cmd) }()

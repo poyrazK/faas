@@ -177,7 +177,60 @@ func TestRequestBudgetPlanCeilings(t *testing.T) {
 	}
 }
 
+// ADR-1180: an async invocation runs for the app's request timeout, at least
+// 30 s and at most the plan's ceiling, and its lease outlasts the run.
+// The guest may take as long as the forwarded deadline, within [floor,
+// RequestBudgetPlanMax] (ADR-1150).
+func TestGuestDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  time.Duration
+	}{
+		{value: "", want: 30 * time.Second},
+		{value: "junk", want: 30 * time.Second},
+		{value: "-5", want: 30 * time.Second},
+		{value: "3000", want: 30 * time.Second},
+		{value: "119999", want: 119999 * time.Millisecond},
+		{value: "86400000", want: RequestBudgetPlanMax},
+	} {
+		if got := GuestDeadline(tc.value, 30*time.Second); got != tc.want {
+			t.Errorf("GuestDeadline(%q) = %s, want %s", tc.value, got, tc.want)
+		}
+	}
+}
+
+func TestAsyncInvocationTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		plan            Plan
+		requestTimeoutS int
+		want            time.Duration
+	}{
+		{PlanPro, 0, AsyncInvocationTimeoutFloor},
+		{PlanPro, 3, AsyncInvocationTimeoutFloor},
+		{PlanPro, 120, 2 * time.Minute},
+		{PlanPro, 900, 5 * time.Minute},
+		{PlanFree, 600, 30 * time.Second},
+		{PlanHobby, 600, time.Minute},
+		{PlanScale, 900, 15 * time.Minute},
+	} {
+		limits := MustLimitsFor(tc.plan)
+		if got := limits.AsyncInvocationTimeout(tc.requestTimeoutS); got != tc.want {
+			t.Errorf("%s request_timeout_s=%d: timeout %s, want %s", tc.plan, tc.requestTimeoutS, got, tc.want)
+		}
+		dispatch := AsyncInvocationDispatchTimeout(tc.want)
+		if dispatch != tc.want+AsyncInvocationWakeAllowance || dispatch > AsyncInvocationDispatchMax {
+			t.Errorf("%s request_timeout_s=%d: dispatch timeout %s, want %s within %s", tc.plan, tc.requestTimeoutS, dispatch, tc.want+AsyncInvocationWakeAllowance, AsyncInvocationDispatchMax)
+		}
+		// The lease outlasts the dispatch so the outcome is recorded
+		// before the invocation could be requeued.
+		if lease := AsyncInvocationLease(tc.want); lease <= dispatch {
+			t.Errorf("%s request_timeout_s=%d: lease %s does not outlast dispatch %s", tc.plan, tc.requestTimeoutS, lease, dispatch)
+		}
+	}
+}
+
 // TestPlanLimitsMatchSpec pins every value in the table to the financial-model /
+// COGS-report numbers (ADR-1430) /
 // spec §1 numbers. If the spreadsheet moves, this test must be updated in the
 // same PR — that is the point.
 func TestPlanLimitsMatchSpec(t *testing.T) {
@@ -186,7 +239,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 		// EgressAllowlistAllowed/MaxSize default to false/0 (Go zero), so
 		// Free/Hobby rows below omit them intentionally — mirrors the
 		// MinInstancesAllowed row shape.
-		PlanFree: {Plan: PlanFree, DeployedApps: 1, PreviewApps: 1, OutboundRequestsPerDayMax: 100_000, OutboundRatePerSecondMax: 10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60, DeploysPerHour: 10, DeveloperApps: 1, DeveloperLeaseMaxHours: 24, MaxConcurrency: 1, RAMMB: 128, AppLayerMaxMB: 256, SourceTarballMaxMB: 100, VCPU: 2, RequestBudgetMaxMs: 30_000, IdleTimeoutS: 60, CertExpiryWarningDays: 30, IncludedGBHours: 5, PriceMillicents: 0, RateLimitRPS: 5, RateLimitBurst: 20, EgressMbit: 10, EgressNewConnPerSecond: 10, EgressNewConnBurst: 40, EgressNewDestinationsPerMinute: 120, EgressNewConnPerDestPerSecond: 5, EgressNewConnPerDestBurst: 20, EgressFloodDropsPerMinute: 120, EgressExtraPortsMax: 0, ServiceTCPSessionsPerAccount: 16, SecretCountMax: 8, SecretValueMaxBytes: 4096, MaxMinInstances: 0,
+		PlanFree: {Plan: PlanFree, DeployedApps: 1, PreviewApps: 1, OutboundRequestsPerDayMax: 100_000, OutboundRatePerSecondMax: 10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60, DeploysPerHour: 10, DeveloperApps: 1, DeveloperLeaseMaxHours: 24, MaxConcurrency: 1, RAMMB: 256, AppLayerMaxMB: 256, SourceTarballMaxMB: 100, VCPU: 2, RequestBudgetMaxMs: 30_000, IdleTimeoutS: 60, CertExpiryWarningDays: 30, IncludedGBHours: 20, ObjectStorage: ObjectStoragePlanLimits{MaxAccountBytes: 1 << 30, IncludedBytes: 1 << 30}, PriceMillicents: 0, RateLimitRPS: 5, RateLimitBurst: 20, EgressMbit: 10, EgressNewConnPerSecond: 10, EgressNewConnBurst: 40, EgressNewDestinationsPerMinute: 120, EgressNewConnPerDestPerSecond: 5, EgressNewConnPerDestBurst: 20, EgressFloodDropsPerMinute: 120, EgressExtraPortsMax: 0, ServiceTCPSessionsPerAccount: 16, SecretCountMax: 8, SecretValueMaxBytes: 4096, MaxMinInstances: 0,
 			// Issue #559: Free = 4 — enough listener concurrency for
 			// small demo bursts while MaxConcurrency remains one VM.
 			ConcurrencyPerVMBound: 4,
@@ -342,9 +395,9 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// ADR-124: Free keeps cancel + clear-obsolete; reorder
 			// stays plan-gated (Free=false).
 			QueueControlsAllowed: false, MaxQueuedDeploysPerApp: 2, MaxCancelOpsPerHour: 0, MaxReorderOpsPerHour: 0},
-		PlanHobby: {Profiling: ProfilingLimits{Enabled: true, RetentionDays: 3, UploadsPerMinute: 60}, Plan: PlanHobby, DeployedApps: 5, PreviewApps: 2, OutboundRequestsPerDayMax: 1_000_000, OutboundRatePerSecondMax: 20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 120, DeploysPerHour: 50, DeveloperApps: 2, DeveloperLeaseMaxHours: 72, MaxConcurrency: 2, RAMMB: 256, AppLayerMaxMB: 512, SourceTarballMaxMB: 100, VCPU: 2, RequestBudgetMaxMs: 60_000, IdleTimeoutS: 60, CertExpiryWarningDays: 30, IncludedGBHours: 50, PriceMillicents: 900_000, RateLimitRPS: 20, RateLimitBurst: 100, EgressMbit: 25, EgressNewConnPerSecond: 20, EgressNewConnBurst: 80, EgressNewDestinationsPerMinute: 240, EgressNewConnPerDestPerSecond: 10, EgressNewConnPerDestBurst: 40, EgressFloodDropsPerMinute: 240, EgressExtraPortsMax: 0, ServiceTCPSessionsPerAccount: 64, SecretCountMax: 25, SecretValueMaxBytes: 8192, MaxMinInstances: 1,
+		PlanHobby: {Profiling: ProfilingLimits{Enabled: true, RetentionDays: 3, UploadsPerMinute: 60}, Plan: PlanHobby, DeployedApps: 5, PreviewApps: 2, OutboundRequestsPerDayMax: 1_000_000, OutboundRatePerSecondMax: 20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 120, DeploysPerHour: 50, DeveloperApps: 2, DeveloperLeaseMaxHours: 72, MaxConcurrency: 2, RAMMB: 512, AppLayerMaxMB: 512, SourceTarballMaxMB: 100, VCPU: 2, RequestBudgetMaxMs: 60_000, IdleTimeoutS: 60, CertExpiryWarningDays: 30, IncludedGBHours: 200, ObjectStorage: ObjectStoragePlanLimits{IncludedBytes: 10 << 30}, PriceMillicents: 1_000_000, RateLimitRPS: 20, RateLimitBurst: 100, EgressMbit: 25, EgressNewConnPerSecond: 20, EgressNewConnBurst: 80, EgressNewDestinationsPerMinute: 240, EgressNewConnPerDestPerSecond: 10, EgressNewConnPerDestBurst: 40, EgressFloodDropsPerMinute: 240, EgressExtraPortsMax: 0, ServiceTCPSessionsPerAccount: 64, SecretCountMax: 25, SecretValueMaxBytes: 8192, MaxMinInstances: 1,
 			// ADR-521: pin the Operations policy alongside the existing plan contract.
-			Operations: OperationPlanLimits{Allowed: true, DefinitionsPerApp: 10, PendingPerAccount: 1000, ReportsPerOperation: 1024, RecoveriesPerOperation: 32, ReportBytes: 4096, SchemaBytes: 65536, ProgressStages: 16, SubscriptionsPerAccount: 100, ReportMinIntervalMS: 100, ResultRetentionSeconds: 7 * 24 * 60 * 60, EventRetentionSeconds: 24 * 60 * 60, IdempotencyRetentionSeconds: 30 * 24 * 60 * 60, ArtifactsPerOperation: 8, ArtifactMaxBytes: 8 << 20, ArtifactTotalMaxBytes: 32 << 20, RetainedArtifactBytesPerAccount: 256 << 20, RetainedArtifactsPerAccount: 256},
+			Operations: OperationPlanLimits{Allowed: true, DefinitionsPerApp: 10, PendingPerAccount: 1000, ReportsPerOperation: 1024, RecoveriesPerOperation: 32, ReportBytes: 4096, SchemaBytes: 65536, ProgressStages: 16, SubscriptionsPerAccount: 100, ReportMinIntervalMS: 100, ResultRetentionSeconds: 7 * 24 * 60 * 60, EventRetentionSeconds: 24 * 60 * 60, IdempotencyRetentionSeconds: 30 * 24 * 60 * 60, ArtifactsPerOperation: 8, ArtifactMaxBytes: 8 << 20, ArtifactTotalMaxBytes: 32 << 20, RetainedArtifactBytesPerAccount: 256 << 20, RetainedArtifactsPerAccount: 256, DeadlineSecondsMax: 86400, AttemptsMax: 3, ExecutionSecondsMax: 3600},
 			// Issue #559: Hobby = 5 (smallest paid tier — one Node
 			// event loop comfortably handles 5 concurrent requests).
 			ConcurrencyPerVMBound: 5,
@@ -510,9 +563,9 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// ADR-124 queue controls — Hobby unlocks the gated surface.
 			QueueControlsAllowed: true, MaxQueuedDeploysPerApp: 5, MaxCancelOpsPerHour: 120, MaxReorderOpsPerHour: 60},
 		// ADR-031: Pro opt-in for per-app egress allowlist with a 16-CIDR cap.
-		PlanPro: {Profiling: ProfilingLimits{Enabled: true, RetentionDays: 7, UploadsPerMinute: 180}, Plan: PlanPro, DeployedApps: 25, PreviewApps: 5, OutboundRequestsPerDayMax: 10_000_000, OutboundRatePerSecondMax: 100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 600, DeploysPerHour: 250, DeveloperApps: 5, DeveloperLeaseMaxHours: 168, MaxConcurrency: 5, RAMMB: 512, AppLayerMaxMB: 1024, SourceTarballMaxMB: 250, VCPU: 2, RequestBudgetMaxMs: 300_000, IdleTimeoutS: 300, CertExpiryWarningDays: 30, IncludedGBHours: 250, PriceMillicents: 2_900_000, RateLimitRPS: 100, RateLimitBurst: 500, EgressMbit: 100, EgressNewConnPerSecond: 50, EgressNewConnBurst: 200, EgressNewDestinationsPerMinute: 1200, EgressNewConnPerDestPerSecond: 25, EgressNewConnPerDestBurst: 100, EgressFloodDropsPerMinute: 600, EgressExtraPortsMax: 8, ServiceTCPSessionsPerAccount: 256, SecretCountMax: 50, SecretValueMaxBytes: 16384, MaxMinInstances: 3,
+		PlanPro: {Profiling: ProfilingLimits{Enabled: true, RetentionDays: 7, UploadsPerMinute: 180}, Plan: PlanPro, DeployedApps: 25, PreviewApps: 5, OutboundRequestsPerDayMax: 10_000_000, OutboundRatePerSecondMax: 100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 600, DeploysPerHour: 250, DeveloperApps: 5, DeveloperLeaseMaxHours: 168, MaxConcurrency: 5, RAMMB: 1024, AppLayerMaxMB: 1024, SourceTarballMaxMB: 250, VCPU: 2, RequestBudgetMaxMs: 300_000, IdleTimeoutS: 300, CertExpiryWarningDays: 30, IncludedGBHours: 1000, ObjectStorage: ObjectStoragePlanLimits{IncludedBytes: 50 << 30}, PriceMillicents: 3_000_000, RateLimitRPS: 100, RateLimitBurst: 500, EgressMbit: 100, EgressNewConnPerSecond: 50, EgressNewConnBurst: 200, EgressNewDestinationsPerMinute: 1200, EgressNewConnPerDestPerSecond: 25, EgressNewConnPerDestBurst: 100, EgressFloodDropsPerMinute: 600, EgressExtraPortsMax: 8, ServiceTCPSessionsPerAccount: 256, SecretCountMax: 50, SecretValueMaxBytes: 16384, MaxMinInstances: 3,
 			// ADR-521: pin the Operations policy alongside the existing plan contract.
-			Operations: OperationPlanLimits{Allowed: true, DefinitionsPerApp: 50, PendingPerAccount: 10000, ReportsPerOperation: 4096, RecoveriesPerOperation: 128, ReportBytes: 8192, SchemaBytes: 65536, ProgressStages: 32, SubscriptionsPerAccount: 1000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 30 * 24 * 60 * 60, EventRetentionSeconds: 7 * 24 * 60 * 60, IdempotencyRetentionSeconds: 90 * 24 * 60 * 60, ArtifactsPerOperation: 16, ArtifactMaxBytes: 32 << 20, ArtifactTotalMaxBytes: 128 << 20, RetainedArtifactBytesPerAccount: 1024 << 20, RetainedArtifactsPerAccount: 1024},
+			Operations: OperationPlanLimits{Allowed: true, DefinitionsPerApp: 50, PendingPerAccount: 10000, ReportsPerOperation: 4096, RecoveriesPerOperation: 128, ReportBytes: 8192, SchemaBytes: 65536, ProgressStages: 32, SubscriptionsPerAccount: 1000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 30 * 24 * 60 * 60, EventRetentionSeconds: 7 * 24 * 60 * 60, IdempotencyRetentionSeconds: 90 * 24 * 60 * 60, ArtifactsPerOperation: 16, ArtifactMaxBytes: 32 << 20, ArtifactTotalMaxBytes: 128 << 20, RetainedArtifactBytesPerAccount: 1024 << 20, RetainedArtifactsPerAccount: 1024, DeadlineSecondsMax: 604800, AttemptsMax: 10, ExecutionSecondsMax: 86400},
 			// Issue #559: Pro = 25 (typical SaaS-tier workload
 			// envelope — one Node/Python service handling fan-out).
 			ConcurrencyPerVMBound: 25,
@@ -671,9 +724,9 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			QueueControlsAllowed: true, MaxQueuedDeploysPerApp: 10, MaxCancelOpsPerHour: 120, MaxReorderOpsPerHour: 60},
 		// ADR-031: Scale double-up to 64 CIDR cap (2× Pro, tracks 2×
 		// DeployedApps).
-		PlanScale: {Profiling: ProfilingLimits{Enabled: true, RetentionDays: 14, UploadsPerMinute: 600}, Plan: PlanScale, DeployedApps: 100, PreviewApps: 20, OutboundRequestsPerDayMax: 100_000_000, OutboundRatePerSecondMax: 500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 3000, DeploysPerHour: 1000, DeveloperApps: 10, DeveloperLeaseMaxHours: 336, MaxConcurrency: 20, RAMMB: 1024, AppLayerMaxMB: 2048, SourceTarballMaxMB: 250, VCPU: 4, RequestBudgetMaxMs: 900_000, IdleTimeoutS: 600, CertExpiryWarningDays: 30, IncludedGBHours: 1500, PriceMillicents: 9_900_000, RateLimitRPS: 500, RateLimitBurst: 2000, EgressMbit: 250, EgressNewConnPerSecond: 100, EgressNewConnBurst: 400, EgressNewDestinationsPerMinute: 3000, EgressNewConnPerDestPerSecond: 50, EgressNewConnPerDestBurst: 200, EgressFloodDropsPerMinute: 1200, EgressExtraPortsMax: 32, ServiceTCPSessionsPerAccount: 1024, SecretCountMax: 100, SecretValueMaxBytes: 32768, MaxMinInstances: 10,
+		PlanScale: {Profiling: ProfilingLimits{Enabled: true, RetentionDays: 14, UploadsPerMinute: 600}, Plan: PlanScale, DeployedApps: 100, PreviewApps: 20, OutboundRequestsPerDayMax: 100_000_000, OutboundRatePerSecondMax: 500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 3000, DeploysPerHour: 1000, DeveloperApps: 10, DeveloperLeaseMaxHours: 336, MaxConcurrency: 20, RAMMB: 2048, AppLayerMaxMB: 2048, SourceTarballMaxMB: 250, VCPU: 4, RequestBudgetMaxMs: 900_000, IdleTimeoutS: 600, CertExpiryWarningDays: 30, IncludedGBHours: 3000, ObjectStorage: ObjectStoragePlanLimits{IncludedBytes: 200 << 30}, PriceMillicents: 9_900_000, RateLimitRPS: 500, RateLimitBurst: 2000, EgressMbit: 250, EgressNewConnPerSecond: 100, EgressNewConnBurst: 400, EgressNewDestinationsPerMinute: 3000, EgressNewConnPerDestPerSecond: 50, EgressNewConnPerDestBurst: 200, EgressFloodDropsPerMinute: 1200, EgressExtraPortsMax: 32, ServiceTCPSessionsPerAccount: 1024, SecretCountMax: 100, SecretValueMaxBytes: 32768, MaxMinInstances: 10,
 			// ADR-521: pin the Operations policy alongside the existing plan contract.
-			Operations: OperationPlanLimits{Allowed: true, DefinitionsPerApp: 200, PendingPerAccount: 100000, ReportsPerOperation: 16384, RecoveriesPerOperation: 256, ReportBytes: 16384, SchemaBytes: 65536, ProgressStages: 64, SubscriptionsPerAccount: 10000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 90 * 24 * 60 * 60, EventRetentionSeconds: 30 * 24 * 60 * 60, IdempotencyRetentionSeconds: 180 * 24 * 60 * 60, ArtifactsPerOperation: 32, ArtifactMaxBytes: 64 << 20, ArtifactTotalMaxBytes: 256 << 20, RetainedArtifactBytesPerAccount: 4096 << 20, RetainedArtifactsPerAccount: 4096},
+			Operations: OperationPlanLimits{Allowed: true, DefinitionsPerApp: 200, PendingPerAccount: 100000, ReportsPerOperation: 16384, RecoveriesPerOperation: 256, ReportBytes: 16384, SchemaBytes: 65536, ProgressStages: 64, SubscriptionsPerAccount: 10000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 90 * 24 * 60 * 60, EventRetentionSeconds: 30 * 24 * 60 * 60, IdempotencyRetentionSeconds: 180 * 24 * 60 * 60, ArtifactsPerOperation: 32, ArtifactMaxBytes: 64 << 20, ArtifactTotalMaxBytes: 256 << 20, RetainedArtifactBytesPerAccount: 4096 << 20, RetainedArtifactsPerAccount: 4096, DeadlineSecondsMax: 2592000, AttemptsMax: 25, ExecutionSecondsMax: 604800},
 			// Issue #559: Scale = 80 (matches Cloud Run's
 			// `80 × vCPU` default per the issue body).
 			ConcurrencyPerVMBound: 80,

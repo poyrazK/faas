@@ -80,13 +80,14 @@ class CoverageFloorTest(unittest.TestCase):
 
     def test_rounded_percentage_cannot_pass_below_threshold(self):
         path = self.profile("below.out", [
-            self.block("pkg/state/store.go", 6996, 1),
-            self.block("pkg/state/store.go", 3004, 0, "3.1,4.1"),
+            self.block("pkg/state/store.go", 6696, 1),
+            self.block("pkg/state/store.go", 3304, 0, "3.1,4.1"),
         ])
         with contextlib.redirect_stdout(io.StringIO()) as output:
             result = coverage_floor.main([path], state_only=True)
+        self.assertEqual(coverage_floor.STATE_EXACT_FLOOR, 67)
         self.assertEqual(result, 1)
-        self.assertIn("70.0% ✗", output.getvalue())
+        self.assertIn("67.0% ✗", output.getvalue())
 
     def test_missing_exact_state_statements_fail(self):
         path = self.profile("generated.out", [self.block("pkg/state/sqlc/generated.go", 100, 1)])

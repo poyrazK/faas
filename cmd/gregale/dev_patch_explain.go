@@ -9,12 +9,17 @@ import (
 
 // devPatchExplanation says why a developer sync rebuilds instead of being
 // applied as a live patch (ADR-740), and what would make the app patchable.
-// ok is false for reasons that are expected or transient (the first sync,
-// a running version from before live patches), which stay quiet.
-func devPatchExplanation(preview api.DevPatchPreview) (string, bool) {
+// watchCommand is what gregale dev --watch would run for this app, "" when
+// it cannot pick one. ok is false for reasons that are expected or transient
+// (the first sync, a running version from before live patches), which stay
+// quiet.
+func devPatchExplanation(preview api.DevPatchPreview, watchCommand string) (string, bool) {
 	switch preview.Reason {
 	case api.DevPatchReasonBuildCommand:
-		return "your app has a build step, so edits go through the build. Run gregale dev --watch to hot-reload it with its development server instead (ADR-1170)", true
+		if watchCommand == "" {
+			return "your app has a build step, so edits go through the build", true
+		}
+		return fmt.Sprintf("your app has a build step, so edits go through the build. Run gregale dev --watch to hot-reload it with its development server (%s) instead (ADR-1170)", watchCommand), true
 	case api.DevPatchReasonNotRailpack:
 		return "this app is built from a Dockerfile. Live patches work for apps Gregale builds without one", true
 	case api.DevPatchReasonNoSourceLayer, api.DevPatchReasonSourceNotDeployed:
@@ -48,6 +53,9 @@ func formatDevPatchBytes(n int64) string {
 // reason is shown when it first appears, and again only after a sync with a
 // different outcome. An app with a build step hears it once per session.
 type devPatchExplainer struct {
+	// watchCommand is what gregale dev --watch would run (devWatchSuggestion).
+	watchCommand string
+
 	mu   sync.Mutex
 	last string
 }
@@ -67,7 +75,7 @@ func (e *devPatchExplainer) explain(preview *api.DevPatchPreview) string {
 	if reason == "" {
 		return ""
 	}
-	why, ok := devPatchExplanation(*preview)
+	why, ok := devPatchExplanation(*preview, e.watchCommand)
 	if !ok {
 		return ""
 	}

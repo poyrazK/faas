@@ -8,7 +8,7 @@ gregale billing status
 gregale billing portal
 ```
 
-Usage is measured in GB-RAM-hours for running app instances. The plan also sets deployed-app, developer-app, concurrency, storage-layer, and idle-timeout limits. Apps parked by scale-to-zero do not accrue running-instance usage; storage and other explicitly metered services remain separate line items.
+Usage is measured in GB-RAM-hours for running app instances. The plan also sets deployed-app, developer-app, concurrency, storage-layer, and idle-timeout limits. Apps parked by scale-to-zero, and function instances held frozen between requests, do not accrue running-instance usage; storage and other explicitly metered services remain separate line items.
 
 Free accounts have a zero monthly charge and are subject to the published limits. Paid plans are billed monthly through the account billing portal. Treat the portal as the source of truth for invoices, tax, payment methods, credits, and failed-payment recovery.
 
@@ -18,7 +18,7 @@ A spend cap is a hard ceiling on the overage an account is billed in a UTC
 calendar month. The included GB-RAM-hours are not counted against it.
 
 ```bash
-gregale overage-cap 500      # cap overage at EUR 5.00 this month
+gregale overage-cap 500      # cap overage at $5.00 this month
 gregale overage-cap --clear  # remove the cap
 ```
 
@@ -35,7 +35,10 @@ When the month's overage reaches the cap:
   warm pools are parked within one scheduler tick;
 - new wakes are refused with HTTP 402 `admission_refused`; the problem body
   carries the observed overage and the cap;
-- queued job tasks wait in the queue; they are not failed.
+- queued job tasks wait in the queue; they are not failed;
+- object storage, which is billed once the month closes, is billed only up
+  to what the cap still allows after the month's compute and egress overage.
+  Object storage keeps serving within its plan limits.
 
 Raising or clearing the cap, or the start of the next month, lets workloads
 wake again on the next request or scheduler tick. If you change plans during
@@ -138,7 +141,7 @@ For example, this spec would select previews while production continues:
 {
   "name": "Preview spending",
   "scope": {"kind": "account"},
-  "currency": "EUR",
+  "currency": "USD",
   "meters": ["compute"],
   "basis": "net_usage",
   "limit_millicents": 1000000,
@@ -151,7 +154,7 @@ For example, this spec would select previews while production continues:
 }
 ```
 
-The limit above is EUR 10.00. Available scopes are account, project,
+The limit above is $10.00. Available scopes are account, project,
 environment, application, and job; resource scopes use their stable UUID.
 Preview identity comes from Gregale's persisted preview metadata. Environment
 membership currently comes from live deployment scopes. Historical costs retain
@@ -176,7 +179,7 @@ compute controls.
 
 The console's Usage page can preview responses and save disabled budget drafts.
 It uses live account-owned project, environment, app and job lists. The editor
-parses EUR text to exact millicents and shows affected and continuing workloads;
+parses USD text to exact millicents and shows affected and continuing workloads;
 a partial cost observation remains labelled partial. Saved drafts do not stop
 usage or send threshold notifications.
 
@@ -368,7 +371,7 @@ best-effort view rather than a frozen snapshot; `has_more: false` means the
 provider reported no further page at that time. Repeat backfill later to find
 newly surfaced or recently created documents.
 
-Imports require EUR totals and tax, a supported invoice state, and an explicit
+Imports require USD totals and tax, a supported invoice state, and an explicit
 billing period. Rows without enough information are counted as skipped rather
 than assigned guessed dates or amounts. Imported invoices have an explicit
 unknown historical Gregale plan because provider history does not reliably

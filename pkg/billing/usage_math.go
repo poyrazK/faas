@@ -26,7 +26,7 @@ import (
 // hours where that grant changes, so the result equals the sum of the
 // pusher's hourly deliveries before any spend-cap clamp. acct.Plan is the
 // fallback for stores or months without recorded activations.
-func OverageMBSecondsForRange(ctx context.Context, store state.Store, acct state.Account, start, end time.Time) (int64, error) {
+func OverageMBSecondsForRange(ctx context.Context, store UsageRangeStore, acct state.Account, start, end time.Time) (int64, error) {
 	if store == nil {
 		return 0, fmt.Errorf("billing: usage range store is nil")
 	}
@@ -96,7 +96,13 @@ func grantBoundaries(snapshots []state.FinancialPriceSnapshot, start, end time.T
 	return out
 }
 
-func sumUsage(ctx context.Context, store state.Store, accountID string, start, end time.Time) (int64, error) {
+// UsageRangeStore reads an account's hourly usage over a UTC range. A store
+// that also implements state.FinancialStore supplies the plan history.
+type UsageRangeStore interface {
+	UsageByHour(ctx context.Context, accountID string, start, end time.Time) ([]state.Usage, error)
+}
+
+func sumUsage(ctx context.Context, store UsageRangeStore, accountID string, start, end time.Time) (int64, error) {
 	if !start.Before(end) {
 		return 0, nil
 	}

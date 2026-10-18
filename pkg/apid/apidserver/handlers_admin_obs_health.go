@@ -70,11 +70,15 @@ func (s *server) obsHealthHandler(w http.ResponseWriter, r *http.Request, acct s
 	}
 	auditWrites, auditWritesOK := s.auditLogWrite5mStatus(ctx)
 	auditFailures, auditFailuresOK := s.auditLogWriteFailures5mStatus(ctx)
-	auditCoverage, auditCoverageOK := s.auditLogCoverageRatio5mStatus(ctx)
+	auditCoverage, err := s.store.OperatorAuditTraceCoverage(ctx, time.Now().UTC().Add(-obsHealthQueryWindow))
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not compute audit trace coverage"))
+		return
+	}
 	alerts, alertsOK := s.alertsFiringStatus(ctx)
 	writeJSON(w, http.StatusOK, api.ObsHealthResponse{
 		GeneratedAt:                        time.Now().UTC(),
-		PrometheusAvailable:                auditWritesOK && auditFailuresOK && auditCoverageOK && alertsOK,
+		PrometheusAvailable:                auditWritesOK && auditFailuresOK && alertsOK,
 		AuditLogWriteTotal5m:               auditWrites,
 		AuditLogWriteFailures5m:            auditFailures,
 		AuditLogCoverageRatio5m:            auditCoverage,

@@ -41,7 +41,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/db"
-	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestNewMigrationsAreReplaySafe(t *testing.T) {
@@ -55,7 +54,7 @@ func TestNewMigrationsAreReplaySafe(t *testing.T) {
 		t.Skip("no parseable versions in FAAS_REPLAY_CHECK_VERSIONS")
 	}
 	ctx := context.Background()
-	pool := pgtest.Open(t) // t.Skip-friendly when Postgres is absent
+	pool := newMigrationReplayPool(t, versions)
 
 	// 1. Bring the schema fully up, the way CI always has.
 	if err := db.MigrateUp(ctx, pool); err != nil {
@@ -63,6 +62,7 @@ func TestNewMigrationsAreReplaySafe(t *testing.T) {
 	}
 
 	beforeConstraints := replayConstraintFingerprint(t, pool)
+	beforeFences := replayFenceFingerprint(t, pool)
 
 	// 2. Drop exactly the ledger rows added by this PR, leaving their schema
 	//    effects in place. With timestamp IDs, unrelated migrations may have
@@ -76,8 +76,10 @@ func TestNewMigrationsAreReplaySafe(t *testing.T) {
 			"what was applied, so this test would prove only part of the diff", got, versions, want)
 	}
 
-	// 3. Re-apply. Every migration this PR added must tolerate its own
-	//    effects already being present.
+	// Frozen issued standards SQL uses the explicit, schema-verified recovery
+	// path. Every other added migration still has to replay through Goose.
+	recoverFrozenStandardsForReplay(t, pool, versions)
+	// 3. Re-apply all remaining migrations against their existing effects.
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf(`migration set %v is not replay-safe: %v
 
@@ -98,7 +100,32 @@ append-only (CLAUDE.md). Only the migration this PR adds should change.`, versio
 	if after := replayConstraintFingerprint(t, pool); after != beforeConstraints {
 		t.Fatal("replaying the migration tail changed existing constraint definitions")
 	}
+	if after := replayFenceFingerprint(t, pool); after != beforeFences {
+		t.Fatal("replaying the migration tail changed existing function or trigger definitions")
+	}
 
+}
+
+// An earlier replay must preserve fences strengthened by a later migration.
+// Constraints alone cannot detect replacing a trigger function with its older,
+// weaker body, or disabling the trigger that enforces the boundary.
+func replayFenceFingerprint(t *testing.T, pool *pgxpool.Pool) string {
+	t.Helper()
+	var fingerprint string
+	err := pool.QueryRow(context.Background(), `SELECT md5(COALESCE(string_agg(definition, E'\n' ORDER BY definition),''))
+ FROM (
+  SELECT 'function:' || pg_get_functiondef(p.oid) AS definition
+  FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+  WHERE n.nspname=current_schema() AND p.prokind IN ('f','p')
+  UNION ALL
+  SELECT 'trigger:' || t.tgenabled::text || ':' || pg_get_triggerdef(t.oid)
+  FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+  WHERE n.nspname=current_schema() AND NOT t.tgisinternal
+ ) fences`).Scan(&fingerprint)
+	if err != nil {
+		t.Fatalf("capture function and trigger definitions: %v", err)
+	}
+	return fingerprint
 }
 
 // parseVersions turns legacy or timestamp version strings into sorted int64s.

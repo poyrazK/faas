@@ -125,6 +125,7 @@ func (s *server) listApps(w http.ResponseWriter, r *http.Request, acct state.Acc
 		api.WriteProblem(w, api.ErrCapacity("could not resolve app deployment availability"))
 		return
 	}
+	parkedByApp := s.latestParkedDeploymentsByApp(r.Context(), acct.ID)
 	out := make([]api.AppResponse, 0, len(apps))
 	for _, a := range apps {
 		resp := s.appResponseWithContext(r.Context(), a, acct.Plan)
@@ -132,9 +133,31 @@ func (s *server) listApps(w http.ResponseWriter, r *http.Request, acct state.Acc
 		if _, deployed := latestByApp[a.ID]; !deployed && resp.Status == string(state.AppActive) {
 			resp.Status = api.AppStatusUndeployed
 		}
+		if parkedByApp != nil {
+			out = append(out, withParkedDeployment(resp, parkedByApp[a.ID]))
+			continue
+		}
 		out = append(out, s.withParkedDeploymentRef(r.Context(), resp, a))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// latestParkedDeploymentsByApp reads every app's parked reference in one
+// query. Per-app lookups ran past the request deadline on a busy control
+// plane and left most of a 100-app list without its references (H10-71). A
+// nil map (store without the batch read, or a read error) falls back to the
+// per-app path.
+func (s *server) latestParkedDeploymentsByApp(ctx context.Context, accountID string) map[string]state.Deployment {
+	lister, ok := s.store.(state.ParkedDeploymentLister)
+	if !ok {
+		return nil
+	}
+	parked, err := lister.ListLatestParkedDeploymentPerApp(ctx, accountID)
+	if err != nil {
+		s.log.Warn("apid: parked deployment refs lookup", "account", accountID, "err", err)
+		return nil
+	}
+	return parked
 }
 
 func appDeploymentAvailability(hasLive bool) api.AppDeploymentAvailability {
@@ -251,6 +274,10 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if typ == state.AppTypeFunction && !api.ValidFunctionRuntime(req.Runtime) {
 		return state.App{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid runtime", "functions require runtime "+strings.Join(api.FunctionRuntimes, ", "))
+	}
+	if typ == state.AppTypeApp && req.Runtime != "" {
+		return state.App{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Runtime is only valid for functions", "omit runtime for type app; the container supplies its own process")
 	}
 	visibility := api.AppVisibility(req.Visibility)
 	if visibility == "" {
@@ -633,8 +660,21 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 // createImageDeployment keeps published-image triggers on normal deployment
 // admission and notification behavior. Only triggers assign a durable identity.
 func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, limits api.Limits, req api.CreateDeploymentRequest, published bool) {
+	if p := validateReviewedStage(req); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	if p := s.applyDeploymentEnvironment(r.Context(), acct, app, &req); p != nil {
 		api.WriteProblem(w, p)
+		return
+	}
+	app, reviewedSettings, reviewProblem := s.reviewedEnvironmentApp(w, r, acct, app, req)
+	if reviewProblem != nil {
+		api.WriteProblem(w, reviewProblem)
+		return
+	}
+	if req.NativeRollout != "" && app.Manifest.ExecutionMode != req.NativeRollout {
+		api.WriteProblem(w, api.ErrValidation("native_rollout must match the reviewed target execution mode"))
 		return
 	}
 	var publishedPrevious state.Deployment
@@ -676,7 +716,7 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 	}
 	if !isDigestPinned(req.Image) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeImageRequired,
-			"Image required", "image: deploys require a digest-pinned reference, e.g. registry.gregale.dev/app@sha256:..."))
+			"Image digest required", "image: deploys require a digest-pinned reference, e.g. registry.gregale.dev/app@sha256:..."))
 		return
 	}
 	// Pre-CreateDeployment validation gates (#472 / #460 / #463).
@@ -758,6 +798,9 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 	// server-resolved and never client-supplied; the
 	// closed-set CHECK on deployed_via (migration 00303) rejects
 	// any out-of-set value the helper chain might emit.
+	dep.ExpectedReview = req.ExpectedReview
+	dep.ReviewedRolloutMode = req.NativeRollout
+	dep.ReviewedSettings = reviewedSettings
 	stampDeploymentActor(&dep, acct, r)
 	if !s.admitAccountDeploy(w, r, acct) {
 		return
@@ -778,6 +821,9 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 		d, err = s.store.CreateDeployment(r.Context(), dep)
 	}
 	if err != nil {
+		if writeReleaseReviewError(w, err) {
+			return
+		}
 		if published && errors.Is(err, state.ErrConflict) && s.replyPublishedImageReplay(w, r, app, req) {
 			return
 		}
@@ -895,12 +941,14 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 	// the time it lands in the store, so we never see one here.
 	ea := egressStringList(a.EgressAllowlist)
 	return api.AppResponse{
-		ID: a.ID, Slug: a.Slug, Type: string(a.Type), WorkloadClass: string(a.WorkloadClass), Runtime: a.Runtime,
+		ServiceBindingFingerprint: state.ServiceBindingFingerprint(a),
+		ID:                        a.ID, Slug: a.Slug, Type: string(a.Type), WorkloadClass: string(a.WorkloadClass), Runtime: a.Runtime,
 		Visibility: string(api.NormalizeAppVisibility(a.Visibility)),
 		RAMMB:      a.RAMMB, VCPU: api.VCPUPerPlan[plan], CPUMillicores: effectiveAppCPUMillicores(a, plan),
 		ResourceProfile: api.ResourceProfileForResources(a.RAMMB, effectiveAppCPUMillicores(a, plan)),
 		MaxConcurrency:  a.MaxConcurrency, IdleTimeoutS: a.IdleTimeoutS,
-		RequestTimeoutS: a.Manifest.RequestTimeoutS,
+		RequestTimeoutS:     a.Manifest.RequestTimeoutS,
+		FunctionConcurrency: a.Manifest.FunctionConcurrency,
 		// Issue #559: platform-advertised per-VM concurrency cap
 		// for the customer's plan. Distinct from MaxConcurrency
 		// (the per-app instance cap above). Unknown plans fall
@@ -933,13 +981,18 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 			User:                         a.Manifest.User,
 			ExecutionMode:                a.Manifest.ExecutionMode,
 			RestartPolicy:                a.Manifest.RestartPolicy,
+			StopSignal:                   a.Manifest.StopSignal,
+			StopGracePeriod:              time.Duration(a.Manifest.StopGracePeriodS) * time.Second,
+			WorkerReplicas:               apiManifestFromState(a.Manifest).WorkerReplicas,
 			AfterRestore:                 a.Manifest.AfterRestore,
 			BeforeCheckpoint:             a.Manifest.BeforeCheckpoint,
+			Pause:                        a.Manifest.Pause,
 			Profiling:                    a.Manifest.Profiling,
 			Tracing:                      a.Manifest.Tracing,
 			StartupDeadlineS:             a.Manifest.StartupDeadlineS,
 			MaxRetries:                   a.Manifest.MaxRetries,
 			RequestTimeoutS:              a.Manifest.RequestTimeoutS,
+			FunctionConcurrency:          a.Manifest.FunctionConcurrency,
 			ServiceReplicas:              apiManifestFromState(a.Manifest).ServiceReplicas,
 			Favicon:                      append([]byte(nil), a.Manifest.Favicon...),
 			RobotsTxt:                    a.Manifest.RobotsTxt,
@@ -1198,6 +1251,15 @@ func (s *server) withParkedDeploymentRef(ctx context.Context, resp api.AppRespon
 		if !errors.Is(err, state.ErrNotFound) {
 			s.log.Warn("apid: parked deployment ref lookup", "app", app.ID, "err", err)
 		}
+		return resp
+	}
+	return withParkedDeployment(resp, d)
+}
+
+// withParkedDeployment attaches d as the parked reference; a zero d (no parked
+// deployment) leaves the response unchanged.
+func withParkedDeployment(resp api.AppResponse, d state.Deployment) api.AppResponse {
+	if d.ID == "" {
 		return resp
 	}
 	resp.ParkedDeployment = &api.ParkedDeploymentRef{

@@ -4,10 +4,21 @@
 /* eslint-disable */
 import type { WorkflowRecoveryCandidateEvidence } from './WorkflowRecoveryCandidateEvidence.js';
 import type { WorkflowRecoveryPolicy } from './WorkflowRecoveryPolicy.js';
+import type { WorkflowRecoveryPollingNotification } from './WorkflowRecoveryPollingNotification.js';
 /**
  * A retained event or latest observation linked to its available recovery evidence.
  */
 export type WorkflowRecoveryHistoryEntry = {
+  polling_notification?: WorkflowRecoveryPollingNotification;
+  initial_failure_id?: string;
+  evidence_kind?: 'parent' | 'child' | 'initial';
+  resume_count?: number;
+  request_id?: string;
+  notification_event_id?: string;
+  diagnosis_reason?: string;
+  review_url?: string;
+  evidence_url?: string;
+  job_url?: string;
   candidate_evidence?: WorkflowRecoveryCandidateEvidence;
   /**
    * True for an immutable event recorded prospectively with a state mutation; absent for retained source observations.

@@ -417,6 +417,18 @@ func TestSQLCredentialRestoreDisablesInheritedLogins(t *testing.T) {
 		t.Fatal(err)
 	}
 	inheritedReader := f.connect(t, f.readonly.name)
+	// Data API and auth logins are copied into a restored branch too.
+	dataAPI := f.runtime
+	dataAPI.name = strings.Replace(dataAPI.name, "gregale_rt_", "gregale_api_", 1)
+	dataAPI.marker = strings.TrimSuffix(dataAPI.marker, ":read_write") + ":data_api"
+	dataAPI.access = managedpostgres.CredentialDataAPI
+	f.extraRoles = append(f.extraRoles, dataAPI.name)
+	auth := f.authRole(t, "")
+	for _, role := range []credentialRole{dataAPI, auth} {
+		if err := f.manager.Ensure(ctx, f.material, role); err != nil {
+			t.Fatal(err)
+		}
+	}
 	// A target binding has a distinct scope, even though it shares the schema owner.
 	source := f.runtime
 	f.runtime.name = "gregale_rt_" + strings.ReplaceAll(uuid.NewString()+uuid.NewString(), "-", "")[:40]
@@ -431,7 +443,7 @@ func TestSQLCredentialRestoreDisablesInheritedLogins(t *testing.T) {
 		t.Fatal(err)
 	}
 	var login bool
-	for _, name := range []string{source.name, f.readonly.name, f.migration.name} {
+	for _, name := range []string{source.name, f.readonly.name, f.migration.name, dataAPI.name, auth.name} {
 		if err := f.admin.QueryRow(ctx, `SELECT rolcanlogin FROM pg_roles WHERE rolname=$1`, name).Scan(&login); err != nil || login {
 			t.Fatalf("inherited role still enabled: %v", err)
 		}

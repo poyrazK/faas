@@ -18,7 +18,7 @@ func TestGatewaySafetyRegistryGates(t *testing.T) {
 	if err != nil || !registry.CanProvision(b.Region) {
 		t.Fatal("gateway mode required provider report path", err)
 	}
-	if charge, err := registry.ChargeForUsage(api.ObjectStorageUsage{}); err != nil || charge != nil {
+	if charge, err := registry.ChargeForUsage(api.ObjectStorageUsage{}, api.ObjectStorageAllowance{}); err != nil || charge != nil {
 		t.Fatal("gateway mode generated charge", charge, err)
 	}
 	for _, tc := range []struct {
@@ -37,7 +37,7 @@ func TestGatewaySafetyRegistryGates(t *testing.T) {
 			}
 		})
 	}
-	if _, err := CalculateCharge(api.ObjectStoragePricing{Currency: "EUR"}, api.ObjectStorageUsage{UnavailableMeters: []string{"stored_byte_hours"}}); !errors.Is(err, ErrInvalidPricing) {
+	if _, err := CalculateCharge(api.ObjectStoragePricing{Currency: "EUR"}, api.ObjectStorageUsage{UnavailableMeters: []string{"stored_byte_hours"}}, api.ObjectStorageAllowance{}); !errors.Is(err, ErrInvalidPricing) {
 		t.Fatal("unknown meter treated as billable zero", err)
 	}
 }

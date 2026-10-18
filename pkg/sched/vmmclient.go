@@ -30,6 +30,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/overlay"
 	"github.com/onebox-faas/faas/pkg/qualificationwire"
+	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
@@ -391,7 +392,9 @@ type VMInstanceStat struct {
 	NetRxBytes       *int64
 	InflightRequests int64
 	// QuietPaused (ADR-1151): vmmd holds the instance paused between requests.
-	QuietPaused   bool
+	QuietPaused bool
+	// Frozen (ADR-1151): vmmd holds the instance frozen in place.
+	Frozen        bool
 	LastRequestAt time.Time
 	// RequestCountTotal is vmmd's cumulative ForwardHTTP count for this
 	// instance. It is optional because older vmmds do not emit it and the
@@ -428,15 +431,17 @@ type VMInstanceStat struct {
 // Empty slice = no allowlist rule emitted in the per-netns forward chain
 // (current behaviour preserved).
 type AppSpec struct {
+	RehearsalRunID string
 	// Migration evidence stays in schedd; no receipt values enter the protobuf
 	// envelope. The flat APIEnv/sealed inputs already carry the boot payload.
-	migrationRuntime *migrationRuntimeInputs
-	BaseKey          string // drive0 base rootfs StorageBackend key (e.g. "base/runtime-node22.ext4")
-	LayerKey         string // drive1 per-app layer StorageBackend key (e.g. "apps/<slug>/<depID>.ext4")
-	VCPUCount        int32  // 2, or 4 for Scale
-	MemSizeMiB       int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
-	CPUMillicores    int32  // sustained cgroup CPU allowance; 250, 500, or 1000
-	EgressMbit       int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
+	migrationRuntime     *migrationRuntimeInputs
+	migrationAdmissionID string
+	BaseKey              string // drive0 base rootfs StorageBackend key (e.g. "base/runtime-node22.ext4")
+	LayerKey             string // drive1 per-app layer StorageBackend key (e.g. "apps/<slug>/<depID>.ext4")
+	VCPUCount            int32  // 2, or 4 for Scale
+	MemSizeMiB           int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
+	CPUMillicores        int32  // sustained cgroup CPU allowance; 250, 500, or 1000
+	EgressMbit           int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
 	// StartupDeadlineS is the plan-resolved readiness budget. 0 preserves the
 	// vmmd default for legacy callers.
 	StartupDeadlineS int32
@@ -566,10 +571,12 @@ type AppSpec struct {
 // Networkless is reserved for the runtime snapshot catalog and is only
 // serialized by RestoreExecution; ordinary app wakes leave it false.
 type SnapshotRef struct {
-	DeploymentID string
-	VMStatePath  string
-	FCVersion    string
-	StorageKey   string
+	// Storage-owned capture reference; never inferred from a caller label.
+	ApplicationStandardCaptureToken string
+	DeploymentID                    string
+	VMStatePath                     string
+	FCVersion                       string
+	StorageKey                      string
 	// VMStateStorageKey is the canonical StorageBackend key for the
 	// vmstate blob (issue #121 / ADR-025 axis 2 slice 4). Empty on
 	// default-local; populated on remote compute nodes.
@@ -586,6 +593,8 @@ type SnapshotBytes struct {
 	MemBytes     int64
 	VMStateBytes int64
 	StoredBytes  int64
+	Capture      runtimeadmission.SnapshotCapture
+	CaptureToken string
 }
 
 // WakeOutcome is the decoded result of a vmmd wake. Method reports what vmmd
@@ -601,6 +610,10 @@ type SnapshotBytes struct {
 // side; we keep the wire shape as a structpb.Struct here so the
 // proto side stays narrow.
 type WakeOutcome struct {
+	RehearsalRunID string
+	// Populated only by CreateAdmittedRuntime after exact receipt validation.
+	RuntimeAdmissionReceipt *runtimeadmission.Receipt
+
 	Instance              string
 	LeaseUID              int32
 	HostIP                string
@@ -701,7 +714,11 @@ func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app App
 	// proto field is the documentation seam.
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
-	resp, err := c.cli.CreateColdBoot(ctx, &vmmdpb.CreateColdBootRequest{
+	boot := c.cli.CreateColdBoot
+	if app.RehearsalRunID != "" {
+		boot = c.cli.CreateRehearsalColdBoot
+	}
+	resp, err := boot(ctx, &vmmdpb.CreateColdBootRequest{
 		Instance:  instance,
 		App:       app.toProto(),
 		Plan:      string(app.Plan),
@@ -710,6 +727,9 @@ func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app App
 	})
 	if err != nil {
 		return nil, liftErr(err)
+	}
+	if err := c.confirmRehearsalNetwork(ctx, app, instance, resp); err != nil {
+		return nil, err
 	}
 	if err := c.confirmSecretAliasSupport(ctx, app, instance, resp.GetSupportsSecretAliases()); err != nil {
 		return nil, err
@@ -757,6 +777,10 @@ func (c *VMMClient) JobColdBoot(ctx context.Context, spec JobVmmSpec) (JobVmmRes
 		QualificationExecution: execution,
 		SealedEnv:              sealedSecretsToProto(spec.SealedEnvEntries),
 	}
+	if in := spec.Interactive; in != nil {
+		request.Interactive = &vmmdpb.JobInteractiveAttach{Tty: in.TTY,
+			AttachTokenSha256: append([]byte(nil), in.TokenSHA256...), AttachTimeoutSeconds: int32(in.AttachTimeoutSec)}
+	}
 	var resp *vmmdpb.JobColdBootResponse
 	var err error
 	if spec.StartHeld {
@@ -771,7 +795,8 @@ func (c *VMMClient) JobColdBoot(ctx context.Context, spec JobVmmSpec) (JobVmmRes
 		return JobVmmResult{}, fmt.Errorf("sched: vmmd job held-start contract mismatch: requested=%t returned=%t", spec.StartHeld, resp.GetStartHeld())
 	}
 	return JobVmmResult{InstanceID: resp.GetInstance(), NodeID: resp.GetNodeId(), Netns: resp.GetNetns(),
-		HostIP: resp.GetHostIp(), GuestUID: int(resp.GetGuestUid()), StartHeld: resp.GetStartHeld()}, nil
+		HostIP: resp.GetHostIp(), GuestUID: int(resp.GetGuestUid()), StartHeld: resp.GetStartHeld(),
+		Interactive: resp.GetInteractive()}, nil
 }
 
 func sealedSecretsToProto(entries []fcvm.SealedEnvEntry) []*vmmdpb.SealedSecret {
@@ -1072,7 +1097,11 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 	// issue #517: see CreateColdBoot above for the rationale.
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
-	resp, err := c.cli.CreateFromSnapshot(ctx, &vmmdpb.CreateFromSnapshotRequest{
+	boot := c.cli.CreateFromSnapshot
+	if app.RehearsalRunID != "" {
+		boot = c.cli.CreateRehearsalFromSnapshot
+	}
+	resp, err := boot(ctx, &vmmdpb.CreateFromSnapshotRequest{
 		Instance:  instance,
 		App:       app.toProto(),
 		Plan:      string(app.Plan),
@@ -1091,6 +1120,9 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 	})
 	if err != nil {
 		return nil, liftErr(err)
+	}
+	if err := c.confirmRehearsalNetwork(ctx, app, instance, resp); err != nil {
+		return nil, err
 	}
 	if err := c.confirmSecretAliasSupport(ctx, app, instance, resp.GetSupportsSecretAliases()); err != nil {
 		return nil, err
@@ -1115,7 +1147,7 @@ func (c *VMMClient) PauseAndSnapshot(ctx context.Context, instance, vmstatePath,
 	if beforeCheckpoint && !resp.GetBeforeCheckpointCompleted() {
 		return SnapshotBytes{}, fmt.Errorf("vmmd did not confirm before_checkpoint callback")
 	}
-	return SnapshotBytes{MemBytes: resp.GetMemBytes(), VMStateBytes: resp.GetVmstateBytes(), StoredBytes: resp.GetStoredBytes()}, nil
+	return snapshotBytesFromProto(resp, instance, storageKey, vmstateStorageKey)
 }
 
 // WarmSnapshot (issue #470 / PR #470-FU-A) wraps the new
@@ -1132,7 +1164,15 @@ func (c *VMMClient) WarmSnapshot(ctx context.Context, instance, storageKey, vmst
 	if err != nil {
 		return SnapshotBytes{}, liftErr(err)
 	}
-	return SnapshotBytes{MemBytes: resp.GetMemBytes(), VMStateBytes: resp.GetVmstateBytes(), StoredBytes: resp.GetStoredBytes()}, nil
+	return snapshotBytesFromProto(resp, instance, storageKey, vmstateStorageKey)
+}
+
+func snapshotBytesFromProto(resp *vmmdpb.SnapshotResponse, instance, storageKey, vmstateStorageKey string) (SnapshotBytes, error) {
+	capture, err := runtimeadmission.CheckSnapshotResponse(resp, instance, storageKey, vmstateStorageKey)
+	if err != nil {
+		return SnapshotBytes{}, fmt.Errorf("vmmd returned invalid native snapshot evidence: %w", err)
+	}
+	return SnapshotBytes{MemBytes: resp.MemBytes, VMStateBytes: resp.VmstateBytes, StoredBytes: resp.StoredBytes, Capture: capture}, nil
 }
 
 // ResumeWarmInstance wraps the additive vmmd RPC used when the scheduler
@@ -1142,6 +1182,49 @@ func (c *VMMClient) ResumeWarmInstance(ctx context.Context, instance string) err
 		return liftErr(err)
 	}
 	return nil
+}
+
+// FreezeReport is vmmd's account of one freeze (ADR-1151): how long the
+// pause and the optional memory reclaim took, and the VM cgroup's resident
+// bytes before and after reclaim (equal without reclaim, zero when vmmd could
+// not read the cgroup or the instance was already frozen).
+type FreezeReport struct {
+	Pause               time.Duration
+	Reclaim             time.Duration
+	ResidentBytesBefore int64
+	ResidentBytesAfter  int64
+}
+
+// FreezeInstance wraps vmmd's FreezeInstance RPC (ADR-1151). reclaim asks
+// vmmd to also reclaim the VM's memory; ADR-1151 sets it only under memory
+// pressure. vmmd refuses an ineligible instance (instance_not_freezable) or
+// one serving a request (instance_busy) with FailedPrecondition.
+func (c *VMMClient) FreezeInstance(ctx context.Context, instance string, reclaim bool) (FreezeReport, error) {
+	resp, err := c.cli.FreezeInstance(ctx, &vmmdpb.FreezeInstanceRequest{Instance: instance, Reclaim: reclaim})
+	if err != nil {
+		return FreezeReport{}, liftErr(err)
+	}
+	return FreezeReport{
+		Pause:               time.Duration(resp.GetPauseMicros()) * time.Microsecond,
+		Reclaim:             time.Duration(resp.GetReclaimMicros()) * time.Microsecond,
+		ResidentBytesBefore: resp.GetResidentBytesBefore(),
+		ResidentBytesAfter:  resp.GetResidentBytesAfter(),
+	}, nil
+}
+
+// ThawInstance wraps vmmd's ThawInstance RPC (ADR-1151). The result reports
+// the work vmmd confirmed; a caller must not route to a thaw that did not
+// confirm the work it asked for.
+func (c *VMMClient) ThawInstance(ctx context.Context, instance string, req ThawRequest) (ThawResult, error) {
+	resp, err := c.cli.ThawInstance(ctx, &vmmdpb.ThawInstanceRequest{
+		Instance:                 instance,
+		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
+		RunAfterRestore:          req.RunAfterRestore,
+	})
+	if err != nil {
+		return ThawResult{}, liftErr(err)
+	}
+	return ThawResult{HealthcheckVerified: resp.GetImageHealthcheckVerified(), AfterRestoreRan: resp.GetAfterRestoreRan()}, nil
 }
 
 // FrameworkReady implements VMM. The wire RPC's NotFound return
@@ -1217,6 +1300,30 @@ func (c *VMMClient) UpdateEgressAllowlist(ctx context.Context, appID string, all
 		EgressPortsSet:  true,
 	}); err != nil {
 		return liftErr(err)
+	}
+	return nil
+}
+
+// UpdateAppEgressPolicy sends a complete revisioned projection. An old node
+// refuses the distinct RPC, and a missing or mismatched acknowledgment fails.
+func (c *VMMClient) UpdateAppEgressPolicy(ctx context.Context, appID string, revision int64, allowlist []netip.Prefix, ports []int) error {
+	wirePorts := make([]uint32, len(ports))
+	for i, port := range ports {
+		if _, forbidden := api.TenantEgressForbiddenPort(port); port < 1 || port > 65535 || forbidden {
+			return fmt.Errorf("invalid revisioned egress policy port")
+		}
+		wirePorts[i] = uint32(port)
+	}
+	ss := make([]string, len(allowlist))
+	for i, prefix := range allowlist {
+		ss[i] = prefix.String()
+	}
+	ack, err := c.cli.UpdateAppEgressPolicy(ctx, &vmmdpb.UpdateAppEgressPolicyRequest{AppId: appID, Revision: revision, EgressAllowlist: ss, EgressPorts: wirePorts})
+	if err != nil {
+		return liftErr(err)
+	}
+	if ack.GetRevision() != revision {
+		return fmt.Errorf("vmmd egress acknowledgment does not match requested revision")
 	}
 	return nil
 }
@@ -1502,27 +1609,23 @@ func (c *VMMClient) AdoptMigratedInstance(ctx context.Context, _, instanceID str
 		fields.InstanceID = instanceID
 	}
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
-	resp, err := c.cli.AdoptMigratedInstance(ctx, &vmmdpb.AdoptMigratedInstanceRequest{
-		InstanceId:        instanceID,
-		AppSpec:           app.toProto(),
-		MemStorageKey:     memKey,
-		VmstateStorageKey: vmstateKey,
-		LeaseToken:        leaseToken,
-		Plan:              string(app.Plan),
-		AccountId:         app.AccountID,
-		DeploymentId:      app.DeploymentID,
-		FcVersion:         app.FCVersion,
-		WakeId:            fields.WakeID,
-	})
+	resp, err := c.cli.AdoptMigratedInstance(ctx, migrationAdoptionRequest(ctx, instanceID, app, memKey, vmstateKey, leaseToken))
 	if err != nil {
 		return LiveMigrationAdopt{}, liftErr(err)
 	}
-	if err := c.confirmSecretAliasSupport(ctx, app, instanceID, resp.GetSupportsSecretAliases()); err != nil {
-		return LiveMigrationAdopt{}, err
+	if app.migrationAdmissionID != "" {
+		if resp.GetAdmissionId() != app.migrationAdmissionID || resp.GetWakeId() != fields.WakeID || appNeedsSecretAliasSupport(app) && !resp.GetSupportsSecretAliases() || app.ImageHealthcheckRequired && (!resp.GetImageHealthcheckVerified() || !resp.GetSupportsImageHealthcheckMonitoring()) {
+			return LiveMigrationAdopt{}, fmt.Errorf("migration adoption did not acknowledge its durable authority: %w", state.ErrMigrationAdoptionUnresolved)
+		}
+	} else {
+		if err := c.confirmSecretAliasSupport(ctx, app, instanceID, resp.GetSupportsSecretAliases()); err != nil {
+			return LiveMigrationAdopt{}, err
+		}
+		if app.ImageHealthcheckRequired && (!resp.GetImageHealthcheckVerified() || !resp.GetSupportsImageHealthcheckMonitoring()) {
+			return LiveMigrationAdopt{}, c.rejectUnverifiedImageHealthcheck(ctx, instanceID)
+		}
 	}
-	if app.ImageHealthcheckRequired && (!resp.GetImageHealthcheckVerified() || !resp.GetSupportsImageHealthcheckMonitoring()) {
-		return LiveMigrationAdopt{}, c.rejectUnverifiedImageHealthcheck(ctx, instanceID)
-	}
+
 	return LiveMigrationAdopt{
 		HostIP:   resp.GetHostIp(),
 		Netns:    resp.GetNetns(),
@@ -1619,6 +1722,7 @@ func vmInstanceStatFromProto(in *vmmdpb.InstanceStats) VMInstanceStat {
 		HostIP:           in.GetHostIp(),
 		InflightRequests: in.GetInflightRequests(),
 		QuietPaused:      in.GetQuietPaused(),
+		Frozen:           in.GetFrozen(),
 	}
 	if v := in.GetResidentBytes(); v != nil {
 		b := v.GetValue()
@@ -1760,6 +1864,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		})
 	}
 	out := &vmmdpb.AppSpec{
+		RehearsalRunId:  a.RehearsalRunID,
 		BaseKey:         a.BaseKey,
 		LayerKey:        a.LayerKey,
 		VcpuCount:       a.VCPUCount,
@@ -1858,6 +1963,7 @@ func sidecarProbeToProto(in *api.SidecarProbe) *vmmdpb.SidecarProbeSpec {
 
 func outcomeFromProto(r *vmmdpb.WakeResponse) *WakeOutcome {
 	o := &WakeOutcome{
+		RehearsalRunID:        r.GetRehearsalRunId(),
 		Instance:              r.GetInstance(),
 		LeaseUID:              r.GetLeaseUid(),
 		HostIP:                r.GetHostIp(),

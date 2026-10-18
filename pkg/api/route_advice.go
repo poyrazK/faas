@@ -60,6 +60,15 @@ type RouteAdviceEvidence struct {
 	TopConsumerRequests      int64  `json:"top_consumer_requests,omitempty"`
 	TopConsumerPeakPerMinute int64  `json:"top_consumer_peak_per_minute,omitempty"`
 	NextConsumerPeakPerMin   int64  `json:"next_consumer_peak_per_minute,omitempty"`
+	// Learned cacheability (ADR-1188): observed anonymous GET responses, how
+	// many repeated or changed within the longest content window, how many
+	// the edge cache could not store, and the longest max-age at which the
+	// repeats would have served at most RouteContentMaxStaleShare stale bodies.
+	ContentObserved    int64 `json:"content_observed,omitempty"`
+	ContentRepeats     int64 `json:"content_repeats,omitempty"`
+	ContentChanges     int64 `json:"content_changes,omitempty"`
+	ContentUncacheable int64 `json:"content_uncacheable,omitempty"`
+	SafeMaxAgeSeconds  int   `json:"safe_max_age_seconds,omitempty"`
 }
 
 // RouteAdviceImpact is the what-if estimate over the same window. Estimates

@@ -1,4 +1,5 @@
 // adr: 210
+// adr: 1523
 package sched
 
 import (
@@ -35,7 +36,7 @@ func TestRuntimeConfigStaleAnchorsOnWakeAdmission(t *testing.T) {
 	time.Sleep(5 * time.Millisecond)
 	readyAfterChange := time.Now()
 
-	booting := state.Instance{ID: "ins-booting", AppID: app.ID, DeploymentID: deployment.ID, WakeID: admittedWake.String(), StartedAt: readyAfterChange}
+	booting := resolvedConfigInstance(t, store, app, deployment, admittedWake.String(), readyAfterChange)
 	if !e.runtimeConfigStale(ctx, booting) {
 		t.Fatal("instance whose wake was admitted before the change was judged fresh; its capture would publish the old secrets")
 	}
@@ -45,13 +46,13 @@ func TestRuntimeConfigStaleAnchorsOnWakeAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fresh := state.Instance{ID: "ins-fresh", AppID: app.ID, DeploymentID: deployment.ID, WakeID: laterWake.String(), StartedAt: time.Now()}
+	fresh := resolvedConfigInstance(t, store, app, deployment, laterWake.String(), time.Now())
 	if e.runtimeConfigStale(ctx, fresh) {
 		t.Fatal("instance admitted after the change was judged stale")
 	}
 
 	// Legacy or non-v7 wake ids fall back to started_at.
-	legacy := state.Instance{ID: "ins-legacy", AppID: app.ID, DeploymentID: deployment.ID, WakeID: "not-a-uuid", StartedAt: readyAfterChange}
+	legacy := resolvedConfigInstance(t, store, app, deployment, uuid.NewString(), readyAfterChange)
 	if e.runtimeConfigStale(ctx, legacy) {
 		t.Fatal("non-v7 wake id must fall back to started_at")
 	}
@@ -69,13 +70,13 @@ func TestStageSnapshotFreshnessKeepsAdmissionClockAndEnvironmentOwner(t *testing
 	if err := f.store.MarkAppRuntimeConfigChanged(ctx, f.app.ID); err != nil {
 		t.Fatal(err)
 	}
-	ins := state.Instance{ID: "stage-boot", AppID: f.app.ID, DeploymentID: f.stage.ID, WakeID: admitted.String(), StartedAt: time.Now()}
+	ins := resolvedConfigInstance(t, f.store, f.app, f.stage, admitted.String(), time.Now())
 	if !e.runtimeConfigStale(ctx, ins) {
 		t.Fatal("stage capture revived configuration removed after admission")
 	}
 	// Legacy admission IDs use readiness, while the deployment must still
 	// retain its environment ownership for snapshot publication.
-	ins.WakeID = uuid.NewString()
+	ins = resolvedConfigInstance(t, f.store, f.app, f.stage, uuid.NewString(), time.Now())
 	if e.runtimeConfigStale(ctx, ins) {
 		t.Fatal("fresh owned stage configuration rejected")
 	}
@@ -84,4 +85,18 @@ func TestStageSnapshotFreshnessKeepsAdmissionClockAndEnvironmentOwner(t *testing
 	if !e.runtimeConfigStale(ctx, ins) {
 		t.Fatal("recreated stage accepted a snapshot from its retired owner")
 	}
+}
+
+func resolvedConfigInstance(t *testing.T, store *state.MemStore, app state.App, deployment state.Deployment, wakeID string, readyAt time.Time) state.Instance {
+	t.Helper()
+	node, err := store.ComputeNodeByName(t.Context(), state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins, err := store.CreateInstance(t.Context(), app.ID, deployment.ID, string(state.StateRunning), app.RAMMB, node.ID, wakeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins.StartedAt = readyAt
+	return ins
 }

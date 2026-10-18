@@ -23,7 +23,7 @@ func ValidateInvoiceHistoryInvoice(inv Invoice, accountID, provider string) erro
 		len(inv.ProviderInvoiceID) > api.MaxFOCUSExportFieldBytes || strings.ContainsAny(inv.ProviderInvoiceID, "\r\n") ||
 		!validInvoiceText(inv.Number, api.MaxInvoiceDetailTextBytes) || strings.ContainsAny(inv.Number, "\r\n") ||
 		!validInvoiceText(inv.ProviderChargeID, api.MaxFOCUSExportFieldBytes) || strings.ContainsAny(inv.ProviderChargeID, "\r\n") ||
-		inv.Plan != InvoicePlanUnknown || inv.Currency != "eur" || inv.PeriodStart.IsZero() || inv.PeriodEnd.IsZero() ||
+		inv.Plan != InvoicePlanUnknown || inv.Currency != api.BillingCurrencyLower || inv.PeriodStart.IsZero() || inv.PeriodEnd.IsZero() ||
 		inv.PeriodEnd.Before(inv.PeriodStart) || inv.SubtotalCents < 0 || inv.TaxCents < 0 ||
 		inv.TotalCents < 0 || inv.TaxCents > inv.TotalCents || inv.AmountPaidCents < 0 || inv.AmountPaidCents > inv.TotalCents {
 		return errors.New("state: invalid provider invoice history record")
@@ -80,7 +80,7 @@ func (s *PgStore) ImportInvoiceHistory(ctx context.Context, accountID, provider 
 			PeriodStart:   pgtype.Timestamptz{Time: inv.PeriodStart.UTC(), Valid: true},
 			PeriodEnd:     pgtype.Timestamptz{Time: inv.PeriodEnd.UTC(), Valid: true},
 			SubtotalCents: inv.SubtotalCents, TaxCents: inv.TaxCents, TotalCents: inv.TotalCents,
-			AmountPaidCents: inv.AmountPaidCents, Plan: string(InvoicePlanUnknown), Currency: "eur",
+			AmountPaidCents: inv.AmountPaidCents, Plan: string(InvoicePlanUnknown), Currency: api.BillingCurrencyLower,
 			PdfAvailable: inv.PDFAvailable, Details: details, DetailLifecycle: lifecycle,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {

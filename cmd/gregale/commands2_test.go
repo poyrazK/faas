@@ -2371,7 +2371,7 @@ func TestCmdDeployTarball_GithubFlag(t *testing.T) {
 	if !strings.Contains(out, "Ref: ${{ github.sha }}") {
 		t.Errorf("snippet missing ${{ github.sha }} placeholder; got:\n%s", out)
 	}
-	if !strings.Contains(out, "app: my-app") {
+	if !strings.Contains(out, `app: "my-app"`) {
 		t.Errorf("snippet missing the --app slug; got:\n%s", out)
 	}
 	if !strings.Contains(out, "uses: poyrazK/faas/.github/actions/deploy@"+githubActionDefaultSHA+" # v0") {
@@ -2694,5 +2694,65 @@ func TestCreateOrFetchApp_Non409ErrorPropagates(t *testing.T) {
 	// the caller prefixes it once with "Could not create or fetch app".
 	if !strings.Contains(err.Error(), "validation_failed: bad slug") {
 		t.Errorf("error should carry the server's code:detail, got: %v", err)
+	}
+}
+
+// H10-21: a startup crash printed only the catalog copy ("the last lines it
+// printed are in the error detail") and never the lines themselves.
+func TestStartupCrashExcerptShowsTheError(t *testing.T) {
+	node := "snapshot prime failed: sched: prime: cold boot: app_startup_crash: workload stopped during startup (guest c26f50da exited before becoming ready): at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)\n" +
+		"Node.js v22.23.3\nguest-init: app restart (restart 3/3 policy=on-failure): run [/bin/bash -c npm run start]: exit status 1\n" +
+		"> node handler.js\nfile:///app/handler.js:10\n^\nError: H10_REQUIRED_CONFIG is not set (deliberate startup crash)\n" +
+		"at file:///app/handler.js:10:47\nat ModuleJob.run (node:internal/modules/esm/module_job:343:25)\nNode.js v22.23.3\n" +
+		"guest-init: app crash-looped after 3 restart(s): run [/bin/bash -c npm run start]: exit status 1"
+	got := startupCrashExcerpt(node)
+	if len(got) == 0 || got[0] != "Error: H10_REQUIRED_CONFIG is not set (deliberate startup crash)" {
+		t.Fatalf("node excerpt = %q, want it to start at the Error line", got)
+	}
+	nginx := "app_startup_crash: workload stopped during startup (guest 10d17e7b exited before becoming ready): " +
+		"2026/10/14 01:09:07 [warn] 644#644: the \"user\" directive makes sense only if the master process runs with super-user privileges\n" +
+		"nginx: [emerg] mkdir() \"/var/cache/nginx/client_temp\" failed (13: Permission denied)\n" +
+		"guest-init: app restart (restart 3/3 policy=on-failure): run [/docker-entrypoint.sh nginx -g daemon off;]: exit status 1"
+	if got := startupCrashExcerpt(nginx); len(got) != 1 || !strings.Contains(got[0], "[emerg] mkdir()") {
+		t.Fatalf("nginx excerpt = %q, want the [emerg] line", got)
+	}
+	if got := startupCrashExcerpt("build failed: exit status 1"); got != nil {
+		t.Fatalf("non-crash excerpt = %q, want nil", got)
+	}
+}
+
+// TestCmdTrafficStatusSeparatesScopes pins H10-114: a project app live in
+// three environments printed one table ending "Total 300%". Each scope now
+// carries its own total; a single-scope app keeps the original layout.
+func TestCmdTrafficStatusSeparatesScopes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSONTest(w, api.DeploymentListResponse{Items: []api.DeploymentResponse{
+			{ID: "dep-staging", Revision: 6, Scope: "staging", Status: statusLive, TrafficPercent: 100},
+			{ID: "dep-prod", Revision: 5, Scope: "production", Status: statusLive, TrafficPercent: 100},
+			{ID: "dep-default", Revision: 1, Status: statusLive, TrafficPercent: 100},
+		}})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+
+	out, restore := captureStdout(t)
+	defer restore()
+	if code := cmdTraffic([]string{"status", "demo"}); code != 0 {
+		t.Fatalf("traffic status exit = %d", code)
+	}
+	output := out.String()
+	for _, want := range []string{
+		"SCOPE\tREVISION\tDEPLOYMENT\tSTATUS\tTRAFFIC",
+		"default\tv1\tdep-default", "Total default\t\t\t\t100%",
+		"production\tv5\tdep-prod", "Total production\t\t\t\t100%",
+		"staging\tv6\tdep-staging", "Total staging\t\t\t\t100%",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing %q: %s", want, output)
+		}
+	}
+	if strings.Contains(output, "300%") {
+		t.Errorf("scopes were summed into one total: %s", output)
 	}
 }

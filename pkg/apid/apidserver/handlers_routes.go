@@ -63,6 +63,22 @@ func (s *server) getAppRoutes(w http.ResponseWriter, r *http.Request, acct state
 		// loadApp already wrote the 404.
 		return
 	}
+	app, env, scope, selected, problem := s.telemetryEnvironment(w, r, acct, app)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if selected {
+		out := s.scopedRoutes(r.Context(), acct, app, env, scope)
+		if problem := s.scopedTelemetryIdentity(r.Context(), acct, app, env); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Faas-Routes-State", out.Source)
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
 	snapshot := s.collectObservedRoutes(r.Context(), acct.ID, app.ID, app.Slug)
 	w.Header().Set("X-Faas-Routes-State", snapshot.Source)
 	writeJSON(w, http.StatusOK, api.AppRoutesResponse{

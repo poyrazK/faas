@@ -42,7 +42,8 @@ class WorkflowRecoveryAutomaticAction:
     suppression: WorkflowRecoveryAutomaticSuppression | Unset = UNSET
     """Immutable operator suppression audit retained with the automatic retry intent."""
     blocked_notification: WorkflowRecoveryAutomaticBlockedNotification | Unset = UNSET
-    """First observed evidence block capture for this automatic action. Receivers are frozen at capture; queued
+    """Latest blocked or recovered evidence capture for a retry or initial-recovery review. Retry sequence
+    increases only on a changed evidence diagnosis or proven clearance. Receivers are frozen at capture; queued
     identifies ledger admission rather than successful delivery. No receivers prevents historical replay to later
     subscribers."""
     child_job_id: UUID | Unset = UNSET

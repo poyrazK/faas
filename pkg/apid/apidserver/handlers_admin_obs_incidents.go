@@ -8,8 +8,8 @@ package apidserver
 // remain owned by their existing controllers.
 
 import (
-	"context"
-	"errors"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
@@ -21,16 +21,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-const obsIncidentStuckAfter = 5 * time.Minute
-
-// obsIncidentNodeLister is implemented by the production stores so the
-// inbox can keep the node source query bounded as well as the response. The
-// fallback preserves compatibility with narrow test doubles that only expose
-// the older fleet-list method.
-type obsIncidentNodeLister interface {
-	ListComputeNodesPage(context.Context, bool, int) ([]state.ComputeNode, error)
-}
-
 func (s *server) obsIncidents(w http.ResponseWriter, r *http.Request, caller state.Account) {
 	if allowed, prob := s.adminAllows(caller); !allowed {
 		api.WriteProblem(w, prob)
@@ -41,7 +31,7 @@ func (s *server) obsIncidents(w http.ResponseWriter, r *http.Request, caller sta
 		api.WriteProblem(w, prob)
 		return
 	}
-	items, err := s.loadObsIncidents(r, q.since, q.kind, q.severity)
+	items, unavailable, err := s.loadObsIncidents(r, q)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not load operator incidents"))
 		return
@@ -53,14 +43,15 @@ func (s *server) obsIncidents(w http.ResponseWriter, r *http.Request, caller sta
 	}
 	emitOperatorJobsView(r, s, caller, "", "obs.incidents")
 	writeJSON(w, http.StatusOK, api.ObsIncidentListResponse{
-		GeneratedAt:  time.Now().UTC(),
-		Items:        page,
-		Limit:        q.limit,
-		Since:        q.since,
-		SinceClamped: q.sinceClamped,
-		Type:         q.kind,
-		Severity:     q.severity,
-		NextCursor:   nextCursor,
+		GeneratedAt:        time.Now().UTC(),
+		UnavailableSources: unavailable,
+		Items:              page,
+		Limit:              q.limit,
+		Since:              q.since,
+		SinceClamped:       q.sinceClamped,
+		Type:               q.kind,
+		Severity:           q.severity,
+		NextCursor:         nextCursor,
 	})
 }
 
@@ -71,6 +62,8 @@ type obsIncidentQuery struct {
 	severity     string
 	cursor       string
 	limit        int
+	beforeAt     time.Time
+	beforeID     string
 }
 
 func parseObsIncidentQuery(r *http.Request) (obsIncidentQuery, *api.Problem) {
@@ -115,207 +108,104 @@ func parseObsIncidentQuery(r *http.Request) (obsIncidentQuery, *api.Problem) {
 		return obsIncidentQuery{}, limitProb
 	}
 	q.limit = limit
+	if q.cursor != "" {
+		key, err := cursor.Decode(q.cursor)
+		if err != nil {
+			return obsIncidentQuery{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid cursor", "cursor must be a value returned as next_cursor")
+		}
+		q.beforeAt, q.beforeID = key.CreatedAt, key.ID
+	}
 	return q, nil
 }
 
-func (s *server) loadObsIncidents(r *http.Request, since time.Time, kind, severity string) ([]api.ObsIncident, error) {
+func (s *server) loadObsIncidents(r *http.Request, q obsIncidentQuery) ([]api.ObsIncident, []string, error) {
 	now := time.Now().UTC()
-	items := make([]api.ObsIncident, 0)
-	want := func(source string) bool { return kind == "" || kind == source }
-	appendItem := func(item api.ObsIncident) {
-		if item.ObservedAt.IsZero() || item.ObservedAt.Before(since) {
-			return
-		}
-		if severity != "" && item.Severity != severity {
-			return
-		}
-		items = append(items, item)
-	}
-
-	if want("deployment") {
-		rows, err := s.store.ListDeploymentsForOperator(r.Context(), state.OperatorDeploymentFilter{
-			Statuses: append([]state.DeploymentStatus(nil), operatorDeploymentIncidentStatuses...),
-			Limit:    api.ObsIncidentLimitMax,
+	items := []api.ObsIncident{}
+	unavailable := []string{}
+	if q.kind != "platform_alert" {
+		var err error
+		items, err = s.store.ListOperatorIncidents(r.Context(), state.OperatorIncidentFilter{
+			Since: q.since, StuckBefore: now.Add(-api.ObsIncidentStuckAfter), StaleBefore: now.Add(-state.DefaultHeartbeatStaleness),
+			Kind: q.kind, Severity: q.severity, BeforeAt: q.beforeAt, BeforeID: q.beforeID, Limit: q.limit + 1,
 		})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		for _, deployment := range rows {
-			app, err := s.store.AppByID(r.Context(), deployment.AppID)
-			if errors.Is(err, state.ErrNotFound) {
-				continue
-			}
-			if err != nil {
-				return nil, err
-			}
-			if app.AccountID == "" || app.Status == state.AppDeleted {
-				continue
-			}
-			observedAt := deployment.CreatedAt.UTC()
-			if observedAt.IsZero() {
-				observedAt = now
-			}
-			sev := "warning"
-			summary := "deployment " + string(deployment.Status)
-			if deployment.Status == state.DeployFailed {
-				sev = "error"
-				summary = "deployment failed"
-				if deployment.ErrorCode != "" {
-					summary += " (" + deployment.ErrorCode + ")"
-				}
-			}
-			appendItem(api.ObsIncident{
-				ID:           "deployment/" + deployment.ID,
-				Type:         "deployment",
-				Severity:     sev,
-				Status:       string(deployment.Status),
-				Summary:      summary,
-				AccountID:    app.AccountID,
-				AppID:        app.ID,
-				ResourceID:   deployment.ID,
-				ResourceName: app.Slug,
-				ObservedAt:   observedAt,
-				DedupeKey:    "deployment:" + deployment.ID,
-				ActionPath:   "/v1/admin/ops/deployments/" + deployment.ID,
-				AuditPath:    "/v1/admin/obs/audit-log/search?target_account_id=" + app.AccountID,
-				RunbookURL:   "/docs/runbooks/FaasDeployFailed.md",
-			})
+		for i := range items {
+			enrichObsIncident(&items[i])
 		}
 	}
-
-	if want("job_run") {
-		runs, err := s.store.JobRunListActive(r.Context(), "", api.ObsIncidentLimitMax, 0)
-		if err != nil {
-			return nil, err
+	if q.kind == "" || q.kind == "platform_alert" {
+		alerts, available := s.obsFiringAlertIncidents(r)
+		if !available {
+			unavailable = append(unavailable, "prometheus")
 		}
-		for _, run := range runs {
-			job, err := s.store.JobGetByID(r.Context(), run.JobID)
-			if errors.Is(err, state.ErrNotFound) {
-				continue
+		for _, alert := range alerts {
+			if q.severity == "" || q.severity == alert.Severity {
+				items = append(items, alert)
 			}
-			if err != nil {
-				return nil, err
-			}
-			if job.AccountID != run.AccountID {
-				continue
-			}
-			observedAt := run.CreatedAt.UTC()
-			if observedAt.IsZero() {
-				observedAt = now
-			}
-			stuck := !observedAt.After(now.Add(-obsIncidentStuckAfter))
-			sev := "warning"
-			summary := "job run " + run.AggregateStatus
-			if stuck {
-				sev = "error"
-				summary = "job run appears stuck"
-			}
-			appendItem(api.ObsIncident{
-				ID:           "job_run/" + run.ID,
-				Type:         "job_run",
-				Severity:     sev,
-				Status:       run.AggregateStatus,
-				Summary:      summary,
-				AccountID:    run.AccountID,
-				ResourceID:   run.ID,
-				ResourceName: job.Name,
-				ObservedAt:   observedAt,
-				DedupeKey:    "job_run:" + run.ID,
-				ActionPath:   "/v1/admin/ops/jobs/runs/" + run.ID,
-				AuditPath:    "/v1/admin/obs/audit-log/search?target_account_id=" + run.AccountID,
-				RunbookURL:   "/docs/ops/gregalectl-operator-quickstart.md#job-run-incidents",
-			})
 		}
 	}
-
-	if want("compute_node") {
-		var nodes []state.ComputeNode
-		var err error
-		if paged, ok := s.store.(obsIncidentNodeLister); ok {
-			nodes, err = paged.ListComputeNodesPage(r.Context(), true, api.ObsIncidentLimitMax)
-		} else {
-			nodes, err = s.store.ListComputeNodes(r.Context(), true)
-			if len(nodes) > api.ObsIncidentLimitMax {
-				nodes = nodes[:api.ObsIncidentLimitMax]
-			}
-		}
-		if err != nil {
-			return nil, err
-		}
-		for _, node := range nodes {
-			lifecycle := string(node.Lifecycle)
-			if lifecycle == "" {
-				if node.Active {
-					lifecycle = string(state.NodeLifecycleActive)
-				} else {
-					lifecycle = string(state.NodeLifecycleUnavailable)
-				}
-			}
-			stale := node.LastHeartbeatAt.IsZero() || now.Sub(node.LastHeartbeatAt) > state.DefaultHeartbeatStaleness
-			if node.Active && lifecycle == string(state.NodeLifecycleActive) && !stale {
-				continue
-			}
-			observedAt := node.LastHeartbeatAt.UTC()
-			if !node.Active {
-				observedAt = now
-			} else if observedAt.IsZero() {
-				observedAt = node.CreatedAt.UTC()
-			}
-			if observedAt.IsZero() {
-				observedAt = now
-			}
-			sev := "warning"
-			summary := "compute node " + lifecycle
-			status := lifecycle
-			if stale {
-				status = "stale"
-				summary = "compute node heartbeat stale"
-			}
-			if !node.Active {
-				sev = "error"
-			}
-			appendItem(api.ObsIncident{
-				ID:           "compute_node/" + node.ID,
-				Type:         "compute_node",
-				Severity:     sev,
-				Status:       status,
-				Summary:      summary,
-				ResourceID:   node.ID,
-				ResourceName: node.Name,
-				ObservedAt:   observedAt,
-				DedupeKey:    "compute_node:" + node.ID,
-				ActionPath:   "/v1/admin/obs/nodes/" + node.Name + "/detail",
-				AuditPath:    "/v1/admin/obs/audit-log/search?kind_prefix=operator.action.",
-				RunbookURL:   "/docs/runbooks/FaasComputeNodeStuckInactive.md",
-			})
-		}
-	}
-
-	if want("platform_alert") {
-		if count := s.alertsFiring(r.Context()); count > 0 {
-			appendItem(api.ObsIncident{
-				ID:           "platform_alert/prometheus",
-				Type:         "platform_alert",
-				Severity:     "critical",
-				Status:       "firing",
-				Summary:      fmt.Sprintf("%d Prometheus alerts firing", count),
-				ResourceID:   "prometheus",
-				ResourceName: "platform alerts",
-				ObservedAt:   now,
-				DedupeKey:    "platform_alerts:firing",
-				ActionPath:   "/v1/admin/obs/health",
-				RunbookURL:   "/docs/ops/alert-cookbook.md",
-			})
-		}
-	}
-
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].ObservedAt.Equal(items[j].ObservedAt) {
 			return items[i].ID > items[j].ID
 		}
 		return items[i].ObservedAt.After(items[j].ObservedAt)
 	})
-	return items, nil
+	return items, unavailable, nil
+}
+
+func enrichObsIncident(item *api.ObsIncident) {
+	item.DedupeKey = strings.Replace(item.ID, "/", ":", 1)
+	if item.AccountID != "" {
+		item.AuditPath = "/v1/admin/obs/audit-log/search?target_account_id=" + item.AccountID
+	}
+	switch item.Type {
+	case "deployment":
+		item.ActionPath = "/v1/admin/ops/deployments/" + item.ResourceID
+		item.RunbookURL = "/docs/runbooks/FaasDeployFailed.md"
+	case "job_run":
+		item.ActionPath = "/v1/admin/ops/jobs/runs/" + item.ResourceID
+		item.RunbookURL = "/docs/ops/gregalectl-operator-quickstart.md#job-run-incidents"
+	case "compute_node":
+		item.ActionPath = "/v1/admin/obs/nodes/" + item.ResourceName + "/detail"
+		item.AuditPath = "/v1/admin/obs/audit-log/search?kind_prefix=operator.action."
+		item.RunbookURL = "/docs/runbooks/FaasComputeNodeStuckInactive.md"
+	}
+}
+
+func (s *server) obsFiringAlertIncidents(r *http.Request) ([]api.ObsIncident, bool) {
+	if s.promqlClient == nil {
+		return nil, false
+	}
+	// ALERTS_FOR_STATE holds the persisted activation time. A scrape timestamp
+	// changes on every request and would make keyset pagination skip alerts.
+	rows, err := s.promqlClient.QueryVector(r.Context(), `ALERTS{alertstate="firing",alertname!="FaasWatchdog",severity!="info"} * ignoring(alertstate) group_left() ALERTS_FOR_STATE`)
+	if err != nil {
+		return nil, false
+	}
+	out := make([]api.ObsIncident, 0, len(rows))
+	for _, row := range rows {
+		name := row.Labels["alertname"]
+		if name == "" || row.Value <= 0 {
+			return nil, false
+		}
+		severity := "warning"
+		switch row.Labels["severity"] {
+		case "page", "critical":
+			severity = "critical"
+		case "error":
+			severity = "error"
+		}
+		labels, _ := json.Marshal(row.Labels)
+		key := fmt.Sprintf("platform_alert/%x", sha256.Sum256(labels))
+		summary := name
+		if component := row.Labels["component"]; component != "" {
+			summary += " (" + component + ")"
+		}
+		out = append(out, api.ObsIncident{ID: key, Type: "platform_alert", Severity: severity, Status: "firing", Summary: summary, ResourceID: name, ResourceName: summary, ObservedAt: time.UnixMilli(int64(row.Value * 1000)).UTC(), DedupeKey: key, ActionPath: "/v1/admin/obs/health", RunbookURL: "/docs/ops/alert-cookbook.md"})
+	}
+	return out, true
 }
 
 func paginateObsIncidents(items []api.ObsIncident, rawCursor string, limit int) ([]api.ObsIncident, string, *api.Problem) {

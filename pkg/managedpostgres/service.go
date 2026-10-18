@@ -170,7 +170,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 			return Database{}, err
 		}
 		if existing.Spec != request.Spec {
-			return Database{}, ErrConflict
+			return Database{}, fmt.Errorf("%w: a database named %q already exists with a different configuration", ErrConflict, request.Name)
 		}
 		if existing.State == StateReady {
 			return existing, nil
@@ -213,7 +213,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 		UpdatedAt:          now,
 	}, reservationLimit)
 	if err != nil {
-		return Database{}, err
+		return Database{}, quotaDetail(err, reservationLimit)
 	}
 	if database.Spec != request.Spec {
 		return Database{}, ErrConflict
@@ -289,13 +289,13 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	if !request.PointInTime.Before(now) || currentRestoreWindow <= 0 || source.Spec.RestoreWindowSeconds <= 0 ||
 		now.Sub(request.PointInTime) > time.Duration(currentRestoreWindow)*time.Second ||
 		now.Sub(request.PointInTime) > time.Duration(source.Spec.RestoreWindowSeconds)*time.Second {
-		return Database{}, false, ErrInvalid
+		return Database{}, false, fmt.Errorf("%w: point in time must be in the past and within the source's %s restore window", ErrInvalid, time.Duration(min(currentRestoreWindow, source.Spec.RestoreWindowSeconds))*time.Second)
 	}
 	// No database has history from before it existed. The provider rejects
 	// such a point only after the target is reserved, leaving a failed row
 	// on the account's database quota (production-us hunt #9).
 	if request.PointInTime.Before(source.CreatedAt) {
-		return Database{}, false, ErrInvalid
+		return Database{}, false, fmt.Errorf("%w: point in time is before the source database was created (%s)", ErrInvalid, source.CreatedAt.UTC().Format(time.RFC3339))
 	}
 	reservationLimit, err := s.AdmitRestoreReservation(ctx, request.AccountID, RestoreSourceDefinition{
 		Spec: source.Spec, BackendID: source.BackendID, BackendFingerprint: source.BackendFingerprint, ProviderResourceID: source.ProviderResourceID, DataResourceID: source.DataResourceID})
@@ -318,7 +318,7 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		UpdatedAt:               now,
 	}, reservationLimit)
 	if err != nil {
-		return Database{}, false, err
+		return Database{}, false, quotaDetail(err, reservationLimit)
 	}
 	if database.RestoreSourceDatabaseID != request.SourceDatabaseID || !database.RestorePointInTime.Equal(request.PointInTime.UTC()) {
 		return Database{}, false, ErrConflict
@@ -451,9 +451,14 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 		}
 	} else {
 		if inspector, ok := backend.Provider.(RestoreInspector); ok && database.RestoreSourceResourceID != "" {
+			recorded, recordedErr := s.restoreVerification(ctx, database)
+			if recordedErr != nil {
+				return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, recordedErr)
+			}
 			observed, err = inspector.InspectRestore(providerContext, database.ProviderResourceID, RestoreRequest{
 				ResourceID: database.ID, SourceResourceID: database.RestoreSourceResourceID,
 				Spec: database.Spec, PointInTime: database.RestorePointInTime, IdempotencyKey: "restore-" + database.ID,
+				Verification: recorded,
 			})
 		} else {
 			observed, err = backend.Provider.Inspect(providerContext, database.ProviderResourceID)
@@ -485,6 +490,9 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 			return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, err)
 		}
 		database.ProviderResourceID = observed.ProviderResourceID
+	}
+	if err := s.recordRestoreVerification(ctx, database, observed); err != nil {
+		return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, err)
 	}
 	switch observed.Status {
 	case ProviderStatusPending, ProviderStatusDeleting:
@@ -677,7 +685,11 @@ func (s *Service) List(ctx context.Context, accountID string) ([]Database, error
 
 func (s *Service) releaseProviderError(ctx context.Context, database Database, next State, providerErr error) error {
 	normalized := normalizeProviderError(providerErr)
-	return s.releaseKnownError(ctx, database, next, providerErrorCode(providerErr), normalized, retryDelay(normalized, database.AttemptCount))
+	code, delay := providerErrorCode(providerErr), retryDelay(normalized, database.AttemptCount)
+	if errors.Is(providerErr, ErrLineageUnproven) {
+		code, delay = "restore_lineage_unavailable", lineageRetryDelay(s.pollInterval, database.AttemptCount)
+	}
+	return s.releaseKnownError(ctx, database, next, code, withLoggableReason(normalized, providerErr), delay)
 }
 
 func (s *Service) releaseKnownError(ctx context.Context, database Database, next State, code string, operationErr error, delay time.Duration) error {
@@ -712,6 +724,18 @@ func (s *Service) finishDelete(ctx context.Context, databaseID, leaseToken strin
 	return s.store.FinishDelete(finishContext, databaseID, leaseToken, s.now())
 }
 
+// lineagePollAttempts bounds how long an unproven restore lineage is retried
+// at the poll interval before the ordinary backoff applies (ADR-1259). Each
+// attempt opens a provider historical connection, so it is not unbounded.
+const lineagePollAttempts = 20
+
+func lineageRetryDelay(poll time.Duration, attempt int32) time.Duration {
+	if attempt <= lineagePollAttempts {
+		return poll
+	}
+	return retryDelay(ErrUnavailable, attempt-lineagePollAttempts)
+}
+
 func retryDelay(err error, attempt int32) time.Duration {
 	if errors.Is(err, ErrInvalid) || errors.Is(err, ErrUnsupported) || errors.Is(err, ErrQuotaExceeded) {
 		return time.Hour
@@ -721,4 +745,15 @@ func retryDelay(err error, attempt int32) time.Duration {
 		delay *= 2
 	}
 	return min(delay, 15*time.Minute)
+}
+
+// quotaDetail names the database-count limit a reservation hit. The bare
+// sentinel left "quota exceeded" without the limit or what counts toward it
+// (production-us live test 2026-10-14; CLAUDE.md: limit errors carry the
+// limit and the observed value).
+func quotaDetail(err error, limit int) error {
+	if !errors.Is(err, ErrQuotaExceeded) {
+		return err
+	}
+	return fmt.Errorf("%w: the account already has %d of %d databases (provisioning and restoring ones count); delete one or upgrade the plan", err, limit, limit)
 }

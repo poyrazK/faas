@@ -2,9 +2,12 @@
 
 `GET /v1/apps/{slug}/entities/readiness` returns a read-only, schema-versioned
 snapshot for an owned app. Use the normal API credential with read scope and MFA
-requirements. The response is `Cache-Control: no-store`. An app outside the
-durable allowlist can still inspect its blockers. It exposes no bucket names,
-credentials, entity payloads, or other tenants' usage.
+requirements. The response is `Cache-Control: no-store`. The preview is hidden
+from customers: while `FAAS_DURABLE_ENTITIES_ENABLED` is off, and for apps
+outside the durable allowlist, this route (like every `/entities` route) answers
+`404 not_found` "no such API route". Operators confirm the allowlist from node
+configuration. It exposes no bucket names, credentials, entity payloads, or
+other tenants' usage.
 
 `configuration_ready` requires a configured conditional-storage manager, the app
 allowlist entry, and shared tenant quotas. Optional capabilities have individual

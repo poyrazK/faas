@@ -3,10 +3,12 @@ package apidserver_test
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func decodeDevSession(t *testing.T, body []byte) api.DevSessionResponse {
@@ -32,8 +34,11 @@ func TestDevSessionWatchModeIsStoredReportedAndCleared(t *testing.T) {
 	if session.Watch == nil || session.Watch.Command != "npm run dev" {
 		t.Fatalf("created watch = %+v, want the trimmed command", session.Watch)
 	}
-	if got, _ := (*e.Store()).DevWatchCommand(t.Context(), session.App.ID); got != "npm run dev" {
-		t.Fatalf("stored command = %q", got)
+	// The app's public hostname goes with the command, for the development
+	// server's host check (api.DevWatchHostEnv).
+	want := state.DevWatchSetting{Command: "npm run dev", Host: strings.TrimPrefix(session.App.URL, "https://")}
+	if got, _ := (*e.Store()).DevWatch(t.Context(), session.App.ID); got != want || got.Host == "" {
+		t.Fatalf("stored watch mode = %+v, want %+v", got, want)
 	}
 	read := e.Do(t, "GET", "/v1/dev/sessions/"+project, nil, nil)
 	if got := decodeDevSession(t, read.Body.Bytes()).Watch; read.Code != http.StatusOK || got == nil || got.Command != "npm run dev" {
@@ -43,14 +48,14 @@ func TestDevSessionWatchModeIsStoredReportedAndCleared(t *testing.T) {
 	if refreshed.Code != http.StatusOK || decodeDevSession(t, refreshed.Body.Bytes()).Watch != nil {
 		t.Fatalf("refresh without watch: status %d body %s", refreshed.Code, refreshed.Body.String())
 	}
-	if got, _ := (*e.Store()).DevWatchCommand(t.Context(), session.App.ID); got != "" {
-		t.Fatalf("command after an upsert without watch = %q, want cleared", got)
+	if got, _ := (*e.Store()).DevWatch(t.Context(), session.App.ID); got != (state.DevWatchSetting{}) {
+		t.Fatalf("watch mode after an upsert without watch = %+v, want cleared", got)
 	}
 }
 
 func TestDevSessionWatchModeRefusals(t *testing.T) {
 	t.Run("too little RAM", func(t *testing.T) {
-		e := apidserver.Setup(t, api.PlanHobby)
+		e := apidserver.Setup(t, api.PlanFree)
 		resp := e.Do(t, "PUT", "/v1/dev/sessions/watch-small", api.UpsertDevSessionRequest{Watch: &api.DevWatch{Command: "npm run dev"}}, nil)
 		var problem api.Problem
 		_ = json.Unmarshal(resp.Body.Bytes(), &problem)
@@ -90,8 +95,8 @@ func TestDevSessionWatchModeRefusals(t *testing.T) {
 		if resp.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("status %d, want 422 for an open developer environment: %s", resp.Code, resp.Body.String())
 		}
-		if got, _ := (*e.Store()).DevWatchCommand(t.Context(), app.ID); got != "" {
-			t.Fatalf("refused request stored %q", got)
+		if got, _ := (*e.Store()).DevWatch(t.Context(), app.ID); got != (state.DevWatchSetting{}) {
+			t.Fatalf("refused request stored %+v", got)
 		}
 	})
 }

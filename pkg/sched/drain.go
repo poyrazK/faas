@@ -124,6 +124,14 @@ type Drain struct {
 	// dispatched in parallel for one drain tick. Queue-source rows stay
 	// serial per app so the FIFO contract is preserved.
 	dispatchConcurrency int
+	// longSlots bounds the invocations of long-timeout apps (ADR-1180)
+	// this drain delivers in the background. A long invocation must not
+	// hold the tick, and with it every other tenant's due work.
+	longSlots chan struct{}
+	// longQueueApps holds the apps whose FIFO queue message is being
+	// delivered in the background; their next message waits for it.
+	longMu        sync.Mutex
+	longQueueApps map[string]bool
 	// accts caches Active(account_id) lookups for the suspended-skip
 	// check (Move 2). One entry per account; the 5s TTL collapses the
 	// 64-row batch's per-row AccountByID into ≤0.2 RPS at Meta's
@@ -136,6 +144,11 @@ type Drain struct {
 // the entire schedd process. Operators can tune it with
 // FAAS_SCHEDD_INVOCATION_DISPATCH_CONCURRENCY.
 const DefaultDrainDispatchConcurrency = 8
+
+// DefaultDrainLongDispatches bounds the invocations of long-timeout apps
+// (ADR-1180) one drain delivers in the background at once. A row beyond it
+// stays pending for a later tick.
+const DefaultDrainLongDispatches = 256
 
 // expiredInvocationReclaimer is implemented by the durable stores. Keeping
 // this as a narrow optional interface preserves the broad state.Store test
@@ -213,6 +226,8 @@ func NewDrain(store state.Store, engine *Engine, opts ...DrainOption) *Drain {
 		wakeLeaseSeconds:    60,
 		retryAfterSeconds:   5,
 		dispatchConcurrency: DefaultDrainDispatchConcurrency,
+		longSlots:           make(chan struct{}, DefaultDrainLongDispatches),
+		longQueueApps:       map[string]bool{},
 		log:                 slog.Default(),
 	}
 	for _, o := range opts {
@@ -302,6 +317,11 @@ func (d *Drain) Tick(ctx context.Context) {
 	// work so the next scheduler tick can make progress. The store update is
 	// conditional on the expired lease and bounded to the same batch size as
 	// the hot queue walk.
+	if acknowledgments, ok := d.store.(state.EventAcknowledgmentStore); ok {
+		if _, err := acknowledgments.ExpireEventAcknowledgments(ctx, d.batchSize); err != nil {
+			d.log.Warn("drain: expire event acknowledgments", "err", err)
+		}
+	}
 	if reclaimer, ok := d.store.(expiredInvocationReclaimer); ok {
 		reclaimed, err := reclaimer.RequeueExpiredInvocations(ctx, d.now(), d.batchSize)
 		if err != nil {
@@ -800,10 +820,38 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			"inv", inv.ID, "app_id", inv.AppID)
 		return
 	}
-	// 3. Claim.
+	// 3. Claim. An app whose invocations may run past 30 s holds a lease
+	// that outlasts the run; an expired lease would requeue the invocation
+	// while its handler still ran (ADR-1180). Its delivery runs in the
+	// background so it cannot hold this tick.
+	timeout := state.AsyncInvocationTimeout(ctx, d.store, app)
+	leaseSeconds := d.wakeLeaseSeconds
+	release := func() {}
+	if timeout > api.AsyncInvocationTimeoutFloor {
+		// A renewed claim keeps the ordinary lease, so a crashed
+		// scheduler's invocation is requeued within one lease. A store
+		// that cannot renew falls back to a lease sized to the run.
+		if !d.renewsInvocationLease(inv) {
+			leaseSeconds = int(api.AsyncInvocationLease(timeout) / time.Second)
+		}
+		var ok bool
+		if release, ok = d.acquireLongDispatch(inv); !ok {
+			return
+		}
+	}
 	cap := d.accountAsyncCap(ctx, inv)
-	claimed, err := d.store.ClaimInvocationWithCap(ctx, inv.ID, "", d.wakeLeaseSeconds, cap)
+	if faults, ok := d.store.(interface {
+		ScenarioWorkerDispatchBlocked(context.Context, string) (bool, error)
+	}); ok {
+		blocked, faultErr := faults.ScenarioWorkerDispatchBlocked(ctx, inv.AppID)
+		if faultErr != nil || blocked {
+			release()
+			return
+		}
+	}
+	claimed, err := d.store.ClaimInvocationWithCap(ctx, inv.ID, "", leaseSeconds, cap)
 	if err != nil {
+		release()
 		if errors.Is(err, state.ErrQuotaExceeded) {
 			// Per-account cap hit (ADR-134 PR-B). Leave the row
 			// in 'pending' so the next tick retries after a
@@ -820,9 +868,70 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	// Use the post-claim row for attempt-aware retry/dead-letter decisions.
 	// ClaimInvocation increments attempts atomically; keeping the pre-claim
 	// snapshot here would delay the terminal callback by one delivery cycle.
-	inv = claimed
+	if timeout > api.AsyncInvocationTimeoutFloor {
+		go func() {
+			defer release()
+			d.deliverClaimed(ctx, claimed, timeout)
+		}()
+		return
+	}
+	d.deliverClaimed(ctx, claimed, timeout)
+}
+
+// acquireLongDispatch reserves a background delivery slot for an invocation
+// of a long-timeout app (ADR-1180). A FIFO queue message also takes its
+// app's queue lane, so the app's next message waits for this one. It
+// returns false when no slot or lane is free; the row stays pending.
+func (d *Drain) acquireLongDispatch(inv state.Invocation) (func(), bool) {
+	fifo := inv.Source == state.InvocationQueue && inv.WorkPolicyName == ""
+	if fifo {
+		d.longMu.Lock()
+		if d.longQueueApps[inv.AppID] {
+			d.longMu.Unlock()
+			return nil, false
+		}
+		if d.longQueueApps == nil {
+			d.longQueueApps = map[string]bool{}
+		}
+		d.longQueueApps[inv.AppID] = true
+		d.longMu.Unlock()
+	}
+	releaseLane := func() {
+		if fifo {
+			d.longMu.Lock()
+			delete(d.longQueueApps, inv.AppID)
+			d.longMu.Unlock()
+		}
+	}
+	if d.longSlots == nil {
+		return releaseLane, true
+	}
+	select {
+	case d.longSlots <- struct{}{}:
+		return func() { <-d.longSlots; releaseLane() }, true
+	default:
+		releaseLane()
+		return nil, false
+	}
+}
+
+// deliverClaimed wakes the app, delivers a claimed invocation and records
+// its outcome. timeout is how long the invocation may run (ADR-1180).
+func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeout time.Duration) {
+	stopLease := func() {}
 	claimCtx, stopClaim := d.operationClaimContext(ctx, inv)
 	defer stopClaim()
+	if timeout > api.AsyncInvocationTimeoutFloor {
+		// The synth client cuts an unmarked call at 30 s; this deadline
+		// bounds the dispatch instead. Store writes keep ctx, so the
+		// outcome is recorded after this.
+		var cancelDispatch context.CancelFunc
+		claimCtx, cancelDispatch = context.WithTimeout(withLongDispatch(claimCtx), api.AsyncInvocationDispatchTimeout(timeout))
+		defer cancelDispatch()
+		claimCtx, stopLease = d.keepInvocationLease(claimCtx, inv)
+		defer stopLease()
+	}
+	var err error
 	d.observeDelayedTaskClaim(inv)
 	// Debug replays are mirror-only work. They carry a small set of
 	// platform-owned metadata headers (the request body and credentials are
@@ -947,6 +1056,20 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		d.emitDone(ctx, inv)
 		return
 	}
+	acknowledgmentToken, ackErr := d.prepareEventAcknowledgment(ctx, inv)
+	if ackErr != nil {
+		if failErr := d.store.FailInvocation(ctx, inv.ID, "prepare event acknowledgment: "+ackErr.Error(), d.invocationRetryDelay(inv), d.invocationAttemptBudget(ctx, inv), failOutcome(ackErr), state.WithInvocationClaim(inv)); failErr != nil {
+			d.log.Warn("drain: event acknowledgment preparation failed", "inv", inv.ID, "err", failErr)
+		}
+		return
+	}
+	if acknowledgmentToken != "" {
+		inv, ackErr = state.WithEventAcknowledgmentToken(inv, acknowledgmentToken)
+		if ackErr != nil {
+			d.log.Warn("drain: encode event acknowledgment", "inv", inv.ID, "err", ackErr)
+			return
+		}
+	}
 	var dispatched state.Invocation
 	if prewoken, ok := d.gateway.(prewokenGatewaySynth); ok {
 		dispatched, err = prewoken.InvokeWithWake(claimCtx, inv.AppID, inv, wakeRes)
@@ -984,6 +1107,14 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			d.emitDeadLetter(ctx, inv, "dead_letter")
 		}
 		d.log.Warn("drain: invoke", "inv", inv.ID, "inst", wakeRes.InstanceID, "err", err, "permanent", retryAfter == 0)
+		return
+	}
+	if acknowledgmentToken != "" && dispatched.ResponseStatusCode == http.StatusAccepted {
+		// Stop scheduler renewal before handing the lease to the consumer.
+		stopLease()
+		if _, err := d.store.(state.EventAcknowledgmentStore).AcceptEventAcknowledgment(ctx, inv, acknowledgmentToken); err != nil {
+			d.log.Warn("drain: event acknowledgment handoff uncertain", "inv", inv.ID, "err", err)
+		}
 		return
 	}
 	// 6. Complete.

@@ -94,8 +94,14 @@ func Synthesize(evidence api.DebugRequestEvidenceResponse) api.DebugEvidenceExpl
 	regressionRef := ""
 	if regression := evidence.Regression; regression != nil {
 		regressionRef = addRef("regression", "Regression observation", "regression")
-		detail := fmt.Sprintf("The route is at p95 %dms versus %dms baseline (%sx), affecting %d represented requests.", regression.P95MS, regression.P95BaseMS, regression.Factor, regression.AffectedCount)
-		addFinding("performance_regression", "A deployment regression is active", detail, "high", regressionRef)
+		if RegressionHasErrors(regression.Kind) {
+			detail := fmt.Sprintf("The route fails %.1f%% of requests versus %.1f%% on the previous deployment (%d failed requests).", regression.ErrorRatePct, regression.ErrorRateBasePct, regression.ErrorCount)
+			addFinding("error_regression", "The route fails more often since the deployment", detail, "high", regressionRef)
+		}
+		if RegressionHasLatency(regression.Kind) {
+			detail := fmt.Sprintf("The route is at p95 %dms versus %dms baseline (%sx), affecting %d represented requests.", regression.P95MS, regression.P95BaseMS, regression.Factor, regression.AffectedCount)
+			addFinding("performance_regression", "A deployment regression is active", detail, "high", regressionRef)
+		}
 		addRecommendation("compare_deployments", "Compare this deployment with its previous healthy deployment before rolling back.")
 	}
 
@@ -146,6 +152,9 @@ func Synthesize(evidence api.DebugRequestEvidenceResponse) api.DebugEvidenceExpl
 		depRef := addRef("dependency_comparison", "Dependency comparison with the previous deployment", "dependency:"+label)
 		detail := fmt.Sprintf("%s now fails %.1f%% of calls versus %.1f%% before the deployment%s%s.",
 			label, failureRegression.CurrentErrorRatePct, failureRegression.BaselineErrorRatePct, deploymentSuffix(dependencyComparison.PreviousDeploymentTag), errorTypeSuffix(failureRegression.TopErrorType))
+		if query := RegressedQuery(*failureRegression, true); query != nil {
+			detail += fmt.Sprintf(" The failing query is `%s` (%.1f%% of its calls).", query.Pattern, query.CurrentErrorRatePct)
+		}
 		addFinding("dependency_failure_regression", "A dependency fails more often since the last deployment", detail, "high", depRef)
 		addRecommendation("inspect_dependency_change", "Review how this deployment changed its calls to "+label+" (timeouts, credentials, request shape) before rolling back.")
 	}
@@ -155,6 +164,9 @@ func Synthesize(evidence api.DebugRequestEvidenceResponse) api.DebugEvidenceExpl
 		depRef := addRef("dependency_comparison", "Dependency comparison with the previous deployment", "dependency:"+label)
 		detail := fmt.Sprintf("%s p95 rose from %dms to %dms (%.1fx) compared with the previous deployment%s.",
 			label, dependencyRegression.BaselineP95MS, dependencyRegression.CurrentP95MS, dependencyRegression.RegressionFactor, deploymentSuffix(dependencyComparison.PreviousDeploymentTag))
+		if query := RegressedQuery(*dependencyRegression, false); query != nil {
+			detail += fmt.Sprintf(" The slower query is `%s` (p95 %dms to %dms).", query.Pattern, query.BaselineP95MS, query.CurrentP95MS)
+		}
 		addFinding("dependency_regression", "A dependency slowed down after the last deployment", detail, "high", depRef)
 		addRecommendation("inspect_dependency_change", "Review how this deployment changed its calls to "+label+" (new queries, missing indexes, extra round trips) before rolling back.")
 	}
@@ -207,12 +219,25 @@ func Synthesize(evidence api.DebugRequestEvidenceResponse) api.DebugEvidenceExpl
 	} else if evidence.Request.Guest != nil && evidence.Request.Guest.Outcome != "" && evidence.Request.Guest.Outcome != "ok" {
 		out.Diagnosis = "request_failure"
 		out.Confidence = "high"
-	} else if dependencyRegression != nil {
+	} else if failureRegression != nil && evidence.Regression != nil && RegressionHasErrors(evidence.Regression.Kind) {
+		// The route regressed on errors: a dependency that started failing
+		// explains it better than one that slowed down, matching the
+		// detector's choice of suspect.
+		out.Diagnosis = "dependency_failure"
+		out.Confidence = "high"
+	} else if dependencyRegression != nil && (evidence.Regression == nil || RegressionHasLatency(evidence.Regression.Kind)) {
+		// A slower dependency explains a latency regression, not a route
+		// that only started failing; that case falls through to
+		// error_regression, with the dependency still listed as a finding.
 		out.Diagnosis = "dependency_regression"
 		out.Confidence = "high"
 	} else if failureRegression != nil {
 		out.Diagnosis = "dependency_failure"
 		out.Confidence = "medium"
+	} else if evidence.Regression != nil && RegressionHasErrors(evidence.Regression.Kind) {
+		// Failing requests outrank slower ones when both regressed.
+		out.Diagnosis = "error_regression"
+		out.Confidence = "high"
 	} else if evidence.Regression != nil {
 		out.Diagnosis = "performance_regression"
 		out.Confidence = "high"
@@ -250,6 +275,8 @@ func Synthesize(evidence api.DebugRequestEvidenceResponse) api.DebugEvidenceExpl
 	case "dependency_regression":
 		out.Headline = fmt.Sprintf("%s slowed from %dms to %dms p95 since the previous deployment%s.",
 			dependencyLabel(*dependencyRegression), dependencyRegression.BaselineP95MS, dependencyRegression.CurrentP95MS, deploymentSuffix(dependencyComparison.PreviousDeploymentTag))
+	case "error_regression":
+		out.Headline = fmt.Sprintf("This route fails %.1f%% of requests since the deployment, up from %.1f%%.", evidence.Regression.ErrorRatePct, evidence.Regression.ErrorRateBasePct)
 	case "performance_regression":
 		out.Headline = "An active deployment regression is the strongest retained signal for this request."
 	case "cold_start":

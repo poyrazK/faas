@@ -51,25 +51,33 @@ native_e2e_phase_files() {
     build) printf '%s\n' build_metal_test.go catalog_runtime_metal_test.go binary_function_metal_test.go ;;
     # Deploy paths: image, source tarball, healthcheck, port override, secrets.
     deploy) printf '%s\n' \
+      app_task_interactive_metal_test.go \
       deploy_healthcheck_metal_test.go \
       dev_loop_metal_test.go \
+      dev_watch_metal_test.go \
+      environment_gitops_native_metal_test.go \
       deploy_override_port_metal_test.go \
       deploy_wake_metal_test.go \
       dev_loop_metal_test.go \
       direct_oci_autoscale_metal_test.go \
       direct_oci_fullrootfs_metal_test.go \
       direct_oci_port_metal_test.go \
+      function_concurrency_metal_test.go \
       guest_tracing_metal_test.go \
+      image_process_identity_metal_test.go \
+      workload_identity_metal_test.go \
       source_deploy_wake_metal_test.go \
       secrets_image_deploy_e2e_test.go \
       queue_push_parallel_metal_test.go \
       private_service_tcp_metal_test.go \
       scenario_tcp_chaos_metal_test.go \
       tcp_ingress_metal_test.go udp_ingress_metal_test.go ;;
-    # Wake scheduling and native Flags cache refresh after VM restore.
+    # Wake scheduling, native Flags cache refresh after VM restore, and service
+    # calls and private TCP that wake a just-parked target (ADR-1131..1134).
     # The platform benchmark remains opt-in via FAAS_WAKE_PLATFORM_BENCH_CYCLES.
     wake) printf '%s\n' \
       wake_timeline_metal_test.go \
+      frozen_tier_metal_test.go \
       wake_platform_bench_metal_test.go \
       wake_burst_metal_test.go \
       wake_platform_bench_metal_test.go \
@@ -81,6 +89,9 @@ native_e2e_phase_files() {
       feature_flags_native_restore_metal_test.go \
       before_checkpoint_metal_test.go \
       fleet_wake_dedup_e2e_test.go \
+      private_service_tcp_stale_metal_test.go \
+      private_tcp_wake_ahead_metal_test.go \
+      service_stale_endpoint_metal_test.go \
       wake_platform_bench_metal_test.go \
       cpu_fairness_test.go ;;
     # Response streaming and the h2c/gRPC inner leg (G19.3).
@@ -93,7 +104,8 @@ native_e2e_phase_files() {
     twonode) printf '%s\n' twonode_failure_safe_metal_test.go twonode_runbook_test.go ;;
     # Real jobs harness and scratch-image workload. This phase remains
     # non-blocking until it passes on the dedicated KVM runner.
-    jobs) printf '%s\n' jobs_metal_test.go customer_job_operations_metal_test.go ;;
+    jobs) printf '%s\n' jobs_metal_test.go customer_job_operations_metal_test.go \
+      image_runs_metal_test.go job_task_logs_metal_test.go image_run_interactive_metal_test.go ;;
     *) echo "native-e2e-phases: unknown phase: $1" >&2; return 1 ;;
   esac
 }
@@ -142,7 +154,7 @@ native_e2e_assert_phase_partition() {
     phase_tests="$(native_e2e_phase_tests "${phase}" "${root}")"
     while IFS= read -r t; do
       [[ -n "${t}" ]] || continue
-      if printf '%s\n' "${seen}" | grep -Fxq -- "${t}"; then
+      if grep -Fxq -- "${t}" <<<"${seen}"; then
         dupes+="${t}"$'\n'
       fi
       seen+="${t}"$'\n'
@@ -283,7 +295,7 @@ native_e2e_assert_lanes() {
   for lane in "${NATIVE_E2E_LANES[@]}"; do
     while IFS= read -r t; do
       [[ -n "${t}" ]] || continue
-      printf '%s\n' "${all_tests}" | grep -qx -- "${t}" || {
+      grep -qx -- "${t}" <<<"${all_tests}" || {
         echo "native-e2e-phases: lane ${lane} names ${t}, which is not a metal-tagged test (renamed, or lost its build tag)" >&2
         rc=1
       }

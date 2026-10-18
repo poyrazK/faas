@@ -134,8 +134,9 @@ def sync_detailed(
         name (str):
         x_gregale_release (UUID | Unset):
         body (OperationDefinitionSpec): Resolved immutable contract for an HTTP handler or a named
-            linear HTTP workflow from the same deployment. Workflow definitions require POST ingress,
-            reconciliation recovery and stages matching the steps. Ownership comes from verified
+            linear workflow from the same deployment. Workflow definitions require POST ingress,
+            reconciliation recovery and stages matching the steps; steps are HTTP actions, fixed
+            timers or declared approvals, ending with an HTTP action. Ownership comes from verified
             authentication. Production admission remains disabled pending qualification.
 
     Raises:
@@ -183,8 +184,9 @@ def sync(
         name (str):
         x_gregale_release (UUID | Unset):
         body (OperationDefinitionSpec): Resolved immutable contract for an HTTP handler or a named
-            linear HTTP workflow from the same deployment. Workflow definitions require POST ingress,
-            reconciliation recovery and stages matching the steps. Ownership comes from verified
+            linear workflow from the same deployment. Workflow definitions require POST ingress,
+            reconciliation recovery and stages matching the steps; steps are HTTP actions, fixed
+            timers or declared approvals, ending with an HTTP action. Ownership comes from verified
             authentication. Production admission remains disabled pending qualification.
 
     Raises:
@@ -227,8 +229,9 @@ async def asyncio_detailed(
         name (str):
         x_gregale_release (UUID | Unset):
         body (OperationDefinitionSpec): Resolved immutable contract for an HTTP handler or a named
-            linear HTTP workflow from the same deployment. Workflow definitions require POST ingress,
-            reconciliation recovery and stages matching the steps. Ownership comes from verified
+            linear workflow from the same deployment. Workflow definitions require POST ingress,
+            reconciliation recovery and stages matching the steps; steps are HTTP actions, fixed
+            timers or declared approvals, ending with an HTTP action. Ownership comes from verified
             authentication. Production admission remains disabled pending qualification.
 
     Raises:
@@ -274,8 +277,9 @@ async def asyncio(
         name (str):
         x_gregale_release (UUID | Unset):
         body (OperationDefinitionSpec): Resolved immutable contract for an HTTP handler or a named
-            linear HTTP workflow from the same deployment. Workflow definitions require POST ingress,
-            reconciliation recovery and stages matching the steps. Ownership comes from verified
+            linear workflow from the same deployment. Workflow definitions require POST ingress,
+            reconciliation recovery and stages matching the steps; steps are HTTP actions, fixed
+            timers or declared approvals, ending with an HTTP action. Ownership comes from verified
             authentication. Production admission remains disabled pending qualification.
 
     Raises:

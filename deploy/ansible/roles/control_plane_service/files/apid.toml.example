@@ -14,6 +14,12 @@
 # Turn it on together with outboundd's ai_gateway_enabled;
 # FAAS_AI_GATEWAY_ENABLED=1 overrides this setting.
 # ai_gateway_enabled = false
+#
+# ADR-998 staged preview rollout: with the gate on, only these accounts may
+# use the AI gateway; empty or "*" admits every account whose plan includes
+# it (Hobby, Pro, Scale). Set the same list in outboundd.
+# FAAS_AI_GATEWAY_ACCOUNTS (comma-separated) overrides this setting.
+# ai_gateway_accounts = ["00000000-0000-0000-0000-000000000000"]
 
 # apps_domain: the wildcard suffix for app URLs.
 # Default: gregale.dev

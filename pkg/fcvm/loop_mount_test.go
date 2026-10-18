@@ -90,3 +90,52 @@ func TestLoopMountSessionTimings_MountFailure(t *testing.T) {
 		t.Fatalf("failed mountpoint not cleaned up: %v", err)
 	}
 }
+
+// H10-30: a busy unmount was ignored and the still-mounted directory was
+// RemoveAll'd. The session now fails (the drive must not boot while mounted
+// on the host), detaches the mount lazily so it cannot leak, and never
+// deletes through a mountpoint it could not unmount.
+func TestLoopMountSessionUnmountFailure(t *testing.T) {
+	busy := errors.New("exit status 32")
+	for _, tc := range []struct {
+		name     string
+		lazyErr  error
+		wantGone bool
+		wantLazy string
+	}{
+		{name: "detached lazily", wantGone: true, wantLazy: "detached lazily"},
+		{name: "lazy unmount fails", lazyErr: errors.New("lazy refused"), wantLazy: "lazy refused"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mountpoint string
+			err := runLoopMountSession("fixture-drive", "faas-test-mount-busy-", func(mp string) error {
+				mountpoint = mp
+				// Stands in for the drive's contents while it is mounted.
+				return os.WriteFile(mp+"/layer-file", []byte("keep"), 0o600)
+			}, nil, loopMountCommands{
+				mount:   func(string, string) ([]byte, error) { return nil, nil },
+				unmount: func(string) error { return busy },
+				lazyUnmount: func(mp string) error {
+					if tc.lazyErr != nil {
+						return tc.lazyErr
+					}
+					// A successful lazy unmount leaves the empty mountpoint.
+					return os.Remove(mp + "/layer-file")
+				},
+			})
+			if !errors.Is(err, busy) || !strings.Contains(err.Error(), tc.wantLazy) {
+				t.Fatalf("session error = %v, want the busy unmount reported (%s)", err, tc.wantLazy)
+			}
+			_, statErr := os.Stat(mountpoint)
+			if gone := errors.Is(statErr, os.ErrNotExist); gone != tc.wantGone {
+				t.Fatalf("mountpoint removed = %v, want %v", gone, tc.wantGone)
+			}
+			if !tc.wantGone {
+				if _, err := os.Stat(mountpoint + "/layer-file"); err != nil {
+					t.Fatalf("files under a still-mounted point were deleted: %v", err)
+				}
+				_ = os.RemoveAll(mountpoint)
+			}
+		})
+	}
+}

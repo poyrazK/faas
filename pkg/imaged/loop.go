@@ -294,6 +294,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	// after recovery so cleanup makes progress on frequently updated nodes.
 	go l.runGCTick(ctx, l.now())
 	go l.reconcileSecurityScans(ctx, l.now(), securityScanEvery)
+	go l.runProducedEvidenceRenewal(ctx)
 	go l.reconcileSecurityLeases(ctx, l.now(), securityScanEvery)
 	go l.reconcileSecuritySignatures(ctx, l.now())
 
@@ -697,9 +698,10 @@ func (l *Loop) removeLocalSnapshotOrphans(ctx context.Context, now time.Time) {
 	}
 }
 
-// runFCSweep is the F2 startup body. Returns true when the sweep ran
-// to completion (whether or not anything was marked stale — an
-// empty-stale-marker is still a successful run). Run() uses the return
+// runFCSweep is the F2 startup body: detect this host's Firecracker
+// version and evict stale rows past retention. It no longer marks rows
+// of other FC versions stale (ADR-1344 §6, see the body). Returns true
+// when FC detection succeeded. Run() uses the return
 // value to decide whether to drain fcCh; on failure the channel stays
 // open so the next tick retries the detect call (F-08). Errors are
 // logged, never returned — FC detection failure must not block imaged
@@ -708,7 +710,7 @@ func (l *Loop) removeLocalSnapshotOrphans(ctx context.Context, now time.Time) {
 // ADR-127 §D1 (Layer 6) extends this body with an F3 step:
 // MarkAppProtocolSnapshotsStale, the app-protocol dimension of the
 // F2/F3 stale-mark split. F3 runs at the tail of runFCSweep — after
-// the F2 mark-stale + retention-eviction — and operates on the
+// the F2 retention-eviction — and operates on the
 // wire-protocol-capable close-set {http2, grpc} (ADR-126 §Decision
 // 6). F3 returns the F2 result on partial failure so F2's success
 // is preserved even if F3 hits a transient error.
@@ -734,13 +736,17 @@ func (l *Loop) runFCSweep(ctx context.Context) bool {
 		l.runAppProtocolSweep(ctx)
 		return false
 	}
-	n, err := l.handler.MarkFCSnapshotsStale(ctx, ver)
-	if err != nil {
-		l.log.Warn("imaged: fc sweep mark", "err", err)
-		// F3 still runs.
-		l.runAppProtocolSweep(ctx)
-		return false
-	}
+	// ADR-1344 §6: no fleet-wide FC stale-mark here. imaged runs on every
+	// compute node, so marking every snapshot whose fc_version differs from
+	// this host's binary meant the first node upgraded in a rolling
+	// Firecracker upgrade retired the warm snapshots of every node still on
+	// the old version, and the next old-version imaged restart did the
+	// reverse. Restore compatibility does not depend on the flag: schedd
+	// (snapshotRejection) and vmmd (PlanWake) both refuse a snapshot whose
+	// fc_version differs and cold-boot instead (ADR-005), and a new capture
+	// replaces a live row of another FC version (Handler, snapshot_written).
+	// MarkFCSnapshotsStale remains for an operator to run once the whole
+	// fleet is on one version.
 	evicted, err := l.evictExpiredStaleSnapshots(ctx)
 	if err != nil {
 		l.log.Warn("imaged: fc sweep evict", "err", err)
@@ -763,7 +769,7 @@ func (l *Loop) runFCSweep(ctx context.Context) bool {
 			"marked_stale", apN)
 	}
 	l.log.Info("imaged: fc sweep done",
-		"fc_version", ver, "marked_stale", n, "evicted", evicted,
+		"fc_version", ver, "evicted", evicted,
 		"app_protocol_marked_stale", apN)
 	return true
 }

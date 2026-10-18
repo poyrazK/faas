@@ -69,6 +69,7 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -524,6 +525,15 @@ func (d *Dispatcher) finishDelivery() {
 // returns — the run loop does not abort on individual delivery
 // failures.
 func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDelivery) {
+	blocked, err := d.store.ScenarioWebhookDeliveryBlocked(ctx, row.AppID, row.WebhookID)
+	if err != nil {
+		d.log.WarnContext(ctx, "webhook: rehearsal policy check failed", "delivery_id", row.ID)
+		return // Unknown authority never permits transmission; the lease can retry.
+	}
+	if blocked {
+		d.markDead(ctx, row, state.ScenarioWebhookSuppressed)
+		return
+	}
 	// Load the subscription row so we know the target_url + secret +
 	// retry_policy. The store guarantees the webhook row exists
 	// (FK CASCADE on the delivery ledger would have prevented the
@@ -645,6 +655,9 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 	if hook.Scope == state.AppWebhookScopePlatformTenant {
 		source = "urn:gregale:platform-tenant:" + hook.PlatformTenantID
 		subject = "platform-tenants/" + hook.PlatformTenantID
+	} else if hook.Scope == state.AppWebhookScopeAccount && row.AppID == "" {
+		source = "urn:gregale:account:" + row.AccountID
+		subject = "accounts/" + row.AccountID
 	}
 	evt := webhookout.Event{
 		ID:         row.ID,
@@ -664,6 +677,19 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 			"attempt":     row.Attempt,
 			"data":        json.RawMessage(row.Payload),
 		},
+	}
+
+	// ADR-752: a datadog webhook sends its secret as a Datadog API key, so
+	// it must only ever reach a Datadog Events API endpoint. apid enforces
+	// this on write; re-check here so a stored row cannot redirect the key.
+	if hook.DeliveryFormat == state.AppWebhookDeliveryFormat(webhookout.DeliveryFormatDatadog) {
+		if !api.IsDatadogEventsURL(hook.TargetURL) {
+			d.markDead(ctx, row, "webhook: datadog delivery target is not a Datadog Events API endpoint")
+			return
+		}
+		if app, appErr := d.store.AppByID(ctx, row.AppID); appErr == nil {
+			evt.Service = app.Slug
+		}
 	}
 
 	// Per-delivery dispatcher. We construct one per call so the

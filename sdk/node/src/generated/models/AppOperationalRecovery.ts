@@ -3,11 +3,17 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AppOperationalRollback } from './AppOperationalRollback.js';
+import type { AppWorkerRecovery } from './AppWorkerRecovery.js';
 import type { RuntimeConfigRestartStatusResponse } from './RuntimeConfigRestartStatusResponse.js';
 /**
  * Bounded app-scoped pending rollbacks and pending or failed restart handoffs. Availability and truncation are explicit; accepted work does not establish completed recovery.
  */
 export type AppOperationalRecovery = {
+  workers?: AppWorkerRecovery;
+  /**
+   * Explicit scoped summaries include only attributable operations; app-wide restarts are excluded.
+   */
+  coverage?: string;
   rollbacks_available: boolean;
   restarts_available: boolean;
   rollbacks_truncated: boolean;

@@ -24,6 +24,9 @@ package secretscan
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
+	pathpkg "path"
 )
 
 // ScanFile scans a single file's bytes for secret-shaped lines. Returns
@@ -34,6 +37,57 @@ import (
 // a single PEM block produces one finding on the BEGIN line, not
 // one per base64 body line.
 func ScanFile(path string, data []byte) []Finding {
+	if pathpkg.Base(path) == validatorBundleName {
+		if out, ok := scanValidatorBundle(path, data); ok {
+			return out
+		}
+	}
+	return scanFileLines(path, data)
+}
+
+// validatorBundleName is the durable-entity validator bundle (ADR-948). Its
+// files[].content values are base64 source; the entropy fallback read each as
+// a secret, so the starter's own `npm run prepare:validator` output could
+// never deploy (H10-9).
+const validatorBundleName = "gregale.validator.json"
+
+// scanValidatorBundle scans each bundled file's decoded source under
+// "<bundle>:<file>", and the envelope with its contents removed. ok is false
+// when data is not a well-formed bundle; the caller then scans it as text.
+func scanValidatorBundle(path string, data []byte) (findings []Finding, ok bool) {
+	var envelope map[string]json.RawMessage
+	var bundle struct {
+		Files []map[string]json.RawMessage `json:"files"`
+	}
+	if json.Unmarshal(data, &envelope) != nil || json.Unmarshal(data, &bundle) != nil || len(bundle.Files) == 0 {
+		return nil, false
+	}
+	var out []Finding
+	for _, file := range bundle.Files {
+		var name, content string
+		if json.Unmarshal(file["path"], &name) != nil || json.Unmarshal(file["content"], &content) != nil {
+			return nil, false
+		}
+		source, err := base64.StdEncoding.DecodeString(content)
+		if err != nil {
+			return nil, false
+		}
+		out = append(out, scanFileLines(path+":"+name, source)...)
+		file["content"] = json.RawMessage(`""`)
+	}
+	files, err := json.Marshal(bundle.Files)
+	if err != nil {
+		return nil, false
+	}
+	envelope["files"] = files
+	rest, err := json.MarshalIndent(envelope, "", "  ")
+	if err != nil {
+		return nil, false
+	}
+	return append(scanFileLines(path, rest), out...), true
+}
+
+func scanFileLines(path string, data []byte) []Finding {
 	var out []Finding
 	inPEMBlock := false
 	dependencyLock := isNpmLockfile(path, data)

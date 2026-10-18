@@ -31,6 +31,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/jobresult"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -72,6 +73,17 @@ type JobWakeResult struct {
 // template cache for them. The 350ms cold-boot budget is the same
 // as app cold-boot; the wake latency is what customers pay.
 func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex int) (JobWakeResult, error) {
+	for range api.NodeAdmissionPlacementAttempts {
+		result, err := e.wakeJobOnce(ctx, accountID, runID, taskIndex)
+		if !errors.Is(err, state.ErrNodeAdmissionStale) {
+			return result, err
+		}
+		ctx = context.WithValue(ctx, freshNodePlacementKey{}, true)
+	}
+	return JobWakeResult{}, api.ErrCapacity("The node fleet changed during job placement; retry dispatch")
+}
+
+func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskIndex int) (JobWakeResult, error) {
 	if accountID == "" || runID == "" {
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob: empty accountID/runID")
 	}
@@ -99,6 +111,10 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	if task.Status != "queued" {
 		return JobWakeResult{}, ErrJobTaskAlreadyClaimed
 	}
+	ciOwned, ciDeadline, err := e.ciJobPreflight(ctx, run, taskIndex)
+	if err != nil {
+		return JobWakeResult{}, err
+	}
 	if task.NextAttemptAt != nil && task.NextAttemptAt.After(time.Now()) {
 		return JobWakeResult{}, ErrJobRetryBackoff
 	}
@@ -122,6 +138,9 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		if owned && (op.JobRunID != runID || op.CancellationRequested) {
 			return JobWakeResult{}, state.ErrOperationStaleAttempt
 		}
+	}
+	if ciOwned && operationOwned {
+		return JobWakeResult{}, ci.ErrRuntimeAuthority
 	}
 	imageKey := job.ImageStorageKey
 	if run.ImageRefSnapshot != "" {
@@ -213,6 +232,14 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	if taskTimeoutSec <= 0 {
 		taskTimeoutSec = 300
 	}
+	if ciOwned {
+		remaining := int(time.Until(ciDeadline).Seconds())
+		if remaining < 1 {
+			e.ledger.Release(instanceID)
+			return JobWakeResult{}, ci.ErrRuntimeAuthority
+		}
+		taskTimeoutSec = min(taskTimeoutSec, remaining)
+	}
 
 	// 3. Mint lease + claim. Lease TTL = task_timeout_s + 90s grace
 	// (mirrors the §6.1 cold-boot + cleanup envelope for app
@@ -254,9 +281,17 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	//
 	//    On any create-instance failure, release the lease + ledger slot. The
 	//    task has not been claimed yet, so it remains queued for the next tick.
-	if _, err := e.store.CreateAndClaimJobInstance(ctx, instanceID, job.ID, runID, taskIndex, string(state.StateColdBooting), ramMB, nodeID, instanceID, string(tok), leaseExpires, e.ownerNodeID); err != nil {
+	if _, err := e.store.CreateAndClaimJobInstance(nodePlacementContext(ctx, placement), instanceID, job.ID, runID, taskIndex, string(state.StateColdBooting), ramMB, nodeID, instanceID, string(tok), leaseExpires, e.ownerNodeID); err != nil {
 		e.rollbackUnclaimedJobAdmission(ctx, instanceID, tok, "")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob create and claim instance: %w", err)
+	}
+	var ciProof ci.RuntimeProof
+	if ciOwned {
+		ciProof, err = e.ciJobProof(ctx, runID, instanceID, tok)
+		if err != nil {
+			e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0, "ci_runtime_refused", "CI runtime authorization was refused")
+			return JobWakeResult{}, err
+		}
 	}
 
 	operationEnv := map[string]string{}
@@ -294,6 +329,12 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	if err != nil {
 		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0, "job_env_invalid", "job environment overrides are invalid; update the job or run")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob decode env overrides: %w", err)
+	}
+	scrubCIJobEnv(env)
+	if ciOwned {
+		env["GREGALE_CI_RUNTIME_URL"] = e.ciJobs.origin
+		env["GREGALE_CI_INSTANCE_ID"] = instanceID
+		env["GREGALE_CI_CAPABILITY"] = ciProof.Capability
 	}
 	// These values identify the actual task and attempt, so customer-supplied
 	// job/run environment entries must never be able to replace them.
@@ -390,6 +431,24 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	if command == nil { // existing runs created before command snapshots
 		command = job.Command
 	}
+	interactive, err := e.jobRunAttach(ctx, runID)
+	if ciOwned {
+		if runtimeInputs != nil || len(sealedEnv) != 0 || len(operationEnv) != 0 {
+			err = ci.ErrRuntimeAuthority
+		}
+		startHeld = true
+		startGateReleaser, _ = e.jobVmmClient.(interface {
+			ReleaseJobStart(context.Context, JobStartSpec) error
+		})
+	}
+	if err == nil && interactive != nil && startHeld {
+		err = errors.New("an interactive run cannot be start-held")
+	}
+	if err != nil {
+		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0,
+			"job_interactive_session_unavailable", "the interactive session could not be prepared; start a new run")
+		return JobWakeResult{}, fmt.Errorf("sched: WakeJob interactive session: %w", err)
+	}
 	out, err := e.jobVmmClient.JobColdBoot(ctx, JobVmmSpec{
 		AccountID:  accountID,
 		RunID:      runID,
@@ -410,6 +469,7 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		KernelKey:        KernelKey(e.fcVer),
 		BaseKey:          BaseKey(""),
 		VcpuCount:        1,
+		Interactive:      interactive,
 	})
 	if err != nil {
 		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, effectiveJobRetryMax(job, run), "job_vmm_cold_boot_failed", "job VM failed to boot before execution; verify the image artifact exists and is readable")
@@ -426,6 +486,12 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0,
 			"job_vmm_start_gate_mismatch", "job VM did not honor the reviewed service-binding start gate; retry the run")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob vmmd held-start mismatch: requested=%t returned=%t", startHeld, out.StartHeld)
+	}
+	if out.Interactive != (interactive != nil) {
+		// A vmmd that predates ADR-1330 boots the command without stdin.
+		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0,
+			"job_vmm_interactive_unsupported", "this node cannot run interactive sessions yet; start the run again after the platform update")
+		return JobWakeResult{}, fmt.Errorf("sched: WakeJob vmmd interactive mismatch: requested=%t returned=%t", interactive != nil, out.Interactive)
 	}
 	if nodeID != "" && out.NodeID != nodeID {
 		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0, "job_vmm_node_mismatch", "vmmd returned a mismatched job node; contact support")
@@ -466,6 +532,13 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	e.recordCommittedInstanceTransition(ctx, published, state.StateColdBooting, state.StateRunning,
 		"", "job_boot_completed", "job_vmmd_boot_completed")
 	if startHeld {
+		if ciOwned {
+			if err := e.ciJobStartAllowed(ctx, ciProof); err != nil {
+				e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0,
+					"ci_start_revoked", "CI authorization changed before command start")
+				return JobWakeResult{}, err
+			}
+		}
 		releaseCtx, releaseCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		err := startGateReleaser.ReleaseJobStart(releaseCtx, JobStartSpec{NodeID: out.NodeID, InstanceID: instanceID})
 		releaseCancel()
@@ -480,6 +553,9 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	exitDeadline := fcvm.EffectiveDestroyWait(taskTimeoutSec)
 	if startHeld {
 		exitDeadline += fcvm.JobStartGateTimeout
+	}
+	if interactive != nil {
+		exitDeadline += time.Duration(interactive.AttachTimeoutSec) * time.Second
 	}
 	e.startJobExitWatch(ctx, JobExitSpec{
 		AccountID: accountID, RunID: runID, TaskIndex: taskIndex,
@@ -568,6 +644,17 @@ func (e *Engine) prepareEnvironmentGitOpsJobRuntimeInputs(ctx context.Context, a
 func (e *Engine) rollbackJobAdmission(ctx context.Context, runID string, taskIndex int, instanceID string, tok LeaseToken, attempt, retryMax int, reason, errorMessage string) {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
+	if e.ciJobs != nil && e.ciJobs.store != nil {
+		owned, err := e.ciJobs.store.JobsRetryBlocked(cleanupCtx, runID)
+		if err != nil {
+			e.log.Warn("sched: job rollback ownership unavailable", "run", runID)
+			return
+		}
+		if owned {
+			e.rollbackCIJobAdmission(ctx, runID, taskIndex, instanceID, tok, errorMessage)
+			return
+		}
+	}
 	if retryMax < 0 {
 		retryMax = 0
 	}
@@ -1225,6 +1312,9 @@ type JobVmmSpec struct {
 	KernelKey        string
 	BaseKey          string
 	VcpuCount        int
+	// Interactive holds the guest command until one client attaches
+	// (ADR-1330). Only the token digest is carried.
+	Interactive *state.JobRunAttach
 }
 
 // JobVmmResult is the vmmd-side cold-boot outcome.
@@ -1235,6 +1325,9 @@ type JobVmmResult struct {
 	HostIP     string
 	GuestUID   int
 	StartHeld  bool
+	// Interactive echoes JobVmmSpec.Interactive; an older vmmd leaves it
+	// false.
+	Interactive bool
 }
 
 type JobStartSpec struct {

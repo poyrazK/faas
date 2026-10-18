@@ -160,10 +160,7 @@ func BaseKey(runtime string) string {
 // A runtime that shares another runtime's base (binary → go124, ADR-987)
 // resolves to that base's key.
 func BaseKeyForArch(runtime, arch string) string {
-	if runtime == "" {
-		return "base/base-" + arch + ".ext4"
-	}
-	return "base/runner-" + api.FunctionBaseRuntime(runtime) + "-" + arch + ".ext4"
+	return state.RuntimeBaseKeyForArch(runtime, arch)
 }
 
 // ParentBaseRuntime is the synthetic runtime name pkg/imaged uses for

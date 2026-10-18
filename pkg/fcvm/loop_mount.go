@@ -4,6 +4,7 @@ package fcvm
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -41,7 +42,8 @@ var loopMountSession = func(drive, prefix string, fn func(mountRoot string) erro
 		mount: func(drive, mp string) ([]byte, error) {
 			return exec.Command("mount", "-o", "loop,rw", drive, mp).CombinedOutput()
 		},
-		unmount: func(mp string) error { return exec.Command("umount", mp).Run() },
+		unmount:     umountRetryBusy,
+		lazyUnmount: func(mp string) error { return exec.Command("umount", "-l", mp).Run() },
 	})
 }
 
@@ -50,9 +52,19 @@ var loopMountSession = func(drive, prefix string, fn func(mountRoot string) erro
 type loopMountCommands struct {
 	mount   func(drive, mountpoint string) ([]byte, error)
 	unmount func(mountpoint string) error
+	// lazyUnmount detaches a mount that stayed busy so it cannot outlive the
+	// session; nil skips that last resort.
+	lazyUnmount func(mountpoint string) error
 }
 
-func runLoopMountSession(drive, prefix string, fn func(string) error, timings *loopMountTimings, commands loopMountCommands) error {
+// runLoopMountSession fails when the drive cannot be unmounted: the caller
+// must not boot a VM on an image that is still mounted read-write on the
+// host. It used to ignore the unmount error and then RemoveAll the still
+// mounted directory. On production-us four failed wakes left their layer
+// loop-mounted under /srv/fc/base, which pinned the jail bind mounts so
+// vmmd's cleanup retried "unmount owned image: exit status 32" for hours and
+// kept the leases (hunt #10, H10-30).
+func runLoopMountSession(drive, prefix string, fn func(string) error, timings *loopMountTimings, commands loopMountCommands) (err error) {
 	if timings == nil {
 		timings = &loopMountTimings{}
 	}
@@ -61,17 +73,35 @@ func runLoopMountSession(drive, prefix string, fn func(string) error, timings *l
 	if err != nil {
 		return fmt.Errorf("mkdir mountpoint: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(mp) }()
 	started := time.Now()
 	out, err := commands.mount(drive, mp)
 	timings.Mount = time.Since(started)
 	if err != nil {
+		_ = os.Remove(mp)
 		return fmt.Errorf("mount loop: %w (%s)", err, bytes.TrimSpace(out))
 	}
 	defer func() {
 		started := time.Now()
-		_ = commands.unmount(mp)
+		unmountErr := commands.unmount(mp)
+		if unmountErr != nil && commands.lazyUnmount != nil {
+			if lazyErr := commands.lazyUnmount(mp); lazyErr != nil {
+				unmountErr = errors.Join(unmountErr, fmt.Errorf("lazy unmount: %w", lazyErr))
+			} else {
+				// Detached, but a holder may still be writing: the drive is
+				// not safe to boot, so the session still fails.
+				unmountErr = fmt.Errorf("drive was busy and was detached lazily: %w", unmountErr)
+			}
+		}
 		timings.Unmount = time.Since(started)
+		if unmountErr != nil {
+			err = errors.Join(err, fmt.Errorf("unmount loop %s: %w", mp, unmountErr))
+			if commands.lazyUnmount == nil {
+				return
+			}
+		}
+		// Only an empty, unmounted directory is removed; never RemoveAll a
+		// mountpoint, which would delete the drive's files.
+		_ = os.Remove(mp)
 	}()
 	return fn(mp)
 }

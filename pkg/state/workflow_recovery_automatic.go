@@ -22,11 +22,15 @@ func recoveryPolicyPauseID(app string, version int64) string {
 }
 func recoveryPolicyPausedPayload(p api.WorkflowRecoveryPolicyResponse, slug string) api.WorkflowRecoveryPolicyPausedWebhookPayload {
 	a := p.AutomaticExecution
-	return api.WorkflowRecoveryPolicyPausedWebhookPayload{EventID: recoveryPolicyPauseID(p.AppID, p.Version), AppID: p.AppID, App: slug, PolicyVersion: p.Version, PausedAt: *a.PausedAt, ConsecutiveFailures: a.ConsecutiveFailures, Reason: a.PauseReason, PolicyURL: "/v1/apps/" + url.PathEscape(slug) + "/recovery-policy"}
+	eventID := recoveryPolicyPauseID(p.AppID, p.Version)
+	if p.Policy.Mode == "automatic_initial" {
+		eventID = uuid.NewSHA1(uuid.NameSpaceURL, []byte(eventID+":"+a.PausedAt.UTC().Format(time.RFC3339Nano))).String()
+	}
+	return api.WorkflowRecoveryPolicyPausedWebhookPayload{EventID: eventID, AppID: p.AppID, App: slug, PolicyVersion: p.Version, PausedAt: *a.PausedAt, ConsecutiveFailures: a.ConsecutiveFailures, Reason: a.PauseReason, PolicyURL: "/v1/apps/" + url.PathEscape(slug) + "/recovery-policy"}
 }
 func recoveryAutomaticAction(r api.WorkflowRecoveryPolicyReview, e api.WorkflowRecoveryAutomaticAction, p api.WorkflowRecoveryPolicyResponse) (api.WorkflowRecoveryResponseAction, error) {
 	if r.Plan == nil || r.PolicyVersion != p.Version || r.Policy.Mode != "automatic_retry" || !reflect.DeepEqual(r.Policy, p.Policy) || r.Plan.AppID != p.AppID || r.Plan.JobID != r.JobID {
-		return api.WorkflowRecoveryResponseAction{}, fmt.Errorf("automatic recovery review does not match current policy")
+		return api.WorkflowRecoveryResponseAction{}, fmt.Errorf("%w: review does not match current policy", errAutomaticPollingData)
 	}
 	for _, a := range r.Plan.Actions {
 		if a.Position != e.Position || api.WorkflowRecoveryResponseActionID(*r.Plan, a) != e.ActionID {
@@ -39,9 +43,15 @@ func recoveryAutomaticAction(r api.WorkflowRecoveryPolicyReview, e api.WorkflowR
 		if target.RunID != a.RunID || target.ParentPosition != a.Position || target.ExpectedResumeCount >= p.Policy.MaxResumeCount {
 			break
 		}
+		for _, id := range []string{r.ID, r.AppID, r.JobID, a.RunID, e.ActionID} {
+			v, err := uuid.Parse(id)
+			if err != nil || v == uuid.Nil {
+				return api.WorkflowRecoveryResponseAction{}, errManualObservationIdentity
+			}
+		}
 		return a, nil
 	}
-	return api.WorkflowRecoveryResponseAction{}, fmt.Errorf("invalid automatic retry action")
+	return api.WorkflowRecoveryResponseAction{}, fmt.Errorf("%w: invalid retry action", errAutomaticPollingData)
 }
 func recoveryAutomaticEligibility(a api.WorkflowRecoveryResponseAction, candidates []recoveryPolicyCandidate) (bool, string) {
 	for _, c := range candidates {
@@ -78,7 +88,7 @@ func recoveryAutomaticEvaluationResult(ctx context.Context, s WorkflowRecoveryRe
 			return nil, reason, nil
 		}
 	}
-	return nil, "evidence_unknown", fmt.Errorf("automatic retry execution is missing from retained review")
+	return nil, "evidence_unknown", fmt.Errorf("%w: retry execution missing from retained review", errAutomaticPollingData)
 }
 func recoveryAutomaticRecordFailure(p *api.WorkflowRecoveryPolicyResponse, result api.WorkflowRecoveryReviewActionStatus, now time.Time) bool {
 	state := p.AutomaticExecution

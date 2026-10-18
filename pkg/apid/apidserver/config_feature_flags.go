@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"fmt"
+
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
 
@@ -10,19 +11,10 @@ func (s *server) configureFeatureFlags(cfg Config, getenv func(string) string) e
 	if v := getenv("FAAS_FLAGS_ENABLED"); v != "" {
 		s.featureFlagsEnabled = v == "1"
 	}
-	path := cfg.FlagsWorkloadJWKSPath
-	if v := getenv("FAAS_FLAGS_WORKLOAD_JWKS_PATH"); v != "" {
-		path = v
-	}
+	path, issuer := workloadTrust(cfg, getenv, "FAAS_FLAGS_WORKLOAD_JWKS_PATH", cfg.FlagsWorkloadJWKSPath,
+		"FAAS_FLAGS_WORKLOAD_ISSUER", cfg.FlagsWorkloadIssuer)
 	if path == "" {
 		return nil
-	}
-	issuer := cfg.FlagsWorkloadIssuer
-	if v := getenv("FAAS_FLAGS_WORKLOAD_ISSUER"); v != "" {
-		issuer = v
-	}
-	if issuer == "" {
-		issuer = workloadidentity.DefaultIssuer
 	}
 	verifier, err := workloadidentity.LoadVerifier(path, issuer)
 	if err != nil {

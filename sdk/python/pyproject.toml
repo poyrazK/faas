@@ -10,8 +10,16 @@ packages = [
 include = [
     "faas_sdk/py.typed",
     { path = "faas_sdk/event_consumer_schema.sql", format = ["sdist", "wheel"] },
+    { path = "faas_sdk/event_consumer_processing_schema.sql", format = ["sdist", "wheel"] },
+    { path = "faas_sdk/event_acknowledgment_intent_schema.sql", format = ["sdist", "wheel"] },
+    { path = "faas_sdk/event_acknowledgment_intent_stored_retry_policy_schema.sql", format = ["sdist", "wheel"] },
+    { path = "faas_sdk/event_acknowledgment_intent_policy_adoption_schema.sql", format = ["sdist", "wheel"] },
+    { path = "faas_sdk/event_acknowledgment_intent_retry_budget_schema.sql", format = ["sdist", "wheel"] },
+    { path = "faas_sdk/event_acknowledgment_intent_retry_resume_schema.sql", format = ["sdist", "wheel"] },
+    { path = "faas_sdk/event_acknowledgment_intent_budget_adoption_schema.sql", format = ["sdist", "wheel"] },
     { path = "faas_sdk/operation_schema.sql", format = ["sdist", "wheel"] },
     { path = "faas_sdk/customer_operation_schema.sql", format = ["sdist", "wheel"] },
+    { path = "faas_sdk/data_repair_readiness_probe.json", format = ["sdist", "wheel"] },
 ]
 
 [tool.poetry.dependencies]
@@ -19,9 +27,11 @@ python = "^3.11"
 httpx = ">=0.23.1,<0.29.0"
 attrs = ">=22.2.0"
 websockets = { version = ">=15.0.1,<16", optional = true }
+cryptography = { version = ">=42", optional = true }
 
 [tool.poetry.extras]
 realtime = ["websockets"]
+auth = ["cryptography"]
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

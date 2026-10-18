@@ -56,6 +56,26 @@ func (s *PgStore) SuppressWorkflowRecoveryAutomaticAction(ctx context.Context, a
 	if p.Version != r.ExpectedPolicyVersion {
 		return out, ErrWorkflowRecoveryPolicyConflict
 	}
+	if sameMemUUID(review, action) {
+		initial, e := initialReviewGetTx(ctx, q, tx, account, app, review, time.Now().UTC())
+		if e == nil {
+			if initial.PolicyVersion != r.ExpectedPolicyVersion {
+				return out, ErrWorkflowRecoveryPolicyConflict
+			}
+			authority, e := pgPolicyResponse(uuidString(p.AppID), p.Version, p.Policy, p.UpdatedAt, p.ActorKind, p.ActorID, p.LastEvaluatedAt, p.Status, p.AutomaticFailures, p.AutomaticPausedAt, p.AutomaticPauseReason, p.AutomaticPollFailure, p.AutomaticPollNotification)
+			if e != nil {
+				return out, e
+			}
+			decided, e := decideInitialReviewTx(ctx, q, tx, account, app, review, authority, api.WorkflowInitialRecoveryReviewDecisionRequest{Decision: "cancel", Reason: r.Reason}, time.Now().UTC())
+			if e != nil {
+				return out, e
+			}
+			return initialAutomaticSuppressionAction(decided), tx.Commit(ctx)
+		}
+		if !errors.Is(e, ErrNotFound) {
+			return out, e
+		}
+	}
 	row, err := q.WorkflowRecoveryAutomaticOperatorAction(ctx, tx, sqlc.WorkflowRecoveryAutomaticOperatorActionParams{AppID: mustPgUUID(app), ReviewID: mustPgUUID(review), ActionID: mustPgUUID(action)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return out, ErrNotFound
@@ -122,7 +142,7 @@ func (s *PgStore) ProcessNextWorkflowRecoveryAutomaticBlockedNotification(ctx co
 	if err != nil {
 		return false, fmt.Errorf("lock blocked retry action: %w", err)
 	}
-	policy, err := pgPolicyResponse(uuidString(p.AppID), p.Version, p.Policy, p.UpdatedAt, p.ActorKind, p.ActorID, p.LastEvaluatedAt, p.Status, p.AutomaticFailures, p.AutomaticPausedAt, p.AutomaticPauseReason)
+	policy, err := pgPolicyResponse(uuidString(p.AppID), p.Version, p.Policy, p.UpdatedAt, p.ActorKind, p.ActorID, p.LastEvaluatedAt, p.Status, p.AutomaticFailures, p.AutomaticPausedAt, p.AutomaticPauseReason, p.AutomaticPollFailure, p.AutomaticPollNotification)
 	if err != nil {
 		return false, err
 	}
@@ -136,8 +156,39 @@ func (s *PgStore) ProcessNextWorkflowRecoveryAutomaticBlockedNotification(ctx co
 	if err = q.WorkflowRecoveryAutomaticBlockedDefer(ctx, tx, sqlc.WorkflowRecoveryAutomaticBlockedDeferParams{ActionID: row.ActionID, NextAt: pgtypeFromTime(now.Add(api.WorkflowRecoveryPolicyPollInterval))}); err != nil {
 		return false, fmt.Errorf("defer blocked retry capture: %w", err)
 	}
-	blocked, err := automaticBlockedEvidence(ctx, s, uuidString(next.AccountID), uuidString(next.AppID), uuidString(next.ReviewID), action, now)
-	if err != nil || !blocked {
+	retained, current, frame, err := retryEvidenceScopeTx(ctx, q, tx, uuidString(next.AccountID), uuidString(next.AppID), uuidString(next.ReviewID), action.ActionID, now, false)
+	if err != nil {
+		return false, err
+	}
+	if retained.ReviewDecision != nil && retained.ReviewDecision.Decision == "dismissed" {
+		return true, tx.Commit(ctx)
+	}
+	var diagnosis api.WorkflowRetryEvidenceDiagnosis
+	if action.Status == "pending" {
+		diagnosis, err = retryParentEvidenceTx(ctx, q, tx, uuidString(next.AccountID), retained, current, frame, now)
+		if err != nil {
+			return false, err
+		}
+		live, liveErr := q.GetNativeWorkflowRun(ctx, tx, mustPgUUID(frame.Target.RunID))
+		if errors.Is(liveErr, pgx.ErrNoRows) {
+			diagnosis.Reason, diagnosis.Repairable = "run_not_retained", false
+		} else if liveErr != nil {
+			return false, fmt.Errorf("inspect blocked retry live generation: %w", liveErr)
+		} else if live.ResumeCount != int32(frame.Target.ExpectedResumeCount) {
+			diagnosis.Reason, diagnosis.Repairable = "generation_superseded", false
+		}
+	} else {
+		var observed api.WorkflowInitialEvidenceDiagnosis
+		observed, err = retryEvidenceTx(ctx, q, tx, uuidString(next.AccountID), retained, current, frame, now)
+		diagnosis = retryEvidenceDiagnosis(observed, action.ActionID)
+		diagnosis.EvidenceKind = "child"
+		diagnosis.ItemPosition = 1
+	}
+	if err != nil {
+		return false, err
+	}
+	transition := automaticEvidenceTransition(uuidString(next.AppID), p.Slug, retained.ID, retained.PolicyVersion, action, diagnosis, now)
+	if transition == nil {
 		return true, tx.Commit(ctx)
 	}
 	receivers, err := q.WorkflowRecoveryReviewNotificationReceivers(ctx, tx, sqlc.WorkflowRecoveryReviewNotificationReceiversParams{AccountID: next.AccountID, AppID: next.AppID, Event: string(AppWebhookEventRecoveryQueueBlocked)})
@@ -148,13 +199,16 @@ func (s *PgStore) ProcessNextWorkflowRecoveryAutomaticBlockedNotification(ctx co
 	for _, id := range receivers {
 		ids = append(ids, uuidString(id))
 	}
-	payload := automaticBlockedPayload(uuidString(next.AppID), p.Slug, uuidString(next.ReviewID), row.PolicyVersion, action, now)
-	receipt, err := json.Marshal(automaticBlockedReceipt(payload, ids))
+	payload := *transition
+	receipt, err := json.Marshal(automaticEvidenceReceipt(payload, action.BlockedNotification, ids))
 	if err != nil {
 		return false, fmt.Errorf("encode blocked retry receipt: %w", err)
 	}
 	if err = q.WorkflowRecoveryAutomaticBlockedCapture(ctx, tx, sqlc.WorkflowRecoveryAutomaticBlockedCaptureParams{ActionID: row.ActionID, Receipt: receipt}); err != nil {
 		return false, fmt.Errorf("retain blocked retry capture: %w", err)
+	}
+	if err = appendRecoveryHistoryEvent(ctx, q, tx, uuidString(next.AppID), retryAlertHistory(retained, payload)); err != nil {
+		return false, err
 	}
 	if len(receivers) > 0 {
 		raw, err := json.Marshal(payload)

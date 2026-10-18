@@ -25,6 +25,8 @@ func logDrainTestServer(t *testing.T, created *api.CreateAppLogDrainRequest) *ht
 			writeJSONTest(w, drain)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/web/log-drains":
 			writeJSONTest(w, []api.AppLogDrainResponse{drain})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/apps/web/log-drains/drain-1":
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(w, r)
 		}
@@ -107,5 +109,62 @@ func TestCmdLogDrainsAddRefusesAnUnsetCredentialVariable(t *testing.T) {
 	}
 	if created.TargetURL != "" {
 		t.Fatalf("request reached the API: %+v", created)
+	}
+}
+
+// H10-17: the usage line shows `rm --id <ID> [<slug>]`, but a slug after the
+// flags was rejected as an unexpected positional argument.
+func TestCmdLogDrainsRmAcceptsTheSlugAfterFlags(t *testing.T) {
+	logDrainTestServer(t, &api.CreateAppLogDrainRequest{})
+	for _, args := range [][]string{
+		{"rm", "--id", "drain-1", "web"},
+		{"rm", "web", "--id", "drain-1"},
+		{"rm", "--app", "web", "--id", "drain-1"},
+	} {
+		out := captureLogDrainOutput(t, false)
+		if code := cmdLogDrains(args); code != 0 {
+			t.Fatalf("log-drains %q exit = %d", args, code)
+		}
+		if !strings.Contains(out.String(), "Deleted log drain drain-1") {
+			t.Fatalf("log-drains %q output = %q", args, out.String())
+		}
+	}
+	if code := cmdLogDrains([]string{"rm", "--id", "drain-1", "web", "extra"}); code == 0 {
+		t.Fatal("two positional arguments must still be rejected")
+	}
+}
+
+// TestCmdLogDrainsRmAcceptsAPositionalID pins H10-125: `log-drains rm <id>
+// --app web` read the id as a second app slug and failed with "pass the app
+// once". A positional UUID is the drain id when --id is not given.
+func TestCmdLogDrainsRmAcceptsAPositionalID(t *testing.T) {
+	const id = "f74a5211-7ff4-4ab8-9636-bb45df3bb4d4"
+	deleted := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete && r.URL.Path == "/v1/apps/web/log-drains/"+id {
+			deleted++
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+	for _, args := range [][]string{
+		{"rm", id, "--app", "web"},
+		{"rm", "--app", "web", id},
+		{"rm", "web", id},
+	} {
+		captureLogDrainOutput(t, false)
+		if code := cmdLogDrains(args); code != 0 {
+			t.Fatalf("log-drains %q exit = %d", args, code)
+		}
+	}
+	if deleted != 3 {
+		t.Fatalf("deleted %d times, want 3", deleted)
+	}
+	if code := cmdLogDrains([]string{"rm", "web", "not-a-drain-id"}); code == 0 {
+		t.Fatal("a non-UUID second positional must still be rejected")
 	}
 }

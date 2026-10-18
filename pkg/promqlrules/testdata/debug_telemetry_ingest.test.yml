@@ -1,0 +1,83 @@
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+# FaasDebugTelemetryIngestStalled fires only when OTLP span writes fail and
+# none land. An idle endpoint and customer-side outcomes (rate_limited,
+# shape_invalid) must stay quiet.
+tests:
+  - interval: 30s
+    name: "every span write failing with db_error fires the alert"
+    input_series:
+      - series: 'gatewayd_public_otel_spans_ingested_total{outcome="inserted"}'
+        values: '5x80'
+      - series: 'gatewayd_public_otel_spans_ingested_total{outcome="db_error"}'
+        values: '0+2x80'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasDebugTelemetryIngestStalled
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: FaasDebugTelemetryIngestStalled
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-public
+              family: debug_telemetry
+            exp_annotations:
+              summary: "gatewayd-public OTel spans writer ingest stalled >15m"
+              description: "gatewayd-public POST /v1/otel/v1/traces is receiving spans but every write fails (db_error) and none has been inserted for 15m. The OTLP writer ships customer spans into request_telemetry.spans_summary (ADR-127 PR-D); a stall means the debugger's per-request span view is going dark. Check gatewayd-public logs for `otel_spans: apid RPC failed` (auth.sock unreachable), `otel_spans: rate_limited` (customer's per-account token bucket exhausted), or `otel_spans: shape_invalid` (malformed OTLP body). Drill-down: `rate(gatewayd_public_otel_spans_ingested_total[5m]) by (outcome)` distinguishes the four outcomes (inserted/rate_limited/db_error/shape_invalid)."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDebugTelemetryIngestStalled.md"
+
+  - interval: 30s
+    name: "write failures before the first insert since restart still fire"
+    input_series:
+      - series: 'gatewayd_public_otel_spans_ingested_total{outcome="db_error"}'
+        values: '0+1x80'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: FaasDebugTelemetryIngestStalled
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-public
+              family: debug_telemetry
+            exp_annotations:
+              summary: "gatewayd-public OTel spans writer ingest stalled >15m"
+              description: "gatewayd-public POST /v1/otel/v1/traces is receiving spans but every write fails (db_error) and none has been inserted for 15m. The OTLP writer ships customer spans into request_telemetry.spans_summary (ADR-127 PR-D); a stall means the debugger's per-request span view is going dark. Check gatewayd-public logs for `otel_spans: apid RPC failed` (auth.sock unreachable), `otel_spans: rate_limited` (customer's per-account token bucket exhausted), or `otel_spans: shape_invalid` (malformed OTLP body). Drill-down: `rate(gatewayd_public_otel_spans_ingested_total[5m]) by (outcome)` distinguishes the four outcomes (inserted/rate_limited/db_error/shape_invalid)."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDebugTelemetryIngestStalled.md"
+
+  - interval: 30s
+    name: "an idle endpoint does not fire"
+    input_series:
+      - series: 'gatewayd_public_otel_spans_ingested_total{outcome="inserted"}'
+        values: '12x80'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: FaasDebugTelemetryIngestStalled
+        exp_alerts: []
+
+  - interval: 30s
+    name: "partial write failures with inserts still landing do not fire"
+    input_series:
+      - series: 'gatewayd_public_otel_spans_ingested_total{outcome="inserted"}'
+        values: '0+3x80'
+      - series: 'gatewayd_public_otel_spans_ingested_total{outcome="db_error"}'
+        values: '0+1x80'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: FaasDebugTelemetryIngestStalled
+        exp_alerts: []
+
+  - interval: 30s
+    name: "customer quota and payload rejections do not fire"
+    input_series:
+      - series: 'gatewayd_public_otel_spans_ingested_total{outcome="rate_limited"}'
+        values: '0+4x80'
+      - series: 'gatewayd_public_otel_spans_ingested_total{outcome="shape_invalid"}'
+        values: '0+1x80'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: FaasDebugTelemetryIngestStalled
+        exp_alerts: []

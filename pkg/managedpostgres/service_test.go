@@ -646,3 +646,32 @@ func TestClosedProvisioningGateIsDistinguishable(t *testing.T) {
 		t.Fatal("a provider outage matched the closed gate")
 	}
 }
+
+// TestRejectionsCarryTheirReason pins the live-test messages (2026-10-14):
+// a full account, a restore point outside the window or before the source,
+// and a same-name create with another spec each named their cause.
+func TestRejectionsCarryTheirReason(t *testing.T) {
+	provider := &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady}
+	service := testService(t, testRegistry(t, provider, nil), NewMemoryStore())
+	source, err := service.Create(context.Background(), CreateRequest{AccountID: "account-a", Name: "orders", Spec: testSpec()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := testSpec()
+	other.Class = ClassBurstable
+	if _, err := service.Create(context.Background(), CreateRequest{AccountID: "account-a", Name: "orders", Spec: other}); !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "already exists with a different configuration") {
+		t.Fatalf("different spec = %v", err)
+	}
+	if _, err := service.Restore(context.Background(), RestoreDatabaseRequest{AccountID: "account-a", SourceDatabaseID: source.ID, Name: "early", PointInTime: source.CreatedAt.Add(-time.Second)}); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "before the source database was created") {
+		t.Fatalf("restore before source = %v", err)
+	}
+	if _, err := service.Restore(context.Background(), RestoreDatabaseRequest{AccountID: "account-a", SourceDatabaseID: source.ID, Name: "late", PointInTime: source.CreatedAt.Add(time.Hour)}); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "restore window") {
+		t.Fatalf("restore in the future = %v", err)
+	}
+	if _, err := service.Create(context.Background(), CreateRequest{AccountID: "account-a", Name: "second", Spec: testSpec()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Create(context.Background(), CreateRequest{AccountID: "account-a", Name: "third", Spec: testSpec()}); !errors.Is(err, ErrQuotaExceeded) || !strings.Contains(err.Error(), "2 of 2 databases") {
+		t.Fatalf("full account = %v", err)
+	}
+}

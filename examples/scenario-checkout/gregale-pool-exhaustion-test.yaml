@@ -47,7 +47,7 @@ scenarios:
           duration: 8s
           streams:
             - {name: dependency, requests: [dependency-probe], rate: 20, vus: 8}
-            - {name: health, requests: [health], rate: 5, vus: 2}
+            - {name: health, requests: [health], rate: 5, vus: 4}
           thresholds: {error_rate: 1}
           chaos_schedule:
             - {name: baseline, duration: 2s, assertions: [health-stays-responsive]}

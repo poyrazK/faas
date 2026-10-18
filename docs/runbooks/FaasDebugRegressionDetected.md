@@ -4,7 +4,7 @@ Source: `deploy/ansible/roles/prometheus/files/faas.rules.yml`.
 Metrics: `apid_debug_regression_detected_total` (counter, single-registry,
 unlabelled — only apid increments).
 ADR: ADR-127 Debugger UX v1.
-Severity: page on `FaasDebugRegressionDetected` (≥1 PRIMARY KEY upsert
+Severity: warn (ADR-1236) on `FaasDebugRegressionDetected` (≥1 PRIMARY KEY upsert
 on `debug_regression_observations` in the last 5m, with 1m debounce).
 The alert is the customer-facing regression banner tripwire — page
 on-call so they can correlate with the dashboard before customers

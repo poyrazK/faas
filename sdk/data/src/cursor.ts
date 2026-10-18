@@ -3,9 +3,9 @@ import type { PostgrestFilterBuilder } from '@supabase/postgrest-js'
 type Scalar = string | number | boolean | null
 export type CursorOrder = Readonly<{ column: string; ascending?: boolean; nullsFirst?: boolean; unique?: boolean }>
 type Row<Query> = Query extends PostgrestFilterBuilder<infer _C, infer _S, infer R, infer _D, infer _N, infer _F, infer _M, infer _T> ? R : never
-type ReadQuery<Query> = Query extends PostgrestFilterBuilder<infer _C, infer _S, infer _R, infer D, infer _N, infer _F, infer M, infer _T>
+export type ReadQuery<Query> = Query extends PostgrestFilterBuilder<infer _C, infer _S, infer _R, infer D, infer _N, infer _F, infer M, infer _T>
   ? M extends 'GET' ? D extends readonly unknown[] ? unknown : never : never : never
-type CheckedOrder<Query, Order extends readonly CursorOrder[]> = {
+export type CheckedOrder<Query, Order extends readonly CursorOrder[]> = {
   [I in keyof Order]: Order[I]['column'] extends keyof Row<Query>
     ? Row<Query>[Order[I]['column']] extends Scalar ? Order[I] : never : never
 }

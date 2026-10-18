@@ -197,6 +197,12 @@ func (s *stubVmmdClient) WarmSnapshot(context.Context, *vmmdpb.WarmSnapshotReque
 func (s *stubVmmdClient) ResumeWarmInstance(context.Context, *vmmdpb.ResumeWarmInstanceRequest, ...grpc.CallOption) (*vmmdpb.ResumeWarmInstanceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "gateway stub does not resume warm instances")
 }
+func (s *stubVmmdClient) FreezeInstance(context.Context, *vmmdpb.FreezeInstanceRequest, ...grpc.CallOption) (*vmmdpb.FreezeInstanceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway stub does not freeze instances")
+}
+func (s *stubVmmdClient) ThawInstance(context.Context, *vmmdpb.ThawInstanceRequest, ...grpc.CallOption) (*vmmdpb.ThawInstanceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway stub does not thaw instances")
+}
 func (s *stubVmmdClient) Destroy(context.Context, *vmmdpb.DestroyRequest, ...grpc.CallOption) (*vmmdpb.DestroyResponse, error) {
 	return &vmmdpb.DestroyResponse{}, nil
 }

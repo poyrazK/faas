@@ -18,11 +18,13 @@ var workflowUUIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{
 
 func cmdWorkflows(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale workflows <list|schedules|schedule-history|run|wait|status|diagnose|steps|attempts|retry|resume|resumes|cancel|cancel-queued-preview|cancel-queued|events>", "workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflows <defaults|list|schedules|schedule-history|run|wait|status|diagnose|steps|attempts|retry|resume|resumes|cancel|cancel-queued-preview|cancel-queued|events>", "workflows")
 		return 1
 	}
 	subcommand, rest := args[0], args[1:]
 	switch subcommand {
+	case "defaults":
+		return cmdWorkflowsDefaults(rest)
 	case "list", "ls", "runs":
 		return cmdWorkflowsList(rest)
 	case "schedules":
@@ -31,6 +33,8 @@ func cmdWorkflows(args []string) int {
 		return cmdWorkflowScheduleHistory(rest)
 	case "run":
 		return cmdWorkflowsRun(rest)
+	case "resume-wait":
+		return resumeRecordedRun("workflow", rest)
 	case "wait":
 		return cmdWorkflowsWait(rest)
 	case "diagnose":
@@ -227,6 +231,7 @@ func cmdWorkflowsRun(args []string) int {
 	if err != nil {
 		return printRunSubmissionError("Request failed", err, recoveryCLI()+" workflows list --app "+recoveryArgument(*appSlug)+" --workflow-name "+recoveryArgument(workflowName), *idempotencyKey != "")
 	}
+	rememberAcceptedWorkflow(*appSlug, workflowName, run)
 	if *wait {
 		if !workflowUUIDPattern.MatchString(run.ID) {
 			if code := renderWorkflowRunStatus(run); code != 0 {
@@ -511,6 +516,9 @@ func cmdWorkflowsResume(args []string) int {
 	if err != nil {
 		return printErr("Request failed", err)
 	}
+	if run.ID == runID {
+		rememberAcceptedWorkflow("", "", run)
+	}
 	if *wait {
 		if run.ID != runID {
 			if code := renderWorkflowRunStatus(run); code != 0 {
@@ -636,6 +644,9 @@ func cmdWorkflowsRetry(args []string) int {
 	run, err := client.RetryWorkflowStep(context.Background(), runID, stepName)
 	if err != nil {
 		return printErr("Request failed", err)
+	}
+	if run.ID == runID {
+		rememberAcceptedWorkflow("", "", run)
 	}
 	if *wait {
 		if run.ID != runID {

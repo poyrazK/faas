@@ -334,8 +334,8 @@ func validateCreateTriggerRequest(req *api.CreateTriggerRequest) *api.Problem {
 	// "triggers not allowed on plan free" response that
 	// would be misleading.
 	if req.Kind == api.TriggerKindCron {
-		if !validCron(req.Schedule) {
-			return api.ErrCronInvalid("expected 5-field cron expression (m h dom mon dow)")
+		if problem := cronScheduleProblem(req.Schedule); problem != nil {
+			return problem
 		}
 		// Path default kept here for parity with the cron table.
 		if req.Path == "" {
@@ -731,9 +731,11 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 			"retry_policy is only valid for non-cron triggers"))
 		return
 	}
-	if req.Schedule != nil && !validCron(*req.Schedule) {
-		api.WriteProblem(w, api.ErrCronInvalid("expected 5-field cron expression"))
-		return
+	if req.Schedule != nil {
+		if problem := cronScheduleProblem(*req.Schedule); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 	}
 	// PR #993 / issue #757 review MED-4: mirror createTrigger's
 	// plan gates for PATCH. A Hobby customer upgrading their
@@ -1255,6 +1257,9 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 		}
 		out = append(out, triggerResponse(created))
 	}
+	if failed := s.applyBatchEventTriggers(r.Context(), acct, app, m.EventTriggers); failed != nil {
+		errs = append(errs, *failed)
+	}
 	writeJSON(w, http.StatusOK, batchCreateResponse{Created: out, Errors: errs})
 }
 
@@ -1438,7 +1443,7 @@ func triggerConfigIdentities() []*age.X25519Identity {
 func sealTriggerConfig(kind api.TriggerKind, raw json.RawMessage) (json.RawMessage, *api.Problem) {
 	var recipient *age.X25519Recipient
 	if setSecretRecipient != nil {
-		recipient = setSecretRecipient()
+		recipient = hostSecretRecipient()
 	}
 	sealed, err := triggerconfig.Seal(kind, raw, recipient)
 	if err == nil {

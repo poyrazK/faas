@@ -5,47 +5,44 @@ import (
 	"time"
 )
 
-func (m *MemStore) PublishOwnedInstanceRuntime(_ context.Context, p RuntimeInstancePublication) (Instance, error) {
+func (m *MemStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeInstancePublication) (Instance, error) {
+	if err := ctx.Err(); err != nil {
+		return Instance{}, err
+	}
 	if err := validateRuntimeInstancePublication(p); err != nil {
 		return Instance{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, err := m.runtimeAppSecretFenceLocked(p.AccountID, p.AppID, p.InstanceID, p.Fence, true); err != nil {
-		return Instance{}, err
-	}
-	instance := m.instances[p.InstanceID]
-	if err := validateWorkerInstanceMutation(instance, p.targetState(), instance.Mode); err != nil {
-		return Instance{}, err
-	}
-	if err := m.requireInstanceLayerArtifactsLocked(instance.DeploymentID, p.targetState()); err != nil {
-		return Instance{}, err
-	}
-	if instance.State != p.ExpectedState || instance.WakeID != p.WakeID || instance.NodeID != p.NodeID {
-		return Instance{}, ErrConflict
-	}
-	snapshot, err := m.runtimeAppValuesLocked(p.AccountID, p.AppID, instance.DeploymentID)
+	instance, err := m.checkOwnedRuntimePublicationLocked(p)
 	if err != nil {
-		return Instance{}, runtimeSecretFenceError(err)
+		return Instance{}, err
 	}
-	current, err := NewRuntimeAppConfigFence(snapshot)
-	if err != nil || current != p.ConfigFence || current.SecretFence != p.Fence {
-		return Instance{}, ErrConflict
-	}
-	if p.ExpectedState == string(StateWarm) || p.ExpectedState == string(StateFrozen) {
-		proof, ok := m.runtimeInstanceConfigProofs[p.InstanceID]
-		if !ok || proof.WakeID != p.WakeID || proof.NodeID != p.NodeID || proof.Fence != p.ConfigFence {
-			return Instance{}, ErrConflict
-		}
+	if capture, found := m.instanceApplicationStandardAdmissions[p.InstanceID]; found && capture.Managed && p.AdmissionReceipt == nil && p.PromotionReceipt == nil {
+		return Instance{}, ErrApplicationStandardRuntimeStale
 	}
 	acceptance, err := m.prepareRuntimeUpgradeAcceptanceLocked(p)
 	if err != nil {
 		return Instance{}, err
 	}
+	if p.AdmissionReceipt != nil || p.PromotionReceipt != nil {
+		instance, err := m.publishOwnedStandardRuntimeLocked(ctx, p)
+		if err != nil {
+			return Instance{}, err
+		}
+		m.runtimeInstanceConfigProofs[p.InstanceID] = runtimeInstanceConfigProof{WakeID: p.WakeID, NodeID: p.NodeID, Fence: p.ConfigFence}
+		if acceptance != nil {
+			if m.runtimeUpgradeAcceptances == nil {
+				m.runtimeUpgradeAcceptances = make(map[string]RuntimeUpgradeAcceptance)
+			}
+			m.runtimeUpgradeAcceptances[acceptance.DeploymentID] = *acceptance
+		}
+		return instance, nil
+	}
 	prior := instance
 	instance.Netns, instance.HostIP, instance.GuestUID = p.Netns, p.HostIP, p.GuestUID
 	instance.StartedAt, instance.State = time.Now().UTC(), p.targetState()
-	if err := m.exclusiveRuntimeTransitionLocked(m.instances[p.InstanceID], instance); err != nil {
+	if err := m.guardInstanceRuntimeTransitionLocked(ctx, m.instances[p.InstanceID], instance); err != nil {
 		return Instance{}, err
 	}
 	m.instances[p.InstanceID] = instance
@@ -61,6 +58,40 @@ func (m *MemStore) PublishOwnedInstanceRuntime(_ context.Context, p RuntimeInsta
 			m.runtimeUpgradeAcceptances = make(map[string]RuntimeUpgradeAcceptance)
 		}
 		m.runtimeUpgradeAcceptances[acceptance.DeploymentID] = *acceptance
+	}
+	return instance, nil
+}
+
+func (m *MemStore) checkOwnedRuntimePublicationLocked(p RuntimeInstancePublication) (Instance, error) {
+	if _, err := m.runtimeAppSecretFenceLocked(p.AccountID, p.AppID, p.InstanceID, p.Fence, true); err != nil {
+		return Instance{}, err
+	}
+	instance := m.instances[p.InstanceID]
+	if err := validateWorkerInstanceMutation(instance, p.targetState(), instance.Mode); err != nil {
+		return Instance{}, err
+	}
+	if err := m.requireInstanceLayerArtifactsLocked(instance.DeploymentID, p.targetState()); err != nil {
+		return Instance{}, err
+	}
+	if (instance.State != p.ExpectedState && (p.PromotionReceipt == nil || instance.State != string(StateRunning))) || instance.WakeID != p.WakeID || instance.NodeID != p.NodeID {
+		return Instance{}, ErrConflict
+	}
+	snapshot, err := m.runtimeAppValuesLocked(p.AccountID, p.AppID, instance.DeploymentID)
+	if err != nil {
+		return Instance{}, runtimeSecretFenceError(err)
+	}
+	current, err := NewRuntimeAppConfigFence(snapshot)
+	if err != nil || current != p.ConfigFence || current.SecretFence != p.Fence {
+		return Instance{}, ErrConflict
+	}
+	if p.ExpectedState == string(StateWarm) || p.ExpectedState == string(StateFrozen) {
+		if !m.instanceSnapshotRecoveryFreshLocked(p.InstanceID) {
+			return Instance{}, ErrConflict
+		}
+		proof, ok := m.runtimeInstanceConfigProofs[p.InstanceID]
+		if !ok || proof.WakeID != p.WakeID || proof.NodeID != p.NodeID || proof.Fence != p.ConfigFence {
+			return Instance{}, ErrConflict
+		}
 	}
 	return instance, nil
 }

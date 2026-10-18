@@ -144,7 +144,7 @@ func TestFunctionLayer_Node22_BuildsWithRunner(t *testing.T) {
 	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
 	app, _ := store.CreateApp(context.Background(), state.App{
 		AccountID: acct.ID, Slug: "node", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
-		Runtime: RuntimeNode22,
+		Type: state.AppTypeFunction, Runtime: RuntimeNode22,
 	})
 	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: "/tmp/src.tgz",
@@ -174,7 +174,7 @@ func TestFunctionLayer_EmptyRunnerPath_FailsLoud(t *testing.T) {
 	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
 	app, _ := store.CreateApp(context.Background(), state.App{
 		AccountID: acct.ID, Slug: "no-runner", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
-		Runtime: RuntimeNode22,
+		Type: state.AppTypeFunction, Runtime: RuntimeNode22,
 	})
 	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: "/tmp/src.tgz",
@@ -247,7 +247,7 @@ func TestHandleSnapshotBoot_BuildsAndPrimesForTarball(t *testing.T) {
 	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
 	app, _ := store.CreateApp(context.Background(), state.App{
 		AccountID: acct.ID, Slug: "boot-app", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
-		Runtime: RuntimeNode22,
+		Type: state.AppTypeFunction, Runtime: RuntimeNode22,
 	})
 	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: "/tmp/x.tgz",
@@ -575,7 +575,7 @@ func TestRecoverBuildHandoffWithoutNotification(t *testing.T) {
 	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
 	app, _ := store.CreateApp(context.Background(), state.App{
 		AccountID: acct.ID, Slug: "boot-app", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
-		Runtime: RuntimeNode22,
+		Type: state.AppTypeFunction, Runtime: RuntimeNode22,
 	})
 	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: "/tmp/x.tgz",

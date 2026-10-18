@@ -13,7 +13,9 @@ import (
 
 // Metrics measures the `gregale dev` inner loop: how long a saved
 // edit takes to go live (as reported by the CLI) and whether syncs can use a
-// live patch (ADR-740) or must rebuild. Every label is bounded.
+// live patch (ADR-740) or must rebuild. Every series carries watch="true"
+// for watch-mode environments (ADR-1170), so the two paths can be compared.
+// Every label is bounded.
 type Metrics struct {
 	registry   prometheus.Registerer
 	syncs      *prometheus.CounterVec
@@ -55,21 +57,21 @@ func NewMetrics(reg prometheus.Registerer, prefix string) *Metrics {
 		syncs: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: prefix + "_dev_syncs_total",
 			Help: "Developer syncs reported by `gregale dev`, by status and whether edit-to-live met its target.",
-		}, []string{"status", "within_slo"}),
+		}, []string{"status", "within_slo", "watch"}),
 		editToLive: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    prefix + "_dev_sync_edit_to_live_seconds",
 			Help:    "Developer sync edit-to-live time reported by `gregale dev`, by status.",
 			Buckets: seconds,
-		}, []string{"status"}),
+		}, []string{"status", "watch"}),
 		phases: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    prefix + "_dev_sync_phase_seconds",
 			Help:    "Developer sync phase durations reported by `gregale dev`, by phase and status.",
 			Buckets: []float64{0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 600},
-		}, []string{"phase", "status"}),
+		}, []string{"phase", "status", "watch"}),
 		patchPlans: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: prefix + "_dev_patch_plans_total",
 			Help: "Developer sync live-patch decisions (ADR-740), by outcome and ineligibility reason.",
-		}, []string{"outcome", "reason"}),
+		}, []string{"outcome", "reason", "watch"}),
 	}
 	register := func(c prometheus.Collector) prometheus.Collector {
 		if err := reg.Register(c); err != nil {
@@ -86,31 +88,33 @@ func NewMetrics(reg prometheus.Registerer, prefix string) *Metrics {
 	m.phases = register(m.phases).(*prometheus.HistogramVec)
 	m.patchPlans = register(m.patchPlans).(*prometheus.CounterVec)
 	for _, outcome := range []string{PatchPublished, PatchNoChanges, PatchDeliveryDisabled, PatchPublishFailed, PatchUninspected} {
-		m.patchPlans.WithLabelValues(outcome, "")
+		m.patchPlans.WithLabelValues(outcome, "", "false")
 	}
 	return m
 }
 
-// ObserveSync records one CLI-reported sync receipt. Phases are validated
-// against devSyncHistoryPhases before this is called.
-func (m *Metrics) ObserveSync(req api.RecordDevSyncRequest) {
+// ObserveSync records one CLI-reported sync receipt of an environment in or
+// out of watch mode. Phases are validated against devSyncHistoryPhases
+// before this is called.
+func (m *Metrics) ObserveSync(req api.RecordDevSyncRequest, watch bool) {
 	if m == nil {
 		return
 	}
-	m.syncs.WithLabelValues(req.Status, strconv.FormatBool(req.WithinSLO)).Inc()
-	m.editToLive.WithLabelValues(req.Status).Observe((time.Duration(req.EditToLiveMS) * time.Millisecond).Seconds())
+	w := strconv.FormatBool(watch)
+	m.syncs.WithLabelValues(req.Status, strconv.FormatBool(req.WithinSLO), w).Inc()
+	m.editToLive.WithLabelValues(req.Status, w).Observe((time.Duration(req.EditToLiveMS) * time.Millisecond).Seconds())
 	for _, phase := range req.Phases {
 		if phase.DurationMS > 0 {
-			m.phases.WithLabelValues(phase.Phase, phase.Status).Observe((time.Duration(phase.DurationMS) * time.Millisecond).Seconds())
+			m.phases.WithLabelValues(phase.Phase, phase.Status, w).Observe((time.Duration(phase.DurationMS) * time.Millisecond).Seconds())
 		}
 	}
 }
 
-func (m *Metrics) ObservePatchPlan(outcome, reason string) {
+func (m *Metrics) ObservePatchPlan(outcome, reason string, watch bool) {
 	if m == nil {
 		return
 	}
-	m.patchPlans.WithLabelValues(outcome, devPatchReasonLabel(reason)).Inc()
+	m.patchPlans.WithLabelValues(outcome, devPatchReasonLabel(reason), strconv.FormatBool(watch)).Inc()
 }
 
 // Registry is the registerer these metrics were created on.

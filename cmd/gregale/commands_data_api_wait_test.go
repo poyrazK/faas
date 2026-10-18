@@ -166,7 +166,12 @@ func TestDataAPIRefreshWaitFailures(t *testing.T) {
 			})
 			_, stderr, restore := swapIO(t)
 			defer restore()
-			if code := cmdDataAPIRefresh([]string{"notes", "--wait", "--timeout=300ms"}); code == 0 {
+			timeout := "5s"
+			switch tc.name {
+			case "restart deadline", "unready engine", "health request deadline":
+				timeout = "300ms"
+			}
+			if code := cmdDataAPIRefresh([]string{"notes", "--wait", "--timeout=" + timeout}); code == 0 {
 				t.Fatal("unverified refresh reported success")
 			}
 			diagnostic := stderr()

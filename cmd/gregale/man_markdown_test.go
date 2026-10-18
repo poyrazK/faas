@@ -38,7 +38,7 @@ func TestMarkdownReferenceOmitsAdvancedCommands(t *testing.T) {
 	var buf bytes.Buffer
 	renderMarkdownReference(&buf, customerCliCommands())
 	out := buf.String()
-	for _, command := range []string{"admin", "mail", "postgres", "rollouts", "github-webhook-secret", "tenant-surfaces"} {
+	for _, command := range []string{"admin", "mail", "postgres", "rollouts", "github-webhook-secret", "tenant-surfaces", "entities"} {
 		if strings.Contains(out, "## "+command+"\n") {
 			t.Errorf("public Markdown reference exposes advanced command %q", command)
 		}
@@ -118,5 +118,16 @@ func TestMarkdownReferenceEscapesPlaceholdersAndFlagValues(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
+	}
+}
+
+// TestMarkdownReferenceListsAppsRmConfirmation pins H10-117: `apps rm`
+// refused in non-interactive mode without --yes while its help listed no
+// flags at all.
+func TestMarkdownReferenceListsAppsRmConfirmation(t *testing.T) {
+	var buf bytes.Buffer
+	renderMarkdownReference(&buf, customerCliCommands())
+	if !strings.Contains(buf.String(), "`gregale apps rm [--dry-run] [--yes] [--quiet] [-q] <slug>`") {
+		t.Error("apps rm reference omits its confirmation flags")
 	}
 }

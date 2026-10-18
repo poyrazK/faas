@@ -32,7 +32,7 @@ tests:
         alertname: FaasFleetSealDomainUnverified
         exp_alerts:
           - exp_labels:
-              severity: page
+              severity: warn
               component: schedd
               family: fleet_seal_domain
               job: node-compute
@@ -66,7 +66,7 @@ tests:
         alertname: FaasInternalMTLSRenewalNeverCompleted
         exp_alerts:
           - exp_labels:
-              severity: page
+              severity: warn
               component: gregalectl
               family: internal_mtls_lifecycle
               public_status: internal
@@ -96,7 +96,7 @@ tests:
         alertname: FaasGCPOpsAgentMissing
         exp_alerts:
           - exp_labels:
-              severity: page
+              severity: warn
               component: gcp-ops-agent
               family: off_host_telemetry
               public_status: internal

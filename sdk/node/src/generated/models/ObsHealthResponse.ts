@@ -5,8 +5,8 @@
 /**
  * Wire shape for GET /v1/admin/obs/health (admin scope +
  * FAAS_ADMIN_EMAILS allowlist + MFA). Composed from
- * apid's own Prometheus counters (audit_log_write_total /
- * audit_log_write_failures_total / audit_log_coverage_ratio_5m),
+ * apid's own Prometheus counters (apid_audit_log_write_total /
+ * apid_audit_log_write_failures_total), a SQL audit-log coverage ratio,
  * a single SQL aggregate over operator_intents (stuck-running
  * rows), a single SQL aggregate over events (trace_id
  * coverage), and a PromQL count of firing alerts. Kinds
@@ -29,24 +29,23 @@ export type ObsHealthResponse = {
    */
   prometheus_available: boolean;
   /**
-   * Sum of audit_log_write_total over the trailing 5m
+   * Increase of apid_audit_log_write_total over the trailing 5m
    * window. 0 when the audit pipeline has been silent in the
    * window. Check `prometheus_available` before interpreting it.
    *
    */
   audit_log_write_total_5m: number;
   /**
-   * Sum of audit_log_write_failures_total over the trailing
+   * Increase of apid_audit_log_write_failures_total over the trailing
    * 5m window. Check `prometheus_available` before interpreting it.
    *
    */
   audit_log_write_failures_5m: number;
   /**
-   * Ratio of audit_log writes with a non-NULL trace_id
-   * over all audit_log writes in the window. 1.0
-   * (vacuous truth) when the audit pipeline has been silent
-   * in the window. Check `prometheus_available` before
-   * interpreting it.
+   * Ratio of durable audit_log rows with a valid W3C trace_id
+   * in their JSON payload over all audit rows in the window. 1.0
+   * (vacuous truth) when no durable audit rows exist in the window.
+   * This ratio comes from SQL, independently of Prometheus availability.
    *
    */
   audit_log_coverage_ratio_5m: number;

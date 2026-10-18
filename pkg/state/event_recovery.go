@@ -183,6 +183,20 @@ func createEventRecoveryTx(ctx context.Context, tx pgx.Tx, accountID, appID stri
 	if active >= api.EventRecoveryActiveJobsMax {
 		return api.EventRecoveryJob{}, ErrEventRecoveryQuota
 	}
+	if req.WorkflowRuns != nil && req.ParentJobID == "" {
+		for _, target := range req.WorkflowRuns.Runs {
+			if target.ExpectedResumeCount != 0 {
+				continue
+			}
+			pending, err := q.WorkflowInitialRecoveryPending(ctx, tx, sqlc.WorkflowInitialRecoveryPendingParams{AppID: mustPgUUID(appID), RunID: target.RunID})
+			if err != nil {
+				return api.EventRecoveryJob{}, fmt.Errorf("check pending initial recovery: %w", err)
+			}
+			if pending {
+				return api.EventRecoveryJob{}, initialReviewBlocked("pending_recovery")
+			}
+		}
+	}
 	now := time.Now().UTC()
 	rows, err := eventRecoveryCandidates(ctx, q, tx, accountID, appID, req, now)
 	if err != nil {

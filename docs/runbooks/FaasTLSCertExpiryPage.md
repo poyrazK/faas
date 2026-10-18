@@ -3,7 +3,8 @@
 Source: `deploy/ansible/roles/prometheus/files/faas.rules.yml`.
 Metric: `gateway_tls_cert_expiry_seconds` (gatewayd-public `/metrics`).
 Spec: §12 + ADR-024 H3 (closed in PR #345).
-Severity: page.
+Severity: warn at 14 days (ADR-1236). `FaasTLSCertExpiryImminent` pages
+below 72 hours.
 
 > **Legacy daemon only (revised 2026-08-04).** This runbook applies
 > to the legacy `cmd/gatewayd/` daemon and to `cmd/gatewayd-public/`

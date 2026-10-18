@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -62,7 +63,39 @@ func cmdCronsInfo(args []string) int {
 		return jsonOut(writeJSON(resp))
 	}
 	renderCronInfo(osStdout, resp)
+	// The cron row says only "enabled"; a schedule failing every run for
+	// days looked healthy here (H10-70). A runs read failure leaves the
+	// block out rather than failing the command.
+	if runs, runsErr := client.ListCronRuns(context.Background(), id, "", cronInfoRecentRuns); runsErr == nil {
+		renderCronRecentRuns(osStdout, id, runs.Runs)
+	}
 	return 0
+}
+
+// cronInfoRecentRuns is how many runs crons info summarizes.
+const cronInfoRecentRuns = 10
+
+// renderCronRecentRuns adds the newest run's outcome and, when any of the
+// recent runs did not succeed, how many, with the command that lists them.
+func renderCronRecentRuns(w io.Writer, id string, runs []api.CronRun) {
+	if len(runs) == 0 {
+		return
+	}
+	newest := runs[0]
+	line := fmt.Sprintf("%s at %s", newest.Outcome, newest.StartedAt.UTC().Format(time.RFC3339))
+	if newest.Error != "" {
+		line += " — " + truncateReason(newest.Error, 120)
+	}
+	_, _ = fmt.Fprintf(w, "  last run: %s\n", line)
+	unsuccessful := 0
+	for _, run := range runs {
+		if run.Outcome != api.CronRunSuccess && run.Outcome != api.CronRunRunning {
+			unsuccessful++
+		}
+	}
+	if unsuccessful > 0 {
+		_, _ = fmt.Fprintf(w, "  recent:   %d of the last %d runs did not succeed; see `gregale crons runs %s`\n", unsuccessful, len(runs), id)
+	}
 }
 
 // renderCronInfo writes one human-mode block for a single cron.

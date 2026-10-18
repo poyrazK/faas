@@ -13,9 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// RecordAIUsage settles one AI call (ADR-988). The caller/model rollup is
-// written before the admission counter so this transaction takes locks in the
-// same order as admission and integration deletion: integration, then state.
+// RecordAIUsage settles one AI call (ADR-988).
 func (b *PostgresBackend) RecordAIUsage(ctx context.Context, record AIUsageRecord) error {
 	_, err := b.RecordAIUsageAlerts(ctx, record)
 	return err
@@ -34,6 +32,13 @@ type aiSettlementLimits struct {
 // RecordAIUsageAlerts settles one AI call and, in the same transaction,
 // records the budget alerts it reached with their webhooks and the call's
 // request-log entry (ADR-991).
+//
+// A call's lease ID is its settlement key (ADR-1120): the first settlement
+// inserts it and deletes the lease, so a retried settlement whose first
+// attempt committed changes nothing. The transaction takes two pipelined
+// round trips before the commit, and the contended rows (the caller/model
+// rollup, the admission state and the binding counters) are locked only in
+// the second.
 func (b *PostgresBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsageRecord) ([]AIBudgetAlert, error) {
 	if err := validateAIUsageRecord(record); err != nil {
 		return nil, err
@@ -45,43 +50,28 @@ func (b *PostgresBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsag
 	if appCaller(record.Caller) && !validUUID(record.Caller) {
 		return nil, fmt.Errorf("%w: AI usage caller must be an app UUID, %q or %q", ErrInvalidIntegration, AIUsageCallerRuns, AIUsageCallerReplay)
 	}
+	var leaseID uuid.UUID
+	if record.LeaseID != "" {
+		if leaseID, err = uuid.Parse(record.LeaseID); err != nil {
+			return nil, fmt.Errorf("%w: AI usage lease id must be a UUID", ErrInvalidIntegration)
+		}
+	}
 	tx, err := b.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := insertAIUsageRollup(ctx, tx, integrationID, record); err != nil {
+	opened, err := openAISettlement(ctx, tx, integrationID, leaseID, record)
+	if err != nil || opened.settled {
 		return nil, err
 	}
-	user, err := insertAIUserUsageRollup(ctx, tx, integrationID, record)
+	crossings, err := settleAIUsageRows(ctx, tx, integrationID, leaseID, record, opened)
 	if err != nil {
 		return nil, err
 	}
-	var now time.Time
-	if err := tx.QueryRow(ctx, `SELECT now()`).Scan(&now); err != nil {
-		return nil, err
-	}
-	var limits aiSettlementLimits
-	if err := tx.QueryRow(ctx, `
-		SELECT account_id, name, COALESCE(ai_daily_token_limit, 0),
-		       COALESCE(ai_daily_cost_limit_millicents, 0), COALESCE(ai_monthly_cost_limit_millicents, 0),
-		       COALESCE(ai_user_daily_token_limit, 0), COALESCE(ai_user_daily_cost_limit_millicents, 0)
-		  FROM outbound_integrations WHERE id = $1`, integrationID).
-		Scan(&limits.accountID, &limits.name, &limits.dailyTokens, &limits.dailyCost, &limits.monthlyCost,
-			&limits.userTokens, &limits.userCost); err != nil {
-		return nil, err
-	}
-	crossings, err := settleAIUsageCounters(ctx, tx, integrationID, record, limits, now)
+	alerts, err := recordAIBudgetAlerts(ctx, tx, integrationID, opened.limits, record.Caller,
+		aiBudgetAlertsFor(record.IntegrationID, crossings, opened.now.UTC()))
 	if err != nil {
-		return nil, err
-	}
-	crossings = append(crossings, userBudgetCrossings(user.endUser, utcDayStart(now), positiveLimit(limits.userTokens),
-		positiveLimit(limits.userCost), user.tokens, user.cost, record.Usage.InputTokens+record.Usage.OutputTokens, record.CostMillicents)...)
-	alerts, err := recordAIBudgetAlerts(ctx, tx, integrationID, limits, record.Caller, aiBudgetAlertsFor(record.IntegrationID, crossings, now.UTC()))
-	if err != nil {
-		return nil, err
-	}
-	if err := insertAIRequestLog(ctx, tx, integrationID, record); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -90,7 +80,223 @@ func (b *PostgresBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsag
 	return alerts, nil
 }
 
-func insertAIUsageRollup(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID, record AIUsageRecord) error {
+// openedAISettlement is what a settlement reads and writes before it locks a
+// contended row.
+type openedAISettlement struct {
+	// settled reports that the call's key was already taken: an earlier
+	// attempt committed this settlement.
+	settled bool
+	now     time.Time
+	limits  aiSettlementLimits
+	logID   uuid.UUID
+}
+
+// openAISettlement claims the call's settlement key, reads the integration's
+// limits, and inserts the request-log row, in one round trip.
+func openAISettlement(ctx context.Context, tx pgx.Tx, integrationID, leaseID uuid.UUID, record AIUsageRecord) (openedAISettlement, error) {
+	batch := &pgx.Batch{}
+	if leaseID != uuid.Nil {
+		batch.Queue(`
+			INSERT INTO outbound_ai_settlements (lease_id, integration_id) VALUES ($1, $2)
+			ON CONFLICT (lease_id) DO NOTHING
+			RETURNING lease_id`, leaseID, integrationID)
+	}
+	batch.Queue(`
+		SELECT now(), account_id, name, COALESCE(ai_daily_token_limit, 0),
+		       COALESCE(ai_daily_cost_limit_millicents, 0), COALESCE(ai_monthly_cost_limit_millicents, 0),
+		       COALESCE(ai_user_daily_token_limit, 0), COALESCE(ai_user_daily_cost_limit_millicents, 0)
+		  FROM outbound_integrations WHERE id = $1`, integrationID)
+	if record.Log != nil {
+		queueAIRequestLog(batch, integrationID, record)
+	}
+	results := tx.SendBatch(ctx, batch)
+	opened, err := scanOpenedAISettlement(results, leaseID, record)
+	if closeErr := results.Close(); err == nil {
+		err = closeErr
+	}
+	return opened, err
+}
+
+func scanOpenedAISettlement(results pgx.BatchResults, leaseID uuid.UUID, record AIUsageRecord) (openedAISettlement, error) {
+	var opened openedAISettlement
+	if leaseID != uuid.Nil {
+		var claimed uuid.UUID
+		err := results.QueryRow().Scan(&claimed)
+		if errors.Is(err, pgx.ErrNoRows) {
+			opened.settled = true
+			return opened, nil
+		}
+		if err != nil {
+			return opened, err
+		}
+	}
+	limits := &opened.limits
+	if err := results.QueryRow().Scan(&opened.now, &limits.accountID, &limits.name, &limits.dailyTokens, &limits.dailyCost,
+		&limits.monthlyCost, &limits.userTokens, &limits.userCost); err != nil {
+		return opened, err
+	}
+	if record.Log != nil {
+		if err := results.QueryRow().Scan(&opened.logID); err != nil {
+			return opened, err
+		}
+	}
+	return opened, nil
+}
+
+// settleAIUsageRows adds the call to the caller/model and end-user rollups
+// and to the admission and binding counters, deletes its lease, and stores
+// its captured content, in one round trip. It returns each limited budget's
+// before and after values. The rollup is written before the admission
+// counter so the transaction takes locks in the same order as admission and
+// integration deletion: integration, then state.
+func settleAIUsageRows(ctx context.Context, tx pgx.Tx, integrationID, leaseID uuid.UUID, record AIUsageRecord,
+	opened openedAISettlement) ([]aiBudgetCrossing, error) {
+	plan := aiSettlementPlan{
+		endUser:  record.EndUser != "",
+		counters: record.Usage.BudgetTokens() > 0 || record.CostMillicents > 0,
+		binding:  record.Usage.BudgetTokens() > 0 && appCaller(record.Caller),
+		lease:    leaseID != uuid.Nil,
+		content:  record.Log != nil && record.Log.Content != nil,
+	}
+	batch := &pgx.Batch{}
+	queueAIUsageRollup(batch, integrationID, record)
+	if plan.endUser {
+		queueAIUserUsageRollup(batch, integrationID, record)
+	}
+	queueAIUsageCounters(batch, integrationID, record, plan)
+	if plan.lease {
+		batch.Queue(`DELETE FROM outbound_admission_leases WHERE integration_id = $1 AND lease_id = $2`, integrationID, leaseID)
+	}
+	if plan.content {
+		queueAIRequestContent(batch, integrationID, opened.logID, record.Log.Content)
+	}
+	results := tx.SendBatch(ctx, batch)
+	crossings, err := scanAIUsageRows(results, record, opened, plan)
+	if closeErr := results.Close(); err == nil {
+		err = closeErr
+	}
+	return crossings, err
+}
+
+// aiSettlementPlan names the statements one settlement sends.
+type aiSettlementPlan struct {
+	endUser, counters, binding, lease, content bool
+}
+
+// queueAIUsageCounters adds the call to the admission and binding counters.
+// The counters follow admission's UTC-day and calendar-month resets; a call
+// that straddles midnight counts toward the day it settles in. A call with
+// nothing to count still locks the state row when it deletes its lease, so
+// the lease is deleted under the same lock order as admission.
+func queueAIUsageCounters(batch *pgx.Batch, integrationID uuid.UUID, record AIUsageRecord, plan aiSettlementPlan) {
+	if !plan.counters {
+		if plan.lease {
+			batch.Queue(`SELECT 1 FROM outbound_admission_state WHERE integration_id = $1 FOR UPDATE`, integrationID)
+		}
+	} else {
+		batch.Queue(`
+			UPDATE outbound_admission_state
+			   SET daily_request_count = CASE WHEN daily_usage_date = (now() AT TIME ZONE 'UTC')::date
+			                                  THEN daily_request_count ELSE 0 END,
+			       daily_ai_token_count = CASE WHEN daily_usage_date = (now() AT TIME ZONE 'UTC')::date
+			                                   THEN daily_ai_token_count + $2 ELSE $2 END,
+			       daily_ai_cost_millicents = CASE WHEN daily_usage_date = (now() AT TIME ZONE 'UTC')::date
+			                                       THEN daily_ai_cost_millicents + $3 ELSE $3 END,
+			       monthly_ai_cost_millicents = CASE WHEN monthly_usage_month = (date_trunc('month', now() AT TIME ZONE 'UTC'))::date
+			                                         THEN monthly_ai_cost_millicents + $3 ELSE $3 END,
+			       daily_usage_date = (now() AT TIME ZONE 'UTC')::date,
+			       monthly_usage_month = (date_trunc('month', now() AT TIME ZONE 'UTC'))::date
+			 WHERE integration_id = $1
+			RETURNING daily_ai_token_count, daily_ai_cost_millicents, monthly_ai_cost_millicents`,
+			integrationID, record.Usage.BudgetTokens(), record.CostMillicents)
+	}
+	// ADR-990: the app's own binding counter, when the app has a binding row.
+	// Operator attachments and Runs have none, so nothing is updated.
+	if plan.binding {
+		batch.Queue(`
+			UPDATE outbound_app_binding_usage usage
+			   SET daily_request_count = CASE WHEN usage.daily_usage_date = (now() AT TIME ZONE 'UTC')::date
+			                                  THEN usage.daily_request_count ELSE 0 END,
+			       daily_ai_token_count = CASE WHEN usage.daily_usage_date = (now() AT TIME ZONE 'UTC')::date
+			                                   THEN usage.daily_ai_token_count + $3 ELSE $3 END,
+			       daily_usage_date = (now() AT TIME ZONE 'UTC')::date,
+			       -- ADR-991: tokens count toward the minute they settle in.
+			       minute_request_count = CASE WHEN usage.minute_window_start = date_trunc('minute', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+			                                   THEN usage.minute_request_count ELSE 0 END,
+			       minute_ai_token_count = CASE WHEN usage.minute_window_start = date_trunc('minute', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+			                                    THEN usage.minute_ai_token_count + $3 ELSE $3 END,
+			       minute_window_start = date_trunc('minute', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+			  FROM outbound_app_bindings binding
+			 WHERE usage.integration_id = $1 AND usage.app_id = $2
+			   AND binding.integration_id = usage.integration_id AND binding.app_id = usage.app_id
+			RETURNING usage.daily_ai_token_count, COALESCE(binding.ai_daily_token_limit, 0)`,
+			integrationID, uuid.MustParse(record.Caller), record.Usage.BudgetTokens())
+	}
+}
+
+// scanAIUsageRows reads the settlement's results in the order they were
+// queued and turns the counters into budget crossings.
+func scanAIUsageRows(results pgx.BatchResults, record AIUsageRecord, opened openedAISettlement, plan aiSettlementPlan) ([]aiBudgetCrossing, error) {
+	if _, err := results.Exec(); err != nil {
+		return nil, err
+	}
+	var user aiUserDay
+	if plan.endUser {
+		if err := results.QueryRow().Scan(&user.endUser, &user.tokens, &user.cost); err != nil {
+			return nil, err
+		}
+	}
+	budgetTokens, cost := record.Usage.BudgetTokens(), record.CostMillicents
+	limits := opened.limits
+	day, month := utcDayStart(opened.now), utcMonthStart(opened.now)
+	var crossings []aiBudgetCrossing
+	if !plan.counters && plan.lease {
+		var locked int
+		if err := results.QueryRow().Scan(&locked); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+	} else if plan.counters {
+		var dailyTokens, dailyCost, monthlyCost int64
+		err := results.QueryRow().Scan(&dailyTokens, &dailyCost, &monthlyCost)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+		if err == nil {
+			crossings = append(crossings,
+				aiBudgetCrossing{api.OutboundAIBudgetDailyTokens, "", day, positiveLimit(limits.dailyTokens), dailyTokens - budgetTokens, dailyTokens, ""},
+				aiBudgetCrossing{api.OutboundAIBudgetDailyCost, "", day, positiveLimit(limits.dailyCost), dailyCost - cost, dailyCost, ""},
+				aiBudgetCrossing{api.OutboundAIBudgetMonthlyCost, "", month, positiveLimit(limits.monthlyCost), monthlyCost - cost, monthlyCost, ""})
+		}
+	}
+	if plan.binding {
+		var bindingTokens, bindingLimit int64
+		err := results.QueryRow().Scan(&bindingTokens, &bindingLimit)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+		if err == nil {
+			crossings = append(crossings, aiBudgetCrossing{api.OutboundAIBudgetAppDailyTokens, record.Caller, day,
+				positiveLimit(bindingLimit), bindingTokens - budgetTokens, bindingTokens, ""})
+		}
+	}
+	if plan.lease {
+		if _, err := results.Exec(); err != nil {
+			return nil, err
+		}
+	}
+	if plan.content {
+		for range 2 {
+			if _, err := results.Exec(); err != nil {
+				return nil, err
+			}
+		}
+	}
+	crossings = append(crossings, userBudgetCrossings(user.endUser, day, positiveLimit(limits.userTokens),
+		positiveLimit(limits.userCost), user.tokens, user.cost, record.Usage.InputTokens+record.Usage.OutputTokens, cost)...)
+	return crossings, nil
+}
+
+func queueAIUsageRollup(batch *pgx.Batch, integrationID uuid.UUID, record AIUsageRecord) {
 	var errorRequests, unknownRequests int64
 	switch record.Outcome {
 	case AIUsageOutcomeError:
@@ -102,7 +308,7 @@ func insertAIUsageRollup(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID
 	// A provider-chosen model name may only add a new row while the day has
 	// fewer than the capped number of distinct models; later ones aggregate
 	// under "other" so a customer origin cannot grow the table without bound.
-	_, err := tx.Exec(ctx, `
+	batch.Queue(`
 		INSERT INTO outbound_ai_usage_daily AS usage
 		    (integration_id, usage_date, caller, model, requests, error_requests, usage_unknown_requests,
 		     input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents,
@@ -132,78 +338,6 @@ func insertAIUsageRollup(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID
 		integrationID, record.Caller, usage.Model, api.OutboundAIUsageModelsPerDay, aiUsageOverflowModel,
 		errorRequests, unknownRequests, usage.InputTokens, usage.CachedInputTokens, usage.CacheWriteTokens,
 		usage.OutputTokens, record.CostMillicents, usage.Images, usage.AudioSeconds, usage.Characters)
-	return err
-}
-
-// settleAIUsageCounters adds the call to the admission and binding counters
-// and returns each limited budget's before and after values.
-func settleAIUsageCounters(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID, record AIUsageRecord,
-	limits aiSettlementLimits, now time.Time) ([]aiBudgetCrossing, error) {
-	budgetTokens := record.Usage.BudgetTokens()
-	cost := record.CostMillicents
-	var crossings []aiBudgetCrossing
-	// The counters follow admission's UTC-day and calendar-month resets. A
-	// call that straddles midnight counts toward the day it settles in.
-	if budgetTokens > 0 || cost > 0 {
-		var dailyTokens, dailyCost, monthlyCost int64
-		err := tx.QueryRow(ctx, `
-			UPDATE outbound_admission_state
-			   SET daily_request_count = CASE WHEN daily_usage_date = (now() AT TIME ZONE 'UTC')::date
-			                                  THEN daily_request_count ELSE 0 END,
-			       daily_ai_token_count = CASE WHEN daily_usage_date = (now() AT TIME ZONE 'UTC')::date
-			                                   THEN daily_ai_token_count + $2 ELSE $2 END,
-			       daily_ai_cost_millicents = CASE WHEN daily_usage_date = (now() AT TIME ZONE 'UTC')::date
-			                                       THEN daily_ai_cost_millicents + $3 ELSE $3 END,
-			       monthly_ai_cost_millicents = CASE WHEN monthly_usage_month = (date_trunc('month', now() AT TIME ZONE 'UTC'))::date
-			                                         THEN monthly_ai_cost_millicents + $3 ELSE $3 END,
-			       daily_usage_date = (now() AT TIME ZONE 'UTC')::date,
-			       monthly_usage_month = (date_trunc('month', now() AT TIME ZONE 'UTC'))::date
-			 WHERE integration_id = $1
-			RETURNING daily_ai_token_count, daily_ai_cost_millicents, monthly_ai_cost_millicents`,
-			integrationID, budgetTokens, cost).Scan(&dailyTokens, &dailyCost, &monthlyCost)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return nil, err
-		}
-		if err == nil {
-			day, month := utcDayStart(now), utcMonthStart(now)
-			crossings = append(crossings,
-				aiBudgetCrossing{api.OutboundAIBudgetDailyTokens, "", day, positiveLimit(limits.dailyTokens), dailyTokens - budgetTokens, dailyTokens, ""},
-				aiBudgetCrossing{api.OutboundAIBudgetDailyCost, "", day, positiveLimit(limits.dailyCost), dailyCost - cost, dailyCost, ""},
-				aiBudgetCrossing{api.OutboundAIBudgetMonthlyCost, "", month, positiveLimit(limits.monthlyCost), monthlyCost - cost, monthlyCost, ""})
-		}
-	}
-	// ADR-990: the app's own binding counter, when the app has a binding row.
-	// Operator attachments and Runs have none, so nothing is updated.
-	if budgetTokens > 0 && appCaller(record.Caller) {
-		appID := uuid.MustParse(record.Caller)
-		var bindingTokens, bindingLimit int64
-		err := tx.QueryRow(ctx, `
-			UPDATE outbound_app_binding_usage usage
-			   SET daily_request_count = CASE WHEN usage.daily_usage_date = (now() AT TIME ZONE 'UTC')::date
-			                                  THEN usage.daily_request_count ELSE 0 END,
-			       daily_ai_token_count = CASE WHEN usage.daily_usage_date = (now() AT TIME ZONE 'UTC')::date
-			                                   THEN usage.daily_ai_token_count + $3 ELSE $3 END,
-			       daily_usage_date = (now() AT TIME ZONE 'UTC')::date,
-			       -- ADR-991: tokens count toward the minute they settle in.
-			       minute_request_count = CASE WHEN usage.minute_window_start = date_trunc('minute', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
-			                                   THEN usage.minute_request_count ELSE 0 END,
-			       minute_ai_token_count = CASE WHEN usage.minute_window_start = date_trunc('minute', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
-			                                    THEN usage.minute_ai_token_count + $3 ELSE $3 END,
-			       minute_window_start = date_trunc('minute', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
-			  FROM outbound_app_bindings binding
-			 WHERE usage.integration_id = $1 AND usage.app_id = $2
-			   AND binding.integration_id = usage.integration_id AND binding.app_id = usage.app_id
-			RETURNING usage.daily_ai_token_count, COALESCE(binding.ai_daily_token_limit, 0)`,
-			integrationID, appID, budgetTokens).Scan(&bindingTokens, &bindingLimit)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return nil, err
-		}
-		if err == nil {
-			crossings = append(crossings, aiBudgetCrossing{api.OutboundAIBudgetAppDailyTokens, record.Caller, utcDayStart(now),
-				positiveLimit(bindingLimit), bindingTokens - budgetTokens, bindingTokens, ""})
-		}
-	}
-	return crossings, nil
 }
 
 // recordAIBudgetAlerts stores first-time alerts and enqueues one
@@ -296,18 +430,14 @@ func nullableAppID(appID string) *uuid.UUID {
 	return &parsed
 }
 
-func insertAIRequestLog(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID, record AIUsageRecord) error {
-	if record.Log == nil {
-		return nil
-	}
+func queueAIRequestLog(batch *pgx.Batch, integrationID uuid.UUID, record AIUsageRecord) {
 	var routeID *uuid.UUID
 	if record.Log.RouteID != "" {
 		parsed := uuid.MustParse(record.Log.RouteID)
 		routeID = &parsed
 	}
 	usage := record.Usage
-	var logID uuid.UUID
-	if err := tx.QueryRow(ctx, `
+	batch.Queue(`
 		INSERT INTO outbound_ai_request_log
 		    (integration_id, caller, route_id, model, status, outcome, input_tokens, cached_input_tokens,
 		     cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts, end_user)
@@ -315,26 +445,17 @@ func insertAIRequestLog(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID,
 		RETURNING id`,
 		integrationID, record.Caller, routeID, usage.Model, record.Log.Status, string(record.Outcome), usage.InputTokens,
 		usage.CachedInputTokens, usage.CacheWriteTokens, usage.OutputTokens, record.CostMillicents,
-		record.Log.DurationMS, record.Log.TTFBMS, record.Log.Attempts, record.EndUser).Scan(&logID); err != nil {
-		return err
-	}
-	return insertAIRequestContent(ctx, tx, integrationID, logID, record.Log.Content)
+		record.Log.DurationMS, record.Log.TTFBMS, record.Log.Attempts, record.EndUser)
 }
 
-// insertAIRequestContent stores a logged call's captured bodies while the
+// queueAIRequestContent stores a logged call's captured bodies while the
 // integration has fewer than the day's capped captures (ADR-996). A
 // transaction lock per integration keeps concurrent settlements from
-// overshooting the cap; it is the transaction's last statement, so the lock
-// is never held while waiting on another.
-func insertAIRequestContent(ctx context.Context, tx pgx.Tx, integrationID, logID uuid.UUID, content *AIRequestContent) error {
-	if content == nil {
-		return nil
-	}
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('outbound-ai-content:' || $1::uuid::text, 0))`,
-		integrationID); err != nil {
-		return err
-	}
-	_, err := tx.Exec(ctx, `
+// overshooting the cap; it is taken after the admission-state row, so the
+// lock is never held while waiting on that row.
+func queueAIRequestContent(batch *pgx.Batch, integrationID, logID uuid.UUID, content *AIRequestContent) {
+	batch.Queue(`SELECT pg_advisory_xact_lock(hashtextextended('outbound-ai-content:' || $1::uuid::text, 0))`, integrationID)
+	batch.Queue(`
 		INSERT INTO outbound_ai_request_content
 		    (log_id, integration_id, request_body, request_truncated, response_body, response_truncated, response_content_type,
 		     request_path)
@@ -345,7 +466,6 @@ func insertAIRequestContent(ctx context.Context, tx pgx.Tx, integrationID, logID
 		                               LIMIT $8) captured) < $8`,
 		logID, integrationID, nonNilBytes(content.Request), content.RequestTruncated, nonNilBytes(content.Response),
 		content.ResponseTruncated, content.ResponseContentType, api.OutboundAIContentCapturesPerDay, content.RequestPath)
-	return err
 }
 
 func nonNilBytes(b []byte) []byte {
@@ -362,8 +482,9 @@ func nonNilBytes(b []byte) []byte {
 func (b *PostgresBackend) PruneAIUsage(ctx context.Context) (int64, error) {
 	var total int64
 	for _, statement := range []struct {
-		sql  string
-		days int
+		sql string
+		// age is the retention, in the unit the statement names.
+		age int
 	}{
 		{`DELETE FROM outbound_ai_usage_daily WHERE usage_date < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUsageRetentionDays},
 		{`DELETE FROM outbound_ai_budget_alerts WHERE period_start < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUsageRetentionDays},
@@ -380,8 +501,10 @@ func (b *PostgresBackend) PruneAIUsage(ctx context.Context) (int64, error) {
 		{`DELETE FROM outbound_ai_user_usage_daily WHERE usage_date < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},
 		// ADR-995: end users' alerts follow the per-user rollup retention.
 		{`DELETE FROM outbound_ai_budget_alerts WHERE end_user IS NOT NULL AND period_start < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},
+		// ADR-1120: a settled call's key only has to outlive its retries.
+		{`DELETE FROM outbound_ai_settlements WHERE settled_at < now() - make_interval(mins => $1::int)`, api.OutboundAISettlementKeyRetentionMinutes},
 	} {
-		command, err := b.pool.Exec(ctx, statement.sql, statement.days)
+		command, err := b.pool.Exec(ctx, statement.sql, statement.age)
 		if err != nil {
 			return total, err
 		}

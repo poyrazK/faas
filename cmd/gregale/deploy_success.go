@@ -174,6 +174,7 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 	if appOK {
 		appURL = canonicalAppURL(app)
 	}
+	noHTTP := appOK && servesNoHTTP(app.Manifest.ExecutionMode)
 	if final.CanaryTotalSteps > 0 && final.RolloutState == rolloutStateAborted {
 		reason := final.RolloutAbortedReason
 		if reason == "" {
@@ -221,15 +222,27 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 		} else {
 			PrintProgress(osStdout, "Promotion: inspect current traffic with gregale traffic status %s", appSlug)
 		}
+	} else if noHTTP {
+		// A worker or job has no URL to visit; the cold-wake and access
+		// lines describe request apps only (H10-137).
+		if label := renderRevision(final.Revision); label != "" {
+			PrintOK(osStdout, "Deployed %s.", label)
+		} else {
+			PrintOK(osStdout, "Deployed.")
+		}
 	} else if label := renderRevision(final.Revision); label != "" {
 		PrintOK(osStdout, "Deployed %s. %s", label, appURL)
 	} else {
 		PrintOK(osStdout, "Deployed. %s", appURL)
 	}
-	if !darkDeploy {
+	switch {
+	case darkDeploy:
+	case noHTTP:
+		printDeployNoHTTPSentence(app.Manifest.ExecutionMode, appSlug)
+	default:
 		printDeployColdWakeSentence()
 	}
-	if appOK {
+	if appOK && !noHTTP {
 		renderDeploymentAccess(osStdout, app, appSlug)
 	}
 	if cache := formatArtifactCacheSummary(final.BuildCacheStatus, final.CacheKeySHA256); cache != "" {
@@ -323,6 +336,17 @@ func renderDeploymentReleaseSummary(w io.Writer, summary api.DeploymentSummaryRe
 	if prev := summary.Previous; prev != nil && prev.Status == statusLive && summary.Deployment.TrafficPercent < 100 &&
 		summary.Deployment.CanaryPreset != "" && summary.Deployment.CanaryPreset != "none" {
 		_, _ = fmt.Fprintf(w, "  Abort canary: gregale traffic promote --app %s --deployment %s\n", appSlug, deploymentLabel(*prev))
+		return
+	}
+	if summary.Deployment.TrafficPercent > 0 && summary.Deployment.TrafficPercent < 100 {
+		// H10-10: a plain split has no single previous release either; the
+		// server refuses a plain rollback, and promoting the earlier live
+		// release is the way back, as for a canary.
+		if prev := summary.Previous; prev != nil && prev.Status == statusLive {
+			_, _ = fmt.Fprintf(w, "  Undo split: gregale traffic promote --app %s --deployment %s\n", appSlug, deploymentLabel(*prev))
+			return
+		}
+		_, _ = fmt.Fprintf(w, "  Undo split: gregale traffic status %s, then gregale traffic promote --app %s --deployment <earlier release>\n", appSlug, appSlug)
 		return
 	}
 	if summary.RollbackTargetID == "" {
@@ -447,6 +471,7 @@ func writeWaitedDeploymentReceiptUntilWithOptions(ctx context.Context, c *Client
 	if receipt.WaitStage != "" {
 		receipt.Recovery = newDeployRecovery(receipt.WaitStage, appSlug, final.ID, "", deadline, waitForRollout)
 		receipt.Recovery.ResumeCommand = ""
+		receipt.Recovery.NextCommand = failedDeploymentRecovery(appSlug, final).NextCommand
 		receipt.Recovery.Hint = "The deployment or rollout reached a failed terminal state. Inspect the deployment and its logs before submitting a corrected deployment."
 	}
 	if code := jsonOut(writeJSON(receipt)); code != 0 {

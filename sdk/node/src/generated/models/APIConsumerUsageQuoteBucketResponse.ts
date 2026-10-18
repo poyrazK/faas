@@ -20,5 +20,13 @@ export type APIConsumerUsageQuoteBucketResponse = {
    */
   tier_units?: Array<number>;
   amount_millicents: number;
+  /**
+   * A minute of the consumer's free trial, quoted at zero (ADR-1314).
+   */
+  trial?: boolean;
+  /**
+   * The quoted minute's price stream when it is not request (ADR-1317).
+   */
+  unit?: string;
 };
 

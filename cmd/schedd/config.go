@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -19,6 +20,8 @@ import (
 
 // Config is the on-disk representation of schedd's TOML config.
 type Config struct {
+	EventAcknowledgmentWriterSlot   string `toml:"event_acknowledgment_writer_slot"`
+	EventAcknowledgmentWriterRoster string `toml:"event_acknowledgment_writer_roster"`
 	// SocketPath is the unix-domain socket schedd's gRPC server binds when
 	// ListenAddr is empty (ADR-018, mode 0660 group `faas`). Defaults to
 	// /run/faas/schedd.sock.
@@ -187,6 +190,19 @@ type Config struct {
 	// budget. Off by default; turn it on together with vmmd's quiet_pause on
 	// the same nodes. A node without a fresh sample counts every booking.
 	QuietPauseAdmission bool `toml:"quiet_pause_admission"`
+
+	// FrozenTier (ADR-1151) freezes an idle eligible function instance in
+	// place at its idle timeout instead of parking it: vmmd keeps the VM
+	// paused in memory, unbilled, and the next request thaws it. Off by
+	// default. Thawing and parking frozen instances run either way, so
+	// turning it off drains the tier within FrozenTTL. FAAS_FROZEN_TIER
+	// overrides it.
+	FrozenTier bool `toml:"frozen_tier"`
+	// FrozenTierApps (ADR-1151 step 3) extends the frozen tier from
+	// functions to request-mode apps whose declared pause is not never.
+	// Off by default and ignored unless frozen_tier is on.
+	// FAAS_FROZEN_TIER_APPS overrides it.
+	FrozenTierApps bool `toml:"frozen_tier_apps"`
 
 	// MigratingWatchdogTickLimit (ADR-067) caps the per-tick
 	// batch of state='migrating' rows the watchdog self-heals.
@@ -466,6 +482,12 @@ func LoadConfig(path string) (*Config, error) {
 		if v := os.Getenv("FAAS_HOST_AGE_IDENTITY_PATH"); v != "" {
 			c.HostAgeIdentityPath = v
 		}
+		// The control-plane role renders this and faas-schedd.socket's
+		// ListenStream from one variable, so the durable socket always
+		// carries the address schedd serves (ADR-1580).
+		if v := os.Getenv("FAAS_SCHEDD_LISTEN_ADDR"); v != "" {
+			c.ListenAddr = v
+		}
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -476,6 +498,7 @@ func LoadConfig(path string) (*Config, error) {
 			// RoleSingleBox when the env is unset.
 			c.Role = role.FromConfig(string(c.Role), "FAAS_SCHEDD_ROLE")
 			applyRoutingEnv()
+			c.overlayEventAcknowledgmentWriterEnv()
 			return c, nil
 		}
 		return nil, fmt.Errorf("schedd: read %q: %w", path, err)
@@ -496,9 +519,34 @@ func LoadConfig(path string) (*Config, error) {
 	// 99-faas-node-name.conf) can override the TOML node_name on
 	// every control-plane box. Empty keeps the TOML value
 	// (single-box dev back-compat).
+	c.overlayEventAcknowledgmentWriterEnv()
 	if v := os.Getenv("FAAS_NODE_NAME"); v != "" {
 		c.NodeName = v
 	}
+	// ADR-1151: FAAS_FROZEN_TIER overrides frozen_tier.
+	if v := os.Getenv("FAAS_FROZEN_TIER"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_FROZEN_TIER must be a boolean (got %q)", v)
+		}
+		c.FrozenTier = enabled
+	}
+	if v := os.Getenv("FAAS_FROZEN_TIER_APPS"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_FROZEN_TIER_APPS must be a boolean (got %q)", v)
+		}
+		c.FrozenTierApps = enabled
+	}
 	applyRoutingEnv()
 	return c, nil
+}
+
+func (c *Config) overlayEventAcknowledgmentWriterEnv() {
+	if v := os.Getenv("FAAS_EVENT_ACK_WRITER_SLOT"); v != "" {
+		c.EventAcknowledgmentWriterSlot = v
+	}
+	if v := os.Getenv("FAAS_EVENT_ACK_WRITER_ROSTER"); v != "" {
+		c.EventAcknowledgmentWriterRoster = v
+	}
 }

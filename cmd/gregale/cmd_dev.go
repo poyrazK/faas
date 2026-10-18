@@ -323,7 +323,7 @@ func cmdDev(args []string) int {
 	debugPort := fs.Int("debug-port", api.DevDebugNodePort, "local port for --debug")
 	all := fs.Bool("all", false, "run one developer loop per deployable workspace app below --path")
 	watch := fs.Bool("watch", false, "run the app's development server with hot reload instead of the production build (ADR-1170)")
-	watchCommand := fs.String("watch-command", "", "development server command for --watch (default: npm run dev)")
+	watchCommand := fs.String("watch-command", "", "development server command for --watch (default: the dev script or the detected framework's server)")
 	if err := fs.Parse(args); err != nil {
 		PrintUsage(osStderr, devUsage, "dev")
 		return 1
@@ -360,8 +360,8 @@ func cmdDev(args []string) int {
 	if *stop && (*watch || *watchCommand != "") {
 		return printErr("Invalid flags", fmt.Errorf("--watch cannot be combined with --stop"))
 	}
-	if *all && (*watch || *watchCommand != "") {
-		return printErr("Invalid flags", fmt.Errorf("--watch cannot be combined with --all yet; run gregale dev --watch in the app's directory"))
+	if *all && *watchCommand != "" {
+		return printErr("Invalid flags", fmt.Errorf("--watch-command cannot be combined with --all; set dev.watch.command in each app's gregale.yaml"))
 	}
 	if *debugPort < 1 || *debugPort > 65535 {
 		return printErr("Invalid --debug-port", fmt.Errorf("use a port between 1 and 65535"))
@@ -374,16 +374,20 @@ func cmdDev(args []string) int {
 	if *all {
 		return cmdDevAllFromFlags(cwd, *sourcePath, explicitFlags, devAllOptions{
 			once: *once, stop: *stop, noLogs: *noLogs, open: *open, postgres: *withPostgres, postgresRegion: *postgresRegion,
-			ttl: *ttl, buckets: bucketNames,
+			ttl: *ttl, buckets: bucketNames, watch: *watch,
 		})
-	}
-	linkedContext, _, linkedErr := linkedProjectContext(cwd)
-	if linkedErr != nil && !errors.Is(linkedErr, errProjectContextNotFound) {
-		return printErr("Could not read local project context", linkedErr)
 	}
 	sourceDir, err := resolveDeploySourceDir(cwd, *sourcePath)
 	if err != nil {
 		return printErr("Invalid developer source", err)
+	}
+	var linkedContext localProjectContext
+	linkedErr := errProjectContextNotFound
+	if *name == "" {
+		linkedContext, _, linkedErr = linkedProjectContext(sourceDir)
+		if linkedErr != nil && !errors.Is(linkedErr, errProjectContextNotFound) {
+			return printErr("Could not read local project context", linkedErr)
+		}
 	}
 	var manifest *gregalemanifest.Manifest
 	if !*stop {
@@ -501,6 +505,12 @@ func cmdDev(args []string) int {
 	if err != nil {
 		return printErr("No deployable source found in "+filepath.Base(sourceDir), err)
 	}
+	if code := checkDevSource(sourceDir, config); code != 0 {
+		return code
+	}
+	if !jsonOutput {
+		PrintProgress(osStdout, "Source: %s; connection: %s; isolated developer session: %s", sourceDir, currentProfile(), project)
+	}
 
 	if *debug && !devDebugSupported(sourceDir, config) {
 		return printErr("Invalid flags", fmt.Errorf("--debug supports Node.js workloads only"))
@@ -509,10 +519,16 @@ func cmdDev(args []string) int {
 	if err != nil {
 		return printErr("Invalid --watch", err)
 	}
+	var devWatchNotes []string
+	if devWatch != nil {
+		// Before the first sync, so a config edit ships with it.
+		devWatchNotes = prepareDevWatchSource(sourceDir, !jsonOutput && !nonInteractive && stdinIsTTY() && stdoutIsTTY(), osStdin, osStdout)
+	}
 	session, err := upsertDevSession(client, project, config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease, devWatch, buckets...))
 	if err != nil {
 		return printErr("Could not create developer environment", err)
 	}
+	defer renderDevSessionExit(sourceDir, project, session.App.Slug, lease)
 	if code := applyDevDebugSetting(client, session.App.Slug, *debug); code != 0 {
 		return code
 	}
@@ -527,6 +543,9 @@ func cmdDev(args []string) int {
 		}
 		if session.Watch != nil {
 			PrintProgress(osStdout, "watch mode: runs %q with hot reload; this environment does not run your production build", session.Watch.Command)
+			for _, note := range devWatchNotes {
+				PrintProgress(osStdout, "watch mode: %s", note)
+			}
 		}
 	}
 
@@ -539,7 +558,10 @@ func cmdDev(args []string) int {
 	devBrowserOpened := false
 	var diagnosticReported atomic.Bool
 	var syncHistoryWarned atomic.Bool
-	var patchExplainer devPatchExplainer
+	patchExplainer := devPatchExplainer{}
+	if devWatch == nil && config.shape != shapeFunction {
+		patchExplainer.watchCommand = devWatchSuggestion(sourceDir)
+	}
 	seedPending := *postgresSeed != ""
 	forceReseed := *reseed
 	reportDevDiagnostic := func(d devDiagnostic) {
@@ -672,6 +694,7 @@ func cmdDev(args []string) int {
 				devTelemetry.finishRouteSwitch()
 			}
 			if code == 0 {
+				devTelemetry.reconcileFinalStages(deployCtx, client)
 				receipt := devTelemetry.receipt("live")
 				if err := reportDevSyncReceipt(deployCtx, client, project, workspaceID, receipt); err != nil && !syncHistoryWarned.Swap(true) {
 					PrintWarn(osStderr, "could not save developer sync history; the live sync succeeded (%v)", err)

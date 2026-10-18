@@ -84,6 +84,9 @@ type InstanceStat struct {
 	// QuietPaused (ADR-1151) is true while vmmd holds the instance
 	// quiet-paused between requests.
 	QuietPaused bool
+	// Frozen (ADR-1151) is true while vmmd holds the instance frozen in
+	// place.
+	Frozen bool
 	// LastRequestAt is the most recent ForwardHTTP start time on
 	// this instance. PR-B populates it from the vmmd
 	// ActivityTracker; PR-A leaves it zero and the poller

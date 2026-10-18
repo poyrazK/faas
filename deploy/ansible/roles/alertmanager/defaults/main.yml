@@ -57,6 +57,20 @@ am_pushover_user_key_file: ""
 am_discord_webhook_url_file: ""
 am_slack_webhook_url_file: ""
 
+# Optional warn-only chat webhooks (same file rules as above). When set,
+# faas-warn posts there and the webhooks above carry pages only, so the 27
+# pages (ADR-1236) never share a channel with the warn digest. Unset, warn
+# alerts fall back to the page webhook.
+am_discord_warn_webhook_url_file: ""
+am_slack_warn_webhook_url_file: ""
+
+# Warn alerts are a review queue, not an interrupt (ADR-1236): one
+# notification per family, new alerts in a family batched for an hour, and a
+# still-firing family repeated once a day instead of every 4 hours.
+am_warn_group_by: [family]
+am_warn_group_interval: 1h
+am_warn_repeat_interval: 24h
+
 # Dead-man's switch. FaasWatchdog fires permanently and Alertmanager posts
 # it to the URL in this file every am_heartbeat_interval. An external
 # monitor (healthchecks.io, Better Stack, Cronitor, …) alerts you when the

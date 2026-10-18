@@ -183,7 +183,7 @@ func TestPostgresCutoverDrainStaleFramesNeverReachNativeStop(t *testing.T) {
 					_, err = s.pool.Exec(t.Context(), `UPDATE apps SET node_id=$2 WHERE id=$1`, c.AppID, f.OwnerNodeID)
 				}
 			case "deployment":
-				_, err = s.pool.Exec(t.Context(), `UPDATE instances SET deployment_id=NULL WHERE id=$1`, ins.ID)
+				err = execLegacyInstanceShape(t, s, `UPDATE instances SET deployment_id=NULL WHERE id=$1`, ins.ID)
 			case "migrating":
 				_, err = s.pool.Exec(t.Context(), `UPDATE instances SET state='migrating' WHERE id=$1`, ins.ID)
 			case "cancelled":

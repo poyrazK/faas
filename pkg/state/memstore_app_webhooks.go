@@ -400,6 +400,7 @@ func (m *MemStore) RecordAppWebhookDelivery(_ context.Context, in AppWebhookDeli
 		in.CreatedAt = time.Now()
 	}
 	in.UpdatedAt = in.CreatedAt
+	m.suppressScenarioWebhookLocked(&in)
 	m.appWebhookDeliveries[in.ID] = in
 	return in, nil
 }
@@ -413,6 +414,10 @@ func (m *MemStore) ClaimDueAppWebhookDeliveries(_ context.Context, limit int, no
 		return nil, nil
 	}
 	liveClaims := make(map[string]int)
+	for id, row := range m.appWebhookDeliveries {
+		m.suppressScenarioWebhookLocked(&row)
+		m.appWebhookDeliveries[id] = row
+	}
 	for _, d := range m.appWebhookDeliveries {
 		if d.Status == AppWebhookDeliveryInFlight && d.NextAttemptAt.After(now) {
 			liveClaims[d.WebhookID]++
@@ -640,6 +645,7 @@ func (m *MemStore) ResetAppWebhookDeliveryFromDead(_ context.Context, id, webhoo
 	d.LastResponseCode = 0
 	d.NextAttemptAt = now
 	d.UpdatedAt = now
+	m.suppressScenarioWebhookLocked(&d)
 	m.appWebhookDeliveries[id] = d
 	if m.appWebhookReplayGenerations == nil {
 		m.appWebhookReplayGenerations = make(map[string]int)
@@ -850,6 +856,7 @@ func (m *MemStore) PruneAppWebhookDeliveries(_ context.Context, cutoff time.Time
 	for _, d := range candidates {
 		delete(m.appWebhookDeliveries, d.ID)
 		delete(m.appWebhookDeliveryAttempts, d.ID)
+		delete(m.appWebhookDeliverySources, d.ID)
 		delete(m.appWebhookReplayGenerations, d.ID)
 		delete(m.deadLetterPurged, unifiedDeadLetterEventID("webhook_delivery", d.ID))
 	}

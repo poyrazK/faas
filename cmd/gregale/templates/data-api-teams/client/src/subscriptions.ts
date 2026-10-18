@@ -1,0 +1,41 @@
+import {dataRequest,validateRpcResponse} from '@gregale/data'
+import type {Database} from './database.types.js'
+import type {teamsClient} from './orders.js'
+export type Subscription=Database['api']['Tables']['team_webhook_subscriptions']['Row']
+export type SubscriptionOperation=Database['api']['Tables']['team_webhook_subscription_operations']['Row']
+const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const ref=/^[a-zA-Z0-9_-]{1,80}$/
+const object=(v:unknown)=>{if(!v||typeof v!=='object'||Array.isArray(v))throw new Error();return v as Record<string,unknown>}
+const filters=(v:unknown):string[]=>{if(!Array.isArray(v)||!v.length||v.length>2||new Set(v).size!==v.length||v.some(x=>!['order.submitted','order.fulfilled'].includes(x)))throw new Error();return [...v].sort()}
+export function parseSubscription(v:unknown):Subscription{
+  const r=object(v)
+  if(typeof r.subscription_id!=='string'||!uuid.test(r.subscription_id)||typeof r.tenant_id!=='string'||!r.tenant_id||typeof r.name!=='string'||!r.name||r.name.length>80||typeof r.config_ref!=='string'||!ref.test(r.config_ref)||typeof r.enabled!=='boolean'||typeof r.paused!=='boolean'||!Number.isSafeInteger(r.version)||(r.version as number)<1||typeof r.revision!=='string'||!uuid.test(r.revision)||typeof r.changed_by!=='string'||!r.changed_by||typeof r.changed_at!=='string'||!Number.isFinite(Date.parse(r.changed_at)))throw new Error('Invalid subscription')
+  return {subscription_id:r.subscription_id,tenant_id:r.tenant_id,name:r.name,event_types:filters(r.event_types),config_ref:r.config_ref,enabled:r.enabled,paused:r.paused,version:r.version as number,revision:r.revision,changed_by:r.changed_by,changed_at:r.changed_at}
+}
+export function parseOperation(v:unknown){const r=object(v);if(typeof r.request_id!=='string'||!uuid.test(r.request_id)||typeof r.actor!=='string'||!r.actor||!['create','update'].includes(r.action as string)||typeof r.occurred_at!=='string'||!Number.isFinite(Date.parse(r.occurred_at)))throw new Error();const snapshot=parseSubscription(r.snapshot);if(snapshot.subscription_id!==r.subscription_id||snapshot.tenant_id!==r.tenant_id||snapshot.changed_by!==r.actor)throw new Error();return {receipt:r as unknown as SubscriptionOperation,snapshot}}
+export function webhookSubscriptions(client:ReturnType<typeof teamsClient>){return {
+  async list(after?:string){if(after&&!uuid.test(after))throw new Error();if((await client.membership())?.role!=='owner')throw new Error();let query=client.db.from('team_webhook_subscriptions').select().eq('tenant_id',client.tenant).order('subscription_id').limit(21);if(after)query=query.gt('subscription_id',after);const checked=validateRpcResponse(await dataRequest(query,{timeoutMs:5000}),{parse(v){if(!Array.isArray(v))throw new Error();return v.map(parseSubscription)}});if(checked.outcome!=='validated'||checked.result.data.some(r=>r.tenant_id!==client.tenant))throw new Error();const rows=checked.result.data.slice(0,20);return {rows,next:checked.result.data.length>20?rows.at(-1)!.subscription_id:null}},
+  async health(id:string){if(!uuid.test(id))throw new Error();const result=await dataRequest(client.db.rpc('get_subscription_health',{team_id:client.tenant,subscription_id:id}),{timeoutMs:5000});const r=object(result.data);if(result.error||r.subscription_id!==id||typeof r.paused!=='boolean'||typeof r.enabled!=='boolean'||!['version','pending','leased','delivered','dead'].every(k=>Number.isSafeInteger(r[k])&&(r[k] as number)>=0)||!(r.oldest_pending_seconds===null||Number.isSafeInteger(r.oldest_pending_seconds)&&(r.oldest_pending_seconds as number)>=0))throw new Error();return r},
+  async deliveries(id:string){if(!uuid.test(id))throw new Error();if((await client.membership())?.role!=='owner')throw new Error();const result=await dataRequest(client.db.from('team_subscription_outbox').select('event_id,tenant_id,subscription_id,subscription_version,config_ref,order_id,version,state,attempts,total_attempts,generation,available_at,lease_until,delivered_at').eq('tenant_id',client.tenant).eq('subscription_id',id).order('event_id').limit(20),{timeoutMs:5000});if(result.error||!Array.isArray(result.data)||result.data.some(r=>r.tenant_id!==client.tenant||r.subscription_id!==id||!uuid.test(r.event_id)||!Number.isInteger(r.generation)||!['pending','leased','delivered','dead'].includes(r.state)))throw new Error();return result.data},
+}}
+export function createSubscriptionForm(client:ReturnType<typeof teamsClient>){
+  let pending:Readonly<{actor:string;args:Database['api']['Functions']['save_webhook_subscription_once']['Args']}>|null=null,busy=false
+  async function execute(input:unknown,recovering=false){
+    if(busy)return {outcome:'busy' as const};if(!recovering&&pending)return {outcome:'pending' as const};if(recovering&&!pending)return {outcome:'empty' as const};busy=true
+    try{
+      let prepared:NonNullable<typeof pending>['args']|undefined
+      if(!recovering){const v=object(input);if(typeof v.name!=='string'||!v.name.trim()||v.name.length>80||typeof v.config_ref!=='string'||!ref.test(v.config_ref)||typeof v.enabled!=='boolean'||typeof v.paused!=='boolean'||v.id!==undefined&&(typeof v.id!=='string'||!uuid.test(v.id))||v.revision!==null&&(typeof v.revision!=='string'||!uuid.test(v.revision))||v.id===undefined&&v.revision!==null||v.id!==undefined&&v.revision===null)throw new Error();prepared={team_id:client.tenant,request_id:crypto.randomUUID(),subscription_id:typeof v.id==='string'?v.id.toLowerCase():crypto.randomUUID(),expected_revision:v.revision as string|null,subscription_name:v.name.trim(),event_filters:filters(v.filters),config_reference:v.config_ref,is_enabled:v.enabled,is_paused:v.paused}}
+      const checkedReceipt=(v:unknown)=>{if(!Array.isArray(v)||v.length!==1)throw new Error();const parsed=parseOperation(v[0]),args=pending!.args,payload=object(parsed.receipt.payload),s=parsed.snapshot;if(parsed.receipt.request_id!==args!.request_id||parsed.receipt.actor!==pending!.actor||s.tenant_id!==client.tenant||s.subscription_id!==args!.subscription_id||s.name!==args!.subscription_name||s.config_ref!==args!.config_reference||s.enabled!==args!.is_enabled||s.paused!==args!.is_paused||JSON.stringify(s.event_types)!==JSON.stringify(args!.event_filters)||payload.revision!==args!.expected_revision)throw new Error();return parsed}
+      if(recovering){const result=await dataRequest(client.db.rpc('get_webhook_subscription_receipt',{team_id:client.tenant,operation_key:pending!.args!.request_id}),{timeoutMs:5000});if(!result.error&&Array.isArray(result.data)&&result.data.length){const parsed=checkedReceipt(result.data);pending=null;return {outcome:'saved' as const,subscription:parsed.snapshot}}if(result.error)throw new Error()}
+      const member=await client.membership();if(member?.role!=='owner'||pending&&member.subject!==pending.actor)return {outcome:'failed' as const,message:'Only the original current owner can save or retry subscription settings.',uncertain:pending!==null}
+      pending??=Object.freeze({actor:member.subject,args:Object.freeze({...prepared!})})
+      const result=await dataRequest(client.db.rpc('save_webhook_subscription_once',pending.args!),{timeoutMs:5000}),checked=validateRpcResponse(result,{parse:checkedReceipt})
+      if(checked.outcome==='validated'){pending=null;return {outcome:'saved' as const,subscription:checked.result.data.snapshot}}
+      const known=['PT400','PT409'].includes(result.error?.code??'')&&['invalid_subscription','subscription_revision_conflict','subscription_payload_conflict'].includes(result.error?.message??'')||result.error?.code==='23505'
+      if(!recovering&&(known||[401,403].includes(result.status)))pending=null
+      return {outcome:'failed' as const,message:known?'Subscription settings changed or the name is already used. Reload and review.':'Could not confirm the subscription. Resolve the original operation before another change.',uncertain:pending!==null}
+    }catch{return {outcome:'failed' as const,message:pending?'Resolve the original subscription operation before another change.':'Choose a name, approved configuration reference and valid event filters.',uncertain:pending!==null}}
+    finally{busy=false}
+  }
+  return {get pending(){return Boolean(pending)},submit:(input:unknown)=>execute(input),reconcile:()=>execute(undefined,true)}
+}

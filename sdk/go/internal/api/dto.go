@@ -82,25 +82,29 @@ type SendAppMessageResponse struct {
 // CreateAppRequest creates an app or function.
 type CreateAppRequest struct {
 	Slug string `json:"slug"`
-	// Outbound service bindings and per-binding reliability policy.
-	ServiceBindingTargets *[]string                           `json:"service_binding_targets,omitempty"`
-	ServiceBindingPolicy  *ServiceBindingPolicy               `json:"service_binding_policy,omitempty"`
-	ServiceReliability    map[string]ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
-	Visibility            string                              `json:"visibility,omitempty"`
-	Type                  string                              `json:"type,omitempty"`    // "app" (default) | "function"
-	Runtime               string                              `json:"runtime,omitempty"` // node22|python312|go124|go124-alpine|node24|python313|binary for functions
-	RAMMB                 int                                 `json:"ram_mb,omitempty"`  // 0 => plan default
-	VCPU                  int                                 `json:"vcpu,omitempty"`    // 0 => plan default; explicit values must match the plan shape
-	CPUMillicores         int                                 `json:"cpu_millicores,omitempty"`
-	ResourceProfile       string                              `json:"resource_profile,omitempty"`
-	MaxConcurrency        int                                 `json:"max_concurrency,omitempty"`
-	IdleTimeoutS          int                                 `json:"idle_timeout_s,omitempty"`
+	// Service discovery, caller authorization, transport, and reliability policy.
+	ServiceBindingTargets    *[]string                           `json:"service_binding_targets,omitempty"`
+	ServiceBindingPolicy     *ServiceBindingPolicy               `json:"service_binding_policy,omitempty"`
+	AllowedServiceCallers    *[]string                           `json:"allowed_service_callers,omitempty"`
+	AllowedServiceCallScopes *ServiceCallerScopes                `json:"allowed_service_call_scopes,omitempty"`
+	ServiceBindingTransport  *ServiceBindingTransport            `json:"service_binding_transport,omitempty"`
+	ServiceReliability       map[string]ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
+	Visibility               string                              `json:"visibility,omitempty"`
+	Type                     string                              `json:"type,omitempty"`    // "app" (default) | "function"
+	Runtime                  string                              `json:"runtime,omitempty"` // node22|python312|go124|go124-alpine|node24|python313|binary for functions
+	RAMMB                    int                                 `json:"ram_mb,omitempty"`  // 0 => plan default
+	VCPU                     int                                 `json:"vcpu,omitempty"`    // 0 => plan default; explicit values must match the plan shape
+	CPUMillicores            int                                 `json:"cpu_millicores,omitempty"`
+	ResourceProfile          string                              `json:"resource_profile,omitempty"`
+	MaxConcurrency           int                                 `json:"max_concurrency,omitempty"`
+	IdleTimeoutS             int                                 `json:"idle_timeout_s,omitempty"`
 	// Lifecycle fields are optional at create-time. Empty values preserve the
 	// request-driven default; service_replicas is valid only for service mode.
 	ExecutionMode          string                `json:"execution_mode,omitempty"`
 	RestartPolicy          string                `json:"restart_policy,omitempty"`
 	AfterRestore           *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint       *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	Pause                  string                `json:"pause,omitempty"`
 	Profiling              *ProfilingConfig      `json:"profiling,omitempty"`
 	Tracing                *TracingConfig        `json:"tracing,omitempty"`
 	StartupDeadlineS       int                   `json:"startup_deadline_s,omitempty"`
@@ -124,35 +128,43 @@ type CreateAppRequest struct {
 }
 
 // UpdateAppRequest is the partial-update payload for PATCH /v1/apps/{slug}.
-// All fields are pointers so the wire form can distinguish "not set" from
-// "set to zero".
+// Optional fields distinguish omission from explicit updates; raw JSON fields
+// additionally support null resets.
 type UpdateAppRequest struct {
-	Visibility *string `json:"visibility,omitempty"`
+	ExpectedServiceBindingFingerprint *string               `json:"expected_service_binding_fingerprint,omitempty"`
+	Visibility                        *string               `json:"visibility,omitempty"`
+	ServiceBindingTargets             *[]string             `json:"service_binding_targets,omitempty"`
+	ServiceBindingPolicy              *ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
+	// Caller policies: omit to retain, null to remove restrictions, [] or {}
+	// respectively to deny all. Marshal typed slices/maps for nonempty grants.
+	AllowedServiceCallers    json.RawMessage          `json:"allowed_service_callers,omitempty"`
+	AllowedServiceCallScopes json.RawMessage          `json:"allowed_service_call_scopes,omitempty"`
+	ServiceBindingTransport  *ServiceBindingTransport `json:"service_binding_transport,omitempty"`
 	// ServiceReliability is a full replacement: omit to retain, null or {}
 	// to clear. ServiceBindingTargets controls which names may be present.
-	ServiceBindingTargets *[]string             `json:"service_binding_targets,omitempty"`
-	ServiceBindingPolicy  *ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
-	ServiceReliability    json.RawMessage       `json:"service_reliability,omitempty"`
-	RAMMB                 *int                  `json:"ram_mb,omitempty"`
-	CPUMillicores         *int                  `json:"cpu_millicores,omitempty"`
-	ResourceProfile       *string               `json:"resource_profile,omitempty"`
-	IdleTimeoutS          *int                  `json:"idle_timeout_s,omitempty"`
-	MaxConcurrency        *int                  `json:"max_concurrency,omitempty"`
+	ServiceReliability json.RawMessage `json:"service_reliability,omitempty"`
+	RAMMB              *int            `json:"ram_mb,omitempty"`
+	CPUMillicores      *int            `json:"cpu_millicores,omitempty"`
+	ResourceProfile    *string         `json:"resource_profile,omitempty"`
+	IdleTimeoutS       *int            `json:"idle_timeout_s,omitempty"`
+	MaxConcurrency     *int            `json:"max_concurrency,omitempty"`
 	// Lifecycle fields are tri-state: nil leaves the current value unchanged.
 	// service_replicas replaces the complete replica policy when present.
 	ExecutionMode    *string               `json:"execution_mode,omitempty"`
 	RestartPolicy    *string               `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
-	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
-	Tracing          *TracingConfig        `json:"tracing,omitempty"`
-	StartupDeadlineS *int                  `json:"startup_deadline_s,omitempty"`
-	MaxRetries       *int                  `json:"max_retries,omitempty"`
-	RetryPolicy      *RetryPolicyDTO       `json:"retry_policy,omitempty"`
-	ServiceReplicas  *ServiceReplicas      `json:"service_replicas,omitempty"`
-	HealthPath       *string               `json:"health_path,omitempty"`
-	HealthPathWakes  *bool                 `json:"health_path_wakes,omitempty"`
-	SessionAffinity  *bool                 `json:"session_affinity,omitempty"`
+	// Pause replaces the declared pause value; "" restores the default.
+	Pause            *string          `json:"pause,omitempty"`
+	Profiling        *ProfilingConfig `json:"profiling,omitempty"`
+	Tracing          *TracingConfig   `json:"tracing,omitempty"`
+	StartupDeadlineS *int             `json:"startup_deadline_s,omitempty"`
+	MaxRetries       *int             `json:"max_retries,omitempty"`
+	RetryPolicy      *RetryPolicyDTO  `json:"retry_policy,omitempty"`
+	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
+	HealthPath       *string          `json:"health_path,omitempty"`
+	HealthPathWakes  *bool            `json:"health_path_wakes,omitempty"`
+	SessionAffinity  *bool            `json:"session_affinity,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 / unset => scale to zero; >0 => keep at least this many
 	// RUNNING instances alive. Pro/Scale only — Free/Hobby get
@@ -456,6 +468,25 @@ type ServiceReliabilityPolicy struct {
 	AllowNonIdempotent bool `json:"allow_non_idempotent,omitempty"`
 }
 
+// ServiceBindingTransport selects the canonical injected service URL scheme.
+// HTTPS does not by itself enforce HTTPS-only access.
+type ServiceBindingTransport string
+
+const (
+	ServiceBindingTransportHTTP  ServiceBindingTransport = "http"
+	ServiceBindingTransportHTTPS ServiceBindingTransport = "https"
+)
+
+// ServiceCallScope grants methods and decoded path prefixes to a caller.
+// Prefixes match themselves and slash-delimited descendants; "*" permits all methods.
+type ServiceCallScope struct {
+	Methods      []string `json:"methods" yaml:"methods"`
+	PathPrefixes []string `json:"path_prefixes" yaml:"path_prefixes"`
+}
+
+// ServiceCallerScopes maps logical caller names to grants. An empty map denies all.
+type ServiceCallerScopes map[string]ServiceCallScope
+
 type ServiceBindingPolicy string
 
 const (
@@ -481,16 +512,17 @@ type RepoResponse struct {
 }
 
 type AppResponse struct {
-	ID              string `json:"id"`
-	Slug            string `json:"slug"`
-	Type            string `json:"type"`
-	Visibility      string `json:"visibility"`
-	Runtime         string `json:"runtime,omitempty"`
-	RAMMB           int    `json:"ram_mb"`
-	VCPU            int    `json:"vcpu"`
-	CPUMillicores   int    `json:"cpu_millicores"`
-	ResourceProfile string `json:"resource_profile,omitempty"`
-	MaxConcurrency  int    `json:"max_concurrency"`
+	ServiceBindingFingerprint string `json:"service_binding_fingerprint,omitempty"`
+	ID                        string `json:"id"`
+	Slug                      string `json:"slug"`
+	Type                      string `json:"type"`
+	Visibility                string `json:"visibility"`
+	Runtime                   string `json:"runtime,omitempty"`
+	RAMMB                     int    `json:"ram_mb"`
+	VCPU                      int    `json:"vcpu"`
+	CPUMillicores             int    `json:"cpu_millicores"`
+	ResourceProfile           string `json:"resource_profile,omitempty"`
+	MaxConcurrency            int    `json:"max_concurrency"`
 	// ConcurrencyPerVMBound (issue #559) is the platform-advertised
 	// per-VM concurrency cap for the customer's plan. Distinct from
 	// MaxConcurrency (the per-app instance cap, spec §6.2-1) — this
@@ -562,8 +594,11 @@ type AppResponse struct {
 	// allowlist under the declared policy.
 	ServiceBindings    []AppServiceBinding                 `json:"service_bindings,omitempty"`
 	ServiceReliability map[string]ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
-	// ServiceBindingPolicy is the caller-side internal-service authorization
-	// policy returned by the API.
+	// Nil caller policies are unrestricted; non-nil empty policies deny all.
+	AllowedServiceCallers    *[]string               `json:"allowed_service_callers,omitempty"`
+	AllowedServiceCallScopes *ServiceCallerScopes    `json:"allowed_service_call_scopes,omitempty"`
+	ServiceBindingTransport  ServiceBindingTransport `json:"service_binding_transport,omitempty"`
+	// ServiceBindingPolicy is the caller-side internal-service authorization policy.
 	ServiceBindingPolicy      ServiceBindingPolicy      `json:"service_binding_policy,omitempty"`
 	PreviewServiceCallsPolicy PreviewServiceCallsPolicy `json:"preview_service_calls_policy,omitempty"`
 	// EgressAllowlist (ADR-031 + ADR-032, tier-2 of the network
@@ -2590,15 +2625,16 @@ type ManagedOperationResult struct {
 // OperationEffectRecord correlates immutable effect identity with the existing
 // webhook ledger. Unavailable means the delivery history was deleted or pruned.
 type OperationEffectRecord struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Generation int64  `json:"generation"`
-	WebhookID  string `json:"webhook_id,omitempty"`
-	DeliveryID string `json:"delivery_id,omitempty"`
-	Type       string `json:"type,omitempty"`
-	Status     string `json:"status"`
-	Attempt    int    `json:"attempt"`
-	LastError  string `json:"last_error,omitempty"`
+	RehearsalRunID string `json:"rehearsal_run_id,omitempty"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Generation     int64  `json:"generation"`
+	WebhookID      string `json:"webhook_id,omitempty"`
+	DeliveryID     string `json:"delivery_id,omitempty"`
+	Type           string `json:"type,omitempty"`
+	Status         string `json:"status"`
+	Attempt        int    `json:"attempt"`
+	LastError      string `json:"last_error,omitempty"`
 }
 
 // OperationEffectPayload is the data in an operation.effect webhook. Scope and

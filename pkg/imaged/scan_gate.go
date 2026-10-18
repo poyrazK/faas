@@ -16,8 +16,8 @@ import (
 var errSecurityScanBlocked = errors.New("imaged: verified security scan blocked deployment")
 
 const (
-	verifiedScanMaxAge   = 5 * time.Minute
-	verifiedScannerDBAge = 30 * 24 * time.Hour
+	verifiedScanMaxAge   = api.ApplicationStandardArtifactScanTTL
+	verifiedScannerDBAge = api.ApplicationStandardScannerDBMaxAge
 )
 
 // verifiedScanFailure preserves the historical best-effort scan posture for

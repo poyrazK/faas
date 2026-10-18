@@ -87,7 +87,11 @@ const (
 	// OrgActionCreateApp gates provisioning an app in the active org.
 	// Owners, admins, and developers may create; viewer and billing roles
 	// cannot provision infrastructure.
-	OrgActionCreateApp OrgAction = "org.create_app"
+	OrgActionCreateApp                         OrgAction = "org.create_app"
+	OrgActionViewApplicationStandards          OrgAction = "org.view_application_standards"
+	OrgActionManageApplicationStandards        OrgAction = "org.manage_application_standards"
+	OrgActionApproveApplicationStandards       OrgAction = "org.approve_application_standards"
+	OrgActionSetApplicationStandardLocalIntent OrgAction = "org.set_application_standard_local_intent"
 )
 
 // AllOrgActions is the closed vocabulary in iteration order. Used by
@@ -106,6 +110,10 @@ var AllOrgActions = []OrgAction{
 	OrgActionCreateApiKey,
 	OrgActionRevokeApiKey,
 	OrgActionCreateApp,
+	OrgActionViewApplicationStandards,
+	OrgActionManageApplicationStandards,
+	OrgActionApproveApplicationStandards,
+	OrgActionSetApplicationStandardLocalIntent,
 }
 
 // AllOrgRoles is the closed role vocabulary in priority order. The

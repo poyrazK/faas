@@ -1,4 +1,4 @@
-// adr: 957 — each tick publishes the instances every node reported
+// adr: 1151 — each tick publishes the instances every node reported
 // quiet-paused, and admission ignores a stale sample.
 package instancestats
 

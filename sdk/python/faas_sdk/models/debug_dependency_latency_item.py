@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -11,6 +11,10 @@ from ..models.debug_dependency_latency_item_type import (
     check_debug_dependency_latency_item_type,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.debug_dependency_query_item import DebugDependencyQueryItem
+
 
 T = TypeVar("T", bound="DebugDependencyLatencyItem")
 
@@ -55,6 +59,11 @@ class DebugDependencyLatencyItem:
     error_rate_delta_pct: float | Unset = UNSET
     top_error_type: str | Unset = UNSET
     """Most frequent span failure class, from the current side when it has failures."""
+    queries: list[DebugDependencyQueryItem] | Unset = UNSET
+    """Database dependencies only: the dependency broken down by normalized query pattern (literals, placeholders,
+    IN lists and VALUES rows folded), regressions first."""
+    queries_truncated: bool | Unset = UNSET
+    """True when more query patterns were seen than are returned."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -108,6 +117,15 @@ class DebugDependencyLatencyItem:
 
         top_error_type = self.top_error_type
 
+        queries: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.queries, Unset):
+            queries = []
+            for queries_item_data in self.queries:
+                queries_item = queries_item_data.to_dict()
+                queries.append(queries_item)
+
+        queries_truncated = self.queries_truncated
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -154,11 +172,17 @@ class DebugDependencyLatencyItem:
             field_dict["error_rate_delta_pct"] = error_rate_delta_pct
         if top_error_type is not UNSET:
             field_dict["top_error_type"] = top_error_type
+        if queries is not UNSET:
+            field_dict["queries"] = queries
+        if queries_truncated is not UNSET:
+            field_dict["queries_truncated"] = queries_truncated
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.debug_dependency_query_item import DebugDependencyQueryItem
+
         d = dict(src_dict)
         type_ = check_debug_dependency_latency_item_type(d.pop("type"))
 
@@ -210,6 +234,17 @@ class DebugDependencyLatencyItem:
 
         top_error_type = d.pop("top_error_type", UNSET)
 
+        _queries = d.pop("queries", UNSET)
+        queries: list[DebugDependencyQueryItem] | Unset = UNSET
+        if _queries is not UNSET:
+            queries = []
+            for queries_item_data in _queries:
+                queries_item = DebugDependencyQueryItem.from_dict(queries_item_data)
+
+                queries.append(queries_item)
+
+        queries_truncated = d.pop("queries_truncated", UNSET)
+
         debug_dependency_latency_item = cls(
             type_=type_,
             name=name,
@@ -236,6 +271,8 @@ class DebugDependencyLatencyItem:
             current_error_rate_pct=current_error_rate_pct,
             error_rate_delta_pct=error_rate_delta_pct,
             top_error_type=top_error_type,
+            queries=queries,
+            queries_truncated=queries_truncated,
         )
 
         debug_dependency_latency_item.additional_properties = d

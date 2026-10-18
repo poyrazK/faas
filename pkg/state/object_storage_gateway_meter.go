@@ -18,6 +18,7 @@ func checkGatewayEgress(s ObjectUsageSnapshot, bucket string, bytes int64, at ti
 	if !p.Valid() || !p.GatewaySafety() || bytes < 0 || bytes > api.MaxObjectStoragePolicyValue || at.IsZero() || at.After(now.Add(time.Minute)) || !ObjectStoragePeriod(at).Equal(ObjectStoragePeriod(now)) {
 		return ErrObjectUsageStale
 	}
+	p = s.planPolicy(p)
 	u := SummarizeObjectUsage(s, p, now)
 	if !u.Fresh {
 		return ErrObjectUsageStale

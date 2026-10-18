@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
 
 // spec: false boolean action flags do not mutate trigger state.
 func TestTriggerEnabledValue(t *testing.T) {
@@ -27,5 +32,14 @@ func TestTriggerEnabledValue(t *testing.T) {
 				t.Fatalf("got %t, want %t", *got, *tt.want)
 			}
 		})
+	}
+}
+
+// A record delivered on its first try has no failed attempts; the line must
+// not read as "never attempted" (H10-62).
+func TestTriggerRecordLineNamesFailedAttempts(t *testing.T) {
+	got := triggerRecordLine(api.TriggerRecord{ID: "r1", State: "succeeded", Attempts: 0, ItemIdentifier: "item-1"})
+	if !strings.Contains(got, "failed_attempts=0") || strings.Contains(got, " attempts=") {
+		t.Fatalf("record line = %q, want failed_attempts=0", got)
 	}
 }
