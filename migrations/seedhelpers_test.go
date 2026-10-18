@@ -158,13 +158,19 @@ func legacyAccount(ctx context.Context, pool *pgxpool.Pool, email string, plan a
 	if err := pool.QueryRow(ctx, `INSERT INTO accounts(email,plan) VALUES($1,$2) RETURNING id::text`, email, string(plan)).Scan(&account.ID); err != nil {
 		return state.Account{}, err
 	}
-	_, err := pool.Exec(ctx, `WITH personal AS (
-		INSERT INTO orgs(id,slug,name,personal_org,personal_owner_account_id,plan,status,created_at,updated_at)
-		SELECT gen_random_uuid(),'u-'||substring(replace(a.id::text,'-','') from 1 for 12),'Personal',true,a.id,a.plan,a.status,a.created_at,now()
-		FROM accounts a WHERE a.id=$1 RETURNING id)
-		INSERT INTO org_memberships(org_id,account_id,role) SELECT id,$1,'owner' FROM personal`, account.ID)
+	_, err := pool.Exec(ctx, personalOrgSQL, account.ID)
 	return account, err
 }
+
+// personalOrgSQL gives account $1 its personal org and owner membership,
+// unless it has one, as 00105_personal_org_backfill.sql does. Since #4882 a
+// project or other owned resource of the account requires it.
+const personalOrgSQL = `WITH personal AS (
+	INSERT INTO orgs(id,slug,name,personal_org,personal_owner_account_id,plan,status,created_at,updated_at)
+	SELECT gen_random_uuid(),'u-'||substring(replace(a.id::text,'-','') from 1 for 12),'Personal',true,a.id,a.plan,a.status,a.created_at,now()
+	FROM accounts a WHERE a.id=$1 AND NOT EXISTS (SELECT 1 FROM orgs o WHERE o.personal_org AND o.personal_owner_account_id=a.id)
+	RETURNING id)
+INSERT INTO org_memberships(org_id,account_id,role) SELECT id,$1,'owner' FROM personal`
 
 // legacyPersonalOrg is the personal org legacyAccount created. Older schemas
 // have no trigger that binds a new project to it, so callers pass it.
@@ -176,3 +182,10 @@ func legacyPersonalOrg(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ac
 	}
 	return id
 }
+
+// deleteAccountSQL erases account $1 and what it owns. Since #4882 owned rows
+// reference the account's resource namespace, which PgStore.DeleteAccount
+// removes after the account's resources; deleting only the accounts row now
+// leaves them (and the personal org they bind) in place.
+const deleteAccountSQL = `WITH namespace AS (DELETE FROM resource_namespaces WHERE id=$1)
+DELETE FROM accounts WHERE id=$1`

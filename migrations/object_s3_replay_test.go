@@ -23,6 +23,7 @@ func TestObjectS3MigrationReplayPreservesSessions(t *testing.T) {
 	// sessions with issued URL deadlines. Replay must preserve their authority.
 	if _, err := pool.Exec(ctx, `
  INSERT INTO accounts(id,email) VALUES('00000000-0000-0000-0000-000000000001','replay@example.com');
+ INSERT INTO orgs(id,slug,name,personal_org,personal_owner_account_id,plan,status) SELECT gen_random_uuid(),'u-000000000000','Personal',true,id,plan,status FROM accounts WHERE id='00000000-0000-0000-0000-000000000001';
  INSERT INTO apps(id,account_id,slug,ram_mb) VALUES('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000001','replay',128);
  INSERT INTO object_buckets(id,account_id,app_id,name,scope,region,backend_id,backend_fingerprint,physical_name,state)
  VALUES('00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000002','replay','app','local','test',repeat('a',64),'replay-physical','ready');

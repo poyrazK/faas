@@ -66,6 +66,9 @@ func seedExclusionFixture(ctx context.Context, t *testing.T, pool poolIface) (ac
 	`, accountID); err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
+	if _, err := pool.Exec(ctx, personalOrgSQL, accountID); err != nil { // projects require it since #4882
+		t.Fatalf("seed personal org: %v", err)
+	}
 	if _, err := pool.Exec(ctx, `
 		insert into projects (id, account_id, slug, created_at)
 		values ($2, $1, 'exclusion-proj', now())
