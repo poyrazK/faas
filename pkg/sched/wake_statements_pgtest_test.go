@@ -344,6 +344,7 @@ func TestPostgresBootStatements(t *testing.T) {
 		{name: "cold boot"},
 		{name: "snapshot restore", snapshot: true},
 		{name: "cold boot, owner cache warm", ownerCache: true},
+		{name: "snapshot restore, owner cache warm", snapshot: true, ownerCache: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store, _, tracer := tracedPgStore(t)
@@ -367,7 +368,9 @@ func TestPostgresBootStatements(t *testing.T) {
 			}
 			if tc.snapshot {
 				if _, err := store.CreateSnapshot(ctx, state.Snapshot{DeploymentID: dep.ID, FCVersion: "1.10.0",
-					StorageKey: "snap/" + dep.ID + "/captures/c1/v2/mem", MemBytes: 1 << 20}); err != nil {
+					// A snapshot whose memory differs from the app's RAM is
+					// retired before admission and the wake cold boots.
+					StorageKey: "snap/" + dep.ID + "/captures/c1/v2/mem", MemBytes: int64(app.RAMMB) << 20}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -389,7 +392,7 @@ func TestPostgresBootStatements(t *testing.T) {
 				if err := e.Park(ctx, first.InstanceID); err != nil {
 					t.Fatalf("Park: %v", err)
 				}
-				vmm.coldBoots = 0
+				vmm.coldBoots, vmm.restores = 0, 0
 			}
 
 			tracer.armed.Store(true)
@@ -412,6 +415,10 @@ func TestPostgresBootStatements(t *testing.T) {
 			}
 			t.Logf("%s: %d statements before the answer, %d sequential round trips (cold boots %d, restores %d)",
 				tc.name, before, tracer.sequentialRoundTrips(answered), vmm.coldBoots, vmm.restores)
+			if wantRestores := map[bool]int{true: 1}[tc.snapshot]; vmm.restores != wantRestores || vmm.coldBoots != 1-wantRestores {
+				t.Fatalf("%s: cold boots %d, restores %d; want the wake to %s", tc.name, vmm.coldBoots, vmm.restores,
+					map[bool]string{true: "restore the snapshot", false: "cold boot"}[tc.snapshot])
+			}
 		})
 	}
 }
