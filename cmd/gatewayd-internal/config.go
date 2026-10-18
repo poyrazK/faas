@@ -223,6 +223,41 @@ type TOMLRateLimitConfig struct {
 	// ratelimit.mode field name so an operator can map the
 	// error straight to the TOML key.
 	Mode string `toml:"mode"`
+
+	// Lease makes central mode spend tokens from local leases instead of
+	// consulting Postgres for every request (ADR-1520). It requires
+	// Mode = "central" and is off by default.
+	Lease bool `toml:"lease"`
+	// LeaseWindowMS is how long a lease should last at the counter's recent
+	// rate. 0 takes the default, 250.
+	LeaseWindowMS int `toml:"lease_window_ms"`
+	// LeaseFraction caps one lease at this share of a bucket's burst. 0 takes
+	// the default, 0.10.
+	LeaseFraction float64 `toml:"lease_fraction"`
+	// AllowanceFraction sizes the local allowance per counter as a share of
+	// a bucket's burst. 0 takes the default, 0.05.
+	AllowanceFraction float64 `toml:"allowance_fraction"`
+}
+
+// leaseConfig validates the leasing tunables. They are gateway tunables,
+// not plan limits, so they live here rather than in pkg/api/limits.go.
+func (c TOMLRateLimitConfig) leaseConfig() (gateway.LeaseConfig, error) {
+	if c.Lease && c.Mode != "central" {
+		return gateway.LeaseConfig{}, fmt.Errorf("ratelimit.lease requires ratelimit.mode = \"central\", got %q", c.Mode)
+	}
+	if c.LeaseWindowMS < 0 || c.LeaseWindowMS > 1000 {
+		return gateway.LeaseConfig{}, fmt.Errorf("ratelimit.lease_window_ms must be between 0 and 1000, got %d", c.LeaseWindowMS)
+	}
+	for name, v := range map[string]float64{"ratelimit.lease_fraction": c.LeaseFraction, "ratelimit.allowance_fraction": c.AllowanceFraction} {
+		if v < 0 || v > 1 {
+			return gateway.LeaseConfig{}, fmt.Errorf("%s must be between 0 and 1, got %g", name, v)
+		}
+	}
+	return gateway.LeaseConfig{
+		Window:            time.Duration(c.LeaseWindowMS) * time.Millisecond,
+		Fraction:          c.LeaseFraction,
+		AllowanceFraction: c.AllowanceFraction,
+	}, nil
 }
 
 // TOMLTLSConfig is the on-disk TLS subset. Function pointers and derived

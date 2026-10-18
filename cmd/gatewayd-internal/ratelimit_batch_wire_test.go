@@ -21,4 +21,9 @@ func TestCentralRateLimitBackendBatches(t *testing.T) {
 	if _, ok := central.(gateway.CentralBatchBackend); !ok {
 		t.Fatal("state.PGRateLimitBackend no longer implements gateway.CentralBatchBackend")
 	}
+	// ADR-1520: leasing gives unspent tokens back while a bucket is under
+	// pressure; without this a customer pacing at the limit loses them.
+	if _, ok := central.(gateway.CentralLeaseBackend); !ok {
+		t.Fatal("state.PGRateLimitBackend no longer implements gateway.CentralLeaseBackend")
+	}
 }

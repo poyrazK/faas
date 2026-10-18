@@ -1,7 +1,7 @@
 # ADR-1501: Reconcile worker pools once at scheduler start
 
 Date: 2026-10-17
-Status: Accepted
+Status: Superseded by [durable worker recovery](20261017221000-durable-worker-recovery.md)
 Related: ADR-420, H10-28 (worker boot backoff), H10-136
 
 ## Context

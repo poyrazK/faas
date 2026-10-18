@@ -176,5 +176,101 @@ class EdgeLaneTest(unittest.TestCase):
             pud.plan(release(apid=APID), host, "edge", CP, ancestor)
 
 
+DATA_V1, DATA_V2 = "data-" + "3" * 40, "data-" + "4" * 40
+MIGRATION = {"path": "migrations/20261018000000001_a.sql", "version": 20261018000000001, "eligible": True}
+
+
+def with_data(rel, version=DATA_V1, **data):
+    rel = copy.deepcopy(rel)
+    rel["data"] = {"eligible": True, "version": version, "migrations": [MIGRATION], "blockers": []} | data
+    rel["tools"] = {"deployctl": {"sha256": "0" * 64}, "migrate": {"sha256": "1" * 64}}
+    return rel
+
+
+def applied(host, version=DATA_V1):
+    host = copy.deepcopy(host)
+    host["unit_versions"]["data_version"] = version
+    return host
+
+
+class DataStepTest(unittest.TestCase):
+    """The control-plane lane applies lane-eligible migrations before it
+    restarts anything (docs/adr/20261018084150-unit-lane-expand-migrations.md)."""
+
+    def test_first_deploy_applies_the_data_step(self):
+        got = cp_plan(with_data(release()), full_host())
+        self.assertEqual(got["action"], "deploy")
+        self.assertEqual(got["replace"]["bin/migrate"], "bin/migrate")
+        self.assertEqual(got["migrations"], [MIGRATION["path"]])
+        self.assertEqual(got["gate"], [["--unit", "apid"], ["--unit", "meterd"], ["--unit", "migrations"]])
+        self.assertEqual(got["unit_versions"]["data_version"], DATA_V1)
+        self.assertNotEqual(got["release_id"], cp_plan(release(), full_host())["release_id"])
+
+    def test_cases(self):
+        units = {"apid": APID["version"], "meterd": METERD["version"]}
+        cases = [
+            # name, release, host, action, applies migrations, recorded data version
+            ("no migrations in the range", release(), full_host(), "deploy", False, None),
+            ("applied already: units only", with_data(release()), applied(overlay_host({"apid": APID["version"]})),
+             "deploy", False, DATA_V1),
+            ("applied already, nothing moved: converge", with_data(release()),
+             applied(overlay_host(units, replaced=("apid", "meterd"))), "converge", False, None),
+            ("newer migrations over an overlay", with_data(release(), DATA_V2),
+             applied(overlay_host({"apid": APID["version"]})), "deploy", True, DATA_V2),
+            ("migrations alone still deploy", with_data(release(), DATA_V2),
+             applied(overlay_host(units, replaced=("apid", "meterd"))), "deploy", True, DATA_V2),
+            ("a rolled-back host applies again (a no-op for goose)", with_data(release()),
+             overlay_host({"apid": APID["version"]}), "deploy", True, DATA_V1),
+        ]
+        for name, rel, host, action, applies, recorded in cases:
+            with self.subTest(name):
+                got = cp_plan(rel, host)
+                self.assertEqual(got["action"], action)
+                self.assertEqual("bin/migrate" in got["replace"], applies)
+                self.assertEqual(["--unit", "migrations"] in got["gate"], applies)
+                if action == "deploy":
+                    self.assertEqual(got["unit_versions"].get("data_version"), recorded)
+
+    def test_migrations_alone_restart_nothing(self):
+        units = {"apid": APID["version"], "meterd": METERD["version"]}
+        got = cp_plan(with_data(release(), DATA_V2), applied(overlay_host(units, replaced=("apid", "meterd"))))
+        self.assertEqual((got["units"], got["only"], got["verify"]), ([], [], []))
+        self.assertEqual(got["gate"], [["--unit", "migrations"]])
+        self.assertEqual(set(got["replace"]), {"bin/migrate", "bin/deployctl", "unit-versions.json"})
+
+    def test_edge_lane_waits_for_the_data_step(self):
+        rel = with_data(release(apid=APID, **{"gatewayd-public": PUBLIC, "gatewayd-internal": INTERNAL}))
+        before = overlay_host({"apid": APID["version"]}, commit=T2)
+        with self.assertRaisesRegex(pud.Refused, "deploy order"):
+            pud.plan(rel, before, "edge", CP, ancestor)
+        got = pud.plan(rel, applied(before), "edge", CP, ancestor)
+        self.assertEqual(got["units"], ["gatewayd-public"])
+        self.assertNotIn("bin/migrate", got["replace"])
+        self.assertEqual(got["unit_versions"]["data_version"], DATA_V1)
+        # Compute hosts have no database: cd-edge-units checks the control
+        # plane before any of them.
+        self.assertEqual(pud.plan(rel, full_host(), "edge", NODE, ancestor)["action"], "deploy")
+
+    def test_refusals(self):
+        no_tool = with_data(release())
+        del no_tool["tools"]["migrate"]
+        cases = [
+            ("ineligible verdict", with_data(release(), eligible=False), "not lane-eligible"),
+            ("ineligible migration", with_data(release(), migrations=[MIGRATION | {"eligible": False}]), "not lane-eligible"),
+            ("no version", with_data(release(), version=None), "not lane-eligible"),
+            ("no migrate tool", no_tool, "no tools/migrate"),
+        ]
+        for name, rel, want in cases:
+            with self.subTest(name):
+                with self.assertRaisesRegex(pud.Refused, want):
+                    cp_plan(rel, full_host())
+
+    def test_release_ids_without_data_are_unchanged(self):
+        # Pinned: overlay ids of releases without a data step keep the
+        # slice 1 formula, so a rerun of an older release reuses its overlay.
+        self.assertEqual(pud.overlay_id(BASE, T2, {"apid": "unit-a"}),
+                         pud.hashlib.sha1(f"{pud.KIND_RELEASE}/1\n{BASE}\n{T2}\napid=unit-a\n".encode()).hexdigest())
+
+
 if __name__ == "__main__":
     unittest.main()
