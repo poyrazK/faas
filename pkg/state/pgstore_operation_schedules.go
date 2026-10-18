@@ -2,6 +2,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"time"
@@ -273,8 +274,10 @@ func admitScheduledOperationTx(ctx context.Context, s *PgStore, tx pgx.Tx, sched
 	return op, "", nil
 }
 
+// canonicalOperationScheduleInput makes an omitted or null input the empty
+// object, as a direct start without input would send.
 func canonicalOperationScheduleInput(raw []byte) []byte {
-	if len(raw) == 0 {
+	if trimmed := bytes.TrimSpace(raw); len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return []byte("{}")
 	}
 	return append([]byte(nil), raw...)

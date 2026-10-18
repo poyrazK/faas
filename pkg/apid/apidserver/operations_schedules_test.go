@@ -154,7 +154,7 @@ func TestOperationScheduleRoutesScopeAndFire(t *testing.T) {
 		{DefinitionID: f.def.ID, Cron: "* * * * *", Timezone: "Mars/Olympus"},
 		{DefinitionID: f.def.ID, At: &at, Input: json.RawMessage(`{"format":1}`)},
 	} {
-		f.decode(f.do("POST", selfSchedules, alice, bad), http.StatusUnprocessableEntity, nil)
+		f.decode(f.do("POST", selfSchedules, alice, bad), http.StatusBadRequest, nil)
 	}
 
 	var list api.OperationScheduleListResponse
