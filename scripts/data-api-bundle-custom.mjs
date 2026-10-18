@@ -64,7 +64,7 @@ export const customProfile = {
   table:'orders',valueColumn:'total',identities:['buyer','other'],wrongTenantIdentity:'wrongTenant',
   body:(identity,value)=>({owner:identity==='buyer'?'customer-a':'customer-b',tenant:identity==='buyer'?'shop-a':'shop-b',total:value}),
   values:[101,102,103,104,105,106],rpc:'create_order',rpcArgs:value=>({order_total:value}),rpcExpected:{owner:'customer-a',tenant:'shop-a'},
-  migrations:'migrations',versions:['0002','0003'],client:'web',types:'web/database.types.ts',checkTypes:true,keepOlderTypes:true,
+  migrations:'migrations',client:'web',types:'web/database.types.ts',checkTypes:true,keepOlderTypes:true,
 }
 
 export async function verifyCustomContract(app) {

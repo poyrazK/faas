@@ -522,9 +522,8 @@ type HostEntry struct {
 	Budget []EdgeRuleBudgetResolved
 	// Cache carries the kind=cache subset (ADR-122). The applier
 	// (handler.go::applyEdgeRuleCache) consults the matched rule's
-	// MaxAgeSeconds + StaleIfErrorSeconds + VaryOn, computes a
-	// CacheKey from (AppID, DeploymentID, RuleID, Method,
-	// NormalizedPath, VaryHash), and consults the runtime
+	// MaxAgeSeconds + StaleIfErrorSeconds + VaryOn, computes the
+	// complete CacheKey with responseCacheKeyForRequest, and consults the runtime
 	// ResponseCache (pkg/gateway/response_cache.go). A fresh hit
 	// serves the cached body BEFORE the wake gate (no VM, no
 	// gb_ram_hour). Stored as a plain slice to match the
