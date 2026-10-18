@@ -103,6 +103,9 @@ func TestParseBudgetHeaderMs_Mega4(t *testing.T) {
 		{"1", 1, true},
 		{"3000", 3000, true},
 		{" 42 ", 42, true}, // trim whitespace
+		{"2147483647", 2147483647, true},
+		{"2147483648", 0, false},        // above the documented MaxInt32
+		{"99999999999999999", 0, false}, // would overflow time.Duration in ms
 	}
 	for _, c := range cases {
 		c := c
