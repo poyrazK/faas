@@ -520,3 +520,25 @@ offboarding. Organization/shared-app, mail, trace and regression HTTP tests pass
 (36.253s), environment-contract checks pass (1.329s for Go checks), and full Go
 SDK tests/vet pass. Trace-domain configured lint reports zero issues; current
 OpenAPI parity and duplicate-key checks pass. Fresh CI remains required.
+
+## Integration with PostgreSQL fault rehearsals
+
+Main through `a7aa553e2` is integrated. The SQLC check keeps both the company
+ownership query packages and the new rehearsal fault package. Fresh PostgreSQL
+schema generation, deterministic SQL bindings and migration lint pass. All 948
+unique base-table policies match the live database and exact column sets.
+
+The new account-linked `scenario_postgres_faults` table is operational evidence,
+not cloneable configuration. All nine unreleased ownership guard definitions
+include it, retaining the existing restriction on unreviewed company rehearsals.
+The seven ownership migrations remain `contract`; no issued migration changed.
+Apply-and-walk, all seven migration replays and ownership down/up recovery pass
+(27.237s). The live erasure function includes the new table.
+
+Node and pinned Python regeneration include the new rehearsal request/receipt
+models. Node build, three diagnostic client tests and 68 Python management
+client tests pass (5.70s for Python). Rehearsal fault/work tests and environment
+contract tests pass (1.668s for the latter). OpenAPI parity and duplicate-key
+validation pass. Earlier state, HTTP and race evidence remains scoped to its
+recorded source; fresh GitHub checks must qualify this merged revision. Native
+KVM and production cutover qualification remain pending.
