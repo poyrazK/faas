@@ -65,6 +65,8 @@ import type { EdgeProtectionResponse } from '../models/EdgeProtectionResponse.js
 import type { EnvironmentRouteBudgets } from '../models/EnvironmentRouteBudgets.js';
 import type { Issue } from '../models/Issue.js';
 import type { IssueActionRequest } from '../models/IssueActionRequest.js';
+import type { IssueCompoundAlertPolicy } from '../models/IssueCompoundAlertPolicy.js';
+import type { IssueCompoundAlertPreview } from '../models/IssueCompoundAlertPreview.js';
 import type { IssueDetail } from '../models/IssueDetail.js';
 import type { IssueEvent } from '../models/IssueEvent.js';
 import type { IssueEventResponse } from '../models/IssueEventResponse.js';
@@ -99,6 +101,7 @@ import type { NativeIssueTicketResult } from '../models/NativeIssueTicketResult.
 import type { NativeIssueTrackerStatus } from '../models/NativeIssueTrackerStatus.js';
 import type { NativeLinearIssueTrackerStatus } from '../models/NativeLinearIssueTrackerStatus.js';
 import type { PreAuthObservationsResponse } from '../models/PreAuthObservationsResponse.js';
+import type { PreviewIssueCompoundAlertRequest } from '../models/PreviewIssueCompoundAlertRequest.js';
 import type { PreviewIssueLifecycleAlertRequest } from '../models/PreviewIssueLifecycleAlertRequest.js';
 import type { PreviewRouteMonitorRequest } from '../models/PreviewRouteMonitorRequest.js';
 import type { PrewarmIntentResponse } from '../models/PrewarmIntentResponse.js';
@@ -174,6 +177,7 @@ import type { TCPListenerResponse } from '../models/TCPListenerResponse.js';
 import type { TCPListenerTLSStatusResponse } from '../models/TCPListenerTLSStatusResponse.js';
 import type { UDPListenerResponse } from '../models/UDPListenerResponse.js';
 import type { UpdateAppRequest } from '../models/UpdateAppRequest.js';
+import type { UpdateIssueCompoundAlertPolicyRequest } from '../models/UpdateIssueCompoundAlertPolicyRequest.js';
 import type { UpdateIssueFrequencyAlertPolicyRequest } from '../models/UpdateIssueFrequencyAlertPolicyRequest.js';
 import type { UpdateIssueImpactAlertPolicyRequest } from '../models/UpdateIssueImpactAlertPolicyRequest.js';
 import type { UpdateIssueLifecycleAlertPolicyRequest } from '../models/UpdateIssueLifecycleAlertPolicyRequest.js';
@@ -2472,6 +2476,112 @@ export class AppsService {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/issue-lifecycle-alert-policy/preview',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read application issue event-compound rules.
+   * @returns IssueCompoundAlertPolicy Current compound policy; an unconfigured app has revision zero and no AND rules.
+   * @throws ApiError
+   */
+  public static getIssueCompoundAlertPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<IssueCompoundAlertPolicy> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issue-compound-alert-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Replace application issue event-compound rules.
+   * Replaces up to ten named AND rules using expected_revision. Both event count and verified distinct customer count must meet their thresholds in the same (now-window, now] retained-event window, optionally scoped to one environment. Active ignores and snoozes suppress admission. Only a new accepted capture inside the window triggers evaluation; retries, configuration changes and expiry alone do not notify. Cooldowns are per rule and canonical issue, survive enable toggles, and reset for changed conditions or timing. Activity, webhook issue.compound_threshold_reached and native Slack admission commit with the capture. Delivery requires an enabled subscription or eligible team destination. Frequency and fixed-window customer-impact policies remain independent.
+   * @returns IssueCompoundAlertPolicy Saved compound AND rules and their resulting revision.
+   * @throws ApiError
+   */
+  public static setIssueCompoundAlertPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: UpdateIssueCompoundAlertPolicyRequest,
+  }): CancelablePromise<IssueCompoundAlertPolicy> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/issue-compound-alert-policy',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Compound rules changed since the supplied revision; reload and review before retrying.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Preview an unsaved compound alert rule against retained issue evidence.
+   * Evaluates every draft predicate in one read-only snapshot and resolves merged aliases. Reports current retained counts and cooldown eligibility without a hypothetical new capture, saving, queue admission, receipt mutation or Slack requests. Allowed means rule eligibility only; routing, subscriptions and queue/sender checks still govern delivery.
+   * @returns IssueCompoundAlertPreview Draft rule conditions at the observation time.
+   * @throws ApiError
+   */
+  public static previewIssueCompoundAlert({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: PreviewIssueCompoundAlertRequest,
+  }): CancelablePromise<IssueCompoundAlertPreview> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issue-compound-alert-policy/preview',
       path: {
         'slug': slug,
       },

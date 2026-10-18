@@ -3935,6 +3935,7 @@ const (
 	AppWebhookEventIssueTrackerSyncAttention               AppWebhookEvent = "issue.tracker_sync.attention"
 	AppWebhookEventIssueTrackerSyncRecovered               AppWebhookEvent = "issue.tracker_sync.recovered"
 	AppWebhookEventIssueFrequencyThresholdReached          AppWebhookEvent = "issue.frequency_threshold_reached"
+	AppWebhookEventIssueCompoundThresholdReached           AppWebhookEvent = "issue.compound_threshold_reached"
 )
 
 // AllAppWebhookEvents is the canonical closed vocabulary shared by
@@ -4008,6 +4009,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventRecoveryExecutionFinished,
 	AppWebhookEventRecoveryExecutionAttention,
 	AppWebhookEventIssueFrequencyThresholdReached,
+	AppWebhookEventIssueCompoundThresholdReached,
 	AppWebhookEventWorkflowFinished, AppWebhookEventAutomationPaused,
 	AppWebhookEventEnvironmentGitOpsChanged,
 }

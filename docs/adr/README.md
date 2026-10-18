@@ -1476,3 +1476,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1650: Per-unit control-plane releases](1650-per-unit-control-plane-releases.md)
 - [ADR-1659: Publish prebuilt Issues source maps during CLI deployment](1659-deploy-issue-source-map-publication.md)
 - [ADR-1661: Offline grouping previews and reviewed regression baselines](1661-issue-grouping-previews-and-baselines.md)
+
+- [ADR-1662: Shared-window compound Issues alerts](1662-shared-window-issue-compound-alerts.md)

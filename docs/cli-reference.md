@@ -11704,6 +11704,25 @@ Publish, inspect or retire deployment mapping artifacts
 | `--directory <PATH>` | deployed directory corresponding to the build scan root |  |
 | `--manifest-file <PATH>` | portable source-map manifest file |  |
 
+### issues compound-alerts
+
+Manage and preview shared-window event and customer conditions
+
+`gregale issues compound-alerts --app <SLUG> [--key <KEY>] [--environment <NAME>] [--minimum-events <N>] [--minimum-customers <N>] [--window-seconds <N>] [--cooldown-seconds <N>] [--enabled[=true|false]] [--expected-revision <N>] [--issue <UUID>] <get|save|remove|preview>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` |  | required |
+| `--key <KEY>` | stable rule key |  |
+| `--environment <NAME>` | exact environment; empty matches all |  |
+| `--minimum-events <N>` | event threshold in the shared window |  |
+| `--minimum-customers <N>` | verified distinct customer threshold in the shared window |  |
+| `--window-seconds <N>` |  |  |
+| `--cooldown-seconds <N>` |  |  |
+| `--enabled[=true|false]` | use --enabled=false to disable a saved rule | one of `true` · `false` |
+| `--expected-revision <N>` | required for save/remove |  |
+| `--issue <UUID>` | existing issue for an unsaved preview |  |
+
 ### issues lifecycle-alerts
 
 Read, save or preview new-issue/regression alert filters

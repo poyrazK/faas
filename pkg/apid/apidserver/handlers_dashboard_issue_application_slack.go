@@ -41,7 +41,7 @@ func (s *server) dashboardApplicationSlackView(w http.ResponseWriter, r *http.Re
 	view.ApplicationSlackPolicy = policy
 	view.ApplicationSlackSaved = r.URL.Query().Get("saved") == "application-slack"
 	view.ApplicationSlackMaxDeliveries = api.IssueApplicationSlackMaxDeliveries
-	for _, event := range []struct{ key, label string }{{"created", "New issues"}, {"regressed", "Regressions"}, {"impact_threshold_reached", "Customer-impact thresholds"}, {"frequency_threshold_reached", "Event-frequency thresholds"}} {
+	for _, event := range []struct{ key, label string }{{"created", "New issues"}, {"regressed", "Regressions"}, {"impact_threshold_reached", "Customer-impact thresholds"}, {"frequency_threshold_reached", "Event-frequency thresholds"}, {"compound_threshold_reached", "Compound thresholds"}} {
 		view.ApplicationSlackEvents = append(view.ApplicationSlackEvents, dashboard.IssueSlackEventChoice{Key: event.key, Label: event.label, Selected: slices.Contains(policy.Events, event.key)})
 	}
 	return s.dashboardApplicationReminderView(w, r, app, view)

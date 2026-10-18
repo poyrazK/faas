@@ -775,6 +775,65 @@ splitting an original member restores its own receipt. Expiry does not send an
 alert by itself. Frequency/customer-impact alerts, reminders, tracker notices and
 raw lifecycle webhooks keep their existing independent policies.
 
+### Compound alerts: frequency and verified customer impact
+
+Compound rules require **both** an event threshold and a verified distinct-customer
+threshold in the same rolling window, optionally restricted to one exact environment.
+For example, notify when a production issue records at least 20 accepted events and
+three verified customers in ten minutes:
+
+```sh
+gregale issues compound-alerts get --app payments
+gregale issues compound-alerts save --app payments --expected-revision 0 --key production-impact --environment production --minimum-events 20 --minimum-customers 3 --window-seconds 600 --cooldown-seconds 1800
+gregale issues compound-alerts preview --app payments --issue ISSUE_UUID --key production-impact --environment production --minimum-events 20 --minimum-customers 3 --window-seconds 600 --cooldown-seconds 1800
+gregale issues compound-alerts remove --app payments --expected-revision 1 --key production-impact
+```
+
+The dashboard's **Compound alerts** page supports editing, removing and previewing
+unsaved rules. CLI save/remove preserves other rules and requires the current
+revision. API `GET|PUT /v1/apps/{slug}/issue-compound-alert-policy` reads or replaces
+the entire policy; use an empty rules array to clear it. Stale writes return 409.
+Up to ten rules are supported, with 1–100,000 events, 1–10,000 verified customers,
+60–86,400-second windows and 60–604,800-second cooldowns.
+
+`POST /v1/apps/{slug}/issue-compound-alert-policy/preview` accepts an existing
+`issue_id` and one draft `rule`. It reports each predicate, counts, window bounds,
+policy revision and next cooldown eligibility in one read-only snapshot. It does
+not insert a hypothetical event, save, reserve a cooldown, enqueue or contact Slack.
+`allowed` means rule eligibility; delivery still requires an eligible subscription
+or team route, queue capacity and sender checks.
+
+Both counts use retained accepted occurrences in `(now-window, now]`, including
+merged members. Distinct customers use authoritative platform tenant/consumer
+attribution; reported hints do not count. Attribution learned after capture
+contributes on the next eligible capture. A new unique event inside the window
+triggers evaluation. Active ignores and snoozes suppress compound admission.
+Cooldown expiry, policy edits, delayed/future captures outside the window and
+capture retries do not trigger notifications by themselves. A regression starts
+a new response incident before evaluating its compound rules.
+
+Subscribe webhooks to `issue.compound_threshold_reached`. Enable **Compound
+thresholds** in native Slack settings to use the issue's assigned team or fallback
+team and its existing inbox/responders. Slack channel rules can select this event,
+environment, routed team and threshold-rule key; the existing `frequency_rule_key`
+selector also applies to compound rules. Event type distinguishes identical keys
+in the independent policies. Channel overrides do not assign a different team.
+History and messages retain aggregate event/customer counts, thresholds and window
+bounds, without customer identifiers.
+
+Activity, receipt, webhook transition and eligible native Slack admission commit
+with the capture. A database failure rolls them all back. A committed transition
+consumes its rule cooldown even if native delivery is disabled, unrouted or at
+capacity. Unchanged rules and enable toggles retain receipts; condition/timing
+changes begin a fresh cycle and removal prunes receipts. Checks use canonical group
+receipts, including merged members. Existing queued messages retain their evidence.
+
+Frequency-only and fixed-24-hour impact policies remain independent. This version
+supports bounded AND conditions; lifecycle triggers, OR/nested expressions, anomaly
+detection and traffic-relative rates remain future work. Apply the migration and
+upgrade all apid consumers before enabling the new policy/native event. See
+[ADR-1662](adr/1662-shared-window-issue-compound-alerts.md).
+
 ### Application error alerting compared with Sentry
 
 The current application-error alert surface has these boundaries (reviewed
@@ -782,11 +841,11 @@ The current application-error alert surface has these boundaries (reviewed
 
 | Workflow | Gregale today | Remaining gap |
 | --- | --- | --- |
-| New issue and release-aware regression | Durable lifecycle webhooks; native Slack environment allowlist and shared per-group cooldown with draft preview | Compound trigger/filter/action rules |
-| Customer impact | One policy per app, counting verified distinct customers per issue over a fixed rolling 24 hours | Per-rule windows and thresholds; verified customers differ from Sentry user counts |
-| Event frequency | Up to ten per-issue rules with rolling windows from one minute to one day | Rates relative to traffic, anomaly detection and compound conditions |
-| Environment routing | Exact frequency-rule selectors and native lifecycle-alert environment allowlist; groups remain separate | Lifecycle filtering for generic webhook subscriptions |
-| Noise control | Frequency-rule cooldowns, shared native new-issue/regression cooldown, ignore and response suppression | Compound suppression conditions and traffic-relative thresholds |
+| New issue and release-aware regression | Durable lifecycle webhooks; native Slack environment allowlist and shared per-group cooldown with draft preview | Lifecycle triggers and general trigger/filter/action rules |
+| Customer impact | One standalone 24-hour impact policy per app plus compound rules with per-rule impact windows and thresholds | Verified customers differ from Sentry user counts; traffic-relative impact is not supported |
+| Event frequency | Up to ten per-issue rules with rolling windows from one minute to one day | Rates relative to traffic, anomaly detection and OR/nested conditions |
+| Environment routing | Exact frequency/compound-rule selectors and native lifecycle-alert environment allowlist; groups remain separate | Lifecycle filtering for generic webhook subscriptions |
+| Noise control | Frequency/compound-rule cooldowns, shared native new-issue/regression cooldown, ignore and response suppression | General suppression expressions and traffic-relative thresholds |
 | Slack | OAuth workspace installation, verified team and per-rule channels, routing preview/history, revocation handling, native threads and retries | Rotating tokens and Enterprise Grid organization grants |
 | Response | Native response inbox, dashboard/Slack acknowledgment and snoozing, reminders, backup-team escalation and handling history | Resolve and assign directly in Slack |
 

@@ -116,7 +116,7 @@ var AllowedAppWebhookEvents = []string{
 	"routes.requirements.recovered",
 	"routes.health.blocked", "routes.health.resumed", "routes.health.aborted",
 	"routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered",
-	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "issue.frequency_threshold_reached", "issue.tracker_sync.attention", "issue.tracker_sync.recovered",
+	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "issue.frequency_threshold_reached", "issue.compound_threshold_reached", "issue.tracker_sync.attention", "issue.tracker_sync.recovered",
 	"workflow.finished", "automation.paused",
 	"event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "event_recovery.execution_finished",
 	"event_recovery.execution_attention",

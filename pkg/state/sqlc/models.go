@@ -862,6 +862,12 @@ type AppIssue struct {
 	AssigneeTeamID           pgtype.UUID
 }
 
+type AppIssueCompoundAlertPolicy struct {
+	AppID    pgtype.UUID
+	Revision int64
+	Rules    []byte
+}
+
 type AppIssueFrequencyAlertPolicy struct {
 	AppID    pgtype.UUID
 	Revision int64
@@ -5296,6 +5302,14 @@ type IssueApplicationTriageActivity struct {
 	CreatedAt    pgtype.Timestamptz
 	SnoozedUntil pgtype.Timestamptz
 	Reason       string
+}
+
+type IssueCompoundAlertReceipt struct {
+	AppID       pgtype.UUID
+	RuleKey     string
+	IssueID     pgtype.UUID
+	RuleHash    string
+	LastAlertAt pgtype.Timestamptz
 }
 
 type IssueEvent struct {

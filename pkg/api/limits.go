@@ -11822,6 +11822,9 @@ const (
 
 // Issue frequency alert bounds cap configuration and per-capture evaluation work.
 const (
+	IssueApplicationSlackMaxEvents        = 5
+	IssueCompoundAlertMaxRules            = 10
+	IssueCompoundAlertMaxCustomers        = IssueImpactAlertMaxCustomers
 	IssueFrequencyAlertMaxRules           = 10
 	IssueFrequencyAlertMaxEvents          = 100000
 	IssueFrequencyAlertMinWindowSeconds   = 60
