@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -50,13 +51,21 @@ import (
 // AppID) — a single page at limit=100 maps to ≤100 AppIDs but in
 // practice tenants run one app per page.
 func (s *server) listInstancesForAccount(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	requestCtx := r.Context()
 	prob, limit := api.ParseLimit(r.URL.Query().Get("limit"), 25, 100, "instances")
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
 	before := r.URL.Query().Get("before")
-	rows, err := s.store.ListInstancesForAccountPaged(r.Context(), acct.ID, limit, before)
+	rows, nextBefore, err := appaccess.VisiblePage(requestCtx, before, limit,
+		func(cursor string) ([]state.Instance, error) {
+			return s.store.ListInstancesForAccountPaged(requestCtx, acct.ID, limit, cursor)
+		},
+		func(rows []state.Instance) ([]state.Instance, error) {
+			return appaccess.VisibleResources(r, s.store, actorAccount(r, acct), rows, func(row state.Instance) string { return row.AppID })
+		},
+		func(row state.Instance) string { return row.ID })
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list instances"))
 		return
@@ -64,14 +73,10 @@ func (s *server) listInstancesForAccount(w http.ResponseWriter, r *http.Request,
 	if rows == nil {
 		rows = []state.Instance{}
 	}
-	floors := s.batchMinInstancesTargets(r.Context(), rows)
+	floors := s.batchMinInstancesTargets(requestCtx, rows)
 	out := make([]api.InstanceResponse, 0, len(rows))
 	for _, ins := range rows {
 		out = append(out, instanceResponse(ins, floors[ins.AppID]))
-	}
-	var nextBefore string
-	if len(out) == limit && len(out) > 0 {
-		nextBefore = out[len(out)-1].ID
 	}
 	writeJSON(w, http.StatusOK, api.ListInstancesResponse{
 		Instances:  out,
@@ -116,13 +121,21 @@ func (s *server) batchMinInstancesTargets(rctx context.Context, rows []state.Ins
 // "<slug>|<key>". The pgstore splits it back via split_part. Sort
 // order is (app_slug ASC, key ASC) so the cursor walk is monotonic.
 func (s *server) listSecretsForAccount(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	requestCtx := r.Context()
 	prob, limit := api.ParseLimit(r.URL.Query().Get("limit"), 25, api.SecretsListPageMax, "secrets")
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
 	before := r.URL.Query().Get("before")
-	rows, err := s.store.ListAppSecretsForAccount(r.Context(), acct.ID, limit, before)
+	rows, nextBefore, err := appaccess.VisiblePage(requestCtx, before, limit,
+		func(cursor string) ([]state.AccountAppSecret, error) {
+			return s.store.ListAppSecretsForAccount(requestCtx, acct.ID, limit, cursor)
+		},
+		func(rows []state.AccountAppSecret) ([]state.AccountAppSecret, error) {
+			return appaccess.VisibleResources(r, s.store, actorAccount(r, acct), rows, func(row state.AccountAppSecret) string { return row.AppID })
+		},
+		func(row state.AccountAppSecret) string { return row.AppSlug + "|" + row.Scope + "|" + row.Key })
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list secrets"))
 		return
@@ -140,19 +153,6 @@ func (s *server) listSecretsForAccount(w http.ResponseWriter, r *http.Request, a
 			CreatedAt:   r.CreatedAt.UTC().Format(time.RFC3339),
 			UpdatedAt:   r.UpdatedAt.UTC().Format(time.RFC3339),
 		})
-	}
-	var nextBefore string
-	if len(out) == limit && len(out) > 0 {
-		// ADR-092 PR-B: cursor is (slug, scope, key) — the
-		// (slug, key) pair is no longer unique post-PR-A because
-		// the same (app, key) can be bound to multiple scopes.
-		// Without scope in the cursor, the next page's WHERE
-		// clause's ">" evaluates to FALSE for rows where
-		// (slug, key) equals the cursor but scope is greater than
-		// the previous page's last-scope — those rows are silently
-		// dropped.
-		last := out[len(out)-1]
-		nextBefore = last.AppSlug + "|" + last.Scope + "|" + last.Key
 	}
 	writeJSON(w, http.StatusOK, api.ListSecretsForAccountResponse{
 		Secrets:    out,
@@ -203,6 +203,9 @@ func (s *server) getAppsMetrics(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 	apps, err := s.store.ListApps(r.Context(), acct.ID)
+	if err == nil {
+		apps, err = appaccess.VisibleApps(r, s.store, actorAccount(r, acct), apps)
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list apps"))
 		return

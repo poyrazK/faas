@@ -19,6 +19,9 @@ func (m *MemStore) CreateEnvironmentWorkloadQualificationInstance(ctx context.Co
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return EnvironmentWorkloadQualificationAdmission{}, err
+	}
 	if err := m.checkNodeAdmissionLocked(ctx, placement.NodeID); err != nil {
 		return EnvironmentWorkloadQualificationAdmission{}, err
 	}

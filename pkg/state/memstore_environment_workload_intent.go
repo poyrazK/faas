@@ -82,9 +82,12 @@ func (m *MemStore) putWorkloadIntentLocked(row EnvironmentWorkloadIntent) Enviro
 	return cloneWorkloadIntent(row)
 }
 
-func (m *MemStore) PutEnvironmentWorkloadIntent(_ context.Context, row EnvironmentWorkloadIntent) (EnvironmentWorkloadIntent, error) {
+func (m *MemStore) PutEnvironmentWorkloadIntent(ctx context.Context, row EnvironmentWorkloadIntent) (EnvironmentWorkloadIntent, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return EnvironmentWorkloadIntent{}, err
+	}
 	app, env, err := m.workloadIntentEnvironmentLocked(row.AccountID, row.AppID, row.EnvironmentID)
 	if err != nil {
 		return row, err

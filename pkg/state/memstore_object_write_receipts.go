@@ -9,9 +9,14 @@ import (
 
 var _ ObjectWriteReceiptStore = (*MemStore)(nil)
 
-func (m *MemStore) GetObjectWriteReceipt(_ context.Context, account, app, bucket, id string) (api.ObjectWriteReceipt, error) {
+func (m *MemStore) GetObjectWriteReceipt(ctx context.Context, account, app, bucket, id string) (api.ObjectWriteReceipt, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 api.ObjectWriteReceipt
+		return zero0, err
+	}
+
 	c, ok := m.objectUploadCompletions[id]
 	if !ok || c.AccountID != account || c.AppID != app || c.BucketID != bucket || !isTrackedWriteReceipt(c) {
 		return api.ObjectWriteReceipt{}, ErrNotFound
@@ -19,7 +24,7 @@ func (m *MemStore) GetObjectWriteReceipt(_ context.Context, account, app, bucket
 	return ViewObjectWriteReceipt(c), nil
 }
 
-func (m *MemStore) ListObjectWriteReceipts(_ context.Context, account, app, bucket, status string, limit int, cursor string) (api.ObjectWriteReceiptList, error) {
+func (m *MemStore) ListObjectWriteReceipts(ctx context.Context, account, app, bucket, status string, limit int, cursor string) (api.ObjectWriteReceiptList, error) {
 	status, limit, valid := api.ParseObjectWriteReceiptPage(status, limit, cursor)
 	if !valid {
 		return api.ObjectWriteReceiptList{}, ErrConflict
@@ -30,6 +35,11 @@ func (m *MemStore) ListObjectWriteReceipts(_ context.Context, account, app, buck
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 api.ObjectWriteReceiptList
+		return zero0, err
+	}
+
 	b, ok := m.objectBuckets[bucket]
 	if !ok || b.AccountID != account || b.AppID != app {
 		return api.ObjectWriteReceiptList{}, ErrNotFound

@@ -9,9 +9,14 @@ import (
 
 var _ ObjectMultipartURLCapabilityStore = (*MemStore)(nil)
 
-func (m *MemStore) IssueObjectMultipartURLCredential(_ context.Context, c ObjectS3Credential, expected ObjectMultipartUpload, p api.ObjectStoragePolicy) (ObjectS3Credential, error) {
+func (m *MemStore) IssueObjectMultipartURLCredential(ctx context.Context, c ObjectS3Credential, expected ObjectMultipartUpload, p api.ObjectStoragePolicy) (ObjectS3Credential, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectS3Credential
+		return zero0, err
+	}
+
 	u := m.objectMultipartUploads[expected.ID]
 	if !validObjectURLMultipartUpload(c, u, m.clock()) || u.AppID != expected.AppID || u.ProviderUploadID != expected.ProviderUploadID || !u.Protection.Equal(expected.Protection) || u.EncryptionDefaultRevision != expected.EncryptionDefaultRevision || !u.Encryption.Equal(expected.Encryption) || !m.objectURLCredentialLiveLocked(c) {
 		return ObjectS3Credential{}, ErrConflict
@@ -19,7 +24,7 @@ func (m *MemStore) IssueObjectMultipartURLCredential(_ context.Context, c Object
 	if _, fenced := m.objectWriteFences[c.BucketID]; fenced {
 		return ObjectS3Credential{}, ErrObjectBucketWriteFenced
 	}
-	c, err := m.insertObjectURLCredentialLocked(c)
+	c, err := m.insertObjectURLCredentialLocked(ctx, c)
 	if err != nil {
 		return ObjectS3Credential{}, err
 	}
@@ -30,12 +35,16 @@ func (m *MemStore) IssueObjectMultipartURLCredential(_ context.Context, c Object
 	return cloneObjectS3Credential(c), nil
 }
 
-func (m *MemStore) BeginObjectURLMultipartPart(_ context.Context, id, token string, p api.ObjectStoragePolicy) error {
+func (m *MemStore) BeginObjectURLMultipartPart(ctx context.Context, id, token string, p api.ObjectStoragePolicy) error {
 	if token == "" || len(token) > 128 {
 		return ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	c := m.objectS3Credentials[id]
 	if c.URL == nil || c.URL.Multipart == nil || !m.objectURLCredentialLiveLocked(c) {
 		return ErrConflict

@@ -23,7 +23,7 @@ func (s *PgStore) IssueObjectMultipartURLCredential(ctx context.Context, c Objec
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(c.AccountID)); err != nil {
+	if _, err = lockObjectUsageScope(ctx, tx, mustPgUUID(c.AccountID), mustPgUUID(c.BucketID)); err != nil {
 		return ObjectS3Credential{}, mapErr(err)
 	}
 	if _, err = q.ObjectS3CredentialLockBucket(ctx, tx, sqlc.ObjectS3CredentialLockBucketParams{ID: mustPgUUID(c.BucketID), AccountID: mustPgUUID(c.AccountID)}); err != nil {
@@ -90,7 +90,7 @@ func (s *PgStore) BeginObjectURLMultipartPart(ctx context.Context, id, token str
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(c.AccountID)); err != nil {
+	if _, err = lockObjectUsageScope(ctx, tx, mustPgUUID(c.AccountID), mustPgUUID(c.BucketID)); err != nil {
 		return mapErr(err)
 	}
 	row, err = q.ObjectURLMultipartCredential(ctx, tx, mustPgUUID(id))

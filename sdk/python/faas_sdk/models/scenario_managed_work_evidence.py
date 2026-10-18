@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from ..models.scenario_managed_work_binding import ScenarioManagedWorkBinding
     from ..models.scenario_managed_work_job import ScenarioManagedWorkJob
     from ..models.scenario_managed_work_plan import ScenarioManagedWorkPlan
+    from ..models.scenario_postgres_fault_receipt import ScenarioPostgresFaultReceipt
     from ..models.scenario_worker_fault import ScenarioWorkerFault
 
 
@@ -46,6 +47,9 @@ class ScenarioManagedWorkEvidence:
     worker_fault: ScenarioWorkerFault | Unset = UNSET
     """Platform-owned checkpoint, collector and VM termination identity. Complete evidence requires a terminated
     receipt and independently journalled recovery on a different VM."""
+    postgres_fault: ScenarioPostgresFaultReceipt | Unset = UNSET
+    """Durable original-owner confirmation of a database-specific connection fence and independent recovery probe.
+    Missing proof remains inconclusive; a proven recovery exceeding the budget fails comparison."""
     reason: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -76,6 +80,10 @@ class ScenarioManagedWorkEvidence:
         if not isinstance(self.worker_fault, Unset):
             worker_fault = self.worker_fault.to_dict()
 
+        postgres_fault: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.postgres_fault, Unset):
+            postgres_fault = self.postgres_fault.to_dict()
+
         reason = self.reason
 
         field_dict: dict[str, Any] = {}
@@ -94,6 +102,8 @@ class ScenarioManagedWorkEvidence:
         )
         if worker_fault is not UNSET:
             field_dict["worker_fault"] = worker_fault
+        if postgres_fault is not UNSET:
+            field_dict["postgres_fault"] = postgres_fault
         if reason is not UNSET:
             field_dict["reason"] = reason
 
@@ -104,6 +114,7 @@ class ScenarioManagedWorkEvidence:
         from ..models.scenario_managed_work_binding import ScenarioManagedWorkBinding
         from ..models.scenario_managed_work_job import ScenarioManagedWorkJob
         from ..models.scenario_managed_work_plan import ScenarioManagedWorkPlan
+        from ..models.scenario_postgres_fault_receipt import ScenarioPostgresFaultReceipt
         from ..models.scenario_worker_fault import ScenarioWorkerFault
 
         d = dict(src_dict)
@@ -140,6 +151,13 @@ class ScenarioManagedWorkEvidence:
         else:
             worker_fault = ScenarioWorkerFault.from_dict(_worker_fault)
 
+        _postgres_fault = d.pop("postgres_fault", UNSET)
+        postgres_fault: ScenarioPostgresFaultReceipt | Unset
+        if isinstance(_postgres_fault, Unset):
+            postgres_fault = UNSET
+        else:
+            postgres_fault = ScenarioPostgresFaultReceipt.from_dict(_postgres_fault)
+
         reason = d.pop("reason", UNSET)
 
         scenario_managed_work_evidence = cls(
@@ -152,6 +170,7 @@ class ScenarioManagedWorkEvidence:
             bindings=bindings,
             jobs=jobs,
             worker_fault=worker_fault,
+            postgres_fault=postgres_fault,
             reason=reason,
         )
 

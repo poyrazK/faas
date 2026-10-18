@@ -62,7 +62,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		ProvisioningEnabled: provisioningGate,
 		ProvisioningAllowed: provisioningAllowed,
 		MaxDatabasesPerAccount: func(ctx context.Context, accountID string) (int, error) {
-			account, err := accountStore.AccountByID(ctx, accountID)
+			account, err := state.BillingResourceAccount(ctx, accountStore, accountID)
 			if err != nil {
 				return 0, err
 			}
@@ -77,7 +77,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 			return limit, nil
 		},
 		AdmitResize: func(ctx context.Context, accountID string, target managedpostgres.Spec) error {
-			account, err := accountStore.AccountByID(ctx, accountID)
+			account, err := state.BillingResourceAccount(ctx, accountStore, accountID)
 			if err != nil {
 				return err
 			}
@@ -91,7 +91,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 			if !registry.UsagePolicy().Enabled {
 				return nil
 			}
-			account, lookupErr := accountStore.AccountByID(ctx, accountID)
+			account, lookupErr := state.BillingResourceAccount(ctx, accountStore, accountID)
 			if lookupErr != nil {
 				if metrics != nil {
 					metrics.ObserveAdmission(lookupErr)
