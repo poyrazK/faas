@@ -3417,6 +3417,9 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	}
 	var placement Placement
 	var ins state.Instance
+	// ADR-1741: the boot's reads of the app and deployment alone run while
+	// the admission does.
+	prefetch := e.startBootPrefetch(ctx, app, dep)
 	// ADR-1741: the admission insert binds the snapshot-recovery lineage in
 	// its own transaction; a store that cannot is bound separately below.
 	recovery := &state.SnapshotRecoveryAdmission{SnapshotID: snap.ID}
@@ -3448,7 +3451,8 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		}
 	}
 	var provisionalCPUBoostUntil time.Time
-	if err := e.checkCapturedApplicationStandardAdmission(ctx, ins.ID, app, acct, dep); err != nil {
+	standardCapture, _, err := e.checkedCapturedApplicationStandardAdmission(ctx, ins.ID, app, acct, dep)
+	if err != nil {
 		_ = e.store.DeleteInstance(context.WithoutCancel(ctx), ins.ID)
 		release()
 		return WakeResult{}, err
@@ -3687,9 +3691,13 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: load GitOps service bindings: %w", err)
 	}
-	privateNetwork := e.privateNetworkProjection(ctx, app)
+	prefetched := prefetch.wait()
+	privateNetwork := prefetched.privateNetwork
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
-	pinnedBase, err := e.deploymentBaseKey(ctx, app, dep, layerKey(dep.RootfsKey, dep.ID))
+	pinnedBase, err := prefetched.baseKey, prefetched.baseKeyErr
+	ctx = withBootPrepared(ctx, bootPrepared{instanceID: ins.ID,
+		rehearsalRunID: prefetched.rehearsalRunID, haveRehearsal: prefetched.rehearsalErr == nil,
+		capture: standardCapture, haveCapture: true})
 	if err != nil {
 		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "wake_runtime_release_unavailable")
 		release()

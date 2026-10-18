@@ -33,17 +33,25 @@ func (e *Engine) checkApplicationStandardAdmission(ctx context.Context, app stat
 }
 
 func (e *Engine) checkCapturedApplicationStandardAdmission(ctx context.Context, id string, app state.App, account state.Account, deployment state.Deployment) error {
+	_, _, err := e.checkedCapturedApplicationStandardAdmission(ctx, id, app, account, deployment)
+	return err
+}
+
+// checkedCapturedApplicationStandardAdmission also returns the capture it
+// checked; read is false for an app outside an organization, which has none.
+func (e *Engine) checkedCapturedApplicationStandardAdmission(ctx context.Context, id string, app state.App, account state.Account, deployment state.Deployment) (state.InstanceApplicationStandardAdmission, bool, error) {
 	if app.OrgID == "" {
-		return nil
+		return state.InstanceApplicationStandardAdmission{}, false, nil
 	}
 	store, ok := e.store.(state.InstanceApplicationStandardAdmissionStore)
 	if !ok {
-		return fmt.Errorf("sched: runtime standards capture reader unavailable")
+		return state.InstanceApplicationStandardAdmission{}, false, fmt.Errorf("sched: runtime standards capture reader unavailable")
 	}
-	if err := state.CheckInstanceApplicationStandardAdmission(ctx, store, id, app, account, deployment); err != nil {
-		return fmt.Errorf("sched: validate captured runtime inputs: %w", applicationStandardRuntimeProblem(err))
+	capture, err := state.CheckedInstanceApplicationStandardAdmission(ctx, store, id, app, account, deployment)
+	if err != nil {
+		return state.InstanceApplicationStandardAdmission{}, false, fmt.Errorf("sched: validate captured runtime inputs: %w", applicationStandardRuntimeProblem(err))
 	}
-	return nil
+	return capture, true, nil
 }
 
 func applicationStandardRuntimeProblem(err error) error {

@@ -4,6 +4,7 @@ package sched
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -30,11 +31,14 @@ type statementTracer struct {
 	mu        sync.Mutex
 	names     []string
 	intervals [][2]time.Time
+	// pids is the backend that ran each statement, which tells one
+	// transaction's statements from concurrent ones.
+	pids []uint32
 }
 
 type statementIndexKey struct{}
 
-func (s *statementTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+func (s *statementTracer) TraceQueryStart(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
 	if !s.armed.Load() {
 		return ctx
 	}
@@ -42,6 +46,7 @@ func (s *statementTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data
 	defer s.mu.Unlock()
 	s.names = append(s.names, statementName(data.SQL))
 	s.intervals = append(s.intervals, [2]time.Time{time.Now()})
+	s.pids = append(s.pids, conn.PgConn().PID())
 	return context.WithValue(ctx, statementIndexKey{}, len(s.intervals)-1)
 }
 
@@ -78,12 +83,51 @@ func (s *statementTracer) sequentialRoundTrips(answered time.Time) int {
 	return chain
 }
 
+// transactionOf returns the statements of the transaction that ran the
+// statement named name: those on its backend from the begin before it to
+// the commit or rollback after it.
+func (s *statementTracer) transactionOf(name string) map[int]bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	at := slices.Index(s.names, name)
+	if at < 0 {
+		return nil
+	}
+	pid, first, last := s.pids[at], at, at
+	for i := at; i >= 0; i-- {
+		if s.pids[i] == pid {
+			first = i
+			if s.names[i] == "begin" {
+				break
+			}
+		}
+	}
+	for i := at; i < len(s.names); i++ {
+		if s.pids[i] == pid {
+			last = i
+			if s.names[i] == "commit" || s.names[i] == "rollback" {
+				break
+			}
+		}
+	}
+	tx := map[int]bool{}
+	for i := first; i <= last; i++ {
+		if s.pids[i] == pid {
+			tx[i] = true
+		}
+	}
+	return tx
+}
+
 // roundTripsWithin is sequentialRoundTrips over the statements that started
-// at or after from and ended at or before to.
-func (s *statementTracer) roundTripsWithin(from, to time.Time) (statements, roundTrips int) {
+// at or after from and ended at or before to, leaving out the excluded ones.
+func (s *statementTracer) roundTripsWithin(from, to time.Time, exclude map[int]bool) (statements, roundTrips int) {
 	s.mu.Lock()
 	var intervals [][2]time.Time
-	for _, iv := range s.intervals {
+	for i, iv := range s.intervals {
+		if exclude[i] {
+			continue
+		}
 		if !iv[1].IsZero() && !iv[0].Before(from) && !iv[1].After(to) {
 			intervals = append(intervals, iv)
 		}
@@ -415,6 +459,11 @@ func TestPostgresBootStatements(t *testing.T) {
 				t.Fatal(err)
 			}
 			e.WithNodeRegistry(NewNodeRegistry(nodes))
+			// vmmd streams live capacity to schedd; placement reads usage from
+			// it rather than from Postgres.
+			for _, n := range nodes {
+				e.CapacityTable().Replace(CapacityReport{NodeID: n.ID, SampledAt: time.Now(), RAMHeadroomMB: int32(n.MemMB)})
+			}
 			if tc.ownerCache {
 				e.WithOwnerCache()
 				first, err := e.Wake(ctx, app.ID, "", "", "")
@@ -447,16 +496,24 @@ func TestPostgresBootStatements(t *testing.T) {
 				tracer.mu.Unlock()
 				if !ended.IsZero() && !ended.After(answered) {
 					before++
-					t.Logf("%2d %s", before, name)
+					tracer.mu.Lock()
+					started, pid := tracer.intervals[i][0], tracer.pids[i]
+					tracer.mu.Unlock()
+					t.Logf("%2d %-44s start %6.1f ms took %4.1f ms pid %d", before, name,
+						float64(started.Sub(wakeStarted).Microseconds())/1000, float64(ended.Sub(started).Microseconds())/1000, pid)
 				}
 			}
 			t.Logf("%s: %d statements before the answer, %d sequential round trips (cold boots %d, restores %d)",
 				tc.name, before, tracer.sequentialRoundTrips(answered), vmm.coldBoots, vmm.restores)
 			vmmEnded := vmmStarted.Add(bootDuration)
-			preStatements, preRTs := tracer.roundTripsWithin(wakeStarted, vmmStarted)
-			postStatements, postRTs := tracer.roundTripsWithin(vmmEnded, answered)
-			t.Logf("%s: critical path %d round trips: %d before vmmd (%d statements), %d after it (%d statements); %d statements overlapped the boot",
-				tc.name, preRTs+postRTs, preRTs, preStatements, postRTs, postStatements, before-preStatements-postStatements)
+			// The scale-out stamp is its own transaction, started before the
+			// boot and joined only before the publication; it runs beside the
+			// wake, not on its path.
+			stamp := tracer.transactionOf("WriteRuntimeScalingState")
+			preStatements, preRTs := tracer.roundTripsWithin(wakeStarted, vmmStarted, stamp)
+			postStatements, postRTs := tracer.roundTripsWithin(vmmEnded, answered, stamp)
+			t.Logf("%s: critical path %d round trips: %d before vmmd (%d statements), %d after it (%d statements); %d statements beside it (the scale-out stamp's %d and any during the boot)",
+				tc.name, preRTs+postRTs, preRTs, preStatements, postRTs, postStatements, before-preStatements-postStatements, len(stamp))
 			if wantRestores := map[bool]int{true: 1}[tc.snapshot]; vmm.restores != wantRestores || vmm.coldBoots != 1-wantRestores {
 				t.Fatalf("%s: cold boots %d, restores %d; want the wake to %s", tc.name, vmm.coldBoots, vmm.restores,
 					map[bool]string{true: "restore the snapshot", false: "cold boot"}[tc.snapshot])
