@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- +goose Up
 -- ADR-1323: realtime usage, recorded to review fair-use limits, never billed. Each realtimed
 -- process reports its cumulative usage per endpoint for the current UTC hour

@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- +goose Up
 -- ADR-1323 fair use: realtimed reports each account's open connections on its
 -- node every few seconds so admission can cap an account across the fleet. A
