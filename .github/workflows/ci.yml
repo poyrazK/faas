@@ -862,7 +862,9 @@ jobs:
   unit-tests-state:
     name: unit tests (state shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Shard 3 reached its 20-minute package deadline after 1,166 passing
+    # top-level tests; allow its unchanged inventory to finish with upload headroom.
+    timeout-minutes: ${{ matrix.shard == 3 && 45 || 30 }}
     strategy:
       fail-fast: false
       matrix:
@@ -931,7 +933,7 @@ jobs:
           # Recovery with an actual serving receipt requires local database authority.
           scripts/ci/with-pg16-unix.sh bash -euo pipefail <<'STATE_TESTS'
           STATE_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=4 -shard=${{ matrix.shard }})
-          go test -race -count=1 -v -p 4 -timeout=20m -run="$STATE_RUN" -coverpkg=./pkg/state -covermode=atomic -coverprofile=coverage/cover-shard-state-${{ matrix.shard }}.out ./pkg/state
+          go test -race -count=1 -v -p 4 -timeout=${{ matrix.shard == 3 && '30m' || '20m' }} -run="$STATE_RUN" -coverpkg=./pkg/state -covermode=atomic -coverprofile=coverage/cover-shard-state-${{ matrix.shard }}.out ./pkg/state
           STATE_TESTS
       - name: upload state coverage
         uses: actions/upload-artifact@v4

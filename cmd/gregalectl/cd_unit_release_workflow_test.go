@@ -1,6 +1,10 @@
 package main
 
 import (
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -107,11 +111,64 @@ func TestUnitLaneRestartsOnlyPlannedServicesOverTheExpectedRelease(t *testing.T)
 		"unit-release-verify.sh ${release_dir}${specs}",
 		"deployctl rollback --only '${only}'",
 	)
+	ordinaryActivation := renderUnitActivationForContract(t, false)
 	for _, forbidden := range []string{"migrate", "converge-control-plane", "kgv rotate", "fleet-seal"} {
-		if strings.Contains(helper, forbidden) {
-			t.Errorf("the unit lanes must leave %q to the full lane", forbidden)
+		checked := helper
+		if forbidden == "migrate" {
+			// ADR-20261018084150 permits a signed expand-only data step.
+			// An ordinary unit plan must still generate no migration step.
+			checked = ordinaryActivation
+		}
+		if strings.Contains(checked, forbidden) {
+			t.Errorf("ordinary unit activation must leave %q to the full lane", forbidden)
 		}
 	}
+	orderedIn(t, "planned migration staging", helper,
+		`if jq -e '.replace["bin/migrate"]' "$plan" >/dev/null; then`,
+		`install -m 0755 "$units/tools/migrate" "$local_stage/bin/migrate"`,
+		"fi",
+	)
+	dataActivation := renderUnitActivationForContract(t, true)
+	orderedIn(t, "planned data step before activation", dataActivation,
+		"deployctl unit-overlay --release-id",
+		"bin/migrate=/var/tmp/gregale-units.Contract1/bin/migrate",
+		"deployctl deploy --only 'apid' --expect-current",
+		"unit-release-verify.sh",
+		"deployctl rollback --only 'apid'",
+	)
+}
+
+// Render the actual host script without executing it or contacting a host.
+func renderUnitActivationForContract(t *testing.T, dataStep bool) string {
+	t.Helper()
+	replacements := map[string]string{"bin/apid": "bin/apid", "bin/deployctl": "bin/deployctl"}
+	if dataStep {
+		replacements["bin/migrate"] = "bin/migrate"
+	}
+	plan := map[string]any{
+		"action": "deploy", "release_id": strings.Repeat("a", 40),
+		"expect_current": strings.Repeat("b", 40), "commit": strings.Repeat("c", 40),
+		"only": []string{"apid"}, "replace": replacements,
+		"verify": []string{"apid=http://127.0.0.1:9101/readyz"},
+	}
+	dir := t.TempDir()
+	raw, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planPath, scriptPath := filepath.Join(dir, "plan.json"), filepath.Join(dir, "activate.sh")
+	if err := os.WriteFile(planPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", filepath.Join("..", "..", "scripts", "ci", "unit_deploy.sh"), "script", planPath, "/var/tmp/gregale-units.Contract1", scriptPath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("render unit activation: %v: %s", err, output)
+	}
+	result, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(result)
 }
 
 // TestUnitLanesGateEveryHostAndRollBack: a unit deploy is not promoted until
