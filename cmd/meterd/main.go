@@ -1168,7 +1168,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// loop's contract is "at most one", matching the design note at
 	// pkg/alerts/evaluator.go.
 	promClient := buildPromQLClient(deps)
+	// ADR-748: probe customer synthetic checks against their public hostnames.
+	appsDomain := deps.getenv("FAAS_APPS_DOMAIN")
+	if appsDomain == "" {
+		appsDomain = "gregale.dev" // apid's default for unset deployments
+	}
+	go runSyntheticChecks(ctx, store, appsDomain, log)
 	evaluator := buildAlertEvaluatorWithPromQL(deps, store, log, ops, promClient)
+	// ADR-749: deliver alerts to Slack, PagerDuty and email channels.
+	evaluator.SetChannels(newAlertChannelSender(mailer), newAlertChannelCounter(ops.Registry()))
+	// ADR-747: record customer SLO budget hours from Prometheus.
+	go runSLORollup(ctx, store, promClient, log)
 	// ADR-098 PR-C: connection-aware upstream probe + partition
 	// cron. The FAAS_UPSTREAM_PROBE environment value is the
 	// bootstrap fallback; the durable data-placement flag can

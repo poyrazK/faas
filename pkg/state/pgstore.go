@@ -3164,6 +3164,26 @@ func (s *PgStore) ListInstancesByNodeID(ctx context.Context, nodeID string) ([]I
 	return scanInstances(rows)
 }
 
+// ListLiveInstancesByNodeID is ListInstancesByNodeID filtered to live states
+// in SQL. On production, listing every instance returned about 27,000
+// parked, stopped and failed rows per call for two live ones, and schedd's
+// stats poller made that call five times a second (H10-145).
+func (s *PgStore) ListLiveInstancesByNodeID(ctx context.Context, nodeID string) ([]Instance, error) {
+	sel := `select i.id, coalesce(i.app_id::text, ''), coalesce(i.deployment_id::text, ''), i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
+		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count, i.mode, i.request_count
+		   from instances i
+		   join apps a on a.id = i.app_id
+		  where a.node_id = $1
+		    and a.status <> 'deleted'
+		    and i.state = any($2::text[])`
+	rows, err := s.pool.Query(ctx, sel, nodeID, LiveStates())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanInstances(rows)
+}
+
 // ListInstancesOnNodeID returns every instance physically resident on the
 // given compute node. It deliberately filters instances.node_id rather than
 // joining through apps.node_id: live migration commits the physical move

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"reflect"
 	"sort"
 	"strconv"
 	"syscall"
@@ -148,7 +149,7 @@ func cmdAlertUpdateInteractive(slug string) int {
 	if err != nil {
 		return printErr("Could not recheck alert", err)
 	}
-	if alertEditableSnapshot(latest) != alertEditableSnapshot(rule) {
+	if !reflect.DeepEqual(alertEditableSnapshot(latest), alertEditableSnapshot(rule)) {
 		return printErr("Alert changed", errors.New("the rule changed while you were editing; run the command again to review its current settings"))
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
