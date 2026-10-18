@@ -2457,7 +2457,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 		var all []state.Instance
 		var err error
 		if owner := l.engine.OwnerNodeID(); owner != "" {
-			all, err = store.ListInstancesByNodeID(ctx, owner)
+			all, err = store.ListLiveInstancesByNodeID(ctx, owner)
 		} else {
 			all, err = store.ListAllInstances(ctx)
 		}

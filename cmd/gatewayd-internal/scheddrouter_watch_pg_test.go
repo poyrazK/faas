@@ -20,7 +20,7 @@
 // pins the seam WITHOUT real LISTEN; THIS test pins it WITH
 // real LISTEN. Both layers matter.
 //
-// The test runs against a fresh schema per pgtest.Open (see
+// The test runs against a fresh migrated database in CI (see
 // pkg/db/pgtest/pgtest.go) and migrates via db.MigrateUp. The
 // `compute_nodes` table is a goose-managed migration (00079+)
 // so we don't have to create it by hand. A real compute_node
@@ -51,7 +51,7 @@ import (
 // regression that touches the wire shape (channel name, payload
 // field rename, trigger definition) must fail this test.
 func TestScheddRouter_WatchNodeChanges_LiveNotify(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)

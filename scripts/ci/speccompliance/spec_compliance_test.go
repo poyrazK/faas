@@ -84,7 +84,9 @@ const (
 	executionWorkflowManagedFile     = "execution_workflow_managed.go" // ADR-171 — server-managed sequential workflow DTOs
 	runtimeReleasesFile              = "runtime_releases.go"           // ADR-736 immutable runtime identity and update preview DTOs
 	devBucketsFile                   = "dev_buckets.go"
-	imageRunsFile                    = "image_runs.go" // ADR-1161 — docker-run-shaped image run DTOs
+	imageRunsFile                    = "image_runs.go"           // ADR-1161 — docker-run-shaped image run DTOs
+	changeTimelineFile               = "change_timeline.go"      // ADR-751 app change timeline DTOs
+	customMetricSeriesFile           = "custom_metric_series.go" // ADR-745 custom metric history DTOs
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -429,6 +431,8 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/rollback":                          true, // HTML form, app rollback (issue #248)
 	"POST /dashboard/apps/{slug}/deployments/{id}/retry":            true, // HTML form, per-stage retry (ADR-117 §Production-ready follow-on C4); CSRF sealed envelope, no SDK twin
 	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable":       true, // ADR-123 — dashboard form post; programatic enable is /v1 with SDK wrapper EnableAlertPreset
+	"GET /dashboard/apps/{slug}/changes":                            true, // ADR-751 HTML view of GET /v1/apps/{slug}/changes
+	"GET /dashboard/apps/{slug}/custom-metrics":                     true, // ADR-745 HTML view of custom metric history
 	"GET /dashboard/apps/{slug}/automations":                        true, // ADR-1285 HTML authoring console
 	"POST /dashboard/apps/{slug}/automations/{action}":              true, // ADR-1285 app-bound CSRF forms
 	// Issue #1233 / ADR-123 PR-C commit 2 — "Send test alert" form
@@ -1493,6 +1497,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", alertsFile),
 		filepath.Join(root, "pkg", "api", alertsDeliveryFile),
 		filepath.Join(root, "pkg", "api", alertsPresetsFile),
+		filepath.Join(root, "pkg", "api", "notification_channels.go"), // ADR-749 channel DTOs
+		filepath.Join(root, "pkg", "api", "slos.go"),                  // ADR-747 customer SLO DTOs
+		filepath.Join(root, "pkg", "api", "synthetic_checks.go"),      // ADR-748 synthetic check DTOs
 		filepath.Join(root, "pkg", "api", manifestFile),
 		filepath.Join(root, "pkg", "api", "profiles.go"), // ADR-819
 		filepath.Join(root, "pkg", "api", "profile_investigations.go"),
@@ -1595,6 +1602,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),
 		filepath.Join(root, "pkg", "api", serviceMapFile),
+		filepath.Join(root, "pkg", "api", changeTimelineFile),
+		filepath.Join(root, "pkg", "api", customMetricSeriesFile),
 		filepath.Join(root, "pkg", "api", applicationStandardsFile),
 		filepath.Join(root, "pkg", "api", applicationStandardResourcesFile),
 		filepath.Join(root, "pkg", "api", applicationStandardMutationsFile),

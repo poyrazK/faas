@@ -7,6 +7,9 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.custom_metric_response_kind import CustomMetricResponseKind, check_custom_metric_response_kind
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="CustomMetricResponse")
 
 
@@ -15,7 +18,8 @@ class CustomMetricResponse:
     """One stored ADR-202 gauge.
 
     Example:
-        {'name': 'orders_pending', 'value': 1284, 'observed_at': '2026-09-21T12:00:00Z', 'stale': False}
+        {'name': 'orders_pending', 'value': 1284, 'observed_at': '2026-09-21T12:00:00Z', 'stale': False, 'kind':
+            'gauge'}
 
     """
 
@@ -25,6 +29,9 @@ class CustomMetricResponse:
     stale: bool
     """True when this row is older than the freshness window and is therefore NOT driving scaling. Computed server-
     side so the API and the scheduler cannot disagree about which rows count."""
+    kind: CustomMetricResponseKind | Unset = UNSET
+    """gauge for pushed values (a scaling signal); counter for ADR-745 OTLP cumulative sums, which never drive
+    scaling."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -36,6 +43,10 @@ class CustomMetricResponse:
 
         stale = self.stale
 
+        kind: str | Unset = UNSET
+        if not isinstance(self.kind, Unset):
+            kind = self.kind
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -46,6 +57,8 @@ class CustomMetricResponse:
                 "stale": stale,
             }
         )
+        if kind is not UNSET:
+            field_dict["kind"] = kind
 
         return field_dict
 
@@ -60,11 +73,19 @@ class CustomMetricResponse:
 
         stale = d.pop("stale")
 
+        _kind = d.pop("kind", UNSET)
+        kind: CustomMetricResponseKind | Unset
+        if isinstance(_kind, Unset):
+            kind = UNSET
+        else:
+            kind = check_custom_metric_response_kind(_kind)
+
         custom_metric_response = cls(
             name=name,
             value=value,
             observed_at=observed_at,
             stale=stale,
+            kind=kind,
         )
 
         custom_metric_response.additional_properties = d

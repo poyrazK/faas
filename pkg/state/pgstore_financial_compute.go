@@ -185,8 +185,6 @@ func (t *pgFinancialComputeTxn) owner(node, incarnation string) (bool, error) {
 	return t.q.FinancialComputeOwnerValid(t.ctx, t.db, sqlc.FinancialComputeOwnerValidParams{NodeID: n, Incarnation: i})
 }
 
-func pgTime(t time.Time) pgtype.Timestamptz { return pgtype.Timestamptz{Time: t.UTC(), Valid: true} }
-
 func (s *PgStore) computeTransaction(ctx context.Context, account string, fn func(*pgFinancialComputeTxn) error) error {
 	if uuid.Validate(account) != nil {
 		return ErrInvalidArgument

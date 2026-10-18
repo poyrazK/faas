@@ -6,6 +6,9 @@
 // adr: 695
 // adr: 708
 // adr: 1701 — commercial configuration needs isolation; user email consent is not copied.
+// adr: 749 — notification channels and rule bindings are customer configuration.
+// adr: 747 — SLO definitions are configuration; hourly rollups are operational.
+// adr: 748 — synthetic check definitions are configuration; runs are operational.
 package state
 
 import (
@@ -164,6 +167,12 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"financial_compute_owners":           CloneSchemaOperational,
 		"financial_funding_currency":         CloneSchemaPlatform,
 		"financial_preview_command_runtimes": CloneSchemaOperational,
+		"notification_channels":              CloneSchemaConfiguration,
+		"alert_rule_channels":                CloneSchemaConfiguration,
+		"app_slos":                           CloneSchemaConfiguration,
+		"app_slo_hourly":                     CloneSchemaOperational,
+		"synthetic_checks":                   CloneSchemaConfiguration,
+		"synthetic_check_runs":               CloneSchemaOperational,
 
 		// Capacity and runtime observations are source-bound, expiring evidence.
 		"managed_postgres_connection_capacity":     CloneSchemaOperational,
