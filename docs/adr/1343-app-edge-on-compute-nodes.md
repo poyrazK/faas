@@ -24,7 +24,7 @@
 - **Builds on:** ADR-070 (one public ingress per box, in front of the local
   gatewayd-internal), ADR-1344 (§2 edge, §8 launch topology, §9 ownership),
   ADR-698–702 (public-edge roster and withdrawal barrier, default off),
-  ADR-1340 (per-gateway journal batching, scaling roadmap).
+  ADR-1521 (per-gateway journal batching, scaling roadmap).
 - **Amends (when accepted):** ADR-070 (a compute node's public ingress is the
   tunnel-fed gatewayd-public); ADR-520 (custom domains stay on the control
   plane's direct-ingress Caddy); CLAUDE.md "Component ownership" (gatewayd-public
@@ -240,7 +240,7 @@ draining one compute node fails no request.
 - Each compute edge adds three pooled Postgres connections plus a LISTEN
   session to the control plane's Postgres until PgBouncer (scaling roadmap
   Stage 1) is on.
-- ADR-1340's journal batches come from each compute node's gateway; nothing
+- ADR-1521's journal batches come from each compute node's gateway; nothing
   changes in that design.
 - More code runs on hosts that run tenant VMs. The edge holds no storage
   credentials, apid sockets or account API tokens, and serves only app hosts.

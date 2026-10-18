@@ -1,0 +1,220 @@
+# adr: 20261017223000
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 30s
+tests:
+- name: shortage survives restart observations and clears after recovery
+  interval: 30s
+  input_series:
+  - series: schedd_worker_recovery_replicas{job="schedd",instance="node-1",state="missing"}
+    values: 2x29 0x21
+  - series: schedd_worker_recovery_apps{job="schedd",instance="node-1",condition="unknown"}
+    values: '0x50'
+  - series: schedd_worker_recovery_apps{job="schedd",instance="node-1",condition="overdue"}
+    values: '0x50'
+  - series: schedd_worker_recovery_observed_timestamp_seconds{job="schedd",instance="node-1"}
+    values: 0+30x50
+  alert_rule_test:
+  - eval_time: 9m
+    alertname: FaasWorkerPoolUnderCapacity
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasWorkerPoolUnderCapacity
+    exp_alerts:
+    - exp_labels:
+        job: schedd
+        instance: node-1
+        severity: warn
+        component: schedd
+        family: worker_recovery
+        public_status: internal
+      exp_annotations:
+        summary: Worker pools remain below required capacity on node-1
+        description: Fresh scheduler observations show missing required workers for
+          ten minutes. Inspect gregale inspect and the recovery ledger for capacity,
+          startup or dependency failures. Intentional zero targets do not contribute
+          a deficit.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/ops/continuous-service-recovery.md
+  - eval_time: 14m
+    alertname: FaasWorkerPoolUnderCapacity
+    exp_alerts:
+    - exp_labels:
+        job: schedd
+        instance: node-1
+        severity: warn
+        component: schedd
+        family: worker_recovery
+        public_status: internal
+      exp_annotations:
+        summary: Worker pools remain below required capacity on node-1
+        description: Fresh scheduler observations show missing required workers for
+          ten minutes. Inspect gregale inspect and the recovery ledger for capacity,
+          startup or dependency failures. Intentional zero targets do not contribute
+          a deficit.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/ops/continuous-service-recovery.md
+  - eval_time: 15m
+    alertname: FaasWorkerPoolUnderCapacity
+    exp_alerts: []
+  - eval_time: 14m
+    alertname: FaasWorkerRecoveryStalled
+    exp_alerts: []
+  - eval_time: 14m
+    alertname: FaasWorkerRecoveryObservationUnavailable
+    exp_alerts: []
+- name: intentional scale to zero is healthy
+  interval: 30s
+  input_series:
+  - series: schedd_worker_recovery_replicas{job="schedd",instance="node-1",state="missing"}
+    values: '0x50'
+  - series: schedd_worker_recovery_apps{job="schedd",instance="node-1",condition="unknown"}
+    values: '0x50'
+  - series: schedd_worker_recovery_apps{job="schedd",instance="node-1",condition="overdue"}
+    values: '0x50'
+  - series: schedd_worker_recovery_observed_timestamp_seconds{job="schedd",instance="node-1"}
+    values: 0+30x50
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasWorkerPoolUnderCapacity
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasWorkerRecoveryStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasWorkerRecoveryObservationUnavailable
+    exp_alerts: []
+- name: future retry and live lease stay quiet; expired reconciliation alerts then
+    clears
+  interval: 30s
+  input_series:
+  - series: schedd_worker_recovery_replicas{job="schedd",instance="node-1",state="missing"}
+    values: '0x50'
+  - series: schedd_worker_recovery_apps{job="schedd",instance="node-1",condition="unknown"}
+    values: '0x50'
+  - series: schedd_worker_recovery_apps{job="schedd",instance="node-1",condition="overdue"}
+    values: 0x5 1x12 0x32
+  - series: schedd_worker_recovery_observed_timestamp_seconds{job="schedd",instance="node-1"}
+    values: 0+30x50
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: FaasWorkerRecoveryStalled
+    exp_alerts: []
+  - eval_time: 4m
+    alertname: FaasWorkerRecoveryStalled
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasWorkerRecoveryStalled
+    exp_alerts:
+    - exp_labels:
+        job: schedd
+        instance: node-1
+        severity: warn
+        component: schedd
+        family: worker_recovery
+        public_status: internal
+      exp_annotations:
+        summary: Worker reconciliation is overdue on node-1
+        description: An eligible owned app has exceeded both its retry deadline and
+          reconciliation lease by at least sixty seconds for two minutes. Inspect
+          scheduler work saturation, ownership and dependencies; an active lease or
+          future retry deadline does not count as overdue.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/ops/continuous-service-recovery.md
+  - eval_time: 10m
+    alertname: FaasWorkerRecoveryStalled
+    exp_alerts: []
+- name: stale database collection is unknown and suppresses stale capacity alerts
+  interval: 30s
+  input_series:
+  - series: schedd_worker_recovery_replicas{job="schedd",instance="node-1",state="missing"}
+    values: 2x50
+  - series: schedd_worker_recovery_apps{job="schedd",instance="node-1",condition="unknown"}
+    values: '0x50'
+  - series: schedd_worker_recovery_apps{job="schedd",instance="node-1",condition="overdue"}
+    values: '0x50'
+  - series: schedd_worker_recovery_observed_timestamp_seconds{job="schedd",instance="node-1"}
+    values: 0+30x4 120x46
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: FaasWorkerRecoveryObservationUnavailable
+    exp_alerts: []
+  - eval_time: 9m
+    alertname: FaasWorkerRecoveryObservationUnavailable
+    exp_alerts:
+    - exp_labels:
+        job: schedd
+        instance: node-1
+        severity: warn
+        component: schedd
+        family: worker_recovery
+        public_status: internal
+      exp_annotations:
+        summary: Worker recovery observations are unavailable on node-1
+        description: An eligible worker app has no fresh pool observation, or database
+          collection has not succeeded for over sixty seconds, for five minutes. Counts
+          are unknown. Check schedd recovery logs, database connectivity, deployment
+          availability and scheduler version.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/ops/continuous-service-recovery.md
+  - eval_time: 12m
+    alertname: FaasWorkerPoolUnderCapacity
+    exp_alerts: []
+  - eval_time: 12m
+    alertname: FaasWorkerRecoveryStalled
+    exp_alerts: []
+- name: missing plans never imply healthy zero; fresh plans resolve the alert
+  interval: 30s
+  input_series:
+  - series: schedd_worker_recovery_replicas{job="schedd",instance="node-1",state="missing"}
+    values: '0x50'
+  - series: schedd_worker_recovery_apps{job="schedd",instance="node-1",condition="unknown"}
+    values: 1x19 0x30
+  - series: schedd_worker_recovery_apps{job="schedd",instance="node-1",condition="overdue"}
+    values: '0x50'
+  - series: schedd_worker_recovery_observed_timestamp_seconds{job="schedd",instance="node-1"}
+    values: 0+30x50
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasWorkerRecoveryObservationUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasWorkerRecoveryObservationUnavailable
+    exp_alerts:
+    - exp_labels:
+        job: schedd
+        instance: node-1
+        severity: warn
+        component: schedd
+        family: worker_recovery
+        public_status: internal
+      exp_annotations:
+        summary: Worker recovery observations are unavailable on node-1
+        description: An eligible worker app has no fresh pool observation, or database
+          collection has not succeeded for over sixty seconds, for five minutes. Counts
+          are unknown. Check schedd recovery logs, database connectivity, deployment
+          availability and scheduler version.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/ops/continuous-service-recovery.md
+  - eval_time: 10m
+    alertname: FaasWorkerRecoveryObservationUnavailable
+    exp_alerts: []
+  - eval_time: 9m
+    alertname: FaasWorkerPoolUnderCapacity
+    exp_alerts: []
+- name: brief shortages clear without an alert
+  interval: 30s
+  input_series:
+  - series: schedd_worker_recovery_replicas{job="schedd",instance="node-1",state="missing"}
+    values: 2x5 0x45
+  - series: schedd_worker_recovery_apps{job="schedd",instance="node-1",condition="unknown"}
+    values: '0x50'
+  - series: schedd_worker_recovery_apps{job="schedd",instance="node-1",condition="overdue"}
+    values: '0x50'
+  - series: schedd_worker_recovery_observed_timestamp_seconds{job="schedd",instance="node-1"}
+    values: 0+30x50
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasWorkerPoolUnderCapacity
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasWorkerRecoveryStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasWorkerRecoveryObservationUnavailable
+    exp_alerts: []

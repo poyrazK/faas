@@ -238,6 +238,7 @@ func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
 		engine.SetBrokerLagReader(l)
 		engine.mu.Lock()
 		engine.serviceReconcileSubmit = l.submitServiceRecovery
+		engine.workerReconcileSubmit = l.submitWorkerRecovery
 		engine.mu.Unlock()
 	}
 	return l
@@ -1129,8 +1130,9 @@ func (l *Loop) Run(ctx context.Context) error {
 	primeRecoveryT := time.NewTicker(primeRecoveryInterval)
 	defer primeRecoveryT.Stop()
 	l.dispatchPrimeRecovery(ctx)
-	workerStartupT := time.NewTimer(workerStartupReconcileDelay)
-	defer workerStartupT.Stop()
+	workerRecoveryT := time.NewTicker(time.Duration(api.WorkerRecoveryPollIntervalSeconds) * time.Second)
+	defer workerRecoveryT.Stop()
+	l.dispatchWorkerRecovery(ctx)
 
 	// Make sure the triggerWakeup channel exists before any
 	// wakeup can race the first select iteration. WakeupTriggers
@@ -1232,8 +1234,8 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-workflowRetentionFirst:
 			l.runWorkflowRetention(ctx)
 			workflowRetentionFirst = nil
-		case <-workerStartupT.C:
-			l.dispatchWorkerStartupReconcile(ctx)
+		case <-workerRecoveryT.C:
+			l.dispatchWorkerRecovery(ctx)
 		case <-workflowRetentionTick(workflowRetentionT):
 			l.runWorkflowRetention(ctx)
 		case <-retentionFirst:
