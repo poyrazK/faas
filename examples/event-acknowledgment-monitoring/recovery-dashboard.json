@@ -1,0 +1,1173 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Opt-in Go, Node or Python callback recovery health, with optional Go/Node actual recovery-worker liveness and latest joined-pass outcomes. Read-only metadata; no callback success or automatic operator action.",
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "title": "Recovery runbook",
+      "url": "https://github.com/poyrazK/faas/blob/main/docs/runbooks/GregaleEventRecovery.md",
+      "type": "link",
+      "targetBlank": true
+    }
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Recovery health: evidence and scope",
+      "type": "text",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 5
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "Load `recovery.rules.yml`. Each target monitors one owner scope; duplicate observers must not be summed. Backlog panels require a live scrape plus complete, fresh advancing evidence and show Unknown when proof is missing. Count zero covers retained intents only. Parked count can drop after operator resume or supersession without callback confirmation. A Prometheus alert resolution after evidence loss is not proof of recovery; inspect evidence/down/absence alerts. No recovery action is automated. [Operator runbook](https://github.com/poyrazK/faas/blob/main/docs/runbooks/GregaleEventRecovery.md)."
+      }
+    },
+    {
+      "id": 2,
+      "title": "Parked callbacks",
+      "type": "stat",
+      "description": "Eligible complete retained count. Warning threshold >=1 held 5m. Unknown evidence is not zero.",
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 8,
+        "h": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "gregale_event_recovery:parked{job=~\"${job:regex}\",instance=~\"${instance:regex}\"}",
+          "legendFormat": "Parked / {{job}} / {{instance}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Unknown",
+          "min": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Due callbacks",
+      "type": "stat",
+      "description": "Due work excludes live claims and parked callbacks. Warning threshold >=100 held 5m.",
+      "gridPos": {
+        "x": 8,
+        "y": 5,
+        "w": 8,
+        "h": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "gregale_event_recovery:due{job=~\"${job:regex}\",instance=~\"${instance:regex}\"}",
+          "legendFormat": "Due / {{job}} / {{instance}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Unknown",
+          "min": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 100
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Stalled callbacks",
+      "type": "stat",
+      "description": "Eligible beyond configured stall interval; example 5m. Warning >=1 held 5m. Parked rows excluded.",
+      "gridPos": {
+        "x": 16,
+        "y": 5,
+        "w": 8,
+        "h": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "gregale_event_recovery:stalled{job=~\"${job:regex}\",instance=~\"${instance:regex}\"}",
+          "legendFormat": "Stalled / {{job}} / {{instance}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Unknown",
+          "min": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Retained recovery backlog",
+      "type": "timeseries",
+      "description": "Only eligible observations. Gaps remain gaps; outstanding includes parked work. No global sum across scopes or duplicate observers.",
+      "gridPos": {
+        "x": 0,
+        "y": 11,
+        "w": 16,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "gregale_event_recovery:outstanding{job=~\"${job:regex}\",instance=~\"${instance:regex}\"}",
+          "legendFormat": "Outstanding / {{job}} / {{instance}}",
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "expr": "gregale_event_recovery:parked{job=~\"${job:regex}\",instance=~\"${instance:regex}\"}",
+          "legendFormat": "Parked / {{job}} / {{instance}}",
+          "instant": false
+        },
+        {
+          "refId": "C",
+          "expr": "gregale_event_recovery:due{job=~\"${job:regex}\",instance=~\"${instance:regex}\"}",
+          "legendFormat": "Due / {{job}} / {{instance}}",
+          "instant": false
+        },
+        {
+          "refId": "D",
+          "expr": "gregale_event_recovery:stalled{job=~\"${job:regex}\",instance=~\"${instance:regex}\"}",
+          "legendFormat": "Stalled / {{job}} / {{instance}}",
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Unknown",
+          "min": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "spanNulls": false,
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Eligible evidence",
+      "type": "stat",
+      "description": "Present value 1 requires live scrape, successful read, complete advancing sample and host/Prometheus freshness. Missing value is Unknown.",
+      "gridPos": {
+        "x": 16,
+        "y": 11,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "gregale_event_recovery:evidence_eligible{job=~\"${job:regex}\",instance=~\"${instance:regex}\"}",
+          "legendFormat": "Eligible / {{job}} / {{instance}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Unknown",
+          "min": 0,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Unavailable / incomplete",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "Present / complete",
+                  "color": "green"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Observation age and freshness bound",
+      "type": "timeseries",
+      "description": "Age uses conservative wall and local monotonic time. Future/non-advancing samples remain ineligible even if displayed age is low. Absent sample age remains missing.",
+      "gridPos": {
+        "x": 0,
+        "y": 19,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "gregale_event_acknowledgment_recovery_observation_age_seconds{gregale_event_recovery=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} and on (job, instance) (up{gregale_event_recovery=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "Age / {{job}} / {{instance}}",
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "expr": "gregale_event_acknowledgment_recovery_max_observation_age_seconds{gregale_event_recovery=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} and on (job, instance) (up{gregale_event_recovery=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "Age bound / {{job}} / {{instance}}",
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "Unknown",
+          "min": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "spanNulls": false,
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "Latest read and coverage",
+      "type": "stat",
+      "description": "Latest cached read/coverage markers, separate from freshness. A stale complete read still needs the Eligible evidence panel. Missing values remain Unknown.",
+      "gridPos": {
+        "x": 12,
+        "y": 19,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "gregale_event_acknowledgment_recovery_read_success{gregale_event_recovery=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} and on (job, instance) (up{gregale_event_recovery=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "Read / {{job}} / {{instance}}",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "expr": "gregale_event_acknowledgment_recovery_complete{gregale_event_recovery=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} and on (job, instance) (up{gregale_event_recovery=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "Coverage / {{job}} / {{instance}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Unknown",
+          "min": 0,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Unavailable / incomplete",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "Present / complete",
+                  "color": "green"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "Sample bounds and invalid rows",
+      "type": "timeseries",
+      "description": "Counts from truncated/invalid samples are lower bounds and excluded from eligible backlog. Review bounded query cost before increasing the scan limit.",
+      "gridPos": {
+        "x": 0,
+        "y": 27,
+        "w": 24,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "gregale_event_acknowledgment_recovery_scan_limit{gregale_event_recovery=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} and on (job, instance) (up{gregale_event_recovery=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "Scan limit / {{job}} / {{instance}}",
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "expr": "gregale_event_acknowledgment_recovery_invalid_rows{gregale_event_recovery=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} and on (job, instance) (up{gregale_event_recovery=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "Invalid rows / {{job}} / {{instance}}",
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Unknown",
+          "min": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "spanNulls": false,
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Worker liveness (opt-in actual pass observer)",
+      "type": "text",
+      "gridPos": {
+        "x": 0,
+        "y": 34,
+        "w": 24,
+        "h": 4
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "Opt in with `gregale_event_recovery_worker=\"true\"` only when this target exports the monitored Go or Node recovery-pass cache. Health polling and HTTP scrapes never refresh worker activity. The first/next pass must start within the idle bound; an active pass must return within its duration expectation. These are alerts, not deadlines or automatic recovery. Outcomes are latest joined-pass gauges, not totals/rates, and may belong to the previous pass while another is active. A completed or empty pass does not prove callback/business success or global drain. Missing evidence is Unknown. [Worker runbook](https://github.com/poyrazK/faas/blob/main/docs/runbooks/GregaleEventRecovery.md#worker-liveness). Node pool-cleanup failures and typed cleanup uncertainty can overlap known settlement outcomes; never sum all outcome fields."
+      }
+    },
+    {
+      "id": 11,
+      "title": "Recovery worker overdue",
+      "type": "stat",
+      "description": "Uses the greater of host conservative age and Prometheus time since actual activity. Independent from database-read evidence; missing is Unknown.",
+      "gridPos": {
+        "x": 0,
+        "y": 38,
+        "w": 8,
+        "h": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "gregale_event_recovery:worker_overdue{job=~\"${job:regex}\",instance=~\"${instance:regex}\"}",
+          "legendFormat": "Worker / {{job}} / {{instance}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Unknown",
+          "min": 0,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Within activity bounds",
+                  "color": "green"
+                },
+                "1": {
+                  "text": "Overdue",
+                  "color": "red"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 12,
+      "title": "Recovery pass in flight",
+      "type": "stat",
+      "description": "One monitored pass has started without returning. Idle is not proof of recovery; inspect overdue and latest outcomes.",
+      "gridPos": {
+        "x": 8,
+        "y": 38,
+        "w": 8,
+        "h": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "gregale_event_acknowledgment_recovery_worker_in_flight{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} and on (job, instance) gregale_event_recovery:worker_evidence_eligible{job=~\"${job:regex}\",instance=~\"${instance:regex}\"}",
+          "legendFormat": "Pass / {{job}} / {{instance}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Unknown",
+          "min": 0,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Idle",
+                  "color": "blue"
+                },
+                "1": {
+                  "text": "In flight",
+                  "color": "blue"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 13,
+      "title": "Latest joined pass duration",
+      "type": "stat",
+      "description": "Historical local monotonic duration, regardless of pass outcome. No pass means Unknown; this does not describe an active pass.",
+      "gridPos": {
+        "x": 16,
+        "y": 38,
+        "w": 8,
+        "h": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "gregale_event_acknowledgment_recovery_worker_last_pass_duration_seconds{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} and on (job, instance) (up{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "Duration / {{job}} / {{instance}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "Unknown",
+          "min": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 14,
+      "title": "Worker activity age and expected bound",
+      "type": "timeseries",
+      "description": "Conservative activity age includes independent Prometheus aging. First/next-pass idle and active-pass duration bounds differ. Missing evidence leaves gaps.",
+      "gridPos": {
+        "x": 0,
+        "y": 44,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "gregale_event_recovery:worker_activity_age_seconds{job=~\"${job:regex}\",instance=~\"${instance:regex}\"}",
+          "legendFormat": "Activity age / {{job}} / {{instance}}",
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "expr": "gregale_event_acknowledgment_recovery_worker_max_idle_seconds{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} and on (job, instance) (gregale_event_acknowledgment_recovery_worker_in_flight{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 0) and on (job, instance) gregale_event_recovery:worker_evidence_eligible{job=~\"${job:regex}\",instance=~\"${instance:regex}\"}",
+          "legendFormat": "Idle bound / {{job}} / {{instance}}",
+          "instant": false
+        },
+        {
+          "refId": "C",
+          "expr": "gregale_event_acknowledgment_recovery_worker_max_pass_seconds{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} and on (job, instance) (gregale_event_acknowledgment_recovery_worker_in_flight{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1) and on (job, instance) gregale_event_recovery:worker_evidence_eligible{job=~\"${job:regex}\",instance=~\"${instance:regex}\"}",
+          "legendFormat": "Active-pass bound / {{job}} / {{instance}}",
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "Unknown",
+          "min": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "spanNulls": false,
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "title": "Latest joined pass outcomes",
+      "type": "stat",
+      "description": "Per-pass gauges retained until the next return, including while another pass is active. Never sum samples or use rate(). Parked outcomes are not total retained parked backlog. Missing outcomes remain Unknown. Node cleanup/typed uncertainty can overlap known outcomes; cleanup is absent on Go targets.",
+      "gridPos": {
+        "x": 12,
+        "y": 44,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "gregale_event_acknowledgment_recovery_worker_last_pass_confirmed{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} and on (job, instance) (up{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1) and on (job, instance) (gregale_event_acknowledgment_recovery_worker_last_pass_result_valid{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "Confirmed / {{job}} / {{instance}}",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "expr": "gregale_event_acknowledgment_recovery_worker_last_pass_unconfirmed{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} and on (job, instance) (up{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1) and on (job, instance) (gregale_event_acknowledgment_recovery_worker_last_pass_result_valid{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "Unconfirmed / {{job}} / {{instance}}",
+          "instant": true
+        },
+        {
+          "refId": "C",
+          "expr": "gregale_event_acknowledgment_recovery_worker_last_pass_parked{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} and on (job, instance) (up{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1) and on (job, instance) (gregale_event_acknowledgment_recovery_worker_last_pass_result_valid{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "Parked / {{job}} / {{instance}}",
+          "instant": true
+        },
+        {
+          "refId": "D",
+          "expr": "gregale_event_acknowledgment_recovery_worker_last_pass_failed{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} and on (job, instance) (up{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1) and on (job, instance) (gregale_event_acknowledgment_recovery_worker_last_pass_result_valid{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "Failed / {{job}} / {{instance}}",
+          "instant": true
+        },
+        {
+          "refId": "E",
+          "expr": "gregale_event_acknowledgment_recovery_worker_last_pass_commit_unknown{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} and on (job, instance) (up{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1) and on (job, instance) (gregale_event_acknowledgment_recovery_worker_last_pass_result_valid{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "Commit unknown / {{job}} / {{instance}}",
+          "instant": true
+        },
+        {
+          "refId": "F",
+          "expr": "gregale_event_acknowledgment_recovery_worker_last_pass_interrupted{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} and on (job, instance) (up{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1) and on (job, instance) (gregale_event_acknowledgment_recovery_worker_last_pass_result_valid{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "Interrupted / {{job}} / {{instance}}",
+          "instant": true
+        },
+        {
+          "refId": "G",
+          "expr": "gregale_event_acknowledgment_recovery_worker_last_pass_cleanup_failures{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} and on (job, instance) (up{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1) and on (job, instance) (gregale_event_acknowledgment_recovery_worker_last_pass_result_valid{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "Cleanup failures / {{job}} / {{instance}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Unknown",
+          "min": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^(Failed|Commit unknown|Cleanup failures) /"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 16,
+      "title": "Latest actual pass start and joined return",
+      "type": "stat",
+      "description": "Historical wall timestamps; latest start can be newer than the latest completion while a pass runs. Does not refresh during scraping.",
+      "gridPos": {
+        "x": 0,
+        "y": 52,
+        "w": 12,
+        "h": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(gregale_event_acknowledgment_recovery_worker_last_started_timestamp_seconds{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} and on (job, instance) (up{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1)) * 1000",
+          "legendFormat": "Started / {{job}} / {{instance}}",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "expr": "(gregale_event_acknowledgment_recovery_worker_last_completed_timestamp_seconds{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} and on (job, instance) (up{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1)) * 1000",
+          "legendFormat": "Returned / {{job}} / {{instance}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dateTimeAsIso",
+          "noValue": "Unknown",
+          "min": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 17,
+      "title": "Worker observation markers",
+      "type": "stat",
+      "description": "Clock invalidity is sticky until reviewed cache replacement. Result-valid is zero before the first return or after malformed scalar progress; liveness and pass outcomes are distinct.",
+      "gridPos": {
+        "x": 12,
+        "y": 52,
+        "w": 12,
+        "h": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "gregale_event_acknowledgment_recovery_worker_clock_valid{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} and on (job, instance) (up{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "Clock / {{job}} / {{instance}}",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "expr": "gregale_event_acknowledgment_recovery_worker_last_pass_result_valid{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} and on (job, instance) (up{gregale_event_recovery_worker=\"true\",job=~\"${job:regex}\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "Result / {{job}} / {{instance}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Unknown",
+          "min": 0,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Unavailable",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "Present",
+                  "color": "green"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "gregale",
+    "events",
+    "recovery"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "refresh": 1,
+        "current": {
+          "selected": true,
+          "text": "prometheus",
+          "value": "prometheus"
+        },
+        "options": []
+      },
+      {
+        "name": "job",
+        "label": "Job",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "definition": "label_values(up{gregale_event_recovery=\"true\"}, job)",
+        "query": {
+          "query": "label_values(up{gregale_event_recovery=\"true\"}, job)",
+          "refId": "job-query"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": []
+      },
+      {
+        "name": "instance",
+        "label": "Instance",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "definition": "label_values(up{gregale_event_recovery=\"true\",job=~\"${job:regex}\"}, instance)",
+        "query": {
+          "query": "label_values(up{gregale_event_recovery=\"true\",job=~\"${job:regex}\"}, instance)",
+          "refId": "instance-query"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": []
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Gregale event acknowledgment recovery",
+  "uid": "gregale-event-recovery",
+  "version": 5
+}

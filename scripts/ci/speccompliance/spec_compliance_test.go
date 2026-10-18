@@ -1328,7 +1328,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	t.Helper()
 
 	files := []string{
-		filepath.Join(root, "pkg", "api", "data_api_connection_budget.go"), // ADR-650 read-only shared database planning DTOs.
+		filepath.Join(root, "pkg", "api", "data_api_runtime_connections.go"), // ADR-1661 private runtime reporting.
+		filepath.Join(root, "pkg", "api", "data_api_connection_budget.go"),   // ADR-650 read-only shared database planning DTOs.
 		filepath.Join(root, "pkg", "api", "compose_healthcheck.go"),
 		filepath.Join(root, "pkg", "api", "environment_gitops.go"),
 		filepath.Join(root, "pkg", "api", "environment_gitops_explanation.go"),

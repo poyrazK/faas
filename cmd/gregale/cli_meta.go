@@ -4474,7 +4474,18 @@ var cliCommands = []cliCommand{
 	{
 		Name: "data-api", DocSlug: "data-api", Short: "Create schema-generated PostgreSQL APIs and export application types",
 		Subcommands: []cliSub{
-			{Name: "transaction", Short: "Build a typed atomic business-operation starter", Subcommands: []cliSub{{Name: "init", Short: "Generate an editable tenant-scoped order/inventory RPC package", Flags: []cliFlag{{Name: "name", Value: "NAME", Req: true, Short: "new function/table prefix"}, {Name: "output", Value: "DIR", Req: true, Short: "new transaction package directory"}}}}},
+			{Name: "transaction", Short: "Build a typed atomic business-operation starter", Subcommands: []cliSub{{Name: "init", Short: "Generate an editable tenant-scoped order/inventory RPC package", Flags: []cliFlag{{Name: "name", Value: "NAME", Req: true, Short: "new function/table prefix"}, {Name: "output", Value: "DIR", Req: true, Short: "new transaction package directory"}, {Name: "contract", Value: "VERSION", Short: "receipt contract (default v1)", ClosedSet: []string{"v1", "v2"}}}}}},
+			{Name: "rotation", Short: "Inspect credential rotation prerequisites and rollout evidence", Subcommands: []cliSub{
+				{Name: "preflight", Short: "Check owner catalog prerequisites and current binding rollout", Positionals: []string{"<name>"}, Flags: []cliFlag{
+					{Name: "binding", Value: "UUID", Req: true, Short: "managed Data API binding UUID"},
+					{Name: "owner-check", Value: "FILE", Req: true, Short: "trusted local read-only owner preflight command configuration"},
+					{Name: "timeout", Value: "DURATION", Short: "check deadline (default 2m, maximum 1h)"},
+				}},
+				{Name: "status", Short: "Inspect binding refresh and credential retirement metadata", Positionals: []string{"<name>"}, Flags: []cliFlag{
+					{Name: "binding", Value: "UUID", Req: true, Short: "managed Data API binding UUID"},
+					{Name: "timeout", Value: "DURATION", Short: "check deadline (default 2m, maximum 1h)"},
+				}},
+			}},
 			{Name: "verify", Short: "Verify named data integrity assertions and project authorization locally", Subcommands: []cliSub{{Name: "release", Short: "Run local Data API release checks and consolidate reports", Flags: []cliFlag{{Name: "config", Value: "FILE", Req: true, Short: "version 1 release-check configuration"}}}, {Name: "coverage", Short: "Check customer-declared verification coverage offline", Flags: []cliFlag{
 				{Name: "schema", Value: "FILE", Req: true, Short: "current saved schema contract"},
 				{Name: "policy", Value: "FILE", Req: true, Short: "explicit relation requirements and named check mappings"},

@@ -8,31 +8,42 @@ import time
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
-from typing import Any, NoReturn
+from typing import Any, NoReturn, Protocol
 
 from ._event_acknowledgment_intent_watch_policy import (
     Condition,
     EventAcknowledgmentIntentAlert,
     EventAcknowledgmentIntentWatchCallbackError,
     EventAcknowledgmentIntentWatchOptions,
-    Policy,
     evidence,
     policy,
 )
 from ._event_acknowledgment_protocol import Control, EventAcknowledgmentWorkerCancellation, owned_operation, pause
 from ._event_deadline_policy import timestamp
-from .event_acknowledgment_intent_health import EventAcknowledgmentIntentHealth, aget_event_acknowledgment_intent_health
+from .event_acknowledgment_intent_health import (
+    EventAcknowledgmentIntentHealth,
+    EventAcknowledgmentIntentHealthOptions,
+    aget_event_acknowledgment_intent_health,
+)
 from .event_consumer_transactions import _uuid
 
 ConnectionFactory = Callable[[], AbstractAsyncContextManager[Any]]
 Notify = Callable[[EventAcknowledgmentIntentAlert, EventAcknowledgmentWorkerCancellation], Awaitable[None] | None]
 
 
+class _ReadHealthSettings(Protocol):
+    @property
+    def health(self) -> EventAcknowledgmentIntentHealthOptions: ...
+
+    @property
+    def query_timeout_ms(self) -> int: ...
+
+
 async def _read_health(
     connection_factory: ConnectionFactory,
     account: str,
     app: str,
-    settings: Policy,
+    settings: _ReadHealthSettings,
     control: Control,
 ) -> EventAcknowledgmentIntentHealth | None:
     """The cooperative deadline includes acquisition, SQL and connection/cursor cleanup."""
@@ -116,6 +127,8 @@ async def awatch_event_acknowledgment_intent_health(
         conditions.append(Condition("due_backlog", settings.due_threshold))
     if settings.stalled_threshold > 0:
         conditions.append(Condition("stalled_recovery", settings.stalled_threshold))
+    if settings.parked_threshold > 0:
+        conditions.append(Condition("parked_intents", settings.parked_threshold))
 
     async def watch(control: Control) -> NoReturn:
         previous_observed = previous_poll = None
@@ -138,7 +151,15 @@ async def awatch_event_acknowledgment_intent_health(
                 previous_observed = observed
             alerts = []
             for condition in conditions:
-                value = 0 if health is None else health.due if condition.metric == "due_backlog" else health.stalled
+                value = (
+                    0
+                    if health is None
+                    else health.due
+                    if condition.metric == "due_backlog"
+                    else health.stalled
+                    if condition.metric == "stalled_recovery"
+                    else health.parked
+                )
                 transition = condition.update(value, reason, local, settings.sustain_ms * 1000000)
                 if transition is not None:
                     change, why = transition

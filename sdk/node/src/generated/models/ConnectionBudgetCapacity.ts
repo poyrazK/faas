@@ -3,10 +3,13 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Qualified tenant-usable allocation for the exact database generation and placement. Current adapters leave this unknown.
+ * Operator-qualified tenant allocation clamped to observed SQL ceilings for the exact database generation and placement. Unknown without fresh evidence; this does not reserve connections or establish complete consumer coverage.
  */
 export type ConnectionBudgetCapacity = {
   state: 'unknown' | 'verified';
   usable_connections?: number;
+  source?: 'provider_api' | 'native_qualification';
+  checked_at?: string;
+  expires_at?: string;
 };
 
