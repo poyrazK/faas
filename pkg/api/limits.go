@@ -11314,9 +11314,11 @@ const (
 	// signs after authorize() allows the read or write.
 	AuthStorageURLSeconds = 60
 	// AuthAdminBodyBytes bounds one /admin/v1 request; AuthImportBatch is
-	// the most users one import request creates.
+	// the most users one import request creates; AuthAdminPageSize is the
+	// most users, organizations or activity entries one list page returns.
 	AuthAdminBodyBytes = 1 << 20
 	AuthImportBatch    = 100
+	AuthAdminPageSize  = 100
 	// AuthImportFileMaxBytes bounds a `gregale auth import` file.
 	AuthImportFileMaxBytes = 256 << 20
 	// AuthMaxSigningKeys bounds an Auth app's ES256 keys: the signer, a

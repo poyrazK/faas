@@ -649,6 +649,24 @@ organizations with their members and pending invitations. Deleting the last
 owner of an organization that has other members is refused; organizations
 whose only member was the deleted user are removed with them.
 
+The same actions work from a terminal with the key, which the CLI prompts for
+or reads with `--admin-key-stdin`. Name a user by ID or email address, and an
+organization by ID or slug. A ban lasts hours (`24h`), days (`7d`) or
+`forever`. Deleting asks you to type `delete user`; with `--admin-key-stdin`,
+pass `--yes` instead. User records go straight from your Auth app to your
+terminal:
+
+```sh
+gregale auth users list shop-auth --search example.com
+gregale auth users get shop-auth ada@example.com
+gregale auth users sign-out shop-auth ada@example.com
+gregale auth users ban shop-auth ada@example.com --for 7d
+gregale auth users unban shop-auth ada@example.com
+gregale auth users delete shop-auth ada@example.com
+gregale auth orgs list shop-auth
+gregale auth orgs get shop-auth acme
+```
+
 The **Activity** tab lists GoTrue's audit log newest first: sign-ins,
 sign-ups, password resets and changes, and administrator actions such as bans
 and deletions, which are reported against the affected user. A user's panel
