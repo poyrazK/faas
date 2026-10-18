@@ -10707,11 +10707,16 @@ const (
 
 // RoutePriority bounds per-app route priorities for the warm-capacity queue
 // (ADR-978): at most RoutePriorityMaxRules rules, cached by each gateway for
-// RoutePriorityCacheTTL and read only when a request has to queue.
+// RoutePriorityCacheTTL and read only when a request has to queue. The
+// cold-wake queue (ADR-20261018181846) prefetches the rules in the background,
+// bounded by RoutePriorityPrefetchTimeout, and releases each lower class
+// RoutePriorityWakeReleaseStagger after the one above it.
 const (
-	RoutePriorityMaxRules = 20
-	RoutePriorityCacheTTL = 30 * time.Second
-	RoutePriorityMaxApps  = 4096
+	RoutePriorityMaxRules           = 20
+	RoutePriorityCacheTTL           = 30 * time.Second
+	RoutePriorityMaxApps            = 4096
+	RoutePriorityPrefetchTimeout    = 5 * time.Second
+	RoutePriorityWakeReleaseStagger = 25 * time.Millisecond
 )
 
 // RouteHealthPooled bounds stage-pooled evidence for low-traffic routes
