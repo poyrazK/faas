@@ -4889,6 +4889,21 @@ var cliCommands = []cliCommand{
 				{Name: "name", Short: "name for the restored database", Req: true, Value: "NAME"},
 				{Name: "point-in-time", Short: "RFC3339 restore timestamp", Req: true, Value: "TIMESTAMP"},
 			}},
+			{Name: "live", Short: "Enable live queries and manage the live secret (operator preview)", Subcommands: []cliSub{
+				{Name: "status", Short: "Show whether live queries are enabled and the live secrets' key IDs", Positionals: []string{"<database>"}},
+				{Name: "enable", Short: "Enable live queries and issue the live secret", Positionals: []string{"<database>"}, Flags: []cliFlag{
+					{Name: "app", Short: "store the secret as an app secret on this app", Value: "APP"},
+					{Name: "scope", Short: "environment scope for --app", Value: "SCOPE"},
+					{Name: "env", Short: "secret name for --app (default GREGALE_LIVE_SECRET)", Value: "NAME"},
+				}, Examples: []string{"gregale postgres live enable orders --app web"}},
+				{Name: "rotate", Short: "Issue a new live secret; the previous one retires after the overlap", Positionals: []string{"<database>"}, Flags: []cliFlag{
+					{Name: "app", Short: "store the secret as an app secret on this app", Value: "APP"},
+					{Name: "scope", Short: "environment scope for --app", Value: "SCOPE"},
+					{Name: "env", Short: "secret name for --app (default GREGALE_LIVE_SECRET)", Value: "NAME"},
+					{Name: "overlap", Short: "how long the previous secret keeps working (default 24h, 0 revokes it at once)", Value: "DURATION"},
+				}},
+				{Name: "disable", Short: "Revoke every live secret and turn live queries off", Positionals: []string{"<database>"}},
+			}},
 			{Name: "cutover", Short: "Stage and verify a restore target without moving workloads", Subcommands: []cliSub{
 				{Name: "prepare", Short: "Stage all source bindings for one app and scope", Positionals: []string{"<source>", "<target>", "<app>"}, Flags: []cliFlag{{Name: "scope", Short: "environment scope", Value: "SCOPE"}}},
 				{Name: "get", Short: "Read cutover progress and SQL evidence", Positionals: []string{"<id>"}},

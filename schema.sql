@@ -36875,6 +36875,32 @@ CREATE TABLE public.managed_postgres_health (
 
 
 --
+-- Name: managed_postgres_live_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_live_keys (
+    kid text NOT NULL,
+    account_id uuid NOT NULL,
+    database_id uuid NOT NULL,
+    sealed_secret bytea NOT NULL,
+    recipient text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    retires_at timestamp with time zone,
+    CONSTRAINT managed_postgres_live_keys_check CHECK (((retires_at IS NULL) OR (retires_at > created_at))),
+    CONSTRAINT managed_postgres_live_keys_kid_check CHECK ((kid ~ '^[0-9a-f]{16}$'::text)),
+    CONSTRAINT managed_postgres_live_keys_recipient_check CHECK ((recipient ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT managed_postgres_live_keys_sealed_secret_check CHECK (((octet_length(sealed_secret) >= 1) AND (octet_length(sealed_secret) <= 4096)))
+);
+
+
+--
+-- Name: TABLE managed_postgres_live_keys; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_live_keys IS 'ADR-20261016151947 live-query secrets per managed database, sealed to livequeryd; at most one active and one retiring key.';
+
+
+--
 -- Name: managed_postgres_resizes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -53471,6 +53497,14 @@ ALTER TABLE ONLY public.managed_postgres_health
 
 
 --
+-- Name: managed_postgres_live_keys managed_postgres_live_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_live_keys
+    ADD CONSTRAINT managed_postgres_live_keys_pkey PRIMARY KEY (kid);
+
+
+--
 -- Name: managed_postgres_resizes managed_postgres_resizes_database_id_generation_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -63437,6 +63471,20 @@ CREATE INDEX managed_postgres_health_account_idx ON public.managed_postgres_heal
 --
 
 CREATE INDEX managed_postgres_health_next_check_idx ON public.managed_postgres_health USING btree (next_check_at, database_id);
+
+
+--
+-- Name: managed_postgres_live_keys_active_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX managed_postgres_live_keys_active_idx ON public.managed_postgres_live_keys USING btree (database_id) WHERE (retires_at IS NULL);
+
+
+--
+-- Name: managed_postgres_live_keys_database_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_live_keys_database_idx ON public.managed_postgres_live_keys USING btree (database_id, created_at);
 
 
 --
@@ -80052,6 +80100,14 @@ ALTER TABLE ONLY public.managed_postgres_health
 
 ALTER TABLE ONLY public.managed_postgres_health
     ADD CONSTRAINT managed_postgres_health_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_live_keys managed_postgres_live_keys_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_live_keys
+    ADD CONSTRAINT managed_postgres_live_keys_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --
