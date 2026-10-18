@@ -592,6 +592,17 @@
       "acceptance_test": "pkg/gateway/handler_test.go::TestColdWakeReturns200AndHeader"
     },
     {
+      "id": "selective-data-repair",
+      "name": "Selective data repair",
+      "category": "data",
+      "description": "Explicitly record PostgreSQL field updates, review inverse-update candidates and conflicts, rehearse through an operator runner or gated schedd/vmmd tasks, and apply an approved plan with fresh row versions and durable receipts. Internal hosted Operations workflow with account approvals, cleanup fencing and receipt recovery; native production qualification remains pending.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/data-repair",
+      "operator_flag": "GREGALE_DATA_REPAIR_ENABLED",
+      "acceptance_test": "pkg/datarepair/repair_test.go::TestSelectiveRepairRealIsolatedRehearsal"
+    },
+    {
       "id": "service-map",
       "name": "Service map",
       "category": "observability",

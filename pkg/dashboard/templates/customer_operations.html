@@ -39,11 +39,19 @@
   </header>
   <main>
     <p><a href="/dashboard/apps/{{.Data.AppSlug}}">{{.Data.AppSlug}}</a> / <a href="{{.Data.ListURL}}">Customer operations</a></p>
+    <p><a href="/v1/apps/{{.Data.AppSlug}}/data-repair/review">Find recorded operations for data repair →</a></p>
     <p><a href="{{.Data.ListURL}}/readiness?scope={{.Data.Scope}}">Transition readiness</a> · <a href="{{.Data.ListURL}}/attention?scope={{.Data.Scope}}">Workflow attention queue →</a> · <a href="{{.Data.ListURL}}/outcomes?scope={{.Data.Scope}}">Business outcomes →</a> · <a href="{{.Data.ListURL}}/performance?scope={{.Data.Scope}}">Workflow performance →</a></p>
     {{if .Data.Detail}}
     {{with .Data.Detail}}
     <h1>{{.Name}}</h1>
     <p><code>{{.ID}}</code> · <a href="{{.DetailURL}}">Refresh status</a></p>
+    <section class="card" aria-labelledby="data-repair">
+      <h2 id="data-repair">Selective data repair</h2>
+      {{if .DataRepair}}<p>Phase: <strong>{{.DataRepair.Phase}}</strong> · {{.DataRepair.Candidates}} candidates · {{.DataRepair.Conflicts}} conflicts · {{.DataRepair.Unavailable}} unavailable.</p>
+      <p>Source operation: <a href="/dashboard/apps/{{$.Data.AppSlug}}/customer-operations/{{.DataRepair.SourceOperationID}}"><code>{{.DataRepair.SourceOperationID}}</code></a>.</p>
+      <p><a href="{{.RepairURL}}">Review repair plan and database receipt</a></p>
+      {{else}}<p>For opted-in database updates, prepare a correction that preserves records with subsequent changes.</p><p><a href="{{.RepairURL}}">Prepare candidate repair</a></p>{{end}}
+    </section>
     <section class="card" aria-labelledby="business-outcome">
       <h2 id="business-outcome">Business work</h2>
       <p><span class="badge {{.StateClass}}">{{.State}}</span>{{if .CancellationRequested}} · Cancellation requested{{end}}</p>
@@ -81,7 +89,7 @@
       {{if .Artifacts}}<ul>{{range .Artifacts}}<li><a href="{{.DownloadURL}}">Download {{.Name}}</a> · {{.SizeBytes}} bytes{{if .ExpiresAt}} · retained until {{.ExpiresAt}}{{end}}</li>{{end}}</ul>{{end}}
     </section>
     <section class="card" aria-labelledby="release-context">
-      <h2 id="release-context">Pinned code</h2>
+      <h2 id="release-context">{{if .DataRepair}}Source release{{else}}Pinned code{{end}}</h2>
       <dl>
         <dt>Deployment</dt><dd><a href="{{.DeploymentURL}}"><code>{{.DeploymentID}}</code></a></dd>
         <dt>Definition revision</dt><dd><code>{{.DefinitionRevision}}</code></dd>

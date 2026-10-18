@@ -39,6 +39,8 @@ import (
 // many tools; pinning it here makes the daemon's config story
 // explicit).
 type Config struct {
+	// Empty keeps managed selective repair admission closed.
+	DataRepairBindingsPath          string              `toml:"data_repair_bindings_path"`
 	ProductControlEnabled           bool                `toml:"product_control_enabled"`
 	EventAcknowledgmentWriterSlot   string              `toml:"event_acknowledgment_writer_slot"`
 	EventAcknowledgmentWriterRoster string              `toml:"event_acknowledgment_writer_roster"`

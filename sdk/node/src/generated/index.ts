@@ -510,6 +510,9 @@ export type { DataPipeline } from './models/DataPipeline.js';
 export type { DataPipelineCapacity } from './models/DataPipelineCapacity.js';
 export type { DataPipelineHealth } from './models/DataPipelineHealth.js';
 export type { DataPipelineList } from './models/DataPipelineList.js';
+export type { DataRepairHealth } from './models/DataRepairHealth.js';
+export type { DataRepairHealthItem } from './models/DataRepairHealthItem.js';
+export type { DataRepairPhaseHealth } from './models/DataRepairPhaseHealth.js';
 export type { DataSourceColumn } from './models/DataSourceColumn.js';
 export type { DataSourceTable } from './models/DataSourceTable.js';
 export type { DataUpstreamHistoryBucket } from './models/DataUpstreamHistoryBucket.js';
@@ -1413,6 +1416,7 @@ export type { OperationBusinessEffectReference } from './models/OperationBusines
 export type { OperationBusinessInvariant } from './models/OperationBusinessInvariant.js';
 export type { OperationBusinessInvariantPayload } from './models/OperationBusinessInvariantPayload.js';
 export type { OperationCancellationRequest } from './models/OperationCancellationRequest.js';
+export type { OperationDataRepair } from './models/OperationDataRepair.js';
 export type { OperationDefinitionResponse } from './models/OperationDefinitionResponse.js';
 export type { OperationDefinitionSpec } from './models/OperationDefinitionSpec.js';
 export type { OperationDefinitionsResponse } from './models/OperationDefinitionsResponse.js';

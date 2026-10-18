@@ -1,0 +1,67 @@
+groups:
+  - name: data-repair-health
+    interval: 30s
+    rules:
+      - alert: FaasDataRepairStalled
+        expr: |
+          max by (phase) (
+            ((time() - schedd_data_repair_oldest_phase_timestamp_seconds{phase!="outcome_unknown"})
+              and (schedd_data_repair_oldest_phase_timestamp_seconds{phase!="outcome_unknown"} > 0))
+            and on (job, instance)
+              ((schedd_data_repair_health_last_success_timestamp_seconds > time() - 120)
+                and (schedd_data_repair_health_last_success_timestamp_seconds > 0))
+          ) > on (phase) max by (phase) (schedd_data_repair_phase_warn_after_seconds)
+        for: 1m
+        labels:
+          severity: warn
+          component: schedd
+          family: data_repair
+          public_status: internal
+        annotations:
+          summary: Data repair is stalled in {{ $labels.phase }}
+          description: Inspect the operator repair health view and original task. Phase age survives retries. Preserve cleanup reservations and original journals; an expired deadline never authorizes another VM.
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDataRepairStuck.md"
+      - alert: FaasDataRepairNodeUnavailable
+        expr: |
+          max(schedd_data_repair_unavailable_tasks
+            and on (job, instance)
+              ((schedd_data_repair_health_last_success_timestamp_seconds > time() - 120)
+                and (schedd_data_repair_health_last_success_timestamp_seconds > 0))) > 0
+        for: 2m
+        labels:
+          severity: warn
+          component: schedd
+          family: data_repair
+          public_status: internal
+        annotations:
+          summary: Data repair retains capacity on an unavailable node
+          description: At least one running or cleanup task has an unavailable, missing, retired or stale-heartbeat node. Restore access to its original journals and retire the original attempt; node loss is not cleanup proof.
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDataRepairStuck.md"
+      - alert: FaasDataRepairOutcomeUnknown
+        expr: |
+          max(schedd_data_repair_phase_count{phase="outcome_unknown"}
+            and on (job, instance)
+              ((schedd_data_repair_health_last_success_timestamp_seconds > time() - 120)
+                and (schedd_data_repair_health_last_success_timestamp_seconds > 0))) > 0
+        for: 1m
+        labels:
+          severity: warn
+          component: apid
+          family: data_repair
+          public_status: internal
+        annotations:
+          summary: Data repair apply outcome requires reconciliation
+          description: Inspect the original application executor plan and saved repair receipt. Reuse the original repair operation ID; a lost response or missing receipt does not prove rollback.
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDataRepairStuck.md"
+      - alert: FaasDataRepairHealthStale
+        expr: (time() - schedd_data_repair_health_last_success_timestamp_seconds > 120) or (schedd_data_repair_health_last_success_timestamp_seconds == 0)
+        for: 2m
+        labels:
+          severity: warn
+          component: schedd
+          family: data_repair
+          public_status: internal
+        annotations:
+          summary: Data repair health observations are unavailable
+          description: Check schedd and its primary database read path. Previous gauges are retained on errors and must not be interpreted as a current healthy queue or zero capacity.
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDataRepairStuck.md"

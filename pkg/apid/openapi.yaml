@@ -49189,6 +49189,41 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/admin/ops/data-repairs:
+    get:
+      tags: [admin]
+      operationId: getDataRepairHealth
+      summary: Observe active data repairs and retained rehearsal capacity.
+      description: |
+        Operator metadata from one primary-database snapshot. Summary counts
+        and oldest phase clocks cover the whole active set; only detail rows
+        are paginated. Source data, SQL and native ownership frames are excluded.
+        Requires admin scope, MFA and membership in FAAS_ADMIN_EMAILS.
+        A failed observation returns 503 instead of a healthy empty queue.
+        Responses use Cache-Control no-store and grant no recovery authority.
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          description: Maximum detail rows; values outside 1 through 500 are rejected.
+          schema: { type: integer, minimum: 1, maximum: 500, default: 64 }
+        - in: query
+          name: cursor
+          required: false
+          description: Opaque next_cursor from the preceding response.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Global repair health and a bounded page of operator metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DataRepairHealth' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/admin/ops/github/recovery:
     get:
       tags: [admin]
@@ -65371,6 +65406,8 @@ components:
           description: Stable failure reason. deadline_exceeded and budget_exhausted mean the operation's own limits settled it (ADR-1196).
         waiting:
           $ref: '#/components/schemas/OperationWaitingState'
+        data_repair:
+          $ref: '#/components/schemas/OperationDataRepair'
         limits:
           $ref: '#/components/schemas/OperationLimits'
         deadline_at:
@@ -65469,7 +65506,7 @@ components:
           items: {$ref: '#/components/schemas/OperationSummary'}
         next_cursor: {type: string, maxLength: 512}
     OperationExecution:
-      description: Retained execution generation. Exactly one invocation_id or workflow_run_id is present. Workflow attempts counts retained HTTP step attempts at that generation.
+      description: Retained execution generation. Exactly one HTTP, workflow, job or data repair backend identity is present. Workflow attempts counts retained HTTP step attempts at that generation.
       type: object
       required: [generation, state, attempts, created_at]
       properties:
@@ -65477,6 +65514,7 @@ components:
         invocation_id: {type: string, format: uuid}
         job_run_id: {type: string, format: uuid}
         workflow_run_id: {type: string, format: uuid}
+        data_repair_id: {type: string, format: uuid}
         state: {type: string}
         attempts: {type: integer, minimum: 0}
         created_at: {type: string, format: date-time}
@@ -73531,6 +73569,123 @@ components:
           description: RFC 3339 cutoff timestamp (now - older_than).
       x-since: "2026-08"
       x-pr-cluster: "operator-obs-mega"
+
+    OperationDataRepair:
+      type: object
+      description: Repair plan metadata in Operation history; captured row values remain in the application executor.
+      required: [source_operation_id, plan_id, plan_digest, phase, candidates, conflicts, unavailable, plan_expires_at]
+      properties:
+        source_operation_id: { type: string, format: uuid }
+        plan_id: { type: string, format: uuid }
+        plan_digest: { type: string }
+        phase:
+          type: string
+          enum: [prepared, rehearsing, awaiting_approval, approved, applying, outcome_unknown, succeeded, failed, rejected, replacing, replaced, resolving, closed]
+        phase_started_at:
+          type: string
+          format: date-time
+          description: Omitted on legacy records; health observations conservatively use creation time.
+        candidates: { type: integer, minimum: 0 }
+        conflicts: { type: integer, minimum: 0 }
+        unavailable: { type: integer, minimum: 0 }
+        plan_expires_at: { type: string, format: date-time }
+        approval:
+          type: object
+          required: [step, decision, actor]
+          properties:
+            step: { type: string }
+            decision: { type: string, enum: [approved, rejected] }
+            actor:
+              type: object
+              required: [kind, id]
+              properties:
+                kind: { type: string, enum: [account] }
+                id: { type: string }
+            comment: { type: string }
+        applied_at: { type: string, format: date-time }
+        rehearsal_task_id: { type: string, format: uuid }
+        rehearsal_status:
+          type: string
+          enum: [queued, running, cleanup, publishing, succeeded, failed, cancelled]
+        rehearsal_cancel_requested: { type: boolean }
+        replaces_plan_id:
+          type: string
+          format: uuid
+          description: Original parent plan for a linked replacement; omitted on root plans.
+        replaces_plan_digest:
+          type: string
+          description: Exact frozen parent digest; approval authority is never inherited.
+        apply_closed_at:
+          type: string
+          format: date-time
+          description: Source-confirmed permanent closure without an apply commit. Replacement requires fresh rehearsal and approval.
+        replacement_operation_id:
+          type: string
+          format: uuid
+          description: Reserved replacement UUID. Resume the same identity after response loss.
+    DataRepairHealth:
+      type: object
+      description: Durable repair reservations and phase clocks; capacity is not measured host usage.
+      required: [observed_at, phases, held_slots, held_memory_mb, held_vcpus, held_cpu_millicores, unavailable_tasks, items, limit]
+      properties:
+        observed_at: { type: string, format: date-time }
+        phases:
+          type: array
+          description: All eight monitored phases, including zero counts.
+          items: { $ref: '#/components/schemas/DataRepairPhaseHealth' }
+        held_slots: { type: integer, format: int64, minimum: 0 }
+        held_memory_mb: { type: integer, format: int64, minimum: 0 }
+        held_vcpus: { type: integer, format: int64, minimum: 0 }
+        held_cpu_millicores: { type: integer, format: int64, minimum: 0 }
+        unavailable_tasks: { type: integer, format: int64, minimum: 0 }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DataRepairHealthItem' }
+        next_cursor: { type: string, description: Omitted on the last page. }
+        limit: { type: integer, minimum: 1, maximum: 500 }
+    DataRepairPhaseHealth:
+      type: object
+      description: Global count and oldest durable phase clock, independent of detail pagination.
+      required: [phase, count, oldest_age_seconds, warn_after_seconds]
+      properties:
+        phase:
+          type: string
+          enum: [queued, running, cleanup, publishing, applying, outcome_unknown, replacing, resolving]
+        count: { type: integer, format: int64, minimum: 0 }
+        oldest_phase_started_at: { type: string, format: date-time }
+        oldest_age_seconds: { type: integer, format: int64, minimum: 0 }
+        warn_after_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Unknown apply outcomes require attention immediately.
+    DataRepairHealthItem:
+      type: object
+      description: Operator recovery metadata for an original rehearsal task, apply operation or pending replacement.
+      required: [cursor_key, operation_id, account_id, app_id, phase, phase_started_at, age_seconds, node_status, capacity_held, held_memory_mb, held_vcpus, cancel_requested, needs_attention, recovery_guidance, runbook_url]
+      properties:
+        cursor_key: { type: string }
+        operation_id: { type: string, format: uuid }
+        task_id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        node_id: { type: string, format: uuid }
+        phase:
+          type: string
+          enum: [queued, running, cleanup, publishing, applying, outcome_unknown, replacing, resolving]
+        phase_started_at: { type: string, format: date-time }
+        age_seconds: { type: integer, format: int64, minimum: 0 }
+        node_status:
+          type: string
+          enum: [unassigned, available, unavailable, missing, retired, heartbeat_stale]
+        capacity_held: { type: boolean }
+        held_memory_mb: { type: integer, minimum: 0 }
+        held_vcpus: { type: integer, minimum: 0 }
+        cancel_requested: { type: boolean }
+        failure_code: { type: string }
+        needs_attention: { type: boolean }
+        recovery_guidance: { type: string }
+        runbook_url: { type: string, format: uri }
 
     GithubRecoveryStatusResponse:
       description: Operator-safe projections of githubd's durable recovery queues. Webhook payloads are never included.

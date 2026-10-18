@@ -657,7 +657,6 @@ from .cancel_deployment_request import CancelDeploymentRequest
 from .cancel_deployment_request_reason import CancelDeploymentRequestReason
 from .cancel_deployment_response_200 import CancelDeploymentResponse200
 from .cancel_event_execution_lineage_retry_job_request import CancelEventExecutionLineageRetryJobRequest
-
 from .cancel_mcp_readiness_maintenance_request import CancelMCPReadinessMaintenanceRequest
 from .cancel_pending_work_request import CancelPendingWorkRequest
 from .cancel_pending_work_response import CancelPendingWorkResponse
@@ -1008,6 +1007,12 @@ from .data_pipeline_health_state import DataPipelineHealthState
 from .data_pipeline_list import DataPipelineList
 from .data_pipeline_state import DataPipelineState
 from .data_pipeline_verification import DataPipelineVerification
+from .data_repair_health import DataRepairHealth
+from .data_repair_health_item import DataRepairHealthItem
+from .data_repair_health_item_node_status import DataRepairHealthItemNodeStatus
+from .data_repair_health_item_phase import DataRepairHealthItemPhase
+from .data_repair_phase_health import DataRepairPhaseHealth
+from .data_repair_phase_health_phase import DataRepairPhaseHealthPhase
 from .data_source_column import DataSourceColumn
 from .data_source_table import DataSourceTable
 from .data_upstream_history_bucket import DataUpstreamHistoryBucket
@@ -2877,6 +2882,13 @@ from .operation_business_invariant_payload import OperationBusinessInvariantPayl
 from .operation_business_invariant_payload_kind import OperationBusinessInvariantPayloadKind
 from .operation_business_invariant_status import OperationBusinessInvariantStatus
 from .operation_cancellation_request import OperationCancellationRequest
+from .operation_data_repair import OperationDataRepair
+from .operation_data_repair_approval import OperationDataRepairApproval
+from .operation_data_repair_approval_actor import OperationDataRepairApprovalActor
+from .operation_data_repair_approval_actor_kind import OperationDataRepairApprovalActorKind
+from .operation_data_repair_approval_decision import OperationDataRepairApprovalDecision
+from .operation_data_repair_phase import OperationDataRepairPhase
+from .operation_data_repair_rehearsal_status import OperationDataRepairRehearsalStatus
 from .operation_definition_response import OperationDefinitionResponse
 from .operation_definition_spec import OperationDefinitionSpec
 from .operation_definition_spec_http_transaction_version import OperationDefinitionSpecHttpTransactionVersion
@@ -6075,7 +6087,6 @@ __all__ = (
     "CancelDeploymentRequestReason",
     "CancelDeploymentResponse200",
     "CancelEventExecutionLineageRetryJobRequest",
-
     "CancelMCPReadinessMaintenanceRequest",
     "CancelPendingWorkRequest",
     "CancelPendingWorkResponse",
@@ -6400,6 +6411,12 @@ __all__ = (
     "DataPipelineList",
     "DataPipelineState",
     "DataPipelineVerification",
+    "DataRepairHealth",
+    "DataRepairHealthItem",
+    "DataRepairHealthItemNodeStatus",
+    "DataRepairHealthItemPhase",
+    "DataRepairPhaseHealth",
+    "DataRepairPhaseHealthPhase",
     "DataSourceColumn",
     "DataSourceTable",
     "DataUpstreamHistoryBucket",
@@ -8161,6 +8178,13 @@ __all__ = (
     "OperationBusinessInvariantPayloadKind",
     "OperationBusinessInvariantStatus",
     "OperationCancellationRequest",
+    "OperationDataRepair",
+    "OperationDataRepairApproval",
+    "OperationDataRepairApprovalActor",
+    "OperationDataRepairApprovalActorKind",
+    "OperationDataRepairApprovalDecision",
+    "OperationDataRepairPhase",
+    "OperationDataRepairRehearsalStatus",
     "OperationDefinitionResponse",
     "OperationDefinitionSpec",
     "OperationDefinitionSpecHttpTransactionVersion",

@@ -31,6 +31,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"data_pipeline_alerts":           CloneSchemaConfiguration,
 		"data_connection_checks":         CloneSchemaOperational,
 		"data_pipeline_alert_deliveries": CloneSchemaOperational,
+		"data_repair_rehearsals":         CloneSchemaOperational,
 		"data_pipeline_schema_refreshes": CloneSchemaOperational,
 		"data_pipeline_setups":           CloneSchemaOperational,
 		"postgres_capacity_reservations": CloneSchemaOperational,

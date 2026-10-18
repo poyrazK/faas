@@ -2511,6 +2511,7 @@ type CustomerOperation struct {
 	WorkflowRunID       pgtype.UUID
 	JobRunID            pgtype.UUID
 	DeadlineAt          pgtype.Timestamptz
+	DataRepairID        pgtype.UUID
 }
 
 type CustomerOperationAttemptInstance struct {
@@ -2570,6 +2571,7 @@ type CustomerOperationExecution struct {
 	JobRunID      pgtype.UUID
 	ExecutionID   pgtype.UUID
 	ExecutionKind string
+	DataRepairID  pgtype.UUID
 }
 
 type CustomerOperationIdempotency struct {
@@ -2924,6 +2926,18 @@ type DataPipelineSetup struct {
 	UpdatedAt          pgtype.Timestamptz
 	CreatedAt          pgtype.Timestamptz
 	DataApiPlan        []byte
+}
+
+type DataRepairRehearsal struct {
+	ID              pgtype.UUID
+	OperationID     pgtype.UUID
+	AccountID       pgtype.UUID
+	NodeID          pgtype.UUID
+	Phase           string
+	CancelRequested bool
+	Deadline        pgtype.Timestamptz
+	Record          []byte
+	CreatedAt       pgtype.Timestamptz
 }
 
 type DataUpstream struct {
