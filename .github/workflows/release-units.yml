@@ -1,18 +1,21 @@
 # .github/workflows/release-units.yml — per-unit control-plane releases
 # (docs/adr/1650-per-unit-control-plane-releases.md).
 #
-# Every push to main builds and signs only the control-plane daemons whose Go
-# inputs changed since the full release production runs (the base), each
-# stamped with its unit version. The signed tarball is a workflow artifact;
-# cd-controlplane.yml deploys it with `units_run_id` and restarts only those
-# daemons. Full releases (release.yml on a v*.*.* tag) are unchanged and
-# remain the only path for migrations, deploy/ changes, dependency bumps and
-# compute daemons; this workflow says so and exits when a range needs one.
+# Every push to main builds and signs only the daemons whose Go inputs
+# changed since the full release production runs (the base), each stamped
+# with its unit version, in two lanes: control-plane daemons, and the edge
+# (gatewayd-public, gatewayd-internal). The signed tarball is a workflow
+# artifact. cd-controlplane.yml deploys the control-plane lane with
+# `units_run_id`, then cd-edge-units.yml the edge lane host by host, each
+# held on the SLO gate. Full releases (release.yml on a v*.*.* tag) are
+# unchanged and remain the only path for migrations, deploy/ changes,
+# dependency bumps and the other compute daemons; this workflow says so and
+# exits when a range needs one.
 #
 # The base defaults to the newest full release tag reachable from the
-# commit. cd-controlplane refuses a unit release whose base is not the full
-# release the control plane actually runs, so when production trails the
-# newest tag, dispatch this workflow with `base` set to the tag it runs.
+# commit, the release CI checked every merge against. The deploy refuses any
+# other base (N±1, docs/release-compatibility.md), and a host that does not
+# run it: roll that full release out first.
 #
 # Unit releases are cumulative over the base, so a newer one supersedes an
 # older one: an in-progress build is cancelled by the next push. A deploy
@@ -57,6 +60,8 @@ jobs:
     outputs:
       eligible: ${{ steps.detect.outputs.eligible }}
       deployable: ${{ steps.detect.outputs.deployable }}
+      control_plane: ${{ steps.detect.outputs.control_plane }}
+      edge: ${{ steps.detect.outputs.edge }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -97,8 +102,12 @@ jobs:
           python3 scripts/ci/affected_units.py --base "$base" --head HEAD --output "$OUT_DIR/report.json"
           eligible="$(jq -r .eligible "$OUT_DIR/report.json")"
           deployable="$(jq -r '.deployable | join(",")' "$OUT_DIR/report.json")"
-          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
-          echo "deployable=$deployable" >> "$GITHUB_OUTPUT"
+          {
+            echo "eligible=$eligible"
+            echo "deployable=$deployable"
+            echo "control_plane=$(jq -r '.lanes["control-plane"].eligible' "$OUT_DIR/report.json")"
+            echo "edge=$(jq -r '.lanes.edge.eligible' "$OUT_DIR/report.json")"
+          } >> "$GITHUB_OUTPUT"
           {
             echo "## Unit release for \`${GITHUB_SHA:0:12}\` over \`$base\`"
             echo
@@ -107,7 +116,8 @@ jobs:
             jq -r '.binaries | to_entries[] | select(.value.changed) | "| \(.key) | \(.value.lane) | `\(.value.commit[0:12])` |"' "$OUT_DIR/report.json"
             echo
             if [[ "$eligible" == true ]]; then
-              echo "Deployable on the control plane alone: **${deployable}**."
+              echo "Deployable as a unit release: **${deployable}**."
+              jq -r '.lanes | to_entries[] | "- \(.key) lane: \(if .value.eligible then (.value.changed | join(", ")) else "not deployable: " + (.value.reasons | join("; ")) end)"' "$OUT_DIR/report.json"
             else
               echo "Not deployable as a unit release: $(jq -r '.reasons | join("; ")' "$OUT_DIR/report.json")."
             fi
@@ -164,17 +174,32 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # Deploy order (docs/release-compatibility.md): the control-plane lane,
+  # held on its SLO gate, then the edge lane host by host. Automatic deploys
+  # are opt-in: set the repository variable UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT
+  # (production or production-us), or dispatch with deploy_environment. The
+  # environment's protection rules still apply.
   deploy:
-    name: Deploy unit release
+    name: Deploy the control-plane lane
     needs: [build]
-    # Automatic deploys are opt-in: set the repository variable
-    # UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT (production or production-us), or
-    # dispatch with deploy_environment. The environment's protection rules
-    # still apply.
     if: >-
       needs.build.outputs.eligible == 'true' &&
       (inputs.deploy_environment != '' || (github.event_name == 'push' && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != ''))
     uses: ./.github/workflows/cd-controlplane.yml
+    with:
+      deploy_environment: ${{ inputs.deploy_environment || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT }}
+      units_run_id: ${{ github.run_id }}
+      units_lane: control-plane
+    secrets: inherit
+    permissions:
+      contents: read
+      actions: read
+
+  deploy-edge:
+    name: Deploy the edge lane
+    needs: [build, deploy]
+    if: needs.build.outputs.edge == 'true'
+    uses: ./.github/workflows/cd-edge-units.yml
     with:
       deploy_environment: ${{ inputs.deploy_environment || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT }}
       units_run_id: ${{ github.run_id }}

@@ -64,6 +64,15 @@ func (s *server) polarWebhook(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrCapacity("billing webhook temporarily unavailable"))
 		return
 	}
+	if s.handleSubscriptionEndedOutbox(w, r, "polar", ev, acct) {
+		return
+	}
+	if s.handleAccountRestoredOutbox(w, r, "polar", ev, acct) {
+		return
+	}
+	if s.handlePaymentFailedOutbox(w, r, "polar", ev, acct) {
+		return
+	}
 	if ev.EventID != "" {
 		now := time.Now().UTC()
 		claimed, err := s.store.ClaimWebhookDelivery(
@@ -105,11 +114,7 @@ func (s *server) polarWebhook(w http.ResponseWriter, r *http.Request) {
 	// projection and entitlement transition above are complete before this
 	// best-effort retry worker starts; Polar's later order.updated delivery
 	// fills in the PDF availability flag.
-	if ev.Type == billing.EventPaymentSucceeded && ev.Invoice != nil && !ev.Invoice.PDFAvailable {
-		if requester, ok := s.billingProvider.(billing.InvoicePDFRequester); ok {
-			s.requestPolarInvoicePDFAsync(r.Context(), requester, ev.Invoice.ProviderInvoiceID, ev.EventID)
-		}
-	}
+	s.startPolarInvoicePDF(r.Context(), ev)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -151,4 +156,12 @@ func (s *server) requestPolarInvoicePDFAsync(parentCtx context.Context, requeste
 
 func (s *server) lookupAccountByPolarID(ctx context.Context, polarID string) (state.Account, error) {
 	return s.lookupBillingAccount(ctx, "polar", polarID)
+}
+
+func (s *server) startPolarInvoicePDF(ctx context.Context, ev billing.Event) {
+	if ev.Type == billing.EventPaymentSucceeded && ev.Invoice != nil && !ev.Invoice.PDFAvailable {
+		if requester, ok := s.billingProvider.(billing.InvoicePDFRequester); ok {
+			s.requestPolarInvoicePDFAsync(ctx, requester, ev.Invoice.ProviderInvoiceID, ev.EventID)
+		}
+	}
 }

@@ -1,0 +1,7 @@
+---
+- name: restart internal mail
+  ansible.builtin.systemd_service:
+    name: faas-maild.service
+    daemon_reload: true
+    state: restarted
+  when: faas_internal_mail_enabled | bool

@@ -88,6 +88,7 @@ func ListenOrRecreate(path string, uid, gid int, mode os.FileMode) (net.Listener
 		return nil, fmt.Errorf("wire: chmod %q to %o: %w", path, mode, err)
 	}
 
+	Share(l)
 	return l, nil
 }
 
@@ -157,6 +158,7 @@ func listenSkipChown(path string, mode os.FileMode) (net.Listener, error) {
 		_ = l.Close()
 		return nil, fmt.Errorf("wire: chmod %q to %o: %w", path, mode, err)
 	}
+	Share(l)
 	return l, nil
 }
 
