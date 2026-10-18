@@ -9,14 +9,17 @@ StartLimitBurst=5
 
 [Service]
 Type=notify
+NotifyAccess=main
 User=faas-apid
 Group=faas
 ExecStart=/opt/faas/current/bin/apid --config /etc/faas/apid.toml
+ExecReload=/bin/kill -USR2 $MAINPID
 Restart=on-failure
 RestartSec=2s
 WatchdogSec=90s
 Slice=faas-cp.slice
 MemoryMax=256M
+OOMPolicy=continue
 CapabilityBoundingSet=
 AmbientCapabilities=
 EnvironmentFile=/etc/faas/sealed.env
