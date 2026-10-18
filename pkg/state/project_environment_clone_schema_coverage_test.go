@@ -25,7 +25,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
-		// Readiness settings need isolation; one-use deployment and delivery authority stays at its source.
+		// Readiness settings and overrides need isolated configuration capture; incident actions/data need isolated data capture.
 		"app_mcp_readiness_policies":               CloneSchemaConfiguration,
 		"app_mcp_readiness_policy_history":         CloneSchemaConfiguration,
 		"mcp_readiness_fallback_policies":          CloneSchemaConfiguration,
@@ -35,14 +35,14 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"mcp_readiness_reminder_defaults":          CloneSchemaConfiguration,
 		"deployment_mcp_readiness_evidence":        CloneSchemaOperational,
 		"deployment_mcp_readiness_monitors":        CloneSchemaOperational,
-		"deployment_mcp_readiness_overrides":       CloneSchemaOperational,
-		"mcp_readiness_attention_actions":          CloneSchemaOperational,
-		"mcp_readiness_incident_attention":         CloneSchemaOperational,
+		"deployment_mcp_readiness_overrides":       CloneSchemaConfiguration,
+		"mcp_readiness_attention_actions":          CloneSchemaData,
+		"mcp_readiness_incident_attention":         CloneSchemaData,
 		"mcp_readiness_incident_cursors":           CloneSchemaOperational,
-		"mcp_readiness_incident_events":            CloneSchemaOperational,
-		"mcp_readiness_incidents":                  CloneSchemaOperational,
-		"mcp_readiness_notification_actions":       CloneSchemaOperational,
-		"mcp_readiness_pagerduty_ack_events":       CloneSchemaOperational,
+		"mcp_readiness_incident_events":            CloneSchemaData,
+		"mcp_readiness_incidents":                  CloneSchemaData,
+		"mcp_readiness_notification_actions":       CloneSchemaData,
+		"mcp_readiness_pagerduty_ack_events":       CloneSchemaData,
 		// Function capture and destination authority stay with their original instance.
 		"function_migration_sources":      CloneSchemaOperational,
 		"function_migration_destinations": CloneSchemaOperational,
@@ -359,6 +359,26 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 	report, err := cloneSchemaCoverage(policies)
 	if err != nil || !report.Known || len(report.Hash) != 64 || len(report.Blockers) == 0 {
 		t.Fatalf("registered does not mean fully copyable: %+v %v", report, err)
+	}
+	for _, want := range []ProjectEnvironmentCloneCoverageBlocker{
+		{Table: "deployment_mcp_readiness_overrides", Code: "isolated_strategy_unavailable"},
+		{Table: "mcp_readiness_attention_actions", Code: "isolated_data_strategy_unavailable"},
+		{Table: "mcp_readiness_incident_attention", Code: "isolated_data_strategy_unavailable"},
+		{Table: "mcp_readiness_incident_events", Code: "isolated_data_strategy_unavailable"},
+		{Table: "mcp_readiness_incidents", Code: "isolated_data_strategy_unavailable"},
+		{Table: "mcp_readiness_notification_actions", Code: "isolated_data_strategy_unavailable"},
+		{Table: "mcp_readiness_pagerduty_ack_events", Code: "isolated_data_strategy_unavailable"},
+	} {
+		found := false
+		for _, blocker := range report.Blockers {
+			if blocker.Table == want.Table && blocker.Code == want.Code {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("readiness scope boundary lost: missing %+v", want)
+		}
 	}
 	policies[0].Kind, policies[0].Columns[0] = "changed", "changed"
 	fresh, err := ProjectEnvironmentCloneSchemaPolicies()

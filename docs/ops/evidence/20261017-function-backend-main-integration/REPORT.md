@@ -731,6 +731,16 @@ gofmt step for `pkg/state/statetest/dispatch.go`; its lint/build steps were
 skipped. That file is now formatted with the pinned Go formatter. This is a
 formatting-only correction; fresh exact-head checks are required.
 
+The next exact-head CI run exposed stale MCP readiness classifications in the
+branch's clone-schema test: main now marks deployment overrides as scoped
+configuration and six incident/action tables as customer data. The test now
+matches those current classifications and asserts that the configuration/data
+entries remain blocked until an isolated capture strategy exists. Tested source
+tree: `214797bc5a2126bcc27366c69d9bf056c3f2ac04`. The focused
+`TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries` passes with
+the pinned Go toolchain. Fresh hosted checks on the corrected head remain
+required.
+
 ## Qualification boundary
 
 Production activation remains disabled. This managed container has no supported
