@@ -48,6 +48,23 @@ optionally the object, and a reason:
 
     -- migration-lint: allow index-build events: ~1 s write pause on 394k rows
 
+Every new migration also declares its compatibility class, once, anywhere in
+the file (docs/adr/20261018084150-unit-lane-expand-migrations.md):
+
+    -- migration-compat: expand     the previous release runs correctly
+                                    against the new schema; a per-unit
+                                    release may apply it ahead of restarts
+    -- migration-compat: contract   only a full release applies it
+
+  compat-marker
+      The marker is missing, repeated or neither value; or a migration
+      marked expand makes a contract change (a drop or rename of anything
+      that existed before, a column type change, a waived not-null, a
+      TRUNCATE, a DROP of a function, type, sequence, trigger or unique
+      constraint it does not create again), or waives lock-timeout or
+      concurrently-in-transaction, which the lane needs to apply it
+      unattended. This rule cannot be waived.
+
 Usage:
   check_migration_expand_contract.py [--base REF] [--release auto|REF]
   check_migration_expand_contract.py --base REF FILE...   # lint given files
@@ -55,6 +72,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import re
 import subprocess
@@ -88,6 +106,20 @@ WAIVER = re.compile(
     r"--\s*migration-lint:\s*allow\s+(?P<rule>[a-z-]+)(?:\s+(?P<target>[A-Za-z0-9_.*]+))?\s*:\s*(?P<reason>\S.*)$",
     re.MULTILINE,
 )
+COMPAT_MARKER = re.compile(r"^--\s*migration-compat:[ \t]*(?P<value>.*?)[ \t]*$", re.MULTILINE)
+COMPAT_VALUES = ("expand", "contract")
+# Changes the previous release may not survive. In a lane verdict they count
+# whether or not code references the object and whether or not they are
+# waived: a waiver is a reviewer's judgment, which a full release carries.
+CONTRACT_RULES = frozenset({
+    "drop-table", "drop-column", "rename-table", "rename-column", "column-type", "not-null", "contract-statement",
+})
+# Rules the unit lane relies on to apply a migration with nobody watching:
+# fail fast instead of queueing traffic, and run at all.
+UNATTENDED_RULES = frozenset({"lock-timeout", "concurrently-in-transaction"})
+ROUTINE_KINDS = ("function", "procedure", "routine", "aggregate")
+# Objects a DROP removes for good; the previous release may call or use them.
+DROPPED_OBJECT_KINDS = ("type", "domain", "sequence", "schema", "extension", "policy", "rule")
 STATEMENT_STARTERS = {
     "alter", "create", "drop", "lock", "reindex", "cluster", "vacuum", "set",
     "perform", "update", "insert", "delete", "truncate", "select", "comment", "grant",
@@ -113,10 +145,13 @@ class Finding:
 
 @dataclass
 class Catalogue:
-    """Relations and indexes that exist on the base."""
+    """Relations and indexes that exist on the base. unique names the
+    unique indexes and the primary key, unique and exclusion constraints:
+    ON CONFLICT targets of the previous release."""
 
     relations: set[str] = field(default_factory=set)
     indexes: set[str] = field(default_factory=set)
+    unique: set[str] = field(default_factory=set)
 
 
 # ---------------------------------------------------------------- tokenizer
@@ -371,6 +406,12 @@ def up_section(text: str) -> tuple[str, int]:
 
 
 def lint_migration(path: str, text: str, catalogue: Catalogue, referenced) -> list[Finding]:
+    return apply_waivers(lint_context(path, text, catalogue, referenced).findings, text)
+
+
+def lint_context(path: str, text: str, catalogue: Catalogue, referenced) -> Context:
+    """Lint one migration; the context holds every finding before waivers
+    and the relations and indexes the migration creates."""
     up, first_line = up_section(text)
     ctx = Context(
         path=path,
@@ -389,7 +430,7 @@ def lint_migration(path: str, text: str, catalogue: Catalogue, referenced) -> li
             ctx.recreated.add(name_at(stmt, i)[0])
     for stmt in statements:
         lint_statement(ctx, stmt)
-    return apply_waivers(ctx.findings, text)
+    return ctx
 
 
 def lint_statement(ctx: Context, stmt: list[Token]) -> None:
@@ -645,6 +686,269 @@ def apply_waivers(findings: list[Finding], text: str) -> list[Finding]:
     return kept
 
 
+# ------------------------------------------------------- compatibility class
+
+
+def compat_marker(text: str) -> tuple[str | None, str | None]:
+    """The migration's declared compatibility class, or the problem with
+    its declaration."""
+    values = [m.group("value") for m in COMPAT_MARKER.finditer(text)]
+    if not values:
+        return None, "declares no `-- migration-compat:` class"
+    if len(values) > 1:
+        return None, "declares `-- migration-compat:` more than once"
+    if values[0] not in COMPAT_VALUES:
+        return None, f"declares migration-compat {values[0]!r}, which is neither expand nor contract"
+    return values[0], None
+
+
+def every_release(name: str, table: str | None):
+    """A referenced() for verdicts: any drop or rename of an existing
+    object is a contract change, whoever reads it."""
+    return "any release", ["*"]
+
+
+def created_objects(statements: list[list[Token]]) -> set[tuple[str, ...]]:
+    """Routines, triggers, indexes and constraints a migration creates, so a
+    DROP it follows with a CREATE of the same name counts as a redefinition."""
+    created: set[tuple[str, ...]] = set()
+    for stmt in statements:
+        w = words(stmt)
+        if w[:1] == ["create"]:
+            i = skip(stmt, 1, "or", "replace")
+            i = skip(stmt, i, "constraint")
+            i = skip(stmt, i, "unique")
+            if i >= len(stmt):
+                continue
+            if is_word(stmt[i], *ROUTINE_KINDS):
+                created.add(("routine", name_at(stmt, i + 1)[0]))
+            elif is_word(stmt[i], "trigger"):
+                name, j = name_at(stmt, i + 1)
+                on = next((k for k in range(j, len(stmt)) if is_word(stmt[k], "on")), None)
+                if on is not None:
+                    created.add(("trigger", name, name_at(stmt, on + 1)[0]))
+            elif is_word(stmt[i], "index"):
+                j = skip(stmt, i + 1, "concurrently")
+                j = skip(stmt, j, "if", "not", "exists")
+                if j < len(stmt) and not is_word(stmt[j], "on"):
+                    created.add(("index", name_at(stmt, j)[0]))
+        elif w[:2] == ["alter", "table"]:
+            table, i = alter_table_target(stmt)
+            for action in split_actions(stmt, i):
+                aw = top_level_words(action)
+                if aw[:2] == ["add", "constraint"] and len(aw) > 2:
+                    created.add(("constraint", table, aw[2]))
+    return created
+
+
+def alter_table_target(stmt: list[Token]) -> tuple[str, int]:
+    i = skip(stmt, 2, "if", "exists")
+    i = skip(stmt, i, "only")
+    table, i = name_at(stmt, i)
+    if i < len(stmt) and stmt[i].kind == "op" and stmt[i].value == "*":
+        i += 1
+    return table, i
+
+
+def routine_names(stmt: list[Token], i: int) -> list[str]:
+    """Names in `DROP FUNCTION a(int), b(text) CASCADE`."""
+    names, depth, expect = [], 0, True
+    while i < len(stmt):
+        tok = stmt[i]
+        if tok.kind == "punct" and tok.value == "(":
+            depth += 1
+        elif tok.kind == "punct" and tok.value == ")":
+            depth -= 1
+        elif depth == 0 and tok.kind == "punct" and tok.value == ",":
+            expect = True
+        elif depth == 0 and expect and tok.kind in ("word", "ident"):
+            name, i = name_at(stmt, i)
+            names.append(name)
+            expect = False
+            continue
+        i += 1
+    return names
+
+
+def contract_statements(path: str, text: str, catalogue: Catalogue) -> list[Finding]:
+    """Contract changes the expand/contract rules do not model: the removal
+    or renaming of a routine, type, sequence, trigger or unique constraint,
+    a dropped column default, and TRUNCATE."""
+    up, first_line = up_section(text)
+    statements = split_statements(tokenize(up, first_line))
+    created = created_objects(statements)
+    found: list[Finding] = []
+
+    def add(stmt: list[Token], target: str, what: str) -> None:
+        found.append(Finding(path, stmt[0].line, "contract-statement", target, what))
+
+    for stmt in statements:
+        w = words(stmt)
+        if not w:
+            continue
+        if w[0] == "truncate":
+            add(stmt, w[-1], "TRUNCATE deletes rows the previous release reads")
+        elif w[0] == "drop" and len(w) > 1:
+            i = skip(stmt, 2, "if", "exists")
+            if w[1] in ROUTINE_KINDS:
+                for name in routine_names(stmt, i):
+                    if ("routine", name) not in created:
+                        add(stmt, name, f"DROP {w[1].upper()} {name} without creating it again")
+            elif w[1] in DROPPED_OBJECT_KINDS:
+                for name in name_list(stmt, i):
+                    add(stmt, name, f"DROP {w[1].upper()} {name}")
+            elif w[1] == "trigger":
+                name, j = name_at(stmt, i)
+                table, _ = name_at(stmt, skip(stmt, j, "on"))
+                if table in catalogue.relations and ("trigger", name, table) not in created:
+                    add(stmt, f"{table}.{name}", f"DROP TRIGGER {name} on {table} without creating it again")
+            elif w[1] == "index":
+                i = skip(stmt, skip(stmt, 2, "concurrently"), "if", "exists")
+                for name in name_list(stmt, i):
+                    if name in catalogue.unique and ("index", name) not in created:
+                        add(stmt, name, f"DROP INDEX of unique index {name}, an ON CONFLICT target")
+        elif w[:2] == ["alter", "table"]:
+            table, i = alter_table_target(stmt)
+            for action in split_actions(stmt, i):
+                aw = top_level_words(action)
+                if aw[:2] == ["rename", "constraint"]:
+                    add(stmt, table, f"RENAME CONSTRAINT on {table}")
+                elif aw[:2] == ["drop", "constraint"]:
+                    rest = aw[2:]
+                    rest = rest[2:] if rest[:2] == ["if", "exists"] else rest
+                    name = rest[0] if rest else ""
+                    if name in catalogue.unique and ("constraint", table, name) not in created:
+                        add(stmt, f"{table}.{name}", f"DROP CONSTRAINT {name}, a unique constraint and ON CONFLICT target")
+                elif aw[:1] == ["alter"] and has_sequence(aw, "drop", "default"):
+                    add(stmt, table, f"DROP DEFAULT on {table}: the previous release inserts rows relying on it")
+        elif w[0] == "alter" and len(w) > 2 and w[1] not in ("view", "materialized") and "rename" in top_level_words(stmt):
+            name = name_at(stmt, 2)[0]
+            # A routine renamed aside and created again keeps its name.
+            if not (w[1] in ROUTINE_KINDS and ("routine", name) in created):
+                add(stmt, name, f"ALTER {w[1].upper()} {name} RENAME")
+    return found
+
+
+def is_waived(finding: Finding, text: str) -> bool:
+    return not apply_waivers([finding], text)
+
+
+def lane_findings(path: str, text: str, catalogue: Catalogue) -> tuple[list[Finding], list[Finding]]:
+    """(blockers, waived) for applying a migration in a per-unit release.
+    Blockers: every contract change, waived or not; every finding left
+    after waivers; a waived lock-timeout or concurrently-in-transaction.
+    Waived findings that stay eligible record a lock cost a reviewer
+    accepted (index-build, table-rewrite)."""
+    raw = lint_context(path, text, catalogue, every_release).findings + contract_statements(path, text, catalogue)
+    blockers, waived = [], []
+    for f in raw:
+        if f.rule in CONTRACT_RULES or f.rule in UNATTENDED_RULES or not is_waived(f, text):
+            blockers.append(f)
+        else:
+            waived.append(f)
+    return blockers, waived
+
+
+def check_compat_marker(path: str, text: str, catalogue: Catalogue) -> list[Finding]:
+    """compat-marker findings for one new migration (never waivable)."""
+    marker, problem = compat_marker(text)
+    if problem:
+        return [Finding(path, 1, "compat-marker", "*",
+                        f"{path} {problem}. Add `-- migration-compat: expand` when the previous release runs correctly "
+                        "against the new schema (a per-unit release may apply it), or `-- migration-compat: contract` "
+                        "when only a full release may.")]
+    if marker != "expand":
+        return []
+    out = []
+    for f in lane_findings(path, text, catalogue)[0]:
+        if f.rule in CONTRACT_RULES:
+            out.append(Finding(path, f.line, "compat-marker", f.target,
+                               f"marked expand, but {f.rule} {f.target} is a contract change the previous release may "
+                               "not survive. Mark the migration `-- migration-compat: contract` so a full release applies it."))
+        elif f.rule in UNATTENDED_RULES and is_waived(f, text):
+            out.append(Finding(path, f.line, "compat-marker", f.target,
+                               f"marked expand, but waives {f.rule}: a per-unit release applies migrations unattended and "
+                               "needs it. Fix the finding, or mark the migration contract."))
+    return out
+
+
+def migration_version(path: str) -> int:
+    m = re.match(r"(\d+)_", os.path.basename(path))
+    return int(m.group(1)) if m else 0
+
+
+def lane_verdict(path: str, text: str, catalogue: Catalogue) -> dict:
+    """Whether a per-unit release may apply this migration ahead of
+    restarts (docs/adr/20261018084150-unit-lane-expand-migrations.md)."""
+    marker, problem = compat_marker(text)
+    blockers, waived = lane_findings(path, text, catalogue)
+    reasons = [problem] if problem else []
+    if marker == "contract":
+        reasons.append("declares migration-compat: contract")
+    for f in blockers:
+        if f.rule in CONTRACT_RULES:
+            reasons.append(f"contract change {f.rule} {f.target} at line {f.line}")
+        elif not is_waived(f, text):
+            reasons.append(f"lint finding {f.rule} {f.target} at line {f.line}")
+        else:
+            reasons.append(f"waives {f.rule} {f.target}, which the lane needs to apply it unattended")
+    return {
+        "path": path,
+        "version": migration_version(path),
+        "sha256": hashlib.sha256(text.encode()).hexdigest(),
+        "compat": marker,
+        "eligible": not reasons,
+        "blockers": reasons,
+        "waived": sorted(f"{f.rule} {f.target}" for f in waived),
+    }
+
+
+def is_migration_file(path: str, directory: str = "migrations/") -> bool:
+    """A goose migration: a .sql file directly in the migrations directory
+    (migrations/embed.go embeds `*.sql`)."""
+    return path.startswith(directory) and path.endswith(".sql") and "/" not in path[len(directory):]
+
+
+def _union(have: set[str], more: set[str]) -> set[str]:
+    return have if isinstance(have, _Everything) else have | more
+
+
+def range_catalogues(base: Catalogue, texts: dict[str, str]) -> dict[str, Catalogue]:
+    """Per migration: the base catalogue plus what the range's other
+    migrations create. An earlier unit release may already have applied
+    those and run code that reads them, so they are existing objects too."""
+    made = {path: lint_context(path, text, base, every_release) for path, text in texts.items()}
+    out = {}
+    for path in texts:
+        relations = set().union(*(ctx.created for other, ctx in made.items() if other != path))
+        indexes = set().union(*(ctx.created_indexes for other, ctx in made.items() if other != path))
+        out[path] = Catalogue(relations=_union(base.relations, relations), indexes=_union(base.indexes, indexes),
+                              unique=_union(base.unique, indexes))
+    return out
+
+
+def classify_range(repo: str, base: str, head: str, directory: str = "migrations/") -> dict:
+    """The data step of a per-unit release over the full release at base:
+    every migration added in (base, head], each with its lane verdict
+    against base's schema. Eligible only when every one is, and when no
+    issued migration was modified or deleted (append-only)."""
+    status = git(repo, "diff", "--name-status", "--no-renames", base, head, "--", directory)
+    added, altered = [], []
+    for line in status.splitlines():
+        state, _, path = line.partition("\t")
+        if is_migration_file(path, directory):
+            (added if state == "A" else altered).append(path)
+    schema = git(repo, "show", f"{base}:schema.sql", check=False)
+    catalogue = load_catalogue(schema) if schema else Catalogue(_Everything(), _Everything(), _Everything())
+    texts = {path: git(repo, "show", f"{head}:{path}") for path in added}
+    catalogues = range_catalogues(catalogue, texts)
+    verdicts = [lane_verdict(path, texts[path], catalogues[path])
+                for path in sorted(added, key=lambda p: (migration_version(p), p))]
+    blockers = [f"{v['path']}: {reason}" for v in verdicts for reason in v["blockers"]]
+    blockers += [f"{path}: an issued migration was modified or deleted" for path in sorted(altered)]
+    return {"eligible": not blockers, "migrations": verdicts, "blockers": blockers}
+
+
 # ---------------------------------------------------------------- git glue
 
 
@@ -659,8 +963,12 @@ def load_catalogue(schema_sql: str) -> Catalogue:
     cat = Catalogue()
     for m in re.finditer(r"^CREATE (?:UNLOGGED )?(?:TABLE|VIEW|MATERIALIZED VIEW) (?:\w+\.)?\"?(\w+)\"?", schema_sql, re.MULTILINE):
         cat.relations.add(m.group(1))
-    for m in re.finditer(r"^CREATE (?:UNIQUE )?INDEX (\w+) ON ", schema_sql, re.MULTILINE):
-        cat.indexes.add(m.group(1))
+    for m in re.finditer(r"^CREATE (UNIQUE )?INDEX (\w+) ON ", schema_sql, re.MULTILINE):
+        cat.indexes.add(m.group(2))
+        if m.group(1):
+            cat.unique.add(m.group(2))
+    for m in re.finditer(r"^\s+ADD CONSTRAINT (\w+) (?:PRIMARY KEY|UNIQUE|EXCLUDE)\b", schema_sql, re.MULTILINE):
+        cat.unique.add(m.group(1))
     return cat
 
 
@@ -726,7 +1034,7 @@ def main(argv: list[str]) -> int:
         schema = git(repo, "show", f"{base}:schema.sql", check=False)
         if not schema:
             print(f"::warning::migration-lint: no schema.sql at {base[:12]}; every table is treated as existing")
-        catalogue = load_catalogue(schema) if schema else Catalogue(relations=_Everything(), indexes=_Everything())
+        catalogue = load_catalogue(schema) if schema else Catalogue(_Everything(), _Everything(), _Everything())
         referenced = make_referenced(repo, release)
     except RuntimeError as err:
         print(f"::error::migration-lint: {err}", file=sys.stderr)
@@ -735,12 +1043,15 @@ def main(argv: list[str]) -> int:
     findings: list[Finding] = []
     for path in files:
         with open(os.path.join(repo, path), encoding="utf-8") as fh:
-            findings.extend(lint_migration(path, fh.read(), catalogue, referenced))
+            text = fh.read()
+        findings.extend(lint_migration(path, text, catalogue, referenced))
+        findings.extend(check_compat_marker(path, text, catalogue))
     for f in findings:
         print(f"::error file={f.path},line={f.line},title=migration-lint {f.rule}::{f.message}")
     if findings:
         print(f"migration-lint: {len(findings)} finding(s) in {len(files)} new migration(s). "
-              "See docs/release-compatibility.md (expand/contract); waive with `-- migration-lint: allow <rule> <object>: <reason>`.")
+              "See docs/release-compatibility.md (expand/contract); waive with `-- migration-lint: allow <rule> <object>: <reason>` "
+              "(compat-marker cannot be waived).")
         return 1
     print(f"migration-lint: OK - {len(files)} new migration(s) are expand/contract safe against {release}")
     return 0

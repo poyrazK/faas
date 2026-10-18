@@ -1,4 +1,5 @@
 -- filename: 20261018093032317_node_leases.sql
+-- migration-compat: expand
 
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
