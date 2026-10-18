@@ -2484,7 +2484,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	httpDrain := wire.NewHTTPDrain(httpSrv)
 	// Requests run under streamsCtx so a hand-off's old generation can end
 	// its SSE streams and long polls before its drain bound cuts them.
-	streamsCtx, endStreams := context.WithCancel(context.Background())
+	streamsCtx, endStreams := context.WithCancel(context.WithoutCancel(stopping))
 	defer endStreams()
 	httpSrv.BaseContext = func(net.Listener) context.Context { return streamsCtx }
 	errc := make(chan error, 1)
