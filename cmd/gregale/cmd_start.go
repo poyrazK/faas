@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,8 +18,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/reposcan"
-	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 type startRunner struct {
@@ -47,8 +48,13 @@ type startRunner struct {
 }
 
 func cmdStart(args []string) (code int) {
-	if len(args) != 0 {
-		return printErr("Start takes no flags or arguments", errors.New("run gregale start and follow the prompts; use gregale deploy for deployment options"))
+	fs := newFlagSet("start", flag.ContinueOnError)
+	if err := parseInterspersed(fs, args); err != nil {
+		return 1
+	}
+	if fs.NArg() > 1 {
+		PrintUsage(osStderr, "usage: gregale start [path]; choose one project directory", "deploy")
+		return 1
 	}
 	if jsonOutput {
 		return printErr("Interactive session required", errors.New("gregale start does not support --json; use gregale deploy --json for automation"))
@@ -56,7 +62,11 @@ func cmdStart(args []string) (code int) {
 	if !stdinIsTTY() {
 		return printErr("Interactive session required", errors.New("run gregale start in a terminal; use gregale deploy for scripts"))
 	}
-	scope, err := canonicalStartScope(".")
+	source := "."
+	if fs.NArg() == 1 {
+		source = fs.Arg(0)
+	}
+	scope, err := canonicalStartScope(source)
 	if err != nil {
 		return printErr("Could not resolve session directory", err)
 	}
@@ -188,20 +198,26 @@ func startTemplateAllowed(name string) bool {
 }
 
 func (r *startRunner) selectSource() int {
-	PrintProgress(osStdout, "2/4 · Choose what to launch")
+	PrintProgress(osStdout, "2/4 · Find your app")
+	root := r.session.ScopePath
+	selected, err := r.selectProjectSource(root)
+	if err != nil {
+		return startInputExit(err)
+	}
+	if detectShape(selected) != shapeUnknown {
+		r.session.SourcePath, r.session.Template, r.session.AppSlug = selected, "", ""
+		PrintProgress(osStdout, "Using source %s", selected)
+		return 0
+	}
 	path, template := "", ""
 	choices := []string{"Deploy this directory", "Create a starter", "Choose another directory"}
-	fallback := 0
-	if detectShape(".") == shapeUnknown {
-		fallback = 1
-	}
-	choice, err := r.prompt.choose(r.ctx, "What would you like to deploy?", choices, fallback)
+	choice, err := r.prompt.choose(r.ctx, "No app found here. What would you like to deploy?", choices, 1)
 	if err != nil {
 		return startInputExit(err)
 	}
 	switch choice {
 	case 0:
-		path = "."
+		path = root
 	case 1:
 		n, err := r.prompt.choose(r.ctx, "Pick a starter. You keep a local copy to edit.", []string{"Node.js HTTP app", "Python HTTP app", "Go HTTP app"}, 0)
 		if err != nil {
@@ -216,7 +232,7 @@ func (r *startRunner) selectSource() int {
 	}
 	if template != "" && path == "" {
 		var err error
-		path, err = r.prompt.text(r.ctx, "Starter directory", "./gregale-"+strings.TrimPrefix(template, "hello-"))
+		path, err = r.prompt.text(r.ctx, "Starter directory", filepath.Join(root, "gregale-"+strings.TrimPrefix(template, "hello-")))
 		if err != nil {
 			return startInputExit(err)
 		}
@@ -294,7 +310,11 @@ func (r *startRunner) selectProjectSource(root string) (string, error) {
 	if len(paths) == 0 {
 		return root, nil
 	}
-	if detectShape(root) != shapeUnknown {
+	// Workspace metadata alone (for example a package.json with only
+	// workspaces) is not another launch candidate. Keep roots with their own
+	// runnable app, Dockerfile, or function available in the picker.
+	profile, profileErr := frameworkprofile.AnalyzeDir(root)
+	if detectShape(root) == shapeFunction || detectFramework(root) == fwDocker || (profileErr == nil && profile.Inferred) {
 		paths, labels = append(paths, root), append(labels, "Deploy the root directory")
 	}
 	if len(paths) == 1 {
@@ -356,6 +376,7 @@ func (r *startRunner) reviewLaunch(edit *startFileEdit) (int, bool) {
 		action = "Deploy new revision to existing app"
 	}
 	_, _ = fmt.Fprintf(osStdout, "\nReady to launch %s\n  Source   %s\n  Account  %s (%s plan)\n  Action   %s\n  Access   %s\n", r.session.AppSlug, r.session.SourcePath, r.account.Email, r.account.Plan, action, accessLabel)
+	r.renderLaunchDefaults(report, app, exists)
 	if r.session.Project != "" {
 		_, _ = fmt.Fprintf(osStdout, "  Project  %s (linked)\n", r.session.Project)
 	}
@@ -465,7 +486,7 @@ func (r *startRunner) reviewLaunch(edit *startFileEdit) (int, bool) {
 	code := r.deploy(deployCtx, args, false, execution)
 	r.progress.Close()
 	if saveErr != nil || identityErr != nil {
-		PrintProgress(osStdout, "Inspect accepted deployment directly: gregale deployment wait %s", safetext.ShellSingleQuote(r.session.DeploymentID))
+		PrintProgress(osStdout, "Inspect accepted deployment directly: %s deployment wait %s", recoveryCLI(), recoveryArgument(r.session.DeploymentID))
 		if saveErr != nil {
 			return printErr("Deployment accepted but recovery state could not be saved", saveErr), false
 		}
@@ -574,8 +595,8 @@ func (r *startRunner) printRecovery() {
 	if r.session.DeploymentID == "" {
 		return
 	}
-	PrintProgress(osStdout, "Run gregale start again from %s to continue this launch.", r.session.ScopePath)
-	PrintProgress(osStdout, "Inspect directly: gregale deployment wait %s", safetext.ShellSingleQuote(r.session.DeploymentID))
+	PrintProgress(osStdout, "Continue this launch: %s start %s", recoveryCLI(), recoveryArgument(r.session.ScopePath))
+	PrintProgress(osStdout, "Inspect directly: %s deployment wait %s", recoveryCLI(), recoveryArgument(r.session.DeploymentID))
 	r.printPreviouslyVerified()
 }
 
@@ -634,13 +655,15 @@ func (r *startRunner) recoverFailure(code int) (int, bool) {
 }
 
 func (r *startRunner) finish() {
-	_, _ = fmt.Fprintf(osStdout, "\nKeep building\n  Deploy: gregale deploy --path %s --source=worktree --name %s --environment=%s\n  Logs:   gregale logs %s --deployment %s --follow\n", safetext.ShellSingleQuote(r.session.SourcePath), safetext.ShellSingleQuote(r.session.AppSlug), safetext.ShellSingleQuote(r.session.Environment), safetext.ShellSingleQuote(r.session.AppSlug), safetext.ShellSingleQuote(r.session.DeploymentID))
+	cli, source, app := recoveryCLI(), recoveryArgument(r.session.SourcePath), recoveryArgument(r.session.AppSlug)
+	_, _ = fmt.Fprintf(osStdout, "\nKeep building\n  Update: %s deploy --path %s --source=worktree --name %s --environment=%s\n  Logs:   %s logs %s --deployment %s --follow\n", cli, source, app, recoveryArgument(r.session.Environment), cli, app, recoveryArgument(r.session.DeploymentID))
 	if r.session.Environment == "" {
-		_, _ = fmt.Fprintf(osStdout, "  Open:   gregale open %s\n", safetext.ShellSingleQuote(r.session.AppSlug))
+		_, _ = fmt.Fprintf(osStdout, "  Open:   %s open %s\n", cli, app)
 	} else if r.lastRequest != nil && r.lastRequest.httpStatus != 0 && !r.lastRequest.private {
 		_, _ = fmt.Fprintf(osStdout, "  Open URL: %s\n", startResponseText(r.lastRequest.appURL))
 	} else {
-		_, _ = fmt.Fprintf(osStdout, "  Inspect: gregale deployment %s\n", safetext.ShellSingleQuote(r.session.DeploymentID))
+		_, _ = fmt.Fprintf(osStdout, "  Inspect: %s deployment %s\n", cli, recoveryArgument(r.session.DeploymentID))
 	}
+	_, _ = fmt.Fprintf(osStdout, "  Delete app: %s apps rm %s\n", cli, app)
 	r.printPreviouslyVerified()
 }

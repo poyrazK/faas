@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -171,15 +172,18 @@ func cmdDevSetup(args []string) int {
 
 	receipt.Buckets = buckets
 	receipt.StartCommand = appendDevBucketArgs(receipt.StartCommand, bucketNames)
+	receipt.StartCommand = devSetupPreserveExplicitArgs(receipt.StartCommand, fs)
+	devArgs := receipt.StartCommand[2:]
+	receipt.Next = devSetupNextSteps(receipt, *start)
+	receipt.StartCommand = devSetupProfileArgs(receipt.StartCommand)
 
 	if !receipt.Authenticated {
-		receipt.Warnings = append(receipt.Warnings, "not logged in; run `gregale login` before starting")
+		receipt.Warnings = append(receipt.Warnings, fmt.Sprintf("not logged in; run `%s` before starting", receipt.Next[0]))
 	}
 	if receipt.Doctor != nil && receipt.Doctor.Errors > 0 {
 		receipt.Ready = false
 		receipt.Warnings = append(receipt.Warnings, "local source checks found errors; fix them before starting")
 	}
-	receipt.Next = devSetupNextSteps(receipt, *start)
 
 	if jsonOutput {
 		if *start {
@@ -193,7 +197,7 @@ func cmdDevSetup(args []string) int {
 			return 1
 		}
 		if *start {
-			return cmdDev(appendDevBucketArgs(devSetupDevArgs(*sourcePath, *name, envFilePath, serviceOverrideFilePath, *once, *noLogs, *open, *withPostgres, *postgresRegion, lease), bucketNames))
+			return cmdDev(devArgs)
 		}
 		return 0
 	}
@@ -206,7 +210,7 @@ func cmdDevSetup(args []string) int {
 		return 0
 	}
 	PrintProgress(osStdout, "Starting the developer environment")
-	return cmdDev(appendDevBucketArgs(devSetupDevArgs(*sourcePath, *name, envFilePath, serviceOverrideFilePath, *once, *noLogs, *open, *withPostgres, *postgresRegion, lease), bucketNames))
+	return cmdDev(devArgs)
 }
 
 func resolveDevSetupSource(sourceDir string) (devSourceConfig, error) {
@@ -343,50 +347,46 @@ func devSetupDependencyFiles(sourceDir string) []string {
 }
 
 func devSetupNextSteps(receipt devSetupReceipt, start bool) []string {
+	// Reuse the effective dev options, including manifest defaults and buckets,
+	// before adding the selected connection profile to either command.
+	retry := append([]string{"gregale", "dev", "setup", "--start"}, receipt.StartCommand[2:]...)
+	retryCommand := devSetupShellCommand(devSetupProfileArgs(retry))
 	if !receipt.Authenticated {
-		return []string{"gregale login", "gregale dev setup --start"}
+		login := devSetupShellCommand(devSetupProfileArgs([]string{"gregale", "login"}))
+		return []string{login, retryCommand}
 	}
 	if receipt.Doctor.Errors > 0 {
-		return []string{"fix the local source check errors above", "gregale dev setup --start"}
+		return []string{"fix the local source check errors above", retryCommand}
 	}
 	if start {
 		return nil
 	}
-	return []string{devSetupShellCommand(receipt.StartCommand)}
+	return []string{devSetupShellCommand(devSetupProfileArgs(receipt.StartCommand))}
 }
 
-func devSetupDevArgs(sourcePath, name, envFile, serviceOverrideFile string, once, noLogs, open, postgres bool, postgresRegion string, lease time.Duration) []string {
-	args := make([]string, 0, 16)
-	if sourcePath != "" {
-		args = append(args, "--path", sourcePath)
+func devSetupProfileArgs(args []string) []string {
+	if profile := currentProfile(); profile != "default" || profileOverride != "" {
+		return append([]string{args[0], "--profile", profile}, args[1:]...)
 	}
-	if name != "" {
-		args = append(args, "--name", name)
-	}
-	if envFile != "" {
-		args = append(args, "--env-file", envFile)
-	}
-	if serviceOverrideFile != "" {
-		args = append(args, "--service-override-file", serviceOverrideFile)
-	}
-	if once {
-		args = append(args, "--once")
-	}
-	if noLogs {
-		args = append(args, "--no-logs")
-	}
-	if open {
-		args = append(args, "--open")
-	}
-	if postgres {
-		args = append(args, "--postgres")
-		if postgresRegion != "" {
-			args = append(args, "--postgres-region", postgresRegion)
+	return args
+}
+
+// Keep explicit empty/false values and selectors that the concise display
+// omits. Dropping them would re-enable manifest or linked-project defaults.
+func devSetupPreserveExplicitArgs(args []string, fs *flag.FlagSet) []string {
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "path", "name", "env-file", "service-override-file", "postgres", "postgres-region":
+			if slices.Contains(args, "--"+f.Name) {
+				return
+			}
+			if f.Name == "postgres" {
+				args = append(args, "--postgres="+f.Value.String())
+			} else {
+				args = append(args, "--"+f.Name, f.Value.String())
+			}
 		}
-	}
-	if lease > 0 {
-		args = append(args, "--ttl", formatDevLease(lease))
-	}
+	})
 	return args
 }
 
@@ -395,6 +395,8 @@ func devSetupDevArgsForDisplay(cwd, sourceDir, project, envFile, serviceOverride
 	rel, err := filepath.Rel(cwd, sourceDir)
 	if err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." {
 		args = append(args, "--path", filepath.ToSlash(rel))
+	} else if sourceDir != cwd {
+		args = append(args, "--path", sourceDir)
 	}
 	if project != sanitizeSlug(filepath.Base(cwd)) || sourceDir != cwd {
 		args = append(args, "--name", project)
@@ -437,11 +439,7 @@ func devSetupDevArgsForDisplay(cwd, sourceDir, project, envFile, serviceOverride
 func devSetupShellCommand(args []string) string {
 	quoted := make([]string, len(args))
 	for i, arg := range args {
-		if i == 0 || strings.IndexFunc(arg, func(r rune) bool { return r == ' ' || r == '\t' || r == '\'' || r == '"' }) < 0 {
-			quoted[i] = arg
-			continue
-		}
-		quoted[i] = "'" + strings.ReplaceAll(arg, "'", "'\\''") + "'"
+		quoted[i] = recoveryArgument(arg)
 	}
 	return strings.Join(quoted, " ")
 }
@@ -479,7 +477,7 @@ func renderDevSetup(stdout, stderr io.Writer, receipt devSetupReceipt) {
 		PrintProgress(stdout, "hosting overrides: start=%q port=%d health=%s", receipt.Hosting.Start, receipt.Hosting.Port, receipt.Hosting.Health)
 	}
 	if !receipt.Authenticated {
-		PrintWarn(stderr, "not logged in; run `gregale login` before starting")
+		PrintWarn(stderr, "not logged in; run `%s` before starting", receipt.Next[0])
 	}
 	if receipt.Doctor.Errors > 0 {
 		PrintWarn(stderr, "local source checks: %d error(s), %d warning(s)", receipt.Doctor.Errors, receipt.Doctor.Warnings)

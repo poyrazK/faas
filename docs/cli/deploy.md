@@ -6,20 +6,28 @@ inferred from flags + the cwd's git state; this page captures the
 non-obvious pieces (which files actually get shipped and what the
 `--json` envelope looks like).
 
+Use `gregale deploy --help` for common options and runnable examples. Add
+`--all` for every flag grouped into source, resources, projects, rollout,
+access, and other tasks. `gregale app --help` follows the same pattern;
+`gregale app my-api scale --help` explains resource changes and saved plans.
+Connection profiles go before the command (`gregale --profile staging deploy`);
+RAM/CPU resource profiles go after it (`gregale deploy --profile small`).
+
 ## Your first deployment with `gregale start`
 
 Run one command in a terminal:
 
 ```bash
 gregale start
+# Or select a project from another directory:
+gregale start ./my-api
 ```
 
-`start` takes no flags or arguments. It asks what to launch, chooses sensible
-defaults, and gets your first app live. For a new app from an existing project
-with a saved login, the healthy path needs just two answers:
-
-1. Deploy this directory, create a starter, or choose another directory.
-2. Review the source, app name, account, environment, access, and billing, then confirm deployment.
+`start` accepts one optional project directory and needs no deployment flags.
+It selects an unambiguous app automatically. For a healthy project with a saved
+login, review the source, app, connection, detected build, environment, access,
+and resources, then confirm deployment. New apps use account plan resource
+defaults; existing apps keep their resource settings.
 
 Browser login appears only when needed. Starters ask for a language (Node.js,
 Python, or Go) and a local directory. Recognized workspaces offer a service picker.
@@ -126,8 +134,9 @@ declining before confirmation submits no update.
 Function-set manifests use the regular `gregale deploy` flow; a guided launch
 keeps its single app target.
 
-Finishing prints commands for deploying changes, reading logs, and opening
-the app. Built-in starters offer an optional next step with two answers: enter a
+Finishing prints commands for deploying changes, reading logs, opening
+the app, and deleting it. Commands retain the connection, source, and deployment
+scope; deletion still asks for confirmation. Built-in starters offer an optional next step with two answers: enter a
 greeting, then approve a combined file-edit and deployment preview. Press Enter at
 the greeting prompt to finish. Declining or closing before confirmation keeps the
 original files and submits no deployment. After approval, the local edit remains
@@ -138,8 +147,8 @@ complete the walkthrough, and serving deployment headers are checked when presen
 ### Continue an interrupted launch
 
 An accepted deployment ID is saved before waiting. Ctrl-C stops the local session
-and leaves the remote deployment running. Run `gregale start` again from the same
-original directory and choose **Continue** to reconnect without submitting another
+and leaves the remote deployment running. Repeat `gregale start [path]` with the same
+original project directory and choose **Continue** to reconnect without submitting another
 deployment. The saved session also remembers source selected from another directory.
 For an update, the newly accepted ID is saved immediately while the previous
 successful response check's deployment ID remains recorded until the new check

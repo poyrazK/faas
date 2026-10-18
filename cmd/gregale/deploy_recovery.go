@@ -23,7 +23,7 @@ func recoveryArgument(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 func recoveryCLI() string {
-	if profile := currentProfile(); profile != "default" {
+	if profile := currentProfile(); profile != "default" || profileOverride != "" {
 		return "gregale --profile " + recoveryArgument(profile)
 	}
 	return "gregale"

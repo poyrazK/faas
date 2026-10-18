@@ -125,7 +125,8 @@ func TestManifestHelpResolvesTopicsAndFlagOrder(t *testing.T) {
 		want string
 	}{
 		{[]string{"help", "deploy"}, "Source defaults to committed HEAD"},
-		{[]string{"deploy", "--plan", "--help"}, "--execution-mode"},
+		{[]string{"deploy", "--plan", "--help"}, "Common flags:"},
+		{[]string{"deploy", "--plan", "--help", "--all"}, "--execution-mode"},
 		{[]string{"deployment", "wait", "--help"}, "gregale deployment wait <id|vN>"},
 		{[]string{"help", "deployment", "wait"}, "--rollout"},
 		{[]string{"deployments", "alias", "list", "--help"}, "gregale deployments alias list"},
@@ -160,7 +161,7 @@ func TestEdgeRuleParsedFlagsAppearInCreateAndUpdateHelp(t *testing.T) {
 			t.Fatalf("edge-rules %s --help = %d", subcommand, code)
 		}
 		for _, flag := range parsed[fn] {
-			if !strings.Contains(out.String(), "--"+flag+" ") && !strings.Contains(out.String(), "--"+flag+"[") {
+			if !strings.Contains(out.String(), "--"+flag+" ") && !strings.Contains(out.String(), "--"+flag+"[") && !strings.Contains(out.String(), "--"+flag+"\n") {
 				t.Errorf("edge-rules %s parses --%s but its help omits it", subcommand, flag)
 			}
 		}
@@ -210,7 +211,7 @@ func flagsRegisteredIn(t *testing.T, file string) map[string][]string {
 }
 
 func TestCommonCommandExamplesAgreeAcrossHelpAndReference(t *testing.T) {
-	for _, name := range []string{"apps", "deploy", "dev", "doctor", "init", "inspect", "login", "logs"} {
+	for _, name := range []string{"app", "apps", "deploy", "dev", "doctor", "init", "inspect", "login", "logs", "start"} {
 		t.Run(name, func(t *testing.T) {
 			command, ok := lookupCliCommand(name)
 			if !ok || len(command.Examples) < 2 {

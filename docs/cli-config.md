@@ -25,6 +25,19 @@ to see the effective value and its source without exposing credentials.
 
 ## Command output and forwarded arguments
 
+`gregale deploy --help` and `gregale app --help` show common options and examples.
+Add `--all` to see every option grouped by purpose:
+
+```bash
+gregale deploy --help --all
+gregale help app --all
+gregale app my-api scale --help
+```
+
+Help is local and works without login or a valid saved connection. Shell
+completion, man pages, and the [CLI reference](cli-reference.md) always retain
+all options. `--all` expands help; it does not change deployment or app settings.
+
 Put the global `--json` (or `-j`) flag before a command's `--` separator.
 Arguments after the separator belong to the app command, including flags such
 as `--help` and `--json`:
@@ -65,6 +78,13 @@ Upgrading does not move or replace existing credentials.
 Put it **before the command**: some commands have their own `--profile` option
 for resource or test settings, and those options retain their meaning.
 Arguments after `--` are forwarded unchanged.
+
+For example, this previews a deployment using the `staging` connection and the
+`small` RAM/CPU resource profile:
+
+```bash
+gregale --profile staging deploy --profile small --dry-run
+```
 
 `FAAS_API` and `FAAS_TOKEN` still override the selected connection's endpoint
 and credential. JSON preferences remain shared across connections.
