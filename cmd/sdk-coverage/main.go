@@ -269,6 +269,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/admin/instances/{id}/force-restart":        true, // PR #1105 P2d — operator-only recovery primitive
 	"POST /v1/admin/builds/sweep-stuck":                  true, // PR #1099 P2c — operator-only recovery primitive
 	"GET /v1/admin/ops/jobs/runs":                        true, // operator-only active job-run projection
+	"GET /v1/admin/ops/data-repairs":                     true, // operator-only repair health projection
 	"GET /v1/admin/ops/jobs/runs/{id}":                   true, // operator-only job-run inspection
 	"POST /v1/admin/ops/jobs/runs/{id}/cancel":           true, // operator-only job-run cancellation
 	"GET /v1/admin/ops/deployments":                      true, // operator-only deployment incident projection

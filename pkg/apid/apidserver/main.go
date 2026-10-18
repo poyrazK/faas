@@ -1510,6 +1510,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := srv.configureOperations(*cfg, deps.getenv); err != nil {
 		return err
 	}
+	if err := srv.configureDataRepair(*cfg, deps.getenv); err != nil {
+		return err
+	}
 	srv.operation.StartOperationNotifications(ctx)
 	srv.configureProductControl(*cfg, deps.getenv)
 	if err := srv.configureFeatureFlags(*cfg, deps.getenv); err != nil {

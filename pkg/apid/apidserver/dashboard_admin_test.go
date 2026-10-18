@@ -45,7 +45,10 @@ func TestDashboardAdmin_TLSCutoverBannerPersistsAfterRollback(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	for _, want := range []string{"TLS cutover drill rolled back successfully", "run-1", "ops@example.com"} {
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("operator health page is cacheable")
+	}
+	for _, want := range []string{"TLS cutover drill rolled back successfully", "run-1", "ops@example.com", "Data repair health", "0 held slots", "Recovery runbook"} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("body missing %q: %s", want, rec.Body.String())
 		}

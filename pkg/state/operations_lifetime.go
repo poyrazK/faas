@@ -13,7 +13,7 @@ func operationIsActive(op Operation) bool {
 }
 
 func operationRetained(op Operation, now time.Time) bool {
-	return operationIsActive(op) || op.ExpiresAt.After(now)
+	return operationIsActive(op) || op.ExpiresAt.After(now) || op.DataRepair != nil && (op.DataRepair.Phase == api.DataRepairReplacing || op.DataRepair.Phase == api.DataRepairResolving)
 }
 
 func (m *MemStore) operationRetainIdentityLocked(op Operation) {

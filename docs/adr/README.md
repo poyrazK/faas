@@ -122,6 +122,17 @@ its baseline line in the same change (the gate fails on a stale entry).
 | ADR | Title | Status | Source |
 |---|---|---|---|
 | 1658 | [Owner-authorized deployment response checks](1658-owner-authorized-deployment-response-checks.md) | accepted; native deployment validation pending | Exact-deployment GET checks through the trusted gateway, with bounded HTTP evidence and no forwarded account credentials |
+| 2026101709 | [Receipt-bound repairable operation transactions](2026101709-repairable-operation-transactions.md) | accepted for internal qualification | Go, Node and Python capture, business writes and receipt bindings commit together; replay survives payload compaction |
+| 2026101708 | [Application writer capture readiness](2026101708-repair-capture-readiness.md) | accepted for internal qualification | Read-only checks on the actual application writer connection |
+| 2026101707 | [Read-only selective repair readiness](2026101707-repair-readiness.md) | accepted for internal qualification | Bounded executor catalog, enrollment and policy diagnostics |
+| 2026101706 | [Source-backed repair history](2026101706-repair-history-discovery.md) | accepted for internal qualification | Scoped discovery and recovery after payload compaction |
+| 2026101705 | [Read-only verification of committed repairs](2026101705-repair-post-apply-verification.md) | accepted for internal qualification | Compare present rows with the committed repair while preserving its receipt |
+| 2026101704 | [Compaction of superseded repair plans](2026101704-repair-superseded-retention.md) | accepted for internal qualification | Preserve replacement lineage and pin active child evidence |
+| 2026101703 | [Authoritative repair apply resolution](2026101703-repair-apply-resolution.md) | accepted for internal qualification | Resolve uncertain outcomes through receipts or durable source closure |
+| 2026101702 | [Linked replacement repair plans](2026101702-repair-replacement.md) | accepted for internal qualification | Narrow original candidates with parent fencing and fresh approval |
+| 2026101701 | [Reviewed retention of repair payloads](2026101701-repair-retention.md) | accepted for internal qualification | Digest-reviewed compaction retains identities, receipts and closure |
+| 2026101710 | [Daemon-bound repair producers](2026101710-repair-producer-retirement.md) | accepted; native execution pending | Physical producer retirement fences cleanup and capacity release |
+| 20261016 | [Selective data repair](20261016-selective-data-repair.md) | accepted for internal qualification | Explicit PostgreSQL field-update capture, isolated rehearsal and atomic approved repair; limits in `pkg/api/limits.go` |
 | 1576 | [Internal CI control plane with compute admission closed](1576-internal-ci-control-plane.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
 | 1571 | [Durable CI execution engine qualification without compute dispatch](1571-ci-execution-engine-qualification.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
 | 1572 | [Account-owned GitHub sources for blocked CI admission](1572-internal-ci-github-sources.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
