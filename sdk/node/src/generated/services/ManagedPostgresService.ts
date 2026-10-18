@@ -6,6 +6,7 @@ import type { ChangeManagedPostgresComputePolicyRequest } from '../models/Change
 import type { CreateManagedPostgresBindingRequest } from '../models/CreateManagedPostgresBindingRequest.js';
 import type { CreateManagedPostgresDatabaseRequest } from '../models/CreateManagedPostgresDatabaseRequest.js';
 import type { DataAPIConnectionBudgets } from '../models/DataAPIConnectionBudgets.js';
+import type { DataAPIRuntimeConnectionReport } from '../models/DataAPIRuntimeConnectionReport.js';
 import type { ManagedPostgresBinding } from '../models/ManagedPostgresBinding.js';
 import type { ManagedPostgresBindingList } from '../models/ManagedPostgresBindingList.js';
 import type { ManagedPostgresCapabilities } from '../models/ManagedPostgresCapabilities.js';
@@ -685,6 +686,34 @@ export class ManagedPostgresService {
       },
       headers: {
         'Idempotency-Key': idempotencyKey,
+      },
+    });
+  }
+  /**
+   * Report resident Data API pool configuration
+   * Private runtime surface. Requires a short-lived gregale:data-api:connections workload assertion for the live instance. Owner API keys and application JWTs are not accepted. Reports are reconciled against current catalog identity and expire within 30 seconds. This does not reserve connections or establish complete demand coverage.
+   * @returns void
+   * @throws ApiError
+   */
+  public static reportDataApiRuntimeConnections({
+    requestBody,
+  }: {
+    requestBody: DataAPIRuntimeConnectionReport,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/runtime/data-api/connection-observations',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        409: `code: conflict`,
+        422: `Observation reporting is unsupported by this catalog adapter.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
       },
     });
   }

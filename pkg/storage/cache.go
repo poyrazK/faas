@@ -511,6 +511,9 @@ func (c *LocalCacheBackend) Put(ctx context.Context, key string, r io.Reader) er
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// The parent has accepted this write. An older deferred read must no
+	// longer mask it in openCache or replace it when its fsync finishes.
+	delete(c.pending, key)
 	if err := os.Rename(tmpPath, path); err != nil {
 		return nil // spool file is removed by the deferred cleanup
 	}

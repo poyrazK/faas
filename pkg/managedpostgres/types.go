@@ -414,6 +414,9 @@ func (c CredentialMaterial) Validate() error {
 
 type CredentialRequest struct {
 	ProviderResourceID string
+	// BindingID identifies owner-approved policies across credential generations.
+	// Standalone provider qualification requests may omit it.
+	BindingID string
 	// IdentityKey is a stable, non-secret identity for one credential
 	// generation. Rotation uses a new key; revocation repeats the key that
 	// created the credential.

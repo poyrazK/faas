@@ -40,6 +40,7 @@ export async function watchEventAcknowledgmentIntentHealth(pool: EventConsumerPo
   const policy = intentWatchPolicy(options), conditions: IntentWatchCondition[] = [];
   if (policy.dueThreshold > 0) conditions.push(new IntentWatchCondition('due_backlog', policy.dueThreshold));
   if (policy.stalledThreshold > 0) conditions.push(new IntentWatchCondition('stalled_recovery', policy.stalledThreshold));
+  if (policy.parkedThreshold !== undefined) conditions.push(new IntentWatchCondition('parked_intents', policy.parkedThreshold));
   const controller = new AbortController(), signal = controller.signal, abort = () => controller.abort(parent?.reason);
   parent?.addEventListener('abort', abort, { once: true });
   if (parent?.aborted) abort();
@@ -58,7 +59,8 @@ export async function watchEventAcknowledgmentIntentHealth(pool: EventConsumerPo
         && (previousObserved === undefined || observed > previousObserved)) previousObserved = observed;
       const alerts: EventAcknowledgmentIntentAlert[] = [];
       for (const condition of conditions) {
-        const value = health === undefined ? 0 : condition.metric === 'due_backlog' ? health.due : health.stalled;
+        const value = health === undefined ? 0 : condition.metric === 'due_backlog' ? health.due
+          : condition.metric === 'stalled_recovery' ? health.stalled : health.parked;
         const transition = condition.update(value, reason, local, policy.sustainMs);
         if (transition) alerts.push(Object.freeze({ accountId: account, appId: app, metric: condition.metric, ...transition,
           at: new Date(wall).toISOString(), value, threshold: condition.threshold, ...(health === undefined ? {} : { health }) }));

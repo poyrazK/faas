@@ -142,10 +142,10 @@ func TestStartSelectedSourcePinsDeploymentAndConfigurationScope(t *testing.T) {
 			if strings.Contains(stdout.String()+stderr()+string(state), "private-start-value") {
 				t.Fatal("scope handling exposed a secret")
 			}
-			if !strings.Contains(stdout.String(), "--environment='"+environment+"'") || !strings.Contains(stdout.String(), "--deployment 'd-linked'") {
+			if !strings.Contains(stdout.String(), "--environment="+recoveryArgument(environment)) || !strings.Contains(stdout.String(), "--deployment d-linked") {
 				t.Fatal("follow-up commands lost the reviewed target")
 			}
-			if linked && (!strings.Contains(stdout.String(), "Project  shop (linked)") || strings.Contains(stdout.String(), "already exists in this account") || strings.Contains(stdout.String(), "gregale open 'shop-api'")) {
+			if linked && (!strings.Contains(stdout.String(), "Project  shop (linked)") || strings.Contains(stdout.String(), "already exists in this account") || strings.Contains(stdout.String(), "gregale open shop-api")) {
 				t.Fatal("linked review or follow-up could send the user to the default app")
 			}
 		})

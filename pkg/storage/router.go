@@ -29,9 +29,9 @@ import (
 //     keys land in the local backend while /apps/* lands in the
 //     sibling one — without the caller having to know which root
 //     owns which prefix.
-//   - List routes its prefix to the matching backend if the prefix
-//     matches a route, otherwise it returns every key across every
-//     route + fallback by issuing parallel List calls.
+//   - List visits every route intersecting the requested prefix and
+//     returns only keys owned by that route under the same longest-prefix
+//     rule used by Get. The fallback covers keys outside explicit routes.
 //
 // Composition vs. inheritance: a PrefixRouter is itself a
 // StorageBackend; you can stack routers (e.g. for namespace
@@ -314,101 +314,56 @@ type aggregatedLister struct {
 	backends map[string]StorageBackend
 }
 
-// List iterates each backend, calls List with the stripped prefix
-// (or empty prefix for the fallback slot), and re-prefixes each
-// result with the route's prefix. The combined slice is sorted for
-// determinism — the per-backend order is arbitrary by design.
-//
-// Routing of the prefix itself:
-//
-//   - If the caller's prefix matches a route exactly (or with a
-//     longer route winning), only that route's backend handles the
-//     list (the others would return a wrong scope).
-//   - If the caller's prefix is empty (list-everything), every
-//     backend handles its own scope: each route lists its subtree,
-//     the fallback lists its root.
-//   - If the caller's prefix is non-empty but matches no route
-//     exactly, the fallback handles it.
+// List visits the backend owning prefix and any more specific routes under
+// that prefix. Results shadowed by another route are excluded, so listing
+// and reading observe the same namespace. The result is sorted.
 func (a *aggregatedLister) List(ctx context.Context, prefix string) ([]string, error) {
 	if prefix != "" {
 		if err := validateKey(strings.TrimSuffix(prefix, "/")); err != nil {
 			return nil, err
 		}
 	}
-	// Find the longest matching route (if any) for the caller's
-	// prefix. The empty prefix matches every route (list-all).
+	owner := a.owningRoute(prefix)
 	var combined []string
-	listRoute := func(route string, b StorageBackend, sub string) error {
+	for route, b := range a.backends {
+		var sub string
+		switch {
+		case route == owner:
+			sub = strings.TrimPrefix(prefix, route)
+		case strings.HasPrefix(route, prefix):
+			// This route is below the requested prefix; list its full root.
+		default:
+			continue
+		}
 		keys, err := b.(LocalArtifactLister).List(ctx, sub)
 		if err != nil {
-			return err
+			return nil, fmt.Errorf("storage: list %q: %w", prefix, err)
 		}
 		for _, k := range keys {
 			if k == "" {
 				continue
 			}
-			if route != "" {
-				combined = append(combined, route+k)
-			} else {
-				combined = append(combined, k)
+			key := route + k
+			if strings.HasPrefix(key, prefix) && a.owningRoute(key) == route {
+				combined = append(combined, key)
 			}
-		}
-		return nil
-	}
-	// Phase 1: routes. Each route lists its own subtree under the
-	// caller's prefix stripped of the route. When the caller's
-	// prefix is empty, every route lists its full subtree.
-	for route, b := range a.backends {
-		if route == "" {
-			continue
-		}
-		if prefix != "" && !strings.HasPrefix(prefix, route) {
-			continue
-		}
-		sub := ""
-		if prefix != "" {
-			sub = strings.TrimPrefix(prefix, route)
-		}
-		if err := listRoute(route, b, sub); err != nil {
-			return nil, fmt.Errorf("storage: list %q: %w", prefix, err)
 		}
 		if cerr := ctx.Err(); cerr != nil {
 			return nil, cerr
-		}
-	}
-	// Phase 2: fallback. The fallback is consulted in two cases:
-	//
-	//   - prefix is empty (list-all): the routes already covered their
-	//     own subtrees; the fallback covers its own root.
-	//   - prefix is non-empty and matches NO route: the fallback
-	//     handles the call directly.
-	//
-	// When the prefix matches a route's scope, the fallback is
-	// intentionally skipped — its root does not contain that subtree,
-	// so a list call would walk a non-existent path and return empty.
-	// (That was the v1 behaviour too; it produced the right answer but
-	// did unnecessary I/O. This is the cleanup.)
-	if fb, ok := a.backends[""]; ok && (prefix == "" || !anyRouteContains(a.backends, prefix)) {
-		if err := listRoute("", fb, prefix); err != nil {
-			return nil, fmt.Errorf("storage: list %q: %w", prefix, err)
 		}
 	}
 	sort.Strings(combined)
 	return combined, nil
 }
 
-// anyRouteContains reports whether any registered route (non-empty
-// key) is a prefix-or-equal match for query. Used by the aggregator
-// to decide whether the fallback should be consulted for a non-empty
-// prefix — when a route owns the prefix, the fallback is irrelevant.
-func anyRouteContains(backends map[string]StorageBackend, query string) bool {
-	for route := range backends {
-		if route == "" {
-			continue
-		}
-		if query == route || strings.HasPrefix(query, route) {
-			return true
+// owningRoute mirrors dispatch's longest-prefix rule. An empty result means
+// no explicit route owns the key, so only the fallback may supply it.
+func (a *aggregatedLister) owningRoute(key string) string {
+	var owner string
+	for route := range a.backends {
+		if len(route) > len(owner) && strings.HasPrefix(key, route) {
+			owner = route
 		}
 	}
-	return false
+	return owner
 }

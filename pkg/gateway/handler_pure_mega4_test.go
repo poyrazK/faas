@@ -11,7 +11,6 @@
 // Targets:
 //   - computeVaryHash (empty, single, multi, case-insensitive,
 //     order-independent)
-//   - sortQuery (empty, single pair, multi-pair order)
 //   - parseBudgetHeaderMs (empty, non-numeric, zero, negative, valid)
 //   - hasSessionCookie (nil req, no cookies, with cookie)
 //   - metricsIncCacheOutcome (nil handler, nil metrics, success)
@@ -84,31 +83,6 @@ func TestComputeVaryHash_DifferentValues_Mega4(t *testing.T) {
 	b := computeVaryHash(r2, []string{"X-Trace"})
 	if a == b {
 		t.Errorf("different values must produce different digests: %x == %x", a, b)
-	}
-}
-
-// --- sortQuery ---------------------------------------------------
-
-func TestSortQuery_Empty_Mega4(t *testing.T) {
-	t.Parallel()
-	if got := sortQuery(""); got != "" {
-		t.Errorf("empty: %q", got)
-	}
-}
-
-func TestSortQuery_Orders_Mega4(t *testing.T) {
-	t.Parallel()
-	got := sortQuery("z=1&a=2&m=3")
-	want := "a=2&m=3&z=1"
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
-func TestSortQuery_Single_Mega4(t *testing.T) {
-	t.Parallel()
-	if got := sortQuery("only=1"); got != "only=1" {
-		t.Errorf("got %q", got)
 	}
 }
 
@@ -401,7 +375,7 @@ func TestWithCacheRuleContext_Populated_Mega4(t *testing.T) {
 		t.Fatal("snapshot = nil, want populated")
 	}
 	if snap.Rule != rule || snap.AppID != "app-1" || snap.Method != "POST" ||
-		snap.Path != "/v1/x" || snap.Query != "q=1" || snap.VaryHash != vary {
+		snap.NormalizedPath != "/v1/x" || snap.Query != "q=1" || snap.VaryHash != vary {
 		t.Errorf("snapshot = %+v, want full mirror", snap)
 	}
 }
