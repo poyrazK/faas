@@ -187,9 +187,9 @@ func readTarballFileAtRoot(path, entryName, sourceRoot string) string {
 	defer func() { _ = gz.Close() }()
 
 	tr := tar.NewReader(gz)
-	needle := strings.ToLower(strings.TrimPrefix(entryName, "./"))
+	needle := strings.ToLower(tarball.TrimLeadingDotSlash(entryName))
 	if root != sourcecontext.DefaultRoot {
-		needle = strings.ToLower(logicalRoot + "/" + strings.TrimPrefix(entryName, "./"))
+		needle = strings.ToLower(logicalRoot + "/" + needle)
 	} else if logicalRoot != "" {
 		needle = strings.ToLower(logicalRoot + "/" + needle)
 	}
@@ -209,7 +209,7 @@ func readTarballFileAtRoot(path, entryName, sourceRoot string) string {
 			tar.TypeGNULongName, tar.TypeGNULongLink:
 			continue
 		}
-		name := strings.ToLower(strings.TrimPrefix(hdr.Name, "./"))
+		name := strings.ToLower(tarball.TrimLeadingDotSlash(hdr.Name))
 		if name != needle {
 			continue
 		}
