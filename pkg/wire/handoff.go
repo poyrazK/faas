@@ -252,7 +252,7 @@ func waitSuccessorReady(ctx context.Context, ready *os.File, exited *exitWatch, 
 		// The pipe usually closes because the successor exited; report how.
 		select {
 		case <-exited.done:
-			return fmt.Errorf("exited before ready: %v", exited.err)
+			return fmt.Errorf("exited before ready: %w", exited.err)
 		case <-time.After(2 * time.Second):
 			return fmt.Errorf("closed its ready pipe before ready (read %q)", got)
 		}

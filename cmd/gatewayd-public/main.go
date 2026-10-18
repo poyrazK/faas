@@ -1020,7 +1020,7 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 		}
 	}()
 
-	handoffs := wire.HandoffRequests(drainCtx)
+	handoffs := wire.HandoffRequests(forceCtx)
 	for {
 		select {
 		case <-drainCtx.Done():
