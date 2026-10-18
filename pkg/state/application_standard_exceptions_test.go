@@ -13,10 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appstandards"
 )
 
-type standardExceptionTestStore interface {
-	standardLocalIntentTestStore
-	ApplicationStandardExceptionStore
-}
+type standardExceptionTestStore = contractTestStore
 
 func standardExceptionRequest(f standardLocalIntentFixture) ApplicationStandardExceptionRequest {
 	return ApplicationStandardExceptionRequest{ExpectedRevision: f.enrollment.DesiredRevision, StandardID: f.version.StandardID, Version: 1, Field: appstandards.LogDestinations, Value: mustStandardLocalJSON([]string{f.rotated.ID}), Reason: "Temporary collector maintenance", ExpiresAt: time.Now().UTC().Add(time.Hour)}

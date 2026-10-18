@@ -18,12 +18,7 @@ type cloneFlagFixtureStore interface {
 	CreatePlatformTenant(context.Context, string, string, string, int) (state.PlatformTenant, bool, error)
 }
 
-type cloneFlagTestStore interface {
-	state.Store
-	cloneFlagFixtureStore
-	CloneProjectEnvironment(context.Context, state.ProjectEnvironmentClone, api.Limits) (state.ProjectEnvironment, state.ProjectEnvironmentCloneResult, error)
-	RollbackProjectEnvironmentClone(context.Context, string, string, string) error
-}
+type cloneFlagTestStore = contractTestStore
 
 func cloneFlagFixture(t *testing.T, s cloneFlagFixtureStore, scope state.FeatureFlagScope) (state.FeatureFlagVersion, string) {
 	t.Helper()

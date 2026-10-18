@@ -3400,6 +3400,8 @@ CREATE TABLE public.deployments (
     serving_ended_at timestamp with time zone,
     runtime_upgrade_routing_token uuid DEFAULT gen_random_uuid() NOT NULL,
     environment_workload_held boolean DEFAULT false NOT NULL,
+    rollback_prepared_at timestamp with time zone,
+    rollout_decision jsonb,
     snapshot_recovery_generation bigint DEFAULT 0 NOT NULL,
     runtime_base text DEFAULT ''::text NOT NULL,
     mail_failure_revision bigint DEFAULT 1 NOT NULL,
@@ -3408,7 +3410,7 @@ CREATE TABLE public.deployments (
     mail_failure_account_revision bigint,
     mail_failure_app_revision bigint,
     mail_failure_success_revision bigint,
-    CONSTRAINT deployments_canary_preset_chk CHECK ((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text]))),
+    CONSTRAINT deployments_canary_preset_chk CHECK (((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text])) OR (canary_preset = 'adaptive'::text))),
     CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
     CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
     CONSTRAINT deployments_canary_total_steps_nonneg_chk CHECK ((canary_total_steps >= 0)),
@@ -3422,7 +3424,7 @@ CREATE TABLE public.deployments (
     CONSTRAINT deployments_failed_traffic_fence_chk CHECK (((status <> 'failed'::text) OR ((traffic_percent = 0) AND (rollout_state = 'aborted'::text) AND (rollout_aborted_at IS NOT NULL)))),
     CONSTRAINT deployments_github_source_ref_pair_chk CHECK ((((github_source_ref IS NULL) AND (github_installation_id IS NULL)) OR ((github_source_ref IS NOT NULL) AND (btrim(github_source_ref) <> ''::text) AND (github_installation_id IS NOT NULL) AND (github_installation_id > 0)))),
     CONSTRAINT deployments_kind_check CHECK ((kind = ANY (ARRAY['image'::text, 'tarball'::text, 'dockerfile'::text, 'github'::text, 'preview'::text]))),
-    CONSTRAINT deployments_last_auto_rollback_reason_check CHECK (((last_auto_rollback_reason IS NULL) OR (last_auto_rollback_reason = ANY (ARRAY['threshold_exceeded'::text, 'first_window_expired'::text])))),
+    CONSTRAINT deployments_last_auto_rollback_reason_check CHECK (((last_auto_rollback_reason IS NULL) OR (last_auto_rollback_reason = ANY (ARRAY['threshold_exceeded'::text, 'first_window_expired'::text])) OR (last_auto_rollback_reason = 'post_release_regression'::text))),
     CONSTRAINT deployments_liveness_restart_count_nonneg_chk CHECK ((liveness_restart_count >= 0)),
     CONSTRAINT deployments_mail_failed_at_check CHECK (((mail_failed_at IS NULL) OR isfinite(mail_failed_at))),
     CONSTRAINT deployments_mail_failure_account_revision_check CHECK (((mail_failure_account_revision IS NULL) OR (mail_failure_account_revision > 0))),
@@ -3437,6 +3439,7 @@ CREATE TABLE public.deployments (
     CONSTRAINT deployments_reason_len_chk CHECK (((reason IS NULL) OR (length(reason) <= 280))),
     CONSTRAINT deployments_release_command_chk CHECK ((((cardinality(release_command) = 0) AND (NOT release_command_shell)) OR (((cardinality(release_command) >= 1) AND (cardinality(release_command) <= 64)) AND (array_position(release_command, NULL::text) IS NULL) AND ((octet_length(btrim(release_command[1])) >= 1) AND (octet_length(btrim(release_command[1])) <= 4096)) AND ((octet_length(array_to_string(release_command, ''::text)) >= 1) AND (octet_length(array_to_string(release_command, ''::text)) <= 16384)) AND ((NOT release_command_shell) OR (cardinality(release_command) = 1))))),
     CONSTRAINT deployments_revision_nonneg_chk CHECK ((revision >= 0)),
+    CONSTRAINT deployments_rollout_decision_chk CHECK (((rollout_decision IS NULL) OR ((jsonb_typeof(rollout_decision) = 'object'::text) AND ((rollout_decision ->> 'kind'::text) = ANY (ARRAY['advance'::text, 'abort'::text])) AND (octet_length((rollout_decision)::text) <= 4096)))),
     CONSTRAINT deployments_rollout_state_chk CHECK ((rollout_state = ANY (ARRAY['pending'::text, 'rolling_out'::text, 'complete'::text, 'aborted'::text]))),
     CONSTRAINT deployments_runtime_base_check CHECK ((runtime_base = ANY (ARRAY[''::text, 'node22'::text, 'node24'::text]))),
     CONSTRAINT deployments_runtime_upgrade_routing_token_check CHECK ((runtime_upgrade_routing_token <> '00000000-0000-0000-0000-000000000000'::uuid)),
@@ -7801,7 +7804,8 @@ BEGIN
             'rollout_state', 'complete',
             'traffic_percent', NEW.traffic_percent,
             'completed_at', COALESCE(NEW.rollout_completed_at, now())
-        );
+        ) || jsonb_strip_nulls(jsonb_build_object('decision',
+            CASE WHEN NEW.rollout_decision->>'kind' = 'advance' THEN NEW.rollout_decision END));
     ELSIF NEW.rollout_state = 'aborted' AND OLD.status = 'live'
           AND NEW.status IN ('live', 'superseded') THEN
         event_name := 'rollout.aborted';
@@ -7812,7 +7816,8 @@ BEGIN
             'traffic_percent', NEW.traffic_percent,
             'reason', COALESCE(NULLIF(NEW.rollout_aborted_reason, ''), 'rollout aborted'),
             'aborted_at', COALESCE(NEW.rollout_aborted_at, now())
-        );
+        ) || jsonb_strip_nulls(jsonb_build_object('decision',
+            CASE WHEN NEW.rollout_decision->>'kind' = 'abort' THEN NEW.rollout_decision END));
     ELSE
         RETURN NEW;
     END IF;
@@ -17386,7 +17391,7 @@ END $$;
 
 CREATE FUNCTION public.mcp_admission_audit_kind_base() RETURNS text
     LANGUAGE sql IMMUTABLE
-    AS $$SELECT 'CHECK ((kind = ANY (ARRAY[''deploy.created''::text, ''deploy.source_ref''::text, ''deploy.local_tarball''::text, ''deploy.traffic_changed''::text, ''deploy.health_probe_failed''::text, ''deploy.health_recovered''::text, ''deploy.rolled_back''::text, ''deploy.removed''::text, ''deploy.rollout_started''::text, ''deploy.rollout_completed''::text, ''deploy.rollout_aborted''::text, ''deploy.canary_step_advanced''::text, ''deploy.alert_rule_fired''::text, ''deploy.scan_regressed''::text, ''deploy.mcp_task_held''::text, ''deploy.mcp_task_retry_requested''::text, ''deploy.mcp_task_retry_started''::text, ''deploy.mcp_task_retry_completed''::text, ''deploy.mcp_task_recovered''::text, ''deploy.mcp_task_hold_cancelled''::text, ''deploy.worker_drain_started''::text, ''deploy.worker_drain_completed''::text])))'$$;
+    AS $$SELECT 'CHECK (((kind = ANY (ARRAY[''deploy.created''::text, ''deploy.source_ref''::text, ''deploy.local_tarball''::text, ''deploy.traffic_changed''::text, ''deploy.health_probe_failed''::text, ''deploy.health_recovered''::text, ''deploy.rolled_back''::text, ''deploy.removed''::text, ''deploy.rollout_started''::text, ''deploy.rollout_completed''::text, ''deploy.rollout_aborted''::text, ''deploy.canary_step_advanced''::text, ''deploy.alert_rule_fired''::text, ''deploy.scan_regressed''::text, ''deploy.mcp_task_held''::text, ''deploy.mcp_task_retry_requested''::text, ''deploy.mcp_task_retry_started''::text, ''deploy.mcp_task_retry_completed''::text, ''deploy.mcp_task_recovered''::text, ''deploy.mcp_task_hold_cancelled''::text, ''deploy.worker_drain_started''::text, ''deploy.worker_drain_completed''::text])) OR (kind = ''deploy.rollout_held''::text)))'$$;
 
 
 --
@@ -25284,6 +25289,85 @@ CREATE TABLE public.app_binding_release_policy_history (
 
 
 --
+-- Name: app_config_guard_secrets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_config_guard_secrets (
+    guard_id uuid NOT NULL,
+    config_key text NOT NULL,
+    existed boolean NOT NULL,
+    ciphertext bytea,
+    kid text,
+    value_hash text,
+    secret_class text,
+    CONSTRAINT app_config_guard_secrets_check CHECK ((existed = (ciphertext IS NOT NULL))),
+    CONSTRAINT app_config_guard_secrets_check1 CHECK ((existed = (secret_class IS NOT NULL))),
+    CONSTRAINT app_config_guard_secrets_config_key_check CHECK (((config_key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(config_key) <= 128))),
+    CONSTRAINT app_config_guard_secrets_secret_class_check CHECK (((secret_class IS NULL) OR (secret_class = ANY (ARRAY['persistent'::text, 'ephemeral'::text]))))
+);
+
+
+--
+-- Name: app_config_guards; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_config_guards (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    base_revision bigint NOT NULL,
+    head_revision bigint NOT NULL,
+    status text NOT NULL,
+    restorable boolean DEFAULT true NOT NULL,
+    opened_at timestamp with time zone NOT NULL,
+    last_change_at timestamp with time zone NOT NULL,
+    window_ends_at timestamp with time zone,
+    closed_at timestamp with time zone,
+    decision jsonb,
+    CONSTRAINT app_config_guards_base_revision_check CHECK ((base_revision >= 1)),
+    CONSTRAINT app_config_guards_check CHECK ((head_revision >= base_revision)),
+    CONSTRAINT app_config_guards_check1 CHECK ((last_change_at >= opened_at)),
+    CONSTRAINT app_config_guards_check2 CHECK (((status = 'watching'::text) = (closed_at IS NULL))),
+    CONSTRAINT app_config_guards_check3 CHECK (((status = 'watching'::text) OR (decision IS NOT NULL))),
+    CONSTRAINT app_config_guards_decision_check CHECK (((decision IS NULL) OR (jsonb_typeof(decision) = 'object'::text))),
+    CONSTRAINT app_config_guards_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
+    CONSTRAINT app_config_guards_status_check CHECK ((status = ANY (ARRAY['watching'::text, 'clean'::text, 'restored'::text, 'regressed'::text, 'no_traffic'::text, 'superseded'::text])))
+);
+
+
+--
+-- Name: app_config_revisions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_config_revisions (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    revision bigint NOT NULL,
+    source text NOT NULL,
+    config_key text DEFAULT ''::text NOT NULL,
+    actor text DEFAULT ''::text NOT NULL,
+    variables jsonb NOT NULL,
+    secrets jsonb NOT NULL,
+    guard_id uuid,
+    restored_revision bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_config_revisions_actor_check CHECK ((octet_length(actor) <= 256)),
+    CONSTRAINT app_config_revisions_check CHECK (((source = ANY (ARRAY['baseline'::text, 'config.rollback'::text, 'config.guard_restore'::text])) = (config_key = ''::text))),
+    CONSTRAINT app_config_revisions_check1 CHECK (((source = ANY (ARRAY['config.rollback'::text, 'config.guard_restore'::text])) = (restored_revision IS NOT NULL))),
+    CONSTRAINT app_config_revisions_config_key_check CHECK (((config_key = ''::text) OR ((config_key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(config_key) <= 128)))),
+    CONSTRAINT app_config_revisions_restored_revision_check CHECK (((restored_revision IS NULL) OR (restored_revision >= 1))),
+    CONSTRAINT app_config_revisions_revision_check CHECK ((revision >= 1)),
+    CONSTRAINT app_config_revisions_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
+    CONSTRAINT app_config_revisions_secrets_check CHECK ((jsonb_typeof(secrets) = 'object'::text)),
+    CONSTRAINT app_config_revisions_source_check CHECK ((source = ANY (ARRAY['baseline'::text, 'env.set'::text, 'env.delete'::text, 'secret.set'::text, 'secret.delete'::text, 'secret.rotate'::text, 'config.rollback'::text, 'config.guard_restore'::text]))),
+    CONSTRAINT app_config_revisions_variables_check CHECK ((jsonb_typeof(variables) = 'object'::text))
+);
+
+
+--
 -- Name: app_cpu_policy_node_status; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -29830,7 +29914,7 @@ CREATE TABLE public.deployment_audit (
     at timestamp with time zone DEFAULT now() NOT NULL,
     data jsonb,
     alert_rule_id uuid,
-    CONSTRAINT deployment_audit_kind_chk CHECK (((kind = ANY (ARRAY['deploy.created'::text, 'deploy.source_ref'::text, 'deploy.local_tarball'::text, 'deploy.traffic_changed'::text, 'deploy.health_probe_failed'::text, 'deploy.health_recovered'::text, 'deploy.rolled_back'::text, 'deploy.removed'::text, 'deploy.rollout_started'::text, 'deploy.rollout_completed'::text, 'deploy.rollout_aborted'::text, 'deploy.canary_step_advanced'::text, 'deploy.alert_rule_fired'::text, 'deploy.scan_regressed'::text, 'deploy.mcp_task_held'::text, 'deploy.mcp_task_retry_requested'::text, 'deploy.mcp_task_retry_started'::text, 'deploy.mcp_task_retry_completed'::text, 'deploy.mcp_task_recovered'::text, 'deploy.mcp_task_hold_cancelled'::text, 'deploy.worker_drain_started'::text, 'deploy.worker_drain_completed'::text])) OR (kind = 'deploy.mcp_admission'::text)))
+    CONSTRAINT deployment_audit_kind_chk CHECK (((kind = ANY (ARRAY['deploy.created'::text, 'deploy.source_ref'::text, 'deploy.local_tarball'::text, 'deploy.traffic_changed'::text, 'deploy.health_probe_failed'::text, 'deploy.health_recovered'::text, 'deploy.rolled_back'::text, 'deploy.removed'::text, 'deploy.rollout_started'::text, 'deploy.rollout_completed'::text, 'deploy.rollout_aborted'::text, 'deploy.canary_step_advanced'::text, 'deploy.alert_rule_fired'::text, 'deploy.scan_regressed'::text, 'deploy.mcp_task_held'::text, 'deploy.mcp_task_retry_requested'::text, 'deploy.mcp_task_retry_started'::text, 'deploy.mcp_task_retry_completed'::text, 'deploy.mcp_task_recovered'::text, 'deploy.mcp_task_hold_cancelled'::text, 'deploy.worker_drain_started'::text, 'deploy.worker_drain_completed'::text])) OR (kind = 'deploy.rollout_held'::text) OR (kind = 'deploy.mcp_admission'::text)))
 );
 
 
@@ -30181,6 +30265,36 @@ CREATE TABLE public.deployment_rollback_operations (
     CONSTRAINT deployment_rollback_operations_receipt_check CHECK (((jsonb_typeof(receipt) = 'object'::text) AND (octet_length((receipt)::text) <= 16384))),
     CONSTRAINT deployment_rollback_operations_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
     CONSTRAINT deployment_rollback_operations_status_check CHECK ((status = ANY (ARRAY['preparing'::text, 'ready'::text, 'blocked'::text, 'routing'::text, 'complete'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: deployment_rollbacks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_rollbacks (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    target_deployment_id uuid NOT NULL,
+    from_deployment_id uuid,
+    trigger text NOT NULL,
+    status text NOT NULL,
+    requested_at timestamp with time zone NOT NULL,
+    finished_at timestamp with time zone,
+    recovery_ms bigint,
+    audit_id bigint,
+    error_code text DEFAULT ''::text NOT NULL,
+    error text DEFAULT ''::text NOT NULL,
+    CONSTRAINT deployment_rollbacks_check CHECK (((status = 'preparing'::text) = (finished_at IS NULL))),
+    CONSTRAINT deployment_rollbacks_check1 CHECK (((status <> 'complete'::text) OR ((recovery_ms IS NOT NULL) AND (audit_id IS NOT NULL)))),
+    CONSTRAINT deployment_rollbacks_error_check CHECK ((octet_length(error) <= 1024)),
+    CONSTRAINT deployment_rollbacks_error_code_check CHECK ((octet_length(error_code) <= 64)),
+    CONSTRAINT deployment_rollbacks_recovery_ms_check CHECK (((recovery_ms IS NULL) OR (recovery_ms >= 0))),
+    CONSTRAINT deployment_rollbacks_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
+    CONSTRAINT deployment_rollbacks_status_check CHECK ((status = ANY (ARRAY['preparing'::text, 'complete'::text, 'failed'::text]))),
+    CONSTRAINT deployment_rollbacks_trigger_check CHECK (((trigger = ANY (ARRAY['manual'::text, 'auto_5xx'::text, 'alert'::text])) OR (trigger = 'post_release'::text)))
 );
 
 
@@ -48643,6 +48757,38 @@ ALTER TABLE ONLY public.app_binding_release_policy_history
 
 
 --
+-- Name: app_config_guard_secrets app_config_guard_secrets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_config_guard_secrets
+    ADD CONSTRAINT app_config_guard_secrets_pkey PRIMARY KEY (guard_id, config_key);
+
+
+--
+-- Name: app_config_guards app_config_guards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_config_guards
+    ADD CONSTRAINT app_config_guards_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: app_config_revisions app_config_revisions_app_id_scope_revision_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_config_revisions
+    ADD CONSTRAINT app_config_revisions_app_id_scope_revision_key UNIQUE (app_id, scope, revision);
+
+
+--
+-- Name: app_config_revisions app_config_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_config_revisions
+    ADD CONSTRAINT app_config_revisions_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: app_cpu_policy_node_status app_cpu_policy_node_status_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -51040,6 +51186,14 @@ ALTER TABLE ONLY public.deployment_revision_pins
 
 ALTER TABLE ONLY public.deployment_rollback_operations
     ADD CONSTRAINT deployment_rollback_operations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: deployment_rollbacks deployment_rollbacks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_rollbacks
+    ADD CONSTRAINT deployment_rollbacks_pkey PRIMARY KEY (id);
 
 
 --
@@ -59371,6 +59525,34 @@ CREATE INDEX app_application_standards_pending_idx ON public.app_application_sta
 
 
 --
+-- Name: app_config_guards_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_config_guards_app ON public.app_config_guards USING btree (app_id, scope, opened_at DESC);
+
+
+--
+-- Name: app_config_guards_one_watching; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX app_config_guards_one_watching ON public.app_config_guards USING btree (app_id, scope) WHERE (status = 'watching'::text);
+
+
+--
+-- Name: app_config_guards_watching; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_config_guards_watching ON public.app_config_guards USING btree (last_change_at, id) WHERE (status = 'watching'::text);
+
+
+--
+-- Name: app_config_revisions_guard; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_config_revisions_guard ON public.app_config_revisions USING btree (guard_id) WHERE (guard_id IS NOT NULL);
+
+
+--
 -- Name: app_cpu_policy_node_status_observed_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -61440,6 +61622,27 @@ CREATE UNIQUE INDEX deployment_rollback_active_scope ON public.deployment_rollba
 --
 
 CREATE INDEX deployment_rollback_pending ON public.deployment_rollback_operations USING btree (updated_at, id) WHERE (status <> ALL (ARRAY['complete'::text, 'failed'::text]));
+
+
+--
+-- Name: deployment_rollbacks_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_rollbacks_app ON public.deployment_rollbacks USING btree (app_id, requested_at DESC);
+
+
+--
+-- Name: deployment_rollbacks_preparing; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_rollbacks_preparing ON public.deployment_rollbacks USING btree (requested_at, id) WHERE (status = 'preparing'::text);
+
+
+--
+-- Name: deployment_rollbacks_preparing_target; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX deployment_rollbacks_preparing_target ON public.deployment_rollbacks USING btree (target_deployment_id) WHERE (status = 'preparing'::text);
 
 
 --
@@ -74448,6 +74651,54 @@ ALTER TABLE ONLY public.app_binding_release_policy_history
 
 
 --
+-- Name: app_config_guard_secrets app_config_guard_secrets_guard_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_config_guard_secrets
+    ADD CONSTRAINT app_config_guard_secrets_guard_id_fkey FOREIGN KEY (guard_id) REFERENCES public.app_config_guards(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_config_guards app_config_guards_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_config_guards
+    ADD CONSTRAINT app_config_guards_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_config_guards app_config_guards_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_config_guards
+    ADD CONSTRAINT app_config_guards_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_config_revisions app_config_revisions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_config_revisions
+    ADD CONSTRAINT app_config_revisions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_config_revisions app_config_revisions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_config_revisions
+    ADD CONSTRAINT app_config_revisions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_config_revisions app_config_revisions_guard_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_config_revisions
+    ADD CONSTRAINT app_config_revisions_guard_id_fkey FOREIGN KEY (guard_id) REFERENCES public.app_config_guards(id) ON DELETE SET NULL;
+
+
+--
 -- Name: app_cpu_policy_node_status app_cpu_policy_node_status_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -77517,6 +77768,38 @@ ALTER TABLE ONLY public.deployment_rollback_operations
 
 ALTER TABLE ONLY public.deployment_rollback_operations
     ADD CONSTRAINT deployment_rollback_operations_target_deployment_id_fkey FOREIGN KEY (target_deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_rollbacks deployment_rollbacks_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_rollbacks
+    ADD CONSTRAINT deployment_rollbacks_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_rollbacks deployment_rollbacks_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_rollbacks
+    ADD CONSTRAINT deployment_rollbacks_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_rollbacks deployment_rollbacks_from_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_rollbacks
+    ADD CONSTRAINT deployment_rollbacks_from_deployment_id_fkey FOREIGN KEY (from_deployment_id) REFERENCES public.deployments(id) ON DELETE SET NULL;
+
+
+--
+-- Name: deployment_rollbacks deployment_rollbacks_target_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_rollbacks
+    ADD CONSTRAINT deployment_rollbacks_target_deployment_id_fkey FOREIGN KEY (target_deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

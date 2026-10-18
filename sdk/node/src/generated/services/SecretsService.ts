@@ -257,6 +257,7 @@ export class SecretsService {
     slug,
     key,
     requestBody,
+    guard,
     scope,
   }: {
     /**
@@ -271,6 +272,14 @@ export class SecretsService {
      * Secret payload — key name + plaintext. Sealed at rest; plaintext never returned.
      */
     requestBody: PutAppSecretRequest,
+    /**
+     * `false` opts this env or secret write out of the config guard
+     * (ADR-1451): no guard opens, and a guard already watching the scope
+     * closes as superseded. Omitted or `true` guards the change when the
+     * scope has a live deployment.
+     *
+     */
+    guard?: boolean,
     /**
      * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
      * lowercase alnum + dash, no leading/trailing dash) — e.g.
@@ -290,6 +299,7 @@ export class SecretsService {
         'key': key,
       },
       query: {
+        'guard': guard,
         'scope': scope,
       },
       body: requestBody,
@@ -316,6 +326,7 @@ export class SecretsService {
   public static deleteSecret({
     slug,
     key,
+    guard,
     scope,
     prefer,
   }: {
@@ -327,6 +338,14 @@ export class SecretsService {
      * Secret key. Must start with a letter; A-Z, 0-9, underscore.
      */
     key: string,
+    /**
+     * `false` opts this env or secret write out of the config guard
+     * (ADR-1451): no guard opens, and a guard already watching the scope
+     * closes as superseded. Omitted or `true` guards the change when the
+     * scope has a live deployment.
+     *
+     */
+    guard?: boolean,
     /**
      * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
      * lowercase alnum + dash, no leading/trailing dash) — e.g.
@@ -353,6 +372,7 @@ export class SecretsService {
         'Prefer': prefer,
       },
       query: {
+        'guard': guard,
         'scope': scope,
       },
       errors: {
@@ -383,6 +403,7 @@ export class SecretsService {
     slug,
     key,
     requestBody,
+    guard,
     scope,
   }: {
     /**
@@ -397,6 +418,14 @@ export class SecretsService {
      * New plaintext value. Sealed at rest server-side; plaintext never returned.
      */
     requestBody: RotateAppSecretRequest,
+    /**
+     * `false` opts this env or secret write out of the config guard
+     * (ADR-1451): no guard opens, and a guard already watching the scope
+     * closes as superseded. Omitted or `true` guards the change when the
+     * scope has a live deployment.
+     *
+     */
+    guard?: boolean,
     /**
      * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
      * lowercase alnum + dash, no leading/trailing dash) — e.g.
@@ -416,6 +445,7 @@ export class SecretsService {
         'key': key,
       },
       query: {
+        'guard': guard,
         'scope': scope,
       },
       body: requestBody,

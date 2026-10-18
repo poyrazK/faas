@@ -1,9 +1,10 @@
 from typing import Literal
 
-CanaryPresetSpecPreset = Literal["1-10-50-100", "aggressive", "balanced", "custom", "none", "slow"]
+CanaryPresetSpecPreset = Literal["1-10-50-100", "adaptive", "aggressive", "balanced", "custom", "none", "slow"]
 
 CANARY_PRESET_SPEC_PRESET_VALUES: set[CanaryPresetSpecPreset] = {
     "1-10-50-100",
+    "adaptive",
     "aggressive",
     "balanced",
     "custom",

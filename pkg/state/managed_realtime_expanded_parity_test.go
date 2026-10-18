@@ -17,28 +17,7 @@ import (
 
 // Run the same observable contracts against both stores. In particular, a
 // failed batch/CAS must leave both the channel head and derived state intact.
-type expandedRealtimeStore interface {
-	state.Store
-	state.ManagedRealtimeEndpointStore
-	state.ManagedRealtimeHistoryStore
-	state.ManagedRealtimeInboxStore
-	state.ManagedRealtimeReadProgressStore
-	state.ManagedRealtimeMutationStore
-	state.ManagedRealtimeDirectMessageReceiptStore
-	state.ManagedRealtimeReducerStore
-	state.ManagedRealtimeConditionalStore
-	state.ManagedRealtimeSnapshotStore
-	state.ManagedRealtimeEventSchemaStore
-	state.ManagedRealtimeScheduleStore
-	state.ManagedRealtimeScheduleGroupStore
-	state.ManagedRealtimeScheduleHistoryStore
-	state.ManagedRealtimePushStore
-	state.ManagedRealtimePushPreferencesStore
-	state.ManagedRealtimeNotificationStore
-	state.ManagedRealtimeNotificationControlStore
-	state.ManagedRealtimeNotificationTimelineStore
-	state.ManagedRealtimePresenceStore
-}
+type expandedRealtimeStore = contractTestStore
 
 func expandedRealtimeCheck(t *testing.T, err error) {
 	t.Helper()

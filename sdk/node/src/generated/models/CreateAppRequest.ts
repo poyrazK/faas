@@ -160,6 +160,14 @@ export type CreateAppRequest = {
    */
   revision_pin_ttl_seconds?: number;
   /**
+   * Default rollout for production releases that name no rollout policy (ADR-1446, ADR-1450). Omit for safe.
+   */
+  release_policy?: 'safe' | 'fast' | 'immediate';
+  /**
+   * Up to 3 concrete GET paths the default rollout probe checks instead of / (ADR-1449).
+   */
+  release_probe_paths?: Array<string>;
+  /**
    * Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471).
    */
   streaming_enabled?: boolean;

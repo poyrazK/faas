@@ -21350,6 +21350,37 @@ WHERE app_id = sqlc.arg(app_id)::text::uuid AND account_id = sqlc.arg(account_id
  AND window_start >= sqlc.arg(since) AND window_start < sqlc.arg(until)
 ORDER BY window_start, method, path;
 
+-- name: ListDefaultRouteProbeTargets :many
+-- ADR-1446: request apps on the safe release policy with an in-flight
+-- default-scope canary and a serving predecessor. apid probes the default
+-- path on both so a quiet canary is judged on evidence. An app with several
+-- serving predecessors returns several rows and is skipped by the caller.
+SELECT a.id::text AS app_id, a.account_id::text AS account_id, a.slug::text AS slug,
+ d.id::text AS candidate_id, s.id::text AS stable_id,
+ coalesce(a.manifest->'release_probe_paths', '[]'::jsonb)::jsonb AS probe_paths
+FROM apps a
+JOIN deployments d ON d.app_id = a.id AND d.status = 'live' AND d.deleted_at IS NULL AND d.traffic_percent > 0
+ AND d.canary_total_steps > 0 AND d.canary_step < d.canary_total_steps
+ AND coalesce(nullif(d.scope, ''), 'default') = 'default'
+JOIN deployments s ON s.app_id = a.id AND s.id <> d.id AND s.status = 'live' AND s.deleted_at IS NULL
+ AND s.traffic_percent > 0 AND coalesce(nullif(s.scope, ''), 'default') = 'default'
+WHERE a.status <> 'deleted' AND a.preview_of_slug IS NULL
+ AND coalesce(a.manifest->>'release_policy', '') <> 'immediate'
+ AND coalesce(a.manifest->>'execution_mode', '') IN ('', 'request')
+ORDER BY a.id, d.id, s.id
+LIMIT sqlc.arg(batch_limit)::int;
+
+-- name: RouteProbeTotalsByDeployment :many
+-- ADR-1446: probe totals per deployment over a canary stage, for meterd's
+-- circuit breaker.
+SELECT deployment_id::text AS deployment_id, sum(requests)::bigint AS requests,
+ sum(server_errors)::bigint AS server_errors, sum(unauthenticated)::bigint AS unauthenticated
+FROM route_probe_observations
+WHERE app_id = sqlc.arg(app_id)::text::uuid
+ AND deployment_id IN (sqlc.arg(candidate_id)::text::uuid, sqlc.arg(stable_id)::text::uuid)
+ AND window_start >= sqlc.arg(since) AND window_start < sqlc.arg(until)
+GROUP BY deployment_id;
+
 -- name: PruneRouteProbeObservations :exec
 DELETE FROM route_probe_observations WHERE window_start < sqlc.arg(before);
 
@@ -21977,6 +22008,34 @@ WHERE j.account_id = sqlc.arg(account_id)::uuid
   AND j.status <> 'deleted'
   AND r.id = sqlc.arg(run_id)::uuid
   AND t.task_index = sqlc.arg(task_index)::int;
+
+-- name: ReleaseRunsCrossedBy :many
+-- ADR-1448: release tasks of other deployments in a rollback target's scope
+-- that started after the target last served (serving_ended_at), or after it
+-- was created if it never served. Any started task counts: a failed migration
+-- may still have committed changes.
+SELECT t.deployment_id::text AS deployment_id, d.revision, t.status, t.started_at::timestamptz AS started_at
+FROM deployments target
+JOIN app_tasks t ON t.app_id = target.app_id
+  AND t.kind = 'release'
+  AND t.started_at IS NOT NULL
+  AND t.deployment_id <> target.id
+  AND coalesce(nullif(t.deployment_scope, ''), 'default') = coalesce(nullif(target.scope, ''), 'default')
+  AND t.started_at > coalesce(target.serving_ended_at, target.created_at)
+JOIN deployments d ON d.id = t.deployment_id
+WHERE target.id = sqlc.arg(target_id)::text::uuid AND target.app_id = sqlc.arg(app_id)::text::uuid
+ORDER BY t.started_at, t.id;
+
+-- name: ReleaseMigrationDatabases :many
+-- ADR-1448: managed PostgreSQL databases whose migration binding delivers a
+-- secret into this app scope, the rows a release task receives.
+SELECT DISTINCT db.id::text AS database_id, db.name
+FROM app_secrets s
+JOIN managed_postgres_bindings b ON b.id = s.managed_postgres_binding_id
+  AND b.access = 'migration' AND b.deleted_at IS NULL
+JOIN managed_postgres_databases db ON db.id = b.database_id AND db.deleted_at IS NULL
+WHERE s.app_id = sqlc.arg(app_id)::text::uuid AND s.scope = sqlc.arg(scope)::text
+ORDER BY db.name, database_id;
 
 -- Identity writes use the account lock before the provider-qualified row.
 -- This matches subscription termination and SMTP lifecycle fencing.

@@ -12,12 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type trackedUploadStore interface {
-	accountingStore
-	state.ObjectTrackedUploadStore
-	state.ObjectUploadRouteStore
-	state.ObjectCapacityStore
-}
+type trackedUploadStore = contractTestStore
 
 func TestTrackedObjectUploadsMem(t *testing.T) { trackedObjectUploadSuite(t, state.NewMemStore()) }
 func TestTrackedObjectUploadsPG(t *testing.T)  { st, _ := pgStore(t); trackedObjectUploadSuite(t, st) }

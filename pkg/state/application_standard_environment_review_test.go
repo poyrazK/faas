@@ -12,10 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-type standardEnvironmentReviewTestStore interface {
-	standardMaterializationTestStore
-	ProjectEnvironmentWorkloadSpecStore
-}
+type standardEnvironmentReviewTestStore = contractTestStore
 
 type standardEnvironmentReviewFixture struct {
 	app     App

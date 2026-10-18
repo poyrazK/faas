@@ -614,6 +614,57 @@
     "kind": "configuration"
   },
   {
+    "table": "app_config_guard_secrets",
+    "columns": [
+      "ciphertext",
+      "config_key",
+      "existed",
+      "guard_id",
+      "kid",
+      "secret_class",
+      "value_hash"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_config_guards",
+    "columns": [
+      "account_id",
+      "app_id",
+      "base_revision",
+      "closed_at",
+      "decision",
+      "head_revision",
+      "id",
+      "last_change_at",
+      "opened_at",
+      "restorable",
+      "scope",
+      "status",
+      "window_ends_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_config_revisions",
+    "columns": [
+      "account_id",
+      "actor",
+      "app_id",
+      "config_key",
+      "created_at",
+      "guard_id",
+      "id",
+      "restored_revision",
+      "revision",
+      "scope",
+      "secrets",
+      "source",
+      "variables"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_cpu_policy_node_status",
     "columns": [
       "app_id",
@@ -3915,6 +3966,26 @@
     "kind": "operational"
   },
   {
+    "table": "deployment_rollbacks",
+    "columns": [
+      "account_id",
+      "app_id",
+      "audit_id",
+      "error",
+      "error_code",
+      "finished_at",
+      "from_deployment_id",
+      "id",
+      "recovery_ms",
+      "requested_at",
+      "scope",
+      "status",
+      "target_deployment_id",
+      "trigger"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "deployment_route_policy_snapshots",
     "columns": [
       "app_id",
@@ -4126,9 +4197,11 @@
       "reordered_by_principal",
       "revision",
       "rollback_on_5xx",
+      "rollback_prepared_at",
       "rollout_aborted_at",
       "rollout_aborted_reason",
       "rollout_completed_at",
+      "rollout_decision",
       "rollout_started_at",
       "rollout_state",
       "rootfs_bytes",

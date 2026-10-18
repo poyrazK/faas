@@ -16,12 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type environmentQueueInvocationTestStore interface {
-	environmentQueueConsumerTestStore
-	state.ProjectEnvironmentQueueInvocationStore
-	state.InvocationEnvironmentQueueAdmissionReader
-	RequeueExpiredInvocations(context.Context, time.Time, int) (int, error)
-}
+type environmentQueueInvocationTestStore = contractTestStore
 
 func enqueueStageQueue(ctx context.Context, t *testing.T, store environmentQueueInvocationTestStore, f queueConsumerFixture) state.Invocation {
 	t.Helper()
