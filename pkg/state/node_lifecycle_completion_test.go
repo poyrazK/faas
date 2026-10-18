@@ -15,11 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type lifecycleCompletionTestStore interface {
-	state.Store
-	state.NodeLifecycleCompletionStore
-	state.AuditEventOutboxStore
-}
+type lifecycleCompletionTestStore = contractTestStore
 
 func completionNode(t *testing.T, store state.Store, lifecycle state.NodeLifecycle) state.ComputeNode {
 	t.Helper()

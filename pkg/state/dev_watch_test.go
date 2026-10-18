@@ -10,10 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type devWatchStore interface {
-	state.Store
-	state.DevWatchStore
-}
+type devWatchStore = contractTestStore
 
 func TestDevWatchStoreMem(t *testing.T) {
 	runDevWatchStoreContract(t, state.NewMemStore(), context.Background())

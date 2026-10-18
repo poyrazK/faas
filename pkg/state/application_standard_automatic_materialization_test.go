@@ -17,10 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appstandards"
 )
 
-type standardAutomaticTestStore interface {
-	standardMaterializationTestStore
-	ApplicationStandardAutomaticMaterializationStore
-}
+type standardAutomaticTestStore = contractTestStore
 
 type standardAutomaticFixture struct {
 	owner        CreateAccountWithPersonalOrgResult

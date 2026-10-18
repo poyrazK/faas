@@ -10,10 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-type runtimeProducerPresenceTestStore interface {
-	runtimeProducerInputTestStore
-	DeploymentRuntimeProducerPresenceStore
-}
+type runtimeProducerPresenceTestStore = contractTestStore
 
 func runtimeProducerPresence(t *testing.T, s runtimeProducerPresenceTestStore) {
 	t.Helper()
