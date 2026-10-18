@@ -43,7 +43,7 @@ vet_pkgs="$(sed -n 1p <<<"$selection")"
 [[ "${VET:-}" == importers ]] && vet_pkgs="$(sed -n 2p <<<"$selection")"
 test_pkgs="$(sed -n 3p <<<"$selection")"
 
-echo "test-changed: $(printf '%s\n' "$paths" | wc -l | tr -d ' ') changed files against ${base:0:10}"
+echo "test-changed: $(printf '%s\n' "$paths" | wc -l | tr -d ' ') changed files against $(git rev-parse --short "$base")"
 echo "  vet  ($(wc -w <<<"$vet_pkgs" | tr -d ' ')): ${vet_pkgs:-<none>}"
 echo "  test ($(wc -w <<<"$test_pkgs" | tr -d ' ')): ${test_pkgs:-<none>}"
 [[ "${DRY_RUN:-}" == 1 ]] && exit 0
