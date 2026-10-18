@@ -268,6 +268,21 @@ func (e *Engine) reconcile(ctx context.Context, p Pipeline, raw string, source *
 	if err != nil || hold {
 		return err
 	}
+	if activeSchema {
+		intent, _ := verificationID(p, relations)
+		if verificationCancelled(p, intent) {
+			// Cancellation is bound to the approved logical run, not its
+			// physical storage or the subscriber's current replication lag.
+			// Its receipt was retired above; keep reads closed and acknowledge
+			// it before ordinary catch-up can postpone the cancellation.
+			if err := allowMirrorReads(ctx, p, target, false); err != nil {
+				return err
+			}
+			ob.SchemaChange.State = "verifying"
+			ob.State, ob.Reason = "blocked", "verification_cancelled"
+			return nil
+		}
+	}
 	if err := prepareMirror(ctx, p, target, owner, relations, hash); err != nil {
 		return err
 	}

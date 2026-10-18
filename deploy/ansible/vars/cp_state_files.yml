@@ -1,0 +1,34 @@
+---
+# ADR-1344 §8: the control plane's host-local state — what a replacement
+# control plane needs that is neither in PostgreSQL nor in the release
+# bundle. The warm standby stages it (control_plane_standby) and the off-host
+# backup seals it (cp_state_backup) from this one list, so the two never
+# drift. Loaded with include_vars by both roles.
+
+# Every file below these directories.
+faas_cp_state_trees:
+  - /etc/faas/secrets
+  - /etc/faas/tls
+  - /etc/grafana/secrets
+
+# Single files, taken when present.
+faas_cp_state_files:
+  - /etc/faas/sealed.env
+  - /etc/faas/compute-db.env
+  - /etc/faas/storage.env
+  - /etc/faas/otel.env
+  - /etc/faas/profiling.env
+  - /etc/faas/object-storage.json
+  # Bootstrap generates these when missing, and new keys break audit joins
+  # and every MFA recovery code (control_plane_service).
+  - /var/lib/faas/audit-hmac.key
+  - /var/lib/faas/recovery-hmac.key
+  - /etc/caddy/tls/cloudflare-origin.pem
+  - /etc/caddy/tls/cloudflare-origin.key
+
+# The host age identity is per host by design (FaasFleetSealDomain): a
+# replacement host gets its own, and copying this one would break the
+# fleet-seal domain separation.
+faas_cp_state_exclude:
+  - /etc/faas/secrets/host.age
+  - /etc/faas/secrets/host.age.previous

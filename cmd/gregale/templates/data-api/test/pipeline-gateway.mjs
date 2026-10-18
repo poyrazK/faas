@@ -36,7 +36,9 @@ try {
   if (!ready) throw new Error('PostgREST did not become ready')
   const key = randomBytes(32)
   const tokens = {}
-  for (const sub of ['alice', 'bob']) tokens[sub] = await new SignJWT({ sub }).setProtectedHeader({ alg: 'HS256' }).setIssuer(config.auth.issuer).setAudience(config.auth.audience).setExpirationTime('2m').sign(key)
+  // Each Go native journey has a five-minute deadline. Keep its fixture
+  // identities valid through late quarantine and recovery assertions.
+  for (const sub of ['alice', 'bob']) tokens[sub] = await new SignJWT({ sub }).setProtectedHeader({ alg: 'HS256' }).setIssuer(config.auth.issuer).setAudience(config.auth.audience).setExpirationTime('5m').sign(key)
   gateway = createServer(config, async token => (await jwtVerify(token, key, { issuer: config.auth.issuer, audience: config.auth.audience, algorithms: ['HS256'] })).payload, port, adminPort)
   await new Promise(resolve => gateway.listen(0, '127.0.0.1', resolve))
   process.stdout.write(`${JSON.stringify({ port: gateway.address().port, fingerprint: config.fingerprint, ...tokens })}\n`)

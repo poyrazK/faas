@@ -1,4 +1,4 @@
-// ADR-1580: recovery commands preserve explicit event and request identity.
+// ADR-1592: recovery commands preserve explicit event and request identity.
 package main
 
 import (

@@ -71,6 +71,24 @@ func assertNativeLargeVerification(t *testing.T, ctx context.Context, store *Pos
 	if err := store.CancelVerification(ctx, account, p.ID, p.Revision, firstRun); err != nil {
 		t.Fatal(err)
 	}
+	// Hold the replication watermark ahead of the source. Cancellation must
+	// clean up and acknowledge its run even while ordinary catch-up is blocked.
+	var barrier, delayedBarrier string
+	if err := target.QueryRow(ctx, `SELECT barrier::text FROM gregale_pipeline.mirrors WHERE pipeline_id=$1`, p.ID).Scan(&barrier); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.QueryRow(ctx, `SELECT (pg_current_wal_lsn()+67108864)::text`).Scan(&delayedBarrier); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := target.Exec(ctx, `UPDATE gregale_pipeline.mirrors SET barrier=$2::pg_lsn WHERE pipeline_id=$1`, p.ID, delayedBarrier); err != nil {
+		t.Fatal(err)
+	}
+	restoreBarrier := func() {
+		t.Helper()
+		if _, err := target.Exec(ctx, `UPDATE gregale_pipeline.mirrors SET barrier=$2::pg_lsn WHERE pipeline_id=$1`, p.ID, barrier); err != nil {
+			t.Fatal(err)
+		}
+	}
 	p = tick()
 	cancelled := get()
 	if cancelled.Reason != "verification_cancelled" || cancelled.VerificationProgress.State != "cancelled" {
@@ -84,6 +102,20 @@ func assertNativeLargeVerification(t *testing.T, ctx context.Context, store *Pos
 	if err := target.QueryRow(ctx, `SELECT count(*) FROM pg_trigger WHERE tgrelid='public.orders'::regclass AND tgname IN ('gregale_verify_rows','gregale_verify_truncate')`).Scan(&triggers); err != nil || triggers != 0 {
 		t.Fatal("cancel retained verification triggers", triggers, err)
 	}
+	restart()
+	p = tick()
+	replayed := get()
+	if replayed.Reason != "verification_cancelled" || replayed.VerificationProgress == nil || replayed.VerificationProgress.State != "cancelled" || replayed.VerificationProgress.ID != firstRun {
+		t.Fatalf("restart lost cancellation during catch-up: %+v", replayed)
+	}
+	var behind bool
+	if err := source.QueryRow(ctx, `SELECT confirmed_flush_lsn<$2::pg_lsn FROM pg_replication_slots WHERE slot_name=$1`, pipelineName(replayed), delayedBarrier).Scan(&behind); err != nil || !behind {
+		t.Fatal("cancellation fixture did not hold back replication", behind, err)
+	}
+	if err := target.QueryRow(ctx, `SELECT NOT readable FROM gregale_pipeline.mirrors WHERE pipeline_id=$1`, p.ID).Scan(&gated); err != nil || !gated {
+		t.Fatal("replayed cancellation reopened reads", err)
+	}
+	restoreBarrier()
 	if err := store.ApproveSchema(ctx, account, p.ID, p.Revision, cancelled.SchemaChange.ID, true); err != nil {
 		t.Fatal(err)
 	}
