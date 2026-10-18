@@ -13,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appstandards"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func livePrivateLeaseFixture(t *testing.T) (*Loop, *testHarness) {
@@ -117,8 +118,8 @@ func assertPrivateLeaseQuarantine(t *testing.T, th *testHarness, reason string) 
 }
 
 type privateLeaseEvidenceTestStore struct {
-	*state.MemStore
-	failure error
+	MemStore *state.MemStore
+	failure  error
 }
 
 func (s *privateLeaseEvidenceTestStore) GetFreshDeploymentRuntimeScan(ctx context.Context, account, app, dep string) (state.DeploymentRuntimeScanEvidence, error) {
@@ -131,7 +132,7 @@ func (s *privateLeaseEvidenceTestStore) GetFreshDeploymentRuntimeScan(ctx contex
 func TestPrivateSecurityLeasesBusyDefersAndStaleRefuses(t *testing.T) {
 	loop, th := livePrivateLeaseFixture(t)
 	store := &privateLeaseEvidenceTestStore{MemStore: th.store, failure: state.ErrApplicationStandardRuntimeBusy}
-	loop.store = store
+	loop.store = statetest.NewMem(store)
 	before, err := th.store.GetCurrentDeploymentRuntimeScan(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -154,7 +155,7 @@ func TestPrivateSecurityLeasesBusyDefersAndStaleRefuses(t *testing.T) {
 
 // Synthetic enrollment envelope verifies the consumer's fallback contract;
 // real materialization/onboarding is covered by the state enrollment tests.
-type managedLeaseTestStore struct{ *state.MemStore }
+type managedLeaseTestStore struct{ MemStore *state.MemStore }
 
 func (s managedLeaseTestStore) GetApplicationStandardEnrollment(context.Context, string, string) (state.ApplicationStandardEnrollment, error) {
 	return state.ApplicationStandardEnrollment{MaterializedFields: []appstandards.Field{appstandards.SecurityPolicy}}, nil
@@ -166,7 +167,7 @@ func TestPrivateSecurityLeasesManagedAbsenceRefusesLegacy(t *testing.T) {
 	store.MemStore = th.store
 	app := th.app
 	app.OrgID = uuid.NewString()
-	loop := &Loop{store: store, log: silentLogger()}
+	loop := &Loop{store: statetest.NewMem(store), log: silentLogger()}
 	handled, reason, err := loop.privateSecurityLeaseFailure(t.Context(), app, th.dep)
 	if err != nil || !handled || reason != "security_scan_evidence_missing" {
 		t.Fatalf("managed absence fell back to legacy metadata: %v %q", err, reason)

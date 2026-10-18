@@ -165,7 +165,7 @@ func TestMCPReadinessFallback(t *testing.T) {
 					recovered := f.observe(now, false, "")
 					// Recreate the PG adapter to demonstrate that routing is not process state.
 					if pg, ok := store.(*PgStore); ok {
-						f.outbox = NewPgStore(pg.pool)
+						f.outbox = NewPgStore(pg.pool.Pool)
 					}
 					recovery := claim(recovered.EventID, "fallback", config.WebhookURL)
 					finish(recovery, true)

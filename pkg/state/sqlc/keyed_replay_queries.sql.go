@@ -69,7 +69,7 @@ func (q *Queries) KeyedReplayAdvanceLane(ctx context.Context, db DBTX, arg Keyed
 }
 
 const keyedReplayChild = `-- name: KeyedReplayChild :one
-SELECT id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, operation_id, deployment_scope, queue_binding_id, replay_generation, outcome_code, environment_id, replay_root_invocation_id, replay_root_created_at FROM invocations WHERE id=$1
+SELECT id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, operation_id, deployment_scope, queue_binding_id, replay_generation, outcome_code, environment_id, replay_root_invocation_id, replay_root_created_at, async_quota_subject_id FROM invocations WHERE id=$1
 `
 
 func (q *Queries) KeyedReplayChild(ctx context.Context, db DBTX, id pgtype.UUID) (Invocation, error) {
@@ -128,6 +128,7 @@ func (q *Queries) KeyedReplayChild(ctx context.Context, db DBTX, id pgtype.UUID)
 		&i.EnvironmentID,
 		&i.ReplayRootInvocationID,
 		&i.ReplayRootCreatedAt,
+		&i.AsyncQuotaSubjectID,
 	)
 	return i, err
 }
@@ -200,7 +201,7 @@ func (q *Queries) KeyedReplayLockLane(ctx context.Context, db DBTX, arg KeyedRep
 }
 
 const keyedReplayParent = `-- name: KeyedReplayParent :one
-SELECT i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+SELECT i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at, i.async_quota_subject_id FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
 WHERE i.id=$1::uuid AND i.account_id=$2::uuid
 AND i.environment_id IS NULL AND NOT EXISTS (SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=i.id)
 FOR UPDATE OF i FOR SHARE OF a
@@ -267,6 +268,7 @@ func (q *Queries) KeyedReplayParent(ctx context.Context, db DBTX, arg KeyedRepla
 		&i.EnvironmentID,
 		&i.ReplayRootInvocationID,
 		&i.ReplayRootCreatedAt,
+		&i.AsyncQuotaSubjectID,
 	)
 	return i, err
 }

@@ -517,7 +517,7 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 	// treats empty as free) so a transient Postgres blip doesn't
 	// drop the entire tick's metric.
 	planByAccount := make(map[string]api.Plan)
-	if accounts, accErr := s.store.ListAllAccounts(ctx); accErr == nil {
+	if accounts, accErr := state.ListBillingResourceAccounts(ctx, s.store); accErr == nil {
 		for _, a := range accounts {
 			planByAccount[a.ID] = a.Plan
 		}
@@ -608,10 +608,10 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 				row := RolledRow{
 					InstanceID:    ins.ID,
 					AppID:         app.ID,
-					AccountID:     app.AccountID,
+					AccountID:     meterAppSubject(app, planByAccount),
 					Minute:        minute,
 					Mode:          ins.Mode,
-					Plan:          string(planByAccount[app.AccountID]),
+					Plan:          string(planByAccount[meterAppSubject(app, planByAccount)]),
 					TXBytes:       int64(usage.TXBytes),
 					NetTxBytes:    int64(usage.NetTXBytes),
 					NetRxBytes:    int64(usage.NetRXBytes),
@@ -630,12 +630,12 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			row := RolledRow{
 				InstanceID:  ins.ID,
 				AppID:       app.ID,
-				AccountID:   app.AccountID,
+				AccountID:   meterAppSubject(app, planByAccount),
 				Minute:      minute,
 				AdmissionMB: api.BillableRAMMBWithSidecars(ins.RAMMB, sidecarMBs),
 				MBSeconds:   int64(api.BillableRAMMBWithSidecars(ins.RAMMB, sidecarMBs)) * seconds,
 				Mode:        ins.Mode,
-				Plan:        string(planByAccount[app.AccountID]),
+				Plan:        string(planByAccount[meterAppSubject(app, planByAccount)]),
 			}
 			// Production traffic is pushed by gatewayd-internal and drained
 			// atomically here. The invocation-table fallback preserves the

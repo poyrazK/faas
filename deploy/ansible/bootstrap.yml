@@ -79,61 +79,101 @@
   roles:
     # Shared preconditions (every box):
     - role: cgroups_v2
+      when: faas_cp_converge_roles | default(none) is none or 'cgroups_v2' in faas_cp_converge_roles
     - role: grub
+      when: faas_cp_converge_roles | default(none) is none or 'grub' in faas_cp_converge_roles
     # ADR-143: spec §11 OS posture (sshd, fail2ban, security updates,
     # auditd, kernel sysctls). Runs right after grub so a lockout guard
     # failure stops the play before anything else is touched.
     - role: host_hardening
+      when: faas_cp_converge_roles | default(none) is none or 'host_hardening' in faas_cp_converge_roles
     - role: storage
       tags: [storage]
+      when: faas_cp_converge_roles | default(none) is none or 'storage' in faas_cp_converge_roles
     - role: lvm
+      when: faas_cp_converge_roles | default(none) is none or 'lvm' in faas_cp_converge_roles
     - role: xfs
+      when: faas_cp_converge_roles | default(none) is none or 'xfs' in faas_cp_converge_roles
     - role: firecracker
+      when: faas_cp_converge_roles | default(none) is none or 'firecracker' in faas_cp_converge_roles
     - role: supply_chain_scanners
+      when: faas_cp_converge_roles | default(none) is none or 'supply_chain_scanners' in faas_cp_converge_roles
     - role: systemd_slices
+      when: faas_cp_converge_roles | default(none) is none or 'systemd_slices' in faas_cp_converge_roles
     # ADR-906 decision 6: memory-only compressed swap for frozen VMs; a no-op
     # unless faas_zswap_enabled is set for the host.
     - role: zswap
+      when: faas_cp_converge_roles | default(none) is none or 'zswap' in faas_cp_converge_roles
     # Optional OTLP traces + metrics configuration. The role only validates
     # the operator-owned root-only env file and installs the example;
     # export stays disabled when /etc/faas/otel.env is absent.
     - role: otlp_exporter
+      when: faas_cp_converge_roles | default(none) is none or 'otlp_exporter' in faas_cp_converge_roles
     - role: nftables
+      when: faas_cp_converge_roles | default(none) is none or 'nftables' in faas_cp_converge_roles
     - role: overlay
+      when: faas_cp_converge_roles | default(none) is none or 'overlay' in faas_cp_converge_roles
     - role: node_exporter
+      when: faas_cp_converge_roles | default(none) is none or 'node_exporter' in faas_cp_converge_roles
     - role: gcp_ops_agent
+      when: faas_cp_converge_roles | default(none) is none or 'gcp_ops_agent' in faas_cp_converge_roles
     - role: internal_pki_renewal
+      when: faas_cp_converge_roles | default(none) is none or 'internal_pki_renewal' in faas_cp_converge_roles
     - role: canary_artifact_retention
+      when: faas_cp_converge_roles | default(none) is none or 'canary_artifact_retention' in faas_cp_converge_roles
     - role: alertmanager
+      when: faas_cp_converge_roles | default(none) is none or 'alertmanager' in faas_cp_converge_roles
     - role: prometheus
+      when: faas_cp_converge_roles | default(none) is none or 'prometheus' in faas_cp_converge_roles
     - role: grafana
+      when: faas_cp_converge_roles | default(none) is none or 'grafana' in faas_cp_converge_roles
     # Control-plane-only:
     - role: postgres
+      when: faas_cp_converge_roles | default(none) is none or 'postgres' in faas_cp_converge_roles
     - role: postgres_capacity
+      when: faas_cp_converge_roles | default(none) is none or 'postgres_capacity' in faas_cp_converge_roles
     - role: pgbouncer
-      when: faas_pgbouncer_enabled | default(false) | bool
+      when:
+        - faas_pgbouncer_enabled | default(false) | bool
+        - faas_cp_converge_roles | default(none) is none or 'pgbouncer' in faas_cp_converge_roles
     - role: postgres_backup
-      when: not (faas_image_seed | default(false) | bool)
+      when:
+        - not (faas_image_seed | default(false) | bool)
+        - faas_cp_converge_roles | default(none) is none or 'postgres_backup' in faas_cp_converge_roles
     # ADR-1344 §8: off-host, encrypted backup of the control plane's
     # host-local state; off until an operator age recipient is configured.
     - role: cp_state_backup
-      when: not (faas_image_seed | default(false) | bool)
+      when:
+        - not (faas_image_seed | default(false) | bool)
+        - faas_cp_converge_roles | default(none) is none or 'cp_state_backup' in faas_cp_converge_roles
     - role: control_plane_service
+      when: faas_cp_converge_roles | default(none) is none or 'control_plane_service' in faas_cp_converge_roles
     - role: internal_mail_service
-      when: faas_internal_mail_managed | default(false) | bool
+      when:
+        - faas_internal_mail_managed | default(false) | bool
+        - faas_cp_converge_roles | default(none) is none or 'internal_mail_service' in faas_cp_converge_roles
     - role: gatewayd_public_service
+      when: faas_cp_converge_roles | default(none) is none or 'gatewayd_public_service' in faas_cp_converge_roles
     - role: public_edge
+      when: faas_cp_converge_roles | default(none) is none or 'public_edge' in faas_cp_converge_roles
     - role: s3_gateway_service
-      when: faas_object_storage_gateway_managed | default(false) | bool
+      when:
+        - faas_object_storage_gateway_managed | default(false) | bool
+        - faas_cp_converge_roles | default(none) is none or 's3_gateway_service' in faas_cp_converge_roles
     - role: githubd_service
+      when: faas_cp_converge_roles | default(none) is none or 'githubd_service' in faas_cp_converge_roles
     - role: log_archive
+      when: faas_cp_converge_roles | default(none) is none or 'log_archive' in faas_cp_converge_roles
     - role: optional_credentials
+      when: faas_cp_converge_roles | default(none) is none or 'optional_credentials' in faas_cp_converge_roles
     # Topology cleanup is safe during image seeding and must also remove
     # legacy one-box services left on an existing control-plane host.
     - role: role_convergence
+      when: faas_cp_converge_roles | default(none) is none or 'role_convergence' in faas_cp_converge_roles
     # ADR-143: prove convergence. Lenient here (first bootstrap has no
     # enabled units yet); `make verify-fleet` runs the strict form.
     - role: fleet_verify
+      when: faas_cp_converge_roles | default(none) is none or 'fleet_verify' in faas_cp_converge_roles
 
 - name: Bootstrap a Gate-B compute-only node (fsn-2)
   hosts: compute_nodes

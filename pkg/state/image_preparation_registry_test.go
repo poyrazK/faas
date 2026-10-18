@@ -8,11 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/imagepublisher"
 )
 
-type registryPreparationTestStore interface {
-	registryRootfsTestStore
-	DeploymentImagePreparationStore
-	RegistryImagePreparationStore
-}
+type registryPreparationTestStore = contractTestStore
 
 func registryImagePreparationContract(t *testing.T, s registryPreparationTestStore, kind, outcome string) {
 	t.Helper()

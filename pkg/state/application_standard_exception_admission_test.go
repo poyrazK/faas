@@ -12,10 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appstandards"
 )
 
-type standardExceptionRuntimeTestStore interface {
-	standardRuntimeCaptureTestStore
-	ApplicationStandardExceptionStore
-}
+type standardExceptionRuntimeTestStore = contractTestStore
 
 func TestMemApplicationStandardExceptionNativeAdmission(t *testing.T) {
 	standardExceptionNativeAdmission(t, NewMemStore())

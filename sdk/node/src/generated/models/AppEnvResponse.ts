@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ConfigChangeReceipt } from './ConfigChangeReceipt.js';
 /**
  * An env var envelope: key name + scope + timestamps. The plaintext value never appears here.
  */
@@ -13,5 +14,9 @@ export type AppEnvResponse = {
   scope: string;
   created_at: string;
   updated_at: string;
+  /**
+   * Present on env writes: the revision this write recorded and the config guard watching it (ADR-1451).
+   */
+  config_change?: ConfigChangeReceipt;
 };
 

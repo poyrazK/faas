@@ -212,6 +212,7 @@ from .app_manifest_execution_mode_type_2_type_1 import AppManifestExecutionModeT
 from .app_manifest_execution_mode_type_3_type_1 import AppManifestExecutionModeType3Type1
 from .app_manifest_healthcheck import AppManifestHealthcheck
 from .app_manifest_pause import AppManifestPause
+from .app_manifest_release_policy import AppManifestReleasePolicy
 from .app_manifest_restart_policy_type_1 import AppManifestRestartPolicyType1
 from .app_manifest_restart_policy_type_2_type_1 import AppManifestRestartPolicyType2Type1
 from .app_manifest_restart_policy_type_3_type_1 import AppManifestRestartPolicyType3Type1
@@ -259,6 +260,7 @@ from .app_response_cpu_millicores import AppResponseCpuMillicores
 from .app_response_deployment_availability import AppResponseDeploymentAvailability
 from .app_response_eviction_priority import AppResponseEvictionPriority
 from .app_response_preview_pr_state import AppResponsePreviewPrState
+from .app_response_release_policy import AppResponseReleasePolicy
 from .app_response_runtime import AppResponseRuntime
 from .app_response_status import AppResponseStatus
 from .app_response_type import AppResponseType
@@ -660,7 +662,6 @@ from .cancel_deployment_request import CancelDeploymentRequest
 from .cancel_deployment_request_reason import CancelDeploymentRequestReason
 from .cancel_deployment_response_200 import CancelDeploymentResponse200
 from .cancel_event_execution_lineage_retry_job_request import CancelEventExecutionLineageRetryJobRequest
-
 from .cancel_mcp_readiness_maintenance_request import CancelMCPReadinessMaintenanceRequest
 from .cancel_pending_work_request import CancelPendingWorkRequest
 from .cancel_pending_work_response import CancelPendingWorkResponse
@@ -717,6 +718,20 @@ from .complete_object_multipart_upload_request import CompleteObjectMultipartUpl
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
 from .compose_healthcheck import ComposeHealthcheck
+from .config_change_receipt import ConfigChangeReceipt
+from .config_guard import ConfigGuard
+from .config_guard_decision import ConfigGuardDecision
+from .config_guard_status import ConfigGuardStatus
+from .config_guard_summary import ConfigGuardSummary
+from .config_guard_summary_status import ConfigGuardSummaryStatus
+from .config_revision import ConfigRevision
+from .config_revision_detail import ConfigRevisionDetail
+from .config_revision_detail_secret_versions import ConfigRevisionDetailSecretVersions
+from .config_revision_detail_variables import ConfigRevisionDetailVariables
+from .config_revision_source import ConfigRevisionSource
+from .config_rollback_request import ConfigRollbackRequest
+from .config_rollback_response import ConfigRollbackResponse
+from .config_secret_difference import ConfigSecretDifference
 from .configure_managed_realtime_push_provider_provider import ConfigureManagedRealtimePushProviderProvider
 from .configure_managed_realtime_push_provider_response_200 import ConfigureManagedRealtimePushProviderResponse200
 from .configure_managed_realtime_push_provider_response_200_provider import (
@@ -778,6 +793,7 @@ from .create_app_request_crawler_policy import CreateAppRequestCrawlerPolicy
 from .create_app_request_eviction_priority import CreateAppRequestEvictionPriority
 from .create_app_request_execution_mode import CreateAppRequestExecutionMode
 from .create_app_request_pause import CreateAppRequestPause
+from .create_app_request_release_policy import CreateAppRequestReleasePolicy
 from .create_app_request_restart_policy import CreateAppRequestRestartPolicy
 from .create_app_request_runtime import CreateAppRequestRuntime
 from .create_app_request_service_binding_policy import CreateAppRequestServiceBindingPolicy
@@ -883,10 +899,14 @@ from .create_object_storage_compute_binding_request_permission import CreateObje
 from .create_object_upload_route_request import CreateObjectUploadRouteRequest
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
+from .create_org_object_bucket_body import CreateOrgObjectBucketBody
 from .create_org_request import CreateOrgRequest
+from .create_outbound_ai_access_token_request import CreateOutboundAIAccessTokenRequest
+from .create_outbound_ai_evaluation_request import CreateOutboundAIEvaluationRequest
 from .create_outbound_ai_replay_request import CreateOutboundAIReplayRequest
 from .create_outbound_ai_route_request import CreateOutboundAIRouteRequest
 from .create_outbound_ai_route_request_format import CreateOutboundAIRouteRequestFormat
+from .create_outbound_ai_route_request_strategy import CreateOutboundAIRouteRequestStrategy
 from .create_outbound_credential_key_request import CreateOutboundCredentialKeyRequest
 from .create_outbound_integration_request import CreateOutboundIntegrationRequest
 from .create_outbound_integration_request_ai_provider import CreateOutboundIntegrationRequestAiProvider
@@ -957,6 +977,7 @@ from .create_trigger_request_config import CreateTriggerRequestConfig
 from .create_udp_listener_request import CreateUDPListenerRequest
 from .create_udp_listener_request_public_port_type_0 import CreateUDPListenerRequestPublicPortType0
 from .create_workflow_callback_webhook_binding_request import CreateWorkflowCallbackWebhookBindingRequest
+from .created_outbound_ai_access_token import CreatedOutboundAIAccessToken
 from .cron_response import CronResponse
 from .cron_response_kind import CronResponseKind
 from .cron_response_suspended_reason import CronResponseSuspendedReason
@@ -1127,6 +1148,8 @@ from .deployment_preview_url import DeploymentPreviewURL
 from .deployment_promotion_hold import DeploymentPromotionHold
 from .deployment_promotion_hold_last_recovery_outcome import DeploymentPromotionHoldLastRecoveryOutcome
 from .deployment_readiness_probe import DeploymentReadinessProbe
+from .deployment_release import DeploymentRelease
+from .deployment_release_status import DeploymentReleaseStatus
 from .deployment_response import DeploymentResponse
 from .deployment_response_build_cache_status import DeploymentResponseBuildCacheStatus
 from .deployment_response_canary_preset import DeploymentResponseCanaryPreset
@@ -1790,6 +1813,7 @@ from .execution_workflow_status_counts import ExecutionWorkflowStatusCounts
 from .execution_workflow_usage import ExecutionWorkflowUsage
 from .export_app_debug_requests_format import ExportAppDebugRequestsFormat
 from .export_focus_invoices_format import ExportFOCUSInvoicesFormat
+from .export_outbound_ai_tag_usage_format import ExportOutboundAITagUsageFormat
 from .export_outbound_integration_ai_user_usage_format import ExportOutboundIntegrationAIUserUsageFormat
 from .failure_rule import FailureRule
 from .failure_rule_action import FailureRuleAction
@@ -2037,6 +2061,10 @@ from .issue_breadcrumb_level import IssueBreadcrumbLevel
 from .issue_browser_csrf_token_action import IssueBrowserCSRFTokenAction
 from .issue_cause import IssueCause
 from .issue_cause_frame_order import IssueCauseFrameOrder
+from .issue_compound_alert_policy import IssueCompoundAlertPolicy
+from .issue_compound_alert_preview import IssueCompoundAlertPreview
+from .issue_compound_alert_preview_reason import IssueCompoundAlertPreviewReason
+from .issue_compound_alert_rule import IssueCompoundAlertRule
 from .issue_detail import IssueDetail
 from .issue_event import IssueEvent
 from .issue_event_frame_order import IssueEventFrameOrder
@@ -2176,6 +2204,7 @@ from .list_billing_run_items_outcome import ListBillingRunItemsOutcome
 from .list_binding_verification_runs_status import ListBindingVerificationRunsStatus
 from .list_bucket_objects_response_200 import ListBucketObjectsResponse200
 from .list_bucket_objects_response_200_items_item import ListBucketObjectsResponse200ItemsItem
+from .list_config_revisions_response import ListConfigRevisionsResponse
 from .list_cron_runs_response import ListCronRunsResponse
 from .list_delayed_tasks_response import ListDelayedTasksResponse
 from .list_deploy_tokens_response import ListDeployTokensResponse
@@ -2219,6 +2248,9 @@ from .list_operator_runtime_config_revisions_response_200 import ListOperatorRun
 from .list_org_activity_actor_type import ListOrgActivityActorType
 from .list_org_activity_response import ListOrgActivityResponse
 from .list_org_api_keys_response import ListOrgAPIKeysResponse
+from .list_org_bucket_objects_response_200 import ListOrgBucketObjectsResponse200
+from .list_org_bucket_objects_response_200_items_item import ListOrgBucketObjectsResponse200ItemsItem
+from .list_org_project_environment_promotions_status import ListOrgProjectEnvironmentPromotionsStatus
 from .list_platform_tenant_self_operations_state import ListPlatformTenantSelfOperationsState
 from .list_platform_tenant_self_workflow_attention_dependency_status import (
     ListPlatformTenantSelfWorkflowAttentionDependencyStatus,
@@ -3532,11 +3564,20 @@ from .org_member_response import OrgMemberResponse
 from .org_member_response_role import OrgMemberResponseRole
 from .org_membership_export_response import OrgMembershipExportResponse
 from .org_membership_export_response_role import OrgMembershipExportResponseRole
+from .org_plan_response import OrgPlanResponse
+from .org_plan_response_plan import OrgPlanResponsePlan
+from .org_project_delete_deployment_scope_exclusion_response_200 import (
+    OrgProjectDeleteDeploymentScopeExclusionResponse200,
+)
+from .org_queue_usage_response import OrgQueueUsageResponse
+from .org_queue_usage_response_plan import OrgQueueUsageResponsePlan
 from .org_response import OrgResponse
 from .org_response_plan import OrgResponsePlan
 from .org_response_status import OrgResponseStatus
 from .org_with_role import OrgWithRole
 from .org_with_role_role import OrgWithRoleRole
+from .outbound_ai_access_token import OutboundAIAccessToken
+from .outbound_ai_access_token_list import OutboundAIAccessTokenList
 from .outbound_ai_budget_alert import OutboundAIBudgetAlert
 from .outbound_ai_budget_alert_budget import OutboundAIBudgetAlertBudget
 from .outbound_ai_budget_alert_list import OutboundAIBudgetAlertList
@@ -3553,6 +3594,18 @@ from .outbound_ai_content_policy_email import OutboundAIContentPolicyEmail
 from .outbound_ai_content_policy_iban import OutboundAIContentPolicyIban
 from .outbound_ai_content_policy_payment_card import OutboundAIContentPolicyPaymentCard
 from .outbound_ai_content_policy_secret import OutboundAIContentPolicySecret
+from .outbound_ai_evaluation import OutboundAIEvaluation
+from .outbound_ai_evaluation_item import OutboundAIEvaluationItem
+from .outbound_ai_evaluation_item_verdict import OutboundAIEvaluationItemVerdict
+from .outbound_ai_evaluation_list import OutboundAIEvaluationList
+from .outbound_ai_evaluation_state import OutboundAIEvaluationState
+from .outbound_ai_evaluation_target_stats import OutboundAIEvaluationTargetStats
+from .outbound_ai_evaluation_verdict_type_0 import OutboundAIEvaluationVerdictType0
+from .outbound_ai_moderation import OutboundAIModeration
+from .outbound_ai_moderation_action import OutboundAIModerationAction
+from .outbound_ai_moderation_categories_item import OutboundAIModerationCategoriesItem
+from .outbound_ai_moderation_kind import OutboundAIModerationKind
+from .outbound_ai_moderation_on_error import OutboundAIModerationOnError
 from .outbound_ai_price_catalog_response import OutboundAIPriceCatalogResponse
 from .outbound_ai_price_entry import OutboundAIPriceEntry
 from .outbound_ai_price_list_response import OutboundAIPriceListResponse
@@ -3565,10 +3618,30 @@ from .outbound_ai_request_content import OutboundAIRequestContent
 from .outbound_ai_request_log_entry import OutboundAIRequestLogEntry
 from .outbound_ai_request_log_entry_outcome import OutboundAIRequestLogEntryOutcome
 from .outbound_ai_request_log_list import OutboundAIRequestLogList
+from .outbound_ai_response_policy import OutboundAIResponsePolicy
+from .outbound_ai_response_policy_blocked_terms import OutboundAIResponsePolicyBlockedTerms
+from .outbound_ai_response_policy_email import OutboundAIResponsePolicyEmail
+from .outbound_ai_response_policy_iban import OutboundAIResponsePolicyIban
+from .outbound_ai_response_policy_moderation import OutboundAIResponsePolicyModeration
+from .outbound_ai_response_policy_payment_card import OutboundAIResponsePolicyPaymentCard
+from .outbound_ai_response_policy_secret import OutboundAIResponsePolicySecret
 from .outbound_ai_route import OutboundAIRoute
+from .outbound_ai_route_canary import OutboundAIRouteCanary
+from .outbound_ai_route_canary_reason_type_0 import OutboundAIRouteCanaryReasonType0
+from .outbound_ai_route_canary_state import OutboundAIRouteCanaryState
+from .outbound_ai_route_canary_status import OutboundAIRouteCanaryStatus
 from .outbound_ai_route_format import OutboundAIRouteFormat
 from .outbound_ai_route_list import OutboundAIRouteList
+from .outbound_ai_route_stats import OutboundAIRouteStats
+from .outbound_ai_route_stats_strategy import OutboundAIRouteStatsStrategy
+from .outbound_ai_route_strategy import OutboundAIRouteStrategy
 from .outbound_ai_route_target import OutboundAIRouteTarget
+from .outbound_ai_route_target_stats import OutboundAIRouteTargetStats
+from .outbound_ai_tag_limit import OutboundAITagLimit
+from .outbound_ai_tag_limits import OutboundAITagLimits
+from .outbound_ai_tag_usage_export_row import OutboundAITagUsageExportRow
+from .outbound_ai_tag_usage_item import OutboundAITagUsageItem
+from .outbound_ai_tag_usage_response import OutboundAITagUsageResponse
 from .outbound_ai_usage_item import OutboundAIUsageItem
 from .outbound_ai_usage_response import OutboundAIUsageResponse
 from .outbound_ai_user_usage_export_row import OutboundAIUserUsageExportRow
@@ -3800,6 +3873,7 @@ from .preview_event_request import PreviewEventRequest
 from .preview_event_request_data_content_type import PreviewEventRequestDataContentType
 from .preview_event_request_datacontenttype import PreviewEventRequestDatacontenttype
 from .preview_event_response import PreviewEventResponse
+from .preview_issue_compound_alert_request import PreviewIssueCompoundAlertRequest
 from .preview_issue_lifecycle_alert_request import PreviewIssueLifecycleAlertRequest
 from .preview_issue_lifecycle_alert_request_event import PreviewIssueLifecycleAlertRequestEvent
 from .preview_platform_tenant_self_workflow_actions_body import PreviewPlatformTenantSelfWorkflowActionsBody
@@ -4107,7 +4181,10 @@ from .put_operation_webhook_binding_request import PutOperationWebhookBindingReq
 from .put_outbound_ai_policy_request import PutOutboundAIPolicyRequest
 from .put_outbound_ai_policy_request_ai_provider import PutOutboundAIPolicyRequestAiProvider
 from .put_outbound_ai_prices_request import PutOutboundAIPricesRequest
+from .put_outbound_ai_route_canary_request import PutOutboundAIRouteCanaryRequest
 from .put_outbound_ai_route_targets_request import PutOutboundAIRouteTargetsRequest
+from .put_outbound_ai_route_targets_request_strategy import PutOutboundAIRouteTargetsRequestStrategy
+from .put_outbound_ai_tag_limits_request import PutOutboundAITagLimitsRequest
 from .put_outbound_binding_ai_budget_request import PutOutboundBindingAIBudgetRequest
 from .put_outbound_binding_ai_guardrails_request import PutOutboundBindingAIGuardrailsRequest
 from .put_outbound_binding_daily_request_budget_request import PutOutboundBindingDailyRequestBudgetRequest
@@ -4286,6 +4363,8 @@ from .register_scenario_test_response_policy_version import RegisterScenarioTest
 from .register_scenario_test_response_recorder_version import RegisterScenarioTestResponseRecorderVersion
 from .register_scenario_test_response_webhook_mode import RegisterScenarioTestResponseWebhookMode
 from .rekey_progress import RekeyProgress
+from .release_database_ref import ReleaseDatabaseRef
+from .release_restore_point import ReleaseRestorePoint
 from .remove_environment_git_ops_override_request import RemoveEnvironmentGitOpsOverrideRequest
 from .rename_app_request import RenameAppRequest
 from .reorder_deployment_body import ReorderDeploymentBody
@@ -4351,16 +4430,23 @@ from .review_project_binding_verification_request import ReviewProjectBindingVer
 from .revoke_application_standard_exception_request import RevokeApplicationStandardExceptionRequest
 from .revoke_execution_artifact_grant_response import RevokeExecutionArtifactGrantResponse
 from .revoke_platform_tenant_self_consumers_request import RevokePlatformTenantSelfConsumersRequest
+from .rollback_crossed_release import RollbackCrossedRelease
 from .rollback_edge_rules_request import RollbackEdgeRulesRequest
 from .rollback_feature_flags_request import RollbackFeatureFlagsRequest
 from .rollback_operation import RollbackOperation
 from .rollback_operation_status import RollbackOperationStatus
+from .rollback_operation_trigger import RollbackOperationTrigger
 from .rollback_operator_runtime_config_request import RollbackOperatorRuntimeConfigRequest
 from .rollback_request import RollbackRequest
 from .rollout_aborted_webhook_payload import RolloutAbortedWebhookPayload
 from .rollout_aborted_webhook_payload_rollout_state import RolloutAbortedWebhookPayloadRolloutState
 from .rollout_completed_webhook_payload import RolloutCompletedWebhookPayload
 from .rollout_completed_webhook_payload_rollout_state import RolloutCompletedWebhookPayloadRolloutState
+from .rollout_decision import RolloutDecision
+from .rollout_decision_kind import RolloutDecisionKind
+from .rollout_decision_rule import RolloutDecisionRule
+from .rollout_decision_sample import RolloutDecisionSample
+from .rollout_decision_signals import RolloutDecisionSignals
 from .rollout_recovery_receipt import RolloutRecoveryReceipt
 from .rollout_recovery_receipt_restored_traffic_percent import RolloutRecoveryReceiptRestoredTrafficPercent
 from .rollout_transition_response import RolloutTransitionResponse
@@ -4694,6 +4780,9 @@ from .scenario_postgres_delta_inserted_item import ScenarioPostgresDeltaInserted
 from .scenario_postgres_evidence import ScenarioPostgresEvidence
 from .scenario_postgres_evidence_provenance import ScenarioPostgresEvidenceProvenance
 from .scenario_postgres_evidence_status import ScenarioPostgresEvidenceStatus
+from .scenario_postgres_fault_receipt import ScenarioPostgresFaultReceipt
+from .scenario_postgres_fault_receipt_state import ScenarioPostgresFaultReceiptState
+from .scenario_postgres_fault_spec import ScenarioPostgresFaultSpec
 from .scenario_postgres_receipt import ScenarioPostgresReceipt
 from .scenario_postgres_receipt_version import ScenarioPostgresReceiptVersion
 from .scenario_postgres_snapshot import ScenarioPostgresSnapshot
@@ -5047,6 +5136,9 @@ from .update_app_request_execution_mode_type_1 import UpdateAppRequestExecutionM
 from .update_app_request_execution_mode_type_2_type_1 import UpdateAppRequestExecutionModeType2Type1
 from .update_app_request_execution_mode_type_3_type_1 import UpdateAppRequestExecutionModeType3Type1
 from .update_app_request_pause import UpdateAppRequestPause
+from .update_app_request_release_policy_type_1 import UpdateAppRequestReleasePolicyType1
+from .update_app_request_release_policy_type_2_type_1 import UpdateAppRequestReleasePolicyType2Type1
+from .update_app_request_release_policy_type_3_type_1 import UpdateAppRequestReleasePolicyType3Type1
 from .update_app_request_restart_policy_type_1 import UpdateAppRequestRestartPolicyType1
 from .update_app_request_restart_policy_type_2_type_1 import UpdateAppRequestRestartPolicyType2Type1
 from .update_app_request_restart_policy_type_3_type_1 import UpdateAppRequestRestartPolicyType3Type1
@@ -5087,6 +5179,7 @@ from .update_edge_rule_request_validate_mode import UpdateEdgeRuleRequestValidat
 from .update_feature_flags_request import UpdateFeatureFlagsRequest
 from .update_financial_budget_request import UpdateFinancialBudgetRequest
 from .update_inbound_webhook_endpoint_request import UpdateInboundWebhookEndpointRequest
+from .update_issue_compound_alert_policy_request import UpdateIssueCompoundAlertPolicyRequest
 from .update_issue_frequency_alert_policy_request import UpdateIssueFrequencyAlertPolicyRequest
 from .update_issue_impact_alert_policy_request import UpdateIssueImpactAlertPolicyRequest
 from .update_issue_lifecycle_alert_policy_request import UpdateIssueLifecycleAlertPolicyRequest
@@ -5730,6 +5823,7 @@ __all__ = (
     "AppManifestExecutionModeType3Type1",
     "AppManifestHealthcheck",
     "AppManifestPause",
+    "AppManifestReleasePolicy",
     "AppManifestRestartPolicyType1",
     "AppManifestRestartPolicyType2Type1",
     "AppManifestRestartPolicyType3Type1",
@@ -5777,6 +5871,7 @@ __all__ = (
     "AppResponseDeploymentAvailability",
     "AppResponseEvictionPriority",
     "AppResponsePreviewPrState",
+    "AppResponseReleasePolicy",
     "AppResponseRuntime",
     "AppResponseStatus",
     "AppResponseType",
@@ -6079,7 +6174,6 @@ __all__ = (
     "CancelDeploymentRequestReason",
     "CancelDeploymentResponse200",
     "CancelEventExecutionLineageRetryJobRequest",
-
     "CancelMCPReadinessMaintenanceRequest",
     "CancelPendingWorkRequest",
     "CancelPendingWorkResponse",
@@ -6130,6 +6224,20 @@ __all__ = (
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
     "ComposeHealthcheck",
+    "ConfigChangeReceipt",
+    "ConfigGuard",
+    "ConfigGuardDecision",
+    "ConfigGuardStatus",
+    "ConfigGuardSummary",
+    "ConfigGuardSummaryStatus",
+    "ConfigRevision",
+    "ConfigRevisionDetail",
+    "ConfigRevisionDetailSecretVersions",
+    "ConfigRevisionDetailVariables",
+    "ConfigRevisionSource",
+    "ConfigRollbackRequest",
+    "ConfigRollbackResponse",
+    "ConfigSecretDifference",
     "ConfigureManagedRealtimePushProviderProvider",
     "ConfigureManagedRealtimePushProviderResponse200",
     "ConfigureManagedRealtimePushProviderResponse200Provider",
@@ -6193,6 +6301,7 @@ __all__ = (
     "CreateAppRequestEvictionPriority",
     "CreateAppRequestExecutionMode",
     "CreateAppRequestPause",
+    "CreateAppRequestReleasePolicy",
     "CreateAppRequestRestartPolicy",
     "CreateAppRequestRuntime",
     "CreateAppRequestServiceBindingPolicy",
@@ -6230,6 +6339,7 @@ __all__ = (
     "CreateDeployTokenRequest",
     "CreateDevBridgeRequest",
     "CreateDevBridgeResponse",
+    "CreatedOutboundAIAccessToken",
     "CreateEdgeRuleListRequest",
     "CreateEdgeRuleListRequestKind",
     "CreateEdgeRuleRequest",
@@ -6288,10 +6398,14 @@ __all__ = (
     "CreateObjectUploadRouteRequest",
     "CreateOrgAPIKeyRequest",
     "CreateOrgAPIKeyRequestScopesItem",
+    "CreateOrgObjectBucketBody",
     "CreateOrgRequest",
+    "CreateOutboundAIAccessTokenRequest",
+    "CreateOutboundAIEvaluationRequest",
     "CreateOutboundAIReplayRequest",
     "CreateOutboundAIRouteRequest",
     "CreateOutboundAIRouteRequestFormat",
+    "CreateOutboundAIRouteRequestStrategy",
     "CreateOutboundCredentialKeyRequest",
     "CreateOutboundIntegrationRequest",
     "CreateOutboundIntegrationRequestAiProvider",
@@ -6517,6 +6631,8 @@ __all__ = (
     "DeploymentPromotionHold",
     "DeploymentPromotionHoldLastRecoveryOutcome",
     "DeploymentReadinessProbe",
+    "DeploymentRelease",
+    "DeploymentReleaseStatus",
     "DeploymentResponse",
     "DeploymentResponseBuildCacheStatus",
     "DeploymentResponseCanaryPreset",
@@ -7145,6 +7261,7 @@ __all__ = (
     "ExecutionWorkflowUsage",
     "ExportAppDebugRequestsFormat",
     "ExportFOCUSInvoicesFormat",
+    "ExportOutboundAITagUsageFormat",
     "ExportOutboundIntegrationAIUserUsageFormat",
     "FailureRule",
     "FailureRuleAction",
@@ -7388,6 +7505,10 @@ __all__ = (
     "IssueBrowserCSRFTokenAction",
     "IssueCause",
     "IssueCauseFrameOrder",
+    "IssueCompoundAlertPolicy",
+    "IssueCompoundAlertPreview",
+    "IssueCompoundAlertPreviewReason",
+    "IssueCompoundAlertRule",
     "IssueDetail",
     "IssueEvent",
     "IssueEventFrameOrder",
@@ -7519,6 +7640,7 @@ __all__ = (
     "ListBindingVerificationRunsStatus",
     "ListBucketObjectsResponse200",
     "ListBucketObjectsResponse200ItemsItem",
+    "ListConfigRevisionsResponse",
     "ListCronRunsResponse",
     "ListDelayedTasksResponse",
     "ListDeploymentAuditResponse",
@@ -7560,6 +7682,9 @@ __all__ = (
     "ListOrgActivityActorType",
     "ListOrgActivityResponse",
     "ListOrgAPIKeysResponse",
+    "ListOrgBucketObjectsResponse200",
+    "ListOrgBucketObjectsResponse200ItemsItem",
+    "ListOrgProjectEnvironmentPromotionsStatus",
     "ListPlatformTenantSelfOperationsState",
     "ListPlatformTenantSelfWorkflowAttentionDependencyStatus",
     "ListPlatformTenantSelfWorkflowAttentionPriority",
@@ -8711,11 +8836,18 @@ __all__ = (
     "OrgMembershipExportResponse",
     "OrgMembershipExportResponseRole",
     "OrgMeResponse",
+    "OrgPlanResponse",
+    "OrgPlanResponsePlan",
+    "OrgProjectDeleteDeploymentScopeExclusionResponse200",
+    "OrgQueueUsageResponse",
+    "OrgQueueUsageResponsePlan",
     "OrgResponse",
     "OrgResponsePlan",
     "OrgResponseStatus",
     "OrgWithRole",
     "OrgWithRoleRole",
+    "OutboundAIAccessToken",
+    "OutboundAIAccessTokenList",
     "OutboundAIBudgetAlert",
     "OutboundAIBudgetAlertBudget",
     "OutboundAIBudgetAlertList",
@@ -8730,6 +8862,18 @@ __all__ = (
     "OutboundAIContentPolicyIban",
     "OutboundAIContentPolicyPaymentCard",
     "OutboundAIContentPolicySecret",
+    "OutboundAIEvaluation",
+    "OutboundAIEvaluationItem",
+    "OutboundAIEvaluationItemVerdict",
+    "OutboundAIEvaluationList",
+    "OutboundAIEvaluationState",
+    "OutboundAIEvaluationTargetStats",
+    "OutboundAIEvaluationVerdictType0",
+    "OutboundAIModeration",
+    "OutboundAIModerationAction",
+    "OutboundAIModerationCategoriesItem",
+    "OutboundAIModerationKind",
+    "OutboundAIModerationOnError",
     "OutboundAIPriceCatalogResponse",
     "OutboundAIPriceEntry",
     "OutboundAIPriceListResponse",
@@ -8742,10 +8886,30 @@ __all__ = (
     "OutboundAIRequestLogEntry",
     "OutboundAIRequestLogEntryOutcome",
     "OutboundAIRequestLogList",
+    "OutboundAIResponsePolicy",
+    "OutboundAIResponsePolicyBlockedTerms",
+    "OutboundAIResponsePolicyEmail",
+    "OutboundAIResponsePolicyIban",
+    "OutboundAIResponsePolicyModeration",
+    "OutboundAIResponsePolicyPaymentCard",
+    "OutboundAIResponsePolicySecret",
     "OutboundAIRoute",
+    "OutboundAIRouteCanary",
+    "OutboundAIRouteCanaryReasonType0",
+    "OutboundAIRouteCanaryState",
+    "OutboundAIRouteCanaryStatus",
     "OutboundAIRouteFormat",
     "OutboundAIRouteList",
+    "OutboundAIRouteStats",
+    "OutboundAIRouteStatsStrategy",
+    "OutboundAIRouteStrategy",
     "OutboundAIRouteTarget",
+    "OutboundAIRouteTargetStats",
+    "OutboundAITagLimit",
+    "OutboundAITagLimits",
+    "OutboundAITagUsageExportRow",
+    "OutboundAITagUsageItem",
+    "OutboundAITagUsageResponse",
     "OutboundAIUsageItem",
     "OutboundAIUsageResponse",
     "OutboundAIUserUsageExportRow",
@@ -8957,6 +9121,7 @@ __all__ = (
     "PreviewEventRequestDatacontenttype",
     "PreviewEventRequestDataContentType",
     "PreviewEventResponse",
+    "PreviewIssueCompoundAlertRequest",
     "PreviewIssueLifecycleAlertRequest",
     "PreviewIssueLifecycleAlertRequestEvent",
     "PreviewPlatformTenantSelfWorkflowActionsBody",
@@ -9238,7 +9403,10 @@ __all__ = (
     "PutOutboundAIPolicyRequest",
     "PutOutboundAIPolicyRequestAiProvider",
     "PutOutboundAIPricesRequest",
+    "PutOutboundAIRouteCanaryRequest",
     "PutOutboundAIRouteTargetsRequest",
+    "PutOutboundAIRouteTargetsRequestStrategy",
+    "PutOutboundAITagLimitsRequest",
     "PutOutboundBindingAIBudgetRequest",
     "PutOutboundBindingAIGuardrailsRequest",
     "PutOutboundBindingDailyRequestBudgetRequest",
@@ -9411,6 +9579,8 @@ __all__ = (
     "RegisterScenarioTestResponseRecorderVersion",
     "RegisterScenarioTestResponseWebhookMode",
     "RekeyProgress",
+    "ReleaseDatabaseRef",
+    "ReleaseRestorePoint",
     "RemoveEnvironmentGitOpsOverrideRequest",
     "RenameAppRequest",
     "ReorderDeploymentBody",
@@ -9472,16 +9642,23 @@ __all__ = (
     "RevokeApplicationStandardExceptionRequest",
     "RevokeExecutionArtifactGrantResponse",
     "RevokePlatformTenantSelfConsumersRequest",
+    "RollbackCrossedRelease",
     "RollbackEdgeRulesRequest",
     "RollbackFeatureFlagsRequest",
     "RollbackOperation",
     "RollbackOperationStatus",
+    "RollbackOperationTrigger",
     "RollbackOperatorRuntimeConfigRequest",
     "RollbackRequest",
     "RolloutAbortedWebhookPayload",
     "RolloutAbortedWebhookPayloadRolloutState",
     "RolloutCompletedWebhookPayload",
     "RolloutCompletedWebhookPayloadRolloutState",
+    "RolloutDecision",
+    "RolloutDecisionKind",
+    "RolloutDecisionRule",
+    "RolloutDecisionSample",
+    "RolloutDecisionSignals",
     "RolloutRecoveryReceipt",
     "RolloutRecoveryReceiptRestoredTrafficPercent",
     "RolloutTransitionResponse",
@@ -9813,6 +9990,9 @@ __all__ = (
     "ScenarioPostgresEvidence",
     "ScenarioPostgresEvidenceProvenance",
     "ScenarioPostgresEvidenceStatus",
+    "ScenarioPostgresFaultReceipt",
+    "ScenarioPostgresFaultReceiptState",
+    "ScenarioPostgresFaultSpec",
     "ScenarioPostgresReceipt",
     "ScenarioPostgresReceiptVersion",
     "ScenarioPostgresSnapshot",
@@ -10148,6 +10328,9 @@ __all__ = (
     "UpdateAppRequestExecutionModeType2Type1",
     "UpdateAppRequestExecutionModeType3Type1",
     "UpdateAppRequestPause",
+    "UpdateAppRequestReleasePolicyType1",
+    "UpdateAppRequestReleasePolicyType2Type1",
+    "UpdateAppRequestReleasePolicyType3Type1",
     "UpdateAppRequestRestartPolicyType1",
     "UpdateAppRequestRestartPolicyType2Type1",
     "UpdateAppRequestRestartPolicyType3Type1",
@@ -10182,6 +10365,7 @@ __all__ = (
     "UpdateFeatureFlagsRequest",
     "UpdateFinancialBudgetRequest",
     "UpdateInboundWebhookEndpointRequest",
+    "UpdateIssueCompoundAlertPolicyRequest",
     "UpdateIssueFrequencyAlertPolicyRequest",
     "UpdateIssueImpactAlertPolicyRequest",
     "UpdateIssueLifecycleAlertPolicyRequest",

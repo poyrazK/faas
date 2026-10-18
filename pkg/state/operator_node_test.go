@@ -13,12 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type nodeIntentTestStore interface {
-	state.Store
-	state.OperatorNodeStore
-	state.NodeLifecycleCompletionStore
-	state.AuditEventOutboxStore
-}
+type nodeIntentTestStore = contractTestStore
 
 func seedNodeIntent(t *testing.T, store nodeIntentTestStore, kind state.OperatorIntentKind, lifecycle state.NodeLifecycle) (state.ComputeNode, state.OperatorIntent) {
 	t.Helper()

@@ -21,11 +21,19 @@ const appID = "22222222-2222-4222-8222-222222222222"
 
 type lookupFixture struct {
 	apps                          map[string]state.App
+	orgs                          map[string]state.Org
 	reads                         int
 	requestError, invocationError bool
 	foreign                       bool
 	change                        bool
 	cancel                        context.CancelFunc
+}
+
+func (f *lookupFixture) OrgByID(_ context.Context, id string) (state.Org, error) {
+	if org, ok := f.orgs[id]; ok {
+		return org, nil
+	}
+	return state.Org{}, state.ErrNotFound
 }
 
 func (f *lookupFixture) AppByID(_ context.Context, id string) (state.App, error) {
@@ -82,6 +90,37 @@ func TestSelectedTraceParse(t *testing.T) {
 	}
 	if s, p := Parse(trace, url.Values{"app_id": {appID}}); p != nil || s.Limit != api.SelectedTraceRowsDefault {
 		t.Fatal("default native selection failed")
+	}
+}
+
+// A retained company namespace may equal its original creator's account UUID.
+// Account-level diagnostics cannot use that equality as company authorization.
+func TestSelectedTraceRejectsCompanyNamespaceAlias(t *testing.T) {
+	owner := account
+	orgID := uuid.NewString()
+	for _, mode := range []string{"personal", "company", "missing_org", "different_personal_owner"} {
+		t.Run(mode, func(t *testing.T) {
+			org := state.Org{ID: orgID, Personal: true, PersonalOwnerAccountID: &owner}
+			if mode == "company" {
+				org.Personal = false
+			}
+			if mode == "different_personal_owner" {
+				other := uuid.NewString()
+				org.PersonalOwnerAccountID = &other
+			}
+			f := &lookupFixture{apps: map[string]state.App{appID: {ID: appID, AccountID: account, OrgID: orgID, Slug: "alpha"}}, orgs: map[string]state.Org{orgID: org}}
+			if mode == "missing_org" {
+				delete(f.orgs, orgID)
+			}
+			_, problem := Lookup(t.Context(), f, f, account, Selection{TraceID: trace, AppIDs: []string{appID}, Limit: 1}, 7)
+			if mode == "personal" {
+				if problem != nil || f.reads != 2 {
+					t.Fatalf("personal diagnostics changed: %v, reads=%d", problem, f.reads)
+				}
+			} else if problem == nil || problem.Status != 404 || f.reads != 0 {
+				t.Fatalf("namespace equality authorized unreviewed resources: %v, reads=%d", problem, f.reads)
+			}
+		})
 	}
 }
 

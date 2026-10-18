@@ -86,7 +86,7 @@ func (s bindingCheckedEmergencyRecoveryStore) AbortCanaryOnExpiredWorkerLease(ct
 	if err != nil {
 		return state.Deployment{}, 0, err
 	}
-	acct, err := s.server.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, s.server.store, app)
 	if err != nil {
 		return state.Deployment{}, 0, err
 	}

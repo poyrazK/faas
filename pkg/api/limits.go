@@ -703,6 +703,58 @@ const RollbackOn5xxTelemetryGrace = 2 * time.Minute
 const RollbackOn5xxCheckIntervalSeconds = 15
 const RollbackOn5xxBatchSize = 100
 
+// Post-release watch (ADR-1445). For PostReleaseWatchWindow after a release
+// reaches 100%, apid compares it with its predecessor's traffic in the
+// PostReleaseWatchBaseline before the rollout started, and rolls back a
+// clear 5xx or p95 regression. Plan-independent, like ADR-625.
+const PostReleaseWatchWindow = 30 * time.Minute
+const PostReleaseWatchBaseline = 30 * time.Minute
+const PostReleaseWatchCheckIntervalSeconds = 15
+const PostReleaseWatchBatchSize = 100
+
+// Guarded, reversible config changes (ADR-1451). Each customer write to an
+// app scope's variables or secrets records a revision; apid keeps the newest
+// ConfigRevisionsRetained per scope (plus any watching guard's base). A write
+// opens or joins the scope's config guard. Its window opens on the first
+// new-config request and lasts ConfigGuardWindowMinutes; a guard that sees no
+// new-config traffic within ConfigGuardMaxWait closes as no_traffic. The
+// old-config sample is the ConfigGuardBaseline before the guard opened. The
+// failure bar reuses RollbackOn5xxMinServerErrors / RollbackOn5xxMinErrorPct.
+// Plan-independent, like the first-wake rollback.
+const ConfigRevisionsRetained = 100
+const ConfigRevisionsListMax = 100
+const ConfigGuardWindowMinutes = 10
+const ConfigGuardMaxWait = 24 * time.Hour
+const ConfigGuardBaseline = time.Hour
+const ConfigGuardCheckIntervalSeconds = 15
+const ConfigGuardBatchSize = 50
+
+// Verified rollback outcomes (ADR-1446). apid resolves each plain rollback
+// every RollbackOutcomeCheckInterval: complete once the target serves,
+// failed when it leaves activation without serving or when
+// RollbackOutcomeTimeout passes. The timeout covers a cold-boot activation
+// with the post-readiness smoke; the drill's recovery was under 10 s.
+const RollbackOutcomeCheckInterval = 5 * time.Second
+const RollbackOutcomeTimeout = 10 * time.Minute
+const RollbackOutcomeBatchSize = 100
+
+// CanaryLowTrafficMaxHold bounds how long the canary circuit breaker holds a
+// stage past its dwell time only because too few requests arrived to compare
+// the candidate with its predecessor (ADR-1446). After the bound, the stage
+// advances if no negative evidence was observed: zero candidate 5xx and a
+// readable, zero OOM-kill signal. Unavailable signals still hold indefinitely.
+// Plan-independent: it bounds a wait, it does not price anything.
+const CanaryLowTrafficMaxHold = 5 * time.Minute
+
+// Explained rollout decisions (ADR-1447). A decision record is aggregate-only
+// evidence, bounded so a malformed worker request cannot grow the deployment
+// row or its audit timeline. A held canary records its hold again only after
+// RolloutHoldRefreshInterval unless the hold's rule changes, so a long hold
+// adds at most one audit row per rule per interval.
+const RolloutDecisionMaxBytes = 2048
+const RolloutDecisionSummaryMaxBytes = 256
+const RolloutHoldRefreshInterval = 5 * time.Minute
+
 // Synchronous invoke (POST /v1/apps/{slug}/invoke) long-poll. The wait stays
 // below DefaultClientTimeout so a slow invocation answers with a 504 naming
 // the invocation rather than a client-side "could not reach Gregale".
@@ -1194,10 +1246,41 @@ const (
 	// the per-million-token ceiling.
 	MaxOutboundAIPriceMillicentsPerImage       int64 = 10_000_000
 	MaxOutboundAIPriceMillicentsPerAudioMinute int64 = 10_000_000
-	OutboundAIPriceEntriesMax                        = 64
+	// Video (ADR-1432): the ceiling of a price per second of video; the
+	// largest video request body the gateway reads to size it; the
+	// duration a request without one reserves; and the bounds of one
+	// request's seconds per video and videos.
+	MaxOutboundAIPriceMillicentsPerVideoSecond int64 = 10_000_000
+	OutboundAIVideoBodyMaxBytes                int64 = 32 << 20
+	OutboundAIVideoDefaultSeconds                    = 8
+	OutboundAIVideoSecondsMax                        = 600
+	OutboundAIVideosPerCallMax                       = 8
+	// Built-in tools (ADR-1433): the uses a request that declares a tool
+	// reserves when it names no limit; how long a code-interpreter
+	// container's session is charged once; the largest container memory in
+	// GB; the uses one response may report; and the ceiling of a price per
+	// web search, file search or GB container session.
+	OutboundAIToolReserveWebSearches             = 5
+	OutboundAIToolReserveFileSearches            = 2
+	OutboundAIContainerSessionMinutes            = 20
+	OutboundAIContainerMemoryGBMax               = 64
+	OutboundAIToolUsesPerCallMax                 = 1_000
+	MaxOutboundAIPriceMillicentsPerToolUse int64 = 10_000_000
+	OutboundAIPriceEntriesMax                    = 64
 	// AI fallback routes (ADR-990).
 	OutboundAIRouteTargetsMax     = 5
 	MaxOutboundAIRoutesPerAccount = 25
+	// Route strategies (ADR-1434): the window latency and cost routes judge
+	// targets over; the attempts a target needs in it to be judged; the
+	// error rate above which it is unhealthy; the share of calls that try a
+	// target without data first; the largest target weight; and the largest
+	// latency target of a cost route.
+	OutboundAIRouteStatsWindowMinutes    = 15
+	OutboundAIRouteStatsMinCalls         = 10
+	OutboundAIRouteUnhealthyErrorPercent = 25
+	OutboundAIRouteExplorePercent        = 5
+	OutboundAIRouteWeightMax             = 100
+	OutboundAIRouteMaxTTFBMSMax          = 600_000
 	// Admission-time reservations (ADR-991): the output reserve when a call
 	// names no output ceiling, and the bytes per estimated input token.
 	OutboundAIDefaultOutputReserveTokens int64 = 4096
@@ -1224,7 +1307,22 @@ const (
 	OutboundAIUsersPerDay            = 10_000
 	OutboundAIUserUsageRetentionDays = 31
 	OutboundAIUserUsagePageMax       = 1_000
-	OutboundAIUserIDMaxBytes         = 64
+	// Usage tags (ADR-1436): tags per call, the longest key and value, the
+	// distinct tags one integration tracks per UTC day (later ones add to
+	// their key's overflow row), and the tag limits per integration. Tag
+	// rows follow OutboundAIUserUsageRetentionDays.
+	OutboundAITagsPerCall      = 5
+	OutboundAITagKeyMaxBytes   = 32
+	OutboundAITagValueMaxBytes = 64
+	OutboundAITagsPerDay       = 1_000
+	OutboundAITagLimitsMax     = 20
+	OutboundAITagUsagePageMax  = 1_000
+	// Automatic prompt caching (ADR-1437): the estimated prompt or prefix
+	// tokens below which no breakpoint is added, and the cache lifetime a
+	// repeated prefix must recur within.
+	OutboundAIPromptCacheMinTokens       = 1_024
+	OutboundAIPromptCacheLifetimeSeconds = 300
+	OutboundAIUserIDMaxBytes             = 64
 	// Opt-in content capture (ADR-996): the bytes kept of each logged
 	// call's request and response body, the captures per integration and
 	// UTC day, and how long they stay.
@@ -1268,6 +1366,78 @@ const (
 	OutboundAISettlementAttempts              = 3
 	OutboundAISettlementAttemptTimeoutSeconds = 5
 	OutboundAISettlementKeyRetentionMinutes   = 60
+	// Model canaries (ADR-1340): the largest share of a route's calls a
+	// canary may take; the bounds and defaults of its error-rate margin in
+	// percentage points, latency margin in percent, minimum calls and
+	// window; how often outboundd judges canaries; and how long per-minute
+	// target rows stay.
+	OutboundAIRouteCanaryPercentMax              = 50
+	OutboundAIRouteCanaryErrorIncreaseDefault    = 5
+	OutboundAIRouteCanaryErrorIncreaseMax        = 100
+	OutboundAIRouteCanaryLatencyIncreaseMax      = 1_000
+	OutboundAIRouteCanaryMinCallsMin             = 10
+	OutboundAIRouteCanaryMinCallsDefault         = 50
+	OutboundAIRouteCanaryMinCallsMax             = 100_000
+	OutboundAIRouteCanaryWindowMinutesMin        = 5
+	OutboundAIRouteCanaryWindowMinutesDefault    = 30
+	OutboundAIRouteCanaryWindowMinutesMax        = 1_440
+	OutboundAIRouteCanaryEvaluateIntervalSeconds = 30
+	OutboundAIRouteStatsRetentionHours           = 48
+	// Log export (ADR-1340): how long an export line waits before the
+	// gateways read it, how long it stays, how many lines one read returns,
+	// and the longest line.
+	OutboundAILogExportVisibilitySeconds = 15
+	OutboundAILogExportRetentionHours    = 24
+	OutboundAILogExportBatchMax          = 500
+	OutboundAILogExportLineMaxBytes      = 4 << 10
+	// Moderation (ADR-1340): the request text one check reads, latest text
+	// first, and the deadline of the check's call.
+	OutboundAIModerationTextMaxBytes       = 32 << 10
+	OutboundAIModerationCallTimeoutSeconds = 10
+	// Response guardrails (ADR-1435): the largest whole response read
+	// before release, the text of a stream channel held back so a finding
+	// split across events is caught, and how far back each stream scan
+	// reads.
+	OutboundAIResponseCheckMaxBytes     int64 = 4 << 20
+	OutboundAIResponseHoldBackBytes           = 512
+	OutboundAIResponseScanLookbackBytes       = 8 << 10
+	// Batches (ADR-1431): the share of the list price a batch costs; the
+	// largest OpenAI input file read at creation, Anthropic batch body and
+	// JSONL line the gateway parses; how often open batches are polled and
+	// how long one may stay open before it settles at its reservation; how
+	// long an unconfirmed batch keeps its reservation; and how long settled
+	// batches stay.
+	OutboundAIBatchPricePercent               = 50
+	OutboundAIBatchInputMaxBytes        int64 = 256 << 20
+	OutboundAIBatchBodyMaxBytes         int64 = 32 << 20
+	OutboundAIBatchLineMaxBytes               = 4 << 20
+	OutboundAIBatchPollIntervalSeconds        = 60
+	OutboundAIBatchAbandonHours               = 72
+	OutboundAIBatchPendingExpiryMinutes       = 60
+	OutboundAIBatchRetentionDays              = 7
+	// Access tokens (ADR-1431): tokens per app, the longest and default
+	// lifetime, the integrations one token may name, how long outboundd
+	// caches a token check, and how long expired or revoked tokens stay.
+	OutboundAIAccessTokensPerApp         = 20
+	OutboundAIAccessTokenTTLMaxHours     = 2_160
+	OutboundAIAccessTokenTTLDefaultHours = 168
+	OutboundAIAccessTokenIntegrationsMax = 32
+	OutboundAIAccessTokenCacheSeconds    = 30
+	OutboundAIAccessTokenRetentionDays   = 30
+	// Evaluations (ADR-1431): the largest and default sample, the default
+	// loss-rate threshold, evaluations per route and UTC day, how long they
+	// stay, the deadline of one candidate or judge call, how long one may
+	// run before it fails as interrupted, how many samples run at once, and
+	// the share of judge errors above which an evaluation fails.
+	OutboundAIEvaluationSampleMax               = 50
+	OutboundAIEvaluationSampleDefault           = 20
+	OutboundAIEvaluationMaxLossRateDefault      = 20
+	OutboundAIEvaluationsPerDay                 = 20
+	OutboundAIEvaluationRetentionDays           = 30
+	OutboundAIEvaluationCallTimeoutSeconds      = 120
+	OutboundAIEvaluationInterruptedAfterMinutes = 90
+	OutboundAIEvaluationParallelCalls           = 4
+	OutboundAIEvaluationJudgeErrorMaxPercent    = 50
 )
 
 // Operator-only managed realtime resume preview safety bounds. These are not
@@ -6523,6 +6693,24 @@ const (
 	// minute) while keeping the query load negligible.
 	DeadNodeReconcilerIntervalSeconds = 30
 
+	// NodeLeaseTTL, NodeLeaseRenewInterval and NodeLeaseFenceMargin time a
+	// compute node's liveness lease (ADR-1344 §4, P3). The node-local schedd
+	// renews every interval, three times per TTL, so two lost renewals in a
+	// row still leave the lease live. The node treats itself as fenced once
+	// TTL minus the margin has passed since its last renewal reply, which is
+	// always before the database considers the lease expired as long as the
+	// reply arrived within the margin. NodeLeaseMaxTTL bounds any configured
+	// TTL so a bad setting cannot keep a dead node looking alive for long.
+	NodeLeaseTTL           = 30 * time.Second
+	NodeLeaseRenewInterval = 10 * time.Second
+	NodeLeaseFenceMargin   = 5 * time.Second
+	NodeLeaseMaxTTL        = 10 * time.Minute
+	// NodeLeaseTakeoverMargin is how long after a lease's expiry, on database
+	// time, peers wait before acting on the node being gone (phase 2). The
+	// node fences itself NodeLeaseFenceMargin before expiry, so its work has
+	// stopped well before any peer takes it over.
+	NodeLeaseTakeoverMargin = 10 * time.Second
+
 	// InstanceDivergenceIntervalSeconds is the cadence of the ADR-191
 	// sweep that finds live rows the owning vmmd is not reporting.
 	// 30s matches the dead-node reconciler: both repair rows the happy
@@ -6648,7 +6836,19 @@ const (
 	// HandoffMaxMemoryPercent refuses a hand-off while the unit's cgroup uses
 	// more than this share of its MemoryMax: both generations share the
 	// cgroup, so the old one must leave room for a second steady state.
-	HandoffMaxMemoryPercent         = 45
+	HandoffMaxMemoryPercent = 45
+	// HandoffMemoryWaitSeconds bounds how long a hand-off waits for the
+	// cgroup to fall back under HandoffMaxMemoryPercent, after returning freed
+	// heap to the OS. apid's memory spikes last minutes, not hours, so a
+	// reload during one waits instead of falling back to a restart.
+	HandoffMemoryWaitSeconds = 60
+	// APIDMemoryMaxMB is faas-apid.service's MemoryMax, and APIDGoMemLimitMB
+	// its GOMEMLIMIT, a soft per-process bound. A reload runs two apid
+	// generations in one cgroup (ADR-1580). Production over 14 days
+	// (2026-10-18): steady state 51-94 MB per process, spikes to 257 MB, and
+	// two OOM kills at the previous 256 MB cap (ADR 20261018132058).
+	APIDMemoryMaxMB                 = 512
+	APIDGoMemLimitMB                = 256
 	ReplicaHeartbeatIntervalSeconds = 5
 	WarmHintCacheSize               = 1000
 	// ServiceRouteConvergenceTimeoutSeconds bounds one routing-generation
@@ -10235,6 +10435,15 @@ const (
 	IssueMaxClockSkew     = 5 * time.Minute
 )
 
+// Offline grouping evaluation and reviewed partition snapshots (ADR-1738).
+const (
+	IssueGroupingEvaluationCasesMax         = 10000
+	IssueGroupingEvaluationCorpusMaxBytes   = 8 << 20
+	IssueGroupingEvaluationBaselineMaxBytes = 8 << 20
+	IssueGroupingEvaluationCaseIDMaxBytes   = 128
+	IssueGroupingEvaluationJSONDepthMax     = 64
+)
+
 // Deployment-local Node source-map registration (ADR-1113). SDK mirrors these
 // bounds; map artifacts and source content never enter ingestion.
 const (
@@ -10252,6 +10461,17 @@ const (
 	IssueTagsMax                   = 16
 	IssueTagKeyMaxBytes            = 64
 	IssueTagValueMaxBytes          = 128
+)
+
+// Match Node build discovery's bundle hashing bounds (ADR-1736).
+const (
+	IssueSourceMapBundleMaxBytes      = 16 << 20
+	IssueSourceMapBundlesMaxBytes     = 64 << 20
+	IssueSourceMapDiscoveryEntriesMax = 4096
+	IssueSourceMapBuildConfigMaxBytes = 4096
+	// Includes build binding fields or cache toolchain metadata around the
+	// bounded, sanitized publication request.
+	IssueSourceMapBuildMetadataMaxBytes = IssueSourceMapsUploadMaxBytes + (64 << 10)
 )
 
 // IssueGroupMembersMax bounds reversible manual group links (ADR-1114).
@@ -10576,16 +10796,30 @@ const (
 // RouteHealthProbeMaxRoutes selectors and RouteHealthProbeRequestsPerMinute
 // requests per route and deployment, only while a canary is in flight.
 // Probe requests are never written to request telemetry or usage.
+//
+// Rounds are claimed once per app and minute. The worker polls every
+// RouteHealthProbePollInterval so a minute's round starts within about
+// that long of the minute (ADR-1321), and a round may take
+// RouteHealthProbeRoundTimeout. The ADR-1446 default probe sends
+// DefaultRouteProbeRequestsPerRound per deployment, the circuit breaker's
+// request floor (canary.CircuitBreakerMinRequests), so one round inside a
+// canary stage is enough evidence.
 const (
 	RouteHealthProbeMaxRoutes         = 5
 	RouteHealthProbeRequestsPerMinute = 10
+	DefaultRouteProbeRequestsPerRound = 20
 	RouteHealthProbeRequestTimeout    = 10 * time.Second
 	RouteHealthProbeChallengeTTL      = 2 * time.Minute
-	RouteHealthProbePollInterval      = time.Minute
+	RouteHealthProbePollInterval      = 15 * time.Second
+	RouteHealthProbeRoundTimeout      = 55 * time.Second
+	RouteHealthProbePruneInterval     = time.Minute
 	RouteHealthProbeRetention         = 24 * time.Hour
 	// A probe window is unknown when at least this share of responses were
 	// 401/403: customer auth gates stay in force for probes.
 	RouteHealthProbeUnauthenticatedShare = 0.5
+	// ReleaseProbePathsMax bounds an app's release_probe_paths (ADR-1449);
+	// a round splits DefaultRouteProbeRequestsPerRound across them.
+	ReleaseProbePathsMax = 3
 )
 
 // ServiceWakeAhead bounds opt-in wake-ahead along measured service edges
@@ -11327,9 +11561,18 @@ const (
 	// signs after authorize() allows the read or write.
 	AuthStorageURLSeconds = 60
 	// AuthAdminBodyBytes bounds one /admin/v1 request; AuthImportBatch is
-	// the most users one import request creates.
+	// the most users one import request creates; AuthAdminPageSize is the
+	// most users, organizations or activity entries one list page returns.
 	AuthAdminBodyBytes = 1 << 20
 	AuthImportBatch    = 100
+	AuthAdminPageSize  = 100
+	// AuthReauthenticationSeconds is how recent a sign-in must be for a
+	// user to delete their own account.
+	AuthReauthenticationSeconds = 600
+	// AuthEmailSubjectMaxChars and AuthEmailBodyMaxBytes bound one email
+	// template (`gregale auth emails set`).
+	AuthEmailSubjectMaxChars = 150
+	AuthEmailBodyMaxBytes    = 4000
 	// AuthImportFileMaxBytes bounds a `gregale auth import` file.
 	AuthImportFileMaxBytes = 256 << 20
 	// AuthMaxSigningKeys bounds an Auth app's ES256 keys: the signer, a
@@ -11562,6 +11805,50 @@ const (
 
 // Maximum payload-free outbox rows mirrored per source for the inspector.
 const RealtimeInspectorSampleMax = 32
+
+// Live queries (ADR-20261016151947): sealed-query bounds and live frame sizes. The SQL
+// and parameter bounds match Neon Realtime's; the sealed payload bound keeps a
+// subscribe frame well inside LiveQueryClientFrameMaxBytes.
+const (
+	LiveQuerySealDefaultTTL        = 60 * time.Second
+	LiveQuerySealMaxTTL            = 5 * time.Minute
+	LiveQuerySealClockSkew         = 30 * time.Second
+	LiveQuerySQLMaxBytes           = 32 << 10
+	LiveQueryParamsMax             = 256
+	LiveQueryParamMaxBytes         = 16 << 10
+	LiveQuerySealPayloadMaxBytes   = 48 << 10
+	LiveQueryDatabaseIDMaxBytes    = 128
+	LiveQuerySecretRotationOverlap = 24 * time.Hour
+	// A rotation may keep the previous secret for at most this long.
+	LiveQuerySecretRotationOverlapMax = 7 * 24 * time.Hour
+	LiveQuerySubscriptionIDMax        = 64
+	// A realtime endpoint routes at most this many live secrets: two per
+	// live database its app is bound to.
+	LiveQueryRoutesPerEndpoint   = 64
+	LiveQueryClientFrameMaxBytes = 80 << 10
+	LiveQueryServerFrameMaxBytes = 256 << 10
+	LiveQueryResultRowsMax       = 10000
+	// RLS mode (ADR-20261016151947): a Data API read is at most LiveQueryRESTMaxBytes
+	// and a user's token (or its claims) at most LiveQueryTokenMaxBytes.
+	LiveQueryRESTMaxBytes  = 8 << 10
+	LiveQueryTokenMaxBytes = 8 << 10
+	// A result sent whole (a new subscriber, a reset, a resubscription) is at
+	// most this many bytes of rows: half of realtimed's per-connection
+	// outbound queue, so delivering it cannot close the connection as a slow
+	// consumer on its own.
+	LiveQueryResultBytesMax = 2 << 20
+	// Starting values for the operator preview, to be set per database class
+	// from measurements before general availability.
+	LiveQuerySubscriptionsPerDatabase   = 10000
+	LiveQueryCompiledQueriesPerDatabase = 1000
+	LiveQuerySubscriptionsPerConnection = 64
+	// RLS-mode subscriptions share maintenance only with identical claims,
+	// so they have their own, lower, per-database limit.
+	LiveQueryRLSSubscriptionsPerDatabase = 2000
+	// A connection whose outbound queue holds this many frames is closed as
+	// a slow consumer.
+	LiveQueryConnectionQueueFrames = 1024
+)
 
 // Bounded backend-worker realtime consumer groups (ADR-1030).
 const (
@@ -12148,6 +12435,9 @@ const (
 
 // Issue frequency alert bounds cap configuration and per-capture evaluation work.
 const (
+	IssueApplicationSlackMaxEvents        = 5
+	IssueCompoundAlertMaxRules            = 10
+	IssueCompoundAlertMaxCustomers        = IssueImpactAlertMaxCustomers
 	IssueFrequencyAlertMaxRules           = 10
 	IssueFrequencyAlertMaxEvents          = 100000
 	IssueFrequencyAlertMinWindowSeconds   = 60

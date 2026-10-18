@@ -16,23 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
-type recipientClaimTestStore interface {
-	state.Store
-	state.AppWorkPolicyStore
-	state.EventWorkBindingStore
-	state.EventSubscriptionStore
-	state.PublishedEventWorkStore
-	state.PublishedEventRecipientWorkStore
-	state.PublishedEventRecipientProgressStore
-	state.EventFanoutReplayStore
-	state.EventFanoutReplayBatchStore
-	state.EventFanoutAttemptHistoryStore
-	state.PublishedEventRetentionStore
-	state.EventReceiptStore
-	state.EventReceiptReplayStore
-	state.EventReceiptAcceptanceStore
-	state.WorkCancellationStore
-}
+type recipientClaimTestStore = contractTestStore
 
 func TestEventRecipientOrderedKeyBlocksYoungerUntilRetrySettles(t *testing.T) {
 	forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, _ *pgxpool.Pool) {

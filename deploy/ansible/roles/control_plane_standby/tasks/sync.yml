@@ -120,3 +120,57 @@
   loop_control:
     label: "{{ item.path }}"
   when: (item.path | regex_replace('^' ~ (faas_standby_stage_dir ~ '/files') | regex_escape, '') | regex_replace('[.]b64$', '')) not in (control_plane_standby_files | map(attribute='path') | list)
+
+# A takeover after the primary is lost cannot ask it which release it ran,
+# and the new control plane must run that release (the database schema is
+# already at its migrations). Record it on every sync; takeover.yml prints it
+# for the failover runbook's release step.
+- name: control_plane_standby — find the primary's current release
+  ansible.builtin.stat:
+    path: /opt/faas/current
+    follow: false
+  delegate_to: "{{ faas_postgres_primary_inventory_host }}"
+  become: true
+  register: control_plane_standby_current_release
+
+- name: control_plane_standby — read the primary's release manifest
+  ansible.builtin.slurp:
+    src: "{{ control_plane_standby_current_release.stat.lnk_source }}/release-manifest.json"
+  delegate_to: "{{ faas_postgres_primary_inventory_host }}"
+  become: true
+  register: control_plane_standby_release_manifest
+  # The role's rule for every read of the primary; the manifest is not secret.
+  no_log: true
+  failed_when: false
+  when: control_plane_standby_current_release.stat.islnk | default(false)
+
+# Per-unit releases (scripts/ci/unit_deploy.sh) overlay single daemons on
+# the full release and list their versions here.
+- name: control_plane_standby — read the primary's per-unit versions
+  ansible.builtin.slurp:
+    src: "{{ control_plane_standby_current_release.stat.lnk_source }}/unit-versions.json"
+  delegate_to: "{{ faas_postgres_primary_inventory_host }}"
+  become: true
+  register: control_plane_standby_unit_versions
+  # The role's rule for every read of the primary; the manifest is not secret.
+  no_log: true
+  failed_when: false
+  when: control_plane_standby_current_release.stat.islnk | default(false)
+
+- name: control_plane_standby — record the primary's release
+  ansible.builtin.copy:
+    dest: "{{ faas_standby_stage_dir }}/release.json"
+    owner: root
+    group: root
+    mode: "0600"
+    content: "{{ control_plane_standby_release | to_nice_json }}\n"
+  no_log: true
+  vars:
+    control_plane_standby_release_body: "{{ control_plane_standby_release_manifest.content | b64decode | from_json }}"
+    control_plane_standby_release:
+      primary: "{{ faas_postgres_primary_inventory_host }}"
+      release_dir: "{{ control_plane_standby_current_release.stat.lnk_source }}"
+      git_sha: "{{ control_plane_standby_release_body.git_sha | default('') }}"
+      manifest_hash: "{{ control_plane_standby_release_body.manifest_hash | default('') }}"
+      unit_versions: "{{ (control_plane_standby_unit_versions.content | b64decode | from_json) if (control_plane_standby_unit_versions.content is defined) else {} }}"
+  when: control_plane_standby_release_manifest.content is defined

@@ -27,8 +27,8 @@ function fakePool(respond) {
   }
 }
 
-async function serve(t, pool, { authenticate = async () => ({ sub: member, session_id: 'session' }), origins = ['https://app.example.test'], invitations, storage, workflows, teamEnabled = false } = {}) {
-  const server = createServer({ upstreamPort: 1, authz: createAuthzHandler({ pool, authenticate, origins, invitations, storage, workflows, teamEnabled }) })
+async function serve(t, pool, { authenticate = async () => ({ sub: member, session_id: 'session' }), origins = ['https://app.example.test'], invitations, storage, workflows, teamEnabled = false, deleteAccount = null, orgClaims = false } = {}) {
+  const server = createServer({ upstreamPort: 1, authz: createAuthzHandler({ pool, authenticate, origins, invitations, storage, workflows, teamEnabled, deleteAccount, orgClaims }) })
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
   t.after(() => server.close())
@@ -172,7 +172,8 @@ test('allows browser calls only from the application origins', async t => {
 
 test('emails invitations through the provider and withholds the token', async t => {
   const sent = []
-  const pool = fakePool((sql, args) => ({ rows: [{ id: member, email: args[1], role: args[2], expires_at: 'later', org_name: 'Acme' }] }))
+  // The owner's invitation template is read in the same transaction.
+  const pool = fakePool((sql, args) => sql.includes('email_templates') ? { rows: [{ type: 'organization_invitation', subject: 'Welcome to {{org}}', body: 'Hi! {{org}} uses {{app}}.' }] } : { rows: [{ id: member, email: args[1], role: args[2], expires_at: 'later', org_name: 'Acme' }] })
   const call = await serve(t, pool, { invitations: { mailer: { send: async (m, key) => { sent.push({ m, key }) } }, external: 'https://shop-auth.gregale.app', app: 'shop.example.test' } })
   const response = await call('POST', `/orgs/${org}/invitations`, { body: { email: 'bob@example.test', role: 'member' } })
   assert.equal(response.status, 201)
@@ -180,6 +181,8 @@ test('emails invitations through the provider and withholds the token', async t 
   assert.equal(response.body.token, undefined)
   assert.equal(response.body.org_name, undefined)
   assert.equal(sent[0].m.to, 'bob@example.test')
+  assert.equal(sent[0].m.subject, 'Welcome to Acme')
+  assert.match(sent[0].m.text, /^Hi! Acme uses shop\.example\.test\.$/m)
   assert.match(sent[0].m.text, /^https:\/\/shop-auth\.gregale\.app\/ui\/invitation#token=[A-Za-z0-9_-]{43}$/m)
   // The email goes out before the invitation commits.
   const order = pool.log.map(entry => entry.sql)
@@ -187,7 +190,7 @@ test('emails invitations through the provider and withholds the token', async t 
 })
 
 test('a failed invitation email rolls the invitation back', async t => {
-  const pool = fakePool((sql, args) => ({ rows: [{ id: member, email: args[1], role: args[2], expires_at: 'later', org_name: 'Acme' }] }))
+  const pool = fakePool((sql, args) => sql.includes('email_templates') ? { rows: [] } : { rows: [{ id: member, email: args[1], role: args[2], expires_at: 'later', org_name: 'Acme' }] })
   const { EmailError } = await import('../email.mjs')
   const call = await serve(t, pool, { invitations: { mailer: { send: async () => { throw new EmailError(503, 'email_provider_unavailable') } }, external: 'https://x.test', app: 'x' } })
   const response = await call('POST', `/orgs/${org}/invitations`, { body: { email: 'bob@example.test', role: 'member' } })
@@ -234,4 +237,50 @@ test('starts workflows only when authorized and configured', async t => {
   assert.equal(starts.length, 1)
   const unconfigured = await serve(t, fakePool(() => ({ rows: [{ allowed: true }] })))
   assert.equal((await unconfigured('POST', '/workflows/onboard/start', { body: { org } })).body.code, 'workflows_unconfigured')
+})
+
+test('lists the caller own sessions and ends another one', async t => {
+  const other = '7a1b2c3d-0000-4000-8000-000000000002'
+  const pool = fakePool(sql => {
+    if (sql.includes('list_sessions')) return { rows: [{ id: other, created_at: '2026-10-18T09:00:00Z', last_active_at: '2026-10-18T10:00:00Z', user_agent: 'Mozilla/5.0', ip: '203.0.113.7', aal: 'aal1', current: false }] }
+    if (sql.includes('end_session')) {
+      const failure = Object.assign(new Error('current_session'), { code: '22023' })
+      if (pool.log.at(-1).args[0] !== other) throw failure
+      return { rows: [{}] }
+    }
+    throw new Error(`unexpected ${sql}`)
+  })
+  const call = await serve(t, pool)
+  const listed = await call('GET', '/sessions')
+  assert.equal(listed.status, 200)
+  assert.equal(listed.body.sessions[0].ip, '203.0.113.7')
+  assert.equal((await call('DELETE', `/sessions/${other}`)).status, 204)
+  assert.deepEqual(pool.log.filter(q => q.sql.includes('end_session')).map(q => q.args), [[other]])
+  assert.deepEqual((await call('DELETE', `/sessions/${member}`)).body, { status: 400, code: 'current_session' })
+  assert.equal((await call('DELETE', '/sessions/not-a-session')).status, 400)
+  assert.equal((await call('POST', '/sessions', { body: {} })).status, 404)
+})
+
+test('deletes the caller own account only when the app allows it', async t => {
+  const pool = fakePool(sql => { throw new Error(`unexpected ${sql}`) })
+  const off = await serve(t, pool)
+  assert.equal((await off('DELETE', '/account')).status, 404)
+  const deleted = []
+  const on = await serve(t, pool, { deleteAccount: async claims => { deleted.push(claims.sub); return [409, { status: 409, code: 'last_owner', organizations: ['acme'] }] } })
+  assert.deepEqual((await on('DELETE', '/account')).body, { status: 409, code: 'last_owner', organizations: ['acme'] })
+  assert.deepEqual(deleted, [member])
+  const client = await serve(t, pool, { authenticate: async () => ({ sub: member, session_id: 'session', client_id: 'c1' }), deleteAccount: async () => { throw new Error('reached') } })
+  assert.equal((await client('DELETE', '/account')).body.code, 'oauth_client_token')
+})
+
+test('chooses the session organization only when organization claims are on', async t => {
+  const pool = fakePool((sql, args) => sql.includes('set_active_organization') ? { rows: args[0] ? [{ id: args[0], slug: 'acme', role: 'member' }] : [] } : { rows: [] })
+  const off = await serve(t, pool)
+  assert.equal((await off('POST', '/active-organization', { body: { org } })).status, 404)
+  const on = await serve(t, pool, { orgClaims: true })
+  assert.deepEqual((await on('POST', '/active-organization', { body: { org } })).body, { organization: { id: org, slug: 'acme', role: 'member' } })
+  assert.deepEqual((await on('POST', '/active-organization', { body: { org: null } })).body, { organization: null })
+  assert.deepEqual(pool.log.filter(q => q.sql.includes('set_active_organization')).map(q => q.args), [[org], [null]])
+  assert.equal((await on('POST', '/active-organization', { body: { org: 'acme' } })).status, 400)
+  assert.equal((await on('POST', '/active-organization', { body: {} })).status, 400)
 })

@@ -35,6 +35,7 @@ test('builds the GoTrue environment from sealed settings', () => {
   assert.equal(g.GOTRUE_JWT_ISSUER, 'https://shop-auth.gregale.app/auth/v1')
   assert.equal(g.GOTRUE_API_HOST, '127.0.0.1')
   assert.equal(g.GOTRUE_JWT_EXP, '600')
+  assert.equal(g.GOTRUE_JWT_DEFAULT_GROUP_NAME, 'authenticated', 'tokens carry role authenticated')
   assert.equal(g.GOTRUE_DB_MAX_POOL_SIZE, '4')
   assert.equal(g.DB_NAMESPACE, 'auth')
   assert.equal(g.GOTRUE_MAILER_AUTOCONFIRM, 'true')
@@ -126,7 +127,7 @@ test('enabled providers get this app\'s callback, and settings report only publi
     password: { min_length: 12, required: ['lower', 'digit', 'custom'], leaked_password_check: false },
     mfa: { totp: false, phone: false, recovery_codes: false }, email: { configured: false, provider: null, from: null }, events: { lifecycle: false },
     passkeys: { enabled: false, rp_id: 'shop-auth.gregale.app', origins: ['https://shop-auth.gregale.app'] },
-    branding: { name: 'shop.example.com', color: null, logo_url: null }, captcha: null, activity: { retention_days: null }, anonymous: { enabled: false, retention_days: null }, identity_linking: false, phone: { enabled: false, provider: null, countries: null }, sso: { enabled: false, entity_id: null, acs_url: null, self_service: false }, oauth: { enabled: false, dynamic_registration: false, issuer: null, metadata_url: null, default_audience: null }, keys: { signing: '0A1B2C3D', verifying: ['FFFF0001'] },
+    branding: { name: 'shop.example.com', color: null, logo_url: null }, captcha: null, activity: { retention_days: null }, anonymous: { enabled: false, retention_days: null }, identity_linking: false, self_deletion: false, organization_claims: false, phone: { enabled: false, provider: null, countries: null }, sso: { enabled: false, entity_id: null, acs_url: null, self_service: false }, oauth: { enabled: false, dynamic_registration: false, issuer: null, metadata_url: null, default_audience: null }, keys: { signing: '0A1B2C3D', verifying: ['FFFF0001'] },
   })
   assert.ok(!JSON.stringify(config.settings).includes('provider-secret'))
   assert.deepEqual(runtimeConfig(env()).settings.password, { min_length: 6, required: [], leaked_password_check: false })

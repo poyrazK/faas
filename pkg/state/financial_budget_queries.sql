@@ -1,10 +1,10 @@
 -- ADR-566. Policy mutations serialize per account and publish an atomic audit.
 -- name: FinancialBudgetAccountLock :one
-SELECT id FROM accounts WHERE id = sqlc.arg(account_id)::uuid FOR UPDATE;
+SELECT id FROM resource_namespaces WHERE id = sqlc.arg(account_id)::uuid FOR UPDATE;
 
 -- name: FinancialBudgetScopeOwned :one
 SELECT CASE sqlc.arg(scope_kind)::text
-  WHEN 'account' THEN EXISTS(SELECT 1 FROM accounts WHERE id = sqlc.arg(account_id)::uuid)
+  WHEN 'account' THEN EXISTS(SELECT 1 FROM resource_namespaces WHERE id = sqlc.arg(account_id)::uuid)
   WHEN 'app' THEN EXISTS(SELECT 1 FROM apps WHERE id = sqlc.narg(scope_id)::uuid AND account_id = sqlc.arg(account_id)::uuid AND status != 'deleted')
   WHEN 'job' THEN EXISTS(SELECT 1 FROM jobs WHERE id = sqlc.narg(scope_id)::uuid AND account_id = sqlc.arg(account_id)::uuid AND status != 'deleted')
   WHEN 'project' THEN EXISTS(SELECT 1 FROM projects WHERE id = sqlc.narg(scope_id)::uuid AND account_id = sqlc.arg(account_id)::uuid)

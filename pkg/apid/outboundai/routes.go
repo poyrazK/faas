@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-const routeInvalidDetail = "a route needs a DNS-label name, a format of native or openai, and 1 to 5 targets that are this account's enabled managed AI integrations: one ai_provider for native routes, or openai, azure_openai, anthropic and gemini targets (all but openai naming a model) for openai routes"
+const routeInvalidDetail = "a route needs a DNS-label name, a format of native or openai, and 1 to 5 targets that are this account's enabled managed AI integrations: one ai_provider for native routes, or openai, azure_openai, anthropic and gemini targets (all but openai naming a model) for openai routes; a strategy of ordered, weighted, latency or cost, where a weighted route weighs every target from 0 to 100 (one above 0) and only a cost route takes max_ttfb_ms (1 to 600000)"
 
 func (s *Service) routeStore(w http.ResponseWriter) (state.OutboundAIRouteStore, bool) {
 	store, ok := s.Host.Store().(state.OutboundAIRouteStore)
@@ -22,9 +22,14 @@ func (s *Service) routeStore(w http.ResponseWriter) (state.OutboundAIRouteStore,
 
 func routeResponse(route state.OutboundAIRoute) api.OutboundAIRoute {
 	out := api.OutboundAIRoute{ID: route.ID, Name: route.Name, Format: route.Format, CreatedAt: route.CreatedAt, UpdatedAt: route.UpdatedAt,
-		Targets: make([]api.OutboundAIRouteTarget, 0, len(route.Targets))}
+		Targets: make([]api.OutboundAIRouteTarget, 0, len(route.Targets)), Strategy: route.Strategy, MaxTTFBMS: copyInt(route.MaxTTFBMS)}
 	for _, target := range route.Targets {
-		out.Targets = append(out.Targets, api.OutboundAIRouteTarget{IntegrationID: target.IntegrationID, Model: target.Model})
+		out.Targets = append(out.Targets, api.OutboundAIRouteTarget{IntegrationID: target.IntegrationID, Model: target.Model,
+			Weight: copyInt(target.Weight)})
+	}
+	if route.Canary != nil {
+		canary := canaryResponse(*route.Canary)
+		out.Canary = &canary
 	}
 	return out
 }
@@ -32,7 +37,7 @@ func routeResponse(route state.OutboundAIRoute) api.OutboundAIRoute {
 func stateRouteTargets(targets []api.OutboundAIRouteTarget) []state.OutboundAIRouteTarget {
 	out := make([]state.OutboundAIRouteTarget, 0, len(targets))
 	for _, target := range targets {
-		out = append(out, state.OutboundAIRouteTarget{IntegrationID: target.IntegrationID, Model: target.Model})
+		out = append(out, state.OutboundAIRouteTarget{IntegrationID: target.IntegrationID, Model: target.Model, Weight: copyInt(target.Weight)})
 	}
 	return out
 }
@@ -59,7 +64,8 @@ func (s *Service) ListRoutes(w http.ResponseWriter, r *http.Request, acct state.
 func (s *Service) CreateRoute(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.CreateOutboundAIRouteRequest
 	if err := httpkit.DecodeJSONSized(r, &req, 8<<10); err != nil || !api.ValidOutboundAIRouteName(req.Name) ||
-		!api.ValidOutboundAIRouteFormat(req.Format) || !api.ValidOutboundAIRouteTargetShape(req.Targets) {
+		!api.ValidOutboundAIRouteFormat(req.Format) || !api.ValidOutboundAIRouteTargetShape(req.Targets) ||
+		!api.ValidOutboundAIRouteStrategy(req.Strategy, req.MaxTTFBMS, req.Targets) {
 		problem(w, http.StatusBadRequest, api.CodeValidation, routeInvalidDetail)
 		return
 	}
@@ -69,6 +75,7 @@ func (s *Service) CreateRoute(w http.ResponseWriter, r *http.Request, acct state
 	}
 	created, err := store.CreateOutboundAIRoute(r.Context(), state.OutboundAIRoute{
 		ID: uuid.NewString(), AccountID: acct.ID, Name: req.Name, Format: req.Format, Targets: stateRouteTargets(req.Targets),
+		Strategy: req.Strategy, MaxTTFBMS: req.MaxTTFBMS,
 	})
 	switch {
 	case errors.Is(err, state.ErrInvalidArgument):
@@ -121,7 +128,8 @@ func (s *Service) PutRouteTargets(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 	var req api.PutOutboundAIRouteTargetsRequest
-	if err := httpkit.DecodeJSONSized(r, &req, 8<<10); err != nil || !api.ValidOutboundAIRouteTargetShape(req.Targets) {
+	if err := httpkit.DecodeJSONSized(r, &req, 8<<10); err != nil || !api.ValidOutboundAIRouteTargetShape(req.Targets) ||
+		!api.ValidOutboundAIRouteStrategy(req.Strategy, req.MaxTTFBMS, req.Targets) {
 		problem(w, http.StatusBadRequest, api.CodeValidation, routeInvalidDetail)
 		return
 	}
@@ -129,8 +137,37 @@ func (s *Service) PutRouteTargets(w http.ResponseWriter, r *http.Request, acct s
 	if !ok {
 		return
 	}
-	err := store.SetOutboundAIRouteTargets(r.Context(), acct.ID, routeID, stateRouteTargets(req.Targets))
+	err := store.SetOutboundAIRouteTargets(r.Context(), acct.ID, routeID, stateRouteTargets(req.Targets),
+		state.OutboundAIRouteRouting{Strategy: req.Strategy, MaxTTFBMS: req.MaxTTFBMS})
 	s.writeResult(w, err, "AI route not found", routeInvalidDetail)
+}
+
+// GetRouteStats returns each target's attempts over the window latency and
+// cost routes judge (ADR-1434).
+func (s *Service) GetRouteStats(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	routeID, ok := routePathID(w, r)
+	if !ok {
+		return
+	}
+	store, ok := s.routeStore(w)
+	if !ok {
+		return
+	}
+	window, err := store.OutboundAIRouteStats(r.Context(), acct.ID, routeID)
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+		httpkit.NotFound(w, "AI route not found")
+	case err != nil:
+		problem(w, http.StatusServiceUnavailable, "outbound_ai_routes_unavailable", "Outbound AI route stats are unavailable")
+	default:
+		out := api.OutboundAIRouteStats{Strategy: window.Strategy, WindowStart: window.WindowStart,
+			Targets: make([]api.OutboundAIRouteTargetStats, 0, len(window.Targets))}
+		for _, stats := range window.Targets {
+			out.Targets = append(out.Targets, targetStatsResponse(stats))
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		httpkit.WriteJSON(w, http.StatusOK, out)
+	}
 }
 
 func (s *Service) DeleteRoute(w http.ResponseWriter, r *http.Request, acct state.Account) {

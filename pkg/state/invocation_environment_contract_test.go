@@ -2,7 +2,6 @@
 package state_test
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -14,11 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
-type invocationEnvironmentTestStore interface {
-	state.Store
-	state.ProjectReleaseSetStore
-	ResolveInvocationPinScope(context.Context, string, string, string) (string, error)
-}
+type invocationEnvironmentTestStore = contractTestStore
 
 type invocationEnvironmentFixture struct {
 	account                         state.Account

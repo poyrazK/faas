@@ -27,7 +27,7 @@ func (s *PostgresStore) ReconcileAccounting(ctx context.Context, command Account
 	if err != nil {
 		return AccountingReconciliationResult{}, err
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.catalog.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return AccountingReconciliationResult{}, mapPostgresError(err)
 	}
@@ -144,7 +144,7 @@ func (s *PostgresStore) ReplayAccountingReconciliation(ctx context.Context, acco
 	if err != nil {
 		return AccountingReconciliationResult{}, err
 	}
-	receipt, err := sqlc.New().GetManagedPostgresAccountingReconciliation(ctx, s.pool, sqlc.GetManagedPostgresAccountingReconciliationParams{AccountID: account, ReconciliationID: id})
+	receipt, err := sqlc.New().GetManagedPostgresAccountingReconciliation(ctx, s.catalog, sqlc.GetManagedPostgresAccountingReconciliationParams{AccountID: account, ReconciliationID: id})
 	if err != nil {
 		return AccountingReconciliationResult{}, mapPostgresError(err)
 	}

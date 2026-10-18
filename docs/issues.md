@@ -343,7 +343,8 @@ server validation and redaction.
 Roll out matching maps and reporting tokens with each deployment. Enabling maps
 can create new issue identities; saved groups and history are not migrated.
 This covers Node reporters. Central artifact publication and server-side OTLP mapping are described below.
-Indexed maps and automatic build-to-server artifact handoff remain future work.
+Automatic publication of prebuilt manifests during CLI deployment is described
+below. Indexed maps and artifacts produced only inside server builds remain future work.
 
 ### Discover source maps during Node builds
 
@@ -451,6 +452,120 @@ can be restored; different mapping metadata cannot replace it. Retained exact ev
 retries keep their original occurrence even after retirement. App or deployment
 deletion cascades artifacts. Existing occurrences retain their mapped evidence;
 source contents and producer extensions are never persisted in artifact storage.
+
+### Publish source maps from Node builds
+
+For JavaScript bundles generated during Gregale's remote build, commit
+`gregale.issue-source-maps.json` beside the selected workload's `package.json`:
+
+```json
+{"version": 1, "directory": "/app/dist"}
+```
+
+Configure your bundler to emit flat Source Map v3 files into that final-image
+directory, including its subdirectories. Deploy normally using local source or
+a connected repository; a workspace uses the selected workload's source root.
+Keep the configuration in the uploaded source archive. This path supports
+production Railpack Node builds; Dockerfiles, other languages and developer
+watch-mode builds reject the opt-in.
+
+The builder discovers final `.js`, `.mjs` and `.cjs` bundles, follows their last
+complete relative `sourceMappingURL` comment, or uses `bundle.js.map` for hidden
+maps. URLs are never fetched. Maps must remain within the configured directory;
+links, inline maps, indexed maps and absolute source paths are unsupported.
+`node_modules` and `.git` are skipped. Bounds are 4,096 visited entries, 16 MiB
+per bundle, 64 MiB total bundles and the existing map/count/decoded-entry limits.
+Empty discovery and invalid/missing referenced maps fail the build.
+
+The artifact sidecar contains only sanitized map metadata: source contents and
+producer extensions are removed. The deployed image remains unchanged, including
+any `.map` files the application ships; control their public serving separately.
+The handoff verifies the exact source archive,
+build, deployment and final OCI image; bundle SHA-256 values describe final
+output bytes. The build commits its source maps and success together, before
+imaging, readiness or production promotion. A verified build-cache hit carries
+the same sanitized maps into the new deployment's artifact set. Temporary
+publication interruptions retry the same completion without another build or
+deployment; a lost image notification is recovered by the existing durable poll.
+Process death before that commit follows the existing build-reaper behavior.
+
+Inspect readiness with `gregale issues source-maps status --app APP --deployment ID`.
+The existing 32-ready-deployment cap and immutable-manifest conflicts still
+apply; retire obsolete sets to free capacity. Do not also use the prebuilt CLI
+publication flags for the same deployment. Automatic publication does not enable
+reporters or grouping: opt into `deployment-source-maps-v1` as described above.
+
+Operators must update both builderd and the builder guest before enabling this
+source-file opt-in. An old guest with a new builderd fails closed on the missing
+handoff; an old builderd does not understand the opt-in. Native builder acceptance
+of the dual-export path remains a rollout requirement.
+
+### Publish prebuilt source maps during deployment
+
+For prebuilt JavaScript bundles, `deploy` can publish the manifest to the exact
+deployment it creates. Put the manifest directly in the directory scanned by the
+Node build command, beside the bundle tree its paths describe:
+
+```sh
+npx gregale-issue-source-maps dist dist/.gregale-issue-maps.json --replace
+# Include the built bundles and manifest in the source archive.
+tar -czf release.tar.gz package.json dist src
+gregale deploy --name exports --tarball release.tar.gz --no-traffic \
+  --issue-source-maps dist/.gregale-issue-maps.json \
+  --issue-source-map-directory /app/dist
+```
+
+`--issue-source-maps` is relative to the selected source root, not the CLI's
+working directory. `--issue-source-map-directory` is the absolute directory in
+the deployed app corresponding to the manifest's directory. The CLI snapshots
+the final archive, validates and sanitizes the manifest, and verifies every
+referenced bundle's SHA-256 before creating an app or deployment. Bounds match
+Node discovery: 16 MiB per bundle and 64 MiB total. Missing, excluded, changed,
+invalid or empty artifacts stop the command before deployment mutations.
+
+Local source selection (`--path`, HEAD or `--source=worktree`) is also supported
+when the bundles and manifest survive normal packing exclusions. `dist` and
+`.next` are excluded from automatic source packing; use an explicit prebuilt
+archive to include them. Default Git selection uses committed files, so a manifest
+present only in the working tree cannot describe that deployment. Workspace
+deploys resolve the manifest relative to the selected workload's build root.
+
+Publication requires `--no-traffic` or `--traffic-percent=0`. The accepted
+deployment must confirm the same source-archive digest, build root and zero
+production traffic before upload, including when an explicit idempotency key
+replays an earlier submission. A fresh deployment read also verifies that the
+deployment still has those properties, rather than relying on a cached receipt.
+A mismatch produces inspection guidance without
+a publication command. After publication,
+the existing deployment wait continues; `--no-wait` still waits for artifact
+publication and returns before build completion. JSON receipts include
+`issue_source_maps` readiness at publication time, deployment ID, map count and canonical digest.
+A lost PUT response is reconciled only when a fresh read confirms the exact ready
+artifact set. Definite authorization and conflict responses remain errors.
+
+If readiness cannot be confirmed, the command fails with the accepted deployment
+ID, a status command and a publication-only recovery command. Recovery uses a
+private, sanitized manifest snapshot saved locally; delete its file and directory
+after recovery. The command never rolls back or resubmits the deployment to retry
+publication. Recovery only uploads artifacts: it does not resume the deployment
+wait or reapply manifest settings rolled back by the failed deploy. Review those
+settings and confirm publication and deployment readiness before using the normal
+guarded promotion flow. This requires access to inspect the deployment as well as
+publish its artifacts.
+
+This does not enable reporter symbolication or grouping automatically. Startup,
+readiness and preview requests may execute while publication is pending; opted-in
+captures still reject missing artifacts. The hashes verify uploaded bundle bytes,
+not transformations a subsequent build might make: deploy prebuilt bundles without
+rebuilding them, and configure their exact runtime paths. No source code is executed
+locally or source-map URL fetched. Map contents remain private under the existing
+publication API's access checks.
+
+Image, connected-repository, embedded-template, project/function-set, developer-sync,
+preview and create-only paths reject these flags; safe/canary rollouts are also
+excluded because this flow stages zero production traffic. Existing explicit
+publication remains available for those builds. See
+[ADR-1736](adr/1736-deploy-issue-source-map-publication.md).
 
 ### Grouping explanations
 
@@ -660,6 +775,65 @@ splitting an original member restores its own receipt. Expiry does not send an
 alert by itself. Frequency/customer-impact alerts, reminders, tracker notices and
 raw lifecycle webhooks keep their existing independent policies.
 
+### Compound alerts: frequency and verified customer impact
+
+Compound rules require **both** an event threshold and a verified distinct-customer
+threshold in the same rolling window, optionally restricted to one exact environment.
+For example, notify when a production issue records at least 20 accepted events and
+three verified customers in ten minutes:
+
+```sh
+gregale issues compound-alerts get --app payments
+gregale issues compound-alerts save --app payments --expected-revision 0 --key production-impact --environment production --minimum-events 20 --minimum-customers 3 --window-seconds 600 --cooldown-seconds 1800
+gregale issues compound-alerts preview --app payments --issue ISSUE_UUID --key production-impact --environment production --minimum-events 20 --minimum-customers 3 --window-seconds 600 --cooldown-seconds 1800
+gregale issues compound-alerts remove --app payments --expected-revision 1 --key production-impact
+```
+
+The dashboard's **Compound alerts** page supports editing, removing and previewing
+unsaved rules. CLI save/remove preserves other rules and requires the current
+revision. API `GET|PUT /v1/apps/{slug}/issue-compound-alert-policy` reads or replaces
+the entire policy; use an empty rules array to clear it. Stale writes return 409.
+Up to ten rules are supported, with 1–100,000 events, 1–10,000 verified customers,
+60–86,400-second windows and 60–604,800-second cooldowns.
+
+`POST /v1/apps/{slug}/issue-compound-alert-policy/preview` accepts an existing
+`issue_id` and one draft `rule`. It reports each predicate, counts, window bounds,
+policy revision and next cooldown eligibility in one read-only snapshot. It does
+not insert a hypothetical event, save, reserve a cooldown, enqueue or contact Slack.
+`allowed` means rule eligibility; delivery still requires an eligible subscription
+or team route, queue capacity and sender checks.
+
+Both counts use retained accepted occurrences in `(now-window, now]`, including
+merged members. Distinct customers use authoritative platform tenant/consumer
+attribution; reported hints do not count. Attribution learned after capture
+contributes on the next eligible capture. A new unique event inside the window
+triggers evaluation. Active ignores and snoozes suppress compound admission.
+Cooldown expiry, policy edits, delayed/future captures outside the window and
+capture retries do not trigger notifications by themselves. A regression starts
+a new response incident before evaluating its compound rules.
+
+Subscribe webhooks to `issue.compound_threshold_reached`. Enable **Compound
+thresholds** in native Slack settings to use the issue's assigned team or fallback
+team and its existing inbox/responders. Slack channel rules can select this event,
+environment, routed team and threshold-rule key; the existing `frequency_rule_key`
+selector also applies to compound rules. Event type distinguishes identical keys
+in the independent policies. Channel overrides do not assign a different team.
+History and messages retain aggregate event/customer counts, thresholds and window
+bounds, without customer identifiers.
+
+Activity, receipt, webhook transition and eligible native Slack admission commit
+with the capture. A database failure rolls them all back. A committed transition
+consumes its rule cooldown even if native delivery is disabled, unrouted or at
+capacity. Unchanged rules and enable toggles retain receipts; condition/timing
+changes begin a fresh cycle and removal prunes receipts. Checks use canonical group
+receipts, including merged members. Existing queued messages retain their evidence.
+
+Frequency-only and fixed-24-hour impact policies remain independent. This version
+supports bounded AND conditions; lifecycle triggers, OR/nested expressions, anomaly
+detection and traffic-relative rates remain future work. Apply the migration and
+upgrade all apid consumers before enabling the new policy/native event. See
+[ADR-1739](adr/1739-shared-window-issue-compound-alerts.md).
+
 ### Application error alerting compared with Sentry
 
 The current application-error alert surface has these boundaries (reviewed
@@ -667,11 +841,11 @@ The current application-error alert surface has these boundaries (reviewed
 
 | Workflow | Gregale today | Remaining gap |
 | --- | --- | --- |
-| New issue and release-aware regression | Durable lifecycle webhooks; native Slack environment allowlist and shared per-group cooldown with draft preview | Compound trigger/filter/action rules |
-| Customer impact | One policy per app, counting verified distinct customers per issue over a fixed rolling 24 hours | Per-rule windows and thresholds; verified customers differ from Sentry user counts |
-| Event frequency | Up to ten per-issue rules with rolling windows from one minute to one day | Rates relative to traffic, anomaly detection and compound conditions |
-| Environment routing | Exact frequency-rule selectors and native lifecycle-alert environment allowlist; groups remain separate | Lifecycle filtering for generic webhook subscriptions |
-| Noise control | Frequency-rule cooldowns, shared native new-issue/regression cooldown, ignore and response suppression | Compound suppression conditions and traffic-relative thresholds |
+| New issue and release-aware regression | Durable lifecycle webhooks; native Slack environment allowlist and shared per-group cooldown with draft preview | Lifecycle triggers and general trigger/filter/action rules |
+| Customer impact | One standalone 24-hour impact policy per app plus compound rules with per-rule impact windows and thresholds | Verified customers differ from Sentry user counts; traffic-relative impact is not supported |
+| Event frequency | Up to ten per-issue rules with rolling windows from one minute to one day | Rates relative to traffic, anomaly detection and OR/nested conditions |
+| Environment routing | Exact frequency/compound-rule selectors and native lifecycle-alert environment allowlist; groups remain separate | Lifecycle filtering for generic webhook subscriptions |
+| Noise control | Frequency/compound-rule cooldowns, shared native new-issue/regression cooldown, ignore and response suppression | General suppression expressions and traffic-relative thresholds |
 | Slack | OAuth workspace installation, verified team and per-rule channels, routing preview/history, revocation handling, native threads and retries | Rotating tokens and Enterprise Grid organization grants |
 | Response | Native response inbox, dashboard/Slack acknowledgment and snoozing, reminders, backup-team escalation and handling history | Resolve and assign directly in Slack |
 
@@ -910,6 +1084,52 @@ precision/recall. App/environment namespaces remain separate. See
 semantics. The initial 19 fixtures are a regression baseline, not production
 accuracy evidence; add reviewed, sanitized real incidents before making rollout
 claims. The evaluator uses no network or database and does not output event content.
+
+Preview which cases would merge or split when switching strategies:
+
+```sh
+go run ./cmd/issues-grouping-eval -strategy cause-chain-v1 -compare-with failure-site-v1
+```
+
+The preview lists affected case IDs, their old/new group representatives and
+structural grouping reasons: selected frame indexes, cause index, evidence basis
+and discriminator kind. It omits messages, paths, code/override values, namespace
+values and family labels. Case IDs are intentionally visible; use non-sensitive
+identifiers. Group names are the smallest member case ID, so a fingerprint version
+change alone does not appear as a membership change. This evaluates offline
+strategy behavior; it does not simulate live manual merge/split rules.
+
+Check future normalizer changes against the checked-in, reviewed synthetic
+partition:
+
+```sh
+make issues-grouping-check
+```
+
+The same baseline is checked by the normalizer and evaluator test suites. A check
+fails for **any newly incorrect pair**, even if total false merges/splits stay the
+same or another pair improves. Existing incorrect pairs do not fail again unless
+they are newly introduced. The JSON report separates new and fixed false merges
+and splits. Previews alone return success when their inputs are valid; `-check`
+requires a saved baseline and returns nonzero for regressions (exit 2 from the
+compiled binary; `go run` wraps that exit).
+
+For an independently reviewed, sanitized incident corpus:
+
+```sh
+go run ./cmd/issues-grouping-eval -corpus PATH -strategy cause-chain-v1 -write-baseline review.next.json
+# Review the labeled corpus and snapshot before accepting it as a baseline.
+go run ./cmd/issues-grouping-eval -corpus PATH -strategy cause-chain-v1 -baseline review.next.json -check
+```
+
+Snapshot creation uses a new private file and refuses to overwrite an existing
+path. Checks never rewrite baselines. Snapshots bind the complete parsed corpus,
+including labels and namespaces, with a SHA-256 digest; reordering cases or JSON
+formatting is harmless, while changing fixtures requires an explicit new review.
+The tool accepts the existing corpus array format and never infers incident truth
+or exports incidents. Review sanitation and labels together, preserving grouping
+differences that matter. See the [corpus guide](../pkg/issues/evaluation/testdata/README.md)
+and [ADR-1738](adr/1738-issue-grouping-previews-and-baselines.md).
 
 ### Reported breadcrumbs and operational tags
 

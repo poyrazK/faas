@@ -19,6 +19,117 @@ per-netns and host renders, the Ansible template, the user-space checks and
 on all nine rows. No deployment uses NAT64. Open: `nft -c` validation of the
 rendered ruleset and a metal run of the egress sweep.
 
+## Post-release watch — 2026-10-17
+
+[ADR-1445](adr/1445-post-release-watch.md): for 30 minutes after a release
+reaches 100%, apid compares it with its predecessor's traffic from before the
+rollout. A clear 5xx or p95-latency regression (the canary's own rules) rolls
+back through the readiness-gated rollback with trigger `post_release`. The
+release is marked `post_release_regression` and records an explained decision.
+Releases that opted out of automatic rollback are not watched, and a rollback
+that would cross a release command is skipped. On the n2 node the
+safe-release drill's new case deployed a release without a canary that
+answers in 700 ms. The watch rolled it back 91 s after the deploy
+(`abort_post_release_p95_latency`, p95 720 ms against 10 ms), and the app
+served again at 92 s. All eight drill cases passed, leakcheck clean, with no
+local vmmd patch and no base-ref pins (the single-box startup fix included).
+The Postgres and MemStore conformance cases and the apidserver watch tests pass.
+
+## Guarded, reversible config changes — 2026-10-17
+
+[ADR-1451](adr/1451-guarded-reversible-config-changes.md): every customer env
+or secret write records a revision of the scope's config (`gregale env
+history`), and `gregale env rollback <revision>` restores its variables. A
+change to a scope with a live deployment opens a config guard. The guard judges
+the first traffic served with the new config against the old config and, when
+the new config fails, restores the previous variables and replaced secrets
+(sealed rows, never unsealed) and restarts the app. Deleted or rotated secrets
+are never restored automatically. Stage 2, config canaries through config-only
+deployments, is a follow-up. On the n2 node the safe-release drill's new case
+sets a variable that makes the hello app answer 500. The guard restored the
+previous config 20 s after the change (`fail_first_wake_5xx`, new config 17/17
+5xx), and the app served again at the same mark. All seven drill cases passed,
+leakcheck clean. The Postgres and MemStore conformance case, the clone schema
+registry on a migrated database, the apidserver guard, rollback and history
+tests, the CLI tests, spec compliance and the SDK coverage gate pass.
+
+## One rollout flag and a live rollout view — 2026-10-16
+
+[ADR-1450](adr/1450-one-rollout-flag-and-live-rollout.md): `gregale deploy
+--rollout safe|fast|immediate` chooses how a release reaches traffic, and the
+app's `release_policy` accepts the same three words (`fast` fills the
+`aggressive` ladder). At a terminal, `gregale deploy` follows a canary rollout
+to 100% or abort; Ctrl-C detaches with exit 0 and the rollout keeps running.
+`--safe`, `--canary-preset` and `--canary-stages` still work and are marked
+deprecated. CLI tests cover the mapping, the conflicts and the detach exit; the
+`pkg/apid/release` default-policy test covers `fast`.
+
+## App-chosen rollout probe routes — 2026-10-16
+
+[ADR-1449](adr/1449-app-chosen-rollout-probe-routes.md): an app may name up to
+three `GET` paths (`release_probe_paths`, `gregale app --release-probe-paths`)
+that the default rollout probe checks instead of `/`; each round splits the 20
+probes per revision across them. The apidserver round trip and probe test and
+the Postgres and MemStore probe-target tests pass on the n2 node.
+
+## Releases that change the database — 2026-10-15
+
+[ADR-1448](adr/1448-releases-that-change-the-database.md): a rollback whose
+target has not served since a later release command ran is refused with
+`rollback_crosses_release` unless acknowledged (`--acknowledge-releases`, a
+typed confirmation at a terminal, or `acknowledge_releases` in the API). The
+refusal lists the crossed releases and, for managed PostgreSQL databases the
+release commands can migrate, the `gregale postgres restore` command for the
+moment before the earliest of them. The usual rollback to the previous release
+crosses nothing; automated rollbacks never acknowledge. Deployment reads report
+the release run as `release`. Verified on the n2 node: apidserver rollback,
+state, CLI and spec tests pass, and the full safe-release drill passed with
+leakcheck clean.
+
+## Evidence-paced default rollouts — 2026-10-15
+
+[ADR-1321](adr/1321-evidence-paced-default-rollouts.md) makes the default
+production rollout `adaptive`: the balanced 1% → 10% → 50% → 100% ladder, but
+each stage advances as soon as the circuit breaker has conclusive, clean
+evidence against the serving predecessor, after at least one minute, instead
+of always waiting for its 2-minute timer. `gregale deploy --safe` uses it;
+explicit presets keep their timers. The default probe now sends 20 probes per
+revision per round, and each minute's round starts within about 15 s. On the
+n2 node a flag-free release of a quiet app reached 100% in 248 s, down from
+about 9 minutes; all six safe-release drill cases passed, leakcheck clean.
+
+## Explained rollout decisions — 2026-10-14
+
+[ADR-1447](adr/1447-explained-rollout-decisions.md) records the evidence behind
+every decision the safe-release circuit breaker makes: why a canary stage
+advanced, is held, or was aborted, with the request, 5xx, probe, latency, OOM
+and restart counts for both revisions. It is stored with the transition
+(`deployments.rollout_decision` and the deployment audit row), holds are
+deduplicated `deploy.rollout_held` audit rows, and the API, `gregale deployment
+wait --rollout`, `deployment summary`, and the `rollout.completed` /
+`rollout.aborted` webhooks show it. The safe-release drill passed on the n2
+node with the new assertions: the quiet canary completed on an
+`advance_probe_evidence` record (20 probes each side at the decision), the
+late-failing release aborted on `abort_5xx` with `probes_included` (candidate
+probe 5xx 20/20), the bad release on `abort_5xx` and the crash loop on
+`abort_crash_loop`; leakcheck clean. The Postgres state tests, conformance,
+spec parity, and the apidserver Safe Deploy tests pass on the node.
+
+## Safe releases by default — 2026-10-13
+
+[ADR-1446](adr/1446-safe-releases-by-default.md) makes the balanced health-gated
+canary with first-wake 5xx rollback the default for production releases,
+bounds low-traffic canary holds, judges quiet canaries on ADR-847 probes of
+`/`, adds a crash-loop gate, and fixes plain rollback of image, GitHub, and
+preview deployments, which the latest-revision promotion fence had silently
+superseded. The metal drill suite (`cmd/e2e/safe_release_drill_metal_test.go`)
+passed on the n2 node on 2026-10-13: safe default, low-traffic advance on
+probe evidence (132–182 s), probe-backed abort of a quiet release that fails
+after its smoke (72–176 s), 5xx abort, crash-loop abort, canary-worker
+fallback, and rollback recovery in 6.8–13.5 s with a verified `complete`
+rollback receipt ([drill record](drills/2026-10-10-safe-release-drill.md)). Progressive rollouts
+are `beta` in the product registry.
+
 ## Two-generation hand-off on reload — 2026-10-18 (branch, not released)
 
 gatewayd-public, gatewayd-internal, apid and realtimed hand off on
@@ -46,8 +157,9 @@ realtimed binary:
 - a restart after a hand-off drains for the 25 s grace.
 The first native run found that a successor started by the old process was an
 alien main process to systemd, which SIGKILLed it on restart; successors are
-now systemd's children. Open: apid's memory headroom (256 M), a WebSocket
-across a gateway hand-off on a real node, and a deploy through deployctl.
+now systemd's children. apid's cap rose to 512 M with a 256 MiB GOMEMLIMIT
+(ADR 20261018132058). Open: a WebSocket across a gateway hand-off on a real
+node, and a deploy through deployctl.
 
 ## Zero-downtime daemon restarts — 2026-10-17 (branch, not released)
 
@@ -1060,6 +1172,225 @@ lint is clean. These checks are separate from native execution. This
 implementation workspace has no `/dev/kvm`; supported native
 execution and host leak qualification remain pending. No feature or rollout gate
 is enabled. Python guest and live-provider qualification remain separate.
+## Organization queues — local implementation, 2026-10-17
+
+[ADR-202610171908](adr/202610171908-organization-queue-ownership.md) gives queue bindings immutable
+organization ownership. Company backlogs, private consumers, stage runtime sets,
+receipt authority and dead-letter/replay history survive creator erasure.
+Reviewed organization routes enforce current roles, scopes and offboarding
+fences; existing workload identities keep processing the same accepted work.
+Company plans and quotas apply across creator namespaces after billing adoption,
+and reservation snapshots release the correct counter through retries and
+completion. Personal cleanup and inventories exclude company queues.
+
+Twenty organization operations are available in OpenAPI and the Go, Node and
+Python SDKs. Memory/PostgreSQL race and HTTP worker acceptance pass, including
+revocation during an enqueue request and retained stage configuration.
+See [implementation evidence](implementation/202610171908-organization-queue-validation.md).
+This supersedes ADR-202610171907's queue ownership restriction. External trigger
+administration, jobs, GitOps and full cloning retain their separate restrictions.
+
+The accumulated enterprise changes are under review in
+[PR #4882](https://github.com/poyrazK/faas/pull/4882). The migration requires a
+coordinated restart of async quota writers while admission and dispatch are
+paused. Deployment and native KVM acceptance remain pending.
+
+## Organization object storage — local implementation, 2026-10-17
+
+[ADR-202610171907](adr/202610171907-organization-object-storage-ownership.md) adds immutable company
+ownership to app/environment buckets, reviewed organization storage routes and
+aggregate usage. Human S3 credentials record their issuer and membership revision;
+role changes and departure revoke them. Application bindings retain their sealed
+credentials and bucket/provider identities through creator erasure. Shared quotas
+and provider exports use the company's financial subject after billing adoption.
+Personal cleanup/exports exclude company storage; organization deletion requires
+bucket cleanup. This supersedes ADR-202610171906's object-storage erasure restriction.
+Unreviewed storage settings, transfer control APIs, cloning, queues and GitHub/GitOps
+integration still require their own ownership review.
+
+Validation details are recorded in
+[the implementation evidence](implementation/202610171907-organization-object-storage-validation.md).
+Memory/PostgreSQL race and HTTP/S3 acceptance, schema/API/SDK contracts and
+configured Go static checks pass.
+Changes remain local; deployment and native KVM acceptance are pending.
+
+## Organization managed PostgreSQL — local implementation, 2026-10-17
+
+[ADR-202610171906](adr/202610171906-organization-managed-postgres-ownership.md) gives managed
+PostgreSQL databases an immutable organization owner. Company database and
+app/environment binding routes enforce current roles, credential scopes and
+membership fences before mutation or replay. Shared source manifests resolve
+company databases within their persisted organization. Database and binding
+storage namespaces remain distinct, preserving existing provider IDs, sealed
+credentials and operation history through creator erasure.
+
+Adopted company plans, quotas and usage aggregate across legacy namespaces.
+Personal inventories and exports exclude company databases and historical audit
+references. Creator erasure retains company accounting; organization deletion
+requires database cleanup. Unreviewed cutover/clone HTTP routes, object storage,
+queues and other unsupported services retain their existing shared-access or
+erasure restrictions. This entry supersedes ADR-202610171905's database restriction.
+
+Race regressions pass for ownership backfill and mixed-root rejection, concurrent
+quota admission, offboarding commit ordering, personal isolation, retained usage
+and creator erasure. A PostgreSQL HTTP regression verifies unchanged sealed
+credentials and usable SQL access after erasure, teammate image deployment and
+credential rotation, and denial of cached binding replay after demotion.
+
+Canonical schema and SQL generation, OpenAPI lint and route/schema parity,
+Node client build, Python SDK compilation and generated client regressions,
+Go SDK path tests, and runtime/customer documentation checks pass. Enabled Go
+static checks report zero findings across all eleven packages changed in this
+slice. The broad historical migration test package still has failures and hit
+its ten-minute timeout; focused migration checks pass. Details are recorded in
+[the implementation evidence](implementation/202610171906-organization-postgres-validation.md).
+
+Changes remain local. Deployment and native KVM acceptance are pending.
+
+## Organization projects and environments — local implementation, 2026-10-17
+
+[ADR-202610171905](adr/202610171905-organization-project-ownership.md) makes persisted project
+organization ownership independent of creator identities. Organization project
+URLs cover source deployment, environments, configuration, releases, protected
+plan approvals, promotions and rollback. Current roles, credential scopes and
+membership transaction fences apply before replay; legacy inventories hide
+company projects after departure. Stable resource namespaces preserve core
+project/environment history and sealed bindings through creator erasure.
+
+Migration backfill refuses mixed ownership. Unsupported data-service and
+GitHub/GitOps references remain erasure blockers. Shared source uploads cannot
+resolve personal database/async-route bindings, and resource cloning remains
+outside the reviewed shared surface. OpenAPI and Go/Node/Python clients expose
+the new organization routes.
+
+Focused MemStore/PostgreSQL and HTTP regressions pass with race detection for
+ownership backfill and isolation, raced offboarding, creator erasure (including
+empty projects), protected approvals, source/image deployment admission,
+promotion, rollback and authorization before cached response replay.
+Reconciliation, personal export filtering and Go client tests also pass with
+race detection.
+
+Canonical schema regeneration, SQL generation, OpenAPI route/schema parity and
+lint, generated Node/Python client builds and selected SDK regressions, and
+repository policy checks pass. Enabled Go static checks report zero findings
+across all ten packages changed in this slice.
+
+Changes remain local. Deployment and native KVM runtime acceptance are pending.
+
+## Organization core resource ownership — local implementation, 2026-10-17
+
+[ADR-202610171904](adr/202610171904-organization-resource-lifecycle.md) separates human identities
+from stable resource namespaces. Adopted organizations own core app policy,
+configuration, deployment lifecycle, request budgets, abuse controls and future
+usage; erasing a former creator preserves these resources. Paid adoption requires
+an organization-owned provider-qualified subscription. Existing billing and
+provider handles are preserved until confirmation, and adoption never reverts to
+a person after cancellation. Free organizations adopt immediately.
+
+MemStore/PostgreSQL and HTTP race regressions pass for creator erasure, sealed
+configuration preservation, permanent billing adoption, usage replay, owner
+safety, current-member access, credential revocation and personal export
+isolation. Scheduler, image, builder, metering, gateway, billing and Go API
+regressions also pass with race detection. A PostgreSQL runtime-admission
+snapshot remains unchanged after erasing the creator.
+
+Canonical schema regeneration, SQL generation, OpenAPI route/schema parity and
+lint, generated Node/Python clients and billing checks, and repository policy
+checks pass. Enabled Go static checks report zero issues across all 18 changed
+packages. Targeted network-usage and billing-adoption checks also pass after
+the final accounting cleanup.
+
+Changes remain local; no production rollout or native KVM acceptance is claimed.
+This environment lacks KVM and cannot inspect the host loop devices required by
+the native leak check. Unsupported project, data-service and installation
+bindings continue to block identity erasure. ADR-202610171905 above supersedes the core
+project/environment restriction recorded in this historical entry.
+
+
+## Local organization application quota ownership — 2026-10-17
+
+This entry records the original ADR-202610171903 boundary. ADR-202610171904 above supersedes its
+core lifecycle restrictions for adopted organizations.
+
+[ADR-202610171903](adr/202610171903-organization-application-quota-ownership.md) moves app
+admission from a creator-wide count to the persisted organization's shared plan
+pool. Production, developer and PR-preview caps remain in `pkg/api/limits.go`.
+Create/restore and plan changes serialize across different creators; personal
+app quotas, account/dashboard counts and scan preflight exclude company apps.
+Missing personal app attribution is repaired without rewriting existing shared
+ownership.
+
+Personal-account deletion scheduling and hard purge now refuse legacy shared-app
+storage/billing references before any child data can be removed. The API returns
+409 with the migration requirement. This change moves app quotas and prevents
+data loss. App child ownership, runtime/metering subjects and organization billing
+still need a coordinated migration. The creator's account cannot yet be erased
+while company apps depend on it.
+
+Focused MemStore/PostgreSQL race suites pass, including both plan-change orders,
+rollback, create/restore contention, separate quota pools, personal display counts
+and preservation during blocked erasure. API scan, account-count, creation,
+restoration, idempotency, offboarding and authorization regressions pass under the
+race detector. Static checks pass with zero issues for the state, app-access and
+API packages. SQL generation and repository policy/docs checks pass.
+
+Implementation and acceptance checks are local; no deployment is implied.
+
+## Local organization application offboarding — 2026-10-16
+
+[ADR-202610171902](adr/202610171902-organization-offboarding-fences.md) adds membership revisions
+and PostgreSQL transaction fences to the shared application and organization
+control plane. Member removal atomically revokes the member's organization keys,
+app deploy tokens and outstanding org invitations, including previously removed
+members in the migration backfill. Personal identities, other org credentials,
+deployed applications and accepted workloads remain intact.
+
+Live/archive logs and app debugger/task tunnels recheck access every second and
+cancel their upstream connections on removal, demotion, key revocation/expiry or
+lookup failure. Direct notification writes also take the membership fence.
+Indirect domain/cron/edge-rule/invocation URLs check their app, and app,
+deployment, build, domain, cron, instance, secret, invocation and app-metrics
+inventories filter resources the departed creator can no longer read. Filtered
+pagination preserves access to older personal resources without exposing hidden
+company cursor values.
+
+Acceptance covers real PostgreSQL commit ordering and rollback, raced credential
+issuance, membership restoration, CI OIDC credential checks, paused HTTP mutations,
+and active HTTP/WebSocket connection revocation. See the [team access
+guide](organization-app-access.md) for guarantees and migration boundaries.
+
+Focused race suites for state/database, API, gateway and authorization middleware
+pass, as do enabled static checks for all seven touched packages, SQL generation,
+documentation links and repository policy gates. CI bearer coverage also fixed
+an existing OIDC insert that omitted the token UUID without a database default.
+
+This is local implementation with no deployment. Additional shared permissions,
+account-owned jobs, projects/environments and other account-wide data services,
+organization billing/quotas, SSO/SCIM and service principals remain separate work.
+
+## Local organization application authorization — 2026-10-16
+
+[ADR-202610171901](adr/202610171901-organization-application-authorization.md) adds current
+organization membership and operation-specific role checks to 39 reviewed app,
+configuration, secret, deployment/build and gateway log routes. Authentication,
+key scopes, MFA and actor attribution remain attached to the caller; existing
+storage, plan limits and billing remain attached to the resource account.
+Authorization precedes mutation replay. Collaborator receipts and activity
+deduplication are partitioned by caller and credential; creator receipts retain
+their existing namespace for upgrade compatibility. Deployment cancellation also
+checks the named app, including when another organization's app shares its legacy
+account.
+
+Portable race checks cover the authorization/middleware packages, focused API
+regressions including real PostgreSQL role changes and owner-scoped storage, and
+gateway live/archive authorization. Touched-package static analysis and repository
+policy/docs checks pass. The [team access guide](organization-app-access.md)
+records the permission matrix and exact migration boundary.
+
+This was the initial authorization slice. The offboarding entry above adds
+stream revocation, transaction fencing and filtered core inventories. Shared
+access beyond the reviewed route list and organization billing/quotas remain
+separate work.
 
 ## Containers: image runs, process identity and Compose build context — 2026-10-15
 
