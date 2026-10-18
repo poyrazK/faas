@@ -1,4 +1,5 @@
 -- ADR-1646: isolated candidate binding evidence, consumed at graph activation.
+-- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 ALTER TABLE environment_workload_qualification_requests ADD COLUMN IF NOT EXISTS binding_context jsonb

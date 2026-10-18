@@ -1,4 +1,5 @@
 -- ADR-1647: checked removal of a complete managed graph, without recipients.
+-- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 ALTER TABLE environment_workload_retirements ADD COLUMN IF NOT EXISTS binding_policy_context jsonb

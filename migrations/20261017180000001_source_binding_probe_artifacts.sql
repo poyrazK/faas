@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- ADR-1645: reviewed source builds have no OCI image digest. Only a fenced
