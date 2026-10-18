@@ -1480,7 +1480,10 @@ func (o *OCIRegistryStorageBackend) pushBlobMonolithic(ctx context.Context, repo
 		if perr != nil {
 			return fmt.Errorf("upload Location: %w", perr)
 		}
-		uploadURL = appendDigestQuery(uploadURL, digestHex)
+		uploadURL, perr = appendDigestQuery(uploadURL, digestHex)
+		if perr != nil {
+			return fmt.Errorf("upload Location query: %w", perr)
+		}
 		// Rewind the body — the POST above already consumed it.
 		// doBearerRequest's Rewind branch only fires on a 401 retry,
 		// not on a clean success→202 transition.
@@ -1554,15 +1557,22 @@ func resolveUploadLocation(registryBase, loc string) (string, error) {
 // doesn't already carry one. The OCI distribution spec mandates the
 // digest is on the final PUT so the registry can verify content
 // addressability.
-func appendDigestQuery(u, digestHex string) string {
-	if strings.Contains(u, "digest=") {
-		return u
+func appendDigestQuery(u, digestHex string) (string, error) {
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return "", fmt.Errorf("parse upload URL: %w", err)
 	}
-	sep := "?"
-	if strings.Contains(u, "?") {
-		sep = "&"
+	if parsed.Query().Has("digest") {
+		return u, nil
 	}
-	return u + sep + "digest=sha256:" + digestHex
+	// Preserve opaque registry state, including query order and escaping.
+	// Only an actual digest parameter counts; a path, another key, or a
+	// parameter value containing "digest=" must not suppress the digest.
+	if parsed.RawQuery != "" {
+		parsed.RawQuery += "&"
+	}
+	parsed.RawQuery += "digest=sha256:" + digestHex
+	return parsed.String(), nil
 }
 
 // pushManifest PUTs the image-manifest JSON to /v2/<repo>/manifests/<tag>.
@@ -1855,42 +1865,6 @@ func (o *OCIRegistryStorageBackend) resolveManifestDigest(ctx context.Context, r
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
-// fetchTags GETs /v2/<repo>/tags/list and returns the tag list. An
-// empty list + nil error means "no tags" (the repo exists but is
-// empty); an HTTP 404 surfaces as ErrNotFound (the repo doesn't
-// exist). Other failures return wrapped errors so List can skip them.
-func (o *OCIRegistryStorageBackend) fetchTags(ctx context.Context, repo string) ([]string, error) {
-	u := o.registry + "/v2/" + o.fullRepo(repo) + "/tags/list"
-	resp, err := o.doBearerRequest(ctx, bearerReqOpts{
-		Method: http.MethodGet,
-		URL:    u,
-		Scope:  "repository:" + o.fullRepo(repo) + ":pull",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("get tags: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, nil // repo doesn't exist → empty
-	}
-	if resp.StatusCode != http.StatusOK {
-		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("tags returned %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if err != nil {
-		return nil, fmt.Errorf("read tags: %w", err)
-	}
-	var resp2 struct {
-		Name string   `json:"name"`
-		Tags []string `json:"tags"`
-	}
-	if err := json.Unmarshal(body, &resp2); err != nil {
-		return nil, fmt.Errorf("decode tags: %w", err)
-	}
-	return resp2.Tags, nil
-}
-
 // --- bearer token cache ------------------------------------------------
 
 // bearer returns a cached bearer for scope, falling back to an empty
@@ -1998,7 +1972,11 @@ func (o *OCIRegistryStorageBackend) singleFlightRefresh(ctx context.Context, sco
 		o.inFlight.Delete(scope)
 		o.refreshMu.Unlock()
 	}
-	<-flight.done
+	select {
+	case <-flight.done:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 	if fresh, ok := o.freshCachedAccessToken(scope); ok {
 		return fresh, nil
 	}
@@ -2053,9 +2031,8 @@ type refreshResult struct {
 //     cleartext realm would let any on-path observer capture them.
 //   - The realm host MUST be the registry host or a one-segment
 //     subdomain (e.g. registry=ghcr.io/onebox → realm=auth.ghcr.io
-//     is allowed but realm=evil.com is not). Most major registries
-//     colocate the token endpoint on the registry host itself
-//     (ghcr.io, registry-1.docker.io) or a single subdomain.
+//     is allowed but realm=evil.com is not). Docker Hub's known
+//     registry-1.docker.io → auth.docker.io pair is also allowed.
 //
 // Anonymous (no creds) flows skip both guards: a realm advertised by
 // the registry on a public read can't leak anything except a token
@@ -2096,7 +2073,8 @@ func (o *OCIRegistryStorageBackend) bearerForChallenge(ctx context.Context, chal
 //     docker.io, and self-hosted distribution),
 //   - a single-segment subdomain of the registry host (auth.ghcr.io
 //     when registry=ghcr.io),
-//   - a single-segment parent (registry=auth.ghcr.io → realm=ghcr.io).
+//   - a single-segment parent (registry=auth.ghcr.io → realm=ghcr.io),
+//   - Docker Hub's registry-1.docker.io → auth.docker.io pair.
 //
 // The matching is host-only; path / port are not part of the trust
 // decision so an operator can reconfigure paths without whitelisting.
@@ -2112,7 +2090,7 @@ func validateBearerRealm(registryBase, realm string) error {
 	if err != nil {
 		return fmt.Errorf("parse registry: %w", err)
 	}
-	if !realmHostAllowed(rURL.Host, regURL.Host) {
+	if !realmHostAllowed(rURL.Hostname(), regURL.Hostname()) {
 		return fmt.Errorf("realm host %q is not the registry host %q nor a single-segment neighbour", rURL.Host, regURL.Host)
 	}
 	return nil
@@ -2125,14 +2103,18 @@ func validateBearerRealm(registryBase, realm string) error {
 //	registry=ghcr.io       → auth.ghcr.io, ghcr.io (exact)
 //	registry=auth.ghcr.io  → auth.ghcr.io (exact), ghcr.io (parent)
 //
-// Anything more distant (attacker.com, foo.bar.ghcr.io) is rejected.
-// This matches what real OCI registries do — the token endpoint lives
-// at most one DNS hop from the registry hostname.
+// Docker Hub uses a known sibling auth.docker.io for registry-1.docker.io.
+// Other sibling hosts and more distant hosts remain rejected.
 func realmHostAllowed(realmHost, registryHost string) bool {
+	realmHost = strings.ToLower(realmHost)
+	registryHost = strings.ToLower(registryHost)
 	if realmHost == "" || registryHost == "" {
 		return false
 	}
 	if realmHost == registryHost {
+		return true
+	}
+	if registryHost == "registry-1.docker.io" && realmHost == "auth.docker.io" {
 		return true
 	}
 	realmLabels := strings.Split(realmHost, ".")
@@ -2212,7 +2194,7 @@ func (o *OCIRegistryStorageBackend) doBearerRequest(ctx context.Context, opts be
 		return resp, nil
 	}
 	// 401 — capture the challenge, then invalidate + refetch + retry.
-	challenge := resp.Header.Get("Www-Authenticate")
+	challenge := strings.Join(resp.Header.Values("Www-Authenticate"), ", ")
 	_ = resp.Body.Close()
 	o.invalidateToken(opts.Scope)
 	tok, terr := o.bearerForChallenge(ctx, challenge, opts.Scope)

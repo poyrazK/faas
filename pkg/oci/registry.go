@@ -557,7 +557,7 @@ func (c *RegistryClient) fetchManifestJSONWithAuthLimit(ctx context.Context, url
 		return nil, "", err
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
-		ch := parseChallenge(resp.Header.Get("Www-Authenticate"))
+		ch := parseChallenge(strings.Join(resp.Header.Values("Www-Authenticate"), ", "))
 		_ = resp.Body.Close()
 		token, err := c.fetchToken(ctx, ch, auth)
 		if err != nil {
@@ -653,7 +653,7 @@ func (c *RegistryClient) openBlobNetworkWithAuth(ctx context.Context, r Referenc
 		return "", nil, err
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
-		ch := parseChallenge(resp.Header.Get("Www-Authenticate"))
+		ch := parseChallenge(strings.Join(resp.Header.Values("Www-Authenticate"), ", "))
 		_ = resp.Body.Close()
 		token, err := c.fetchToken(ctx, ch, auth)
 		if err != nil {
@@ -741,7 +741,7 @@ func (c *RegistryClient) resolveDigestWithAuth(ctx context.Context, r Reference,
 	}
 	// A 401 carries the token challenge: fetch a bearer token and retry once.
 	if resp.StatusCode == http.StatusUnauthorized {
-		ch := parseChallenge(resp.Header.Get("Www-Authenticate"))
+		ch := parseChallenge(strings.Join(resp.Header.Values("Www-Authenticate"), ", "))
 		_ = resp.Body.Close()
 		token, err := c.fetchToken(ctx, ch, auth)
 		if err != nil {
