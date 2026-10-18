@@ -726,7 +726,10 @@ subsequently advanced to `c746937a74080c71c26e65a0dca89646cbee950b`; that
 commit only changes two scheduler tests outside the conflict set. The changed
 PostgreSQL clone registry has not been replayed against a local database on
 this source tree; fresh hosted checks remain required. Native activation
-remains disabled.
+remains disabled. Hosted lint on the first resolved merge head stopped at its
+gofmt step for `pkg/state/statetest/dispatch.go`; its lint/build steps were
+skipped. That file is now formatted with the pinned Go formatter. This is a
+formatting-only correction; fresh exact-head checks are required.
 
 ## Qualification boundary
 
