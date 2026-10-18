@@ -26,9 +26,10 @@ Non-Go inputs map to flags (scripts/ci/release_units.json):
 
   blocking     the release units deployctl installs at activation (unit
                files and tmpfiles rule of the control-plane bundle), other
-               files cd-controlplane copies into its bundle, the release
-               tarball's own contents, migrations that are not lane-eligible,
-               and deploy/ paths no host role reads. Any of these since base
+               files cd-controlplane copies into its bundle that no
+               control-plane role installs, the release tarball's own
+               contents, migrations that are not lane-eligible, and deploy/
+               paths no host role reads. Any of these since base
                makes the range ineligible: the per-unit lane reuses them
                from the base release.
   data         migrations added since base when every one is lane-eligible
@@ -38,8 +39,8 @@ Non-Go inputs map to flags (scripts/ci/release_units.json):
                docs/adr/20261018084150-unit-lane-expand-migrations.md). The
                control-plane lane applies them before it restarts anything;
                the edge lane waits for that.
-  host_config  deploy/ paths a control-plane host role reads
-               (scripts/ci/host_roles.py). The control-plane lane converges
+  host_config  deploy/ paths and bundle files a control-plane host role
+               reads (scripts/ci/host_roles.py). The control-plane lane converges
                the roles whose content hash changed before anything else
                (docs/adr/20261018133100-host-configuration-lane.md).
   pending      guest/, images/, kernel, and deploy/ paths a compute host
@@ -377,18 +378,25 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=Non
     claimed = set(step["paths"]) if step["eligible"] else set()
     changed_paths = {p for _, paths in commits for p in paths} - claimed
     deploy_prefixes = (config.get("blocking_paths") or {}).get("deploy") or []
+    # A bundle file a control-plane role installs is host configuration:
+    # the lane's convergence installs it, and no unit activation does.
+    converged_owned = {p for g in (config.get("host_config") or {}).get("converged_groups") or []
+                       for p in (host.get(g) or {}).get("owners", {})}
+    bundle_prefixes = (config.get("blocking_paths") or {}).get("control_plane_bundle") or []
     for kind in ("blocking_paths", "pending_paths"):
         for flag, prefixes in sorted((config.get(kind) or {}).items()):
             if kind == "blocking_paths" and flag == "deploy":
                 continue
-            found = sorted(p for p in changed_paths if matches(p, prefixes))
+            found = sorted(p for p in changed_paths if matches(p, prefixes)
+                           and not (flag == "control_plane_bundle" and p in converged_owned))
             if found:
                 flags[flag] = {"blocking": kind == "blocking_paths", "count": len(found), "paths": found[:FLAG_PATH_LIMIT]}
     # deploy/ by what reads it: a role a lane converges (host_config), a
     # compute role (compute_deploy, which waits for the full release and
     # holds the edge lane), the release's own units, or nothing that
     # converges (deploy). A deploy/ path no host role reads blocks.
-    deploy_paths = {p for p in changed_paths if matches(p, deploy_prefixes)}
+    deploy_paths = {p for p in changed_paths if matches(p, deploy_prefixes)
+                    or (matches(p, bundle_prefixes) and p in converged_owned)}
     for flag, found in classify_deploy(deploy_paths, config, host).items():
         flags[flag] = {"blocking": flag in ("deploy", "release_units"), "count": len(found),
                        "paths": found[:FLAG_PATH_LIMIT]}

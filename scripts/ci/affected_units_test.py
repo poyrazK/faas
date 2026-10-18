@@ -269,6 +269,18 @@ class HostConfigTest(unittest.TestCase):
         self.assertEqual(rep["blocked_by"], ["deploy"])
         self.assertIsNone(rep["host_config"]["version"])
 
+    def test_bundle_file_a_role_installs_is_host_config(self):
+        # docs/DPA.md is in the control-plane bundle; control_plane_service
+        # installs it too, so converging the role applies it.
+        host = dict(HOST, control_plane={"owners": dict(HOST["control_plane"]["owners"],
+                                                        **{"docs/DPA.md": ["control_plane_service"]})})
+        rep = au.analyze([("c1", ["docs/DPA.md"])], CLOSURES, CONFIG, EXISTS, host=host)
+        self.assertEqual(rep["blocked_by"], [])
+        self.assertEqual(rep["host_config"]["roles"], ["control_plane_service"])
+        self.assertTrue(rep["lanes"]["control-plane"]["eligible"])
+        rep = au.analyze([("c1", ["docs/DPA.md"])], CLOSURES, CONFIG, EXISTS, host=HOST)
+        self.assertEqual(rep["blocked_by"], ["control_plane_bundle"])
+
     def test_release_unit_blocks_although_a_role_reads_it(self):
         # deployctl reinstalls the base release's unit files at every unit
         # activation, so converging the role would not stick.
