@@ -7,10 +7,14 @@
 # (gatewayd-public, gatewayd-internal). The signed tarball is a workflow
 # artifact. cd-controlplane.yml deploys the control-plane lane with
 # `units_run_id`, then cd-edge-units.yml the edge lane host by host, each
-# held on the SLO gate. Full releases (release.yml on a v*.*.* tag) are
-# unchanged and remain the only path for migrations, deploy/ changes,
-# dependency bumps and the other compute daemons; this workflow says so and
-# exits when a range needs one.
+# held on the SLO gate. Migrations added since the base ride along when
+# every one is lane-eligible (declared `-- migration-compat: expand` and
+# free of contract changes, docs/adr/20261018084150-unit-lane-expand-
+# migrations.md): the control-plane lane applies them before it restarts
+# anything. Full releases (release.yml on a v*.*.* tag) are unchanged and
+# remain the only path for contract migrations, deploy/ changes, dependency
+# bumps and the other compute daemons; this workflow says so and exits when
+# a range needs one.
 #
 # The base defaults to the newest full release tag reachable from the
 # commit, the release CI checked every merge against. The deploy refuses any
@@ -22,7 +26,8 @@
 # already started is never cancelled (cd-controlplane's own concurrency).
 #
 # Gate: the merged commit passed the pull request's required light tier.
-# The mega tier (ci.yml) still gates every full release tag and runs nightly.
+# The mega tier (ci.yml) runs nightly and gates no release, full or unit
+# (docs/adr/20261018104452-release-decoupled-from-full-ci.md).
 
 name: release-units
 
@@ -123,6 +128,12 @@ jobs:
             fi
             pending="$(jq -r '[.pending[][]] | join(", ")' "$OUT_DIR/report.json")"
             [[ -z "$pending" ]] || echo "Waiting for the next full release: ${pending}."
+            if [[ "$(jq '.data.migrations | length' "$OUT_DIR/report.json")" != 0 ]]; then
+              echo
+              echo "| migration | class | lane | blockers |"
+              echo "| --- | --- | --- | --- |"
+              jq -r '.data.migrations[] | "| \(.path | ltrimstr("migrations/")) | \(.compat // "none") | \(if .eligible then "eligible" else "full release" end) | \(.blockers | join("; ")) |"' "$OUT_DIR/report.json"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build unit binaries

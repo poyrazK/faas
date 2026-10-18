@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/rehearsalfault"
 )
 
 const (
@@ -27,10 +29,11 @@ var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var checkpointPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 
 type Plan struct {
-	Version           int                `json:"version" yaml:"version"`
-	Primary           string             `json:"primary" yaml:"primary"`
-	Participants      []Participant      `json:"participants" yaml:"participants"`
-	WorkerTermination *WorkerTermination `json:"worker_termination,omitempty" yaml:"worker_termination,omitempty"`
+	PostgresFault     *rehearsalfault.Postgres `json:"postgres_fault,omitempty" yaml:"postgres_fault,omitempty"`
+	Version           int                      `json:"version" yaml:"version"`
+	Primary           string                   `json:"primary" yaml:"primary"`
+	Participants      []Participant            `json:"participants" yaml:"participants"`
+	WorkerTermination *WorkerTermination       `json:"worker_termination,omitempty" yaml:"worker_termination,omitempty"`
 }
 
 type Participant struct {
@@ -80,6 +83,12 @@ func Normalize(p Plan, workloads []string) ([]byte, string, error) {
 		worker, found := p.Participant(f.Workload)
 		if !found || !worker.Async || !checkpointPattern.MatchString(f.Checkpoint) {
 			return nil, "", errors.New("worker_termination requires a declared async worker and named checkpoint fixture")
+		}
+	}
+	if f := p.PostgresFault; f != nil {
+		worker, found := p.Participant(f.Workload)
+		if f.Validate() != nil || !found || !worker.Async || worker.Postgres != "read_write" || workers != 1 || len(p.Participants) != 2 || primary.Postgres != "read_write" || p.WorkerTermination != nil {
+			return nil, "", errors.New("postgres_fault requires one PostgreSQL worker, its primary and no worker termination")
 		}
 	}
 	p.Participants = append([]Participant(nil), p.Participants...)
@@ -144,16 +153,17 @@ type Job struct {
 	Attempts      []Attempt `json:"attempts"`
 }
 type Evidence struct {
-	Version     int          `json:"version"`
-	RunID       string       `json:"run_id"`
-	PlanSHA256  string       `json:"plan_sha256"`
-	Status      string       `json:"status"`
-	Closing     bool         `json:"closing"`
-	Plan        Plan         `json:"plan"`
-	Bindings    []Binding    `json:"bindings"`
-	Jobs        []Job        `json:"jobs"`
-	Reason      string       `json:"reason,omitempty"`
-	WorkerFault *WorkerFault `json:"worker_fault,omitempty"`
+	PostgresFault *rehearsalfault.Receipt `json:"postgres_fault,omitempty"`
+	Version       int                     `json:"version"`
+	RunID         string                  `json:"run_id"`
+	PlanSHA256    string                  `json:"plan_sha256"`
+	Status        string                  `json:"status"`
+	Closing       bool                    `json:"closing"`
+	Plan          Plan                    `json:"plan"`
+	Bindings      []Binding               `json:"bindings"`
+	Jobs          []Job                   `json:"jobs"`
+	Reason        string                  `json:"reason,omitempty"`
+	WorkerFault   *WorkerFault            `json:"worker_fault,omitempty"`
 }
 
 func (e Evidence) Validate() error {
@@ -203,7 +213,10 @@ func (e Evidence) Validate() error {
 			return errors.New("declared worker was not exercised")
 		}
 	}
-	return e.validateWorkerFault()
+	if err := e.validateWorkerFault(); err != nil {
+		return err
+	}
+	return e.validatePostgresFault()
 }
 
 func validID(id string) bool {

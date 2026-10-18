@@ -1955,6 +1955,7 @@ type OpsMetrics struct {
 	// dlqRetentionPurgedTotal counts unified failed-events projection rows
 	// removed by the scheduler retention sweep.
 	dlqRetentionPurgedTotal prometheus.Counter
+	workerRecovery          *workerRecoveryMetrics
 	queue                   *queueMetrics
 	delayedTasks            *delayedTaskMetrics
 	// auditLogWriteTotal (PR-#TBD / C5): per-(endpoint, kind)
@@ -2098,6 +2099,7 @@ func (m *OpsMetrics) HubDropped(channel string) {
 func NewOpsMetrics(prefix string) *OpsMetrics {
 	reg := prometheus.NewRegistry()
 	eventDelivery := newEventDeliveryMetrics(prefix)
+	workerRecovery := newWorkerRecoveryMetrics(prefix)
 	queue := newQueueMetrics(prefix)
 	delayedTasks := newDelayedTaskMetrics(prefix)
 	ops := prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -3890,6 +3892,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// calls that would silently drift apart.
 	commonCollectors := []prometheus.Collector{
 		eventDelivery.deferrals, eventDelivery.waiting, eventDelivery.oldest,
+		workerRecovery.apps, workerRecovery.replicas, workerRecovery.observedAt,
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter, queue.bindingWorkerDemand, queue.bindingThrottled,
 		delayedTasks.dispatchTotal, delayedTasks.scheduleLagSeconds,
@@ -4913,6 +4916,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		executionWorkers:                   schedd,
 		wakeRPCDuration:                    schedd,
 		serviceRolloutHandoffPhaseDuration: schedd,
+		workerRecovery.apps:                schedd,
+		workerRecovery.replicas:            schedd,
+		workerRecovery.observedAt:          schedd,
 		serviceReplicaStatus:               schedd,
 		esmPollsTotal:                      schedd,
 		esmRecordsConsumedTotal:            schedd,
@@ -5652,6 +5658,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		dlqReplayedTotal:                     dlqReplayedTotal,
 		dlqPurgedTotal:                       dlqPurgedTotal,
 		dlqRetentionPurgedTotal:              dlqRetentionPurgedTotal,
+		workerRecovery:                       workerRecovery,
 		queue:                                queue,
 		delayedTasks:                         delayedTasks,
 		auditLogWriteTotal:                   auditLogWriteTotal,

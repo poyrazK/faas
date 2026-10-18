@@ -1854,19 +1854,21 @@ SET state = $4,
 WHERE app_id = $1
   AND deployment_id = $2
   AND route = $3
+  AND ($6::uuid IS NULL OR review_version = $6::uuid)
 RETURNING app_id, deployment_id, route,
           p95_ms, p95_base_ms, affected_count,
           regression_factor, first_detected_at, last_detected_at,
           state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
-          kind, error_rate_pct, error_rate_base_pct, error_count
+          kind, error_rate_pct, error_rate_base_pct, error_count, review_version
 `
 
 type ApplyRegressionActionParams struct {
-	AppID        pgtype.UUID
-	DeploymentID pgtype.UUID
-	Route        string
-	State        string
-	Column5      pgtype.Timestamptz
+	AppID           pgtype.UUID
+	DeploymentID    pgtype.UUID
+	Route           string
+	State           string
+	Column5         pgtype.Timestamptz
+	ExpectedVersion pgtype.UUID
 }
 
 // Change only the debugger workflow state for one app-scoped observation.
@@ -1880,6 +1882,7 @@ func (q *Queries) ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyR
 		arg.Route,
 		arg.State,
 		arg.Column5,
+		arg.ExpectedVersion,
 	)
 	var i DebugRegressionObservation
 	err := row.Scan(
@@ -1901,6 +1904,7 @@ func (q *Queries) ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyR
 		&i.ErrorRatePct,
 		&i.ErrorRateBasePct,
 		&i.ErrorCount,
+		&i.ReviewVersion,
 	)
 	return i, err
 }
@@ -23817,7 +23821,7 @@ SELECT app_id, deployment_id, route,
        p95_ms, p95_base_ms, affected_count,
        regression_factor, first_detected_at, last_detected_at,
        state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
-       kind, error_rate_pct, error_rate_base_pct, error_count
+       kind, error_rate_pct, error_rate_base_pct, error_count, review_version
 FROM debug_regression_observations
 WHERE app_id = $1
   AND deployment_id = $2
@@ -23854,6 +23858,7 @@ func (q *Queries) GetRegressionObservation(ctx context.Context, db DBTX, arg Get
 		&i.ErrorRatePct,
 		&i.ErrorRateBasePct,
 		&i.ErrorCount,
+		&i.ReviewVersion,
 	)
 	return i, err
 }
@@ -81020,7 +81025,7 @@ RETURNING app_id, deployment_id, route,
           p95_ms, p95_base_ms, affected_count,
           regression_factor, first_detected_at, last_detected_at,
           state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
-          kind, error_rate_pct, error_rate_base_pct, error_count
+          kind, error_rate_pct, error_rate_base_pct, error_count, review_version
 `
 
 // A detector pass that no longer sees a regression resolves the previous
@@ -81054,6 +81059,7 @@ func (q *Queries) ResolveStaleRegressionObservations(ctx context.Context, db DBT
 			&i.ErrorRatePct,
 			&i.ErrorRateBasePct,
 			&i.ErrorCount,
+			&i.ReviewVersion,
 		); err != nil {
 			return nil, err
 		}

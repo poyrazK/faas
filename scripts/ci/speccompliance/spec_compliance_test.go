@@ -1440,6 +1440,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "event_subscription_deadlines.go"),
 		filepath.Join(root, "pkg", "api", "workflow_event_replay_preview.go"),
 		filepath.Join(root, "pkg", "api", "app_operational_summary.go"),
+		filepath.Join(root, "pkg", "api", "worker_recovery.go"),
 		filepath.Join(root, "pkg", "api", "commit.go"),
 		filepath.Join(root, "pkg", "api", "issues.go"),
 		filepath.Join(root, "pkg", "api", "issue_frequency_alerts.go"),
@@ -1746,6 +1747,13 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	}
 	for name, schema := range map[string]string{"WorkerTermination": "ScenarioWorkerTermination", "WorkerFault": "ScenarioWorkerFault"} {
 		dtos[schema] = workDTOs[name]
+	}
+	postgresFaultDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "rehearsalfault", "postgres.go")})
+	if err != nil {
+		t.Fatalf("scan rehearsal PostgreSQL fault DTOs: %v", err)
+	}
+	for name, schema := range map[string]string{"Postgres": "ScenarioPostgresFaultSpec", "Receipt": "ScenarioPostgresFaultReceipt"} {
+		dtos[schema] = postgresFaultDTOs[name]
 	}
 	postgresDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "rehearsalpg", "protocol.go")})
 	if err != nil {

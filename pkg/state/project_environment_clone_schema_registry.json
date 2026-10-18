@@ -2946,6 +2946,7 @@
       "p95_ms",
       "regression_factor",
       "resolved_at",
+      "review_version",
       "route",
       "state",
       "suspected_dependency"
@@ -11616,6 +11617,21 @@
       "failures",
       "lease_until",
       "next_attempt_at",
+      "revision",
+      "status",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "worker_recovery",
+    "columns": [
+      "app_id",
+      "claim_token",
+      "failures",
+      "lease_until",
+      "next_attempt_at",
+      "pools",
       "revision",
       "status",
       "updated_at"

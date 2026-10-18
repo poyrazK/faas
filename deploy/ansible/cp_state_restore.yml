@@ -1,0 +1,20 @@
+# ADR-1344 §8: rebuild a control plane from the off-host state backup.
+# Install the files `gregalectl backup restore-cp-state` staged on the new
+# control-plane host BEFORE its first bootstrap, so bootstrap finds the CA,
+# the apid HMAC keys and the secrets instead of generating new ones
+# (docs/runbooks/ControlPlaneStateBackup.md).
+
+- name: Install the restored control-plane state on the new control plane
+  hosts: control_plane
+  gather_facts: false
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+  vars:
+    # PostgreSQL is restored after bootstrap, so there is nothing to promote.
+    control_plane_standby_require_promoted: false
+  tasks:
+    - name: Install the restored control-plane state
+      ansible.builtin.include_role:
+        name: control_plane_standby
+        tasks_from: takeover

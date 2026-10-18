@@ -10801,6 +10801,19 @@ const (
 	MCPCompareUntilMaxBytes                       = 64
 	MCPRegressionsDefault                         = 20
 	MCPRegressionsMax                             = 50
+	MCPFleetRegressionAppsMax                     = 5
+	MCPFleetRegressionsDefaultPerApp              = 5
+	MCPFleetRegressionsMaxPerApp                  = 10
+	MCPFleetRegressionAppResultMaxBytes           = 16 << 10
+	MCPFleetRegressionAppTimeout                  = 5 * time.Second
+	MCPIncidentEvidenceMaxBytes                   = 48 << 10
+	MCPIncidentSectionMaxBytes                    = 16 << 10
+	MCPIncidentRegressionLimit                    = 5
+	MCPIncidentComparisonLimit                    = 5
+	MCPIncidentSectionTimeout                     = 5 * time.Second
+	SelectedTraceAppsMax                          = 5
+	SelectedTraceRowsDefault                      = 10
+	SelectedTraceRowsMax                          = 20
 	MCPResidencyHistoryDefault                    = 10
 	MCPResidencyHistoryMax                        = 20
 	MCPResidencyCausesMax                         = 16
@@ -12460,7 +12473,7 @@ const CIExecutionCheckSummaryMaxBytes = 8 << 10
 // (ADR-1577, ADR-1586). Each delivery has its own lifetime budget.
 const CICheckRetryMaxGenerations = 3
 
-// Explicit recovery of a retained, never-admitted automatic source (ADR-1580).
+// Explicit recovery of a retained, never-admitted automatic source (ADR-1592).
 const CIAutomationRetryMaxGenerations = 3
 
 // Automatic runs serialize per account, binding and branch (ADR-1581).
@@ -12836,6 +12849,32 @@ const ServiceMapDefaultRange = "1h"
 
 // ServiceMapHighErrorRatePct is the edge error rate the dashboard highlights.
 const ServiceMapHighErrorRatePct = 5.0
+
+// Debugger triage duration bounds are shared by planning, API validation and
+// fresh transactional writes. Replaying a committed receipt does not renew them.
+const (
+	DebugRegressionDefaultDismissal = 24 * time.Hour
+	DebugRegressionMaxDismissal     = 30 * 24 * time.Hour
+)
+
+// Durable worker recovery is bounded independently of events and queue polling.
+const (
+	// Diagnostics become unknown after fifteen minutes without a pool observation.
+	WorkerRecoveryObservationFreshnessSeconds = 900
+	// Bound persisted per-pool refusal evidence, including a cooldown marker.
+	WorkerAdmissionBlockersMax = 16
+	// A retry/lease is overdue only after discovery has had a minute to reclaim it.
+	WorkerRecoveryOverdueGraceSeconds     = 60
+	WorkerRecoveryMetricsFreshnessSeconds = 60
+	WorkerRecoveryPollIntervalSeconds     = 5
+	WorkerRecoveryHealthyIntervalSeconds  = 30
+	WorkerRecoveryRetryBaseSeconds        = 5
+	WorkerRecoveryRetryMaxSeconds         = 300
+	WorkerRecoveryAttemptTimeoutSeconds   = 600
+	WorkerRecoveryFailureCountMax         = 32
+	WorkerRecoveryConcurrentApps          = 8
+	WorkerRecoveryBatchSize               = 32
+)
 
 // MCPReadinessFallbackMaxFailures bounds completed primary failures before failover.
 const MCPReadinessFallbackMaxFailures = 10

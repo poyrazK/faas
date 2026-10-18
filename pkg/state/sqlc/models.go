@@ -2986,6 +2986,7 @@ type DebugRegressionObservation struct {
 	ErrorRatePct        pgtype.Numeric
 	ErrorRateBasePct    pgtype.Numeric
 	ErrorCount          int32
+	ReviewVersion       pgtype.UUID
 }
 
 type DeployToken struct {
@@ -11832,6 +11833,17 @@ type ScenarioObjectFixture struct {
 	Document  []byte
 }
 
+type ScenarioPostgresFault struct {
+	ID         pgtype.UUID
+	ResourceID pgtype.UUID
+	AccountID  pgtype.UUID
+	RunID      string
+	AppID      pgtype.UUID
+	OwnerID    pgtype.UUID
+	Phase      string
+	Receipt    []byte
+}
+
 type ScenarioPostgresFixture struct {
 	ID              pgtype.UUID
 	AccountID       pgtype.UUID
@@ -12429,6 +12441,18 @@ type WebhookDelivery struct {
 	DeliveryID string
 	ReceivedAt pgtype.Timestamptz
 	ExpiresAt  pgtype.Timestamptz
+}
+
+type WorkerRecovery struct {
+	AppID         pgtype.UUID
+	Revision      string
+	ClaimToken    pgtype.UUID
+	LeaseUntil    pgtype.Timestamptz
+	Status        string
+	Failures      int32
+	NextAttemptAt pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+	Pools         []byte
 }
 
 type WorkflowAutomationDefinition struct {

@@ -23,6 +23,9 @@ func addManagedWorkGroups(s *api.ScenarioActionSnapshot, groups map[string]Chang
 	if e.Validate() != nil || e.RunID != s.RunID || len(e.Bindings) != len(s.Workloads) {
 		return errors.New("managed-work evidence is incomplete")
 	}
+	if err := addPostgresFaultGroup(s, groups); err != nil {
+		return err
+	}
 	if fault := e.WorkerFault; fault != nil {
 		found := false
 		for _, attempt := range s.SimulatedAttempts {

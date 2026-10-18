@@ -12,6 +12,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/actioncompare"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/rehearsalpg"
 	"github.com/onebox-faas/faas/pkg/rehearsalresume"
 )
 
@@ -22,6 +23,7 @@ type testActionSpec struct {
 }
 
 type testActionEvidence struct {
+	PostgresFaultSHA256 string                  `json:"postgres_fault_sha256,omitempty"`
 	SuspendResumeSHA256 string                  `json:"suspend_resume_sha256,omitempty"`
 	ColdStartSHA256     string                  `json:"cold_start_sha256,omitempty"`
 	ManagedWorkSHA256   string                  `json:"managed_work_sha256,omitempty"`
@@ -55,6 +57,9 @@ func newTestActionCollector(ctx context.Context, client testActionSnapshotClient
 		if receipt.SuspendResume != nil && receipt.SuspendResume.Spec.ManagedJob() {
 			captureWithin = 170 * time.Second
 		}
+		if receipt.Actions.PostgresFaultSHA256 != "" {
+			captureWithin = 170 * time.Second
+		}
 		captureCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), captureWithin)
 		defer cancel()
 		for {
@@ -64,6 +69,10 @@ func newTestActionCollector(ctx context.Context, client testActionSnapshotClient
 				break
 			}
 			evidence.Snapshot = &snapshot
+			if receipt.Actions.PostgresFaultSHA256 != "" && (snapshot.ManagedWork == nil || snapshot.ManagedWork.Plan.PostgresFault == nil || rehearsalpg.Hash(*snapshot.ManagedWork.Plan.PostgresFault) != receipt.Actions.PostgresFaultSHA256) {
+				evidence.Error = "PostgreSQL fault coverage differs from enrollment"
+				break
+			}
 			if receipt.Actions.SimulationSHA256 != "" {
 				evidence.Provenance = actioncompare.SimulationProvenance
 				if snapshot.Version != api.ScenarioSimulationSnapshotVersion || snapshot.SimulationSHA256 != receipt.Actions.SimulationSHA256 || snapshot.RecorderVersion != 1 {
@@ -123,6 +132,13 @@ func newTestActionCollector(ctx context.Context, client testActionSnapshotClient
 					break
 				}
 				evidence.Status = "complete"
+				if budgetError := testPostgresFaultBudgetError(snapshot.ManagedWork); budgetError != "" {
+					if receipt.Error != "" {
+						receipt.Error += "; "
+					}
+					receipt.Error += budgetError
+					receipt.Status = "failed"
+				}
 				if budgetError := testSuspendResumeBudgetError(snapshot.SuspendResume); budgetError != "" {
 					if receipt.Error != "" {
 						receipt.Error += "; "
@@ -182,6 +198,13 @@ func compareTestActions(before, after testRunReceipt) *actioncompare.Comparison 
 			return nil
 		}
 		if (run.Actions.Network != "" && run.Actions.Network != "contained") || run.Actions.Webhooks != "capture" || run.Actions.PolicyVersion != 1 || run.Actions.Status != "applied" || run.Actions.Evidence == nil {
+			return &actioncompare.Evidence{}
+		}
+		faultHash := ""
+		if snapshot := run.Actions.Evidence.Snapshot; snapshot != nil && snapshot.ManagedWork != nil && snapshot.ManagedWork.Plan.PostgresFault != nil {
+			faultHash = rehearsalpg.Hash(*snapshot.ManagedWork.Plan.PostgresFault)
+		}
+		if faultHash != run.Actions.PostgresFaultSHA256 {
 			return &actioncompare.Evidence{}
 		}
 		resumeDigest := ""

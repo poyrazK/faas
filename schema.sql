@@ -162,6 +162,20 @@ END $$;
 
 
 --
+-- Name: advance_regression_review_version(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.advance_regression_review_version() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+        BEGIN
+            NEW.review_version := gen_random_uuid();
+            RETURN NEW;
+        END;
+        $$;
+
+
+--
 -- Name: alert_presets_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -21040,6 +21054,121 @@ END $_$;
 
 
 --
+-- Name: scenario_postgres_fault_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_postgres_fault_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE p scenario_test_action_policies%ROWTYPE; f scenario_postgres_fixtures%ROWTYPE;
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF EXISTS(SELECT 1 FROM scenario_postgres_fixtures WHERE id=OLD.resource_id AND status NOT IN ('complete','deleted'))
+   THEN RAISE EXCEPTION 'PostgreSQL fault recovery is retained until resource cleanup' USING ERRCODE='23514'; END IF;
+  RETURN OLD;
+ END IF;
+ IF TG_OP='UPDATE' THEN
+  IF (NEW.id,NEW.resource_id,NEW.account_id,NEW.run_id,NEW.app_id,NEW.owner_id) IS DISTINCT FROM
+     (OLD.id,OLD.resource_id,OLD.account_id,OLD.run_id,OLD.app_id,OLD.owner_id)
+   OR (NEW.receipt - ARRAY['state','activated','recovered','closed_connections','outage_ms','recovery_ms','error','restore_at','deadline_at']) IS DISTINCT FROM
+      (OLD.receipt - ARRAY['state','activated','recovered','closed_connections','outage_ms','recovery_ms','error','restore_at','deadline_at'])
+   OR NOT ((OLD.phase='requested' AND NEW.phase IN ('cutting','recovering')) OR
+    (OLD.phase='cutting' AND NEW.phase IN ('active','recovering')) OR (OLD.phase='active' AND NEW.phase='recovering') OR
+    (OLD.phase='recovering' AND NEW.phase IN ('recovered','failed')) OR (OLD.phase='failed' AND NEW.phase='recovering') OR
+    (OLD.phase='recovered' AND NEW.phase='failed'))
+   OR (OLD.receipt->>'error' IS NOT NULL AND NEW.receipt->>'error' IS DISTINCT FROM OLD.receipt->>'error')
+   OR (OLD.receipt->>'activated'='true' AND NEW.receipt->>'activated' IS DISTINCT FROM 'true')
+   OR (OLD.receipt->>'recovered'='true' AND NEW.receipt->>'recovered' IS DISTINCT FROM 'true')
+   OR ((OLD.receipt->>'restore_at')::timestamptz > '0001-01-01 UTC'::timestamptz AND NEW.receipt->>'restore_at' IS DISTINCT FROM OLD.receipt->>'restore_at')
+   OR (NEW.receipt->>'deadline_at')::timestamptz < (OLD.receipt->>'deadline_at')::timestamptz
+   THEN RAISE EXCEPTION 'PostgreSQL fault identity or phase is immutable' USING ERRCODE='23514'; END IF;
+  IF NEW.phase='recovered' AND NOT ((NEW.receipt->>'activated'='true' AND NEW.receipt->>'recovered'='true'
+   AND NOT NEW.receipt ? 'error' AND (NEW.receipt->>'outage_ms')::bigint >= (NEW.receipt->'spec'->>'unavailable_ms')::bigint
+   AND (NEW.receipt->>'recovery_ms')::bigint>=0) IS TRUE)
+   THEN RAISE EXCEPTION 'PostgreSQL recovery proof is missing' USING ERRCODE='23514'; END IF;
+  RETURN NEW;
+ END IF;
+ SELECT * INTO p FROM scenario_test_action_policies WHERE app_id=NEW.app_id;
+ PERFORM pg_advisory_xact_lock(hashtextextended('scenario-action-run:'||NEW.account_id::text||':'||NEW.run_id,0));
+ SELECT * INTO p FROM scenario_test_action_policies WHERE app_id=NEW.app_id;
+ SELECT * INTO f FROM scenario_postgres_fixtures WHERE id=NEW.resource_id;
+ IF NEW.phase<>'requested' OR p.managed_work_plan->'postgres_fault' IS DISTINCT FROM NEW.receipt->'spec'
+  OR NEW.receipt->>'activated' IS DISTINCT FROM 'false' OR NEW.receipt->>'recovered' IS DISTINCT FROM 'false'
+  OR NEW.receipt->>'closed_connections' IS DISTINCT FROM '0' OR NEW.receipt->>'outage_ms' IS DISTINCT FROM '0'
+  OR NEW.receipt->>'recovery_ms' IS DISTINCT FROM '0' OR NEW.receipt ? 'error'
+  OR NOT coalesce(NEW.receipt->>'plan_sha256' ~ '^[a-f0-9]{64}$',false)
+  OR p.account_id IS DISTINCT FROM NEW.account_id OR p.run_id IS DISTINCT FROM NEW.run_id
+  OR p.sealed_at IS NOT NULL OR p.recorder_closing OR p.managed_work_failed
+  OR f.owner_id IS DISTINCT FROM NEW.owner_id OR f.account_id IS DISTINCT FROM NEW.account_id OR f.run_id IS DISTINCT FROM NEW.run_id
+  OR f.backend_sha256 IS DISTINCT FROM NEW.receipt->>'backend_sha256' OR f.status IS DISTINCT FROM 'ready' OR f.expires_at<=clock_timestamp()
+  OR NOT EXISTS(SELECT 1 FROM scenario_recorder_sessions r JOIN scenario_recorder_requests q ON q.session_id=r.id
+   JOIN instances i ON i.id=r.instance_id JOIN invocations v ON nullif(v.instance_id,'')::uuid=i.id AND v.app_id=i.app_id
+   WHERE r.id=(NEW.receipt->>'recorder_session_id')::uuid AND r.app_id=NEW.app_id AND r.instance_id=(NEW.receipt->>'instance_id')::uuid
+    AND r.deployment_id=(NEW.receipt->>'deployment_id')::uuid AND r.status='recording' AND q.status='admitted'
+    AND q.attempt_id=(NEW.receipt->>'checkpoint_attempt_id')::uuid AND i.state='running'
+    AND v.id=(NEW.receipt->>'invocation_id')::uuid AND v.state='dispatching' AND v.source='async_invoke'
+    AND v.attempts=1 AND v.replay_generation=0 AND v.lease_expires_at>clock_timestamp())
+  THEN RAISE EXCEPTION 'PostgreSQL fault checkpoint is not owned by its original dispatch' USING ERRCODE='23514'; END IF;
+ RETURN NEW;
+END $_$;
+
+
+--
+-- Name: scenario_postgres_fault_policy_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_postgres_fault_policy_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE f jsonb; p jsonb;
+BEGIN
+ f:=NEW.managed_work_plan->'postgres_fault'; p:=NEW.managed_work_plan;
+ IF f IS NULL THEN RETURN NEW; END IF;
+ IF NOT ((f->>'workload' ~ '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$'
+  AND f->>'checkpoint' ~ '^[a-z][a-z0-9-]{0,62}$'
+  AND (f->>'unavailable_ms')::bigint BETWEEN 100 AND 30000
+  AND (f->>'recover_within_ms')::bigint BETWEEN 1 AND 120000
+  AND NEW.suspend_resume_spec IS NULL AND NEW.cold_start_spec IS NULL AND NOT p ? 'worker_termination'
+  AND jsonb_array_length(p->'participants')=2
+  AND (SELECT count(*) FROM jsonb_array_elements(p->'participants') v WHERE coalesce((v->>'async')::boolean,false))=1
+  AND EXISTS(SELECT 1 FROM jsonb_array_elements(p->'participants') v WHERE v->>'workload'=f->>'workload' AND v->>'postgres'='read_write' AND v->>'async'='true')
+  AND EXISTS(SELECT 1 FROM jsonb_array_elements(p->'participants') v WHERE v->>'workload'=p->>'primary' AND v->>'postgres'='read_write' AND NOT coalesce((v->>'async')::boolean,false))
+  AND EXISTS(SELECT 1 FROM jsonb_array_elements(NEW.simulation_plan->'fixtures') v
+   WHERE v->>'workload'=f->>'workload' AND v->>'name'=f->>'checkpoint' AND v->>'integration'='checkpoint'
+   AND v->>'adapter'='http' AND v->>'method'='POST' AND jsonb_array_length(v->'responses')=1
+   AND v->'responses'->0->>'status'='200' AND coalesce(v->'responses'->0->>'fault','')=''
+   AND coalesce(v->'responses'->0->>'delay_ms','0')='0' AND coalesce(v->'responses'->0->>'retry_after_seconds','0')='0')) IS TRUE)
+  THEN RAISE EXCEPTION 'unsupported PostgreSQL fault enrollment' USING ERRCODE='23514'; END IF;
+ RETURN NEW;
+END $_$;
+
+
+--
+-- Name: scenario_postgres_fault_scope(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_postgres_fault_scope() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE p scenario_test_action_policies%ROWTYPE;
+BEGIN
+ SELECT * INTO p FROM scenario_test_action_policies WHERE app_id=NEW.app_id;
+ IF p.managed_work_plan->'postgres_fault' IS NULL THEN RETURN NEW; END IF;
+ PERFORM pg_advisory_xact_lock(hashtextextended('scenario-action-run:'||p.account_id::text||':'||p.run_id,0));
+ IF TG_OP='INSERT' THEN
+  IF p.workload_name IS DISTINCT FROM p.managed_work_plan->'postgres_fault'->>'workload' OR NEW.source<>'async_invoke'
+   OR EXISTS(SELECT 1 FROM invocations v JOIN scenario_test_action_policies w ON w.app_id=v.app_id WHERE w.account_id=p.account_id AND w.run_id=p.run_id)
+   THEN RAISE EXCEPTION 'PostgreSQL fault supports one managed HTTP job' USING ERRCODE='23514'; END IF;
+ ELSIF NEW.state='dispatching' AND (NEW.state,NEW.attempts,NEW.instance_id) IS DISTINCT FROM (OLD.state,OLD.attempts,OLD.instance_id) THEN
+  IF EXISTS(SELECT 1 FROM scenario_postgres_faults f WHERE f.account_id=p.account_id AND f.run_id=p.run_id AND
+   (f.phase IN ('requested','cutting') OR (nullif(NEW.instance_id,'') IS NOT NULL AND NEW.instance_id IS DISTINCT FROM f.receipt->>'instance_id')))
+   THEN RAISE EXCEPTION 'PostgreSQL recovery retains its original worker dispatch' USING ERRCODE='23514'; END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: scenario_postgres_fixture_delete_guard(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -28176,6 +28305,7 @@ CREATE TABLE public.debug_regression_observations (
     error_rate_pct numeric(5,2) DEFAULT 0 NOT NULL,
     error_rate_base_pct numeric(5,2) DEFAULT 0 NOT NULL,
     error_count integer DEFAULT 0 NOT NULL,
+    review_version uuid DEFAULT '00000000-0000-0000-0000-000000000001'::uuid NOT NULL,
     CONSTRAINT debug_regression_observations_affected_count_check CHECK ((affected_count >= 0)),
     CONSTRAINT debug_regression_observations_error_count_check CHECK ((error_count >= 0)),
     CONSTRAINT debug_regression_observations_error_rate_base_pct_check CHECK (((error_rate_base_pct >= (0)::numeric) AND (error_rate_base_pct <= (100)::numeric))),
@@ -28186,7 +28316,8 @@ CREATE TABLE public.debug_regression_observations (
     CONSTRAINT debug_regression_observations_regression_factor_check CHECK ((regression_factor >= 1.0)),
     CONSTRAINT debug_regression_observations_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
     CONSTRAINT debug_regression_observations_state_check CHECK ((state = ANY (ARRAY['active'::text, 'acknowledged'::text, 'dismissed'::text, 'resolved'::text]))),
-    CONSTRAINT debug_regression_observations_suspected_dependency_check CHECK (((suspected_dependency IS NULL) OR ((jsonb_typeof(suspected_dependency) = 'object'::text) AND (octet_length((suspected_dependency)::text) <= 1024))))
+    CONSTRAINT debug_regression_observations_suspected_dependency_check CHECK (((suspected_dependency IS NULL) OR ((jsonb_typeof(suspected_dependency) = 'object'::text) AND (octet_length((suspected_dependency)::text) <= 1024)))),
+    CONSTRAINT debug_regression_review_version_nonzero CHECK ((review_version <> '00000000-0000-0000-0000-000000000000'::uuid))
 );
 
 
@@ -44270,6 +44401,25 @@ CREATE TABLE public.scenario_object_fixtures (
 
 
 --
+-- Name: scenario_postgres_faults; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scenario_postgres_faults (
+    id uuid NOT NULL,
+    resource_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    run_id text NOT NULL,
+    app_id uuid NOT NULL,
+    owner_id uuid NOT NULL,
+    phase text NOT NULL,
+    receipt jsonb NOT NULL,
+    CONSTRAINT scenario_postgres_faults_check CHECK (((jsonb_typeof(receipt) = 'object'::text) AND ((((receipt ->> 'id'::text) = (id)::text) AND ((receipt ->> 'resource_id'::text) = (resource_id)::text) AND ((receipt ->> 'account_id'::text) = (account_id)::text) AND ((receipt ->> 'app_id'::text) = (app_id)::text) AND ((receipt ->> 'owner_id'::text) = (owner_id)::text) AND ((receipt ->> 'run_id'::text) = run_id) AND ((receipt ->> 'state'::text) = phase)) IS TRUE))),
+    CONSTRAINT scenario_postgres_faults_phase_check CHECK ((phase = ANY (ARRAY['requested'::text, 'cutting'::text, 'active'::text, 'recovering'::text, 'recovered'::text, 'failed'::text]))),
+    CONSTRAINT scenario_postgres_faults_run_id_check CHECK ((run_id ~ '^[a-f0-9]{32}$'::text))
+);
+
+
+--
 -- Name: scenario_postgres_fixtures; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -45329,6 +45479,29 @@ CREATE TABLE public.webhook_deliveries (
     received_at timestamp with time zone DEFAULT now() NOT NULL,
     expires_at timestamp with time zone NOT NULL,
     CONSTRAINT webhook_deliveries_provider_check CHECK ((provider = ANY (ARRAY['github'::text, 'stripe'::text, 'paddle'::text, 'polar'::text, 'resend'::text])))
+);
+
+
+--
+-- Name: worker_recovery; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.worker_recovery (
+    app_id uuid NOT NULL,
+    revision text NOT NULL,
+    claim_token uuid,
+    lease_until timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL,
+    status text NOT NULL,
+    failures integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    pools jsonb DEFAULT '[]'::jsonb NOT NULL,
+    CONSTRAINT worker_recovery_check CHECK (((next_attempt_at >= updated_at) OR (claim_token IS NOT NULL))),
+    CONSTRAINT worker_recovery_claim_token_check CHECK ((claim_token <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT worker_recovery_failures_check CHECK (((failures >= 0) AND (failures <= 32))),
+    CONSTRAINT worker_recovery_pools_check CHECK ((jsonb_typeof(pools) = 'array'::text)),
+    CONSTRAINT worker_recovery_revision_check CHECK ((revision <> ''::text)),
+    CONSTRAINT worker_recovery_status_check CHECK ((status = ANY (ARRAY['reconciling'::text, 'ready'::text, 'starting'::text, 'draining'::text, 'waiting_capacity'::text, 'retrying_startup'::text, 'waiting_dependency'::text])))
 );
 
 
@@ -55821,6 +55994,30 @@ ALTER TABLE ONLY public.scenario_object_fixtures
 
 
 --
+-- Name: scenario_postgres_faults scenario_postgres_faults_account_id_run_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_postgres_faults
+    ADD CONSTRAINT scenario_postgres_faults_account_id_run_id_key UNIQUE (account_id, run_id);
+
+
+--
+-- Name: scenario_postgres_faults scenario_postgres_faults_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_postgres_faults
+    ADD CONSTRAINT scenario_postgres_faults_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: scenario_postgres_faults scenario_postgres_faults_resource_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_postgres_faults
+    ADD CONSTRAINT scenario_postgres_faults_resource_id_key UNIQUE (resource_id);
+
+
+--
 -- Name: scenario_postgres_fixtures scenario_postgres_fixtures_account_id_run_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -56330,6 +56527,14 @@ ALTER TABLE ONLY public.warm_hint
 
 ALTER TABLE ONLY public.webhook_deliveries
     ADD CONSTRAINT webhook_deliveries_pkey PRIMARY KEY (provider, delivery_id);
+
+
+--
+-- Name: worker_recovery worker_recovery_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.worker_recovery
+    ADD CONSTRAINT worker_recovery_pkey PRIMARY KEY (app_id);
 
 
 --
@@ -65004,6 +65209,13 @@ CREATE INDEX webhook_deliveries_expires_idx ON public.webhook_deliveries USING b
 
 
 --
+-- Name: worker_recovery_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX worker_recovery_due_idx ON public.worker_recovery USING btree (next_attempt_at, app_id);
+
+
+--
 -- Name: workflow_automation_failure_finished_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -70072,6 +70284,13 @@ CREATE TRIGGER registry_rootfs_private_guard BEFORE INSERT OR DELETE OR UPDATE O
 
 
 --
+-- Name: debug_regression_observations regression_review_version; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regression_review_version BEFORE INSERT OR UPDATE ON public.debug_regression_observations FOR EACH ROW EXECUTE FUNCTION public.advance_regression_review_version();
+
+
+--
 -- Name: reserved_ip_inventory reserved_ip_inventory_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -70461,6 +70680,27 @@ CREATE TRIGGER scenario_object_fixture_immutable BEFORE DELETE OR UPDATE ON publ
 --
 
 CREATE TRIGGER scenario_postgres_backend_guard BEFORE INSERT OR UPDATE ON public.scenario_postgres_fixtures FOR EACH ROW EXECUTE FUNCTION public.scenario_postgres_backend_guard();
+
+
+--
+-- Name: scenario_postgres_faults scenario_postgres_fault_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_postgres_fault_guard BEFORE INSERT OR DELETE OR UPDATE ON public.scenario_postgres_faults FOR EACH ROW EXECUTE FUNCTION public.scenario_postgres_fault_guard();
+
+
+--
+-- Name: scenario_test_action_policies scenario_postgres_fault_policy_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_postgres_fault_policy_guard BEFORE INSERT OR UPDATE ON public.scenario_test_action_policies FOR EACH ROW EXECUTE FUNCTION public.scenario_postgres_fault_policy_guard();
+
+
+--
+-- Name: invocations scenario_postgres_fault_scope; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_postgres_fault_scope BEFORE INSERT OR UPDATE OF state, attempts, instance_id ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.scenario_postgres_fault_scope();
 
 
 --
@@ -83054,6 +83294,30 @@ ALTER TABLE ONLY public.scenario_object_fixtures
 
 
 --
+-- Name: scenario_postgres_faults scenario_postgres_faults_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_postgres_faults
+    ADD CONSTRAINT scenario_postgres_faults_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_postgres_faults scenario_postgres_faults_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_postgres_faults
+    ADD CONSTRAINT scenario_postgres_faults_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_postgres_faults scenario_postgres_faults_resource_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_postgres_faults
+    ADD CONSTRAINT scenario_postgres_faults_resource_id_fkey FOREIGN KEY (resource_id) REFERENCES public.scenario_postgres_fixtures(id) ON DELETE CASCADE;
+
+
+--
 -- Name: scenario_postgres_fixtures scenario_postgres_fixtures_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -83555,6 +83819,14 @@ ALTER TABLE ONLY public.usage_minutes
 
 ALTER TABLE ONLY public.usage_statement_invoice_exports
     ADD CONSTRAINT usage_statement_invoice_exports_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: worker_recovery worker_recovery_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.worker_recovery
+    ADD CONSTRAINT worker_recovery_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

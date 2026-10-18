@@ -2,6 +2,9 @@
 SELECT (pg_catalog.to_jsonb(pg_catalog.pg_control_system())->>'system_identifier')::text AS system_id,
  (SELECT oid::text FROM pg_catalog.pg_database WHERE datname='gregale_rehearsal_admin')::text AS admin_database_id;
 
+-- name: LockFixtureDatabase :exec
+SELECT pg_catalog.pg_advisory_lock(pg_catalog.hashtextextended('rehearsal-fixture:'||sqlc.arg(database_name)::text,0));
+
 -- name: ClusterReady :one
 SELECT (current_database()='gregale_rehearsal_admin'
  AND current_setting('server_version_num')::integer>=160000
@@ -29,6 +32,14 @@ SELECT pg_catalog.format('ALTER ROLE %I NOLOGIN',sqlc.arg(role_name)::text)::tex
 SELECT pg_catalog.format('ALTER ROLE %I PASSWORD %L',sqlc.arg(role_name)::text,sqlc.arg(password)::text)::text;
 -- name: FormatFreezeDatabase :one
 SELECT pg_catalog.format('ALTER DATABASE %I ALLOW_CONNECTIONS false',sqlc.arg(database_name)::text)::text;
+-- name: FormatRecoverDatabase :one
+SELECT pg_catalog.format('ALTER DATABASE %I ALLOW_CONNECTIONS true',sqlc.arg(database_name)::text)::text;
+-- name: DatabaseConnectionsAllowed :one
+SELECT datallowconn::boolean FROM pg_catalog.pg_database WHERE datname=sqlc.arg(database_name)::text;
+-- name: FaultAccessProbe :one
+SELECT current_database()=sqlc.arg(database_name)::text AND
+ pg_catalog.has_database_privilege(sqlc.arg(role_name)::text,current_database(),'CONNECT') AND
+ EXISTS(SELECT 1 FROM pg_catalog.pg_roles WHERE rolname=sqlc.arg(role_name)::text AND rolcanlogin) AS ready;
 -- name: FormatDropDatabase :one
 SELECT pg_catalog.format('DROP DATABASE IF EXISTS %I WITH (FORCE)',sqlc.arg(database_name)::text)::text;
 -- name: FormatDropRole :one
