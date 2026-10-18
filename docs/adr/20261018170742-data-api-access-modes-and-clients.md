@@ -83,6 +83,30 @@ app secret in the free slot, and requests a fresh restart. It refuses to
 overwrite a used slot unless asked to replace the oldest one. Revocation removes
 a slot and restarts.
 
+### Edge-cached public reads
+
+`DATA_API_PUBLIC_READ_MAX_AGE` (1–3600 seconds, valid only with public reads)
+lets the existing gateway response cache serve anonymous reads. The CLI owns one
+named cache rule for `GET /rest/v1/*`. Requests with `Authorization` already
+bypass the gateway cache, and only responses the runtime marks
+`Cache-Control: public` are stored.
+
+The gateway cache key is method, host, path and query, and it refuses responses
+that `Vary` on anything else. The runtime therefore marks a response public only
+when those fully determine it: a `200` for a default-schema relation, requested
+without `Range`, `Range-Unit`, `Prefer`, `Cookie` or another `Accept-Profile`,
+and with a JSON-compatible `Accept`. With caching on, anonymous responses use
+`Access-Control-Allow-Origin: *` instead of `Vary: Origin`.
+
+Each cacheable response carries `Cache-Tag: data-api` plus one
+`data-api:SCHEMA.RELATION` tag for every relation in its body, embeddings
+included, so a tag purge is complete. A response whose tags would exceed the
+gateway's count or byte bounds stays `no-store`.
+
+A request with representation headers that hits an existing entry receives the
+canonical JSON. The data is public by construction, so this costs fidelity, not
+confidentiality.
+
 ### Aggregates
 
 `DATA_API_AGGREGATES=1` sets PostgREST's `db-aggregates-enabled`. It requires
@@ -139,7 +163,7 @@ exactly like the TypeScript export.
 - Python and Go output is generated code, not a published SDK, and has no
   runtime input validation beyond JSON decoding.
 - New canonical bounds (`DataAPIPublicReadMaxRelations`,
-  `DataAPIServerKeySubjectMaxBytes`) live in `pkg/api/limits.go` and are
+  `DataAPIServerKeySubjectMaxBytes`, `DataAPIPublicReadMaxAgeSeconds`) live in `pkg/api/limits.go` and are
   mirrored in `config.mjs` under the existing parity test.
 
 ## Rejected alternatives

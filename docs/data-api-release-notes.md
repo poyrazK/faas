@@ -11,6 +11,10 @@ closes five product gaps, all opt-in:
 - **Public reads.** `--public-read` lists relations that anonymous `GET`/`HEAD`
   requests may read. Startup requires RLS tables or security-invoker views.
   Embeddings must also be listed, and every anonymous client is rate limited.
+- **Edge-cached public reads.** `configure --public-read-cache 30s` lets the
+  gateway cache serve canonical anonymous reads. Responses are tagged per
+  relation so `gregale cache purge --tag data-api:api.products` invalidates
+  precisely. Every other response stays `no-store`.
 - **Server keys.** `data-api server-key create|list|revoke` manages two
   hash-only rotation slots for trusted backends. RLS still applies, keys are
   refused when sent with an `Origin` header, and `X-Gregale-Subject` acts for

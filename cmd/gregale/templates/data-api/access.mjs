@@ -75,11 +75,26 @@ export function publicReadTarget(req, config) {
   if (!relationPart.test(relation) || !listed(relation)) return { code: 'token_required' }
   const selects = url.searchParams.getAll('select')
   if (selects.length > 1) return { code: 'public_read_not_allowed' }
-  if (selects.length === 1) {
-    const embedded = selectEmbeddings(selects[0])
-    if (!embedded || embedded.some(name => !listed(name))) return { code: 'public_read_not_allowed' }
-  }
-  return { schema, relation }
+  const embedded = selects.length ? selectEmbeddings(selects[0]) : []
+  if (!embedded || embedded.some(name => !listed(name))) return { code: 'public_read_not_allowed' }
+  return { schema, relation, embedded }
+}
+
+const jsonMediaRange = /^\s*(application\/json|text\/plain|\*\/\*)\s*(;[^,]*)?$/i
+
+// The edge cache key covers method, host, path and query only. A response may
+// become a shared entry only when those fully determine it: the default schema
+// and the default full JSON representation. Everything else stays no-store.
+export function publicReadCache(req, config, target) {
+  if (!config.publicReadMaxAge || !target?.relation || target.schema !== config.schemas[0]) return null
+  const h = req.headers
+  if (h.range !== undefined || h['range-unit'] !== undefined || h.prefer !== undefined || h.cookie !== undefined) return null
+  if (h['accept-profile'] !== undefined && h['accept-profile'] !== config.schemas[0]) return null
+  if (h.accept !== undefined && !h.accept.split(',').every(part => jsonMediaRange.test(part))) return null
+  // Tags let owners purge one relation; every relation in the body must be tagged.
+  const tags = ['data-api', ...new Set([target.relation, ...target.embedded].map(name => `data-api:${target.schema}.${name}`))]
+  if (tags.length > limits.cacheTagsMax || tags.some(tag => Buffer.byteLength(tag) > limits.cacheTagMaxBytes)) return null
+  return Object.freeze({ cacheControl: `public, max-age=${config.publicReadMaxAge}`, tags: tags.join(', ') })
 }
 
 function expandIPv6(value) {

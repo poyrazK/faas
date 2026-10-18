@@ -3,9 +3,11 @@ import { markResponseLimit } from './logging.mjs'
 
 // Count actual engine body bytes without buffering the response. Pause the
 // engine when the downstream write buffer fills, and resume only after drain.
-export function streamResponse(response, res, method, deadline, problem) {
+export function streamResponse(response, res, method, deadline, problem, publicCache = null) {
   let bytes = 0, stopped = false
   const out = { 'Cache-Control': 'no-store' }
+  // Only a complete success may become a shared edge entry.
+  if (publicCache && response.statusCode === 200) Object.assign(out, { 'Cache-Control': publicCache.cacheControl, 'Cache-Tag': publicCache.tags })
   for (const name of ['content-type', 'content-range', 'preference-applied', 'location']) if (response.headers[name]) out[name] = response.headers[name]
   const headers = () => { if (!res.headersSent) res.writeHead(response.statusCode, out) }
   const stop = () => { stopped = true; res.removeListener('drain', drain) }

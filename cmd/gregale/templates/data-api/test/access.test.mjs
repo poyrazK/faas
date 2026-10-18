@@ -3,8 +3,8 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import { createHash } from 'node:crypto'
 import { createServer } from '../server.mjs'
-import { runtimeConfig, publicReadConfig, serverKeyConfig, limits } from '../config.mjs'
-import { selectEmbeddings, clientKey, matchServerKey, serverSubject, unsafePublicRelations, publicReadTarget } from '../access.mjs'
+import { runtimeConfig, publicReadConfig, serverKeyConfig, publicReadMaxAge, limits } from '../config.mjs'
+import { selectEmbeddings, clientKey, matchServerKey, serverSubject, unsafePublicRelations, publicReadTarget, publicReadCache } from '../access.mjs'
 
 const keyA = 'gdsk_' + 'A'.repeat(43)
 const keyB = 'gdsk_' + 'b'.repeat(42) + '-'
@@ -84,8 +84,8 @@ test('aggregates are opt-in and require the SQL deadline', () => {
 test('only listed GET/HEAD relation reads can be anonymous', () => {
   const config = runtimeConfig({ ...baseEnv, DATA_API_PUBLIC_READ: 'api.products,api.categories' })
   const target = (url, method = 'GET', headers = {}) => publicReadTarget({ url, method, headers }, config)
-  assert.deepEqual(target('/rest/v1/products?select=*,categories(name)'), { schema: 'api', relation: 'products' })
-  assert.deepEqual(target('/rest/v1/products', 'HEAD'), { schema: 'api', relation: 'products' })
+  assert.deepEqual(target('/rest/v1/products?select=*,categories(name)'), { schema: 'api', relation: 'products', embedded: ['categories'] })
+  assert.deepEqual(target('/rest/v1/products', 'HEAD'), { schema: 'api', relation: 'products', embedded: [] })
   assert.equal(target('/rest/v1/notes').code, 'token_required')
   assert.equal(target('/rest/v1/products', 'POST').code, 'token_required')
   assert.equal(target('/rest/v1/rpc/save_note', 'POST').code, 'token_required')
@@ -106,6 +106,7 @@ async function fixture(t, env = {}, verify = async () => ({ sub: 'private-subjec
   const upstream = http.createServer((req, res) => {
     req.resume()
     state.calls.push({ path: req.url, method: req.method, claims: claimsOf(req.headers.authorization) })
+    if (req.url.includes('fail=1')) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end('{"code":"PGRST100"}'); return }
     res.end('[]')
   })
   const ready = http.createServer((_req, res) => res.end('{}'))
@@ -184,10 +185,16 @@ test('anonymous clients have their own per-address budget', async t => {
 
 test('anonymous budgets apply by default when the owner set no rate limit', async t => {
   const { send } = await fixture(t)
-  const statuses = []
-  for (let i = 0; i < limits.rateLimitDefaultBurst + 1; i++) statuses.push((await send('/rest/v1/products', { headers: { 'x-faas-client-ip': '192.0.2.9' } })).status)
-  assert.equal(statuses.filter(status => status === 200).length, limits.rateLimitDefaultBurst)
-  assert.equal(statuses.at(-1), 429)
+  // Parallel batches within the admission queue outpace refill even on a loaded host.
+  let limited
+  for (let batch = 0; batch < 20 && !limited; batch++) {
+    const responses = await Promise.all(Array.from({ length: 8 }, () => send('/rest/v1/products', { headers: { 'x-faas-client-ip': '192.0.2.9' } })))
+    limited = responses.find(response => response.status === 429)
+  }
+  assert.ok(limited, 'anonymous clients must be limited without an owner policy')
+  const body = JSON.parse(limited.body)
+  assert.equal(body.per_second, limits.rateLimitDefaultPerSecond)
+  assert.equal(body.burst, limits.rateLimitDefaultBurst)
 })
 
 test('server keys sign server claims, may act for a subject and stay out of browsers', async t => {
@@ -228,4 +235,71 @@ test('application JWTs cannot claim another access kind or server slot', async t
   assert.equal(state.calls[0].claims.gregale_access, 'user')
   assert.equal(state.calls[0].claims.gregale_server_key, undefined)
   assert.equal(state.calls[0].claims.sub, 'private-subject')
+})
+
+test('public read freshness is bounded and requires public reads', () => {
+  assert.equal(publicReadMaxAge(undefined, false), null)
+  assert.equal(publicReadMaxAge('30', true), 30)
+  for (const value of ['0', '-1', '1.5', '30s', String(limits.publicReadMaxAgeSeconds + 1), '']) assert.throws(() => publicReadMaxAge(value, true), /MAX_AGE/, value)
+  assert.throws(() => publicReadMaxAge('30', false), /requires DATA_API_PUBLIC_READ/)
+  assert.throws(() => runtimeConfig({ ...baseEnv, DATA_API_PUBLIC_READ_MAX_AGE: '30' }), /requires DATA_API_PUBLIC_READ/)
+  assert.equal(runtimeConfig({ ...baseEnv, DATA_API_PUBLIC_READ: 'api.products', DATA_API_PUBLIC_READ_MAX_AGE: '60' }).publicReadMaxAge, 60)
+})
+
+test('only the default schema and full JSON representation can become shared entries', () => {
+  const config = runtimeConfig({ ...baseEnv, DATA_API_SCHEMAS: 'api,catalog', DATA_API_PUBLIC_READ: 'api.products,api.categories,catalog.items', DATA_API_PUBLIC_READ_MAX_AGE: '30' })
+  const cache = (headers = {}, target = { schema: 'api', relation: 'products', embedded: ['categories'] }) => publicReadCache({ headers }, config, target)
+  assert.deepEqual(cache(), { cacheControl: 'public, max-age=30', tags: 'data-api, data-api:api.products, data-api:api.categories' })
+  assert.deepEqual(cache({ accept: 'application/json, text/plain, */*', 'accept-profile': 'api' }).cacheControl, 'public, max-age=30')
+  for (const headers of [{ range: '0-9' }, { 'range-unit': 'items' }, { prefer: 'count=exact' }, { cookie: 'a=b' }, { 'accept-profile': 'catalog' },
+    { accept: 'text/csv' }, { accept: 'application/vnd.pgrst.object+json' }, { accept: 'application/json, text/csv' }]) {
+    assert.equal(cache(headers), null, JSON.stringify(headers))
+  }
+  assert.equal(cache({}, { schema: 'catalog', relation: 'items', embedded: [] }), null, 'non-default schemas share paths with the default schema')
+  assert.equal(publicReadCache({ headers: {} }, runtimeConfig({ ...baseEnv, DATA_API_PUBLIC_READ: 'api.products' }), { schema: 'api', relation: 'products', embedded: [] }), null)
+  const many = Array.from({ length: limits.cacheTagsMax }, (_, i) => `r${i}`)
+  assert.equal(cache({}, { schema: 'api', relation: 'products', embedded: many }), null, 'untaggable responses cannot be purged precisely')
+  const long = 's'.repeat(63), relation = 'x'.repeat(63)
+  const longConfig = runtimeConfig({ ...baseEnv, DATA_API_SCHEMAS: long, DATA_API_PUBLIC_READ: `${long}.${relation}`, DATA_API_PUBLIC_READ_MAX_AGE: '30' })
+  assert.equal(publicReadCache({ headers: {} }, longConfig, { schema: long, relation, embedded: [] }), null, 'tags over 128 bytes cannot be stored')
+})
+
+test('canonical anonymous reads are edge-cacheable; everything else stays no-store', async t => {
+  const { state, send } = await fixture(t, { DATA_API_PUBLIC_READ_MAX_AGE: '30' })
+  const cached = await send('/rest/v1/products?select=id,categories(name)&limit=10', { headers: { Origin: 'https://elsewhere.example', 'x-faas-client-ip': '203.0.113.1' } })
+  assert.equal(cached.status, 200)
+  assert.equal(cached.headers['cache-control'], 'public, max-age=30')
+  assert.equal(cached.headers['cache-tag'], 'data-api, data-api:api.products, data-api:api.categories')
+  assert.equal(cached.headers['access-control-allow-origin'], '*')
+  assert.equal(cached.headers.vary, undefined, 'shared entries cannot vary on Origin')
+  for (const [path, headers, why] of [
+    ['/rest/v1/products', { Range: '0-9' }, 'range'],
+    ['/rest/v1/products', { Prefer: 'count=exact' }, 'prefer'],
+    ['/rest/v1/products', { Accept: 'text/csv' }, 'csv'],
+    ['/rest/v1/products?fail=1', {}, 'engine error'],
+  ]) {
+    const response = await send(path, { headers: { ...headers, 'x-faas-client-ip': '203.0.113.2' } })
+    assert.equal(response.headers['cache-control'], 'no-store', why)
+    assert.equal(response.headers['cache-tag'], undefined, why)
+  }
+  const denied = await send('/rest/v1/notes')
+  assert.equal(denied.status, 401)
+  assert.equal(denied.headers['cache-control'], 'no-store')
+  const user = await send('/rest/v1/products', { headers: { Authorization: 'Bearer header.payload.signature', Origin: 'https://app.example' } })
+  assert.equal(user.headers['cache-control'], 'no-store')
+  assert.equal(user.headers['access-control-allow-origin'], 'https://app.example')
+  assert.equal(user.headers.vary, 'Origin')
+  const preflight = await send('/rest/v1/products', { method: 'OPTIONS', headers: { Origin: 'https://app.example', 'Access-Control-Request-Method': 'GET' } })
+  assert.equal(preflight.status, 204)
+  assert.equal(preflight.headers['access-control-allow-origin'], 'https://app.example', 'preflights keep the owner origin allowlist')
+  assert.equal(state.calls.length, 6)
+})
+
+test('without a freshness setting public reads keep per-origin CORS and no-store', async t => {
+  const { send } = await fixture(t)
+  const response = await send('/rest/v1/products', { headers: { Origin: 'https://app.example' } })
+  assert.equal(response.status, 200)
+  assert.equal(response.headers['cache-control'], 'no-store')
+  assert.equal(response.headers['access-control-allow-origin'], 'https://app.example')
+  assert.equal(response.headers.vary, 'Origin')
 })

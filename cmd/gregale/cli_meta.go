@@ -4791,6 +4791,7 @@ var cliCommands = []cliCommand{
 			{Name: "configure", Short: "Change public reads or aggregates and fresh-restart the runtime", Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "public-read", Value: "SCHEMA.RELATION[,...]", Short: "relations readable without a token"},
 				{Name: "no-public-read", Short: "disable anonymous reads"},
+				{Name: "public-read-cache", Value: "DURATION|off", Short: "cache canonical public reads at the edge (max 1h)"},
 				{Name: "aggregates", Value: "on|off", Short: "aggregate queries; on also enables the SQL deadline", ClosedSet: []string{"on", "off"}},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 				{Name: "no-restart", Short: "store settings without a fresh restart"},

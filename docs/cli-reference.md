@@ -14949,12 +14949,13 @@ Deploy a single-app Data API with its migrations as the release task
 
 Change public reads or aggregates and fresh-restart the runtime
 
-`gregale data-api configure [--public-read <SCHEMA.RELATION[,...]>] [--no-public-read] [--aggregates <on|off>] [--scope <SCOPE>] [--no-restart] <name>`
+`gregale data-api configure [--public-read <SCHEMA.RELATION[,...]>] [--no-public-read] [--public-read-cache <DURATION|off>] [--aggregates <on|off>] [--scope <SCOPE>] [--no-restart] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--public-read <SCHEMA.RELATION[,...]>` | relations readable without a token |  |
 | `--no-public-read` | disable anonymous reads |  |
+| `--public-read-cache <DURATION|off>` | cache canonical public reads at the edge (max 1h) |  |
 | `--aggregates <on|off>` | aggregate queries; on also enables the SQL deadline | one of `on` · `off` |
 | `--scope <SCOPE>` | environment scope |  |
 | `--no-restart` | store settings without a fresh restart |  |

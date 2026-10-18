@@ -17,7 +17,7 @@ import { createRateLimiter, admitRateLimit } from './rate-limit.mjs'
 import { createUserConcurrency, admitUserConcurrency } from './user-concurrency.mjs'
 import { qualifiedConnectionEngine, startConnectionReporter } from './connection-observations.mjs'
 import { createPoolObservation } from './pool.mjs'
-import { publicReadTarget, clientKey, matchServerKey, serverSubject, checkPublicRelations } from './access.mjs'
+import { publicReadTarget, publicReadCache, clientKey, matchServerKey, serverSubject, checkPublicRelations } from './access.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
   const servingFingerprint = config.fingerprint
@@ -36,7 +36,12 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     if (guarded) req.url = guarded[2]
     traceRequest(req, res, log)
     const origin = req.headers.origin
-    if (origin && config.origins.includes(origin)) {
+    if (config.publicReadMaxAge && req.headers.authorization === undefined && req.method !== 'OPTIONS') {
+      // Edge-cached public reads are shared across origins, so they cannot vary
+      // on Origin. They carry no credentials; any origin may read public rows.
+      res.setHeader('Access-Control-Allow-Origin', '*')
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Range,Preference-Applied,X-Request-Id,Retry-After')
+    } else if (origin && config.origins.includes(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin)
       res.setHeader('Vary', 'Origin')
       res.setHeader('Access-Control-Expose-Headers', 'Content-Range,Preference-Applied,X-Request-Id,Retry-After')
@@ -70,12 +75,13 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     if (!['GET', 'HEAD', 'POST', 'PATCH', 'DELETE'].includes(req.method)) return problem(res, 405, 'method_not_allowed')
     if (['/__gregale/schema', '/openapi.json'].includes(req.url) && req.method !== 'GET') return problem(res, 405, 'method_not_allowed')
     const token = req.headers.authorization?.match(/^Bearer ([^\s]+)$/i)?.[1]
-    let access = 'user', serverKeySlot = null, subject = null
+    let access = 'user', serverKeySlot = null, subject = null, publicCache = null
     if (req.headers.authorization === undefined) {
       // Never downgrade a present but invalid credential to anonymous access.
       const target = publicReadTarget(req, config)
       if (target.code) return problem(res, target.code === 'public_read_not_allowed' ? 403 : 401, target.code)
       access = 'anonymous'
+      publicCache = publicReadCache(req, config, target)
     } else if (!token) return problem(res, 401, 'token_required')
     else if (token.startsWith('gdsk_')) {
       access = 'server'
@@ -157,7 +163,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
         }
         const internal = await new SignJWT(claims).setProtectedHeader({ alg: 'HS256' }).sign(new TextEncoder().encode(config.secret.toString('base64url')))
         if (!deadline.check()) return
-        proxy(req, res, internal, upstreamPort, config, guarded ? `/__gregale/contract/${guarded[1]}/rest/v1` : '/rest/v1', deadline, userLease)
+        proxy(req, res, internal, upstreamPort, config, guarded ? `/__gregale/contract/${guarded[1]}/rest/v1` : '/rest/v1', deadline, userLease, guarded ? null : publicCache)
       } catch { problem(res, 503, 'data_api_unavailable') }
       finally { if (userLease) userLease.settled() }
     })
@@ -212,7 +218,7 @@ async function readiness(res, health, contract = {}, deadline, userLease) {
   return healthResponse(res, ready ? 200 : 503, { ready, ...(ready ? contract : {}) })
 }
 
-function proxy(req, res, token, port, config, restBasePath, deadline, userLease) {
+function proxy(req, res, token, port, config, restBasePath, deadline, userLease, publicCache = null) {
   const declared = Number(req.headers['content-length'] ?? 0)
   if (!Number.isSafeInteger(declared) || declared < 0 || declared > limits.bodyBytes) return problem(res, 413, 'request_too_large')
   const headers = { authorization: `Bearer ${token}` }
@@ -232,7 +238,7 @@ function proxy(req, res, token, port, config, restBasePath, deadline, userLease)
     response.on('data', () => deadline.check())
     if (req.method === 'GET' && path.split('?')[0] === '/' && response.statusCode === 200) return openAPISpec(response, res, config, restBasePath, deadline)
     if (response.statusCode >= 400) markRequest(res, 'upstream_error')
-    streamResponse(response, res, req.method, deadline, problem)
+    streamResponse(response, res, req.method, deadline, problem, publicCache)
   })
   let bytes = 0
   req.on('data', chunk => {

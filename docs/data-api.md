@@ -1028,6 +1028,51 @@ never client addresses.
 Add `"public_read": ["api.products"]` to `data-api.dev.json` to try anonymous
 reads in `gregale data-api dev`; the same RLS check runs locally.
 
+### Cache public reads at the edge
+
+Public rows are the same for every visitor, so the Gregale edge can serve them
+without waking the API or querying PostgreSQL:
+
+```sh
+gregale data-api configure shop-data --public-read-cache 30s
+```
+
+This stores `DATA_API_PUBLIC_READ_MAX_AGE` and creates one gateway cache rule,
+`data-api-public-read-cache`, for `GET /rest/v1/*` on the app's canonical host.
+The maximum is one hour. `--public-read-cache off` removes the setting and the
+rule, and `--no-public-read` removes them too.
+
+The rule covers the whole path, but only responses the runtime marks as
+`Cache-Control: public` are stored. Those are successful (`200`) anonymous
+reads of relations in the default schema, using the default JSON
+representation: no `Range`, `Range-Unit`, `Prefer`, `Cookie` or other-schema
+`Accept-Profile` header, and an `Accept` of `application/json`, `text/plain` or
+`*/*`. Every other response stays `no-store`. Signed-in and server-key requests
+always bypass the edge cache, because they carry `Authorization`.
+
+A cached response is shared across origins, so with caching on, anonymous
+responses send `Access-Control-Allow-Origin: *` instead of varying on `Origin`.
+Any website can then read your public rows, which anyone could already fetch
+directly. Rate limits apply only to requests that reach the API.
+
+The cache key is the method, host, path and query string. A client that sends a
+representation header for a URL that is already cached gets the cached JSON
+instead. Page with `limit` and `offset` query parameters, and keep exact counts,
+CSV and other schemas on signed-in requests.
+
+Changes appear once the max age passes. To show them sooner, purge by tag. Each
+cached response is tagged `data-api` plus `data-api:SCHEMA.RELATION` for every
+relation it contains, embedded ones included:
+
+```sh
+gregale cache purge shop-data --tag data-api:api.products   # one table
+gregale cache purge shop-data --tag data-api                # every public read
+```
+
+Deployments, including single-app migrations, and rule changes also invalidate
+cached entries. In a two-app project, purge `data-api` after migrating. While
+the API is unreachable, the edge may serve stale entries for up to five minutes.
+
 ## Server keys for trusted backends
 
 Backends, jobs and webhooks can call the same API with a server key instead of

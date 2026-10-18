@@ -31,6 +31,7 @@ type settingsAPI struct {
 	mu       sync.Mutex
 	requests []recordedRequest
 	secrets  []api.AppSecretResponse
+	rules    []api.EdgeRuleResponse
 }
 
 func newSettingsAPI(t *testing.T, secrets ...api.AppSecretResponse) *settingsAPI {
@@ -42,6 +43,12 @@ func newSettingsAPI(t *testing.T, secrets ...api.AppSecretResponse) *settingsAPI
 		s.requests = append(s.requests, recordedRequest{r.Method, r.URL.Path, r.URL.RawQuery, string(body)})
 		s.mu.Unlock()
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/shop-data":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{Slug: "shop-data", CanonicalURL: "https://shop-data.example.com"})
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/edge-rules"):
+			_ = json.NewEncoder(w).Encode(s.rules)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/edge-rules"), r.Method == http.MethodPatch:
+			_, _ = w.Write([]byte(`{"id":"rule-1","kind":"cache"}`))
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/secrets"):
 			_ = json.NewEncoder(w).Encode(api.AppSecretListResponse{Secrets: s.secrets, Count: len(s.secrets)})
 		case r.Method == http.MethodDelete && strings.HasSuffix(r.URL.Path, "/DATA_API_AGGREGATES"):
@@ -73,10 +80,14 @@ func (s *settingsAPI) calls() []string {
 }
 
 func (s *settingsAPI) bodyFor(suffix string) string {
+	return s.bodyOf(http.MethodPut, suffix)
+}
+
+func (s *settingsAPI) bodyOf(method, suffix string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, r := range s.requests {
-		if strings.HasSuffix(r.path, suffix) && r.method == http.MethodPut {
+		if strings.HasSuffix(r.path, suffix) && r.method == method {
 			return r.body
 		}
 	}
@@ -137,7 +148,7 @@ func TestDataAPIConfigureDisablesWithoutRestartWhenAsked(t *testing.T) {
 		t.Fatalf("exit = %d, output %s", code, out.String())
 	}
 	calls := server.calls()
-	if strings.Join(calls, "|") != "DELETE /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ|DELETE /v1/apps/shop-data/secrets/DATA_API_AGGREGATES" {
+	if strings.Join(calls, "|") != "GET /v1/apps/shop-data/edge-rules|DELETE /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ_MAX_AGE|DELETE /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ|DELETE /v1/apps/shop-data/secrets/DATA_API_AGGREGATES" {
 		t.Fatalf("calls = %v (an absent setting must count as removed, and no restart)", calls)
 	}
 	if !strings.Contains(out.String(), "data-api refresh shop-data") {
@@ -376,5 +387,103 @@ func TestDataAPITypesRendersClientsFromSnapshotFile(t *testing.T) {
 		if code := cmdDataAPITypes(args); code != 1 {
 			t.Fatalf("%v exit = %d", args, code)
 		}
+	}
+}
+
+var publicReadSecret = api.AppSecretResponse{Key: "DATA_API_PUBLIC_READ", Scope: api.DefaultEnvScope}
+
+func ownedCacheRule(id string) api.EdgeRuleResponse {
+	return api.EdgeRuleResponse{ID: id, Name: dataAPIPublicReadCacheRule, Kind: "cache"}
+}
+
+func TestDataAPIConfigurePublicReadCacheCreatesTheRule(t *testing.T) {
+	resetJSONOut(t)
+	server := newSettingsAPI(t, publicReadSecret)
+	server.rules = []api.EdgeRuleResponse{{ID: "other", Name: "owner-rule", Kind: "cache"}}
+	out, restore := captureStdout(t)
+	defer restore()
+	if code := cmdDataAPIConfigure([]string{"shop-data", "--public-read-cache", "30s"}); code != 0 {
+		t.Fatalf("exit = %d: %s", code, out.String())
+	}
+	want := "GET /v1/apps/shop-data/secrets|PUT /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ_MAX_AGE|GET /v1/apps/shop-data/edge-rules|GET /v1/apps/shop-data|POST /v1/apps/shop-data/edge-rules|POST /v1/apps/shop-data/restart"
+	if got := strings.Join(server.calls(), "|"); got != want {
+		t.Fatalf("calls = %s", got)
+	}
+	if !strings.Contains(server.bodyFor("/DATA_API_PUBLIC_READ_MAX_AGE"), `"30"`) {
+		t.Fatalf("max age body = %s", server.bodyFor("/DATA_API_PUBLIC_READ_MAX_AGE"))
+	}
+	var rule api.CreateEdgeRuleRequest
+	if err := json.Unmarshal([]byte(server.bodyOf(http.MethodPost, "/edge-rules")), &rule); err != nil {
+		t.Fatal(err)
+	}
+	var action api.EdgeRuleCacheAction
+	_ = json.Unmarshal(rule.Action, &action)
+	if rule.Name != dataAPIPublicReadCacheRule || rule.Kind != "cache" || rule.MatchPath != "/rest/v1/*" || rule.MatchHost != "shop-data.example.com" || strings.Join(rule.MatchMethods, ",") != "GET" || action.MaxAgeSeconds != 30 || action.StaleIfErrorSeconds != api.ResponseCacheStaleIfErrorMaxSeconds {
+		t.Fatalf("rule = %+v action = %+v", rule, action)
+	}
+}
+
+func TestDataAPIConfigurePublicReadCacheUpdatesOwnedRuleOnly(t *testing.T) {
+	resetJSONOut(t)
+	server := newSettingsAPI(t)
+	server.rules = []api.EdgeRuleResponse{ownedCacheRule("r1"), {ID: "owner", Name: "owner-rule", Kind: "cache"}, ownedCacheRule("r2")}
+	out, restore := captureStdout(t)
+	defer restore()
+	if code := cmdDataAPIConfigure([]string{"shop-data", "--public-read", "api.products", "--public-read-cache", "1m", "--no-restart"}); code != 0 {
+		t.Fatalf("exit = %d: %s", code, out.String())
+	}
+	got := strings.Join(server.calls(), "|")
+	if !strings.Contains(got, "PATCH /v1/edge-rules/r1") || !strings.Contains(got, "DELETE /v1/edge-rules/r2") || strings.Contains(got, "owner") || strings.Contains(got, "restart") || strings.Contains(got, "POST /v1/apps/shop-data/edge-rules") {
+		t.Fatalf("calls = %s", got)
+	}
+	if !strings.Contains(server.bodyOf(http.MethodPatch, "/r1"), `"max_age_seconds":60`) {
+		t.Fatalf("patch = %s", server.bodyOf(http.MethodPatch, "/r1"))
+	}
+}
+
+func TestDataAPIConfigurePublicReadCacheRequiresPublicReads(t *testing.T) {
+	resetJSONOut(t)
+	server := newSettingsAPI(t)
+	if code := cmdDataAPIConfigure([]string{"shop-data", "--public-read-cache", "30s"}); code == 0 {
+		t.Fatal("caching enabled without public reads")
+	}
+	if got := strings.Join(server.calls(), "|"); got != "GET /v1/apps/shop-data/secrets" {
+		t.Fatalf("calls = %s (nothing may be written)", got)
+	}
+	for _, args := range [][]string{
+		{"shop-data", "--public-read-cache", "2h"},
+		{"shop-data", "--public-read-cache", "0s"},
+		{"shop-data", "--public-read-cache", "soon"},
+		{"shop-data", "--no-public-read", "--public-read-cache", "30s"},
+		{"shop-data", "--public-read-cache", "30s", "--scope", "preview"},
+	} {
+		if code := cmdDataAPIConfigure(args); code == 0 {
+			t.Fatalf("%v accepted", args)
+		}
+	}
+	if got := len(server.calls()); got != 1 {
+		t.Fatalf("invalid flags reached the API: %v", server.calls())
+	}
+}
+
+func TestDataAPIConfigurePublicReadCacheOffAndPublicReadRemoval(t *testing.T) {
+	resetJSONOut(t)
+	server := newSettingsAPI(t, publicReadSecret)
+	server.rules = []api.EdgeRuleResponse{ownedCacheRule("r1")}
+	out, restore := captureStdout(t)
+	defer restore()
+	if code := cmdDataAPIConfigure([]string{"shop-data", "--public-read-cache", "off", "--no-restart"}); code != 0 {
+		t.Fatalf("exit = %d: %s", code, out.String())
+	}
+	if got := strings.Join(server.calls(), "|"); got != "GET /v1/apps/shop-data/edge-rules|DELETE /v1/edge-rules/r1|DELETE /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ_MAX_AGE" {
+		t.Fatalf("off calls = %s", got)
+	}
+	removal := newSettingsAPI(t)
+	removal.rules = []api.EdgeRuleResponse{ownedCacheRule("r9")}
+	if code := cmdDataAPIConfigure([]string{"shop-data", "--no-public-read", "--no-restart"}); code != 0 {
+		t.Fatal("public read removal failed")
+	}
+	if got := strings.Join(removal.calls(), "|"); got != "GET /v1/apps/shop-data/edge-rules|DELETE /v1/edge-rules/r9|DELETE /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ_MAX_AGE|DELETE /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ" {
+		t.Fatalf("removal calls = %s", got)
 	}
 }
