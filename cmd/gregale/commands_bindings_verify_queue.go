@@ -57,6 +57,12 @@ func executeQueueBindingCanary(ctx context.Context, client *api.Client, app, bin
 	if err != nil {
 		return r, err
 	}
+	if r.ReleaseID != "" {
+		release, err := uuid.Parse(r.ReleaseID)
+		if err != nil || release == uuid.Nil || release.String() != r.ReleaseID {
+			return r, fmt.Errorf("server did not confirm the exact canary release")
+		}
+	}
 	id, parseErr := uuid.Parse(r.ID)
 	expectedScope, scopeSelected := ctx.Value(queueCanaryScopeKey{}).(string)
 	if parseErr != nil || id == uuid.Nil || !sameBindingDeployment(r.DeploymentID, deployment) || r.Binding != binding || r.ExpiresAt.IsZero() || r.PublishedAt.IsZero() || !r.ExpiresAt.After(r.PublishedAt) || r.ExpiresAt.Sub(r.PublishedAt) > time.Duration(api.QueueCanaryMaxTTLSeconds)*time.Second || api.ValidateScope(r.Scope) != nil || scopeSelected && r.Scope != expectedScope {
@@ -95,7 +101,7 @@ func executeQueueBindingCanary(ctx context.Context, client *api.Client, app, bin
 		if err != nil {
 			return r, err
 		}
-		if next.ID != r.ID || next.DeploymentID != r.DeploymentID || next.Binding != r.Binding || next.Scope != r.Scope || !next.PublishedAt.Equal(r.PublishedAt) || !next.ExpiresAt.Equal(r.ExpiresAt) {
+		if next.ID != r.ID || next.ReleaseID != r.ReleaseID || next.DeploymentID != r.DeploymentID || next.Binding != r.Binding || next.Scope != r.Scope || !next.PublishedAt.Equal(r.PublishedAt) || !next.ExpiresAt.Equal(r.ExpiresAt) {
 			return r, fmt.Errorf("queue canary identity changed")
 		}
 		r = next

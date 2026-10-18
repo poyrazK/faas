@@ -14,7 +14,8 @@ import (
 func imagePreparationFromRow(p sqlc.DeploymentImagePreparation) ImagePreparation {
 	return ImagePreparation{DeploymentID: uuid.UUID(p.DeploymentID.Bytes).String(), NodeName: p.NodeName,
 		InputPath: p.InputPath, InputKey: p.InputKey, InputBytes: p.InputBytes,
-		ClaimToken: uuid.UUID(p.ClaimToken.Bytes).String(), Phase: ImagePreparationPhase(p.Phase), UpdatedAt: p.UpdatedAt.Time}
+		ClaimToken: uuid.UUID(p.ClaimToken.Bytes).String(), Phase: ImagePreparationPhase(p.Phase), UpdatedAt: p.UpdatedAt.Time,
+		PhaseStartedAt: p.PhaseStartedAt.Time}
 }
 
 func (s *PgStore) BeginImagePreparation(ctx context.Context, id, node string) (ImagePreparation, error) {

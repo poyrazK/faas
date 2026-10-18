@@ -3237,14 +3237,15 @@ type DeploymentDependencyGate struct {
 }
 
 type DeploymentImagePreparation struct {
-	DeploymentID pgtype.UUID
-	NodeName     string
-	InputPath    string
-	InputKey     string
-	InputBytes   int64
-	ClaimToken   pgtype.UUID
-	Phase        string
-	UpdatedAt    pgtype.Timestamptz
+	DeploymentID   pgtype.UUID
+	NodeName       string
+	InputPath      string
+	InputKey       string
+	InputBytes     int64
+	ClaimToken     pgtype.UUID
+	Phase          string
+	UpdatedAt      pgtype.Timestamptz
+	PhaseStartedAt pgtype.Timestamptz
 }
 
 type DeploymentLog struct {
@@ -3716,6 +3717,28 @@ type EntityOutboxAcceptance struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type EnvironmentBindingReleaseReceipt struct {
+	ReleaseID  pgtype.UUID
+	GraphID    pgtype.UUID
+	Members    []byte
+	ValidUntil pgtype.Timestamptz
+	RecordedAt pgtype.Timestamptz
+}
+
+type EnvironmentBindingRetirementReceipt struct {
+	ReleaseID     pgtype.UUID
+	SourceID      pgtype.UUID
+	RevisionID    pgtype.UUID
+	Generation    int64
+	IntentVersion int64
+	PlanHash      string
+	PriorRelease  string
+	RetirementIds []pgtype.UUID
+	Policies      []byte
+	ValidUntil    pgtype.Timestamptz
+	RecordedAt    pgtype.Timestamptz
+}
+
 type EnvironmentDesiredRevision struct {
 	ID               pgtype.UUID
 	SourceID         pgtype.UUID
@@ -3962,6 +3985,14 @@ type EnvironmentQualificationRestoreReservation struct {
 	CreatedAt         pgtype.Timestamptz
 }
 
+type EnvironmentQualificationServiceReceipt struct {
+	RequestID  pgtype.UUID
+	Attempt    int64
+	Binding    string
+	Route      []byte
+	RecordedAt pgtype.Timestamptz
+}
+
 type EnvironmentQualificationSmokeReceipt struct {
 	RequestID         pgtype.UUID
 	Attempt           int64
@@ -4024,6 +4055,7 @@ type EnvironmentWorkloadQualificationRequest struct {
 	LeaseUntil         pgtype.Timestamptz
 	Attempt            int64
 	ReservedInstanceID pgtype.UUID
+	BindingContext     []byte
 }
 
 type EnvironmentWorkloadRetirement struct {
@@ -4050,6 +4082,7 @@ type EnvironmentWorkloadRetirement struct {
 	RecoveryRevisionID   pgtype.UUID
 	RecoveryGeneration   int64
 	RecoveredAt          pgtype.Timestamptz
+	BindingPolicyContext []byte
 }
 
 type EnvironmentWorkloadServingQueueAck struct {
@@ -8757,6 +8790,56 @@ type OidcTrustPolicy struct {
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
 	AuditLogin     string
+}
+
+type OperatorAlertCollection struct {
+	Singleton     bool
+	LastAttemptAt pgtype.Timestamptz
+	LastSuccessAt pgtype.Timestamptz
+}
+
+type OperatorAlertCollectionOutcome struct {
+	AttemptedAt pgtype.Timestamptz
+	Outcome     string
+	Reason      string
+	Diagnostics []byte
+}
+
+type OperatorAlertEpisode struct {
+	ID                 string
+	SeriesID           string
+	RuleKey            string
+	Name               string
+	Component          string
+	Severity           string
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	NodeID             pgtype.UUID
+	RunbookUrl         string
+	StartedAt          pgtype.Timestamptz
+	FirstSeenAt        pgtype.Timestamptz
+	LastSeenAt         pgtype.Timestamptz
+	LastEvaluatedAt    pgtype.Timestamptz
+	LastCheckedAt      pgtype.Timestamptz
+	ResolvedAt         pgtype.Timestamptz
+	TriageRevision     int64
+	TriageAcknowledged bool
+	TriageOwnerID      pgtype.UUID
+	TriageSnoozedUntil pgtype.Timestamptz
+	TriageUpdatedAt    pgtype.Timestamptz
+}
+
+type OperatorAlertRetentionHealth struct {
+	Singleton          bool
+	LastAttemptAt      pgtype.Timestamptz
+	LastSuccessAt      pgtype.Timestamptz
+	LastPrunedEpisodes int64
+}
+
+type OperatorAlertRuleObservation struct {
+	RuleKey     string
+	EvaluatedAt pgtype.Timestamptz
+	EpisodeIds  []byte
 }
 
 type OperatorIntent struct {

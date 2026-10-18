@@ -1,0 +1,39 @@
+# ADR-1446: a rollback that never restored its predecessor must page.
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: a completed rollback does not page
+    interval: 1m
+    input_series:
+      - series: apid_rollback_outcomes_total{outcome="complete",trigger="manual",job="apid",instance="a"}
+        values: 0 1 1
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: FaasRollbackNotRestored
+        exp_alerts: []
+
+  - name: a rollback that never served pages with its trigger
+    interval: 1m
+    input_series:
+      - series: apid_rollback_outcomes_total{outcome="failed",trigger="manual",job="apid",instance="a"}
+        values: 0 1 1
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: FaasRollbackNotRestored
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: apid
+              family: safe_release
+              public_status: degraded
+              outcome: failed
+              trigger: manual
+              job: apid
+              instance: a
+            exp_annotations:
+              summary: A rollback did not restore the previous release (manual)
+              description: "apid verified that a manual rollback never served. Read the app.rollback_failed audit event or `gregale rollback status <app> --operation <id>` for the error, confirm which release is serving, and retry or roll back with --to."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md

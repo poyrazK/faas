@@ -83,24 +83,14 @@ func testOwnershipRecoveryTransfer(t *testing.T, fx *Fixture) {
 		t.Fatal(err)
 	}
 	for _, lifecycle := range []state.NodeLifecycle{state.NodeLifecycleDraining, state.NodeLifecycleRecovering, state.NodeLifecycleMaintenance, state.NodeLifecycleUnavailable} {
-		if err := fx.Store.NodeSetLifecycle(fx.Ctx, destination.ID, state.NodeLifecycleActive, lifecycle); err != nil {
+		// Isolate rejected destinations: resetting a recovering node would
+		// require a generation-bound completion receipt (ADR-1527).
+		blocked := ownershipDestination(t, fx)
+		if err := fx.Store.NodeSetLifecycle(fx.Ctx, blocked.ID, state.NodeLifecycleActive, lifecycle); err != nil {
 			t.Fatal(err)
 		}
-		if err := transfer(); !errors.Is(err, state.ErrConflict) {
+		if err := fx.Store.ReassignOrphanedAppOwner(fx.Ctx, fx.App.ID, fx.Node.ID, blocked.ID, 60); !errors.Is(err, state.ErrConflict) {
 			t.Fatalf("destination %s accepted: %v", lifecycle, err)
-		}
-		// ADR-1522: recovering -> active needs a generation-bound completion
-		// receipt, so this fixture returns the destination through
-		// unavailable instead of completing a recovery it never ran.
-		restore := lifecycle
-		if lifecycle == state.NodeLifecycleRecovering {
-			if err := fx.Store.NodeSetLifecycle(fx.Ctx, destination.ID, lifecycle, state.NodeLifecycleUnavailable); err != nil {
-				t.Fatal(err)
-			}
-			restore = state.NodeLifecycleUnavailable
-		}
-		if err := fx.Store.NodeSetLifecycle(fx.Ctx, destination.ID, restore, state.NodeLifecycleActive); err != nil {
-			t.Fatal(err)
 		}
 	}
 	const contenders = 8

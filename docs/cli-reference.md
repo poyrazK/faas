@@ -2542,10 +2542,11 @@ Suspend versioning while retaining older versions
 
 Inspect app bindings, verification, runtime freshness, and rotation progress
 
-`gregale bindings [<subcommand>] <app> [--require-complete] [--scope <SCOPE>]`
+`gregale bindings [<subcommand>] <app> [--deployment <ID|vN>] [--require-complete] [--scope <SCOPE>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--deployment <ID|vN>` | inspect exact deployment service bindings, including frozen environment routes |  |
 | `--require-complete` | fail if binding metadata, verification, runtime freshness or refresh progress is incomplete |  |
 | `--scope <SCOPE>` | filter resource bindings by environment scope; app-wide bindings remain included |  |
 
@@ -2595,12 +2596,14 @@ Configure standalone service bindings
 
 #### bindings service explain
 
-Explain app-level service authorization; exits 0 allowed, 1 denied, 2 indeterminate/error
+Explain service authorization, optionally for an exact deployment; exits 0 allowed, 1 denied, 2 indeterminate/error
 
-`gregale bindings service explain [--method <METHOD>] [--path <PATH>] <caller> <target>`
+`gregale bindings service explain [--deployment <ID>] [--scope <ENV>] [--method <METHOD>] [--path <PATH>] <caller> <target>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--deployment <ID>` | exact caller deployment UUID; use server routing and effective policy |  |
+| `--scope <ENV>` | assert deployment environment; requires --deployment |  |
 | `--method <METHOD>` | HTTP method (default GET) |  |
 | `--path <PATH>` | origin-form request path (default /) |  |
 

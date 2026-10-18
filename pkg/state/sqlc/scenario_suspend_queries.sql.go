@@ -109,7 +109,7 @@ func (q *Queries) PendingScenarioSuspendResumes(ctx context.Context, db DBTX) ([
 }
 
 const scenarioResumingCallersByHostIP = `-- name: ScenarioResumingCallersByHostIP :many
-SELECT i.app_id::text AS app_id,i.deployment_id::text AS deployment_id
+SELECT i.id::text AS instance_id,i.app_id::text AS app_id,i.deployment_id::text AS deployment_id
 FROM instances i JOIN compute_nodes n ON n.id=i.node_id
 JOIN apps a ON a.id=i.app_id AND a.status='active' AND a.preview_pr_state='open' AND a.preview_expires_at>clock_timestamp()
 JOIN scenario_suspend_resumes c ON c.instance_id=i.id AND c.app_id=i.app_id AND c.deployment_id=i.deployment_id
@@ -129,6 +129,7 @@ type ScenarioResumingCallersByHostIPParams struct {
 }
 
 type ScenarioResumingCallersByHostIPRow struct {
+	InstanceID   string
 	AppID        string
 	DeploymentID string
 }
@@ -142,7 +143,7 @@ func (q *Queries) ScenarioResumingCallersByHostIP(ctx context.Context, db DBTX, 
 	items := []ScenarioResumingCallersByHostIPRow{}
 	for rows.Next() {
 		var i ScenarioResumingCallersByHostIPRow
-		if err := rows.Scan(&i.AppID, &i.DeploymentID); err != nil {
+		if err := rows.Scan(&i.InstanceID, &i.AppID, &i.DeploymentID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

@@ -369,6 +369,20 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/health":                  true, // Obs-Meta + Trace-IDs Mega-PR / C7 — operator-only meta-obs health snapshot
 	"GET /v1/admin/obs/incidents":               true, // operator-only bounded incident correlation inbox
 
+	"GET /v1/admin/obs/incidents/{kind}/{id}/evidence":               true,
+	"GET /v1/admin/obs/incidents/platform_alert/recurrence":          true, // private retained-episode recurrence diagnostics
+	"GET /v1/admin/obs/incidents/platform_alert/response-times":      true, // private retained-episode response analytics
+	"GET /v1/admin/obs/notification-health":                          true, // private notification pipeline health
+	"GET /v1/admin/obs/collection-history":                           true, // private prospective collection evidence
+	"GET /v1/admin/obs/rule-health":                                  true, // private current alert-rule diagnostics
+	"GET /v1/admin/obs/rule-coverage":                                true, // private explicitly selected rule coverage
+	"GET /v1/admin/obs/recording-coverage":                           true, // private explicitly selected recording coverage
+	"GET /v1/admin/obs/input-health":                                 true, // private explicitly selected telemetry inputs
+	"GET /v1/admin/obs/incidents/platform_alert/summary":             true, // private retained-alert workload summary
+	"GET /v1/admin/obs/incidents/platform_alert/{id}/triage-history": true, // private sanitized operator triage receipts
+	"GET /v1/admin/obs/incidents/{kind}/{id}/context":                true, // private operator incident context
+	"POST /v1/admin/obs/incidents/platform_alert/{id}/triage":        true, // operator cookie session + recent MFA; outside tenant SDK // operator-only bounded incident evidence
+
 	// Operator-side observability mega-PR (PR #1099) P2 recovery
 	// primitives. Mirror the cmd/sdk-coverage/main.go::routeExclude
 	// entries for these same routes — both lists must move
@@ -681,6 +695,7 @@ var dtoExclude = map[string]bool{
 	"PlatformTenantActivityOptions":                   true, // client-only query parameters; the response DTOs are in the public spec
 	"OperationMilestoneListOptions":                   true, // client-only milestone query selectors
 	"OperationListOptions":                            true, // client-only history query parameters; OperationListResponse is the wire DTO
+	"ExplainServiceBindingOptions":                    true, // client-only explanation query parameters; ServiceBindingExplanation is the wire DTO
 	// ADR-1194: the decision payload delivered to the workflow, not an apid request or response.
 	"OperationApprovalPayload":  true,
 	"OperationApprovalDecision": true,
@@ -784,6 +799,8 @@ var dtoExclude = map[string]bool{
 	"ObsBuilderHeartbeatRow":          true,
 	"ObsIncident":                     true,
 	"ObsIncidentListResponse":         true,
+	"ObsIncidentEvidenceResponse":     true, // same private incident surface
+	"ObsIncidentEvidenceEntry":        true,
 	// P2d / C5/C7 mega-PR follow-on DTOs (Obs-Meta + Trace-IDs
 	// Mega-PR / PR #1111): admin-only shapes for /v1/admin/obs/*
 	// surface; intentionally undocumented for public consumers.
@@ -1597,6 +1614,17 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", envDiffFile),
 		filepath.Join(root, "pkg", "api", operatorConfigFile),
 		filepath.Join(root, "pkg", "api", obsFile),
+		filepath.Join(root, "pkg", "api", "obs_triage.go"),
+		filepath.Join(root, "pkg", "api", "obs_triage_history.go"),
+		filepath.Join(root, "pkg", "api", "obs_workload.go"),
+		filepath.Join(root, "pkg", "api", "obs_response_times.go"),
+		filepath.Join(root, "pkg", "api", "obs_recurrence.go"),
+		filepath.Join(root, "pkg", "api", "obs_collection_history.go"),
+		filepath.Join(root, "pkg", "api", "obs_notifications.go"),
+		filepath.Join(root, "pkg", "api", "obs_rule_health.go"),
+		filepath.Join(root, "pkg", "api", "obs_rule_coverage.go"),
+		filepath.Join(root, "pkg", "api", "obs_recording_coverage.go"),
+		filepath.Join(root, "pkg", "api", "obs_input_health.go"),
 		filepath.Join(root, "pkg", "api", corsPresetsFile),
 		filepath.Join(root, "pkg", "api", canaryCustomStageFile),
 		filepath.Join(root, "pkg", "api", uploadSessionFile),
@@ -1633,6 +1661,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", queueBindingFile),
 		filepath.Join(root, "pkg", "api", "queue_leases.go"), // ADR-1140 pull-lease DTOs
 		filepath.Join(root, "pkg", "api", "binding_inventory.go"),
+		filepath.Join(root, "pkg", "api", "service_binding_explanation.go"),
+		filepath.Join(root, "pkg", "api", "managed_service_probe.go"),
 		filepath.Join(root, "pkg", "api", "binding_release_policy.go"),
 		filepath.Join(root, "pkg", "api", "rollout_recovery.go"),
 		filepath.Join(root, "pkg", "api", "service_rollout_bindings.go"),

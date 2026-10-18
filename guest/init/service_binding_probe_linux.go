@@ -32,6 +32,9 @@ func isServiceBindingProbeCommand(req apptaskproto.Request) bool {
 }
 
 func executeServiceBindingProbeCommand(ctx context.Context, req apptaskproto.Request, manifest api.AppManifest, secrets, apiEnv map[string]string, stdout io.Writer) (apptaskproto.Result, error) {
+	if len(req.Command) == 3 && req.Command[0] == api.AppTaskManagedServiceBindingProbeCommand {
+		return executeManagedServiceBindingProbe(ctx, req, manifest, secrets, apiEnv, stdout)
+	}
 	service := ""
 	target := ""
 	if api.IsServiceBindingTargetProbeCommand(req.Command, req.CommandShell) {
@@ -96,7 +99,12 @@ func runServiceBindingProbe(ctx context.Context, service string, caBundle []byte
 }
 
 func runServiceBindingTargetProbe(ctx context.Context, service, target string, caBundle []byte, resolver serviceBindingProbeResolver, dialContext func(context.Context, string, string) (net.Conn, error)) api.ServiceBindingProbeReport {
+	return runServiceBindingContextProbe(ctx, service, target, nil, caBundle, resolver, dialContext)
+}
+
+func runServiceBindingContextProbe(ctx context.Context, service, target string, managed *api.ManagedServiceProbeSpec, caBundle []byte, resolver serviceBindingProbeResolver, dialContext func(context.Context, string, string) (net.Conn, error)) api.ServiceBindingProbeReport {
 	report := api.ServiceBindingProbeReport{
+		ManagedService:     managed,
 		TargetDeploymentID: target,
 		Service:            service,
 		URL:                "https://" + service + ".internal",
@@ -165,6 +173,9 @@ func runServiceBindingTargetProbe(ctx context.Context, service, target string, c
 	if target != "" {
 		request.Header.Set(api.TargetDeploymentHeader, target)
 	}
+	if managed != nil {
+		request.Header.Set(api.ReleaseHeader, managed.ReleaseID)
+	}
 	response, err := client.Do(request)
 	if err != nil {
 		report.TLS = api.ServiceBindingProbeCheck{Status: "failed", Detail: boundedProbeDetail("HTTPS request failed: " + err.Error())}
@@ -182,7 +193,8 @@ func runServiceBindingTargetProbe(ctx context.Context, service, target string, c
 
 	stage := response.Header.Get(api.ServiceBindingProbeStageHeader)
 	marker := response.Header.Get(api.ServiceBindingProbeResponseHeader)
-	if response.StatusCode == http.StatusNoContent && marker == api.ServiceBindingProbeVersion && stage == "complete" && (target == "" || response.Header.Get(api.TargetDeploymentHeader) == target) {
+	managedConfirmed := managed == nil || len(response.Header.Values(api.TargetDeploymentHeader)) == 1 && response.Header.Get(api.TargetDeploymentHeader) == managed.TargetDeploymentID && len(response.Header.Values(api.ReleaseHeader)) == 1 && response.Header.Get(api.ReleaseHeader) == managed.ReleaseID
+	if response.StatusCode == http.StatusNoContent && marker == api.ServiceBindingProbeVersion && stage == "complete" && (target == "" || response.Header.Get(api.TargetDeploymentHeader) == target) && managedConfirmed {
 		report.Authorization = api.ServiceBindingProbeCheck{Status: "passed", Detail: "caller binding and target policy allowed the request"}
 		report.Routing = api.ServiceBindingProbeCheck{Status: "passed", Detail: "healthy endpoint is registered; target was not woken"}
 		return report

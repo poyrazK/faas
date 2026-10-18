@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
-	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/credentialprobe/sqlc"
 )
 
 func TestCredentialProbeConfigRejectsUnsafeConnectionOptions(t *testing.T) {

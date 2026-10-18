@@ -123,3 +123,7 @@ SELECT id FROM projects WHERE id=sqlc.arg(project_id)::uuid AND account_id=sqlc.
 UPDATE deployments d SET traffic_percent=0,traffic_percent_explicit=true
 FROM environment_workload_retirements r WHERE r.id=sqlc.arg(id)::uuid AND r.source_id=sqlc.arg(source_id)::uuid
  AND r.phase='retiring' AND d.id=ANY(r.deployment_ids) AND d.status='live';
+
+-- name: AuthorizeEnvironmentBindingRetirement :one
+SELECT authorize_environment_binding_retirement(sqlc.arg(source_id)::uuid,sqlc.arg(next_release)::uuid,
+ sqlc.arg(prior_release)::text,sqlc.arg(plan_hash)::text)::boolean;
