@@ -17,7 +17,7 @@ func MCPCatalogOAuthSecretSource(secret AppSecret) string {
 }
 
 func (m *MemStore) credentialChangeLocked(account, app, scope, key string, deleted bool, at time.Time) error {
-	if scope != DefaultEnvScope || m.mcpCatalogMonitorOwners[app] != account {
+	if m.mcpCatalogMonitorOwners[app] != account {
 		return nil
 	}
 	root, ok := m.mcpCatalogMonitors[app]
@@ -37,7 +37,7 @@ func (m *MemStore) credentialChangeLocked(account, app, scope, key string, delet
 		}
 	}()
 	for role, view := range retirementViews(root) {
-		if view.Config.Observer == nil || view.Config.Observer.OAuth == nil {
+		if api.MCPConnectionScope(view.Config.Scope) != api.MCPConnectionScope(scope) || view.Config.Observer == nil || view.Config.Observer.OAuth == nil {
 			continue
 		}
 		cfg := view.Config.Observer.OAuth
@@ -53,9 +53,9 @@ func (m *MemStore) credentialChangeLocked(account, app, scope, key string, delet
 		if journal := st.Renewal; journal != nil && (journal.State == "pending" || journal.State == "reauthorization_required") && journal.Result == nil {
 			frozen := *cfg
 			phase := &api.MCPCatalogOAuthRevocation{ID: journal.ID, State: "pending", NextAttemptAt: at.Add(time.Duration(api.MCPCatalogOAuthFlowSeconds) * time.Second), Config: &frozen}
-			r := newRetirement(app, m.apps[app].Slug, role, "credential_changed", phase, at)
+			r := newRetirement(app, m.apps[app].Slug, role, "credential_changed", phase, at, scope)
 			r.State = "awaiting_issuance"
-			m.captureRetirementClientLocked(account, app, phase)
+			m.captureRetirementClientLocked(account, app, phase, scope)
 			if err := m.insertRetirementLocked(account, r); err != nil {
 				return err
 			}

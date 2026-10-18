@@ -815,5 +815,42 @@
     "native_acceptance": false,
     "production_activation": false,
     "local_capacity_note": "First compile exhausted managed workspace before test execution. Removed only inactive generated Go archive caches and reran all contracts successfully."
+  },
+  "mcp_main_integration": {
+    "source_parents": [
+      "ef08649b068014911061c58f1d24f51611b810cb",
+      "637ef59e883a26efdc8de554b039e15e99a8fcd8"
+    ],
+    "fresh_schema_reported_lines": 81257,
+    "migration_source_digest": "7f18fe66d7c131196978d45c020071d147512a6d46fecfdb2dd8b26268bd38ef",
+    "function_migrations": {
+      "new_migrations": 3,
+      "replay_schema_equal": true,
+      "down_up_schema_equal": true,
+      "schema_sha256": "90da80add76f625294a2ceacbc9a00d3a1dec50d2ec1630745f0293702cd68bd"
+    },
+    "published_mcp_adrs_unchanged": 30,
+    "openapi_copies_unchanged_from_published_main": true,
+    "sqlc_generation_and_drift": "pass",
+    "node_and_python_sdk_generation": "pass; generated trees match published main",
+    "node_build_python_compile_runtime_helper_drift": "pass",
+    "adr_uniqueness": {
+      "adrs": 1767,
+      "distinct_ids": 1563,
+      "baseline_duplicate_ids": 164
+    },
+    "docs_links_and_four_local_fixtures": "pass",
+    "prior_head_hosted_function_gate": {
+      "head": "ef08649b068014911061c58f1d24f51611b810cb",
+      "run_id": 39094030717,
+      "job_id": 117576589186,
+      "conclusion": "success",
+      "started_at": "2026-10-18T03:59:54Z",
+      "completed_at": "2026-10-18T04:23:48Z",
+      "guarded_native_suite": "compiled only; no native test execution"
+    },
+    "combined_head_hosted_ci": "required before merge; no success claimed here",
+    "native_acceptance": false,
+    "production_activation": false
   }
 }

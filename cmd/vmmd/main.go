@@ -45,10 +45,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/fcvm/activity"
 	"github.com/onebox-faas/faas/pkg/fcvm/cpustats"
+	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/fcvm/netstats"
 	"github.com/onebox-faas/faas/pkg/frameworkready"
 	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/imaged"
+	"github.com/onebox-faas/faas/pkg/mcpprotocol"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/sched"
@@ -886,9 +888,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.PmemBaseDir != "" && fcvm.PmemBaseSupported(fcVersion) && !cfg.NativeProcessRecovery {
 		pmemBaseDir = cfg.PmemBaseDir
 	}
+	protocolMetrics := mcpprotocol.New(ops.Registry())
+	protocolCoverage := mcpprotocol.NewCoverage(ops.Registry())
 	jailer := fcvm.NewJailerVMM(fcvm.JailChrootBase, 30*time.Second).
 		WithRuntimeSourceRoot(vmmdRuntimeSourceRoot(storageBackend)).
 		WithServiceProxyCA(serviceProxyCAPEM).
+		WithLogCommitCallback(func(appID string, line logbuf.Line) { protocolMetrics.Observe(appID, line.Line, line.WrittenAt) }).
+		WithInstanceLogObserver(protocolCoverage.Start).
+		WithInstancePauseObserver(protocolCoverage.Pause).
 		// Same registry the Manager gets below, so per-artifact
 		// materialization lands next to the wake phases in one scrape.
 		WithWakePhaseMetrics(wpm).

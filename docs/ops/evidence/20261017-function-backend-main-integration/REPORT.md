@@ -259,6 +259,29 @@ compile reached workspace capacity before tests ran; generated archive caches
 were reclaimed and the complete contract run passed. No native test body or
 production activation is qualified by these checks.
 
+## Integration with MCP readiness release
+
+Main through `637ef59e883a26efdc8de554b039e15e99a8fcd8` adds MCP starter
+parity, monitoring and readiness operations. The merge retains all thirty
+published MCP timestamp ADRs and both OpenAPI copies byte-for-byte. Only the
+three function migrations differ from published main; their IDs remain after
+the newly integrated MCP migrations.
+
+Fresh schema generation reports 81,257 lines. Replaying the three function
+migrations and reversing down/forward up preserve the identical combined
+schema. SQLC generation/drift, both SDK generators, TypeScript compilation,
+Python compilation and canonical helper drift checks pass. Generated management
+SDK trees match published main. ADR uniqueness preserves the 164-duplicate
+baseline across 1,767 decisions, and documentation links and their four local
+fixtures pass.
+
+The [hosted function gate for source `ef08649b068014911061c58f1d24f51611b810cb`](https://github.com/poyrazK/faas/actions/runs/39094030717/job/117576589186)
+passed in twenty-four minutes, including runner/real SQL races, execution
+ownership checks and guarded native compilation. This confirms the revised
+compiler phase within the unchanged job budget for that source. All applicable
+hosted checks must pass again on the new combined head before merge. Native
+compilation supplies no physical execution or production activation evidence.
+
 ## Qualification boundary
 
 Production activation remains disabled. This managed container has no supported
