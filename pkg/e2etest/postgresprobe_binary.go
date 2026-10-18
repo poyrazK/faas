@@ -38,8 +38,8 @@ func PostgresProbeExecutable() ([]byte, error) {
 		command := exec.CommandContext(ctx, "go", "build", "-p", "1", "-trimpath", "-buildvcs=false", "-ldflags=-s -w", "-o", output, ".")
 		command.Dir = filepath.Join(filepath.Dir(source), "testdata", "postgresprobe")
 		command.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64")
-		if err := command.Run(); err != nil {
-			postgresProbeErr = fmt.Errorf("build PostgreSQL probe: %w", err)
+		if output, err := command.CombinedOutput(); err != nil {
+			postgresProbeErr = fmt.Errorf("build PostgreSQL probe: %w\n%s", err, output)
 			return
 		}
 		postgresProbeBytes, postgresProbeErr = os.ReadFile(output)

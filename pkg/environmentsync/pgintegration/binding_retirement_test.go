@@ -263,7 +263,7 @@ func TestPgBindingRetirementAuditIsImmutable(t *testing.T) {
 			t.Fatal("retirement authority/history was mutable")
 		}
 	}
-	source, err := os.ReadFile("../../../migrations/20261017210000001_checked_binding_retirement.sql")
+	source, err := os.ReadFile("../../../migrations/20261018014811962_checked_binding_retirement.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

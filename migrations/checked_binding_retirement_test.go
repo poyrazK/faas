@@ -12,7 +12,7 @@ import (
 
 func TestCheckedBindingRetirementMigrationRoundTrip(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
-	source, err := os.ReadFile("20261017210000001_checked_binding_retirement.sql")
+	source, err := os.ReadFile("20261018014811962_checked_binding_retirement.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

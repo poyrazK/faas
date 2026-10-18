@@ -81,6 +81,17 @@ sql:
         emit_methods_with_db_argument: true
         emit_empty_slices: true
 
+  # Credential verification is also linked into the disposable guest binary.
+  - engine: "postgresql"
+    queries: "pkg/managedpostgres/credentialprobe/queries.sql"
+    schema: "pkg/managedpostgres/credentialprobe/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/managedpostgres/credentialprobe/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+
   # Disposable SQL workload acceptance through delivered app credentials.
   - engine: "postgresql"
     queries: "pkg/managedpostgres/credentialdelivery/probe_queries.sql"

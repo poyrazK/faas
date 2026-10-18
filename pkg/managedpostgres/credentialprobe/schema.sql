@@ -1,0 +1,1 @@
+-- Credential probes read only built-in PostgreSQL catalogs. No application schema.

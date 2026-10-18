@@ -3623,7 +3623,6 @@ type Querier interface {
 	PrepareCheckedRollbackTarget(ctx context.Context, db DBTX, arg PrepareCheckedRollbackTargetParams) error
 	PrepareEnvironmentWorkloadRetirementGateways(ctx context.Context, db DBTX, arg PrepareEnvironmentWorkloadRetirementGatewaysParams) (EnvironmentWorkloadRetirement, error)
 	PreviewEventExecutionLineageRetries(ctx context.Context, db DBTX, arg PreviewEventExecutionLineageRetriesParams) ([]EventExecutionLineageCase, error)
-	ProbeManagedPostgresCredential(ctx context.Context, db DBTX, access string) (ProbeManagedPostgresCredentialRow, error)
 	ProductBillingCredited(ctx context.Context, db DBTX, operationID pgtype.UUID) (int64, error)
 	ProductBillingDocument(ctx context.Context, db DBTX, arg ProductBillingDocumentParams) (ProductControlBillingDocument, error)
 	ProductBillingDocuments(ctx context.Context, db DBTX, arg ProductBillingDocumentsParams) ([]ProductControlBillingDocument, error)
