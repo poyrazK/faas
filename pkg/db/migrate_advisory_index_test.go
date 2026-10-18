@@ -41,7 +41,7 @@ func TestAcquireMigrationLockWaiterAllowsConcurrentIndex(t *testing.T) {
 	go func() {
 		release, err := AcquireMigrationLock(ctx, waiterPool)
 		if err == nil {
-			err = release(context.Background())
+			err = release(ctx)
 		}
 		done <- err
 	}()
