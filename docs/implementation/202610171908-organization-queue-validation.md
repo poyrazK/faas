@@ -468,3 +468,21 @@ Main's replaced-transport readiness probes pass (0.053s), all 41 launcher tests
 pass (0.974s), and its stricter migration validator accepts the seven contract
 migrations. ADR uniqueness holds at 1812 files, 1608 distinct identifiers and
 the unchanged 164-duplicate baseline. Fresh CI must qualify the merged source.
+
+## Mail billing fixture regression
+
+The full CI mail suite exercises real state-store billing methods against
+minimal mail-schema fixtures. Those fixtures lacked the organization ownership
+and billing-policy columns queried before personal-account billing updates. The
+restoration regression reproduced SQLSTATE 42703 locally before the fix. Both
+fixture entry points now install the missing policy columns; production SQL,
+state behavior and generated code are unchanged.
+
+The complete mail-outbox suite passes against a fresh PostgreSQL test database
+(189.199s, without race detection), including restoration and lifecycle ABA,
+concurrent suspension/deletion, lost-acknowledgement handoff, and the real
+company-erasure ownership fence. Shard 2 also qualified database migration tests
+with race detection (240.263s), managed PostgreSQL (265.568s), reconciliation
+(185.655s), apid (72.774s) and 150 selected state regressions (168.537s) on
+`2fbc5bce0`; only the partial mail fixtures failed there. Fresh GitHub checks
+must qualify the fixture correction.
