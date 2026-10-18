@@ -324,7 +324,7 @@ func Restore(r io.Reader, identities []age.Identity, stageDir string, force bool
 	if err != nil {
 		return Index{}, fmt.Errorf("cpstate: create staging: %w", err)
 	}
-	defer os.RemoveAll(tmp)
+	defer func() { _ = os.RemoveAll(tmp) }()
 	seen := map[string]bool{}
 	for {
 		hdr, err := tr.Next()

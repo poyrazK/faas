@@ -12,6 +12,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"flag"
 	"fmt"
@@ -43,32 +44,30 @@ func cmdBackupSealCPState(args []string) int {
 		return 2
 	}
 	if *out == "" {
-		fmt.Fprintln(osStderr, "gregalectl backup seal-cp-state: --out is required")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl backup seal-cp-state: --out is required")
 		return 2
 	}
 	if err := sealCPState(*specPath, *recipientsPath, *out, *primary); err != nil {
-		fmt.Fprintf(osStderr, "gregalectl backup seal-cp-state: %v\n", err)
+		_, _ = fmt.Fprintf(osStderr, "gregalectl backup seal-cp-state: %v\n", err)
 		return 1
 	}
 	return 0
 }
 
 func sealCPState(specPath, recipientsPath, out, primary string) error {
-	specFile, err := os.Open(specPath)
+	specBody, err := os.ReadFile(specPath)
 	if err != nil {
-		return fmt.Errorf("open spec: %w", err)
+		return fmt.Errorf("read spec: %w", err)
 	}
-	defer specFile.Close()
-	spec, err := cpstate.ParseSpec(specFile)
+	spec, err := cpstate.ParseSpec(bytes.NewReader(specBody))
 	if err != nil {
 		return err
 	}
-	recipientsFile, err := os.Open(recipientsPath)
+	recipientsBody, err := os.ReadFile(recipientsPath)
 	if err != nil {
-		return fmt.Errorf("open recipients: %w", err)
+		return fmt.Errorf("read recipients: %w", err)
 	}
-	defer recipientsFile.Close()
-	recipients, err := age.ParseRecipients(recipientsFile)
+	recipients, err := age.ParseRecipients(bytes.NewReader(recipientsBody))
 	if err != nil {
 		return fmt.Errorf("parse recipients: %w", err)
 	}
@@ -81,7 +80,7 @@ func sealCPState(specPath, recipientsPath, out, primary string) error {
 	if err != nil {
 		return fmt.Errorf("create bundle: %w", err)
 	}
-	defer os.Remove(tmp.Name())
+	defer func() { _ = os.Remove(tmp.Name()) }()
 	if err := tmp.Chmod(0o600); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("protect bundle: %w", err)
@@ -97,7 +96,7 @@ func sealCPState(specPath, recipientsPath, out, primary string) error {
 	if err := os.Rename(tmp.Name(), out); err != nil {
 		return fmt.Errorf("install bundle: %w", err)
 	}
-	fmt.Fprintf(osStdout, "sealed %d files and %d directories from %s into %s\n", len(index.Files), len(index.Directories), primary, out)
+	_, _ = fmt.Fprintf(osStdout, "sealed %d files and %d directories from %s into %s\n", len(index.Files), len(index.Directories), primary, out)
 	return nil
 }
 
@@ -111,39 +110,39 @@ func cmdBackupRestoreCPState(args []string) int {
 		return 2
 	}
 	if *identityPath == "" || *in == "" {
-		fmt.Fprintln(osStderr, "gregalectl backup restore-cp-state: --identity and --in are required")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl backup restore-cp-state: --identity and --in are required")
 		return 2
 	}
 	if err := restoreCPState(*identityPath, *in, *stage, *force); err != nil {
-		fmt.Fprintf(osStderr, "gregalectl backup restore-cp-state: %v\n", err)
+		_, _ = fmt.Fprintf(osStderr, "gregalectl backup restore-cp-state: %v\n", err)
 		return 1
 	}
 	return 0
 }
 
 func restoreCPState(identityPath, in, stage string, force bool) error {
-	identityFile, err := os.Open(identityPath)
+	identityBody, err := os.ReadFile(identityPath)
 	if err != nil {
-		return fmt.Errorf("open identity: %w", err)
+		return fmt.Errorf("read identity: %w", err)
 	}
-	defer identityFile.Close()
-	identities, err := age.ParseIdentities(identityFile)
+	identities, err := age.ParseIdentities(bytes.NewReader(identityBody))
 	if err != nil {
 		return fmt.Errorf("parse identity: %w", err)
 	}
 	if len(identities) == 0 {
 		return errors.New("identity file holds no age identity")
 	}
-	bundle, err := os.Open(in)
+	// A bundle is a few files of keys and env, well under the 16 MB per-file
+	// limit; read it whole rather than streaming from disk.
+	bundle, err := os.ReadFile(in)
 	if err != nil {
-		return fmt.Errorf("open bundle: %w", err)
+		return fmt.Errorf("read bundle: %w", err)
 	}
-	defer bundle.Close()
-	index, err := cpstate.Restore(bundle, identities, stage, force)
+	index, err := cpstate.Restore(bytes.NewReader(bundle), identities, stage, force)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(osStdout, "staged %d files from %s (sealed %s) in %s; install them with deploy/ansible/cp_state_restore.yml before bootstrap\n",
+	_, _ = fmt.Fprintf(osStdout, "staged %d files from %s (sealed %s) in %s; install them with deploy/ansible/cp_state_restore.yml before bootstrap\n",
 		len(index.Files), index.Primary, index.CreatedAt.Format(time.RFC3339), stage)
 	return nil
 }
