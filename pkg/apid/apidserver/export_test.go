@@ -1316,6 +1316,18 @@ func (r *statusMetrics) ObserveMutation(p0 string, p1 string, p2 string) {
 	r.observeMutation(p0, p1, p2)
 }
 
+func (r *server) DrainMigrationVerificationsForTest(ctx context.Context) error {
+	worker, ok := r.migrationVerificationWorker()
+	if !ok {
+		return nil
+	}
+	return worker.Drain(ctx)
+}
+
+func (r *server) RestoreMigrationServiceForTest(ctx context.Context, account, app string, run api.MigrationVerification) (string, error) {
+	return r.restoreMigrationService(ctx, account, app, run)
+}
+
 // Members of testEnv
 func (r *testEnv) Acct() *state.Account                           { return &r.acct }
 func (r *testEnv) H() *http.Handler                               { return &r.h }

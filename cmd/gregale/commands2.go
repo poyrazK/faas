@@ -3962,8 +3962,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		defer func() { _ = openTarball2.Close() }()
 		applyCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "project-apply"))
-		apply, err := client.ApplyProjectPlanWithBindingEnvironmentApproval(applyCtx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
-			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment, approvalToken, platformTenantRequiredPtr)
+		apply, err := client.ApplyProjectPlanWithInitialSecrets(applyCtx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
+			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment, approvalToken,
+			projectDeployInitialSecrets(plan.Workloads, deploySecrets), platformTenantRequiredPtr)
 		if err != nil {
 			return printErr("Apply failed", err)
 		}
@@ -3973,19 +3974,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				time.Duration(*waitTimeoutSeconds)*time.Second)
 		}
 		applyStatus := summarizeProjectApply(apply)
-		// Project deploys share the same sealed app-secret storage as
-		// single-app deploys. Apply the validated bundle to every workload
-		// selected by this project plan before returning the apply receipt;
-		// this keeps existing host-key rekey and secret redaction paths in
-		// force while making one-command monorepo deploys usable.
-		if len(deploySecrets) > 0 {
-			configured, secretErr := setProjectDeploySecretsWithScope(ctx, client, plan.Workloads, deploySecrets, *environment)
-			if secretErr != nil {
-				return printErr("Could not configure --secrets-file", secretErr)
-			}
-			if !jsonOutput {
-				PrintOK(osStdout, "Configured %d secret(s) across %d workload(s)", len(deploySecrets), configured)
-			}
+		if len(deploySecrets) > 0 && !jsonOutput {
+			PrintOK(osStdout, "Configured %d secret(s) before deployment across %d workload(s)", len(deploySecrets), len(plan.Workloads))
 		}
 		if jsonOutput {
 			if code := jsonOut(writeJSON(apply)); code != 0 {

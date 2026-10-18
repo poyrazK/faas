@@ -4779,6 +4779,24 @@ END $$;
 
 
 --
+-- Name: capture_deployment_public_build_urls(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_deployment_public_build_urls() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.kind IN ('tarball','github','dockerfile') AND NEW.scope='default' THEN
+  INSERT INTO deployment_public_build_urls(deployment_id,urls)
+  SELECT NEW.id,COALESCE(a.manifest->'public_build_urls','{}'::jsonb)
+  FROM apps a WHERE a.id=NEW.app_id AND COALESCE(a.preview_of_slug,'')='';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: capture_deployment_recovery_lineage(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -27358,6 +27376,20 @@ ALTER TABLE public.deployment_audit ALTER COLUMN id ADD GENERATED ALWAYS AS IDEN
 
 
 --
+-- Name: deployment_build_dependency_gates; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_build_dependency_gates (
+    deployment_id uuid NOT NULL,
+    progress jsonb NOT NULL,
+    check_after timestamp with time zone DEFAULT '-infinity'::timestamp with time zone NOT NULL,
+    CONSTRAINT deployment_build_dependency_gates_check_after_check CHECK ((check_after < 'infinity'::timestamp with time zone)),
+    CONSTRAINT deployment_build_dependency_gates_deployment_id_check CHECK ((deployment_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT deployment_build_dependency_gates_progress_check CHECK (((jsonb_typeof(progress) = 'object'::text) AND (progress ?& ARRAY['dependencies'::text, 'status'::text, 'deadline_at'::text, 'check_after'::text]) AND (jsonb_typeof((progress -> 'dependencies'::text)) = 'array'::text) AND ((jsonb_array_length((progress -> 'dependencies'::text)) >= 1) AND (jsonb_array_length((progress -> 'dependencies'::text)) <= 10)) AND (jsonb_typeof((progress -> 'status'::text)) = 'string'::text) AND ((progress ->> 'status'::text) = ANY (ARRAY['waiting'::text, 'ready'::text, 'failed'::text])) AND (jsonb_typeof((progress -> 'deadline_at'::text)) = 'string'::text) AND (jsonb_typeof((progress -> 'check_after'::text)) = 'string'::text) AND (octet_length((progress)::text) <= 16000)))
+);
+
+
+--
 -- Name: deployment_revision_pins; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -27552,6 +27584,18 @@ CREATE TABLE public.deployment_openapi_snapshots (
     CONSTRAINT deployment_openapi_snapshots_schema_version_positive CHECK ((schema_version >= 1)),
     CONSTRAINT deployment_openapi_snapshots_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
     CONSTRAINT deployment_openapi_snapshots_sha256_shape CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: deployment_public_build_urls; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_public_build_urls (
+    deployment_id uuid NOT NULL,
+    urls jsonb NOT NULL,
+    CONSTRAINT deployment_public_build_urls_deployment_id_check CHECK ((deployment_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT deployment_public_build_urls_urls_check CHECK (((jsonb_typeof(urls) = 'object'::text) AND (octet_length((urls)::text) <= 24000)))
 );
 
 
@@ -35228,6 +35272,24 @@ END) STORED,
 
 
 --
+-- Name: migration_cutovers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.migration_cutovers (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    version bigint NOT NULL,
+    snapshot jsonb NOT NULL,
+    next_attempt_at timestamp with time zone,
+    CONSTRAINT migration_cutover_report_check CHECK (COALESCE(((jsonb_typeof((snapshot -> 'Report'::text)) = 'object'::text) AND (((snapshot -> 'Report'::text) ->> 'status'::text) = ANY (ARRAY['prepared'::text, 'checking'::text, 'ready'::text, 'attention'::text, 'completed'::text, 'cancelled'::text, 'restored'::text, 'blocked'::text])) AND (((snapshot -> 'Report'::text) ->> 'id'::text) = (id)::text)), false)),
+    CONSTRAINT migration_cutovers_snapshot_check CHECK ((jsonb_typeof(snapshot) = 'object'::text)),
+    CONSTRAINT migration_cutovers_version_check CHECK ((version > 0))
+);
+
+
+--
 -- Name: migration_leases; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -35273,6 +35335,25 @@ END) STORED,
     CONSTRAINT migration_sources_proof_check CHECK ((octet_length(proof) <= 1024)),
     CONSTRAINT migration_sources_ram_mb_check CHECK ((ram_mb > 0)),
     CONSTRAINT migration_sources_vcpu_check CHECK ((vcpu > 0))
+);
+
+
+--
+-- Name: migration_verifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.migration_verifications (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    version bigint NOT NULL,
+    snapshot jsonb NOT NULL,
+    next_attempt_at timestamp with time zone,
+    CONSTRAINT migration_verification_report_check CHECK (COALESCE(((jsonb_typeof((snapshot -> 'Report'::text)) = 'object'::text) AND (((snapshot -> 'Report'::text) ->> 'status'::text) = ANY (ARRAY['pending'::text, 'passed'::text, 'failed'::text, 'blocked'::text, 'expired'::text, 'cancelled'::text])) AND (((snapshot -> 'Report'::text) ->> 'phase'::text) = ANY (ARRAY['dependencies'::text, 'startup'::text, 'park'::text, 'drain'::text, 'wake'::text, 'waking'::text, 'cold_smoke'::text, 'cold_dependencies'::text, 'restoring'::text, 'complete'::text])) AND (((snapshot -> 'Report'::text) ->> 'id'::text) = (id)::text)), false)),
+    CONSTRAINT migration_verifications_next_attempt_at_check CHECK (((next_attempt_at IS NULL) OR isfinite(next_attempt_at))),
+    CONSTRAINT migration_verifications_snapshot_check CHECK ((jsonb_typeof(snapshot) = 'object'::text)),
+    CONSTRAINT migration_verifications_version_check CHECK ((version > 0))
 );
 
 
@@ -40028,6 +40109,24 @@ CREATE TABLE public.project_environment_workload_specs (
     CONSTRAINT project_environment_workload_specs_config_hash_check CHECK ((config_hash ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT project_environment_workload_specs_revision_check CHECK ((revision > 0)),
     CONSTRAINT project_environment_workload_specs_settings_check CHECK ((json_typeof(settings) = 'object'::text))
+);
+
+
+--
+-- Name: project_migrations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_migrations (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_slug text NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    version bigint NOT NULL,
+    lease_until timestamp with time zone,
+    snapshot jsonb NOT NULL,
+    CONSTRAINT project_migration_report_check CHECK (COALESCE(((jsonb_typeof((snapshot -> 'Report'::text)) = 'object'::text) AND (((snapshot -> 'Report'::text) ->> 'status'::text) = ANY (ARRAY['prepared'::text, 'applying'::text, 'tracking'::text, 'attention'::text])) AND (((snapshot -> 'Report'::text) ->> 'id'::text) = (id)::text) AND (((snapshot -> 'Report'::text) ->> 'project'::text) = project_slug) AND ((jsonb_array_length(((snapshot -> 'Report'::text) -> 'services'::text)) >= 1) AND (jsonb_array_length(((snapshot -> 'Report'::text) -> 'services'::text)) <= 10))), false)),
+    CONSTRAINT project_migrations_snapshot_check CHECK ((jsonb_typeof(snapshot) = 'object'::text)),
+    CONSTRAINT project_migrations_version_check CHECK ((version > 0))
 );
 
 
@@ -45979,6 +46078,14 @@ ALTER TABLE ONLY public.deployment_audit
 
 
 --
+-- Name: deployment_build_dependency_gates deployment_build_dependency_gates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_build_dependency_gates
+    ADD CONSTRAINT deployment_build_dependency_gates_pkey PRIMARY KEY (deployment_id);
+
+
+--
 -- Name: deployment_dependency_gates deployment_dependency_gates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -46032,6 +46139,14 @@ ALTER TABLE ONLY public.deployment_openapi_docs
 
 ALTER TABLE ONLY public.deployment_openapi_snapshots
     ADD CONSTRAINT deployment_openapi_snapshots_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_public_build_urls deployment_public_build_urls_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_public_build_urls
+    ADD CONSTRAINT deployment_public_build_urls_pkey PRIMARY KEY (deployment_id);
 
 
 --
@@ -49267,6 +49382,14 @@ ALTER TABLE ONLY public.migration_admissions
 
 
 --
+-- Name: migration_cutovers migration_cutovers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.migration_cutovers
+    ADD CONSTRAINT migration_cutovers_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: migration_leases migration_leases_lease_token_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -49288,6 +49411,14 @@ ALTER TABLE ONLY public.migration_leases
 
 ALTER TABLE ONLY public.migration_sources
     ADD CONSTRAINT migration_sources_pkey PRIMARY KEY (lease_token);
+
+
+--
+-- Name: migration_verifications migration_verifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.migration_verifications
+    ADD CONSTRAINT migration_verifications_pkey PRIMARY KEY (id);
 
 
 --
@@ -51560,6 +51691,14 @@ ALTER TABLE ONLY public.project_environments
 
 ALTER TABLE ONLY public.project_environments
     ADD CONSTRAINT project_environments_project_slug_uniq UNIQUE (project_id, slug);
+
+
+--
+-- Name: project_migrations project_migrations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_migrations
+    ADD CONSTRAINT project_migrations_pkey PRIMARY KEY (id);
 
 
 --
@@ -58313,6 +58452,20 @@ CREATE INDEX migration_admissions_owned_wake ON public.migration_admissions USIN
 
 
 --
+-- Name: migration_cutovers_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX migration_cutovers_app_idx ON public.migration_cutovers USING btree (account_id, app_id, created_at DESC, id DESC);
+
+
+--
+-- Name: migration_cutovers_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX migration_cutovers_due_idx ON public.migration_cutovers USING btree (next_attempt_at, id) WHERE (next_attempt_at IS NOT NULL);
+
+
+--
 -- Name: migration_leases_expiry_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -58345,6 +58498,20 @@ CREATE INDEX migration_sources_recovery ON public.migration_sources USING btree 
 --
 
 CREATE INDEX migration_sources_resumed_wake ON public.migration_sources USING btree (instance_id, source_node_id, source_wake_id) WHERE (phase = 'resumed'::text);
+
+
+--
+-- Name: migration_verifications_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX migration_verifications_app_idx ON public.migration_verifications USING btree (account_id, app_id, created_at DESC, id DESC);
+
+
+--
+-- Name: migration_verifications_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX migration_verifications_due_idx ON public.migration_verifications USING btree (next_attempt_at, id) WHERE (next_attempt_at IS NOT NULL);
 
 
 --
@@ -59451,6 +59618,20 @@ CREATE INDEX project_environment_route_policies_project_idx ON public.project_en
 --
 
 CREATE INDEX project_environments_account_project_idx ON public.project_environments USING btree (account_id, project_id, slug);
+
+
+--
+-- Name: project_migrations_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_migrations_account_idx ON public.project_migrations USING btree (account_id, created_at DESC, id DESC);
+
+
+--
+-- Name: project_migrations_project_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_migrations_project_idx ON public.project_migrations USING btree (account_id, project_slug);
 
 
 --
@@ -63066,6 +63247,13 @@ CREATE TRIGGER deployment_aliases_app_changed AFTER INSERT OR DELETE OR UPDATE O
 
 
 --
+-- Name: deployments deployment_capture_public_build_urls; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployment_capture_public_build_urls AFTER INSERT ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.capture_deployment_public_build_urls();
+
+
+--
 -- Name: deployments deployment_dependency_release_check; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -66093,7 +66281,7 @@ CREATE TRIGGER scenario_worker_fault_guard BEFORE DELETE OR UPDATE ON public.sce
 -- Name: apps service_binding_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER service_binding_revision AFTER INSERT OR DELETE OR UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.capture_service_binding_revision('id,account_id,slug,status,manifest,project_id,preview_of_slug,preview_pr_number,preview_pr_state,preview_expires_at,app_protocol,websocket_enabled');
+CREATE TRIGGER service_binding_revision AFTER INSERT OR DELETE OR UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.capture_service_binding_revision('id,account_id,slug,workload_name,status,manifest,project_id,preview_of_slug,preview_pr_number,preview_pr_state,preview_expires_at,app_protocol,websocket_enabled');
 
 
 --
@@ -69769,6 +69957,14 @@ ALTER TABLE ONLY public.deployment_artifact_scans
 
 
 --
+-- Name: deployment_build_dependency_gates deployment_build_dependency_gates_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_build_dependency_gates
+    ADD CONSTRAINT deployment_build_dependency_gates_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
 -- Name: deployment_dependency_gates deployment_dependency_gates_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -69846,6 +70042,14 @@ ALTER TABLE ONLY public.deployment_openapi_snapshots
 
 ALTER TABLE ONLY public.deployment_openapi_snapshots
     ADD CONSTRAINT deployment_openapi_snapshots_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_public_build_urls deployment_public_build_urls_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_public_build_urls
+    ADD CONSTRAINT deployment_public_build_urls_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --
@@ -73737,6 +73941,22 @@ ALTER TABLE ONLY public.migration_admissions
 
 
 --
+-- Name: migration_cutovers migration_cutovers_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.migration_cutovers
+    ADD CONSTRAINT migration_cutovers_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: migration_cutovers migration_cutovers_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.migration_cutovers
+    ADD CONSTRAINT migration_cutovers_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: migration_leases migration_leases_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -73750,6 +73970,22 @@ ALTER TABLE ONLY public.migration_leases
 
 ALTER TABLE ONLY public.migration_sources
     ADD CONSTRAINT migration_sources_active_lease_token_fkey FOREIGN KEY (active_lease_token) REFERENCES public.migration_leases(lease_token);
+
+
+--
+-- Name: migration_verifications migration_verifications_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.migration_verifications
+    ADD CONSTRAINT migration_verifications_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: migration_verifications migration_verifications_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.migration_verifications
+    ADD CONSTRAINT migration_verifications_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -76622,6 +76858,14 @@ ALTER TABLE ONLY public.project_environments
 
 ALTER TABLE ONLY public.project_environments
     ADD CONSTRAINT project_environments_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_migrations project_migrations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_migrations
+    ADD CONSTRAINT project_migrations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

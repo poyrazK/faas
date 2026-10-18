@@ -2091,6 +2091,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go srv.runWorkflowReadinessSubscriptionWorker(ctx)
 	go srv.runWorkflowReadinessReminderWorker(ctx)
 	go srv.runApplicationStandardWorker(ctx)
+	go srv.runMigrationVerificationWorker(ctx)
+	go srv.runMigrationCutoverWorker(ctx)
 	if deps.bgBefore != nil {
 		deps.bgBefore(ctx, log, srv)
 	}

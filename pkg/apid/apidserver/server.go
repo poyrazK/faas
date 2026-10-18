@@ -1547,6 +1547,15 @@ func (s *server) handler() http.Handler {
 	// before app lookup so a disabled host reveals no app existence. Public
 	// admission is manual-only; release tasks remain an internal consumer.
 	mux.HandleFunc("GET /v1/apps/{slug}/tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppTasks))))
+	mux.HandleFunc("POST /v1/apps/{slug}/migration-cutovers", s.authLimited(s.requireMFA(s.requireVerifiedEmail(s.requireScope(api.ScopesDeployWriteSurface...)(s.createMigrationCutover)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/migration-cutovers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listMigrationCutovers))))
+	mux.HandleFunc("GET /v1/apps/{slug}/migration-cutovers/{plan}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getMigrationCutover))))
+	mux.HandleFunc("POST /v1/apps/{slug}/migration-cutovers/{plan}/actions", s.authLimited(s.requireMFA(s.requireVerifiedEmail(s.requireScope(api.ScopesDeployWriteSurface...)(s.actOnMigrationCutover)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/migration-verifications", s.authLimited(s.requireMFA(s.requireVerifiedEmail(s.requireScope(api.ScopesDeployWriteSurface...)(s.createMigrationVerification)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/migration-verifications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listMigrationVerifications))))
+	mux.HandleFunc("GET /v1/apps/{slug}/migration-verifications/{run}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getMigrationVerification))))
+	mux.HandleFunc("POST /v1/apps/{slug}/migration-verifications/{run}/advance", s.authLimited(s.requireMFA(s.requireVerifiedEmail(s.requireScope(api.ScopesDeployWriteSurface...)(s.advanceMigrationVerification)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/migration-verifications/{run}/cancel", s.authLimited(s.requireMFA(s.requireVerifiedEmail(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelMigrationVerification)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAppTask)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/tasks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppTask))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/tasks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.cancelAppTask)))))
@@ -2904,6 +2913,11 @@ func (s *server) handler() http.Handler {
 	// over-quota on /apply.
 	mux.HandleFunc("POST /v1/projects/scan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.scanProject))))
 	mux.HandleFunc("POST /v1/projects/scan/source-ref", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.scanProjectSourceRef))))
+	mux.HandleFunc("POST /v1/project-migrations", s.authLimited(s.requireMFA(s.requireVerifiedEmail(s.requireScope(api.ScopesDeployWriteSurface...)(s.createProjectMigration)))))
+	mux.HandleFunc("GET /v1/project-migrations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjectMigrations))))
+	mux.HandleFunc("GET /v1/project-migrations/{migration}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectMigration))))
+	mux.HandleFunc("POST /v1/project-migrations/{migration}/resume", s.authLimited(s.requireMFA(s.requireVerifiedEmail(s.requireScope(api.ScopesDeployWriteSurface...)(s.resumeProjectMigration)))))
+	mux.HandleFunc("POST /v1/projects/apply-plan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.applyCachedProjectPlan))))))
 	mux.HandleFunc("POST /v1/projects", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.applyProject))))))
 	mux.HandleFunc("GET /v1/projects", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjects))))
 	mux.HandleFunc("GET /v1/projects/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProject))))

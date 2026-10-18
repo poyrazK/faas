@@ -19,6 +19,29 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
+		// adr:1660,1662,1665,1666 — saved authority stays with its source;
+		// public compile inputs require an isolated configuration strategy.
+		"deployment_build_dependency_gates": CloneSchemaOperational,
+		"deployment_public_build_urls":      CloneSchemaConfiguration,
+		"migration_cutovers":                CloneSchemaOperational,
+		"migration_verifications":           CloneSchemaOperational,
+		"project_migrations":                CloneSchemaOperational,
+
+		// Rehearsal authority, admission policies and evidence belong to the
+		// original run; cloning must never enroll or resume its execution.
+		"scenario_cold_preparations":    CloneSchemaOperational,
+		"scenario_command_networks":     CloneSchemaOperational,
+		"scenario_managed_work":         CloneSchemaOperational,
+		"scenario_object_fixtures":      CloneSchemaOperational,
+		"scenario_postgres_fixtures":    CloneSchemaOperational,
+		"scenario_recorder_requests":    CloneSchemaOperational,
+		"scenario_recorder_sessions":    CloneSchemaOperational,
+		"scenario_simulation_attempts":  CloneSchemaOperational,
+		"scenario_suspend_resumes":      CloneSchemaOperational,
+		"scenario_test_action_policies": CloneSchemaOperational,
+		"scenario_worker_faults":        CloneSchemaOperational,
+		"exclusive_work_effects":        CloneSchemaOperational,
+
 		// CI configuration stays scoped; execution authority remains at its source.
 		"ci_automation_event_retries": CloneSchemaOperational,
 		"ci_automation_branches":      CloneSchemaOperational,

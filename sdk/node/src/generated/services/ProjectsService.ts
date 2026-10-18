@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { AdoptEnvironmentGitOpsRequest } from '../models/AdoptEnvironmentGitOpsRequest.js';
 import type { AdoptEnvironmentGitOpsResponse } from '../models/AdoptEnvironmentGitOpsResponse.js';
+import type { ApplyCachedProjectPlanRequest } from '../models/ApplyCachedProjectPlanRequest.js';
 import type { ApplyResponse } from '../models/ApplyResponse.js';
 import type { ApproveEnvironmentGitRevisionRequest } from '../models/ApproveEnvironmentGitRevisionRequest.js';
 import type { ApproveEnvironmentGitRevisionResponse } from '../models/ApproveEnvironmentGitRevisionResponse.js';
@@ -18,6 +19,7 @@ import type { CreateProjectBindingVerificationRunRequest } from '../models/Creat
 import type { CreateProjectEnvironmentApprovalRequest } from '../models/CreateProjectEnvironmentApprovalRequest.js';
 import type { CreateProjectEnvironmentQualificationRequest } from '../models/CreateProjectEnvironmentQualificationRequest.js';
 import type { CreateProjectEnvironmentRequest } from '../models/CreateProjectEnvironmentRequest.js';
+import type { CreateProjectMigrationRequest } from '../models/CreateProjectMigrationRequest.js';
 import type { DetachEnvironmentGitSourceRequest } from '../models/DetachEnvironmentGitSourceRequest.js';
 import type { EnvironmentFieldOwnershipRequest } from '../models/EnvironmentFieldOwnershipRequest.js';
 import type { EnvironmentFieldOwnershipResponse } from '../models/EnvironmentFieldOwnershipResponse.js';
@@ -31,6 +33,7 @@ import type { PrepareProjectRollbackRequest } from '../models/PrepareProjectRoll
 import type { PreviewEnvironmentGitPlanResponse } from '../models/PreviewEnvironmentGitPlanResponse.js';
 import type { PreviewEnvironmentGitRevisionRequest } from '../models/PreviewEnvironmentGitRevisionRequest.js';
 import type { PreviewEnvironmentGitRevisionResponse } from '../models/PreviewEnvironmentGitRevisionResponse.js';
+import type { Problem } from '../models/Problem.js';
 import type { ProjectApplyRequest } from '../models/ProjectApplyRequest.js';
 import type { ProjectBindingVerificationReview } from '../models/ProjectBindingVerificationReview.js';
 import type { ProjectBindingVerificationRun } from '../models/ProjectBindingVerificationRun.js';
@@ -53,6 +56,8 @@ import type { ProjectEnvironmentReleaseListResponse } from '../models/ProjectEnv
 import type { ProjectEnvironmentResponse } from '../models/ProjectEnvironmentResponse.js';
 import type { ProjectEnvironmentRoutePolicyResponse } from '../models/ProjectEnvironmentRoutePolicyResponse.js';
 import type { ProjectEnvironmentStateResponse } from '../models/ProjectEnvironmentStateResponse.js';
+import type { ProjectMigration } from '../models/ProjectMigration.js';
+import type { ProjectMigrationList } from '../models/ProjectMigrationList.js';
 import type { ProjectReleaseSetListResponse } from '../models/ProjectReleaseSetListResponse.js';
 import type { ProjectReleaseSetResponse } from '../models/ProjectReleaseSetResponse.js';
 import type { ProjectReleaseStage } from '../models/ProjectReleaseStage.js';
@@ -65,6 +70,7 @@ import type { PublishProjectReleaseSetRequest } from '../models/PublishProjectRe
 import type { RebindEnvironmentGitSourceRequest } from '../models/RebindEnvironmentGitSourceRequest.js';
 import type { RemoveEnvironmentGitOpsOverrideRequest } from '../models/RemoveEnvironmentGitOpsOverrideRequest.js';
 import type { ReplaceProjectEnvironmentQueueBindingsRequest } from '../models/ReplaceProjectEnvironmentQueueBindingsRequest.js';
+import type { ResumeProjectMigrationRequest } from '../models/ResumeProjectMigrationRequest.js';
 import type { ReviewProjectBindingVerificationRequest } from '../models/ReviewProjectBindingVerificationRequest.js';
 import type { StageProjectReleaseRequest } from '../models/StageProjectReleaseRequest.js';
 import type { UpdateProjectEnvironmentConfigRequest } from '../models/UpdateProjectEnvironmentConfigRequest.js';
@@ -76,6 +82,98 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class ProjectsService {
+  /**
+   * Save and apply a reviewed multi-service migration
+   * Save and apply a reviewed multi-service migration. Source-backed HTTP and GraphQL services only. Secret values are request-only; the receipt retains key names. Existing reconcile, sealing, deployment admission, verification and cutover owners remain authoritative. No domain or production traffic changes are performed by this endpoint.
+   * @returns ProjectMigration Save and apply a reviewed multi-service migration result.
+   * @returns Problem Save and apply a reviewed multi-service migration error.
+   * @throws ApiError
+   */
+  public static createProjectMigration({
+    requestBody,
+  }: {
+    requestBody: CreateProjectMigrationRequest,
+  }): CancelablePromise<ProjectMigration | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/project-migrations',
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * List saved project migrations for the authenticated account
+   * List saved project migrations for the authenticated account. Source-backed HTTP and GraphQL services only. Secret values are request-only; the receipt retains key names. Existing reconcile, sealing, deployment admission, verification and cutover owners remain authoritative. No domain or production traffic changes are performed by this endpoint.
+   * @returns ProjectMigrationList List saved project migrations for the authenticated account result.
+   * @returns Problem List saved project migrations for the authenticated account error.
+   * @throws ApiError
+   */
+  public static listProjectMigrations({
+    project,
+  }: {
+    /**
+     * Optional exact project slug to filter migration records.
+     */
+    project?: string,
+  }): CancelablePromise<ProjectMigrationList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/project-migrations',
+      query: {
+        'project': project,
+      },
+    });
+  }
+  /**
+   * Inspect each reserved deployment and its recorded verification and cutover
+   * Inspect each reserved deployment and its recorded verification and cutover. Source-backed HTTP and GraphQL services only. Secret values are request-only; the receipt retains key names. Existing reconcile, sealing, deployment admission, verification and cutover owners remain authoritative. No domain or production traffic changes are performed by this endpoint.
+   * @returns ProjectMigration Inspect each reserved deployment and its recorded verification and cutover result.
+   * @returns Problem Inspect each reserved deployment and its recorded verification and cutover error.
+   * @throws ApiError
+   */
+  public static getProjectMigration({
+    migration,
+  }: {
+    /**
+     * Creator-owned migration journal UUID.
+     */
+    migration: string,
+  }): CancelablePromise<ProjectMigration | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/project-migrations/{migration}',
+      path: {
+        'migration': migration,
+      },
+    });
+  }
+  /**
+   * Resume unfinished migration services while preserving accepted deployments
+   * Resume unfinished migration services while preserving accepted deployments. Source-backed HTTP and GraphQL services only. Secret values are request-only; the receipt retains key names. Existing reconcile, sealing, deployment admission, verification and cutover owners remain authoritative. No domain or production traffic changes are performed by this endpoint.
+   * @returns ProjectMigration Resume unfinished migration services while preserving accepted deployments result.
+   * @returns Problem Resume unfinished migration services while preserving accepted deployments error.
+   * @throws ApiError
+   */
+  public static resumeProjectMigration({
+    migration,
+    requestBody,
+  }: {
+    /**
+     * Saved migration to resume after reviewing unfinished services.
+     */
+    migration: string,
+    requestBody: ResumeProjectMigrationRequest,
+  }): CancelablePromise<ProjectMigration | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/project-migrations/{migration}/resume',
+      path: {
+        'migration': migration,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
   /**
    * Scan an uploaded tarball and return a deploy plan.
    * Dry-run. Accepts a multipart upload (`source=<tar.gz>`,
@@ -153,6 +251,36 @@ export class ProjectsService {
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.
         `,
+      },
+    });
+  }
+  /**
+   * Deploy an account-owned reviewed project source without another upload.
+   * Applies the exact archive retained by a project scan, not the current
+   * head of a mutable Git ref. The normal scanner and apply admission gates
+   * run again. The account-scoped source expires after one hour; rescan on
+   * preview_expired. Initial secrets require secrets:write or admin and are
+   * sealed before any deployment is enqueued. Failed configuration starts
+   * no builds; saved apps and any completed configuration remain available
+   * for correction. Values are never included in responses or scan plans.
+   *
+   * @returns ApplyResponse Project applied with per-workload deployment receipts.
+   * @throws ApiError
+   */
+  public static applyCachedProjectPlan({
+    requestBody,
+  }: {
+    requestBody: ApplyCachedProjectPlanRequest,
+  }): CancelablePromise<ApplyResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/apply-plan',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        403: `The caller lacks deployment or secret write permission.`,
+        409: `The plan is stale, blocked, or requires environment approval.`,
+        410: `The account-owned reviewed source expired; scan again.`,
       },
     });
   }

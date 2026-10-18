@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 )
@@ -37,6 +38,11 @@ func newEffectFixture(t *testing.T, backend string, captureRun ...string) effect
 	f := effectFixture{}
 	if backend == "postgres" {
 		f.pool = pgtest.OpenMigrated(t)
+		// Without CI's template mode OpenMigrated returns an isolated empty
+		// schema. Migrate it before creating the fixture's account and app.
+		if err := db.MigrateUp(ctx, f.pool); err != nil {
+			t.Fatal(err)
+		}
 		f.base = NewPgStore(f.pool)
 	} else {
 		f.base = NewMemStore()

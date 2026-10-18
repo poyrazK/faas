@@ -495,6 +495,7 @@ var dtoExclude = map[string]bool{
 	"RealtimeLimits":                    true, // internal plan policy, not a wire DTO
 	"ExecutionSnapshotShape":            true, // internal snapshot compatibility key, not a wire DTO
 	"ResolvedExecutionRequest":          true, // sealed scheduler intent, not a public DTO
+	"MigrationDependencyReport":         true, // Private guest task protocol, not an HTTP DTO.
 	"ResolvedCreateAppTaskRequest":      true, // validated state admission input, not a public DTO
 	"RecoverDeploymentRolloutRequest":   true, // loopback-only meterd ↔ apid contract; intentionally absent from the public OpenAPI spec
 	"AlertRuleRow":                      true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
@@ -797,6 +798,9 @@ var schemaSpecOnly = map[string]bool{
 	"ServiceReliabilityPolicies": true, // Named map schema for the per-binding policy object.
 	"PreviewServiceCallsPolicy":  true, // Typed-string enum in pkg/api/preview_service_calls.go; the schema is still part of the wire contract.
 	"ServiceCallerScopes":        true, // Named map DTO; its additionalProperties shape is documented directly in OpenAPI.
+	"ProjectInitialSecrets":      true, // Named nested map DTO; request serialization is covered by Go, Node and Python wire tests.
+	"ProjectServiceConnections":  true, // Named nested map DTO; connection choices are covered by migration wire and persistence tests.
+	"ProjectPublicBuildURLs":     true, // Named nested map; public URL wire and validation coverage.
 	"BillingRunExport":           true, // ADR-1503: enum shared by run and schedule DTOs, which carry it as a string field.
 	"BillingRunSources":          true, // ADR-1503: array enum shared by run and schedule DTOs, which carry it as []string.
 	"BillingProvider":            true, // ADR-1507: enum shared by connection and export DTOs, which carry it as a string field.
@@ -1445,6 +1449,11 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "project_release_staging.go"),
 		filepath.Join(root, "pkg", "api", "queue_binding_canary.go"),
 		filepath.Join(root, "pkg", "api", "binding_verification_run.go"),
+		filepath.Join(root, "pkg", "api", "migration_verification.go"),
+		filepath.Join(root, "pkg", "api", "migration_connections.go"),
+		filepath.Join(root, "pkg", "api", "public_build_urls.go"),
+		filepath.Join(root, "pkg", "api", "migration_cutover.go"),
+		filepath.Join(root, "pkg", "api", "project_migration.go"),
 		filepath.Join(root, "pkg", "api", "binding_verification_run_list.go"),
 		filepath.Join(root, "pkg", "api", "binding_verification_qualification.go"),
 		filepath.Join(root, "pkg", "api", "binding_verification_review.go"),

@@ -643,6 +643,11 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.recoverClaimAfterLookupFailure(ctx, build, "load deployment", err)
 		return BuildResult{}, fmt.Errorf("builderd: load deployment: %w", err)
 	}
+	buildGate, stop, gateErr := b.admitBuildDependencies(ctx, build, dep)
+	if stop || gateErr != nil {
+		return BuildResult{}, gateErr
+	}
+	buildDependencyDigest := state.BuildDependencyDigest(buildGate)
 	app, err := state.AppForDeployment(ctx, b.store, dep)
 	if err != nil {
 		b.recoverClaimAfterLookupFailure(ctx, build, "load app", err)
@@ -869,8 +874,15 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if b.stopIfBuildCancelled(ctx, build) {
 		return BuildResult{}, nil
 	}
+	publicURLs, publicErr := deploymentPublicBuildURLs(ctx, b.store, app, dep)
+	if publicErr != nil {
+		b.markFailed(ctx, build, state.FailureInfra, "load public build URLs", buildStart)
+		return BuildResult{}, publicErr
+	}
 	recipe := BuildCacheRecipe{
-		SourceSHA256: srcHash, SourceRoot: dep.SourceRoot,
+		BuildDependencyDigest: buildDependencyDigest,
+		PublicBuildURLs:       publicURLs,
+		SourceSHA256:          srcHash, SourceRoot: dep.SourceRoot,
 		DockerfilePath: dockerfilePath,
 		Framework:      fw, Plan: acct.Plan, RuntimeBaseRef: runtimeBaseRef,
 		Function:        app.Type == state.AppTypeFunction,
@@ -964,26 +976,28 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 
 	dependencyCacheKey := dependencyCacheKeyForApp(app, fw, dep.SourceRoot, runtimeBaseRef)
 	vmReq := VMRequest{
-		BuildID:            build.ID,
-		TenantID:           app.AccountID,
-		DeploymentID:       dep.ID,
-		SourcePath:         dep.SourcePath,
-		SourceSHA256:       srcHash,
-		SourceRoot:         dep.SourceRoot,
-		DockerfilePath:     dockerfilePath,
-		Framework:          fw,
-		Runtime:            runtimeName,
-		RuntimeBaseRef:     runtimeBaseRef,
-		Function:           app.Type == state.AppTypeFunction,
-		SharedRuntime:      sharedRuntime != "",
-		DevWatchCommand:    watch.Command,
-		DevWatchHost:       watch.Host,
-		DependencyCacheKey: dependencyCacheKey,
-		LogPath:            dep.LogPath,
-		RAMMB:              api.BuildVMRAMMB,
-		TimeoutSec:         b.cfg.BuildTimeoutSeconds,
-		Plan:               string(acct.Plan),
-		WarmScopeKey:       builderWarmScopeKey(app.AccountID, app.ID, fw, runtimeBaseRef),
+		BuildDependencyDigest: buildDependencyDigest,
+		PublicBuildURLs:       publicURLs,
+		BuildID:               build.ID,
+		TenantID:              app.AccountID,
+		DeploymentID:          dep.ID,
+		SourcePath:            dep.SourcePath,
+		SourceSHA256:          srcHash,
+		SourceRoot:            dep.SourceRoot,
+		DockerfilePath:        dockerfilePath,
+		Framework:             fw,
+		Runtime:               runtimeName,
+		RuntimeBaseRef:        runtimeBaseRef,
+		Function:              app.Type == state.AppTypeFunction,
+		SharedRuntime:         sharedRuntime != "",
+		DevWatchCommand:       watch.Command,
+		DevWatchHost:          watch.Host,
+		DependencyCacheKey:    dependencyCacheKey,
+		LogPath:               dep.LogPath,
+		RAMMB:                 api.BuildVMRAMMB,
+		TimeoutSec:            b.cfg.BuildTimeoutSeconds,
+		Plan:                  string(acct.Plan),
+		WarmScopeKey:          builderWarmScopeKey(app.AccountID, app.ID, fw, runtimeBaseRef),
 	}
 	warmVM, warmResult, warmSnapshot, warmStarted := b.prepareWarmBuilder(ctx, slot, vmReq)
 	var warmCaptured WarmSnapshot
@@ -1147,6 +1161,16 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}
 	if b.stopIfBuildCancelled(ctx, build) {
 		return BuildResult{}, nil
+	}
+	if out.ExitCode == 0 && out.BuildDependencyDigest != buildDependencyDigest {
+		err := errors.New("builder guest did not acknowledge the selected build dependencies")
+		b.markFailed(ctx, build, state.FailureInfra, err.Error(), buildStart)
+		return BuildResult{}, err
+	}
+	if out.ExitCode == 0 && out.PublicBuildURLsSHA256 != api.PublicBuildURLsSHA256(publicURLs) {
+		err := fmt.Errorf("builder guest did not acknowledge the reviewed public build URLs")
+		b.markFailed(ctx, build, state.FailureInfra, err.Error(), buildStart)
+		return BuildResult{}, err
 	}
 	if out.DependencyCacheStoreError != "" {
 		b.log.Warn("builderd: dependency cache store failed (continuing)", "build", build.ID, "err", out.DependencyCacheStoreError)

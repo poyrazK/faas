@@ -2979,6 +2979,12 @@ type DeploymentAudit struct {
 	AlertRuleID  pgtype.UUID
 }
 
+type DeploymentBuildDependencyGate struct {
+	DeploymentID pgtype.UUID
+	Progress     []byte
+	CheckAfter   pgtype.Timestamptz
+}
+
 type DeploymentCodePinDeadline struct {
 	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID
@@ -3058,6 +3064,11 @@ type DeploymentOpenapiSnapshot struct {
 	Sha256        string
 	SchemaVersion int32
 	CapturedAt    pgtype.Timestamptz
+}
+
+type DeploymentPublicBuildUrl struct {
+	DeploymentID pgtype.UUID
+	Urls         []byte
 }
 
 type DeploymentRecoveryLineage struct {
@@ -7145,6 +7156,16 @@ type MigrationAdmission struct {
 	CleanupProof          string
 }
 
+type MigrationCutover struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
+	Version       int64
+	Snapshot      []byte
+	NextAttemptAt pgtype.Timestamptz
+}
+
 type MigrationLease struct {
 	InstanceID        pgtype.UUID
 	LeaseToken        string
@@ -7170,6 +7191,16 @@ type MigrationSource struct {
 	Phase            string
 	Proof            string
 	ActiveLeaseToken pgtype.Text
+}
+
+type MigrationVerification struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
+	Version       int64
+	Snapshot      []byte
+	NextAttemptAt pgtype.Timestamptz
 }
 
 type MirrorInvocationResult struct {
@@ -9892,6 +9923,16 @@ type ProjectEnvironmentWorkloadSpec struct {
 	ConfigHash    string
 	Settings      []byte
 	CreatedAt     pgtype.Timestamptz
+}
+
+type ProjectMigration struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	ProjectSlug string
+	CreatedAt   pgtype.Timestamptz
+	Version     int64
+	LeaseUntil  pgtype.Timestamptz
+	Snapshot    []byte
 }
 
 type ProjectReleaseMember struct {

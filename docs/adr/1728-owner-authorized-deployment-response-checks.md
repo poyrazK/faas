@@ -1,4 +1,4 @@
-# ADR-1331: Owner-authorized deployment response checks
+# ADR-1728: Owner-authorized deployment response checks
 
 Date: 2026-10-15
 Status: Accepted
