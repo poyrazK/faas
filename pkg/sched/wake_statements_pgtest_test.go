@@ -459,6 +459,11 @@ func TestPostgresBootStatements(t *testing.T) {
 				t.Fatal(err)
 			}
 			e.WithNodeRegistry(NewNodeRegistry(nodes))
+			// A compute node's schedd owns the apps placed on its node.
+			if err := store.SetAppNodeID(ctx, app.ID, node.ID); err != nil {
+				t.Fatal(err)
+			}
+			e.WithOwnerNodeID(node.ID)
 			// vmmd streams live capacity to schedd; placement reads usage from
 			// it rather than from Postgres.
 			for _, n := range nodes {

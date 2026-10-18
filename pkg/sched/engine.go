@@ -3414,6 +3414,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		PreferredNodeIDs:           snapshotNodes,
 		PrioritizeSnapshotLocality: deploymentSmoke && snapshotLocalityKnown,
 		PreferredRegion:            preferredRegion,
+		ownerApp:                   &app,
 	}
 	var placement Placement
 	var ins state.Instance
@@ -4815,7 +4816,13 @@ func (e *Engine) loadPlacementSnapshot(ctx context.Context, r Request) (placemen
 		// gateway partitions by apps.node_id before dialling);
 		// this is the second-line filter for direct Engine
 		// calls (the engine_test.go wake-locality tests).
-		if app, err := e.store.AppByID(ctx, r.AppID); err == nil && app.NodeID != "" && app.NodeID != e.ownerNodeID {
+		app, err := state.App{}, error(nil)
+		if r.ownerApp != nil && r.ownerApp.ID == r.AppID {
+			app = *r.ownerApp
+		} else {
+			app, err = e.store.AppByID(ctx, r.AppID)
+		}
+		if err == nil && app.NodeID != "" && app.NodeID != e.ownerNodeID {
 			return placementSnapshot{}, api.ErrCapacity(fmt.Sprintf(
 				"placement: app %s is owned by node %s; this schedd owns %s",
 				r.AppID, app.NodeID, e.ownerNodeID))
