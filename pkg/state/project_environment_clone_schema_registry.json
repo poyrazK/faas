@@ -2360,6 +2360,32 @@
     "kind": "operational"
   },
   {
+    "table": "customer_operation_schedules",
+    "columns": [
+      "account_id",
+      "app_id",
+      "at",
+      "created_at",
+      "cron",
+      "definition_id",
+      "fires",
+      "id",
+      "input",
+      "kind",
+      "last_error",
+      "last_fired_at",
+      "last_operation_id",
+      "lease_token",
+      "lease_until",
+      "next_fire_at",
+      "platform_tenant_id",
+      "state",
+      "timezone",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "customer_operation_stream_leases",
     "columns": [
       "account_id",
