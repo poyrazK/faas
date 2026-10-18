@@ -1923,8 +1923,11 @@ func TestPg_ComputeNodes_UsedMB_SumsLiveInstancesOnly(t *testing.T) {
 		t.Errorf("ComputeNodeUsedMB=%d, want %d (5 live × (256+%d))", got, want, api.PerVMOverheadMB)
 	}
 
-	// Unknown node → 0 (COALESCE wraps the aggregate in the SELECT).
-	gotU, err := s.ComputeNodeUsedMB(ctx, "00000000-0000-0000-0000-000000000000")
+	// Unknown node → 0 (COALESCE wraps the aggregate in the SELECT). The nil
+	// UUID is not a node id at all: migration admission accounting (ADR-1529)
+	// refuses it, so the unknown node is a well-formed id with no rows.
+	unknown := uuid.NewString()
+	gotU, err := s.ComputeNodeUsedMB(ctx, unknown)
 	if err != nil {
 		t.Fatalf("ComputeNodeUsedMB(unknown): %v", err)
 	}
@@ -1932,15 +1935,15 @@ func TestPg_ComputeNodes_UsedMB_SumsLiveInstancesOnly(t *testing.T) {
 		t.Errorf("ComputeNodeUsedMB(unknown)=%d, want 0", gotU)
 	}
 
-	cpu, err := s.ComputeNodeUsedCPUMillicoresByNode(ctx, []string{nodeID, "00000000-0000-0000-0000-000000000000"})
+	cpu, err := s.ComputeNodeUsedCPUMillicoresByNode(ctx, []string{nodeID, unknown})
 	if err != nil {
 		t.Fatalf("ComputeNodeUsedCPUMillicoresByNode: %v", err)
 	}
 	if cpu[nodeID] != 5*api.DefaultAppCPUMillicores {
 		t.Errorf("used CPU for live instances = %d, want %d", cpu[nodeID], 5*api.DefaultAppCPUMillicores)
 	}
-	if cpu["00000000-0000-0000-0000-000000000000"] != 0 {
-		t.Errorf("used CPU for unknown node = %d, want 0", cpu["00000000-0000-0000-0000-000000000000"])
+	if cpu[unknown] != 0 {
+		t.Errorf("used CPU for unknown node = %d, want 0", cpu[unknown])
 	}
 }
 
