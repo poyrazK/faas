@@ -181,6 +181,9 @@ func testExecutionCompleteForEvidence(r testRunReceipt) bool {
 	if testColdStartBudgetOnlyFailure(r) {
 		return true
 	}
+	if r.Status == "failed" && r.Error == "PostgreSQL recovery budget exceeded" && r.Actions != nil && r.Actions.Evidence != nil && r.Actions.Evidence.Snapshot != nil && testPostgresFaultBudgetError(r.Actions.Evidence.Snapshot.ManagedWork) == r.Error {
+		return true
+	}
 	return r.Status == "failed" && r.Error == "PostgreSQL lock-wait budget exceeded" && r.Postgres != nil && r.Postgres.Validate() == nil && !r.Postgres.LockBudgetPassed
 }
 func testPostgresComparisonStatus(runs []testRunComparison) string {
