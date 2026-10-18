@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -326,6 +327,13 @@ func verifyInstalledRelease(root string, manifest releasebundle.Manifest) error 
 
 type fileLock struct {
 	file *os.File
+}
+
+// Lock takes the deploy lock a deploy, rollback or overlay holds, for a
+// host change outside the controller (deployctl restart-changed) that must
+// not interleave with one. Close releases it.
+func Lock(path string) (io.Closer, error) {
+	return acquireLock(path)
 }
 
 func acquireLock(path string) (*fileLock, error) {

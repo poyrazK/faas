@@ -77,6 +77,9 @@
     group: "{{ faas_pgbouncer_os_user }}"
     mode: "0640"
     validate: "/usr/sbin/pgbouncer -V >/dev/null 2>&1 && test -r %s"
+  # Host-configuration lane (ADR 20261018133100): never restart the pooler
+  # outside a full release; only report the change.
+  check_mode: "{{ not (faas_stateful_restart_allowed | default(true) | bool) }}"
   notify: restart pgbouncer
 
 - name: pgbouncer — enable and start

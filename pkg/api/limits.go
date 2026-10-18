@@ -6523,6 +6523,24 @@ const (
 	// minute) while keeping the query load negligible.
 	DeadNodeReconcilerIntervalSeconds = 30
 
+	// NodeLeaseTTL, NodeLeaseRenewInterval and NodeLeaseFenceMargin time a
+	// compute node's liveness lease (ADR-1344 §4, P3). The node-local schedd
+	// renews every interval, three times per TTL, so two lost renewals in a
+	// row still leave the lease live. The node treats itself as fenced once
+	// TTL minus the margin has passed since its last renewal reply, which is
+	// always before the database considers the lease expired as long as the
+	// reply arrived within the margin. NodeLeaseMaxTTL bounds any configured
+	// TTL so a bad setting cannot keep a dead node looking alive for long.
+	NodeLeaseTTL           = 30 * time.Second
+	NodeLeaseRenewInterval = 10 * time.Second
+	NodeLeaseFenceMargin   = 5 * time.Second
+	NodeLeaseMaxTTL        = 10 * time.Minute
+	// NodeLeaseTakeoverMargin is how long after a lease's expiry, on database
+	// time, peers wait before acting on the node being gone (phase 2). The
+	// node fences itself NodeLeaseFenceMargin before expiry, so its work has
+	// stopped well before any peer takes it over.
+	NodeLeaseTakeoverMargin = 10 * time.Second
+
 	// InstanceDivergenceIntervalSeconds is the cadence of the ADR-191
 	// sweep that finds live rows the owning vmmd is not reporting.
 	// 30s matches the dead-node reconciler: both repair rows the happy
@@ -6648,7 +6666,19 @@ const (
 	// HandoffMaxMemoryPercent refuses a hand-off while the unit's cgroup uses
 	// more than this share of its MemoryMax: both generations share the
 	// cgroup, so the old one must leave room for a second steady state.
-	HandoffMaxMemoryPercent         = 45
+	HandoffMaxMemoryPercent = 45
+	// HandoffMemoryWaitSeconds bounds how long a hand-off waits for the
+	// cgroup to fall back under HandoffMaxMemoryPercent, after returning freed
+	// heap to the OS. apid's memory spikes last minutes, not hours, so a
+	// reload during one waits instead of falling back to a restart.
+	HandoffMemoryWaitSeconds = 60
+	// APIDMemoryMaxMB is faas-apid.service's MemoryMax, and APIDGoMemLimitMB
+	// its GOMEMLIMIT, a soft per-process bound. A reload runs two apid
+	// generations in one cgroup (ADR-1580). Production over 14 days
+	// (2026-10-18): steady state 51-94 MB per process, spikes to 257 MB, and
+	// two OOM kills at the previous 256 MB cap (ADR 20261018132058).
+	APIDMemoryMaxMB                 = 512
+	APIDGoMemLimitMB                = 256
 	ReplicaHeartbeatIntervalSeconds = 5
 	WarmHintCacheSize               = 1000
 	// ServiceRouteConvergenceTimeoutSeconds bounds one routing-generation

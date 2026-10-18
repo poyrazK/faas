@@ -586,6 +586,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	heartbeatRetentionMetrics := heartbeatretention.NewMetrics(ops.Registry(), ops.MetricPrefix())
 	heartbeatRetention := heartbeatretention.New(store, log, heartbeatRetentionMetrics)
 	go heartbeatRetention.Run(ctx)
+	if err := startNodeLeaseKeeper(ctx, store, ownerNodeID, ops, log); err != nil {
+		return err
+	}
+	leaseGuard, err := newNodeLeaseGuard(store, ops, log)
+	if err != nil {
+		return err
+	}
 	workflowMetrics := wire.NewWorkflowMetrics(ops.Registry())
 	prewarmMetrics := wire.NewPrewarmMetrics(ops.Registry())
 	privateNetworkMetrics := privatenetwork.NewMetrics(ops.Registry(), ops.MetricPrefix())
@@ -644,6 +651,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// scheduler's fleet-wide placement; a configured owner pins this
 	// schedd to its registered compute node.
 	engine.WithOwnerNodeID(ownerNodeID)
+	if leaseGuard != nil {
+		engine.WithTakeoverGuard(leaseGuard)
+	}
 	engine.WithNodeRegistry(nodeRegistry)
 	engine.WithEnvironmentQualificationServiceProxyForTransport(environmentQualificationServiceProxyResolver(store, ownerNodeID,
 		os.Getenv(environmentQualificationServiceProxyHTTPEnv), os.Getenv(environmentQualificationServiceProxyHTTPSEnv)))
@@ -1575,6 +1585,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithNodeRegistry(nodeRegistry).
 		WithEvents(eventsPlatform).
 		WithReachableHook(engine.DestroyLostVMs)
+	if leaseGuard != nil {
+		hb.WithTakeoverGuard(leaseGuard)
+	}
 	hb.Interval = cfg.HeartbeatInterval
 	hb.Staleness = cfg.HeartbeatStaleness
 	// FAAS_HEARTBEAT_FAILURE_THRESHOLD overrides how many consecutive failed

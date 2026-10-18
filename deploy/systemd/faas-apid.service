@@ -18,7 +18,7 @@ Restart=on-failure
 RestartSec=2s
 WatchdogSec=90s
 Slice=faas-cp.slice
-MemoryMax=256M
+MemoryMax=512M
 OOMPolicy=continue
 CapabilityBoundingSet=
 AmbientCapabilities=
@@ -26,6 +26,7 @@ EnvironmentFile=/etc/faas/sealed.env
 EnvironmentFile=-/etc/faas/storage.env
 EnvironmentFile=-/etc/faas/profiling.env
 EnvironmentFile=-/etc/faas/otel.env
+Environment=GOMEMLIMIT=256MiB
 Environment=FAAS_INTERNAL_MAIL_PRODUCER_OUTBOX_ENABLED=0
 Environment=FAAS_INTERNAL_MAIL_OUTBOX_RECONCILIATION_ENABLED=0
 Environment=FAAS_INTERNAL_MAIL_VERIFICATION_OUTBOX_ENABLED=0

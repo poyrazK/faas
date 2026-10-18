@@ -11,10 +11,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type hostingFailureFaultStore struct {
-	*state.MemStore
+	MemStore                             *state.MemStore
 	failureErr, receiptErr               error
 	failureCalls, receiptCalls, oldCalls int
 }
@@ -84,27 +85,27 @@ func hostingReplayFixture(t *testing.T) *hostingReplay {
 	t.Helper()
 	ctx := context.Background()
 	f := &hostingReplay{store: &hostingFailureFaultStore{MemStore: state.NewMemStore()}}
-	account, err := f.store.CreateAccount(ctx, "hosting-replay@example.test", "pro")
+	account, err := f.store.MemStore.CreateAccount(ctx, "hosting-replay@example.test", "pro")
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := f.store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "hosting-replay", RAMMB: 256, IdleTimeoutS: 60})
+	app, err := f.store.MemStore.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "hosting-replay", RAMMB: 256, IdleTimeoutS: 60})
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.previous, err = f.store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Scope: state.DefaultEnvScope, ImageDigest: "sha256:previous", Status: state.DeployLive})
+	f.previous, err = f.store.MemStore.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Scope: state.DefaultEnvScope, ImageDigest: "sha256:previous", Status: state.DeployLive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.candidate, err = f.store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Scope: state.DefaultEnvScope, ImageDigest: "sha256:candidate"})
+	f.candidate, err = f.store.MemStore.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Scope: state.DefaultEnvScope, ImageDigest: "sha256:candidate"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.store.UpdateDeploymentStatus(ctx, f.candidate.ID, state.DeploySnapshotting, ""); err != nil {
+	if err := f.store.MemStore.UpdateDeploymentStatus(ctx, f.candidate.ID, state.DeploySnapshotting, ""); err != nil {
 		t.Fatal(err)
 	}
 	f.notif = &hostingFailureNotifier{store: f.store.MemStore}
-	f.handler = New(f.store, f.notif, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmokeRequired(true)
+	f.handler = New(statetest.NewMem(f.store), f.notif, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmokeRequired(true)
 	f.notification = db.Notification{Channel: db.NotifySnapshotWritten, Payload: `{"deployment_id":"` + f.candidate.ID + `","storage_key":"snap/` + f.candidate.ID + `/mem","mem_bytes":268435456,"vmstate_bytes":40960,"fc_version":"firecracker-1.10"}`}
 	return f
 }
@@ -112,8 +113,8 @@ func hostingReplayFixture(t *testing.T) *hostingReplay {
 func (f *hostingReplay) assertReplayable(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
-	dep, err := f.store.DeploymentByID(ctx, f.candidate.ID)
-	live, liveErr := f.store.LiveDeploymentForScope(ctx, f.candidate.AppID, state.DefaultEnvScope)
+	dep, err := f.store.MemStore.DeploymentByID(ctx, f.candidate.ID)
+	live, liveErr := f.store.MemStore.LiveDeploymentForScope(ctx, f.candidate.AppID, state.DefaultEnvScope)
 	if err != nil || dep.Status != state.DeploySnapshotting || len(dep.APIHostingReceipt) != 0 || liveErr != nil || live.ID != f.previous.ID || f.notif.failed != 0 || f.store.oldCalls != 0 {
 		t.Fatalf("not replayable: status=%s receipt=%s live=%s events=%d legacy=%d err=%v liveErr=%v", dep.Status, dep.APIHostingReceipt, live.ID, f.notif.failed, f.store.oldCalls, err, liveErr)
 	}
@@ -157,7 +158,7 @@ func TestHostingVerifiedReceiptOutageRemainsReplayable(t *testing.T) {
 	if err := f.handler.HandleNotification(context.Background(), f.notification); err != nil {
 		t.Fatal(err)
 	}
-	live, err := f.store.LiveDeploymentForScope(context.Background(), f.candidate.AppID, state.DefaultEnvScope)
+	live, err := f.store.MemStore.LiveDeploymentForScope(context.Background(), f.candidate.AppID, state.DefaultEnvScope)
 	if err != nil || live.ID != f.candidate.ID || f.store.failureCalls != 0 || f.notif.failed != 0 {
 		t.Fatalf("verified candidate did not promote: live=%s err=%v", live.ID, err)
 	}
@@ -183,7 +184,7 @@ func TestHostingConsumerCancellationDoesNotBecomeCandidateFailure(t *testing.T) 
 	if err := f.handler.HandleNotification(context.Background(), f.notification); err != nil {
 		t.Fatal(err)
 	}
-	live, _ := f.store.LiveDeploymentForScope(context.Background(), f.candidate.AppID, state.DefaultEnvScope)
+	live, _ := f.store.MemStore.LiveDeploymentForScope(context.Background(), f.candidate.AppID, state.DefaultEnvScope)
 	if live.ID != f.candidate.ID || f.store.failureCalls != 0 || smokes != 2 {
 		t.Fatalf("interrupted candidate not replayed: live=%s atomic=%d smokes=%d", live.ID, f.store.failureCalls, smokes)
 	}
@@ -192,7 +193,7 @@ func TestHostingConsumerCancellationDoesNotBecomeCandidateFailure(t *testing.T) 
 func TestHostingWithdrawnCandidateIgnoresStaleFailure(t *testing.T) {
 	f := hostingReplayFixture(t)
 	f.handler.WithHostingSmoke(func(ctx context.Context, _ state.App, dep state.Deployment) (apihostingreceipt.SmokeResult, error) {
-		if err := f.store.UpdateDeploymentStatus(ctx, dep.ID, state.DeployCancelled, "customer cancelled"); err != nil {
+		if err := f.store.MemStore.UpdateDeploymentStatus(ctx, dep.ID, state.DeployCancelled, "customer cancelled"); err != nil {
 			t.Fatal(err)
 		}
 		return apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeFailed, StatusCode: 503}, nil
@@ -200,7 +201,7 @@ func TestHostingWithdrawnCandidateIgnoresStaleFailure(t *testing.T) {
 	if err := f.handler.HandleNotification(context.Background(), f.notification); err != nil {
 		t.Fatal(err)
 	}
-	dep, _ := f.store.DeploymentByID(context.Background(), f.candidate.ID)
+	dep, _ := f.store.MemStore.DeploymentByID(context.Background(), f.candidate.ID)
 	if dep.Status != state.DeployCancelled || len(dep.APIHostingReceipt) != 0 || f.notif.failed != 0 || f.store.oldCalls != 0 {
 		t.Fatalf("stale verifier replaced cancellation: %+v events=%d", dep, f.notif.failed)
 	}
@@ -214,7 +215,7 @@ func TestHostingProbeDeadlineStillFinalizesVerdict(t *testing.T) {
 	if err := f.handler.HandleNotification(context.Background(), f.notification); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("probe deadline not reported: %v", err)
 	}
-	dep, _ := f.store.DeploymentByID(context.Background(), f.candidate.ID)
+	dep, _ := f.store.MemStore.DeploymentByID(context.Background(), f.candidate.ID)
 	if dep.Status != state.DeployFailed || f.notif.failed != 1 || f.notif.commitErr != nil {
 		t.Fatalf("probe deadline did not finalize: status=%s events=%d commit=%v", dep.Status, f.notif.failed, f.notif.commitErr)
 	}

@@ -171,8 +171,9 @@ realtimed binary:
 - a restart after a hand-off drains for the 25 s grace.
 The first native run found that a successor started by the old process was an
 alien main process to systemd, which SIGKILLed it on restart; successors are
-now systemd's children. Open: apid's memory headroom (256 M), a WebSocket
-across a gateway hand-off on a real node, and a deploy through deployctl.
+now systemd's children. apid's cap rose to 512 M with a 256 MiB GOMEMLIMIT
+(ADR 20261018132058). Open: a WebSocket across a gateway hand-off on a real
+node, and a deploy through deployctl.
 
 ## Zero-downtime daemon restarts — 2026-10-17 (branch, not released)
 

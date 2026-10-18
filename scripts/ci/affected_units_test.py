@@ -15,6 +15,7 @@ REPO = HERE.parent.parent
 spec = importlib.util.spec_from_file_location("affected_units", HERE / "affected_units.py")
 au = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(au)
+host_roles = au.host_roles
 
 CONFIG = {
     "binaries": {
@@ -32,7 +33,32 @@ CONFIG = {
         "control_plane_bundle": ["docs/DPA.md"],
     },
     "pending_paths": {"guest": ["guest/"]},
-    "compute_only_paths": ["deploy/ansible/roles/vmmd_service/"],
+    "host_config": {
+        "converged_groups": ["control_plane"],
+        "release_units": ["deploy/ansible/roles/control_plane_service/files/faas-apid.service"],
+        "outside_releases": ["deploy/systemd/", "deploy/grafana/"],
+    },
+}
+
+# Paths each host group's roles read (host_roles.group_owners); "*" is a
+# group global, read by every role.
+HOST = {
+    "control_plane": {"owners": {
+        "deploy/ansible/bootstrap.yml": ["*"],
+        "deploy/ansible/roles/prometheus/x.yml": ["prometheus"],
+        "deploy/ansible/roles/postgres_capacity/defaults/main.yml": ["postgres_capacity"],
+        "deploy/ansible/roles/host_hardening/tasks/main.yml": ["host_hardening"],
+        "deploy/ansible/roles/control_plane_service/files/faas-apid.service": ["control_plane_service"],
+        "deploy/systemd/faas-pg-basebackup.service": ["postgres_backup"],
+        "deploy/ansible/roles/grafana/files/fleet.json": ["grafana"],
+    }, "restart_roles": ["postgres", "postgres_capacity"]},
+    "compute_nodes": {"owners": {
+        "deploy/ansible/bootstrap.yml": ["*"],
+        "deploy/ansible/roles/vmmd_service/files/faas-vmmd.service": ["vmmd_service"],
+        "deploy/ansible/roles/vmmd_service/tasks/main.yml": ["vmmd_service"],
+        "deploy/ansible/roles/vmmd_service/x.yml": ["vmmd_service"],
+        "deploy/ansible/roles/host_hardening/tasks/main.yml": ["host_hardening"],
+    }},
 }
 
 # (package dirs, input files) per binary, as binary_closures returns them.
@@ -91,9 +117,32 @@ class AnalyzeTest(unittest.TestCase):
         ("compute-only role is pending, not blocking",
          [("c1", ["pkg/apid/server.go", "deploy/ansible/roles/vmmd_service/files/faas-vmmd.service"])],
          {"apid": "c1"}, ["apid"], [], True),
-        ("control-plane role next to a compute role still blocks",
+        ("control-plane role change rides the control-plane lane",
          [("c1", ["deploy/ansible/roles/vmmd_service/x.yml", "deploy/ansible/roles/prometheus/x.yml"])],
-         {}, [], ["deploy"], False),
+         {}, [], [], True),
+        ("control-plane role file change rides the lane with a daemon",
+         [("c2", ["pkg/apid/server.go"]), ("c1", ["deploy/ansible/roles/grafana/files/fleet.json"])],
+         {"apid": "c2"}, ["apid"], [], True),
+        ("a role that can restart PostgreSQL blocks",
+         [("c2", ["pkg/apid/server.go"]), ("c1", ["deploy/ansible/roles/postgres_capacity/defaults/main.yml"])],
+         {"apid": "c2"}, [], ["stateful_restart"], False),
+        ("unit tree file a control-plane role reads is host config",
+         [("c1", ["pkg/apid/server.go", "deploy/systemd/faas-pg-basebackup.service"])],
+         {"apid": "c1"}, ["apid"], [], True),
+        ("legacy unit tree file no role reads maps to nothing",
+         [("c1", ["pkg/apid/server.go", "deploy/systemd/faas-gatewayd-internal.service"])],
+         {"apid": "c1"}, ["apid"], [], True),
+        ("deploy documentation maps to nothing",
+         [("c1", ["pkg/apid/server.go", "deploy/ansible/roles/prometheus/README.md", "deploy/README.md"])],
+         {"apid": "c1"}, ["apid"], [], True),
+        ("dashboard mirror maps to nothing", [("c1", ["pkg/apid/server.go", "deploy/grafana/fleet.json"])],
+         {"apid": "c1"}, ["apid"], [], True),
+        ("release unit file blocks",
+         [("c1", ["pkg/apid/server.go", "deploy/ansible/roles/control_plane_service/files/faas-apid.service"])],
+         {"apid": "c1"}, [], ["release_units"], False),
+        ("deploy path no host role reads blocks",
+         [("c1", ["pkg/apid/server.go", "deploy/manifest/production/gcp-live.template.yaml"])],
+         {"apid": "c1"}, [], ["deploy"], False),
         ("unit version is the newest commit that touched the unit",
          [("c3", ["pkg/sched/sched.go"]), ("c2", ["pkg/apid/server.go"]), ("c1", ["pkg/state/store.go"])],
          {"apid": "c2", "meterd": "c1", "schedd": "c3", "gatewayd-internal": "c1", "gregalectl": "c1"},
@@ -105,7 +154,7 @@ class AnalyzeTest(unittest.TestCase):
     def test_cases(self):
         for name, commits, want_changed, deployable, blocked, eligible in self.CASES:
             with self.subTest(name):
-                rep = au.analyze(commits, CLOSURES, CONFIG, EXISTS)
+                rep = au.analyze(commits, CLOSURES, CONFIG, EXISTS, host=HOST)
                 self.assertEqual(changed(rep), want_changed)
                 self.assertEqual(rep["deployable"], deployable)
                 self.assertEqual(rep["blocked_by"], blocked)
@@ -127,7 +176,7 @@ class AnalyzeTest(unittest.TestCase):
         # roles, so a compute role change waits for the full release; the
         # control-plane lane is unaffected.
         rep = au.analyze([("c1", ["pkg/state/store.go", "deploy/ansible/roles/vmmd_service/tasks/main.yml"])],
-                         CLOSURES, CONFIG, EXISTS)
+                         CLOSURES, CONFIG, EXISTS, host=HOST)
         self.assertTrue(rep["lanes"]["control-plane"]["eligible"])
         self.assertEqual(rep["lanes"]["edge"]["blocked_by"], ["compute_deploy"])
         self.assertFalse(rep["lanes"]["edge"]["eligible"])
@@ -170,6 +219,152 @@ class AnalyzeTest(unittest.TestCase):
             au.analyze([], extra, CONFIG, EXISTS)
 
 
+class HostConfigTest(unittest.TestCase):
+    """A change to a control-plane host role rides the control-plane lane,
+    which converges the role before it restarts anything
+    (docs/adr/20261018133100-host-configuration-lane.md)."""
+
+    def test_role_change_alone_deploys_the_control_plane_lane(self):
+        rep = au.analyze([("c2", ["docs/quickstart.md"]),
+                          ("c1", ["deploy/ansible/roles/grafana/files/fleet.json"])],
+                         CLOSURES, CONFIG, EXISTS, host=HOST)
+        self.assertEqual(rep["host_config"], {"group": "control_plane", "roles": ["grafana"], "all": False,
+                                              "commit": "c1", "version": "host-c1"})
+        self.assertEqual(rep["flags"]["host_config"],
+                         {"blocking": False, "count": 1, "paths": ["deploy/ansible/roles/grafana/files/fleet.json"]})
+        self.assertTrue(rep["lanes"]["control-plane"]["eligible"])
+        self.assertEqual(rep["lanes"]["control-plane"]["reasons"], [])
+        self.assertFalse(rep["lanes"]["edge"]["eligible"])
+        self.assertEqual(rep["deployable"], [])
+        self.assertTrue(rep["eligible"])
+
+    def test_role_both_planes_run_holds_the_edge_lane(self):
+        # host_hardening runs on compute hosts too, which no lane converges
+        # yet: the edge lane waits for the full release.
+        rep = au.analyze([("c1", ["pkg/state/store.go", "deploy/ansible/roles/host_hardening/tasks/main.yml"])],
+                         CLOSURES, CONFIG, EXISTS, host=HOST)
+        self.assertEqual(rep["host_config"]["roles"], ["host_hardening"])
+        self.assertTrue(rep["lanes"]["control-plane"]["eligible"])
+        self.assertEqual(rep["lanes"]["edge"]["blocked_by"], ["compute_deploy"])
+
+    def test_content_hashes_decide_the_roles(self):
+        # A path changed and changed back: the owners say postgres_capacity,
+        # the hashes say nothing changed, so there is nothing to converge.
+        host = dict(HOST, control_plane=dict(HOST["control_plane"], changed={"all": False, "roles": []}))
+        rep = au.analyze([("c1", ["pkg/apid/server.go", "deploy/ansible/roles/postgres_capacity/defaults/main.yml"])],
+                         CLOSURES, CONFIG, EXISTS, host=host)
+        self.assertEqual(rep["host_config"]["roles"], [])
+        self.assertIsNone(rep["host_config"]["version"])
+        self.assertTrue(rep["lanes"]["control-plane"]["eligible"])
+        rep = au.analyze([("c1", ["deploy/ansible/roles/postgres_capacity/defaults/main.yml"])],
+                         CLOSURES, CONFIG, EXISTS, host=host)
+        self.assertFalse(rep["lanes"]["control-plane"]["eligible"])
+        self.assertIn("no control-plane daemon changed since base", rep["lanes"]["control-plane"]["reasons"])
+
+    def test_play_change_converges_every_role_so_it_blocks(self):
+        # Every role includes the ones that can restart PostgreSQL.
+        rep = au.analyze([("c1", ["deploy/ansible/bootstrap.yml"])], CLOSURES, CONFIG, EXISTS, host=HOST)
+        self.assertTrue(rep["host_config"]["all"])
+        self.assertEqual(rep["flags"]["stateful_restart"]["paths"], ["deploy/ansible/bootstrap.yml"])
+        self.assertEqual(rep["flags"]["compute_deploy"]["paths"], ["deploy/ansible/bootstrap.yml"])
+        self.assertFalse(rep["lanes"]["control-plane"]["eligible"])
+        self.assertFalse(rep["lanes"]["edge"]["eligible"])
+
+    def test_postgres_restart_roles_block_and_name_their_paths(self):
+        rep = au.analyze([("c2", ["deploy/ansible/roles/grafana/files/fleet.json"]),
+                          ("c1", ["deploy/ansible/roles/postgres_capacity/defaults/main.yml"])],
+                         CLOSURES, CONFIG, EXISTS, host=HOST)
+        self.assertEqual(rep["flags"]["stateful_restart"],
+                         {"blocking": True, "count": 1, "paths": ["deploy/ansible/roles/postgres_capacity/defaults/main.yml"]})
+        self.assertEqual(rep["host_config"]["roles"], ["grafana", "postgres_capacity"])
+        self.assertIn("stateful_restart changed since base (1 paths, e.g. deploy/ansible/roles/postgres_capacity/defaults/main.yml)",
+                      rep["lanes"]["control-plane"]["reasons"])
+
+    def test_without_a_host_view_deploy_blocks(self):
+        rep = au.analyze([("c1", ["pkg/apid/server.go", "deploy/ansible/roles/prometheus/x.yml"])],
+                         CLOSURES, CONFIG, EXISTS)
+        self.assertEqual(rep["blocked_by"], ["deploy"])
+        self.assertIsNone(rep["host_config"]["version"])
+
+    def test_bundle_file_a_role_installs_is_host_config(self):
+        # docs/DPA.md is in the control-plane bundle; control_plane_service
+        # installs it too, so converging the role applies it.
+        host = dict(HOST, control_plane={"owners": dict(HOST["control_plane"]["owners"],
+                                                        **{"docs/DPA.md": ["control_plane_service"]})})
+        rep = au.analyze([("c1", ["docs/DPA.md"])], CLOSURES, CONFIG, EXISTS, host=host)
+        self.assertEqual(rep["blocked_by"], [])
+        self.assertEqual(rep["host_config"]["roles"], ["control_plane_service"])
+        self.assertTrue(rep["lanes"]["control-plane"]["eligible"])
+        rep = au.analyze([("c1", ["docs/DPA.md"])], CLOSURES, CONFIG, EXISTS, host=HOST)
+        self.assertEqual(rep["blocked_by"], ["control_plane_bundle"])
+
+    def test_release_unit_blocks_although_a_role_reads_it(self):
+        # deployctl reinstalls the base release's unit files at every unit
+        # activation, so converging the role would not stick.
+        rep = au.analyze([("c1", ["deploy/ansible/roles/control_plane_service/files/faas-apid.service"])],
+                         CLOSURES, CONFIG, EXISTS, host=HOST)
+        self.assertEqual(rep["blocked_by"], ["release_units"])
+        self.assertNotIn("host_config", rep["flags"])
+        self.assertFalse(rep["eligible"])
+
+
+class StatefulRestartHistoryTest(unittest.TestCase):
+    """The real postgres_capacity and grafana roles in a throwaway history,
+    classified through host_view (no Go toolchain needed)."""
+
+    def run_git(self, *args):
+        return subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True, text=True).stdout.strip()
+
+    def commit(self):
+        self.run_git("add", "-A")
+        self.run_git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "x")
+        return self.run_git("rev-parse", "HEAD")
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root)
+        self.run_git("init", "-q")
+        for role in ("postgres_capacity", "grafana"):
+            shutil.copytree(REPO / "deploy/ansible/roles" / role, pathlib.Path(self.root, "deploy/ansible/roles", role))
+        pathlib.Path(self.root, "deploy/ansible/bootstrap.yml").write_text(
+            "- name: cp\n  hosts: control_plane\n  roles:\n    - role: grafana\n    - role: postgres_capacity\n",
+            encoding="utf-8")
+        self.base = self.commit()
+
+    def report(self):
+        head = self.commit()
+        host = au.host_view(self.base, head, self.root, CONFIG_WITH_STATEFUL["host_config"]["stateful_services"])
+        commits = au.range_commits(self.base, head, self.root)
+        return au.analyze(commits, CLOSURES, CONFIG_WITH_STATEFUL, EXISTS, host=host)
+
+    def test_postgres_capacity_change_moving_max_connections_blocks_the_lane(self):
+        defaults = pathlib.Path(self.root, "deploy/ansible/roles/postgres_capacity/defaults/main.yml")
+        text = defaults.read_text(encoding="utf-8")
+        budget = re.search(r"(?m)^faas_postgres_control_plane_pool_budget: (\d+)$", text)
+        self.assertIsNotNone(budget, "postgres_capacity no longer declares the control-plane pool budget")
+        # 40 more pooled connections moves the derived max_connections on
+        # any fleet size, and only a postmaster restart applies it.
+        defaults.write_text(text.replace(budget.group(0), f"faas_postgres_control_plane_pool_budget: {int(budget.group(1)) + 40}"),
+                            encoding="utf-8")
+        rep = self.report()
+        self.assertEqual(rep["host_config"]["roles"], ["postgres_capacity"])
+        self.assertEqual(rep["blocked_by"], ["stateful_restart"])
+        self.assertEqual(rep["flags"]["stateful_restart"]["paths"],
+                         ["deploy/ansible/roles/postgres_capacity/defaults/main.yml"])
+        self.assertFalse(rep["lanes"]["control-plane"]["eligible"])
+        self.assertFalse(rep["eligible"])
+
+    def test_a_role_that_never_restarts_postgres_still_rides_the_lane(self):
+        tasks = pathlib.Path(self.root, "deploy/ansible/roles/grafana/tasks/main.yml")
+        tasks.write_text(tasks.read_text(encoding="utf-8") + "\n- name: grafana — noop\n  ansible.builtin.debug: {}\n",
+                         encoding="utf-8")
+        rep = self.report()
+        self.assertEqual(rep["host_config"]["roles"], ["grafana"])
+        self.assertEqual(rep["blocked_by"], [])
+        self.assertTrue(rep["lanes"]["control-plane"]["eligible"])
+
+
+CONFIG_WITH_STATEFUL = dict(CONFIG, host_config=dict(CONFIG["host_config"], stateful_services=["postgresql", "pgbouncer"]))
 DATA_CONFIG = dict(CONFIG, migrations_dir="migrations/")
 EXPAND = {"eligible": True, "blockers": [], "migrations": [
     {"path": "migrations/20261018000000001_a.sql", "version": 20261018000000001, "eligible": True, "blockers": []}]}
@@ -282,50 +477,83 @@ class RepositoryContractTest(unittest.TestCase):
         for needle in ("GO_BUILD_FLAGS", "LDFLAGS", "build-release-batch:", "build-release-unit:"):
             self.assertIn(needle, recipe)
 
-    def test_control_plane_bundle_sources_are_covered(self):
-        # Every repository file cd-controlplane copies into its bundle is
-        # reused from the base release by the unit lane, so a change to one
-        # must block that lane.
+    def bundle_step(self):
         workflow = (REPO / ".github/workflows/cd-controlplane.yml").read_text(encoding="utf-8")
         start = workflow.index("- name: Build immutable release bundle")
         end = workflow.index("- name:", start + 1)
-        step = "\n".join(line for line in workflow[start:end].split("\n") if not line.lstrip().startswith("#"))
+        return "\n".join(line for line in workflow[start:end].split("\n") if not line.lstrip().startswith("#"))
+
+    def test_control_plane_bundle_sources_are_covered(self):
+        # Every repository file cd-controlplane copies into its bundle is
+        # reused from the base release by the unit lane. A change to one
+        # must block that lane, or be a release unit, or be read by a
+        # control-plane host role, which the lane converges first.
+        step = self.bundle_step()
         sources = set(re.findall(r"(?<![\w/$.-])((?:deploy|docs|pkg|scripts)/[\w./-]+)", step))
         self.assertTrue(sources, "found no repository sources in the bundle step")
-        blocking = [p for prefixes in self.config["blocking_paths"].values() for p in prefixes]
+        blocking = [p for flag, prefixes in self.config["blocking_paths"].items() if flag != "deploy" for p in prefixes]
+        owners = host_roles.group_owners(host_roles.fs_tree(str(REPO)), "control_plane")
         for source in sorted(sources):
             with self.subTest(source):
-                self.assertTrue(au.matches(source, blocking) or source.endswith("/"),
-                                f"{source} is copied into the control-plane bundle but no blocking path covers it")
+                # Directories are the unit loop's role trees; the release
+                # units test covers what the loop takes from them.
+                self.assertTrue(au.matches(source, blocking) or (REPO / source).is_dir()
+                                or source in self.config["host_config"]["release_units"] or source in owners,
+                                f"{source} is copied into the control-plane bundle but neither blocks nor is host config")
 
-    def test_compute_only_roles_never_run_on_the_control_plane(self):
-        # compute_only_paths lets a role change wait for the full release.
-        # That is only sound for roles the control-plane play never runs,
-        # directly or through another role: include_role/import_role
-        # (name: X), meta dependencies (role: X) and file lookups
-        # (roles/X/, ../X/) all name the role in one of these forms.
-        bootstrap = (REPO / "deploy/ansible/bootstrap.yml").read_text(encoding="utf-8")
-        plays = re.split(r"^- name: ", bootstrap, flags=re.M)[1:]
-        control = [p for p in plays if re.search(r"^  hosts: .*\bcontrol_plane\b", p, re.M)]
-        self.assertTrue(control, "bootstrap.yml has no control-plane play")
-        cp_roles = {r for play in control for r in re.findall(r"^\s+- role: ([\w-]+)", play, re.M)}
-        self.assertIn("control_plane_service", cp_roles)
-        compute_only = {p.rstrip("/").rsplit("/", 1)[-1] for p in self.config["compute_only_paths"]}
-        for role in sorted(compute_only):
-            with self.subTest(role):
-                self.assertTrue((REPO / "deploy/ansible/roles" / role).is_dir(), f"{role} is not a role")
-                self.assertNotIn(role, cp_roles)
-        for cp_role in sorted(cp_roles):
-            root = REPO / "deploy/ansible/roles" / cp_role
-            for path in root.rglob("*"):
-                if not path.is_file() or path.suffix not in (".yml", ".yaml", ".j2"):
-                    continue
-                text = "\n".join(line for line in path.read_text(encoding="utf-8", errors="replace").split("\n")
-                                 if not line.lstrip().startswith("#"))
-                for role in compute_only:
-                    with self.subTest(f"{cp_role} -> {role}"):
-                        self.assertIsNone(re.search(rf"(?:role:\s*|name:\s*|roles/|\.\./){role}\b", text),
-                                          f"{path.relative_to(REPO)} names compute-only role {role}")
+    def test_release_units_are_what_activation_installs(self):
+        # deployctl installs the bundle's systemd/, optional-systemd/ and
+        # tmpfiles.d/ at every activation, a unit release's included.
+        step = self.bundle_step()
+        units = re.search(r"for unit in \\\n(.*?); do", step, re.S).group(1).split()
+        role_dirs = re.search(r"for role_dir in \\\n(.*?); do", step, re.S).group(1).split()
+        want = set()
+        for unit in (u.strip("\\") for u in units if u != "\\"):
+            found = [f"{d}/{unit}" for d in role_dirs if d != "\\" and (REPO / d / unit).is_file()]
+            self.assertTrue(found, f"{unit} is in no role files/ tree")
+            want.add(found[0])
+        for dest in ("optional-systemd", "tmpfiles.d"):
+            want.update(re.findall(rf"((?:deploy)/[\w./-]+)\s*\\?\s*\n?\s*\"\$\{{BUNDLE_ROOT\}}/{dest}/", step))
+        self.assertEqual(sorted(want), sorted(self.config["host_config"]["release_units"]))
+
+    def test_trees_outside_releases_are_not_released(self):
+        # No release workflow installs these trees; a role that names one of
+        # their files makes that file host config instead.
+        outside = self.config["host_config"]["outside_releases"]
+        for workflow in ("release.yml", "release-units.yml", "cd-controlplane.yml", "cd-compute.yml",
+                         "cd-platform.yml", "cd-edge-units.yml", "cd-edge-node.yml"):
+            path = REPO / ".github/workflows" / workflow
+            if not path.exists():
+                continue
+            text = path.read_text(encoding="utf-8")
+            for prefix in outside:
+                with self.subTest(workflow=workflow, prefix=prefix):
+                    self.assertNotIn(prefix, text)
+        # deploy/grafana/ is a byte-identical mirror of the role's copies.
+        for dashboard in sorted((REPO / "deploy/grafana").glob("*.json")):
+            with self.subTest(dashboard=dashboard.name):
+                role_copy = REPO / "deploy/ansible/roles/grafana/files" / dashboard.name
+                if role_copy.exists():
+                    self.assertEqual(dashboard.read_bytes(), role_copy.read_bytes())
+
+    def test_converged_roles_never_include_compute_only_roles(self):
+        # A path only compute roles read waits for the full release; a path
+        # control-plane roles read rides the lane. The split comes from the
+        # plays themselves (host_roles.py), so a compute role the control
+        # plane starts to run moves its paths to host_config.
+        tree = host_roles.fs_tree(str(REPO))
+        cp = host_roles.group_owners(tree, "control_plane")
+        compute = host_roles.group_owners(tree, "compute_nodes")
+        for path in ("deploy/ansible/roles/vmmd_service/tasks/main.yml",
+                     "deploy/ansible/roles/gatewayd_internal_service/files/faas-gatewayd-internal.service"):
+            self.assertIn(path, compute)
+            self.assertNotIn(path, cp)
+        self.assertIn("deploy/ansible/roles/postgres_capacity/defaults/main.yml", cp)
+        # The legacy unit tree is outside releases on the control plane
+        # except for the files postgres_backup installs from it.
+        unread = sorted(p for p in cp if p.startswith("deploy/systemd/"))
+        self.assertTrue(unread)
+        self.assertTrue(all("postgres_backup" in cp[p] for p in unread), unread)
 
     def test_deployable_lanes_name_services(self):
         for name, entry in self.config["binaries"].items():
