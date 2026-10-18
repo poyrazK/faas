@@ -19,7 +19,7 @@ import { accessTokenClaims, authorizationDetails, authorizationResource, bearerC
 
 const prefix = '/auth/v1'
 const authzPrefix = '/authz/v1/'
-const pages = new Set(['/ui', '/ui/', '/ui/sign-in', '/ui/sign-up', '/ui/forgot-password', '/ui/reset-password', '/ui/invitation', '/ui/phone', '/ui/sso', '/ui/consent'])
+const pages = new Set(['/ui', '/ui/', '/ui/sign-in', '/ui/sign-up', '/ui/forgot-password', '/ui/reset-password', '/ui/invitation', '/ui/phone', '/ui/sso', '/ui/consent', '/ui/account'])
 const assets = { '/ui/app.js': 'text/javascript; charset=utf-8', '/ui/style.css': 'text/css; charset=utf-8' }
 // The hosted pages load only their own script and style and call only this
 // origin, plus a configured logo's origin and CAPTCHA provider; tokens

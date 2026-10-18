@@ -6,8 +6,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -27,7 +29,7 @@ const goTrueStub = `CREATE TABLE auth.users (id uuid PRIMARY KEY, email varchar(
 CREATE TABLE auth.identities (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES auth.users ON DELETE CASCADE, provider text NOT NULL, provider_id text NOT NULL);
 CREATE TABLE auth.sso_providers (id uuid PRIMARY KEY);
 CREATE TABLE auth.sso_domains (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), sso_provider_id uuid NOT NULL REFERENCES auth.sso_providers ON DELETE CASCADE, domain text NOT NULL);
-CREATE TABLE auth.sessions (id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES auth.users ON DELETE CASCADE, not_after timestamptz, aal text, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(), refreshed_at timestamp);
+CREATE TABLE auth.sessions (id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES auth.users ON DELETE CASCADE, not_after timestamptz, aal text, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(), refreshed_at timestamp, user_agent text, ip inet, oauth_client_id uuid);
 CREATE TABLE auth.audit_log_entries (instance_id uuid, id uuid PRIMARY KEY, payload json, created_at timestamptz, ip_address varchar(64) NOT NULL DEFAULT '');`
 
 type authUser struct{ id, session uuid.UUID }
@@ -295,6 +297,53 @@ func TestSQLSubjectAuthorizationForRealtimeIsOwnerOnlyAndUserLevel(t *testing.T)
 	reader := f.connect(t, f.readonly.name)
 	deniedSQL(t, reader, `SELECT gregale_auth.authorize_subject('`+bob.id.String()+`', 'realtime:read', '`+resource+`')`)
 	deniedSQL(t, reader, `SELECT gregale_auth.user_active('`+bob.id.String()+`')`)
+}
+
+// TestSQLUserSessionsListAndEndOnlyTheCallersOwn pins sql/0013: a person
+// lists their first-party sessions and ends any but the current one.
+func TestSQLUserSessionsListAndEndOnlyTheCallersOwn(t *testing.T) {
+	f := newCredentialFixture(t)
+	ctx := context.Background()
+	_, owner := installAuthorization(t, f)
+	alice, bob := newAuthUser(t, owner, "alice@example.test"), newAuthUser(t, owner, "bob@example.test")
+	phone, client := uuid.New(), uuid.New()
+	executeSQL(t, owner, `INSERT INTO auth.sessions (id, user_id, user_agent, ip, refreshed_at) VALUES ($1, $2, 'Mozilla/5.0 (iPhone)', '203.0.113.7', (now() + interval '1 minute') AT TIME ZONE 'UTC')`, phone, alice.id)
+	executeSQL(t, owner, `INSERT INTO auth.sessions (id, user_id, oauth_client_id) VALUES ($1, $2, gen_random_uuid())`, client, alice.id)
+	actAs(ctx, t, owner, alice)
+	rows, err := owner.Query(ctx, `SELECT id, ip, current FROM gregale_auth.list_sessions()`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed []string
+	for rows.Next() {
+		var id uuid.UUID
+		var ip *string
+		var current bool
+		if err := rows.Scan(&id, &ip, &current); err != nil {
+			t.Fatal(err)
+		}
+		listed = append(listed, fmt.Sprintf("%s %v %v", id, ip != nil && *ip == "203.0.113.7", current))
+	}
+	rows.Close()
+	// Most recently active first; the OAuth client's session is not listed.
+	if want := []string{phone.String() + " true false", alice.session.String() + " false true"}; !reflect.DeepEqual(listed, want) {
+		t.Fatalf("listed %v, want %v", listed, want)
+	}
+	wantSQLError(t, owner, "22023", "current_session", `SELECT gregale_auth.end_session($1)`, alice.session)
+	wantSQLError(t, owner, "P0002", "not_found", `SELECT gregale_auth.end_session($1)`, bob.session)
+	wantSQLError(t, owner, "P0002", "not_found", `SELECT gregale_auth.end_session($1)`, client)
+	executeSQL(t, owner, `SELECT gregale_auth.end_session($1)`, phone)
+	if queryBool(t, owner, `SELECT EXISTS (SELECT 1 FROM auth.sessions WHERE id = $1)`, phone) || !queryBool(t, owner, `SELECT EXISTS (SELECT 1 FROM auth.sessions WHERE id = $1)`, bob.session) {
+		t.Fatal("end_session ended the wrong sessions")
+	}
+	executeSQL(t, owner, `SELECT set_config('request.jwt.claims', '', false)`)
+	wantSQLError(t, owner, "28000", "not_authenticated", `SELECT * FROM gregale_auth.list_sessions()`)
+	if err := f.manager.Ensure(ctx, f.material, f.readonly); err != nil {
+		t.Fatal(err)
+	}
+	reader := f.connect(t, f.readonly.name)
+	deniedSQL(t, reader, `SELECT * FROM gregale_auth.list_sessions()`)
+	deniedSQL(t, reader, `SELECT gregale_auth.end_session('`+phone.String()+`')`)
 }
 
 // TestSQLLifecycleEventsRecordUserChangesOnlyWhenEnabled pins the outbox the

@@ -20,7 +20,7 @@ const codes = new Map([
 // Messages raised by gregale_auth functions; anything else is never echoed.
 const stableMessages = new Set(['not_authenticated', 'forbidden', 'not_found', 'slug_taken', 'invalid_organization', 'organization_limit', 'anonymous_user',
   'unknown_role', 'invalid_invitation', 'invitation_limit', 'invitation_invalid', 'invitation_email_mismatch', 'already_member', 'last_owner',
-  'domain_taken', 'domain_limit', 'invalid_domain', 'domain_in_use', 'domain_not_verified', 'sso_provider_limit', 'team_limit'])
+  'domain_taken', 'domain_limit', 'invalid_domain', 'domain_in_use', 'domain_not_verified', 'sso_provider_limit', 'team_limit', 'current_session'])
 
 export class HTTPError extends Error {
   constructor(status, code) { super(code); this.status = status; this.code = code }
@@ -161,6 +161,15 @@ export async function route(pool, claims, method, path, body, services = {}) {
       await rows('SELECT gregale_auth.revoke_invitation($1, $2)', [org, requireUUID(parts[3])])
       return [204, null]
     }
+  }
+  // The caller's own sessions (sql/0013); the current one ends through
+  // GoTrue's logout, and all the others through logout?scope=others.
+  if (path === '/sessions' && method === 'GET') {
+    return [200, { sessions: await rows('SELECT id, created_at, last_active_at, user_agent, ip, aal, current FROM gregale_auth.list_sessions()') }]
+  }
+  if (parts[0] === 'sessions' && parts.length === 2 && method === 'DELETE') {
+    await rows('SELECT gregale_auth.end_session($1)', [requireUUID(parts[1])])
+    return [204, null]
   }
   if (path === '/invitations/accept' && method === 'POST') {
     const [membership] = await rows('SELECT org_id, role FROM gregale_auth.accept_invitation($1)', [hashToken(body?.token)])

@@ -189,7 +189,8 @@ export function captchaConfig(env) {
 // plus the logo's origin and the CAPTCHA provider when configured.
 export function pagePolicy(branding, captcha) {
   const extra = captcha?.sources ?? []
-  const img = ["'self'", ...(branding.logoOrigin ? [branding.logoOrigin] : [])]
+  // data: carries the QR code GoTrue returns when an authenticator app is added.
+  const img = ["'self'", 'data:', ...(branding.logoOrigin ? [branding.logoOrigin] : [])]
   return ["default-src 'none'", `script-src 'self' ${extra.join(' ')}`.trim(), `style-src 'self' ${extra.join(' ')}`.trim(), `connect-src 'self' ${extra.join(' ')}`.trim(),
     `img-src ${img.join(' ')}`, ...(extra.length ? [`frame-src ${extra.join(' ')}`] : []), "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'"].join('; ')
 }

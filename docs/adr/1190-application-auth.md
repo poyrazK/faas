@@ -389,6 +389,21 @@ enforce `aal2` themselves, through the `aal` claim. GoTrue texts a phone
 factor's challenge through the SMS provider even for numbers in
 `GOTRUE_SMS_TEST_OTP`, which covers sign-in codes only.
 
+The hosted account page `/ui/account` gives people the self-service that
+GoTrue's user API allows without each application building it: email and
+password changes, second factors and recovery codes, passkeys, linked
+providers, connected OAuth apps and their own sessions. Like the consent page
+it signs in through the usual pages (so the session is `aal2` for anyone with
+a second factor, which removing a factor requires), keeps the session only in
+the tab's memory and ends it on leaving; it never reuses the application's
+session, which would need a token handed across origins. GoTrue v2.197.0 can
+end the current session, the others or all, but cannot list sessions or end
+one, so `gregale_auth.list_sessions()` and `end_session()` (owner-only, run by
+the front under the caller's verified claims like the organization
+functions) serve `/authz/v1/sessions`. They leave third-party OAuth clients'
+sessions to connected apps, and the current session to GoTrue's logout. The
+page's image policy adds `data:` for the QR code GoTrue returns inline.
+
 ### Phone sign-in
 
 Phone sign-in uses GoTrue's own SMS providers (Twilio, Twilio Verify,

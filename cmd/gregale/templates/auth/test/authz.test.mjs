@@ -235,3 +235,25 @@ test('starts workflows only when authorized and configured', async t => {
   const unconfigured = await serve(t, fakePool(() => ({ rows: [{ allowed: true }] })))
   assert.equal((await unconfigured('POST', '/workflows/onboard/start', { body: { org } })).body.code, 'workflows_unconfigured')
 })
+
+test('lists the caller own sessions and ends another one', async t => {
+  const other = '7a1b2c3d-0000-4000-8000-000000000002'
+  const pool = fakePool(sql => {
+    if (sql.includes('list_sessions')) return { rows: [{ id: other, created_at: '2026-10-18T09:00:00Z', last_active_at: '2026-10-18T10:00:00Z', user_agent: 'Mozilla/5.0', ip: '203.0.113.7', aal: 'aal1', current: false }] }
+    if (sql.includes('end_session')) {
+      const failure = Object.assign(new Error('current_session'), { code: '22023' })
+      if (pool.log.at(-1).args[0] !== other) throw failure
+      return { rows: [{}] }
+    }
+    throw new Error(`unexpected ${sql}`)
+  })
+  const call = await serve(t, pool)
+  const listed = await call('GET', '/sessions')
+  assert.equal(listed.status, 200)
+  assert.equal(listed.body.sessions[0].ip, '203.0.113.7')
+  assert.equal((await call('DELETE', `/sessions/${other}`)).status, 204)
+  assert.deepEqual(pool.log.filter(q => q.sql.includes('end_session')).map(q => q.args), [[other]])
+  assert.deepEqual((await call('DELETE', `/sessions/${member}`)).body, { status: 400, code: 'current_session' })
+  assert.equal((await call('DELETE', '/sessions/not-a-session')).status, 400)
+  assert.equal((await call('POST', '/sessions', { body: {} })).status, 404)
+})

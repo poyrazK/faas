@@ -518,7 +518,8 @@ gregale auth config shop-auth --brand-name Shop --brand-color '#4f46e5' --brand-
 ```
 
 The name also appears in emails and passkey prompts. The logo loads from its
-HTTPS URL; the pages allow that URL's origin for images and nothing else.
+HTTPS URL; besides the pages' own files, the only images allowed are from that
+URL's origin and the inline QR code of an authenticator app.
 
 Read the session with `@gregale/auth`:
 
@@ -528,6 +529,35 @@ import { createAuthClient } from '@gregale/auth'
 const auth = createAuthClient({ url: 'https://shop-auth.gregale.app' })
 await auth.sessionFromUrl()
 const token = await auth.getAccessToken()
+```
+
+### Account page
+
+Link signed-in users to `https://<auth-host>/ui/account?redirect_to=<your URL>`,
+or `auth.hostedAccountUrl({ redirectTo })`. The page signs them in again,
+including their second step, and lets them:
+
+- change their email address (confirmed by link) and password;
+- add or remove an authenticator app or text-message codes and create
+  recovery codes, as far as `--mfa`, `--mfa-phone` and `--recovery-codes`
+  allow (turning one on signs out every session that has not passed a second
+  step, which may include your app in the same browser);
+- add and remove passkeys;
+- link and unlink sign-in providers when identity linking is on;
+- revoke apps they allowed through the OAuth server;
+- see where they are signed in (device, IP address and last activity) and
+  sign out any of those sessions, or all but the page's own.
+
+The page keeps its session only in the tab and ends it when the person
+returns or closes the tab. People whose organization signs them in (SSO)
+cannot change their email address or password here.
+
+Your own pages can do the same with `@gregale/auth`:
+
+```ts
+const sessions = await auth.sessions.list() // { id, user_agent, ip, last_active_at, current, … }
+await auth.sessions.revoke(sessions[1].id)
+await auth.signOut({ scope: 'others' }) // every session but this one
 ```
 
 ## Files, realtime channels and workflows

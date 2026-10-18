@@ -238,7 +238,7 @@ test('second factors enrol, challenge and verify to aal2', async () => {
   const api = server({
     'POST /auth/v1/token': () => [200, session('aal1')],
     'GET /auth/v1/user': () => [200, { id: 'u1', factors: [{ id: 'f1', factor_type: 'totp', status: 'verified' }, { id: 'rc', factor_type: 'recovery_code', status: 'verified' }] }],
-    'POST /auth/v1/factors': call => [200, call.body.factor_type === 'totp' ? { id: 'f2', type: 'totp', totp: { qr_code: 'data:', secret: 'S', uri: 'otpauth://' } } : { id: 'f3', factor_type: 'phone', status: 'unverified' }],
+    'POST /auth/v1/factors': call => [200, call.body.factor_type === 'totp' ? { id: 'f2', type: 'totp', totp: { qr_code: '<svg xmlns="http://www.w3.org/2000/svg"/>', secret: 'S', uri: 'otpauth://' } } : { id: 'f3', factor_type: 'phone', status: 'unverified' }],
     'POST /auth/v1/factors/f1/challenge': () => [200, { id: 'c1', type: 'totp', expires_at: 1 }],
     'POST /auth/v1/factors/f1/verify': call => call.body.code === '123456' ? [200, session('aal2')] : [422, { error_code: 'mfa_verification_failed' }],
     'POST /auth/v1/factors/recovery-codes/verify': () => [200, session('aal2')],
@@ -249,7 +249,9 @@ test('second factors enrol, challenge and verify to aal2', async () => {
   auth.onAuthStateChange(event => events.push(event))
   await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
   assert.deepEqual(await auth.mfa.assuranceLevel(), { current: 'aal1', next: 'aal2' })
-  assert.deepEqual((await auth.mfa.enrollTOTP({ friendlyName: 'Phone app' })).totp.uri, 'otpauth://')
+  const enrollment = await auth.mfa.enrollTOTP({ friendlyName: 'Phone app' })
+  assert.deepEqual(enrollment.totp.uri, 'otpauth://')
+  assert.equal(enrollment.totp.qr_code, 'data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%2F%3E', 'GoTrue SVG becomes an image URL')
   assert.deepEqual(api.calls.at(-1).body, { factor_type: 'totp', friendly_name: 'Phone app' })
   await auth.mfa.enrollPhone({ phone: '+447700900123' })
   assert.deepEqual(api.calls.at(-1).body, { factor_type: 'phone', phone: '+447700900123' })
@@ -317,4 +319,23 @@ test('anonymous users sign in, link a provider and unlink a sign-in method', asy
   assert.equal(link.headers.Authorization, 'Bearer access-1')
   await auth.unlinkIdentity('i1')
   assert.equal(api.calls.at(-1).key, 'DELETE /auth/v1/user/identities/i1')
+})
+
+test('lists the user own sessions, ends one and signs out the others', async () => {
+  const listed = [{ id: 's2', created_at: '2026-10-18T09:00:00Z', last_active_at: '2026-10-18T10:00:00Z', user_agent: 'Mozilla/5.0', ip: '203.0.113.7', aal: 'aal1', current: false }]
+  const api = server({
+    'POST /auth/v1/token': () => [200, tokens(1)],
+    'GET /authz/v1/sessions': () => [200, { sessions: listed }],
+    'DELETE /authz/v1/sessions/s2': () => [204, undefined],
+    'POST /auth/v1/logout': () => [204, undefined],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  assert.deepEqual(await auth.sessions.list(), listed)
+  await auth.sessions.revoke('s2')
+  assert.equal(api.calls.at(-1).headers.Authorization, 'Bearer access-1')
+  await auth.signOut({ scope: 'others' })
+  assert.equal(api.calls.at(-1).url.searchParams.get('scope'), 'others')
+  assert.notEqual(await auth.getSession(), null, 'signing the others out keeps this session')
+  assert.equal(auth.hostedAccountUrl({ redirectTo: 'https://shop.example.com/app' }), `${origin}/ui/account?redirect_to=https%3A%2F%2Fshop.example.com%2Fapp`)
 })
