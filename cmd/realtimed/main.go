@@ -217,10 +217,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 			})
 		}, callbackReplayRestarts.Inc)
 	}()
+	// The drains let a connection accepted just before shutdown deliver its
+	// request; net/http drops one it reads after Shutdown began (ADR-1580).
+	// During a hand-off the successor accepts on the same sockets.
+	serverDrain, healthDrain := wire.NewHTTPDrain(server), wire.NewHTTPDrain(healthServer)
 	serverErr := make(chan error, 2)
 	go func() {
 		log.Info("realtimed listening", "socket", socketPath)
-		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := serverDrain.ServeErr(server.Serve(serverDrain.Listener(listener))); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
 			return
 		}
@@ -229,7 +233,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	readySignal.Set(true, "")
 	go func() {
 		log.Info("realtimed health listening", "address", healthListener.Addr().String())
-		if err := healthServer.Serve(healthListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := healthDrain.ServeErr(healthServer.Serve(healthDrain.Listener(healthListener))); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
 			return
 		}
@@ -260,8 +264,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(stopping), 10*time.Second)
 		defer cancel()
 		_ = manager.Close()
-		_ = healthServer.Shutdown(shutdownCtx)
-		return server.Shutdown(shutdownCtx)
+		healthDone := make(chan struct{})
+		go func() { defer close(healthDone); _ = healthDrain.Shutdown(shutdownCtx, healthServer) }()
+		err := serverDrain.Shutdown(shutdownCtx, server)
+		<-healthDone
+		return err
 	}
 }
 

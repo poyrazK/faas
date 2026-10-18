@@ -130,8 +130,10 @@ func handoff(ctx context.Context, opts HandoffOptions) (int, error) {
 	}
 	defer func() { _ = readR.Close() }()
 
+	// An intermediate starts the successor so that it is not our child
+	// (handoff_spawn.go); it reports the successor's PID on the ready pipe.
 	cmd := exec.Command(opts.Path, opts.Args...) //nolint:gosec // the daemon's own ExecStart path and arguments
-	cmd.Env = handoffEnv(os.Environ(), len(files))
+	cmd.Env = append(handoffEnv(os.Environ(), len(files)), handoffSpawnEnv+"=1")
 	cmd.ExtraFiles = append(append([]*os.File(nil), files...), readW)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -139,23 +141,26 @@ func handoff(ctx context.Context, opts HandoffOptions) (int, error) {
 		return 0, fmt.Errorf("wire: start successor %s: %w", opts.Path, err)
 	}
 	_ = readW.Close()
-	pid := cmd.Process.Pid
-	exited := newExitWatch(cmd)
+	lines := handoffLines(readR)
+	pid, err := waitSuccessorStarted(ctx, cmd, lines)
+	if err != nil {
+		return 0, fmt.Errorf("wire: start successor %s: %w", opts.Path, err)
+	}
 	opts.Log.Info("hand-off: successor started", "pid", pid, "path", opts.Path, "sockets", len(files))
 
-	if err := waitSuccessorReady(ctx, readR, exited, opts.ReadyTimeout); err != nil {
-		stopSuccessor(cmd, exited)
+	if err := waitSuccessorReady(ctx, lines, opts.ReadyTimeout); err != nil {
+		stopSuccessor(pid)
 		return 0, fmt.Errorf("wire: successor %d: %w", pid, err)
 	}
 	if opts.underSystemd() {
 		if err := opts.notify(fmt.Sprintf("MAINPID=%d\nSTATUS=handed off to %d", pid, pid)); err != nil {
-			stopSuccessor(cmd, exited)
+			stopSuccessor(pid)
 			return 0, fmt.Errorf("wire: hand main PID to %d: %w", pid, err)
 		}
 		if err := opts.confirmMain(ctx, pid); err != nil {
 			// systemd would treat this process's exit as the service's and
 			// stop the successor with it; keep serving instead.
-			stopSuccessor(cmd, exited)
+			stopSuccessor(pid)
 			return 0, fmt.Errorf("wire: systemd did not adopt successor %d: %w", pid, err)
 		}
 	}
@@ -193,7 +198,9 @@ func (o HandoffOptions) withDefaults() HandoffOptions {
 // two generations run at once, and the newest hand-off keeps the full drain.
 func endPredecessor(log *slog.Logger) {
 	parent, err := strconv.Atoi(os.Getenv(handoffParentEnv))
-	if err != nil || parent <= 1 || os.Getppid() != parent {
+	// The successor is re-parented to PID 1 (handoff_spawn.go), so the
+	// predecessor is recognized by its cgroup, the unit's, not as a parent.
+	if err != nil || parent <= 1 || !sameCgroup(parent) {
 		return
 	}
 	if err := syscall.Kill(parent, syscall.SIGTERM); err == nil {
@@ -221,43 +228,62 @@ func handoffEnv(env []string, sockets int) []string {
 	)
 }
 
-// exitWatch reports a child's exit to any number of waiters.
-type exitWatch struct {
-	done chan struct{}
-	err  error
+// handoffLines delivers each line written to the ready pipe and closes
+// when every writer has closed it: the intermediate after the PID line, the
+// successor after "ready" or when it exits.
+func handoffLines(r *os.File) <-chan string {
+	lines := make(chan string, 4)
+	go func() {
+		defer close(lines)
+		br := bufio.NewReader(r)
+		for {
+			text, err := br.ReadString('\n')
+			if t := strings.TrimSpace(text); t != "" {
+				lines <- t
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return lines
 }
 
-func newExitWatch(cmd *exec.Cmd) *exitWatch {
-	w := &exitWatch{done: make(chan struct{})}
-	go func() {
-		w.err = cmd.Wait()
-		close(w.done)
-	}()
-	return w
+// waitSuccessorStarted waits for the intermediate to report the
+// successor's PID and exit.
+func waitSuccessorStarted(ctx context.Context, intermediate *exec.Cmd, lines <-chan string) (int, error) {
+	exited := make(chan error, 1)
+	go func() { exited <- intermediate.Wait() }()
+	timer := time.NewTimer(30 * time.Second)
+	defer timer.Stop()
+	select {
+	case line, ok := <-lines:
+		<-exited
+		pid, err := strconv.Atoi(strings.TrimPrefix(line, handoffPIDLine+" "))
+		if !ok || !strings.HasPrefix(line, handoffPIDLine+" ") || err != nil || pid <= 1 {
+			return 0, fmt.Errorf("intermediate reported no successor (read %q)", line)
+		}
+		return pid, nil
+	case <-timer.C:
+	case <-ctx.Done():
+	}
+	_ = intermediate.Process.Kill()
+	<-exited
+	return 0, errors.New("intermediate did not start the successor")
 }
 
-func waitSuccessorReady(ctx context.Context, ready *os.File, exited *exitWatch, timeout time.Duration) error {
-	line := make(chan string, 1)
-	go func() {
-		text, _ := bufio.NewReader(ready).ReadString('\n')
-		line <- strings.TrimSpace(text)
-	}()
+func waitSuccessorReady(ctx context.Context, lines <-chan string, timeout time.Duration) error {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
-	case got := <-line:
-		if got == daemonunit.HandoffReadyMessage {
+	case got, ok := <-lines:
+		if ok && got == daemonunit.HandoffReadyMessage {
 			return nil
 		}
-		// The pipe usually closes because the successor exited; report how.
-		select {
-		case <-exited.done:
-			return fmt.Errorf("exited before ready: %w", exited.err)
-		case <-time.After(2 * time.Second):
-			return fmt.Errorf("closed its ready pipe before ready (read %q)", got)
+		if !ok {
+			return errors.New("exited before ready")
 		}
-	case <-exited.done:
-		return fmt.Errorf("exited before ready: %w", exited.err)
+		return fmt.Errorf("unexpected readiness report %q", got)
 	case <-timer.C:
 		return fmt.Errorf("not ready within %v", timeout)
 	case <-ctx.Done():
@@ -265,14 +291,22 @@ func waitSuccessorReady(ctx context.Context, ready *os.File, exited *exitWatch, 
 	}
 }
 
-func stopSuccessor(cmd *exec.Cmd, exited *exitWatch) {
-	_ = cmd.Process.Signal(syscall.SIGTERM)
-	select {
-	case <-exited.done:
-	case <-time.After(time.Duration(api.GatewayDrainGraceSeconds+5) * time.Second):
-		_ = cmd.Process.Kill()
-		<-exited.done
+// stopSuccessor ends a successor that did not take over. It is PID 1's
+// child, so this process signals it and waits for it to be gone.
+func stopSuccessor(pid int) {
+	_ = syscall.Kill(pid, syscall.SIGTERM)
+	deadline := time.Now().Add(time.Duration(api.GatewayDrainGraceSeconds+5) * time.Second)
+	for processExists(pid) {
+		if time.Now().After(deadline) {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+func processExists(pid int) bool {
+	return syscall.Kill(pid, 0) == nil
 }
 
 // handoffFiles duplicates every shared socket for the successor. Unix

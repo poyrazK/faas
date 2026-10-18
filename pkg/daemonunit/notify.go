@@ -119,9 +119,12 @@ func NotifyReadyWhen(ctx context.Context, ready func() bool) func() {
 		defer ticker.Stop()
 		for {
 			if ready() {
-				_ = Notify("READY=1")
-				// A hand-off successor is not the main process yet, so
-				// systemd ignores READY=1; its predecessor moves MAINPID.
+				// A hand-off successor is not the main process yet and the
+				// unit is already active: systemd would reject READY=1 and
+				// log it. Its predecessor hands it the unit (MAINPID=).
+				if !isHandoffSuccessor() {
+					_ = Notify("READY=1")
+				}
 				SignalHandoffReady()
 				select {
 				case <-stop:

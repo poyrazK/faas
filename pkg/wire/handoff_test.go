@@ -209,6 +209,11 @@ func TestHandoffKeepsLongRequestsAndDropsNothing(t *testing.T) {
 			_ = syscall.Kill(pid, syscall.SIGTERM)
 		}
 	})
+	// systemd waits for and reaps only its own children: the successor
+	// must not be the old generation's (handoff_spawn.go).
+	if out, err := exec.Command("ps", "-o", "ppid=", "-p", newPID).Output(); err == nil && strings.TrimSpace(string(out)) == oldPID {
+		t.Fatalf("successor %s is the old generation's child", newPID)
+	}
 
 	for range 3 {
 		select {
