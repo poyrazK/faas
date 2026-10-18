@@ -60,7 +60,8 @@ refused prediction never becomes a wake error a real request could join, and
 - A woken-ahead service runs, and is billed (plan RAM + 8 MB per second, §4.7),
   from the moment it is woken. An unused one parks after its idle timeout. The
   customer opts in knowing this.
-- Evidence is per gateway process and starts empty after a restart; in a
+- Evidence is per gateway process and starts empty after a restart (ADR-1132
+  later persists it in a node-local snapshot); in a
   multi-node fleet each gateway learns from the wakes and calls it sees.
 - No scheduler change: the trigger is attribution only.
 
@@ -72,3 +73,10 @@ refused prediction never becomes a wake error a real request could join, and
   requests that joined it. The guard therefore decides before any wake starts.
 - **Durable edge statistics in Postgres.** The gateway does not write
   customer tables; in-memory evidence is enough to decide and bounded.
+
+## Amendment (ADR-1134, 2026-10-13)
+
+Private TCP sessions (ADR-576) teach the learner too. The service TCP proxy
+observes each authorized session once, when it hands the session to a
+replica, with whether it had to wake the target. All thresholds, bounds and
+guards above are unchanged.

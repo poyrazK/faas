@@ -152,9 +152,15 @@ type Config struct {
 	// api.DefaultInstanceRetention (the only "old enough to forget"
 	// threshold the platform has today).
 	CacheMaxAge time.Duration `toml:"cache_max_age"`
+	// CacheMinFreeFraction is the share of the cache filesystem the GC
+	// keeps free by evicting oldest-first (H10-109). The cache shares the
+	// host root filesystem, which CacheMaxBytes alone does not protect.
+	// 0 disables the floor; a value outside [0, 1) falls back to
+	// builderd.DefaultCacheMinFreeFraction.
+	CacheMinFreeFraction float64 `toml:"cache_min_free_fraction"`
 	// CacheGCSweepInterval is the cadence of the cache GC loop (B2.1).
-	// Zero falls back to 24 hours in main.go — daily is the right
-	// frequency for a slow disk-bleed control.
+	// The loop also sweeps at startup. Zero falls back to one hour in
+	// main.go, so the free-space floor reacts within the hour.
 	CacheGCSweepInterval time.Duration `toml:"cache_gc_sweep_interval"`
 	// SourceMaxAge is the retention window for split-box source archives
 	// under the remote sources/ namespace. Queued and running builds are
@@ -267,6 +273,9 @@ func (c *Config) normalizeConfig() {
 	if c.WarmIdle <= 0 {
 		c.WarmIdle = builderdpkg.DefaultWarmIdle
 	}
+	if c.CacheMinFreeFraction < 0 || c.CacheMinFreeFraction >= 1 {
+		c.CacheMinFreeFraction = builderdpkg.DefaultCacheMinFreeFraction
+	}
 }
 
 // warmIdleWithEnv resolves the warm-builder idle window without allowing an
@@ -326,10 +335,11 @@ func LoadConfig(path string) (*Config, error) {
 		// B2.1 (issue #196): cache GC. 50 GB cap matches the spec
 		// fleet budget. 30-day TTL matches the only other retention
 		// constant the platform has (api.DefaultInstanceRetention).
-		// 24h sweep cadence is the right frequency for a slow bleed.
+		// The hourly sweep enforces the free-space floor (H10-109).
 		CacheMaxBytes:         50 << 30, // 50 GiB
 		CacheMaxAge:           30 * 24 * time.Hour,
-		CacheGCSweepInterval:  24 * time.Hour,
+		CacheMinFreeFraction:  builderdpkg.DefaultCacheMinFreeFraction,
+		CacheGCSweepInterval:  time.Hour,
 		SourceMaxAge:          24 * time.Hour,
 		SourceGCSweepInterval: 24 * time.Hour,
 		// ADR-038: default compute_node name stamped on provenance

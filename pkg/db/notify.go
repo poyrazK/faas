@@ -577,7 +577,7 @@ func (p PoolNotifier) RuntimeConfigRestartStatus(ctx context.Context, appID, wak
 //	                         "at":rfc3339nano}
 //	                         meterd → dashboard: paid-tier overage crossed
 //	                         100 %; apps keep running, overage accrues at
-//	                         €0.01/GB-h (spec §1, §10).
+//	                         $0.01/GB-h (spec §1, §10).
 //	NotifyMigrationsApplied {"version_id":int64}
 //	                         the leader's goose-up landed an applied migration
 //	                         ledger row (migration 20260904000000001 trigger).

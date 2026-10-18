@@ -32,9 +32,9 @@
   and a GCP warm standby with manual failover (§8). The three-zone cell
   follows after launch.
 
-  **Revised 2026-10-15:** the scaling roadmap owns the request path, the
-  app edge on compute nodes and PgBouncer; this ADR owns availability,
-  fencing and cells (§9).
+  **Revised 2026-10-15:** the scaling roadmap owns the request path and
+  PgBouncer; this ADR owns availability, fencing, cells and the app edge
+  on compute nodes (§9, ADR-1343).
 - **Why:** owner goal for public release (2026-10-13): partition tolerance,
   zero downtime and acceptable scaling across regions and zones, with
   Postgres run by us. Today a single host (fsn-1) holds every
@@ -229,9 +229,9 @@ specifies what runs inside it:
   drains (N+1).
 - **Object storage** in the region, multi-zone, for snapshots, artifacts
   and backups.
-- **Edge:** owned by the scaling roadmap (Stage 1, §9). A Cloudflare
-  Tunnel connector and gatewayd-public run on every compute node and
-  serve the cell's apps domain; the platform hosts stay on the control
+- **Edge:** designed in ADR-1343 (§9). A Cloudflare Tunnel connector and
+  gatewayd-public run on every compute node and serve the cell's apps
+  domain; the platform hosts stay on the control
   nodes. It replaces ADR-083's DNS flip. This ADR only requires that
   losing any one node or zone leaves the edge serving.
 
@@ -555,8 +555,7 @@ second provider. Tracking: epic #4700.
   - two compute nodes (OVH Rise S), on the same vRack private network as
     the control node;
   - the public edge for apps (a Cloudflare Tunnel connector and
-    gatewayd-public) runs on the two compute nodes, as the scaling
-    roadmap's Stage 1 plans (§9). The control node serves only the
+    gatewayd-public) runs on the two compute nodes (ADR-1343). The control node serves only the
     platform hosts. On the GCP beta the 2-vCPU control plane saturated at
     about 157 req/s with the edge on it, while the compute nodes sat
     75–90% idle (scaling roadmap, measured 2026-10-14).
@@ -573,6 +572,19 @@ second provider. Tracking: epic #4700.
   nodes keeps serving warm traffic throughout (§5).
   Targets: RPO of seconds (replication lag) and RTO of about 15–30 minutes.
   The runbook is drilled before launch.
+- **Replica implementation** (2026-10-16):
+  - The manifest's `postgresql.standby` (`name`, `address`, `ssh_host`)
+    declares the standby. It is rendered as its own `postgres_standby`
+    inventory group and converged by `deploy/ansible/postgres_standby.yml`.
+  - Replication is plain physical streaming. The primary holds a
+    `faas_standby` slot capped by `max_slot_wal_keep_size`, and admits the
+    `replicator` role from the standby's overlay address only.
+  - The standby's `pg_basebackup` seed refuses to wipe a cluster that may
+    be a promoted primary.
+  - The second backup repository is a separate decision; the replica does
+    not depend on it.
+  - Alerts: `FaasPostgresStandby*`; runbook:
+    `docs/runbooks/FaasPostgresStandby.md`.
 - **Why not two control nodes (OVH + GCP)?**
   - etcd and Patroni need three members to survive losing one. With two,
     losing either stops automatic failover, and a cut between the
@@ -590,7 +602,7 @@ second provider. Tracking: epic #4700.
 - **Capacity check before ordering:** the RAM admission ceiling (47,600 MB
   per node, `pkg/api/limits.go`) assumes a 64 GB compute node. A Rise S
   with less RAM needs its own per-node budget, and admission must hold
-  back the CPU the edge daemons use (scaling roadmap Stage 1).
+  back the CPU the edge daemons use (ADR-1343 §4).
 
 ### 9. Relation to the scaling roadmap (2026-10-15)
 
@@ -598,14 +610,14 @@ The scaling roadmap ("Gregale scaling roadmap", 2026-10-15) removes the
 throughput limits: control-plane work off the request path, then a split
 control plane, then cells. Its branches so far are
 `perf/thaw-timing-data`, `perf/wake-dedupe-reads`,
-`perf/wake-pipeline-reads`, `perf/batch-request-id-journal` (ADR-1340) and
-`design/rate-limit-token-leasing` (ADR-1341). The two plans overlap, so
+`perf/wake-pipeline-reads`, `perf/batch-request-id-journal` (ADR-1521) and
+`perf/rate-limit-token-leasing` (ADR-1520). The two plans overlap, so
 each topic has one owner:
 
 | Topic | Owner |
 |---|---|
-| Request path: batched request-ID journal (ADR-1340), local rate-limit allowance (ADR-1341) | Scaling roadmap |
-| Public edge on every compute node, DNS split, node-local gateway routing | Scaling roadmap (Stage 1) |
+| Request path: batched request-ID journal (ADR-1521), local rate-limit allowance (ADR-1520) | Scaling roadmap |
+| Public edge on every compute node, DNS split, node-local gateway routing | This ADR's work, designed in ADR-1343. The owner moved it from the scaling roadmap's Stage 1 on 2026-10-15. |
 | PgBouncer | Scaling roadmap (Stage 1) |
 | Wake-path reads, the schedd owner cache, the frozen fast path | Scaling roadmap |
 | Hot/intent database split, read replicas, telemetry store, the sharded scheduler | Scaling roadmap (Stage 2) |
@@ -620,8 +632,8 @@ Interfaces between the two:
   builds on P1's last-known inventory and resync (§5).
 - Once P3 lands, the owner cache's single guarded wake write also checks
   the node-lease epoch.
-- The edge placement ADR from Stage 1 replaces this ADR's earlier
-  Cloudflare Load Balancer design for the app edge.
+- ADR-1343 (edge placement) replaces this ADR's earlier Cloudflare Load
+  Balancer design for the app edge.
 
 ## Phases and exit criteria
 
@@ -629,7 +641,7 @@ Interfaces between the two:
 |---|---|---|
 | P0 · Proof | SLO dashboards. Native drills for partition, zone loss, Postgres failover and node drain, run nightly (wire `CmdFaultInjector.Partition`). Multi-host load test. | Every drill automated, with a baseline recorded |
 | P1 · Static stability | §5, `archive_timeout` and WAL-archive alerts, per-node Firecracker staleness. PgBouncer is turned on by the scaling roadmap (Stage 1, §9), not here. | Postgres down 5 min: zero errors on warm traffic; no recovery storm afterwards |
-| P2 · Cell HA across zones | §3 Patroni; the public edge on every compute node (scaling roadmap Stage 1, §9); N apid replicas; leases for singletons; monitoring off the database hosts; off-region backups of the database and artifacts; land the branch's cell identity (729) dark | Kill any one node or zone under load: RTO ≤ 60 s, RPO 0. Region-rebuild drill: restore the cell into its paired region within RPO ≤ 60 s and RTO about 2–4 h |
+| P2 · Cell HA across zones | §3 Patroni; the public edge on every compute node (ADR-1343); N apid replicas; leases for singletons; monitoring off the database hosts; off-region backups of the database and artifacts; land the branch's cell identity (729) dark | Kill any one node or zone under load: RTO ≤ 60 s, RPO 0. Region-rebuild drill: restore the cell into its paired region within RPO ≤ 60 s and RTO about 2–4 h |
 | P3 · Fenced compute | §4 node leases, self-fencing, epochs, rejoin cleanup, keepalives, hysteresis, zone-loss certificate | Partition drill: zero duplicate at-most-once executions; quota never released without stop proof |
 | P4 · Zero-downtime operations | §6 | Release, drain and Firecracker upgrade under load: zero failed requests; no cold-boot storm |
 | P5 · Scale within a cell | §7 | Load test at the §7 targets within SLO |
@@ -758,5 +770,5 @@ control-node machine.
 
 | Question | Decision |
 |---|---|
-| Overlap with the scaling roadmap | One owner per topic (§9): the scaling roadmap owns the request path, the app edge on compute nodes and PgBouncer; this ADR owns static stability, control-plane HA, leases and fencing, zero-downtime operations and cells. |
+| Overlap with the scaling roadmap | One owner per topic (§9): the scaling roadmap owns the request path and PgBouncer; this ADR owns static stability, control-plane HA, leases and fencing, zero-downtime operations, cells and the app edge on compute nodes (ADR-1343). |
 | App edge at launch | On the two OVH compute nodes (§8), replacing this ADR's earlier Cloudflare Load Balancer design. |

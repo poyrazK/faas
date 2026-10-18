@@ -1,0 +1,39 @@
+{{define "automation-webhook-settings"}}
+<fieldset><legend>Choose how to edit this definition</legend>
+<label class="check"><input type="radio" name="editor_mode" value="webhook" {{if eq .Data.EditorMode "webhook"}}checked{{end}}>Use webhook starter settings below</label>
+<label class="check"><input type="radio" name="editor_mode" value="json" {{if ne .Data.EditorMode "webhook"}}checked{{end}}>Use the JSON editor</label></fieldset>
+<p class="muted">These settings update the event trigger and handler paths while preserving advanced inputs and retries. Verified webhook routing is configured separately after publication.</p>
+{{with .Data.Webhook}}<div class="grid">
+<div><label for="webhook-source">Platform event source</label><input id="webhook-source" type="text" name="webhook_source" value="{{.Source}}"><p class="muted">Used for authenticated platform events. Verified webhooks use their endpoint's reserved source instead.</p></div>
+<div><label for="webhook-event-type">Platform event type</label><input id="webhook-event-type" type="text" name="webhook_event_type" value="{{.EventType}}"></div>
+<div><label for="webhook-lookup">Lookup handler path</label><input id="webhook-lookup" type="text" name="webhook_lookup" value="{{.LookupPath}}"></div>
+<div><label for="webhook-enrich">Record handler path</label><input id="webhook-enrich" type="text" name="webhook_enrich" value="{{.EnrichPath}}"></div></div>
+<label for="webhook-filter">Platform event filter (JSON)</label><textarea id="webhook-filter" name="webhook_filter" rows="4" spellcheck="false">{{.Filter}}</textarea>
+<p class="muted">Use {} to accept all matching event data. The verified-webhook binding has its own event pattern and filter. Review input mappings in the advanced definition: Stripe wraps the full provider event in data; generic webhooks wrap the signed JSON body.</p>{{end}}
+{{end}}
+
+{{define "automation-webhook-panel"}}
+{{with .Data.Ingress}}<section id="webhook-setup"><h2>Connect a verified webhook</h2>
+<p>Select an existing signed inbound endpoint on this app. This page uses its configured signature verification without showing secrets or sending a test event. Publish the automation before binding it.</p>
+{{if .EndpointsError}}<p role="status">{{.EndpointsError}}</p>{{else if .Endpoints}}<ul>{{range .Endpoints}}<li><a href="{{.URL}}">{{.Name}}</a> — {{.Provider}}, {{if .Enabled}}endpoint enabled{{else}}endpoint disabled{{end}}</li>{{end}}</ul>{{else}}<p>No signed inbound endpoints are configured for this app. Create a Stripe or generic signed endpoint through the inbound webhook API or CLI, then refresh.</p>{{end}}
+{{with .Endpoint}}<h3>Selected endpoint: {{.Name}}</h3><p>Provider: {{.Provider}}. Endpoint: {{if .Enabled}}enabled{{else}}disabled; binding does not enable this endpoint{{end}}. Ordinary delivery path: <code>{{.DeliveryPath}}</code>.</p>{{end}}
+{{if .Endpoint}}
+{{if .BindingError}}<p role="status">{{.BindingError}}</p>{{else if .Binding}}<p>Bound automation: <strong>{{.Binding.WorkflowName}}</strong>. Binding revision {{.Binding.Version}}. Current event pattern: <code>{{.Binding.EventType}}</code>.</p><details><summary>Current binding filter</summary><pre><code>{{printf "%s" .Binding.Filter}}</code></pre></details>{{else if .BindingObserved}}<p>No automation binding is configured for this endpoint.</p>{{end}}
+<p>Saving this binding takes over future ordinary app delivery and replaces any displayed automation binding. If the endpoint and automatic starts are enabled, matching verified deliveries can perform real actions immediately. Review the automatic-start controls above. Endpoints reserved by other triggers may reject the change. Accepted events keep their captured routing. A binding targets the named automation's published revision at event acceptance, including later publications.</p>
+<form method="post" action="{{$.Data.BaseURL}}/bind-webhook" aria-label="Bind selected webhook">
+<input type="hidden" name="csrf_token" value="{{$.Data.CSRFToken}}"><input type="hidden" name="name" value="{{$.Data.Name}}"><input type="hidden" name="endpoint_id" value="{{.EndpointID}}"><input type="hidden" name="binding_version" value="{{.BindingVersion}}"><input type="hidden" name="action_key" value="{{.ActionKey}}">
+<label for="binding-event-type">Verified webhook event pattern</label><input id="binding-event-type" type="text" name="binding_event_type" value="{{.Pattern}}" required><p class="muted">For example, order.created, invoice.* or *. This pattern and the filter below control this endpoint independently of the platform event trigger.</p>
+<label for="binding-filter">Verified webhook filter (JSON)</label><textarea id="binding-filter" name="binding_filter" rows="5" spellcheck="false" required>{{.Filter}}</textarea>
+<label class="check"><input type="checkbox" name="confirm_bind-webhook" value="yes">Route future matching verified deliveries to {{$.Data.Name}}, replacing ordinary delivery or the current automation binding.</label>
+<div class="actions"><button type="submit" class="primary" {{if or .ControlsDisabled (not .BindingObserved) (not $.Data.PublicationObserved) (not $.Data.Published)}}disabled{{end}}>Save webhook binding</button></div>
+</form>
+{{if .ControlsDisabled}}<p><a href="{{$.Data.BaseURL}}?name={{$.Data.Name}}&amp;endpoint={{.EndpointID}}#webhook-setup">Reload the endpoint and confirm again</a> before making another routing change.</p>{{end}}
+{{if and .Binding (eq .Binding.WorkflowName $.Data.Name)}}<details><summary>Remove this automation binding</summary><p>Removal restores ordinary app delivery for future events. It does not cancel accepted work. Pause automatic starts above if future events should receive ignored receipts instead.</p>
+<form method="post" action="{{$.Data.BaseURL}}/unbind-webhook" aria-label="Remove selected webhook binding"><input type="hidden" name="csrf_token" value="{{$.Data.CSRFToken}}"><input type="hidden" name="name" value="{{$.Data.Name}}"><input type="hidden" name="endpoint_id" value="{{.EndpointID}}"><input type="hidden" name="binding_version" value="{{.BindingVersion}}"><label class="check"><input type="checkbox" name="confirm_unbind-webhook" value="yes">Restore ordinary app delivery for future webhook events.</label><button type="submit" {{if .ControlsDisabled}}disabled{{end}}>Remove webhook binding</button></form></details>{{end}}
+<h3>Inspect a provider event</h3><form method="get" action="{{$.Data.BaseURL}}"><input type="hidden" name="name" value="{{$.Data.Name}}"><input type="hidden" name="endpoint" value="{{.EndpointID}}"><label for="webhook-event-id">Provider event ID</label><input id="webhook-event-id" name="event_id" type="text" value="{{.EventID}}" required><div class="actions"><button type="submit">Inspect webhook receipt</button></div></form>
+{{if .ReceiptError}}<p role="status">{{.ReceiptError}}</p>{{end}}
+{{with .Receipt}}<article id="webhook-receipt"><h3>Webhook receipt</h3><p>Event <code>{{.ProviderEventID}}</code> was {{.Status}} at {{.AcceptedAt}}. Routing: <strong>{{.RoutingStatus}}</strong>.</p>{{if .IgnoredReason}}<p>Ignored reason: <code>{{.IgnoredReason}}</code>.</p>{{end}}{{if .Duplicate}}<p>The API reported a duplicate delivery for this receipt.</p>{{end}}<p>Provider retries reuse the original receipt and accepted work. Receipt lookup does not report retry counts or delivery history.</p></article>{{end}}
+{{if .RunURL}}<p><a href="{{.RunURL}}">Inspect webhook run</a></p>{{end}}
+{{end}}
+</section>{{end}}
+{{end}}

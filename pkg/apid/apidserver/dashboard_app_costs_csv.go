@@ -249,7 +249,7 @@ func dashboardAppCostCSVWriteUnavailable(writer *csv.Writer, app state.App, mont
 	row := make([]string, dashboardCostCSVColumnCount)
 	row[dashboardCostCSVRecordType] = "unavailable"
 	row[dashboardCostCSVAppSlug] = dashboardCSVText(app.Slug)
-	row[dashboardCostCSVCurrency] = "EUR"
+	row[dashboardCostCSVCurrency] = api.BillingCurrency
 	row[dashboardCostCSVPeriodStart] = dashboardCSVTime(monthStart)
 	row[dashboardCostCSVPeriodEnd] = dashboardCSVTime(monthStart.AddDate(0, 1, 0))
 	row[dashboardCostCSVScope] = "application_attributed_retained_compute_and_interface_egress"
@@ -306,7 +306,7 @@ func dashboardAppCostsCSVSetMeter(row []string, meter, unit string, quantity, at
 }
 
 func dashboardCSVMoney(millicents int64) string {
-	return strings.TrimPrefix(dashboardMoney(millicents), "EUR ")
+	return strings.TrimPrefix(dashboardMoney(millicents), api.BillingCurrency+" ")
 }
 
 func dashboardCSVTime(value time.Time) string {

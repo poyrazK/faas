@@ -266,6 +266,7 @@ def expire_fixture_client_credentials(directory):
 def remote_fixture_acceptance(args):
     """Called by the Go test's real TLS bridge, never against a live account."""
     resource = os.environ["GREGALE_MCP_TEST_RESOURCE"]
+    request_mode = os.environ.get("GREGALE_MCP_TEST_REQUEST_MODE", "")
     if not resource.startswith("https://127.0.0.1:"):
         raise RuntimeError("Remote acceptance requires the isolated loopback TLS fixture")
     config = "mcp_servers={gregale={url=" + toml_string(resource) + ",startup_timeout_sec=20,tool_timeout_sec=20}}"
@@ -299,14 +300,606 @@ def remote_fixture_acceptance(args):
                 result = rpc.request("mcpServer/tool/call", {"threadId": thread_id, "server": "gregale", "tool": tool, "arguments": {}})
                 if result.get("isError"):
                     raise RuntimeError("Codex remote fixture read failed")
-            if not {"gregale_plan_source_deploy", "gregale_plan_workload_rollout", "gregale_plan_service_abort", "gregale_get_rollout"}.issubset(names):
+            if not {"gregale_plan_source_deploy", "gregale_plan_workload_rollout", "gregale_plan_service_abort", "gregale_get_rollout", "gregale_get_request_analytics", "gregale_get_request_analytics_timeseries", "gregale_list_error_groups", "gregale_list_error_requests", "gregale_get_wake_history", "gregale_get_wake_timeline", "gregale_get_profiles"}.issubset(names):
                 raise RuntimeError("Codex remote source tool is missing")
             source_planning_call(rpc, thread_id)
             scoped_telemetry_calls(rpc, thread_id)
             rollout_watch_call(rpc, thread_id)
             context_resource_call(rpc, thread_id)
             preflight_call(rpc, thread_id)
+            if request_mode:
+                request_calls(rpc, thread_id, request_mode == "approved")
             return len(names)
+
+        def invoke(rpc, thread_id, tool, arguments):
+            result = rpc.request("mcpServer/tool/call", {"threadId": thread_id, "server": "gregale", "tool": tool, "arguments": arguments})
+            value = result.get("structuredContent")
+            if not isinstance(value, dict):
+                value = json.loads(next(item["text"] for item in result["content"] if item["type"] == "text"))
+            return result, value
+
+        def profiles_call(rpc, thread_id, approved, app="alpha", empty=False):
+            args = {"app":app, "deployment_id":"11111111-1111-4111-8111-111111111111", "runtime":"go", "start":"2026-10-16T10:00:00Z", "end":"2026-10-16T11:00:00Z", "route":"GET /orders", "limit":2}
+            result, value = invoke(rpc, thread_id, "gregale_get_profiles", args)
+            if bool(result.get("isError")) == approved:
+                raise RuntimeError("Codex profile diagnostic consent failed")
+            if not approved:
+                if value.get("code") != "request_access_denied":
+                    raise RuntimeError("Codex profile denial lost its code")
+                return
+            for key, expected in {"scope":"app_wide", "deployment_id":args["deployment_id"], "runtime":"go", "start":args["start"], "end":args["end"], "route":args["route"], "window_verification":"native_query_echo", "count_basis":"native_nonzero_sample_entries", "source_completeness":"unknown", "freshness":"unknown", "limit":2}.items():
+                if value.get(key) != expected:
+                    raise RuntimeError("Codex profile selection or uncertainty lost: " + key)
+            coverage, attribution = value.get("coverage", {}), value.get("attribution", {})
+            if coverage.get("status") != "observed" or attribution.get("status") != "observed" or coverage.get("scope") != "deployment_runtime_window" or attribution.get("scope") != "deployment_runtime_window":
+                raise RuntimeError("Codex profile route read lost whole-window quality scope")
+            c, a = coverage.get("measurements", {}), attribution.get("measurements", {})
+            if c.get("gap_seconds") != 600 or c.get("recorded_capture_seconds") != 3000 or c.get("received_profiles") != 3 or c.get("last_received_at") != "2026-10-16T11:15:00Z" or c.get("recorded_failed_uploads_lower_bound") != 0 or c.get("failures_complete") is not False or a.get("total_cpu_seconds") != 10 or a.get("attributed_percent") != 60 or a.get("native_diagnostics_complete") is not False:
+                raise RuntimeError("Codex profile receipt/capture/attribution semantics changed")
+            if any(marker in json.dumps(value) for marker in ["excluded-", "fp_test_", '"file"', '"line"', '"source"', '"flamegraph"', '"routes"', '"collector_id"']):
+                raise RuntimeError("Codex profile projection leaked excluded payloads")
+            if empty:
+                if value.get("status") != "no_selected_samples" or "sampled_cpu_seconds" in value or value.get("functions") != [] or value.get("native_nonzero_sample_entries") != 0:
+                    raise RuntimeError("Codex empty profile read invented observed zero CPU")
+                return
+            rows = value.get("functions", [])
+            if value.get("status") != "observed" or value.get("sampled_cpu_seconds") != 3 or value.get("native_nonzero_sample_entries") != 4 or value.get("native_function_count") != 3 or value.get("returned_function_count") != 2 or value.get("functions_truncated") is not True or len(rows) != 2 or rows[0].get("self_cpu_seconds") != 2 or rows[0].get("labels_modified") is not True:
+                raise RuntimeError("Codex profile CPU, native order or bounded prefix lost")
+
+        def wake_history_call(rpc, thread_id, approved, app, empty):
+            args = {"app":app, "since":"2026-10-16T10:00:00Z", "until":"2026-10-16T11:00:00Z", "limit":2}
+            result, value = invoke(rpc, thread_id, "gregale_get_wake_history", args)
+            if bool(result.get("isError")) == approved:
+                raise RuntimeError("Codex wake history consent failed")
+            if not approved:
+                if value.get("code") != "request_access_denied":
+                    raise RuntimeError("Codex wake history denial lost its code")
+                return
+            for key, expected in {"scope":"app_wide", "source_status":"not_reported", "source_completeness":"unknown", "freshness":"unknown", "window_verification":"not_echoed_by_native", "requested_since":args["since"], "requested_until":args["until"], "native_candidate_limit":100, "native_candidate_truncation":"not_reported", "count_basis":"latest_instance_candidates_filtered_by_requested_range", "at_capacity_denominator":"native_instances_with_meta", "admission_count_basis":"native_admission_concurrency_ledger"}.items():
+                if value.get(key) != expected:
+                    raise RuntimeError("Codex wake history lost scope, window or native limits: " + key)
+            if any(marker in json.dumps(value) for marker in ["excluded-", "fp_test_", '"request_id"', '"node_id"', '"trigger_histogram"']):
+                raise RuntimeError("Codex wake history projection leaked private data")
+            if empty:
+                if value.get("wakes") != [] or value.get("status") != "no_returned_wakes" or value.get("native_returned_row_count") != 0 or value.get("returned_row_count") != 0 or value.get("rows_truncated") is not False or "at_capacity_pct" in value or value.get("at_capacity_pct_status") != "no_meta_rows":
+                    raise RuntimeError("Codex empty wake history fabricated measurements or completeness")
+                return
+            rows = value.get("wakes")
+            if not isinstance(rows, list) or len(rows) != 2 or value.get("native_selected_instance_count") != 3 or value.get("native_returned_row_count") != 3 or value.get("returned_row_count") != 2 or value.get("rows_truncated") is not True or value.get("at_capacity_pct") != 50 or value.get("at_capacity_present_count") != 2 or value.get("at_capacity_pct_status") != "observed_on_meta_rows":
+                raise RuntimeError("Codex wake history lost counters, denominator or output limits")
+            observed, missing = rows
+            if observed.get("ready_in_ms") != 112 or observed.get("queued_count") != 2 or observed.get("concurrency_at_admit") != 2 or observed.get("at_capacity") is not True or observed.get("labels_modified") is not True or observed.get("method") != "restore" or observed.get("tier") != "warm" or observed.get("window_membership") != "compatible_at_native_second_precision":
+                raise RuntimeError("Codex wake history lost observed duration, admission or label evidence")
+            if missing.get("at_capacity") is not False or missing.get("at_capacity_status") != "observed" or missing.get("queued_count_status") != "zero_or_not_reported" or missing.get("concurrency_status") != "zero_or_not_reported" or missing.get("readiness_status") != "not_reported" or any(key in missing for key in ["queued_count", "concurrency_at_admit", "ready_in_ms"]):
+                raise RuntimeError("Codex wake history confused observed false with missing scalar measurements")
+            return observed["wake_id"]
+
+        def wake_timeline_call(rpc, thread_id, approved, app, empty, wake_id):
+            # Explicit client drill-down; the bridge never fetches stage data
+            # automatically from history. Denied/empty cases use the known
+            # fixture ID; populated cases use the unchanged history identifier.
+            result, value = invoke(rpc, thread_id, "gregale_get_wake_timeline", {"app":app, "wake_id":wake_id or "wake-1", "since":"2026-10-16T10:00:00Z", "limit":8})
+            if bool(result.get("isError")) == approved:
+                raise RuntimeError("Codex wake stage consent failed")
+            if not approved:
+                if value.get("code") != "request_access_denied":
+                    raise RuntimeError("Codex wake stage denial lost its code")
+                return
+            expected = {"app":app, "wake_id":"wake-1", "scope":"app_wide", "requested_since":"2026-10-16T10:00:00Z", "lower_bound":"exclusive", "since_precision":"native_postgresql_microseconds", "window_verification":"not_echoed_by_native", "limit":8, "pagination_status":"timestamp_only_not_lossless", "event_time_basis":"native_event_recorded_at", "source_completeness":"unknown", "freshness":"unknown"}
+            if any(value.get(k) != v for k,v in expected.items()):
+                raise RuntimeError("Codex wake stage query lost identity, selection or timing limits")
+            if any(marker in json.dumps(value) for marker in ["excluded-", "fp_test_", '"data"', '"actor"', '"request_id"', '"node_id"', '"queue_wait_ms"', '"gateway_phases_ms"']) or "next_arguments" in value:
+                raise RuntimeError("Codex wake stage projection leaked data or invented continuation")
+            stages = {s["stage"]:s for s in value.get("stage_observations", [])}
+            rows = value.get("events")
+            if empty:
+                if rows != [] or value.get("status") != "no_returned_events" or value.get("native_returned_event_count") != 0 or value.get("returned_event_count") != 0 or value.get("native_more_events_hint") is not False or any(s["status"] != "not_returned" or s["event_count"] != 0 for s in stages.values()) or len(stages) != 6:
+                    raise RuntimeError("Codex empty filtered wake stages invented outcomes")
+                return
+            if not isinstance(rows, list) or len(rows) != 8 or value.get("native_returned_event_count") != 8 or value.get("returned_event_count") != 8 or value.get("native_more_events_hint") is not True or value.get("native_cursor_at") != "2026-10-16T10:59:00.112Z" or value.get("unknown_event_count") != 1 or stages.get("boot", {}).get("event_count") != 3 or stages.get("parking", {}).get("status") != "not_returned":
+                raise RuntimeError("Codex wake stages lost bounded counts, gaps or native continuation uncertainty")
+            boot, completed, ready, proxy = (rows[i].get("details", {}) for i in [2,3,4,5])
+            if boot.get("queued_count") != 0 or boot.get("concurrency_at_admit") != 0 or boot.get("at_capacity") is not False or boot.get("labels_modified") is not True or boot.get("admission_count_basis") != "native_admission_concurrency_ledger" or completed.get("restore_fallback_reason") != "after_restore_failed" or completed.get("restore_fallback_status") != "observed" or ready.get("readiness_elapsed_ms") != 0 or ready.get("probe_count") != 1 or proxy.get("acceptance_to_first_byte_ms") != 112 or proxy.get("post_wake_proxy_ms") != 10:
+                raise RuntimeError("Codex wake stages lost observed zero/false, fallback or timing boundaries")
+            if rows[6].get("details", {}).get("native_call_basis") != "restore_call" or rows[6].get("details", {}).get("native_call_total_ms") != 90 or rows[7].get("kind") != "unrecognized_event" or rows[7].get("details", {}).get("status") != "not_exposed_for_kind" or rows[5]["at"] != rows[7]["at"]:
+                raise RuntimeError("Codex wake stages lost native call boundaries, tied timestamps or unknown event handling")
+
+        def error_triage_calls(rpc, thread_id, approved, app, empty):
+            fingerprint = "b" * 64
+            group_args = {"app":app, "since":"2026-10-16T10:00:00Z", "until":"2026-10-16T11:00:00Z", "limit":1}
+            result, groups = invoke(rpc, thread_id, "gregale_list_error_groups", group_args)
+            if bool(result.get("isError")) == approved:
+                raise RuntimeError("Codex error-group consent failed")
+            if not approved:
+                if groups.get("code") != "request_access_denied":
+                    raise RuntimeError("Codex error-group denial lost its code")
+            else:
+                expected = {"scope":"app_wide", "window_start":group_args["since"], "window_end":group_args["until"], "window_basis":"group_last_seen_at", "window_bounds":"inclusive", "counts_basis":"native_group_history_counters", "source_completeness":"unknown", "freshness":"unknown", "order":"count_desc_last_seen_desc_fingerprint_desc", "limit":1}
+                if any(groups.get(k) != v for k,v in expected.items()):
+                    raise RuntimeError("Codex error groups lost native window/count semantics")
+                if any(marker in json.dumps(groups) for marker in ["excluded-", "fp_test_", "sample_message", '"last_node_id"', '"last_commit_sha"']):
+                    raise RuntimeError("Codex error groups leaked excluded data")
+                if empty:
+                    if groups.get("groups") != [] or groups.get("status") != "no_returned_groups" or groups.get("page_complete") is not True or groups.get("next_arguments"):
+                        raise RuntimeError("Codex empty error summary invented health or continuation")
+                else:
+                    rows = groups.get("groups", [])
+                    if len(rows) != 1 or rows[0].get("fingerprint") != fingerprint or rows[0].get("count") != 7 or rows[0].get("request_count") != 10 or rows[0].get("first_seen_at") != "2026-10-01T10:00:00Z" or rows[0].get("last_seen_at") != group_args["until"] or rows[0].get("route") != "/orders" or rows[0].get("route_modified") is not True:
+                        raise RuntimeError("Codex error summary lost group-history counters or inclusive selection")
+                    continuation = groups.get("next_arguments", {})
+                    if groups.get("page_complete") is not False or any(continuation.get(k) != v for k,v in group_args.items()) or continuation.get("cursor") != groups.get("next_cursor") or not continuation.get("cursor", "").startswith("e1."):
+                        raise RuntimeError("Codex error summary continuation context changed")
+                    result, last = invoke(rpc, thread_id, "gregale_list_error_groups", continuation)
+                    if result.get("isError") or last.get("groups") != [] or last.get("page_complete") is not True or last.get("next_arguments") or last.get("window_start") != groups.get("window_start") or last.get("window_end") != groups.get("window_end"):
+                        raise RuntimeError("Codex error summary empty terminal page failed")
+            request_args = {"app":app, "fingerprint":fingerprint, "limit":1}
+            result, requests = invoke(rpc, thread_id, "gregale_list_error_requests", request_args)
+            if not approved:
+                if not result.get("isError") or requests.get("code") != "request_access_denied":
+                    raise RuntimeError("Codex fingerprint requests bypassed consent")
+                return
+            if empty:
+                if not result.get("isError") or requests.get("code") != "not_found":
+                    raise RuntimeError("Codex purged/missing fingerprint did not preserve its native error")
+                return
+            if result.get("isError") or requests.get("scope") != "app_wide" or requests.get("selection_basis") != "retained_fingerprint_history_without_summary_window_filter" or requests.get("lookup_basis") != "public_request_id" or requests.get("evidence_availability") != "not_checked" or "window_start" in requests or "window_end" in requests:
+                raise RuntimeError("Codex fingerprint requests invented a summary-window cohort or evidence availability")
+            if any(marker in json.dumps(requests) for marker in ["excluded-", "fp_test_", "sample_message", '"deployment_id"', '"node_id"', '"commit_sha"']):
+                raise RuntimeError("Codex fingerprint requests leaked excluded fields")
+            rows = requests.get("requests", [])
+            if len(rows) != 1 or rows[0].get("lookup_identifier") != "019a0000-0000-7000-8000-000000000001" or rows[0].get("received_at") != "2026-10-15T08:00:00Z" or rows[0].get("http_status") != 503 or rows[0].get("route_modified") is not True:
+                raise RuntimeError("Codex fingerprint requests lost unchanged public lookup or independent history")
+            continuation = requests.get("next_arguments", {})
+            if requests.get("page_complete") is not False or any(continuation.get(k) != v for k,v in request_args.items()) or continuation.get("cursor") != requests.get("next_cursor") or not continuation.get("cursor", "").startswith("e1."):
+                raise RuntimeError("Codex fingerprint request continuation changed")
+            result, last = invoke(rpc, thread_id, "gregale_list_error_requests", continuation)
+            if result.get("isError") or last.get("requests") != [] or last.get("header_status") != "not_reported" or last.get("page_complete") is not True or last.get("next_arguments") or "http_status" in last:
+                raise RuntimeError("Codex fingerprint empty terminal page invented header evidence")
+            result, request = invoke(rpc, thread_id, "gregale_get_request", {"app":app, "request_id":rows[0]["lookup_identifier"]})
+            if result.get("isError") or request.get("lookup_identifier") != rows[0]["lookup_identifier"] or request.get("evidence_status") != "request_id_only" or "latency_ms" in request or "status" in request:
+                raise RuntimeError("Codex public error request lookup invented missing telemetry")
+
+        def timeseries_calls(rpc, thread_id, approved, app, empty):
+            for paired in [False, True]:
+                arguments = {"app":app, "since":"3h45m", "until":"2026-10-16T13:15:03Z", "limit":4}
+                if paired:
+                    arguments.update({"route":"GET /orders", "method":"GET"})
+                result, value = invoke(rpc, thread_id, "gregale_get_request_analytics_timeseries", arguments)
+                if bool(result.get("isError")) == approved:
+                    raise RuntimeError("Codex timeseries consent failed")
+                if not approved:
+                    if value.get("code") != "request_access_denied":
+                        raise RuntimeError("Codex timeseries denial lost its code")
+                    continue
+                expected = {"app":app, "scope":"app_wide", "series_scope":"route_method" if paired else "app_wide", "since":"3h45m", "from":"2026-10-16T09:30:03Z", "until":arguments["until"], "as_of":"2026-10-16T13:16:03Z", "window_clamped":False, "bucket":"1h", "source_completeness":"unknown", "freshness":"unknown", "error_basis":"http_status_gte_400", "basis":"retained_requests_weighted_by_collapse_count", "native_returned_point_count":5, "returned_point_count":4, "points_truncated":True, "order":"oldest_first"}
+                if any(value.get(key) != wanted for key, wanted in expected.items()):
+                    raise RuntimeError("Codex timeseries lost native window, pair scope or output bounds")
+                if (paired and (value.get("route") != "GET /orders" or value.get("method") != "GET")) or (not paired and ("route" in value or "method" in value)):
+                    raise RuntimeError("Codex timeseries changed the exact native selector")
+                if any(marker in json.dumps(value) for marker in ["excluded-", "fp_test_", '"series"', '"groups"', '"compute_cost"', '"deployment_costs"', '"dependencies"', '"guest_cpu_avg_ms"']):
+                    raise RuntimeError("Codex timeseries leaked excluded or invented data")
+                rows = value.get("points", [])
+                if len(rows) != 4 or rows[0].get("start") != "2026-10-16T09:00:00Z" or rows[0].get("end") != "2026-10-16T10:00:00Z" or rows[0].get("window_from") != value["from"] or rows[0].get("window_until") != "2026-10-16T10:00:00Z" or rows[0].get("partial") is not True or rows[1].get("partial") is not False or rows[-1].get("start") != "2026-10-16T12:00:00Z":
+                    raise RuntimeError("Codex timeseries lost partial-hour boundaries or native order")
+                if rows[1].get("zero_filled") is not True or rows[1].get("latency_status") != "no_retained_requests" or "p50_ms" in rows[1]:
+                    raise RuntimeError("Codex timeseries invented latency in an empty bucket")
+                if empty:
+                    if value.get("status") != "no_retained_requests" or any(row.get("zero_filled") is not True or row.get("requests") != 0 or "p95_ms" in row for row in rows):
+                        raise RuntimeError("Codex empty timeseries invented measured zero or health")
+                elif value.get("status") != "observed" or rows[0].get("p50_ms") != 0 or rows[0].get("requests") != 7 or rows[0].get("error_requests") != 7 or rows[0].get("cold_boots") != 7 or rows[2].get("zero_filled") is not False or rows[2].get("requests") != 3 or rows[2].get("p95_ms") != 0:
+                    raise RuntimeError("Codex timeseries confused empty and observed zero buckets")
+
+        def analytics_call(rpc, thread_id, approved, app, empty):
+            arguments = {"app":app, "since":"1h", "until":"2026-10-16T11:00:03Z", "limit":2}
+            result, value = invoke(rpc, thread_id, "gregale_get_request_analytics", arguments)
+            if bool(result.get("isError")) == approved:
+                raise RuntimeError("Codex analytics consent failed")
+            if not approved:
+                if value.get("code") != "request_access_denied":
+                    raise RuntimeError("Codex analytics denial lost its code")
+                return
+            expected = {"app":app, "scope":"app_wide", "since":"1h", "from":"2026-10-16T10:00:03Z", "until":arguments["until"], "as_of":"2026-10-16T11:00:04Z", "window_clamped":False, "source_completeness":"unknown", "freshness":"unknown", "error_basis":"http_status_gte_400", "basis":"retained_requests_weighted_by_collapse_count", "native_routes_limit":50}
+            if any(value.get(key) != wanted for key, wanted in expected.items()):
+                raise RuntimeError("Codex analytics lost native window or measurement basis")
+            if any(marker in json.dumps(value) for marker in ["excluded-", "fp_test_", '"groups"', '"compute_cost"', '"deployment_costs"', '"dependencies"', '"deployment_observations"', '"estimated_compute_cost_millicents"']):
+                raise RuntimeError("Codex analytics leaked excluded fields")
+            summary = value["summary"]
+            if empty:
+                if value.get("routes") != [] or value.get("status") != "no_retained_requests" or summary.get("latency_status") != "no_retained_requests" or "p50_ms" in summary or value.get("native_returned_route_count") != 0 or value.get("routes_truncated") is not False:
+                    raise RuntimeError("Codex empty analytics invented measured zero")
+                return
+            if value.get("status") != "observed" or summary.get("p50_ms") != 0 or summary.get("requests") != 10 or summary.get("error_requests") != 7 or summary.get("latency_status") != "observed":
+                raise RuntimeError("Codex analytics summary lost observed zero or error counts")
+            if len(value.get("routes", [])) != 2 or value.get("native_returned_route_count") != 3 or value.get("returned_route_count") != 2 or any(value.get(key) is not True for key in ["native_routes_truncated", "native_groups_truncated", "routes_truncated"]):
+                raise RuntimeError("Codex analytics lost independent native and projection limits")
+            measured, missing = value["routes"]
+            metrics = measured.get("measurements", {})
+            if measured.get("route") != "/orders" or measured.get("route_modified") is not True or measured.get("route_filter_usable") is not False or measured.get("timeseries_filter_usable") is not False or metrics.get("measurement_coverage") != "not_reported" or metrics.get("guest_cpu_avg_ms") != 0 or metrics.get("guest_execution_p50_ms") != 0 or metrics.get("guest_peak_rss_max_mb") != 8 or "wake_boot_p95_ms" in metrics:
+                raise RuntimeError("Codex analytics lost safe labels or optional zero measurements")
+            if missing.get("route_filter_usable") is not True or missing.get("timeseries_filter_usable") is not True or missing.get("method") != "POST" or missing.get("p95_ms") != 0 or missing.get("measurements") != {"measurement_coverage":"not_reported"}:
+                raise RuntimeError("Codex analytics confused measured zero and missing telemetry")
+
+        def comparison_call(rpc, thread_id, approved, app, empty):
+            arguments = {"app":app, "source_deployment_id":"11111111-1111-4111-8111-111111111111", "target_deployment_id":"22222222-2222-4222-8222-222222222222", "since":"1h", "until":"2026-10-16T11:00:00Z", "limit":2}
+            result, value = invoke(rpc, thread_id, "gregale_compare_deployments", arguments)
+            if bool(result.get("isError")) == approved:
+                raise RuntimeError("Codex comparison consent failed")
+            if not approved:
+                if value.get("code") != "request_access_denied":
+                    raise RuntimeError("Codex comparison denial lost its code")
+                return
+            if value.get("source_scope") != "staging" or value.get("target_scope") != "production" or value.get("source_completeness") != "unknown" or value.get("window_end") != arguments["until"]:
+                raise RuntimeError("Codex comparison lost scope or native window metadata")
+            if empty:
+                if value.get("routes") != [] or value.get("status") != "no_retained_route_samples":
+                    raise RuntimeError("Codex comparison invented empty evidence")
+            elif value["routes"][0]["source"].get("p50_ms") != 0 or value["routes"][1]["target"].get("evidence") != "no_retained_samples" or "p95_ms" in value["routes"][1]["target"] or value["routes"][1].get("comparable") is not False:
+                raise RuntimeError("Codex comparison misrepresented observed zero or missing samples")
+
+        def regression_call(rpc, thread_id, approved, app, empty):
+            result, value = invoke(rpc, thread_id, "gregale_list_regressions", {"app":app, "since":"1h", "limit":2})
+            if bool(result.get("isError")) == approved:
+                raise RuntimeError("Codex regression inbox consent failed")
+            if not approved:
+                if value.get("code") != "request_access_denied":
+                    raise RuntimeError("Codex regression inbox denial lost its code")
+                return
+            if value.get("scope") != "app_wide" or value.get("since") != "1h" or value.get("lookback_basis") != "last_detected_at" or value.get("source_completeness") != "unknown" or "window_start" in value or "window_end" in value:
+                raise RuntimeError("Codex regression inbox invented window/completeness metadata")
+            if any(marker in json.dumps(value) for marker in ["excluded-", "fp_test_", '"query"']):
+                raise RuntimeError("Codex regression inbox leaked excluded data")
+            if empty:
+                if value.get("regressions") != [] or value.get("status") != "no_visible_regressions":
+                    raise RuntimeError("Codex regression inbox invented empty evidence")
+                return
+            rows = value["regressions"]
+            if len(rows) != 2 or value.get("regressions_truncated") is not True or value.get("native_returned_regression_count") != 3:
+                raise RuntimeError("Codex regression inbox lost projection limits")
+            if rows[0].get("kind") != "errors" or rows[0].get("regression_factor") != "1.00" or rows[0].get("route") != "/orders" or rows[0].get("route_modified") is not True or rows[0].get("affected_count") != 7 or rows[0].get("deployment_scope") != "staging" or rows[0].get("suspected_dependency", {}).get("basis") != "hypothesis":
+                raise RuntimeError("Codex regression inbox lost detector metrics or hypothesis limits")
+            if rows[1].get("state") != "acknowledged" or rows[1].get("deployment_scope") != "production" or not rows[1].get("acknowledged_at"):
+                raise RuntimeError("Codex regression inbox lost triage state or scope")
+
+        def check_dependency_impact(value, empty=False):
+            if value.get("source_completeness") != "unknown" or value.get("edges_truncated") is not False or value.get("exemplars_truncated") is not False:
+                raise RuntimeError("Codex dependency impact lost source/projection uncertainty")
+            edges = value.get("edges")
+            if empty:
+                if edges != [] or value.get("native_returned_edge_count") != 0 or value.get("returned_edge_count") != 0:
+                    raise RuntimeError("Codex empty dependency impact invented relationships")
+                return
+            if not isinstance(edges, list) or len(edges) != 1 or value.get("native_returned_edge_count") != 1 or value.get("returned_edge_count") != 1:
+                raise RuntimeError("Codex dependency impact lost native/returned relationship counts")
+            edge = edges[0]
+            if edge.get("from") != {"type":"application", "name":"request"} or edge.get("to", {}).get("kind") != "postgres" or edge.get("labels_modified") is not True or edge.get("calls") != 20 or edge.get("calls") <= value.get("represented_requests") or edge.get("error_calls") != 14 or edge.get("error_rate_pct") != 70 or edge.get("baseline_p95_ms") != 20 or edge.get("current_p95_ms") != 50 or edge.get("regression_factor") != 2.5 or edge.get("baseline_exclusive_p95_ms") != 10 or edge.get("current_exclusive_p95_ms") != 40:
+                raise RuntimeError("Codex dependency relationships lost child sample metrics, display labels or represented weights")
+            if edge.get("side_sample_availability") != "not_reported" or "failure_regression" in edge or "baseline_calls" in edge or edge.get("exemplars_truncated") is not False or edge.get("native_returned_exemplar_count") != 2 or edge.get("returned_exemplar_count") != 2:
+                raise RuntimeError("Codex dependency edge invented native signals or lost exemplar bounds")
+            examples = edge.get("exemplars", [])
+            if len(examples) != 2 or examples[0].get("lookup_identifier") != "row-1" or examples[0].get("count") != 7 or examples[0].get("duration_ms") != 50 or examples[0].get("duration_basis") != "child_span_sample" or examples[0].get("error") is not True or examples[1].get("window") != "baseline" or examples[1].get("count") != 3:
+                raise RuntimeError("Codex dependency representative lookup, half-window or child duration basis lost")
+
+        def performance_calls(rpc, thread_id, approved, app="alpha", empty=False):
+            wake_id = wake_history_call(rpc, thread_id, approved, app, empty)
+            wake_timeline_call(rpc, thread_id, approved, app, empty, wake_id)
+            regression_call(rpc, thread_id, approved, app, empty)
+            comparison_call(rpc, thread_id, approved, app, empty)
+            analytics_call(rpc, thread_id, approved, app, empty)
+            timeseries_calls(rpc, thread_id, approved, app, empty)
+            error_triage_calls(rpc, thread_id, approved, app, empty)
+            windows = []
+            for tool in ["gregale_get_debug_coverage", "gregale_get_dependency_latency", "gregale_get_critical_paths"]:
+                arguments = {"app":app, "since":"1h"}
+                if tool == "gregale_get_critical_paths":
+                    arguments["limit"] = 1
+                result, value = invoke(rpc, thread_id, tool, arguments)
+                if bool(result.get("isError")) == approved:
+                    raise RuntimeError("Codex performance consent failed")
+                if not approved:
+                    if value.get("code") != "request_access_denied":
+                        raise RuntimeError("Codex performance denial lost its code")
+                    continue
+                if value.get("scope") != "app_wide" or value.get("since") != "1h" or any(marker in json.dumps(value) for marker in ["excluded-", "fp_test_", '"queries"', '"trace_id"', '"deployment_comparison"']):
+                    raise RuntimeError("Codex performance scope/redaction failed")
+                windows.append(value.get("window_start"))
+                if tool == "gregale_get_debug_coverage":
+                    if value.get("collection_completeness") != "unknown" or value.get("coverage_basis") != "retained_telemetry_only":
+                        raise RuntimeError("Codex coverage invented a traffic denominator")
+                    if empty and (value.get("status") != "no_retained_telemetry" or value.get("represented_requests") != 0):
+                        raise RuntimeError("Codex empty coverage was presented as evidence")
+                elif tool == "gregale_get_critical_paths":
+                    if empty:
+                        if value.get("status") != "no_returned_paths" or value.get("critical_paths") != [] or value.get("path_samples") != 0:
+                            raise RuntimeError("Codex empty critical-path evidence was lost")
+                    else:
+                        path = value["critical_paths"][0]
+                        if value.get("complete") is not False or value.get("source_truncated") is not True or value.get("path_samples") != 2 or value.get("represented_requests") != 10 or path.get("dominant_segment_exclusive_ms") != 300:
+                            raise RuntimeError("Codex critical-path sampling/regression limits lost")
+                        if path["segments"][0].get("name") != "handler" or path["exemplars"][0].get("lookup_identifier") != "row-1" or path["exemplars"][0].get("count") != 7 or path["exemplars"][1].get("window") != "baseline" or '"trace_id"' in json.dumps(path):
+                            raise RuntimeError("Codex critical-path sequence, representative lookup or trace exclusion failed")
+                        lookup = path["exemplars"][0]["lookup_identifier"]
+                        detail_result, detail = invoke(rpc, thread_id, "gregale_get_request_evidence", {"app":app, "request_id":lookup})
+                        if detail_result.get("isError") or detail.get("request", {}).get("id") != lookup or detail["request"].get("count") != 7:
+                            raise RuntimeError("Codex critical-path representative drill-down failed")
+                elif tool == "gregale_get_dependency_latency":
+                    check_dependency_impact(value, empty)
+                    if empty:
+                        if value.get("status") != "no_retained_spans" or value.get("dependencies") != []:
+                            raise RuntimeError("Codex empty dependency evidence was lost")
+                    else:
+                        if value.get("complete") is not False or value.get("source_truncated") is not True or not value.get("dependencies"):
+                            raise RuntimeError("Codex sampled dependency limits were lost")
+                        lookup = value["edges"][0]["exemplars"][0]["lookup_identifier"]
+                        detail_result, detail = invoke(rpc, thread_id, "gregale_get_request_evidence", {"app":app, "request_id":lookup})
+                        if detail_result.get("isError") or detail.get("request", {}).get("id") != lookup or detail["request"].get("count") != 7 or detail["request"].get("scope") != "staging":
+                            raise RuntimeError("Codex dependency representative drill-down failed")
+            if approved and len(set(windows)) != 3:
+                raise RuntimeError("Codex performance observations lost their independent windows")
+
+        def residency_calls(rpc, thread_id, approved, app="alpha", empty=False):
+            result, value = invoke(rpc, thread_id, "gregale_get_running_causes", {"app":app, "since":"1h", "limit":1})
+            if bool(result.get("isError")) == approved:
+                raise RuntimeError("Codex residency consent failed")
+            if not approved:
+                if value.get("code") != "request_access_denied":
+                    raise RuntimeError("Codex residency denial lost its code")
+                return
+            if value.get("scope") != "app_wide" or value.get("freshness") != "unknown" or value.get("since") != "1h":
+                raise RuntimeError("Codex residency scope/freshness lost")
+            if any(marker in json.dumps(value) for marker in ["excluded-", "fp_test_", "192.0.2.123", '"flow_topology"', '"instance_id"', '"trace_id"']):
+                raise RuntimeError("Codex residency projection leaked excluded data")
+            if empty:
+                if value.get("status") != "no_retained_observations" or value.get("history") != [] or value.get("current") != [] or "current_observed_at" in value:
+                    raise RuntimeError("Codex empty residency invented current evidence")
+            elif value.get("current_observation_age_seconds") != 1800 or value.get("current_degraded") is not True or value.get("history_truncated") is not True or value["current"][0]["request"].get("basis") != "nearest_retained_aggregate_not_exact_causation":
+                raise RuntimeError("Codex residency lost observation age, degradation or approximate attribution")
+
+        def check_request_path(value, empty=False):
+            path = value.get("critical_path", {})
+            if path.get("basis") != "native_retained_span_parent_chain" or path.get("source_completeness") != "unknown":
+                raise RuntimeError("Codex request path lost provenance")
+            if empty:
+                if path.get("status") != "unavailable" or path.get("segments") != [] or path.get("complete") is not False or "duration_ms" in path:
+                    raise RuntimeError("Codex empty request path invented timing or segments")
+                return
+            segments = path.get("segments", [])
+            if path.get("status") != "observed" or path.get("complete") is not True or path.get("duration_ms") != 90 or len(segments) != 3 or path.get("slowest_segment_ref") != "/critical_path/segments/2" or path.get("slowest_exclusive_ms") != 50:
+                raise RuntimeError("Codex request path lost timing or completeness")
+            if segments[1].get("parent_ref") != segments[0].get("ref") or segments[2].get("parent_ref") != segments[1].get("ref") or segments[2].get("dependency_kind") != "http" or segments[2].get("status") != "error":
+                raise RuntimeError("Codex request path lost local topology or dependency status")
+            if any(marker in json.dumps(path) for marker in ["excluded-", "fp_test_", '"span_id"', '"trace_id"', '"dependency_name"', "2222222222222222", "1111111111111111", "0000000000000001"]):
+                raise RuntimeError("Codex request path leaked private span data")
+
+        def check_guest_execution(request, missing=False):
+            guest = request.get("guest", {})
+            if guest.get("duration_precision") != "native_retained_may_be_bucketed":
+                raise RuntimeError("Codex guest duration precision lost")
+            if missing:
+                if guest.get("status") != "unavailable" or "duration_ms" in guest:
+                    raise RuntimeError("Codex missing guest evidence invented timing")
+                return
+            if guest.get("status") != "observed" or guest.get("runtime") != "node22" or guest.get("outcome") != "timeout" or guest.get("error_class") != "timeout" or guest.get("duration_ms") != 70 or guest.get("represents_multiple_requests") is not True:
+                raise RuntimeError("Codex guest runtime/outcome/aggregation evidence lost")
+
+        def check_request_regression(value, status="observed"):
+            regression = value.get("regression", {})
+            if regression.get("status") != status or regression.get("basis") != "native_route_deployment_observation" or regression.get("source_completeness") != "unknown":
+                raise RuntimeError("Codex request regression lost availability or provenance")
+            if status != "observed":
+                if "observation" in regression:
+                    raise RuntimeError("Codex missing request regression invented an observation")
+                return
+            row = regression.get("observation", {})
+            if row.get("deployment_id") != value["request"].get("deployment_id") or row.get("route") != "/orders" or row.get("deployment_scope") != "staging" or row.get("route_modified") is not True or row.get("kind") != "latency_and_errors" or row.get("state") != "active" or row.get("regression_factor") != "2.50" or row.get("p95_ms") != 250 or row.get("p95_base_ms") != 100 or row.get("error_rate_pct") != 20 or row.get("error_rate_base_pct") != 5 or row.get("suspected_dependency", {}).get("basis") != "hypothesis":
+                raise RuntimeError("Codex matched regression lost scope, metrics or hypothesis limits")
+            if any(marker in json.dumps(regression) for marker in ["excluded-", "private-query", "fp_test_", '"query"', '"baseline_deployment_id"', '"window_start"']):
+                raise RuntimeError("Codex matched regression exposed excluded data or invented metadata")
+
+        def check_request_dependency_comparison(value, status="observed"):
+            comparison = value.get("dependency_comparison", {})
+            if comparison.get("status") != status or comparison.get("basis") != "native_route_deployment_dependency_comparison" or comparison.get("source_completeness") != "unknown":
+                raise RuntimeError("Codex request dependency comparison lost availability/provenance")
+            if status == "unavailable":
+                if comparison.get("dependencies") != [] or "previous_deployment_id" in comparison or "current_deployment_id" in comparison:
+                    raise RuntimeError("Codex missing dependency comparison invented deployment/metric evidence")
+                return
+            if comparison.get("current_deployment_id") != value["request"].get("deployment_id") or comparison.get("previous_deployment_id") != "22222222-2222-4222-8222-222222222222" or comparison.get("current_deployment_scope") != "staging" or comparison.get("previous_deployment_scope") != "production" or comparison.get("route") != "/orders" or comparison.get("route_modified") is not True:
+                raise RuntimeError("Codex native dependency pair lost association/verified scopes")
+            if comparison.get("native_returned_dependency_count") != 1 or comparison.get("returned_dependency_count") != 1 or comparison.get("native_truncated") != (status == "partial") or comparison.get("dependencies_truncated") is not False:
+                raise RuntimeError("Codex dependency comparison lost native/projection bounds")
+            rows = comparison.get("dependencies", [])
+            if len(rows) != 1 or rows[0].get("calls") != 40 or rows[0].get("error_calls") != 6 or rows[0].get("baseline_p95_ms") != 40 or rows[0].get("current_p95_ms") != 100 or rows[0].get("regression_factor") != 2.5 or rows[0].get("baseline_error_rate_pct") != 0 or rows[0].get("current_error_rate_pct") != 30 or rows[0].get("regression") is not True or rows[0].get("failure_regression") is not True:
+                raise RuntimeError("Codex dependency comparison lost latency/error metrics")
+            if any(marker in json.dumps(comparison) for marker in ["excluded-", "fp_test_", "private-query", '"queries"', '"pattern"', '"previous_commit_sha"', '"window_start"']):
+                raise RuntimeError("Codex dependency comparison leaked excluded data or invented a window")
+
+        def check_request_explanation(value, empty=False):
+            check_request_path(value, empty)
+            check_request_regression(value, "unknown" if empty else "observed")
+            check_request_dependency_comparison(value, "unavailable" if empty else "observed")
+            check_guest_execution(value.get("request", {}), missing=empty)
+            explanation = value.get("explanation", {})
+            if explanation.get("basis") != "native_finding_codes_and_exposed_evidence" or explanation.get("confidence_basis") != "native_rule_label" or explanation.get("source_completeness") != "unknown":
+                raise RuntimeError("Codex request explanation lost provenance")
+            if empty:
+                if explanation.get("status") != "unavailable" or explanation.get("findings") != [] or explanation.get("recommendations") != [] or value.get("request", {}).get("status") != 503:
+                    raise RuntimeError("Codex unavailable explanation invented findings or lost request evidence")
+                return
+            findings = explanation.get("findings", [])
+            if explanation.get("status") != "partial" or len(findings) != 8 or explanation.get("omitted_finding_count") != 0 or len(explanation.get("recommendations", [])) != 4:
+                raise RuntimeError("Codex request explanation lost unsupported findings/actions")
+            if findings[0].get("code") != "request_failure" or findings[0].get("confidence") != "high" or findings[0].get("approximate") is not True or findings[1].get("code") != "evidence_gap":
+                raise RuntimeError("Codex request explanation lost native confidence, aggregates or gaps")
+            if findings[2].get("code") != "slowest_span" or findings[2].get("evidence_refs") != ["/critical_path/segments/0"] or findings[3].get("code") != "dependency_failure" or findings[3].get("evidence_refs") != ["/critical_path/segments/2"]:
+                raise RuntimeError("Codex request explanation lost verified path findings")
+            if findings[4].get("code") != "guest_failure" or findings[4].get("evidence_refs") != ["/request/guest"] or explanation["recommendations"][0].get("evidence_refs") != ["/request/guest"]:
+                raise RuntimeError("Codex guest finding or investigation reference lost")
+            if findings[5].get("code") != "error_regression" or findings[5].get("evidence_refs") != ["/regression/observation"] or findings[5].get("approximate") is not True:
+                raise RuntimeError("Codex regression finding citations or aggregation semantics lost")
+            if explanation["recommendations"][2].get("action") != "compare_deployments" or explanation["recommendations"][2].get("evidence_refs") != ["/regression/observation"]:
+                raise RuntimeError("Codex regression investigation suggestion lost support")
+            if findings[6].get("code") != "dependency_regression" or findings[7].get("code") != "dependency_failure_regression" or any(f.get("evidence_refs") != ["/dependency_comparison/dependencies/0"] or f.get("approximate") is not True for f in findings[6:]):
+                raise RuntimeError("Codex dependency comparison findings lost local references/aggregate semantics")
+            if explanation["recommendations"][3].get("action") != "inspect_dependency_change" or explanation["recommendations"][3].get("evidence_refs") != ["/dependency_comparison/dependencies/0"]:
+                raise RuntimeError("Codex dependency change suggestion lost supported comparison citation")
+            for item in findings + explanation["recommendations"]:
+                for pointer in item.get("evidence_refs", []):
+                    if pointer not in ["/request", "/request/guest", "/regression/observation", "/dependency_comparison/dependencies/0", "/correlation/stages/0", "/critical_path/segments/0", "/critical_path/segments/2"]:
+                        raise RuntimeError("Codex request explanation exposed unsupported reference")
+                    node = value
+                    for part in pointer[1:].split("/"):
+                        node = node[int(part)] if isinstance(node, list) else node[part]
+                    if node is None:
+                        raise RuntimeError("Codex request explanation has a dangling reference")
+
+        def check_request_wake(request, status="observed"):
+            wake = request.get("wake", {})
+            if wake.get("status") != status or wake.get("basis") != "native_retained_request_wake_id" or wake.get("association_scope") != "retained_row" or wake.get("timeline_availability") != "not_checked":
+                raise RuntimeError("Codex request wake lost association provenance or availability")
+            if status != "observed":
+                if any(key in wake for key in ["wake_id", "timeline_tool", "timeline_arguments"]):
+                    raise RuntimeError("Codex missing/invalid request wake fabricated a usable selector")
+                return
+            if wake.get("wake_id") != "wake-1" or wake.get("represents_multiple_requests") is not True or wake.get("timeline_tool") != "gregale_get_wake_timeline" or wake.get("timeline_arguments") != {"app":"alpha", "wake_id":"wake-1", "limit":50}:
+                raise RuntimeError("Codex request wake changed the recorded ID, inferred time filters or lost aggregation")
+
+        saved_wake_continuation = None
+
+        def wake_pagination_calls(rpc, thread_id, approved, app):
+            nonlocal saved_wake_continuation
+            args = {"app":app, "wake_id":"wake-paged-1", "since":"2026-10-16T10:00:00Z", "limit":2}
+            kinds = []
+            for index in range(3):
+                result, value = invoke(rpc, thread_id, "gregale_get_wake_timeline", args)
+                if bool(result.get("isError")) == approved:
+                    raise RuntimeError("Codex keyset wake consent failed")
+                if not approved:
+                    if value.get("code") != "request_access_denied":
+                        raise RuntimeError("Codex keyset denial lost its code")
+                    return
+                rows = value.get("events", [])
+                if value.get("pagination_status") != "keyset_at_id_v1" or value.get("window_verification") != "native_since_echo" or value.get("source_completeness") != "unknown" or len(rows) != 2 or value.get("returned_event_count") != 2 or any(row.get("at") != "2026-10-16T10:59:00.112Z" for row in rows):
+                    raise RuntimeError("Codex keyset read lost native mode, tied timestamps or page bounds")
+                if any(marker in json.dumps(value) for marker in ["excluded-", "fp_test_", '"actor"', '"data"', '"event_id"']):
+                    raise RuntimeError("Codex keyset continuation exposed excluded event data")
+                kinds.extend(row["kind"] for row in rows)
+                if index == 2:
+                    if value.get("page_complete") is not True or value.get("native_more_events_hint") is not False or "next_cursor" in value or "next_arguments" in value:
+                        raise RuntimeError("Codex terminal keyset page invented continuation")
+                    break
+                next_args = value.get("next_arguments", {})
+                if value.get("page_complete") is not False or value.get("native_more_events_hint") is not True or any(next_args.get(key) != args[key] for key in ["app", "wake_id", "since", "limit"]) or next_args.get("cursor") != value.get("next_cursor") or not next_args.get("cursor", "").startswith("wp1."):
+                    raise RuntimeError("Codex keyset next_arguments lost exact original selection")
+                if index == 0:
+                    if saved_wake_continuation is None:
+                        saved_wake_continuation = next_args
+                    # Reuse the original client cursor after bridge restart and
+                    # OAuth refresh; no bridge-local page state is required.
+                    args = saved_wake_continuation
+                else:
+                    args = next_args
+            if kinds != ["wake.queue_accepted", "wake.admitted", "wake.boot_started", "wake.readiness_200", "wake.proxy_first_byte", "unrecognized_event"]:
+                raise RuntimeError("Codex keyset paging dropped/duplicated equal-time events")
+
+        saved_history_continuation = None
+
+        def history_pagination_calls(rpc, thread_id, approved, app):
+            nonlocal saved_history_continuation
+            args = {"app": app, "since": "2026-10-15T10:00:00Z", "until": "2026-10-15T11:00:00Z", "limit": 2}
+            seen = []
+            for index in range(3):
+                result, value = invoke(rpc, thread_id, "gregale_get_wake_history", args)
+                if bool(result.get("isError")) == approved:
+                    raise RuntimeError("Codex paged history consent failed")
+                if not approved:
+                    if value.get("code") != "request_access_denied":
+                        raise RuntimeError("Codex paged history denial lost its code")
+                    return
+                rows = value.get("wakes", [])
+                if value.get("pagination_status") != "keyset_started_at_instance_id_v1" or value.get("window_verification") != "native_window_echo" or value.get("source_status") != "read_succeeded" or value.get("count_basis") != "returned_page_instance_records" or value.get("source_completeness") != "unknown" or len(rows) != 2 or any(row.get("at") != "2026-10-15T10:30:00.123456Z" for row in rows):
+                    raise RuntimeError("Codex history page lost mode, source, window or tied timestamps")
+                if any(marker in json.dumps(value) for marker in ['"instance_id"', '"node_id"', '"data"', '"boot_data"']):
+                    raise RuntimeError("Codex paged history exposed excluded data")
+                seen.extend(row["wake_id"] for row in rows)
+                if index == 2:
+                    if value.get("page_complete") is not True or "next_arguments" in value or "next_cursor" in value:
+                        raise RuntimeError("Codex terminal history page invented continuation")
+                    break
+                next_args = value.get("next_arguments", {})
+                if value.get("page_complete") is not False or any(next_args.get(key) != args[key] for key in ["app", "since", "until", "limit"]) or next_args.get("cursor") != value.get("next_cursor") or not next_args.get("cursor", "").startswith("hp1."):
+                    raise RuntimeError("Codex history continuation lost original selection")
+                if index == 0:
+                    if saved_history_continuation is None:
+                        saved_history_continuation = next_args
+                    args = saved_history_continuation
+                else:
+                    args = next_args
+            if seen != ["history-wake-" + str(i) for i in range(1, 7)]:
+                raise RuntimeError("Codex history paging lost or duplicated records")
+
+        def request_calls(rpc, thread_id, approved, app="alpha"):
+            profiles_call(rpc, thread_id, approved, app)
+            performance_calls(rpc, thread_id, approved, app)
+            residency_calls(rpc, thread_id, approved, app)
+            wake_pagination_calls(rpc, thread_id, approved, app)
+            history_pagination_calls(rpc, thread_id, approved, app)
+            before_wake_drill = fixture_control("evidence")["wake_timeline_reads"]
+
+            query = {"app":app,"since":"1h","route":"/orders","deployment_id":"11111111-1111-4111-8111-111111111111","status":503,"min_latency_ms":50,"cold_boot":False,"limit":1}
+            result, page = invoke(rpc, thread_id, "gregale_list_requests", query)
+            if bool(result.get("isError")) == approved:
+                raise RuntimeError("Codex request discovery consent failed")
+            lookup = "public-request"
+            if not approved:
+                if page.get("code") != "request_access_denied":
+                    raise RuntimeError("Codex request discovery denial lost its code")
+            else:
+                if page.get("complete") is not False or len(page.get("requests", [])) != 1 or page.get("since") != "1h":
+                    raise RuntimeError("Codex request discovery lost pagination or window metadata")
+                continuation = page.get("next_arguments", {})
+                if any(continuation.get(k) != v for k, v in query.items()) or continuation.get("cursor") != page.get("next_cursor"):
+                    raise RuntimeError("Codex request discovery changed continuation filters")
+                row = page["requests"][0]
+                lookup = row.get("lookup_identifier")
+                if not lookup or row.get("scope") != "staging" or row.get("count") != 7 or any(marker in json.dumps(page) for marker in ["excluded-", "fp_test_", "private-query"]):
+                    raise RuntimeError("Codex request discovery attribution/redaction failed")
+                check_guest_execution(row)
+                check_request_wake(row)
+                result, last = invoke(rpc, thread_id, "gregale_list_requests", continuation)
+                if result.get("isError") or last.get("complete") is not True or last.get("next_cursor") or last.get("next_arguments") or last.get("window_start") != page.get("window_start") or last.get("window_end") != page.get("window_end"):
+                    raise RuntimeError("Codex request discovery continuation failed")
+                if last["requests"][0]["lookup_identifier"] == lookup:
+                    raise RuntimeError("Codex request discovery repeated the first page")
+                check_request_wake(last["requests"][0], "not_reported")
+            for tool in ["gregale_get_request", "gregale_get_request_evidence"]:
+                result, value = invoke(rpc, thread_id, tool, {"app": app, "request_id": lookup})
+                if bool(result.get("isError")) == approved:
+                    raise RuntimeError("Codex request diagnostic consent failed")
+                if not approved:
+                    if value.get("code") != "request_access_denied":
+                        raise RuntimeError("Codex request diagnostic denial lost its code")
+                    continue
+                encoded = json.dumps(value)
+                if any(marker in encoded for marker in ["excluded-", "fp_test_", "private-query", '"spans"', '"actor"']):
+                    raise RuntimeError("Codex request diagnostic projection leaked excluded data")
+                request = value.get("request", value)
+                if request.get("status") != 503 or request.get("deployment_id") != query["deployment_id"] or request.get("id") != lookup:
+                    raise RuntimeError("Codex request diagnostic identity/status missing")
+                check_guest_execution(request)
+                check_request_wake(request)
+                if tool == "gregale_get_request_evidence" and (value.get("correlation", {}).get("complete") is not False or not value.get("dependency_latency")):
+                    raise RuntimeError("Codex request diagnostic evidence missing")
+                if tool == "gregale_get_request_evidence":
+                    check_request_explanation(value)
+            if fixture_control("evidence")["wake_timeline_reads"] != before_wake_drill:
+                raise RuntimeError("Request projection automatically fetched wake stage evidence")
+            if approved:
+                wake = request["wake"]
+                result, stages = invoke(rpc, thread_id, wake["timeline_tool"], wake["timeline_arguments"])
+                if result.get("isError") or stages.get("wake_id") != wake["wake_id"] or stages.get("app") != app or stages.get("limit") != 50 or "requested_since" in stages or stages.get("returned_event_count") != 8 or stages.get("pagination_status") != "timestamp_only_not_lossless":
+                    raise RuntimeError("Codex explicit request-to-wake drill-down lost identity, scope or native timing limits")
+                if fixture_control("evidence")["wake_timeline_reads"] != before_wake_drill + 1:
+                    raise RuntimeError("Request-to-wake drill-down read more than one bounded native response")
 
         rpc = start()
         try:
@@ -333,6 +926,86 @@ def remote_fixture_acceptance(args):
             rpc.close()
         if fixture_control("evidence")["refreshes"] < 1:
             raise RuntimeError("Codex did not refresh its remote OAuth token")
+        if request_mode:
+            evidence = fixture_control("evidence")
+            if evidence["native_writes"] != 0 or evidence["request_reads"] != (21 if request_mode == "approved" else 0):
+                raise RuntimeError("Request acceptance performed unauthorized reads or writes")
+            if evidence["profile_reads"] != (3 if request_mode == "approved" else 0):
+                raise RuntimeError("Codex profile read count changed or consent bypassed")
+            if evidence["wake_history_reads"] != (3 if request_mode == "approved" else 0):
+                raise RuntimeError("Wake acceptance performed unauthorized native reads")
+            if evidence["wake_timeline_reads"] != (6 if request_mode == "approved" else 0):
+                raise RuntimeError("Wake stage acceptance performed unauthorized native reads")
+            if evidence["wake_history_page_reads"] != (9 if request_mode == "approved" else 0):
+                raise RuntimeError("Codex history page read count changed")
+            if evidence["wake_page_reads"] != (9 if request_mode == "approved" else 0):
+                raise RuntimeError("Keyset wake acceptance performed unexpected native reads")
+            if evidence["error_groups_reads"] != (6 if request_mode == "approved" else 0) or evidence["error_requests_reads"] != (6 if request_mode == "approved" else 0):
+                raise RuntimeError("Error triage acceptance performed unauthorized native reads")
+            if evidence["timeseries_reads"] != (6 if request_mode == "approved" else 0):
+                raise RuntimeError("Timeseries acceptance performed unauthorized reads")
+            if evidence["analytics_reads"] != (3 if request_mode == "approved" else 0):
+                raise RuntimeError("Analytics acceptance performed unauthorized reads")
+            if evidence["performance_reads"] != (6 if request_mode == "approved" else 0):
+                raise RuntimeError("Performance acceptance performed unauthorized reads")
+            if evidence["residency_reads"] != (3 if request_mode == "approved" else 0):
+                raise RuntimeError("Residency acceptance performed unauthorized reads")
+            if evidence["critical_path_reads"] != (3 if request_mode == "approved" else 0):
+                raise RuntimeError("Critical-path acceptance performed unauthorized reads")
+            if evidence["comparison_reads"] != (3 if request_mode == "approved" else 0):
+                raise RuntimeError("Comparison acceptance performed unauthorized reads")
+            if evidence["regression_reads"] != (3 if request_mode == "approved" else 0):
+                raise RuntimeError("Regression inbox acceptance performed unauthorized reads")
+            if request_mode == "approved":
+                fixture_control("performance-empty")
+                fixture_control("residency-empty")
+                rpc = start()
+                try:
+                    thread_id, _server = connect(rpc)
+                    profiles_call(rpc, thread_id, True, empty=True)
+                    performance_calls(rpc, thread_id, True, empty=True)
+                    residency_calls(rpc, thread_id, True, empty=True)
+                    result, value = invoke(rpc, thread_id, "gregale_get_request_evidence", {"app":"alpha", "request_id":"row-1"})
+                    if result.get("isError"):
+                        raise RuntimeError("Codex empty request explanation read failed")
+                    check_request_wake(value["request"], "not_reported")
+                    for suffix, status in [("missing", "not_reported"), ("invalid", "invalid_native_wake"), ("cold", "observed")]:
+                        result, linked = invoke(rpc, thread_id, "gregale_get_request_evidence", {"app":"alpha", "request_id":"row-1-wake-" + suffix})
+                        if result.get("isError") or linked.get("request", {}).get("status") != 503:
+                            raise RuntimeError("Codex optional wake metadata discarded other request evidence")
+                        check_request_wake(linked["request"], status)
+                        if any(marker in json.dumps(linked) for marker in ["private-wake", "fp_test_"]):
+                            raise RuntimeError("Codex invalid wake ID leaked or was rewritten into a selector")
+                        if suffix == "cold":
+                            recs = linked.get("explanation", {}).get("recommendations", [])
+                            if len(recs) != 1 or recs[0].get("action") != "inspect_wake_timeline" or recs[0].get("evidence_refs") != ["/request/wake"] or recs[0].get("tool") != linked["request"]["wake"]["timeline_tool"] or recs[0].get("arguments") != linked["request"]["wake"]["timeline_arguments"]:
+                                raise RuntimeError("Codex supported wake investigation lost its exposed association/arguments")
+                    check_request_explanation(value, empty=True)
+                    result, value = invoke(rpc, thread_id, "gregale_get_request_evidence", {"app":"alpha", "request_id":"row-1-comparison-truncated"})
+                    if result.get("isError") or value.get("request", {}).get("status") != 503:
+                        raise RuntimeError("Codex truncated comparison discarded request evidence")
+                    check_request_dependency_comparison(value, "partial")
+                    if any(f.get("code") in ["dependency_regression", "dependency_failure_regression"] for f in value.get("explanation", {}).get("findings", [])):
+                        raise RuntimeError("Codex collection-truncated comparison invented supported findings")
+                    if any(r.get("action") == "inspect_dependency_change" for r in value.get("explanation", {}).get("recommendations", [])):
+                        raise RuntimeError("Codex collection-truncated comparison invented an investigation action")
+                    for selector, status in [("row-1-no-regression", "no_matching_observation"), ("row-1-regression-unavailable", "unavailable")]:
+                        result, value = invoke(rpc, thread_id, "gregale_get_request_evidence", {"app":"alpha", "request_id":selector})
+                        if result.get("isError") or value.get("request", {}).get("status") != 503:
+                            raise RuntimeError("Codex missing regression discarded request evidence")
+                        check_request_regression(value, status)
+                        if any(f.get("code") in ["error_regression", "performance_regression"] for f in value.get("explanation", {}).get("findings", [])):
+                            raise RuntimeError("Codex missing regression invented a finding")
+                finally:
+                    rpc.close()
+            rpc = start()
+            try:
+                thread_id, _server = connect(rpc)
+                request_calls(rpc, thread_id, False, app="future")
+                fixture_control("replace")
+                request_calls(rpc, thread_id, False)
+            finally:
+                rpc.close()
         fixture_control("revoke")
         rpc = start()
         try:
@@ -341,7 +1014,7 @@ def remote_fixture_acceptance(args):
                 raise RuntimeError("Codex retained remote tools after grant revocation")
         finally:
             rpc.close()
-        print(json.dumps({"client": "codex", "fixture": True, "transport": "streamable-http", "tools": tools, "oauth_login": "passed", "discovery": "passed", "read_calls": "passed", "source_planning": "passed", "scoped_telemetry": "passed", "rollout_watch": "passed", "resources": "passed", "restart": "passed", "refresh": "passed", "revocation": "passed", "model_requests": 0, "deployment_writes": 0}))
+        print(json.dumps({"client": "codex", "fixture": True, "transport": "streamable-http", "tools": tools, "oauth_login": "passed", "discovery": "passed", "read_calls": "passed", "source_planning": "passed", "scoped_telemetry": "passed", "rollout_watch": "passed", "resources": "passed", "restart": "passed", "refresh": "passed", "revocation": "passed", "request_diagnostics": request_mode, "request_discovery": "passed" if request_mode else "not_requested", "performance_diagnosis": "passed" if request_mode else "not_requested", "empty_performance": "passed" if request_mode == "approved" else "not_requested", "residency_diagnosis": "passed" if request_mode else "not_requested", "empty_residency": "passed" if request_mode == "approved" else "not_requested", "critical_paths": "passed" if request_mode else "not_requested", "empty_critical_paths": "passed" if request_mode == "approved" else "not_requested", "deployment_comparison": "passed" if request_mode else "not_requested", "empty_comparison": "passed" if request_mode == "approved" else "not_requested", "regression_inbox": "passed" if request_mode else "not_requested", "empty_regressions": "passed" if request_mode == "approved" else "not_requested", "request_explanations": "passed" if request_mode else "not_requested", "empty_request_explanation": "passed" if request_mode == "approved" else "not_requested", "request_critical_path": "passed" if request_mode else "not_requested", "empty_request_critical_path": "passed" if request_mode == "approved" else "not_requested", "guest_execution": "passed" if request_mode else "not_requested", "missing_guest_execution": "passed" if request_mode == "approved" else "not_requested", "request_regression_context": "passed" if request_mode else "not_requested", "missing_request_regression": "passed" if request_mode == "approved" else "not_requested", "request_dependency_comparison": "passed" if request_mode else "not_requested", "missing_request_dependency_comparison": "passed" if request_mode == "approved" else "not_requested", "truncated_request_dependency_comparison": "passed" if request_mode == "approved" else "not_requested", "dependency_impact": "passed" if request_mode else "not_requested", "empty_dependency_impact": "passed" if request_mode == "approved" else "not_requested", "request_analytics": "passed" if request_mode else "not_requested", "empty_request_analytics": "passed" if request_mode == "approved" else "not_requested", "request_analytics_timeseries": "passed" if request_mode else "not_requested", "empty_request_analytics_timeseries": "passed" if request_mode == "approved" else "not_requested", "request_wake": "passed" if request_mode else "not_requested", "missing_request_wake": "passed" if request_mode == "approved" else "not_requested", "invalid_request_wake": "passed" if request_mode == "approved" else "not_requested", "request_wake_recommendation": "passed" if request_mode == "approved" else "not_requested", "wake_pagination": "passed" if request_mode else "not_requested", "wake_history_pagination": "passed" if request_mode else "not_requested", "wake_timeline": "passed" if request_mode else "not_requested", "empty_wake_timeline": "passed" if request_mode == "approved" else "not_requested", "wake_history": "passed" if request_mode else "not_requested", "empty_wake_history": "passed" if request_mode == "approved" else "not_requested", "error_triage": "passed" if request_mode else "not_requested", "empty_error_triage": "passed" if request_mode == "approved" else "not_requested", "profiles": "passed" if request_mode else "not_requested", "empty_profiles": "passed" if request_mode == "approved" else "not_requested", "model_requests": 0, "deployment_writes": 0}))
 
 
 def main():

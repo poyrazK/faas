@@ -92,6 +92,7 @@ func startUDPIngress(ctx context.Context, log *slog.Logger, store *state.PgStore
 	done := make(chan struct{})
 	result := make(chan error, 1)
 	supervisor := &udpd.Supervisor{
+		Listen:   wire.ListenUDPInherited, // a hand-off passes the sockets on
 		BindHost: bindHost, Source: store,
 		AllowedSources: sources, ResolveTarget: resolver.ResolveTarget, Metrics: metrics,
 		Forwarder: gateway.UDPForwarder{Nodes: nodes},

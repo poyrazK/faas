@@ -53,6 +53,15 @@ func (s *PgStore) publishOwnedInstanceRuntimeOnce(ctx context.Context, p Runtime
 	if err := runtimeAppConfigFenceDB(ctx, tx, p); err != nil {
 		return Instance{}, err
 	}
+	if p.ExpectedState == string(StateWarm) || p.ExpectedState == string(StateFrozen) {
+		fresh, err := sqlc.New().InstanceSnapshotRecoveryFresh(ctx, tx, mustPgUUID(p.InstanceID))
+		if err != nil {
+			return Instance{}, mapErr(err)
+		}
+		if !fresh {
+			return Instance{}, ErrConflict
+		}
+	}
 	acceptance, err := prepareRuntimeUpgradeAcceptanceDB(ctx, tx, p)
 	if err != nil {
 		return Instance{}, err

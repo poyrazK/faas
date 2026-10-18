@@ -138,6 +138,32 @@ tests:
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasConsumerUsageDelivery.md"
 
   - interval: 1m
+    name: "a billable response aborted before durable usage pages immediately"
+    input_series:
+      - series: 'gateway_usage_commit_aborts_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
+        values: '0x2 1x27'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: FaasUsageCommitAborted
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: FaasUsageCommitAborted
+        exp_alerts:
+          - exp_labels:
+              job: "gatewayd-internal"
+              instance: "fsn-2.gregale.dev:9092"
+              severity: "page"
+              component: "gatewayd-internal"
+              family: "consumer_usage_delivery"
+            exp_annotations:
+              summary: "Monetized responses withheld: usage could not be made durable"
+              description: "The gateway aborted billable responses because their usage events could not be fsynced to the local outbox (ADR-1505). Clients saw failed requests. Check outbox capacity and disk health; readiness should already be draining the node."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasConsumerUsageDelivery.md"
+      - eval_time: 10m
+        alertname: FaasUsageCommitAborted
+        exp_alerts: []
+
+  - interval: 1m
     name: "a usage outbox above 80% pages"
     input_series:
       - series: 'gateway_consumer_usage_outbox_pending_bytes{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
@@ -160,16 +186,26 @@ tests:
   - interval: 1m
     name: "a healthy usage outbox stays quiet"
     input_series:
+      - series: 'gateway_usage_commit_aborts_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
+        values: '3x30'
       - series: 'gateway_consumer_usage_outbox_failures_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
         values: '3x30'
       - series: 'gateway_consumer_usage_outbox_pending_bytes{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
         values: '1000000x30'
+      - series: 'gateway_usage_commit_aborts_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
+        values: '3x30'
     alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasUsageCommitAborted
+        exp_alerts: []
       - eval_time: 20m
         alertname: FaasConsumerUsageOutboxAppendFailed
         exp_alerts: []
       - eval_time: 20m
         alertname: FaasConsumerUsageOutboxNearCapacity
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: FaasUsageCommitAborted
         exp_alerts: []
 
   - interval: 1m

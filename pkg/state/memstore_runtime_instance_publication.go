@@ -106,6 +106,9 @@ func (m *MemStore) checkOwnedRuntimePublicationLocked(p RuntimeInstancePublicati
 		return Instance{}, ErrConflict
 	}
 	if p.ExpectedState == string(StateWarm) || p.ExpectedState == string(StateFrozen) {
+		if !m.instanceSnapshotRecoveryFreshLocked(p.InstanceID) {
+			return Instance{}, ErrConflict
+		}
 		proof, ok := m.runtimeInstanceConfigProofs[p.InstanceID]
 		if !ok || proof.WakeID != p.WakeID || proof.NodeID != p.NodeID || proof.Fence != p.ConfigFence {
 			return Instance{}, ErrConflict

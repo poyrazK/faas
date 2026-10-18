@@ -84,6 +84,17 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 	}
 
 	for _, warm := range candidates {
+		recoveryFresh, err := e.snapshotRecoveryFresh(ctx, warm.ID)
+		if err != nil {
+			return WakeResult{}, false, fmt.Errorf("sched: warm pool: snapshot recovery lineage: %w", err)
+		}
+		if !recoveryFresh {
+			if e.discardWarmPromotion(ctx, warm, "operator_cold_boot") {
+				warmCount--
+			}
+			e.observeWarmResume("stale")
+			continue
+		}
 		// A paused row without runtime identity cannot be resumed safely;
 		// destroy and park it so it cannot consume resident capacity forever.
 		if warm.Netns == "" || warm.HostIP == "" {

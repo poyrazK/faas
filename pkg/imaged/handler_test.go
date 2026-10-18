@@ -995,9 +995,11 @@ func TestHandleDeployment_PullDigestSentinel_PersistsErrorCode(t *testing.T) {
 			want: api.CodeStatelessOnlyViolation,
 		},
 		{
-			name: "non-sentinel error leaves code empty (free-text only)",
+			// H10-107: an unmapped failure still gets a stable code;
+			// the free-text error keeps the detail.
+			name: "non-sentinel error gets deploy_failed",
 			err:  errors.New("net down"),
-			want: "",
+			want: api.CodeDeployFailed,
 		},
 	}
 	for _, tc := range cases {

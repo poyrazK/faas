@@ -76,6 +76,9 @@ type projectCloneArtifact struct {
 	DisableStartupCPUBoost  bool            `json:"disable_startup_cpu_boost"`
 	SecretReloadSignal      string          `json:"secret_reload_signal"`
 	SecretReloadSignalKnown bool            `json:"secret_reload_signal_known"`
+	// RuntimeBase travels with the layer it was built for (H10-140). Omitted
+	// when empty so snapshots of other deployments keep their encoding.
+	RuntimeBase string `json:"runtime_base,omitempty"`
 }
 
 func projectCloneArtifactFromDeployment(d Deployment) projectCloneArtifact {
@@ -88,7 +91,8 @@ func projectCloneArtifactFromDeployment(d Deployment) projectCloneArtifact {
 		OverrideMainDependsOn: d.OverrideMainDependsOn, Sidecars: d.Sidecars, Workflows: d.Workflows,
 		FullRootfsAllowAuto: d.FullRootfsAllowAuto, FullRootfsOverride: d.FullRootfsOverride, InferredProfile: d.InferredProfile,
 		ReleaseCommand: d.ReleaseCommand, ReleaseCommandShell: d.ReleaseCommandShell,
-		DisableStartupCPUBoost: d.DisableStartupCPUBoost, SecretReloadSignal: d.SecretReloadSignal, SecretReloadSignalKnown: d.SecretReloadSignalKnown}
+		DisableStartupCPUBoost: d.DisableStartupCPUBoost, SecretReloadSignal: d.SecretReloadSignal, SecretReloadSignalKnown: d.SecretReloadSignalKnown,
+		RuntimeBase: d.RuntimeBase}
 }
 
 func (a projectCloneArtifact) deployment(operationID, target string, settings ProjectEnvironmentWorkloadSettings) Deployment {
@@ -102,7 +106,7 @@ func (a projectCloneArtifact) deployment(operationID, target string, settings Pr
 		FullRootfsAllowAuto: a.FullRootfsAllowAuto, FullRootfsOverride: a.FullRootfsOverride, InferredProfile: a.InferredProfile,
 		ReleaseCommand: a.ReleaseCommand, ReleaseCommandShell: a.ReleaseCommandShell,
 		DisableStartupCPUBoost: a.DisableStartupCPUBoost, SecretReloadSignal: a.SecretReloadSignal, SecretReloadSignalKnown: a.SecretReloadSignalKnown,
-		MinInstances: settings.MinInstances, Status: DeployPending, TrafficPercent: 0, TrafficPercentExplicit: true,
+		RuntimeBase: a.RuntimeBase, MinInstances: settings.MinInstances, Status: DeployPending, TrafficPercent: 0, TrafficPercentExplicit: true,
 		Reason: "environment-clone:" + operationID, DeployedVia: "api", RolloutState: "pending", CanaryPreset: "none"}
 }
 

@@ -375,9 +375,9 @@ func TestMonthlyUsageGB(t *testing.T) {
 // runaway instance doesn't emit a 5-digit percentage into the
 // metric label set).
 func TestCheckQuota(t *testing.T) {
-	const freeQuota = 5   // GB-h
-	const hobbyQuota = 50 // GB-h
-	const proQuota = 250  // GB-h
+	const freeQuota = 20   // GB-h (ADR-1430)
+	const hobbyQuota = 200 // GB-h
+	const proQuota = 1000  // GB-h
 
 	cases := []struct {
 		name        string
@@ -388,7 +388,7 @@ func TestCheckQuota(t *testing.T) {
 		wantQuotaGB int
 	}{
 		// Zero baseline. The aggregator's early-exit path
-		// (`if q <= 0`) must NOT fire here — Free has quota=5,
+		// (`if q <= 0`) must NOT fire here — Free has quota=20,
 		// not 0 — but Percent should still come back as 0.
 		{
 			name:        "free_zero",
@@ -399,7 +399,7 @@ func TestCheckQuota(t *testing.T) {
 			wantQuotaGB: freeQuota,
 		},
 
-		// Under-quota rounding boundary. 4.99/5 = 99.8% rounds
+		// Under-quota rounding boundary. 19.96/20 = 99.8% rounds
 		// to 100% under `int(usedGB*100.0/float64(q) + 0.5)`. The
 		// dashboard distinguishes "100% with no action" from
 		// "100% with stop" via the Action field, so this case
@@ -407,19 +407,19 @@ func TestCheckQuota(t *testing.T) {
 		{
 			name:        "free_under_quota_rounds_to_100",
 			plan:        api.PlanFree,
-			usedGB:      4.99,
+			usedGB:      19.96,
 			wantAction:  "",
 			wantPercent: 100,
 			wantQuotaGB: freeQuota,
 		},
 
-		// Hobby under-quota rounding boundary. 49.9/50 = 99.8%
+		// Hobby under-quota rounding boundary. 199.6/200 = 99.8%
 		// → 100%. Same shape as the Free case above; pinned on
 		// both plans to make the per-plan independence obvious.
 		{
 			name:        "hobby_under_quota_rounds_to_100",
 			plan:        api.PlanHobby,
-			usedGB:      49.9,
+			usedGB:      199.6,
 			wantAction:  "",
 			wantPercent: 100,
 			wantQuotaGB: hobbyQuota,
@@ -430,10 +430,10 @@ func TestCheckQuota(t *testing.T) {
 		{
 			name:        "percent_cap_999_runaway",
 			plan:        api.PlanScale,
-			usedGB:      200_000.0, // 13_333% → cap to 999
+			usedGB:      200_000.0, // 6_667% → cap to 999
 			wantAction:  "warn",
 			wantPercent: 999,
-			wantQuotaGB: 1500,
+			wantQuotaGB: 3000,
 		},
 
 		// 999% cap — exactly at the cap. Verifies the cap is
@@ -441,10 +441,10 @@ func TestCheckQuota(t *testing.T) {
 		{
 			name:        "percent_exactly_at_cap_999",
 			plan:        api.PlanScale,
-			usedGB:      14985.0, // 999.0% — exactly at the cap
+			usedGB:      29970.0, // 999.0% — exactly at the cap
 			wantAction:  "warn",
 			wantPercent: 999,
-			wantQuotaGB: 1500,
+			wantQuotaGB: 3000,
 		},
 
 		// 999% cap — just under. 998.6 % → rounds to 999 (still
@@ -453,14 +453,14 @@ func TestCheckQuota(t *testing.T) {
 		{
 			name:        "percent_just_under_cap_rounds_to_999",
 			plan:        api.PlanScale,
-			usedGB:      14979.0, // 998.6% → 999
+			usedGB:      29958.0, // 998.6% → 999
 			wantAction:  "warn",
 			wantPercent: 999,
-			wantQuotaGB: 1500,
+			wantQuotaGB: 3000,
 		},
 
 		// Pro 25 % under — pure shape, ensures Pro's quota
-		// (250) is wired. The over-quota Pro case is covered by
+		// (1000) is wired. The over-quota Pro case is covered by
 		// TestCheckQuota_Bands.
 		{
 			name:        "pro_at_quota_warns",

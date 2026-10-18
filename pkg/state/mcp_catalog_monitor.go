@@ -114,13 +114,24 @@ func mutateMCPCatalogMonitor(out *api.MCPCatalogMonitorSnapshot, config *api.MCP
 		return ErrInvalidArgument
 	}
 	role = api.CatalogMonitorRole(role)
+	if config != nil {
+		if api.ValidateScope(api.MCPConnectionScope(config.Scope)) != nil {
+			return ErrInvalidArgument
+		}
+		prior, exists := api.CatalogMonitorRoleSnapshot(*out, role)
+		// A role is a durable connection identity. Moving one could reuse another
+		// environment's grant, so create a new role when changing environments.
+		if exists && prior.Config.Revision != "" && api.MCPConnectionScope(prior.Config.Scope) != api.MCPConnectionScope(config.Scope) {
+			return ErrInvalidArgument
+		}
+	}
 	if config != nil && config.Observer != nil && config.Observer.OAuth != nil {
 		views := map[string]api.MCPCatalogMonitorSnapshot{"default": *out}
 		for name, view := range out.Roles {
 			views[name] = view
 		}
 		for name, view := range views {
-			if name != role && view.Config.Observer != nil && view.Config.Observer.OAuth != nil && config.Observer.OAuth.RefreshTokenSecretRef != "" && view.Config.Observer.OAuth.RefreshTokenSecretRef == config.Observer.OAuth.RefreshTokenSecretRef {
+			if name != role && api.MCPConnectionScope(view.Config.Scope) == api.MCPConnectionScope(config.Scope) && view.Config.Observer != nil && view.Config.Observer.OAuth != nil && config.Observer.OAuth.RefreshTokenSecretRef != "" && view.Config.Observer.OAuth.RefreshTokenSecretRef == config.Observer.OAuth.RefreshTokenSecretRef {
 				return ErrInvalidArgument
 			}
 		}

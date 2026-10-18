@@ -14,6 +14,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apptaskattach"
+	"github.com/onebox-faas/faas/pkg/apid/rehearsal"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -104,6 +105,10 @@ func (s *server) createAppTask(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 
+	if problem := rehearsal.ValidateTask(resolved, s.rehearsalCommandsEnabled); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	var attachToken string
 	if resolved.Interactive {
 		if attachToken, problem = apptaskattach.Mint(s.interactiveAppTasksEnabled); problem != nil {
@@ -141,6 +146,10 @@ func (s *server) admitAppTaskWithAttach(r *http.Request, acct state.Account, app
 	}
 	pin, pinErr := s.captureBindingVerificationPin(r, acct, app, deployment, resolved)
 	if pinErr != nil {
+		var problem *api.Problem
+		if errors.As(pinErr, &problem) {
+			return state.AppTask{}, problem
+		}
 		return state.AppTask{}, api.ErrInternal("could not capture binding verification metadata")
 	}
 	if (resolved.VerificationDeploymentID != "" || len(resolved.Command) > 0 && (resolved.Command[0] == api.AppTaskOutboundBindingProbeCommand || resolved.Command[0] == api.AppTaskObjectStorageWriteProbeCommand)) && pin == nil {

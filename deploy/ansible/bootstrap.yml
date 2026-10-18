@@ -115,6 +115,8 @@
     - role: postgres_backup
       when: not (faas_image_seed | default(false) | bool)
     - role: control_plane_service
+    - role: internal_mail_service
+      when: faas_internal_mail_managed | default(false) | bool
     - role: gatewayd_public_service
     - role: public_edge
     - role: s3_gateway_service
@@ -185,6 +187,9 @@
     # first start finds the file at the FAAS_GEOIP_DB_PATH default.
     - role: geoip
     - role: gatewayd_internal_service
+    # ADR-1343: the app edge (Cloudflare Tunnel connector + gatewayd-public in
+    # compute edge mode); removes itself unless the manifest turns it on.
+    - role: gatewayd_public_edge_service
     - role: builderd_service
     - role: compute_only_service
     - role: profiled_service

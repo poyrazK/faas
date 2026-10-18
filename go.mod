@@ -53,6 +53,7 @@ require (
 	github.com/stripe/stripe-go v70.15.0+incompatible
 	github.com/testcontainers/testcontainers-go/modules/kafka v0.44.0
 	github.com/zalando/go-keyring v0.2.8
+	go.etcd.io/bbolt v1.5.0
 	go.opentelemetry.io/collector/pdata v1.60.0
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.71.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.71.0
@@ -102,6 +103,7 @@ require (
 	github.com/cncf/xds/go v0.0.0-20260202195803-dba9d589def2 // indirect
 	github.com/corazawaf/libinjection-go v0.3.3 // indirect
 	github.com/dlclark/regexp2/v2 v2.2.1 // indirect
+	github.com/emersion/go-msgauth v0.7.0
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect

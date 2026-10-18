@@ -1,0 +1,25 @@
+# ADR-1311: Provider collection for exported statement invoices
+
+- **Status:** accepted
+- **Date:** 2026-10-14
+- **Decision:** A billing connection can ask its provider to collect exported invoices, instead of always leaving drafts (ADR-1502, ADR-1507). This supersedes "Gregale never finalizes, sends or charges an invoice" in ADR-1502 and ADR-1504 for connections that opt in.
+  - **Collection modes.** `PUT /v1/account/billing-connections/{provider}` takes `collection` and, for `send`, `days_until_due` (1–365, default 30):
+    - `none` (the default): unchanged. Stripe and Paddle get drafts; Lago issues the invoice without charging it.
+    - `send`: Stripe only. The invoice uses `collection_method=send_invoice`. Once every item is on it, Gregale finalizes it with `auto_advance=true`, and Stripe emails it to the customer, due after `days_until_due`.
+    - `charge`: Stripe and Lago.
+      - Stripe: the invoice is finalized the same way with `collection_method=charge_automatically`. Stripe charges the customer's default payment method and retries by the account's own Stripe settings.
+      - Lago: the invoice is created without `skip_psp`, so Lago charges it through the operator's connected payment provider.
+  - **Paddle.** Paddle stays `none`. Billing a manually collected transaction needs a customer address the export does not have, and charging a saved method needs a subscription.
+  - **Fixed per export.** Each export records the mode and due days it began with, so a resumed export keeps them even if the connection changes. The export response shows the mode.
+  - **Order.** Stripe finalizes after the last item and before the handoff is recorded. An export completes only once the invoice is finalized. A retry checks the invoice and finalizes only a draft, under an idempotency key derived from the export.
+- **Why:** Operators who already trust their own Stripe or Lago setup asked Gregale to finish the job. Usage statements, billing runs (ADR-1503) and payment tracking (ADR-1504) were in place, but every invoice still had to be finalized by hand.
+- **Consequences:**
+  - **Money stays with the provider.** Collection happens entirely in the operator's own provider account, with its customers, payment methods, dunning and emails. Gregale only asks for it, never holds or moves money, and never stores payment details.
+  - **Customer-facing actions.** With `send` or `charge`, an export or billing run reaches the operator's customers directly. Mistakes in prices or customer mapping are no longer caught at a draft review, so the mode is opt-in and `none` stays the default.
+  - **Adjustments.** Re-rated adjustments with negative items (ADR-951, ADR-975) finalize like any invoice in Stripe. Stripe never charges a total below zero, and Gregale never exports one.
+  - **Payment status.** The existing status sync (ADR-1504) follows the invoice from `open` to `paid`, overdue or `uncollectible`, and the overdue digest reports failed charges.
+  - **Key scope.** A restricted Stripe key needs write access to invoices to finalize them, as it already does to create them.
+- **Rejected alternatives:**
+  - Charging through Gregale's own Stripe account (Connect destination charges) would make Gregale part of the money flow, with the merchant and compliance duties that brings.
+  - A per-export `collection` flag would let a billing run mix modes across customers; one setting per connection keeps a run predictable.
+  - Calling Stripe's `pay` endpoint right after finalizing would charge at once but bypass the account's own retry and email settings, which `auto_advance` follows.

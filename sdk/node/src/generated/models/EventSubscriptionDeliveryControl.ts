@@ -5,10 +5,15 @@
 import type { EventCircuitBreakerResponse } from './EventCircuitBreakerResponse.js';
 import type { EventSubscriptionCapacityCommandBudget } from './EventSubscriptionCapacityCommandBudget.js';
 import type { EventSubscriptionCapacityCommandReceipt } from './EventSubscriptionCapacityCommandReceipt.js';
+import type { EventSubscriptionRateLimit } from './EventSubscriptionRateLimit.js';
 /**
  * Live operator controls for a captured application subscription. Pending and processing counts include publication and historical backfill recipients retained in the backlog.
  */
 export type EventSubscriptionDeliveryControl = {
+  /**
+   * Optional token-bucket observation; absent on older responses.
+   */
+  rate_limit?: EventSubscriptionRateLimit;
   /**
    * Optional complete receipt budget in read-only delivery-control status. Mutation responses may omit it; absence means unknown.
    */

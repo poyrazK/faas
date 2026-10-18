@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Lifecycle alerts · Gregale</title><style nonce="{{.Nonce}}">body{font:16px system-ui;background:#111827;color:#e5e7eb;margin:0}main{max-width:900px;margin:32px auto;padding:24px}a{color:#93c5fd}section,fieldset{padding:20px;background:#1f2937;border:1px solid #6b7280;border-radius:8px;margin:20px 0}label{display:block;margin:10px 0}input,select,button{padding:8px;margin:4px;background:#111827;color:#e5e7eb;border:1px solid #6b7280;border-radius:5px}</style></head><body><main>{{with .Data}}
+<a href="/dashboard/apps/{{.AppSlug}}/issues">← Issues</a><h1>New-issue and regression alerts</h1>
+<p>Choose which environments can send native Slack alerts and how soon the same issue can alert again. New issues and regressions share one cooldown per issue group, across teams and channels.</p>
+{{if .Saved}}<p role="status">Lifecycle alert policy saved.</p>{{end}}
+{{if .Draft}}<p role="status">Unsaved draft. Preview does not save settings, send messages or consume a cooldown.</p>{{end}}
+<form method="post"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><input type="hidden" name="expected_revision" value="{{.Policy.Revision}}">
+<label>Environments (comma-separated; blank means all)<input name="environments" value="{{.EnvironmentsText}}" placeholder="production, staging"></label>
+<p>Use exact names. Up to {{.MaxEnvironments}} environments.</p>
+<label>Shared cooldown (seconds; zero disables throttling)<input type="number" name="cooldown_seconds" value="{{.Policy.CooldownSeconds}}" min="0" max="{{.MaxCooldown}}" required></label>
+<button name="action" value="save">Save policy</button>
+<fieldset><legend>Preview a draft for an existing issue</legend><label>Issue ID<input name="issue_id" value="{{.IssueID}}"></label><label>Hypothetical event<select name="event"><option value="created" {{if eq .Event "created"}}selected{{end}}>New issue</option><option value="regressed" {{if eq .Event "regressed"}}selected{{end}}>Regression</option></select></label><button name="action" value="preview">Preview policy</button></fieldset></form>
+{{with .Preview}}<section aria-label="Policy preview"><h2>Policy preview</h2><p>Issue <code>{{.IssueID}}</code> · environment <strong>{{.Environment}}</strong></p>{{if eq .Reason "environment_excluded"}}<p>This draft excludes the issue's environment.</p>{{else if eq .Reason "cooldown"}}<p>This issue is in cooldown until {{.NextEligibleAt.Format "2006-01-02 15:04:05 UTC"}}.</p>{{else}}<p>This draft permits the event.</p>{{end}}</section>{{end}}
+<p>Preview checks this draft's environment filter and cooldown only. Delivery also requires the event to be enabled in <a href="/dashboard/apps/{{.AppSlug}}/issues/tracker-notifications#application-slack-settings">native Slack settings</a>, an eligible team destination and queue capacity. Ignore, response and sender checks still apply.</p>
+<p>Only admitted new-issue or regression alerts consume a cooldown. Policy edits preserve cooldown history and affect future alerts; they do not replay events or recall queued messages. Frequency alerts, customer-impact alerts, reminders, tracker notices and lifecycle webhooks keep their existing policies.</p>
+{{end}}</main></body></html>

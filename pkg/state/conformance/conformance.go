@@ -90,10 +90,12 @@ func Run(t *testing.T, open Open) {
 		{"service_recovery_candidates_are_active_owned_and_bounded", testServiceRecoveryCandidates},
 		{"ownership_recovery_pages_are_scoped_exclusive_and_bounded", testOwnershipRecoveryPages},
 		{"ownership_recovery_transfer_fences_health_cooldown_and_peers", testOwnershipRecoveryTransfer},
+		{"scenario_rehearsal_reads_for_unenrolled_app", testScenarioRehearsalReadsForUnenrolledApp},
 		{"usage_rollup_merges_minutes", testUsageRollup},
 		{"archived_logs_are_scoped_to_the_owning_app", testInstanceLogsOwnedByApp},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
 		{"live_state_readers_count_running_instances", testLiveStateReaders},
+		{"live_instances_by_node_are_the_nodes_live_rows", testLiveInstancesByNode},
 		{"frozen_instance_holds_ram_without_concurrency", testFrozenInstanceState},
 		{"beta_first_success_includes_parked_instances", testBetaFirstSuccess},
 		{"account_credits_issue_list_and_consume", testAccountCredits},
@@ -1843,7 +1845,7 @@ func testInvoiceRefunds(t *testing.T, fx *Fixture) {
 		TotalCents:        1000,
 		AmountPaidCents:   1000,
 		Plan:              api.PlanPro,
-		Currency:          "eur",
+		Currency:          api.BillingCurrencyLower,
 	}); err != nil {
 		t.Fatalf("UpsertInvoice: %v", err)
 	}
@@ -1972,7 +1974,7 @@ func testInvoiceHistoryImport(t *testing.T, fx *Fixture) {
 		Number:            "HISTORY-001", Status: "paid",
 		PeriodStart: now.Add(-30 * 24 * time.Hour), PeriodEnd: now,
 		SubtotalCents: 900, TaxCents: 100, TotalCents: 1000, AmountPaidCents: 1000,
-		Plan: state.InvoicePlanUnknown, Currency: "eur", PDFAvailable: true,
+		Plan: state.InvoicePlanUnknown, Currency: api.BillingCurrencyLower, PDFAvailable: true,
 		Details: &state.InvoiceDetails{PaymentTerms: "Net 30"},
 	}
 
@@ -2018,7 +2020,7 @@ func testInvoiceDetailRefresh(t *testing.T, fx *Fixture) {
 		ProviderInvoiceID: "refresh-" + uuid.NewString(),
 		Status:            "paid", PeriodStart: now.Add(-30 * 24 * time.Hour), PeriodEnd: now,
 		SubtotalCents: 1000, TotalCents: 1000, AmountPaidCents: 1000,
-		Plan: api.PlanPro, Currency: "eur",
+		Plan: api.PlanPro, Currency: api.BillingCurrencyLower,
 	}
 	if err := fx.Store.UpsertInvoice(fx.Ctx, inv); err != nil {
 		t.Fatalf("UpsertInvoice: %v", err)

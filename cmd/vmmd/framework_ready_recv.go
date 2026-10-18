@@ -487,8 +487,12 @@ func (r *FrameworkReadyReceiver) dispatchDiskUsage(instance string, wire diskUsa
 }
 
 func (r *FrameworkReadyReceiver) dispatchEventPublish(instance string, payload []byte) {
-	if r.eventPublisher == nil {
+	if r.eventPublisher == nil || r.mgr == nil {
 		r.log.Warn("event publish receiver unavailable", "instance", instance)
+		return
+	}
+	if _, _, err := r.mgr.InstanceExternalActionIdentity(r.ctx, instance); err != nil {
+		r.log.Warn("event publish identity unavailable", "instance", instance, "err", err)
 		return
 	}
 	if err := r.eventPublisher(r.ctx, instance, payload); err != nil {

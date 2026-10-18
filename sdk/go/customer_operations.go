@@ -43,6 +43,15 @@ type (
 	OperationArtifactRequest                 = api.OperationArtifactRequest
 	OperationDeliveryResponse                = api.OperationDeliveryResponse
 	OperationResponse                        = api.OperationResponse
+	OperationDataRepair                      = api.OperationDataRepair
+	OperationApprovalSpec                    = api.OperationApprovalSpec
+	OperationWaitingState                    = api.OperationWaitingState
+	OperationApprovalRequest                 = api.OperationApprovalRequest
+	OperationApprovalActor                   = api.OperationApprovalActor
+	OperationApprovalPayload                 = api.OperationApprovalPayload
+	OperationApprovalDecision                = api.OperationApprovalDecision
+	OperationLimits                          = api.OperationLimits
+	OperationUsage                           = api.OperationUsage
 	OperationSummary                         = api.OperationSummary
 	OperationDeliverySummary                 = api.OperationDeliverySummary
 	OperationListOptions                     = api.OperationListOptions
@@ -148,6 +157,7 @@ const (
 	OperationFailed                   = api.OperationFailed
 	OperationCancelled                = api.OperationCancelled
 	OperationRequiresReconciliation   = api.OperationRequiresReconciliation
+	OperationWaiting                  = api.OperationWaiting
 	OperationRecoveryReconcile        = api.OperationRecoveryReconcile
 	OperationRecoverySafeRetry        = api.OperationRecoverySafeRetry
 	OperationOwnerPlatformTenant      = api.OperationOwnerPlatformTenant

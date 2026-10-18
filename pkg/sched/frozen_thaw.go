@@ -68,6 +68,14 @@ func (e *Engine) promoteFrozenInstanceLocked(ctx context.Context, app state.App,
 		return WakeResult{}, false, nil
 	}
 	for _, candidate := range candidates {
+		fresh, err := e.snapshotRecoveryFresh(ctx, candidate.ins.ID)
+		if err != nil {
+			return WakeResult{}, false, fmt.Errorf("sched: frozen thaw: snapshot recovery lineage: %w", err)
+		}
+		if !fresh {
+			e.parkFrozenLocked(ctx, candidate.ins, "operator_cold_boot")
+			continue
+		}
 		result, thawed, err := e.thawFrozenLocked(ctx, thawer, app, acct, limits, dep, values, candidate, timing)
 		if err != nil {
 			return WakeResult{}, false, err

@@ -49,6 +49,9 @@ type BackendConfig struct {
 	Endpoint                     string   `json:"endpoint"`
 	S3Region                     string   `json:"s3_region"`
 	PathStyle                    bool     `json:"path_style"`
+	OwnedNodeReceipts            bool     `json:"owned_node_receipts,omitempty"`
+	OwnedNodeSettlements         bool     `json:"owned_node_settlements,omitempty"`
+	OwnedNodeUsageCounters       bool     `json:"owned_node_usage_counters,omitempty"`
 	AccessKeyEnv                 string   `json:"access_key_env"`
 	SecretKeyEnv                 string   `json:"secret_key_env"`
 	SessionTokenEnv              string   `json:"session_token_env,omitempty"`
@@ -160,6 +163,15 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 	validGCSServiceAccount := regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,126}@[a-z0-9.-]+\.gserviceaccount\.com$`)
 	encryptionOwners := map[string]string{}
 	for _, b := range c.Backends {
+		if b.OwnedNodeUsageCounters && !b.OwnedNodeReceipts {
+			return nil, errors.New("object storage: owned node usage counters require owned node receipts")
+		}
+		if b.OwnedNodeSettlements && !b.OwnedNodeReceipts {
+			return nil, errors.New("object storage: owned node settlements require owned node receipts")
+		}
+		if b.OwnedNodeReceipts && (b.Driver != "s3" || b.ObjectLock.Enabled || len(b.Encryption.Algorithms) != 0 || len(b.Encryption.Keys) != 0) {
+			return nil, errors.New("object storage: owned node receipts require an S3 backend without encryption or Object Lock")
+		}
 		if b.UsageReportsPath != "" {
 			if !filepath.IsAbs(b.UsageReportsPath) {
 				return nil, errors.New("object storage: usage_reports_path must be absolute")
@@ -322,6 +334,9 @@ func Load(getenv func(string) string) (*Registry, error) {
 	var extra any
 	if dec.Decode(&extra) != io.EOF {
 		return nil, errors.New("object storage: trailing configuration data")
+	}
+	if err := validateLoadedOwnedNodes(c, getenv); err != nil {
+		return nil, err
 	}
 	return NewRegistry(c, getenv, map[string]Factory{"gcs": NewGCS, "s3": NewS3})
 }

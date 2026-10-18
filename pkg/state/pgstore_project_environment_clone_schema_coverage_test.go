@@ -51,6 +51,10 @@ func TestPgCloneSchemaRegistryCoversMigratedApplicationTablesAndFailsBeforeReser
 		t.Fatalf("schema inventory is incomplete: %d/%d %v", len(coverage.Tables), len(policies), err)
 	}
 	for _, want := range []state.ProjectEnvironmentCloneCoverageBlocker{
+		{Table: "product_control_heads", Code: "isolated_strategy_unavailable"},
+		{Table: "product_control_revisions", Code: "isolated_strategy_unavailable"},
+		{Table: "product_control_customers", Code: "isolated_strategy_unavailable"},
+		{Table: "product_control_help_requests", Code: "isolated_data_strategy_unavailable"},
 		{Table: "app_binding_release_policies", Code: "isolated_strategy_unavailable"},
 		{Table: "app_binding_release_policy_history", Code: "isolated_strategy_unavailable"},
 		{Table: "environment_external_field_owners", Code: "isolated_strategy_unavailable"},
@@ -75,6 +79,12 @@ func TestPgCloneSchemaRegistryCoversMigratedApplicationTablesAndFailsBeforeReser
 		{Table: "exclusive_work_trigger_bindings", Code: "isolated_strategy_unavailable"},
 		{Table: "app_udp_listeners", Code: "isolated_strategy_unavailable"},
 		{Table: "app_issue_impact_alert_policies", Code: "isolated_strategy_unavailable"},
+		{Table: "app_issue_frequency_alert_policies", Code: "isolated_strategy_unavailable"},
+		{Table: "issue_tracker_auto_sync", Code: "isolated_strategy_unavailable"},
+		{Table: "issue_tracker_linear_connections", Code: "isolated_strategy_unavailable"},
+		{Table: "issue_slack_installations", Code: "isolated_strategy_unavailable"},
+		{Table: "issue_slack_interaction_policies", Code: "isolated_strategy_unavailable"},
+		{Table: "issue_slack_routing_policies", Code: "isolated_strategy_unavailable"},
 		{Table: "issue_ingest_tokens", Code: "isolated_strategy_unavailable"},
 	} {
 		assertCloneCoverageBlocker(t, coverage, want)

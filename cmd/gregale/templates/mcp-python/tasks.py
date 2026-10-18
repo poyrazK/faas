@@ -227,6 +227,7 @@ class DurableTaskRuntime:
 
         try:
             from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+            from psycopg.conninfo import conninfo_to_dict
             from psycopg.rows import dict_row
             from psycopg_pool import ConnectionPool
         except ImportError as exc:
@@ -335,20 +336,19 @@ class DurableTaskRuntime:
             database_url,
             min_size=1,
             max_size=max(4, self.concurrency + 2),
-            kwargs={"row_factory": dict_row, "connect_timeout": 5, "options": "-c statement_timeout=10000"},
+            kwargs={"row_factory": dict_row, "connect_timeout": 5, "options": conninfo_to_dict(database_url).get("options", "") + " -c statement_timeout=10000"},
             open=False,
         )
         try:
             self.pool.open(wait=True, timeout=10)
+            check_task_schema(self.pool)
             if self.role == "observer":
                 self.queue_metrics()
-            else:
-                self._initialize()
         except Exception:
             self.pool.close()
             if self.role == "observer":
                 raise ValueError("MCP task observer health check failed; verify its read-only database grants") from None
-            raise ValueError("could not initialize the durable PostgreSQL MCP task store") from None
+            raise ValueError("MCP Task schema is unavailable or incompatible; run python task_schema.py apply with the migration account") from None
         self._stopping = threading.Event()
         self._notification_thread = None
         self._worker = None
@@ -677,29 +677,6 @@ class DurableTaskRuntime:
             ).fetchone()
         if worker_table is None or not worker_table["table_exists"] or worker_table["can_write"]:
             raise ValueError("MCP task observer requires read-only PostgreSQL access")
-
-    def _initialize(self):
-        statements = [
-            CREATE_SCHEMA,
-            CREATE_WORKER_HANDLERS_SCHEMA,
-            "ALTER TABLE gregale_mcp_task_worker_handlers ADD COLUMN IF NOT EXISTS deployment_id text NOT NULL DEFAULT ''",
-            "CREATE INDEX IF NOT EXISTS gregale_mcp_task_worker_handlers_live_idx ON gregale_mcp_task_worker_handlers(namespace,tool_name,handler_version,heartbeat_at DESC)",
-            "CREATE INDEX IF NOT EXISTS gregale_mcp_task_worker_handlers_stale_idx ON gregale_mcp_task_worker_handlers(namespace,heartbeat_at)",
-            "ALTER TABLE gregale_mcp_tasks ADD COLUMN IF NOT EXISTS input_state_encrypted bytea, ADD COLUMN IF NOT EXISTS input_methods text[] NOT NULL DEFAULT '{}', ADD COLUMN IF NOT EXISTS resume_pending boolean NOT NULL DEFAULT false",
-            "ALTER TABLE gregale_mcp_tasks DROP CONSTRAINT IF EXISTS gregale_mcp_tasks_status_check",
-            "ALTER TABLE gregale_mcp_tasks ADD CONSTRAINT gregale_mcp_tasks_status_check CHECK (status IN ('queued','running','input_required','completed','cancelled','failed'))",
-            "ALTER TABLE gregale_mcp_tasks DROP CONSTRAINT IF EXISTS gregale_mcp_tasks_input_state_check",
-            "ALTER TABLE gregale_mcp_tasks ADD CONSTRAINT gregale_mcp_tasks_input_state_check CHECK (status <> 'input_required' OR input_state_encrypted IS NOT NULL)",
-            "CREATE INDEX IF NOT EXISTS gregale_mcp_tasks_queue_idx ON gregale_mcp_tasks(namespace,created_at,task_id) WHERE status IN ('queued','running')",
-            "CREATE INDEX IF NOT EXISTS gregale_mcp_tasks_admission_idx ON gregale_mcp_tasks(namespace,owner_hash,expires_at) WHERE status IN ('queued','running','input_required')",
-            CREATE_TASK_NOTIFY_FUNCTION,
-            CREATE_TASK_NOTIFY_TRIGGER,
-        ]
-        with self.pool.connection() as connection:
-            with connection.transaction():
-                connection.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))", ("gregale_mcp_tasks",))
-                for statement in statements:
-                    connection.execute(statement)
 
     def _owner_hashes(self, identity):
         if not getattr(identity, "subject", ""):
@@ -1284,3 +1261,64 @@ register_task_handler(
     validate=_validate_build_report_task,
     execute=_execute_build_report,
 )
+
+
+def migrate_task_schema(pool):
+    statements = [
+        CREATE_SCHEMA,
+        CREATE_WORKER_HANDLERS_SCHEMA,
+        "ALTER TABLE gregale_mcp_task_worker_handlers ADD COLUMN IF NOT EXISTS deployment_id text NOT NULL DEFAULT ''",
+        "CREATE INDEX IF NOT EXISTS gregale_mcp_task_worker_handlers_live_idx ON gregale_mcp_task_worker_handlers(namespace,tool_name,handler_version,heartbeat_at DESC)",
+        "CREATE INDEX IF NOT EXISTS gregale_mcp_task_worker_handlers_stale_idx ON gregale_mcp_task_worker_handlers(namespace,heartbeat_at)",
+        "ALTER TABLE gregale_mcp_tasks ADD COLUMN IF NOT EXISTS input_state_encrypted bytea, ADD COLUMN IF NOT EXISTS input_methods text[] NOT NULL DEFAULT '{}', ADD COLUMN IF NOT EXISTS resume_pending boolean NOT NULL DEFAULT false",
+        "ALTER TABLE gregale_mcp_tasks DROP CONSTRAINT IF EXISTS gregale_mcp_tasks_status_check",
+        "ALTER TABLE gregale_mcp_tasks ADD CONSTRAINT gregale_mcp_tasks_status_check CHECK (status IN ('queued','running','input_required','completed','cancelled','failed'))",
+        "ALTER TABLE gregale_mcp_tasks DROP CONSTRAINT IF EXISTS gregale_mcp_tasks_input_state_check",
+        "ALTER TABLE gregale_mcp_tasks ADD CONSTRAINT gregale_mcp_tasks_input_state_check CHECK (status <> 'input_required' OR input_state_encrypted IS NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS gregale_mcp_tasks_queue_idx ON gregale_mcp_tasks(namespace,created_at,task_id) WHERE status IN ('queued','running')",
+        "CREATE INDEX IF NOT EXISTS gregale_mcp_tasks_admission_idx ON gregale_mcp_tasks(namespace,owner_hash,expires_at) WHERE status IN ('queued','running','input_required')",
+        CREATE_TASK_NOTIFY_FUNCTION,
+        CREATE_TASK_NOTIFY_TRIGGER,
+    ]
+    with pool.connection() as connection:
+        with connection.transaction():
+            connection.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))", ("gregale_mcp_tasks",))
+            check_migration_schema(connection)
+            installed = connection.execute("SELECT to_regclass('gregale_mcp_task_starter_schema') IS NOT NULL AS installed").fetchone()["installed"]
+            if installed:
+                row = connection.execute("SELECT version FROM gregale_mcp_task_starter_schema WHERE id=1").fetchone()
+                if row is None or row["version"] != 1:
+                    raise ValueError("unsupported MCP Task starter schema version")
+            connection.execute("CREATE TABLE IF NOT EXISTS gregale_mcp_task_starter_schema (id integer PRIMARY KEY CHECK (id=1), version integer NOT NULL CHECK (version>0))")
+            connection.execute("INSERT INTO gregale_mcp_task_starter_schema (id,version) VALUES (1,1) ON CONFLICT (id) DO NOTHING")
+            for statement in statements:
+                connection.execute(statement)
+
+
+def check_migration_schema(connection):
+    row = connection.execute("""SELECT NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_namespace n,
+        LATERAL pg_catalog.aclexplode(COALESCE(n.nspacl,pg_catalog.acldefault('n',n.nspowner))) a
+        WHERE n.nspname=current_schema() AND a.grantee=0 AND a.privilege_type='CREATE')
+        AND current_schema() IS NOT NULL AS trusted""").fetchone()
+    if not row["trusted"]:
+        raise ValueError("MCP Task migrations require a schema without PUBLIC CREATE")
+    connection.execute("SELECT set_config('search_path',quote_ident(current_schema()) || ',pg_catalog',true)")
+
+
+def check_task_schema(pool):
+    """Read installed schema state without DDL or a migration credential."""
+    with pool.connection() as connection:
+        row = connection.execute("SELECT version FROM gregale_mcp_task_starter_schema WHERE id=1").fetchone()
+        if row is None or row["version"] != 1:
+            raise ValueError("unsupported MCP Task starter schema version")
+        connection.execute("""SELECT namespace,task_id,owner_hash,tool_name,handler_version,arguments_encrypted,status,
+            result_encrypted,error_encrypted,input_state_encrypted,input_methods,created_at,updated_at,
+            expires_at,attempt_count,resume_pending,lease_token,lease_expires_at,cancel_requested_at
+            FROM gregale_mcp_tasks LIMIT 0""")
+        connection.execute("SELECT namespace,worker_id,tool_name,handler_version,deployment_id,heartbeat_at FROM gregale_mcp_task_worker_handlers LIMIT 0")
+        row = connection.execute("""SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger
+            WHERE tgrelid='gregale_mcp_tasks'::regclass AND tgname='gregale_mcp_tasks_notify'
+            AND NOT tgisinternal AND tgenabled IN ('O','A')) AS ready""").fetchone()
+        if not row["ready"]:
+            raise ValueError("MCP Task notification trigger is unavailable")

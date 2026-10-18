@@ -1626,6 +1626,10 @@ const (
 	// Distinct from app_startup_timeout (still running, never ready) and
 	// app_not_listening (running, nothing bound).
 	CodeAppStartupCrash = "app_startup_crash"
+	// CodeExecutionModeConflict means the workload's startup behavior
+	// contradicts its declared execution mode: a worker that bound a port or
+	// exited, or a job that served. Customer-caused, like app_startup_crash.
+	CodeExecutionModeConflict = "execution_mode_conflict"
 	// CodeDeploymentSmokeFailed means the public post-readiness health
 	// request did not complete successfully. It is distinct from guest boot
 	// failures so operators can tell serving-path regressions from image
@@ -2035,7 +2039,7 @@ func StatusForCode(code string) int {
 		CodeSecurityQuarantineRecoveryBlocked, CodeDevSourceDiverged,
 		CodeInstanceNotFreezable, CodeInstanceBusy, CodeFrozenInstanceRefused, CodeFrozenCompressUnavailable:
 		return http.StatusConflict
-	case CodeMCPAccessPolicyChanged, CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeMCPTaskCompatibilityGate, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
+	case CodeMCPReadinessRequired, CodeMCPAccessPolicyChanged, CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeMCPTaskCompatibilityGate, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected
 		// serving revision. Sits next to CodeConflict /
 		// CodeDomainNotVerified / CodeNoRollbackTarget because the
@@ -2124,6 +2128,7 @@ func StatusForCode(code string) int {
 		CodeDepInstallFailed,
 		CodeAppStartupTimeout,
 		CodeAppStartupCrash,
+		CodeExecutionModeConflict,
 		CodeDeploymentSmokeFailed,
 		CodeReleaseCommandFailed,
 		CodeReleasePhaseUnavailable:
@@ -6686,7 +6691,7 @@ func ErrMCPGatewayPromotion(code string) *Problem {
 
 func IsMCPPromotionConditionFailure(code string) bool {
 	switch code {
-	case CodeMCPAdmissionEvidenceUnavailable, CodeMCPAccessPolicyChanged, CodeMCPAccountRevisionChanged, CodeMCPGatewayEvidenceUnavailable, CodeMCPGatewayEvidenceStale, CodeMCPGatewayReplayPending:
+	case CodeMCPReadinessRequired, CodeMCPAdmissionEvidenceUnavailable, CodeMCPAccessPolicyChanged, CodeMCPAccountRevisionChanged, CodeMCPGatewayEvidenceUnavailable, CodeMCPGatewayEvidenceStale, CodeMCPGatewayReplayPending:
 		return true
 	}
 	return false

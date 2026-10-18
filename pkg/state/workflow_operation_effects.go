@@ -11,9 +11,10 @@ import (
 )
 
 type workflowOperationStoredEffect struct {
-	OperationID string
-	Effect      exclusivework.Effect
-	Record      api.OperationEffectRecord
+	ReceiverSHA256 string
+	OperationID    string
+	Effect         exclusivework.Effect
+	Record         api.OperationEffectRecord
 }
 
 func prepareManagedWorkflowStepCommit(in ManagedWorkflowStepCommit) (ManagedWorkflowStepCommit, error) {
@@ -91,6 +92,9 @@ func managedWorkflowEffectDestinationMatches(accountID, appID, platformTenantID 
 
 func workflowEffectStatusRecord(effect workflowOperationStoredEffect, delivery AppWebhookDelivery, deliveryExists, receiverExists bool) api.OperationEffectRecord {
 	record := effect.Record
+	if record.RehearsalRunID != "" {
+		return record
+	}
 	if !deliveryExists || !receiverExists || delivery.WebhookID != record.WebhookID || delivery.Event != OperationEffectEvent {
 		record.Status = "unavailable"
 		return record

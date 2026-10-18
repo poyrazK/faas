@@ -1129,6 +1129,8 @@ func (l *Loop) Run(ctx context.Context) error {
 	primeRecoveryT := time.NewTicker(primeRecoveryInterval)
 	defer primeRecoveryT.Stop()
 	l.dispatchPrimeRecovery(ctx)
+	workerStartupT := time.NewTimer(workerStartupReconcileDelay)
+	defer workerStartupT.Stop()
 
 	// Make sure the triggerWakeup channel exists before any
 	// wakeup can race the first select iteration. WakeupTriggers
@@ -1230,6 +1232,8 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-workflowRetentionFirst:
 			l.runWorkflowRetention(ctx)
 			workflowRetentionFirst = nil
+		case <-workerStartupT.C:
+			l.dispatchWorkerStartupReconcile(ctx)
 		case <-workflowRetentionTick(workflowRetentionT):
 			l.runWorkflowRetention(ctx)
 		case <-retentionFirst:
@@ -1272,6 +1276,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			// table (42P01) for fresh clusters pre-migration.
 			l.runOperatorIntentCompletenessTick(ctx)
 		case <-triggerT.C:
+			l.dispatchScenarioWorkerFaults(ctx)
+			l.dispatchScenarioSuspendResumes(ctx)
 			// Issue #757 / ADR-100: trigger dispatch tick. 1s
 			// safety cadence; WakeupTriggers advances the
 			// effective interval when a broker ack/nack wakes the
@@ -2448,7 +2454,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 		var all []state.Instance
 		var err error
 		if owner := l.engine.OwnerNodeID(); owner != "" {
-			all, err = store.ListInstancesByNodeID(ctx, owner)
+			all, err = store.ListLiveInstancesByNodeID(ctx, owner)
 		} else {
 			all, err = store.ListAllInstances(ctx)
 		}

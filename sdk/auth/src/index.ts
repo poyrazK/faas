@@ -2,6 +2,7 @@
 // Sign-up, sign-in, passkeys, sessions with single-flight refresh, the hosted
 // pages, and the /authz/v1 organization and authorization API. No
 // dependencies.
+import { baseURL } from './url.js'
 
 export type Session = Readonly<{
   accessToken: string
@@ -38,11 +39,32 @@ export type Passkey = Readonly<{ id: string; friendly_name?: string | null; crea
 /** Sign-up and sign-in calls take the CAPTCHA token when the Auth app requires one. */
 export type Captcha = { captchaToken?: string }
 
-export type AuthEvent = 'SIGNED_IN' | 'TOKEN_REFRESHED' | 'SIGNED_OUT'
+export type AuthEvent = 'SIGNED_IN' | 'TOKEN_REFRESHED' | 'SIGNED_OUT' | 'MFA_VERIFIED'
+
+/** A second factor: an authenticator app, a phone, a passkey or recovery codes. */
+export type Factor = Readonly<{ id: string; factor_type: string; status: string; friendly_name?: string; phone?: string; created_at?: string; [key: string]: unknown }>
+export type TOTPEnrollment = Readonly<{ id: string; type: 'totp'; friendly_name?: string; totp: Readonly<{ qr_code: string; secret: string; uri: string }> }>
+export type FactorChallenge = Readonly<{ id: string; type: string; expires_at?: number }>
+export type RecoveryCodes = Readonly<{ id: string; type: string; total: number; remaining?: number; codes?: readonly string[] }>
+export type AssuranceLevel = Readonly<{ current: 'aal1' | 'aal2' | null; next: 'aal1' | 'aal2' | null }>
+
+/** aal reads the assurance level of an access token without verifying it. */
+function aal(token: string): 'aal1' | 'aal2' {
+  try {
+    const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+    return JSON.parse(atob(part + '='.repeat((4 - part.length % 4) % 4))).aal === 'aal2' ? 'aal2' : 'aal1'
+  } catch { return 'aal1' }
+}
+
+/** A third-party app (an OAuth client) the user allowed to use their account. */
+export type ConnectedApp = Readonly<{ client: { id: string; name: string; uri?: string; logo_uri?: string }; scopes: string[]; granted_at: string }>
 
 export type Organization = Readonly<{ id: string; slug: string; name: string; role?: string; created_at: string }>
 export type Member = Readonly<{ user_id: string; email: string; role: string; created_at: string }>
 export type Invitation = Readonly<{ id: string; email: string; role: string; expires_at: string; created_at?: string }>
+/** An email domain an organization proves it controls with a DNS TXT record. */
+export type OrgDomain = Readonly<{ domain: string; verified: boolean; verified_at: string | null; record: Readonly<{ type: 'TXT'; name: string; value: string }> }>
+export type OrgSSOProvider = Readonly<{ id: string; entity_id: string | null; metadata_url: string | null; domains: readonly string[]; role: string }>
 export type CreatedInvitation = Invitation & Readonly<{ delivered: boolean; token?: string }>
 
 /** A failed request. `code` is the stable server code, or `http_<status>`. */
@@ -70,13 +92,6 @@ function defaultStore(): SessionStore {
   return { get: () => storage.getItem(storageKey), set: v => storage.setItem(storageKey, v), remove: () => storage.removeItem(storageKey) }
 }
 
-function baseURL(value: string): string {
-  const url = new URL(value)
-  if (url.username || url.password || url.search || url.hash) throw new Error('Auth URL must not contain credentials, a query or a fragment')
-  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) throw new Error('Auth requires HTTPS')
-  return url.origin
-}
 
 type TokenResponse = { access_token: string; refresh_token: string; expires_in: number; expires_at?: number; user?: User }
 
@@ -221,11 +236,40 @@ export function createAuthClient(options: AuthClientOptions) {
       // Email confirmation is pending; GoTrue returns the user only.
       return { session: null, user: body ?? null }
     },
+    /**
+     * Starts a session for an anonymous user, when the Auth app allows them.
+     * The user becomes permanent, keeping its ID and data, by adding an email
+     * address and password with updateUser or a provider with linkIdentity.
+     */
+    async signInAnonymously(input: Captcha = {}): Promise<Session> {
+      return save(toSession(await call<TokenResponse>('POST', '/auth/v1/signup', { body: captcha(input) })), 'SIGNED_IN')
+    },
     async signInWithPassword(input: { email: string; password: string } & Captcha): Promise<Session> {
       return save(toSession(await call<TokenResponse>('POST', '/auth/v1/token?grant_type=password', { body: { email: input.email, password: input.password, ...captcha(input) } })), 'SIGNED_IN')
     },
     async signInWithMagicLink(input: { email: string; redirectTo?: string; createUser?: boolean } & Captcha): Promise<void> {
       await call('POST', withRedirect('/auth/v1/otp', input.redirectTo), { body: { email: input.email, create_user: input.createUser ?? false, ...captcha(input) } })
+    },
+    /**
+     * Texts a one-time code to phone, with its country code (+447700900123).
+     * createUser (default false) lets a new number sign up.
+     */
+    async signInWithPhone(input: { phone: string; createUser?: boolean } & Captcha): Promise<void> {
+      await call('POST', '/auth/v1/otp', { body: { phone: input.phone, channel: 'sms', create_user: input.createUser ?? false, ...captcha(input) } })
+    },
+    /** Completes a phone sign-in with the texted code. */
+    async verifyPhone(input: { phone: string; code: string }): Promise<Session> {
+      return save(toSession(await call<TokenResponse>('POST', '/auth/v1/verify', { body: { type: 'sms', phone: input.phone, token: input.code } })), 'SIGNED_IN')
+    },
+    /**
+     * Starts organization single sign-on (SAML) for the identity provider of
+     * an email domain, or a provider ID. Navigate the browser to the returned
+     * URL; the Auth app returns to redirectTo with the session in the URL
+     * fragment, which sessionFromUrl() reads.
+     */
+    async signInWithSSO(input: ({ domain: string } | { providerId: string }) & { redirectTo?: string } & Captcha): Promise<{ url: string }> {
+      const target = 'domain' in input ? { domain: input.domain.trim().toLowerCase() } : { provider_id: input.providerId }
+      return call<{ url: string }>('POST', '/auth/v1/sso', { body: { ...target, ...(input.redirectTo ? { redirect_to: input.redirectTo } : {}), skip_http_redirect: true, ...captcha(input) } })
     },
     /** Signs in with a passkey; the browser asks the user to choose one. */
     async signInWithPasskey(input: Captcha = {}): Promise<Session> {
@@ -233,6 +277,44 @@ export function createAuthClient(options: AuthClientOptions) {
       const credential = await webauthn().get({ publicKey: decodeOptions(options) })
       if (!credential) throw new AuthError(400, 'passkey_cancelled')
       return save(toSession(await call<TokenResponse>('POST', '/auth/v1/passkeys/authentication/verify', { body: { challenge_id, credential: credentialJSON(credential) } })), 'SIGNED_IN')
+    },
+    /**
+     * Second factors. A user who enrolled one signs in at aal1 and reaches
+     * aal2 by verifying a challenge (or a recovery code); require aal2 where
+     * it matters, for example with `gregale_auth.claims()->>'aal'` in RLS.
+     */
+    mfa: {
+      listFactors: async (): Promise<Factor[]> => (await call<{ factors?: Factor[] }>('GET', '/auth/v1/user', { token: await bearer() })).factors ?? [],
+      /** Starts enrolling an authenticator app; show totp.qr_code, then challenge and verify to activate it. */
+      enrollTOTP: async (input: { friendlyName?: string; issuer?: string } = {}): Promise<TOTPEnrollment> =>
+        call<TOTPEnrollment>('POST', '/auth/v1/factors', { token: await bearer(), body: { factor_type: 'totp', ...(input.friendlyName ? { friendly_name: input.friendlyName } : {}), ...(input.issuer ? { issuer: input.issuer } : {}) } }),
+      /** Starts enrolling a phone for SMS codes; challenge and verify to activate it. */
+      enrollPhone: async (input: { phone: string; friendlyName?: string }): Promise<Factor> =>
+        call<Factor>('POST', '/auth/v1/factors', { token: await bearer(), body: { factor_type: 'phone', phone: input.phone, ...(input.friendlyName ? { friendly_name: input.friendlyName } : {}) } }),
+      /** Creates a challenge; for a phone factor this texts the code. */
+      challenge: async (factorId: string): Promise<FactorChallenge> => call<FactorChallenge>('POST', `/auth/v1/factors/${id(factorId)}/challenge`, { token: await bearer(), body: {} }),
+      /** Verifies a challenge; the stored session becomes aal2. */
+      verify: async (input: { factorId: string; challengeId: string; code: string }): Promise<Session> =>
+        save(toSession(await call<TokenResponse>('POST', `/auth/v1/factors/${id(input.factorId)}/verify`, { token: await bearer(), body: { challenge_id: input.challengeId, code: input.code } })), 'MFA_VERIFIED'),
+      unenroll: async (factorId: string): Promise<void> => { await call('DELETE', `/auth/v1/factors/${id(factorId)}`, { token: await bearer() }) },
+      /** current is the session's level; next is aal2 when the user has a verified second factor. */
+      assuranceLevel: async (): Promise<AssuranceLevel> => {
+        const session = await getSession()
+        if (!session) return { current: null, next: null }
+        const factors = (await call<{ factors?: Factor[] }>('GET', '/auth/v1/user', { token: session.accessToken })).factors ?? []
+        const current = aal(session.accessToken)
+        return { current, next: factors.some(f => f.status === 'verified' && f.factor_type !== 'recovery_code') ? 'aal2' : current }
+      },
+      recoveryCodes: {
+        /** Creates one-time recovery codes (needs aal2); the codes are returned only here. */
+        generate: async (friendlyName?: string): Promise<RecoveryCodes> => call<RecoveryCodes>('POST', '/auth/v1/factors/recovery-codes', { token: await bearer(), body: friendlyName ? { friendly_name: friendlyName } : {} }),
+        regenerate: async (): Promise<RecoveryCodes> => call<RecoveryCodes>('POST', '/auth/v1/factors/recovery-codes/regenerate', { token: await bearer(), body: {} }),
+        status: async (): Promise<RecoveryCodes> => call<RecoveryCodes>('GET', '/auth/v1/factors/recovery-codes', { token: await bearer() }),
+        remove: async (): Promise<void> => { await call('DELETE', '/auth/v1/factors/recovery-codes', { token: await bearer() }) },
+        /** Uses one recovery code in place of a second factor; the session becomes aal2. */
+        verify: async (code: string): Promise<Session> =>
+          save(toSession(await call<TokenResponse>('POST', '/auth/v1/factors/recovery-codes/verify', { token: await bearer(), body: { code } })), 'MFA_VERIFIED'),
+      },
     },
     passkeys: {
       /** Registers a new passkey for the signed-in user. */
@@ -246,6 +328,27 @@ export function createAuthClient(options: AuthClientOptions) {
       list: async (): Promise<Passkey[]> => (await call<Passkey[] | null>('GET', '/auth/v1/passkeys', { token: await bearer() })) ?? [],
       rename: async (passkey: string, name: string): Promise<void> => { await call('PATCH', `/auth/v1/passkeys/${id(passkey)}`, { token: await bearer(), body: { friendly_name: name } }) },
       remove: async (passkey: string): Promise<void> => { await call('DELETE', `/auth/v1/passkeys/${id(passkey)}`, { token: await bearer() }) },
+    },
+    /**
+     * Apps the user allowed through the Auth app's OAuth server. Revoking one
+     * ends its sessions; it must ask the user again.
+     */
+    connectedApps: {
+      list: async (): Promise<ConnectedApp[]> => (await call<ConnectedApp[] | null>('GET', '/auth/v1/user/oauth/grants', { token: await bearer() })) ?? [],
+      revoke: async (clientId: string): Promise<void> => { await call('DELETE', `/auth/v1/user/oauth/grants?client_id=${id(clientId)}`, { token: await bearer() }) },
+    },
+    /**
+     * Links an OAuth provider account to the signed-in user, when the Auth app
+     * allows identity linking. Navigate the browser to the returned URL; the
+     * Auth app returns to redirectTo with the session in the URL fragment.
+     */
+    async linkIdentity(input: { provider: string; redirectTo?: string }): Promise<{ url: string }> {
+      const query = new URLSearchParams({ provider: input.provider, skip_http_redirect: 'true', ...(input.redirectTo ? { redirect_to: input.redirectTo } : {}) })
+      return call<{ url: string }>('GET', `/auth/v1/user/identities/authorize?${query}`, { token: await bearer() })
+    },
+    /** Removes a sign-in method from the signed-in user; one must remain. */
+    async unlinkIdentity(identityId: string): Promise<void> {
+      await call('DELETE', `/auth/v1/user/identities/${id(identityId)}`, { token: await bearer() })
     },
     /** Navigate the browser here to sign in with an OAuth provider. */
     oauthUrl(input: { provider: string; redirectTo: string }): string {
@@ -317,6 +420,31 @@ export function createAuthClient(options: AuthClientOptions) {
       revoke: (org: string, invitation: string) => authz<null>('DELETE', `/orgs/${id(org)}/invitations/${id(invitation)}`),
       accept: (token: string) => authz<{ org_id: string; role: string }>('POST', '/invitations/accept', { token }),
     },
+    /**
+     * Self-service organization SSO, when the app owner turned it on: an
+     * organization's owners (or members with sso:manage) verify email
+     * domains with a DNS TXT record, then connect their own SAML identity
+     * provider for those domains.
+     */
+    orgSSO: {
+      domains: {
+        list: async (org: string) => (await authz<{ domains: OrgDomain[] }>('GET', `/orgs/${id(org)}/domains`)).domains,
+        /** Returns the TXT record to publish; then call verify. */
+        add: (org: string, domain: string) => authz<OrgDomain>('POST', `/orgs/${id(org)}/domains`, { domain }),
+        verify: (org: string, domain: string) => authz<OrgDomain>('POST', `/orgs/${id(org)}/domains/${id(domain)}/verify`, {}),
+        remove: (org: string, domain: string) => authz<null>('DELETE', `/orgs/${id(org)}/domains/${id(domain)}`),
+      },
+      providers: {
+        list: async (org: string) => (await authz<{ providers: OrgSSOProvider[] }>('GET', `/orgs/${id(org)}/sso`)).providers,
+        add: (org: string, input: { metadataUrl?: string; metadataXml?: string; domains: string[]; role?: string }) =>
+          authz<OrgSSOProvider>('POST', `/orgs/${id(org)}/sso`, ssoBody(input)),
+        update: (org: string, provider: string, input: { metadataUrl?: string; metadataXml?: string; domains?: string[]; role?: string }) =>
+          authz<OrgSSOProvider>('PATCH', `/orgs/${id(org)}/sso/${id(provider)}`, ssoBody(input)),
+        remove: (org: string, provider: string) => authz<null>('DELETE', `/orgs/${id(org)}/sso/${id(provider)}`),
+        /** Creates the token the identity provider uses for SCIM provisioning; shown once. */
+        scimToken: (org: string, provider: string) => authz<{ token: string; scim_url: string }>('POST', `/orgs/${id(org)}/sso/${id(provider)}/scim-token`, {}),
+      },
+    },
     /** Asks the Auth app whether the signed-in user may take action on resource. */
     async authorize(action: string, resource: string): Promise<boolean> {
       return (await authz<{ allowed: boolean }>('POST', '/authorize', { action, resource })).allowed === true
@@ -325,6 +453,13 @@ export function createAuthClient(options: AuthClientOptions) {
 }
 
 export type AuthClient = ReturnType<typeof createAuthClient>
+
+function ssoBody(input: { metadataUrl?: string; metadataXml?: string; domains?: string[]; role?: string }) {
+  return {
+    ...(input.metadataUrl ? { metadata_url: input.metadataUrl } : {}), ...(input.metadataXml ? { metadata_xml: input.metadataXml } : {}),
+    ...(input.domains ? { domains: input.domains } : {}), ...(input.role ? { role: input.role } : {}),
+  }
+}
 
 /** The resource name authorize() and gregale_auth.authorize() expect. */
 export function resource(org: string, kind: string, name: string | number): string {

@@ -24,6 +24,10 @@ func (s *server) renderDashboardAuth(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !api.ApplicationAuthEnabled(acct.ID) {
+		http.NotFound(w, r)
+		return
+	}
 	changed := r.URL.Query().Get("changed")
 	data := dashboard.AuthAdminData{Slug: app.Slug, Providers: authsettings.Providers, Changed: changed, Error: r.URL.Query().Get("error"), RestartPending: strings.HasSuffix(changed, "-restart-pending")}
 	isAuth, err := s.appHasAuthBinding(ctx, acct, app)
@@ -40,6 +44,7 @@ func (s *server) renderDashboardAuth(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Security-Policy", policy)
 			data.AuthOrigin = origin
 			data.CSRFToken = s.issueDashboardConfigCSRF(w, s.log, dashboardAuthSettingsAction, dashboardAuthSettingsCookie, acct.ID, app.ID)
+			data.Keys, data.MaxKeys, data.EmailProviders, data.SMSProviders = s.dashboardAuthKeys(ctx, acct, app), api.AuthMaxSigningKeys, authsettings.EmailProviders, authsettings.SMSProviders
 		} else {
 			data.Message = "This app has no HTTPS address the dashboard can reach."
 		}
