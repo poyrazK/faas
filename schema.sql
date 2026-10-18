@@ -45195,6 +45195,29 @@ CREATE TABLE public.webhook_deliveries (
 
 
 --
+-- Name: worker_recovery; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.worker_recovery (
+    app_id uuid NOT NULL,
+    revision text NOT NULL,
+    claim_token uuid,
+    lease_until timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL,
+    status text NOT NULL,
+    failures integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    pools jsonb DEFAULT '[]'::jsonb NOT NULL,
+    CONSTRAINT worker_recovery_check CHECK (((next_attempt_at >= updated_at) OR (claim_token IS NOT NULL))),
+    CONSTRAINT worker_recovery_claim_token_check CHECK ((claim_token <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT worker_recovery_failures_check CHECK (((failures >= 0) AND (failures <= 32))),
+    CONSTRAINT worker_recovery_pools_check CHECK ((jsonb_typeof(pools) = 'array'::text)),
+    CONSTRAINT worker_recovery_revision_check CHECK ((revision <> ''::text)),
+    CONSTRAINT worker_recovery_status_check CHECK ((status = ANY (ARRAY['reconciling'::text, 'ready'::text, 'starting'::text, 'draining'::text, 'waiting_capacity'::text, 'retrying_startup'::text, 'waiting_dependency'::text])))
+);
+
+
+--
 -- Name: workflow_automation_definitions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -56195,6 +56218,14 @@ ALTER TABLE ONLY public.webhook_deliveries
 
 
 --
+-- Name: worker_recovery worker_recovery_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.worker_recovery
+    ADD CONSTRAINT worker_recovery_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: workflow_automation_definitions workflow_automation_definitions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -64863,6 +64894,13 @@ CREATE INDEX warm_hint_node_id_idx ON public.warm_hint USING btree (node_id);
 --
 
 CREATE INDEX webhook_deliveries_expires_idx ON public.webhook_deliveries USING btree (expires_at);
+
+
+--
+-- Name: worker_recovery_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX worker_recovery_due_idx ON public.worker_recovery USING btree (next_attempt_at, app_id);
 
 
 --
@@ -83290,6 +83328,14 @@ ALTER TABLE ONLY public.usage_minutes
 
 ALTER TABLE ONLY public.usage_statement_invoice_exports
     ADD CONSTRAINT usage_statement_invoice_exports_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: worker_recovery worker_recovery_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.worker_recovery
+    ADD CONSTRAINT worker_recovery_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
