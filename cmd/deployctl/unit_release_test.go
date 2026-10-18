@@ -266,8 +266,10 @@ func TestOnlyNarrowsTheRestartOrderOfAHostManagedRelease(t *testing.T) {
 }
 
 // stubSystemdShow answers `systemctl show` for the dependency guard: a
-// service's value is its Wants/Requires/BindsTo, a dependency's its
-// "ActiveState LoadState".
+// service's entry is its Wants/Requires/BindsTo values, a dependency's its
+// "ActiveState LoadState", printed the way systemctl does: Key=Value lines
+// in systemd's own order (LoadState before ActiveState), whatever order -p
+// asked for.
 func stubSystemdShow(t *testing.T, units map[string]string) {
 	t.Helper()
 	orig := commandOutput
@@ -276,7 +278,12 @@ func stubSystemdShow(t *testing.T, units map[string]string) {
 		if name != "systemctl" || len(args) < 2 || args[0] != "show" {
 			return "", fmt.Errorf("unexpected %s %v", name, args)
 		}
-		return units[args[1]] + "\n", nil
+		value := units[args[1]]
+		if strings.Contains(strings.Join(args, " "), "ActiveState") {
+			states := strings.Fields(value)
+			return "LoadState=" + states[1] + "\nActiveState=" + states[0] + "\n", nil
+		}
+		return value + "\n", nil
 	}
 }
 
@@ -290,8 +297,8 @@ func TestOnlyDeployRefusesToStartAStoppedDependency(t *testing.T) {
 	}{
 		{name: "dependency active", vmmd: "active loaded"},
 		{name: "dependency masked", vmmd: "inactive masked"},
-		{name: "dependency stopped", vmmd: "inactive loaded", want: "faas-vmmd.service, which is inactive/loaded"},
-		{name: "dependency crash-looping", vmmd: "activating loaded", want: "which is activating/loaded"},
+		{name: "dependency stopped", vmmd: "inactive loaded", want: "faas-vmmd.service, which is inactive (loaded)"},
+		{name: "dependency crash-looping", vmmd: "activating loaded", want: "which is activating (loaded)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stubSystemdShow(t, map[string]string{

@@ -293,16 +293,23 @@ func (r hostRuntime) requireDependenciesUp(ctx context.Context) error {
 			if !strings.HasPrefix(dep, serviceFilePrefix) || !strings.HasSuffix(dep, serviceFileSuffix) {
 				continue
 			}
-			state, err := commandOutput(ctx, "systemctl", "show", dep, "-p", "ActiveState", "-p", "LoadState", "--value")
+			// Key=Value lines: systemctl prints properties in its own
+			// order, not the order asked for (LoadState comes first).
+			out, err := commandOutput(ctx, "systemctl", "show", dep, "-p", "ActiveState", "-p", "LoadState")
 			if err != nil {
 				return err
 			}
-			fields := strings.Fields(state)
-			if len(fields) == 2 && (fields[0] == "active" || fields[1] == "masked") {
+			props := map[string]string{}
+			for _, line := range strings.Split(out, "\n") {
+				if key, value, ok := strings.Cut(strings.TrimSpace(line), "="); ok {
+					props[key] = value
+				}
+			}
+			if props["ActiveState"] == "active" || props["LoadState"] == "masked" {
 				continue
 			}
-			return fmt.Errorf("%s depends on %s, which is %s: restarting %s alone would start it; deploy when it is active",
-				service, dep, strings.Join(fields, "/"), service)
+			return fmt.Errorf("%s depends on %s, which is %s (%s): restarting %s alone would start it; deploy when it is active",
+				service, dep, props["ActiveState"], props["LoadState"], service)
 		}
 	}
 	return nil
