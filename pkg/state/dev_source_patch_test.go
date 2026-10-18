@@ -12,10 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type devPatchStore interface {
-	state.Store
-	state.DevSourcePatchStore
-}
+type devPatchStore = contractTestStore
 
 func TestDevSourcePatchStoreMem(t *testing.T) {
 	runDevSourcePatchStoreContract(t, state.NewMemStore(), context.Background())

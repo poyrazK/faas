@@ -9,11 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-type invocationLeaseFixtureStore interface {
-	Store
-	InvocationLeaseStore
-	RequeueExpiredInvocations(context.Context, time.Time, int) (int, error)
-}
+type invocationLeaseFixtureStore = contractTestStore
 
 // ADR-1180: a dispatcher keeps a long invocation's claim by renewing it, but
 // a stale attempt or a lapsed lease is never revived.

@@ -7,10 +7,7 @@ import (
 	"github.com/google/uuid"
 )
 
-type standardRuntimeRefreshTestStore interface {
-	standardOperationControlTestStore
-	ApplicationStandardRuntimeRefreshStore
-}
+type standardRuntimeRefreshTestStore = contractTestStore
 
 func standardRuntimeRefreshFixture(t *testing.T, s standardRuntimeRefreshTestStore) (standardApprovalFixture, map[string]Snapshot) {
 	t.Helper()

@@ -12,15 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type objectURLTestStore interface {
-	accountingStore
-	state.Store
-	state.ObjectS3CredentialBindingStore
-	state.ObjectURLCapabilityStore
-	state.ObjectPreparedUploadFailureStore
-	state.ObjectTrackedGatewayUploadStore
-	state.ObjectBucketAccessStore
-}
+type objectURLTestStore = contractTestStore
 
 // adr: 557
 func TestObjectURLCapabilitiesMem(t *testing.T) { objectURLCapabilitySuite(t, state.NewMemStore()) }
