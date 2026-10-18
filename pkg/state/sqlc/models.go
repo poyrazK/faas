@@ -192,20 +192,23 @@ type AgentExecutionWorkflow struct {
 }
 
 type AlertDelivery struct {
-	ID             pgtype.UUID
-	RuleID         pgtype.UUID
-	AccountID      pgtype.UUID
-	AppID          pgtype.UUID
-	IdempotencyKey string
-	Payload        []byte
-	Status         string
-	AttemptCount   int32
-	LastStatusCode pgtype.Int4
-	LastError      pgtype.Text
-	ObservedValue  float64
-	FiredAt        pgtype.Timestamptz
-	DeliveredAt    pgtype.Timestamptz
-	IsTest         bool
+	ID                      pgtype.UUID
+	RuleID                  pgtype.UUID
+	AccountID               pgtype.UUID
+	AppID                   pgtype.UUID
+	IdempotencyKey          string
+	Payload                 []byte
+	Status                  string
+	AttemptCount            int32
+	LastStatusCode          pgtype.Int4
+	LastError               pgtype.Text
+	ObservedValue           float64
+	FiredAt                 pgtype.Timestamptz
+	DeliveredAt             pgtype.Timestamptz
+	IsTest                  bool
+	ReadinessEventID        string
+	ReadinessDestination    string
+	ReadinessFailoverReason string
 }
 
 type AlertHistoricalRollbackClaim struct {
@@ -262,6 +265,9 @@ type AlertRule struct {
 	PostDeployRollbackWindowSeconds int32
 	EventSubscriptionID             pgtype.UUID
 	EdgeRuleID                      pgtype.UUID
+	McpMinCalls                     int32
+	McpForMinutes                   int32
+	McpReadinessScope               string
 }
 
 type ApiConsumer struct {
@@ -968,6 +974,20 @@ type AppLogDrainHealth struct {
 	OldestPendingAt           pgtype.Timestamptz
 	DeliveryLatencyNanosTotal int64
 	DeliveryLatencySamples    int64
+}
+
+type AppMcpReadinessPolicy struct {
+	AppID  pgtype.UUID
+	Policy []byte
+	Scope  string
+}
+
+type AppMcpReadinessPolicyHistory struct {
+	Revision   pgtype.UUID
+	AppID      pgtype.UUID
+	Policy     []byte
+	Scope      string
+	RecordedAt pgtype.Timestamptz
 }
 
 type AppMcpTaskCompatibility struct {
@@ -3032,6 +3052,37 @@ type DeploymentLog struct {
 	Stream       string
 	Line         string
 	WrittenAt    pgtype.Timestamptz
+}
+
+type DeploymentMcpReadinessEvidence struct {
+	DeploymentID   pgtype.UUID
+	Role           string
+	PolicyRevision pgtype.UUID
+	ArtifactSha256 string
+	Passed         bool
+	ObservedAt     pgtype.Timestamptz
+	Evidence       []byte
+}
+
+type DeploymentMcpReadinessMonitor struct {
+	DeploymentID pgtype.UUID
+	Role         string
+	Status       []byte
+	NextProbeAt  pgtype.Timestamptz
+	LeaseID      pgtype.UUID
+	LeaseUntil   pgtype.Timestamptz
+}
+
+type DeploymentMcpReadinessOverride struct {
+	ID             pgtype.UUID
+	DeploymentID   pgtype.UUID
+	PolicyRevision pgtype.UUID
+	ArtifactSha256 string
+	Reason         string
+	CreatedBy      pgtype.UUID
+	CreatedAt      pgtype.Timestamptz
+	ExpiresAt      pgtype.Timestamptz
+	UsedAt         pgtype.Timestamptz
 }
 
 type DeploymentMcpTaskHold struct {
@@ -7155,6 +7206,149 @@ type McpOauthRetirement struct {
 	NextAttemptAt pgtype.Timestamptz
 	State         pgtype.Text
 	Payload       []byte
+}
+
+type McpReadinessAttentionAction struct {
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+	RequestID  pgtype.UUID
+	IncidentID pgtype.UUID
+	Request    []byte
+	Receipt    []byte
+	CreatedAt  pgtype.Timestamptz
+}
+
+type McpReadinessFallbackPolicy struct {
+	RuleID               pgtype.UUID
+	Version              int64
+	Enabled              bool
+	WebhookUrl           string
+	WebhookSecretSealed  []byte
+	AfterFailures        int32
+	Provider             string
+	Region               string
+	IntegrationKeySealed []byte
+	Fingerprint          string
+}
+
+type McpReadinessIncident struct {
+	ID                 pgtype.UUID
+	RuleID             pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	Scope              string
+	Coverage           string
+	OpenedAt           pgtype.Timestamptz
+	ResolvedAt         pgtype.Timestamptz
+	MaintenancePending bool
+	DeliveryRouting    []byte
+}
+
+type McpReadinessIncidentAttention struct {
+	IncidentID pgtype.UUID
+	Snapshot   []byte
+}
+
+type McpReadinessIncidentCursor struct {
+	RuleID         pgtype.UUID
+	LastObservedAt pgtype.Timestamptz
+}
+
+type McpReadinessIncidentEvent struct {
+	ID                    pgtype.UUID
+	IncidentID            pgtype.UUID
+	RuleID                pgtype.UUID
+	Kind                  string
+	Sequence              int64
+	OccurredAt            pgtype.Timestamptz
+	Payload               []byte
+	ObservedValue         float64
+	DeliveryStatus        string
+	AttemptCount          int32
+	AvailableAt           pgtype.Timestamptz
+	LeaseToken            pgtype.UUID
+	LeaseUntil            pgtype.Timestamptz
+	LastDeliveryID        pgtype.UUID
+	LastAttemptAt         pgtype.Timestamptz
+	LastStatusCode        pgtype.Int4
+	Imported              bool
+	MaintenanceWindowIds  []byte
+	SuppressionReason     string
+	NotificationReason    string
+	DeliveryVersion       int64
+	LastOperatorAction    []byte
+	ReminderNumber        int32
+	DeliveryRouting       []byte
+	DestinationDeliveries []byte
+}
+
+type McpReadinessMaintenanceWindow struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	Scope        string
+	StartsAt     pgtype.Timestamptz
+	EndsAt       pgtype.Timestamptz
+	Reason       string
+	CreatedBy    pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+	CancelledAt  pgtype.Timestamptz
+	CancelledBy  pgtype.UUID
+	CancelReason pgtype.Text
+}
+
+type McpReadinessNotificationAction struct {
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	RequestID       pgtype.UUID
+	EventID         pgtype.UUID
+	Action          string
+	ExpectedVersion int64
+	Reason          string
+	Receipt         []byte
+	Destination     string
+}
+
+type McpReadinessPagerdutyAckEvent struct {
+	RuleID              pgtype.UUID
+	EventID             string
+	ID                  pgtype.UUID
+	IncidentID          pgtype.UUID
+	Digest              string
+	Receipt             []byte
+	ReceivedAt          pgtype.Timestamptz
+	DeliveryDestination string
+}
+
+type McpReadinessPagerdutyAcknowledgement struct {
+	RuleID                 pgtype.UUID
+	Version                int64
+	Enabled                bool
+	SigningSecretSealed    []byte
+	PagerdutyVersion       int64
+	Region                 string
+	Fingerprint            string
+	ServiceID              string
+	Destination            string
+	FallbackVersion        int64
+	LegacyReceiver         bool
+	SyncUnacknowledgements bool
+}
+
+type McpReadinessPagerdutyPolicy struct {
+	RuleID               pgtype.UUID
+	Version              int64
+	Enabled              bool
+	IntegrationKeySealed []byte
+	Fingerprint          string
+	Region               string
+}
+
+type McpReadinessReminderDefault struct {
+	RuleID          pgtype.UUID
+	Version         int64
+	IntervalSeconds int32
+	MaxReminders    int32
 }
 
 type MeterGatewayUsageEvent struct {

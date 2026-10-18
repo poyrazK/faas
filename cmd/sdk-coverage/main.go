@@ -100,6 +100,18 @@ var routeExclude = map[string]bool{
 	"GET /dashboard/apps/{slug}/issues/tracker-review":                                  true, // authenticated browser-only tracker review/notification surface
 	"GET /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync/{link_id}":               true, // authenticated browser-only tracker review/notification surface
 	"POST /dashboard/apps/{slug}/issues/frequency-alerts":                               true, // authenticated browser-only frequency alert form
+	// Browser session and named-CSRF adapters for documented MCP APIs.
+	"POST /dashboard/mcp/apps/{slug}/alerts":                           true,
+	"POST /dashboard/mcp/apps/{slug}/alerts/{id}":                      true,
+	"POST /dashboard/mcp/apps/{slug}/incidents/{id}/attention-actions": true,
+	"POST /dashboard/mcp/apps/{slug}/alerts/{id}/pagerduty":            true,
+	"POST /dashboard/mcp/apps/{slug}/alerts/{id}/reminder-defaults":    true,
+	"POST /dashboard/mcp/apps/{slug}/alerts/{id}/fallback":             true,
+	"POST /dashboard/mcp/apps/{slug}/maintenance":                      true,
+	"POST /dashboard/mcp/apps/{slug}/maintenance/{id}/cancel":          true,
+	"POST /dashboard/mcp/apps/{slug}/notifications/actions":            true,
+	"POST /dashboard/mcp/apps/{slug}/oauth":                            true,
+	"POST /dashboard/mcp/retirements/{id}":                             true,
 
 	"GET /v1/apps/{slug}/entities/connect":                                   true, // WebSocket frames require the durable-session transport, not Client.do.
 	"GET /v1/apps/{slug}/entities/session-connect":                           true, // Browser grant subprotocol and Origin authentication, not Bearer HTTP.
@@ -202,32 +214,35 @@ var routeExclude = map[string]bool{
 	// workload assertion. Owner API keys cannot publish these observations.
 	"POST /v1/runtime/data-api/connection-observations": true,
 
-	"GET /v1/account/dpa":                                             true, // public markdown (no Bearer; SDK consumers don't render HTML)
-	"GET /v1/apps/{slug}/tasks/{id}/attach":                           true, // ADR-1037 WebSocket attach; the CLI drives it directly
-	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/attach":                true, // ADR-1330 WebSocket attach; the CLI drives it directly
-	"POST /v1/webhooks/stripe":                                        true, // HMAC-signed webhook; outside the Bearer-auth surface
-	"POST /v1/webhooks/resend":                                        true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
-	"POST /v1/hooks/{token}":                                          true, // ADR-212 provider-signed ingress; outside the Bearer-auth SDK
-	"GET /v1/openapi.yaml":                                            true, // metadata
-	"GET /v1/openapi.json":                                            true, // metadata
-	"GET /docs":                                                       true, // anonymous Swagger UI metadata page
-	"GET /v1/internal/metrics/targets":                                true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
-	"GET /v1/internal/metrics/promtail-targets":                       true, // issue #274 — loopback Promtail HTTP-SD endpoint
-	"POST /v1/cli-auth/code":                                          true, // anonymous device-code (CLI uses wrapper)
-	"POST /v1/cli-auth/exchange":                                      true,
-	"GET /status/slo.json":                                            true,
-	"GET /status":                                                     true,
-	"POST /dashboard/apps/{slug}/crons/{id}/policy":                   true, // HTML form, scheduled-work policy editor (ADR-385)
-	"POST /dashboard/jobs/{name}/policy":                              true, // HTML form, scheduled-work policy editor (ADR-385)
-	"POST /dashboard/jobs/{name}/runs/{id}/replay-failed":             true, // HTML form, failed job partition replay (ADR-385)
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync":      true, // ADR-1474: authenticated HTML review/recovery form with named CSRF.
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection": true, // ADR-1474: owner HTML credential form with session MFA and CSRF.
-	"POST /hooks/issue-trackers/linear/{app_id}":                      true, // ADR-1476: raw-body HMAC provider protocol, outside the Bearer-auth DTO/SDK surface.
-	"GET /dashboard/apps/{slug}/issues/lifecycle-alerts":              true, // ADR-1499: authenticated HTML policy editor; JSON API remains checked.
-	"POST /dashboard/apps/{slug}/issues/lifecycle-alerts":             true, // ADR-1499: session/MFA/CSRF HTML adapter for public update/preview APIs.
-	"GET /dashboard/apps/{slug}/issues/slack-routing":                 true, // ADR-1498 owner-only Slack routing editor.
-	"GET /oauth/slack/callback":                                       true, // ADR-1497 owner session and one-use state confirmation.
-	"GET /oauth/linear/callback":                                      true, // ADR-1478: owner session OAuth callback and HTML team picker with PKCE and one-use state.
+	"GET /v1/account/dpa":                                                    true, // public markdown (no Bearer; SDK consumers don't render HTML)
+	"GET /v1/apps/{slug}/tasks/{id}/attach":                                  true, // ADR-1037 WebSocket attach; the CLI drives it directly
+	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/attach":                       true, // ADR-1330 WebSocket attach; the CLI drives it directly
+	"POST /v1/webhooks/stripe":                                               true, // HMAC-signed webhook; outside the Bearer-auth surface
+	"POST /v1/webhooks/resend":                                               true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
+	"POST /v1/hooks/{token}":                                                 true, // ADR-212 provider-signed ingress; outside the Bearer-auth SDK
+	"GET /v1/openapi.yaml":                                                   true, // metadata
+	"GET /v1/openapi.json":                                                   true, // metadata
+	"GET /docs":                                                              true, // anonymous Swagger UI metadata page
+	"GET /v1/internal/metrics/targets":                                       true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
+	"GET /v1/internal/metrics/promtail-targets":                              true, // issue #274 — loopback Promtail HTTP-SD endpoint
+	"POST /v1/cli-auth/code":                                                 true, // anonymous device-code (CLI uses wrapper)
+	"POST /v1/cli-auth/exchange":                                             true,
+	"GET /status/slo.json":                                                   true,
+	"GET /status":                                                            true,
+	"POST /dashboard/apps/{slug}/crons/{id}/policy":                          true, // HTML form, scheduled-work policy editor (ADR-385)
+	"POST /dashboard/jobs/{name}/policy":                                     true, // HTML form, scheduled-work policy editor (ADR-385)
+	"POST /dashboard/jobs/{name}/runs/{id}/replay-failed":                    true, // HTML form, failed job partition replay (ADR-385)
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync":             true, // ADR-1474: authenticated HTML review/recovery form with named CSRF.
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection":        true, // ADR-1474: owner HTML credential form with session MFA and CSRF.
+	"POST /hooks/issue-trackers/linear/{app_id}":                             true, // ADR-1476: raw-body HMAC provider protocol, outside the Bearer-auth DTO/SDK surface.
+	"GET /dashboard/apps/{slug}/issues/lifecycle-alerts":                     true, // ADR-1499: authenticated HTML policy editor; JSON API remains checked.
+	"POST /dashboard/apps/{slug}/issues/lifecycle-alerts":                    true, // ADR-1499: session/MFA/CSRF HTML adapter for public update/preview APIs.
+	"GET /dashboard/apps/{slug}/issues/slack-routing":                        true, // ADR-1498 owner-only Slack routing editor.
+	"GET /oauth/slack/callback":                                              true, // ADR-1497 owner session and one-use state confirmation.
+	"GET /oauth/linear/callback":                                             true, // ADR-1478: owner session OAuth callback and HTML team picker with PKCE and one-use state.
+	"POST /v1/webhooks/mcp-readiness/pagerduty/{id}":                         true, // Provider HMAC authentication, not Bearer HTTP.
+	"POST /v1/webhooks/mcp-readiness/pagerduty/{id}/{destination}":           true, // Destination-scoped provider HMAC ingress (ADR-20261017191529).
+	"POST /dashboard/mcp/apps/{slug}/alerts/{id}/pagerduty-acknowledgements": true, // Named-CSRF browser adapter.
 
 	// Issue #555 trace endpoint. Operator-only surface (X-Faas-Trace-Auth
 	// header), not a customer-Bearer-auth endpoint. The SDK does not
@@ -476,6 +491,34 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/source-review":                                             "ReviewSourceRef",
 	"POST /v1/projects/{slug}/environments/{environment}/approval-requests":          "RequestBrowserPromotionApproval",
 	"POST /v1/projects/{slug}/environments/{environment}/approval-requests/exchange": "ExchangeBrowserPromotionApproval",
+	// MCP readiness clients use explicit domain names rather than path-derived names.
+	"GET /v1/apps/{slug}/alerts/{id}/mcp-readiness-pagerduty-acknowledgements":        "GetMCPReadinessPagerDutyAcknowledgements",
+	"PUT /v1/apps/{slug}/alerts/{id}/mcp-readiness-pagerduty-acknowledgements":        "SetMCPReadinessPagerDutyAcknowledgements",
+	"GET /v1/apps/{slug}/alerts/{id}/mcp-readiness-pagerduty-acknowledgements/events": "ListMCPReadinessPagerDutyAcknowledgementEvents",
+	"GET /v1/apps/{slug}/alerts/{id}/mcp-readiness-pagerduty":                         "GetMCPReadinessPagerDuty",
+	"PUT /v1/apps/{slug}/alerts/{id}/mcp-readiness-pagerduty":                         "SetMCPReadinessPagerDuty",
+	"GET /v1/apps/{slug}/alerts/{id}/mcp-readiness-reminder-defaults":                 "GetMCPReadinessReminderDefaults",
+	"PUT /v1/apps/{slug}/alerts/{id}/mcp-readiness-reminder-defaults":                 "SetMCPReadinessReminderDefaults",
+	"GET /v1/apps/{slug}/alerts/{id}/mcp-readiness-fallback":                          "GetMCPReadinessFallback",
+	"PUT /v1/apps/{slug}/alerts/{id}/mcp-readiness-fallback":                          "SetMCPReadinessFallback",
+	"GET /v1/apps/{slug}/mcp-readiness-attention":                                     "ListMCPReadinessAttention",
+	"GET /v1/apps/{slug}/mcp-readiness-incidents":                                     "ListMCPReadinessIncidents",
+	"GET /v1/apps/{slug}/mcp-readiness-incidents/{id}/attention-actions":              "ListMCPReadinessAttentionHistory",
+	"GET /v1/apps/{slug}/mcp-readiness-maintenance":                                   "ListMCPReadinessMaintenance",
+	"GET /v1/apps/{slug}/mcp-readiness-notifications":                                 "ListMCPReadinessNotificationQueues",
+	"GET /v1/apps/{slug}/mcp-readiness-policy":                                        "GetMCPReadinessPolicy",
+	"GET /v1/apps/{slug}/mcp-readiness-policy/diff":                                   "DiffMCPReadinessPolicy",
+	"GET /v1/apps/{slug}/mcp-readiness-policy/history":                                "ListMCPReadinessPolicyHistory",
+	"GET /v1/apps/{slug}/mcp-readiness-policy/history/{revision}":                     "GetMCPReadinessPolicyRevision",
+	"GET /v1/deployments/{id}/mcp-readiness":                                          "GetMCPReadiness",
+	"POST /v1/apps/{slug}/mcp-readiness-incidents/{id}/attention-actions":             "ActMCPReadinessAttention",
+	"POST /v1/apps/{slug}/mcp-readiness-maintenance":                                  "CreateMCPReadinessMaintenance",
+	"POST /v1/apps/{slug}/mcp-readiness-maintenance/{id}/cancel":                      "CancelMCPReadinessMaintenance",
+	"POST /v1/apps/{slug}/mcp-readiness-notifications/actions":                        "ActMCPReadinessNotification",
+	"POST /v1/apps/{slug}/mcp-readiness-policy/history/{revision}/restore":            "RestoreMCPReadinessPolicy",
+	"POST /v1/deployments/{id}/mcp-readiness":                                         "ProbeMCPReadiness",
+	"POST /v1/deployments/{id}/mcp-readiness-overrides":                               "OverrideMCPReadiness",
+	"PUT /v1/apps/{slug}/mcp-readiness-policy":                                        "SetMCPReadinessPolicy",
 
 	// BEGIN managed realtime SDK routes
 	"GET /v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials":                                                   "ListRealtimePublisherCredentials",
