@@ -2538,7 +2538,7 @@
       ]
     },
     {
-      "revision": "ede7f64ccc84ae08a7fb92819c1e56fb1bfbfe4ebc9dc447d5c7923883131ddf",
+      "revision": "505e98f7ea78ce3d62513d230aa07418f28e3afd80b14ff989977d3410190e3a",
       "expected": {
         "id": "gregale-full-v1",
         "revision": "17ef46f0a1105660d88f41ce20977e2566aabce34766fa2953b53fb4b687812b",
@@ -3631,8 +3631,8 @@
           }
         ]
       },
-      "alert_set_revision": "b6b8894572fb65dd5ad82aaff6cb69a4222bbaeea4f78c6a84540733a76d38b5",
-      "alert_count": 378,
+      "alert_set_revision": "47371723a2759f1b017ba39a71a5f7604b75e47337120e469e930af55f1fad42",
+      "alert_count": 380,
       "dependents": [
         {
           "rule_id": "04e71a8f5cf3db701f2c7083e95693cd02058aa3b83e91279b44abcac2192ea5",

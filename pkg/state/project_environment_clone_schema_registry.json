@@ -2937,6 +2937,7 @@
       "p95_ms",
       "regression_factor",
       "resolved_at",
+      "review_version",
       "route",
       "state",
       "suspected_dependency"

@@ -22,7 +22,9 @@ the database on its own and leave the daemons where they are.
 ## Before you need it
 
 An unplanned failover cannot copy anything from a dead host, so everything
-below must already be on the standby. Check it at every drill.
+below must already be on the standby. Check it at every drill. If the
+standby is lost too, rebuild from the off-host state backup instead
+(`docs/runbooks/ControlPlaneStateBackup.md`).
 
 1. **The replica streams.** `FaasPostgresStandby*` alerts are quiet, and
    `make bootstrap-postgres-standby` passes.

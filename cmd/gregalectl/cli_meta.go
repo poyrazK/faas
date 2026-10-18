@@ -230,6 +230,8 @@ var cliCommands = []cliCommand{
 			{Name: "unseal-rclone", Short: "Unseal the rclone config"},
 			{Name: "unseal-archive-creds", Short: "Unseal the log-archive credentials"},
 			{Name: "init", Short: "Initialise the on-disk backup credentials store"},
+			{Name: "seal-cp-state", Short: "Encrypt the control plane's host-local state for off-host backup"},
+			{Name: "restore-cp-state", Short: "Decrypt a control-plane state backup into the takeover stage"},
 		},
 	},
 	{

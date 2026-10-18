@@ -4693,7 +4693,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "b6b8894572fb65dd5ad82aaff6cb69a4222bbaeea4f78c6a84540733a76d38b5",
+      "revision": "47371723a2759f1b017ba39a71a5f7604b75e47337120e469e930af55f1fad42",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -7160,6 +7160,19 @@
           }
         },
         {
+          "id": "7c18355a820cbafa9675d867cbccfcacbbdcea9cf981d44bde9337e1727dadfc",
+          "file_name": "pg_backup.rules.yml",
+          "group_name": "faas.pg_backup",
+          "rule_name": "FaasControlPlaneStateBackupStale",
+          "definition": {
+            "expression_hash": "9eca418a81d5a4a5ec346d825a510a078f9b421e1c8316e512abc815a6926773",
+            "labels_hash": "e76b550b20d586c5501f4420abd7762949a761b9374d0ea9ade2c365391043db",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "ca6c0c5c10a39052631b6d4953b4c2b9c5f7c39b3ba4a6809d54b619c147718d"
+          }
+        },
+        {
           "id": "7c77e78ee5f3f82ccac9d0543054d82555d6be7e9df2c713891f8ffb335eb50a",
           "file_name": "faas.rules.yml",
           "group_name": "faas_spec12_operator_signals",
@@ -9445,6 +9458,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "4b4d10d0b867c7206815f71e845b1b1d8ba2fc1572eb445b4f3c478f23cdb5a8"
+          }
+        },
+        {
+          "id": "f82f974e5ebf053b19bf3667418caa9c18f8ea55082ce873c79f053a569b9348",
+          "file_name": "pg_backup.rules.yml",
+          "group_name": "faas.pg_backup",
+          "rule_name": "FaasControlPlaneStateBackupFailed",
+          "definition": {
+            "expression_hash": "b03c1e5b9eedef267313151d207c29df6b871cd8b99ed4f6f584870e2b6e4325",
+            "labels_hash": "e76b550b20d586c5501f4420abd7762949a761b9374d0ea9ade2c365391043db",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "d02a4d1d55e95179cbf63bfa89115bb7357470169770378a97e049edb9df5f26"
           }
         },
         {
