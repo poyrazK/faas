@@ -9188,7 +9188,7 @@
       "request",
       "request_id"
     ],
-    "kind": "operational"
+    "kind": "customer_data"
   },
   {
     "table": "mcp_readiness_fallback_policies",
