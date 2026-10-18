@@ -13593,6 +13593,17 @@
     "kind": "operational"
   },
   {
+    "table": "node_leases",
+    "columns": [
+      "epoch",
+      "expires_at",
+      "holder",
+      "node_id",
+      "renewed_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "node_lifecycle_completions",
     "columns": [
       "audit_outbox_id",

@@ -748,6 +748,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_SCHEDD_INVOCATION_DISPATCH_CONCURRENCY", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_SCHEDD_LISTEN_ADDR", Owners: []string{"schedd"}, Source: EnvSourceDropin, Note: "rendered with faas-schedd.socket's ListenStream from faas_schedd_listen_addr (ADR-1580)"},
 	{Name: "FAAS_SCHEDD_NODE_INVENTORY_ENFORCE", Owners: []string{"schedd", "shared"}, Source: EnvSourceDropin, Default: "0", Note: "ADR-419; control-plane and compute-only roles deliver the signed process-inventory canary switch; enable only after native recovery qualification"},
+	{Name: "FAAS_SCHEDD_NODE_LEASE", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "ADR-1344 §4 P3 phase 1: the node-local schedd renews its node's liveness lease; off by default and observe-only"},
 	{Name: "FAAS_SCHEDD_RECONCILE_ENFORCE", Owners: []string{"schedd", "shared"}, Source: EnvSourceDefault, Note: "ADR-191; \"1\" lets the instance-divergence sweep write. Default off ships the sweep report-only: it counts and logs what it would repair and touches no row"},
 	{Name: "FAAS_SCHEDD_ROLE", Owners: []string{"schedd", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_SCHEDD_SOCKET", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDropin},
