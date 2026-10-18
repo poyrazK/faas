@@ -44,8 +44,8 @@ const githubActionVersion = "v0"
 // workflows. Release builds replace this source fallback with the current v0
 // target before publishing the CLI binary. The release tag points to a commit
 // containing the vendored deploy binary, which is why the source tag's SHA is
-// not suitable here.
-var githubActionDefaultSHA = "29aa7ea51128dca7f8e823f86a9ac0e482357737"
+// not suitable here. This fallback includes the environment input used below.
+var githubActionDefaultSHA = "195983faa4e1214305a80128d95499006c6860c5"
 
 // githubActionPath is the monorepo path to the composite action. ADR-093
 // chose the monorepo shape over the separate-repo shape so PR-1 and

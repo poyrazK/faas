@@ -209,6 +209,8 @@ gregale --json deploy --github --name my-app
 ```
 
 The JSON form returns `app`, `environment`, and the generated `workflow` text.
+The default Action pin supports these inputs; a custom `--pinned-sha` must also
+support the inputs in the generated workflow.
 Generation writes no files or remote resources; redirection in the first example
 is performed by the shell. Unsupported settings, including a local source path,
 resource overrides, and worktree mode, are rejected rather than omitted. The
