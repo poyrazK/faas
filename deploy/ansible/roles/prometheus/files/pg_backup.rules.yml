@@ -32,6 +32,38 @@ groups:
             Runbook: docs/runbooks/PostgresBackup.md
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PostgresBackup.md"
 
+      # ADR-1344 §8: the control plane's host-local state (CA, apid HMAC
+      # keys, secrets) pushed off-host by faas-cp-state-backup. The success
+      # gauge exists only after a first verified push; the unit-failure rule
+      # catches a backup that has never succeeded.
+      - alert: FaasControlPlaneStateBackupStale
+        expr: time() - faas_cp_state_backup_last_success_timestamp_seconds > 93600
+        for: 30m
+        labels:
+          severity: warn
+          family: cp_state_backup
+        annotations:
+          summary: "The control plane's host-local state has no recent verified off-host copy"
+          description: |
+            The last verified control-plane state backup is older than 26 hours.
+            Losing the control plane now would lose every change to its keys and
+            secrets since then. Check `journalctl -u faas-cp-state-backup.service`.
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/ControlPlaneStateBackup.md"
+
+      - alert: FaasControlPlaneStateBackupFailed
+        expr: node_systemd_unit_state{name="faas-cp-state-backup.service",state="failed"} == 1
+        for: 5m
+        labels:
+          severity: warn
+          family: cp_state_backup
+        annotations:
+          summary: "The control-plane state backup failed on {{ $labels.instance }}"
+          description: |
+            faas-cp-state-backup.service failed: sealing, the off-host push or
+            its verification did not complete. Check
+            `journalctl -u faas-cp-state-backup.service`.
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/ControlPlaneStateBackup.md"
+
       - alert: PgWalPruneStale
         expr: apid_pg_wal_prune_last_success_timestamp_seconds == 0 or time() - apid_pg_wal_prune_last_success_timestamp_seconds > 7200
         for: 15m
@@ -56,4 +88,43 @@ groups:
           description: |
             Verified pruning is not keeping the local archive bounded. Check the
             prune journal and off-host object-store reachability before deleting files.
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PostgresBackup.md"
+
+      # ADR-1344 §3: the WAL off-host copy bounds the region-loss RPO. The
+      # metrics come from faas-postgres-connection-metrics (postgres role).
+      - alert: PgWalArchiveStalled
+        # archive_timeout = 60s forces a segment switch every minute on a
+        # control plane that is never idle, so ten minutes without a locally
+        # archived segment means archiving itself is stuck.
+        expr: max(faas_postgres_wal_last_archived_timestamp_seconds) > 0 and time() - max(faas_postgres_wal_last_archived_timestamp_seconds) > 600
+        for: 5m
+        labels:
+          severity: warn
+          family: pg_backup
+        annotations:
+          summary: "PostgreSQL has not archived a WAL segment for ten minutes"
+          description: |
+            pg_stat_archiver shows no locally archived segment for over ten
+            minutes. Check `SELECT * FROM pg_stat_archiver` and the PostgreSQL
+            log for archive_command errors; WAL accumulates in pg_wal until
+            archiving recovers.
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PostgresBackup.md"
+
+      - alert: PgWalOffHostPushStale
+        # archive_command touches the marker after each successful off-host
+        # push. A failed push still archives locally and the hourly prune
+        # copies the gap later, so RPO degraded silently before this alert.
+        expr: max(faas_postgres_offhost_wal_configured) == 1 and time() - max(faas_postgres_offhost_wal_last_success_timestamp_seconds) > 900
+        for: 10m
+        labels:
+          severity: warn
+          family: pg_backup
+        annotations:
+          summary: "No WAL segment has reached off-host storage for 15 minutes"
+          description: |
+            Off-host WAL credentials are installed but archive_command has not
+            pushed a segment successfully for over 15 minutes, so a region-loss
+            restore would lose more than the 60 s RPO target. Check the
+            PostgreSQL log for "off-host WAL push failed" and object-store
+            reachability from the control-plane host.
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PostgresBackup.md"

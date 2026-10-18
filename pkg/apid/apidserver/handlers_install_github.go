@@ -15,13 +15,10 @@
 //     hydrates its dropdown from this list.
 //
 //   - POST /v1/apps/{slug}/install/bind persists the bind row via
-//     s.githubd.BindAppRepo (which now writes through to
-//     pkg/state.PgStore.UpsertGithubInstallBinding per ADR-017 +
-//     PR-B's persistence story). Before persisting, it re-runs
-//     githubd.VerifyInstallation with the session's github_login
-//     so a stale dashboard tab can't bind an install that was
-//     revoked between the callback and the bind click — same
-//     §11 proof the callback handler uses.
+//     s.githubd.BindAppRepo. Both routes require the installation to belong
+//     to the authenticated account before live verification or repository
+//     access. Connect GitHub supplies that durable ownership proof without
+//     changing the customer's sign-in provider (ADR-1345).
 //
 // Both routes are cookie-session-authenticated (NOT API-key auth)
 // and live on the dashboard mux so the §11 middleware stack applies.
@@ -133,9 +130,7 @@ func validateDeployBranches(branches map[string]string) error {
 //   - githubd not wired (stub): 503 githubd_not_ready
 //   - GitHub API call fails:     502 github_unreachable
 //   - malformed body:           400 invalid_request
-//   - session lacks github_login: 403 unauthenticated (the user
-//     never finished /v1/auth/github — same proof the OAuth
-//     callback requires)
+//   - installation not connected to this account: 403 github_install_not_owned
 func (s *server) listInstallableRepos(w http.ResponseWriter, r *http.Request) {
 	const op = "listInstallableRepos"
 
@@ -160,46 +155,41 @@ func (s *server) listInstallableRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// §11 ownership proof (same shape as renderOAuthCallback): the
-	// session must carry the github_login established by
-	// /v1/auth/github. Otherwise a logged-in FaaS user could
-	// enumerate repos of any installation they happen to know
-	// the ID of.
-	expectedLogin, ok := s.sessionGithubLogin(w, r)
+	// OAuth established the durable account/installation association. A
+	// separate GitHub sign-in claim is absent from Google/password sessions.
+	installation, ok := s.browserGitHubInstallation(w, r, acct, req.InstallationID)
 	if !ok {
-		return // sessionGithubLogin already wrote the 403.
+		return
 	}
+	connectionLogin := installation.AuditGithubLogin
 
 	verified, accountLogin, _, err := s.githubd.VerifyInstallation(r.Context(), req.InstallationID, "")
 	if err != nil {
 		s.log.Warn("listInstallableRepos: verify installation failed",
 			"op", op, "account_id", acct.ID,
 			"install_id", stripLogInt(req.InstallationID),
-			// expected_login flows from the session cookie and is
-			// therefore attacker-controllable in principle; sanitize
-			// to defeat Log entries created from user input
-			// (CodeQL go/log-injection, CWE-117).
-			"expected_login", stripLogCRLF(expectedLogin), "err", err)
+			// Installation owner metadata is untrusted log input.
+			"connection_login", stripLogCRLF(connectionLogin), "err", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "github_unreachable",
 			"Could not reach GitHub", "retry in a minute: https://docs/connect-github"))
 		return
 	}
 	if !verified {
-		// Same two-cases split as renderOAuthCallback: accountLogin
-		// populated → forged takeover (403), empty → unknown install
-		// (302 to /dashboard/account?github=forged).
+		// This JSON surface always returns a problem, including when GitHub
+		// no longer recognizes a previously connected installation.
 		if accountLogin != "" {
 			s.log.Warn("listInstallableRepos: install belongs to a different GitHub user",
 				"op", op, "account_id", acct.ID,
 				"install_id", stripLogInt(req.InstallationID),
-				"expected_login", stripLogCRLF(expectedLogin),
+				"connection_login", stripLogCRLF(connectionLogin),
 				"actual_account_login", stripLogCRLF(accountLogin))
 			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "forged",
-				"This installation belongs to a different GitHub user",
-				"the install is bound to a different GitHub identity than the one you signed in with"))
+				"GitHub installation could not be verified",
+				"confirm the GitHub App is still installed, then retry"))
 			return
 		}
-		http.Redirect(w, r, "/dashboard/account?github=forged", http.StatusFound)
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "forged",
+			"GitHub installation could not be verified", "confirm the GitHub App is still installed, then retry"))
 		return
 	}
 
@@ -236,12 +226,9 @@ func (s *server) listInstallableRepos(w http.ResponseWriter, r *http.Request) {
 //
 //  1. sessionAuth + loadApp resolve the slug → app, scoped to the
 //     logged-in account (cross-account slugs collapse to 404).
-//  2. sessionGithubLogin pulls expectedLogin from the envelope.
-//  3. VerifyInstallation re-runs the §11 ownership proof with
-//     expectedLogin. This catches the "user opened the bind picker
-//     in a stale tab, then revoked the GitHub App install in
-//     between" case — the callback verified at time T but the
-//     bind fires at T+30min.
+//  2. The durable account/installation row proves ownership (ADR-1345).
+//  3. VerifyInstallation rechecks the live installation, and githubd verifies
+//     account ownership and current repository access before persisting.
 //  4. githubd.BindAppRepo persists via pkg/state (PR-B closes the
 //     in-memory-only gap) and returns the deterministic binding_id.
 //  5. The handler emits an audit event so the dashboard's
@@ -292,21 +279,19 @@ func (s *server) bindAppToRepo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	expectedLogin, ok := s.sessionGithubLogin(w, r)
+	installation, ok := s.browserGitHubInstallation(w, r, acct, req.InstallationID)
 	if !ok {
-		return // sessionGithubLogin already wrote the 403.
+		return
 	}
+	connectionLogin := installation.AuditGithubLogin
 
 	verified, accountLogin, defaultBranch, err := s.githubd.VerifyInstallation(r.Context(), req.InstallationID, "")
 	if err != nil {
 		s.log.Warn("bindAppToRepo: verify installation failed",
 			"op", op, "account_id", acct.ID,
 			"install_id", stripLogInt(req.InstallationID),
-			// expected_login flows from the session cookie and is
-			// therefore attacker-controllable in principle; sanitize
-			// to defeat Log entries created from user input
-			// (CodeQL go/log-injection, CWE-117).
-			"expected_login", stripLogCRLF(expectedLogin), "err", err)
+			// Installation owner metadata is untrusted log input.
+			"connection_login", stripLogCRLF(connectionLogin), "err", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "github_unreachable",
 			"Could not reach GitHub", "retry in a minute: https://docs/connect-github"))
 		return
@@ -317,26 +302,27 @@ func (s *server) bindAppToRepo(w http.ResponseWriter, r *http.Request) {
 				"op", op, "account_id", acct.ID,
 				"app_id", app.ID,
 				"install_id", stripLogInt(req.InstallationID),
-				"expected_login", stripLogCRLF(expectedLogin),
+				"connection_login", stripLogCRLF(connectionLogin),
 				"actual_account_login", stripLogCRLF(accountLogin))
 			acctID := acct.ID
 			s.audit.Emit(r.Context(), "auth.install.takeover_rejected", &acctID, map[string]any{
 				"install_id":           req.InstallationID,
 				"app_id":               app.ID,
-				"expected_login":       expectedLogin,
+				"connection_login":     connectionLogin,
 				"actual_account_login": accountLogin,
 				"path":                 "bindAppToRepo",
 			})
 			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "forged",
-				"This installation belongs to a different GitHub user",
-				"the install is bound to a different GitHub identity than the one you signed in with"))
+				"GitHub installation could not be verified",
+				"confirm the GitHub App is still installed, then retry"))
 			return
 		}
 		s.log.Warn("bindAppToRepo: forged or unknown install_id",
 			"op", op, "account_id", acct.ID,
 			"install_id", stripLogInt(req.InstallationID),
-			"expected_login", stripLogCRLF(expectedLogin))
-		http.Redirect(w, r, "/dashboard/account?github=forged", http.StatusFound)
+			"connection_login", stripLogCRLF(connectionLogin))
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "forged",
+			"GitHub installation could not be verified", "confirm the GitHub App is still installed, then retry"))
 		return
 	}
 
@@ -381,7 +367,7 @@ func (s *server) bindAppToRepo(w http.ResponseWriter, r *http.Request) {
 	s.audit.Emit(r.Context(), "auth.install.bound", &acctID, map[string]any{
 		"install_id":        req.InstallationID,
 		"app_id":            app.ID,
-		"github_login":      expectedLogin,
+		"connection_login":  connectionLogin,
 		"install_owner":     accountLogin,
 		"repo_full_name":    req.RepoFullName,
 		"production_branch": branch,
@@ -394,6 +380,28 @@ func (s *server) bindAppToRepo(w http.ResponseWriter, r *http.Request) {
 		ProductionBranch: branch,
 		DeployBranches:   req.DeployBranches,
 	})
+}
+
+// browserGitHubInstallation authorizes the exact connection before any
+// githubd call. Knowing an installation ID or having a GitHub login claim
+// never grants access to another Gregale account's connection.
+func (s *server) browserGitHubInstallation(w http.ResponseWriter, r *http.Request, acct state.Account, installationID int64) (state.GitHubInstall, bool) {
+	install, err := s.store.GitHubInstallForAccountInstallation(r.Context(), acct.ID, installationID)
+	if errors.Is(err, state.ErrNotFound) || (err == nil && (install.AccountID != acct.ID || install.InstallationID != installationID)) {
+		acctID := acct.ID
+		s.audit.Emit(r.Context(), "auth.install.takeover_rejected", &acctID, map[string]any{
+			"install_id": installationID,
+			"reason":     api.CodeGitHubInstallNotOwned,
+		})
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeGitHubInstallNotOwned,
+			"GitHub installation is not connected to this account", "connect the GitHub App before accessing its repositories"))
+		return state.GitHubInstall{}, false
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not read GitHub installation"))
+		return state.GitHubInstall{}, false
+	}
+	return install, true
 }
 
 // bindGitHubConnection is the bearer/API-key bind surface. Unlike the
@@ -507,16 +515,14 @@ func (s *server) bindGitHubConnection(w http.ResponseWriter, r *http.Request, ac
 	})
 }
 
-// sessionGithubLogin extracts env.GithubLogin from the session
-// cookie, applying the same §11 proof renderOAuthCallback uses.
+// sessionGithubLogin extracts env.GithubLogin for the legacy server-rendered
+// creation flow, applying the same §11 proof renderOAuthCallback uses.
 // Writes the right 403 / 302 and returns ok=false when the proof
 // can't be established so the caller can early-return without
 // further logging.
 //
-// Centralised here so the bind picker, /oauth/callback, and any
-// future per-install surface share one §11 enforcement site — a
-// refactor that drops the check in one place is visible in the
-// other two.
+// The browser JSON picker and bind routes use the durable account-owned
+// connection instead (ADR-1345); they do not depend on the sign-in provider.
 func (s *server) sessionGithubLogin(w http.ResponseWriter, r *http.Request) (string, bool) {
 	c, err := r.Cookie(sessionCookie)
 	if err != nil || c.Value == "" {

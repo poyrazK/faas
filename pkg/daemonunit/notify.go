@@ -78,10 +78,11 @@ func runWatchdog(ctx context.Context, every time.Duration, healthy func() bool, 
 }
 
 // Notify sends one sd_notify state datagram to systemd. Abstract namespace
-// sockets use the systemd convention of a leading '@' in NOTIFY_SOCKET.
+// sockets use the systemd convention of a leading '@' in NOTIFY_SOCKET. After
+// MarkHandedOff it sends nothing.
 func Notify(state string) error {
 	socket := os.Getenv("NOTIFY_SOCKET")
-	if socket == "" {
+	if socket == "" || handedOff.Load() {
 		return nil
 	}
 	name := socket
@@ -104,7 +105,7 @@ func Notify(state string) error {
 // ctx is cancelled. The returned function stops the bridge for tests or
 // callers that own a shorter lifecycle.
 func NotifyReadyWhen(ctx context.Context, ready func() bool) func() {
-	if ready == nil || os.Getenv("NOTIFY_SOCKET") == "" {
+	if ready == nil || (os.Getenv("NOTIFY_SOCKET") == "" && !isHandoffSuccessor()) {
 		return func() {}
 	}
 	stop := make(chan struct{})
@@ -118,7 +119,13 @@ func NotifyReadyWhen(ctx context.Context, ready func() bool) func() {
 		defer ticker.Stop()
 		for {
 			if ready() {
-				_ = Notify("READY=1")
+				// A hand-off successor is not the main process yet and the
+				// unit is already active: systemd would reject READY=1 and
+				// log it. Its predecessor hands it the unit (MAINPID=).
+				if !isHandoffSuccessor() {
+					_ = Notify("READY=1")
+				}
+				SignalHandoffReady()
 				select {
 				case <-stop:
 				case <-ctx.Done():

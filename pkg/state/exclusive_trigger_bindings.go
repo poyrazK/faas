@@ -77,7 +77,7 @@ func (s *MemStore) UpsertExclusiveTriggerBinding(ctx context.Context, in Exclusi
 		}
 		in.AppID = cron.AppID
 	case "inbound_webhook":
-		if _, exists := s.webhookAutomationBindings[in.TriggerID]; exists {
+		if _, exists := s.webhookAutomationBindings[in.TriggerID]; exists || s.operationWebhookBoundLocked(in.TriggerID) {
 			return ExclusiveTriggerBinding{}, ErrConflict
 		}
 		endpoint, ok := s.inboundWebhookEndpoints[in.TriggerID]

@@ -1,4 +1,8 @@
+-- filename: 20261014220145045_profile_captures.sql
+-- migration-compat: expand
+
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- On-demand profile captures (ADR-1155). apid queues a capture and emits
 -- pg_notify('profile_capture'); schedd claims it, runs it through vmmd and
 -- writes the result. capture holds the request and result metadata;

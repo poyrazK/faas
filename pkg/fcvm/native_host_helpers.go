@@ -282,6 +282,11 @@ func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLau
 	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || !sameNativePhysicalLease(owner.Lease, expected.Lease) || owner.ResourcesRemoved {
 		return record, false, errors.New("native helper: launch owner changed or was revoked")
 	}
+	if j.purpose != nativeHostHelperNetworkCleanup {
+		if err := j.owner.requireRepairProducerContext(ctx, owner); err != nil {
+			return record, false, err
+		}
+	}
 	argv := cmd.Args
 	if !deviceCommand && !snapshotCommand {
 		argv = cmd.Args[4:]

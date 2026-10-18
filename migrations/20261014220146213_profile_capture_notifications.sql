@@ -1,6 +1,8 @@
 -- filename: 20261014220146213_profile_capture_notifications.sql
+-- migration-compat: expand
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- Automatic profile capture notifications (ADR-1155): schedd enqueues
 -- profile.capture_ready and profile.capture_oom_linked into the app webhook
 -- outbox in the transaction that finishes a capture or links an OOM kill.

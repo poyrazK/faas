@@ -1,6 +1,7 @@
 package mcpmanagement
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -113,8 +114,8 @@ func (m *management) listenResources(ctx context.Context, next mcp.MethodHandler
 		if err != nil {
 			return nil, m.contextError(err)
 		}
-		if args.App == "" || (view != "release" && view != "health" && view != "budgets") || seen[uri] {
-			return nil, m.contextError(invalid("invalid_subscription", "subscribe to distinct app release, health or budgets resources"))
+		if args.App == "" || (view != "release" && view != "health" && view != "budgets" && view != "regressions") || seen[uri] {
+			return nil, m.contextError(invalid("invalid_subscription", "subscribe to distinct app release, health, budgets or app-wide regressions resources"))
 		}
 		seen[uri] = true
 	}
@@ -217,6 +218,9 @@ func (m *management) subscriptionSnapshot(ctx context.Context, args appArgs, vie
 	}
 	if err := m.authorizeArgs(ctx, args); err != nil {
 		return nil, zero, err
+	}
+	if view == "regressions" {
+		return m.regressionSubscriptionSnapshot(ctx, args, pin)
 	}
 	app, env, err := m.appEnvironment(ctx, args.App, args.Project, args.Environment, false)
 	if err != nil {
@@ -373,8 +377,18 @@ func (m *management) stopResourceSubscriptions() {
 
 func resourceSemanticDigest(data json.RawMessage, now time.Time) ([32]byte, error) {
 	var value any
-	if err := json.Unmarshal(data, &value); err != nil {
+	if !json.Valid(data) {
+		return [32]byte{}, invalid("invalid_response", "invalid resource snapshot JSON")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber() // Preserve changes to integer counters beyond float64 precision.
+	if err := decoder.Decode(&value); err != nil {
 		return [32]byte{}, err
+	}
+	if root, ok := value.(map[string]any); ok {
+		// Only the snapshot's collection clock is volatile. Detector and triage
+		// timestamps remain meaningful, including timestamps in nested rows.
+		delete(root, "snapshot_observed_at")
 	}
 	stripResourceObservationTimes(value, now)
 	encoded, err := json.Marshal(value)
@@ -384,9 +398,10 @@ func stripResourceObservationTimes(value any, now time.Time) {
 	switch v := value.(type) {
 	case map[string]any:
 		if evaluated, ok := v["evaluated_at"].(string); ok {
-			ttl, _ := v["valid_for_seconds"].(float64)
+			number, _ := v["valid_for_seconds"].(json.Number)
+			ttl, ttlErr := number.Float64()
 			at, err := time.Parse(time.RFC3339Nano, evaluated)
-			v["evidence_fresh"] = err == nil && ttl > 0 && !at.After(now) && now.Sub(at) <= time.Duration(min(ttl, api.AppHealthEvidenceMaxAge.Seconds())*float64(time.Second))
+			v["evidence_fresh"] = err == nil && ttlErr == nil && ttl > 0 && !at.After(now) && now.Sub(at) <= time.Duration(min(ttl, api.AppHealthEvidenceMaxAge.Seconds())*float64(time.Second))
 		}
 		for _, key := range []string{"checked_at", "evaluated_at", "metrics_as_of", "window_start", "window_end", "observation_anchor", "updated_at", "start", "end"} {
 			delete(v, key)

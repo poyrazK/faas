@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // safeRecipient strips CR/LF from a customer-controlled email address
@@ -39,6 +41,12 @@ func safeRecipient(email string) string {
 // DELETE (deletion_requested_at); restoreUntil is the same moment + 30
 // days, the deadline after which pkg/grace performs the hard delete.
 func AccountDeletionPendingBody(email string, scheduledAt, restoreUntil time.Time) (subject, body string) {
+	return AccountDeletionPendingBodyV1(email, scheduledAt, restoreUntil)
+}
+
+// AccountDeletionPendingBodyV1 is frozen for durable producer retries. Future
+// wording changes must introduce a new version instead of changing this body.
+func AccountDeletionPendingBodyV1(email string, scheduledAt, restoreUntil time.Time) (subject, body string) {
 	email = safeRecipient(email)
 	scheduled := scheduledAt.UTC().Format("2006-01-02")
 	deadline := restoreUntil.UTC().Format("2006-01-02")
@@ -245,8 +253,14 @@ sort it out.
 // Free. It is deliberately not sent on the non-payment path — that
 // customer already received the past_due / suspended emails.
 func SubscriptionEndedBody(email, fromPlan string, endedAt time.Time) (subject, body string) {
+	return SubscriptionEndedBodyV1(email, fromPlan, endedAt)
+}
+
+// SubscriptionEndedBodyV1 is frozen for durable retries of subscription termination.
+func SubscriptionEndedBodyV1(email, fromPlan string, endedAt time.Time) (subject, body string) {
 	email = safeRecipient(email)
 	atStr := endedAt.UTC().Format("2006-01-02 15:04 UTC")
+	free := api.MustLimitsFor(api.PlanFree)
 	subject = "Your Gregale subscription has ended — you are now on the Free plan"
 	body = fmt.Sprintf(`Hi,
 
@@ -255,8 +269,8 @@ Gregale account (%s) has ended. Your account is now on the Free plan.
 
 What changes:
 
-  - The Free plan includes 1 deployed app, 128 MB RAM per app, and
-    5 GB-hours per calendar month. Apps above those limits keep running
+  - The Free plan includes %d deployed app, %d MB RAM per app, and
+    %d GB-hours per calendar month. Apps above those limits keep running
     until the Free allowance is used up, then park until next month.
   - New deploys must fit the Free limits.
 
@@ -271,7 +285,7 @@ or open the billing page in the dashboard.
 If you did not expect this, contact support@gregale.dev.
 
 — Gregale
-`, atStr, fromPlan, email)
+`, atStr, fromPlan, email, free.DeployedApps, free.RAMMB, free.IncludedGBHours)
 	return
 }
 

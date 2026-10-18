@@ -16,6 +16,8 @@ type (
 	PreviewEnvironmentGitRevisionResponse  = api.PreviewEnvironmentGitRevisionResponse
 	ApproveEnvironmentGitRevisionRequest   = api.ApproveEnvironmentGitRevisionRequest
 	ApproveEnvironmentGitRevisionResponse  = api.ApproveEnvironmentGitRevisionResponse
+	EnvironmentWorkloadRetirement          = api.EnvironmentWorkloadRetirement
+	EnvironmentWorkloadRetirementImpact    = api.EnvironmentWorkloadRetirementImpact
 	EnvironmentGitOpsStatusResponse        = api.EnvironmentGitOpsStatusResponse
 	AdoptEnvironmentGitOpsRequest          = api.AdoptEnvironmentGitOpsRequest
 	AdoptEnvironmentGitOpsResponse         = api.AdoptEnvironmentGitOpsResponse

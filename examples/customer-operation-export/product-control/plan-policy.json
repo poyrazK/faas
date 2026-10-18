@@ -1,0 +1,6 @@
+{
+  "transitions": {
+    "starter": ["pro"],
+    "pro": ["starter"]
+  }
+}

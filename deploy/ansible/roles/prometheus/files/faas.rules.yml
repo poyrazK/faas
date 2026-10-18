@@ -253,7 +253,13 @@ groups:
     interval: 30s
     rules:
       - alert: FaasRequestIDJournalWriteFailures
-        expr: sum(rate(gateway_request_id_journal_write_total{result="failed"}[5m])) > (1 / 60)
+        # ADR-1521: records are written in batches, so one failed batch counts
+        # up to 128 failed records. Alert on a failure share, not a count alone.
+        expr: |
+          sum(rate(gateway_request_id_journal_write_total{result="failed"}[5m])) > (1 / 60)
+          and
+          sum(rate(gateway_request_id_journal_write_total{result="failed"}[5m]))
+            / sum(rate(gateway_request_id_journal_write_total{result=~"recorded|rejected|failed"}[5m])) > 0.05
         for: 2m
         labels:
           severity: warn
@@ -261,7 +267,7 @@ groups:
           family: request_id_journal
         annotations:
           summary: "Exact request-ID journal writes are failing"
-          description: "The gateway's mandatory pre-proxy request-ID journal has failed above 1 write per minute for 2 minutes. Affected requests are rejected with 503 before guest execution; check the apid private gRPC path and Postgres write health."
+          description: "More than 5% of exact request-ID journal records (and more than 1 per minute) failed to reach apid for 2 minutes. Requests are still served (ADR-634), but their public request IDs may not resolve in the debugger; check the apid private gRPC path and Postgres write health."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRequestIDJournalWriteFailures.md"
 
   - name: outbound_webhook_delivery
@@ -412,6 +418,18 @@ groups:
         annotations:
           summary: "Financial usage event could not be journaled"
           description: "The gateway served a request whose usage fact could not be appended to its local durable outbox. Preserve the spool and inspect disk health and capacity before trusting usage totals."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasConsumerUsageDelivery.md"
+
+      - alert: FaasUsageCommitAborted
+        expr: increase(gateway_usage_commit_aborts_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: page
+          component: gatewayd-internal
+          family: consumer_usage_delivery
+        annotations:
+          summary: "Monetized responses withheld: usage could not be made durable"
+          description: "The gateway aborted billable responses because their usage events could not be fsynced to the local outbox (ADR-1505). Clients saw failed requests. Check outbox capacity and disk health; readiness should already be draining the node."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasConsumerUsageDelivery.md"
 
       - alert: FaasConsumerUsageOutboxNearCapacity
@@ -994,6 +1012,61 @@ groups:
           description: "faas-postgres-connection-metrics.timer runs every 30 seconds and only refreshes its textfile after a successful query. A stale file means the database is hung, refusing connections, or the probe timer stopped."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresDown.md"
 
+      # ADR-1344 §8 warm standby. The primary's probe reports its slot only
+      # when the manifest declares postgresql.standby, so these stay silent
+      # on fleets without one.
+      - alert: FaasPostgresStandbyDisconnected
+        expr: faas_postgres_standby_slot_active == 0
+        for: 5m
+        labels:
+          severity: warn
+          component: postgres
+          family: database_availability
+          public_status: internal
+        annotations:
+          summary: "The warm-standby replica is not streaming from {{ $labels.instance }}"
+          description: "The faas_standby slot has had no WAL receiver for 5 minutes. The primary keeps WAL for it up to max_slot_wal_keep_size; until the standby reconnects, a failover would lose everything written since it left."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresStandby.md"
+
+      - alert: FaasPostgresStandbyLagHigh
+        expr: faas_postgres_standby_replay_lag_bytes > 268435456
+        for: 10m
+        labels:
+          severity: warn
+          component: postgres
+          family: database_availability
+          public_status: internal
+        annotations:
+          summary: "The warm standby is more than 256 MiB of WAL behind {{ $labels.instance }}"
+          description: "The connected standby has not replayed {{ $value | humanize1024 }}B of WAL for 10 minutes. A failover now would lose that much committed data; check the link between the providers and the standby's disk."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresStandby.md"
+
+      - alert: FaasPostgresStandbySlotRetentionHigh
+        expr: faas_postgres_standby_slot_retained_bytes > 0.5 * faas_postgres_standby_slot_keep_size_bytes and faas_postgres_standby_slot_keep_size_bytes > 0
+        for: 10m
+        labels:
+          severity: warn
+          component: postgres
+          family: database_availability
+          public_status: internal
+        annotations:
+          summary: "The warm standby's slot holds over half of max_slot_wal_keep_size on {{ $labels.instance }}"
+          description: "The primary keeps {{ $value | humanize1024 }}B of WAL for the standby. When it reaches max_slot_wal_keep_size the slot is invalidated and the standby must be reseeded from scratch."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresStandby.md"
+
+      - alert: FaasPostgresStandbySlotLost
+        expr: faas_postgres_standby_slot_wal_status{wal_status="lost"} == 1
+        for: 1m
+        labels:
+          severity: page
+          component: postgres
+          family: database_availability
+          public_status: internal
+        annotations:
+          summary: "The warm standby can no longer catch up with {{ $labels.instance }}"
+          description: "The faas_standby slot exceeded max_slot_wal_keep_size and the primary removed WAL the standby still needed. There is no usable failover target until the standby is reseeded."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresStandby.md"
+
   # ────────────────────────────────────────────────────────────────────
   # Off-host log pipeline health (issue #274).
   # Promtail exposes its own counters; these recording rules give the
@@ -1312,6 +1385,80 @@ groups:
           summary: "Compute metrics discovery is filtering invalid targets for {{ $labels.job }}"
           description: "apid omitted one or more active compute registry rows from the {{ $labels.job }} HTTP-SD response because the gateway target or stable node name failed validation. Metrics coverage is partial; repair the registry row and verify the next refresh."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
+
+  # ────────────────────────────────────────────────────────────────────
+  # ADR-1343 §5: the app edge on each compute node (gatewayd-public in
+  # compute edge mode and its Cloudflare Tunnel connector). Prometheus
+  # scrapes the two jobs only while the cell runs the edge, so these stay
+  # silent on fleets without it. One edge down is lost capacity; Cloudflare
+  # sends its share to the other connectors. All of them down is an outage.
+  # ────────────────────────────────────────────────────────────────────
+  - name: faas_compute_edge
+    rules:
+      - alert: FaasComputeEdgeUnavailable
+        expr: (sum(up{job="gatewayd-public-edge"}) == 0) or (sum(cloudflared_tunnel_ha_connections) == 0)
+        for: 2m
+        labels:
+          severity: page
+          component: gatewayd-public
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "No compute-node app edge is serving"
+          description: "Every compute edge is down or every Cloudflare Tunnel connector has lost its connections for 2 minutes. App requests routed through the tunnel are failing."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
+
+      - alert: FaasComputeEdgeDown
+        expr: up{job="gatewayd-public-edge"} == 0
+        for: 2m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "The app edge on {{ $labels.node }} is not answering"
+          description: "Prometheus cannot scrape gatewayd-public's compute edge on {{ $labels.node }}. Its connector may still take tunnel traffic and fail it; Cloudflare routes away only once the connector disconnects."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
+
+      - alert: FaasComputeEdgeConnectorDisconnected
+        expr: (up{job="cloudflared"} == 0) or (cloudflared_tunnel_ha_connections == 0)
+        for: 2m
+        labels:
+          severity: warn
+          component: cloudflared
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "The Cloudflare Tunnel connector on {{ $labels.node }} is not connected"
+          description: "faas-cloudflared on {{ $labels.node }} is down or holds no tunnel connections. The node serves no app traffic until it reconnects; the other connectors carry its share."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
+
+      - alert: FaasComputeEdgeLocalFallback
+        expr: rate(gatewayd_public_edge_local_fallback_total[5m]) > 0.5
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "The app edge on {{ $labels.node }} is routing around its own gateway"
+          description: "The compute edge on {{ $labels.node }} sent {{ $value | humanize }} requests/s to the compute pool for 10 minutes because its node's gatewayd-internal failed its health check or refused dials. Traffic still flows, with an extra hop; check gatewayd-internal on that node."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
+
+      - alert: FaasComputeEdgeMisdirected
+        expr: rate(gatewayd_public_edge_misdirected_total[5m]) > 0.2
+        for: 15m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "The app edge on {{ $labels.node }} is receiving non-app hosts"
+          description: "The compute edge on {{ $labels.node }} answered {{ $value | humanize }} requests/s with 421 for hosts outside the apps domain for 15 minutes. The tunnel's ingress rules likely send platform or custom-domain hosts to the compute edge."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
 
   # ────────────────────────────────────────────────────────────────────
   # Dead-man's switch. FaasWatchdog fires permanently; Alertmanager routes
@@ -2335,8 +2482,12 @@ groups:
       # different hosts (or different daemons on one host) are serving
       # incompatible code. The canonical rollout owns a bounded convergence
       # window; public status must show the mixed fleet while that gate runs.
+      # Per-unit control-plane releases stamp unit-<commit> versions and are
+      # deliberately mixed with their base release until the next full one
+      # (docs/adr/1650-per-unit-control-plane-releases.md); the unit lane
+      # gates each restarted daemon itself, so they are left out here.
       - alert: FaasDeployVersionSkew
-        expr: count(count by (version) ({__name__=~".*_faas_deploy_version"})) > 1
+        expr: count(count by (version) ({__name__=~".*_faas_deploy_version", version!~"unit-.+"})) > 1
         labels:
           severity: warn
           component: platform
@@ -3737,8 +3888,8 @@ groups:
           family: alert_preset_signals
           preset: spend_eur_20
         annotations:
-          summary: "Account {{ $labels.account_id }} spend > 20 EUR over 24h"
-          description: "meterd_account_spend_eur{account_id=\"{{ $labels.account_id }}\"} has been > 20 EUR over the rolling 24h window for 1h. This is the alert_preset catalog `spend_eur_20` signal. Cross-check the per-account billing panel; the customer may have crossed their plan tier or be experiencing runaway invocations. The 1h `for:` matches the catalog's `default_cooldown_minutes` to avoid re-firing on a single blip."
+          summary: "Account {{ $labels.account_id }} spend > $20 over 24h"
+          description: "meterd_account_spend_eur{account_id=\"{{ $labels.account_id }}\"} has been over $20 (billing currency, ADR-1430) over the rolling 24h window for 1h. This is the alert_preset catalog `spend_eur_20` signal. Cross-check the per-account billing panel; the customer may have crossed their plan tier or be experiencing runaway invocations. The 1h `for:` matches the catalog's `default_cooldown_minutes` to avoid re-firing on a single blip."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSpendEur20.md"
 
       - alert: FaasDeployFailedAccount
@@ -4308,6 +4459,116 @@ groups:
           description: "At least three terminal init snapshot attempts failed in 15m, and failures exceeded 10% of attempts. before_checkpoint_failed is excluded because it is an application callback rejection. Inspect the capture outcome dashboard and schedd/vmmd logs."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInitSnapshotCaptureFailures.md"
 
+  # ADR-1151 pause tiers: the frozen tier and quiet pause. Warnings while the
+  # tiers are in canary; the dashboard is deploy/grafana/frozen-tier.json and
+  # docs/runbooks/FaasFrozenTier.md covers every alert.
+  - name: faas_frozen_tier
+    interval: 30s
+    rules:
+      - alert: FaasFrozenThawFailing
+        expr: |
+          (
+            sum by (instance) (increase(schedd_frozen_thaw_total{outcome="failed"}[15m])) >= 3
+          )
+          and on (instance)
+          (
+            sum by (instance) (increase(schedd_frozen_thaw_total{outcome="failed"}[15m]))
+            /
+            clamp_min(sum by (instance) (increase(schedd_frozen_thaw_total[15m])), 1)
+            > 0.1
+          )
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: frozen_tier
+        annotations:
+          summary: "Thaws of frozen instances are failing on {{ $labels.instance }}"
+          description: "More than 10% of thaws failed in 15m, at least three. A failed thaw parks the frozen VM and the request restores from the snapshot instead, so wakes are slower but still served. Check vmmd thaw errors and apps whose after_restore hook fails."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFrozenTier.md"
+      - alert: FaasFrozenFreezeErrors
+        expr: |
+          (
+            sum by (instance) (increase(schedd_frozen_total{outcome="error"}[15m])) >= 3
+          )
+          and on (instance)
+          (
+            sum by (instance) (increase(schedd_frozen_total{outcome="error"}[15m]))
+            /
+            clamp_min(sum by (instance) (increase(schedd_frozen_total[15m])), 1)
+            > 0.1
+          )
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: frozen_tier
+        annotations:
+          summary: "Idle instances are failing to freeze on {{ $labels.instance }}"
+          description: "More than 10% of idle-timeout freeze attempts errored in 15m, at least three. Those instances park as before, so customers are unaffected, but the frozen tier is not freezing. Check vmmd FreezeInstance errors and vmmd and schedd version skew."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFrozenTier.md"
+      - alert: FaasFrozenMemoryPressureParks
+        expr: |
+          (
+            sum by (instance) (increase(schedd_frozen_parks_total{reason="memory_pressure"}[30m])) >= 10
+          )
+          and on (instance)
+          (
+            sum by (instance) (increase(schedd_frozen_parks_total{reason="memory_pressure"}[30m]))
+            /
+            clamp_min(sum by (instance) (increase(schedd_frozen_parks_total[30m])), 1)
+            > 0.5
+          )
+        for: 15m
+        labels:
+          severity: warn
+          component: schedd
+          family: frozen_tier
+        annotations:
+          summary: "Frozen instances keep being evicted for memory on {{ $labels.instance }}"
+          description: "More than half of the frozen parks in 30m, at least ten, were memory-pressure evictions: frozen VMs are destroyed before a request can thaw them, so they hold memory without saving restores. Check node_frozen_resident_bytes and the node's measured memory; turn frozen_tier_apps off for the node or add capacity."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFrozenTier.md"
+      - alert: FaasFrozenThawSlow
+        expr: |
+          (
+            histogram_quantile(0.95, sum by (le, instance) (rate(vmmd_thaw_seconds_bucket[15m]))) > 0.5
+          )
+          and on (instance)
+          (
+            sum by (instance) (increase(vmmd_thaw_seconds_count[15m])) >= 5
+          )
+        for: 15m
+        labels:
+          severity: warn
+          component: vmmd
+          family: frozen_tier
+        annotations:
+          summary: "Thaws of frozen instances are slow on {{ $labels.instance }}"
+          description: "The p95 thaw took longer than 500ms over 15m. A thaw should take milliseconds; slow thaws come from memory faulting back in after reclaim or swap, or from a slow image healthcheck or after_restore hook. Check node_frozen_resident_bytes, host swap activity and the vmmd thaw logs."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFrozenTier.md"
+      - alert: FaasFrozenNodeNearCap
+        expr: max by (instance) (node_frozen_instances) >= 900
+        for: 15m
+        labels:
+          severity: warn
+          component: vmmd
+          family: frozen_tier
+        annotations:
+          summary: "{{ $labels.instance }} is near the frozen instance cap"
+          description: "The node holds at least 900 frozen instances, close to FrozenMaxPerNode (1000). At the cap, idle instances park instead of freezing. Check that TTL parks are running and why the node holds so many idle instances."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFrozenTier.md"
+      - alert: FaasQuietResumeErrors
+        expr: sum by (instance) (increase(vmmd_quiet_resume_errors_total[10m])) >= 3
+        for: 5m
+        labels:
+          severity: warn
+          component: vmmd
+          family: frozen_tier
+        annotations:
+          summary: "Quiet-paused instances fail to resume on {{ $labels.instance }}"
+          description: "vmmd failed to resume at least three quiet-paused instances in 10m. Each failure fails or retries the request that arrived. Check vmmd logs for ResumeVM errors and the node's Firecracker processes; turning vmmd's quiet_pause off stops new pauses."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFrozenTier.md"
+
   - name: faas_service_rollout_handoff
     interval: 30s
     rules:
@@ -4323,6 +4584,47 @@ groups:
           summary: "A zero-downtime service rollout handoff is blocked"
           description: "schedd recorded a routing or request-drain timeout/error during a service rollout in the last ten minutes. Inspect the deployment's service_rollout_handoff status for the action, generation, missing gateways, retry count, and last error. The predecessor remains live while reconciliation retries."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServiceRolloutHandoffBlocked.md"
+
+  # ADR-20261017223000: fresh persisted observations, with no customer labels.
+  - name: faas_worker_recovery
+    interval: 30s
+    rules:
+      - alert: FaasWorkerPoolUnderCapacity
+        expr: (sum without (state) (schedd_worker_recovery_replicas{state="missing"}) > 0) and (time() - schedd_worker_recovery_observed_timestamp_seconds <= 60)
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: worker_recovery
+          public_status: internal
+        annotations:
+          summary: "Worker pools remain below required capacity on {{ $labels.instance }}"
+          description: "Fresh scheduler observations show missing required workers for ten minutes. Inspect gregale inspect and the recovery ledger for capacity, startup or dependency failures. Intentional zero targets do not contribute a deficit."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/continuous-service-recovery.md"
+      - alert: FaasWorkerRecoveryStalled
+        expr: (sum without (condition) (schedd_worker_recovery_apps{condition="overdue"}) > 0) and (time() - schedd_worker_recovery_observed_timestamp_seconds <= 60)
+        for: 2m
+        labels:
+          severity: warn
+          component: schedd
+          family: worker_recovery
+          public_status: internal
+        annotations:
+          summary: "Worker reconciliation is overdue on {{ $labels.instance }}"
+          description: "An eligible owned app has exceeded both its retry deadline and reconciliation lease by at least sixty seconds for two minutes. Inspect scheduler work saturation, ownership and dependencies; an active lease or future retry deadline does not count as overdue."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/continuous-service-recovery.md"
+      - alert: FaasWorkerRecoveryObservationUnavailable
+        expr: (sum without (condition) (schedd_worker_recovery_apps{condition="unknown"}) > 0) or (time() - schedd_worker_recovery_observed_timestamp_seconds > 60)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: worker_recovery
+          public_status: internal
+        annotations:
+          summary: "Worker recovery observations are unavailable on {{ $labels.instance }}"
+          description: "An eligible worker app has no fresh pool observation, or database collection has not succeeded for over sixty seconds, for five minutes. Counts are unknown. Check schedd recovery logs, database connectivity, deployment availability and scheduler version."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/continuous-service-recovery.md"
 
   - name: faas_durable_queue
     interval: 30s
@@ -5005,3 +5307,423 @@ groups:
           summary: "schedd instance-stats collection on {{ $labels.instance }} is slow"
           description: "Collecting per-instance stats from vmmd has taken more than 200 ms at p95 for 10m, which points at dialer saturation; scale signals read stale data until it recovers."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasScheddInstanceStatsPartialErrors.md"
+  # ADR-1575: internal CI operational evidence. Fleet gauges repeat across daemons;
+  # aggregate only readable targets with max usage/counts and min limits.
+  # Boot worker switches are independent of heartbeat freshness. All alerts
+  # are internal warnings; disabled worker paths stay quiet. No state is mutated.
+  - name: faas_internal_ci
+    interval: 30s
+    rules:
+      - record: faas_ci:observation_enabled:by_daemon
+        expr: |-
+          max by (daemon) (
+          label_replace(
+          {__name__=~"(apid|githubd)_ci_health_enabled"} and on (job, instance) (up{job=~"apid|githubd"} == 1),
+          "daemon", "$1", "__name__", "(apid|githubd)_ci_health_enabled")
+          )
+      - record: faas_ci:observation_up:by_daemon
+        expr: |-
+          max by (daemon) (
+          label_replace(
+          {__name__=~"(apid|githubd)_ci_health_up"} == 1
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_enabled"} == 1)
+          and on (job, instance) (up{job=~"apid|githubd"} == 1),
+          "daemon", "$1", "__name__", "(apid|githubd)_ci_health_up")
+          )
+          or on (daemon) ((faas_ci:observation_enabled:by_daemon == 1) * 0)
+      - record: faas_ci:health_readable
+        expr: max(faas_ci:observation_up:by_daemon)
+      - record: faas_ci:observation_status:by_daemon
+        expr: |-
+          ((faas_ci:observation_enabled:by_daemon == 0)) * 0 + 0
+          or on (daemon) ((faas_ci:observation_up:by_daemon == 1)) * 0 + 1
+          or on (daemon) (((faas_ci:observation_enabled:by_daemon == 1) unless on (daemon) (faas_ci:observation_up:by_daemon == 1))) * 0 + 2
+          or on (daemon) label_replace(vector(3), "daemon", "apid", "", "")
+          or on (daemon) label_replace(vector(3), "daemon", "githubd", "", "")
+      - record: faas_ci:worker_enabled:by_worker
+        expr: |-
+          max by (worker) (
+          {__name__=~"(apid|githubd)_ci_worker_enabled"} and on (job, instance) (up{job=~"apid|githubd"} == 1)
+          )
+      - record: faas_ci:queue_worker_enabled:by_queue
+        expr: |-
+          max by (queue) (
+          label_replace(faas_ci:worker_enabled:by_worker{worker="dispatcher"}, "queue", "executions", "", "")
+          or
+          label_replace(faas_ci:worker_enabled:by_worker{worker="retention"}, "queue", "retirement", "", "")
+          or
+          label_replace(faas_ci:worker_enabled:by_worker{worker="execution_checks"}, "queue", "check_retries", "", "")
+          or
+          label_replace(faas_ci:worker_enabled:by_worker{worker=~"metadata_admission|automation_admission|metadata_checks|execution_checks"}, "queue", "$1", "worker", "(.+)")
+          )
+      - record: faas_ci:queue_items:by_queue_condition
+        expr: |-
+          max by (queue, condition) (
+          {__name__=~"(apid|githubd)_ci_queue_items"}
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_enabled"} == 1)
+          and on (job, instance) (up{job=~"apid|githubd"} == 1)
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_up"} == 1)
+          )
+      - record: faas_ci:queue_oldest_item_age_seconds:by_queue
+        expr: |-
+          max by (queue) (
+          {__name__=~"(apid|githubd)_ci_queue_oldest_item_age_seconds"}
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_enabled"} == 1)
+          and on (job, instance) (up{job=~"apid|githubd"} == 1)
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_up"} == 1)
+          )
+      - record: faas_ci:resource_used:by_resource
+        expr: |-
+          max by (resource) (
+          {__name__=~"(apid|githubd)_ci_resource_used"}
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_enabled"} == 1)
+          and on (job, instance) (up{job=~"apid|githubd"} == 1)
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_up"} == 1)
+          )
+      - record: faas_ci:resource_limit:by_resource
+        expr: |-
+          min by (resource) (
+          {__name__=~"(apid|githubd)_ci_resource_limit"}
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_enabled"} == 1)
+          and on (job, instance) (up{job=~"apid|githubd"} == 1)
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_up"} == 1)
+          )
+      - record: faas_ci:worker_replicas:by_worker_condition
+        expr: |-
+          max by (worker, condition) (
+          {__name__=~"(apid|githubd)_ci_worker_replicas"}
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_enabled"} == 1)
+          and on (job, instance) (up{job=~"apid|githubd"} == 1)
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_up"} == 1)
+          )
+      - record: faas_ci:resource_headroom:by_resource
+        expr: clamp_min(faas_ci:resource_limit:by_resource - faas_ci:resource_used:by_resource, 0)
+      - record: faas_ci:resource_utilization:by_resource
+        expr: faas_ci:resource_used:by_resource / (faas_ci:resource_limit:by_resource > 0)
+      - record: faas_ci:worker_available:by_worker
+        expr: |-
+          ((sum by (worker) (faas_ci:worker_replicas:by_worker_condition{condition=~"healthy|starting"}) > bool 0)
+          or on (worker) ((faas_ci:worker_enabled:by_worker == 1) * 0))
+          and on () (faas_ci:health_readable == 1)
+      - record: faas_ci:worker_status:by_worker
+        expr: |-
+          (faas_ci:worker_enabled:by_worker == 0)
+          or on (worker) ((faas_ci:worker_enabled:by_worker == 1) and on (worker) (faas_ci:worker_replicas:by_worker_condition{condition="healthy"} > 0)) * 0 + 1
+          or on (worker) ((faas_ci:worker_enabled:by_worker == 1) and on (worker) (faas_ci:worker_replicas:by_worker_condition{condition="starting"} > 0)) * 0 + 2
+          or on (worker) ((faas_ci:worker_enabled:by_worker == 1) and on (worker) (faas_ci:worker_replicas:by_worker_condition{condition="degraded"} > 0)) * 0 + 3
+          or on (worker) ((faas_ci:worker_enabled:by_worker == 1) and on (worker) (faas_ci:worker_replicas:by_worker_condition{condition="blocked"} > 0)) * 0 + 4
+          or on (worker) ((faas_ci:worker_enabled:by_worker == 1) and on (worker) (faas_ci:worker_replicas:by_worker_condition{condition="stalled"} > 0)) * 0 + 5
+          or on (worker) ((faas_ci:worker_enabled:by_worker == 1) and on (worker) (faas_ci:worker_replicas:by_worker_condition{condition="stale"} > 0)) * 0 + 6
+          or on (worker) (faas_ci:worker_enabled:by_worker == 1) * 0 + 7
+          or on (worker) label_replace(vector(7), "worker", "dispatcher", "", "")
+          or on (worker) label_replace(vector(7), "worker", "metadata_admission", "", "")
+          or on (worker) label_replace(vector(7), "worker", "automation_admission", "", "")
+          or on (worker) label_replace(vector(7), "worker", "metadata_checks", "", "")
+          or on (worker) label_replace(vector(7), "worker", "execution_checks", "", "")
+          or on (worker) label_replace(vector(7), "worker", "retention", "", "")
+      - alert: FaasCIHealthUnavailable
+        expr: |-
+          (faas_ci:observation_enabled:by_daemon == 1)
+          unless on (daemon) (faas_ci:observation_up:by_daemon == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: platform
+          family: internal_ci
+          public_status: internal
+        annotations:
+          summary: Internal CI health cannot be read
+          description: An observed daemon is configured for CI monitoring but has no successful durable health read. Inspect database access and CI migrations; unavailable evidence must not be interpreted as an empty queue.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalCIOperations.md
+      - alert: FaasCIWorkerUnavailable
+        expr: |-
+          (faas_ci:worker_enabled:by_worker == 1)
+          and on (worker) (faas_ci:worker_available:by_worker == 0)
+        for: 5m
+        labels:
+          severity: warn
+          component: platform
+          family: internal_ci
+          public_status: internal
+        annotations:
+          summary: An enabled internal CI worker has no available observation
+          description: No healthy or starting group is observed for an enabled worker. Inspect unknown, stale, stalled, blocked and degraded states, dependency wiring and diagnostic slot capacity before changing work intent.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalCIOperations.md
+      - alert: FaasCILeaseRecoveryStalled
+        expr: |-
+          (faas_ci:queue_items:by_queue_condition{condition="stale_leases"} > 0)
+          and on (queue) (faas_ci:queue_worker_enabled:by_queue == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: platform
+          family: internal_ci
+          public_status: internal
+        annotations:
+          summary: Internal CI expired leases are not recovering
+          description: Expired work leases remain while their owning worker is enabled. Inspect worker health and durable execution or delivery state. Preserve attempt identity, fences and native retirement safety; do not force lease or object deletion.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalCIOperations.md
+      - alert: FaasCICheckDeliveryDead
+        expr: |-
+          (faas_ci:queue_items:by_queue_condition{queue=~"metadata_checks|execution_checks",condition="dead"} > 0)
+          and on (queue) (faas_ci:queue_worker_enabled:by_queue == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: platform
+          family: internal_ci
+          public_status: internal
+        annotations:
+          summary: Internal CI Check delivery exhausted its retry budget
+          description: A Check outbox contains dead delivery while publication is enabled. Inspect repository authority and the safe failure code. For eligible execution Checks use the bounded audited retry API after fixing the cause; execution work must not be replayed.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalCIOperations.md
+      - alert: FaasCIQuotaPressure
+        expr: |-
+          ((faas_ci:resource_utilization:by_resource{resource=~"active_executions|dispatch_leases"} >= 0.8)
+          and on () (max(faas_ci:worker_enabled:by_worker{worker="dispatcher"}) == 1))
+          or
+          ((faas_ci:resource_utilization:by_resource{resource=~"storage_bytes|storage_objects|storage_journal|storage_io"} >= 0.8)
+          and on () (max(faas_ci:worker_enabled:by_worker{worker=~"dispatcher|retention"}) == 1))
+        for: 10m
+        labels:
+          severity: warn
+          component: platform
+          family: internal_ci
+          public_status: internal
+        annotations:
+          summary: Internal CI global quota is under sustained pressure
+          description: At least 80 percent of an existing global budget is used while its execution or retention path is enabled. Inspect usage and headroom. Permanent storage tombstones remain charged; never delete deduplication or retirement evidence to manufacture capacity.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalCIOperations.md
+
+  # ─────────────────────────────────────────────────────────────────
+  # Account dashboard rollups (hunt #10, 2026-10-15)
+  # ─────────────────────────────────────────────────────────────────
+  #
+  # The account analytics panel sums the gateway request counter and
+  # latency histogram per app over windows up to 15d. The raw series
+  # carry one copy per gateway instance and node; over 24h the latency
+  # buckets (about 11.5k series on production-us) took 17 s on the
+  # 2 vCPU control plane against apid's 5 s budget, so every window
+  # past an hour came back degraded. These rules keep only the labels
+  # the panel groups on. pkg/appmetrics.AccountIncreaseQuery sums the
+  # 5m rollup for 6h and 24h windows and the hourly one for 7d and 15d.
+  # Each evaluation records the increase since the previous one, so a
+  # sum_over_time across a window is the increase over that window.
+  - name: faas_gateway_account_rollups_5m
+    interval: 5m
+    rules:
+      - record: app_class:gateway_request_duration_seconds_count:increase5m
+        expr: sum by (app, class) (increase(gateway_request_duration_seconds_count[5m]))
+      - record: app_class_le:gateway_request_duration_seconds_bucket:increase5m
+        expr: sum by (app, class, le) (increase(gateway_request_duration_seconds_bucket[5m]))
+
+  - name: faas_gateway_account_rollups_1h
+    interval: 1h
+    rules:
+      - record: app_class:gateway_request_duration_seconds_count:increase1h
+        expr: sum by (app, class) (increase(gateway_request_duration_seconds_count[1h]))
+      - record: app_class_le:gateway_request_duration_seconds_bucket:increase1h
+        expr: sum by (app, class, le) (increase(gateway_request_duration_seconds_bucket[1h]))
+
+  # Starter-reported protocol signals, not host-verified authorization outcomes.
+  # No alert is inferred from event silence: idle apps emit no protocol events.
+  - name: faas_mcp_protocol
+    interval: 30s
+    rules:
+      - alert: FaasMCPProtocolHighErrorRate
+        expr: |
+          (
+            sum by (app_id) (increase(vmmd_mcp_protocol_requests_total{outcome=~"rpc_error|tool_error|authorization_error|internal_error|timeout"}[5m]))
+            / sum by (app_id) (increase(vmmd_mcp_protocol_requests_total[5m]))
+          ) > 0.1
+          and on (app_id) (sum by (app_id) (increase(vmmd_mcp_protocol_requests_total[5m])) >= 20)
+        for: 10m
+        labels:
+          severity: warn
+          component: vmmd
+          family: mcp_protocol
+          public_status: internal
+        annotations:
+          summary: "MCP protocol failures exceed ten percent"
+          description: "Starter-reported RPC/tool failures or timeouts exceed ten percent with at least twenty observed calls in each five-minute window. Cancellations are tracked separately. Review the app's MCP performance dashboard and logs."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMCPProtocolPerformance.md"
+      - alert: FaasMCPProtocolSlowExecution
+        expr: |
+          histogram_quantile(0.95, sum by (app_id, le) (rate(vmmd_mcp_protocol_execution_seconds_bucket[5m]))) > 5
+          and on (app_id) (sum by (app_id) (increase(vmmd_mcp_protocol_execution_seconds_count[5m])) >= 20)
+        for: 10m
+        labels:
+          severity: warn
+          component: vmmd
+          family: mcp_protocol
+          public_status: internal
+        annotations:
+          summary: "MCP execution p95 exceeds five seconds"
+          description: "At least twenty response-construction measurements per five-minute window show sustained slow execution. This excludes SSE delivery lifetime and background task execution."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMCPProtocolPerformance.md"
+      - alert: FaasMCPProtocolAggregationCapacity
+        expr: sum by (job) (increase(vmmd_mcp_protocol_capacity_dropped_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: vmmd
+          family: mcp_protocol
+          public_status: internal
+        annotations:
+          summary: "MCP protocol aggregation is dropping observations"
+          description: "The bounded per-host app table is full. Performance charts may be incomplete. Inspect active app placement and aggregation capacity."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMCPProtocolPerformance.md"
+      - alert: FaasMCPTelemetryHeartbeatLost
+        expr: |
+          (time() - vmmd_mcp_telemetry_heartbeat_timestamp_seconds > 120)
+          and (time() - vmmd_mcp_telemetry_instance_started_timestamp_seconds > 180)
+          and (vmmd_mcp_telemetry_loss_alert_enabled == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: vmmd
+          family: mcp_protocol
+          public_status: internal
+        annotations:
+          summary: "MCP starter telemetry heartbeats stopped"
+          description: "An opted-in executing instance has stopped reporting heartbeats after its startup grace period. This indicates missing process telemetry, independently of MCP readiness and tool success. Paused and retired host log lifecycles are excluded."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMCPProtocolPerformance.md"
+
+  - name: faas-internal-mail
+    rules:
+      - alert: InternalMailMonitoringUnavailable
+        expr: '(maild_mail_monitoring_up == 0) or (time() - maild_mail_monitoring_collected_at_seconds > 120)'
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail monitoring is unavailable or stale"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailStatisticsUnavailable
+        expr: '(maild_mail_stats_up == 0) or (maild_mail_postfix_stats_up == 0)'
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail database or Postfix statistics are unavailable"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailQueueStalled
+        expr: '(maild_mail_oldest_pending_seconds > 300) or (max without (kind) (maild_mail_postfix_oldest_seconds{kind="delivery"}) > 900)'
+        for: 5m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail delivery queue is aging"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailReportsStuck
+        expr: '(max without (kind) (maild_mail_postfix_oldest_seconds{kind="report"}) > 120) or (maild_mail_oldest_report_wait_seconds > 7200)'
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail reports are waiting too long"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailUncertainSubmission
+        expr: 'max without (state) (maild_mail_recipients{state="uncertain"}) > 0'
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail has an uncertain SMTP submission"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailBounceRateHigh
+        expr: '(sum without (kind) (maild_mail_outcomes_last_day{kind="bounced"}) / clamp_min(sum without (kind) (maild_mail_outcomes_last_day{kind=~"accepted|bounced"}), 1) > 0.2) and (sum without (kind) (maild_mail_outcomes_last_day{kind=~"accepted|bounced"}) >= 5)'
+        for: 5m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail bounces exceed the pilot threshold"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailComplaint
+        expr: 'sum without (kind) (maild_mail_outcomes_last_day{kind="complained"}) > 0'
+        for: 1m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail received a complaint"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailRetentionFailed
+        expr: 'maild_mail_retention_enabled == 1 and (maild_mail_retention_last_run_up == 0 or maild_mail_retention_stats_up == 0 or time() - maild_mail_retention_last_attempt_seconds > 7200)'
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail payload retention is failing or stale"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailDKIMRotationFailed
+        expr: |
+          (maild_mail_dkim_rotation_enabled == 1)
+          and on(job,instance)
+          (
+            (maild_mail_domain_lifecycle_stats_up == 0)
+            or (maild_mail_dkim_failed_keys > 0)
+            or (maild_mail_dkim_oldest_staged_seconds > 86400)
+          )
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail DKIM rotation is failing or stalled"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailDomainAuthorizationFailed
+        expr: |
+          (maild_mail_domain_reverify_enabled == 1)
+          and on(job,instance)
+          (
+            (maild_mail_domain_lifecycle_stats_up == 0)
+            or (maild_mail_domain_paused > 0)
+            or (maild_mail_domain_stale > 0)
+            or (maild_mail_domain_lookup_unavailable > 0)
+            or (maild_mail_domain_check_last_run_up == 0)
+            or ((time() - maild_mail_domain_check_last_attempt_seconds) > 180)
+          )
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail domain authorization is failing or stale"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"

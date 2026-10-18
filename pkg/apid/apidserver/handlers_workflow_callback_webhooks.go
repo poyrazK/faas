@@ -48,7 +48,7 @@ func workflowCallbackWebhookBindingResponse(binding state.WorkflowCallbackWebhoo
 // endpoint to an exact provider object event. PUT is idempotent for retries.
 func (s *server) putWorkflowCallbackWebhookBinding(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	run, step, ok := s.workflowCallbackForAccount(w, r, acct)
-	if !ok {
+	if !ok || s.refuseOperationWorkflowCallback(w, r, run) {
 		return
 	}
 	var req api.CreateWorkflowCallbackWebhookBindingRequest

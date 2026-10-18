@@ -981,6 +981,16 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if req.ExpectedServiceBindingFingerprint != nil {
+		if problem := validateServiceBindingPlanRequest(req, environment.Slug); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		if *req.ExpectedServiceBindingFingerprint != state.ServiceBindingFingerprint(app) {
+			api.WriteProblem(w, serviceBindingPlanConflictProblem())
+			return
+		}
+	}
 	allowedCallers, callerPolicySet, callerProblem := serviceCallersForPatch(req.AllowedServiceCallers)
 	if callerProblem != nil {
 		api.WriteProblem(w, callerProblem)
@@ -1170,7 +1180,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// a previous PATCH doesn't reach a fresh request.
 	var publicAuthSealed []byte
 	if req.PublicAuth != nil && req.PublicAuth.Mode == api.AppPublicAuthModeBasic {
-		recipient := setSecretRecipient()
+		recipient := hostSecretRecipient()
 		if recipient == nil {
 			api.WriteProblem(w, customerCapacityProblem(s.log, "update app public authentication", "App settings temporarily unavailable",
 				"Gregale could not securely update these app settings.",
@@ -1493,6 +1503,9 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			Sealed:   publicAuthSealed,
 		}
 	}
+	if req.ExpectedServiceBindingFingerprint != nil {
+		params.ExpectedServiceBindingFingerprint = *req.ExpectedServiceBindingFingerprint
+	}
 	if environment.Slug != "" {
 		s.updateEnvironmentAppSettings(w, r, acct, app, environment, params)
 		return
@@ -1524,7 +1537,9 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
 	}
 	if err != nil {
-		if problem := state.ServiceCapacityProblem(err); problem != nil {
+		if errors.Is(err, state.ErrServiceBindingPlanConflict) {
+			api.WriteProblem(w, serviceBindingPlanConflictProblem())
+		} else if problem := state.ServiceCapacityProblem(err); problem != nil {
 			api.WriteProblem(w, problem)
 		} else {
 			// The caller only sees a generic 503; keep the cause. Under load,
@@ -2661,10 +2676,14 @@ func (s *server) parkAppWithGuard(w http.ResponseWriter, r *http.Request, acct s
 			"Preview required", "fresh park is available only for preview apps"))
 		return
 	}
+	coldPreparation, err := s.beginScenarioColdPark(r.Context(), acct.ID, app.ID, fresh)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Cold-start preparation unavailable", "finish managed work and use a fresh preview park with one running instance per workload"))
+		return
+	}
 	st := state.AppEvictedCold
 	var (
 		claimed        bool
-		err            error
 		parkTransition state.AppParkTransition
 		durablePark    state.AppParkTransitionStore
 	)
@@ -2719,6 +2738,12 @@ func (s *server) parkAppWithGuard(w http.ResponseWriter, r *http.Request, acct s
 		s.audit.Emit(r.Context(), "preview.test_fresh_parked", &acct.ID, map[string]any{
 			"app_id": app.ID, "slug": app.Slug,
 		})
+	}
+	if coldPreparation {
+		if err := s.completeScenarioColdPark(r.Context(), acct.ID, app.ID); err != nil {
+			api.WriteProblem(w, api.ErrCapacity("cold-start preparation receipt is incomplete"))
+			return
+		}
 	}
 	if durablePark != nil {
 		if _, err := durablePark.CompleteDrainedAppParkTransition(r.Context(), parkTransition.ID); err != nil {
@@ -5214,7 +5239,7 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		// events remain ACKed so an unsupported provider event cannot create
 		// an endless retry loop.
 		if mapStripeTypeToEventType(ev.Type) != billing.EventUnknown {
-			s.log.Warn("stripe_webhook.unknown_customer", "customer_id", ev.Data.Object.Customer, "event_type", ev.Type)
+			s.log.Warn("stripe_webhook.unknown_customer", "customer_id", logsanitize.Field(ev.Data.Object.Customer), "event_type", logsanitize.Field(ev.Type))
 			api.WriteProblem(w, api.ErrCapacity("billing webhook customer binding unavailable"))
 			return
 		}
@@ -5223,7 +5248,7 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	normalized := normalizeStripeWebhook(ev, body)
 	if err := s.persistBillingInvoice(r.Context(), string(webhookdedupe.ProviderStripe), acct, normalized.PlanID, normalized.Invoice); err != nil {
-		s.log.Error("stripe webhook invoice persistence failed", "event_id", logsanitize.Field(ev.ID), "err", err)
+		s.log.Error("stripe webhook invoice persistence failed", "event_id", logsanitize.Field(ev.ID), "err", logsanitize.Field(err.Error()))
 		api.WriteProblem(w, api.ErrCapacity("billing webhook temporarily unavailable"))
 		return
 	}
@@ -5238,13 +5263,22 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 	// row carries the resolved account id as the subject (matching
 	// the refund.processed precedent at spec §5.7 line 336).
 	//
+	if s.handleSubscriptionEndedOutbox(w, r, "stripe", normalized, acct) {
+		return
+	}
+	if s.handleAccountRestoredOutbox(w, r, "stripe", normalized, acct) {
+		return
+	}
+	if s.handlePaymentFailedOutbox(w, r, "stripe", normalized, acct) {
+		return
+	}
 	if ev.ID == "" {
 		api.WriteProblem(w, api.ErrValidation("stripe webhook event id is required"))
 		return
 	}
 	claimed, err := s.claimWebhookDelivery(r.Context(), webhookdedupe.ProviderStripe, ev.ID)
 	if err != nil {
-		s.log.Error("stripe replay claim failed", "event_id", logsanitize.Field(ev.ID), "err", err)
+		s.log.Error("stripe replay claim failed", "event_id", logsanitize.Field(ev.ID), "err", logsanitize.Field(err.Error()))
 		api.WriteProblem(w, api.ErrCapacity("billing webhook replay protection unavailable"))
 		return
 	}
@@ -5263,7 +5297,7 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 	// VerifyWebhook return value, so both paths converge on
 	// handleBillingEvent.
 	if err := s.handleBillingEvent(r.Context(), normalized, acct); err != nil {
-		s.log.Error("stripe webhook state application failed", "event_id", logsanitize.Field(ev.ID), "err", err)
+		s.log.Error("stripe webhook state application failed", "event_id", logsanitize.Field(ev.ID), "err", logsanitize.Field(err.Error()))
 		s.releaseWebhookDelivery(r.Context(), webhookdedupe.ProviderStripe, ev.ID)
 		api.WriteProblem(w, api.ErrCapacity("billing webhook temporarily unavailable"))
 		return
@@ -5455,6 +5489,15 @@ func (s *server) paddleWebhook(w http.ResponseWriter, r *http.Request) {
 	// the check — pre-#294 behaviour. Claim failures are retryable because
 	// acknowledging without replay protection could duplicate money-related
 	// audit/state side effects.
+	if s.handleSubscriptionEndedOutbox(w, r, "paddle", ev, acct) {
+		return
+	}
+	if s.handleAccountRestoredOutbox(w, r, "paddle", ev, acct) {
+		return
+	}
+	if s.handlePaymentFailedOutbox(w, r, "paddle", ev, acct) {
+		return
+	}
 	if ev.EventID != "" {
 		now := time.Now().UTC()
 		claimed, err := s.store.ClaimWebhookDelivery(
@@ -5513,7 +5556,7 @@ func (s *server) persistBillingInvoice(ctx context.Context, provider string, acc
 	}
 	currency := data.Currency
 	if currency == "" {
-		currency = "eur"
+		currency = api.BillingCurrencyLower
 	}
 	plan := billingPlanFromProviderID(providerPlanID)
 	if !plan.Valid() {
@@ -5672,61 +5715,7 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 			}
 		}
 	case billing.EventPaymentSucceeded:
-		if err := s.applyInvoiceCredits(ctx, providerName(s.billingProvider), acct, ev.Invoice); err != nil {
-			return fmt.Errorf("apply invoice credits: %w", err)
-		}
-		if ev.SubscriptionID != "" {
-			if err := s.stampActiveBillingSubscription(ctx, acct, ev.SubscriptionID); err != nil {
-				return fmt.Errorf("store payment subscription id: %w", err)
-			}
-		}
-		if plan := billingPlanFromProviderID(ev.PlanID); plan != "" {
-			if err := s.setAccountPlan(ctx, acct, plan); err != nil {
-				return fmt.Errorf("store payment plan: %w", err)
-			}
-		}
-		// Restore the account if it was past_due. meterd will refresh
-		// quota state on its next tick. We also clear the dedupe stamp
-		// on last_quota_warning_at so the next quota tick (if the
-		// customer is still over quota from a prior cycle) emits a
-		// fresh warning — otherwise the stamp from the previous day
-		// would suppress it (spec §4.7).
-		//
-		// A dunning suspension (suspended with past_due_at still set) is
-		// lifted too: the suspension email tells the customer that paying
-		// — `gregale billing retry` — restores service, but only past_due
-		// was restored, so a customer who paid stayed suspended and the
-		// dunning timer went on to schedule the account for deletion.
-		// Operator suspensions carry no past_due_at and stay in place.
-		// A dunning deletion (deleted_pending with past_due_at) is
-		// undone by paying within its grace window as well.
-		if acct.Status == state.AccountPastDue ||
-			(acct.Status == state.AccountSuspended && acct.PastDueAt != nil) ||
-			(acct.Status == state.AccountDeletedPending && acct.PastDueAt != nil) {
-			if err := s.store.UpdateAccountStatus(ctx, acct.ID, state.AccountActive); err != nil {
-				s.log.Warn("apid: payment_succeeded restore",
-					"account", acct.ID, "err", err)
-				return fmt.Errorf("restore account: %w", err)
-			} else {
-				s.notifyAccountLifecycle(ctx, acct.ID, "account_reactivated")
-				// Status just flipped back to active. Send the
-				// recovery email (spec §171 "All transitions emailed").
-				// payment_succeeded is naturally idempotent — the
-				// status guard above ensures we only fire on a real
-				// past_due → active transition, never on a no-op
-				// redelivery.
-				subject, body := mail.AccountRestoredBody(acct.Email, time.Now().UTC())
-				s.sendBillingTransitionMail(ctx, acct, subject, body, asyncBillingMail, "payment_succeeded")
-			}
-		}
-		// Clear the dedupe stamp on every payment_succeeded, not just
-		// past_due → active flips: a fresh signup's first provider
-		// confirmation shouldn't wait until the next UTC midnight to
-		// hear about a quota they crossed during the trial, and the
-		// cost of an extra pg_notify on a no-op event is nil.
-		if err := s.store.ClearQuotaWarning(ctx, acct.ID); err != nil {
-			return fmt.Errorf("clear quota warning: %w", err)
-		}
+		return s.handleSuccessfulPayment(ctx, ev, acct, asyncBillingMail, providerName(s.billingProvider), s.accountRestoredRequested())
 	case billing.EventSubscriptionUpdated:
 		if ev.SubscriptionID != "" {
 			if err := s.stampActiveBillingSubscription(ctx, acct, ev.SubscriptionID); err != nil {
@@ -6652,7 +6641,7 @@ func (s *server) buildUsageSummary(ctx context.Context, acct state.Account, mont
 	if overage < 0 {
 		overage = 0
 	}
-	// Spec §1 / financial model: €0.01/GB-h overage → 1 cent per
+	// Spec §1 / financial model: $0.01/GB-h overage → 1 cent per
 	// GB-h. Plan's overage rate can vary in the model; constants here
 	// are the production default. Storing cents as int64 keeps
 	// floats away from money (spec §Conventions).

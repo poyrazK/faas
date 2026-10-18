@@ -1,6 +1,6 @@
 // ADR-586: customer PostgreSQL business writes and replayable handler responses.
 import { createHash } from "node:crypto";
-import { operationReceiptTransaction, type OperationPool, type OperationTransaction, type OperationTransactionResult } from './operation-receipt.js';
+import { operationReceiptTransaction, type OperationPool, type OperationTransaction, type OperationTransactionResult, type OperationReceiptGuard } from './operation-receipt.js';
 export { OperationConflictError, OperationCommitUnknownError, type OperationPool, type OperationTransaction, type OperationConnection, type OperationTransactionResult } from './operation-receipt.js';
 import type { ManagedOperationEffect } from "./generated/models/ManagedOperationEffect.js";
 import {
@@ -164,13 +164,22 @@ export async function withOperationTransaction(
   pool: OperationPool, input: OperationRequest,
   handler: (transaction: OperationTransaction) => Promise<OperationOutcome>,
 ): Promise<OperationTransactionResult> {
+  return operationTransactionWithGuard(pool, input, handler);
+}
+
+// Internal SDK composition point. Capture guards run inside receipt ownership.
+export async function operationTransactionWithGuard(
+  pool: OperationPool, input: OperationRequest,
+  handler: (transaction: OperationTransaction) => Promise<OperationOutcome>, guard?: OperationReceiptGuard,
+): Promise<OperationTransactionResult> {
   if (input[customerBinding] !== undefined) throw new TypeError("use withCustomerOperationTransaction for customer receipts");
-  return operationTransaction(pool, input, handler);
+  return operationTransaction(pool, input, handler, guard);
 }
 
 async function operationTransaction(
   pool: OperationPool, input: OperationRequest,
   handler: (transaction: OperationTransaction) => Promise<OperationOutcome>,
+  guard?: OperationReceiptGuard,
 ): Promise<OperationTransactionResult> {
   const request = normalize(input);
   const digest = Buffer.from(operationRequestDigest(request));
@@ -180,7 +189,7 @@ async function operationTransaction(
     body => {
       validateBody(body);
       if (protocol === 'customer') customerResult(body);
-    });
+    }, guard);
 }
 
 /** Explicit HTTP/PostgreSQL receipt context. Claim proofs are never retained. */

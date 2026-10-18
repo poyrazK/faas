@@ -310,3 +310,40 @@ func TestCmdDeployTarball_ProjectBuildFailuresSetExitCode(t *testing.T) {
 		})
 	}
 }
+
+// H10-88: Apps is the whole project membership while Builds holds only what
+// the apply enqueued. Editing one service of a two-service project printed
+// "applied with failures" and exited 1 because the untouched service counted
+// as a missing build; the server now names it in Unchanged.
+func TestSummarizeProjectApply_UnchangedWorkloadIsNotAFailure(t *testing.T) {
+	plan := projectApplyPlan("update", "update")
+	apply := api.ApplyResponse{
+		ProjectID: "project-1",
+		Apps:      []api.ApplyResponseApp{{Slug: "app-a"}, {Slug: "app-b"}},
+		Builds:    []api.AppliedBuild{projectApplyBuild("app-a", "dep-a", "build-a", "")},
+		Unchanged: []string{"app-b"},
+	}
+
+	status := summarizeProjectApply(apply)
+	if status.buildsFailed != 0 || status.missingBuilds != 0 || status.buildsQueued != 1 || status.unchanged != 1 {
+		t.Fatalf("status = %+v, want 1 queued, 1 unchanged, 0 failed", status)
+	}
+	var out bytes.Buffer
+	if code := renderProjectApplyResult(&out, plan, apply); code != 0 {
+		t.Fatalf("apply with an unchanged workload exit = %d, want 0:\n%s", code, out.String())
+	}
+	for _, want := range []string{
+		"app-b: unchanged; its live release keeps serving",
+		"Summary: apps reconciled=2, builds queued=1, builds failed=0, unchanged=1",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("output missing %q:\n%s", want, out.String())
+		}
+	}
+
+	// A server without the field still has its missing builds counted.
+	apply.Unchanged = nil
+	if status := summarizeProjectApply(apply); status.missingBuilds != 1 || status.buildsFailed != 1 {
+		t.Fatalf("legacy response status = %+v, want 1 missing build", status)
+	}
+}

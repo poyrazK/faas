@@ -188,7 +188,7 @@ func snapshotProcs() []*exec.Cmd {
 func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *Harness {
 	t.Helper()
 
-	tmp := t.TempDir()
+	tmp := harnessTempDir(t)
 	// Daemon binaries are built once per process and shared across tests;
 	// see EnsureSharedBinaries for why this is not under t.TempDir().
 	bin := buildBinaries(t)
@@ -211,6 +211,9 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *H
 	currentHarness = h
 	if which&Gatewayd != 0 {
 		reserveGatewayAddresses(t, h)
+		// APID starts first, but its probes must target this reserved control
+		// port rather than another gateway's default localhost listener.
+		extraEnv = append([]string{"FAAS_GATEWAYD_CONTROL_URL=http://" + h.gatewayControlAddr}, extraEnv...)
 		t.Cleanup(h.releaseGatewayAddressReservations)
 	}
 	if which&GatewaySynthStub != 0 {
@@ -338,7 +341,7 @@ failure_report_dir = %q
 	if which&Gatewayd != 0 {
 		// Guest DNS is pinned to the tenant bridge, including in builder VMs.
 		// Metal source-build tests need the gateway's real bridge resolver.
-		guestDNS := which&Builderd != 0 && which&VMMD != 0 && os.Getenv("FAAS_TEST_KERNEL") != ""
+		guestDNS := nativeGuestDNS(which)
 		startGatewayd(t, h, bin, dbURL, extraEnv, guestDNS)
 	}
 	if which&GatewaydPublic != 0 {
@@ -393,6 +396,9 @@ failure_report_dir = %q
 		// pg_stat_activity for a session holding LISTEN build_queued in this
 		// schema — the only consumer of that channel is builderd.
 		if err := h.waitBuilderdListens(10 * time.Second); err != nil {
+			// As for imaged: keep builderd's last words, or a slow or
+			// crashed builderd reads only as "never subscribed".
+			dumpProcs(t)
 			t.Fatalf("e2etest: builderd did not subscribe to build_queued: %v", err)
 		}
 	}
@@ -715,7 +721,7 @@ const e2eMigrationTarget = 416
 // only needs apid, no schedd/vmmd).
 func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []string) *Harness {
 	t.Helper()
-	tmp := t.TempDir()
+	tmp := harnessTempDir(t)
 	// Shared, built-once daemon binaries — see EnsureSharedBinaries.
 	bin := buildBinaries(t)
 	appsRoot := filepath.Join(tmp, "apps")
@@ -731,6 +737,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	currentHarness = h
 	if which&Gatewayd != 0 {
 		reserveGatewayAddresses(t, h)
+		extraEnv = append([]string{"FAAS_GATEWAYD_CONTROL_URL=http://" + h.gatewayControlAddr}, extraEnv...)
 		t.Cleanup(h.releaseGatewayAddressReservations)
 	}
 	if which&GatewaySynthStub != 0 {
@@ -1048,6 +1055,7 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 		"FAAS_SCHEDD_SOCKET="+h.ScheddSock,
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+filepath.Join(h.SockDir, "request_telemetry.sock"),
 		"FAAS_CONSUMER_USAGE_OUTBOX_ROOT="+filepath.Join(h.TmpDir, "consumer-usage"),
+		"FAAS_GATEWAY_WAKE_AHEAD_STATE_DIR="+filepath.Join(h.TmpDir, "wake-ahead"),
 		"FAAS_APPS_DOMAIN="+testDomain,
 	)
 	env = append(env, extraEnv...)
@@ -1140,6 +1148,7 @@ func (h *Harness) startAdditionalGatewayWithControl(nodeName string, extraEnv ..
 		"FAAS_SCHEDD_SOCKET="+h.ScheddSock,
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+filepath.Join(h.SockDir, "request_telemetry.sock"),
 		"FAAS_CONSUMER_USAGE_OUTBOX_ROOT="+filepath.Join(dir, "consumer-usage"),
+		"FAAS_GATEWAY_WAKE_AHEAD_STATE_DIR="+filepath.Join(dir, "wake-ahead"),
 		"FAAS_APPS_DOMAIN="+testDomain,
 		"FAAS_NODE_NAME="+nodeName,
 	)
@@ -1583,6 +1592,7 @@ func (h *Harness) stop() {
 		}
 	}
 	h.stopProcs(draining)
+	h.destroyLiveVMs(remaining)
 	h.stopProcs(remaining)
 }
 
@@ -2370,6 +2380,7 @@ func waitReadyz(t *testing.T, controlAddr string, d time.Duration) {
 	waitTCP(t, controlAddr, d)
 	url := "http://" + controlAddr + "/readyz"
 	client := &http.Client{Timeout: time.Second}
+	d = readyTimeout(d)
 	deadline := time.Now().Add(d)
 	lastStatus := 0
 	for time.Now().Before(deadline) {
@@ -2390,6 +2401,7 @@ func waitReadyz(t *testing.T, controlAddr string, d time.Duration) {
 
 func waitTCP(t *testing.T, addr string, d time.Duration) {
 	t.Helper()
+	d = readyTimeout(d)
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
 		c, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
@@ -2458,6 +2470,7 @@ func setDefaultLocalScheddTarget(t *testing.T, pool *pgxpool.Pool, sockPath, vmm
 // creates the file before binding, so file-existence is a strong signal.
 func waitUnix(t *testing.T, path string, d time.Duration) {
 	t.Helper()
+	d = readyTimeout(d)
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
 		if c, err := net.DialTimeout("unix", path, 100*time.Millisecond); err == nil {
@@ -2518,6 +2531,7 @@ func envBuilderBase(t *testing.T) string {
 // exclusively).
 func (h *Harness) waitBuilderdListens(d time.Duration) error {
 	h.T.Helper()
+	d = readyTimeout(d)
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
 		var ready bool
@@ -2548,6 +2562,7 @@ func (h *Harness) waitBuilderdListens(d time.Duration) error {
 // itself, and proves imaged keeps that session off its ordinary query pool.
 func (h *Harness) waitImagedListens(d time.Duration) error {
 	h.T.Helper()
+	d = readyTimeout(d)
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
 		ok, err := sessionListens(context.Background(), h.Pool, "faas-imaged-direct")
@@ -2740,7 +2755,28 @@ func imagedEnv(t *testing.T, dbURL, guestInit, appsRoot, tmp string) []string {
 	// starts imaged failed, deployments sat at status=pending, and wakes
 	// returned 503. First seen on the 2026-09-13 native e2e run; invisible in
 	// CI because only the metal-tagged tests start imaged.
-	return append(env, functionRunnerEnv(t, tmp)...)
+	env = append(env, functionRunnerEnv(t, tmp)...)
+	// Runtime bases built on the Debian parent (node, python) are staged in a
+	// tree vmmd fills, and vmmd writes only under the tmpfs staging root
+	// faas-imaged.service names. The default TMPDIR is outside it, so every
+	// such base failed with "target_dir outside staging root".
+	return append(env, "FAAS_BASE_STAGING_ROOT="+imagedUnitEnv(t, "FAAS_BASE_STAGING_ROOT"))
+}
+
+// imagedUnitEnv returns the value faas-imaged.service sets for key.
+func imagedUnitEnv(t *testing.T, key string) string {
+	t.Helper()
+	unit, err := daemonunitspec.UnitByName("imaged")
+	if err != nil {
+		t.Fatalf("e2etest: look up imaged unit spec: %v", err)
+	}
+	for _, kv := range unit.Environment {
+		if kv.Key == key {
+			return kv.Value
+		}
+	}
+	t.Fatalf("e2etest: the imaged unit spec does not set %s", key)
+	return ""
 }
 
 // boundingSetPrefix returns an argv prefix that runs a daemon with the same
@@ -2935,6 +2971,11 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 	// sig_invalid.
 	if h.SignKeyPath != "" {
 		env = append(env, "FAAS_SIGN_KEY="+h.SignKeyPath)
+	}
+	// imaged asks vmmd to materialize the parent base. Without this it dials
+	// /run/faas/vmmd.sock, which the harness's vmmd does not listen on.
+	if h.VMMDSock != "" {
+		env = append(env, "FAAS_VMM_SOCK=unix://"+h.VMMDSock)
 	}
 	// Optional builder-base override (Lima / CI without ghcr creds). When
 	// FAAS_TEST_BUILDER_BASE_REF is set, imaged pulls the base from there

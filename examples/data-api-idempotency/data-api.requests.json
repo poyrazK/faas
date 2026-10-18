@@ -43,6 +43,69 @@
           }
         },
         {
+          "name": "Read the committed receipt without replay",
+          "identity": "alice",
+          "method": "POST",
+          "path": "/rest/v1/rpc/read_order_receipt",
+          "body": {
+            "request_key": "e302015b-f904-4385-97f7-a1cd6edb657a",
+            "order_total": 42
+          },
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "id": "{{id}}",
+                "owner": "alice",
+                "tenant": "team-a",
+                "request_key": "e302015b-f904-4385-97f7-a1cd6edb657a",
+                "total": 42
+              }
+            ]
+          }
+        },
+        {
+          "name": "Receipt payload conflict",
+          "identity": "alice",
+          "method": "POST",
+          "path": "/rest/v1/rpc/read_order_receipt",
+          "body": {
+            "request_key": "e302015b-f904-4385-97f7-a1cd6edb657a",
+            "order_total": 43
+          },
+          "expect": {
+            "status": 409
+          }
+        },
+        {
+          "name": "Other tenant cannot infer a receipt conflict",
+          "identity": "otherTenant",
+          "method": "POST",
+          "path": "/rest/v1/rpc/read_order_receipt",
+          "body": {
+            "request_key": "e302015b-f904-4385-97f7-a1cd6edb657a",
+            "order_total": 43
+          },
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Missing receipt stays absent",
+          "identity": "alice",
+          "method": "POST",
+          "path": "/rest/v1/rpc/read_order_receipt",
+          "body": {
+            "request_key": "e302015b-f904-4385-97f7-a1cd6edb657b",
+            "order_total": 42
+          },
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
           "name": "Changed payload conflicts",
           "identity": "alice",
           "method": "POST",

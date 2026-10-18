@@ -201,6 +201,13 @@ func writeAppCgroupAt(parent, instance string, plan api.Plan, planMB, cpuMillico
 	if err := writeAppCPUMaxTo(scope, plan, cpuMillicores); err != nil {
 		return err
 	}
+	// A running guest never swaps (ADR-906 decision 6); only a frozen one
+	// may, and only to memory-only swap (frozen_swap.go).
+	if swapMaxSupported(scope) {
+		if err := writeSwapMax(scope, swapClosed); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

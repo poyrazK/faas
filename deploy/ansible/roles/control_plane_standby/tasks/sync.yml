@@ -1,0 +1,122 @@
+---
+# control_plane_standby — stage the primary's control-plane files on the
+# standby (ADR-1344 §8). Runs on the postgres_standby host and reads the
+# primary through delegation, so the contents pass through the controller's
+# memory only, never its disk.
+
+- name: control_plane_standby — load the control-plane state list
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/vars/cp_state_files.yml"
+
+- name: control_plane_standby — inspect the synced directories on the primary
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ faas_standby_sync_trees + (faas_standby_sync_files + faas_standby_sync_extra_files) | map('dirname') | unique }}"
+  delegate_to: "{{ faas_postgres_primary_inventory_host }}"
+  become: true
+  register: control_plane_standby_roots
+
+- name: control_plane_standby — list subdirectories on the primary
+  ansible.builtin.find:
+    paths: "{{ faas_standby_sync_trees }}"
+    recurse: true
+    file_type: directory
+    hidden: true
+  delegate_to: "{{ faas_postgres_primary_inventory_host }}"
+  become: true
+  register: control_plane_standby_subdirs
+
+- name: control_plane_standby — list files below the synced directories on the primary
+  ansible.builtin.find:
+    paths: "{{ faas_standby_sync_trees }}"
+    recurse: true
+    file_type: file
+    hidden: true
+  delegate_to: "{{ faas_postgres_primary_inventory_host }}"
+  become: true
+  register: control_plane_standby_tree_files
+
+- name: control_plane_standby — inspect single files on the primary
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ faas_standby_sync_files + faas_standby_sync_extra_files }}"
+  delegate_to: "{{ faas_postgres_primary_inventory_host }}"
+  become: true
+  register: control_plane_standby_single_files
+
+- name: control_plane_standby — decide what to stage
+  ansible.builtin.set_fact:
+    control_plane_standby_directories: >-
+      {{ (control_plane_standby_roots.results | selectattr('stat.exists') | map(attribute='stat') | selectattr('isdir') | list)
+         + control_plane_standby_subdirs.files }}
+    control_plane_standby_files: >-
+      {{ (control_plane_standby_tree_files.files
+          + (control_plane_standby_single_files.results | selectattr('stat.exists') | map(attribute='stat') | list))
+         | rejectattr('path', 'in', faas_standby_sync_exclude) | list }}
+
+- name: control_plane_standby — read the files on the primary
+  ansible.builtin.slurp:
+    src: "{{ item.path }}"
+  loop: "{{ control_plane_standby_files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  delegate_to: "{{ faas_postgres_primary_inventory_host }}"
+  become: true
+  register: control_plane_standby_contents
+  no_log: true
+
+- name: control_plane_standby — create the root-only staging root
+  ansible.builtin.file:
+    path: "{{ faas_standby_stage_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: control_plane_standby — create the staging area
+  ansible.builtin.file:
+    path: "{{ faas_standby_stage_dir }}/files{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop: "{{ [''] + (control_plane_standby_files | map(attribute='path') | map('dirname') | unique | list) }}"
+
+- name: control_plane_standby — stage the files
+  ansible.builtin.copy:
+    dest: "{{ faas_standby_stage_dir }}/files{{ item.source }}.b64"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ control_plane_standby_contents.results }}"
+  loop_control:
+    label: "{{ item.source }}"
+  no_log: true
+
+- name: control_plane_standby — record ownership and modes
+  ansible.builtin.template:
+    src: index.json.j2
+    dest: "{{ faas_standby_stage_dir }}/index.json"
+    owner: root
+    group: root
+    mode: "0600"
+
+# A secret removed or rotated away on the primary must not come back on a
+# takeover.
+- name: control_plane_standby — list staged files
+  ansible.builtin.find:
+    paths: "{{ faas_standby_stage_dir }}/files"
+    recurse: true
+    patterns: "*.b64"
+    hidden: true
+  register: control_plane_standby_staged
+
+- name: control_plane_standby — remove files the primary no longer has
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ control_plane_standby_staged.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: (item.path | regex_replace('^' ~ (faas_standby_stage_dir ~ '/files') | regex_escape, '') | regex_replace('[.]b64$', '')) not in (control_plane_standby_files | map(attribute='path') | list)

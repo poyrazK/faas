@@ -14,24 +14,35 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const startSessionVersion = 1
+const startSessionVersion = 2
 
 // startSession contains only recovery metadata. Tokens, secret values and
 // secret-file paths belong to the credential/secrets workflows, never here.
+// RequireDeploymentEvidence keeps older CLIs strict when recovering new records;
+// current checks require identity evidence regardless of this field's value.
 type startSession struct {
-	Version      int    `json:"version"`
-	APIBase      string `json:"api_base"`
-	AccountID    string `json:"account_id"`
-	ScopePath    string `json:"scope_path"`
-	SourcePath   string `json:"source_path"`
-	Template     string `json:"template,omitempty"`
-	AppSlug      string `json:"app_slug"`
-	AppID        string `json:"app_id,omitempty"`
-	DeploymentID string `json:"deployment_id,omitempty"`
-	Status       string `json:"status"`
-	Revision     int    `json:"revision,omitempty"`
-	HealthPath   string `json:"health_path,omitempty"`
-	UpdatedAt    string `json:"updated_at"`
+	Version                   int                     `json:"version"`
+	APIBase                   string                  `json:"api_base"`
+	AccountID                 string                  `json:"account_id"`
+	ScopePath                 string                  `json:"scope_path"`
+	SourcePath                string                  `json:"source_path"`
+	ContextKey                string                  `json:"context_key,omitempty"`
+	SourceContext             string                  `json:"source_context,omitempty"`
+	Project                   string                  `json:"project,omitempty"`
+	ProjectID                 string                  `json:"project_id,omitempty"`
+	Environment               string                  `json:"environment,omitempty"`
+	EnvironmentID             string                  `json:"environment_id,omitempty"`
+	Template                  string                  `json:"template,omitempty"`
+	AppSlug                   string                  `json:"app_slug"`
+	AppID                     string                  `json:"app_id,omitempty"`
+	DeploymentID              string                  `json:"deployment_id,omitempty"`
+	VerifiedDeploymentID      string                  `json:"verified_deployment_id,omitempty"`
+	RequireDeploymentEvidence bool                    `json:"require_deployment_evidence,omitempty"`
+	Status                    string                  `json:"status"`
+	Revision                  int                     `json:"revision,omitempty"`
+	HealthPath                string                  `json:"health_path,omitempty"`
+	UpdatedAt                 string                  `json:"updated_at"`
+	PendingSubmission         *startPendingSubmission `json:"pending_submission,omitempty"`
 }
 
 // canonicalStartScope resolves dir through symlinks so one directory keys one
@@ -77,14 +88,27 @@ func loadStartSession(path string) (startSession, bool, error) {
 	if err := json.Unmarshal(data, &session); err != nil {
 		return session, true, fmt.Errorf("decode start session: %w", err)
 	}
-	if session.Version != startSessionVersion || session.APIBase == "" || session.AccountID == "" || session.ScopePath == "" || session.SourcePath == "" || !api.ValidAppSlug(session.AppSlug) {
+	if (session.Version != 1 && session.Version != startSessionVersion) || session.APIBase == "" || session.AccountID == "" || session.ScopePath == "" || session.SourcePath == "" || !api.ValidAppSlug(session.AppSlug) {
 		return session, true, errors.New("start session has an unsupported or incomplete format")
+	}
+	if session.Project != "" && !api.ValidProjectSlug(session.Project) || session.Environment != "" && (session.Project == "" || !api.ValidProjectEnvironmentSlug(session.Environment)) {
+		return session, true, errors.New("start session has an invalid project or environment")
+	}
+	if pending := session.PendingSubmission; pending != nil {
+		if session.Version != startSessionVersion || session.AppID == "" || pending.Key == "" || validateDeployIdempotencyKey(pending.Key) != nil || pending.TotalSize <= 0 || (pending.Transport != "resumable" && pending.Transport != "multipart") {
+			return session, true, errors.New("start session has an invalid pending submission")
+		}
 	}
 	return session, true, nil
 }
 
 func saveStartSession(path string, session startSession) error {
-	session.Version = startSessionVersion
+	// Older CLIs must refuse an uncertain submission rather than silently
+	// resume the previous deployment. Completed records remain readable by them.
+	session.Version = 1
+	if session.PendingSubmission != nil {
+		session.Version = startSessionVersion
+	}
 	session.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	data, err := json.MarshalIndent(session, "", "  ")
 	if err != nil {

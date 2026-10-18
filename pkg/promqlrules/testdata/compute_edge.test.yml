@@ -1,0 +1,115 @@
+# ADR-1343 §5: per-node alerts for the app edge on compute nodes.
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - name: one edge down warns, all edges down pages
+    interval: 1m
+    input_series:
+      - series: up{job="gatewayd-public-edge",node="cn-1"}
+        values: 1 1 0 0 0 0 0 0
+      - series: up{job="gatewayd-public-edge",node="cn-2"}
+        values: 1 1 1 1 1 0 0 0 0 0
+      - series: cloudflared_tunnel_ha_connections{job="cloudflared",node="cn-1"}
+        values: 4+0x10
+      - series: cloudflared_tunnel_ha_connections{job="cloudflared",node="cn-2"}
+        values: 4+0x10
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasComputeEdgeDown
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-public
+              family: compute_edge
+              public_status: internal
+              job: gatewayd-public-edge
+              node: cn-1
+            exp_annotations:
+              summary: "The app edge on cn-1 is not answering"
+              description: "Prometheus cannot scrape gatewayd-public's compute edge on cn-1. Its connector may still take tunnel traffic and fail it; Cloudflare routes away only once the connector disconnects."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
+      - eval_time: 5m
+        alertname: FaasComputeEdgeUnavailable
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: FaasComputeEdgeUnavailable
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: gatewayd-public
+              family: compute_edge
+              public_status: internal
+            exp_annotations:
+              summary: "No compute-node app edge is serving"
+              description: "Every compute edge is down or every Cloudflare Tunnel connector has lost its connections for 2 minutes. App requests routed through the tunnel are failing."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
+
+  - name: a connector that is up but holds no tunnel connections warns
+    interval: 1m
+    input_series:
+      - series: up{job="cloudflared",node="cn-1"}
+        values: 1+0x10
+      - series: cloudflared_tunnel_ha_connections{job="cloudflared",node="cn-1"}
+        values: 4 4 0 0 0 0 0 0 0 0
+      - series: up{job="cloudflared",node="cn-2"}
+        values: 1+0x10
+      - series: cloudflared_tunnel_ha_connections{job="cloudflared",node="cn-2"}
+        values: 4+0x10
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: FaasComputeEdgeConnectorDisconnected
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: cloudflared
+              family: compute_edge
+              public_status: internal
+              job: cloudflared
+              node: cn-1
+            exp_annotations:
+              summary: "The Cloudflare Tunnel connector on cn-1 is not connected"
+              description: "faas-cloudflared on cn-1 is down or holds no tunnel connections. The node serves no app traffic until it reconnects; the other connectors carry its share."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
+      - eval_time: 6m
+        alertname: FaasComputeEdgeUnavailable
+        exp_alerts: []
+
+  - name: sustained local fallback and misdirected hosts warn
+    interval: 1m
+    input_series:
+      - series: gatewayd_public_edge_local_fallback_total{job="gatewayd-public-edge",node="cn-1"}
+        values: 0+60x30
+      - series: gatewayd_public_edge_misdirected_total{job="gatewayd-public-edge",node="cn-1"}
+        values: 0+30x30
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasComputeEdgeLocalFallback
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-public
+              family: compute_edge
+              public_status: internal
+              job: gatewayd-public-edge
+              node: cn-1
+            exp_annotations:
+              summary: "The app edge on cn-1 is routing around its own gateway"
+              description: "The compute edge on cn-1 sent 1 requests/s to the compute pool for 10 minutes because its node's gatewayd-internal failed its health check or refused dials. Traffic still flows, with an extra hop; check gatewayd-internal on that node."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
+      - eval_time: 25m
+        alertname: FaasComputeEdgeMisdirected
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-public
+              family: compute_edge
+              public_status: internal
+              job: gatewayd-public-edge
+              node: cn-1
+            exp_annotations:
+              summary: "The app edge on cn-1 is receiving non-app hosts"
+              description: "The compute edge on cn-1 answered 500m requests/s with 421 for hosts outside the apps domain for 15 minutes. The tunnel's ingress rules likely send platform or custom-domain hosts to the compute edge."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"

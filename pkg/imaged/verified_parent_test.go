@@ -4,6 +4,7 @@ package imaged
 
 import (
 	"context"
+	"errors"
 	"net"
 	"testing"
 
@@ -58,6 +59,10 @@ func TestVerifiedParentClientRequiresCompleteReceipt(t *testing.T) {
 			}
 			if err == nil || actual.Valid() {
 				t.Fatal("unsupported server minted a receipt")
+			}
+			// Only a vmmd without the RPC is the deferrable legacy case.
+			if got := errors.Is(err, ErrVerifiedParentUnsupported); got != (mode == "legacy") {
+				t.Fatalf("ErrVerifiedParentUnsupported = %v for %s: %v", got, mode, err)
 			}
 		})
 	}

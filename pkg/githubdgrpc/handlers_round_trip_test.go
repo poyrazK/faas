@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/http"
 	"testing"
 	"time"
 
@@ -506,6 +507,19 @@ func TestClient_ExchangeOAuthCode_RoundTrip(t *testing.T) {
 	}
 	if instID != "inst-c" || branch != "main" {
 		t.Errorf("instID/branch = (%q, %q)", instID, branch)
+	}
+}
+
+func TestClient_ExchangeOAuthCode_AccountConflict(t *testing.T) {
+	stub := &stubSvc{exchangeOAuthCode: func(string, string, string) (string, string, error) {
+		return "", "", api.ErrGitHubAccountConflict()
+	}}
+	conn := newBufConn(t, newProtoServerWithStub(t, stub))
+	defer func() { _ = conn.Close() }()
+	_, _, err := githubdgrpc.NewClient(conn).ExchangeOAuthCode(context.Background(), "account", "code", "state")
+	p := api.AsProblem(err)
+	if p == nil || p.Status != http.StatusConflict || p.Code != api.CodeGitHubAccountConflict || p.Detail != api.ErrGitHubAccountConflict().Detail {
+		t.Fatalf("gRPC lost the account conflict: %v", err)
 	}
 }
 

@@ -1,0 +1,19 @@
+---
+# gatewayd_public_edge_service — the app edge on a compute node (ADR-1343).
+#
+# A Cloudflare Tunnel connector (faas-cloudflared) that only dials out, in
+# front of gatewayd-public in compute edge mode (faas-gatewayd-public-edge),
+# which routes to this node's gatewayd-internal. The manifest's
+# public_edge.compute_nodes turns it on per cell; turning it off removes it.
+#
+# Operator-provisioned: the cell's tunnel token at faas_cloudflared_token_path,
+# and the tunnel's ingress rule in Cloudflare (*.<apps domain> →
+# http://127.0.0.1:8090). Without the token the edge listens locally but the
+# connector stays stopped, so no traffic arrives.
+- name: gatewayd_public_edge_service — install and start the app edge
+  ansible.builtin.include_tasks: enable.yml
+  when: faas_edge_on_compute_nodes | bool
+
+- name: gatewayd_public_edge_service — remove the app edge
+  ansible.builtin.include_tasks: disable.yml
+  when: not (faas_edge_on_compute_nodes | bool)

@@ -82,7 +82,7 @@ tests:
         alertname: FaasApiDownAccount
 
   # ──────────────────────────────────────────────────────────────
-  # Test 2 — spend_eur_20 fires when 24h spend crosses 20 EUR.
+  # Test 2 — spend_eur_20 fires when 24h spend crosses $20.
   # 1h `for:` matches the catalog's default_cooldown_minutes.
   # ──────────────────────────────────────────────────────────────
   - interval: 30s
@@ -103,8 +103,8 @@ tests:
               preset: spend_eur_20
               account_id: "acct-spend"
             exp_annotations:
-              summary: "Account acct-spend spend > 20 EUR over 24h"
-              description: "meterd_account_spend_eur{account_id=\"acct-spend\"} has been > 20 EUR over the rolling 24h window for 1h. This is the alert_preset catalog `spend_eur_20` signal. Cross-check the per-account billing panel; the customer may have crossed their plan tier or be experiencing runaway invocations. The 1h `for:` matches the catalog's `default_cooldown_minutes` to avoid re-firing on a single blip."
+              summary: "Account acct-spend spend > $20 over 24h"
+              description: "meterd_account_spend_eur{account_id=\"acct-spend\"} has been over $20 (billing currency, ADR-1430) over the rolling 24h window for 1h. This is the alert_preset catalog `spend_eur_20` signal. Cross-check the per-account billing panel; the customer may have crossed their plan tier or be experiencing runaway invocations. The 1h `for:` matches the catalog's `default_cooldown_minutes` to avoid re-firing on a single blip."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSpendEur20.md"
 
   # ──────────────────────────────────────────────────────────────

@@ -217,7 +217,6 @@ GetWorkflowEventsForRun
 GetWorkflowRunByIdempotencyKey
 GitHubBindingForApp
 GitHubInstallForAccount
-GitHubInstallForAccountInstallation
 GithubInstallBindingForRepoBranch
 GithubInstallBindingForRepoBranchInstallation
 HasPaddleOverageMonth
@@ -337,7 +336,6 @@ ListExpiredTriggerRecordsForReaper
 ListGdprRequestsForAccount
 ListGitHubInstallationsForAccount
 ListGithubInstallBindingsForAccount
-ListInstancesByNodeID
 ListInstancesByStatesOlderThan
 ListInstancesForAccount
 ListInstancesForAccountPaged

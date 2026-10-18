@@ -40,12 +40,13 @@ func (s *server) renderAdminDashboard(w http.ResponseWriter, r *http.Request, lo
 		Title:   "Admin",
 		Body:    "admin",
 		Account: dashboardAccountView(acct, 0),
-		Data: dashboard.AdminData{
+		Data: s.adminRepairHealthData(r, dashboard.AdminData{
 			TLSCutover:          cutover,
 			TLSCutoverStateFile: stateFile,
 			TLSCutoverPresent:   present,
-		},
+		}),
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)
 	}

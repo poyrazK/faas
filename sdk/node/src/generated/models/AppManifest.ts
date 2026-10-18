@@ -68,6 +68,10 @@ export type AppManifest = {
   after_restore?: AfterRestoreHook;
   before_checkpoint?: BeforeCheckpointHook;
   /**
+   * The app's declared pause tier (ADR-1151). Absent means the default for its type: between_requests for a function, when_idle for a request-mode app.
+   */
+  pause?: 'between_requests' | 'when_idle' | 'never';
+  /**
    * Upper bound on time-to-ready (seconds). Per-plan cap enforced by Validate() (ADR-138 §Decision 3). Default 0 means 'use plan default'.
    */
   startup_deadline_s?: number | null;
@@ -79,6 +83,10 @@ export type AppManifest = {
    * Runtime request wall-clock timeout in seconds. 0 inherits the plan/type default.
    */
   request_timeout_s?: number | null;
+  /**
+   * Per-worker request concurrency imaged stamps into the function's build as FAAS_FUNCTION_CONCURRENCY (ADR-1342). 0 or 1 means one request per worker.
+   */
+  function_concurrency?: number | null;
   service_replicas?: ServiceReplicas;
   worker_replicas?: WorkerScaling;
   /**

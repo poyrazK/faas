@@ -29,6 +29,25 @@ func (e *Engine) EnableFrozenTier() { e.frozenTier.Store(true) }
 
 func (e *Engine) frozenTierEnabled() bool { return e.frozenTier.Load() }
 
+// EnableFrozenTierApps extends the frozen tier to request-mode apps (schedd
+// `frozen_tier_apps`, off by default). It has no effect unless the frozen
+// tier itself is enabled.
+func (e *Engine) EnableFrozenTierApps() { e.frozenTierApps.Store(true) }
+
+// frozenTierAllows reports whether the frozen tier may freeze an idle
+// instance of app (ADR-1151): a request-serving workload whose declared
+// pause is not never. Apps other than functions also need the apps switch.
+func (e *Engine) frozenTierAllows(app state.App, mode, privateNetworkID string) bool {
+	if !pauseTierWorkload(app, mode, privateNetworkID) {
+		return false
+	}
+	function := app.Type == state.AppTypeFunction
+	if api.EffectivePause(app.Manifest.Pause, function) == api.PauseNever {
+		return false
+	}
+	return function || e.frozenTierApps.Load()
+}
+
 // FreezeIdle freezes an idle RUNNING instance in place of parking it. It
 // reports handled=false, with no error, when the instance is not eligible;
 // the reaper then parks it as before. residentMB is the instance's latest

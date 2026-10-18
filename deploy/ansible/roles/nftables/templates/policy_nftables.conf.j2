@@ -35,6 +35,9 @@ table inet faas {
     ip saddr {{ cidr }} tcp dport 5432 accept comment "faas postgres from compute"
 {% endfor -%}
 {% endif -%}
+{% if faas_postgres_standby_address | default('') -%}
+    {{ 'ip6' if ':' in faas_postgres_standby_address else 'ip' }} saddr {{ faas_postgres_standby_address }} tcp dport 5432 accept comment "faas postgres replication to the warm standby (ADR-1344)"
+{% endif -%}
 {% if faas_pgbouncer_enabled | default(false) and faas_postgres_allowed_cidrs is defined and faas_postgres_allowed_cidrs -%}
 {% for cidr in faas_postgres_allowed_cidrs -%}
     ip saddr {{ cidr }} tcp dport {{ faas_pgbouncer_listen_port | default(6432) }} accept comment "faas pgbouncer from compute"
@@ -43,6 +46,21 @@ table inet faas {
 {% if faas_compute_allowed_cidrs is defined and faas_compute_allowed_cidrs -%}
 {% for cidr in faas_compute_allowed_cidrs -%}
     ip saddr {{ cidr }} tcp dport { {{ faas_compute_allowed_ports | join(', ') }} } accept comment "faas control services from compute"
+{% endfor -%}
+{% endif -%}
+{% if (faas_edge_on_compute_nodes | default(false) | string | lower) in ["true", "yes", "on", "1"] and faas_edge_private_listen_addr | default('') and faas_compute_allowed_cidrs is defined and faas_compute_allowed_cidrs -%}
+{% for cidr in faas_compute_allowed_cidrs -%}
+    ip saddr {{ cidr }} tcp dport {{ faas_edge_private_listen_addr.rsplit(':', 1)[1] }} accept comment "faas app edge forwards from compute (ADR-1343)"
+{% endfor -%}
+{% endif -%}
+{% if (faas_edge_on_compute_nodes | default(false) | string | lower) in ["true", "yes", "on", "1"] and faas_edge_peer_cidrs | default([]) -%}
+{% for cidr in faas_edge_peer_cidrs -%}
+    ip saddr {{ cidr }} tcp dport {{ faas_edge_peer_gateway_port | default(8080) }} accept comment "faas app edge compute-pool fallback (ADR-1343)"
+{% endfor -%}
+{% endif -%}
+{% if (faas_edge_on_compute_nodes | default(false) | string | lower) in ["true", "yes", "on", "1"] and faas_control_plane_allowed_cidrs is defined and faas_control_plane_allowed_cidrs -%}
+{% for cidr in faas_control_plane_allowed_cidrs -%}
+    ip saddr {{ cidr }} tcp dport {{ faas_edge_connector_metrics_port | default(20241) }} accept comment "faas app edge connector metrics from control (ADR-1343)"
 {% endfor -%}
 {% endif -%}
 {% if faas_control_plane_allowed_cidrs is defined and faas_control_plane_allowed_cidrs -%}

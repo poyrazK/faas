@@ -19,6 +19,9 @@ func validateOperationCancellation(op Operation, accountID, tenantID string, gen
 	if generation < 1 {
 		return ErrInvalidArgument
 	}
+	if op.DataRepair != nil {
+		return ErrConflict
+	}
 	if generation != op.Generation || op.State == api.OperationRequiresReconciliation {
 		return ErrConflict
 	}
@@ -54,7 +57,7 @@ func (m *MemStore) CancelOperation(_ context.Context, accountID, tenantID, opera
 	case InvocationPending:
 		reserved := inv.QuotaReserved
 		inv.State, inv.QuotaReserved, inv.CompletedAt = InvocationCancelled, false, &now
-		if err := m.operationTransitionLocked(inv, false); err != nil {
+		if err := m.operationTransitionLocked(&inv, false); err != nil {
 			return Operation{}, err
 		}
 		m.invocations[inv.ID] = inv
@@ -72,6 +75,9 @@ func (s *PgStore) CancelOperation(ctx context.Context, accountID, tenantID, oper
 	snapshot, err := s.OperationByID(ctx, accountID, tenantID, operationID)
 	if err != nil {
 		return Operation{}, err
+	}
+	if snapshot.DataRepair != nil {
+		return Operation{}, ErrConflict
 	}
 	if snapshot.WorkflowRunID != "" {
 		return s.cancelOperationWorkflow(ctx, snapshot, generation)
@@ -148,6 +154,14 @@ func (m *MemStore) StampOperationExecutionAttempt(_ context.Context, id, instanc
 	}
 	inv.InstanceID = instanceID
 	m.invocations[id] = inv
+	data := m.operationMemoryLocked()
+	key := operationAttemptKey{operation: data.executions[id], generation: data.generations[id], attempt: attempt}
+	if data.attemptInstances == nil {
+		data.attemptInstances = map[operationAttemptKey]string{}
+	}
+	if _, placed := data.attemptInstances[key]; !placed {
+		data.attemptInstances[key] = instanceID
+	}
 	return nil
 }
 

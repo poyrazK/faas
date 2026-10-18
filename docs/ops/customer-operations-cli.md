@@ -162,6 +162,7 @@ gregale customer-operations list --app exports --scope production --tenant TENAN
 gregale customer-operations get OPERATION_UUID --app exports --json
 gregale customer-operations events OPERATION_UUID --app exports --after 0
 gregale customer-operations executions OPERATION_UUID --app exports --limit 20
+gregale customer-operations timeline OPERATION_UUID --app exports --all --logs
 gregale customer-operations watch OPERATION_UUID --app exports --timeout 5m --json
 gregale customer-operations download OPERATION_UUID --app exports --output export.csv
 gregale customer-operations delivery OPERATION_UUID --app exports --json
@@ -205,6 +206,15 @@ filter does not change the included milestone facts or state history.
 ascending. Pass `next_generation` as `--after` for the next page. `attempts` is
 the execution ledger's aggregate attempt count; this endpoint does not invent
 individual attempt outcomes. Both evidence commands emit JSON in either mode.
+
+`timeline` prints one chronological history: events, each HTTP execution
+attempt, each workflow step attempt and each completion delivery attempt. Pass
+`next_cursor` as `--cursor`, or `--all` to follow every page. `--logs` reads the
+archived logs of the instance that ran each HTTP attempt and prints the lines
+written during that attempt. Lines from other requests on the same instance can
+interleave, and archives lag the live log ring. `--json` prints one page per
+line and cannot be combined with `--logs`. See
+[ADR-1195](../adr/1195-unified-operation-timeline.md).
 
 `watch` polls the durable status API and prints only changed snapshots. `--json`
 emits one OperationResponse per line (NDJSON). Its exit code follows business
@@ -283,9 +293,12 @@ The account routes added by the operator and developer slices are:
 | GET | /v1/apps/{slug}/operations | Account read and MFA |
 | GET | /v1/apps/{slug}/operations/{id}/events | Account read and MFA |
 | GET | /v1/apps/{slug}/operations/{id}/executions | Account read and MFA |
+| GET | /v1/apps/{slug}/operations/{id}/timeline | Account read and MFA |
 | GET | /v1/apps/{slug}/operations/{id}/delivery | Account read and MFA |
 | GET | /v1/apps/{slug}/operations/{id}/delivery-attempts | Account read and MFA |
 | POST | /v1/apps/{slug}/operations/{id}/delivery-retries | Account deploy write and MFA |
+| POST | /v1/apps/{slug}/operations/{id}/signals | Account deploy write and MFA |
+| POST | /v1/apps/{slug}/operation-signals | Account deploy write and MFA |
 | POST | /v1/apps/{slug}/operations/{id}/retry-delivery | Legacy account deploy write and MFA |
 
 Existing account get, download, cancel and recover routes supply the other

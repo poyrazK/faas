@@ -120,10 +120,11 @@ type OpsMetrics struct {
 	warmPoolResumeTotal *prometheus.CounterVec
 	// Frozen tier (ADR-1151): freeze attempts, thaws and parks by bounded
 	// outcome or reason, and the instances currently frozen.
-	frozenFreezeTotal *prometheus.CounterVec
-	frozenThawTotal   *prometheus.CounterVec
-	frozenParksTotal  *prometheus.CounterVec
-	frozenInstances   prometheus.Gauge
+	frozenFreezeTotal   *prometheus.CounterVec
+	frozenThawTotal     *prometheus.CounterVec
+	frozenParksTotal    *prometheus.CounterVec
+	frozenCompressTotal *prometheus.CounterVec
+	frozenInstances     prometheus.Gauge
 	// warmupErrors (Tier A8 / ADR-083). Per-(app slug) probe-failure
 	// counter for the standby warm-up scraper. Bounded cardinality
 	// (operator-managed FAAS_STANDBY_WARMUP_SLUGS_PATH); see
@@ -985,7 +986,7 @@ type OpsMetrics struct {
 	canaryFleetInFlightHighAlertFiredTotal    prometheus.Counter
 
 	// Issue #1233 / ADR-123 — alert-preset signal gauges.
-	// meterdAccountSpendEur (account_id) is the MTD EUR spend
+	// meterdAccountSpendEur (account_id) is the MTD spend in the billing currency (ADR-1430; the name keeps eur)
 	// computed by the meterd tick loop and stamped every
 	// AlertEvalInterval. Cardinity is bounded by account count.
 	meterdAccountSpendEur *prometheus.GaugeVec
@@ -1953,6 +1954,7 @@ type OpsMetrics struct {
 	// dlqRetentionPurgedTotal counts unified failed-events projection rows
 	// removed by the scheduler retention sweep.
 	dlqRetentionPurgedTotal prometheus.Counter
+	workerRecovery          *workerRecoveryMetrics
 	queue                   *queueMetrics
 	delayedTasks            *delayedTaskMetrics
 	// auditLogWriteTotal (PR-#TBD / C5): per-(endpoint, kind)
@@ -2096,6 +2098,7 @@ func (m *OpsMetrics) HubDropped(channel string) {
 func NewOpsMetrics(prefix string) *OpsMetrics {
 	reg := prometheus.NewRegistry()
 	eventDelivery := newEventDeliveryMetrics(prefix)
+	workerRecovery := newWorkerRecoveryMetrics(prefix)
 	queue := newQueueMetrics(prefix)
 	delayedTasks := newDelayedTaskMetrics(prefix)
 	ops := prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -2233,6 +2236,13 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}, []string{"reason"})
 	for _, reason := range FrozenParkReasons {
 		frozenParksTotal.WithLabelValues(reason)
+	}
+	frozenCompressTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_frozen_compress_total",
+		Help: "Compressions of frozen instances into memory-only swap before memory pressure would park them (ADR-906 decision 6), by outcome.",
+	}, []string{"outcome"})
+	for _, outcome := range FrozenCompressOutcomes {
+		frozenCompressTotal.WithLabelValues(outcome)
 	}
 	frozenInstances := prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: prefix + "_frozen_instances",
@@ -3348,7 +3358,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// Issue #1233 / ADR-123 — alert-preset signal gauges.
 	meterdAccountSpendEur := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_account_spend_eur",
-		Help: "Per-{account_id} MTD EUR spend, recomputed by the meterd tick loop every AlertEvalInterval. Backs the alert preset spend_eur_20. Cardinity is bounded by account count.",
+		Help: "Per-{account_id} MTD spend in the billing currency (USD, ADR-1430), recomputed by the meterd tick loop every AlertEvalInterval. Backs the alert preset spend_eur_20. Cardinity is bounded by account count.",
 	}, []string{"account_id"})
 	apidTenantSurfaceCertExpirySeconds := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_tenant_surface_cert_expiry_seconds",
@@ -3874,10 +3884,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// calls that would silently drift apart.
 	commonCollectors := []prometheus.Collector{
 		eventDelivery.deferrals, eventDelivery.waiting, eventDelivery.oldest,
+		workerRecovery.apps, workerRecovery.replicas, workerRecovery.observedAt,
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter, queue.bindingWorkerDemand, queue.bindingThrottled,
 		delayedTasks.dispatchTotal, delayedTasks.scheduleLagSeconds,
-		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, frozenFreezeTotal, frozenThawTotal, frozenParksTotal, frozenInstances, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeColdReason, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
+		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, frozenFreezeTotal, frozenThawTotal, frozenParksTotal, frozenCompressTotal, frozenInstances, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeColdReason, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, buildCacheOutcome, builderWarmRestoreTotal,
@@ -4897,6 +4908,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		executionWorkers:                   schedd,
 		wakeRPCDuration:                    schedd,
 		serviceRolloutHandoffPhaseDuration: schedd,
+		workerRecovery.apps:                schedd,
+		workerRecovery.replicas:            schedd,
+		workerRecovery.observedAt:          schedd,
 		serviceReplicaStatus:               schedd,
 		esmPollsTotal:                      schedd,
 		esmRecordsConsumedTotal:            schedd,
@@ -5387,6 +5401,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		frozenFreezeTotal:                          frozenFreezeTotal,
 		frozenThawTotal:                            frozenThawTotal,
 		frozenParksTotal:                           frozenParksTotal,
+		frozenCompressTotal:                        frozenCompressTotal,
 		frozenInstances:                            frozenInstances,
 		warmupErrors:                               warmupErrors,
 		writeRedirectTotal:                         writeRedirectTotal,
@@ -5634,6 +5649,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		dlqReplayedTotal:                     dlqReplayedTotal,
 		dlqPurgedTotal:                       dlqPurgedTotal,
 		dlqRetentionPurgedTotal:              dlqRetentionPurgedTotal,
+		workerRecovery:                       workerRecovery,
 		queue:                                queue,
 		delayedTasks:                         delayedTasks,
 		auditLogWriteTotal:                   auditLogWriteTotal,
@@ -6146,6 +6162,9 @@ var (
 	FrozenThawOutcomes   = []string{"success", "failed", "no_capacity"}
 	FrozenParkReasons    = []string{"ttl", "memory_pressure", "superseded", "config_changed", "stale",
 		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park"}
+	// FrozenCompressOutcomes: compressed keeps the VM frozen; insufficient,
+	// unavailable (no memory-only swap) and error park it.
+	FrozenCompressOutcomes = []string{"compressed", "insufficient", "unavailable", "error"}
 )
 
 // FrozenFreezeTotal is the idle-timeout freeze counter for one outcome.
@@ -6170,6 +6189,14 @@ func (m *OpsMetrics) FrozenParksTotal(reason string) prometheus.Counter {
 		return nil
 	}
 	return m.frozenParksTotal.WithLabelValues(reason)
+}
+
+// FrozenCompressTotal is the frozen-compression counter for one outcome.
+func (m *OpsMetrics) FrozenCompressTotal(outcome string) prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.frozenCompressTotal.WithLabelValues(outcome)
 }
 
 // SetFrozenInstances sets the number of instances held frozen.
@@ -8917,7 +8944,7 @@ func (m *OpsMetrics) AlertActionExecutedTotal(action string) func() {
 	return func() {}
 }
 
-// MeterdAccountSpendEur returns the per-{account_id} MTD EUR-spend
+// MeterdAccountSpendEur returns the per-{account_id} MTD billing-currency spend
 // gauge fed by the meterd spend aggregator. Issue #1233 / ADR-123
 // backs the alert preset spend_eur_20. Returns nil on a nil receiver.
 func (m *OpsMetrics) MeterdAccountSpendEur() *prometheus.GaugeVec {

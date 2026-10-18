@@ -20,6 +20,13 @@ func (m *MemStore) UpdateEnvironmentGitSource(_ context.Context, accountID, sour
 	if err != nil {
 		return EnvironmentGitSource{}, err
 	}
+	if source.Spec.Mode != "enforce" {
+		for _, r := range memory.retirements {
+			if r.Phase != "recovered" && r.Phase != "cancelled" {
+				return EnvironmentGitSource{}, ErrConflict
+			}
+		}
+	}
 	source.Generation++
 	memory.source = source
 	touchGitOpsMemoryIntent(memory)

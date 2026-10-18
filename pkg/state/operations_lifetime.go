@@ -9,11 +9,11 @@ import (
 // Active HTTP work can outlive the result window. Only settled work or a
 // stopped reconciliation expires; active execution keeps its scoped identity.
 func operationIsActive(op Operation) bool {
-	return op.State == api.OperationAccepted || op.State == api.OperationRunning
+	return op.State == api.OperationAccepted || op.State == api.OperationRunning || op.State == api.OperationWaiting
 }
 
 func operationRetained(op Operation, now time.Time) bool {
-	return operationIsActive(op) || op.ExpiresAt.After(now)
+	return operationIsActive(op) || op.ExpiresAt.After(now) || op.DataRepair != nil && (op.DataRepair.Phase == api.DataRepairReplacing || op.DataRepair.Phase == api.DataRepairResolving)
 }
 
 func (m *MemStore) operationRetainIdentityLocked(op Operation) {

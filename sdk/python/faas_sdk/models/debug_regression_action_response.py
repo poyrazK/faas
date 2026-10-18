@@ -6,8 +6,11 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.debug_regression_item import DebugRegressionItem
+    from ..models.debug_regression_review import DebugRegressionReview
 
 
 T = TypeVar("T", bound="DebugRegressionActionResponse")
@@ -15,14 +18,21 @@ T = TypeVar("T", bound="DebugRegressionActionResponse")
 
 @_attrs_define
 class DebugRegressionActionResponse:
-    """The updated debugger regression observation after a workflow action."""
+    """Updated regression plus the exact workflow receipt. Older servers may omit review."""
 
     regression: DebugRegressionItem
     """One regression observation row."""
+    review: DebugRegressionReview | Unset = UNSET
+    """Exact workflow-only observation. Opaque version invalidates on every update; state is stored triage
+    metadata, not health or effective inbox visibility."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         regression = self.regression.to_dict()
+
+        review: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.review, Unset):
+            review = self.review.to_dict()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -31,18 +41,29 @@ class DebugRegressionActionResponse:
                 "regression": regression,
             }
         )
+        if review is not UNSET:
+            field_dict["review"] = review
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.debug_regression_item import DebugRegressionItem
+        from ..models.debug_regression_review import DebugRegressionReview
 
         d = dict(src_dict)
         regression = DebugRegressionItem.from_dict(d.pop("regression"))
 
+        _review = d.pop("review", UNSET)
+        review: DebugRegressionReview | Unset
+        if isinstance(_review, Unset):
+            review = UNSET
+        else:
+            review = DebugRegressionReview.from_dict(_review)
+
         debug_regression_action_response = cls(
             regression=regression,
+            review=review,
         )
 
         debug_regression_action_response.additional_properties = d

@@ -42,6 +42,9 @@ func (s *PgStore) CleanupProjectEnvironmentCloneDeploymentsForLease(ctx context.
 		if err = q.LockCloneDeploymentCleanupBorrowerWriters(ctx, tx); err != nil {
 			return mapErr(err)
 		}
+		if err = q.LockCloneDeploymentCleanupRetirementWriters(ctx, tx); err != nil {
+			return mapErr(err)
+		}
 		if err = requireCloneDeploymentUnborrowedTx(ctx, tx, op, native.Plan, false); err != nil {
 			return err
 		}

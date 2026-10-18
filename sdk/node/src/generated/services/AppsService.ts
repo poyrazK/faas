@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AppBindingInventory } from '../models/AppBindingInventory.js';
+import type { AppChangeTimelineResponse } from '../models/AppChangeTimelineResponse.js';
 import type { AppErrorRequestsResponse } from '../models/AppErrorRequestsResponse.js';
 import type { AppErrorSampleResponse } from '../models/AppErrorSampleResponse.js';
 import type { AppErrorsSummaryResponse } from '../models/AppErrorsSummaryResponse.js';
@@ -24,17 +25,31 @@ import type { AppWakeResponse } from '../models/AppWakeResponse.js';
 import type { AppWakeTimelineResponse } from '../models/AppWakeTimelineResponse.js';
 import type { AutomaticRouteCheck } from '../models/AutomaticRouteCheck.js';
 import type { BindingReleasePolicy } from '../models/BindingReleasePolicy.js';
+import type { BindingVerificationReview } from '../models/BindingVerificationReview.js';
+import type { BindingVerificationRun } from '../models/BindingVerificationRun.js';
+import type { BindingVerificationRunDiagnostics } from '../models/BindingVerificationRunDiagnostics.js';
+import type { BindingVerificationRunList } from '../models/BindingVerificationRunList.js';
+import type { BindingVerificationRunStep } from '../models/BindingVerificationRunStep.js';
+import type { BulkIssueActionRequest } from '../models/BulkIssueActionRequest.js';
+import type { BulkIssueActionResponse } from '../models/BulkIssueActionResponse.js';
 import type { CanaryRouteGate } from '../models/CanaryRouteGate.js';
 import type { CheckProfileRegressionRequest } from '../models/CheckProfileRegressionRequest.js';
 import type { CheckRouteRequirementsRequest } from '../models/CheckRouteRequirementsRequest.js';
 import type { CreateAppRequest } from '../models/CreateAppRequest.js';
+import type { CreateBindingVerificationRunRequest } from '../models/CreateBindingVerificationRunRequest.js';
 import type { CreateDeployTokenRequest } from '../models/CreateDeployTokenRequest.js';
 import type { CreateIssueIngestTokenRequest } from '../models/CreateIssueIngestTokenRequest.js';
+import type { CreateNativeIssueTicketRequest } from '../models/CreateNativeIssueTicketRequest.js';
+import type { CreateNativeLinearIssueTicketRequest } from '../models/CreateNativeLinearIssueTicketRequest.js';
 import type { CreateProfileCaptureRequest } from '../models/CreateProfileCaptureRequest.js';
+import type { CreateQueueBindingCanaryRequest } from '../models/CreateQueueBindingCanaryRequest.js';
+import type { CreateSLORequest } from '../models/CreateSLORequest.js';
+import type { CreateSyntheticCheckRequest } from '../models/CreateSyntheticCheckRequest.js';
 import type { CreateTCPListenerRequest } from '../models/CreateTCPListenerRequest.js';
 import type { CreateUDPListenerRequest } from '../models/CreateUDPListenerRequest.js';
 import type { CustomMetricListResponse } from '../models/CustomMetricListResponse.js';
 import type { CustomMetricRequest } from '../models/CustomMetricRequest.js';
+import type { CustomMetricSeriesResponse } from '../models/CustomMetricSeriesResponse.js';
 import type { DebugCompareRequest } from '../models/DebugCompareRequest.js';
 import type { DebugCompareResponse } from '../models/DebugCompareResponse.js';
 import type { DebugCoverageResponse } from '../models/DebugCoverageResponse.js';
@@ -42,6 +57,7 @@ import type { DebugCriticalPathHistoryResponse } from '../models/DebugCriticalPa
 import type { DebugDependencyLatencyResponse } from '../models/DebugDependencyLatencyResponse.js';
 import type { DebugRegressionActionRequest } from '../models/DebugRegressionActionRequest.js';
 import type { DebugRegressionActionResponse } from '../models/DebugRegressionActionResponse.js';
+import type { DebugRegressionReview } from '../models/DebugRegressionReview.js';
 import type { DebugRegressionsResponse } from '../models/DebugRegressionsResponse.js';
 import type { DebugReplayRequest } from '../models/DebugReplayRequest.js';
 import type { DebugReplayResponse } from '../models/DebugReplayResponse.js';
@@ -53,26 +69,44 @@ import type { DeployTokenResponse } from '../models/DeployTokenResponse.js';
 import type { DiscoveredRoutesResponse } from '../models/DiscoveredRoutesResponse.js';
 import type { EdgeProtectionResponse } from '../models/EdgeProtectionResponse.js';
 import type { EnvironmentRouteBudgets } from '../models/EnvironmentRouteBudgets.js';
+import type { GuardedDebugRegressionActionRequest } from '../models/GuardedDebugRegressionActionRequest.js';
 import type { Issue } from '../models/Issue.js';
 import type { IssueActionRequest } from '../models/IssueActionRequest.js';
 import type { IssueDetail } from '../models/IssueDetail.js';
 import type { IssueEvent } from '../models/IssueEvent.js';
 import type { IssueEventResponse } from '../models/IssueEventResponse.js';
+import type { IssueFrequencyAlertPolicy } from '../models/IssueFrequencyAlertPolicy.js';
 import type { IssueImpactAlertPolicy } from '../models/IssueImpactAlertPolicy.js';
 import type { IssueIngestToken } from '../models/IssueIngestToken.js';
+import type { IssueLifecycleAlertPolicy } from '../models/IssueLifecycleAlertPolicy.js';
+import type { IssueLifecycleAlertPreview } from '../models/IssueLifecycleAlertPreview.js';
 import type { IssueOwnershipRules } from '../models/IssueOwnershipRules.js';
+import type { IssueReleaseComparison } from '../models/IssueReleaseComparison.js';
+import type { IssueSavedView } from '../models/IssueSavedView.js';
+import type { IssueSourceMapsMetadata } from '../models/IssueSourceMapsMetadata.js';
 import type { IssueSplitMatcher } from '../models/IssueSplitMatcher.js';
 import type { IssueSplitPreview } from '../models/IssueSplitPreview.js';
 import type { IssueSplitRule } from '../models/IssueSplitRule.js';
 import type { IssueSplitRuleUndoRequest } from '../models/IssueSplitRuleUndoRequest.js';
 import type { IssueSplitRuleUpdate } from '../models/IssueSplitRuleUpdate.js';
+import type { IssueTeam } from '../models/IssueTeam.js';
+import type { IssueTrackerAutoSync } from '../models/IssueTrackerAutoSync.js';
+import type { IssueTrackerLinearConnection } from '../models/IssueTrackerLinearConnection.js';
+import type { IssueTrackerLink } from '../models/IssueTrackerLink.js';
 import type { ListDeployTokensResponse } from '../models/ListDeployTokensResponse.js';
 import type { ListIssueIngestTokensResponse } from '../models/ListIssueIngestTokensResponse.js';
+import type { ListIssueSavedViewsResponse } from '../models/ListIssueSavedViewsResponse.js';
 import type { ListIssuesResponse } from '../models/ListIssuesResponse.js';
+import type { ListIssueTeamsResponse } from '../models/ListIssueTeamsResponse.js';
+import type { ListIssueTrackerLinksResponse } from '../models/ListIssueTrackerLinksResponse.js';
 import type { ListProfileDeploymentChecksResponse } from '../models/ListProfileDeploymentChecksResponse.js';
 import type { ListProfileInvestigationsResponse } from '../models/ListProfileInvestigationsResponse.js';
 import type { ListProfilePeriodicMonitorsResponse } from '../models/ListProfilePeriodicMonitorsResponse.js';
+import type { NativeIssueTicketResult } from '../models/NativeIssueTicketResult.js';
+import type { NativeIssueTrackerStatus } from '../models/NativeIssueTrackerStatus.js';
+import type { NativeLinearIssueTrackerStatus } from '../models/NativeLinearIssueTrackerStatus.js';
 import type { PreAuthObservationsResponse } from '../models/PreAuthObservationsResponse.js';
+import type { PreviewIssueLifecycleAlertRequest } from '../models/PreviewIssueLifecycleAlertRequest.js';
 import type { PreviewRouteMonitorRequest } from '../models/PreviewRouteMonitorRequest.js';
 import type { PrewarmIntentResponse } from '../models/PrewarmIntentResponse.js';
 import type { PrewarmRequest } from '../models/PrewarmRequest.js';
@@ -89,10 +123,16 @@ import type { ProfileDeploymentPolicy } from '../models/ProfileDeploymentPolicy.
 import type { ProfileHeapResponse } from '../models/ProfileHeapResponse.js';
 import type { ProfileInvestigationResponse } from '../models/ProfileInvestigationResponse.js';
 import type { ProfileResponse } from '../models/ProfileResponse.js';
+import type { PublishIssueSourceMapsRequest } from '../models/PublishIssueSourceMapsRequest.js';
+import type { PutIssueSavedViewRequest } from '../models/PutIssueSavedViewRequest.js';
+import type { PutIssueTeamRequest } from '../models/PutIssueTeamRequest.js';
+import type { PutIssueTrackerLinkRequest } from '../models/PutIssueTrackerLinkRequest.js';
+import type { QueueBindingCanary } from '../models/QueueBindingCanary.js';
 import type { RenameAppRequest } from '../models/RenameAppRequest.js';
 import type { RequestAnalyticsResponse } from '../models/RequestAnalyticsResponse.js';
 import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyticsTimeseriesResponse.js';
 import type { RequestAuditListResponse } from '../models/RequestAuditListResponse.js';
+import type { ReviewBindingVerificationRequest } from '../models/ReviewBindingVerificationRequest.js';
 import type { RotateDeployTokenRequest } from '../models/RotateDeployTokenRequest.js';
 import type { RotateDeployTokenResponse } from '../models/RotateDeployTokenResponse.js';
 import type { RouteAdviceResponse } from '../models/RouteAdviceResponse.js';
@@ -133,19 +173,29 @@ import type { SetBindingReleasePolicyRequest } from '../models/SetBindingRelease
 import type { SetCanaryRouteGateRequest } from '../models/SetCanaryRouteGateRequest.js';
 import type { SetEnvironmentRouteBudgetsRequest } from '../models/SetEnvironmentRouteBudgetsRequest.js';
 import type { SetObjectStorageBindingReleasePolicyRequest } from '../models/SetObjectStorageBindingReleasePolicyRequest.js';
+import type { SetQueueBindingReleasePolicyRequest } from '../models/SetQueueBindingReleasePolicyRequest.js';
 import type { SetRouteHealthGateRequest } from '../models/SetRouteHealthGateRequest.js';
 import type { SetRouteMonitorRequest } from '../models/SetRouteMonitorRequest.js';
 import type { SetRoutePrioritiesRequest } from '../models/SetRoutePrioritiesRequest.js';
 import type { SetRouteRemovalPolicyRequest } from '../models/SetRouteRemovalPolicyRequest.js';
 import type { SetServiceWakeAheadRequest } from '../models/SetServiceWakeAheadRequest.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
+import type { SLOResponse } from '../models/SLOResponse.js';
 import type { SourceReviewRequest } from '../models/SourceReviewRequest.js';
 import type { SourceReviewResponse } from '../models/SourceReviewResponse.js';
+import type { SyntheticCheckResponse } from '../models/SyntheticCheckResponse.js';
 import type { TCPListenerResponse } from '../models/TCPListenerResponse.js';
 import type { TCPListenerTLSStatusResponse } from '../models/TCPListenerTLSStatusResponse.js';
 import type { UDPListenerResponse } from '../models/UDPListenerResponse.js';
 import type { UpdateAppRequest } from '../models/UpdateAppRequest.js';
+import type { UpdateIssueFrequencyAlertPolicyRequest } from '../models/UpdateIssueFrequencyAlertPolicyRequest.js';
 import type { UpdateIssueImpactAlertPolicyRequest } from '../models/UpdateIssueImpactAlertPolicyRequest.js';
+import type { UpdateIssueLifecycleAlertPolicyRequest } from '../models/UpdateIssueLifecycleAlertPolicyRequest.js';
+import type { UpdateIssueTrackerAutoSyncRequest } from '../models/UpdateIssueTrackerAutoSyncRequest.js';
+import type { UpdateIssueTrackerLinearConnectionRequest } from '../models/UpdateIssueTrackerLinearConnectionRequest.js';
+import type { UpdateNativeIssueTrackerStatusRequest } from '../models/UpdateNativeIssueTrackerStatusRequest.js';
+import type { UpdateNativeLinearIssueTrackerStatusRequest } from '../models/UpdateNativeLinearIssueTrackerStatusRequest.js';
+import type { UpdateSyntheticCheckRequest } from '../models/UpdateSyntheticCheckRequest.js';
 import type { UpdateTCPListenerRequest } from '../models/UpdateTCPListenerRequest.js';
 import type { UpdateUDPListenerRequest } from '../models/UpdateUDPListenerRequest.js';
 import type { WakeTimelineResponse } from '../models/WakeTimelineResponse.js';
@@ -204,6 +254,8 @@ export class AppsService {
    * cutovers, legacy recovery and project release graph switches fail closed
    * until they support binding fences. Policies with storage requirements must use
    * release-policy-with-object-storage for updates, including explicit clearing.
+   * Policies with queue requirements must use release-policy-with-queues and
+   * explicitly retain or clear every queue and storage requirement.
    * To recover without evidence, explicitly
    * set off with the current revision and a reason, then retry. Every update
    * has durable policy history. Existing traffic is not changed by this call.
@@ -329,6 +381,7 @@ export class AppsService {
   public static getAppBindingInventory({
     slug,
     deploymentId,
+    serviceTargets,
     scope,
   }: {
     /**
@@ -339,6 +392,10 @@ export class AppsService {
      * Select evidence for this exact app-owned, materialized live deployment, including zero-traffic candidates. No fallback to evidence from another deployment. Omit to use the manual-task selection.
      */
     deploymentId?: string,
+    /**
+     * JSON object mapping declared service names to exact live deployment UUIDs in the caller scope. Requires deployment_id. Target evidence is isolated from ordinary any-replica evidence. Does not change routes or grant access.
+     */
+    serviceTargets?: string,
     /**
      * Filter database and bucket binding scopes. Omit to include all scopes. App-wide service, queue and outbound bindings always remain included.
      */
@@ -352,6 +409,7 @@ export class AppsService {
       },
       query: {
         'deployment_id': deploymentId,
+        'service_targets': serviceTargets,
         'scope': scope,
       },
       errors: {
@@ -1270,6 +1328,381 @@ export class AppsService {
     });
   }
   /**
+   * Read a custom metric's history (ADR-745)
+   * ADR-745 internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
+   * otherwise 503 `custom_metric_history_unavailable`.
+   *
+   * Returns the values Prometheus recorded from pushed custom metrics over
+   * `range` (`1h`, `6h`, `24h` default, `7d`, `15d`). Only fresh pushes are
+   * recorded, so a gap means nothing was pushed then. Prometheus failure
+   * returns 200 with `source: "degraded: <reason>"` and null `points`.
+   *
+   * @returns CustomMetricSeriesResponse The recorded history.
+   * @throws ApiError
+   */
+  public static getCustomMetricSeries({
+    slug,
+    name,
+    range = '24h',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * The pushed custom metric whose history to read.
+     */
+    name: string,
+    /**
+     * History window. Default 24h.
+     */
+    range?: '1h' | '6h' | '24h' | '7d' | '15d',
+  }): CancelablePromise<CustomMetricSeriesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/custom-metrics/{name}/series',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      query: {
+        'range': range,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Ingest OTLP/HTTP metrics as custom metrics (ADR-745)
+   * ADR-745 internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
+   * otherwise 503. Point an OpenTelemetry exporter's metrics endpoint here
+   * with a `metrics:write` API key as the bearer token.
+   *
+   * Accepts an OTLP `ExportMetricsServiceRequest` as `application/x-protobuf`
+   * or `application/json` (at most 1 MiB) and answers in the same encoding.
+   * Gauges are stored as gauges and cumulative monotonic sums as counters;
+   * metric names are lowercased with `.`, `-` and `/` mapped to `_`. Delta
+   * or non-monotonic sums, histograms, data points with attributes,
+   * negative values, and names beyond the per-app limit are not stored and
+   * are reported through `partialSuccess`.
+   *
+   * @returns any The export was processed; rejected data points are reported in partialSuccess.
+   * @throws ApiError
+   */
+  public static postOtlpMetrics({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: Record<string, any>,
+  }): CancelablePromise<Record<string, any>> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/otlp/v1/metrics',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List the app's customer-defined SLOs (ADR-747)
+   * Returns every SLO defined on the app, name-ordered. Distinct from GET /v1/apps/{slug}/slo, which reports ADR-082's fixed 99.5% availability panel.
+   * @returns SLOResponse The app's SLO definitions.
+   * @throws ApiError
+   */
+  public static listSlOs({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<Array<SLOResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/slos',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Define an SLO on the app (ADR-747)
+   * Creates an availability or latency SLO with an objective between 90% and 99.99% over a rolling 7- or 30-day window. Latency thresholds are limited to the gateway histogram bucket bounds so attainment is exact. An app can hold at most 10 SLOs.
+   * @returns SLOResponse The SLO was created.
+   * @throws ApiError
+   */
+  public static createSlo({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateSLORequest,
+  }): CancelablePromise<SLOResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/slos',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        409: `The app already has an SLO with this name.`,
+        422: `The app is at its SLO cap; the problem carries limit and observed.`,
+      },
+    });
+  }
+  /**
+   * Get one customer-defined SLO and its error budget (ADR-747)
+   * Returns one SLO definition with its status: attainment and budget remaining over the window from hourly history, and live 1h/6h burn rates. An id belonging to another app returns 404.
+   * @returns SLOResponse The SLO definition.
+   * @throws ApiError
+   */
+  public static getSlo({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * SLO identifier returned when the SLO was created.
+     */
+    id: string,
+  }): CancelablePromise<SLOResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/slos/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Delete a customer-defined SLO (ADR-747)
+   * Removes the SLO and frees a slot against the per-app cap.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteSlo({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * SLO identifier returned when the SLO was created.
+     */
+    id: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/slos/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+    });
+  }
+  /**
+   * List the app's synthetic checks (ADR-748)
+   * Returns every scheduled HTTP check defined on the app, name-ordered.
+   * @returns SyntheticCheckResponse The app's synthetic checks.
+   * @throws ApiError
+   */
+  public static listSyntheticChecks({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<Array<SyntheticCheckResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/synthetics',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Define a synthetic check on the app (ADR-748)
+   * Schedules a GET or HEAD request to a path on the app's own hostname every 5, 15, or 60 minutes, through the public edge. A probe that wakes a parked app is billed like any request. An app can have at most 5 checks.
+   * @returns SyntheticCheckResponse The check was created and will run within one interval.
+   * @throws ApiError
+   */
+  public static createSyntheticCheck({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateSyntheticCheckRequest,
+  }): CancelablePromise<SyntheticCheckResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/synthetics',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        409: `The app already has a synthetic check with this name.`,
+        422: `The app is at its synthetic check cap; the problem carries limit and observed.`,
+      },
+    });
+  }
+  /**
+   * Get one synthetic check and its recent results (ADR-748)
+   * Returns one check definition with 24-hour and 7-day uptime, 24-hour p95 latency, and the last 20 runs. An id belonging to another app returns 404.
+   * @returns SyntheticCheckResponse The check definition.
+   * @throws ApiError
+   */
+  public static getSyntheticCheck({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Synthetic check identifier returned when the check was created.
+     */
+    id: string,
+  }): CancelablePromise<SyntheticCheckResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/synthetics/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Pause or resume a synthetic check (ADR-748)
+   * Sets whether the check runs. To change its path, schedule or expectations, delete and recreate it.
+   * @returns SyntheticCheckResponse The updated check.
+   * @throws ApiError
+   */
+  public static updateSyntheticCheck({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Synthetic check identifier returned when the check was created.
+     */
+    id: string,
+    requestBody: UpdateSyntheticCheckRequest,
+  }): CancelablePromise<SyntheticCheckResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/apps/{slug}/synthetics/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Delete a synthetic check (ADR-748)
+   * Removes the check and its run history.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteSyntheticCheck({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Synthetic check identifier returned when the check was created.
+     */
+    id: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/synthetics/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
    * Observe-mode decisions for each configured pre-auth policy.
    * Read-only security telemetry, available on every app plan. Each policy
    * reports how often observe mode would have blocked a request and the
@@ -1481,6 +1914,55 @@ export class AppsService {
     });
   }
   /**
+   * Read an app's change timeline.
+   * ADR-751 internal preview, enabled by `FAAS_CHANGE_TIMELINE_ENABLED=1`;
+   * otherwise 503 `change_timeline_unavailable`. Requires apps:read or
+   * admin; no MFA required.
+   *
+   * Merges deployment audit, edge-rule changes, the latest runtime-config
+   * change, route incidents, recorded health transitions, and environment
+   * and domain activity into one newest-first list. The window defaults to
+   * the last 24 hours, `until` is clamped to now, and the window is at most
+   * 7 days. At most 200 events are returned (`truncated: true` when more
+   * exist). A source that cannot be read is named in `unavailable_sources`
+   * and the remaining sources are still returned. Summaries never contain
+   * values, credentials, actors, or raw error text.
+   *
+   * @returns AppChangeTimelineResponse The change timeline; Cache-Control no-store.
+   * @returns Problem Invalid window, access denial, or the preview is disabled.
+   * @throws ApiError
+   */
+  public static getAppChangeTimeline({
+    slug,
+    since,
+    until,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Window start (RFC 3339). Defaults to 24 hours before until.
+     */
+    since?: string,
+    /**
+     * Window end (RFC 3339), exclusive. Defaults to and is clamped to now.
+     */
+    until?: string,
+  }): CancelablePromise<AppChangeTimelineResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/changes',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+        'until': until,
+      },
+    });
+  }
+  /**
    * Per-app request metrics (issue
    * Time-windowed rollup of one app's gateway activity. The `range`
    * parameter is a closed vocabulary bounded by Prometheus
@@ -1545,7 +2027,7 @@ export class AppsService {
    * emits the same data as JSON so a separate frontend agent can
    * render without re-parsing HTML.
    *
-   * Returns the 50 most-recent instance rows for the app, joined
+   * Legacy requests select 100 recent candidates before time filtering, joined
    * against the events table's `wake.boot_started` rows for the
    * per-row telemetry (Trigger, QueuedCount, ConcurrencyAtAdmit,
    * AtCapacity, ReadyInMS). The aggregation math is shared with
@@ -1564,6 +2046,17 @@ export class AppsService {
    * to `wake_count_24h` but not the denominator — same
    * posture as the HTML page.
    *
+   * Opt-in keyset_v1 filters app and inclusive since/until before limiting
+   * and seeking in descending (started_at, instance ID) order. Missing
+   * start times are excluded. Bounds normalize to PostgreSQL microseconds;
+   * default until resolves once to now and must not be in the future.
+   * since must precede until. Repeat the original bounds/limit on every
+   * page. Boot and completion metadata are app-scoped. Source failures
+   * return errors, not successful empty/partial results. Page metadata
+   * echoes selection and cursor; counts/histograms describe this page
+   * only. Complete marks the end of this live retained read, not complete
+   * capture or a snapshot. Inserts, retention and metadata can affect pages.
+   *
    * Plan-gated Hobby+ (mirror of /v1/apps/{slug}/metrics —
    * same `code` so a downgrade between the two endpoints flips
    * both at once).
@@ -1575,6 +2068,9 @@ export class AppsService {
     slug,
     since,
     until,
+    pagination,
+    limit = 20,
+    cursor,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -1588,6 +2084,18 @@ export class AppsService {
      * Inclusive RFC3339 upper bound; defaults to now.
      */
     until?: string,
+    /**
+     * Opt in to window-first keyset paging. Legacy reads select 100 recent instance candidates before time filtering.
+     */
+    pagination?: 'keyset_v1',
+    /**
+     * Page size in keyset_v1 mode only; legacy requests ignore this parameter.
+     */
+    limit?: number,
+    /**
+     * Opaque page.next_cursor. Repeat original normalized since/until and limit with keyset_v1. Bound to account and immutable app; grants no authority.
+     */
+    cursor?: string,
   }): CancelablePromise<AppWakeTimelineResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -1598,8 +2106,12 @@ export class AppsService {
       query: {
         'since': since,
         'until': until,
+        'pagination': pagination,
+        'limit': limit,
+        'cursor': cursor,
       },
       errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
         401: `code: unauthorized`,
         402: `Plan does not unlock the per-app wake-timeline. Free plan —
         Hobby or above required. Same code as /v1/apps/{slug}/metrics
@@ -1611,6 +2123,10 @@ export class AppsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });
@@ -1633,7 +2149,7 @@ export class AppsService {
    * Overage computation: `overage_gb_hours = max(0, gb_hours -
    * plan_included_gb_hours)`. The included band is echoed from
    * `acct.Plan.PlanIncludedGBHours()`; the overage figure is the
-   * integer-rounded float the Stripe pusher bills at €0.01/GB-h.
+   * integer-rounded float the Stripe pusher bills at $0.01/GB-h.
    *
    * Source: `usage_minutes` today (after the 30d retention cap).
    * `usage_daily` / `mixed` land with the trail-period reader
@@ -2306,6 +2822,183 @@ export class AppsService {
     });
   }
   /**
+   * Read native new-issue and regression alert filters.
+   * Unconfigured apps return revision zero, all environments and zero cooldown.
+   * @returns IssueLifecycleAlertPolicy Current lifecycle alert policy.
+   * @throws ApiError
+   */
+  public static getIssueLifecycleAlertPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<IssueLifecycleAlertPolicy> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issue-lifecycle-alert-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Replace native new-issue and regression alert filters.
+   * Requires deploy-write and session MFA. Empty environments means all exact environments. The cooldown is shared across created/regressed native Slack alerts per canonical issue, across channels and teams. Zero disables throttling. Only queue admission consumes it; missing routes, capacity failures and previews do not. Edits preserve receipts and affect future events only; queued messages are unchanged. Merge uses the latest member receipt. No events are replayed. Lifecycle audit webhooks, impact/frequency alerts, reminders and tracker notifications retain their independent policies. Stale revisions return 409.
+   * @returns IssueLifecycleAlertPolicy Updated policy; identical writes preserve its revision.
+   * @throws ApiError
+   */
+  public static setIssueLifecycleAlertPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: UpdateIssueLifecycleAlertPolicyRequest,
+  }): CancelablePromise<IssueLifecycleAlertPolicy> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/issue-lifecycle-alert-policy',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Lifecycle alert policy revision changed.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Preview a draft lifecycle alert filter without sending.
+   * Requires app read access and Issues entitlement. Evaluates the supplied draft's environment filter and shared cooldown for a hypothetical created/regressed event, resolving merged aliases. Reads one database snapshot and returns the saved policy revision at that snapshot. Does not save, reserve cooldown, mutate lifecycle or contact Slack. Allowed means this policy permits the event; actual delivery separately applies native event subscription, ignore/response state, eligible routing, capacity and sender gates.
+   * @returns IssueLifecycleAlertPreview Draft policy eligibility at the preview snapshot.
+   * @throws ApiError
+   */
+  public static previewIssueLifecycleAlert({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: PreviewIssueLifecycleAlertRequest,
+  }): CancelablePromise<IssueLifecycleAlertPreview> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issue-lifecycle-alert-policy/preview',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read application issue event-frequency rules.
+   * @returns IssueFrequencyAlertPolicy Current policy. Unconfigured apps return revision zero and no rules.
+   * @throws ApiError
+   */
+  public static getIssueFrequencyAlertPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<IssueFrequencyAlertPolicy> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issue-frequency-alert-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Replace application issue event-frequency rules.
+   * Requires the current revision (zero initially). Replaces up to ten named rules; an empty array removes all rules. Stale writes return 409. Counts retained accepted occurrences per canonical issue in (now-window, now]. Only a new capture inside the window evaluates a rule. At or above threshold, the first eligible capture after cooldown alerts again. Active ignore periods suppress alerts while collection continues. Configuration edits do not send notifications. Changing a rule's environment, threshold, window or cooldown starts a fresh cycle on the next capture; unchanged rules and disable/re-enable retain cooldowns. Webhook event is issue.frequency_threshold_reached. This policy does not alter customer-impact alerts.
+   * @returns IssueFrequencyAlertPolicy Updated policy.
+   * @throws ApiError
+   */
+  public static setIssueFrequencyAlertPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: UpdateIssueFrequencyAlertPolicyRequest,
+  }): CancelablePromise<IssueFrequencyAlertPolicy> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/issue-frequency-alert-policy',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Policy revision changed. Read the current policy and retry.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
    * Read the app's customer-impact alert policy.
    * Returns the threshold for verified distinct customers in a rolling 24-hour window. A zero threshold disables the policy.
    * @returns IssueImpactAlertPolicy The current policy; disabled apps report minimum_customers as zero.
@@ -2444,6 +3137,1123 @@ export class AppsService {
     });
   }
   /**
+   * Publish immutable deployment-local source-map artifacts.
+   * Requires deploy-write permission and session MFA. Source contents and extensions are discarded. Matching canonical manifests are idempotent; a different manifest for the deployment conflicts, including after retirement.
+   * @returns IssueSourceMapsMetadata Artifact readiness and immutable identity.
+   * @throws ApiError
+   */
+  public static publishIssueSourceMaps({
+    slug,
+    deploymentId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Deployment UUID whose source-map publication is being managed.
+     */
+    deploymentId: string,
+    requestBody: PublishIssueSourceMapsRequest,
+  }): CancelablePromise<IssueSourceMapsMetadata> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps',
+      path: {
+        'slug': slug,
+        'deployment_id': deploymentId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Immutable manifest conflict or active artifact quota exceeded.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect deployment source-map readiness without downloading mapping artifacts.
+   * @returns IssueSourceMapsMetadata Read-only artifact metadata.
+   * @throws ApiError
+   */
+  public static getIssueSourceMaps({
+    slug,
+    deploymentId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Deployment UUID whose source-map publication is being managed.
+     */
+    deploymentId: string,
+  }): CancelablePromise<IssueSourceMapsMetadata> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps',
+      path: {
+        'slug': slug,
+        'deployment_id': deploymentId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Retire mapping blobs while preserving their immutable deployment identity.
+   * Requires deploy-write permission and session MFA. New symbolicated captures require the same manifest to be restored; retained exact event retries remain idempotent.
+   * @returns IssueSourceMapsMetadata Retired metadata, including the preserved manifest digest.
+   * @throws ApiError
+   */
+  public static retireIssueSourceMaps({
+    slug,
+    deploymentId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Deployment UUID whose source-map publication is being managed.
+     */
+    deploymentId: string,
+  }): CancelablePromise<IssueSourceMapsMetadata> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps',
+      path: {
+        'slug': slug,
+        'deployment_id': deploymentId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * List the app's shared named issue inbox filters.
+   * @returns ListIssueSavedViewsResponse Up to 20 shared saved views, ordered by name and key.
+   * @throws ApiError
+   */
+  public static listIssueSavedViews({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ListIssueSavedViewsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issue-saved-views',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the latest shared view definition.
+   * @returns IssueSavedView Named filters; me remains relative to the eventual authenticated reader.
+   * @throws ApiError
+   */
+  public static getIssueSavedView({
+    slug,
+    viewKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stable key of the shared issue query to read, replace or delete.
+     */
+    viewKey: string,
+  }): CancelablePromise<IssueSavedView> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issue-saved-views/{view_key}',
+      path: {
+        'slug': slug,
+        'view_key': viewKey,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Save or replace a shared named issue inbox view.
+   * Requires deploy-write permission and session MFA. Existing keys replace their definition; new keys consume the 20-view app quota. Filters are bounded known fields, not executable queries. UUID assignees must be currently eligible app owners or active organization members. Views confer no additional read permission.
+   * @returns IssueSavedView Saved definition and editor metadata.
+   * @throws ApiError
+   */
+  public static putIssueSavedView({
+    slug,
+    viewKey,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stable key of the shared issue query to read, replace or delete.
+     */
+    viewKey: string,
+    requestBody: PutIssueSavedViewRequest,
+  }): CancelablePromise<IssueSavedView> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/issue-saved-views/{view_key}',
+      path: {
+        'slug': slug,
+        'view_key': viewKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Shared view quota reached.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Delete a shared view without changing any issues.
+   * Requires deploy-write permission and session MFA.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteIssueSavedView({
+    slug,
+    viewKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stable key of the shared issue query to read, replace or delete.
+     */
+    viewKey: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/issue-saved-views/{view_key}',
+      path: {
+        'slug': slug,
+        'view_key': viewKey,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * List app-scoped teams and their members.
+   * @returns ListIssueTeamsResponse Up to 20 teams, ordered by name and key.
+   * @throws ApiError
+   */
+  public static listIssueTeams({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ListIssueTeamsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issue-teams',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Get a team by its stable key.
+   * @returns IssueTeam Team identity, name, member roster and editor metadata.
+   * @throws ApiError
+   */
+  public static getIssueTeam({
+    slug,
+    teamKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stable application team key used to manage its identity and membership.
+     */
+    teamKey: string,
+  }): CancelablePromise<IssueTeam> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issue-teams/{team_key}',
+      path: {
+        'slug': slug,
+        'team_key': teamKey,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Create or replace a team name and complete membership roster.
+   * Membership grants no app access. Members must already be eligible app owners or active organization members. Mutations require deploy-write permission and session MFA. Teams referenced by issue assignments or routing rules cannot be deleted.
+   * @returns IssueTeam Team identity and complete member roster.
+   * @throws ApiError
+   */
+  public static putIssueTeam({
+    slug,
+    teamKey,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stable application team key used to manage its identity and membership.
+     */
+    teamKey: string,
+    requestBody: PutIssueTeamRequest,
+  }): CancelablePromise<IssueTeam> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/issue-teams/{team_key}',
+      path: {
+        'slug': slug,
+        'team_key': teamKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Team quota reached.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Delete an unused team.
+   * Deletes the unused application team after checking that no issue assignments or routing rules reference it. Requires deploy-write permission and session MFA.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteIssueTeam({
+    slug,
+    teamKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stable application team key used to manage its identity and membership.
+     */
+    teamKey: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/issue-teams/{team_key}',
+      path: {
+        'slug': slug,
+        'team_key': teamKey,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Team still owns issues or routing rules.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Compare observed release request health and issue signals over the last 24 hours.
+   * Request counts expand telemetry row weights and span all traffic for each deployment. Issue signals use the selected environment. These are independent retained observations, not complete traffic, crash-free sessions, or a controlled experiment. Unknown request rates and deltas are null.
+   * @returns IssueReleaseComparison Both deployment observations from one consistent database snapshot.
+   * @throws ApiError
+   */
+  public static compareIssueReleases({
+    slug,
+    baseline,
+    candidate,
+    environment = 'application',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Baseline deployment UUID for the issue health comparison.
+     */
+    baseline: string,
+    /**
+     * Candidate deployment UUID compared with the selected baseline.
+     */
+    candidate: string,
+    /**
+     * Issue environment included in both deployment health observations.
+     */
+    environment?: string,
+  }): CancelablePromise<IssueReleaseComparison> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issue-release-comparison',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'baseline': baseline,
+        'candidate': candidate,
+        'environment': environment,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Create or recover a GitHub ticket through the owned app connection.
+   * Requires Issues entitlement, deploy-write and session MFA. Pins the owned installation and bound repository identity. Retains a server receipt before dispatch; reusing request_id with different inputs or binding is refused. An unconfirmed dispatch can only recover a marker-verified existing ticket after the 15-second dispatch window. A created result means the ticket exists and attachment must be retried with identical inputs. At most 100 receipts are retained per original issue. Installation Issues write permission is required; credentials remain server-side.
+   * @returns NativeIssueTicketResult Durable ticket evidence and attachment state; created requires retrying attachment.
+   * @throws ApiError
+   */
+  public static createNativeIssueTicket({
+    slug,
+    issueId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Original Gregale issue identity retained across creation retries.
+     */
+    issueId: string,
+    /**
+     * Explicit content, target repository and stable request identity for creation or recovery.
+     */
+    requestBody: CreateNativeIssueTicketRequest,
+  }): CancelablePromise<NativeIssueTicketResult> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issues/{issue_id}/native-tickets',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Request conflict or unconfirmed dispatch or retained receipt quota reached; preserve request inputs and recover the existing ticket.`,
+        502: `GitHub rejected creation or connected credentials are unavailable.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Preview a linked Linear lifecycle using the stored owner connection.
+   * Requires app read access and the app owner with Issues entitlement and deploy eligibility. Verifies the stored workspace/viewer/team and linked ticket identity. Returns status plus connection revision and group fingerprint for an explicit push. Archived and canceled or unfamiliar provider states require manual triage. No credentials are returned.
+   * @returns NativeLinearIssueTrackerStatus Verified linked Linear status and current preview scope.
+   * @throws ApiError
+   */
+  public static getNativeLinearIssueTrackerStatus({
+    slug,
+    issueId,
+    linkId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Gregale issue identity whose current group contains the Linear reference.
+     */
+    issueId: string,
+    /**
+     * Stored Linear reference selected for explicit lifecycle synchronization.
+     */
+    linkId: string,
+  }): CancelablePromise<NativeLinearIssueTrackerStatus> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-linear-status',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+        'link_id': linkId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Connection or group changed or provider state requires manual triage.`,
+        502: `Provider identity or credential availability could not be confirmed.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Explicitly push the Gregale lifecycle to its linked Linear ticket.
+   * Requires the app owner with Issues entitlement and deploy-write and session MFA. desired_state must match the current open/resolved Gregale lifecycle. Sends a known provider snapshot and preview connection revision/group fingerprint. A changing lifecycle additionally requires an explicit active same-team workflow state UUID of the matching type. Rechecks scope before dispatch and after the provider response. Aligned lifecycles remain unchanged. A provider write already dispatched cannot be recalled and the two systems do not share an atomic transaction.
+   * @returns NativeLinearIssueTrackerStatus Confirmed provider lifecycle and unchanged preview scope.
+   * @throws ApiError
+   */
+  public static updateNativeLinearIssueTrackerStatus({
+    slug,
+    issueId,
+    linkId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Gregale issue identity whose current group contains the Linear reference.
+     */
+    issueId: string,
+    /**
+     * Stored Linear reference selected for explicit lifecycle synchronization.
+     */
+    linkId: string,
+    /**
+     * Explicit lifecycle push with observed provider and connection/group scope.
+     */
+    requestBody: UpdateNativeLinearIssueTrackerStatusRequest,
+  }): CancelablePromise<NativeLinearIssueTrackerStatus> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-linear-status',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+        'link_id': linkId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Provider snapshot or connection or group changed or the lifecycle is unsupported.`,
+        502: `Provider operation or workflow selection could not be confirmed.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Create or recover a Linear ticket using the owner's stored team connection.
+   * Requires the app owner with Issues entitlement and deploy-write and session MFA. Verifies the stored workspace/viewer/team before dispatch. request_id must be UUID v4 and is used as the provider issue ID. A durable receipt fences concurrent dispatch and preserves uncertain outcomes. Retry identical inputs to finish attachment; after an uncertain create use recover=true to query the stable UUID without needing a URL. Same-identity credential replacement preserves recovery. Changed identity or inputs conflict. Responses never include credentials. A provider write already dispatched cannot be recalled by disconnect.
+   * @returns NativeIssueTicketResult Durable creation evidence; created means attachment requires retry and linked means the reference is confirmed.
+   * @throws ApiError
+   */
+  public static createNativeLinearIssueTicket({
+    slug,
+    issueId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Original Gregale issue identity whose current group receives the confirmed Linear reference.
+     */
+    issueId: string,
+    /**
+     * Explicit ticket inputs and stable UUID; recovery is an explicit decision after an unconfirmed dispatch.
+     */
+    requestBody: CreateNativeLinearIssueTicketRequest,
+  }): CancelablePromise<NativeIssueTicketResult> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issues/{issue_id}/native-linear-tickets',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Connection or inputs changed or outcome is unconfirmed or request quota is exhausted.`,
+        502: `Provider verification or credential availability failed or creation was explicitly rejected.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the app owner's Linear connection metadata.
+   * Requires app read access and the app owner. Returns only non-secret identity and revision. Unconfigured apps return disconnected with revision zero. Inspection remains available after an Issues plan downgrade.
+   * @returns IssueTrackerLinearConnection Linear connection metadata without credentials.
+   * @throws ApiError
+   */
+  public static getIssueTrackerLinearConnection({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<IssueTrackerLinearConnection> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issue-tracker-linear-connection',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Connect or disconnect an owner-scoped Linear personal API key.
+   * Requires the app owner with deploy-write and session MFA. Connecting additionally requires Issues entitlement and an account eligible to deploy. Verifies workspace and viewer and active team before sealing credentials. expected_revision fences competing changes. Disconnect erases credentials without provider access and remains available after a plan downgrade. This does not enable automatic sync or perform provider writes.
+   * @returns IssueTrackerLinearConnection Updated non-secret connection metadata and revision.
+   * @throws ApiError
+   */
+  public static updateIssueTrackerLinearConnection({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Explicit connection decision and known revision; personal API key is accepted only when connecting.
+     */
+    requestBody: UpdateIssueTrackerLinearConnectionRequest,
+  }): CancelablePromise<IssueTrackerLinearConnection> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/issue-tracker-linear-connection',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `The connection revision changed; read metadata again.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read an automatic native tracker lifecycle policy.
+   * Requires app read access and Issues entitlement. Unconfigured references return disabled with revision zero. Conflicts and blocked outcomes pause the worker until an owner explicitly re-enables an aligned policy.
+   * @returns IssueTrackerAutoSync Opt-in policy and latest durable reconciliation outcome.
+   * @throws ApiError
+   */
+  public static getIssueTrackerAutoSync({
+    slug,
+    issueId,
+    linkId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Gregale issue identity whose current group contains the automatic sync reference.
+     */
+    issueId: string,
+    /**
+     * Stored GitHub or Linear reference whose automatic sync policy is inspected or configured.
+     */
+    linkId: string,
+  }): CancelablePromise<IssueTrackerAutoSync> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+        'link_id': linkId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Enable or disable future Gregale-to-tracker lifecycle pushes.
+   * Requires the app owner, Issues entitlement, deploy-write and session MFA. expected_revision fences competing policy changes. Enabling requires either expected_status for GitHub or expected_linear_status plus distinct linear_open_state_id and linear_resolved_state_id for Linear, and expected_issue_state; the lifecycles must already match. Verifies active Linear workflows in the connected team. Pins the canonical group and owned repository binding or Linear connection revision. The background worker preserves uncertain pending writes and pauses on provider edits or unsupported states or changed groups/connections. Disabling does not require live provider access. Linear pending writes with an unconfirmed outcome are observed without redispatch; explicitly align and re-enable to resume. A provider write already dispatched during disable cannot be recalled.
+   * @returns IssueTrackerAutoSync Persisted automatic sync policy with its new configuration revision.
+   * @throws ApiError
+   */
+  public static updateIssueTrackerAutoSync({
+    slug,
+    issueId,
+    linkId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Gregale issue identity whose current group contains the automatic sync reference.
+     */
+    issueId: string,
+    /**
+     * Stored GitHub or Linear reference whose automatic sync policy is inspected or configured.
+     */
+    linkId: string,
+    /**
+     * Explicit delegation decision and observed policy/native snapshot for automatic sync.
+     */
+    requestBody: UpdateIssueTrackerAutoSyncRequest,
+  }): CancelablePromise<IssueTrackerAutoSync> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+        'link_id': linkId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Policy or native snapshot changed or lifecycle alignment is required before delegation.`,
+        502: `Native provider snapshot could not be confirmed.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read a linked GitHub issue through the app owner's native installation.
+   * Requires Issues entitlement and app read access. Verifies the caller-owned installation, pinned bound repository identity, current repository visibility and issue-group reference membership. GitHub installation credentials stay server-side. Linear native connections are unsupported.
+   * @returns NativeIssueTrackerStatus Canonical issue, reference, connection and observed provider status.
+   * @throws ApiError
+   */
+  public static getNativeIssueTrackerStatus({
+    slug,
+    issueId,
+    linkId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Gregale issue identity whose canonical group owns the tracker reference.
+     */
+    issueId: string,
+    /**
+     * Tracker reference identity to read or synchronize through the native connection.
+     */
+    linkId: string,
+  }): CancelablePromise<NativeIssueTrackerStatus> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+        'link_id': linkId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Native connection missing, unsupported status or changed binding/reference.`,
+        502: `Provider status could not be confirmed.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Push the current Gregale lifecycle through the native GitHub connection.
+   * Requires deploy-write and session MFA. desired_state must match the current canonical Gregale issue. expected must be the observed linked GitHub status. Rechecks reference membership, installation ownership, repository identity and visibility before using server credentials. Refuses changed snapshots and unsupported states. Separate APIs cannot provide an atomic cross-provider transaction; preview again after uncertain outcomes.
+   * @returns NativeIssueTrackerStatus Verified native connection and resulting provider status.
+   * @throws ApiError
+   */
+  public static updateNativeIssueTrackerStatus({
+    slug,
+    issueId,
+    linkId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Gregale issue identity whose canonical group owns the tracker reference.
+     */
+    issueId: string,
+    /**
+     * Tracker reference identity to read or synchronize through the native connection.
+     */
+    linkId: string,
+    requestBody: UpdateNativeIssueTrackerStatusRequest,
+  }): CancelablePromise<NativeIssueTrackerStatus> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+        'link_id': linkId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Native connection missing, unsupported status or changed snapshot.`,
+        502: `Provider update could not be confirmed; preview again.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * List GitHub and Linear references across this canonical issue group.
+   * Links remain attached to original issue identities through merges and splits. Returns at most 50 references per page; cursors are bound to the app and canonical issue.
+   * @returns ListIssueTrackerLinksResponse References and an optional continuation cursor.
+   * @throws ApiError
+   */
+  public static listIssueTrackerLinks({
+    slug,
+    issueId,
+    cursor,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Issue group UUID that owns the external tracker references.
+     */
+    issueId: string,
+    /**
+     * Opaque continuation token from the preceding tracker-reference page.
+     */
+    cursor?: string,
+  }): CancelablePromise<ListIssueTrackerLinksResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+      },
+      query: {
+        'cursor': cursor,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Attach an existing tracker issue or update its display title.
+   * Requires deploy-write and session MFA. Canonicalizes public GitHub issue and Linear URLs; ignores tracking queries, fragments and Linear title slugs. An existing group reference is reused. New references are capped at 20 per canonical group; existing references survive merges above that limit. Records actor activity. No provider request, ticket creation, access verification or status synchronization occurs.
+   * @returns IssueTrackerLink Canonical reference and creation/update metadata.
+   * @throws ApiError
+   */
+  public static putIssueTrackerLink({
+    slug,
+    issueId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Issue group UUID that owns the external tracker references.
+     */
+    issueId: string,
+    requestBody: PutIssueTrackerLinkRequest,
+  }): CancelablePromise<IssueTrackerLink> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Tracker-reference quota reached.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Remove a tracker reference from this issue group.
+   * Requires deploy-write and session MFA. Records unlink activity; the provider ticket is unchanged.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteIssueTrackerLink({
+    slug,
+    issueId,
+    linkId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Issue group UUID whose selected tracker reference will be removed.
+     */
+    issueId: string,
+    /**
+     * Stored tracker-reference UUID to detach from the selected issue group.
+     */
+    linkId: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+        'link_id': linkId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Atomically assign, resolve, ignore, or reopen selected issue groups.
+   * Requires deploy-write permission and session MFA. Up to 50 distinct issue UUIDs; merged aliases are acted on once and return one canonical issue. Any missing issue or invalid action rolls back the entire batch. Regrouping is excluded. Supports the standard Idempotency-Key header.
+   * @returns BulkIssueActionResponse Canonical issue groups after the complete batch commits.
+   * @throws ApiError
+   */
+  public static bulkActOnIssues({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: BulkIssueActionRequest,
+  }): CancelablePromise<BulkIssueActionResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issues/bulk-actions',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Idempotency conflict.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
    * List durable grouped application issues.
    * @returns ListIssuesResponse A bounded page of issues for this application.
    * @throws ApiError
@@ -2452,8 +4262,10 @@ export class AppsService {
     slug,
     state,
     environment,
+    team,
     assignee,
     sort = 'recent',
+    tag,
     minCustomers,
     cursor,
   }: {
@@ -2470,6 +4282,10 @@ export class AppsService {
      */
     environment?: string,
     /**
+     * Shared inbox for a team UUID in this app. Mutually exclusive with assignee.
+     */
+    team?: string,
+    /**
      * Filter by me, unassigned, or an owner account UUID.
      */
     assignee?: string,
@@ -2477,6 +4293,10 @@ export class AppsService {
      * Issue ordering; impact ranks by verified distinct customers in the fixed 24-hour window.
      */
     sort?: 'recent' | 'impact',
+    /**
+     * Exact allowed operational key=value match on retained occurrences in the fixed 24-hour window.
+     */
+    tag?: string,
     /**
      * Return issues affecting at least this many verified distinct customers in the fixed 24-hour window.
      */
@@ -2495,8 +4315,10 @@ export class AppsService {
       query: {
         'state': state,
         'environment': environment,
+        'team': team,
         'assignee': assignee,
         'sort': sort,
+        'tag': tag,
         'min_customers': minCustomers,
         'cursor': cursor,
       },
@@ -4691,6 +6513,8 @@ export class AppsService {
    * workflow metadata only; it never changes deployment traffic.
    * `dismissed_until` is required only for dismiss and defaults to 24h
    * when omitted. The server caps dismissals at 30 days.
+   * Use the dedicated checked actions endpoint for mandatory app/version
+   * guards. Legacy PATCH clients retain unguarded workflow transitions.
    *
    * @returns DebugRegressionActionResponse Updated regression observation.
    * @throws ApiError
@@ -4719,6 +6543,113 @@ export class AppsService {
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
+      },
+    });
+  }
+  /**
+   * Apply a checked regression triage action.
+   * Atomically requires the exact app identity and observation version from
+   * the review endpoint. A changed or missing observation returns 409
+   * regression_changed. Requires app write permissions, MFA and debugger
+   * entitlement. Records the review reason in native audit metadata. Retry
+   * with the exact same body after an ambiguous response to recover the
+   * original receipt. The observation update, reason and receipt commit in
+   * one database transaction. Operation identity binds the complete checked
+   * body and account, independently of the caller's Idempotency-Key header.
+   * Native replay uses the existing 24-hour cache retention. This dedicated route fails closed on
+   * older API nodes; it never falls back to the legacy unguarded PATCH.
+   * Changes triage metadata only, without changing traffic or proving health.
+   *
+   * @returns DebugRegressionActionResponse Checked triage receipt and updated observation.
+   * @throws ApiError
+   */
+  public static applyAppDebugRegressionAction({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: GuardedDebugRegressionActionRequest,
+  }): CancelablePromise<DebugRegressionActionResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/debug/regressions/actions',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
+      },
+    });
+  }
+  /**
+   * Review one exact regression workflow observation.
+   * Includes acknowledged, dismissed and resolved observations without inbox
+   * visibility filters. The opaque version changes on every database update,
+   * including detector refreshes and legacy triage actions. Supply app_id as
+   * expected_app_id and version as expected_version on the dedicated checked actions endpoint.
+   * Requires ordinary app read permissions, MFA and debugger entitlement.
+   * Read-only; no collection, traffic changes or health assessment.
+   *
+   * @returns DebugRegressionReview Exact versioned workflow observation.
+   * @throws ApiError
+   */
+  public static getAppDebugRegressionReview({
+    slug,
+    deploymentId,
+    route,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Exact retained observation deployment identity.
+     */
+    deploymentId: string,
+    /**
+     * Exact stored route label, including method when present.
+     */
+    route: string,
+  }): CancelablePromise<DebugRegressionReview> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/debug/regressions/review',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'deployment_id': deploymentId,
+        'route': route,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -4734,7 +6665,11 @@ export class AppsService {
    * distributions in a shared time window. Body holds the
    * two deployment ids + optional route filter + optional
    * since/until bounds. Returns merged per-route stats with
-   * per-deployment p50/p95/p99 + row counts. Plan-gated by
+   * per-deployment p50/p95/p99 + represented request counts. Includes
+   * the effective window and retention-clamping metadata (ADR-1623).
+   * Invalid lookbacks, invalid/future until values, and windows wholly
+   * outside current plan retention are rejected. Reads retained telemetry
+   * without replaying requests or writing platform state. Plan-gated by
    * DebugTelemetryEnabled.
    *
    * @returns DebugCompareResponse Per-route compare stats.
@@ -7329,6 +9264,8 @@ export class AppsService {
     wakeId,
     since,
     limit = 200,
+    pagination,
+    cursor,
   }: {
     /**
      * App slug (lowercase, kebab-case; per-account unique).
@@ -7345,13 +9282,21 @@ export class AppsService {
      */
     wakeId: string,
     /**
-     * Only return rows with `at >= since` (RFC 3339).
+     * Exclusive at > since lower bound (RFC3339). Omission reads from retained history. keyset_v1 normalizes to UTC/PostgreSQL microseconds.
      */
     since?: string,
     /**
-     * Max frames to return. Silently capped at 1000.
+     * Max frames to return. Values outside 1..1000 are rejected.
      */
     limit?: number,
+    /**
+     * Opt in to app-scoped timestamp/event-ID keyset pagination. Omit for the unchanged legacy timestamp-hint contract.
+     */
+    pagination?: 'keyset_v1',
+    /**
+     * Opaque page.next_cursor from keyset_v1. Requires pagination=keyset_v1 and the same account, immutable app, wake, normalized since and limit. Selection data, not authorization; pages are live retained reads, not a snapshot.
+     */
+    cursor?: string,
   }): CancelablePromise<WakeTimelineResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -7363,6 +9308,8 @@ export class AppsService {
       query: {
         'since': since,
         'limit': limit,
+        'pagination': pagination,
+        'cursor': cursor,
       },
       errors: {
         400: `Malformed query parameter on the wake-timeline read — \`since\` not RFC 3339 or \`limit\` out of range.`,
@@ -7435,6 +9382,549 @@ export class AppsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Explain blockers and recovery for an app verification receipt
+   * @returns BindingVerificationRunDiagnostics App receipt diagnostics. Read-only public observations and suggested recovery; grants no admission or activation authority.
+   * @throws ApiError
+   */
+  public static getBindingVerificationRunDiagnostics({
+    slug,
+    run,
+  }: {
+    /**
+     * Slug of the app for diagnosing an app binding verification receipt.
+     */
+    slug: string,
+    /**
+     * Verification receipt UUID for diagnosing an app binding verification receipt.
+     */
+    run: string,
+  }): CancelablePromise<BindingVerificationRunDiagnostics> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/bindings/verification-runs/{run}/diagnostics',
+      path: {
+        'slug': slug,
+        'run': run,
+      },
+      errors: {
+        400: `App receipt diagnostics. Invalid receipt UUID.`,
+        403: `App receipt diagnostics. Read access to every reviewed binding domain is required.`,
+        404: `App receipt diagnostics. No owned receipt was found.`,
+        503: `App receipt diagnostics. Receipt metadata could not be read.`,
+      },
+    });
+  }
+  /**
+   * Review app binding verification selection and consent without admitting work
+   * @returns BindingVerificationReview App verification review. Server plan, blockers, required consent and opaque review digests. Ready means the plan is available; it is not verification evidence.
+   * @throws ApiError
+   */
+  public static reviewBindingVerification({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Slug of the app for reviewing an app binding plan before admitting work.
+     */
+    slug: string,
+    requestBody: ReviewBindingVerificationRequest,
+  }): CancelablePromise<BindingVerificationReview> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/bindings/verification-runs/review',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        403: `App verification review. Read access to every reviewed binding domain is required.`,
+        409: `App verification review. The selected deployment, policy or prepared manifest changed.`,
+        503: `App verification review. A complete review could not be read.`,
+      },
+    });
+  }
+  /**
+   * Atomically admit one frozen step or return its previously recorded resource.
+   * @returns BindingVerificationRunStep Durable receipt with original identity and deadline.
+   * @throws ApiError
+   */
+  public static admitBindingVerificationRunStep({
+    slug,
+    run,
+    step,
+  }: {
+    /**
+     * Slug of the app for admitting one frozen app verification step.
+     */
+    slug: string,
+    /**
+     * Verification receipt UUID for admitting one frozen app verification step.
+     */
+    run: string,
+    /**
+     * Frozen step index selected for admission within this app receipt.
+     */
+    step: number,
+  }): CancelablePromise<BindingVerificationRunStep> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/bindings/verification-runs/{run}/steps/{step}/admit',
+      path: {
+        'slug': slug,
+        'run': run,
+        'step': step,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Complete only after fresh server-side policy preflight.
+   * @returns BindingVerificationRun App receipt completion. Durable receipt with original identity and deadline.
+   * @throws ApiError
+   */
+  public static completeBindingVerificationRun({
+    slug,
+    run,
+  }: {
+    /**
+     * Slug of the app for finalizing an app verification receipt.
+     */
+    slug: string,
+    /**
+     * Verification receipt UUID for finalizing an app verification receipt.
+     */
+    run: string,
+  }): CancelablePromise<BindingVerificationRun> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/bindings/verification-runs/{run}/complete',
+      path: {
+        'slug': slug,
+        'run': run,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Confirm the original review without extending deadlines or replacing work.
+   * @returns BindingVerificationRun App receipt reconciliation. Durable receipt with original identity and deadline.
+   * @throws ApiError
+   */
+  public static resumeBindingVerificationRun({
+    slug,
+    run,
+  }: {
+    /**
+     * Slug of the app for reconciling unfinished app verification work.
+     */
+    slug: string,
+    /**
+     * Verification receipt UUID for reconciling unfinished app verification work.
+     */
+    run: string,
+  }): CancelablePromise<BindingVerificationRun> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/bindings/verification-runs/{run}/resume',
+      path: {
+        'slug': slug,
+        'run': run,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Observe the original plan and current owned or reused resource status.
+   * @returns BindingVerificationRun App receipt status. Durable receipt with original identity and deadline.
+   * @throws ApiError
+   */
+  public static getBindingVerificationRun({
+    slug,
+    run,
+  }: {
+    /**
+     * Slug of the app for inspecting or cancelling an app verification receipt.
+     */
+    slug: string,
+    /**
+     * Verification receipt UUID for inspecting or cancelling an app verification receipt.
+     */
+    run: string,
+  }): CancelablePromise<BindingVerificationRun> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/bindings/verification-runs/{run}',
+      path: {
+        'slug': slug,
+        'run': run,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Block admissions and cancel only unfinished work owned by this run.
+   * @returns BindingVerificationRun App receipt cancellation. Durable receipt with original identity and deadline.
+   * @throws ApiError
+   */
+  public static cancelBindingVerificationRun({
+    slug,
+    run,
+  }: {
+    /**
+     * Slug of the app for inspecting or cancelling an app verification receipt.
+     */
+    slug: string,
+    /**
+     * Verification receipt UUID for inspecting or cancelling an app verification receipt.
+     */
+    run: string,
+  }): CancelablePromise<BindingVerificationRun> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/bindings/verification-runs/{run}',
+      path: {
+        'slug': slug,
+        'run': run,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List retained app binding verification receipt summaries
+   * App receipt discovery. Newest first with creation-time and UUID keyset pagination. Reuse filters with next_cursor. observed_at freezes the expiry cutoff; recorded state may change between pages. Listings grant no admission or release authority.
+   * @returns BindingVerificationRunList App receipt discovery. Bounded retained receipt summaries; not a permanent history or proof of current qualification.
+   * @throws ApiError
+   */
+  public static listBindingVerificationRuns({
+    slug,
+    limit = 20,
+    cursor,
+    deploymentId,
+    status,
+    scope,
+    includeMembers = false,
+  }: {
+    /**
+     * Slug of the app for discovering or creating app verification receipts.
+     */
+    slug: string,
+    /**
+     * Maximum retained app verification receipts returned on this page.
+     */
+    limit?: number,
+    /**
+     * Opaque continuation cursor from the previous app verification receipt page.
+     */
+    cursor?: string,
+    /**
+     * Restrict retained app verification receipts to this exact deployment UUID.
+     */
+    deploymentId?: string,
+    /**
+     * Restrict app verification receipt discovery to this effective retained status.
+     */
+    status?: 'pending' | 'passed' | 'cancelled' | 'expired',
+    /**
+     * Only app receipts whose frozen binding scope matches this value are returned.
+     */
+    scope?: string,
+    /**
+     * Include app receipts created as members of project verification graphs.
+     */
+    includeMembers?: boolean,
+  }): CancelablePromise<BindingVerificationRunList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/bindings/verification-runs',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'limit': limit,
+        'cursor': cursor,
+        'deployment_id': deploymentId,
+        'status': status,
+        'scope': scope,
+        'include_members': includeMembers,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Create a reviewed fixed-deadline single-app verification receipt.
+   * @returns BindingVerificationRun App receipt creation. Durable receipt with original identity and deadline.
+   * @throws ApiError
+   */
+  public static createBindingVerificationRun({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Slug of the app for discovering or creating app verification receipts.
+     */
+    slug: string,
+    requestBody: CreateBindingVerificationRunRequest,
+  }): CancelablePromise<BindingVerificationRun> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/bindings/verification-runs',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Observe exact-deployment queue completion evidence.
+   * @returns QueueBindingCanary Current evidence; an in-flight handler may finish after cancellation.
+   * @throws ApiError
+   */
+  public static getQueueBindingCanary({
+    slug,
+    canary,
+  }: {
+    /**
+     * Slug of the app for inspecting or cancelling an existing queue completion canary.
+     */
+    slug: string,
+    /**
+     * Identifier of the push queue completion canary selected for inspection or cancellation.
+     */
+    canary: string,
+  }): CancelablePromise<QueueBindingCanary> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/bindings/queue-canaries/{canary}',
+      path: {
+        'slug': slug,
+        'canary': canary,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Cancel the canary and revoke its evidence.
+   * @returns QueueBindingCanary Queue canary cancellation. Current evidence; an in-flight handler may finish after cancellation.
+   * @throws ApiError
+   */
+  public static cancelQueueBindingCanary({
+    slug,
+    canary,
+  }: {
+    /**
+     * Slug of the app for inspecting or cancelling an existing queue completion canary.
+     */
+    slug: string,
+    /**
+     * Identifier of the push queue completion canary selected for inspection or cancellation.
+     */
+    canary: string,
+  }): CancelablePromise<QueueBindingCanary> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/bindings/queue-canaries/{canary}',
+      path: {
+        'slug': slug,
+        'canary': canary,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Publish one explicitly consented safe message through a push queue binding.
+   * Requires a live pinned deployment declaring this binding in GREGALE_QUEUE_CANARY_BINDINGS. Uses normal queue and runtime capacity; no traffic change.
+   * @returns QueueBindingCanary Published canary; publication does not prove delivery or handler completion.
+   * @throws ApiError
+   */
+  public static createQueueBindingCanary({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Slug of the app for publishing a consented push queue completion canary.
+     */
+    slug: string,
+    requestBody: CreateQueueBindingCanaryRequest,
+  }): CancelablePromise<QueueBindingCanary> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/bindings/queue-canaries',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Replace release policy with explicit per-binding queue readiness requirements.
+   * Requires deploy:write or admin and completed MFA. queue_requirements is
+   * explicit, including an empty object to clear it. Names select one shared
+   * or selected-environment push binding; consumer_readiness requires a
+   * confirmed queue environment and an enabled, active, healthy scheduler
+   * consumer with a poll at most thirty seconds old. Missing, ambiguous,
+   * disabled, external pull, unobserved or
+   * stale consumers block. Connectivity and message delivery remain
+   * unverified; passed readiness policies retain partial coverage. Unlisted
+   * queues retain strict unsupported coverage. Existing storage requirements
+   * must be explicitly retained or cleared. Policy and queue facts, and poll
+   * expiry, are checked at the traffic write. This call sends no messages and
+   * performs no probes. Older servers return 404 before mutation.
+   *
+   * @returns BindingReleasePolicy Saved policy with explicit queue requirements and incremented revision.
+   * @throws ApiError
+   */
+  public static setQueueBindingReleasePolicy({
+    slug,
+    requestBody,
+    scope = 'default',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetQueueBindingReleasePolicyRequest,
+    /**
+     * Deployment scope whose queue release requirements will be replaced. Omit for default.
+     */
+    scope?: string,
+  }): CancelablePromise<BindingReleasePolicy> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/bindings/release-policy-with-queues',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });

@@ -122,6 +122,11 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 		if err := opts.Environments.validate(); err != nil {
 			return nil, nil, err
 		}
+		for slug, id := range opts.Environments.RequestReadApps {
+			if opts.AllowedApps != nil && opts.AllowedApps[slug] != id {
+				return nil, nil, errors.New("request diagnostics must be within app consent")
+			}
+		}
 	}
 	if opts.Lifecycle == nil {
 		opts.Lifecycle = NewLifecycle()
@@ -150,7 +155,11 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	register(s, m, "gregale_get_metrics", "Inspect recent app metrics. The source field identifies degraded telemetry; zero values alone do not establish app health.", m.getMetrics)
 	register(s, m, "gregale_preflight", "Check selected app/environment consent, read endpoint compatibility and durable bridge status without plans or writes. Passed reads do not prove mutation authorization or native qualification.", m.preflight)
 	registerRouteBudgets(s, m)
+	registerRegressionActions(s, m)
 	registerInspection(s, m)
+	registerRequestDiagnostics(s, m)
+	registerPerformanceDiagnostics(s, m)
+	registerResidencyDiagnostics(s, m)
 	registerReleases(s, m)
 	registerEnvironments(s, m)
 	registerContextCatalog(s, m)
@@ -204,6 +213,12 @@ func registerTool[In any](s *mcp.Server, m *management, name, description string
 				if err := m.authorizeArgs(ctx, args); err != nil {
 					return m.toolError(err), nil, nil
 				}
+			}
+			if guarded, ok := output.(*guardedRead); ok {
+				if err := guarded.check(ctx); err != nil {
+					return m.toolError(err), nil, nil
+				}
+				output = guarded.value
 			}
 			output, err = m.safeOutput(output)
 			if err != nil {

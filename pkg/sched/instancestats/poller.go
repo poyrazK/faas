@@ -22,6 +22,11 @@ import (
 // touching the Reader API.
 const DefaultStatsInterval = 200 * time.Millisecond
 
+// statsCallTimeout bounds one node's Stats read, so a slow or dead vmmd
+// costs a sweep at most this long instead of the gRPC client's one-minute
+// default.
+const statsCallTimeout = 2 * time.Second
+
 // DefaultFreshness is the staleness budget used by Reader's signal
 // accessors. Rows remain available through snapshot accessors for
 // diagnostics, but stale rows cannot drive reactive scaling.
@@ -102,6 +107,12 @@ type Poller struct {
 	// intentionally separate from Telemetry: the local ReportCapacity stream
 	// remains the authoritative source for metering and node diagnostics.
 	FleetStats StatsRouter
+	// Router serves the per-node sweep from cached vmmd clients when set.
+	// Without it every tick dials each vmmd afresh: on the control-plane
+	// schedd, which has no owner node and so no telemetry stream, that was a
+	// new mTLS connection to every node five times a second, each logging
+	// "unary gRPC call without deadline" (hunt #10, H10-84).
+	Router StatsRouter
 	// DiskPressureHandler turns a full guest writable filesystem into an
 	// explicit lifecycle action. Nil keeps the poller observation-only.
 	DiskPressureHandler DiskPressureHandler
@@ -146,6 +157,15 @@ func (p *Poller) WithNodeRegistry(reg *sched.NodeRegistry) *Poller {
 func (p *Poller) WithOwnerNodeID(nodeID string) *Poller {
 	if p != nil {
 		p.OwnerNodeID = nodeID
+	}
+	return p
+}
+
+// WithStatsRouter serves the per-node sweep from router's cached clients
+// instead of a fresh Dialer connection per node and tick.
+func (p *Poller) WithStatsRouter(router StatsRouter) *Poller {
+	if p != nil {
+		p.Router = router
 	}
 	return p
 }
@@ -257,9 +277,10 @@ func (p *Poller) Tick(ctx context.Context) error {
 	var instances []state.Instance
 	var err error
 	if p.FleetStats != nil && p.OwnerNodeID != "" {
-		// ListInstancesByNodeID follows app ownership, not physical
-		// placement. An owner's app may have instances on any active node.
-		instances, err = p.Store.ListInstancesByNodeID(ctx, p.OwnerNodeID)
+		// The owner listing follows app ownership, not physical placement:
+		// an owner's app may have instances on any active node. Only live
+		// instances have stats, so terminal history stays in Postgres.
+		instances, err = p.Store.ListLiveInstancesByNodeID(ctx, p.OwnerNodeID)
 	} else {
 		instances, err = p.Store.ListAllInstances(ctx)
 	}
@@ -304,17 +325,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 		rows, rolled := p.decodeTelemetrySnapshot(
 			p.Telemetry.Snapshot(p.now()), instances, sidecarByDeploy)
 		if p.Metrics != nil && len(rows) < len(instances) {
-			reported := make(map[string]struct{}, len(rows))
-			for _, row := range rows {
-				reported[row.InstanceID] = struct{}{}
-			}
-			missingNodes := make(map[string]struct{})
-			for _, instance := range instances {
-				if _, ok := reported[instance.ID]; !ok && instance.NodeID != "" {
-					missingNodes[instance.NodeID] = struct{}{}
-				}
-			}
-			for nodeID := range missingNodes {
+			for nodeID := range telemetryMissingNodes(instances, rows) {
 				p.Metrics.InstanceStatsPartialError(nodeID)
 			}
 		}
@@ -576,24 +587,34 @@ func (p *Poller) decodeTelemetrySnapshot(
 	return rows, rolled
 }
 
-// tickNode dials one node fresh, calls Stats, and decodes the
-// result into InstanceStat rows + wire rollup rows. On dial
-// failure it logs, increments the per-node error counter, and
-// returns empty slices — the caller continues to the next node.
+// tickNode reads one node's Stats, through Router's cached client when
+// set and otherwise over a fresh Dialer connection, and decodes the
+// result into InstanceStat rows + wire rollup rows. On failure it logs,
+// increments the per-node error counter, and returns empty slices — the
+// caller continues to the next node.
 func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings []state.Instance, sidecarByDeploy map[string][]int) ([]InstanceStat, []wire.InstanceStatRow) {
-	if p.Dialer == nil {
+	if p.Router == nil && p.Dialer == nil {
 		return nil, nil
 	}
-	vmm, err := p.Dialer.Dial(ctx, node.TargetURL, p.TLS)
-	if err != nil {
-		p.Log.Warn("instance stats dial failed", "node_id", node.ID, "err", err)
-		if p.Metrics != nil {
-			p.Metrics.InstanceStatsPartialError(node.ID)
+	callCtx, cancel := context.WithTimeout(ctx, statsCallTimeout)
+	defer cancel()
+	var snap *sched.StatsSnapshot
+	var err error
+	if p.Router != nil {
+		snap, err = p.Router.Stats(callCtx, node.ID)
+	} else {
+		var vmm sched.VMM
+		vmm, err = p.Dialer.Dial(callCtx, node.TargetURL, p.TLS)
+		if err != nil {
+			p.Log.Warn("instance stats dial failed", "node_id", node.ID, "err", err)
+			if p.Metrics != nil {
+				p.Metrics.InstanceStatsPartialError(node.ID)
+			}
+			return nil, nil
 		}
-		return nil, nil
+		defer func() { _ = vmm.Close() }()
+		snap, err = vmm.Stats(callCtx)
 	}
-	defer func() { _ = vmm.Close() }()
-	snap, err := vmm.Stats(ctx)
 	if err != nil {
 		p.Log.Warn("instance stats vmm.Stats failed", "node_id", node.ID, "err", err)
 		if p.Metrics != nil {
@@ -602,6 +623,29 @@ func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings 
 		return nil, nil
 	}
 	return p.decodeStatsSnapshot(node, siblings, snap, sidecarByDeploy)
+}
+
+// telemetryMissingNodes names the nodes whose stream left out a live instance.
+// A waking or cold-booting row has no VM in vmmd's stats yet, so it is not
+// missing: a worker's ~10 s cold boot alone counted ~50 partial errors a
+// minute and took FaasScheddInstanceStatsPartialErrors to pending
+// (production-us hunt #10, H10-138).
+func telemetryMissingNodes(instances []state.Instance, rows []InstanceStat) map[string]struct{} {
+	reported := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		reported[row.InstanceID] = struct{}{}
+	}
+	missing := make(map[string]struct{})
+	for _, instance := range instances {
+		switch state.State(instance.State) {
+		case state.StateWaking, state.StateColdBooting:
+			continue
+		}
+		if _, ok := reported[instance.ID]; !ok && instance.NodeID != "" {
+			missing[instance.NodeID] = struct{}{}
+		}
+	}
+	return missing
 }
 
 // deploymentSidecarMBs returns the sidecar RAM slice for every deployment in
@@ -671,7 +715,7 @@ func (p *Poller) tickFleet(
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			callCtx, cancel := context.WithTimeout(ctx, statsCallTimeout)
 			defer cancel()
 			snap, err := p.FleetStats.Stats(callCtx, node.ID)
 			if err != nil {

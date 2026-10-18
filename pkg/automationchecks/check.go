@@ -78,32 +78,8 @@ func Passes(expectations []api.AutomationCheckExpectation, response api.Simulate
 		return false
 	}
 	for _, e := range expectations {
-		var row api.AutomationSimulationStep
-		matches := 0
-		for _, r := range response.Trace {
-			if e.Loop == "" {
-				if r.ParentStep != "" || r.ItemIndex != nil || r.StepName != e.Step {
-					continue
-				}
-			} else if r.ParentStep != e.Loop || r.ItemIndex == nil || *r.ItemIndex != *e.ItemIndex {
-				continue
-			}
-			row = r
-			matches++
-		}
-		if matches != 1 || (e.State != "" && row.State != e.State) || (e.Reason != nil && row.Reason != *e.Reason) || (e.WhenMatched != nil && (row.WhenMatched == nil || *row.WhenMatched != *e.WhenMatched)) || (len(e.Output) > 0 && !EqualJSON(e.Output, row.Output)) || (e.AttemptCount != nil && len(row.Attempts) != *e.AttemptCount) {
+		if len(MismatchFields(e, response.Trace)) != 0 {
 			return false
-		}
-		if e.Attempts != nil {
-			if len(*e.Attempts) != len(row.Attempts) {
-				return false
-			}
-			for i, a := range *e.Attempts {
-				r := row.Attempts[i]
-				if r.Attempt != i+1 || a.Outcome != r.Outcome || (a.HTTPStatus != nil && (r.HTTPStatus == nil || *a.HTTPStatus != *r.HTTPStatus)) {
-					return false
-				}
-			}
 		}
 	}
 	return true

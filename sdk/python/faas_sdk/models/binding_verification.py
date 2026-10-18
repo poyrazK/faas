@@ -35,6 +35,10 @@ class BindingVerification:
     """Currently task_guest."""
     deployment_id: UUID
     scope: str
+    task_id: UUID | Unset = UNSET
+    """Original probe task identity for pending observation and durable receipts."""
+    target_deployment_id: UUID | Unset = UNSET
+    """Service recipient qualified by the probe; absent for legacy any-replica evidence."""
     object_storage_mode: BindingVerificationObjectStorageMode | Unset = UNSET
     """Object operation level admitted for this stored verification; missing values denote a legacy listing canary
     and do not qualify required write operations."""
@@ -54,6 +58,14 @@ class BindingVerification:
         deployment_id = str(self.deployment_id)
 
         scope = self.scope
+
+        task_id: str | Unset = UNSET
+        if not isinstance(self.task_id, Unset):
+            task_id = str(self.task_id)
+
+        target_deployment_id: str | Unset = UNSET
+        if not isinstance(self.target_deployment_id, Unset):
+            target_deployment_id = str(self.target_deployment_id)
 
         object_storage_mode: str | Unset = UNSET
         if not isinstance(self.object_storage_mode, Unset):
@@ -84,6 +96,10 @@ class BindingVerification:
                 "scope": scope,
             }
         )
+        if task_id is not UNSET:
+            field_dict["task_id"] = task_id
+        if target_deployment_id is not UNSET:
+            field_dict["target_deployment_id"] = target_deployment_id
         if object_storage_mode is not UNSET:
             field_dict["object_storage_mode"] = object_storage_mode
         if reason is not UNSET:
@@ -109,6 +125,20 @@ class BindingVerification:
         deployment_id = UUID(d.pop("deployment_id"))
 
         scope = d.pop("scope")
+
+        _task_id = d.pop("task_id", UNSET)
+        task_id: UUID | Unset
+        if isinstance(_task_id, Unset):
+            task_id = UNSET
+        else:
+            task_id = UUID(_task_id)
+
+        _target_deployment_id = d.pop("target_deployment_id", UNSET)
+        target_deployment_id: UUID | Unset
+        if isinstance(_target_deployment_id, Unset):
+            target_deployment_id = UNSET
+        else:
+            target_deployment_id = UUID(_target_deployment_id)
 
         _object_storage_mode = d.pop("object_storage_mode", UNSET)
         object_storage_mode: BindingVerificationObjectStorageMode | Unset
@@ -142,6 +172,8 @@ class BindingVerification:
             source=source,
             deployment_id=deployment_id,
             scope=scope,
+            task_id=task_id,
+            target_deployment_id=target_deployment_id,
             object_storage_mode=object_storage_mode,
             reason=reason,
             checked_at=checked_at,

@@ -90,6 +90,9 @@
             <table><thead><tr><th>Resource</th><th>Field</th><th>Action</th><th>Reason</th></tr></thead><tbody>
               {{range .Changes}}<tr><td><code>{{.Resource}}</code></td><td><code>{{.Path}}</code></td><td>{{.Action}}</td><td>{{.Reason}}</td></tr>{{end}}
             </tbody></table>
+            {{if .RetirementImpacts}}<h3>Workloads proposed for retirement</h3>
+            <p>Counts are a review-time snapshot. All accepted work remains retained.</p>
+            {{range .RetirementImpacts}}<p><code>{{.Resource}}</code> · app <code>{{.AppID}}</code> · routes {{len .Routes}} · queues {{len .QueueBindingIDs}} · consumers {{len .ConsumerIDs}}{{if .JobID}} · Job <code>{{.JobID}}</code>{{end}} · pending invocations {{.PendingInvocations}} · in flight {{.InFlightInvocations}} · queued tasks {{.QueuedTasks}} · running tasks {{.InFlightTasks}}</p>{{end}}{{end}}
             {{if .CanApply}}<form method="POST" action="{{$target}}/adopt">
               <input type="hidden" name="csrf_token" value="{{$csrf}}">
               <input type="hidden" name="plan_hash" value="{{.Hash}}">
@@ -113,6 +116,15 @@
             <p>No current candidate graph has been prepared for the approved definition and environment intent.</p>
           </section>
           {{end}}
+        {{end}}
+        {{if .Status.WorkloadRetirements}}
+        <section>
+          <h2>Retained workloads</h2>
+          <p>Retirement closes this environment while retaining configuration and accepted work. Recovery uses the original app identity and fresh qualification.</p>
+          <table><thead><tr><th>Workload</th><th>Phase</th><th>Original app</th><th>Gateway acknowledgements</th><th>Retained queues</th></tr></thead><tbody>
+          {{range .Status.WorkloadRetirements}}<tr><td><code>{{.Resource}}</code></td><td>{{.Phase}}</td><td><code>{{.AppID}}</code></td><td>{{len .AcknowledgedGateways}} / {{len .ExpectedGateways}}</td><td>{{len .QueueBindingIDs}}</td></tr>{{end}}
+          </tbody></table>
+        </section>
         {{end}}
         <section>
           <h2>Source binding</h2>

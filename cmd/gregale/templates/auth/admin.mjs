@@ -2,6 +2,8 @@ import { createHash, createPrivateKey, randomBytes, sign, timingSafeEqual } from
 import http from 'node:http'
 import { gotrue, limits } from './config.mjs'
 import { HTTPError, readJSON } from './authz.mjs'
+import { ssoRoute } from './sso.mjs'
+import { oauthRoute } from './oauth.mjs'
 
 // /admin/v1: owner administration of an application Auth app (ADR-1190
 // phase 6). The owner holds the key; the app stores only its SHA-256 as
@@ -70,7 +72,7 @@ export function goTrueAdmin(signer, port = gotrue.port) {
   })
 }
 
-function goTrueError({ status, data }) {
+export function goTrueError({ status, data }) {
   if (status >= 500) return new HTTPError(503, 'auth_unavailable')
   if (status === 404) return new HTTPError(404, 'not_found')
   // GoTrue's error codes are stable identifiers; its messages are not echoed.
@@ -171,11 +173,36 @@ async function importUsers(admin, users) {
   return { created, skipped: skipped.sort((a, b) => a.index - b.index) }
 }
 
+// activity reads GoTrue's audit log (sign-ins, sign-ups, password and
+// account changes), newest first, overall or for one user. search matches an
+// action exactly or an address in part. Pages carry no total, which would
+// count the whole log. GoTrue v2.197.0 leaves the log's IP address empty, so
+// none is returned. GoTrue records administrator actions (this API acting
+// as service_role) with the zero actor ID and the affected user in traits;
+// they are reported against that user, marked as an administrator's.
+const administratorID = '00000000-0000-0000-0000-000000000000'
+async function activity(query, params) {
+  const { page, perPage, search } = pageParams(params)
+  const user = params.get('user') ?? ''
+  if (user && !uuid.test(user)) throw new HTTPError(400, 'invalid_id')
+  const rows = await query(`SELECT id, created_at, payload->>'action' AS action,
+      CASE WHEN payload->>'actor_id' = $6 THEN 'administrator' ELSE 'user' END AS actor,
+      COALESCE(NULLIF(payload->'traits'->>'user_id', ''), NULLIF(payload->>'actor_id', $6)) AS user_id,
+      COALESCE(NULLIF(payload->'traits'->>'user_email', ''), CASE WHEN payload->>'actor_id' = $6 THEN NULL ELSE payload->>'actor_username' END) AS email
+    FROM auth.audit_log_entries
+    WHERE ($1 = '' OR payload->>'actor_id' = $1 OR payload->'traits'->>'user_id' = $1)
+      AND ($2 = '' OR payload->>'action' = $2 OR payload->>'actor_username' ILIKE $3 ESCAPE '\\' OR payload->'traits'->>'user_email' ILIKE $3 ESCAPE '\\')
+    ORDER BY created_at DESC, id LIMIT $4 OFFSET $5`, [user, search, likePattern(search), perPage + 1, (page - 1) * perPage, administratorID])
+  return { entries: rows.slice(0, perPage), more: rows.length > perPage, page, per_page: perPage }
+}
+
 // adminRoute returns [status, body] for one authorized request.
-export async function adminRoute({ pool, admin }, method, url, body) {
+export async function adminRoute({ pool, admin, external }, method, url, body) {
   const path = url.pathname.replace(/^\/admin\/v1/, '')
   const parts = path.split('/').filter(Boolean)
   const query = async (sql, args) => (await pool.query(sql, args)).rows
+  if (parts[0] === 'sso') return ssoRoute({ query, admin, goTrueError, external }, method, parts, body)
+  if (parts[0] === 'oauth') return oauthRoute({ admin, goTrueError }, method, parts, body)
   const user = parts[0] === 'users' && parts[1] && parts[1] !== 'import' ? (uuid.test(parts[1]) ? parts[1] : null) : undefined
   if (user === null) throw new HTTPError(400, 'invalid_id')
 
@@ -224,6 +251,7 @@ export async function adminRoute({ pool, admin }, method, url, body) {
       : { rowCount: 0 }
     return [200, { deleted: true, organizations_deleted: rowCount }]
   }
+  if (path === '/activity' && method === 'GET') return [200, await activity(query, url.searchParams)]
   if (path === '/orgs' && method === 'GET') {
     const { page, perPage, search } = pageParams(url.searchParams)
     const rows = await query(`SELECT o.id, o.slug, o.name, o.created_at, (SELECT count(*)::int FROM gregale_auth.memberships m WHERE m.org_id = o.id) AS members, count(*) OVER ()::int AS total
@@ -245,7 +273,7 @@ export async function adminRoute({ pool, admin }, method, url, body) {
 }
 
 // createAdminHandler serves /admin/v1. Without a key it does not exist.
-export function createAdminHandler({ pool, admin, keys, origins = [] }) {
+export function createAdminHandler({ pool, admin, keys, origins = [], external }) {
   const allowed = new Set(origins)
   return async (req, res) => {
     const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
@@ -255,14 +283,14 @@ export function createAdminHandler({ pool, admin, keys, origins = [] }) {
     if (keys.length === 0) { req.resume(); return reply(404, { status: 404, code: 'not_found' }) }
     if (req.method === 'OPTIONS') {
       if (!origin || !allowed.has(origin)) return reply(403, { status: 403, code: 'origin_not_allowed' })
-      res.writeHead(204, { ...headers, 'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'Authorization,Content-Type', 'Access-Control-Max-Age': '600' })
+      res.writeHead(204, { ...headers, 'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'Authorization,Content-Type', 'Access-Control-Max-Age': '600' })
       return res.end()
     }
     try {
       if (!keyMatches(keys, req.headers.authorization)) { req.resume(); throw new HTTPError(401, 'invalid_admin_key') }
       const url = new URL(req.url, 'http://admin.invalid')
       const body = await readJSON(req, limits.adminBodyBytes)
-      const [status, payload] = await adminRoute({ pool, admin }, req.method, url, body)
+      const [status, payload] = await adminRoute({ pool, admin, external }, req.method, url, body)
       reply(status, payload)
     } catch (err) {
       const failure = err instanceof HTTPError ? err : new HTTPError(500, 'internal_error')

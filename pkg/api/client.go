@@ -958,7 +958,80 @@ func (c *Client) DeleteDevSessionsProject(ctx context.Context, project string, w
 // RegisterScenarioTest gives a run's developer sessions a private service
 // namespace before source deployment. Registration is create-only.
 func (c *Client) RegisterScenarioTest(ctx context.Context, runID string, req RegisterScenarioTestRequest) error {
-	return c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID, req, nil)
+	if req.CommandVersion != 0 && (req.CommandVersion != 1 || req.Simulation == nil) {
+		return errors.New("contained commands require protocol version 1 and simulation enrollment")
+	}
+	if req.NetworkMode != "" && (req.NetworkMode != "contained" || req.WebhookMode != "capture") {
+		return errors.New("contained rehearsal networking requires capture mode")
+	}
+	if req.ActionEvidenceVersion != 0 && ((req.ActionEvidenceVersion != ScenarioActionSnapshotVersion && req.ActionEvidenceVersion != ScenarioSimulationSnapshotVersion) || req.WebhookMode != "capture") {
+		return errors.New("sealed action evidence requires capture mode and a supported evidence version")
+	}
+	simulationDigest := ""
+	if req.Simulation != nil {
+		if req.NetworkMode != "contained" || req.WebhookMode != "capture" || req.ActionEvidenceVersion != ScenarioSimulationSnapshotVersion {
+			return errors.New("simulation requires contained networking and action evidence version 2")
+		}
+		names := make([]string, 0, len(req.Members))
+		for _, m := range req.Members {
+			names = append(names, m.Workload)
+		}
+		_, digest, err := NormalizeScenarioSimulationPlan(*req.Simulation, names)
+		if err != nil {
+			return err
+		}
+		simulationDigest = digest
+	} else if req.ActionEvidenceVersion == ScenarioSimulationSnapshotVersion {
+		return errors.New("action evidence version 2 requires simulation fixtures")
+	}
+	_, resumeDigest, err := ScenarioSuspendResumeEnrollment(req)
+	if err != nil {
+		return err
+	}
+	_, coldDigest, err := ScenarioColdStartEnrollment(req)
+	if err != nil {
+		return err
+	}
+	workDigest, err := validateScenarioManagedWorkEnrollment(req)
+	if err != nil {
+		return err
+	}
+	path := "/v1/dev/test-runs/" + runID
+	if req.WebhookMode == "" {
+		return c.do(ctx, "PUT", path, req, nil)
+	}
+	var out RegisterScenarioTestResponse
+	if err := c.do(ctx, "PUT", path, req, &out); err != nil {
+		return err
+	}
+	if out.SuspendResumeSHA256 != resumeDigest {
+		return errors.New("server did not acknowledge the exact suspend/resume plan")
+	}
+	if out.ColdStartSHA256 != coldDigest {
+		return errors.New("server did not acknowledge the exact cold-start plan")
+	}
+	if out.ManagedWorkSHA256 != workDigest {
+		return errors.New("server did not acknowledge the exact managed-work plan")
+	}
+	if req.CommandVersion != 0 && out.CommandVersion != req.CommandVersion {
+		return errors.New("server did not acknowledge contained command execution")
+	}
+	if req.Simulation != nil && out.RecorderVersion != 1 {
+		return errors.New("server did not acknowledge durable rehearsal recorder support")
+	}
+	if out.SimulationSHA256 != simulationDigest {
+		return errors.New("server did not acknowledge the exact rehearsal simulation fixtures")
+	}
+	if out.NetworkMode != req.NetworkMode {
+		return errors.New("server did not acknowledge the requested rehearsal network containment")
+	}
+	if out.PolicyVersion != 1 || out.WebhookMode != req.WebhookMode {
+		return errors.New("server did not acknowledge the requested rehearsal webhook capture policy")
+	}
+	if req.ActionEvidenceVersion != 0 && out.ActionEvidenceVersion != req.ActionEvidenceVersion {
+		return errors.New("server did not acknowledge the requested sealed action evidence version")
+	}
+	return nil
 }
 
 // InjectScenarioTestChaos installs bounded HTTP and TCP faults for one isolated run.
@@ -4208,10 +4281,9 @@ func (c *Client) RotateDeployToken(ctx context.Context, slug, id string, req Rot
 // reads it as a forward narrative (queue_accepted → admitted →
 // boot_started → boot_completed → readiness_200 → proxy_first_byte).
 //
-// since is an RFC 3339 timestamp; rows strictly older are skipped
-// (the dashboard's "load older" infinite-scroll). limit is bounded
-// server-side at 1000; values larger are silently capped per the
-// same convention as ListSecrets / ListAuditEvents.
+// since is an exclusive RFC3339 lower bound (at > since). The legacy
+// timestamp hint can skip equal-time events; use ListWakeTimelinePage for
+// keyset continuation. limit is bounded to 1..1000; larger values are rejected.
 //
 // Cross-account visibility is enforced server-side: the slug must
 // resolve to the caller's account, and each row's data.app_id is
@@ -4723,8 +4795,14 @@ func (c *Client) DeleteAppRegistryCredential(ctx context.Context, slug, registry
 // ListSecrets/SetSecret/UnsetSecret which the gate tolerates as
 // pre-existing helpers — new surfaces follow MethodResource).
 func (c *Client) GetAppsSlugEnv(ctx context.Context, slug string) (AppEnvListResponse, error) {
+	return c.GetAppsSlugEnvWithScope(ctx, slug, "")
+}
+
+// GetAppsSlugEnvWithScope lists runtime variable names in one scope. Empty
+// scope preserves the default endpoint; values are never returned.
+func (c *Client) GetAppsSlugEnvWithScope(ctx context.Context, slug, scope string) (AppEnvListResponse, error) {
 	var out AppEnvListResponse
-	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/env", nil, &out)
+	return out, c.do(ctx, "GET", c.scopeQuery("/v1/apps/"+slug+"/env", scope), nil, &out)
 }
 func (c *Client) PutAppsSlugEnvKey(ctx context.Context, slug, key, value string) error {
 	return c.do(ctx, "PUT", "/v1/apps/"+slug+"/env/"+key,

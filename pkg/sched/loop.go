@@ -242,6 +242,7 @@ func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
 		engine.SetBrokerLagReader(l)
 		engine.mu.Lock()
 		engine.serviceReconcileSubmit = l.submitServiceRecovery
+		engine.workerReconcileSubmit = l.submitWorkerRecovery
 		engine.mu.Unlock()
 	}
 	return l
@@ -1139,6 +1140,9 @@ func (l *Loop) Run(ctx context.Context) error {
 	primeRecoveryT := time.NewTicker(primeRecoveryInterval)
 	defer primeRecoveryT.Stop()
 	l.dispatchPrimeRecovery(ctx)
+	workerRecoveryT := time.NewTicker(time.Duration(api.WorkerRecoveryPollIntervalSeconds) * time.Second)
+	defer workerRecoveryT.Stop()
+	l.dispatchWorkerRecovery(ctx)
 
 	// Make sure the triggerWakeup channel exists before any
 	// wakeup can race the first select iteration. WakeupTriggers
@@ -1240,6 +1244,8 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-workflowRetentionFirst:
 			l.runWorkflowRetention(ctx)
 			workflowRetentionFirst = nil
+		case <-workerRecoveryT.C:
+			l.dispatchWorkerRecovery(ctx)
 		case <-workflowRetentionTick(workflowRetentionT):
 			l.runWorkflowRetention(ctx)
 		case <-retentionFirst:
@@ -1286,6 +1292,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			// table (42P01) for fresh clusters pre-migration.
 			l.runOperatorIntentCompletenessTick(ctx)
 		case <-triggerT.C:
+			l.dispatchScenarioWorkerFaults(ctx)
+			l.dispatchScenarioSuspendResumes(ctx)
 			// Issue #757 / ADR-100: trigger dispatch tick. 1s
 			// safety cadence; WakeupTriggers advances the
 			// effective interval when a broker ack/nack wakes the
@@ -2464,7 +2472,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 		var all []state.Instance
 		var err error
 		if owner := l.engine.OwnerNodeID(); owner != "" {
-			all, err = store.ListInstancesByNodeID(ctx, owner)
+			all, err = store.ListLiveInstancesByNodeID(ctx, owner)
 		} else {
 			all, err = store.ListAllInstances(ctx)
 		}
@@ -2750,7 +2758,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 	l.parkExpiredFrozen(ctx, snapshot, now)
 	l.evictForMeasuredMemory(ctx, snapshot, activityByInstance, now)
 	for _, id := range SelectEvictions(resident, now, snapshot) {
-		if err := l.engine.Evict(ctx, id); err != nil {
+		if err := l.engine.EvictUnderPressure(ctx, id); err != nil {
 			l.log.Warn("reaper: eviction", "instance", id, "err", err)
 			continue
 		}
@@ -5166,7 +5174,7 @@ func (l *Loop) evictForMeasuredMemory(ctx context.Context, snapshot []InstanceIn
 		resident[id] = a.ResidentMB
 	}
 	for _, id := range SelectMemoryEvictions(now, snapshot, used, ceiling, resident) {
-		if err := l.engine.Evict(ctx, id); err != nil {
+		if err := l.engine.EvictUnderPressure(ctx, id); err != nil {
 			l.log.Warn("reaper: measured memory eviction", "instance", id, "err", err)
 			continue
 		}

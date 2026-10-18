@@ -132,7 +132,7 @@ func TestIdempotent_GateRefusalIsNotReplayed(t *testing.T) {
 		return rec
 	}
 	create := httptest.NewRecorder()
-	cr := httptest.NewRequest(http.MethodPost, "/v1/apps", strings.NewReader(`{"slug":"idem-gate","runtime":"node22"}`))
+	cr := httptest.NewRequest(http.MethodPost, "/v1/apps", strings.NewReader(`{"slug":"idem-gate","type":"app"}`))
 	cr.Header.Set("Authorization", "Bearer "+(*env.Key()))
 	cr.Header.Set("Content-Type", "application/json")
 	(*env.H()).ServeHTTP(create, cr)
@@ -268,7 +268,7 @@ func TestIdempotent_FailedDeployIsNotReplayed(t *testing.T) {
 		(*env.H()).ServeHTTP(rec, r)
 		return rec
 	}
-	if rec := do(http.MethodPost, "/v1/apps", `{"slug":"idem-fail","runtime":"node22"}`); rec.Code != http.StatusCreated {
+	if rec := do(http.MethodPost, "/v1/apps", `{"slug":"idem-fail","type":"app"}`); rec.Code != http.StatusCreated {
 		t.Fatalf("create app = %d %s", rec.Code, rec.Body)
 	}
 	deploy := `{"image":"registry.gregale.dev/app@sha256:a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"}`

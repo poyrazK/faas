@@ -31,10 +31,11 @@ type DesiredState struct {
 // ObservedState contains intent only, read at one database snapshot. Version
 // is a durable intent version, not a timestamp or a runtime counter.
 type ObservedState struct {
-	Version     int64             `json:"version"`
-	Fields      []Field           `json:"fields"`
-	ResourceIDs map[string]string `json:"resource_ids"`
-	Unsupported []string          `json:"unsupported,omitempty"`
+	RetirementImpacts []api.EnvironmentWorkloadRetirementImpact `json:"-"`
+	Version           int64                                     `json:"version"`
+	Fields            []Field                                   `json:"fields"`
+	ResourceIDs       map[string]string                         `json:"resource_ids"`
+	Unsupported       []string                                  `json:"unsupported,omitempty"`
 }
 
 type Ownership struct {

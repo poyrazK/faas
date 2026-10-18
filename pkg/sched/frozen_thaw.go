@@ -47,6 +47,14 @@ func (e *Engine) promoteFrozenInstanceLocked(ctx context.Context, app state.App,
 		return WakeResult{}, false, nil
 	}
 	for _, frozen := range candidates {
+		fresh, err := e.snapshotRecoveryFresh(ctx, frozen.ID)
+		if err != nil {
+			return WakeResult{}, false, fmt.Errorf("sched: frozen thaw: snapshot recovery lineage: %w", err)
+		}
+		if !fresh {
+			e.parkFrozenLocked(ctx, frozen, "operator_cold_boot")
+			continue
+		}
 		result, thawed, err := e.thawFrozenLocked(ctx, thawer, app, acct, limits, dep, values, frozen)
 		if err != nil {
 			return WakeResult{}, false, err
@@ -58,8 +66,22 @@ func (e *Engine) promoteFrozenInstanceLocked(ctx context.Context, app state.App,
 	return WakeResult{}, false, nil
 }
 
-// frozenCandidates lists the deployment's frozen rows, newest first. Rows
-// whose shape no longer matches the app are parked.
+// unconfirmedThawWork fails a thaw that did not confirm the work it was asked
+// to run. A vmmd that predates a request field answers without it, and the
+// instance must not serve without its healthcheck or its after_restore.
+func unconfirmedThawWork(req ThawRequest, result ThawResult) error {
+	switch {
+	case req.ImageHealthcheckRequired && !result.HealthcheckVerified:
+		return errors.New("thaw did not verify the required image healthcheck")
+	case req.RunAfterRestore && !result.AfterRestoreRan:
+		return errors.New("thaw did not run the app's after_restore hook")
+	}
+	return nil
+}
+
+// frozenCandidates lists the deployment's frozen rows, newest first, with
+// the wake's preferred instance (WithPreferredInstance) ahead of the rest.
+// Rows whose shape no longer matches the app are parked.
 func (e *Engine) frozenCandidates(ctx context.Context, app state.App, dep state.Deployment) ([]state.Instance, error) {
 	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
 	if err != nil {
@@ -86,6 +108,16 @@ func (e *Engine) frozenCandidates(ctx context.Context, app state.App, dep state.
 		}
 		return out[i].LastRequestAt.After(out[j].LastRequestAt)
 	})
+	// A session pinned to one of these VMs thaws its own first.
+	if preferred := PreferredInstanceFromContext(ctx); preferred != "" {
+		for i, ins := range out {
+			if ins.ID == preferred {
+				copy(out[1:i+1], out[:i])
+				out[0] = ins
+				break
+			}
+		}
+	}
 	return out, nil
 }
 
@@ -121,13 +153,13 @@ func (e *Engine) thawFrozenLocked(ctx context.Context, thawer FrozenVMM, app sta
 	}
 	started := time.Now()
 	thawCtx, cancel := context.WithTimeout(ctx, frozenRPCTimeout)
-	healthcheckRequired := imageHealthcheckRequiredFromDep(dep)
-	verified, thawErr := thawer.ThawInstance(thawCtx, e.nodeForRoute(frozen.NodeID), frozen.ID, healthcheckRequired)
+	// An app that declared after_restore reconnects its clients after the
+	// time it spent frozen, as it does after a restore.
+	req := ThawRequest{ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(dep), RunAfterRestore: app.Manifest.AfterRestore != nil}
+	result, thawErr := thawer.ThawInstance(thawCtx, e.nodeForRoute(frozen.NodeID), frozen.ID, req)
 	cancel()
-	if thawErr == nil && healthcheckRequired && !verified {
-		// The deployment requires an image healthcheck the thaw did not
-		// confirm; never route to it.
-		thawErr = errors.New("thaw did not verify the required image healthcheck")
+	if thawErr == nil {
+		thawErr = unconfirmedThawWork(req, result)
 	}
 	if thawErr != nil {
 		e.log.Warn("sched: frozen thaw failed; parking", "instance", frozen.ID, "err", thawErr)
