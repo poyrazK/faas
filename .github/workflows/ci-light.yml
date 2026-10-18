@@ -497,8 +497,9 @@ jobs:
     # related to the change, without -race. The mega tier (ci.yml) runs every
     # suite in full with -race nightly and before every release. Main pushes
     # also warm the large-package build for later pull requests.
-    # State shard 2 also needs a cold non-race build after its race suites.
-    timeout-minutes: ${{ github.ref == 'refs/heads/main' && 40 || matrix.shard == 2 && 30 || 20 }}
+    # State and apidserver shards also need cold non-race builds after their
+    # race suites; shard 3 first compiles portable binding/guest contracts.
+    timeout-minutes: ${{ github.ref == 'refs/heads/main' && 40 || (matrix.shard == 2 || matrix.shard == 3) && 30 || 20 }}
     strategy:
       fail-fast: false
       matrix:
