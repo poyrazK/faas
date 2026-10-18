@@ -9212,7 +9212,7 @@
       "incident_id",
       "snapshot"
     ],
-    "kind": "operational"
+    "kind": "customer_data"
   },
   {
     "table": "mcp_readiness_incident_cursors",
