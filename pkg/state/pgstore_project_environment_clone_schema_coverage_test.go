@@ -52,6 +52,13 @@ func TestPgCloneSchemaRegistryCoversMigratedApplicationTablesAndFailsBeforeReser
 	}
 	for _, want := range []state.ProjectEnvironmentCloneCoverageBlocker{
 		{Table: "data_pipelines", Code: "isolated_strategy_unavailable"},
+		{Table: "app_mcp_readiness_policies", Code: "isolated_strategy_unavailable"},
+		{Table: "app_mcp_readiness_policy_history", Code: "isolated_strategy_unavailable"},
+		{Table: "mcp_readiness_fallback_policies", Code: "isolated_strategy_unavailable"},
+		{Table: "mcp_readiness_maintenance_windows", Code: "isolated_strategy_unavailable"},
+		{Table: "mcp_readiness_pagerduty_acknowledgements", Code: "isolated_strategy_unavailable"},
+		{Table: "mcp_readiness_pagerduty_policies", Code: "isolated_strategy_unavailable"},
+		{Table: "mcp_readiness_reminder_defaults", Code: "isolated_strategy_unavailable"},
 		{Table: "data_pipeline_alerts", Code: "isolated_strategy_unavailable"},
 
 		{Table: "product_control_heads", Code: "isolated_strategy_unavailable"},

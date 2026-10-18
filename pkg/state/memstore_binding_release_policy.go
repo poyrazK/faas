@@ -89,6 +89,9 @@ func (m *MemStore) checkBindingReleaseTrafficLocked(ctx context.Context, propose
 	}
 	for id, percent := range proposed {
 		d := m.deployments[id]
+		if err := m.checkMCPReadinessLocked(d, percent); err != nil {
+			return err
+		}
 		if percent <= d.TrafficPercent {
 			continue
 		}

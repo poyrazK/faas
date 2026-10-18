@@ -35,6 +35,26 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"postgres_capacity_sources":      CloneSchemaOperational,
 		"postgres_capacity_targets":      CloneSchemaOperational,
 
+		// Readiness intent needs isolated strategies; deployment evidence and delivery
+		// receipts remain with the source environment and cannot authorize a clone.
+		"app_mcp_readiness_policies":               CloneSchemaConfiguration,
+		"app_mcp_readiness_policy_history":         CloneSchemaConfiguration,
+		"deployment_mcp_readiness_evidence":        CloneSchemaOperational,
+		"deployment_mcp_readiness_monitors":        CloneSchemaOperational,
+		"deployment_mcp_readiness_overrides":       CloneSchemaOperational,
+		"mcp_readiness_attention_actions":          CloneSchemaOperational,
+		"mcp_readiness_fallback_policies":          CloneSchemaConfiguration,
+		"mcp_readiness_incident_attention":         CloneSchemaOperational,
+		"mcp_readiness_incident_cursors":           CloneSchemaOperational,
+		"mcp_readiness_incident_events":            CloneSchemaOperational,
+		"mcp_readiness_incidents":                  CloneSchemaOperational,
+		"mcp_readiness_maintenance_windows":        CloneSchemaConfiguration,
+		"mcp_readiness_notification_actions":       CloneSchemaOperational,
+		"mcp_readiness_pagerduty_ack_events":       CloneSchemaOperational,
+		"mcp_readiness_pagerduty_acknowledgements": CloneSchemaConfiguration,
+		"mcp_readiness_pagerduty_policies":         CloneSchemaConfiguration,
+		"mcp_readiness_reminder_defaults":          CloneSchemaConfiguration,
+
 		// Rehearsal policies, leases, fixtures and receipts belong to their original run.
 		"scenario_cold_preparations":    CloneSchemaOperational,
 		"scenario_command_networks":     CloneSchemaOperational,

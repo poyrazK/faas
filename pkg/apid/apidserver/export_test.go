@@ -160,6 +160,7 @@ const DashboardJobsCSRFCookie = dashboardJobsCSRFCookie
 const DashboardKeyConfirmField = dashboardKeyConfirmField
 const DashboardKeyDeleteCSRFCookie = dashboardKeyDeleteCSRFCookie
 const DashboardMFAPath = dashboardMFAPath
+const DashboardMCPAlertCookie = dashboardMCPAlertCookie
 const DashboardMirrorsCSRFCookie = dashboardMirrorsCSRFCookie
 const DashboardReplayFailedAction = dashboardReplayFailedAction
 const DashboardReplayFailedCSRFCookie = dashboardReplayFailedCSRFCookie

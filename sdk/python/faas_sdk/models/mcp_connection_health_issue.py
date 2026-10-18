@@ -29,6 +29,8 @@ class MCPConnectionHealthIssue:
     state: str
     recovery_action: str
     recovery_path: str
+    scope: str | Unset = UNSET
+    """Environment containing the MCP connection with this health issue. Empty means default."""
     app_deleted: bool | Unset = UNSET
     retirement_id: UUID | Unset = UNSET
     expires_at: datetime.datetime | Unset = UNSET
@@ -50,6 +52,8 @@ class MCPConnectionHealthIssue:
         recovery_action = self.recovery_action
 
         recovery_path = self.recovery_path
+
+        scope = self.scope
 
         app_deleted = self.app_deleted
 
@@ -75,6 +79,8 @@ class MCPConnectionHealthIssue:
                 "recovery_path": recovery_path,
             }
         )
+        if scope is not UNSET:
+            field_dict["scope"] = scope
         if app_deleted is not UNSET:
             field_dict["app_deleted"] = app_deleted
         if retirement_id is not UNSET:
@@ -103,6 +109,8 @@ class MCPConnectionHealthIssue:
 
         recovery_path = d.pop("recovery_path")
 
+        scope = d.pop("scope", UNSET)
+
         app_deleted = d.pop("app_deleted", UNSET)
 
         _retirement_id = d.pop("retirement_id", UNSET)
@@ -128,6 +136,7 @@ class MCPConnectionHealthIssue:
             state=state,
             recovery_action=recovery_action,
             recovery_path=recovery_path,
+            scope=scope,
             app_deleted=app_deleted,
             retirement_id=retirement_id,
             expires_at=expires_at,
