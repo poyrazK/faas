@@ -346,6 +346,41 @@ differ from the hosted runner. The hosted gate retains the entire affected
 shard and must pass on the new exact head. No native filesystem or KVM
 acceptance is supplied by these fixture checks.
 
+## Published observability and live-instance integration (2026-10-18)
+
+The fixture correction is retained while integrating published main through
+`2a4c0d1fca2b7b01bb7bda206b822a135ce45d1e`, including live-instance filtering,
+the observability schema and MCP clone classifications. Validation used the
+merged source tree `6cd0bd0a6f9dde98041065fab72787c3596bb70e` before this
+evidence update. The interrupted pre-restart validation is not counted.
+
+The canonical schema was regenerated from a fresh disposable PostgreSQL 16
+database, with migration source digest
+`e20c0fd4bc038473c31571eb2a1d6b2a13aa781b9b7ffe866b33cacd3c601326`.
+All sixteen SQLC generation blocks and three function query sources remain;
+SQLC generation and drift checks pass. The clone registry preserves all 901
+published main classifications and column sets, plus the two operational
+function journals, without duplicate MCP entries. Both management SDKs
+regenerate without changes to the merged generated trees; Node builds,
+Python compilation and canonical helper drift checks pass.
+
+Fresh full ordinary race execution passes 129 scheduler-entrypoint and 3,149
+scheduler tests/subtests, with the same three existing skips and zero failures.
+Qualified state and scheduler selections pass 79 and 28 tests/subtests; the
+additional live PostgreSQL schema contract passes five. All 112 qualified
+checks execute without skips or failures. The MemStore and PgStore committed
+source-cleanup cases retain source capacity until cleanup acknowledgment;
+the live-state enumeration and unknown-schema-before-reservation cases pass.
+
+Compilation remains serial with 5 GiB/GOGC 50. Executed tests retain 2 GiB,
+GOGC 10, two processors and unchanged ten-minute ordinary/three-minute
+qualified deadlines. The private TLS fixture uses 512 locks per transaction
+and 1 GiB shared memory. ADR uniqueness, documentation links and four local
+HTTP documentation fixtures pass; the three function migrations pass the
+expand/contract check against the integrated main. New exact-head hosted CI
+and the guarded native compile remain required before merge. No physical
+execution or production activation is supplied by these checks.
+
 ## Qualification boundary
 
 Production activation remains disabled. This managed container has no supported

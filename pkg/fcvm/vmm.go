@@ -649,6 +649,18 @@ func (v *JailerVMM) registerAppRing(instance, appID string) *logbuf.Ring {
 	return v.registerDeploymentRing(instance, appID, "")
 }
 
+// registerLeaseRing registers the lease's ring with the app and deployment
+// identity the wake carried in its correlation fields. Builder VMs get an
+// anonymous ring, so build output never counts as the app's log lines
+// (ADR-746) or reaches app log observers.
+func (v *JailerVMM) registerLeaseRing(ctx context.Context, l Lease) *logbuf.Ring {
+	if l.IsBuilder {
+		return v.registerRing(l.Instance)
+	}
+	fields, _ := wire.FromContext(ctx)
+	return v.registerDeploymentRing(l.Instance, fields.AppID, fields.DeploymentID)
+}
+
 func (v *JailerVMM) registerDeploymentRing(instance, appID, deploymentID string) *logbuf.Ring {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -1175,8 +1187,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 			_ = v.Kill(context.WithoutCancel(ctx), l)
 		}
 	}()
-	fields, _ := wire.FromContext(ctx)
-	_ = v.registerDeploymentRing(l.Instance, fields.AppID, fields.DeploymentID)
+	_ = v.registerLeaseRing(ctx, l)
 
 	cfg = v.withBalloon(cfg)
 	cfg = v.withPmemBase(l, cfg)
@@ -2207,8 +2218,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// Move 4 (issue #254): register the per-instance ring BEFORE
 	// startJailer so cmd.Stdout captures every byte the resumed FC
 	// writes, including the boot echo and the resume hook's ack.
-	fields, _ := wire.FromContext(ctx)
-	_ = v.registerDeploymentRing(l.Instance, fields.AppID, fields.DeploymentID)
+	_ = v.registerLeaseRing(ctx, l)
 	networkWait, networkSetup, err := awaitWakeNetwork(ctx)
 	if err != nil {
 		return err

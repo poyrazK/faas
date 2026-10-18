@@ -1000,5 +1000,127 @@
     "full_local_ordinary_shard": "not accepted as a complete pass; managed tmpfs/process-umask and TEST-NET probe results differ from hosted runner; hosted full affected selection unchanged and required on final head",
     "native_acceptance": false,
     "production_activation": false
+  },
+  "observability_live_instance_main_integration": {
+    "source_base": "2c352fc8c8575eb375490ebd6db0b5873c94c7f0",
+    "integrated_main": "2a4c0d1fca2b7b01bb7bda206b822a135ce45d1e",
+    "tested_source_tree": "6cd0bd0a6f9dde98041065fab72787c3596bb70e",
+    "interrupted_pre_restart_run_counted": false,
+    "canonical_schema_sha256": "aee715e366ad7226d34165b1c22fc939a863fe418549c2e75387e178c954c9c7",
+    "migration_source_digest": "e20c0fd4bc038473c31571eb2a1d6b2a13aa781b9b7ffe866b33cacd3c601326",
+    "sqlc_generation_blocks": 16,
+    "function_query_sources": 3,
+    "clone_registry": {
+      "published_main_policies_preserved": 901,
+      "operational_function_journals": 2,
+      "total": 903,
+      "duplicates": 0
+    },
+    "ordinary_scheduler_race": {
+      "counts": {
+        "pass": 3278,
+        "skip": 3
+      },
+      "skipped_tests": [
+        "TestLoadSchedInternalSvcKey_SealedPath",
+        "TestFunctionExecutionWarmRecoveryResealsParkAdmission",
+        "TestReconcileExpiredMigrations_ConflictOnPeerRollback"
+      ],
+      "package_results": [
+        {
+          "Package": "github.com/onebox-faas/faas/cmd/schedd",
+          "Action": "pass",
+          "Elapsed": 47.163
+        },
+        {
+          "Package": "github.com/onebox-faas/faas/pkg/sched",
+          "Action": "pass",
+          "Elapsed": 343.68
+        }
+      ],
+      "committed_source_cleanup_cases": [],
+      "log_sha256": "35d80514142abdfc2534a2e98674d7cfa9dab5a2dd9401dd3ccf606b4f380296"
+    },
+    "qualified_state_race": {
+      "counts": {
+        "pass": 79
+      },
+      "skipped_tests": [],
+      "package_results": [
+        {
+          "Package": "github.com/onebox-faas/faas/pkg/state",
+          "Action": "pass",
+          "Elapsed": 69.973
+        }
+      ],
+      "committed_source_cleanup_cases": [
+        "TestFunctionMigrationSharedCapacityPg/committed_source_cleanup",
+        "TestFunctionMigrationSharedCapacityMem/committed_source_cleanup"
+      ],
+      "log_sha256": "47c4d3f11a884812f261be0552fb969ee0a0af071cf7e8abfdc62e4074c48ea1"
+    },
+    "qualified_scheduler_race": {
+      "counts": {
+        "pass": 28
+      },
+      "skipped_tests": [],
+      "package_results": [
+        {
+          "Package": "github.com/onebox-faas/faas/pkg/sched",
+          "Action": "pass",
+          "Elapsed": 1.438
+        }
+      ],
+      "committed_source_cleanup_cases": [],
+      "log_sha256": "a89dbb14e52813b947391c2170cad50d01cc372341cc0d54b530028bc5fab6fc"
+    },
+    "qualified_live_schema_race": {
+      "counts": {
+        "pass": 5
+      },
+      "skipped_tests": [],
+      "package_results": [
+        {
+          "Package": "github.com/onebox-faas/faas/pkg/state",
+          "Action": "pass",
+          "Elapsed": 21.731
+        }
+      ],
+      "committed_source_cleanup_cases": [],
+      "log_sha256": "b89e5cd1e12e371f87e5a885f1b768377159cd11e8373df626f7a31b0f210ce7"
+    },
+    "qualified_passed": 112,
+    "qualified_skipped": 0,
+    "qualified_failed": 0,
+    "compiler": {
+      "memory_target": "5GiB",
+      "gogc": 50,
+      "package_parallelism": 1
+    },
+    "runtime": {
+      "memory_target": "2GiB",
+      "gogc": 10,
+      "gomaxprocs": 2,
+      "ordinary_deadline": "10m",
+      "qualified_deadline": "3m"
+    },
+    "fixture": {
+      "postgres_major": 16,
+      "tls": true,
+      "max_locks_per_transaction": 512,
+      "shared_memory": "1GiB"
+    },
+    "sqlc_check": "pass",
+    "sdk_regeneration": "clean against merged generated trees",
+    "sdk_node_build": "pass",
+    "sdk_python_compile": "pass",
+    "canonical_helper_drift": "pass",
+    "adr_uniqueness": "pass",
+    "documentation_links": "pass",
+    "documentation_http_fixtures_passed": 4,
+    "function_migration_expand_contract": "pass against integrated main",
+    "hosted_current_head_ci": "required after publication",
+    "native_physical_acceptance": false,
+    "production_activation": false
   }
 }
