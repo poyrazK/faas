@@ -4,7 +4,13 @@
 # affected_units.py report: every binary of an eligible lane (control-plane,
 # edge), built with build-release-batch's flags and stamped with its unit
 # version, plus units-manifest.json describing them, and the deployctl the
-# deploy hosts run (tools/deployctl). release-units.yml signs the tarball.
+# deploy hosts run (tools/deployctl). When the range added lane-eligible
+# migrations (the report's data step), it also carries the migrate tool
+# built at the head commit (tools/migrate), which the control-plane lane
+# runs before it restarts anything
+# (docs/adr/20261018084150-unit-lane-expand-migrations.md), and the
+# manifest records every migration's verdict. release-units.yml signs the
+# tarball.
 #
 #   REPORT=report.json OUT_DIR=out scripts/build-unit-release.sh
 #
@@ -54,6 +60,13 @@ echo "building deployctl"
 (cd "$repo_root" && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 "${GO:-go}" build -trimpath -buildvcs=false \
   -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${head_sha}" \
   -o "$work/tools/deployctl" ./cmd/deployctl)
+if [[ "$(jq -r '.data.version // empty' "$report")" =~ ^data-[0-9a-f]{40}$ ]]; then
+  # The full lane's controller-built bin/migrate, from the release commit.
+  echo "building migrate ($(jq -r '.data.migrations | length' "$report") migrations, $(jq -r .data.version "$report"))"
+  (cd "$repo_root" && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 "${GO:-go}" build -trimpath -buildvcs=false \
+    -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${head_sha}" \
+    -o "$work/tools/migrate" ./cmd/migrate)
+fi
 
 python3 - "$report" "$lanes" "$work" <<'PY'
 import hashlib
@@ -99,6 +112,9 @@ manifest = {
     "pending": report["pending"],
     "flags": report["flags"],
 }
+data = report.get("data") or {}
+if data.get("version"):
+    manifest["data"] = {key: data[key] for key in ("eligible", "version", "commit", "migrations", "blockers")}
 with open(os.path.join(work, "units-manifest.json"), "w", encoding="utf-8") as fh:
     json.dump(manifest, fh, indent=2, sort_keys=True)
     fh.write("\n")
