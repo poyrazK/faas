@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/edgejwks"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/realtime"
@@ -51,6 +55,33 @@ func (a *realtimeJWTAuthorizer) AuthorizeIdentity(ctx context.Context, rawToken 
 		return realtime.JWTIdentity{}, realtime.ErrUnauthorized
 	}
 	return realtime.JWTIdentity{Principal: claims.Subject, SessionID: claims.Custom["session_id"], ExpiresAt: claims.Exp}, nil
+}
+
+// AuthorizeClaims verifies a token for RLS-mode live queries (ADR-20261016151947) and
+// returns its whole claims object, which the database reads as
+// request.jwt.claims. The payload is read only after the signature, issuer,
+// audience and lifetime have been verified; the token must expire.
+func (a *realtimeJWTAuthorizer) AuthorizeClaims(ctx context.Context, rawToken string, policy realtime.AuthPolicy) (json.RawMessage, time.Time, error) {
+	claims, err := a.verifyClaims(ctx, rawToken, policy, true)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	if claims.Exp.IsZero() || !time.Now().Before(claims.Exp) {
+		return nil, time.Time{}, realtime.ErrUnauthorized
+	}
+	parts := strings.Split(rawToken, ".")
+	if len(parts) != 3 {
+		return nil, time.Time{}, fmt.Errorf("realtime: malformed jwt")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil || len(payload) > api.LiveQueryTokenMaxBytes {
+		return nil, time.Time{}, fmt.Errorf("realtime: jwt payload unreadable")
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &object); err != nil {
+		return nil, time.Time{}, fmt.Errorf("realtime: jwt payload is not an object")
+	}
+	return json.RawMessage(payload), claims.Exp, nil
 }
 
 func (a *realtimeJWTAuthorizer) verifyClaims(ctx context.Context, rawToken string, policy realtime.AuthPolicy, requireExpiry bool) (*edgejwks.Claims, error) {

@@ -108,13 +108,22 @@ func (s *server) autoRollbackOn5xx(ctx context.Context, c state.RollbackOn5xxCan
 		return err
 	}
 	targetID := target.ID
-	if _, problem := s.rollbackAppCore(request, acct, app, api.RollbackRequest{TargetDeploymentID: &targetID}); problem != nil {
+	if _, _, problem := s.rollbackAppCore(request, acct, app, api.RollbackRequest{TargetDeploymentID: &targetID}, state.RollbackTriggerAuto5xx); problem != nil {
+		if problem.Code == api.CodeRollbackCrossesRelease {
+			// ADR-1448: automation never runs code on changes it has not
+			// served with. The release keeps serving; a person decides.
+			s.log.Warn("rollback-on-5xx: skipped; the rollback would cross release commands",
+				"app", app.ID, "deployment", c.DeploymentID, "target", target.ID, "detail", problem.Detail)
+			return nil
+		}
 		return fmt.Errorf("roll back to %s: %s: %s", target.ID, problem.Code, problem.Detail)
 	}
 	if _, err := s.store.MarkAutoRollback(ctx, c.DeploymentID, string(state.AutoRollbackReasonThresholdExceeded), time.Now().UTC()); err != nil {
 		return fmt.Errorf("record auto-rollback: %w", err)
 	}
-	s.log.Warn("rollback-on-5xx: release rolled back", "app", app.ID, "deployment", c.DeploymentID,
+	// The rollback is requested, not yet done; the outcome worker records
+	// whether the previous release actually served again (ADR-1446).
+	s.log.Warn("rollback-on-5xx: rollback requested", "app", app.ID, "deployment", c.DeploymentID,
 		"target", target.ID, "requests", requests, "server_errors", serverErrors)
 	s.audit.Emit(ctx, "app.auto_rollback_on_5xx", &acct.ID, map[string]any{
 		"app_id": app.ID, "from": c.DeploymentID, "to": target.ID,

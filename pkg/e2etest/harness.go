@@ -103,6 +103,9 @@ type Harness struct {
 	// schedd verifies with. imaged must sign with this exact key; see
 	// writeScheddSignPub.
 	SignKeyPath string
+	// signPubPath is the public half written by ensureSignPub. apid gets it
+	// too, so its rollback precheck verifies the same signatures schedd does.
+	signPubPath string
 	// GatewayURL addresses gatewayd-internal directly. Prefer EdgeURL for a
 	// customer-shaped request; reach for this only when a test is
 	// deliberately bypassing the public hop.
@@ -110,6 +113,9 @@ type Harness struct {
 	GatewayControlURL       string // /metrics + /healthz, loopback only
 	GatewayPublicURL        string
 	GatewayPublicControlURL string
+	// ScheddMetricsURL is schedd's loopback /metrics endpoint. The canary
+	// circuit breaker reads its liveness and OOM counters (ADR-1446).
+	ScheddMetricsURL string
 	// gatewayPublicAddr and gatewayControlAddr are reserved before schedd
 	// starts so its RPS scale-up scraper can be pointed at the real
 	// gatewayd-internal control listener. Keeping the addresses on the
@@ -237,7 +243,14 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *H
 	// See e2eMigrationTarget for the head value and the bump rationale.
 	pgtest.WaitForMigration(t, pool, e2eMigrationTarget, 30*time.Second)
 
+	// apid's rollback precheck verifies the signatures schedd does, so it
+	// gets the same key when schedd runs. This only writes the key: schedd
+	// itself still starts after vmmd (TestStart_BootsVMMDBeforeSchedd).
+	scheddVerifies := which&Schedd != 0
 	if which&APID != 0 {
+		if scheddVerifies {
+			h.ensureSignPub(t)
+		}
 		startAPID(t, h, bin, dbURL, extraEnv...)
 	}
 
@@ -309,7 +322,7 @@ failure_report_dir = %q
 		sockPath := h.ScheddSock
 		vmmdSock := h.VMMDSock
 		cfgPath := writeScheddConfig(t, h, tmp, which&(Gatewayd|GatewaySynthStub) != 0)
-		signPubPath := writeScheddSignPub(t, h)
+		signPubPath := h.ensureSignPub(t)
 		env := append(testEnvCommon(dbURL),
 			"FAAS_SCHEDD_CONFIG="+cfgPath,
 			"FAAS_SIGN_PUB="+signPubPath,
@@ -814,7 +827,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 		h.ScheddSock = sockPath
 		h.VMMDSock = vmmdSock
 		cfgPath := writeScheddConfig(t, h, tmp, which&(Gatewayd|GatewaySynthStub) != 0)
-		signPubPath := writeScheddSignPub(t, h)
+		signPubPath := h.ensureSignPub(t)
 		env := append(testEnvCommon(dbURL),
 			"FAAS_SCHEDD_CONFIG="+cfgPath,
 			"FAAS_SIGN_PUB="+signPubPath,
@@ -903,6 +916,9 @@ func startAPID(t *testing.T, h *Harness, bin, dbURL string, extraEnv ...string) 
 		"FAAS_SPOOL_ROOT="+spoolRoot,
 		"FAAS_SCAN_SPOOL_ROOT="+scanRoot,
 	)
+	if h.signPubPath != "" {
+		env = append(env, "FAAS_SIGN_PUB="+h.signPubPath)
+	}
 	env = append(env, extraEnv...)
 	for _, entry := range extraEnv {
 		if nodeName, ok := strings.CutPrefix(entry, "FAAS_E2E_APID_NODE_NAME="); ok && nodeName != "" {
@@ -948,14 +964,18 @@ func writeScheddConfig(t *testing.T, h *Harness, tmp string, includeSynth bool) 
 	if h.gatewayControlAddr != "" {
 		metricsURL = "http://" + h.gatewayControlAddr + "/metrics/gateway-requests"
 	}
+	// A concrete port, unlike metricsAddrFor's :0, so a test can scrape it.
+	scheddMetricsAddr := freeTCPAddr(t)
+	h.ScheddMetricsURL = "http://" + scheddMetricsAddr + "/metrics"
 	cfg := fmt.Sprintf(
 		`socket_path = %q
 owner_user = %q
 vmmd_socket = %q
 gateway_synth_socket = %q
 gateway_metrics_url = %q
+metrics_addr = %q
 `,
-		sockPath, "root", vmmdSock, gatewaySynth, metricsURL,
+		sockPath, "root", vmmdSock, gatewaySynth, metricsURL, scheddMetricsAddr,
 	)
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatalf("e2etest: write schedd.toml: %v", err)
@@ -1541,6 +1561,15 @@ func writeScheddSignPub(t *testing.T, h *Harness) string {
 	return pubPath
 }
 
+// ensureSignPub writes the harness keypair once and returns the public half.
+func (h *Harness) ensureSignPub(t *testing.T) string {
+	t.Helper()
+	if h.signPubPath == "" {
+		h.signPubPath = writeScheddSignPub(t, h)
+	}
+	return h.signPubPath
+}
+
 // startMeterd boots meterd against the test's schedd unix socket. The
 // Stripe push is intentionally disabled — STRIPE_API_KEY is left blank,
 // which the meterd wire-up warns about and the stripex SDK call skips
@@ -1697,28 +1726,39 @@ func (h *Harness) ScheddEnvValue(key string) string {
 // harness alive. Reaping here is important because Harness.stop owns the
 // single Wait call for every process it starts.
 func (h *Harness) KillSchedd() error {
+	return h.killChild("schedd")
+}
+
+// KillMeterd terminates and reaps meterd, the canary progression worker.
+// The safe-release drill uses it to prove a defaulted canary falls back to
+// an immediate cutover once the worker lease expires (ADR-1446).
+func (h *Harness) KillMeterd() error {
+	return h.killChild("meterd")
+}
+
+func (h *Harness) killChild(name string) error {
 	if h == nil {
 		return fmt.Errorf("e2etest: nil harness")
 	}
 	for _, proc := range h.procs {
-		if proc == nil || proc.Process == nil || filepath.Base(proc.Path) != "schedd" {
+		if proc == nil || proc.Process == nil || filepath.Base(proc.Path) != name {
 			continue
 		}
 		if proc.ProcessState == nil {
 			if err := proc.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-				return fmt.Errorf("e2etest: kill schedd: %w", err)
+				return fmt.Errorf("e2etest: kill %s: %w", name, err)
 			}
 			if err := proc.Wait(); err != nil {
 				// A signal exit is the expected result of this fault injection.
 				var exitErr *exec.ExitError
 				if !errors.As(err, &exitErr) {
-					return fmt.Errorf("e2etest: reap schedd: %w", err)
+					return fmt.Errorf("e2etest: reap %s: %w", name, err)
 				}
 			}
 		}
 		return nil
 	}
-	return fmt.Errorf("e2etest: schedd process not found")
+	return fmt.Errorf("e2etest: %s process not found", name)
 }
 
 // RestartSchedd launches a fresh schedd with the retained config and env.

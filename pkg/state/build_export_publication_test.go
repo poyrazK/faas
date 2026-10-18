@@ -16,10 +16,7 @@ import (
 	"time"
 )
 
-type buildExportTestStore interface {
-	Store
-	BuildExportPublicationStore
-}
+type buildExportTestStore = contractTestStore
 
 func buildExportFixture(t *testing.T, s buildExportTestStore) (BuildExportPublicationInput, App, Deployment, Build, *ecdsa.PrivateKey) {
 	return buildExportFixtureRuntime(t, s, "node22")

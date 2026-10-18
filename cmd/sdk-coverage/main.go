@@ -251,6 +251,15 @@ var routeExclude = map[string]bool{
 	// coverage map.
 	"GET /v1/traces/{trace_id}": true,
 
+	// ADR-20261016151947 live queries: a preview gated by FAAS_LIVE_QUERIES_ACCOUNTS
+	// and answering like unregistered routes outside it, so it stays out of
+	// the public OpenAPI spec and generated SDKs until launch. pkg/api keeps
+	// its client for the operator CLI. Mirror across this list AND scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
+	"GET /v1/postgres/databases/{id}/live":         true,
+	"POST /v1/postgres/databases/{id}/live":        true,
+	"DELETE /v1/postgres/databases/{id}/live":      true,
+	"POST /v1/postgres/databases/{id}/live/rotate": true,
+
 	// Issue #777 / ADR-091: operator observability backend. Same
 	// operator-only posture as /v1/compute-nodes — admin scope
 	// + FAAS_ADMIN_EMAILS allowlist. Mirror the exclusion across
@@ -762,6 +771,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":        "GetIssueSourceMaps",
 	"DELETE /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":     "RetireIssueSourceMaps",
 	"GET /v1/apps/{slug}/issues":                                               "ListIssues",
+	"GET /v1/apps/{slug}/issue-compound-alert-policy":                          "GetIssueCompoundAlertPolicy",
+	"PUT /v1/apps/{slug}/issue-compound-alert-policy":                          "SetIssueCompoundAlertPolicy",
+	"POST /v1/apps/{slug}/issue-compound-alert-policy/preview":                 "PreviewIssueCompoundAlert",
 	"GET /v1/apps/{slug}/issue-lifecycle-alert-policy":                         "GetIssueLifecycleAlertPolicy",
 	"PUT /v1/apps/{slug}/issue-lifecycle-alert-policy":                         "SetIssueLifecycleAlertPolicy",
 	"POST /v1/apps/{slug}/issue-lifecycle-alert-policy/preview":                "PreviewIssueLifecycleAlert",
@@ -992,9 +1004,20 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/outbound/integrations/{integration}/ai-prices":                            "SetOutboundIntegrationAIPrices",
 	"PUT /v1/apps/{slug}/outbound-bindings/{integration}/ai-budget":                    "SetOutboundBindingAIBudget",
 	"GET /v1/outbound/ai-routes":                                                       "ListOutboundAIRoutes",
+	"PUT /v1/outbound/ai-routes/{route}/canary":                                        "SetOutboundAIRouteCanary",
+	"GET /v1/outbound/ai-routes/{route}/canary":                                        "GetOutboundAIRouteCanary",
+	"POST /v1/outbound/ai-routes/{route}/canary/promote":                               "PromoteOutboundAIRouteCanary",
+	"DELETE /v1/outbound/ai-routes/{route}/canary":                                     "DeleteOutboundAIRouteCanary",
+	"GET /v1/outbound/ai-routes/{route}/stats":                                         "GetOutboundAIRouteStats",
+	"POST /v1/outbound/ai-routes/{route}/evaluations":                                  "CreateOutboundAIEvaluation",
+	"GET /v1/outbound/ai-routes/{route}/evaluations":                                   "ListOutboundAIEvaluations",
+	"GET /v1/outbound/ai-evaluations/{evaluation}":                                     "GetOutboundAIEvaluation",
+	"POST /v1/apps/{slug}/ai-access-tokens":                                            "CreateOutboundAIAccessToken",
+	"GET /v1/apps/{slug}/ai-access-tokens":                                             "ListOutboundAIAccessTokens",
+	"DELETE /v1/apps/{slug}/ai-access-tokens/{token}":                                  "RevokeOutboundAIAccessToken",
 	"POST /v1/outbound/ai-routes":                                                      "CreateOutboundAIRoute",
 	"GET /v1/outbound/ai-routes/{route}":                                               "GetOutboundAIRoute",
-	"PUT /v1/outbound/ai-routes/{route}/targets":                                       "SetOutboundAIRouteTargets",
+	"PUT /v1/outbound/ai-routes/{route}/targets":                                       "SetOutboundAIRouteRouting",
 	"DELETE /v1/outbound/ai-routes/{route}":                                            "DeleteOutboundAIRoute",
 	"PUT /v1/apps/{slug}/outbound-bindings/{integration}/ai-guardrails":                "SetOutboundBindingAIGuardrails",
 	"GET /v1/outbound/integrations/{integration}/credential-keys":                      "ListOutboundCredentialKeys",
@@ -1007,6 +1030,10 @@ var methodRouteMap = map[string]string{
 	"GET /v1/outbound/ai-replays/{replay}":                                             "GetOutboundAIReplay",
 	"PUT /v1/outbound/integrations/{integration}/ai-content-policy":                    "SetOutboundAIContentPolicy",
 	"GET /v1/outbound/integrations/{integration}/ai-usage/users":                       "GetOutboundAIUserUsage",
+	"GET /v1/outbound/integrations/{integration}/ai-usage/tags":                        "GetOutboundAITagUsage",
+	"GET /v1/outbound/integrations/{integration}/ai-usage/tags/export":                 "ExportOutboundAITagUsage",
+	"GET /v1/outbound/integrations/{integration}/ai-tag-limits":                        "GetOutboundAITagLimits",
+	"PUT /v1/outbound/integrations/{integration}/ai-tag-limits":                        "SetOutboundAITagLimits",
 	"GET /v1/outbound/integrations/{integration}/ai-usage/users/export":                "ExportOutboundAIUserUsage",
 	"GET /v1/outbound/ai-price-catalog":                                                "GetOutboundAIPriceCatalog",
 
@@ -1057,6 +1084,10 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/restore":                                                                        "RestoreApp",
 	"DELETE /v1/apps/{slug}/secrets/{key}":                                                                "UnsetSecret",
 	"GET /v1/apps/{slug}/secret-revocations/{revocation_id}":                                              "GetSecretRevocation",
+	"GET /v1/apps/{slug}/config/revisions":                                                                "ListConfigRevisions",
+	"GET /v1/apps/{slug}/config/revisions/{revision}":                                                     "GetConfigRevision",
+	"GET /v1/apps/{slug}/config/guard":                                                                    "GetConfigGuard",
+	"POST /v1/apps/{slug}/config/rollback":                                                                "RollbackConfig",
 	"PUT /v1/apps/{slug}/secrets/{key}":                                                                   "SetSecret",
 	"GET /v1/apps/{slug}/secret-references":                                                               "ListAppSecretReferences",
 	"PUT /v1/apps/{slug}/secret-references/{key}":                                                         "SetAppSecretReference",

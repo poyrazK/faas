@@ -86,6 +86,9 @@ const (
 	runtimeReleasesFile              = "runtime_releases.go"           // ADR-736 immutable runtime identity and update preview DTOs
 	devBucketsFile                   = "dev_buckets.go"
 	imageRunsFile                    = "image_runs.go"           // ADR-1161 — docker-run-shaped image run DTOs
+	rolloutDecisionFile              = "rollout_decision.go"     // ADR-1447 explained rollout decisions
+	releaseRollbackFile              = "release_rollback.go"     // ADR-1448 releases that change the database
+	configRevisionsFile              = "config_revisions.go"     // ADR-1451 guarded, reversible config changes
 	changeTimelineFile               = "change_timeline.go"      // ADR-751 app change timeline DTOs
 	customMetricSeriesFile           = "custom_metric_series.go" // ADR-745 custom metric history DTOs
 )
@@ -304,6 +307,8 @@ var routeExclude = map[string]bool{
 	"POST /hooks/issue-trackers/linear/{app_id}":                      true, // ADR-1476: raw-body HMAC provider protocol, outside the Bearer-auth DTO/SDK surface.
 	"GET /dashboard/apps/{slug}/issues/lifecycle-alerts":              true, // ADR-1499: authenticated HTML policy editor; JSON API remains checked.
 	"POST /dashboard/apps/{slug}/issues/lifecycle-alerts":             true, // ADR-1499: session/MFA/CSRF HTML adapter for public update/preview APIs.
+	"GET /dashboard/apps/{slug}/issues/compound-alerts":               true, // ADR-1739 authenticated compound alert editor.
+	"POST /dashboard/apps/{slug}/issues/compound-alerts":              true, // ADR-1739 session/MFA/CSRF adapter for policy and preview.
 	"GET /dashboard/apps/{slug}/issues/slack-routing":                 true, // ADR-1498 owner-only Slack routing editor.
 	"GET /oauth/slack/callback":                                       true, // ADR-1497 owner session and one-use state confirmation.
 	"GET /oauth/linear/callback":                                      true, // ADR-1478: owner session OAuth callback and HTML team picker with PKCE and one-use state.
@@ -327,6 +332,16 @@ var routeExclude = map[string]bool{
 	"POST /v1/webhooks/mcp-readiness/pagerduty/{id}":                         true, // Provider HMAC authentication, not Bearer HTTP.
 	"POST /v1/webhooks/mcp-readiness/pagerduty/{id}/{destination}":           true, // Destination-scoped provider HMAC ingress (ADR-20261017191529).
 	"POST /dashboard/mcp/apps/{slug}/alerts/{id}/pagerduty-acknowledgements": true, // Named-CSRF browser adapter.
+
+	// ADR-20261016151947 live queries: a preview gated by FAAS_LIVE_QUERIES_ACCOUNTS
+	// and answering like unregistered routes outside it, so it stays out of
+	// the public OpenAPI spec and generated SDKs until launch. pkg/api keeps
+	// its client for the operator CLI. Mirror across this list AND cmd/sdk-coverage/main.go::routeExclude.
+	"GET /v1/postgres/databases/{id}/live":         true,
+	"POST /v1/postgres/databases/{id}/live":        true,
+	"DELETE /v1/postgres/databases/{id}/live":      true,
+	"POST /v1/postgres/databases/{id}/live/rotate": true,
+
 	// Issue #777 / ADR-091: operator observability backend.
 	// Mirror the operator-only exclusion across both this list
 	// AND cmd/sdk-coverage/main.go::routeExclude. The two lists
@@ -633,6 +648,8 @@ var dtoExclude = map[string]bool{
 	"ResolvedExecutionRequest":          true, // sealed scheduler intent, not a public DTO
 	"ResolvedCreateAppTaskRequest":      true, // validated state admission input, not a public DTO
 	"RecoverDeploymentRolloutRequest":   true, // loopback-only meterd ↔ apid contract; intentionally absent from the public OpenAPI spec
+	"RecordRolloutHoldRequest":          true, // ADR-1447 loopback-only meterd ↔ apid hold route; intentionally absent from the public OpenAPI spec
+	"RecordRolloutHoldResponse":         true, // ADR-1447 loopback-only meterd ↔ apid hold route
 	"AlertRuleRow":                      true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
 	"RouteCapturedOperation":            true, // ADR-446: internal inventory rows are excluded from reports with json:"-".
 	"CanaryRouteHealthRecoveryRequest":  true, // loopback-only fresh check and recovery contract
@@ -1449,6 +1466,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "commit.go"),
 		filepath.Join(root, "pkg", "api", "issues.go"),
 		filepath.Join(root, "pkg", "api", "issue_frequency_alerts.go"),
+		filepath.Join(root, "pkg", "api", "issue_compound_alerts.go"),
 		filepath.Join(root, "pkg", "api", "issue_lifecycle_alerts.go"),
 		filepath.Join(root, "pkg", "api", "issue_context.go"),
 		filepath.Join(root, "pkg", "api", "issue_source_maps.go"),
@@ -1622,8 +1640,16 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "alert_rollbacks.go"),
 		filepath.Join(root, "pkg", "api", "binding_application_adoption.go"),
 		filepath.Join(root, "pkg", "api", outboundBindingsFile),
-		filepath.Join(root, "pkg", "api", "outbound_ai.go"), // ADR-990/991 AI gateway prices, routes, guardrails, keys, alerts and request log
+		filepath.Join(root, "pkg", "api", "outbound_ai.go"),            // ADR-990/991 AI gateway prices, routes, guardrails, keys, alerts and request log
+		filepath.Join(root, "pkg", "api", "outbound_ai_canary.go"),     // ADR-1340 model canaries
+		filepath.Join(root, "pkg", "api", "outbound_ai_moderation.go"), // ADR-1340 moderation checks
+		filepath.Join(root, "pkg", "api", "outbound_ai_evaluations.go"),
+		filepath.Join(root, "pkg", "api", "outbound_ai_access_tokens.go"),
+		filepath.Join(root, "pkg", "api", "outbound_ai_tags.go"), // ADR-1436 usage tags and tag limits
 		filepath.Join(root, "pkg", "api", runtimeReleasesFile),
+		filepath.Join(root, "pkg", "api", rolloutDecisionFile),
+		filepath.Join(root, "pkg", "api", releaseRollbackFile),
+		filepath.Join(root, "pkg", "api", configRevisionsFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),

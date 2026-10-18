@@ -116,7 +116,7 @@ var AllowedAppWebhookEvents = []string{
 	"routes.requirements.recovered",
 	"routes.health.blocked", "routes.health.resumed", "routes.health.aborted",
 	"routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered",
-	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "issue.frequency_threshold_reached", "issue.tracker_sync.attention", "issue.tracker_sync.recovered",
+	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "issue.frequency_threshold_reached", "issue.compound_threshold_reached", "issue.tracker_sync.attention", "issue.tracker_sync.recovered",
 	"workflow.finished", "automation.paused",
 	"event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "event_recovery.execution_finished",
 	"event_recovery.execution_attention",
@@ -163,6 +163,8 @@ type RolloutCompletedWebhookPayload struct {
 	RolloutState   string `json:"rollout_state"`
 	TrafficPercent int    `json:"traffic_percent"`
 	CompletedAt    string `json:"completed_at"`
+	// Decision is the advance evidence that completed the rollout (ADR-1447).
+	Decision *RolloutDecision `json:"decision,omitempty"`
 }
 
 // RolloutAbortedWebhookPayload is the payload stored for a rollout.aborted
@@ -174,6 +176,9 @@ type RolloutAbortedWebhookPayload struct {
 	TrafficPercent int    `json:"traffic_percent"`
 	Reason         string `json:"reason"`
 	AbortedAt      string `json:"aborted_at"`
+	// Decision is the abort evidence when the circuit breaker or a recorded
+	// manual or lease-expiry transition aborted the rollout (ADR-1447).
+	Decision *RolloutDecision `json:"decision,omitempty"`
 }
 
 // ErrorNewWebhookPayload is the payload stored for an error.new delivery.

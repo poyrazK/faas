@@ -565,6 +565,34 @@ groups:
           description: "APID could not complete a Safe Deploy emergency sweep or abort. Inspect the active canary and recover traffic manually if its predecessor is still serving."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
 
+      # ADR-1446 verified rollback outcomes. A failed outcome means a plain
+      # rollback (manual, dashboard, or first-wake 5xx auto-rollback) never
+      # served: the release it meant to replace is still live.
+      - alert: FaasRollbackNotRestored
+        expr: increase(apid_rollback_outcomes_total{outcome="failed"}[10m]) > 0
+        for: 0m
+        labels:
+          severity: page
+          component: apid
+          family: safe_release
+          public_status: degraded
+        annotations:
+          summary: "A rollback did not restore the previous release ({{ $labels.trigger }})"
+          description: "apid verified that a {{ $labels.trigger }} rollback never served. Read the app.rollback_failed audit event or `gregale rollback status <app> --operation <id>` for the error, confirm which release is serving, and retry or roll back with --to."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
+
+      - alert: FaasRollbackRecoverySlow
+        expr: histogram_quantile(0.95, sum by (le) (rate(apid_rollback_recovery_seconds_bucket[6h]))) > 60
+        for: 30m
+        labels:
+          severity: warn
+          component: apid
+          family: safe_release
+        annotations:
+          summary: "Rollback recovery p95 is above the 60 s scorecard bar"
+          description: "Completed rollbacks took longer than 60 s at p95 over 6 h, measured from request to serving. Check snapshot restore, cold boot, and post-readiness smoke latency."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
+
   - name: managed_realtime_channel_routing
     interval: 30s
     rules:

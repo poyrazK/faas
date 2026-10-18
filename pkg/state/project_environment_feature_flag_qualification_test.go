@@ -11,10 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type flagQualificationTestStore interface {
-	workloadQualificationTestStore
-	state.FeatureFlagStore
-}
+type flagQualificationTestStore = contractTestStore
 
 func TestMemQualificationPinsFeatureFlags(t *testing.T) {
 	qualificationPinsFeatureFlags(t, state.NewMemStore())

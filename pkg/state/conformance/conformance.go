@@ -58,6 +58,8 @@ func Run(t *testing.T, open Open) {
 		{"non_uuid_invocation_identity_is_unowned", testNonUUIDInvocationIdentityIsUnowned},
 		{"deployment_secret_reload_signal_survives_read", testDeploymentSecretReloadSignalSurvivesRead},
 		{"rollback_on_5xx_candidates_track_the_opt_in", testRollbackOn5xxCandidates},
+		{"config_revisions_and_guards_track_each_write", testConfigRevisionsAndGuards},
+		{"post_release_watch_candidates_follow_the_newest_release", testPostReleaseWatchCandidates},
 		{"app_secret_revocation_ack_survives_secret_deletion", testAppSecretRevocationAckSurvivesDeletion},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
 		{"scaling_policy_survives_a_store_round_trip", testScalingPolicyRoundTrip},
@@ -3738,6 +3740,18 @@ func testPrepareDeploymentRollback(t *testing.T, fx *Fixture) {
 	if prepared.Status != state.DeploySnapshotting || prepared.TrafficPercent != 0 ||
 		prepared.RolloutState != "pending" || prepared.CanaryPreset != "none" {
 		t.Fatalf("prepared rollback target = %+v", prepared)
+	}
+	// ADR-1446: imaged reads this marker to promote the older revision
+	// without the latest-revision fence.
+	if markers, ok := fx.Store.(state.RollbackPreparedStore); ok {
+		isPrepared, err := markers.DeploymentRollbackPrepared(fx.Ctx, fx.Deployment.ID)
+		if err != nil || !isPrepared {
+			t.Fatalf("DeploymentRollbackPrepared(target) = %v, %v; want true", isPrepared, err)
+		}
+		isPrepared, err = markers.DeploymentRollbackPrepared(fx.Ctx, current.ID)
+		if err != nil || isPrepared {
+			t.Fatalf("DeploymentRollbackPrepared(current) = %v, %v; want false", isPrepared, err)
+		}
 	}
 	live, err := fx.Store.LiveDeployment(fx.Ctx, fx.App.ID)
 	if err != nil {

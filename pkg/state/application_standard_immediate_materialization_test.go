@@ -12,10 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-type standardImmediateTestStore interface {
-	standardAutomaticTestStore
-	ApplicationStandardImmediateMaterializationStore
-}
+type standardImmediateTestStore = contractTestStore
 
 func TestMemApplicationStandardImmediateClaim(t *testing.T) {
 	standardImmediateClaim(t, NewMemStore())

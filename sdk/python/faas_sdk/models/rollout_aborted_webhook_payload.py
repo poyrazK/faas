@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -11,6 +11,11 @@ from ..models.rollout_aborted_webhook_payload_rollout_state import (
     RolloutAbortedWebhookPayloadRolloutState,
     check_rollout_aborted_webhook_payload_rollout_state,
 )
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.rollout_decision import RolloutDecision
+
 
 T = TypeVar("T", bound="RolloutAbortedWebhookPayload")
 
@@ -25,6 +30,9 @@ class RolloutAbortedWebhookPayload:
     traffic_percent: int
     reason: str
     aborted_at: datetime.datetime
+    decision: RolloutDecision | Unset = UNSET
+    """Evidence behind one decision about a rollout (ADR-1447): why a canary stage advanced, is held, or was
+    aborted. Aggregates only; no request payloads, routes, URLs or customer text."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -40,6 +48,10 @@ class RolloutAbortedWebhookPayload:
 
         aborted_at = self.aborted_at.isoformat()
 
+        decision: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.decision, Unset):
+            decision = self.decision.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -52,11 +64,15 @@ class RolloutAbortedWebhookPayload:
                 "aborted_at": aborted_at,
             }
         )
+        if decision is not UNSET:
+            field_dict["decision"] = decision
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.rollout_decision import RolloutDecision
+
         d = dict(src_dict)
         app_id = d.pop("app_id")
 
@@ -70,6 +86,13 @@ class RolloutAbortedWebhookPayload:
 
         aborted_at = datetime.datetime.fromisoformat(d.pop("aborted_at"))
 
+        _decision = d.pop("decision", UNSET)
+        decision: RolloutDecision | Unset
+        if isinstance(_decision, Unset):
+            decision = UNSET
+        else:
+            decision = RolloutDecision.from_dict(_decision)
+
         rollout_aborted_webhook_payload = cls(
             app_id=app_id,
             deployment_id=deployment_id,
@@ -77,6 +100,7 @@ class RolloutAbortedWebhookPayload:
             traffic_percent=traffic_percent,
             reason=reason,
             aborted_at=aborted_at,
+            decision=decision,
         )
 
         rollout_aborted_webhook_payload.additional_properties = d

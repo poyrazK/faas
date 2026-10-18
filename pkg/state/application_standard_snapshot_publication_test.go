@@ -12,10 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
-type standardSnapshotPublicationTestStore interface {
-	Store
-	standardSnapshotTestStore
-}
+type standardSnapshotPublicationTestStore = contractTestStore
 
 func standardSnapshotCacheRow(depID string, g runtimeadmission.SnapshotGrant, a runtimeadmission.SnapshotAcknowledgment) Snapshot {
 	tier := SnapshotTierInit

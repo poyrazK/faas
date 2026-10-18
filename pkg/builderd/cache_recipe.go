@@ -39,6 +39,8 @@ type BuildCacheRecipe struct {
 	// DevWatchHost is baked into the watch-mode image's environment, so two
 	// developer apps with the same source never share one image.
 	DevWatchHost string `json:"dev_watch_host,omitempty"`
+	// Separate opted-in output from older builders that ignored the config.
+	IssueSourceMapsDirectory string `json:"issue_source_maps_directory,omitempty"`
 }
 
 const (

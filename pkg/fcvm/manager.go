@@ -5411,7 +5411,7 @@ func (m *Manager) ensureBaseGeneration(ctx context.Context, baseKey, scanKey str
 	if err != nil {
 		return fmt.Errorf("read refreshed scan sidecar: %w", err)
 	}
-	if scan.Image != expected {
+	if !scanNamesConfiguredBase(scan.Image, expected) {
 		return fmt.Errorf("refreshed scan generation %q does not match configured runtime base %q", scan.Image, expected)
 	}
 
@@ -5506,7 +5506,7 @@ func (m *Manager) baseScanVerdict(baseKey, scanKey string, scan baseScanSidecar,
 			"scan sidecar missing",
 			fmt.Sprintf("scan sidecar missing for base %q at %q; refusing to boot un-scanned ext4 (issue #299)", baseKey, scanKey))
 	}
-	if expected := m.baseGenerations[baseKey]; expected != "" && scan.Image != expected {
+	if expected := m.baseGenerations[baseKey]; expected != "" && !scanNamesConfiguredBase(scan.Image, expected) {
 		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"scan sidecar generation mismatch",
 			fmt.Sprintf("scan sidecar at %q names %q, want configured runtime base %q; refusing to boot (issue #299)", scanKey, scan.Image, expected))

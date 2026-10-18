@@ -14,10 +14,7 @@ import (
 
 // adr: 361 — the account abuse hold makes the account inactive without
 // touching its billing status, keeps the first reason, and releases cleanly.
-func exerciseAccountAbuseHold(t *testing.T, store interface {
-	state.Store
-	state.AccountAbuseHoldStore
-}) {
+func exerciseAccountAbuseHold(t *testing.T, store contractTestStore) {
 	t.Helper()
 	ctx := context.Background()
 	acct, err := store.CreateAccount(ctx, "abuse-hold-"+time.Now().Format("150405.000000")+"@example.com", api.PlanPro)
