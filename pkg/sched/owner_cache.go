@@ -93,6 +93,12 @@ func (e *Engine) WithOwnerCache() *Engine {
 	return e
 }
 
+// Outcomes of a boot's publication on its admission's generation.
+const (
+	ownerCacheGuardedPublish      = "guarded_publish"
+	ownerCacheGuardedPublishMoved = "guarded_publish_moved"
+)
+
 func (e *Engine) observeOwnerCache(outcome string) {
 	if e != nil && e.ops != nil {
 		e.ops.OwnerCacheTotal(outcome).Inc()

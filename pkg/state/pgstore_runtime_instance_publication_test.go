@@ -16,6 +16,11 @@ func TestPgRuntimeInstancePublicationOwnership(t *testing.T) {
 	testRuntimeInstancePublicationOwnership(t, store)
 }
 
+func TestPgGenerationGuardedPublication(t *testing.T) {
+	store, _, _ := pgWithPool(t)
+	testGenerationGuardedPublication(t, store)
+}
+
 func TestPgRuntimeInstancePublicationLifetime(t *testing.T) {
 	store, _, _ := pgWithPool(t)
 	testRuntimeInstancePublicationLifetime(t, store)

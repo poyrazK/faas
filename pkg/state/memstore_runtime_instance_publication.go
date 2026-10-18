@@ -16,8 +16,17 @@ func (m *MemStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeIns
 	if p.Bookkeeping != nil && p.Bookkeeping.NotifyChannel != "" {
 		return Instance{}, ErrInvalidArgument
 	}
+	_, guarded, err := generationGuardedPublication(ctx, p)
+	if err != nil {
+		return Instance{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if guarded {
+		if err := m.checkRuntimeGenerationLocked(ctx); err != nil {
+			return Instance{}, err
+		}
+	}
 	instance, err := m.checkOwnedRuntimePublicationLocked(p)
 	if err != nil {
 		return Instance{}, err

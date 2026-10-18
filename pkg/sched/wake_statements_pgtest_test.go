@@ -78,6 +78,28 @@ func (s *statementTracer) sequentialRoundTrips(answered time.Time) int {
 	return chain
 }
 
+// roundTripsWithin is sequentialRoundTrips over the statements that started
+// at or after from and ended at or before to.
+func (s *statementTracer) roundTripsWithin(from, to time.Time) (statements, roundTrips int) {
+	s.mu.Lock()
+	var intervals [][2]time.Time
+	for _, iv := range s.intervals {
+		if !iv[1].IsZero() && !iv[0].Before(from) && !iv[1].After(to) {
+			intervals = append(intervals, iv)
+		}
+	}
+	s.mu.Unlock()
+	sort.Slice(intervals, func(i, j int) bool { return intervals[i][1].Before(intervals[j][1]) })
+	chain, lastEnd := 0, time.Time{}
+	for _, iv := range intervals {
+		if !iv[0].Before(lastEnd) {
+			chain++
+			lastEnd = iv[1]
+		}
+	}
+	return len(intervals), chain
+}
+
 func (s *statementTracer) recorded() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -381,6 +403,10 @@ func TestPostgresBootStatements(t *testing.T) {
 			if err := store.HeartbeatComputeNode(ctx, node.ID); err != nil {
 				t.Fatal(err)
 			}
+			// vmmd takes bootDuration, as a real restore or boot takes
+			// hundreds of milliseconds; statements that run meanwhile (the
+			// scale-out stamp) are not on the wake's critical path.
+			const bootDuration = 150 * time.Millisecond
 			vmm := &fakeVMM{}
 			e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd")).WithNotifyInPublication()
 			if tc.ownerCache {
@@ -395,7 +421,12 @@ func TestPostgresBootStatements(t *testing.T) {
 				vmm.coldBoots, vmm.restores = 0, 0
 			}
 
+			var vmmStarted time.Time
+			vmm.sleepFor = bootDuration
+			vmm.restoreHook = func() { vmmStarted = time.Now() }
+			vmm.coldBootHook = vmm.restoreHook
 			tracer.armed.Store(true)
+			wakeStarted := time.Now()
 			result, err := e.Wake(ctx, app.ID, "", "", "")
 			answered := time.Now()
 			tracer.armed.Store(false)
@@ -415,6 +446,11 @@ func TestPostgresBootStatements(t *testing.T) {
 			}
 			t.Logf("%s: %d statements before the answer, %d sequential round trips (cold boots %d, restores %d)",
 				tc.name, before, tracer.sequentialRoundTrips(answered), vmm.coldBoots, vmm.restores)
+			vmmEnded := vmmStarted.Add(bootDuration)
+			preStatements, preRTs := tracer.roundTripsWithin(wakeStarted, vmmStarted)
+			postStatements, postRTs := tracer.roundTripsWithin(vmmEnded, answered)
+			t.Logf("%s: critical path %d round trips: %d before vmmd (%d statements), %d after it (%d statements); %d statements overlapped the boot",
+				tc.name, preRTs+postRTs, preRTs, preStatements, postRTs, postStatements, before-preStatements-postStatements)
 			if wantRestores := map[bool]int{true: 1}[tc.snapshot]; vmm.restores != wantRestores || vmm.coldBoots != 1-wantRestores {
 				t.Fatalf("%s: cold boots %d, restores %d; want the wake to %s", tc.name, vmm.coldBoots, vmm.restores,
 					map[bool]string{true: "restore the snapshot", false: "cold boot"}[tc.snapshot])

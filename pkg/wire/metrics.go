@@ -2233,7 +2233,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}
 	ownerCacheTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_owner_cache_total",
-		Help: "schedd owner cache (ADR-1741) by outcome: hit, miss, invalidated (an app's generation moved), resync (every entry dropped), refused (an admission found its entry's generation moved).",
+		Help: "schedd owner cache (ADR-1741) by outcome: hit, miss, invalidated (an app's generation moved), resync (every entry dropped), refused (an admission found its entry's generation moved), guarded_publish (a boot published on its admission's generation), guarded_publish_moved (the generation moved during the boot; it published through the fence).",
 	}, []string{"outcome"})
 	for _, outcome := range OwnerCacheOutcomes {
 		ownerCacheTotal.WithLabelValues(outcome)
@@ -6171,7 +6171,7 @@ var (
 	FrozenThawOutcomes   = []string{"success", "failed", "no_capacity", "fast", "fast_refused"}
 	// OwnerCacheOutcomes are schedd_owner_cache_total's closed label set
 	// (ADR-1741).
-	OwnerCacheOutcomes = []string{"hit", "miss", "invalidated", "resync", "refused"}
+	OwnerCacheOutcomes = []string{"hit", "miss", "invalidated", "resync", "refused", "guarded_publish", "guarded_publish_moved"}
 	FrozenParkReasons  = []string{"ttl", "memory_pressure", "superseded", "config_changed", "stale",
 		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park"}
 	// FrozenCompressOutcomes: compressed keeps the VM frozen; insufficient,

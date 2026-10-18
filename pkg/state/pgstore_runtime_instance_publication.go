@@ -45,13 +45,19 @@ func RuntimePublicationOutcomeUnknown(err error) bool {
 }
 
 func (s *PgStore) publishOwnedInstanceRuntimeOnce(ctx context.Context, p RuntimeInstancePublication) (Instance, error) {
+	guard, guarded, err := generationGuardedPublication(ctx, p)
+	if err != nil {
+		return Instance{}, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Instance{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := runtimeAppConfigFenceDB(ctx, tx, p); err != nil {
-		return Instance{}, err
+	if !guarded {
+		if err := runtimeAppConfigFenceDB(ctx, tx, p); err != nil {
+			return Instance{}, err
+		}
 	}
 	if p.ExpectedState == string(StateWarm) || p.ExpectedState == string(StateFrozen) {
 		fresh, err := sqlc.New().InstanceSnapshotRecoveryFresh(ctx, tx, mustPgUUID(p.InstanceID))
@@ -81,6 +87,14 @@ func (s *PgStore) publishOwnedInstanceRuntimeOnce(ctx context.Context, p Runtime
 	}
 	if acceptance != nil {
 		if err := insertRuntimeUpgradeAcceptanceDB(ctx, tx, *acceptance); err != nil {
+			return Instance{}, err
+		}
+	}
+	// ADR-1741: the generation stands in for the fence's reads. It is taken
+	// last, after the row locks above, so it cannot close a lock cycle with
+	// a writer that bumps it after its own row locks.
+	if guarded {
+		if err := checkRuntimeGenerationTx(ctx, tx, guard); err != nil {
 			return Instance{}, err
 		}
 	}

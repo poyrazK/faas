@@ -24,6 +24,14 @@ type RuntimeInstancePublication struct {
 	// Bookkeeping, when set, commits a wake's bookkeeping with the
 	// publication instead of after it.
 	Bookkeeping *RuntimePublicationBookkeeping
+	// GenerationGuarded publishes a wake admitted from schedd's owner cache
+	// on the app's runtime generation instead of the fence's reads
+	// (ADR-1741): every change the fence checks moves the generation. ctx
+	// carries the guard the admission insert checked; the publication takes
+	// it after its own row locks and, when it moved, writes nothing and
+	// refuses with ErrRuntimeGenerationMoved, so the caller publishes again
+	// through the fence. It applies only without a standards receipt.
+	GenerationGuarded bool
 }
 
 // RuntimePublicationBookkeeping is what a wake records with its publication.

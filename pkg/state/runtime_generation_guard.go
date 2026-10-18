@@ -35,6 +35,27 @@ func runtimeGenerationGuardFrom(ctx context.Context) (runtimeGenerationGuard, bo
 	return guard, ok
 }
 
+// RuntimeGenerationGuarded reports whether ctx carries appID's generation
+// guard, so its writes may rely on the generation instead of rereading.
+func RuntimeGenerationGuarded(ctx context.Context, appID string) bool {
+	guard, ok := runtimeGenerationGuardFrom(ctx)
+	return ok && guard.appID == appID
+}
+
+// generationGuardedPublication reports whether p publishes on the guard
+// ctx carries: it asked to, carries no standards receipt, and ctx guards its
+// app. A request without the guard is a caller error.
+func generationGuardedPublication(ctx context.Context, p RuntimeInstancePublication) (runtimeGenerationGuard, bool, error) {
+	if !p.GenerationGuarded {
+		return runtimeGenerationGuard{}, false, nil
+	}
+	guard, ok := runtimeGenerationGuardFrom(ctx)
+	if !ok || guard.appID != p.AppID || p.AdmissionReceipt != nil || p.PromotionReceipt != nil {
+		return runtimeGenerationGuard{}, false, ErrInvalidArgument
+	}
+	return guard, true, nil
+}
+
 // CheckRuntimeGenerationGuard rereads the generation ctx's guard carries and
 // refuses with ErrRuntimeGenerationMoved when it moved; without a guard it
 // reads nothing. A write that does not carry the guard checks it this way

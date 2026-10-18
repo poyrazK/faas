@@ -210,3 +210,60 @@ func TestOwnerCacheNotifications(t *testing.T) {
 		t.Fatalf("owner cache outcomes = %v", got)
 	}
 }
+
+// A boot admitted from the cache publishes on the generation its admission
+// insert checked, without rereading the managed Postgres barrier; when the
+// generation moves during the boot it publishes through the fence instead,
+// and the booted VM serves.
+func TestOwnerCacheBootPublishesOnItsAdmissionGeneration(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		moveDuringBoot bool
+	}{
+		{name: "generation held"},
+		{name: "generation moved during the boot", moveDuringBoot: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mem := state.NewMemStore()
+			_, app, _ := seedApp(t, mem, api.PlanPro, 512, 5)
+			counter := &readCountingStore{MemStore: mem}
+			ops := wire.NewOpsMetrics("schedd")
+			vmm := &fakeVMM{}
+			e := newEngine(t, statetest.NewMem(counter), vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops).WithOwnerCache()
+			f := ownerCacheFixture{mem: mem, counter: counter, e: e, ops: ops, app: app}
+			f.wakeAndPark(t)
+			if tc.moveDuringBoot {
+				// A new deployment moves the generation without touching the
+				// fence or the plan, so only the generation refuses the first
+				// attempt.
+				vmm.coldBootHook = func() {
+					if _, err := mem.CreateDeployment(context.Background(), state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage}); err != nil {
+						t.Error(err)
+					}
+				}
+			}
+			barrierReads := counter.reads()["ManagedPostgresAdmissionFenced"]
+			result, err := e.Wake(t.Context(), app.ID, "", "", "")
+			if err != nil {
+				t.Fatalf("Wake: %v", err)
+			}
+			if ins, err := mem.InstanceByID(t.Context(), result.InstanceID); err != nil || ins.State != string(state.StateRunning) {
+				t.Fatalf("instance = %+v, %v; want it published RUNNING", ins, err)
+			}
+			got := f.outcomes()
+			wantBarrierReads := 0
+			if tc.moveDuringBoot {
+				wantBarrierReads = 1
+				if got["guarded_publish_moved"] != 1 || got["guarded_publish"] != 1 {
+					t.Fatalf("owner cache outcomes = %v, want the guarded publication refused once and published through the fence", got)
+				}
+			} else if got["guarded_publish"] != 2 || got["guarded_publish_moved"] != 0 {
+				// The first wake loaded the entry and published guarded too.
+				t.Fatalf("owner cache outcomes = %v, want guarded publications only", got)
+			}
+			if n := counter.reads()["ManagedPostgresAdmissionFenced"] - barrierReads; n != wantBarrierReads {
+				t.Fatalf("managed Postgres barrier reads during the cached wake = %d, want %d", n, wantBarrierReads)
+			}
+		})
+	}
+}
