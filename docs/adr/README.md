@@ -1474,7 +1474,9 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-1331: Retained GitOps workload retirement and reviewed recovery](1331-gitops-workload-retirement.md)
 
+- [ADR-1520: Rate-limit token leasing](1520-rate-limit-token-leasing.md)
 - [ADR-1522: Recoverable operator restart execution](1522-recoverable-operator-restart-execution.md)
+- [ADR-1521: The request-ID journal is written in batches](1521-batched-request-id-journal.md)
 - [ADR-1523: Durable operator cold-boot recovery](1523-durable-operator-cold-boot-recovery.md)
 - [ADR-1524: Durable operator recovery submissions](1524-durable-operator-recovery-submissions.md)
 
@@ -1600,6 +1602,10 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261017191528: Native PagerDuty readiness fallback](20261017191528-mcp-readiness-pagerduty-fallback.md)
 - [ADR 20261017191529: Independent PagerDuty acknowledgement bindings](20261017191529-mcp-readiness-independent-pagerduty-bindings.md)
 - [ADR 20261017191530: Opt-in PagerDuty acknowledgement release](20261017191530-mcp-readiness-pagerduty-release.md)
+
+- [Durable worker-pool recovery](20261017221000-durable-worker-recovery.md)
+- [Worker recovery diagnostics and alerts](20261017223000-worker-recovery-diagnostics.md)
+- [Worker admission explanations](20261018090000-worker-admission-explanations.md)
 - [ADR 202610171900: Release compatibility gates (N±1, deploy order, skew and migration checks, SLO gate)](202610171900-release-compatibility-gates.md)
 
 - [ADR-1650: Per-unit control-plane releases](1650-per-unit-control-plane-releases.md)

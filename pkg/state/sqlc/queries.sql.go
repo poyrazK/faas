@@ -77388,6 +77388,80 @@ func (q *Queries) RecordRequestIDJournal(ctx context.Context, db DBTX, arg Recor
 	return id, err
 }
 
+const recordRequestIDJournalBatch = `-- name: RecordRequestIDJournalBatch :many
+INSERT INTO request_id_journal (
+    id, account_id, app_id, request_id, trace_id, received_at, expires_at
+)
+SELECT r.id,
+       a.account_id,
+       a.id,
+       r.request_id,
+       NULLIF(r.trace_id, ''),
+       r.received_at,
+       r.expires_at
+  FROM (
+         SELECT unnest($1::uuid[]) AS id,
+                unnest($2::uuid[]) AS account_id,
+                unnest($3::uuid[]) AS app_id,
+                unnest($4::text[]) AS request_id,
+                unnest($5::text[]) AS trace_id,
+                unnest($6::timestamptz[]) AS received_at,
+                unnest($7::timestamptz[]) AS expires_at
+       ) AS r
+  JOIN apps a ON a.id = r.app_id AND a.account_id = r.account_id
+ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+ WHERE request_id_journal.account_id = EXCLUDED.account_id
+   AND request_id_journal.app_id = EXCLUDED.app_id
+   AND request_id_journal.request_id = EXCLUDED.request_id
+   AND request_id_journal.trace_id IS NOT DISTINCT FROM EXCLUDED.trace_id
+   AND request_id_journal.received_at = EXCLUDED.received_at
+   AND request_id_journal.expires_at = EXCLUDED.expires_at
+RETURNING id
+`
+
+type RecordRequestIDJournalBatchParams struct {
+	Ids         []pgtype.UUID
+	AccountIds  []pgtype.UUID
+	AppIds      []pgtype.UUID
+	RequestIds  []string
+	TraceIds    []string
+	ReceivedAts []pgtype.Timestamptz
+	ExpiresAts  []pgtype.Timestamptz
+}
+
+// ADR-1521: RecordRequestIDJournal for many records in one statement. The
+// same ownership join and idempotent-retry rule apply per row; a row whose app
+// is not owned by its account, or whose id holds different content, is left
+// out of RETURNING. Record ids must be unique within one call: ON CONFLICT DO
+// UPDATE cannot touch the same row twice in a statement.
+func (q *Queries) RecordRequestIDJournalBatch(ctx context.Context, db DBTX, arg RecordRequestIDJournalBatchParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, recordRequestIDJournalBatch,
+		arg.Ids,
+		arg.AccountIds,
+		arg.AppIds,
+		arg.RequestIds,
+		arg.TraceIds,
+		arg.ReceivedAts,
+		arg.ExpiresAts,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const recordRouteProbeObservation = `-- name: RecordRouteProbeObservation :exec
 INSERT INTO route_probe_observations (app_id, account_id, deployment_id, method, path, window_start, requests, server_errors, unauthenticated)
 VALUES ($1::text::uuid, $2::text::uuid, $3::text::uuid, $4, $5, $6, $7, $8, $9)

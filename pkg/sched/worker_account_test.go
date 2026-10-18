@@ -64,4 +64,15 @@ func TestWorkerScopedAccountCapacityReportsBlockedDemand(t *testing.T) {
 	if vmm.coldBoots != 1 {
 		t.Fatalf("account-full environment booted another VM: %d", vmm.coldBoots)
 	}
+	recovery, err := store.WorkerRecoveryByApp(ctx, app.ID)
+	if err != nil || len(recovery.Pools) != 2 {
+		t.Fatalf("missing scope evidence: %+v %v", recovery, err)
+	}
+	if len(recovery.Pools[0].Blockers) != 0 {
+		t.Fatalf("healthy default pool acquired blockers: %+v", recovery.Pools)
+	}
+	b := requireWorkerBlocker(t, recovery.Pools[1], "account_worker_limit")
+	if b.Used == nil || *b.Used != 1 || b.Limit == nil || *b.Limit != 1 {
+		t.Fatalf("account usage lost: %+v", b)
+	}
 }

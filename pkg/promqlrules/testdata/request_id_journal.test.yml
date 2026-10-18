@@ -21,7 +21,7 @@ tests:
               family: request_id_journal
             exp_annotations:
               summary: "Exact request-ID journal writes are failing"
-              description: "The gateway's mandatory pre-proxy request-ID journal has failed above 1 write per minute for 2 minutes. Affected requests are rejected with 503 before guest execution; check the apid private gRPC path and Postgres write health."
+              description: "More than 5% of exact request-ID journal records (and more than 1 per minute) failed to reach apid for 2 minutes. Requests are still served (ADR-634), but their public request IDs may not resolve in the debugger; check the apid private gRPC path and Postgres write health."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRequestIDJournalWriteFailures.md"
 
   - interval: 30s
@@ -31,5 +31,19 @@ tests:
         values: '0+0x20'
     alert_rule_test:
       - eval_time: 5m
+        alertname: FaasRequestIDJournalWriteFailures
+        exp_alerts: []
+
+  # ADR-1521: one failed batch of 128 records among ~20 recorded per second
+  # is under 5% of records and must not alert.
+  - interval: 30s
+    name: "a single failed batch amid healthy traffic does not alert"
+    input_series:
+      - series: 'gateway_request_id_journal_write_total{result="recorded"}'
+        values: '0+600x30'
+      - series: 'gateway_request_id_journal_write_total{result="failed"}'
+        values: '0x10 128x20'
+    alert_rule_test:
+      - eval_time: 9m
         alertname: FaasRequestIDJournalWriteFailures
         exp_alerts: []
