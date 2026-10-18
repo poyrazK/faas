@@ -45,9 +45,9 @@ jobs:
             queries: security-and-quality
             upload: always
           - language: go
-            # Full Go extraction exceeded 30 minutes on hosted runners.
-            # Allow it to finish without reducing the analyzed source set.
-            timeout_minutes: 60
+            # Cold Go extraction and database import used the full hour on
+            # hosted runners. Leave bounded time for queries and SARIF work.
+            timeout_minutes: 90
             queries: security-and-quality
             # The Go suppression query has kind `alert-suppression`, so it
             # must be added as a query-pack query rather than a local query

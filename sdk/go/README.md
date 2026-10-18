@@ -1604,6 +1604,17 @@ timestamps and ordering-blocker identities remain separate from triage observati
 Check `Explanations.ReadComplete` for read coverage. See
 [blocker explanation semantics](../../docs/event-deadline-alert-investigation.md#blocker-explanations).
 
+### MCP readiness notification queues
+
+MCP readiness notification queues expose separate `Destinations` with independent
+heads and retry status. Use `ListMCPReadinessNotificationQueues` to inspect them,
+then `ActMCPReadinessNotification` with `Destination: "primary"` or `"fallback"`,
+the head's `DeliveryVersion`, a stable request UUID and operator reason. Omit
+`Destination` for the whole-event action. `GetMCPReadinessFallback` and
+`SetMCPReadinessFallback` manage the rule's optional signed fallback;
+`ListMCPReadinessIncidents` includes per-receiver delivery history. These APIs
+require the normal app ownership, scopes and MFA checks.
+
 ### Adopt claim budgets for existing callback backlog
 
 `AdoptEventAcknowledgmentIntentRetryBudget` attaches v2 to a selected active unbound/

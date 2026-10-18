@@ -669,3 +669,37 @@ func TestTierC_MetricsAccount_RejectsSlug(t *testing.T) {
 		t.Fatalf("--account + slug exit = %d, want 1", code)
 	}
 }
+
+func TestMCPReadinessAlertScopeCLI(t *testing.T) {
+	resetJSONOut(t)
+	fake := authedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","metric":"mcp_readiness_unhealthy","mcp_readiness_scope":"staging"}`, http.StatusOK)
+	args := []string{"--app", "demo", "--name", "staging readiness", "--metric", api.MetricMCPReadinessUnhealthy, "--comparison", "gt", "--threshold", "0", "--window-spec", "5m", "--mcp-readiness-scope", "staging", "--webhook-url", "https://example.com/hook", "--webhook-secret", "fixture-secret"}
+	if code := cmdAlertAdd(args); code != 0 {
+		t.Fatal("create", code)
+	}
+	var request api.CreateAlertRuleRequest
+	if e := json.Unmarshal(fake.sawBody, &request); e != nil || request.MCPReadinessScope != "staging" {
+		t.Fatal("scope not sent", request, e)
+	}
+	for i, arg := range args {
+		if arg == api.MetricMCPReadinessUnhealthy {
+			args[i] = "request_count"
+		}
+	}
+	fake.sawMethod = ""
+	if code := cmdAlertAdd(args); code == 0 || fake.sawMethod != "" {
+		t.Fatal("selector accepted on unrelated metric", code, fake.sawMethod)
+	}
+}
+
+func TestMCPReadinessIncidentsCLI(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"events":[]}`, http.StatusOK)
+	if code := cmdMCPReadiness([]string{"incidents", "--app", "demo", "--scope", "staging", "--limit", "1"}); code != 0 || f.sawPath != "/v1/apps/demo/mcp-readiness-incidents" {
+		t.Fatal("timeline", code, f.sawPath)
+	}
+	f.sawMethod = ""
+	if code := cmdMCPReadiness([]string{"incidents", "--app", "demo", "--before", "invalid"}); code == 0 || f.sawMethod != "" {
+		t.Fatal("invalid cursor reached API", code)
+	}
+}

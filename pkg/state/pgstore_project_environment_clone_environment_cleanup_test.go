@@ -237,7 +237,7 @@ func TestPgCloneEnvironmentCleanupMigrationRefusesEvidence(t *testing.T) {
 // column must be classified before the deletion inventory can stay complete.
 func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 	_, _, pool := pgWithPool(t)
-	rows, err := pool.Query(t.Context(), `SELECT c.table_name||'.'||c.column_name FROM information_schema.columns c JOIN information_schema.tables t USING(table_schema,table_name) WHERE c.table_schema='public' AND t.table_type='BASE TABLE' AND c.column_name IN ('environment_id','environment_slug','environment','scope','deployment_scope','managed_scope','queue_binding_scope','queue_binding_environment_id') ORDER BY 1`)
+	rows, err := pool.Query(t.Context(), `SELECT c.table_name||'.'||c.column_name FROM information_schema.columns c JOIN information_schema.tables t USING(table_schema,table_name) WHERE c.table_schema='public' AND t.table_type='BASE TABLE' AND c.column_name IN ('environment_id','environment_slug','environment','scope','deployment_scope','managed_scope','queue_binding_scope','queue_binding_environment_id','mcp_readiness_scope') ORDER BY 1`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,6 +254,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 	expected := []string{
+		"alert_rules.mcp_readiness_scope",
 		"app_binding_release_policies.scope",
 		"app_binding_release_policy_history.scope",
 		"app_environment_route_budgets.environment_id",
@@ -265,6 +266,8 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"app_environment_workload_intents.environment_id",
 		"app_envs.scope",
 		"app_issues.environment",
+		"app_mcp_readiness_policies.scope",
+		"app_mcp_readiness_policy_history.scope",
 		"app_runtime_config_scope_changes.scope",
 		"app_secret_revocations.scope",
 		"app_secret_runtime_reload_observations.scope",
@@ -311,6 +314,8 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"managed_postgres_bindings.scope",
 		"managed_postgres_cutover_drain_plan_members.deployment_scope", // Immutable captured retirement evidence survives environment retention.
 		"managed_postgres_cutovers.scope",
+		"mcp_readiness_incidents.scope",
+		"mcp_readiness_maintenance_windows.scope",
 		"object_buckets.scope",
 		"object_storage_s3_credentials.managed_scope",
 		"pg_ratelimit_counters.scope",
@@ -412,7 +417,7 @@ func TestPgCloneEnvironmentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 		case <-ticker.C:
 		}
 	}
-	for _, borrower := range []string{"foreign_key", "hosting", "scope", "workflow_state", "workflow_readiness", "binding_verification", "project_binding_verification", "release_stage"} {
+	for _, borrower := range []string{"foreign_key", "hosting", "scope", "workflow_state", "workflow_readiness", "binding_verification", "project_binding_verification", "release_stage", "app_mcp_readiness_policies", "app_mcp_readiness_policy_history", "mcp_readiness_incidents", "mcp_readiness_maintenance_windows", "alert_rules"} {
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -433,6 +438,8 @@ func TestPgCloneEnvironmentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 			_, err = tx.Exec(ctx, "LOCK TABLE binding_verification_runs IN ROW EXCLUSIVE MODE")
 		} else if borrower == "project_binding_verification" {
 			_, err = tx.Exec(ctx, "LOCK TABLE project_binding_verification_runs IN ROW EXCLUSIVE MODE")
+		} else if strings.HasPrefix(borrower, "app_mcp_readiness_") || strings.HasPrefix(borrower, "mcp_readiness_") || borrower == "alert_rules" {
+			_, err = tx.Exec(ctx, "LOCK TABLE "+borrower+" IN ROW EXCLUSIVE MODE")
 		} else if borrower == "release_stage" {
 			_, err = tx.Exec(ctx, "LOCK TABLE project_release_stages IN ROW EXCLUSIVE MODE")
 		} else {

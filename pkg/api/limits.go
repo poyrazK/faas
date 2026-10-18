@@ -12706,3 +12706,39 @@ const (
 	EnvironmentRecoveryMaxBytes        int64 = 1 << 30
 	EnvironmentRecoveryAccountMaxBytes int64 = 2 << 30
 )
+
+// MCPReadinessFallbackMaxFailures bounds completed primary failures before failover.
+const MCPReadinessFallbackMaxFailures = 10
+
+// MCPReadinessFallbackURLMaxBytes bounds persisted fallback receiver addresses.
+const MCPReadinessFallbackURLMaxBytes = 2048
+
+// MCP readiness reminders have a finite per-incident budget and bounded interval.
+const (
+	MCPReadinessReminderMinIntervalSeconds = 60
+	MCPReadinessReminderMaxIntervalSeconds = 86400
+	MCPReadinessReminderMaxCount           = 10
+)
+
+// Native PagerDuty readiness delivery uses bounded credentials and transport work.
+const (
+	MCPReadinessPagerDutyWebhookPageDefault       = 20
+	MCPReadinessPagerDutyWebhookPageMax           = 50
+	MCPReadinessPagerDutyWebhookDashboardEvents   = 5
+	MCPReadinessPagerDutyWebhookBodyMaxBytes      = 64 * 1024
+	MCPReadinessPagerDutyWebhookHeaderMaxBytes    = 1024
+	MCPReadinessPagerDutyWebhookMaxSignatures     = 8
+	MCPReadinessPagerDutyWebhookJSONMaxDepth      = 32
+	MCPReadinessPagerDutyWebhookSecretMinBytes    = 16
+	MCPReadinessPagerDutyWebhookSecretMaxBytes    = 1024
+	MCPReadinessPagerDutyWebhookIDMaxBytes        = 128
+	MCPReadinessPagerDutyWebhookMaxAgeSeconds     = 7 * 86400
+	MCPReadinessPagerDutyWebhookFutureSkewSeconds = 300
+	MCPReadinessPagerDutyWebhookEventsPerIncident = 128
+	MCPReadinessPagerDutyKeyBytes                 = 32
+	MCPReadinessPagerDutyCiphertextMaxBytes       = 4096
+	MCPReadinessPagerDutyResponseMaxBytes         = 64 * 1024
+	MCPReadinessPagerDutySummaryMaxBytes          = 1024
+	MCPReadinessPagerDutyTimeoutSeconds           = 30
+	MCPReadinessPagerDutyMaxRetryAfterSeconds     = 86400
+)

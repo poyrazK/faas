@@ -42,8 +42,11 @@ func retirementEvent(r *api.MCPOAuthRetirement, action string, at time.Time) {
 		r.History = r.History[len(r.History)-api.MCPOAuthRetirementHistoryLimit:]
 	}
 }
-func newRetirement(app, slug, role, reason string, phase *api.MCPCatalogOAuthRevocation, at time.Time) api.MCPOAuthRetirement {
+func newRetirement(app, slug, role, reason string, phase *api.MCPCatalogOAuthRevocation, at time.Time, scopes ...string) api.MCPOAuthRetirement {
 	r := api.MCPOAuthRetirement{ID: phase.ID, AppID: app, AppSlug: slug, Role: api.CatalogMonitorRole(role), Reason: reason, State: phase.State, CreatedAt: at, RetainUntil: at.Add(time.Duration(api.MCPOAuthRetirementRetentionSeconds) * time.Second), Revocation: phase, History: []api.MCPOAuthRetirementEvent{}}
+	if len(scopes) > 0 {
+		r.Scope = api.MCPConnectionScope(scopes[0])
+	}
 	retirementEvent(&r, "queued", at)
 	return r
 }
@@ -95,21 +98,29 @@ func insertRetirement(ctx context.Context, db sqlc.DBTX, account string, r api.M
 	_, err = sqlc.New().InsertMCPOAuthRetirement(ctx, db, sqlc.InsertMCPOAuthRetirementParams{ID: mustPgUUID(r.ID), AccountID: mustPgUUID(account), AppID: mustPgUUID(r.AppID), BindingSha256: retirementBinding(r.Revocation.Config), CreatedAt: retirementPgTime(r.CreatedAt), RetainUntil: retirementPgTime(r.RetainUntil), NextAttemptAt: retirementPgTime(r.Revocation.NextAttemptAt), Payload: data})
 	return err
 }
-func (s *PgStore) captureRetirementClient(ctx context.Context, db sqlc.DBTX, account, app string, phase *api.MCPCatalogOAuthRevocation) {
+func (s *PgStore) captureRetirementClient(ctx context.Context, db sqlc.DBTX, account, app string, phase *api.MCPCatalogOAuthRevocation, scopes ...string) {
 	if phase.Config == nil || phase.Config.ClientSecretRef == "" || phase.Config.ResolvedRevocationAuthMethod() == "none" || len(phase.ClientCiphertext) > 0 {
 		return
 	}
-	data, err := sqlc.New().MCPOAuthRetirementClientCiphertext(ctx, db, sqlc.MCPOAuthRetirementClientCiphertextParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), Key: strings.TrimPrefix(phase.Config.ClientSecretRef, api.SecretRefPrefix)})
+	scope := DefaultEnvScope
+	if len(scopes) > 0 {
+		scope = api.MCPConnectionScope(scopes[0])
+	}
+	data, err := sqlc.New().MCPOAuthRetirementClientCiphertext(ctx, db, sqlc.MCPOAuthRetirementClientCiphertextParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), Key: strings.TrimPrefix(phase.Config.ClientSecretRef, api.SecretRefPrefix), Scope: scope})
 	if err == nil {
 		phase.ClientCiphertext = append([]byte(nil), data...)
 	}
 }
-func (m *MemStore) captureRetirementClientLocked(account, app string, phase *api.MCPCatalogOAuthRevocation) {
+func (m *MemStore) captureRetirementClientLocked(account, app string, phase *api.MCPCatalogOAuthRevocation, scopes ...string) {
 	if phase.Config == nil || phase.Config.ClientSecretRef == "" || phase.Config.ResolvedRevocationAuthMethod() == "none" || len(phase.ClientCiphertext) > 0 {
 		return
 	}
 	key := strings.TrimPrefix(phase.Config.ClientSecretRef, api.SecretRefPrefix)
-	secret, ok := m.secrets[secretKey{AppID: app, Scope: DefaultEnvScope, Key: key}]
+	scope := DefaultEnvScope
+	if len(scopes) > 0 {
+		scope = api.MCPConnectionScope(scopes[0])
+	}
+	secret, ok := m.secrets[secretKey{AppID: app, Scope: scope, Key: key}]
 	if ok && secret.AccountID == account && secret.ManagedPostgresBindingID == "" && secret.ManagedObjectStorageCredentialID == "" && secret.ManagedCredentialRef == "" {
 		phase.ClientCiphertext = append([]byte(nil), secret.Ciphertext...)
 	}
@@ -177,7 +188,7 @@ func (s *PgStore) PrepareMCPOAuthRetirement(ctx context.Context, job MCPCatalogO
 	phase.State = "pending"
 	phase.ClientCiphertext = append([]byte(nil), client...)
 	phase.NextAttemptAt = at.Add(time.Duration(api.MCPCatalogOAuthFlowSeconds) * time.Second)
-	out = newRetirement(job.AppID, slug, job.Role, "authorization_exchange", phase, at)
+	out = newRetirement(job.AppID, slug, job.Role, "authorization_exchange", phase, at, job.Snapshot.Config.Scope)
 	out.State = "awaiting_issuance"
 	if err = insertRetirement(ctx, tx, job.AccountID, out); err != nil {
 		return out, err
@@ -216,7 +227,7 @@ func (m *MemStore) PrepareMCPOAuthRetirement(_ context.Context, job MCPCatalogOb
 	phase.State = "pending"
 	phase.ClientCiphertext = append([]byte(nil), client...)
 	phase.NextAttemptAt = at.Add(time.Duration(api.MCPCatalogOAuthFlowSeconds) * time.Second)
-	out = newRetirement(app.ID, app.Slug, job.Role, "authorization_exchange", phase, at)
+	out = newRetirement(app.ID, app.Slug, job.Role, "authorization_exchange", phase, at, job.Snapshot.Config.Scope)
 	out.State = "awaiting_issuance"
 	err := m.insertRetirementLocked(job.AccountID, out)
 	return out, err
@@ -427,7 +438,7 @@ func queuedRetirements(before, after api.MCPCatalogMonitorSnapshot, app, slug st
 				if next.OAuthLifecycle != nil && next.OAuthLifecycle.CredentialState != "" {
 					reason = "credential_changed"
 				}
-				out = append(out, newRetirement(app, slug, role, reason, phase, at))
+				out = append(out, newRetirement(app, slug, role, reason, phase, at, old.Config.Scope))
 			}
 		}
 		if next.OAuthLifecycle == nil || next.OAuthLifecycle.Revocation == nil {
@@ -454,7 +465,7 @@ func queuedRetirements(before, after api.MCPCatalogMonitorSnapshot, app, slug st
 		if next.OAuthLifecycle.CredentialState != "" {
 			reason = "credential_changed"
 		}
-		out = append(out, newRetirement(app, slug, role, reason, &copy, at))
+		out = append(out, newRetirement(app, slug, role, reason, &copy, at, old.Config.Scope))
 	}
 	return out
 }
@@ -470,7 +481,7 @@ func (s *PgStore) syncRetirements(ctx context.Context, db sqlc.DBTX, account, ap
 		return mapErr(err)
 	}
 	for _, r := range queuedRetirements(before, *after, app, slug, at) {
-		s.captureRetirementClient(ctx, db, account, app, r.Revocation)
+		s.captureRetirementClient(ctx, db, account, app, r.Revocation, r.Scope)
 		if err = insertRetirement(ctx, db, account, r); err != nil {
 			return err
 		}
@@ -513,7 +524,7 @@ func (m *MemStore) syncRetirementsLocked(account, app string, before api.MCPCata
 		}
 	}()
 	for _, r := range queuedRetirements(before, *after, app, m.apps[app].Slug, at) {
-		m.captureRetirementClientLocked(account, app, r.Revocation)
+		m.captureRetirementClientLocked(account, app, r.Revocation, r.Scope)
 		if err := m.insertRetirementLocked(account, r); err != nil {
 			return err
 		}
