@@ -1,0 +1,96 @@
+package api
+
+import "time"
+
+type ProductCustomerBilling struct {
+	Review    ProductBillingReview    `json:"review"`
+	Documents ProductBillingDocuments `json:"documents"`
+}
+
+// ProductBillingReview is a live, bounded projection of admission-month receipts.
+// Finalization requires a closed UTC month, no unresolved receipts, and this hash.
+type ProductBillingReview struct {
+	TenantID         string                  `json:"tenant_id"`
+	Period           string                  `json:"period"`
+	Currency         string                  `json:"currency"`
+	Closed           bool                    `json:"closed"`
+	Starts           int64                   `json:"starts"`
+	Unresolved       int64                   `json:"unresolved"`
+	AmountMillicents int64                   `json:"amount_millicents"`
+	Lines            []ProductBillingLine    `json:"lines"`
+	ReviewHash       string                  `json:"review_hash"`
+	Finalized        *ProductBillingDocument `json:"finalized,omitempty"`
+}
+
+type ProductBillingLine struct {
+	Feature             string    `json:"feature"`
+	Revision            string    `json:"revision"`
+	Plan                string    `json:"plan"`
+	UnitPriceMillicents int64     `json:"unit_price_millicents"`
+	Starts              int64     `json:"starts"`
+	Succeeded           int64     `json:"succeeded"`
+	Failed              int64     `json:"failed"`
+	Cancelled           int64     `json:"cancelled"`
+	Waived              int64     `json:"waived"`
+	Unresolved          int64     `json:"unresolved"`
+	AmountMillicents    int64     `json:"amount_millicents"`
+	ChangedAt           time.Time `json:"changed_at"`
+}
+
+// Documents are immutable. Credit notes reduce a finalized statement without
+// rewriting it. Each document is handed to the owner's invoicer independently.
+type ProductBillingDocument struct {
+	ID               string                `json:"id"`
+	Kind             string                `json:"kind"`
+	TenantID         string                `json:"tenant_id"`
+	Period           string                `json:"period"`
+	Currency         string                `json:"currency"`
+	AmountMillicents int64                 `json:"amount_millicents"`
+	StatementID      string                `json:"statement_id,omitempty"`
+	OperationID      string                `json:"operation_id,omitempty"`
+	Reason           string                `json:"reason,omitempty"`
+	CreatedAt        time.Time             `json:"created_at"`
+	Snapshot         *ProductBillingReview `json:"snapshot,omitempty"`
+}
+
+type ProductBillingDocuments struct {
+	Documents  []ProductBillingDocument `json:"documents"`
+	NextCursor string                   `json:"next_cursor,omitempty"`
+}
+
+type ProductBillingReceipts struct {
+	Receipts   []ProductReceiptEvidence `json:"receipts"`
+	NextCursor string                   `json:"next_cursor,omitempty"`
+}
+
+type ProductFinalizeRequest struct {
+	TenantID     string `json:"tenant_id"`
+	Period       string `json:"period"`
+	ExpectedHash string `json:"expected_review_hash"`
+}
+
+type ProductWaiverRequest struct {
+	TenantID string `json:"tenant_id"`
+	Reason   string `json:"reason"`
+}
+
+type ProductCreditRequest struct {
+	ID               string `json:"id"`
+	TenantID         string `json:"tenant_id"`
+	OperationID      string `json:"operation_id"`
+	AmountMillicents int64  `json:"amount_millicents"`
+	Reason           string `json:"reason"`
+}
+
+type ProductInvoiceHandoff struct {
+	DocumentID        string    `json:"document_id"`
+	ExternalInvoiceID string    `json:"external_invoice_id"`
+	Currency          string    `json:"currency"`
+	AmountMillicents  int64     `json:"amount_millicents"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
+type ProductHandoffRequest struct {
+	TenantID          string `json:"tenant_id"`
+	ExternalInvoiceID string `json:"external_invoice_id"`
+}

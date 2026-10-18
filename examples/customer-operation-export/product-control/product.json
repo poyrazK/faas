@@ -1,0 +1,20 @@
+{
+  "auth_app": "customer-export-auth",
+  "currency": "EUR",
+  "features": {
+    "export": {
+      "label": "CSV export",
+      "operation": { "name": "customer-export", "scope": "default" }
+    }
+  },
+  "plans": {
+    "starter": {
+      "label": "Starter",
+      "features": { "export": { "monthly_starts": 10, "unit_price_millicents": 25000 } }
+    },
+    "pro": {
+      "label": "Pro",
+      "features": { "export": { "monthly_starts": 20, "unit_price_millicents": 10000 } }
+    }
+  }
+}

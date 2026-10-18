@@ -3637,6 +3637,87 @@ type Querier interface {
 	PrepareEnvironmentWorkloadRetirementGateways(ctx context.Context, db DBTX, arg PrepareEnvironmentWorkloadRetirementGatewaysParams) (EnvironmentWorkloadRetirement, error)
 	PreviewEventExecutionLineageRetries(ctx context.Context, db DBTX, arg PreviewEventExecutionLineageRetriesParams) ([]EventExecutionLineageCase, error)
 	ProbeManagedPostgresCredential(ctx context.Context, db DBTX, access string) (ProbeManagedPostgresCredentialRow, error)
+	ProductBillingCredited(ctx context.Context, db DBTX, operationID pgtype.UUID) (int64, error)
+	ProductBillingDocument(ctx context.Context, db DBTX, arg ProductBillingDocumentParams) (ProductControlBillingDocument, error)
+	ProductBillingDocuments(ctx context.Context, db DBTX, arg ProductBillingDocumentsParams) ([]ProductControlBillingDocument, error)
+	ProductBillingGetHandoff(ctx context.Context, db DBTX, arg ProductBillingGetHandoffParams) (ProductBillingGetHandoffRow, error)
+	ProductBillingInsertDocument(ctx context.Context, db DBTX, arg ProductBillingInsertDocumentParams) error
+	ProductBillingInsertHandoff(ctx context.Context, db DBTX, arg ProductBillingInsertHandoffParams) error
+	ProductBillingLines(ctx context.Context, db DBTX, arg ProductBillingLinesParams) ([]ProductBillingLinesRow, error)
+	ProductBillingLockReceipt(ctx context.Context, db DBTX, arg ProductBillingLockReceiptParams) error
+	// Account, shared app and tenant locks precede this; billing never locks operation,
+	// invocation, deployment or pin rows. Exec discards IDs without materializing
+	// an unbounded receipt list in Go. Settlement locks the same receipt rows.
+	ProductBillingLockReceipts(ctx context.Context, db DBTX, arg ProductBillingLockReceiptsParams) error
+	ProductBillingReceipt(ctx context.Context, db DBTX, arg ProductBillingReceiptParams) (ProductBillingReceiptRow, error)
+	ProductBillingReceipts(ctx context.Context, db DBTX, arg ProductBillingReceiptsParams) ([]ProductBillingReceiptsRow, error)
+	ProductBillingScopeExists(ctx context.Context, db DBTX, arg ProductBillingScopeExistsParams) (bool, error)
+	ProductBillingStatement(ctx context.Context, db DBTX, arg ProductBillingStatementParams) (ProductControlBillingDocument, error)
+	ProductBillingWaive(ctx context.Context, db DBTX, arg ProductBillingWaiveParams) error
+	ProductControlCountStarts(ctx context.Context, db DBTX, arg ProductControlCountStartsParams) (int64, error)
+	ProductControlCustomerByAuthOrganization(ctx context.Context, db DBTX, arg ProductControlCustomerByAuthOrganizationParams) (ProductControlCustomerByAuthOrganizationRow, error)
+	ProductControlGetCustomer(ctx context.Context, db DBTX, arg ProductControlGetCustomerParams) (ProductControlGetCustomerRow, error)
+	ProductControlGetHead(ctx context.Context, db DBTX, arg ProductControlGetHeadParams) (ProductControlGetHeadRow, error)
+	ProductControlGetReceipt(ctx context.Context, db DBTX, arg ProductControlGetReceiptParams) (ProductControlGetReceiptRow, error)
+	ProductControlGetRevision(ctx context.Context, db DBTX, arg ProductControlGetRevisionParams) ([]byte, error)
+	ProductControlInsertReceipt(ctx context.Context, db DBTX, arg ProductControlInsertReceiptParams) error
+	ProductControlListCustomers(ctx context.Context, db DBTX, arg ProductControlListCustomersParams) ([]ProductControlListCustomersRow, error)
+	ProductControlLiveDefinition(ctx context.Context, db DBTX, arg ProductControlLiveDefinitionParams) (string, error)
+	ProductControlManagedApp(ctx context.Context, db DBTX, arg ProductControlManagedAppParams) (bool, error)
+	ProductControlOwnedApp(ctx context.Context, db DBTX, arg ProductControlOwnedAppParams) (pgtype.UUID, error)
+	ProductControlPutRevision(ctx context.Context, db DBTX, arg ProductControlPutRevisionParams) error
+	ProductControlSetCustomer(ctx context.Context, db DBTX, arg ProductControlSetCustomerParams) error
+	ProductControlSetHead(ctx context.Context, db DBTX, arg ProductControlSetHeadParams) error
+	ProductControlSettleReceipt(ctx context.Context, db DBTX, arg ProductControlSettleReceiptParams) error
+	ProductControlUsage(ctx context.Context, db DBTX, arg ProductControlUsageParams) ([]ProductControlUsageRow, error)
+	// One statement observes all sources with one PostgreSQL snapshot. No customer
+	// Operations or Auth journals are read; no signed reviews, inputs or result payloads are returned.
+	// Source IDs identify retained receipts; kind disambiguates their milestones.
+	ProductCustomerActivity(ctx context.Context, db DBTX, arg ProductCustomerActivityParams) ([]ProductCustomerActivityRow, error)
+	ProductCustomerWorkSummary(ctx context.Context, db DBTX, arg ProductCustomerWorkSummaryParams) (ProductCustomerWorkSummaryRow, error)
+	ProductHelpCount(ctx context.Context, db DBTX, arg ProductHelpCountParams) (ProductHelpCountRow, error)
+	ProductHelpGet(ctx context.Context, db DBTX, arg ProductHelpGetParams) (ProductControlHelpRequest, error)
+	ProductHelpInsert(ctx context.Context, db DBTX, arg ProductHelpInsertParams) error
+	ProductHelpList(ctx context.Context, db DBTX, arg ProductHelpListParams) ([]ProductControlHelpRequest, error)
+	ProductHelpUpdate(ctx context.Context, db DBTX, arg ProductHelpUpdateParams) (int64, error)
+	ProductNotificationCountReads(ctx context.Context, db DBTX, arg ProductNotificationCountReadsParams) (int64, error)
+	// Source metadata and read state share one query snapshot. No payloads, customer
+	// text, credentials, prices or execution-row locks are involved.
+	ProductNotificationList(ctx context.Context, db DBTX, arg ProductNotificationListParams) ([]ProductNotificationListRow, error)
+	ProductNotificationPrune(ctx context.Context, db DBTX, arg ProductNotificationPruneParams) error
+	// The customer transaction holds the existing account lock for CAS and quota.
+	ProductNotificationWriteRead(ctx context.Context, db DBTX, arg ProductNotificationWriteReadParams) (int64, error)
+	ProductOnboardingAccess(ctx context.Context, db DBTX, arg ProductOnboardingAccessParams) error
+	ProductOnboardingAuthApp(ctx context.Context, db DBTX, arg ProductOnboardingAuthAppParams) (pgtype.UUID, error)
+	ProductOnboardingCreateTenant(ctx context.Context, db DBTX, arg ProductOnboardingCreateTenantParams) error
+	ProductOnboardingFirstSuccess(ctx context.Context, db DBTX, arg ProductOnboardingFirstSuccessParams) (ProductOnboardingFirstSuccessRow, error)
+	ProductOnboardingGet(ctx context.Context, db DBTX, arg ProductOnboardingGetParams) (ProductControlOnboarding, error)
+	ProductOnboardingInsert(ctx context.Context, db DBTX, arg ProductOnboardingInsertParams) error
+	ProductOnboardingLatest(ctx context.Context, db DBTX, arg ProductOnboardingLatestParams) (ProductControlOnboarding, error)
+	ProductOnboardingOwner(ctx context.Context, db DBTX, arg ProductOnboardingOwnerParams) (string, error)
+	ProductOnboardingReadTenant(ctx context.Context, db DBTX, arg ProductOnboardingReadTenantParams) (PlatformTenant, error)
+	ProductOnboardingTenant(ctx context.Context, db DBTX, arg ProductOnboardingTenantParams) (PlatformTenant, error)
+	ProductOnboardingTenantCount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
+	ProductOwnerAttention(ctx context.Context, db DBTX, arg ProductOwnerAttentionParams) ([]ProductOwnerAttentionRow, error)
+	ProductOwnerGetChange(ctx context.Context, db DBTX, arg ProductOwnerGetChangeParams) (ProductOwnerGetChangeRow, error)
+	ProductOwnerInsertChange(ctx context.Context, db DBTX, arg ProductOwnerInsertChangeParams) error
+	ProductOwnerRuns(ctx context.Context, db DBTX, arg ProductOwnerRunsParams) ([]ProductOwnerRunsRow, error)
+	ProductPlanGetChange(ctx context.Context, db DBTX, arg ProductPlanGetChangeParams) (ProductPlanGetChangeRow, error)
+	ProductPlanInsertChange(ctx context.Context, db DBTX, arg ProductPlanInsertChangeParams) error
+	ProductPlanListChanges(ctx context.Context, db DBTX, arg ProductPlanListChangesParams) ([]ProductPlanListChangesRow, error)
+	ProductPlanStarts(ctx context.Context, db DBTX, arg ProductPlanStartsParams) ([]ProductPlanStartsRow, error)
+	// Select only customer run metadata. Retention matches Operations: active work
+	// remains readable, while stopped work expires. Never return record payloads.
+	ProductRunDetails(ctx context.Context, db DBTX, arg ProductRunDetailsParams) (ProductRunDetailsRow, error)
+	// One statement reference and signed aggregate, independent of document count.
+	// No reasons, snapshots, invoice handoffs or unrelated operation credits.
+	ProductRunDetailsBilling(ctx context.Context, db DBTX, arg ProductRunDetailsBillingParams) (ProductRunDetailsBillingRow, error)
+	// Customer work history is sourced from independent receipts, including old
+	// features/plans. No price, input, result body, owner notes or document is read.
+	ProductWorkHistory(ctx context.Context, db DBTX, arg ProductWorkHistoryParams) ([]ProductWorkHistoryRow, error)
+	// Customer-safe fields are selected explicitly. Permission and realm filters
+	// apply before pagination; owner notes, prices, snapshots and handoffs stay out.
+	ProductWorkspaceActivity(ctx context.Context, db DBTX, arg ProductWorkspaceActivityParams) ([]ProductWorkspaceActivityRow, error)
 	ProfileInvestigationAppOwned(ctx context.Context, db DBTX, arg ProfileInvestigationAppOwnedParams) (bool, error)
 	ProfileInvestigationDeploymentOwned(ctx context.Context, db DBTX, arg ProfileInvestigationDeploymentOwnedParams) (bool, error)
 	ProfileRequestCount(ctx context.Context, db DBTX, arg ProfileRequestCountParams) (ProfileRequestCountRow, error)

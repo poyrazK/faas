@@ -2,7 +2,7 @@
 
 - **Status:** accepted implementation; native qualification pending; production off
 - **Date:** 2026-10-16
-- **Decision:** Extend ADR-1658 with acknowledged, incarnation-scoped execution
+- **Decision:** Extend ADR-20261018005023 with acknowledged, incarnation-scoped execution
   reservations owned by vmmd, a guest-init authenticated proxy and a VM-wide
   interpreter lifecycle barrier. Enable the wiring only in dedicated
   `metal,function_background_native` acceptance builds. Ordinary production

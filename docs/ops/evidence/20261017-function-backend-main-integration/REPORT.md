@@ -4,8 +4,8 @@ This review increment integrates main at `5f10b1f27616c7543680df4c31b79018312911
 Later integration checks are recorded below with their own source revision.
 It preserves the shipped `PostgresPoolBinding` API, its secret-adoption and
 starter checkpoint behavior, and the generic migration source journal. The
-function decisions are [ADR-1658](../../../adr/1658-function-background-completion-protocol.md)
-through [ADR-1665](../../../adr/1665-function-migration-scheduler-restart.md).
+function decisions are [ADR-20261018005023](../../../adr/20261018005023-function-background-completion-protocol.md)
+and ADR-1659 through [ADR-1665](../../../adr/1665-function-migration-scheduler-restart.md).
 The existing cancellation decision remains ADR-1540.
 
 ## Integration contracts
@@ -146,6 +146,31 @@ in the Node and Python generated SDKs. The published Auth dark-launch change
 deliberately removed `auth` from the public binding schema. Regeneration now
 matches that schema's four access modes. The published spec and feature flags
 retain their existing behavior. The Node SDK build and Python compilation pass.
+
+## Integration with the Product Control release
+
+Main advanced through `f63c75848c99002fe379db8f3f1c17e1777fab63` while hosted checks were running.
+The merge preserves the complete default-off Product Control SQLC configuration
+and status entries alongside all three function query sources. A fresh owned
+PostgreSQL database produced an 80,013-line schema; function migration replay
+and reverse down/forward up preserved the identical combined schema. Published
+main migrations retain their bytes and identities.
+
+Main also published deployment response checks as ADR-1658. Only the unpublished
+function background-completion decision moves to ADR-20261018005023; function
+ADRs 1659–1665 and the published response-check decision retain their identities.
+The ADR uniqueness gate and documentation/live HTTP fixture checks pass.
+
+SQLC generation/drift, both management SDK generators with an empty resulting
+diff, the Node SDK build and Python compilation pass. The qualification-tagged
+state/scheduler race run passes 298 and 48 tests/subtests respectively,
+with zero skips or failures. It exercises the function handoff contracts and
+Product Control state on the combined schema using simulated host boundaries.
+
+The previously recorded native binary hash belongs to the prior rehearsal
+integration. Fresh-head hosted checks, including guarded native compilation,
+must finish before merge. No native execution or production activation is
+qualified by this integration.
 
 ## Qualification boundary
 

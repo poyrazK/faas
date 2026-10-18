@@ -506,5 +506,80 @@
       "node": "15392908ce19418594df4eb24e884f3b432fb178ab7750f356dd0a388e4bb95e",
       "python": "7e688397f920a4fa5a6fa76de15aa7c88612e9ee2d961ee5eaff0de6be3a9c2a"
     }
+  },
+  "product_control_main_integration": {
+    "main_base": "f63c75848c99002fe379db8f3f1c17e1777fab63",
+    "feature_head_before_merge": "428b8bd3f54138ceb07fd930174ab10976c11963",
+    "recorded_at": "2026-10-18T01:03:08.248253+00:00",
+    "background_completion_adr": "20261018005023",
+    "other_function_adrs": [
+      1659,
+      1660,
+      1661,
+      1662,
+      1663,
+      1664,
+      1665
+    ],
+    "published_response_check_adr_preserved": 1658,
+    "schema_lines": 80013,
+    "checks": {
+      "fresh_schema": {
+        "passed": true,
+        "log_sha256": "d9eea1e73afa49832064d016c65ae625c8515c0ef0f8cdc6b5c2b6722ba2d524"
+      },
+      "sqlc_generation": {
+        "passed": true,
+        "log_sha256": "e446c92dbb3d88045bec51f0ad24386ed1b0f40d60039508b551b2ea3e041a2e"
+      },
+      "sqlc_drift": {
+        "passed": true,
+        "log_sha256": "1175d7bbb92d8df7bf5aba98f1372028e88e4395ff62071b1297e5d5502e7855"
+      },
+      "documentation_and_adr": {
+        "passed": true,
+        "log_sha256": "66cb343846e5c31a3035d022df3fdaf500fefeedfb683504b58b4d21b132c022"
+      },
+      "node_sdk_regeneration": {
+        "passed": true,
+        "log_sha256": "058886e4dc1aadf89e063ee1e749339c6e93e2fd1f3a62e05736e1cb7de5eefe"
+      },
+      "python_sdk_regeneration": {
+        "passed": true,
+        "log_sha256": "b4d214a8d2a7181fb097785dbcf62048e6048cbe3054634da51239a1e81b1333"
+      },
+      "node_sdk_build": {
+        "passed": true,
+        "log_sha256": "01569a110227e471b5b46e1c495f2fc92cf3f1cd4f021b4a8f09186d17e1288c"
+      },
+      "function_migration_replay_down_up": {
+        "passed": true,
+        "log_sha256": "2228318b3952a6e0bcb0d025d0816a32a245e9777a82f79e215c53621b277f76"
+      }
+    },
+    "race": {
+      "qualification_tags": [
+        "metal",
+        "function_background_native"
+      ],
+      "simulated_host_only": true,
+      "log_sha256": "b903713961512f32bd7fd567b6d04632d40effa1ef8f545fab14a653c14a4258",
+      "packages": {
+        "github.com/onebox-faas/faas/pkg/state": {
+          "passed_tests": 298,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/sched": {
+          "passed_tests": 48,
+          "skipped_tests": [],
+          "failed_tests": []
+        }
+      }
+    },
+    "sdk_regeneration_unstaged_diff_empty": true,
+    "python_compilation_passed": true,
+    "native_acceptance": false,
+    "production_activation": false
   }
 }

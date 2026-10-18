@@ -16,7 +16,12 @@ Users live in the `auth` schema of your own database. The `auth` binding acts
 as the owner of only the `auth` and `gregale_auth` schemas; it cannot read or
 change your other tables. GoTrue migrations run in the release task, never at
 serving startup. The image verifies every pinned upstream migration byte for
-byte and replaces one file whose grants assumed a role named `postgres`.
+byte. The release runner applies the verified files directly, with an overlay
+for the file whose grants assumed a role named `postgres`. GoTrue's stock
+`migrate` command uses embedded SQL and does not read that overlay; the template
+does not invoke it. Existing versions stay in `auth.schema_migrations`, and
+each migration/version record commits together. Raw files, manifest and overlay
+remain in the image for release-time verification.
 
 Organizations, memberships, roles and invitations live in the `gregale_auth`
 schema. The `/authz/v1` API manages them and answers `authorize` checks;
@@ -24,6 +29,17 @@ schema. The `/authz/v1` API manages them and answers `authorize` checks;
 `gregale_auth.has_permission(org, permission)` serve row-level security. The
 release task applies `sql/` after GoTrue's migrations, then the declarative
 `AUTH_AUTHZ` roles and policies.
+
+The internal Product Control team API requires
+`AUTH_PRODUCT_CONTROL_TEAM_ENABLED=1`; it is off by default. After applying
+`sql/0010_reviewed_team_actions.sql` through the release task, it provides
+`GET /authz/v1/orgs/{org}/team` and reviewed `/team-actions` create/read/history
+routes. They require a live session with `org:read` and `members:manage`.
+Membership changes and their retry/audit receipts commit in the same transaction.
+Invitations reuse the existing hosted acceptance page and email provider. Manual
+invitation links are returned once, never retained in receipts or returned by
+retries. Product Control's separate apid flag and opt-in product permission are
+also required for its portal. The existing Auth APIs keep their own permissions.
 
 `POST /authz/v1/storage/sign` signs 60-second URLs for buckets bound to this
 app (`GREGALE_S3_<NAME>_*`); `POST /realtime/authorize-channel` serves managed
@@ -74,3 +90,11 @@ create organizations, and `--anonymous-retention DAYS` deletes those idle
 that long (`AUTH_ANONYMOUS_RETENTION_DAYS`). `--identity-linking on`
 (`AUTH_IDENTITY_LINKING`) lets users link a provider account, which also
 makes an anonymous user permanent, and unlink sign-in methods.
+
+Run the portable tests with `npm ci` and `npm test`. To include the reviewed
+team transaction tests, set `GREGALE_AUTH_TEAM_TEST_DATABASE_URL` to a disposable
+local database named `product_control_team_auth_<suffix>`. That test resets its
+Auth schemas and applies the Gregale migrations twice. It supplies a minimal
+GoTrue user/session schema for SQL contract tests; actual GoTrue session,
+configured-provider email and hosted acceptance qualification still require the
+live Product Control pilot.

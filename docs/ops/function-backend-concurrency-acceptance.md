@@ -1,7 +1,7 @@
 # Function backend concurrency acceptance
 
 This guide covers shared-worker cancellation and PostgreSQL integration
-(ADR-1540), the Node background-completion foundation (ADR-1658), and the
+(ADR-1540), the Node background-completion foundation (ADR-20261018005023), and the
 acknowledged VM execution lifetime/checkpoint barrier (ADR-1659) and automatic
 Node PostgreSQL ownership (ADR-1660).
 Shared-worker concurrency is opt-in and takes effect after redeployment.

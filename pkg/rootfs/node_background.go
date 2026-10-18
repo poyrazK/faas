@@ -1,7 +1,7 @@
 package rootfs
 
 // nodeFunctionBackground is the negotiated execution-completion contract
-// (ADR-1658). A response can finish while registered promises still own their
+// (ADR-20261018005023). A response can finish while registered promises still own their
 // invocation slot. Only actual settlement permits execution completion.
 const nodeFunctionBackground = `
 function setupBackground(env, out) {

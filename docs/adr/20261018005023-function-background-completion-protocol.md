@@ -1,4 +1,4 @@
-# ADR-1658 · Negotiated Node post-response execution completion
+# ADR-20261018005023 · Negotiated Node post-response execution completion
 
 - **Status:** accepted; runner/adapter foundation, production activation disabled
 - **Date:** 2026-10-16
