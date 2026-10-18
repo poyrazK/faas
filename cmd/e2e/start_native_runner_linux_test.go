@@ -194,7 +194,7 @@ m['write_fixture'](pathlib.Path(sys.argv[1]), sys.argv[2])`
 				var baseline state.Deployment
 				if !strings.HasPrefix(scenario, "submission-") {
 					s := f.start(t)
-					s.answer("Choose [1]: ", "1")
+					s.expect("Using source " + f.source)
 					s.answer("Deploy this app (y/N) [n]: ", "y")
 					baseline = f.accepted(t)
 					markers.Store(baseline.ID, nativeStartSource{Marker: marker})

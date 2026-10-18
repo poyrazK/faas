@@ -57,7 +57,7 @@ func TestE2E_Start_CompatibilityPreflightBlocksMutations(t *testing.T) {
 				}
 			}
 			session := fixture.start(t)
-			session.answer("Choose [1]: ", "1")
+			session.expect("Using source " + fixture.source)
 			session.wait(1)
 			want := "updates"
 			if mode == "gateway-outage" {
