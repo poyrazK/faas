@@ -51,7 +51,9 @@ By category:
 
 So the common case is a role change that converging one role would apply.
 The cheapest part, not blocking on files no host role reads, comes free with
-the same path classification.
+the same path classification. Three of the nine role closers (the two
+`postgres_capacity` budgets and the `postgres` change) are roles that can
+restart PostgreSQL; those keep closing the lane (below).
 
 ## Decision
 
@@ -110,6 +112,9 @@ within a range changes nothing.
     those, and the full job's copy matches the role's. The report names the roles whose hash changed and
     `host-<newest commit that changed one>`. The control-plane lane
     carries it, so a range that changes only roles is deployable.
+  - `stateful_restart`: the range changed a control-plane role that can
+    restart or stop a stateful service, or every role's globals. This is
+    blocking for both lanes. See "Stateful services" below.
   - `compute_deploy`: a compute role reads the path. It is pending for the
     control-plane lane and holds the edge lane, as `compute_only_paths`
     did. The split now comes from the plays rather than a hand-kept list.
@@ -134,6 +139,11 @@ within a range changes nothing.
     role converges.
   - A record from a commit that is not an ancestor of the release commit
     is refused, so host configuration never goes backwards.
+  - A role that can restart a stateful service, or the group's globals,
+    differing from the host's full release is refused. Otherwise such a
+    role is never selected on its own, since its content is the full
+    release's. It is selected only when every role converges, and then
+    under the restart guard below.
 
 ### Where the converged hash is recorded
 
@@ -233,9 +243,54 @@ successor inherits the old environment and credentials. A stopped daemon
 stays stopped, as the roles' try-restart handlers leave it. There is never
 a blanket restart. A daemon nothing changed for is not touched.
 
-One exception is shared with ADR-580: `postgres_capacity` restarts
-PostgreSQL when the derived `max_connections` moves. This lane does not
-make it worse, and a policy for postmaster restarts is a follow-up.
+### Stateful services: the lane never restarts PostgreSQL or pgbouncer
+
+A PostgreSQL restart drops every daemon's database connections. A pgbouncer
+restart drops every pooled client. Before this lane, both happened only in
+a full release, and the owner's rule is zero downtime. So the lane fails
+closed on them (`host_config.stateful_services`), in three layers:
+
+1. **Detection.** `host_roles.restart_roles` finds the roles that can
+   restart or stop a stateful service:
+   - a task that does so (a service or systemd module whose `name:` names
+     it with `state: restarted|stopped`, `systemctl restart|stop`, or
+     `pg_ctl`/`pg_ctlcluster` for PostgreSQL);
+   - a task that notifies a handler, of any role in the play, that does;
+   - a role that includes such a role.
+
+   Today these are:
+   - `postgres` (`restart postgresql`: listen_addresses, wal_level,
+     archive_mode, removing standby settings);
+   - `postgres_capacity` (restarts when the derived `max_connections` or
+     `superuser_reserved_connections` moves);
+   - `pgbouncer` (`restart pgbouncer`).
+
+   A test pins this set, so a new restart path is noticed.
+2. **CI and the plan.** A content change to one of these roles, or to the
+   group's globals, is `stateful_restart`: it blocks both lanes and waits
+   for a full release or a maintenance window. This holds for every
+   `postgres_capacity` change, because whether `max_connections` moves
+   depends on the inventory, which CI cannot see. `plan_host_config.py`
+   checks the same at deploy time against the host's full release.
+3. **The converge path.** In lane mode gregalectl passes
+   `faas_stateful_restart_allowed: false`, and `control_plane_converge.yml`
+   refuses lane mode without it. Each task that can lead to a restart runs
+   in check mode, so a needed change is reported but `postgresql.conf` and
+   `pgbouncer.ini` stay untouched and no restart is left pending. A refusal
+   handler on the restart topic fails the run. The restart handlers and
+   `postgres_capacity`'s restart task do not run. `postgres_capacity`
+   compares the running `max_connections:superuser_reserved_connections`
+   with the derived target before it writes anything, and fails on a
+   difference. This covers the cases where the lane converges every role:
+   no record, other globals, or an operator variable or inventory change.
+   A change needing no restart (pg_hba reloads) still applies. One that
+   needs a restart fails the run, which rolls back and keeps `deploy-units`
+   from running.
+
+A full release and `make bootstrap-control-plane` leave
+`faas_stateful_restart_allowed` unset and restart as before. The cd-compute
+path that runs `postgres_capacity` on the control plane when a node joins
+(`node_join_control_plane.yml`) does too.
 
 ### SLO gate and rollback
 
@@ -265,6 +320,9 @@ not run.
   converging the role would not stick. These files are generated from
   `pkg/daemonunitspec`, and none of them closed the lane after the last 15
   tags.
+- **Roles that can restart PostgreSQL or pgbouncer** (`postgres`,
+  `postgres_capacity`, `pgbouncer`) and the control-plane play's globals.
+  See above.
 - **`deploy/` paths no host role reads, and bundle files no role
   installs.** These are manifests, other playbooks, drill scripts and
   example configurations.
@@ -299,21 +357,28 @@ session, so this change does not touch it, `node_join`, `cmd/vmmd`,
 
 - **Lane-open length.** In the simulation over the last 15 tags (migrations
   taken as lane-eligible, horizon today's main), the control-plane lane
-  stays open for a median of 64 merges instead of 3. The remaining closers
-  in that window are:
-  - a restore-drill script, which no role reads;
-  - `deploy/managed-postgres.example.json`;
+  stays open for a median of 29 merges instead of 3. Without the
+  stateful-restart rule it would be 64. The remaining closers in that
+  window are:
+  - the `postgres_capacity` budget changes and the `postgres` change
+    (`stateful_restart`), deliberately;
+  - `deploy/managed-postgres.example.json`, which no role reads;
   - the go.mod change.
 - **First run.** The first lane run on a host has no record, so it
   converges every control-plane role once. Through ADR-580 that took about
-  30 minutes on production-us.
+  30 minutes on production-us. The PostgreSQL and pgbouncer roles run under
+  the restart guard. If the host's settings drifted from them, the run
+  fails instead of restarting the database.
 - **Next full release.** That release's ADR-580 contract changes once,
   because the control-plane play's role entries gained the selection
   condition, so it runs the whole play once. The role hashes ignore the
   condition, so they do not move.
 - **Operator variable changes.** A `CP_ANSIBLE_VARS_B64` change still
   reaches every role. The lane does that on its next run that has a record,
-  and the full lane does it as before.
+  and the full lane does it as before. An inventory change that moves
+  `max_connections` (a compute node added) fails the lane's run. It waits
+  for a full release, or for the join path that already restarts
+  PostgreSQL.
 - **Time budget.** A host-config step adds about 7-9 minutes on the control
   plane:
   - verification, checkout and the cached Ansible toolchain: 1-2 min;
@@ -356,8 +421,10 @@ session, so this change does not touch it, `node_join`, `cmd/vmmd`,
 - **More trees outside releases.** Operator playbooks (`cp_state_restore`,
   `postgres_promote`, standby), drill scripts and `deploy/lima`, each with
   proof that no release reads it.
-- **PostgreSQL postmaster restarts.** These need their own policy: a full
-  release or a maintenance window.
+- **Planned stateful restarts.** A maintenance-window mode would let a
+  dispatched lane run allow the restart (`faas_stateful_restart_allowed`)
+  behind the owner's approval. Until then, those changes take a full
+  release.
 - **One gate when host configuration and units restart together.**
 
 ## Rejected alternatives
