@@ -8,12 +8,92 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func serviceExplainApps() (api.AppResponse, api.AppResponse) {
 	return api.AppResponse{ID: "caller-id", Slug: "frontend", ServiceBindingFingerprint: strings.Repeat("a", 64)}, api.AppResponse{ID: "target-id", Slug: "billing", ServiceBindingFingerprint: strings.Repeat("b", 64)}
+}
+
+func TestServiceExplainDeploymentCLI(t *testing.T) {
+	deployment := uuid.NewString()
+	for _, tc := range []struct {
+		name, result string
+		code         int
+		mutate       func(*api.ServiceBindingExplanation)
+		status       int
+	}{
+		{"allowed", "allowed", 0, nil, 200},
+		{"denied", "denied", 1, nil, 200},
+		{"unknown", "indeterminate", 2, nil, 200},
+		{"old server", "indeterminate", 2, nil, 404},
+		{"wrong deployment", "indeterminate", 2, func(r *api.ServiceBindingExplanation) { r.CallerDeploymentID = uuid.NewString() }, 200},
+		{"wrong environment", "indeterminate", 2, func(r *api.ServiceBindingExplanation) { r.Scope = "production" }, 200},
+		{"missing route", "indeterminate", 2, func(r *api.ServiceBindingExplanation) { r.TargetDeploymentID = "" }, 200},
+		{"missing fingerprint", "indeterminate", 2, func(r *api.ServiceBindingExplanation) { r.TargetFingerprint = "" }, 200},
+		{"invalid target", "indeterminate", 2, func(r *api.ServiceBindingExplanation) { r.TargetAppID = "not-an-id" }, 200},
+		{"conflicting decision", "indeterminate", 2, func(r *api.ServiceBindingExplanation) { r.Checks[0].Result = "denied" }, 200},
+		{"empty response", "indeterminate", 2, func(r *api.ServiceBindingExplanation) { *r = api.ServiceBindingExplanation{} }, 200},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetJSONOut(t)
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if r.Method != "GET" || r.URL.Path != "/v1/apps/frontend/bindings/services/billing/explanation" {
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+				}
+				if q := r.URL.Query(); q.Get("deployment_id") != deployment || q.Get("scope") != "staging" || q.Get("method") != "GET" || q.Get("path") != "/invoices" {
+					t.Errorf("query=%v", q)
+				}
+				if tc.status != 200 {
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte("PRIVATE_ERROR"))
+					return
+				}
+				report := api.ServiceBindingExplanation{CallerFingerprint: strings.Repeat("a", 64), TargetFingerprint: strings.Repeat("b", 64), Caller: "frontend", Target: "billing", Method: "GET", Path: "/invoices", Result: "allowed", Scope: "staging", CheckedAt: time.Now().UTC(), CallerDeploymentID: deployment, TargetAppID: uuid.NewString(), TargetDeploymentID: uuid.NewString(), ReleaseID: uuid.NewString(), PolicySource: "environment_release", Transport: api.ServiceBindingTransportHTTPS, Checks: []api.ServiceAuthorizationCheck{{Rule: "routing", Result: "allowed", Reason: "active_reviewed_release"}}, Limitations: "Metadata observation only."}
+				if tc.name == "denied" || tc.name == "unknown" {
+					report.Result = tc.result
+					report.Checks[0].Result = tc.result
+				}
+				if tc.mutate != nil {
+					tc.mutate(&report)
+				}
+				writeJSONTest(w, report)
+			}))
+			defer server.Close()
+			t.Setenv("FAAS_API", server.URL)
+			t.Setenv("FAAS_TOKEN", "fp_test_x")
+			var output bytes.Buffer
+			old := osStdout
+			osStdout = &output
+			t.Cleanup(func() { osStdout = old })
+			args := []string{"bindings", "service", "explain", "frontend", "billing", "--deployment", deployment, "--scope", "staging", "--path", "/invoices?secret=PRIVATE_QUERY", "--json"}
+			if code := run(args); code != tc.code {
+				t.Fatalf("code=%d output=%s", code, &output)
+			}
+			var got api.ServiceBindingExplanation
+			if err := json.Unmarshal(output.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Result != tc.result || calls != 1 || strings.Contains(output.String(), "PRIVATE_") {
+				t.Fatalf("calls=%d output=%s", calls, &output)
+			}
+		})
+	}
+}
+
+func TestServiceExplainDeploymentRejectsInvalidSelectors(t *testing.T) {
+	for _, args := range [][]string{{"--scope", "staging"}, {"--scope", ""}, {"--deployment", ""}, {"--deployment", "bad"}, {"--deployment", uuid.Nil.String()}, {"--deployment", uuid.NewString(), "--scope", "BAD"}} {
+		resetJSONOut(t)
+		if code := run(append([]string{"bindings", "service", "explain", "frontend", "billing", "--json"}, args...)); code != 2 {
+			t.Fatalf("args=%v code=%d", args, code)
+		}
+	}
 }
 
 func TestServiceAuthorizationExplanation(t *testing.T) {

@@ -60,6 +60,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
 
+var ResolveAlertmanagerURL = resolveAlertmanagerURL
+
 // Package-level types
 type AffectedPartition = affectedPartition
 type AnnotationForm = annotationForm
@@ -311,7 +313,6 @@ var BuildDebugDependencyComparisonBetween = buildDebugDependencyComparisonBetwee
 var BuildDebugDependencyDeploymentComparison = buildDebugDependencyDeploymentComparison
 var BuildDebugDependencyLatencyHistory = buildDebugDependencyLatencyHistory
 var BuildEnvDiffResponse = buildEnvDiffResponse
-var BuildObsCapacityProfiles = buildObsCapacityProfiles
 var BuildObsTenantUsageProfiles = buildObsTenantUsageProfiles
 var BuildSourceRefTarGz = buildSourceRefTarGz
 var BuildTestAlertEvent = buildTestAlertEvent
@@ -628,7 +629,6 @@ var StoreAsAuthenticator = storeAsAuthenticator
 var StoreAsSessionLookup = storeAsSessionLookup
 var StorePlanCache = storePlanCache
 var StripeWebhookHarness = stripeWebhookHarness
-var SummariseBetaFunnel = summariseBetaFunnel
 var SummarizeDevSyncHistory = summarizeDevSyncHistory
 var SummarizeRuntimePolicySchedulerStatus = summarizeRuntimePolicySchedulerStatus
 var SummarizeRuntimePolicyStatus = summarizeRuntimePolicyStatus

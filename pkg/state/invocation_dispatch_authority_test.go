@@ -95,7 +95,7 @@ func dispatchCanaryFixture(t *testing.T) (*MemStore, App, Invocation) {
 }
 
 func TestDispatchAuthorityCanaryFences(t *testing.T) {
-	for _, change := range []string{"valid", "cancelled", "expired", "replay", "attempt", "pin", "source_spoof", "account_spoof", "app_spoof", "missing_receipt", "authority_failure", "receipt_failure", "ingress", "owner_spoof"} {
+	for _, change := range []string{"valid", "esm_transport", "cancelled", "expired", "replay", "attempt", "pin", "source_spoof", "account_spoof", "app_spoof", "missing_receipt", "authority_failure", "receipt_failure", "ingress", "owner_spoof", "binding_spoof", "queue_spoof", "scope_spoof"} {
 		t.Run(change, func(t *testing.T) {
 			m, app, inv := dispatchCanaryFixture(t)
 			s := &countedDispatchStore{MemStore: m}
@@ -104,6 +104,10 @@ func TestDispatchAuthorityCanaryFences(t *testing.T) {
 			switch change {
 			case "valid":
 				want = nil
+			case "esm_transport":
+				want = nil
+				inv.Source = InvocationSource("esm")
+				inv.QueueName = ""
 			case "cancelled":
 				record.Cancelled = true
 			case "expired":
@@ -120,6 +124,12 @@ func TestDispatchAuthorityCanaryFences(t *testing.T) {
 				record.Cancelled = true
 				inv.Source = "workflow"
 				inv.Payload = nil
+			case "binding_spoof":
+				inv.QueueBindingID = uuid.NewString()
+			case "queue_spoof":
+				inv.QueueName = "other"
+			case "scope_spoof":
+				inv.DeploymentScope = "staging"
 			case "account_spoof":
 				inv.AccountID = uuid.NewString()
 				want = ErrNotFound
@@ -153,7 +163,7 @@ func TestDispatchAuthorityCanaryFences(t *testing.T) {
 				t.Fatalf("err=%v want=%v", err, want)
 			}
 			// Bound queue resolution still performs its independent ownership reads.
-			if change == "valid" && (s.apps != 3 || s.canaries != 1 || s.authorities != 1) {
+			if (change == "valid" || change == "esm_transport") && (s.apps != 3 || s.canaries != 1 || s.authorities != 1) {
 				t.Fatalf("canary reads: %+v", s)
 			}
 		})

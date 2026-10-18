@@ -85,7 +85,7 @@ WHERE t.id=sqlc.arg(task_id)::text::uuid AND t.lease_token=sqlc.arg(lease_token)
 UPDATE scenario_command_networks SET active=false WHERE task_id=sqlc.arg(task_id)::text::uuid AND active;
 
 -- name: ScenarioCommandCallersByHostIP :many
-SELECT t.app_id::text AS app_id,t.deployment_id::text AS deployment_id
+SELECT t.id::text AS instance_id,t.app_id::text AS app_id,t.deployment_id::text AS deployment_id
 FROM scenario_command_networks c JOIN app_tasks t ON t.id=c.task_id JOIN compute_nodes n ON n.id=c.node_id
 JOIN scenario_recorder_sessions r ON r.instance_id=t.id AND r.app_id=t.app_id
 JOIN scenario_test_action_policies p ON p.app_id=t.app_id JOIN apps a ON a.id=t.app_id

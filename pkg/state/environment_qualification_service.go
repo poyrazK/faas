@@ -68,7 +68,14 @@ func qualificationServiceRoute(caller, target EnvironmentWorkloadQualificationRe
 		return zero, ErrConflict
 	}
 	callerName := strings.TrimPrefix(caller.Resource, "workload/")
-	policy := target.FrozenInputs.Baseline
+	policy, err := EffectiveEnvironmentWorkloadManifest(target.FrozenInputs)
+	if err != nil {
+		return zero, ErrConflict
+	}
+	callerPolicy, err := EffectiveEnvironmentWorkloadManifest(caller.FrozenInputs)
+	if err != nil {
+		return zero, ErrConflict
+	}
 	if policy.AllowedServiceCallers != nil {
 		allowed := false
 		for _, name := range *policy.AllowedServiceCallers {
@@ -79,7 +86,7 @@ func qualificationServiceRoute(caller, target EnvironmentWorkloadQualificationRe
 		}
 	}
 	route := EnvironmentQualificationServiceRoute{Caller: callerStatus.Execution, Target: targetStatus.Execution,
-		RequireHTTPS: caller.FrozenInputs.Baseline.EffectiveServiceBindingTransport() == api.ServiceBindingTransportHTTPS,
+		RequireHTTPS: callerPolicy.EffectiveServiceBindingTransport() == api.ServiceBindingTransportHTTPS,
 		Deadline:     *caller.LeaseUntil}
 	if target.LeaseUntil.Before(route.Deadline) {
 		route.Deadline = *target.LeaseUntil

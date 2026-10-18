@@ -16,8 +16,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	probesql "github.com/onebox-faas/faas/pkg/managedpostgres/credentialdelivery/sqlc"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/credentialprobe"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
 )
 
 var ErrProbe = errors.New("PostgreSQL acceptance probe failed")
@@ -107,19 +108,19 @@ func (c Config) Migrate(ctx context.Context) error {
 	if c.MigrationURI == "" {
 		return probeFailure("migration_secret_missing")
 	}
-	if err := managedpostgres.VerifyCredentialSQL(ctx, c.MigrationURI, managedpostgres.CredentialMigration, c.PostgresMajor); err != nil {
+	if err := credentialprobe.VerifyCredentialSQL(ctx, c.MigrationURI, credentialprobe.Migration, c.PostgresMajor); err != nil {
 		switch {
-		case errors.Is(err, managedpostgres.ErrInvalid):
+		case errors.Is(err, pgerrors.ErrInvalid):
 			return probeFailure("migration_credential_invalid")
-		case errors.Is(err, managedpostgres.ErrUnavailable):
+		case errors.Is(err, pgerrors.ErrUnavailable):
 			return probeFailure("migration_sql_unavailable")
-		case errors.Is(err, managedpostgres.ErrConflict):
+		case errors.Is(err, pgerrors.ErrConflict):
 			return probeFailure("migration_privileges")
 		default:
 			return probeFailure("migration_verification")
 		}
 	}
-	conn, err := managedpostgres.ConnectCredentialSQL(ctx, c.MigrationURI)
+	conn, err := credentialprobe.ConnectCredentialSQL(ctx, c.MigrationURI)
 	if err != nil {
 		return probeFailure("migration_connect")
 	}
@@ -146,15 +147,15 @@ func (c Config) Check(ctx context.Context) (Result, error) {
 	if err != nil || c.RuntimeURI == "" || c.ReaderURI == "" || c.MigrationURI != "" {
 		return Result{}, ErrProbe
 	}
-	if managedpostgres.VerifyCredentialSQL(ctx, c.RuntimeURI, managedpostgres.CredentialReadWrite, c.PostgresMajor) != nil || managedpostgres.VerifyCredentialSQL(ctx, c.ReaderURI, managedpostgres.CredentialReadOnly, c.PostgresMajor) != nil {
+	if credentialprobe.VerifyCredentialSQL(ctx, c.RuntimeURI, credentialprobe.ReadWrite, c.PostgresMajor) != nil || credentialprobe.VerifyCredentialSQL(ctx, c.ReaderURI, credentialprobe.ReadOnly, c.PostgresMajor) != nil {
 		return Result{}, ErrProbe
 	}
-	writer, err := managedpostgres.ConnectCredentialSQL(ctx, c.RuntimeURI)
+	writer, err := credentialprobe.ConnectCredentialSQL(ctx, c.RuntimeURI)
 	if err != nil {
 		return Result{}, ErrProbe
 	}
 	defer func() { _ = writer.Close(context.WithoutCancel(ctx)) }()
-	reader, err := managedpostgres.ConnectCredentialSQL(ctx, c.ReaderURI)
+	reader, err := credentialprobe.ConnectCredentialSQL(ctx, c.ReaderURI)
 	if err != nil {
 		return Result{}, ErrProbe
 	}

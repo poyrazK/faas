@@ -9,6 +9,10 @@ import (
 func NormalizeVerification(task state.BindingVerificationTask) *api.BindingVerification {
 	result := &api.BindingVerification{TaskID: task.TaskID, Result: "unknown", Source: "task_guest", DeploymentID: task.DeploymentID,
 		Scope: task.Scope, TargetDeploymentID: task.Pin.TargetDeploymentID, CheckedAt: task.FinishedAt, CredentialGeneration: task.Pin.CredentialGeneration}
+	if task.Pin.ManagedService != nil {
+		spec := *task.Pin.ManagedService
+		result.ManagedService = &spec
+	}
 	if !state.AppTaskStatus(task.Status).Terminal() {
 		result.Reason = "probe_pending"
 		return result
@@ -34,7 +38,11 @@ func NormalizeVerification(task state.BindingVerificationTask) *api.BindingVerif
 			result.Reason = "report_invalid"
 			return result
 		}
-		reportFailed = report.Error != ""
+		if task.Pin.ManagedService != nil && (report.ManagedService == nil || !report.ManagedService.Valid() || *report.ManagedService != *task.Pin.ManagedService || task.Pin.Revision != task.Pin.ManagedService.ContextRevision || task.DeploymentID != task.Pin.ManagedService.CallerDeploymentID || task.Scope != task.Pin.ManagedService.Scope) || task.Pin.ManagedService == nil && report.ManagedService != nil {
+			result.Reason = "managed_service_report_invalid"
+			return result
+		}
+		reportFailed = report.Error != "" || task.Pin.ManagedService != nil && (!report.Passed() || report.URL != "https://"+task.Pin.Binding+".internal")
 		names = []string{"dns", "tls", "authorization", "routing"}
 		statuses = []string{report.DNS.Status, report.TLS.Status, report.Authorization.Status, report.Routing.Status}
 	case api.BindingTypePostgres:

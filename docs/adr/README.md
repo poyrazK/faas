@@ -1,5 +1,10 @@
 # Architecture Decision Records
 
+- [ADR-1739: Shared-window compound Issues alerts](1739-shared-window-issue-compound-alerts.md)
+- [ADR-1738: Offline grouping previews and reviewed regression baselines](1738-issue-grouping-previews-and-baselines.md)
+- [ADR-1737: Publish final Node build source maps with build completion](1737-builder-issue-source-map-publication.md)
+- [ADR-1736: Publish prebuilt Issues source maps during CLI deployment](1736-deploy-issue-source-map-publication.md)
+
 - [Preserve request identity in response caching](20261017214848-response-cache-request-identity.md)
 
 - [Restart-safe Go acknowledgment recovery alerts](20261017182028-go-recovery-alert-checkpoints.md)
@@ -1489,6 +1494,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1260: Initial-failure policy dry run](1260-initial-failure-policy-dry-run.md)
 - [ADR-1261: Durable first-recovery reviews](1261-durable-initial-recovery-reviews.md)
 - [ADR-1135: Sparse extent encoding for remote drives and snapshot memory](1135-sparse-extent-encoding-for-remote-artifacts.md)
+- [Operator incident evidence (2026-10-15)](20261015-operator-incident-evidence.md)
+
 
 [ADR-202610171028: Site hosting GitHub OIDC](202610171028-site-hosting-github-oidc.md) specifies explicit immutable trust and short-lived preview credentials.
 

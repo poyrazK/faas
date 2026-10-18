@@ -440,6 +440,11 @@ func completeRequestQualificationReceipts(t *testing.T, store *state.PgStore, re
 		t.Fatal(err)
 	}
 	placement := qualificationPlacement(t, store, 4096)
+	completeClaimedQualificationReceipts(t, store, claimed, placement)
+}
+
+func completeClaimedQualificationReceipts(t *testing.T, store *state.PgStore, claimed state.EnvironmentWorkloadQualificationRequest, placement state.EnvironmentWorkloadQualificationPlacement) {
+	t.Helper()
 	admitted, err := store.CreateEnvironmentWorkloadQualificationInstance(t.Context(), claimed, placement)
 	if err != nil {
 		t.Fatal(err)
@@ -449,6 +454,9 @@ func completeRequestQualificationReceipts(t *testing.T, store *state.PgStore, re
 	}
 	inputs := state.RuntimeConfigInputs{Scope: "production", Boundary: time.Now().UTC(), Variables: map[string]string{},
 		SecretVersions: map[string]int64{}, SecretRefs: map[string]string{}, AllSecrets: true}
+	for key, value := range claimed.FrozenInputs.Variables {
+		inputs.Variables[key] = value
+	}
 	runtime := state.EnvironmentWorkloadQualificationRuntime{NodeID: placement.NodeID, WakeID: placement.WakeID,
 		Netns: "qualification-source", HostIP: "10.0.0.1", GuestUID: 20001, Inputs: inputs}
 	if _, err := store.PublishEnvironmentWorkloadQualificationRuntime(t.Context(), claimed, runtime); err != nil {

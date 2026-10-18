@@ -16,7 +16,7 @@ import (
 )
 
 func TestAllBindingQueueVerification(t *testing.T) {
-	for _, scenario := range []string{"completed", "no consent", "unsupported handler", "pull", "paused", "disabled", "outside scope", "ambiguous", "failed", "wrong deployment", "wrong scope", "wrong binding", "incomplete receipt", "timeout", "unpinned consent"} {
+	for _, scenario := range []string{"completed", "no consent", "unsupported handler", "release unavailable", "pull", "paused", "disabled", "outside scope", "ambiguous", "failed", "wrong deployment", "wrong release", "wrong scope", "wrong binding", "incomplete receipt", "timeout", "unpinned consent"} {
 		t.Run(scenario, func(t *testing.T) {
 			deployment := pinnedBindingDeployment
 			now := time.Now().UTC().Add(-time.Second)
@@ -25,6 +25,9 @@ func TestAllBindingQueueVerification(t *testing.T) {
 			switch scenario {
 			case "unsupported handler":
 				queue.QueueCanarySupported = false
+			case "release unavailable":
+				queue.QueueCanarySupported = false
+				queue.QueueCanaryReason = "queue_canary_context_unavailable"
 			case "pull":
 				queue.Access = "pull"
 			case "paused":
@@ -76,6 +79,9 @@ func TestAllBindingQueueVerification(t *testing.T) {
 					}
 					writeJSONTest(w, receipt)
 				case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/bindings/queue-canaries/"+receipt.ID:
+					if scenario == "wrong release" {
+						receipt.ReleaseID = uuid.NewString()
+					}
 					polls++
 					if scenario != "timeout" {
 						receipt.Status = "succeeded"
@@ -128,7 +134,7 @@ func TestAllBindingQueueVerification(t *testing.T) {
 			if err := json.Unmarshal([]byte(out), &report); err != nil {
 				t.Fatalf("%v output=%s errors=%s", err, out, errs)
 			}
-			shouldPublish := scenario == "completed" || scenario == "failed" || scenario == "wrong deployment" || scenario == "wrong scope" || scenario == "wrong binding" || scenario == "incomplete receipt" || scenario == "timeout"
+			shouldPublish := scenario == "completed" || scenario == "failed" || scenario == "wrong deployment" || scenario == "wrong release" || scenario == "wrong scope" || scenario == "wrong binding" || scenario == "incomplete receipt" || scenario == "timeout"
 			if shouldPublish && publishes != 1 || !shouldPublish && publishes != 0 {
 				t.Fatalf("publishes=%d report=%s", publishes, out)
 			}
@@ -137,13 +143,17 @@ func TestAllBindingQueueVerification(t *testing.T) {
 				if code != 0 || report.Passed != 2 || report.Coverage != "complete" || polls != 1 || cancels != 0 || tasks != 1 || report.Bindings[0].QueueReport == nil || report.Gate == nil || !report.Gate.Passed {
 					t.Fatalf("code=%d polls=%d cancels=%d tasks=%d report=%s", code, polls, cancels, tasks, out)
 				}
-			case "failed", "wrong deployment", "wrong scope", "wrong binding", "incomplete receipt", "timeout":
+			case "failed", "wrong deployment", "wrong release", "wrong scope", "wrong binding", "incomplete receipt", "timeout":
 				wantCancels := 1
 				if scenario == "wrong deployment" || scenario == "wrong scope" || scenario == "wrong binding" {
 					wantCancels = 0
 				}
 				if code == 0 || report.Failed != 1 || cancels != wantCancels {
 					t.Fatalf("code=%d cancels=%d report=%s errors=%s", code, cancels, out, errs)
+				}
+			case "release unavailable":
+				if publishes != 0 || !strings.Contains(out, "queue_canary_context_unavailable") {
+					t.Fatalf("misleading release eligibility: %s", out)
 				}
 			case "disabled", "outside scope":
 				if code != 0 || report.Skipped != 1 || report.Passed != 1 {

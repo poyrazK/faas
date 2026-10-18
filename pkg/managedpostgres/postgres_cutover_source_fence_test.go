@@ -373,12 +373,50 @@ func TestPostgresCutoverSourceFenceExclusionAndNeverDispatchedCancellation(t *te
 	if err != nil || !coverage.Known {
 		t.Fatal("SQL journal schema escaped clone classification", coverage.Blockers, err)
 	}
-	for _, name := range []string{"managed_postgres_cutover_source_fences", "managed_postgres_cutover_preflights"} {
+	// ADR-1646/1647: probe/activation/removal receipts are source-bound
+	// authority and audit evidence, never configuration to copy into a clone.
+	for _, name := range []string{"managed_postgres_cutover_source_fences", "managed_postgres_cutover_preflights",
+		"environment_binding_release_receipts", "environment_binding_retirement_receipts", "environment_qualification_service_receipts"} {
 		i := slices.IndexFunc(coverage.Tables, func(p state.ProjectEnvironmentCloneSchemaPolicy) bool { return p.TableName == name })
 		if i < 0 || coverage.Tables[i].Kind != state.CloneSchemaOperational {
 			t.Fatal("private recovery table is cloneable", name)
 		}
 	}
+	// ADR-20261017191509/20261017191518: readiness policies remain copy-gated
+	// until an isolated strategy exists; deployment proofs, one-shot overrides,
+	// monitors, cursors and incident history remain operational state at the
+	// source, matching the clone schema registry.
+	mcpCloneKinds := map[string]string{
+		"app_mcp_readiness_policies":               state.CloneSchemaConfiguration,
+		"app_mcp_readiness_policy_history":         state.CloneSchemaConfiguration,
+		"deployment_mcp_readiness_evidence":        state.CloneSchemaOperational,
+		"deployment_mcp_readiness_monitors":        state.CloneSchemaOperational,
+		"deployment_mcp_readiness_overrides":       state.CloneSchemaOperational,
+		"mcp_readiness_attention_actions":          state.CloneSchemaOperational,
+		"mcp_readiness_fallback_policies":          state.CloneSchemaConfiguration,
+		"mcp_readiness_incident_attention":         state.CloneSchemaOperational,
+		"mcp_readiness_incident_cursors":           state.CloneSchemaOperational,
+		"mcp_readiness_incident_events":            state.CloneSchemaOperational,
+		"mcp_readiness_incidents":                  state.CloneSchemaOperational,
+		"mcp_readiness_maintenance_windows":        state.CloneSchemaConfiguration,
+		"mcp_readiness_notification_actions":       state.CloneSchemaOperational,
+		"mcp_readiness_pagerduty_ack_events":       state.CloneSchemaOperational,
+		"mcp_readiness_pagerduty_acknowledgements": state.CloneSchemaConfiguration,
+		"mcp_readiness_pagerduty_policies":         state.CloneSchemaConfiguration,
+		"mcp_readiness_reminder_defaults":          state.CloneSchemaConfiguration,
+	}
+	for name, kind := range mcpCloneKinds {
+		i := slices.IndexFunc(coverage.Tables, func(p state.ProjectEnvironmentCloneSchemaPolicy) bool { return p.TableName == name })
+		if i < 0 || coverage.Tables[i].Kind != kind {
+			t.Fatal("MCP readiness clone boundary changed", name, kind)
+		}
+		if kind == state.CloneSchemaConfiguration && !slices.ContainsFunc(coverage.Blockers, func(b state.ProjectEnvironmentCloneCoverageBlocker) bool {
+			return b.Table == name && b.Code == "isolated_strategy_unavailable"
+		}) {
+			t.Fatal("MCP readiness policy became copyable without a scoped strategy", name)
+		}
+	}
+
 }
 
 func TestPostgresCutoverSourceFenceFailedReceiptAndOwnerChange(t *testing.T) {
