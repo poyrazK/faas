@@ -290,6 +290,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GATEWAYD_ROLE` | gatewayd-internal, shared | `dropin` |  |  | `` |  |
 | `FAAS_GATEWAY_CIRCUIT_BREAKER` | gatewayd-internal | `dropin` |  |  | `` | ADR-201 §2; on (the drop-in default since H4-68) shares one instance-health breaker between the public path and the service proxy, tuned per app by kind=circuit_breaker rules; off installs the legacy fixed-TTL quarantine and leaves the public path unbroken |
 | `FAAS_GATEWAY_CONTROL_LISTEN` | gatewayd-internal | `default` |  |  | `` |  |
+| `FAAS_GATEWAY_EGRESS_LEDGER_ROOT` | gatewayd-internal | `default` |  |  | `` | ADR-1580 optional override for the root of the durable egress replay ledger's per-generation slots; defaults to /var/lib/faas/egress-meter, which the unit allows writing |
 | `FAAS_GATEWAY_EGRESS_SOCKET` | shared | `default` |  |  | `` |  |
 | `FAAS_GATEWAY_LISTEN` | gatewayd-internal, shared | `unit` |  |  | `` |  |
 | `FAAS_GATEWAY_METRICS_URL` | schedd | `dropin` |  |  | `` |  |
