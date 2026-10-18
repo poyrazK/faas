@@ -1038,6 +1038,12 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-1735: Owner-approved deadline grants during credential rotation](1735-data-api-deadline-grant-rotation.md)
 
+- [ADR-1736: Zero-downtime daemon restarts](1736-zero-downtime-daemon-restarts.md)
+
+- [ADR-1737: Internal mail service with independent activation and delivery gates](1737-internal-mail-service.md)
+
+- [ADR-1738: Durable producer handoff for internal account-deletion email](1738-mail-producer-outbox.md)
+
 - [ADR-1667: Coordinated SQL refresh across credential rotation](1667-data-api-coordinated-refresh-rotation.md)
 
 - [ADR-1668: Read-only Data API rotation preflight](1668-data-api-rotation-preflight.md)
