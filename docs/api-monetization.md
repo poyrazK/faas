@@ -5,8 +5,12 @@ caller, meters their requests, prices them with versioned rate cards, and
 produces auditable usage statements that you invoice through your own billing
 system. Gregale does not collect payment from your customers.
 
-API monetization is in beta. It is available on Hobby, Pro, and Scale; see
-[Plans and pricing](plans.md) for consumer key limits.
+API monetization is not released (ADR-20261018090210). It stays off, with
+no customer-facing surface, until an operator sets the `api_monetization_enabled`
+runtime setting; `FAAS_API_MONETIZATION_ENABLED=1` is its bootstrap value for
+apid and gateways and shows its commands in the CLI. Once released it is
+available on Hobby, Pro, and Scale; see [Plans and pricing](plans.md) for
+consumer key limits.
 
 ## 1. Identify your consumers
 

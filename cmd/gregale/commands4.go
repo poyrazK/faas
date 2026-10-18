@@ -26,8 +26,11 @@ import (
 func cmdAccount(args []string) int {
 	parent, _ := lookupCliCommand("account")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale account {export|delete|restore|status|dpa|slo|stripe|billing-run|invoices}", "account")
+		PrintUsage(os.Stderr, releasedUsage("account", "usage: gregale account {export|delete|restore|status|dpa|slo|billing-connection|billing-run|invoices}"), "account")
 		return 1
+	}
+	if hiddenMonetizationVerb("account", args[0]) {
+		return unknownAccountSubcommand(parent, args[0])
 	}
 	switch args[0] {
 	case "export":
@@ -60,11 +63,15 @@ func cmdAccount(args []string) int {
 		// (issue #696 / ADR-082). Account-wide SLO rollup.
 		return cmdAccountSLO(args[1:])
 	default:
-		sug, _ := suggestSubcommand(args[0], parent)
-		fmt.Fprintf(os.Stderr, "gregale account: unknown subcommand %q\n", args[0])
-		maybeSuggestSub(sug)
-		return 1
+		return unknownAccountSubcommand(parent, args[0])
 	}
+}
+
+func unknownAccountSubcommand(parent cliCommand, name string) int {
+	sug, _ := suggestSubcommand(name, parent)
+	fmt.Fprintf(os.Stderr, "gregale account: unknown subcommand %q\n", name)
+	maybeSuggestSub(sug)
+	return 1
 }
 
 // cmdAccountExport downloads the GDPR export bundle. Default output

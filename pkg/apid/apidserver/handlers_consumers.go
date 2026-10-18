@@ -213,6 +213,30 @@ func (s *server) countAccountConsumerKeys(ctx context.Context, acctID string) (i
 	return count, nil
 }
 
+// consumerKeyScopesProblem trims scopes in place and rejects unknown or
+// repeated ones. The billing scope only reaches API monetization's
+// self-service routes, so it is not offered until monetization is released
+// (ADR-20261018090210).
+func (s *server) consumerKeyScopesProblem(scopes []string) *api.Problem {
+	billing, allowed := s.apiMonetizationEnabled(), "scopes must contain only read, write, or admin"
+	if billing {
+		allowed = "scopes must contain only read, write, admin, or billing"
+	}
+	seen := make(map[string]struct{}, len(scopes))
+	for i, scope := range scopes {
+		scopes[i] = strings.TrimSpace(scope)
+		if scopes[i] != "read" && scopes[i] != "write" && scopes[i] != "admin" && (!billing || scopes[i] != api.ConsumerScopeBilling) {
+			return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid consumer key scope", allowed)
+		}
+		if _, ok := seen[scopes[i]]; ok {
+			return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+				"Invalid consumer key scope", "scopes must not contain duplicates")
+		}
+		seen[scopes[i]] = struct{}{}
+	}
+	return nil
+}
+
 func (s *server) createConsumerKey(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.consumerFeatureAllowed(w, acct) {
 		return
@@ -241,20 +265,9 @@ func (s *server) createConsumerKey(w http.ResponseWriter, r *http.Request, acct 
 			"Invalid consumer key", "name must be 1-64 characters and scopes must not be empty"))
 		return
 	}
-	seen := make(map[string]struct{}, len(req.Scopes))
-	for i, scope := range req.Scopes {
-		req.Scopes[i] = strings.TrimSpace(scope)
-		if req.Scopes[i] != "read" && req.Scopes[i] != "write" && req.Scopes[i] != "admin" && req.Scopes[i] != api.ConsumerScopeBilling {
-			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-				"Invalid consumer key scope", "scopes must contain only read, write, admin, or billing"))
-			return
-		}
-		if _, ok := seen[req.Scopes[i]]; ok {
-			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-				"Invalid consumer key scope", "scopes must not contain duplicates"))
-			return
-		}
-		seen[req.Scopes[i]] = struct{}{}
+	if problem := s.consumerKeyScopesProblem(req.Scopes); problem != nil {
+		api.WriteProblem(w, problem)
+		return
 	}
 	if req.ExpiresAt != nil && !req.ExpiresAt.After(time.Now()) {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,

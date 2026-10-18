@@ -59,7 +59,10 @@ func (h *Handler) enforceTenantRequestBudget(w http.ResponseWriter, r *http.Requ
 		h.denyTenantBudgetUnavailable(w, r, rec, app)
 		return false
 	}
-	if decision.Allowed {
+	// An overdue hold is API monetization: while it is off a held tenant is
+	// served (ADR-20261018090210). The hold refused before its budget was
+	// counted, so this request does not use budget.
+	if decision.Allowed || decision.Scope == TenantBudgetScopeOverdue && !h.apiMonetizationEnabled() {
 		return true
 	}
 	suppressFinancialUsage(r)

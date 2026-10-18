@@ -38,6 +38,19 @@ type Host interface {
 type Service struct {
 	Host Host
 	Now  func() time.Time
+	// Enabled pauses the background worker while it reports false: API
+	// monetization is released by a runtime setting (ADR-20261018090210).
+	// Nil runs it.
+	Enabled func() bool
+}
+
+// tick runs one background tick unless Enabled pauses the worker; paused,
+// spend caps are not rechecked.
+func (s *Service) tick(ctx context.Context) error {
+	if s.Enabled != nil && !s.Enabled() {
+		return nil
+	}
+	return s.CheckOnce(ctx)
 }
 
 var currencyRE = regexp.MustCompile(`^[A-Z]{3}$`)
@@ -317,7 +330,7 @@ func (s *Service) Start(ctx context.Context, log *slog.Logger) {
 		ticker := time.NewTicker(api.ConsumerSpendCapCheckInterval)
 		defer ticker.Stop()
 		for {
-			if err := s.CheckOnce(ctx); err != nil && ctx.Err() == nil {
+			if err := s.tick(ctx); err != nil && ctx.Err() == nil {
 				log.Warn("consumer spend cap check failed", "err", err)
 			}
 			select {

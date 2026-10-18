@@ -255,10 +255,11 @@ func usageCommitFrom(ctx context.Context) *usageCommit {
 
 // armUsageCommit holds a monetized request's final response bytes until its
 // usage is durable (ADR-1505). Called just before the request is forwarded;
-// anonymous and audit-only traffic keeps the observe-time append.
+// anonymous and audit-only traffic, and all traffic while API monetization
+// is off (ADR-20261018090210), keeps the observe-time append.
 func (h *Handler) armUsageCommit(r *http.Request, target Target) {
 	holder, _ := r.Context().Value(usageCommitKey{}).(*usageCommitHolder)
-	if holder == nil || h.usageOutbox == nil || isRouteProbe(r.Context()) || r.Context().Value(suppressFinancialUsageKey{}) == true {
+	if holder == nil || h.usageOutbox == nil || !h.apiMonetizationEnabled() || isRouteProbe(r.Context()) || r.Context().Value(suppressFinancialUsageKey{}) == true {
 		return
 	}
 	accountID, appID := accountIDFromContext(r.Context()), appIDFromContext(r.Context())

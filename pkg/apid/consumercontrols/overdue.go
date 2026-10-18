@@ -130,7 +130,7 @@ func (s *Service) Start(ctx context.Context, log *slog.Logger) {
 		ticker := time.NewTicker(api.ConsumerOverdueCheckInterval)
 		defer ticker.Stop()
 		for {
-			if err := s.SyncOverdueOnce(ctx); err != nil && ctx.Err() == nil {
+			if err := s.tick(ctx); err != nil && ctx.Err() == nil {
 				log.Warn("overdue check failed", "err", err)
 			}
 			select {

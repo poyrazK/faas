@@ -45,7 +45,7 @@ func TestTenantSurfaceUnitsAndOverdueHold(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &overdueTenantStore{}
-	h := NewHandlerWith(backend, NewMetrics(), nil).WithTenantRequestBudgetStore(store)
+	h := NewHandlerWith(backend, NewMetrics(), nil).WithAPIMonetization(monetizationOn).WithTenantRequestBudgetStore(store)
 	h.usageOutbox = q
 	h.requestTelemetry = makeTestRecorder()
 	request := func() *httptest.ResponseRecorder {

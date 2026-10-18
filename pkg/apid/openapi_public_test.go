@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/apid/monetization"
 	"gopkg.in/yaml.v3"
 )
 
@@ -26,10 +27,11 @@ func decodeSpec(t *testing.T, raw []byte) specShape {
 }
 
 // The anonymous spec must not advertise the durable entity preview, while the
-// embedded source keeps it for SDK generation and contract tooling.
+// embedded source keeps it for SDK generation and contract tooling. API
+// monetization is published here so only the preview filter is measured.
 func TestPublicOpenAPIHidesDurableEntityPaths(t *testing.T) {
 	full := decodeSpec(t, OpenAPIYAML())
-	public := decodeSpec(t, PublicOpenAPIYAML())
+	public := decodeSpec(t, PublicOpenAPIYAMLFor(true))
 	hidden := 0
 	for path := range full.Paths {
 		if hiddenPublicPath(path) {
@@ -75,6 +77,76 @@ func TestPublicOpenAPIPrunesExclusiveComponents(t *testing.T) {
 	for _, name := range []string{"Problem", "DurableEntityValidatorDeploymentInfo"} {
 		if _, ok := public.Components["schemas"][name]; !ok {
 			t.Errorf("public spec dropped shared schema %s", name)
+		}
+	}
+}
+
+// adr: 20261018090210 — until API monetization is released the served spec
+// lists none of its paths, schemas only they use or webhook events; once it
+// is released they all return.
+func TestPublicOpenAPIFollowsMonetizationRelease(t *testing.T) {
+	full := decodeSpec(t, OpenAPIYAML())
+	hidden := decodeSpec(t, PublicOpenAPIYAMLFor(false))
+	shown := decodeSpec(t, PublicOpenAPIYAMLFor(true))
+	monetized := 0
+	for path := range full.Paths {
+		if !monetization.Path(path) || hiddenPublicPath(path) {
+			continue
+		}
+		monetized++
+		if _, ok := hidden.Paths[path]; ok {
+			t.Errorf("hidden spec lists %s", path)
+		}
+		if _, ok := shown.Paths[path]; !ok {
+			t.Errorf("released spec dropped %s", path)
+		}
+	}
+	if monetized < 50 {
+		t.Fatalf("only %d monetization paths in the embedded spec; the route list is stale", monetized)
+	}
+	for _, name := range []string{"APIConsumerRateCardResponse", "BillingRunResponse"} {
+		if _, ok := full.Components["schemas"][name]; !ok {
+			t.Fatalf("embedded spec lacks %s; update this test", name)
+		}
+		if _, ok := hidden.Components["schemas"][name]; ok {
+			t.Errorf("hidden spec still defines %s", name)
+		}
+		if _, ok := shown.Components["schemas"][name]; !ok {
+			t.Errorf("released spec dropped %s", name)
+		}
+	}
+	hiddenYAML, shownYAML := string(PublicOpenAPIYAMLFor(false)), string(PublicOpenAPIYAMLFor(true))
+	for _, event := range monetization.WebhookEvents {
+		if strings.Contains(hiddenYAML, "- "+event+"\n") || strings.Contains(hiddenYAML, "["+event) {
+			t.Errorf("hidden spec still offers webhook event %s", event)
+		}
+		if !strings.Contains(shownYAML, event) {
+			t.Errorf("released spec lacks webhook event %s", event)
+		}
+	}
+	if string(PublicOpenAPIYAML()) != hiddenYAML {
+		t.Error("PublicOpenAPIYAML must be the hidden variant")
+	}
+}
+
+func TestOpenAPIHandlersFollowMonetization(t *testing.T) {
+	var on bool
+	o := OpenAPI{Monetization: func() bool { return on }}
+	for _, release := range []bool{false, true} {
+		on = release
+		rec := httptest.NewRecorder()
+		o.ServeJSON(rec, httptest.NewRequest(http.MethodGet, "/v1/openapi.json", nil))
+		var spec specShape
+		if err := json.Unmarshal(rec.Body.Bytes(), &spec); err != nil {
+			t.Fatalf("decode JSON spec: %v", err)
+		}
+		if _, ok := spec.Paths["/v1/apps/{slug}/rate-cards"]; ok != release {
+			t.Errorf("released=%t: rate cards listed=%t", release, ok)
+		}
+		rec = httptest.NewRecorder()
+		o.ServeDocs(rec, httptest.NewRequest(http.MethodGet, "/docs", nil))
+		if !strings.Contains(rec.Body.String(), openAPIJSONSHA256For(release)) {
+			t.Errorf("released=%t: docs page names another document", release)
 		}
 	}
 }
@@ -129,7 +201,7 @@ func TestServeOpenAPISpecJSONHidesDurableEntityPaths(t *testing.T) {
 }
 
 func TestPublicSpecFailsClosed(t *testing.T) {
-	if got := string(publicSpec([]byte("paths: [unterminated"))); !strings.HasPrefix(got, "error:") {
+	if got := string(publicSpec([]byte("paths: [unterminated"), false)); !strings.HasPrefix(got, "error:") {
 		t.Errorf("malformed spec returned %q, want an error document", got)
 	}
 }

@@ -29,7 +29,11 @@ type guestExecutionEvidence struct {
 	FlagEvidenceJSON       string
 	// MeterUnits are the units the app reported in Gregale-Usage
 	// (ADR-1318), summed per meter.
-	MeterUnits   map[string]int64
+	MeterUnits map[string]int64
+	// usageHeader is set while API monetization is on: only then is
+	// Gregale-Usage a platform header that is consumed and removed
+	// (ADR-20261018090210). Off, it reaches the client untouched.
+	usageHeader  bool
 	cpuUsageSeen bool
 	peakRSSSeen  bool
 	seen         bool
@@ -48,8 +52,15 @@ type guestExecutionEvidenceSnapshot struct {
 
 type guestExecutionEvidenceContextKey struct{}
 
-func withGuestExecutionEvidence(r *http.Request) *http.Request {
-	return r.WithContext(context.WithValue(r.Context(), guestExecutionEvidenceContextKey{}, &guestExecutionEvidence{}))
+func withGuestExecutionEvidence(r *http.Request, usageHeader bool) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), guestExecutionEvidenceContextKey{}, &guestExecutionEvidence{usageHeader: usageHeader}))
+}
+
+// usageHeaderOwned reports whether the request's Gregale-Usage header is
+// the platform's to consume.
+func usageHeaderOwned(ctx context.Context) bool {
+	evidence, ok := ctx.Value(guestExecutionEvidenceContextKey{}).(*guestExecutionEvidence)
+	return ok && evidence != nil && evidence.usageHeader
 }
 
 // guestExecutionEvidenceOf is the request's evidence collector, or nil.
@@ -129,6 +140,9 @@ func recordGuestExecutionEvidence(ctx context.Context, name, value string) bool 
 	defer evidence.mu.Unlock()
 	switch name {
 	case api.UsageHeader:
+		if !evidence.usageHeader {
+			return false
+		}
 		evidence.addUsageHeader(value)
 		return true
 	case api.FlagEvidenceHeader:
@@ -249,7 +263,7 @@ func forwardedResponseHeaderWithUpgrade(ctx context.Context, dst http.Header, na
 	if guestSetsManagedReleaseContextCookie(ctx, name, value) {
 		return
 	}
-	if !recordGuestExecutionEvidence(ctx, name, value) && !isGuestEvidenceHeader(name) {
+	if !recordGuestExecutionEvidence(ctx, name, value) && !platformResponseHeader(ctx, name) {
 		dst.Add(name, value)
 	}
 }
@@ -277,6 +291,15 @@ func stripGuestManagedPlatformCookiesResponseHeader(resp *http.Response) {
 			resp.Header.Add("Set-Cookie", value)
 		}
 	}
+}
+
+// platformResponseHeader reports whether name is a platform marker the guest
+// must not pass to the client.
+func platformResponseHeader(ctx context.Context, name string) bool {
+	if http.CanonicalHeaderKey(strings.TrimSpace(name)) == api.UsageHeader {
+		return usageHeaderOwned(ctx)
+	}
+	return isGuestEvidenceHeader(name)
 }
 
 func isGuestEvidenceHeader(name string) bool {
@@ -312,12 +335,15 @@ func stripGuestEvidenceResponseHeaders(resp *http.Response) {
 		api.GuestEvidencePeakRSSHeader,
 		api.UsageHeader,
 	} {
+		if !platformResponseHeader(ctx, name) {
+			continue
+		}
 		for _, value := range resp.Header.Values(name) {
 			recordGuestExecutionEvidence(ctx, name, value)
 		}
 		resp.Header.Del(name)
 	}
-	if resp.Body != nil {
+	if resp.Body != nil && usageHeaderOwned(ctx) {
 		resp.Body = &usageTrailerReader{ReadCloser: resp.Body, resp: resp, ctx: ctx}
 	}
 }

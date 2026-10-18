@@ -36,6 +36,19 @@ type Host interface {
 type Service struct {
 	Host Host
 	Now  func() time.Time
+	// Enabled pauses the background worker while it reports false: API
+	// monetization is released by a runtime setting (ADR-20261018090210).
+	// Nil runs it.
+	Enabled func() bool
+}
+
+// tick runs one background tick unless Enabled pauses the worker; paused,
+// holds are neither placed nor lifted.
+func (s *Service) tick(ctx context.Context) error {
+	if s.Enabled != nil && !s.Enabled() {
+		return nil
+	}
+	return s.SyncOverdueOnce(ctx)
 }
 
 func (s *Service) now() time.Time {

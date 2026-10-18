@@ -1031,6 +1031,10 @@ func isHandlerErrorResult(body []byte) bool {
 // runDeps is the dependency seam for run. Tests inject net.Listen / http.Server
 // wrappers so the seam is fully exercised without spawning a real daemon.
 type runDeps struct {
+	// apiMonetization is the API monetization release gate
+	// (ADR-20261018090210), following the api_monetization_enabled runtime
+	// setting. Nil keeps monetization off.
+	apiMonetization func() bool
 	// Private identity is built only with the process-wide drain tracker.
 	runtimeIngressIdentity http.Handler
 	listen                 func(network, addr string) (net.Listener, error)
@@ -1494,6 +1498,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	deps.appsDomain = appsDomain
 	tenantSurfacesFlag := runtimeconfig.NewBoolFlag(api.TenantSurfacesEnabled())
+	apiMonetizationFlag := runtimeconfig.NewBoolFlag(api.APIMonetizationEnabled())
+	deps.apiMonetization = apiMonetizationFlag.Load
 	hstsFlag := runtimeconfig.NewBoolFlag(httpsec.HSTSEnabledFromEnv(osGetenv))
 	httpsec.SetHSTSEnabled(hstsFlag.Load())
 	router := pgRouter{
@@ -2096,7 +2102,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 		defer runtimeCancel()
 		watcher := runtimeconfig.New(pgStore, pool,
-			[]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS},
+			[]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS, runtimeconfig.KeyAPIMonetization},
 			func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 				enabled, err := runtimeconfig.Bool(value)
 				if err != nil {
@@ -2105,6 +2111,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 				switch key {
 				case runtimeconfig.KeyTenantSurfaces:
 					tenantSurfacesFlag.Store(enabled)
+				case runtimeconfig.KeyAPIMonetization:
+					apiMonetizationFlag.Store(enabled)
 				case runtimeconfig.KeyHSTS:
 					hstsFlag.Store(enabled)
 					httpsec.SetHSTSEnabled(enabled)
@@ -2782,6 +2790,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// adapter translates only the narrow lookup/touch contract.
 	handler.WithConsumerAuth(newConsumerAuthStore(deps.pgStore))
 	handler.WithTenantRequestBudgetStore(newTenantRequestBudgetStore(deps.pgStore))
+	handler.WithAPIMonetization(deps.apiMonetization)
 	// ADR-978: order the warm-capacity queue by route priority. Rules are
 	// read only for requests that have to queue, through a 30 s cache.
 	if pgStore := deps.pgStore; pgStore != nil {
@@ -3926,6 +3935,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Wake:      newServiceProxyWaker(pgStore, handler.EnsureWakeAheadCapacity),
 		})
 		serviceProxyConfig := gateway.ServiceProxyConfig{
+			APIMonetization:           deps.apiMonetization,
 			AdmitManagedAsync:         gateway.NewRehearsalAsyncAdmitter(pgStore),
 			Provider:                  serviceEndpointProvider,
 			Resolve:                   newServiceProxyResolver(pgStore),

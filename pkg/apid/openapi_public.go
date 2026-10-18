@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/onebox-faas/faas/pkg/apid/monetization"
 	"gopkg.in/yaml.v3"
 )
 
@@ -15,21 +16,36 @@ import (
 // for SDK generation, contract diffs and the route compliance gate.
 var publicHiddenPathPrefixes = []string{"/v1/apps/{slug}/entities"}
 
-var (
-	publicYAMLOnce sync.Once
-	publicYAML     []byte
-)
+// publicSpecs caches the served spec: index 0 hides API monetization
+// (ADR-20261018090210), index 1 publishes it.
+var publicSpecs [2]struct {
+	once sync.Once
+	yaml []byte
+}
 
-// PublicOpenAPIYAML returns the embedded spec without hidden paths or the
-// components only they reference. Computed on first use, like the JSON form.
-func PublicOpenAPIYAML() []byte {
-	publicYAMLOnce.Do(func() { publicYAML = publicSpec(openapiYAML) })
-	return publicYAML
+// PublicOpenAPIYAML returns the embedded spec without hidden paths, API
+// monetization's included, or the components only they reference.
+func PublicOpenAPIYAML() []byte { return PublicOpenAPIYAMLFor(false) }
+
+// PublicOpenAPIYAMLFor returns the served spec, publishing API monetization's
+// paths and webhook events only when monetization is released. Each variant
+// is computed on first use, like the JSON form.
+func PublicOpenAPIYAMLFor(monetization bool) []byte {
+	spec := &publicSpecs[specIndex(monetization)]
+	spec.once.Do(func() { spec.yaml = publicSpec(openapiYAML, monetization) })
+	return spec.yaml
+}
+
+func specIndex(monetization bool) int {
+	if monetization {
+		return 1
+	}
+	return 0
 }
 
 // publicSpec filters raw. A spec it cannot rewrite yields an error document,
 // never the unfiltered spec, so hidden paths cannot leak on failure.
-func publicSpec(raw []byte) []byte {
+func publicSpec(raw []byte, showMonetization bool) []byte {
 	const malformed = "error: openapi spec is malformed at build time\n"
 	var doc yaml.Node
 	if err := yaml.Unmarshal(raw, &doc); err != nil || len(doc.Content) == 0 {
@@ -43,7 +59,7 @@ func publicSpec(raw []byte) []byte {
 	var removed []*yaml.Node
 	kept := make([]*yaml.Node, 0, len(paths.Content))
 	for i := 0; i+1 < len(paths.Content); i += 2 {
-		if hiddenPublicPath(paths.Content[i].Value) {
+		if hiddenPublicPath(paths.Content[i].Value) || !showMonetization && monetization.Path(paths.Content[i].Value) {
 			removed = append(removed, paths.Content[i+1])
 			continue
 		}
@@ -54,6 +70,9 @@ func publicSpec(raw []byte) []byte {
 	}
 	paths.Content = kept
 	pruneComponents(root, removed)
+	if !showMonetization {
+		dropListValues(root, monetization.WebhookEvent)
+	}
 	explicitNulls(root)
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
@@ -135,6 +154,29 @@ func componentRef(value string) (string, bool) {
 		return "", false
 	}
 	return "#/components/" + parts[0] + "/" + parts[1], true
+}
+
+// dropListValues removes matching scalars from every enum and default list,
+// so the remaining schemas stop naming hidden webhook events.
+func dropListValues(node *yaml.Node, drop func(string) bool) {
+	if node.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			list := node.Content[i+1]
+			if key := node.Content[i].Value; (key != "enum" && key != "default") || list.Kind != yaml.SequenceNode {
+				continue
+			}
+			kept := list.Content[:0]
+			for _, item := range list.Content {
+				if item.Kind != yaml.ScalarNode || !drop(item.Value) {
+					kept = append(kept, item)
+				}
+			}
+			list.Content = kept
+		}
+	}
+	for _, child := range node.Content {
+		dropListValues(child, drop)
+	}
 }
 
 // explicitNulls spells implicit nulls (an empty value) as `null`: the encoder
