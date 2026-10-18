@@ -15,21 +15,38 @@ import (
 type Metrics struct {
 	registry      *prometheus.Registry
 	webhookEvents *prometheus.CounterVec
+	scheduleFires *prometheus.CounterVec
 }
 
 func NewMetrics(registry *prometheus.Registry, prefix string) *Metrics {
-	events := prometheus.NewCounterVec(prometheus.CounterOpts{
+	events := registerCounterVec(registry, prometheus.CounterOpts{
 		Name: prefix + "_customer_operation_webhook_events_total",
 		Help: "Verified provider events on operation-bound endpoints by binding mode and result; refused is any non-2xx answer.",
-	}, []string{"mode", "result"})
-	if err := registry.Register(events); err != nil {
+	}, "mode", "result")
+	fires := registerCounterVec(registry, prometheus.CounterOpts{
+		Name: prefix + "_customer_operation_schedule_fires_total",
+		Help: "Operation schedule fires by result: admitted, refused (recorded on the schedule) or error (retried after the lease lapses).",
+	}, "result")
+	return &Metrics{registry: registry, webhookEvents: events, scheduleFires: fires}
+}
+
+func registerCounterVec(registry *prometheus.Registry, opts prometheus.CounterOpts, labels ...string) *prometheus.CounterVec {
+	counter := prometheus.NewCounterVec(opts, labels)
+	if err := registry.Register(counter); err != nil {
 		var existing prometheus.AlreadyRegisteredError
 		if !errors.As(err, &existing) {
 			panic(err)
 		}
-		events = existing.ExistingCollector.(*prometheus.CounterVec)
+		counter = existing.ExistingCollector.(*prometheus.CounterVec)
 	}
-	return &Metrics{registry: registry, webhookEvents: events}
+	return counter
+}
+
+func (m *Metrics) scheduleFire(result string) {
+	if m == nil {
+		return
+	}
+	m.scheduleFires.WithLabelValues(result).Inc()
 }
 
 func (m *Metrics) Registry() *prometheus.Registry {
