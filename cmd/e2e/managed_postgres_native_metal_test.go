@@ -469,7 +469,20 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status != http.StatusNoContent {
 			t.Fatalf("park SQL app: status=%d", status)
 		}
-		initialSnapshot = waitAfterRestoreSnapshot(t, store, deploymentID, initialSnapshot)
+		// pooled_disconnect_recovery captured the post-rotation snapshot. Parking
+		// the guest restored from it keeps that healthy init capture instead of
+		// uploading another one (sched reusableSnapshot), so accept either it or
+		// a newer capture, but never a stale one.
+		ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+		defer cancel()
+		if _, err := e2etest.WaitForAppParked(ctx, t, pool, appID, 45*time.Second); err != nil {
+			t.Fatal("rotated SQL guest did not park")
+		}
+		snapshot, err := store.LatestSnapshotForTier(ctx, deploymentID, state.SnapshotTierInit)
+		if err != nil || snapshot.Stale {
+			t.Fatal("rotated SQL guest has no usable init snapshot")
+		}
+		initialSnapshot = snapshot.ID
 		last = probe(t, bindings[mp.CredentialReadWrite], "restore")
 	})
 	phase("parked_rotation_scheduler_recovery", func(t *testing.T) {
