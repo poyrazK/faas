@@ -3690,7 +3690,7 @@
       "reason",
       "used_at"
     ],
-    "kind": "configuration"
+    "kind": "operational"
   },
   {
     "table": "deployment_mcp_task_holds",
@@ -9087,7 +9087,7 @@
       "request",
       "request_id"
     ],
-    "kind": "customer_data"
+    "kind": "operational"
   },
   {
     "table": "mcp_readiness_fallback_policies",
@@ -9111,7 +9111,7 @@
       "incident_id",
       "snapshot"
     ],
-    "kind": "customer_data"
+    "kind": "operational"
   },
   {
     "table": "mcp_readiness_incident_cursors",
@@ -9150,7 +9150,7 @@
       "sequence",
       "suppression_reason"
     ],
-    "kind": "customer_data"
+    "kind": "operational"
   },
   {
     "table": "mcp_readiness_incidents",
@@ -9166,7 +9166,7 @@
       "rule_id",
       "scope"
     ],
-    "kind": "customer_data"
+    "kind": "operational"
   },
   {
     "table": "mcp_readiness_maintenance_windows",
@@ -9199,7 +9199,7 @@
       "receipt",
       "request_id"
     ],
-    "kind": "customer_data"
+    "kind": "operational"
   },
   {
     "table": "mcp_readiness_pagerduty_ack_events",
@@ -9213,7 +9213,7 @@
       "received_at",
       "rule_id"
     ],
-    "kind": "customer_data"
+    "kind": "operational"
   },
   {
     "table": "mcp_readiness_pagerduty_acknowledgements",
