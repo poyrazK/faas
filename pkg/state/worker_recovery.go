@@ -2,8 +2,10 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -20,16 +22,35 @@ type WorkerRecovery struct {
 	AppID, Revision, ClaimToken, Status  string
 	Failures                             int
 	NextAttemptAt, LeaseUntil, UpdatedAt time.Time
+	Pools                                []WorkerRecoveryPool
 }
 
-func workerRecoveryFromSQL(r sqlc.WorkerRecovery) WorkerRecovery {
+// WorkerRecoveryPool is the scheduler's last successfully observed plan and
+// resident fleet for an environment. Revision fences observations from older
+// desired intent, including during mixed-version rollout.
+type WorkerRecoveryPool struct {
+	Scope        string    `json:"scope"`
+	DeploymentID string    `json:"deployment_id"`
+	Revision     string    `json:"revision"`
+	ObservedAt   time.Time `json:"observed_at"`
+	Desired      int       `json:"desired"`
+	Running      int       `json:"running"`
+	Starting     int       `json:"starting"`
+	Draining     int       `json:"draining"`
+}
+
+func workerRecoveryFromSQL(r sqlc.WorkerRecovery) (WorkerRecovery, error) {
 	var token string
 	if r.ClaimToken.Valid {
 		token = uuid.UUID(r.ClaimToken.Bytes).String()
 	}
+	var pools []WorkerRecoveryPool
+	if err := json.Unmarshal(r.Pools, &pools); err != nil {
+		return WorkerRecovery{}, fmt.Errorf("state: decode worker observations: %w", err)
+	}
 	return WorkerRecovery{AppID: uuid.UUID(r.AppID.Bytes).String(), Revision: r.Revision,
 		ClaimToken: token, Status: r.Status, Failures: int(r.Failures),
-		NextAttemptAt: r.NextAttemptAt.Time, LeaseUntil: r.LeaseUntil.Time, UpdatedAt: r.UpdatedAt.Time}
+		NextAttemptAt: r.NextAttemptAt.Time, LeaseUntil: r.LeaseUntil.Time, UpdatedAt: r.UpdatedAt.Time, Pools: pools}, nil
 }
 
 func workerRecoveryUUID(s string) pgtype.UUID {
@@ -70,16 +91,25 @@ func (s *PgStore) ClaimWorkerRecovery(ctx context.Context, appID, owner, revisio
 	if err != nil {
 		return WorkerRecovery{}, false, fmt.Errorf("state: claim worker recovery: %w", err)
 	}
-	return workerRecoveryFromSQL(r), true, nil
+	out, err := workerRecoveryFromSQL(r)
+	return out, err == nil, err
 }
 
 func (s *PgStore) CompleteWorkerRecovery(ctx context.Context, token string, r WorkerRecovery) error {
 	if !validWorkerRecoveryCompletion(r) {
 		return ErrInvalidArgument
 	}
+	pools := r.Pools
+	if pools == nil {
+		pools = []WorkerRecoveryPool{}
+	}
+	encoded, err := json.Marshal(pools)
+	if err != nil {
+		return fmt.Errorf("state: encode worker observations: %w", err)
+	}
 	n, err := sqlc.New().CompleteWorkerRecovery(ctx, s.pool, sqlc.CompleteWorkerRecoveryParams{
 		AppID: workerRecoveryUUID(r.AppID), ClaimToken: workerRecoveryUUID(token),
-		Status: r.Status, Failures: int32(r.Failures), NextAttemptAt: workerRecoveryTime(r.NextAttemptAt), UpdatedAt: workerRecoveryTime(r.UpdatedAt)})
+		Revision: r.Revision, Status: r.Status, Failures: int32(r.Failures), NextAttemptAt: workerRecoveryTime(r.NextAttemptAt), UpdatedAt: workerRecoveryTime(r.UpdatedAt), Pools: encoded})
 	if err != nil {
 		return fmt.Errorf("state: complete worker recovery: %w", err)
 	}
@@ -97,7 +127,7 @@ func (s *PgStore) WorkerRecoveryByApp(ctx context.Context, id string) (WorkerRec
 	if err != nil {
 		return WorkerRecovery{}, fmt.Errorf("state: read worker recovery: %w", err)
 	}
-	return workerRecoveryFromSQL(r), nil
+	return workerRecoveryFromSQL(r)
 }
 
 func (m *MemStore) ListWorkerRecoveryApps(_ context.Context, owner string, now time.Time, limit int) ([]string, error) {
@@ -159,6 +189,7 @@ func (m *MemStore) ClaimWorkerRecovery(_ context.Context, id, owner, revision, t
 		r.Failures = 0
 		r.NextAttemptAt = now.UTC()
 		r.Status = "reconciling"
+		r.Pools = nil
 	}
 	r.AppID, r.Revision, r.ClaimToken = id, revision, token
 	r.LeaseUntil, r.UpdatedAt = until.UTC(), now.UTC()
@@ -169,6 +200,7 @@ func (m *MemStore) ClaimWorkerRecovery(_ context.Context, id, owner, revision, t
 		m.workerRecovery = make(map[string]WorkerRecovery)
 	}
 	m.workerRecovery[id] = r
+	r.Pools = slices.Clone(r.Pools)
 	return r, true, nil
 }
 
@@ -180,6 +212,16 @@ func validWorkerRecoveryClaim(revision, token string, now, until time.Time) bool
 func validWorkerRecoveryCompletion(r WorkerRecovery) bool {
 	if r.Failures < 0 || r.Failures > api.WorkerRecoveryFailureCountMax || r.UpdatedAt.IsZero() || r.NextAttemptAt.Before(r.UpdatedAt) {
 		return false
+	}
+	seen := make(map[string]bool, len(r.Pools))
+	for _, pool := range r.Pools {
+		if api.ValidateScope(pool.Scope) != nil || seen[pool.Scope] || pool.Revision != r.Revision ||
+			pool.ObservedAt.IsZero() || pool.ObservedAt.After(r.UpdatedAt) ||
+			pool.Desired < 0 || pool.Running < 0 || pool.Starting < 0 || pool.Draining < 0 ||
+			(pool.Desired > 0 && pool.DeploymentID == "") {
+			return false
+		}
+		seen[pool.Scope] = true
 	}
 	switch r.Status {
 	case "ready", "starting", "draining", "waiting_capacity", "retrying_startup", "waiting_dependency":
@@ -196,10 +238,11 @@ func (m *MemStore) CompleteWorkerRecovery(_ context.Context, token string, r Wor
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	old, ok := m.workerRecovery[r.AppID]
-	if !ok || old.ClaimToken != token || token == "" || !old.LeaseUntil.After(r.UpdatedAt) {
+	if !ok || old.ClaimToken != token || token == "" || old.Revision != r.Revision || !old.LeaseUntil.After(r.UpdatedAt) {
 		return ErrConflict
 	}
 	old.Status, old.Failures, old.NextAttemptAt, old.UpdatedAt = r.Status, r.Failures, r.NextAttemptAt.UTC(), r.UpdatedAt.UTC()
+	old.Pools = slices.Clone(r.Pools)
 	old.ClaimToken, old.LeaseUntil = "", time.Unix(0, 0).UTC()
 	m.workerRecovery[r.AppID] = old
 	return nil
@@ -212,6 +255,7 @@ func (m *MemStore) WorkerRecoveryByApp(_ context.Context, id string) (WorkerReco
 	if !ok {
 		return WorkerRecovery{}, ErrNotFound
 	}
+	r.Pools = slices.Clone(r.Pools)
 	return r, nil
 }
 

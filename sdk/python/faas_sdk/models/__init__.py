@@ -328,6 +328,9 @@ from .app_webhook_response_event_filter_item import AppWebhookResponseEventFilte
 from .app_webhook_response_retry_policy import AppWebhookResponseRetryPolicy
 from .app_webhook_response_webhook_secret_sealed_masked import AppWebhookResponseWebhookSecretSealedMasked
 from .app_webhook_retry_delivery_response import AppWebhookRetryDeliveryResponse
+from .app_worker_pool_observation import AppWorkerPoolObservation
+from .app_worker_recovery import AppWorkerRecovery
+from .app_worker_recovery_scope import AppWorkerRecoveryScope
 from .application_standard_adoption import ApplicationStandardAdoption
 from .application_standard_assignment import ApplicationStandardAssignment
 from .application_standard_assignment_list import ApplicationStandardAssignmentList
@@ -5670,6 +5673,9 @@ __all__ = (
     "AppWebhookResponseRetryPolicy",
     "AppWebhookResponseWebhookSecretSealedMasked",
     "AppWebhookRetryDeliveryResponse",
+    "AppWorkerPoolObservation",
+    "AppWorkerRecovery",
+    "AppWorkerRecoveryScope",
     "AssignAPIConsumerPlanRequest",
     "AssignPlatformTenantPlanRequest",
     "AsyncInvokeResponse",

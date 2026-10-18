@@ -11369,6 +11369,7 @@ type WorkerRecovery struct {
 	Failures      int32
 	NextAttemptAt pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
+	Pools         []byte
 }
 
 type WorkflowAutomationDefinition struct {

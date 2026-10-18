@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,6 +21,7 @@ type workerRecoveryAttempt struct {
 	status  string
 	cooling bool
 	scoped  bool
+	scope   string
 }
 
 func isWorkerApp(app state.App) bool {
@@ -54,7 +56,7 @@ func workerRecoveryBackoff(failures int) time.Duration {
 	return min(delay, maximum)
 }
 
-func (e *Engine) beginWorkerRecovery(ctx context.Context, app state.App, deps []state.Deployment, scoped bool) (*workerRecoveryAttempt, bool, error) {
+func (e *Engine) beginWorkerRecovery(ctx context.Context, app state.App, deps []state.Deployment, scope string) (*workerRecoveryAttempt, bool, error) {
 	if app.Status != state.AppActive {
 		return nil, true, nil // Lifecycle cleanup never admits another worker.
 	}
@@ -66,7 +68,7 @@ func (e *Engine) beginWorkerRecovery(ctx context.Context, app state.App, deps []
 		return nil, false, err
 	}
 	return &workerRecoveryAttempt{lease: lease, status: "ready",
-		cooling: lease.Failures > 0 && lease.NextAttemptAt.After(now), scoped: scoped}, true, nil
+		cooling: lease.Failures > 0 && lease.NextAttemptAt.After(now), scoped: scope != "", scope: scope}, true, nil
 }
 
 func (a *workerRecoveryAttempt) observe(status string) {
@@ -91,6 +93,14 @@ func (e *Engine) completeWorkerRecovery(ctx context.Context, a *workerRecoveryAt
 	}
 	now := e.now().UTC()
 	row := a.lease
+	// An older writer can change the desired revision without refreshing the
+	// diagnostic JSON. These remnants must not block releasing the app lease.
+	row.Pools = nil
+	for _, pool := range a.lease.Pools {
+		if pool.Revision == row.Revision {
+			row.Pools = append(row.Pools, pool)
+		}
+	}
 	row.UpdatedAt = now
 	row.Status = a.status
 	row.NextAttemptAt = now.Add(time.Duration(api.WorkerRecoveryPollIntervalSeconds) * time.Second)
@@ -118,6 +128,12 @@ func (e *Engine) completeWorkerRecovery(ctx context.Context, a *workerRecoveryAt
 		row.Failures = 0
 		row.NextAttemptAt = now.Add(time.Duration(api.WorkerRecoveryHealthyIntervalSeconds) * time.Second)
 	}
+	// A busy environment cannot keep moving the full-app sweep into the future.
+	// Failed attempts still retain their admission backoff above.
+	if a.scoped && attemptErr == nil && (a.status == "ready" || a.status == "starting" || a.status == "draining") &&
+		row.NextAttemptAt.After(a.lease.NextAttemptAt) {
+		row.NextAttemptAt = a.lease.NextAttemptAt
+	}
 	if row.NextAttemptAt.Before(now) {
 		row.NextAttemptAt = now // Cooldown may have elapsed during scale-in.
 	}
@@ -136,28 +152,61 @@ func (e *Engine) observeWorkerRecoveryFleet(ctx context.Context, appID string, p
 	if err != nil {
 		return err
 	}
+	now := e.now().UTC()
+	observations := make([]state.WorkerRecoveryPool, 0, len(plans))
 	for _, plan := range plans {
-		if plan.target == "" || plan.queueHold {
-			continue
+		residents := make(map[string]bool, len(plan.workers))
+		for id := range plan.residents {
+			residents[id] = true
 		}
-		ready, starting, draining := 0, 0, 0
+		for _, ins := range plan.workers {
+			residents[ins.ID] = true
+		}
+		ready, starting, draining, targetSlots := 0, 0, 0, 0
 		for _, ins := range rows {
-			if ins.DeploymentID != plan.target || ins.Mode != string(state.InstanceModeWorker) {
+			if ins.Mode != string(state.InstanceModeWorker) || !state.State(ins.State).CountsForRAM() ||
+				(ins.DeploymentID != plan.target && !residents[ins.ID]) {
+				continue
+			}
+			stopping := e.workerStopping(ins.ID)
+			if ins.DeploymentID == plan.target {
+				// Retired residents are visible as draining but cannot satisfy
+				// the target generation's existing allocation/readiness gate.
+				switch state.State(ins.State) {
+				case state.StateRunning:
+					if !stopping {
+						targetSlots++
+					}
+				case state.StateWaking, state.StateColdBooting, state.StateDraining:
+					targetSlots++
+				}
+			}
+			if ins.DeploymentID != plan.target || stopping {
+				draining++
 				continue
 			}
 			switch state.State(ins.State) {
 			case state.StateRunning:
-				if !e.workerStopping(ins.ID) {
-					ready++
-				}
+				ready++
 			case state.StateWaking, state.StateColdBooting:
 				starting++
-			case state.StateDraining:
+			default:
 				draining++
 			}
 		}
+		if plan.target != "" || ready+starting+draining > 0 {
+			observations = append(observations, state.WorkerRecoveryPool{
+				Scope: plan.scope, DeploymentID: plan.target, Revision: attempt.lease.Revision, ObservedAt: now,
+				Desired: plan.desired, Running: ready, Starting: starting, Draining: draining})
+		}
+		if plan.target == "" || plan.queueHold {
+			if draining > 0 {
+				attempt.observe("draining")
+			}
+			continue
+		}
 		switch {
-		case ready+starting+draining < plan.desired:
+		case targetSlots < plan.desired:
 			attempt.observe("waiting_capacity")
 		case draining > 0:
 			attempt.observe("draining")
@@ -165,6 +214,15 @@ func (e *Engine) observeWorkerRecoveryFleet(ctx context.Context, appID string, p
 			attempt.observe("starting")
 		}
 	}
+	if attempt.scoped {
+		for _, old := range attempt.lease.Pools {
+			if old.Scope != attempt.scope {
+				observations = append(observations, old)
+			}
+		}
+	}
+	sort.Slice(observations, func(i, j int) bool { return observations[i].Scope < observations[j].Scope })
+	attempt.lease.Pools = observations
 	return nil
 }
 
@@ -183,6 +241,15 @@ func (l *Loop) runWorkerRecovery(ctx context.Context) {
 	if err != nil {
 		l.log.Warn("worker recovery: list due apps", "err", err)
 		return
+	}
+	if l.engine.ops != nil {
+		summary, err := l.engine.store.WorkerRecoverySummary(listCtx, l.engine.workerRecoveryOwner(), l.now().UTC())
+		if err != nil {
+			l.log.Warn("worker recovery: collect diagnostics", "err", err)
+		} else {
+			l.engine.ops.SetWorkerRecoverySummary(summary.Apps, summary.Unobserved, summary.Overdue,
+				summary.Desired, summary.Running, summary.Starting, summary.Draining, summary.Missing, l.now().UTC())
+		}
 	}
 	for _, appID := range apps {
 		l.submitWorkerRecovery(ctx, appID)

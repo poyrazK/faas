@@ -64572,6 +64572,7 @@ components:
       description: Bounded app-scoped pending rollbacks and pending or failed restart handoffs. Availability and truncation are explicit; accepted work does not establish completed recovery.
       required: [rollbacks_available, restarts_available, rollbacks_truncated, restarts_truncated, rollbacks, restarts]
       properties:
+        workers: { $ref: '#/components/schemas/AppWorkerRecovery' }
         coverage: { type: string, description: Explicit scoped summaries include only attributable operations; app-wide restarts are excluded. }
         rollbacks_available: { type: boolean }
         restarts_available: { type: boolean }
@@ -64585,6 +64586,36 @@ components:
           type: array
           maxItems: 10
           items: { $ref: '#/components/schemas/RuntimeConfigRestartStatusResponse' }
+    AppWorkerRecovery:
+      type: object
+      description: Read-only app-wide worker retry status and last scheduler pool observations. Environment selection filters pools; retry status remains app-wide. Missing evidence never establishes health.
+      required: [available, eligible, scope, status, failures, pools]
+      properties:
+        available: { type: boolean }
+        eligible: { type: boolean, description: Whether the app and account permit automatic recovery. }
+        scope: { type: string, enum: [app] }
+        status: { type: string, description: Last app-wide recovery outcome; unknown and not_observed indicate missing evidence. }
+        reason: { type: string }
+        failures: { type: integer, minimum: 0, maximum: 32 }
+        next_attempt_at: { type: string, format: date-time }
+        lease_until: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        pools:
+          type: array
+          items: { $ref: '#/components/schemas/AppWorkerPoolObservation' }
+    AppWorkerPoolObservation:
+      type: object
+      description: Last scheduler target after environment scaling and cooldowns, before account or physical capacity admission. Counts describe that observation time; stale after fifteen minutes. Running counts only the target generation; predecessor and stopping residents count as draining.
+      required: [scope, observed_at, stale, desired, running, starting, draining]
+      properties:
+        scope: { type: string }
+        deployment_id: { type: string }
+        observed_at: { type: string, format: date-time }
+        stale: { type: boolean }
+        desired: { type: integer, minimum: 0 }
+        running: { type: integer, minimum: 0 }
+        starting: { type: integer, minimum: 0 }
+        draining: { type: integer, minimum: 0 }
     AppOperationalRollback:
       type: object
       description: Pending checked rollback progress with stable codes and target selection; free-form reasons and blocker diagnostics are omitted.

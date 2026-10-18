@@ -5000,6 +5000,10 @@ type Querier interface {
 	WorkerAdmissionLockAccount(ctx context.Context, db DBTX, arg WorkerAdmissionLockAccountParams) (WorkerAdmissionLockAccountRow, error)
 	WorkerPoolHistory(ctx context.Context, db DBTX, arg WorkerPoolHistoryParams) (WorkerPoolHistoryRow, error)
 	WorkerRecoveryByApp(ctx context.Context, db DBTX, appID pgtype.UUID) (WorkerRecovery, error)
+	// Aggregate only eligible apps owned by this scheduler, including candidates
+	// that have never acquired a lease. Live leases and persisted retry deadlines
+	// suppress overdue detection until they expire plus the discovery grace.
+	WorkerRecoverySummary(ctx context.Context, db DBTX, arg WorkerRecoverySummaryParams) (WorkerRecoverySummaryRow, error)
 	WorkflowAlertSnapshot(ctx context.Context, db DBTX, arg WorkflowAlertSnapshotParams) (WorkflowAlertSnapshotRow, error)
 	WorkflowControlSteps(ctx context.Context, db DBTX, runID pgtype.UUID) ([]WorkflowControlStepsRow, error)
 	// Recheck after acquiring the workflow concurrency lock. Earlier workers can

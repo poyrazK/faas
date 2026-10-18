@@ -166,6 +166,8 @@ export type { AppWebhookDeliveryListResponse } from './AppWebhookDeliveryListRes
 export type { AppWebhookDeliveryResponse } from './AppWebhookDeliveryResponse.js';
 export type { AppWebhookResponse } from './AppWebhookResponse.js';
 export type { AppWebhookRetryDeliveryResponse } from './AppWebhookRetryDeliveryResponse.js';
+export type { AppWorkerPoolObservation } from './AppWorkerPoolObservation.js';
+export type { AppWorkerRecovery } from './AppWorkerRecovery.js';
 export type { ApplicationStandardAdoption } from './ApplicationStandardAdoption.js';
 export type { ApplicationStandardAssignment } from './ApplicationStandardAssignment.js';
 export type { ApplicationStandardAssignmentList } from './ApplicationStandardAssignmentList.js';

@@ -42687,9 +42687,11 @@ CREATE TABLE public.worker_recovery (
     failures integer DEFAULT 0 NOT NULL,
     next_attempt_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
+    pools jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT worker_recovery_check CHECK (((next_attempt_at >= updated_at) OR (claim_token IS NOT NULL))),
     CONSTRAINT worker_recovery_claim_token_check CHECK ((claim_token <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT worker_recovery_failures_check CHECK (((failures >= 0) AND (failures <= 32))),
+    CONSTRAINT worker_recovery_pools_check CHECK ((jsonb_typeof(pools) = 'array'::text)),
     CONSTRAINT worker_recovery_revision_check CHECK ((revision <> ''::text)),
     CONSTRAINT worker_recovery_status_check CHECK ((status = ANY (ARRAY['reconciling'::text, 'ready'::text, 'starting'::text, 'draining'::text, 'waiting_capacity'::text, 'retrying_startup'::text, 'waiting_dependency'::text])))
 );

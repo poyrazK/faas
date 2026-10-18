@@ -1032,6 +1032,7 @@ type Store interface {
 	ClaimWorkerRecovery(ctx context.Context, appID, ownerNodeID, revision, token string, sampledAt, leaseUntil time.Time) (WorkerRecovery, bool, error)
 	CompleteWorkerRecovery(ctx context.Context, token string, recovery WorkerRecovery) error
 	WorkerRecoveryByApp(ctx context.Context, appID string) (WorkerRecovery, error)
+	WorkerRecoverySummary(ctx context.Context, ownerNodeID string, sampledAt time.Time) (WorkerRecoverySummary, error)
 
 	// Ping tests store/database connectivity.
 	Ping(ctx context.Context) error

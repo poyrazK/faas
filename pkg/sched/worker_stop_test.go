@@ -141,11 +141,22 @@ func TestStoppingWorkerStillCountsAgainstAccountCap(t *testing.T) {
 	if err := engine.SeedLedger(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// adr: 20261017223000 — a stopped predecessor stays visible while it
+	// holds resources, even after a new generation becomes the target.
+	target, err := engine.store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "default",
+		Kind: state.DeploymentKindImage, ImageDigest: "sha256:replacement", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := engine.ReconcileWorkerPoolForScope(ctx, app.ID, "default", 1, TriggerWorkerPool); err != nil {
 		t.Fatal(err)
 	}
 	if vmm.coldBoots != 0 {
 		t.Fatalf("admitted a replacement while the stopping worker held the last slot: boots=%d", vmm.coldBoots)
+	}
+	recovery, err := engine.store.WorkerRecoveryByApp(ctx, app.ID)
+	if err != nil || len(recovery.Pools) != 1 || recovery.Pools[0].DeploymentID != target.ID || recovery.Pools[0].Draining != 1 || recovery.Pools[0].Running != 0 {
+		t.Fatalf("stopping predecessor disappeared from diagnostics: %+v %v", recovery.Pools, err)
 	}
 }
 

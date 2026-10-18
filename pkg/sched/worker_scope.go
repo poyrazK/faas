@@ -103,6 +103,8 @@ type workerScopePlan struct {
 	cooldown  bool
 	queueHold bool
 	workers   []state.Instance
+	// Includes residents already owned by a stop, for diagnostics only.
+	residents map[string]bool
 }
 
 func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope string, override *int, trigger string) (resultErr error) {
@@ -123,11 +125,22 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 	if err != nil {
 		return err
 	}
-	attempt, proceed, err := e.beginWorkerRecovery(ctx, app, deployments, onlyScope != "")
+	attempt, proceed, err := e.beginWorkerRecovery(ctx, app, deployments, onlyScope)
 	if err != nil || !proceed {
 		return err
 	}
-	defer func() { e.completeWorkerRecovery(ctx, attempt, resultErr) }()
+	plansReady := false
+	plans := map[string]*workerScopePlan{}
+	defer func() {
+		// Capture the resulting fleet even when an admission/startup failed.
+		// Never publish a partial plan after a demand/dependency read failure.
+		if plansReady {
+			if err := e.observeWorkerRecoveryFleet(ctx, appID, plans, attempt); err != nil && resultErr == nil {
+				resultErr = err
+			}
+		}
+		e.completeWorkerRecovery(ctx, attempt, resultErr)
+	}()
 	instances, err := e.store.ListInstancesForApp(ctx, appID)
 	if err != nil {
 		return err
@@ -136,7 +149,6 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 	for _, dep := range deployments {
 		byDeployment[dep.ID] = dep
 	}
-	plans := map[string]*workerScopePlan{}
 	planFor := func(scope string) *workerScopePlan {
 		if plans[scope] == nil {
 			plans[scope] = &workerScopePlan{scope: scope, app: app}
@@ -185,13 +197,18 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 			if state.State(ins.State) == state.StateMigrating {
 				return fmt.Errorf("worker environment %s is migrating: %w", scope, state.ErrConflict)
 			}
+			plan := planFor(scope)
+			if plan.residents == nil {
+				plan.residents = make(map[string]bool)
+			}
+			plan.residents[ins.ID] = true
 			// A background stop already owns this worker. Leaving it out of
 			// the plan means it is neither kept nor stopped twice, while the
 			// account cap still counts it until teardown commits.
 			if e.workerStopping(ins.ID) {
 				continue
 			}
-			planFor(scope).workers = append(planFor(scope).workers, ins)
+			plan.workers = append(plan.workers, ins)
 		}
 	}
 	scopes := make([]string, 0, len(plans))
@@ -220,6 +237,7 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 		scopes = append(scopes, scope)
 	}
 	sort.Strings(scopes)
+	plansReady = true
 	if len(plans) == 0 && !isWorkerApp(app) {
 		return nil
 	}
@@ -241,7 +259,7 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 			return fmt.Errorf("reconcile worker environment %s: %w", scope, err)
 		}
 	}
-	return e.observeWorkerRecoveryFleet(ctx, appID, plans, attempt)
+	return nil
 }
 
 func (e *Engine) retiredQueueHasInFlightWork(ctx context.Context, app state.App, scope string) (bool, error) {

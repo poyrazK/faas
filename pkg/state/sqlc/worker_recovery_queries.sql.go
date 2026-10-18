@@ -24,9 +24,10 @@ ON CONFLICT (app_id) DO UPDATE SET
  updated_at = EXCLUDED.updated_at,
  status = CASE WHEN worker_recovery.revision <> EXCLUDED.revision THEN 'reconciling' ELSE worker_recovery.status END,
  failures = CASE WHEN worker_recovery.revision <> EXCLUDED.revision THEN 0 ELSE worker_recovery.failures END,
+ pools = CASE WHEN worker_recovery.revision <> EXCLUDED.revision THEN '[]'::jsonb ELSE worker_recovery.pools END,
  next_attempt_at = CASE WHEN worker_recovery.revision <> EXCLUDED.revision THEN EXCLUDED.next_attempt_at ELSE worker_recovery.next_attempt_at END
 WHERE worker_recovery.lease_until <= EXCLUDED.updated_at
-RETURNING app_id, revision, claim_token, lease_until, status, failures, next_attempt_at, updated_at
+RETURNING app_id, revision, claim_token, lease_until, status, failures, next_attempt_at, updated_at, pools
 `
 
 type ClaimWorkerRecoveryParams struct {
@@ -59,35 +60,42 @@ func (q *Queries) ClaimWorkerRecovery(ctx context.Context, db DBTX, arg ClaimWor
 		&i.Failures,
 		&i.NextAttemptAt,
 		&i.UpdatedAt,
+		&i.Pools,
 	)
 	return i, err
 }
 
 const completeWorkerRecovery = `-- name: CompleteWorkerRecovery :execrows
 UPDATE worker_recovery SET status = $1::text, failures = $2::integer,
- next_attempt_at = $3::timestamptz, updated_at = $4::timestamptz,
+ pools = $3::jsonb,
+ next_attempt_at = $4::timestamptz, updated_at = $5::timestamptz,
  claim_token = NULL, lease_until = '1970-01-01'::timestamptz
-WHERE app_id = $5::uuid AND claim_token = $6::uuid
-  AND lease_until > $4::timestamptz
+WHERE app_id = $6::uuid AND claim_token = $7::uuid
+  AND revision = $8::text
+  AND lease_until > $5::timestamptz
 `
 
 type CompleteWorkerRecoveryParams struct {
 	Status        string
 	Failures      int32
+	Pools         []byte
 	NextAttemptAt pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
 	AppID         pgtype.UUID
 	ClaimToken    pgtype.UUID
+	Revision      string
 }
 
 func (q *Queries) CompleteWorkerRecovery(ctx context.Context, db DBTX, arg CompleteWorkerRecoveryParams) (int64, error) {
 	result, err := db.Exec(ctx, completeWorkerRecovery,
 		arg.Status,
 		arg.Failures,
+		arg.Pools,
 		arg.NextAttemptAt,
 		arg.UpdatedAt,
 		arg.AppID,
 		arg.ClaimToken,
+		arg.Revision,
 	)
 	if err != nil {
 		return 0, err
@@ -142,7 +150,7 @@ func (q *Queries) ListWorkerRecoveryApps(ctx context.Context, db DBTX, arg ListW
 }
 
 const workerRecoveryByApp = `-- name: WorkerRecoveryByApp :one
-SELECT app_id, revision, claim_token, lease_until, status, failures, next_attempt_at, updated_at FROM worker_recovery WHERE app_id = $1
+SELECT app_id, revision, claim_token, lease_until, status, failures, next_attempt_at, updated_at, pools FROM worker_recovery WHERE app_id = $1
 `
 
 func (q *Queries) WorkerRecoveryByApp(ctx context.Context, db DBTX, appID pgtype.UUID) (WorkerRecovery, error) {
@@ -157,6 +165,84 @@ func (q *Queries) WorkerRecoveryByApp(ctx context.Context, db DBTX, appID pgtype
 		&i.Failures,
 		&i.NextAttemptAt,
 		&i.UpdatedAt,
+		&i.Pools,
+	)
+	return i, err
+}
+
+const workerRecoverySummary = `-- name: WorkerRecoverySummary :one
+WITH eligible AS (
+ SELECT a.id, r.revision, r.pools,
+        greatest(coalesce(r.next_attempt_at, a.created_at), coalesce(r.lease_until, '1970-01-01'::timestamptz)) AS due_at
+ FROM apps a JOIN accounts ac ON ac.id = a.account_id
+ LEFT JOIN worker_recovery r ON r.app_id = a.id
+ WHERE a.status = 'active'
+  AND (a.manifest->>'execution_mode' = 'worker' OR a.workload_class = 'worker'
+    OR EXISTS (SELECT 1 FROM deployments d
+      JOIN project_environment_workload_deployment_specs p ON p.deployment_id = d.id
+      JOIN project_environment_workload_specs s ON s.id = p.spec_id AND s.app_id = a.id
+      WHERE d.app_id = a.id AND d.status = 'live'
+        AND (s.settings->'manifest'->>'execution_mode' = 'worker' OR s.settings->>'workload_class' = 'worker'))
+    OR EXISTS (SELECT 1 FROM instances i WHERE i.app_id = a.id AND i.mode = 'worker'
+      AND i.state IN ('running', 'waking', 'cold_booting', 'draining', 'migrating', 'snapshotting', 'warm', 'frozen')))
+  AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL
+  AND ($3::text = '' OR a.node_id IS NULL OR a.node_id::text = $3::text)
+
+), pools AS (
+ SELECT e.id, (p->>'desired')::bigint AS desired,
+        (p->>'running')::bigint AS running, (p->>'starting')::bigint AS starting,
+        (p->>'draining')::bigint AS draining
+ FROM eligible e CROSS JOIN LATERAL jsonb_array_elements(e.pools) p
+ WHERE p->>'revision' = e.revision
+   AND (p->>'observed_at')::timestamptz >= $1::timestamptz
+)
+SELECT (SELECT count(*) FROM eligible)::bigint AS apps,
+       (SELECT count(*) FROM eligible e
+        WHERE coalesce(jsonb_array_length(e.pools), 0) = 0
+           OR EXISTS (SELECT 1 FROM jsonb_array_elements(e.pools) p
+                      WHERE p->>'revision' IS DISTINCT FROM e.revision
+                         OR (p->>'observed_at')::timestamptz < $1::timestamptz))::bigint AS unobserved,
+       (SELECT count(*) FROM eligible WHERE due_at < $2::timestamptz)::bigint AS overdue,
+       coalesce(sum(desired), 0)::bigint AS desired,
+       coalesce(sum(running), 0)::bigint AS running,
+       coalesce(sum(starting), 0)::bigint AS starting,
+       coalesce(sum(draining), 0)::bigint AS draining,
+       coalesce(sum(greatest(desired - running, 0)), 0)::bigint AS missing
+FROM pools
+`
+
+type WorkerRecoverySummaryParams struct {
+	FreshAfter    pgtype.Timestamptz
+	OverdueBefore pgtype.Timestamptz
+	OwnerNodeID   string
+}
+
+type WorkerRecoverySummaryRow struct {
+	Apps       int64
+	Unobserved int64
+	Overdue    int64
+	Desired    int64
+	Running    int64
+	Starting   int64
+	Draining   int64
+	Missing    int64
+}
+
+// Aggregate only eligible apps owned by this scheduler, including candidates
+// that have never acquired a lease. Live leases and persisted retry deadlines
+// suppress overdue detection until they expire plus the discovery grace.
+func (q *Queries) WorkerRecoverySummary(ctx context.Context, db DBTX, arg WorkerRecoverySummaryParams) (WorkerRecoverySummaryRow, error) {
+	row := db.QueryRow(ctx, workerRecoverySummary, arg.FreshAfter, arg.OverdueBefore, arg.OwnerNodeID)
+	var i WorkerRecoverySummaryRow
+	err := row.Scan(
+		&i.Apps,
+		&i.Unobserved,
+		&i.Overdue,
+		&i.Desired,
+		&i.Running,
+		&i.Starting,
+		&i.Draining,
+		&i.Missing,
 	)
 	return i, err
 }

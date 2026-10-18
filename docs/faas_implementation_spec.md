@@ -1100,6 +1100,14 @@ Events honor admission cooldown while permitting scale-in and zero floors.
 Suspension, abuse holds, ownership and existing account/node admission fences
 remain authoritative. See [durable worker recovery](adr/20261017221000-durable-worker-recovery.md).
 
+Worker recovery diagnostics persist the scheduler's environment target and
+resident counts under the same lease, with observation timestamps. The existing
+operational-summary API and `gregale inspect` expose app-wide retry state and
+separate environment observations. Missing or fifteen-minute-old observations
+remain unknown; fresh owner-scoped metrics distinguish deficits, overdue
+reconciliation and unavailable collection. Intentional zero targets do not
+contribute a capacity deficit. See [worker recovery diagnostics](adr/20261017223000-worker-recovery-diagnostics.md).
+
 ### 6.3 Wake latency budget (p50 targets)
 
 | Step | ms |

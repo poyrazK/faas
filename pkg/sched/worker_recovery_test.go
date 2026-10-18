@@ -91,6 +91,12 @@ func exerciseWorkerRecoveryRestart(t *testing.T, store state.Store, reopen func(
 	if err != nil || retry.Status != "waiting_capacity" || retry.Failures != 1 || !retry.NextAttemptAt.Equal(now().Add(5*time.Second)) {
 		t.Fatalf("capacity refusal was not durable: %+v %v", retry, err)
 	}
+	if len(retry.Pools) != 1 || retry.Pools[0].Desired != 2 || retry.Pools[0].Running != 0 || !retry.Pools[0].ObservedAt.Equal(now()) {
+		t.Fatalf("capacity refusal lost pool diagnostics: %+v", retry.Pools)
+	}
+	if summary, err := store.WorkerRecoverySummary(ctx, "", now()); err != nil || summary.Missing != 2 || summary.Unobserved != 0 {
+		t.Fatalf("capacity shortage invisible to alerts: %+v %v", summary, err)
+	}
 	store = reopen()
 	e = newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 	e.now = now
@@ -116,6 +122,12 @@ func exerciseWorkerRecoveryRestart(t *testing.T, store state.Store, reopen func(
 	retry, err = store.WorkerRecoveryByApp(ctx, app.ID)
 	if err != nil || retry.Status != "ready" || retry.Failures != 0 || !retry.NextAttemptAt.Equal(now().Add(30*time.Second)) {
 		t.Fatalf("pool did not become healthy: %+v %v", retry, err)
+	}
+	if len(retry.Pools) != 1 || retry.Pools[0].Running != 2 || !retry.Pools[0].ObservedAt.Equal(now()) {
+		t.Fatalf("recovered pool diagnostics stayed stale: %+v", retry.Pools)
+	}
+	if summary, err := store.WorkerRecoverySummary(ctx, "", now()); err != nil || summary.Missing != 0 || summary.Running != 2 || summary.Overdue != 0 {
+		t.Fatalf("recovery did not clear alerts: %+v %v", summary, err)
 	}
 	for range 3 {
 		clock.Add(int64(30 * time.Second))
@@ -285,6 +297,10 @@ func TestWorkerRecoveryCooldownAllowsScopedScaleIn(t *testing.T) {
 	if err != nil || held.Failures != retry.Failures || !held.NextAttemptAt.Equal(retry.NextAttemptAt) {
 		t.Fatalf("scale-in changed cooldown: %+v %v", held, err)
 	}
+	if len(held.Pools) != 2 || held.Pools[0].Scope != "default" || held.Pools[0].Desired != 0 ||
+		held.Pools[1].Scope != "staging" || held.Pools[1].Desired != 1 {
+		t.Fatalf("scoped observation erased neighboring demand: %+v", held.Pools)
+	}
 	// Canceling the remaining demand keeps the zero floor at zero on recovery.
 	for _, row := range stagingDemand {
 		if err := store.CancelInvocation(ctx, row.ID); err != nil {
@@ -299,6 +315,9 @@ func TestWorkerRecoveryCooldownAllowsScopedScaleIn(t *testing.T) {
 	ready, err := store.WorkerRecoveryByApp(ctx, app.ID)
 	if err != nil || ready.Status != "ready" || ready.Failures != 0 {
 		t.Fatalf("zero floor did not settle: %+v %v", ready, err)
+	}
+	if summary, err := store.WorkerRecoverySummary(ctx, "", now); err != nil || summary.Missing != 0 || summary.Desired != 0 || summary.Unobserved != 0 {
+		t.Fatalf("intentional scale-to-zero retained an alert: %+v %v", summary, err)
 	}
 	if vmm.coldBoots != 1 {
 		t.Fatalf("zero floor restarted a worker: %d", vmm.coldBoots)
@@ -332,6 +351,108 @@ func TestWorkerRecoveryDemandReadFailureIsDurable(t *testing.T) {
 	loop.dispatchWorkerRecovery(ctx)
 	loop.workPool().drain()
 	assertRecoveryWorkers(t, store, app.ID, 2)
+}
+
+// adr: 20261017223000 — a mode switch must retire old diagnostic pools too.
+func TestWorkerRecoveryDropsRetiredPoolObservations(t *testing.T) {
+	store := state.NewMemStore()
+	e, app, _ := workerRecoveryFixture(t, store, &fakeVMM{}, 0)
+	if err := e.ReconcileWorkerPools(t.Context(), app.ID, TriggerWorkerPool); err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.WorkerRecoveryByApp(t.Context(), app.ID)
+	if err != nil || len(before.Pools) != 1 {
+		t.Fatalf("missing zero-floor observation: %+v %v", before, err)
+	}
+	manifest := app.Manifest
+	manifest.ExecutionMode = api.ExecutionModeRequest
+	if _, err := store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.ReconcileWorkerPools(t.Context(), app.ID, TriggerWorkerPool); err != nil {
+		t.Fatal(err)
+	}
+	after, err := store.WorkerRecoveryByApp(t.Context(), app.ID)
+	if err != nil || len(after.Pools) != 0 {
+		t.Fatalf("retired worker pool still visible: %+v %v", after, err)
+	}
+}
+
+// adr: 20261017223000 — old draining workers never fill a new generation's target.
+func TestWorkerRecoveryObservationsDistinguishRetiredGeneration(t *testing.T) {
+	store := state.NewMemStore()
+	e, app, old := workerRecoveryFixture(t, store, &fakeVMM{}, 2)
+	dep, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: "default",
+		Kind: state.DeploymentKindImage, ImageDigest: "sha256:next-generation", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedScopedWorker(t, store, app, dep)
+	retired := seedScopedWorker(t, store, app, old)
+	attempt := &workerRecoveryAttempt{lease: state.WorkerRecovery{Revision: "r"}, status: "ready"}
+	plans := map[string]*workerScopePlan{"default": {scope: "default", target: dep.ID, desired: 2, workers: []state.Instance{retired}}}
+	if err := e.observeWorkerRecoveryFleet(t.Context(), app.ID, plans, attempt); err != nil {
+		t.Fatal(err)
+	}
+	if attempt.status != "waiting_capacity" || len(attempt.lease.Pools) != 1 {
+		t.Fatalf("retired resident masked the missing target worker: %+v", attempt)
+	}
+	pool := attempt.lease.Pools[0]
+	if pool.Desired != 2 || pool.Running != 1 || pool.Draining != 1 || pool.Starting != 0 {
+		t.Fatalf("generation observations were conflated: %+v", pool)
+	}
+}
+
+// adr: 20261017223000 — N-1 may update intent without knowing the observation column.
+func TestWorkerRecoveryLegacyObservationsDoNotBlockCompletion(t *testing.T) {
+	store := state.NewMemStore()
+	e, app, dep := workerRecoveryFixture(t, store, &fakeVMM{}, 0)
+	now := time.Now().UTC()
+	e.now = func() time.Time { return now }
+	lease, claimed, err := store.ClaimWorkerRecovery(t.Context(), app.ID, "", "current", uuid.NewString(), now, now.Add(time.Minute))
+	if err != nil || !claimed {
+		t.Fatalf("claim: %v %v", claimed, err)
+	}
+	// Model the JSON left by an older binary's explicit-column revision update.
+	lease.Pools = []state.WorkerRecoveryPool{{Scope: "staging", DeploymentID: dep.ID,
+		Revision: "previous", ObservedAt: now, Desired: 1}}
+	attempt := &workerRecoveryAttempt{lease: lease, status: "ready", scoped: true, scope: "default"}
+	e.completeWorkerRecovery(t.Context(), attempt, errors.New("demand unavailable"))
+	row, err := store.WorkerRecoveryByApp(t.Context(), app.ID)
+	if err != nil || row.ClaimToken != "" || row.Status != "waiting_dependency" || row.Failures != 1 || len(row.Pools) != 0 {
+		t.Fatalf("legacy observations blocked completion: %+v %v", row, err)
+	}
+}
+
+// adr: 20261017223000 — hot scoped events cannot starve a quiet pool's observation.
+func TestWorkerRecoveryScopedSuccessDoesNotPostponeFullSweep(t *testing.T) {
+	store := state.NewMemStore()
+	account, app, _ := seedWorkerScopes(t, store, api.PlanPro)
+	enqueueScopedDemand(t, store, account, app, "staging", "", 1)
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e.workerReconcileSubmit = func(context.Context, string) {}
+	now := time.Now().UTC()
+	e.now = func() time.Time { return now }
+	for range 4 {
+		if err := e.ReconcileWorkerPoolForScope(t.Context(), app.ID, "default", 0, TriggerWorkerPool); err != nil {
+			t.Fatal(err)
+		}
+		row, err := store.WorkerRecoveryByApp(t.Context(), app.ID)
+		if err != nil || row.NextAttemptAt.After(now) {
+			t.Fatalf("scoped success postponed the full sweep: %+v %v", row, err)
+		}
+		now = now.Add(time.Second)
+	}
+	loop := NewLoop(nil, e, testLog()).WithClock(e.now)
+	loop.dispatchWorkerRecovery(t.Context())
+	loop.workPool().drain()
+	if got := scopedWorkerCounts(t, store, app.ID); got["default"] != 0 || got["staging"] != 1 {
+		t.Fatalf("quiet environment never recovered: %+v", got)
+	}
+	row, err := store.WorkerRecoveryByApp(t.Context(), app.ID)
+	if err != nil || len(row.Pools) != 2 || row.Status != "ready" {
+		t.Fatalf("full sweep did not publish both pools: %+v %v", row, err)
+	}
 }
 
 func TestWorkerRecoveryInactiveAccountsNeverBoot(t *testing.T) {

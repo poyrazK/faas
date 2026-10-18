@@ -7,6 +7,27 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Worker recovery diagnostics — 2026-10-17
+
+Worker recovery now records per-environment scheduler targets and resident counts
+with observation times. The operational-summary API and CLI inspect/watch expose
+app-wide retry progress while keeping environment pool observations separate.
+Missing and stale evidence remain explicit. Owner-scoped aggregate metrics and
+internal warning alerts cover missing capacity, overdue retry/lease deadlines
+and unavailable observations; zero targets and inactive workloads do not create
+capacity deficits. The existing service/worker recovery runbook documents these
+signals and investigation steps. Apply the additive observation migration before
+upgrading schedd and apid. This change is not deployed.
+
+Portable validation includes 68 scheduler checks and 30 CLI inspect/watch checks
+with no skips, plus 16 shared worker/service recovery contracts on memory and
+PostgreSQL stores. API authorization/MFA, environment selection and read-only
+behavior pass; fresh schema replay, generated SQL, OpenAPI parity and protocol
+compatibility against the branch base are checked. Promtool fixtures and typed
+Node/Python SDK round trips pass, and SDK regeneration is deterministic. Native
+worker availability qualification remains separate as documented below. Scoped
+production lint passes with zero issues.
+
 ## Durable worker-pool recovery — 2026-10-17
 
 Worker recovery now persists retry deadlines, failure counts and app leases.

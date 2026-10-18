@@ -152,6 +152,19 @@ func inspectWatchComparable(summary inspectSummary) inspectSummary {
 		operation.CheckedAt = time.Time{}
 		operation.Monitoring.CheckedAt = nil
 		operation.Monitoring.WindowStart, operation.Monitoring.WindowEnd = nil, nil
+		if operation.Recovery.Workers != nil {
+			workers := *operation.Recovery.Workers
+			workers.UpdatedAt, workers.LeaseUntil = nil, nil
+			if workers.Failures == 0 {
+				workers.NextAttemptAt = nil
+			}
+			workers.Pools = slices.Clone(workers.Pools)
+			for i := range workers.Pools {
+				workers.Pools[i].ObservedAt = time.Time{}
+			}
+			slices.SortFunc(workers.Pools, func(a, b api.AppWorkerPoolObservation) int { return strings.Compare(a.Scope, b.Scope) })
+			operation.Recovery.Workers = &workers
+		}
 		operation.Recovery.Rollbacks = slices.Clone(operation.Recovery.Rollbacks)
 		operation.Recovery.Restarts = slices.Clone(operation.Recovery.Restarts)
 		for i := range operation.Recovery.Rollbacks {

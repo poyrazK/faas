@@ -89,6 +89,8 @@ func Run(t *testing.T, open Open) {
 		{"service_recovery_claim_and_retry_are_durable", testServiceRecoveryClaims},
 		{"service_recovery_candidates_are_active_owned_and_bounded", testServiceRecoveryCandidates},
 		{"worker_recovery_claim_and_retry_are_durable", testWorkerRecoveryClaims},
+		{"worker_recovery_observations_are_fenced_and_copied", testWorkerRecoveryObservations},
+		{"worker_recovery_diagnostics_are_owned_fresh_and_eligible", testWorkerRecoveryDiagnostics},
 		{"worker_recovery_candidates_are_active_owned_and_bounded", testWorkerRecoveryCandidates},
 		{"worker_recovery_discovers_captured_environments", testWorkerRecoveryCapturedEnvironment},
 		{"worker_recovery_discovers_unfinished_mode_cleanup", testWorkerRecoveryModeCleanup},

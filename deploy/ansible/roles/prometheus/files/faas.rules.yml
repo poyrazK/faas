@@ -4579,6 +4579,47 @@ groups:
           description: "schedd recorded a routing or request-drain timeout/error during a service rollout in the last ten minutes. Inspect the deployment's service_rollout_handoff status for the action, generation, missing gateways, retry count, and last error. The predecessor remains live while reconciliation retries."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServiceRolloutHandoffBlocked.md"
 
+  # ADR-20261017223000: fresh persisted observations, with no customer labels.
+  - name: faas_worker_recovery
+    interval: 30s
+    rules:
+      - alert: FaasWorkerPoolUnderCapacity
+        expr: (sum without (state) (schedd_worker_recovery_replicas{state="missing"}) > 0) and (time() - schedd_worker_recovery_observed_timestamp_seconds <= 60)
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: worker_recovery
+          public_status: internal
+        annotations:
+          summary: "Worker pools remain below required capacity on {{ $labels.instance }}"
+          description: "Fresh scheduler observations show missing required workers for ten minutes. Inspect gregale inspect and the recovery ledger for capacity, startup or dependency failures. Intentional zero targets do not contribute a deficit."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/continuous-service-recovery.md"
+      - alert: FaasWorkerRecoveryStalled
+        expr: (sum without (condition) (schedd_worker_recovery_apps{condition="overdue"}) > 0) and (time() - schedd_worker_recovery_observed_timestamp_seconds <= 60)
+        for: 2m
+        labels:
+          severity: warn
+          component: schedd
+          family: worker_recovery
+          public_status: internal
+        annotations:
+          summary: "Worker reconciliation is overdue on {{ $labels.instance }}"
+          description: "An eligible owned app has exceeded both its retry deadline and reconciliation lease by at least sixty seconds for two minutes. Inspect scheduler work saturation, ownership and dependencies; an active lease or future retry deadline does not count as overdue."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/continuous-service-recovery.md"
+      - alert: FaasWorkerRecoveryObservationUnavailable
+        expr: (sum without (condition) (schedd_worker_recovery_apps{condition="unknown"}) > 0) or (time() - schedd_worker_recovery_observed_timestamp_seconds > 60)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: worker_recovery
+          public_status: internal
+        annotations:
+          summary: "Worker recovery observations are unavailable on {{ $labels.instance }}"
+          description: "An eligible worker app has no fresh pool observation, or database collection has not succeeded for over sixty seconds, for five minutes. Counts are unknown. Check schedd recovery logs, database connectivity, deployment availability and scheduler version."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/continuous-service-recovery.md"
+
   - name: faas_durable_queue
     interval: 30s
     rules:
