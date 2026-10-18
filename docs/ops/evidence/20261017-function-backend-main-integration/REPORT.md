@@ -399,6 +399,36 @@ changed by that correction. ADR uniqueness passes with the existing 164
 baseline entries. Generation, environment-contract and documentation checks
 pass, including seven listener-template and four HTTP documentation fixtures.
 
+## Selective repair contract integration (2026-10-18)
+
+Published main through `fb63fcc029d8865cb662a08b18bcbae8696a2369` introduces
+data-repair protobufs, two migrations and native lifecycle paths. The merge
+preserves both the function destination/wake identity and the data-repair-only
+marker in cold-start instances. All published SQLC sources, including the two
+repair query files, are retained alongside the three function query files.
+
+The schema is regenerated from a clean disposable database with source digest
+`750a73093169a71c79989608458307641d7f2b69d68e66b7caa2df53b19e2ed7`.
+Protobufs are regenerated and normalized; all sixteen SQLC blocks regenerate
+and pass drift checks. Both OpenAPI copies and generated management SDK trees
+match published main. Node build, Python compilation and helper drift checks
+pass. Every published clone policy is retained, with only the two operational
+function journals added.
+
+Merged source tree `9fc4217c110f34408060cc3b00a1ec0af17cdf44` passes 80
+qualified portable host tests/subtests and 34 scheduler tests/subtests covering
+function lifecycle and data-repair retirement/RPC contracts. All 114 execute
+without skips or failures. Serial compilation uses 5 GiB/GOGC 50; execution
+retains 2 GiB/GOGC 10, two processors and three-minute deadlines. The earlier
+full scheduler/state evidence remains associated with its recorded source.
+Fresh-head hosted state checks and guarded native compilation remain required.
+
+Generation, environment-contract and documentation checks pass; ADR uniqueness
+passes with 1,788 decisions and the unchanged 164-entry duplicate baseline.
+Only the three function migrations differ from the integrated main and pass
+the expand/contract check. Native activation and physical acceptance remain
+pending.
+
 ## Qualification boundary
 
 Production activation remains disabled. This managed container has no supported

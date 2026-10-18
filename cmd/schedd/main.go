@@ -50,6 +50,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched/instancestats"
 	"github.com/onebox-faas/faas/pkg/sched/prewarm"
 	"github.com/onebox-faas/faas/pkg/sched/recentload"
+	"github.com/onebox-faas/faas/pkg/sched/repairhealth"
 	"github.com/onebox-faas/faas/pkg/sched/scaleup"
 	"github.com/onebox-faas/faas/pkg/sched/targets"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
@@ -575,6 +576,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	ledger := sched.NewNodeLedger()
 	ops := wire.NewOpsMetrics("schedd")
+	repairHealth := &repairhealth.Collector{Store: store, Metrics: repairhealth.NewMetrics(ops.Registry(), ops.MetricPrefix()), Log: log}
+	go repairHealth.Run(ctx)
 	wire.BootStamps(ctx, "schedd", ops)
 	wire.RegisterDefaultOps(ops)
 	// ADR-190 follow-up: export this pool's live statistics so the
@@ -979,6 +982,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := engine.SeedLedger(ctx); err != nil {
 		seedLedgerReady = false
 		log.Warn("seed ledger", "err", err)
+	}
+	if err := engine.SeedDataRepairRehearsals(ctx); err != nil {
+		return fmt.Errorf("schedd: seed repair rehearsal capacity: %w", err)
+	}
+	if err := startDataRepairRehearsals(ctx, engine, store, vmmRouter, ownerNodeID, seedLedgerReady, log); err != nil {
+		return err
 	}
 	qualificationDispatchValue := os.Getenv("FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_DISPATCH")
 	qualificationDispatchRequested := environmentQualificationDispatchEnabled(qualificationDispatchValue)

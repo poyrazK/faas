@@ -204,6 +204,12 @@ func WithOperationTransaction(ctx context.Context, db *sql.DB, input OperationRe
 }
 
 func withOperationTransaction(ctx context.Context, db *sql.DB, input OperationRequest, handler func(OperationSQLTransaction) (OperationOutcome, error)) (OperationTransactionResult, error) {
+	return guardedOperationTransaction(ctx, db, input, handler, nil)
+}
+
+type operationReceiptGuard func(context.Context, OperationSQLTransaction, []byte, bool) error
+
+func guardedOperationTransaction(ctx context.Context, db *sql.DB, input OperationRequest, handler func(OperationSQLTransaction) (OperationOutcome, error), guard operationReceiptGuard) (OperationTransactionResult, error) {
 	request, err := normalizeOperationRequest(input)
 	if err != nil {
 		return OperationTransactionResult{}, err
@@ -262,6 +268,11 @@ func withOperationTransaction(ctx context.Context, db *sql.DB, input OperationRe
 		}
 	} else {
 		return OperationTransactionResult{}, fmt.Errorf("operation receipt read: %w", err)
+	}
+	if guard != nil {
+		if err := guard(ctx, tx, []byte(body), replayed); err != nil {
+			return OperationTransactionResult{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return OperationTransactionResult{}, fmt.Errorf("%w: %w", ErrOperationCommitUnknown, err)

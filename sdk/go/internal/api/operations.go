@@ -194,6 +194,7 @@ type OperationDeliveryResponse struct {
 }
 
 type OperationResponse struct {
+	DataRepair            *OperationDataRepair      `json:"data_repair,omitempty"`
 	Subject               *OperationSubject         `json:"subject,omitempty"`
 	ID                    string                    `json:"id"`
 	Name                  string                    `json:"name"`
@@ -267,6 +268,7 @@ type OperationListOptions struct {
 // headers, instance credentials or runtime capability. Attempts is the execution
 // ledger's attempt count, not a fabricated per-attempt outcome history.
 type OperationExecution struct {
+	DataRepairID  string     `json:"data_repair_id,omitempty"`
 	Generation    int        `json:"generation"`
 	InvocationID  string     `json:"invocation_id,omitempty"`
 	JobRunID      string     `json:"job_run_id,omitempty"`

@@ -5,12 +5,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestMCPReadinessAlertScopeMigrationReplay(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	ctx := t.Context()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
 	tx, e := pool.Begin(ctx)
 	if e != nil {
 		t.Fatal(e)

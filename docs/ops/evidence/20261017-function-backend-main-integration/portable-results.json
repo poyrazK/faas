@@ -1187,5 +1187,76 @@
     "http_documentation_fixtures_passed": 4,
     "production_activation": false,
     "native_physical_acceptance": false
+  },
+  "selective_repair_main_integration": {
+    "integrated_main": "fb63fcc029d8865cb662a08b18bcbae8696a2369",
+    "tested_source_tree": "9fc4217c110f34408060cc3b00a1ec0af17cdf44",
+    "migration_source_digest": "750a73093169a71c79989608458307641d7f2b69d68e66b7caa2df53b19e2ed7",
+    "schema_sha256": "a3973917d3fc082676fc2508b01a31c8457ed849187b78a4c58bea552af73c33",
+    "cold_start_preserves": [
+      "functionDestination",
+      "wakeID",
+      "DataRepairOnly"
+    ],
+    "sqlc_blocks": 16,
+    "published_main_query_sources_preserved": true,
+    "function_query_sources_preserved": 3,
+    "protobufs": "regenerated and normalized",
+    "qualified_phases": [
+      {
+        "name": "fcvm-compile",
+        "exitCode": 0,
+        "seconds": 193.011
+      },
+      {
+        "name": "fcvm-race",
+        "exitCode": 0,
+        "seconds": 19.437,
+        "counts": {
+          "pass": 80
+        },
+        "skippedTests": [],
+        "failedTests": []
+      },
+      {
+        "name": "sched-compile",
+        "exitCode": 0,
+        "seconds": 162.338
+      },
+      {
+        "name": "sched-race",
+        "exitCode": 0,
+        "seconds": 12.492,
+        "counts": {
+          "pass": 34
+        },
+        "skippedTests": [],
+        "failedTests": []
+      }
+    ],
+    "qualified_passed": 114,
+    "qualified_skipped": 0,
+    "qualified_failed": 0,
+    "log_sha256": {
+      "fcvm": "5d4146704fc6d25e711fd83bb57cbedc81291bcacb79f8cd4364c56b437946fc",
+      "sched": "a33473307efe3c23a7131d9fa6574cedd04fd5ee0ecfeda876c2039d7574caf6"
+    },
+    "compiler": "5GiB/GOGC50/serial",
+    "runtime": "2GiB/GOGC10/GOMAXPROCS2/3m",
+    "sqlc_drift": "pass",
+    "node_sdk_generation": "matches main",
+    "python_sdk_generation": "API/models match main",
+    "node_build": "pass",
+    "python_compile": "pass",
+    "canonical_helper_drift": "pass",
+    "generated_daemons": "pass",
+    "environment_contract": "pass",
+    "documentation_links": "pass",
+    "http_documentation_fixtures_passed": 4,
+    "adr_uniqueness": "1788 decisions, 1584 distinct IDs, unchanged164-entry baseline",
+    "function_migration_expand_contract": "pass",
+    "fresh_hosted_current_head_checks": "required",
+    "native_physical_acceptance": false,
+    "production_activation": false
   }
 }
