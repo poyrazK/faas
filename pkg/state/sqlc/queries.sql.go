@@ -6973,6 +6973,9 @@ const cloneEnvironmentCleanupHasScopeBorrowers = `-- name: CloneEnvironmentClean
 WITH scoped_apps AS (SELECT id FROM apps WHERE project_id=$2::uuid)
 SELECT
  (EXISTS(SELECT 1 FROM app_binding_release_policies p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM app_mcp_readiness_policies p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM mcp_readiness_incidents p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM mcp_readiness_maintenance_windows p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
  OR EXISTS(SELECT 1 FROM binding_verification_runs p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
  OR EXISTS(SELECT 1 FROM project_binding_verification_runs p WHERE p.project_id=$2::uuid AND p.environment_slug=$1::text)
  OR EXISTS(SELECT 1 FROM app_tasks p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=$1::text)
@@ -7027,7 +7030,8 @@ type CloneEnvironmentCleanupHasScopeBorrowersParams struct {
 
 // Original clone journals and historical secret/runtime-change tombstones are
 // retained evidence, as are production_lifecycle_reviews attached to retained
-// deployments. All other known operational references must close first.
+// deployments and append-only binding/MCP readiness policy history. All other
+// known operational references must close first.
 func (q *Queries) CloneEnvironmentCleanupHasScopeBorrowers(ctx context.Context, db DBTX, arg CloneEnvironmentCleanupHasScopeBorrowersParams) (bool, error) {
 	row := db.QueryRow(ctx, cloneEnvironmentCleanupHasScopeBorrowers,
 		arg.Environment,
@@ -48609,6 +48613,18 @@ func (q *Queries) LockCloneEnvironmentCleanupScopeBorrowers(ctx context.Context,
 	return err
 }
 
+const lockCloneMCPReadinessEnvironmentCleanupBorrowers = `-- name: LockCloneMCPReadinessEnvironmentCleanupBorrowers :exec
+LOCK TABLE app_mcp_readiness_policies,mcp_readiness_incidents,mcp_readiness_maintenance_windows IN SHARE MODE
+`
+
+// Environment-scoped MCP readiness policies, incidents and maintenance windows
+// were also added after the migration-owned writer fence. Their scope-only rows
+// have no environment foreign key, so keep their writers out of the deletion window.
+func (q *Queries) LockCloneMCPReadinessEnvironmentCleanupBorrowers(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, lockCloneMCPReadinessEnvironmentCleanupBorrowers)
+	return err
+}
+
 const lockCloneWorkloadCleanupSpecs = `-- name: LockCloneWorkloadCleanupSpecs :many
 SELECT id FROM project_environment_workload_specs WHERE environment_id=$1 ORDER BY id FOR UPDATE
 `
@@ -68288,8 +68304,14 @@ func (q *Queries) ReadCloneConfigurationOwnershipSnapshot(ctx context.Context, d
 const readCloneDeploymentBorrowers = `-- name: ReadCloneDeploymentBorrowers :one
 SELECT (jsonb_build_object(
     'binding_verification_runs_deployment_id_fkey', (SELECT count(*) FROM binding_verification_runs WHERE deployment_id = $1::uuid),
+    'deployment_build_dependency_gates_deployment_id_fkey', (SELECT count(*) FROM deployment_build_dependency_gates WHERE deployment_id = $1::uuid),
+    'deployment_public_build_urls_deployment_id_fkey', (SELECT count(*) FROM deployment_public_build_urls WHERE deployment_id = $1::uuid),
+    'data_api_runtime_connection_observations_deployment_id_fkey', (SELECT count(*) FROM data_api_runtime_connection_observations WHERE deployment_id = $1::uuid),
     'deployment_mcp_task_holds_deployment_id_fkey', (SELECT count(*) FROM deployment_mcp_task_holds WHERE deployment_id = $1::uuid),
     'deployment_mcp_task_migration_overrides_deployment_id_fkey', (SELECT count(*) FROM deployment_mcp_task_migration_overrides WHERE deployment_id = $1::uuid),
+    'deployment_mcp_readiness_evidence_deployment_id_fkey', (SELECT count(*) FROM deployment_mcp_readiness_evidence WHERE deployment_id = $1::uuid),
+    'deployment_mcp_readiness_monitors_deployment_id_fkey', (SELECT count(*) FROM deployment_mcp_readiness_monitors WHERE deployment_id = $1::uuid),
+    'deployment_mcp_readiness_overrides_deployment_id_fkey', (SELECT count(*) FROM deployment_mcp_readiness_overrides WHERE deployment_id = $1::uuid),
     'dev_source_manifests_deployment_id_fkey', (SELECT count(*) FROM dev_source_manifests WHERE deployment_id = $1::uuid),
     'dev_source_patches_base_deployment_id_fkey', (SELECT count(*) FROM dev_source_patches WHERE base_deployment_id = $1::uuid),
     'profile_canary_checks_deployment_id_fkey', (SELECT count(*) FROM profile_canary_checks WHERE deployment_id = $1::uuid),
@@ -68440,6 +68462,10 @@ SELECT jsonb_build_object(
  'project_environment_promotion_workloads.target_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE target_deployment_id=$1::uuid::text),
  'request_audit_events.deployment_id', (SELECT count(*) FROM request_audit_events WHERE deployment_id=$1::uuid),
  'request_telemetry.deployment_id', (SELECT count(*) FROM request_telemetry WHERE deployment_id=$1::uuid),
+ 'scenario_cold_preparations.deployment_id', (SELECT count(*) FROM scenario_cold_preparations WHERE deployment_id=$1::uuid),
+ 'scenario_recorder_sessions.deployment_id', (SELECT count(*) FROM scenario_recorder_sessions WHERE deployment_id=$1::uuid),
+ 'scenario_suspend_resumes.deployment_id', (SELECT count(*) FROM scenario_suspend_resumes WHERE deployment_id=$1::uuid),
+ 'scenario_worker_faults.deployment_id', (SELECT count(*) FROM scenario_worker_faults WHERE deployment_id=$1::uuid),
  'upload_commit_outcomes.deployment_id', (SELECT count(*) FROM upload_commit_outcomes WHERE deployment_id=$1::uuid::text),
  'upload_sessions.deployment_id', (SELECT count(*) FROM upload_sessions WHERE deployment_id=$1::uuid::text),
  'instance_application_standard_admissions.deployment_id', (SELECT count(*) FROM instance_application_standard_admissions WHERE deployment_id=$1::uuid)
@@ -68479,9 +68505,9 @@ func (q *Queries) ReadCloneEnvironmentCleanup(ctx context.Context, db DBTX, oper
 
 const readCloneEnvironmentMetadataBorrowers = `-- name: ReadCloneEnvironmentMetadataBorrowers :one
 WITH scoped_apps AS (
- SELECT id FROM apps WHERE project_id=$3::uuid
+ SELECT id FROM apps WHERE project_id=$2::uuid
 ), scoped_deployments AS (
- SELECT d.id,d.app_id FROM deployments d WHERE d.app_id IN (SELECT id FROM scoped_apps) AND d.scope=$2::text
+ SELECT d.id,d.app_id FROM deployments d WHERE d.app_id IN (SELECT id FROM scoped_apps) AND d.scope=$3::text
 )
 SELECT
  (SELECT count(*) FROM app_environment_route_budgets p WHERE p.environment_id=$1::uuid) AS app_environment_route_budgets,
@@ -68496,26 +68522,27 @@ SELECT
  (SELECT count(*) FROM environment_workload_graphs p WHERE p.environment_id=$1::uuid) AS environment_workload_graphs,
  (SELECT count(*) FROM environment_workload_retirements p WHERE p.environment_id=$1::uuid) AS environment_workload_retirements,
  (SELECT count(*) FROM feature_flag_versions p WHERE p.environment_id=$1::uuid) AS feature_flag_versions,
+ (SELECT count(*) FROM hosting_sites p WHERE p.project_id=$2::uuid AND p.environment=$3::text) AS hosting_sites,
  (SELECT count(*) FROM invocation_environment_queue_admissions p WHERE p.environment_id=$1::uuid) AS invocation_environment_queue_admissions,
  (SELECT count(*) FROM invocation_work_environment_admissions p WHERE p.environment_id=$1::uuid) AS invocation_work_environment_admissions,
  (SELECT count(*) FROM invocation_work_environment_domains p WHERE p.environment_id=$1::uuid) AS invocation_work_environment_domains,
- (SELECT count(*) FROM invocations p WHERE p.environment_id=$1::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=$2::text)) AS invocations,
- (SELECT count(*) FROM project_environment_edge_policies p WHERE p.project_id=$3::uuid AND p.environment_slug=$2::text) AS project_environment_edge_policies,
- (SELECT count(*) FROM project_environment_qualifications p WHERE p.project_id=$3::uuid AND p.environment_slug=$2::text) AS project_environment_qualifications,
+ (SELECT count(*) FROM invocations p WHERE p.environment_id=$1::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=$3::text)) AS invocations,
+ (SELECT count(*) FROM project_environment_edge_policies p WHERE p.project_id=$2::uuid AND p.environment_slug=$3::text) AS project_environment_edge_policies,
+ (SELECT count(*) FROM project_environment_qualifications p WHERE p.project_id=$2::uuid AND p.environment_slug=$3::text) AS project_environment_qualifications,
  (SELECT count(*) FROM project_environment_queue_runtime_sets p WHERE p.environment_id=$1::uuid) AS project_environment_queue_runtime_sets,
- (SELECT count(*) FROM project_environment_route_policies p WHERE p.project_id=$3::uuid AND p.environment_slug=$2::text) AS project_environment_route_policies,
+ (SELECT count(*) FROM project_environment_route_policies p WHERE p.project_id=$2::uuid AND p.environment_slug=$3::text) AS project_environment_route_policies,
  (SELECT count(*) FROM project_environment_workload_specs p WHERE p.environment_id=$1::uuid) AS project_environment_workload_specs,
- (SELECT count(*) FROM project_release_sets p WHERE p.project_id=$3::uuid AND p.environment_slug=$2::text) AS project_release_sets,
- (SELECT count(*) FROM project_release_stages p WHERE p.project_id=$3::uuid AND p.environment_slug=$2::text) AS project_release_stages,
- (SELECT count(*) FROM runtime_environment_scaling_states p WHERE p.environment_id=$1::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$2::text)) AS runtime_environment_scaling_states,
+ (SELECT count(*) FROM project_release_sets p WHERE p.project_id=$2::uuid AND p.environment_slug=$3::text) AS project_release_sets,
+ (SELECT count(*) FROM project_release_stages p WHERE p.project_id=$2::uuid AND p.environment_slug=$3::text) AS project_release_stages,
+ (SELECT count(*) FROM runtime_environment_scaling_states p WHERE p.environment_id=$1::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$3::text)) AS runtime_environment_scaling_states,
  (SELECT count(*) FROM scoped_deployments d WHERE EXISTS(SELECT 1 FROM project_environment_clone_workloads w WHERE w.operation_id=$4::uuid AND w.app_id=d.app_id AND w.target_deployment_id=d.id)) AS owned_deployments,
  (SELECT count(*) FROM scoped_deployments d WHERE NOT EXISTS(SELECT 1 FROM project_environment_clone_workloads w WHERE w.operation_id=$4::uuid AND w.app_id=d.app_id AND w.target_deployment_id=d.id)) AS foreign_deployments
 `
 
 type ReadCloneEnvironmentMetadataBorrowersParams struct {
 	EnvironmentID pgtype.UUID
-	Environment   string
 	ProjectID     pgtype.UUID
+	Environment   string
 	OperationID   pgtype.UUID
 }
 
@@ -68532,6 +68559,7 @@ type ReadCloneEnvironmentMetadataBorrowersRow struct {
 	EnvironmentWorkloadGraphs            int64
 	EnvironmentWorkloadRetirements       int64
 	FeatureFlagVersions                  int64
+	HostingSites                         int64
 	InvocationEnvironmentQueueAdmissions int64
 	InvocationWorkEnvironmentAdmissions  int64
 	InvocationWorkEnvironmentDomains     int64
@@ -68553,8 +68581,8 @@ type ReadCloneEnvironmentMetadataBorrowersRow struct {
 func (q *Queries) ReadCloneEnvironmentMetadataBorrowers(ctx context.Context, db DBTX, arg ReadCloneEnvironmentMetadataBorrowersParams) (ReadCloneEnvironmentMetadataBorrowersRow, error) {
 	row := db.QueryRow(ctx, readCloneEnvironmentMetadataBorrowers,
 		arg.EnvironmentID,
-		arg.Environment,
 		arg.ProjectID,
+		arg.Environment,
 		arg.OperationID,
 	)
 	var i ReadCloneEnvironmentMetadataBorrowersRow
@@ -68571,6 +68599,7 @@ func (q *Queries) ReadCloneEnvironmentMetadataBorrowers(ctx context.Context, db 
 		&i.EnvironmentWorkloadGraphs,
 		&i.EnvironmentWorkloadRetirements,
 		&i.FeatureFlagVersions,
+		&i.HostingSites,
 		&i.InvocationEnvironmentQueueAdmissions,
 		&i.InvocationWorkEnvironmentAdmissions,
 		&i.InvocationWorkEnvironmentDomains,
