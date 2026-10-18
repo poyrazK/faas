@@ -18,6 +18,9 @@ func RecoverCallbacks(ctx context.Context, db *sql.DB, client *faas.Client, acco
 			MaxAttempts:   100,
 			Concurrency:   4,
 			ClaimDuration: 30 * time.Second,
-			Backoff:       time.Second,
+			RetryPolicy: &faas.EventAcknowledgmentIntentRetryPolicy{
+				InitialBackoff: time.Second,
+				MaxBackoff:     5 * time.Minute,
+			},
 		})
 }

@@ -13943,12 +13943,40 @@ Build a typed atomic business-operation starter
 
 Generate an editable tenant-scoped order/inventory RPC package
 
-`gregale data-api transaction init --name <NAME> --output <DIR>`
+`gregale data-api transaction init --name <NAME> --output <DIR> [--contract <VERSION>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--name <NAME>` | new function/table prefix | required |
 | `--output <DIR>` | new transaction package directory | required |
+| `--contract <VERSION>` | receipt contract (default v1) | one of `v1` · `v2` |
+
+### data-api rotation
+
+Inspect credential rotation prerequisites and rollout evidence
+
+#### data-api rotation preflight
+
+Check owner catalog prerequisites and current binding rollout
+
+`gregale data-api rotation preflight --binding <UUID> --owner-check <FILE> [--timeout <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--binding <UUID>` | managed Data API binding UUID | required |
+| `--owner-check <FILE>` | trusted local read-only owner preflight command configuration | required |
+| `--timeout <DURATION>` | check deadline (default 2m, maximum 1h) |  |
+
+#### data-api rotation status
+
+Inspect binding refresh and credential retirement metadata
+
+`gregale data-api rotation status --binding <UUID> [--timeout <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--binding <UUID>` | managed Data API binding UUID | required |
+| `--timeout <DURATION>` | check deadline (default 2m, maximum 1h) |  |
 
 ### data-api verify
 

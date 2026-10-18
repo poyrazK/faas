@@ -51,9 +51,22 @@ def rules(settings: Policy) -> list[dict[str, Any]]:
         for metric, threshold in (
             ("due_backlog", settings.due_threshold),
             ("stalled_recovery", settings.stalled_threshold),
+            ("parked_intents", settings.parked_threshold),
         )
         if threshold > 0
     ]
+
+
+def checkpoint_version(settings: Policy) -> int:
+    return 2 if settings.parked_threshold > 0 else 1
+
+
+def checkpoint_policy(settings: Policy) -> dict[str, Any]:
+    """Keep version 1 policy keys/order when parked alerts are disabled."""
+    out = asdict(settings)
+    if settings.parked_threshold == 0:
+        del out["parked_threshold"]
+    return out
 
 
 def _checkpoint_policy(value: Any) -> Policy:
@@ -68,6 +81,7 @@ def _checkpoint_policy(value: Any) -> Policy:
     return policy(
         EventAcknowledgmentIntentWatchOptions(
             health=EventAcknowledgmentIntentHealthOptions(health["scan_limit"], health["stall_after_ms"]),
+            parked_threshold=value.get("parked_threshold", 0),
             **{key: value[key] for key in fields},
         )
     )
@@ -90,7 +104,7 @@ def _validate(value: Any) -> dict[str, Any]:
         not isinstance(value, dict)
         or value.get("kind") != KIND
         or type(value.get("version")) is not int
-        or value["version"] != 1
+        or value["version"] not in (1, 2)
         or not isinstance(value.get("target"), dict)
         or not _count(value.get("sequence"))
         or not isinstance(value.get("session"), str)
@@ -99,6 +113,8 @@ def _validate(value: Any) -> dict[str, Any]:
         _invalid()
     target = {key: _uuid(value["target"].get(key)) for key in ("account_id", "app_id")}
     settings = _checkpoint_policy(value.get("policy"))
+    if value["version"] != checkpoint_version(settings):
+        _invalid()
     expected = rules(settings)
     session, sequence = value["session"], value["sequence"]
     last_observed = None if "last_observed_at" not in value else checkpoint_time(value["last_observed_at"])
@@ -236,9 +252,9 @@ def _validate(value: Any) -> dict[str, Any]:
             _invalid()
     return {
         "kind": KIND,
-        "version": 1,
+        "version": checkpoint_version(settings),
         "target": target,
-        "policy": asdict(settings),
+        "policy": checkpoint_policy(settings),
         "session": session,
         "sequence": sequence,
         **({} if last_observed is None else {"last_observed_at": value["last_observed_at"]}),

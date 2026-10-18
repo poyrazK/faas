@@ -53,7 +53,7 @@ func RootPrefix(path string) (string, error) {
 			tar.TypeGNULongName, tar.TypeGNULongLink:
 			continue
 		}
-		name := strings.TrimPrefix(strings.TrimSuffix(hdr.Name, "/"), "./")
+		name := strings.TrimSuffix(TrimLeadingDotSlash(hdr.Name), "/")
 		if name == "" {
 			continue
 		}
@@ -122,7 +122,7 @@ func archiveContainsRoot(path, root string) (bool, error) {
 	defer func() { _ = zr.Close() }()
 
 	tr := tar.NewReader(zr)
-	root = strings.TrimSuffix(strings.TrimPrefix(root, "./"), "/")
+	root = strings.TrimSuffix(TrimLeadingDotSlash(root), "/")
 	prefix := root + "/"
 	for {
 		hdr, err := tr.Next()
@@ -137,9 +137,19 @@ func archiveContainsRoot(path, root string) (bool, error) {
 			tar.TypeGNULongName, tar.TypeGNULongLink:
 			continue
 		}
-		name := strings.TrimPrefix(strings.TrimSuffix(hdr.Name, "/"), "./")
+		name := strings.TrimSuffix(TrimLeadingDotSlash(hdr.Name), "/")
 		if name == root || strings.HasPrefix(name, prefix) {
 			return true, nil
 		}
 	}
+}
+
+// TrimLeadingDotSlash removes repeated harmless "./" prefixes from an archive
+// entry name. It preserves all other components, including parent traversal,
+// so callers can still apply their path validation rules.
+func TrimLeadingDotSlash(name string) string {
+	for strings.HasPrefix(name, "./") {
+		name = strings.TrimPrefix(name, "./")
+	}
+	return name
 }

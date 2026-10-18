@@ -60,9 +60,11 @@ func ValidateBindingRoutePolicy(ceiling, requested RoutePolicy) error {
 
 func hasMethodOverride(r *http.Request) bool {
 	for _, name := range []string{"X-HTTP-Method-Override", "X-Method-Override", "X-HTTP-Method"} {
-		if r.Header.Get(name) != "" {
+		// A provider can read a later field even when the first is empty.
+		// Presence is enough to make the effective method ambiguous.
+		if len(r.Header.Values(name)) != 0 {
 			return true
 		}
 	}
-	return r.URL.Query().Has("_method")
+	return r.URL != nil && r.URL.Query().Has("_method")
 }

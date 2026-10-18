@@ -31,7 +31,8 @@ saved input hashes, platform attempt fence and conditional settlement protocol.
 | `maxAttempts` | 100 | Integer 1..10000; maximum admitted recovery iterations. |
 | `concurrency` | 4 | Integer 1..32; maximum concurrent iterations. |
 | `claimDurationMs` | 30000 | Existing database claim duration, whole milliseconds 1000..300000. |
-| `backoffMs` | 1000 | Existing persisted unconfirmed-settlement backoff, whole milliseconds 1..3600000. |
+| `backoffMs` | 1000 when `retryPolicy` is omitted | Fixed persisted unconfirmed-settlement delay, whole milliseconds 1..3600000. Omit with a policy. |
+| `retryPolicy` | Omitted | Optional `EventAcknowledgmentIntentRetryPolicy` for capped exponential full jitter using the durable recovery-claim count. |
 | `callbackOptions` | Omitted | Existing `EventAcknowledgmentWorkerOptions`, copied before I/O. |
 | `signal` | Omitted | Optional borrowed `AbortSignal`; the pass never aborts it. |
 
@@ -46,7 +47,7 @@ claims. Existing callback retry limits apply within each iteration. A due
 unconfirmed intent can be admitted again within a pass. No per-pass ID tracking,
 deduplication, row fairness or global ordering is introduced.
 
-Options and nested callback overrides must have current own data properties.
+Options, nested retry policies and callback overrides must have current own data properties.
 Unknown keys, symbols, accessors, malformed values and throwing descriptor traps
 raise a generic `TypeError` before recovery starts; getters are not invoked.
 Overrides are copied/frozen before I/O. Broad callback ranges are checked at entry;
@@ -54,8 +55,16 @@ the existing primitive checks the chosen row's actual lease before claim COMMIT.
 A row-incompatible override fails without claiming that row. Omitted overrides
 keep lease-dependent defaults.
 
+See the [retry policy contract](event-acknowledgment-node-retry-policy.md) for
+bounds, jitter and worker coordination. Policies are copied/frozen before I/O.
+Combining a policy with a defined `backoffMs` is invalid before workers start.
+
+Bound intents use their captured stored policy instead of this worker fallback.
+Current intent recovery requires the upgraded columns even for unbound rows;
+see [binding precedence and rollout](event-acknowledgment-stored-retry-policy.md).
+
 The first empty rejection, owner abort, hard failure or uncertain commit closes
-admission. Unconfirmed settlements and lost claims remain independent observations
+admission. Unconfirmed settlements, known parked outcomes and lost claims remain independent observations
 and allow more admissions. Already admitted attempts drain after empty/hard
 failures; owner abort cooperatively stops their remaining work. Results reflect
 all admitted promises after they finish, including outcomes observed after
@@ -63,7 +72,9 @@ admission closes.
 
 An empty probe sees no due unclaimed row for that iteration's `SKIP LOCKED` query.
 Other hosts/iterations may hold claims; future due work and concurrent commits can
-change the view. Neither `empty` nor `limit` proves a globally drained backlog.
+change the view. Neither `empty` nor `limit` proves a globally drained backlog. Parked rows require
+explicit operator action and are excluded from automatic claim selection. See
+[budget parking and resume](event-acknowledgment-retry-budgets.md#node-budgets-and-guarded-resume).
 Use retained [intent health](event-acknowledgment-intent-health.md#node-summary)
 and listing as independent evidence.
 
@@ -112,6 +123,7 @@ per-intent statuses, connections or raw errors:
 | `attempts` | Admitted recovery iterations, including empty probes/acquisition failures. |
 | `confirmed` | Returned locally committed confirmed settlements. |
 | `unconfirmed` | Returned locally committed unconfirmed settlements with persisted backoff. |
+| `parked` | Known parking mutations, including exhausted crashed claims without callback delivery. |
 | `superseded` | Returned locally committed superseded settlements. |
 | `empty` | Actual empty recovery rejections. |
 | `claimLost` | Claims expired/replaced before a valid settlement returned. |

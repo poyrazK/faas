@@ -38,6 +38,10 @@ func (w *httpMetricsResponseWriter) WriteHeader(status int) {
 	if w.wroteHeader {
 		return
 	}
+	if status >= 100 && status < 200 && status != http.StatusSwitchingProtocols {
+		w.ResponseWriter.WriteHeader(status)
+		return
+	}
 	w.status = status
 	w.wroteHeader = true
 	w.ResponseWriter.WriteHeader(status)
@@ -68,11 +72,12 @@ func (w *httpMetricsResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error
 	if !ok {
 		return nil, nil, errors.New("http metrics response writer: hijacking unsupported")
 	}
-	if !w.wroteHeader {
+	conn, rw, err := hijacker.Hijack()
+	if err == nil && !w.wroteHeader {
 		w.status = http.StatusSwitchingProtocols
 		w.wroteHeader = true
 	}
-	return hijacker.Hijack()
+	return conn, rw, err
 }
 
 func (w *httpMetricsResponseWriter) Push(target string, opts *http.PushOptions) error {

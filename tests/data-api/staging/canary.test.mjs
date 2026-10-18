@@ -187,6 +187,13 @@ test('SDK IDs must match safe runtime records from the serving deployment', () =
   assert.equal(matchingRuntimeLog(envelope({ ...runtimeRecord(), admission }), info, 'deployment', 'POST', 'rpc').request_id, requestID)
   const timings = { verification: { duration_ms: 0, complete: true }, upstream: { duration_ms: 10, complete: true } }
   assert.equal(matchingRuntimeLog(envelope({ ...runtimeRecord(), admission, timings }), info, 'deployment', 'POST', 'rpc').request_id, requestID)
+  const database_timings = { version: 1, source: 'postgrest_server_timing', state: 'observed', sql_execution: 'unknown', pool_wait: 'unknown', phases: Object.fromEntries(['jwt', 'parse', 'plan', 'transaction', 'response'].map(phase => [phase, { duration_ms: 0, complete: true }])) }
+  assert.equal(matchingRuntimeLog(envelope({ ...runtimeRecord(), database_timings }), info, 'deployment', 'POST', 'rpc').request_id, requestID)
+  for (const change of [{ source: 'private-test-token' }, { sql_execution: 'observed' }, { pool_wait: 'observed' }, { phases: {} }, { phases: { ...database_timings.phases, transaction: { duration_ms: 0, complete: false } } }, { secret: 'private-test-token' }]) {
+    assert.throws(() => matchingRuntimeLog(envelope({ ...runtimeRecord(), database_timings: { ...database_timings, ...change } }), info, 'deployment', 'POST', 'rpc'), /runtime_log_database_timings_invalid/)
+  }
+  const unknownTiming = { version: 1, source: 'postgrest_server_timing', state: 'unknown', sql_execution: 'unknown', pool_wait: 'unknown', reason: 'missing_header' }
+  assert.equal(matchingRuntimeLog(envelope({ ...runtimeRecord(), database_timings: unknownTiming }), info, 'deployment', 'POST', 'rpc').request_id, requestID)
   for (const invalid of [{}, [], { secret: timings.upstream }, { upstream: { complete: true } }, { upstream: { duration_ms: -1, complete: true } }, { upstream: { duration_ms: 10, complete: false } }, { upstream: { ...timings.upstream, secret: 'private-test-token' } }]) {
     assert.throws(() => matchingRuntimeLog(envelope({ ...runtimeRecord(), timings: invalid }), info, 'deployment', 'POST', 'rpc'), /runtime_log_timings_invalid/)
   }

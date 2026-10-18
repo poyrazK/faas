@@ -46,11 +46,27 @@ export function matchingRuntimeLog(output, info, deployment, method, route) {
         Object.entries(timings).every(([phase, timing]) => ['verification','refresh','readiness','signing','upstream','streaming'].includes(phase) &&
           timing && Object.keys(timing).sort().join(',') === 'complete,duration_ms' && timing.complete === true && Number.isFinite(timing.duration_ms) && timing.duration_ms >= 0), 'runtime_log_timings_invalid')
     }
-    requireValue(Object.keys(record).sort().join(',') === fields.join(',') && record.event === 'data_api_request' &&
+    if (record.database_timings !== undefined) {
+      fields.push('database_timings')
+      verifiedDatabaseTimings(record.database_timings)
+    }
+    requireValue(Object.keys(record).sort().join(',') === fields.sort().join(',') && record.event === 'data_api_request' &&
       record.method === method && record.route === route && record.status === info.status && record.outcome === 'completed' && record.code === null && record.level === 'info' &&
       Number.isFinite(record.duration_ms) && record.duration_ms >= 0 && Number.isFinite(Date.parse(record.time)) && envelope.deployment_id === deployment &&
       typeof envelope.instance === 'string' && /^[a-f0-9-]{36}$/i.test(envelope.instance), 'runtime_log_contract_invalid')
     return { request_id: record.request_id, status: record.status, method, route, deployment_id: deployment, instance_id: envelope.instance }
   }
   return null
+}
+
+function verifiedDatabaseTimings(timing) {
+  const valid = value => requireValue(value, 'runtime_log_database_timings_invalid')
+  valid(timing && timing.version === 1 && timing.source === 'postgrest_server_timing' && timing.sql_execution === 'unknown' && timing.pool_wait === 'unknown')
+  if (timing.state === 'unknown') {
+    valid(Object.keys(timing).sort().join(',') === 'pool_wait,reason,source,sql_execution,state,version' && ['no_response', 'missing_header', 'invalid_header'].includes(timing.reason))
+    return
+  }
+  valid(timing.state === 'observed' && Object.keys(timing).sort().join(',') === 'phases,pool_wait,source,sql_execution,state,version' &&
+    timing.phases && Object.keys(timing.phases).sort().join(',') === 'jwt,parse,plan,response,transaction' &&
+    Object.values(timing.phases).every(phase => phase && Object.keys(phase).sort().join(',') === 'complete,duration_ms' && phase.complete === true && Number.isFinite(phase.duration_ms) && phase.duration_ms >= 0))
 }

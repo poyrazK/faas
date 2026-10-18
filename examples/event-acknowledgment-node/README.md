@@ -1,5 +1,11 @@
 # Durable Node event acknowledgment integration
 
+[`stored-policy.mjs`](stored-policy.mjs) shows explicit atomic policy binding for
+new completion intents. Apply the shared upgrade and update every recovery host
+before using it. Repeated explicit staging must use the original normalized
+policy; existing unbound duplicates conflict. See the
+[shared binding contract](../../docs/event-acknowledgment-stored-retry-policy.md).
+
 This module connects the [Node durable intent store](../../docs/event-acknowledgment-node-intents.md)
 to an application-owned durable ingestion queue and a separate recovery host.
 Copy/import `consumer.mjs` into those hosts. No helper starts automatically, and
@@ -146,7 +152,8 @@ await watchAcknowledgmentRecovery({ app: appSlug, accountId, appId }, pool, sign
   });
 ```
 
-The wrapper enables a due threshold of 100 and stalled threshold of 1, with
+The wrapper enables a due threshold of 100, stalled threshold of 1 and parked
+threshold of 1, with
 30-second confirmation for both firing and resolution. It reads metadata only,
 uses the shared five-minute stall definition and claims no recovery work. Both
 transitions need multiple fresh, complete, advancing observations. Missing,
@@ -188,6 +195,16 @@ replay before the first health query. It delivers `checkpoint.pending` in sequen
 order. The destination must deduplicate by incident ID plus sequence. A crash after
 confirmed delivery but before acknowledgment can repeat that same notification.
 No queue, store, file or notification service is installed by the SDK.
+
+The wrapper enables the same three thresholds as the ordinary watch, selecting
+a version 2 checkpoint for parked alerts. Every host that can resume or acknowledge
+it must support version 2. Omit `parkedThreshold` or set it to zero to retain the
+previous version 1 selection. Changing the selection requires a new session after
+reconciling and retaining the old checkpoint/incidents/notifications under the
+writer fence; do not edit a saved version in place. A parked recovery notification
+means only that parked count remained below threshold, including after operator
+resume or supersession. See the
+[parked alert contract](../../docs/event-acknowledgment-node-checkpoints.md#parked-intent-alerts).
 
 Retain unresolved identity across evidence loss and restart, then collect fresh,
 complete observations before reconfirming or resolving. The outbox contains only
@@ -409,6 +426,9 @@ and tune its workload thresholds and notification routing before enabling it.
 `consumer.mjs` exports `recoverAcknowledgmentsPass(scope, pool, signal)`, using
 the trusted owner scope, up to 100 admitted iterations and concurrency 4. It
 recovers existing saved callbacks independently of ingestion-job processing.
+Its retry policy selects exponential full jitter with a one-second initial cap
+and a five-minute maximum. The claim count and due time persist in PostgreSQL.
+For a fixed delay, omit `retryPolicy` and supply `backoffMs: 1000` instead.
 
 ```js
 import { recoverAcknowledgmentsPass } from './consumer.mjs';
@@ -439,8 +459,8 @@ The pass guards release exceptions, preserving known settlements and unknown
 COMMIT, and reports cleanup failures without retrying an ambiguous release.
 
 An empty probe stops admission without proving the backlog drained; other hosts
-can hold claims and work can become due later. Unconfirmed callbacks retain the
-existing persisted backoff and can become due again within a pass. Admissions
+can hold claims and work can become due later. Unconfirmed callbacks persist the
+selected jittered delay and can become due again within a pass. Admissions
 count iterations, including empty probes/acquisition failures, rather than unique
 rows or HTTP requests. The host explicitly schedules another pass as needed.
 
@@ -451,3 +471,104 @@ above Node's safe-integer range stops with the existing compatibility code when
 ordinary failure is primary; use a compatible recovery host. The example never
 acks ingestion jobs or reruns business work. See the
 [bounded Node pass contract](../../docs/event-acknowledgment-node-recovery-pass.md).
+See [retry policy bounds and uncertainty](../../docs/event-acknowledgment-node-retry-policy.md)
+for database-clock scheduling and coordinated worker configuration.
+
+## Adopt a policy for existing callback backlog
+
+`policy-adoption.mjs` exports `selectPolicyAdoption` and `applyPolicyAdoption`.
+The first reads an explicitly selected key with exact microsecond timestamp
+metadata and builds an immutable command. Durably persist that command under its
+trusted owner scope before calling the second function. Retry the same saved
+command to resolve an uncertain result; selecting again is a new operator decision
+and needs a new command UUID. No action occurs on module import.
+
+Install the optional `eventAcknowledgmentIntentPolicyAdoptionSchema` alongside
+the upgraded intent table. All recovery hosts must honor bindings before adoption.
+Guard conflicts and missing rows commit rejection receipts; inspect typed errors'
+`.receipt`. Adoption changes only policy columns and the timestamp, preserving
+callback data, count and due time. See the
+[shared adoption contract](../../docs/event-acknowledgment-policy-adoption.md#node-selection-adoption-and-replay).
+
+## Bound recovery claims and resume parked callbacks
+
+[retry-budget.mjs](retry-budget.mjs) shows optional `retryBudget` staging, precise
+metadata selection and execution of a durably saved operator command. Install the
+budget upgrade before current helpers (even v1-only use); install the optional
+resume ledger before commands. Omitted budgets stay unlimited. Counts track
+committed claims, including crashes, and never reset on resume. Known parked
+outcomes appear in recovery progress/health; enable `parkedThreshold` for sustained
+parked alerts. Keep enabled scopes on current budget-aware Go, Node or Python hosts. See
+[installation, parking, exact fences and receipt replay](../../docs/event-acknowledgment-retry-budgets.md#node-budgets-and-guarded-resume).
+
+## Adopt budgets for existing backlog
+
+[budget-adoption.mjs](budget-adoption.mjs) selects precise metadata and constructs
+a detached command that preserves v1 timing. Authorize the owner/key and total,
+durably save all original inputs, then call its apply function. Install the separate
+optional budget-adoption ledger first. Live claims, newer attempts or stale fences
+produce retained conflicts; exact retries read historical results before current
+rows, without another COMMIT. Counts, callbacks and due times remain unchanged.
+See [Node adoption and receipt replay](../../docs/event-acknowledgment-budget-adoption.md#node-selection-adoption-and-replay).
+
+## Export recovery health to Prometheus
+
+[`createRecoveryHealthMetricsHost`](recovery-metrics.mjs) creates a bounded cache,
+an unbound HTTP server and an explicitly invoked sequential poller. It observes
+one trusted application scope and performs no callback recovery. Scrapes format
+the cache only; no scrape starts SQL or a second poller.
+
+```js
+import { once } from 'node:events';
+import { createRecoveryHealthMetricsHost } from './recovery-metrics.mjs';
+
+const host = createRecoveryHealthMetricsHost(pool, accountId, appId);
+host.server.listen(9466, '127.0.0.1');
+await once(host.server, 'listening');
+try {
+  await host.run(shutdown.signal); // Host aborts on shutdown; work is joined before rejection.
+} finally {
+  await new Promise((resolve, reject) => host.server.close(error => error ? reject(error) : resolve()));
+}
+```
+
+Use the SDK's Node version requirement (22.10+) and bound pool acquisition,
+statement, connection release and HTTP shutdown. One run per host is permitted.
+The loop reads immediately, then waits five seconds after each joined read.
+A cooperative five-second query deadline is checked after all active driver work;
+late/failing reads clear the cache. Thirty-second freshness expires even if the
+poller hangs and scraping remains responsive. Stopping the poller clears it too.
+Drain polling before closing the pool. Run the metrics host independently of
+business request lifetimes; importing this file opens no listener or connection.
+
+Valid incomplete/stale samples expose bounded raw counts with ineligible evidence.
+Missing/failed observations omit counts rather than inventing healthy zeroes.
+The default prefix and fixed gauge names match the
+[recovery rules/dashboard](../event-acknowledgment-monitoring/README.md#recovery-health-node).
+Choose one scrape job per collector, separate ports for other metric servers and
+an explicit protected network path if Prometheus is in another namespace. No
+account/invocation IDs or protected inputs appear in labels. Keep the scope-to-
+target mapping in trusted application configuration.
+
+See [cache, freshness and exposition details](../../docs/event-acknowledgment-node-recovery-prometheus.md)
+and [operator recovery](../../docs/runbooks/GregaleEventRecovery.md). Live scraping,
+clock behavior, alert evaluation and Grafana rendering remain pending hosted
+qualification. No local tests or SDK helper smoke runs are used for this example.
+
+## Observe actual recovery worker activity
+
+[worker-metrics.mjs](worker-metrics.mjs) composes the health-only host with an
+observer of actual bounded recovery passes. Construct it once per trusted owner
+scope, explicitly bind its server to loopback 9466, supervise `runHealth(signal)`
+and schedule `recover(signal)` separately. Inspect each original result or typed
+exception before deciding whether to schedule another pass. Construction and
+scraping start no recovery work.
+
+Use the alternative
+[worker scrape job](../event-acknowledgment-monitoring/prometheus-recovery-node-worker.yml)
+for this endpoint, retaining both opt-in labels. Do not also scrape the same
+cache through the health-only job. Idle/active expectations observe scheduling
+and joined return; they do not cancel work or authorize retries. Join recovery,
+polling and HTTP before closing the pool. See
+[worker timing and native cleanup outcomes](../../docs/event-acknowledgment-node-worker-liveness.md)
+and the [operator runbook](../../docs/runbooks/GregaleEventRecovery.md#node-worker-hosts-and-cleanup).
