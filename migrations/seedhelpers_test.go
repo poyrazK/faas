@@ -26,6 +26,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // slugFragment returns a 12-character lowercase hex fragment of a fresh
@@ -142,6 +145,34 @@ func seedComputeNode(t *testing.T, ctx context.Context, pool *pgxpool.Pool) stri
 		returning id::text
 	`, "seed-node-"+slugFragment()).Scan(&id); err != nil {
 		t.Fatalf("seed compute_nodes row: %v", err)
+	}
+	return id
+}
+
+// legacyAccount creates an account and its personal org the way an older
+// schema holds them. PgStore.CreateAccount reads organization columns that
+// later migrations add (#4882), so upgrade tests that stop at an earlier
+// version seed accounts here and keep using the store for everything else.
+func legacyAccount(ctx context.Context, pool *pgxpool.Pool, email string, plan api.Plan) (state.Account, error) {
+	account := state.Account{Email: email, Plan: plan}
+	if err := pool.QueryRow(ctx, `INSERT INTO accounts(email,plan) VALUES($1,$2) RETURNING id::text`, email, string(plan)).Scan(&account.ID); err != nil {
+		return state.Account{}, err
+	}
+	_, err := pool.Exec(ctx, `WITH personal AS (
+		INSERT INTO orgs(id,slug,name,personal_org,personal_owner_account_id,plan,status,created_at,updated_at)
+		SELECT gen_random_uuid(),'u-'||substring(replace(a.id::text,'-','') from 1 for 12),'Personal',true,a.id,a.plan,a.status,a.created_at,now()
+		FROM accounts a WHERE a.id=$1 RETURNING id)
+		INSERT INTO org_memberships(org_id,account_id,role) SELECT id,$1,'owner' FROM personal`, account.ID)
+	return account, err
+}
+
+// legacyPersonalOrg is the personal org legacyAccount created. Older schemas
+// have no trigger that binds a new project to it, so callers pass it.
+func legacyPersonalOrg(t *testing.T, ctx context.Context, pool *pgxpool.Pool, accountID string) string {
+	t.Helper()
+	var id string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM orgs WHERE personal_org AND personal_owner_account_id=$1`, accountID).Scan(&id); err != nil {
+		t.Fatalf("personal org for %s: %v", accountID, err)
 	}
 	return id
 }
