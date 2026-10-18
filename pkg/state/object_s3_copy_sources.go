@@ -42,7 +42,7 @@ func validCopySourceCredential(c ObjectS3Credential) bool {
 
 func compatibleCopySourceBuckets(destination, source ObjectBucket) bool {
 	return destination.State == "ready" && source.State == "ready" &&
-		destination.ID != source.ID && destination.AccountID == source.AccountID &&
+		destination.ID != source.ID && destination.AccountID == source.AccountID && destination.OrgID == source.OrgID &&
 		destination.BackendID != "" && destination.BackendID == source.BackendID &&
 		destination.BackendFingerprint == source.BackendFingerprint
 }

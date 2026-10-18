@@ -72,7 +72,7 @@ func (s *server) newCheckpointObjectCredentialValues(ctx context.Context, r stat
 		return zero, objectstorage.ErrUnavailable
 	}
 	out.Endpoint, out.Region = s.objectStorage.PublicEndpoint, s.objectStorage.PublicRegion
-	account, err := s.store.AccountByID(ctx, r.Inputs.AccountID)
+	account, err := state.ProjectResourceAccountByID(ctx, s.store, r.Inputs.ProjectID)
 	if err != nil {
 		return zero, err
 	}

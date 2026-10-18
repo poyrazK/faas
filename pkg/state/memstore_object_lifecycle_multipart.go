@@ -23,9 +23,14 @@ func (m *MemStore) lifecycleMultipartUploadsLocked(j ObjectLifecycleScan) []Obje
 	return rows
 }
 
-func (m *MemStore) ListObjectLifecycleMultipartUploads(_ context.Context, id, token string) ([]ObjectMultipartUpload, error) {
+func (m *MemStore) ListObjectLifecycleMultipartUploads(ctx context.Context, id, token string) ([]ObjectMultipartUpload, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []ObjectMultipartUpload
+		return zero0, err
+	}
+
 	j, ok := m.objectLifecycleScans[id]
 	if !ok {
 		return nil, ErrNotFound
@@ -39,9 +44,14 @@ func (m *MemStore) ListObjectLifecycleMultipartUploads(_ context.Context, id, to
 
 // Admission and its checkpoint share the same mutex. The provider is called
 // later by multipart recovery; reservation bytes are unchanged here.
-func (m *MemStore) CheckpointObjectLifecycleMultipartUpload(_ context.Context, id, token string, expected ObjectMultipartUpload) (ObjectLifecycleScan, error) {
+func (m *MemStore) CheckpointObjectLifecycleMultipartUpload(ctx context.Context, id, token string, expected ObjectMultipartUpload) (ObjectLifecycleScan, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectLifecycleScan
+		return zero0, err
+	}
+
 	var next ObjectMultipartUpload
 	j, err := m.mutateLifecycleScanLocked(id, func(j ObjectLifecycleScan) (ObjectLifecycleScan, error) {
 		now := m.clock()

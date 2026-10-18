@@ -29,6 +29,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
+	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -300,7 +303,10 @@ func (a *auditor) Emit(ctx context.Context, kind string, accountID *string, data
 	if a == nil || a.inner == nil {
 		return
 	}
-	a.inner.Emit(ctx, kind, accountID, data)
+	if g, ok := postgresaccess.From(ctx); ok {
+		accountID = &g.Actor.ID
+	}
+	a.inner.Emit(ctx, kind, accountID, postgresaccess.AuditData(ctx, projectaccess.AuditData(ctx, appaccess.AuditData(ctx, data))))
 }
 
 // EmitAs is the per-call-actor twin of Emit (issue #606 /
@@ -316,7 +322,7 @@ func (a *auditor) EmitAs(ctx context.Context, actor, kind string, accountID *str
 	if a == nil || a.inner == nil {
 		return
 	}
-	a.inner.EmitAs(ctx, actor, kind, accountID, data)
+	a.inner.EmitAs(ctx, actor, kind, accountID, postgresaccess.AuditData(ctx, projectaccess.AuditData(ctx, appaccess.AuditData(ctx, data))))
 }
 
 // EmitFailedLogin is the handler-side entry point for the

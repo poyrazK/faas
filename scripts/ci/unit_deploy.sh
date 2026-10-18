@@ -13,6 +13,20 @@
 #   unit_deploy.sh rollback PLAN STAGE           put the plan's services back on the previous release
 #   unit_deploy.sh cleanup STAGE                 remove the stage dir
 #
+# The control plane's host-configuration step
+# (docs/adr/20261018133100-host-configuration-lane.md):
+#
+#   unit_deploy.sh host-state                    print the full release and the host-config record as JSON
+#   unit_deploy.sh host-manifest STATE OUT       copy the active release's production manifest, checked
+#                                                against the manifest_hash host-state printed
+#   unit_deploy.sh host-stage DEPLOYCTL          copy deployctl to the host; print the stage dir
+#   unit_deploy.sh host-restart-script STAGE OUT write the script (runs on the host) that restarts the
+#                                                daemons whose start inputs changed since they started
+#                                                (deployctl restart-changed), saving its report in STAGE
+#   unit_deploy.sh host-restarted STAGE          print that report
+#   unit_deploy.sh host-record RECORD CONTRACT   record the converged role hashes and the bootstrap
+#                                                contract (after the SLO gate)
+#
 # The deploy host is UNIT_SSH_TARGET (user@host) with UNIT_SSH_KEY,
 # UNIT_SSH_KNOWN_HOSTS (default ~/.ssh/known_hosts) and UNIT_SSH_PORT
 # (default 22); a non-root user runs host commands through sudo -n. The SLO
@@ -253,6 +267,94 @@ cmd_cleanup() {
   remote UNIT "$target" "$(as_root "$target") -c 'rm -rf -- $stage'" || true
 }
 
+# The host-config record and the ADR-580 contract live here; tests point
+# HOST_CONFIG_DIR elsewhere.
+host_config_dir() {
+  local dir="${HOST_CONFIG_DIR:-/var/lib/faas/bootstrap}"
+  [[ "$dir" =~ ^/[A-Za-z0-9._/-]+$ ]] || die "bad host config dir: $dir"
+  printf '%s' "$dir"
+}
+
+cmd_host_state() {
+  local target
+  target="$(deploy_target)"
+  remote UNIT "$target" "$(as_root "$target") -s -- '$(host_config_dir)'" <<'REMOTE'
+set -euo pipefail
+current="$(readlink -f /opt/faas/current)"
+test -s "$current/release-manifest.json"
+record=null
+if jq -e 'type == "object"' "$1/control-plane-roles.json" >/dev/null 2>&1; then
+  record="$(cat "$1/control-plane-roles.json")"
+fi
+jq -n --arg current "$(basename "$current")" \
+  --argjson release "$(cat "$current/release-manifest.json")" \
+  --argjson record "$record" \
+  '{current: $current, base_git_sha: $release.git_sha, manifest_hash: $release.manifest_hash, record: $record}'
+REMOTE
+}
+
+cmd_host_manifest() {
+  local state="$1" out="$2" target want got
+  target="$(deploy_target)"
+  want="$(plan_field "$state" .manifest_hash)"
+  [[ "$want" =~ ^sha256:[0-9a-f]{64}$ ]] || die "host state has no manifest_hash: $want"
+  # The command runs on the host, which resolves its own active release.
+  # shellcheck disable=SC2016
+  remote UNIT "$target" 'cat "$(readlink -f /opt/faas/current)/production-manifest.yaml"' > "$out"
+  got="sha256:$(sha256sum "$out" | awk '{print $1}')"
+  [[ "$got" == "$want" ]] || die "the active release's production manifest is $got, its release manifest says $want"
+}
+
+cmd_host_stage() {
+  local deployctl="$1" target remote_stage
+  target="$(deploy_target)"
+  remote_stage="$(remote UNIT "$target" 'mktemp -d /var/tmp/gregale-units.XXXXXXXX')"
+  [[ "$remote_stage" =~ ^/var/tmp/gregale-units\.[A-Za-z0-9]+$ ]] || die "unexpected remote stage dir: $remote_stage"
+  remote UNIT "$target" "mkdir -p '$remote_stage/bin'"
+  copy UNIT "$deployctl" "$target:$remote_stage/bin/deployctl"
+  remote UNIT "$target" "chmod 0755 '$remote_stage/bin/deployctl'"
+  printf '%s\n' "$remote_stage"
+}
+
+cmd_host_restart_script() {
+  local stage="$1" out="$2"
+  [[ "$stage" =~ ^/var/tmp/gregale-units\.[A-Za-z0-9]+$ ]] || die "stage must be a /var/tmp/gregale-units dir: $stage"
+  {
+    echo 'set -euo pipefail'
+    echo "${stage}/bin/deployctl restart-changed --json > ${stage}/restart.json"
+    echo "if [[ -n \"\${ROLLOUT_ACTIVATION_MARKER:-}\" ]]; then touch \"\$ROLLOUT_ACTIVATION_MARKER\"; fi"
+  } > "$out"
+}
+
+cmd_host_restarted() {
+  local stage="$1" target
+  target="$(deploy_target)"
+  [[ "$stage" =~ ^/var/tmp/gregale-units\.[A-Za-z0-9]+$ ]] || die "stage must be a /var/tmp/gregale-units dir: $stage"
+  remote UNIT "$target" "$(as_root "$target") -c 'cat $stage/restart.json'"
+}
+
+cmd_host_record() {
+  local record="$1" contract="$2" target payload
+  target="$(deploy_target)"
+  jq -e '.kind == "gregale-host-config" and .group == "control_plane"
+         and (.commit | test("^[0-9a-f]{40}$")) and (.environment | test("^sha256:[0-9a-f]{64}$"))
+         and (.roles | type == "object")' "$record" >/dev/null || die "not a host-config record with an environment: $record"
+  [[ "$contract" =~ ^sha256:[0-9a-f]{64}$ ]] || die "bad bootstrap contract: $contract"
+  payload="$(base64 < "$record" | tr -d '\n')"
+  [[ "$payload" =~ ^[A-Za-z0-9+/=]+$ ]] || die "record did not encode"
+  remote UNIT "$target" "$(as_root "$target") -s -- '$(host_config_dir)' '$payload' '$contract'" <<'REMOTE'
+set -euo pipefail
+dir="$1"
+install -d -m 0700 "$dir"
+umask 077
+printf '%s' "$2" | base64 --decode > "$dir/.control-plane-roles.json.new"
+jq -e '.kind == "gregale-host-config"' "$dir/.control-plane-roles.json.new" >/dev/null
+printf '%s\n' "$3" > "$dir/.control-plane-bootstrap-contract.sha256.new"
+mv -f "$dir/.control-plane-roles.json.new" "$dir/control-plane-roles.json"
+mv -f "$dir/.control-plane-bootstrap-contract.sha256.new" "$dir/control-plane-bootstrap-contract.sha256"
+REMOTE
+}
+
 command="${1:-}"
 shift || true
 case "$command" in
@@ -264,5 +366,11 @@ case "$command" in
   gate) cmd_gate "$@" ;;
   rollback) cmd_rollback "$@" ;;
   cleanup) cmd_cleanup "$@" ;;
-  *) echo "usage: $0 state|stage|script|run|now|gate|rollback|cleanup ..." >&2; exit 2 ;;
+  host-state) cmd_host_state "$@" ;;
+  host-manifest) cmd_host_manifest "$@" ;;
+  host-stage) cmd_host_stage "$@" ;;
+  host-restart-script) cmd_host_restart_script "$@" ;;
+  host-restarted) cmd_host_restarted "$@" ;;
+  host-record) cmd_host_record "$@" ;;
+  *) echo "usage: $0 state|stage|script|run|now|gate|rollback|cleanup|host-state|host-manifest|host-stage|host-restart-script|host-restarted|host-record ..." >&2; exit 2 ;;
 esac

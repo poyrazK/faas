@@ -442,10 +442,14 @@ const (
 
 // Account is a customer account.
 type Account struct {
-	ID     string
-	Email  string
-	Plan   api.Plan
-	Status AccountStatus
+	// ResourceOrgID is set only on a resource policy/billing projection. Such a
+	// value is never returned by AccountByID or used as a human principal.
+	ResourceOrgID            string
+	ResourceOwnershipEnabled bool
+	ID                       string
+	Email                    string
+	Plan                     api.Plan
+	Status                   AccountStatus
 	// ProviderCustomerID is the per-account `cus_…` returned by Stripe when
 	// the customer signs up (spec §4.7). The unique index makes it a
 	// stable webhook lookup key.
@@ -1274,9 +1278,8 @@ type DeployToken struct {
 type App struct {
 	ID        string
 	AccountID string
-	// OrgID is the owning organization persisted on the app row. AccountID
-	// remains the creator/legacy authorization identity; activity attribution
-	// must follow OrgID, never the caller's active org or API-key scope.
+	// AccountID is an immutable storage namespace, not a human ownership FK.
+	// OrgID owns shared authorization, runtime policy, billing and lifecycle.
 	OrgID string
 	Slug  string
 	// Visibility controls public edge exposure. Public is the default;
@@ -4548,6 +4551,8 @@ type Invocation struct {
 	// account_async_quota slot for this dispatch. It is internal lifecycle
 	// state, not part of the customer invocation representation.
 	QuotaReserved bool `json:"-"`
+	// AsyncQuotaSubjectID captures the reserved counter independently of storage ownership.
+	AsyncQuotaSubjectID string `json:"-"`
 	// WorkPolicyName and WorkKeyDigest identify an app-scoped scheduling lane.
 	// The raw application key is never persisted in this ledger.
 	WorkPolicyName     string     `json:"work_policy_name,omitempty"`
@@ -4914,6 +4919,7 @@ type QueueStats struct {
 // rows: push consumers and queue-depth autoscaling can reconcile from this
 // stable configuration without scanning customer messages.
 type QueueBinding struct {
+	OrgID string
 	// Empty retains the historical app-wide contract. Named scopes are immutable.
 	DeploymentScope string
 	// EnvironmentID retains the original catalog identity through removal/recreation.
@@ -7430,6 +7436,7 @@ const (
 type Project struct {
 	ID               string
 	AccountID        string
+	OrgID            string // persisted owner; AccountID is the stable resource namespace
 	Slug             string
 	RepoFullName     string // empty for standalone (non-bound) projects
 	ProductionBranch string // empty until BindAppRepo runs
@@ -7631,18 +7638,21 @@ const (
 // (personal_owner_account_id) WHERE personal_org = true enforces
 // exactly-one-personal-per-account at the SQL layer).
 type Org struct {
-	ID                     string
-	Slug                   string
-	Name                   string
-	Personal               bool
-	PersonalOwnerAccountID *string
-	Plan                   api.Plan
-	Status                 OrgStatus
-	ProviderCustomerID     string
-	StripeSubscriptionItem string
-	DeletedPending         bool
-	CreatedAt              time.Time
-	UpdatedAt              time.Time
+	AbuseHoldAt              *time.Time
+	AbuseHoldReason          string
+	ResourceOwnershipEnabled bool
+	ID                       string
+	Slug                     string
+	Name                     string
+	Personal                 bool
+	PersonalOwnerAccountID   *string
+	Plan                     api.Plan
+	Status                   OrgStatus
+	ProviderCustomerID       string
+	StripeSubscriptionItem   string
+	DeletedPending           bool
+	CreatedAt                time.Time
+	UpdatedAt                time.Time
 }
 
 // OrgMembership is the (org, account) join row. The pair is the PK;

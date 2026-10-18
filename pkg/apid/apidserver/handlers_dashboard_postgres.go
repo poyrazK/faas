@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
@@ -20,7 +21,12 @@ func (s *server) renderManagedPostgres(w http.ResponseWriter, r *http.Request, l
 	if s.managedPostgres == nil {
 		data.Error = "Managed PostgreSQL is not enabled for this environment yet."
 	} else {
-		databases, err := s.managedPostgres.List(r.Context(), acct.ID)
+		ctx, err := postgresaccess.PersonalContext(r.Context(), s.store, acct.ID)
+		var databases []managedpostgres.Database
+		if err == nil {
+			databases, err = s.managedPostgres.List(ctx, acct.ID)
+		}
+		r = r.WithContext(ctx)
 		if err != nil {
 			log.Warn("dashboard renderManagedPostgres: list databases", "account_id", acct.ID, "err", err)
 			data.Error = "Managed PostgreSQL status is temporarily unavailable."

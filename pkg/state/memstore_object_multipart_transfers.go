@@ -10,18 +10,26 @@ import (
 
 var _ ObjectMultipartTransferStore = (*MemStore)(nil)
 
-func (m *MemStore) BeginObjectMultipartPart(_ context.Context, account, bucket, id, token string, part int32, size, maxObject int64, p api.ObjectStoragePolicy) error {
+func (m *MemStore) BeginObjectMultipartPart(ctx context.Context, account, bucket, id, token string, part int32, size, maxObject int64, p api.ObjectStoragePolicy) error {
 	if token == "" || len(token) > 128 {
 		return ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	return m.admitMultipartPartLocked(account, bucket, id, token, part, size, maxObject, p)
 }
 
-func (m *MemStore) SettleObjectMultipartPart(_ context.Context, account, id string, part int32, token string) error {
+func (m *MemStore) SettleObjectMultipartPart(ctx context.Context, account, id string, part int32, token string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	u := m.objectMultipartUploads[id]
 	transfer := m.objectMultipartTransfers[id][part]
 	if u.AccountID != account || token == "" || transfer.token != token || m.multipartPartWriterPendingLocked(id, part) {
@@ -54,12 +62,17 @@ func (m *MemStore) multipartTransfersPendingLocked(id string) bool {
 	return false
 }
 
-func (m *MemStore) PrepareObjectMultipartCompletion(_ context.Context, u ObjectMultipartUpload, token string, size int64, parts []api.ObjectMultipartCompletedPart, p api.ObjectStoragePolicy) (ObjectMultipartUpload, error) {
+func (m *MemStore) PrepareObjectMultipartCompletion(ctx context.Context, u ObjectMultipartUpload, token string, size int64, parts []api.ObjectMultipartCompletedPart, p api.ObjectStoragePolicy) (ObjectMultipartUpload, error) {
 	if !validMultipartChecksumCompletion(u, parts, size) || !u.CompletionConditions.Valid() || token == "" || len(token) > 128 || size < 1 || size > api.MaxObjectUploadBytes || len(parts) < 1 || len(parts) > api.MaxMultipartParts {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectMultipartUpload
+		return zero0, err
+	}
+
 	current, ok := m.objectMultipartUploads[u.ID]
 	if !ok || current.Checksum.Policy != u.Checksum.Policy || ObjectMultipartIsCompleting(current.State) && !current.Checksum.Equal(u.Checksum) || !current.Protection.Equal(u.Protection) || current.EncryptionDefaultRevision != u.EncryptionDefaultRevision || !current.Encryption.Equal(u.Encryption) || current.PartRevision != u.PartRevision || m.multipartTransfersPendingLocked(u.ID) || ObjectMultipartIsCompleting(current.State) && (current.CompletionConditions != u.CompletionConditions || current.SizeBytes != size) {
 		return ObjectMultipartUpload{}, ErrConflict
@@ -79,9 +92,14 @@ func (m *MemStore) PrepareObjectMultipartCompletion(_ context.Context, u ObjectM
 	return cloneObjectMultipartUpload(claimed), nil
 }
 
-func (m *MemStore) ObjectMultipartAbortReady(_ context.Context, id, token string) (bool, error) {
+func (m *MemStore) ObjectMultipartAbortReady(ctx context.Context, id, token string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 bool
+		return zero0, err
+	}
+
 	u := m.objectMultipartUploads[id]
 	if token == "" || u.LeaseToken != token || u.State != ObjectMultipartAborting {
 		return false, ErrConflict
@@ -89,9 +107,13 @@ func (m *MemStore) ObjectMultipartAbortReady(_ context.Context, id, token string
 	return !u.PartURLUnsafeUntil.After(m.clock()) && !m.multipartTransfersPendingLocked(id), nil
 }
 
-func (m *MemStore) FinishVerifiedObjectMultipartAbort(_ context.Context, id, token string) error {
+func (m *MemStore) FinishVerifiedObjectMultipartAbort(ctx context.Context, id, token string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	u := m.objectMultipartUploads[id]
 	if token == "" || u.LeaseToken != token || u.State != ObjectMultipartAborting || u.PartURLUnsafeUntil.After(m.clock()) || m.multipartTransfersPendingLocked(id) {
 		return ErrConflict
@@ -119,9 +141,13 @@ func (m *MemStore) FinishVerifiedObjectMultipartAbort(_ context.Context, id, tok
 	return nil
 }
 
-func (m *MemStore) RejectObjectMultipartCompletion(_ context.Context, id, token, code string) error {
+func (m *MemStore) RejectObjectMultipartCompletion(ctx context.Context, id, token, code string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	u := m.objectMultipartUploads[id]
 	if token == "" || u.LeaseToken != token || u.State != ObjectMultipartCompletingConditional || !validMultipartCompletionFailure(code) {
 		return ErrConflict
@@ -136,12 +162,16 @@ func (m *MemStore) RejectObjectMultipartCompletion(_ context.Context, id, token,
 
 var _ ObjectCrossBucketMultipartStore = (*MemStore)(nil)
 
-func (m *MemStore) BeginObjectCrossBucketMultipartPart(_ context.Context, account, bucket, id, token string, part int32, size, maxObject int64, p api.ObjectStoragePolicy, source ObjectMultipartCopySource) error {
+func (m *MemStore) BeginObjectCrossBucketMultipartPart(ctx context.Context, account, bucket, id, token string, part int32, size, maxObject int64, p api.ObjectStoragePolicy, source ObjectMultipartCopySource) error {
 	if token == "" || len(token) > 128 || !validMultipartCopyAuthority(source, bucket) {
 		return ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	g, _, err := m.resolveObjectS3CopySourceLocked(account, source.SubjectID, source.BucketID, source.Key)
 	if err != nil || g.ID != source.GrantID || g.BucketID != bucket {
 		return ErrConflict

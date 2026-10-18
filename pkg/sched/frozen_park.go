@@ -116,7 +116,7 @@ func (e *Engine) warmCapturePending(ctx context.Context, app state.App, ins stat
 	if !app.WarmSnapshotEnabled || ins.FrameworkReadyAt == nil || app.Manifest.BeforeCheckpoint != nil {
 		return false
 	}
-	acct, err := e.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil || !acct.Plan.WarmSnapshotAllowed() {
 		return false
 	}

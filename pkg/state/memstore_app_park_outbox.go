@@ -20,9 +20,12 @@ func (m *MemStore) BeginAppParkTransition(ctx context.Context, appID string, exp
 	return m.BeginAppParkTransitionIfDeployment(ctx, appID, expected, "")
 }
 
-func (m *MemStore) BeginAppParkTransitionIfDeployment(_ context.Context, appID string, expected AppStatus, deploymentID string) (AppParkTransition, bool, error) {
+func (m *MemStore) BeginAppParkTransitionIfDeployment(ctx context.Context, appID string, expected AppStatus, deploymentID string) (AppParkTransition, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return AppParkTransition{}, false, err
+	}
 	app, ok := m.apps[appID]
 	if !ok {
 		return AppParkTransition{}, false, ErrNotFound

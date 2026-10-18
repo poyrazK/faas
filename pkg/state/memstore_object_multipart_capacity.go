@@ -11,9 +11,13 @@ import (
 
 var _ ObjectMultipartCapacityStore = (*MemStore)(nil)
 
-func (m *MemStore) AdmitObjectMultipartPart(_ context.Context, account, bucket, id string, part int32, size, maxObject int64, p api.ObjectStoragePolicy) error {
+func (m *MemStore) AdmitObjectMultipartPart(ctx context.Context, account, bucket, id string, part int32, size, maxObject int64, p api.ObjectStoragePolicy) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	return m.admitMultipartPartLocked(account, bucket, id, "", part, size, maxObject, p)
 }
 
@@ -39,7 +43,7 @@ func (m *MemStore) admitMultipartPartLocked(account, bucket, id, token string, p
 	if total > maxObject-delta {
 		return ErrObjectCapacity
 	}
-	if _, _, err := checkObjectAdmission(m.objectUsageLocked(account, now), bucket, delta, 0, true, true, p, now); err != nil {
+	if _, _, err := checkObjectAdmission(m.objectUsageLocked(m.objectBillingSubjectLocked(m.objectBuckets[bucket]), now), bucket, delta, 0, true, true, p, now); err != nil {
 		return err
 	}
 	if m.objectMultipartPartGrants == nil {
@@ -72,20 +76,24 @@ func (m *MemStore) admitMultipartPartLocked(account, bucket, id, token string, p
 	upload.PartRevision++
 	upload.UpdatedAt = now
 	m.objectMultipartUploads[id] = upload
-	m.authorizeMultipartLocked(account, now)
+	m.authorizeMultipartLocked(bucket, now)
 	return nil
 }
 
-func (m *MemStore) authorizeMultipartLocked(account string, now time.Time) {
+func (m *MemStore) authorizeMultipartLocked(bucket string, now time.Time) {
 	if m.objectAuthorizations == nil {
 		m.objectAuthorizations = map[string]int64{}
 	}
-	m.objectAuthorizations[account+ObjectStoragePeriod(now).String()]++
+	m.objectAuthorizations[m.objectBillingSubjectLocked(m.objectBuckets[bucket])+ObjectStoragePeriod(now).String()]++
 }
 
-func (m *MemStore) AdmitObjectMultipartCompletion(_ context.Context, account, bucket, id, key string, size int64, p api.ObjectStoragePolicy) error {
+func (m *MemStore) AdmitObjectMultipartCompletion(ctx context.Context, account, bucket, id, key string, size int64, p api.ObjectStoragePolicy) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	return m.admitMultipartCompletionLocked(account, bucket, id, key, size, p, "")
 }
 
@@ -105,7 +113,7 @@ func (m *MemStore) admitMultipartCompletionLocked(account, bucket, id, key strin
 	for _, v := range m.objectMultipartPartGrants[id] {
 		reserved = boundedObjectAdd(reserved, v)
 	}
-	snapshot := withoutMultipartReservation(m.objectUsageLocked(account, now), bucket, reserved)
+	snapshot := withoutMultipartReservation(m.objectUsageLocked(m.objectBillingSubjectLocked(m.objectBuckets[bucket]), now), bucket, reserved)
 	hash := objectKeyHash(key)
 	old, exists := m.objectGrants[bucket][hash]
 	all := versionAdmissionMode(snapshot, bucket)
@@ -140,16 +148,21 @@ func (m *MemStore) admitMultipartCompletionLocked(account, bucket, id, key strin
 	u.GrantedBytes += delta
 	u.GrantedKeys += keys
 	m.objectUsage[bucket] = u
-	m.authorizeMultipartLocked(account, now)
+	m.authorizeMultipartLocked(bucket, now)
 	return nil
 }
 
-func (m *MemStore) ListObjectS3MultipartUploads(_ context.Context, account, app, bucket, prefix, keyMarker, uploadMarker string, limit int32) ([]ObjectMultipartUpload, error) {
+func (m *MemStore) ListObjectS3MultipartUploads(ctx context.Context, account, app, bucket, prefix, keyMarker, uploadMarker string, limit int32) ([]ObjectMultipartUpload, error) {
 	if limit < 1 || limit > api.MaxObjectS3ListItems+1 {
 		return nil, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []ObjectMultipartUpload
+		return zero0, err
+	}
+
 	out := []ObjectMultipartUpload{}
 	for _, u := range m.objectMultipartUploads {
 		if u.AccountID != account || u.AppID != app || u.BucketID != bucket || u.PartCount != 0 || u.State == ObjectMultipartInitiating || !objectMultipartLive(u.State) || !strings.HasPrefix(u.Key, prefix) {

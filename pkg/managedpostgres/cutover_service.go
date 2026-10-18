@@ -40,6 +40,9 @@ func (s *CutoverService) Prepare(ctx context.Context, r PrepareCutoverRequest) (
 	if !validPrepareCutover(r, s.bindings.now()) {
 		return Cutover{}, ErrInvalid
 	}
+	if _, err := s.bindings.databases.Get(ctx, r.AccountID, r.SourceDatabaseID); err != nil {
+		return Cutover{}, err
+	}
 	target, err := s.bindings.databases.Get(ctx, r.AccountID, r.TargetDatabaseID)
 	if err != nil {
 		return Cutover{}, err
@@ -67,9 +70,21 @@ func (s *CutoverService) Prepare(ctx context.Context, r PrepareCutoverRequest) (
 	return c, nil
 }
 func (s *CutoverService) Get(ctx context.Context, account, id string) (Cutover, error) {
-	return s.store.GetCutover(ctx, account, id)
+	c, err := s.store.GetCutover(ctx, account, id)
+	if err != nil {
+		return Cutover{}, err
+	}
+	for _, database := range []Database{c.Source, c.Target} {
+		if _, err := s.bindings.databases.Get(ctx, account, database.ID); err != nil {
+			return Cutover{}, err
+		}
+	}
+	return c, nil
 }
 func (s *CutoverService) Cancel(ctx context.Context, account, id string) (Cutover, error) {
+	if _, err := s.Get(ctx, account, id); err != nil {
+		return Cutover{}, err
+	}
 	return s.store.CancelCutover(ctx, account, id, s.bindings.now())
 }
 
@@ -77,6 +92,9 @@ func (s *CutoverService) Cancel(ctx context.Context, account, id string) (Cutove
 func (s *CutoverService) Verify(ctx context.Context, account, id string) (Cutover, error) {
 	if s.verifier == nil || !s.bindings.provisioningEnabled() || !s.bindings.provisioningAllowed(ctx, account) {
 		return Cutover{}, ErrUnavailable
+	}
+	if _, err := s.Get(ctx, account, id); err != nil {
+		return Cutover{}, err
 	}
 	return s.store.RequestCutoverVerification(ctx, account, id, s.bindings.now())
 }
