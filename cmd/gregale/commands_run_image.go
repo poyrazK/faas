@@ -20,6 +20,8 @@ import (
 	"time"
 	"unicode"
 
+	"golang.org/x/term"
+
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -239,6 +241,13 @@ func parseImageRunArgs(args []string) (imageRunOptions, bool) {
 	return imageRunOptions{request: req, detach: *detach, registryUsername: *registryUsername, passwordStdin: *passwordStdin}, true
 }
 
+// osStdinIsTerminal reports whether the CLI's stdin is a terminal that can
+// prompt.
+func osStdinIsTerminal() bool {
+	f, ok := osStdin.(*os.File)
+	return ok && term.IsTerminal(int(f.Fd()))
+}
+
 // imageRunRegistryAuth reads the registry password for --registry-username:
 // from stdin with --registry-password-stdin, else from
 // $GREGALE_REGISTRY_PASSWORD, else from a terminal prompt.
@@ -256,7 +265,7 @@ func imageRunRegistryAuth(opts imageRunOptions) (*api.ImageRunRegistryAuth, erro
 		password = strings.TrimSuffix(strings.TrimSuffix(string(body), "\n"), "\r")
 	case os.Getenv(imageRunEnvPasswordVar) != "":
 		password = os.Getenv(imageRunEnvPasswordVar)
-	case stdinIsTTY():
+	case osStdinIsTerminal():
 		value, err := readInteractivePassword(bufio.NewReader(osStdin), "Registry password/token: ")
 		if err != nil {
 			return nil, fmt.Errorf("read registry password: %w", err)
