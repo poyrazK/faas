@@ -1520,5 +1520,58 @@
     "docs_links": "pass",
     "live_docs_fixture_retry": "pass after selecting repository toolchain and granting local loopback socket permission",
     "http_documentation_fixtures_passed": 4
+  },
+  "release_policy_and_mcp_schema_integration": {
+    "integrated_main": "3eadd00f38a449e46dc8d10d0c772256e0b557c5",
+    "tested_source_tree_before_evidence": "4e1d5ab4d798b2ac31b0f77e12112432797c06f5",
+    "hosted_failure_head": "c68bd0016df42965a0e7654e45ee40aeb3e1393a",
+    "hosted_failure_job": 117654151912,
+    "hosted_failed_test": "TestUnitLaneRestartsOnlyPlannedServicesOverTheExpectedRelease",
+    "replacement_policy_assertions": [
+      "signature verification",
+      "signed manifest equality",
+      "all-migration eligibility",
+      "migrator digest",
+      "guarded staging before activation"
+    ],
+    "existing_full_lane_operation_cas_service_gate_rollback_assertions_retained": true,
+    "release_workflow_race_tests": {
+      "pass": 6,
+      "fail": 0,
+      "skip": 0
+    },
+    "race_log_sha256": "bba9e1bcc1d0b9eb9344a4b7fef45005ace561fcc5b3435ac12723efa2cdf902",
+    "compile_bounds": "5GiB/GOGC50;serial",
+    "runtime_bounds": "2GiB/GOGC10/GOMAXPROCS2/3m",
+    "initial_local_execution": "wrong working directory failed repository file lookups; same compiled binary passed all six tests from its package directory",
+    "clean_canonical_schema_replay": "pass; only task-owned schema_dump database reset",
+    "schema_lines": 84179,
+    "schema_sha256": "dc58d8308173c402e1ea051ff18ddd9de07201c02bd02a5d9ffe66e77f8afc24",
+    "migration_source_digest": "b4779ad555a3a1f8921d17b294fe17dc46360a921930f463e8843ca5b6fa4f06",
+    "sqlc_blocks": 18,
+    "published_query_sources_preserved": true,
+    "function_query_sources_preserved": 3,
+    "sqlc_generation_drift": "pass",
+    "clone_registry": {
+      "main_preserved": 946,
+      "function_records": 2,
+      "duplicates": 0
+    },
+    "sdk_regeneration_and_openapi_match_main": true,
+    "node_build_python_compile_starter_helper_drift": "pass",
+    "policy_tests_passed": 51,
+    "affected_unit_tests_passed": 25,
+    "release_plan_tests_passed": 19,
+    "hermetic_unit_deployment_and_verification_suites": "both pass; remote execution stubbed",
+    "adr_uniqueness": "1817 decisions,1613 distinct,164-entry baseline unchanged",
+    "generated_daemons": "pass",
+    "environment_contract": "pass",
+    "documentation_links": "pass",
+    "http_documentation_fixtures_passed": 4,
+    "destination_migration_class": "contract; full release required",
+    "function_host_scheduler_proto_unchanged": true,
+    "fresh_hosted_current_head_checks": "required",
+    "native_physical_acceptance": false,
+    "production_activation": false
   }
 }

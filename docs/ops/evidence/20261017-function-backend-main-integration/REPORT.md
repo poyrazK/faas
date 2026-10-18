@@ -541,6 +541,45 @@ the preceding worker-integration head. No assertion, policy or resource limit is
 weakened. Fresh exact-head hosted checks remain required; physical acceptance
 and activation remain pending.
 
+## Release-policy coverage and MCP schema coexistence (2026-10-18)
+
+Hosted job `117654151912` on head
+`c68bd0016df42965a0e7654e45ee40aeb3e1393a` found one failed test:
+`TestUnitLaneRestartsOnlyPlannedServicesOverTheExpectedRelease` still rejected
+any occurrence of `migrate`, including the new policy's guarded migrator
+staging. Its replacement assertions require signature verification, signed
+manifest equality, every migration's eligibility, the migrator digest and
+staging before activation. Full-lane-only operations, compare-and-swap,
+service selection, activation gates and rollback checks remain enforced.
+
+Main `3eadd00f38a449e46dc8d10d0c772256e0b557c5` is integrated, including
+its MCP review-version migration and both new query sources. A clean replay
+in the task-owned disposable database generates an 84,179-line canonical
+schema with SHA-256
+`dc58d8308173c402e1ea051ff18ddd9de07201c02bd02a5d9ffe66e77f8afc24`
+and migration-source digest
+`b4779ad555a3a1f8921d17b294fe17dc46360a921930f463e8843ca5b6fa4f06`.
+All eighteen SQLC blocks, published query sources and 946 published clone
+policies remain intact, alongside the three function query sources and two
+operational journals. There are no duplicate clone policies. Both management
+SDK generators match main's OpenAPI and generated trees; TypeScript builds,
+Python compiles and canonical starter-helper drift checks pass.
+
+Tested source tree before this evidence entry: `4e1d5ab4d798b2ac31b0f77e12112432797c06f5`. All six
+release-workflow race tests execute with zero skips or failures. Compilation
+uses 5 GiB/GOGC 50; execution retains 2 GiB/GOGC 10, two processors and the
+three-minute deadline. All 51 migration-policy, 25 affected-unit and 19
+release-plan tests and both hermetic shell suites pass. ADR uniqueness passes
+with 1,817 decisions, 1,613 distinct numbers and the unchanged 164-entry
+baseline. Generated daemon configuration, environment and documentation checks
+pass, including four HTTP fixtures. No remote deployment runs.
+
+The destination migration remains contract-classified and requires a full
+release. Function host/scheduler/protobuf sources are unchanged from the prior
+head. Hosted worker/TLS SQL tests and guarded native compilation passed on
+`c68bd0016`; every applicable hosted check must pass again on the fresh head.
+Physical native acceptance and production activation remain pending.
+
 ## Qualification boundary
 
 Production activation remains disabled. This managed container has no supported

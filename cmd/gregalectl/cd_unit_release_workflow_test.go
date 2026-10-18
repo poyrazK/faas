@@ -107,11 +107,31 @@ func TestUnitLaneRestartsOnlyPlannedServicesOverTheExpectedRelease(t *testing.T)
 		"unit-release-verify.sh ${release_dir}${specs}",
 		"deployctl rollback --only '${only}'",
 	)
-	for _, forbidden := range []string{"migrate", "converge-control-plane", "kgv rotate", "fleet-seal"} {
+	for _, forbidden := range []string{"converge-control-plane", "kgv rotate", "fleet-seal"} {
 		if strings.Contains(helper, forbidden) {
 			t.Errorf("the unit lanes must leave %q to the full lane", forbidden)
 		}
 	}
+	// ADR-20261018084150 permits only verified, lane-eligible migrations
+	// before activation. A blanket ban on the word "migrate" would also
+	// reject the guarded staging of the signed migrator for that data step.
+	verifier := readRepoFile(t, "scripts", "ci", "verify_unit_release.sh")
+	orderedIn(t, "signed migration eligibility", verifier,
+		"cosign verify-blob",
+		`cmp "$manifest" "$dir/units-manifest.json"`,
+		`if jq -e '(.data.migrations // []) | length > 0' "$manifest"`,
+		`.data.eligible == true`,
+		`all(.data.migrations[]; .eligible == true)`,
+		`(.tools.migrate.sha256 | type == "string")`,
+		"exit 1",
+		`(cd "$dir/unpacked" && sha256sum -c --quiet -)`,
+	)
+	orderedIn(t, "planned migration staging", helper,
+		`if jq -e '.replace["bin/migrate"]' "$plan"`,
+		`install -m 0755 "$units/tools/migrate" "$local_stage/bin/migrate"`,
+		"deployctl unit-overlay --release-id ${release_id} --expect-current ${expect}",
+		"deployctl deploy --only '${only}' --expect-current ${expect} ${release_id}",
+	)
 }
 
 // TestUnitLanesGateEveryHostAndRollBack: a unit deploy is not promoted until

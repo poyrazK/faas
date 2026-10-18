@@ -26,6 +26,14 @@ func (m *management) authorizeArgs(ctx context.Context, args any) error {
 }
 
 func (m *management) authorizeToolArgs(ctx context.Context, args any, write bool) error {
+	if diagnostic, ok := args.(incidentBundleArgs); ok {
+		if write {
+			return invalid("request_access_denied", "incident bundles are read-only")
+		}
+		// Optional comparison deployments are guarded under app-wide diagnostic
+		// consent, independently of ordinary environment inspection grants.
+		args = appArgs{App: diagnostic.App}
+	}
 	if diagnostic, ok := args.(profilesArgs); ok {
 		if write {
 			return invalid("request_access_denied", "profile diagnostics are read-only")

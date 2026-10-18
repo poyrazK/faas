@@ -14,15 +14,29 @@ import (
 
 func TestControlPlaneStandbySyncsWhatATakeoverNeeds(t *testing.T) {
 	root := repoRoot(t)
-	body, err := os.ReadFile(filepath.Join(root, "deploy", "ansible", "roles", "control_plane_standby", "defaults", "main.yml"))
+	// The standby stages the shared control-plane state list, which the
+	// off-host backup seals too.
+	roleDefaults, err := os.ReadFile(filepath.Join(root, "deploy", "ansible", "roles", "control_plane_standby", "defaults", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`faas_standby_sync_trees: "{{ faas_cp_state_trees }}"`,
+		`faas_standby_sync_files: "{{ faas_cp_state_files }}"`,
+		`faas_standby_sync_exclude: "{{ faas_cp_state_exclude }}"`,
+	} {
+		if !strings.Contains(string(roleDefaults), want) {
+			t.Errorf("standby does not stage the shared state list: missing %s", want)
+		}
+	}
+	body, err := os.ReadFile(filepath.Join(root, "deploy", "ansible", "vars", "cp_state_files.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var defaults struct {
-		Stage   string   `yaml:"faas_standby_stage_dir"`
-		Trees   []string `yaml:"faas_standby_sync_trees"`
-		Files   []string `yaml:"faas_standby_sync_files"`
-		Exclude []string `yaml:"faas_standby_sync_exclude"`
+		Trees   []string `yaml:"faas_cp_state_trees"`
+		Files   []string `yaml:"faas_cp_state_files"`
+		Exclude []string `yaml:"faas_cp_state_exclude"`
 	}
 	if err := yaml.Unmarshal(body, &defaults); err != nil {
 		t.Fatal(err)
