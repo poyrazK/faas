@@ -89,17 +89,28 @@ func (s *startTerminal) expect(want string) {
 	defer timer.Stop()
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
-	for {
+	consume := func() bool {
 		out := s.output.String()
 		if at := strings.Index(out[s.cursor:], want); at >= 0 {
 			s.cursor += at + len(want)
-			return
+			return true
 		}
 		if want == "Keep building in this project." && strings.Contains(out[s.cursor:], "Your deployment is saved. Let's check its response.") {
 			s.t.Fatalf("app response check failed\n%s", s.transcript())
 		}
+		return false
+	}
+	for {
+		if consume() {
+			return
+		}
 		select {
 		case <-s.done:
+			// Wait has drained both output streams. A fast exit can publish
+			// its final milestone after the snapshot above but before select.
+			if consume() {
+				return
+			}
 			s.t.Fatalf("gregale exited before %q: %v\n%s", want, s.err, s.transcript())
 		case <-timer.C:
 			s.t.Fatalf("timed out waiting for %q\n%s", want, s.transcript())

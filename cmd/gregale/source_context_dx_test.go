@@ -22,8 +22,15 @@ func TestStartRemembersAppAndRetainsAcceptedRecovery(t *testing.T) {
 			runner := startTestRunner(t, scope, "")
 			runner.session.SourcePath = source
 			runner.session.AppID, runner.session.DeploymentID = "app-1", "accepted-1"
+			if err := saveStartSession(runner.statePath, runner.session); err != nil {
+				t.Fatal(err)
+			}
 			if err := runner.rememberApp(); err != nil {
 				t.Fatal(err)
+			}
+			paths, err := filepath.Glob(filepath.Join(filepath.Dir(runner.statePath), "*.json"))
+			if err != nil || len(paths) != 1 || paths[0] != runner.statePath {
+				t.Fatalf("remembering the app duplicated its recovery record: paths=%v err=%v", paths, err)
 			}
 			link, path, err := findProjectContext(source)
 			if err != nil || link.Version != standaloneContextVersion || link.Project != "" || link.App != runner.session.AppSlug || path != projectContextPath(source) {
@@ -39,6 +46,45 @@ func TestStartRemembersAppAndRetainsAcceptedRecovery(t *testing.T) {
 				t.Fatalf("recovery lost: resume=%t proceed=%t session=%+v err=%v", resume, proceed, recovery.session, err)
 			}
 		})
+	}
+}
+
+func TestStartRememberMovesPendingRecoveryWithoutChangingOtherAccounts(t *testing.T) {
+	startTestEnvironment(t)
+	source := startTestSource(t)
+	runner := startTestRunner(t, source, "")
+	runner.session.AppID, runner.session.DeploymentID, runner.session.VerifiedDeploymentID = "app-1", "previous-1", "previous-1"
+	runner.session.PendingSubmission = &startPendingSubmission{Key: "11111111-1111-4111-8111-111111111111", Transport: "resumable", UploadID: "pending-upload", TotalSize: 512}
+	previousPath := runner.statePath
+	if err := saveStartSession(previousPath, runner.session); err != nil {
+		t.Fatal(err)
+	}
+	other := runner.session
+	other.AccountID, other.AppID, other.DeploymentID = "other-account", "other-app", "other-deployment"
+	other.PendingSubmission = nil
+	otherPath := startContextSessionPath(previousPath, other.APIBase, other.AccountID)
+	if err := saveStartSession(otherPath, other); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(otherPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.rememberApp(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(previousPath); !os.IsNotExist(err) {
+		t.Fatalf("previous pending record was not retired: %v", err)
+	}
+	after, err := os.ReadFile(otherPath)
+	if err != nil || string(before) != string(after) {
+		t.Fatalf("another account's recovery record changed: %v", err)
+	}
+	recovery := startTestRunner(t, source, "\n")
+	resume, proceed, err := recovery.chooseRecovery()
+	saved := recovery.session
+	if err != nil || !resume || !proceed || saved.DeploymentID != "previous-1" || saved.VerifiedDeploymentID != "previous-1" || saved.PendingSubmission == nil || *saved.PendingSubmission != *runner.session.PendingSubmission {
+		t.Fatalf("pending recovery changed while remembering the app: resume=%t proceed=%t session=%+v err=%v", resume, proceed, saved, err)
 	}
 }
 

@@ -67,9 +67,18 @@ func (r *startRunner) rememberApp() error {
 	if err != nil {
 		return err
 	}
+	previousStatePath := r.statePath
 	r.statePath = startContextSessionPath(base, r.session.APIBase, r.session.AccountID, r.session.ContextKey)
 	if err := saveStartSession(r.statePath, r.session); err != nil {
 		return fmt.Errorf("app default saved but recovery record could not be updated: %w", err)
+	}
+	// The directory lock spans this move. Publish the same launch under its
+	// remembered context before removing only its previous record; keeping that
+	// record would leave stale accepted or pending state for the unlinked source.
+	if previousStatePath != r.statePath {
+		if err := os.Remove(previousStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("app default saved but previous recovery record could not be retired: %w", err)
+		}
 	}
 	PrintOK(osStdout, "Remembered app %s in %s", link.App, path)
 	return nil
