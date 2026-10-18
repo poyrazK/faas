@@ -14,6 +14,9 @@ import (
 // Credentials, token hashes, pending browser codes and native keys are excluded.
 type ConnectionSummary struct {
 	RequestReadApps               []string  `json:"request_read_apps"`
+	RegressionWriteApps           []string  `json:"regression_write_apps"`
+	RegressionWriteAppCount       int       `json:"regression_write_app_count"`
+	RegressionWriteAppsTruncated  bool      `json:"regression_write_apps_truncated"`
 	RequestReadAppCount           int       `json:"request_read_app_count"`
 	RequestReadAppsTruncated      bool      `json:"request_read_apps_truncated"`
 	GrantID                       string    `json:"grant_id"`
@@ -116,6 +119,14 @@ func connectionSummary(g *oauthGrant) ConnectionSummary {
 		out.Apps = out.Apps[:min(len(out.Apps), defaultPageSize)]
 	}
 	if g.environments != nil {
+		out.RegressionWriteApps = []string{}
+		for slug := range g.environments.RegressionWriteApps {
+			out.RegressionWriteApps = append(out.RegressionWriteApps, slug)
+		}
+		sort.Strings(out.RegressionWriteApps)
+		out.RegressionWriteAppCount = len(out.RegressionWriteApps)
+		out.RegressionWriteAppsTruncated = len(out.RegressionWriteApps) > defaultPageSize
+		out.RegressionWriteApps = out.RegressionWriteApps[:min(len(out.RegressionWriteApps), defaultPageSize)]
 		out.RequestReadApps = []string{}
 		for slug := range g.environments.RequestReadApps {
 			out.RequestReadApps = append(out.RequestReadApps, slug)
