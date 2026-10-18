@@ -1028,6 +1028,14 @@ type Store interface {
 	CompleteServiceRecovery(ctx context.Context, token string, recovery ServiceRecovery) error
 	ServiceRecoveryByApp(ctx context.Context, appID string) (ServiceRecovery, error)
 
+	// Worker retries share an app lease across events and periodic sweeps.
+	// Claims preserve cooldown so scale-in can proceed while admission waits.
+	ListWorkerRecoveryApps(ctx context.Context, ownerNodeID string, sampledAt time.Time, limit int) ([]string, error)
+	ClaimWorkerRecovery(ctx context.Context, appID, ownerNodeID, revision, token string, sampledAt, leaseUntil time.Time) (WorkerRecovery, bool, error)
+	CompleteWorkerRecovery(ctx context.Context, token string, recovery WorkerRecovery) error
+	WorkerRecoveryByApp(ctx context.Context, appID string) (WorkerRecovery, error)
+	WorkerRecoverySummary(ctx context.Context, ownerNodeID string, sampledAt time.Time) (WorkerRecoverySummary, error)
+
 	// Ping tests store/database connectivity.
 	Ping(ctx context.Context) error
 

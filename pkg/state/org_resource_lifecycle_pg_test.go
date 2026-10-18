@@ -328,6 +328,10 @@ func TestPostgresOrgResourceRuntimeAdmissionSurvivesErasure(t *testing.T) {
 	if err := store.UpdateAccountPlan(ctx, f.actor.ID, api.PlanFree); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(ctx, `INSERT INTO worker_recovery(app_id,revision,status,next_attempt_at,updated_at)
+VALUES ($1,'company-runtime','ready',now(),now())`, f.app.ID); err != nil {
+		t.Fatal(err)
+	}
 	var before, after []byte
 	if err := pool.QueryRow(ctx, `SELECT application_standard_runtime_snapshot($1,NULL)`, f.app.ID).Scan(&before); err != nil {
 		t.Fatal(err)
@@ -346,6 +350,10 @@ func TestPostgresOrgResourceRuntimeAdmissionSurvivesErasure(t *testing.T) {
 	}
 	if !bytes.Equal(before, after) {
 		t.Fatal("creator erasure changed immutable runtime admission inputs")
+	}
+	var revision string
+	if err := pool.QueryRow(ctx, `SELECT revision FROM worker_recovery WHERE app_id=$1`, f.app.ID).Scan(&revision); err != nil || revision != "company-runtime" {
+		t.Fatalf("creator erasure changed durable worker recovery: %q %v", revision, err)
 	}
 }
 

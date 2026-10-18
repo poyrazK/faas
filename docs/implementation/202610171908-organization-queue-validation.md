@@ -435,3 +435,21 @@ renumbered to `202610180920` and `202610180921`, with scoped links updated.
 Internal CI recovery retains `202610180816`; restart ADR-1580 remains unchanged.
 The CI workflow retains main's forty-minute shard budget and all qualification
 commands. Fresh GitHub checks must qualify the final revision before merge.
+
+## Integration with durable worker recovery
+
+Main through `2243dce39` is integrated, including rate-limit token leasing,
+batched request-ID journals and durable worker recovery. The scheduler retains
+organization resource-account and quota subjects. Worker recovery references
+application identity, so its operational journal follows the retained company
+application. The runtime-erasure regression also checks that journal's revision.
+No new account-bound erasure domain or ownership migration renumbering is needed.
+
+Canonical PostgreSQL schema generation and SQLC generation/checks pass with 112
+state query files. All 947 unique clone policies and exact column sets match the
+live migrated database. Migration lint, ADR uniqueness, twelve systemd units and
+seven durable-listener checks pass. Full Node and pinned Python generation
+reproduce the merged SDK source with no drift; Node build and both operational
+summary tests pass, and 66 Python Auth, organization, MCP and operational-summary
+tests pass. Current ownership/recovery checks and fresh GitHub CI must qualify
+this merged revision before release. Native KVM qualification remains pending.

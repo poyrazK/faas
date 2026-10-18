@@ -604,6 +604,13 @@ jobs:
           if grep -qE '^(cmd/gregale/templates/(queue-worker/|starter_handlers_test.go)|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
             go test -race -p 1 ./cmd/gregale/templates -run '^TestQueueWorkerStarter' -count=1
           fi
+      - name: native M9 gate contracts (no KVM)
+        if: matrix.shard == 1
+        run: |
+          if grep -qE '^(tests/native/m9/|scripts/ci/(native-m9-|run-native-m9-)|Makefile|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
+            make test-native-m9-contracts
+            go test -tags=metal -run '^$' ./tests/native/m9
+          fi
       - name: generated PostgreSQL starter TLS recovery
         if: matrix.shard == 1
         env:

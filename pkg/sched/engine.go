@@ -826,13 +826,8 @@ type Engine struct {
 	// themselves are pinned directly by TestBootTimeout_SpecBudgets.
 	bootBudget func(state.State) time.Duration
 
-	// workerBoots counts consecutive failed worker instances per deployment
-	// so worker.singleton backs off instead of re-admitting at once
-	// (worker_boot_backoff.go). The zero value is ready to use.
-	workerBoots workerBootFailures
-	// workerRetryAfter schedules a delayed worker reconcile. nil uses
-	// time.AfterFunc; tests record the delay instead of waiting for it.
-	workerRetryAfter func(time.Duration, func())
+	// Worker event callbacks share the bounded recovery pool with sweeps.
+	workerReconcileSubmit func(context.Context, string)
 }
 
 // budgetFor returns the vmmd call budget for a row in state s: the
@@ -1636,9 +1631,10 @@ func (e *Engine) NodeKeyRegistry() *NodeKeyRegistry {
 // identity (the compute_node.id), with the dial target chosen on
 // the gateway side from that.
 type WakeResult struct {
-	InstanceID string
-	NodeID     string // compute_nodes.id (uuid), empty only on error
-	Method     vmmdpb.WakeMethod
+	admissionBlockers []api.WorkerAdmissionBlocker // Internal evidence for worker recovery; never a scheduling input.
+	InstanceID        string
+	NodeID            string // compute_nodes.id (uuid), empty only on error
+	Method            vmmdpb.WakeMethod
 	// WakeID is the per-wake-attempt correlation handle (gaps analysis
 	// 2026-07-23). UUIDv7 minted at Phase 2 before CreateInstance;
 	// gatewayd-internal propagates it back to the client as x-faas-wake-id and
@@ -2860,7 +2856,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			release()
 			if errors.Is(depErr, state.ErrNotFound) {
 				e.refuseExplicitDeployment(appID, deploymentID, deploymentSmoke, "deployment_not_found", "")
-				return WakeResult{AtCapacity: true}, nil
+				return WakeResult{AtCapacity: true, admissionBlockers: []api.WorkerAdmissionBlocker{{Code: "deployment_unavailable"}}}, nil
 			}
 			return WakeResult{}, fmt.Errorf("sched: resolve explicit deployment: %w", depErr)
 		}
@@ -2872,7 +2868,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 				reason = "deployment_app_mismatch"
 			}
 			e.refuseExplicitDeployment(appID, deploymentID, deploymentSmoke, reason, string(explicitDep.Status))
-			return WakeResult{AtCapacity: true}, nil
+			return WakeResult{AtCapacity: true, admissionBlockers: []api.WorkerAdmissionBlocker{{Code: "deployment_unavailable"}}}, nil
 		}
 		dep = explicitDep
 	}
@@ -3072,7 +3068,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			// hits the gate on the same account.
 			if liftCapacityToResult {
 				e.IncAtCapacity(appID, "wake")
-				return WakeResult{AtCapacity: true}, nil
+				return WakeResult{AtCapacity: true, admissionBlockers: []api.WorkerAdmissionBlocker{
+					limitBlocker("spend_cap", "cents", obsCents, capCents)}}, nil
 			}
 			return WakeResult{}, api.ErrAdmissionRefused(obsCents, capCents)
 		}
@@ -3300,7 +3297,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		if errors.Is(err, state.ErrAccountWorkerCapacity) {
 			e.IncAtCapacity(appID, "wake")
 			if liftCapacityToResult {
-				return WakeResult{AtCapacity: true}, nil
+				return WakeResult{AtCapacity: true, admissionBlockers: []api.WorkerAdmissionBlocker{{Code: "account_worker_limit"}}}, nil
 			}
 			return WakeResult{}, api.ErrCapacity("The account worker replica limit is reached")
 		}
@@ -3347,7 +3344,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		_ = e.store.DeleteInstance(ctx, ins.ID)
 		release()
 		if errors.Is(err, hostport.ErrExhausted) {
-			return WakeResult{}, api.ErrCapacity("no host ports are available on the selected compute node")
+			return WakeResult{}, explainAdmission(api.ErrCapacity("no host ports are available on the selected compute node"),
+				api.WorkerAdmissionBlocker{Code: "node_ports"})
 		}
 		return WakeResult{}, err
 	}
@@ -3403,7 +3401,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			e.releaseHostPortLeases(ctx, placement.NodeID, ins.ID)
 			release()
 			e.IncAtCapacity(appID, "wake")
-			return WakeResult{AtCapacity: true}, nil
+			return WakeResult{AtCapacity: true, admissionBlockers: admissionBlockers(err)}, nil
 		}
 		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "admit_denied")
 		release()
@@ -9620,12 +9618,10 @@ func (e *Engine) transitionWithKindCAS(ctx context.Context, instanceID, appID st
 	if to == state.StateParked && ins.Mode == string(state.InstanceModeService) {
 		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
 	}
-	// A worker pool has no periodic floor unless it scales on a queue
-	// signal, so a worker parked here never came back: h8-worker sat at
-	// zero replicas for 42 h after a heartbeat blip (production-us hunt #9,
-	// H9-171).
+	// Recovery parking can leave a worker pool below its target. Submit
+	// through the same bounded reconciler as the durable safety sweep.
 	if to == state.StateParked && ins.Mode == string(state.InstanceModeWorker) {
-		go e.ReconcileWorkerApp(detachedServiceContext(ctx), appID)
+		e.scheduleWorkerAppReconcile(ctx, appID)
 	}
 	return true, nil
 }
@@ -9686,17 +9682,15 @@ func (e *Engine) recordCommittedInstanceTransition(ctx context.Context, ins stat
 }
 
 // reconcileAfterInstanceTransition restores service and worker allocations
-// after a committed edge. A failed worker is replaced with backoff
-// (worker_boot_backoff.go); a running one clears that backoff.
+// after a committed edge. Worker retry deadlines and failure counts are
+// completed by the durable app reconciliation, rather than individual replicas.
 func (e *Engine) reconcileAfterInstanceTransition(ctx context.Context, ins state.Instance, to state.State) {
 	switch {
 	case (to == state.StateRunning || to == state.StateStopped || to == state.StateFailed) &&
 		ins.Mode == string(state.InstanceModeService):
 		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
 	case to == state.StateFailed && ins.Mode == string(state.InstanceModeWorker):
-		e.scheduleWorkerReconcileAfterFailure(ctx, ins.DeploymentID)
-	case to == state.StateRunning && ins.Mode == string(state.InstanceModeWorker):
-		e.workerBoots.reset(ins.DeploymentID)
+		e.scheduleWorkerAppReconcile(ctx, ins.AppID)
 	}
 }
 

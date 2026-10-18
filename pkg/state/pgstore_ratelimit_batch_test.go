@@ -1,4 +1,4 @@
-// adr: 104 — batched central rate-limit consumes.
+// adr: 104, 1520 — batched central rate-limit consumes and lease returns.
 package state_test
 
 import (
@@ -114,5 +114,38 @@ func TestPGRateLimitBackendConsumeTokensSerializesReplicas(t *testing.T) {
 	}
 	if granted != burst {
 		t.Fatalf("granted %d across %d replicas asking for %d each, want exactly the burst %d", granted, replicas, perBatch, burst)
+	}
+}
+
+// TestPGRateLimitBackendReturnTokensCapsAtBurst pins the statement a leasing
+// gateway uses to give unspent tokens back under pressure (ADR-1520): the
+// tokens rejoin the shared balance, never above burst, and a missing counter
+// is left alone.
+func TestPGRateLimitBackendReturnTokensCapsAtBurst(t *testing.T) {
+	_, pool, ctx := pgStoreWithPool(t)
+	backend := state.NewPGRateLimitBackend(pool)
+	subjectID := uuid.NewString()
+
+	if granted, _, err := backend.ConsumeTokens(ctx, "app", subjectID, "hobby", 0.1, 5, 4); err != nil || granted != 4 {
+		t.Fatalf("lease = (%d, %v), want (4, nil)", granted, err)
+	}
+	if err := backend.ReturnTokens(ctx, "app", subjectID, "hobby", 5, 3); err != nil {
+		t.Fatalf("ReturnTokens: %v", err)
+	}
+	if granted, remaining, err := backend.ConsumeTokens(ctx, "app", subjectID, "hobby", 0.1, 5, 1); err != nil || granted != 1 || remaining != 3 {
+		t.Fatalf("after returning 3 of 4 = (%d, %d, %v), want (1, 3, nil)", granted, remaining, err)
+	}
+	if err := backend.ReturnTokens(ctx, "app", subjectID, "hobby", 5, 100); err != nil {
+		t.Fatalf("ReturnTokens over burst: %v", err)
+	}
+	if granted, _, err := backend.ConsumeTokens(ctx, "app", subjectID, "hobby", 0.1, 5, 100); err != nil || granted != 5 {
+		t.Fatalf("drain after an oversized return = (%d, %v), want the burst of 5", granted, err)
+	}
+	if err := backend.ReturnTokens(ctx, "app", uuid.NewString(), "hobby", 5, 2); err != nil {
+		t.Fatalf("ReturnTokens to a missing counter: %v", err)
+	}
+	var rows int
+	if err := pool.QueryRow(ctx, `select count(*) from pg_ratelimit_counters where scope = 'app' and plan = 'hobby' and subject_id <> $1`, subjectID).Scan(&rows); err != nil || rows != 0 {
+		t.Fatalf("a return created a counter: rows=%d err=%v", rows, err)
 	}
 }
