@@ -2937,6 +2937,7 @@
       "p95_ms",
       "regression_factor",
       "resolved_at",
+      "review_version",
       "route",
       "state",
       "suspected_dependency"
@@ -13579,6 +13580,17 @@
       "source_node_id",
       "source_wake_id",
       "vcpu"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "node_leases",
+    "columns": [
+      "epoch",
+      "expires_at",
+      "holder",
+      "node_id",
+      "renewed_at"
     ],
     "kind": "operational"
   },

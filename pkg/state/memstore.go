@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/hostport"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
 	"github.com/onebox-faas/faas/pkg/rehearsalcold"
+	"github.com/onebox-faas/faas/pkg/rehearsalfault"
 	"github.com/onebox-faas/faas/pkg/rehearsalobj"
 	"github.com/onebox-faas/faas/pkg/rehearsalpg"
 	"github.com/onebox-faas/faas/pkg/rehearsalresume"
@@ -147,6 +148,7 @@ type jobRegistryCredentialKey struct {
 
 type MemStore struct {
 	productData                                *productMemory
+	scenarioPostgresFaults                     map[string]rehearsalfault.Row
 	scenarioManagedWork                        map[string]scenarioManagedJob
 	scenarioWorkerFaults                       map[string]rehearsalwork.WorkerFault
 	scenarioColdPreparations                   map[string]rehearsalcold.Preparation
@@ -605,6 +607,7 @@ type MemStore struct {
 	operatorParks               map[string]OperatorParkExecution
 	operatorNodes               map[string]OperatorNodeResult
 	nodeLifecycleCompletions    map[nodeLifecycleCompletionKey]NodeLifecycleCompletionResult
+	nodeLeases                  map[string]NodeLease
 	operatorRecoverySubmissions map[string]operatorRecoverySubmissionRow
 	snapshotRecoveryGenerations map[string]int64
 	instanceSnapshotRecovery    map[string]instanceSnapshotRecovery
@@ -13785,6 +13788,9 @@ func (m *MemStore) ClaimInvocation(_ context.Context, id, instanceID string, lea
 	if m.scenarioWorkerDispatchBlockedLocked(inv.AppID) {
 		return Invocation{}, ErrConflict
 	}
+	if err := m.checkScenarioPostgresFaultDispatchLocked(inv.AppID, instanceID); err != nil {
+		return Invocation{}, err
+	}
 	if instanceID == "" && m.scenarioActionPolicies[inv.AppID].Member.ManagedWorkJSON != "" {
 		inv.InstanceID = ""
 	}
@@ -14734,6 +14740,9 @@ func (m *MemStore) StampInstanceInvocation(_ context.Context, id, instanceID str
 	inv, ok := m.invocations[id]
 	if !ok || inv.State != InvocationDispatching {
 		return ErrNotFound
+	}
+	if err := m.checkScenarioPostgresFaultDispatchLocked(inv.AppID, instanceID); err != nil {
+		return err
 	}
 	inv.InstanceID = instanceID
 	m.setInvocationLocked(id, inv)
@@ -26576,7 +26585,7 @@ func (m *MemStore) UpsertRegressionObservation(_ context.Context, _ sqlc.UpsertR
 // GetRegressionObservation is intentionally unsupported by MemStore;
 // regression observations are a Postgres-only request telemetry surface.
 func (m *MemStore) GetRegressionObservation(_ context.Context, _ sqlc.GetRegressionObservationParams) (sqlc.DebugRegressionObservation, error) {
-	panic("memstore: GetRegressionObservation unimplemented")
+	return sqlc.DebugRegressionObservation{}, errMemStoreRequestTelemetry
 }
 
 // ListActiveRegressionsByApp is intentionally unsupported by MemStore;
@@ -26589,7 +26598,7 @@ func (m *MemStore) ListActiveRegressionsByApp(_ context.Context, _ sqlc.ListActi
 // ApplyRegressionAction is intentionally unsupported by MemStore because
 // debugger lifecycle state is persisted with request telemetry in Postgres.
 func (m *MemStore) ApplyRegressionAction(_ context.Context, _ sqlc.ApplyRegressionActionParams) (sqlc.DebugRegressionObservation, error) {
-	panic("memstore: ApplyRegressionAction unimplemented")
+	return sqlc.DebugRegressionObservation{}, errMemStoreRequestTelemetry
 }
 
 // ResolveStaleRegressionObservations is intentionally unsupported by
@@ -26683,6 +26692,9 @@ func (m *MemStore) ClaimInvocationWithCap(_ context.Context, id, instanceID stri
 	}
 	if m.scenarioWorkerDispatchBlockedLocked(inv.AppID) {
 		return Invocation{}, ErrConflict
+	}
+	if err := m.checkScenarioPostgresFaultDispatchLocked(inv.AppID, instanceID); err != nil {
+		return Invocation{}, err
 	}
 	if instanceID == "" && m.scenarioActionPolicies[inv.AppID].Member.ManagedWorkJSON != "" {
 		inv.InstanceID = ""

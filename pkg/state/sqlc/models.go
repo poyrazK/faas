@@ -2980,6 +2980,7 @@ type DebugRegressionObservation struct {
 	ErrorRatePct        pgtype.Numeric
 	ErrorRateBasePct    pgtype.Numeric
 	ErrorCount          int32
+	ReviewVersion       pgtype.UUID
 }
 
 type DeployToken struct {
@@ -7972,6 +7973,14 @@ type NodeJoinJob struct {
 	CompletedAt    pgtype.Timestamptz
 }
 
+type NodeLease struct {
+	NodeID    pgtype.UUID
+	Holder    string
+	Epoch     int64
+	RenewedAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+}
+
 type NodeLifecycleCompletion struct {
 	NodeID           pgtype.UUID
 	SourceGeneration int64
@@ -11824,6 +11833,17 @@ type ScenarioObjectFixture struct {
 	Status    string
 	ExpiresAt pgtype.Timestamptz
 	Document  []byte
+}
+
+type ScenarioPostgresFault struct {
+	ID         pgtype.UUID
+	ResourceID pgtype.UUID
+	AccountID  pgtype.UUID
+	RunID      string
+	AppID      pgtype.UUID
+	OwnerID    pgtype.UUID
+	Phase      string
+	Receipt    []byte
 }
 
 type ScenarioPostgresFixture struct {

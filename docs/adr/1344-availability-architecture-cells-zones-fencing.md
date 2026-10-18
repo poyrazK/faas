@@ -419,6 +419,30 @@ The primitive is used for:
 - gRPC keepalives go on every overlay dial.
 - The lease timings go in `pkg/api/limits.go`.
 
+**Implementation phases** (2026-10-18). Each phase ships off by default.
+- **Phase 1: lease only.**
+  - A `node_leases` table holds one row per node: holder, epoch,
+    `renewed_at`, `expires_at`, all on database time. The holder is the
+    hostname plus the kernel boot id, so a schedd restart keeps the epoch and
+    a reboot takes the lease over with the next one.
+  - The node-local schedd renews its node's lease every 10 s with a 30 s TTL
+    (`pkg/nodelease`, `FAAS_SCHEDD_NODE_LEASE`).
+  - `schedd_node_lease_would_fence` reports when the node is past its fence
+    point (TTL minus a 5 s margin since the last renewal reply, on the
+    monotonic clock). Nothing acts on it yet.
+  - A node without a row is "unknown", never "expired", so an N-1 schedd or a
+    rollback cannot make a live node look dead.
+- **Phase 2: takeover guard.**
+  - When the lease is on, the stale-peer observer, `RecoveryRunner` and the
+    dead-node sweep act only after the node's lease has expired by database
+    time plus a margin. That is in addition to the existing heartbeat gap and
+    the P1 settle hold.
+- **Phase 3: self-fence.**
+  - Past its fence point, the node-local schedd refuses wakes, stops claiming
+    jobs and app tasks, and stops its at-most-once job VMs before their task
+    leases can be re-dispatched.
+  - Epoch checks on job and app-task completion follow.
+
 ### 5. Static-stability rules for the data plane
 
 1. **Keep last-known-good.** A refresh error never discards
@@ -585,6 +609,20 @@ second provider. Tracking: epic #4700.
     not depend on it.
   - Alerts: `FaasPostgresStandby*`; runbook:
     `docs/runbooks/FaasPostgresStandby.md`.
+- **Control-plane host state** (2026-10-18). The CA key, the apid HMAC keys,
+  `sealed.env` and the per-daemon secrets are in neither PostgreSQL nor the
+  release. Two copies protect them, both read from one list
+  (`deploy/ansible/vars/cp_state_files.yml`):
+  - the standby stages them on every converge, and a takeover installs them
+    before the first bootstrap;
+  - `faas-cp-state-backup` seals them daily into an age bundle and pushes it
+    off-host with the PostgreSQL backups' remote. The bundle is encrypted
+    only to operator recipients, so the control plane cannot read its own
+    backup.
+
+  A rebuild after losing both hosts restores the bundle
+  (`gregalectl backup restore-cp-state`, `cp_state_restore.yml`) before
+  bootstrap. Runbook: `docs/runbooks/ControlPlaneStateBackup.md`.
 - **Why not two control nodes (OVH + GCP)?**
   - etcd and Patroni need three members to survive losing one. With two,
     losing either stops automatic failover, and a cut between the

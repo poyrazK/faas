@@ -13,34 +13,18 @@ faas_postgres_primary_inventory_host: "{{ (groups['control_plane'] | default([''
 # an index of their owner, group and mode on the primary.
 faas_standby_stage_dir: /var/lib/faas-standby
 
-# Every file below these directories on the primary.
-faas_standby_sync_trees:
-  - /etc/faas/secrets
-  - /etc/faas/tls
-  - /etc/grafana/secrets
-
-# Single files, copied when present on the primary.
-faas_standby_sync_files:
-  - /etc/faas/sealed.env
-  - /etc/faas/compute-db.env
-  - /etc/faas/storage.env
-  - /etc/faas/otel.env
-  - /etc/faas/profiling.env
-  - /etc/faas/object-storage.json
-  # Bootstrap generates these when missing, and new keys break audit joins
-  # and every MFA recovery code (control_plane_service).
-  - /var/lib/faas/audit-hmac.key
-  - /var/lib/faas/recovery-hmac.key
-  - /etc/caddy/tls/cloudflare-origin.pem
-  - /etc/caddy/tls/cloudflare-origin.key
+# What is staged: the shared control-plane state list
+# (deploy/ansible/vars/cp_state_files.yml, loaded by sync.yml), which the
+# off-host backup (cp_state_backup) seals too.
+faas_standby_sync_trees: "{{ faas_cp_state_trees }}"
+faas_standby_sync_files: "{{ faas_cp_state_files }}"
+faas_standby_sync_exclude: "{{ faas_cp_state_exclude }}"
 
 # Operator-chosen paths, such as the Alertmanager receiver files
-# (am_*_file).
-faas_standby_sync_extra_files: []
+# (am_*_file). The off-host backup takes them too.
+faas_standby_sync_extra_files: "{{ faas_cp_state_extra_files | default([]) }}"
 
-# The host age identity is per host by design (FaasFleetSealDomain): the
-# standby has its own, and copying the primary's would break the fleet-seal
-# domain separation.
-faas_standby_sync_exclude:
-  - /etc/faas/secrets/host.age
-  - /etc/faas/secrets/host.age.previous
+# A takeover refuses to run until this host's database is promoted. A
+# rebuild from the off-host backup (cp_state_restore.yml) installs the files
+# before PostgreSQL exists, so it turns the check off.
+control_plane_standby_require_promoted: true

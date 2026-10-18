@@ -618,6 +618,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REHEARSAL_NETWORK_CONTAINMENT` | apid | `default` |  | 0 | `` | opt-in contained rehearsal enrollment; disabled pending native network qualification |
 | `FAAS_REHEARSAL_OBJECT_FIXTURES` | apid, gatewayd-internal | `default` |  | 0 | `` | opt-in isolated rehearsal object fixture API and private proxy; disabled pending native containment qualification |
 | `FAAS_REHEARSAL_POSTGRES_ADMIN_URL` | apid | `secrets-env` |  |  | `` | optional dedicated rehearsal fixture-cluster admin DSN in /etc/faas/sealed.env; never point at platform metadata or production databases |
+| `FAAS_REHEARSAL_POSTGRES_FAULTS` | apid | `default` |  | 0 | `` | opt-in contained PostgreSQL disconnect and recovery rehearsals; disabled pending native fault-injection qualification |
 | `FAAS_REHEARSAL_POSTGRES_FIXTURES` | apid, gatewayd-internal | `default` |  | 0 | `` | opt-in isolated rehearsal PostgreSQL fixture API and private proxy; disabled pending native containment qualification |
 | `FAAS_REHEARSAL_POSTGRES_PROXY_TARGET` | gatewayd-internal | `default` |  |  | `` | explicit loopback endpoint of the dedicated rehearsal fixture cluster; required only when PostgreSQL fixtures are enabled |
 | `FAAS_REHEARSAL_RUNNING_JOB_SUSPEND` | apid | `default` |  | 0 | `` | opt-in same-VM suspend/resume at a cooperative managed-job checkpoint; disabled pending native qualification |
@@ -665,6 +666,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SCHEDD_INVOCATION_DISPATCH_CONCURRENCY` | schedd | `default` |  |  | `` |  |
 | `FAAS_SCHEDD_LISTEN_ADDR` | schedd | `dropin` |  |  | `` | rendered with faas-schedd.socket's ListenStream from faas_schedd_listen_addr (ADR-1580) |
 | `FAAS_SCHEDD_NODE_INVENTORY_ENFORCE` | schedd, shared | `dropin` |  | 0 | `` | ADR-419; control-plane and compute-only roles deliver the signed process-inventory canary switch; enable only after native recovery qualification |
+| `FAAS_SCHEDD_NODE_LEASE` | schedd | `default` |  |  | `` | ADR-1344 §4 P3 phase 1: the node-local schedd renews its node's liveness lease; off by default and observe-only |
 | `FAAS_SCHEDD_RECONCILE_ENFORCE` | schedd, shared | `default` |  |  | `` | ADR-191; "1" lets the instance-divergence sweep write. Default off ships the sweep report-only: it counts and logs what it would repair and touches no row |
 | `FAAS_SCHEDD_ROLE` | schedd, shared | `dropin` |  |  | `` |  |
 | `FAAS_SCHEDD_SOCKET` | gatewayd-internal | `dropin` |  |  | `` |  |

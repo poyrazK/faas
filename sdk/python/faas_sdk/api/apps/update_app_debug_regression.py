@@ -67,6 +67,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
 
@@ -107,10 +112,12 @@ def sync_detailed(
     workflow metadata only; it never changes deployment traffic.
     `dismissed_until` is required only for dismiss and defaults to 24h
     when omitted. The server caps dismissals at 30 days.
+    Use the dedicated checked actions endpoint for mandatory app/version
+    guards. Legacy PATCH clients retain unguarded workflow transitions.
 
     Args:
         slug (str):
-        body (DebugRegressionActionRequest): Debugger-only workflow action for one
+        body (DebugRegressionActionRequest): Legacy debugger-only workflow action for one
             deployment/route observation.
 
     Raises:
@@ -146,10 +153,12 @@ def sync(
     workflow metadata only; it never changes deployment traffic.
     `dismissed_until` is required only for dismiss and defaults to 24h
     when omitted. The server caps dismissals at 30 days.
+    Use the dedicated checked actions endpoint for mandatory app/version
+    guards. Legacy PATCH clients retain unguarded workflow transitions.
 
     Args:
         slug (str):
-        body (DebugRegressionActionRequest): Debugger-only workflow action for one
+        body (DebugRegressionActionRequest): Legacy debugger-only workflow action for one
             deployment/route observation.
 
     Raises:
@@ -180,10 +189,12 @@ async def asyncio_detailed(
     workflow metadata only; it never changes deployment traffic.
     `dismissed_until` is required only for dismiss and defaults to 24h
     when omitted. The server caps dismissals at 30 days.
+    Use the dedicated checked actions endpoint for mandatory app/version
+    guards. Legacy PATCH clients retain unguarded workflow transitions.
 
     Args:
         slug (str):
-        body (DebugRegressionActionRequest): Debugger-only workflow action for one
+        body (DebugRegressionActionRequest): Legacy debugger-only workflow action for one
             deployment/route observation.
 
     Raises:
@@ -217,10 +228,12 @@ async def asyncio(
     workflow metadata only; it never changes deployment traffic.
     `dismissed_until` is required only for dismiss and defaults to 24h
     when omitted. The server caps dismissals at 30 days.
+    Use the dedicated checked actions endpoint for mandatory app/version
+    guards. Legacy PATCH clients retain unguarded workflow transitions.
 
     Args:
         slug (str):
-        body (DebugRegressionActionRequest): Debugger-only workflow action for one
+        body (DebugRegressionActionRequest): Legacy debugger-only workflow action for one
             deployment/route observation.
 
     Raises:

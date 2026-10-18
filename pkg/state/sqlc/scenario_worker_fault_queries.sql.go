@@ -245,7 +245,8 @@ func (q *Queries) ScenarioWorkerCheckpoint(ctx context.Context, db DBTX, arg Sce
 const scenarioWorkerDispatchBlocked = `-- name: ScenarioWorkerDispatchBlocked :one
 SELECT coalesce(EXISTS(SELECT 1 FROM scenario_worker_faults f WHERE f.app_id=$1::text::uuid AND
  (f.state<>'terminated' OR EXISTS(SELECT 1 FROM instances i WHERE i.id=f.instance_id AND i.state IN ('waking','cold_booting','running','draining'))))
- OR EXISTS(SELECT 1 FROM scenario_suspend_resumes r WHERE r.app_id=$1::text::uuid AND r.invocation_id IS NOT NULL AND r.state<>'complete'),false)::boolean AS blocked
+ OR EXISTS(SELECT 1 FROM scenario_suspend_resumes r WHERE r.app_id=$1::text::uuid AND r.invocation_id IS NOT NULL AND r.state<>'complete')
+ OR EXISTS(SELECT 1 FROM scenario_postgres_faults f WHERE f.app_id=$1::text::uuid AND f.phase IN ('requested','cutting')),false)::boolean AS blocked
 `
 
 func (q *Queries) ScenarioWorkerDispatchBlocked(ctx context.Context, db DBTX, appID string) (bool, error) {
