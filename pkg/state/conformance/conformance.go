@@ -94,6 +94,7 @@ func Run(t *testing.T, open Open) {
 		{"archived_logs_are_scoped_to_the_owning_app", testInstanceLogsOwnedByApp},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
 		{"live_state_readers_count_running_instances", testLiveStateReaders},
+		{"live_instances_by_node_are_the_nodes_live_rows", testLiveInstancesByNode},
 		{"frozen_instance_holds_ram_without_concurrency", testFrozenInstanceState},
 		{"beta_first_success_includes_parked_instances", testBetaFirstSuccess},
 		{"account_credits_issue_list_and_consume", testAccountCredits},
