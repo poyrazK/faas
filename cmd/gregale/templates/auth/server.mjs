@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import pg from 'pg'
-import { adminKeyHashes, createAdminHandler, goTrueAdmin, goTrueError, signingKey } from './admin.mjs'
+import { adminKeyHashes, createAdminHandler, deleteOwnAccount, goTrueAdmin, goTrueError, signingKey } from './admin.mjs'
 import { createAuthzHandler, goTrueAuthenticator } from './authz.mjs'
 import { createHookServer, createMailer, hookAddress, hookEnv, newHookSecret } from './email.mjs'
 import { filterLogs } from './logs.mjs'
@@ -226,7 +226,8 @@ export function start(env = process.env) {
   const workflows = workflowsConfig(env)
   const goTrue = goTrueAdmin(signingKey(config.gotrueEnv.GOTRUE_JWT_KEYS))
   const orgSSO = config.orgSSO ? { admin: goTrue, goTrueError, external: config.external } : null
-  const authz = createAuthzHandler({ pool, authenticate: goTrueAuthenticator(), origins: config.origins, invitations, storage: storageBindings(env), workflows: workflows && createWorkflowStarter(workflows), orgSSO, teamEnabled: config.productControlTeamEnabled, emailEnabled: config.productControlEmailEnabled })
+  const deleteAccount = config.selfDeletion ? claims => deleteOwnAccount({ pool, admin: goTrue }, claims) : null
+  const authz = createAuthzHandler({ pool, authenticate: goTrueAuthenticator(), origins: config.origins, invitations, storage: storageBindings(env), workflows: workflows && createWorkflowStarter(workflows), orgSSO, teamEnabled: config.productControlTeamEnabled, emailEnabled: config.productControlEmailEnabled, deleteAccount })
   const realtime = createRealtimeAuthorizer({ pool, tokens: callbackTokens(env) })
   // The dashboard is served from the Gregale API origin.
   let dashboard = []

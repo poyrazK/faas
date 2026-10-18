@@ -27,3 +27,4 @@ h2 { font-size: 1.05rem; margin: 0 0 12px; }
 .row button { flex: none; padding: 6px 10px; }
 .qr { display: block; width: 180px; height: 180px; margin: 0 auto 12px; background: #fff; }
 .codes { columns: 2; font-size: 0.95rem; }
+.danger button[type=submit] { background: #b91c1c; }

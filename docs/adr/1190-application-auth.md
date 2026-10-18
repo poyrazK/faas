@@ -404,6 +404,18 @@ functions) serve `/authz/v1/sessions`. They leave third-party OAuth clients'
 sessions to connected apps, and the current session to GoTrue's logout. The
 page's image policy adds `data:` for the QR code GoTrue returns inline.
 
+GoTrue has no endpoint for people to delete themselves. With
+`AUTH_SELF_DELETION` on (off by default: an app may need to settle billing
+or data first), `DELETE /authz/v1/account` deletes the caller through the
+same path as an owner's deletion, so the last-owner refusal and the removal
+of organizations left without members are shared. It requires the token's
+session to be younger than `AuthReauthenticationSeconds` and, for a user
+with a verified second factor, `aal2`; anonymous users are exempt because
+they cannot sign in again. A third-party client's token cannot reach it.
+GoTrue's audit log records the deletion as an administrator's, since it goes
+through the admin API; the lifecycle event `auth.user.deleted` is the same
+either way.
+
 ### Phone sign-in
 
 Phone sign-in uses GoTrue's own SMS providers (Twilio, Twilio Verify,

@@ -546,7 +546,8 @@ including their second step, and lets them:
 - link and unlink sign-in providers when identity linking is on;
 - revoke apps they allowed through the OAuth server;
 - see where they are signed in (device, IP address and last activity) and
-  sign out any of those sessions, or all but the page's own.
+  sign out any of those sessions, or all but the page's own;
+- delete their account, if you allow it (below).
 
 The page keeps its session only in the tab and ends it when the person
 returns or closes the tab. People whose organization signs them in (SSO)
@@ -559,6 +560,25 @@ const sessions = await auth.sessions.list() // { id, user_agent, ip, last_active
 await auth.sessions.revoke(sessions[1].id)
 await auth.signOut({ scope: 'others' }) // every session but this one
 ```
+
+### Let people delete their accounts
+
+Self-service deletion is off until you turn it on:
+
+```sh
+gregale auth config shop-auth --self-deletion on
+```
+
+Then the account page offers it, and `await auth.deleteAccount()` does it
+from your own pages. Either way the person needs a sign-in from the last ten
+minutes, including their second step if they have one; otherwise the call
+fails with `reauthentication_required`. Anonymous users can always delete
+themselves, since they cannot sign in again. Deletion follows the same rules
+as yours from the dashboard: the only owner of an organization that has other
+members is refused (`last_owner`, naming the organizations), and
+organizations whose only member they were are deleted with them. With
+lifecycle events on, `auth.user.deleted` tells your app to remove the
+person's data.
 
 ## Files, realtime channels and workflows
 

@@ -152,6 +152,12 @@ export function errorMessage(body, status) {
     sso_provider_not_found: 'No organization sign-in is set up for this email domain.',
     sso_provider_disabled: 'Organization sign-in for this domain is turned off.',
     saml_provider_disabled: 'Organization sign-in is turned off for this application.',
+    reauthentication_required: 'Sign in again to do this; your sign-in is too old.',
+    current_session: 'Use Back to leave; this page signs itself out.',
+  }
+  if (code === 'last_owner') {
+    const orgs = Array.isArray(body?.organizations) ? body.organizations.join(', ') : 'an organization'
+    return `You are the only owner of ${orgs}, which has other members. Make another member an owner first.`
   }
   return known[code] ?? (status === 429 ? 'Too many attempts. Wait a minute and try again.' : 'Something went wrong. Try again.')
 }
@@ -602,11 +608,13 @@ async function account(root, config, query) {
     async act(work) { try { await work() } catch (err) { say(passkeyFailure(err)) } },
     // Linking a provider leaves through its sign-in and returns with a new
     // session; this one stays listed under sessions until it is signed out.
+    // Deleting the account ends every session with it.
     leave() { ended = true },
+    back,
     async refresh() {
       let user
       try { user = await ctx.call('GET', '/auth/v1/user') } catch (err) { return say(err.message) }
-      const parts = await Promise.all([profileSection(ctx, user), mfaSection(ctx, user), passkeysSection(ctx), identitiesSection(ctx, user), connectedAppsSection(ctx), sessionsSection(ctx)]
+      const parts = await Promise.all([profileSection(ctx, user), mfaSection(ctx, user), passkeysSection(ctx), identitiesSection(ctx, user), connectedAppsSection(ctx), sessionsSection(ctx), deletionSection(ctx, root)]
         .map(part => Promise.resolve(part).catch(err => { say(err.message); return null })))
       area.replaceChildren(...parts.filter(Boolean))
     },
@@ -741,6 +749,26 @@ async function sessionsSection(ctx) {
     ctx.say(`Signed out everywhere else, including ${ctx.config.app} in this browser.`)
   })]] : []
   return section('Where you are signed in', el('p', {}, `This page has its own session; ${ctx.config.app} in this browser is listed separately.`), ...list, actions(others))
+}
+
+// deletionSection lets people delete their own account when the app allows
+// it. The page's session is a fresh sign-in, which the Auth app requires.
+function deletionSection(ctx, root) {
+  if (ctx.options.self_deletion !== true) return null
+  const confirmation = 'delete my account'
+  const node = section('Delete your account',
+    el('p', {}, `This deletes your ${ctx.config.app} account and signs you out everywhere. It cannot be undone. Type "${confirmation}" to confirm.`),
+    plainForm(async ({ confirm }) => {
+      if (confirm.trim() !== confirmation) return ctx.say(`Type "${confirmation}" to confirm.`)
+      try {
+        await ctx.call('DELETE', '/authz/v1/account')
+        ctx.leave()
+        render(root, 'Your account is deleted')
+        root.append(el('p', {}, `Your ${ctx.config.app} account and its sign-in methods are gone.`), el('a', { class: 'button', href: ctx.back }, `Back to ${ctx.config.app}`))
+      } catch (err) { ctx.say(err.message) }
+    }, 'Delete my account', el('label', {}, 'Confirmation', el('input', { name: 'confirm', autocomplete: 'off', spellcheck: 'false', required: '' }))))
+  node.classList.add('danger')
+  return node
 }
 
 if (typeof document !== 'undefined') {

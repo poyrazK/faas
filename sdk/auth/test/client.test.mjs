@@ -339,3 +339,18 @@ test('lists the user own sessions, ends one and signs out the others', async () 
   assert.notEqual(await auth.getSession(), null, 'signing the others out keeps this session')
   assert.equal(auth.hostedAccountUrl({ redirectTo: 'https://shop.example.com/app' }), `${origin}/ui/account?redirect_to=https%3A%2F%2Fshop.example.com%2Fapp`)
 })
+
+test('deletes the user own account and forgets the session', async () => {
+  const api = server({
+    'POST /auth/v1/token': () => [200, tokens(1)],
+    'DELETE /authz/v1/account': () => [200, { deleted: true, organizations_deleted: 1 }],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  const events = []
+  auth.onAuthStateChange(event => events.push(event))
+  assert.deepEqual(await auth.deleteAccount(), { organizations_deleted: 1 })
+  assert.equal(api.calls.at(-1).headers.Authorization, 'Bearer access-1')
+  assert.equal(await auth.getSession(), null)
+  assert.deepEqual(events, ['SIGNED_OUT'])
+})

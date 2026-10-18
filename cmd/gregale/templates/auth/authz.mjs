@@ -171,6 +171,11 @@ export async function route(pool, claims, method, path, body, services = {}) {
     await rows('SELECT gregale_auth.end_session($1)', [requireUUID(parts[1])])
     return [204, null]
   }
+  // Deleting one's own account, when the app allows it (AUTH_SELF_DELETION).
+  if (path === '/account' && method === 'DELETE') {
+    if (!services.deleteAccount) throw new HTTPError(404, 'not_found')
+    return services.deleteAccount(claims)
+  }
   if (path === '/invitations/accept' && method === 'POST') {
     const [membership] = await rows('SELECT org_id, role FROM gregale_auth.accept_invitation($1)', [hashToken(body?.token)])
     return [200, membership]
@@ -221,7 +226,7 @@ export function readJSON(req, maxBytes) {
   })
 }
 
-export function createAuthzHandler({ pool, authenticate, origins = [], invitations = {}, storage, workflows, orgSSO, teamEnabled = false, emailEnabled = false }) {
+export function createAuthzHandler({ pool, authenticate, origins = [], invitations = {}, storage, workflows, orgSSO, teamEnabled = false, emailEnabled = false, deleteAccount = null }) {
   const allowed = new Set(origins)
   return async (req, res, path) => {
     const origin = req.headers.origin
@@ -247,7 +252,7 @@ export function createAuthzHandler({ pool, authenticate, origins = [], invitatio
       if (!token) throw new HTTPError(401, 'not_authenticated')
       const body = await readJSON(req, limits.authzBodyBytes)
       const claims = await authenticate(token)
-      const [status, payload] = await route(pool, claims, req.method, path, body, { invitations, storage, workflows, orgSSO, teamEnabled, emailEnabled, query: new URL(req.url, 'http://auth.local').searchParams })
+      const [status, payload] = await route(pool, claims, req.method, path, body, { invitations, storage, workflows, orgSSO, teamEnabled, emailEnabled, deleteAccount, query: new URL(req.url, 'http://auth.local').searchParams })
       res.writeHead(status, headers)
       res.end(payload === null ? undefined : JSON.stringify(payload))
     } catch (err) {

@@ -27,8 +27,8 @@ function fakePool(respond) {
   }
 }
 
-async function serve(t, pool, { authenticate = async () => ({ sub: member, session_id: 'session' }), origins = ['https://app.example.test'], invitations, storage, workflows, teamEnabled = false } = {}) {
-  const server = createServer({ upstreamPort: 1, authz: createAuthzHandler({ pool, authenticate, origins, invitations, storage, workflows, teamEnabled }) })
+async function serve(t, pool, { authenticate = async () => ({ sub: member, session_id: 'session' }), origins = ['https://app.example.test'], invitations, storage, workflows, teamEnabled = false, deleteAccount = null } = {}) {
+  const server = createServer({ upstreamPort: 1, authz: createAuthzHandler({ pool, authenticate, origins, invitations, storage, workflows, teamEnabled, deleteAccount }) })
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
   t.after(() => server.close())
@@ -256,4 +256,16 @@ test('lists the caller own sessions and ends another one', async t => {
   assert.deepEqual((await call('DELETE', `/sessions/${member}`)).body, { status: 400, code: 'current_session' })
   assert.equal((await call('DELETE', '/sessions/not-a-session')).status, 400)
   assert.equal((await call('POST', '/sessions', { body: {} })).status, 404)
+})
+
+test('deletes the caller own account only when the app allows it', async t => {
+  const pool = fakePool(sql => { throw new Error(`unexpected ${sql}`) })
+  const off = await serve(t, pool)
+  assert.equal((await off('DELETE', '/account')).status, 404)
+  const deleted = []
+  const on = await serve(t, pool, { deleteAccount: async claims => { deleted.push(claims.sub); return [409, { status: 409, code: 'last_owner', organizations: ['acme'] }] } })
+  assert.deepEqual((await on('DELETE', '/account')).body, { status: 409, code: 'last_owner', organizations: ['acme'] })
+  assert.deepEqual(deleted, [member])
+  const client = await serve(t, pool, { authenticate: async () => ({ sub: member, session_id: 'session', client_id: 'c1' }), deleteAccount: async () => { throw new Error('reached') } })
+  assert.equal((await client('DELETE', '/account')).body.code, 'oauth_client_token')
 })

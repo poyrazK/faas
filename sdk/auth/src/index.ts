@@ -432,6 +432,18 @@ export function createAuthClient(options: AuthClientOptions) {
       list: async () => (await authz<{ sessions: UserSession[] }>('GET', '/sessions')).sessions,
       revoke: (session: string) => authz<null>('DELETE', `/sessions/${id(session)}`),
     },
+    /**
+     * Deletes the signed-in user's account, when the Auth app allows it. The
+     * session must come from a sign-in in the last ten minutes (with the
+     * second step, if the user has one), else this fails with
+     * reauthentication_required; the last owner of an organization with
+     * other members gets last_owner. Clears the stored session.
+     */
+    async deleteAccount(): Promise<{ organizations_deleted: number }> {
+      const result = await authz<{ deleted: boolean; organizations_deleted: number }>('DELETE', '/account')
+      await clear()
+      return { organizations_deleted: result.organizations_deleted }
+    },
     organizations: {
       list: async () => (await authz<{ organizations: Organization[] }>('GET', '/orgs')).organizations,
       create: (input: { slug: string; name: string }) => authz<Organization>('POST', '/orgs', input),

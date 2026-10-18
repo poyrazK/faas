@@ -4582,6 +4582,7 @@ var cliCommands = []cliCommand{
 				{Name: "anonymous", Value: "on|off", Short: "let people start without an account (anonymous users); turn on CAPTCHA with it", ClosedSet: []string{"on", "off"}},
 				{Name: "anonymous-retention", Value: "DAYS", Short: "days an anonymous user may stay idle before it is deleted, or forever"},
 				{Name: "identity-linking", Value: "on|off", Short: "let signed-in users link and unlink sign-in methods", ClosedSet: []string{"on", "off"}},
+				{Name: "self-deletion", Value: "on|off", Short: "let signed-in users delete their own accounts after a recent sign-in", ClosedSet: []string{"on", "off"}},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 			}, Examples: []string{"gregale auth config shop-auth", "gregale auth config shop-auth --events on", "gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit --mfa on"}},
 			{Name: "providers", Short: "Manage OAuth sign-in providers such as Google or GitHub", Subcommands: []cliSub{
