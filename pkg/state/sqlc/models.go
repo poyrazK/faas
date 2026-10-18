@@ -11835,6 +11835,17 @@ type ScenarioObjectFixture struct {
 	Document  []byte
 }
 
+type ScenarioPostgresFault struct {
+	ID         pgtype.UUID
+	ResourceID pgtype.UUID
+	AccountID  pgtype.UUID
+	RunID      string
+	AppID      pgtype.UUID
+	OwnerID    pgtype.UUID
+	Phase      string
+	Receipt    []byte
+}
+
 type ScenarioPostgresFixture struct {
 	ID              pgtype.UUID
 	AccountID       pgtype.UUID

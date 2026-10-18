@@ -1,0 +1,64 @@
+version: 1
+scenarios:
+  running-import:
+    project: import-api
+    source: .
+    timeout: 10m
+    services:
+      worker:
+        source: ./worker
+        secrets: {POSTGRES_RECOVERY_FIXTURE: "1"}
+        async_routes:
+          - path: /import
+            methods: [POST]
+            retry_policy: {max_attempts: 2, base_seconds: 3, max_seconds: 3}
+    command_execution: {version: 1, runtime: contained}
+    setup: [[node, commands.mjs, setup]]
+    trigger: [node, commands.mjs, trigger]
+    command: [node, commands.mjs, observe]
+    checks:
+      - name: health
+        method: GET
+        path: /
+        expect: {status: 200, json: {'/ready': true}}
+    wait_for:
+      invocations: [{service: worker, trigger_key: worker_invocation_id, min_attempts: 2}]
+    behavior:
+      version: 1
+      fixtures: [input.json]
+      observers: [commands.mjs]
+      observations: [{key: api.ready, kind: http}]
+    postgres_fixture:
+      version: 1
+      fixture: fixture.sql
+      max_lock_wait_ms: 250
+      tables: [{schema: public, name: imports, columns: [external_id, state]}]
+    objects_fixture: {version: 1, bucket: imports, fixtures: []}
+    managed_work:
+      version: 1
+      primary: import-api
+      postgres_fault: {workload: worker, checkpoint: after-commit, unavailable_ms: 1000, recover_within_ms: 5000}
+      participants:
+        - {workload: import-api, postgres: read_write, objects: read_write}
+        - {workload: worker, async: true, postgres: read_write, objects: read_write}
+    actions:
+      webhooks: capture
+      network: contained
+      simulation:
+        version: 1
+        fixtures:
+          - workload: worker
+            name: after-commit
+            integration: checkpoint
+            adapter: http
+            method: POST
+            path: /after-commit
+            responses: [{status: 200}]
+          - workload: worker
+            name: notification
+            integration: email
+            adapter: resend
+            method: POST
+            path: /emails
+            capture_fields: [to, subject]
+            responses: [{status: 200, body: '{"id":"simulated-notification"}'}]
