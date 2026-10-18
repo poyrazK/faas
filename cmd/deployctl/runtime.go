@@ -175,7 +175,10 @@ func (r hostRuntime) restartServices(manifest releasebundle.Manifest) ([]string,
 		return nil, err
 	}
 	if !present {
-		return order, nil
+		// A host-managed release (no systemd units: a compute host's
+		// `gregalectl release install`) still restarts only --only. Before
+		// this, it restarted the whole order, vmmd first (fsn-4, 2026-10-18).
+		return r.onlyServices(order)
 	}
 	filtered := make([]string, 0, len(services))
 	for _, service := range order {

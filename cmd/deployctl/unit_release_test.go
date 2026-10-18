@@ -224,3 +224,41 @@ func TestHostManagedReleaseSwapsBinariesOnly(t *testing.T) {
 		t.Fatalf("host unit removed: %v", err)
 	}
 }
+
+// A release without unit files carries no service list, so restarts fall
+// back to the registry's restart order. --only must still narrow it: an edge
+// deploy of gatewayd-internal on a compute host restarted vmmd first.
+func TestOnlyNarrowsTheRestartOrderOfAHostManagedRelease(t *testing.T) {
+	order, err := daemonunitspec.RestartOrder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostManaged := releasebundle.Manifest{Files: []releasebundle.File{{Path: "bin/gatewayd-internal"}}}
+	r := hostRuntime{serviceOrder: order, only: set("gatewayd-internal")}
+	got, err := r.restartServices(hostManaged)
+	if err != nil || !reflect.DeepEqual(got, []string{"gatewayd-internal"}) {
+		t.Fatalf("restartServices = %v, %v; want only gatewayd-internal", got, err)
+	}
+
+	orig := runCommand
+	t.Cleanup(func() { runCommand = orig })
+	var restarted []string
+	runCommand = func(_ context.Context, name string, args ...string) error {
+		if name == "systemctl" && len(args) >= 2 && (args[0] == "restart" || args[0] == "reload") {
+			restarted = append(restarted, args[1])
+		}
+		return nil
+	}
+	r.binaryDir = t.TempDir()
+	if err := os.WriteFile(filepath.Join(r.binaryDir, "gatewayd-internal"), []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r.readyTimeout = 100 * time.Millisecond
+	r.waitReadyOverride = func(context.Context, string) error { return nil }
+	if err := r.Restart(context.Background(), hostManaged); err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if want := []string{"faas-gatewayd-internal.service"}; !reflect.DeepEqual(restarted, want) {
+		t.Fatalf("host-managed --only restarted %v, want %v", restarted, want)
+	}
+}
