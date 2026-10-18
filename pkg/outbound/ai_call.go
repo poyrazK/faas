@@ -18,6 +18,9 @@ type aiCallPlan struct {
 	// path is the escaped provider path, kept with captured content so a
 	// replay can resend the call (ADR-997).
 	path string
+	// unmetered marks a write the gateway does not meter that the AI policy
+	// lets through outside the caps (ADR-1432).
+	unmetered bool
 }
 
 // aiCallRejection is a guardrail refusal sent before admission.
@@ -27,15 +30,37 @@ type aiCallRejection struct {
 	title  string
 }
 
+// unmeteredRejection refuses a write the gateway cannot meter (ADR-1432).
+var unmeteredRejection = &aiCallRejection{http.StatusForbidden, "outbound_ai_endpoint_unmetered",
+	"The gateway cannot meter this AI call against the integration's caps; set allow_unmetered in the AI policy to let such calls through"}
+
 // planAICall applies an app's model allow-list and output ceiling, adds a
 // missing ceiling to the buffered body, and estimates the reservation. It
-// returns nil for a call that is not an AI POST.
+// returns nil for a call that is not an AI write. A write the gateway
+// neither meters nor knows to be free is refused unless the AI policy
+// allows unmetered calls (ADR-1432).
 func planAICall(r *http.Request, integration Integration, bindingAppID, path string, ai *aiRequest,
 	form map[string]string) (*aiCallPlan, *aiCallRejection) {
-	if integration.AIProvider == "" || r.Method != http.MethodPost {
+	if integration.AIProvider == "" {
+		return nil, nil
+	}
+	switch r.Method {
+	case http.MethodPost:
+	case http.MethodPut, http.MethodPatch:
+		if !integration.AIAllowUnmetered {
+			return nil, unmeteredRejection
+		}
+		return &aiCallPlan{path: path, unmetered: true}, nil
+	default:
 		return nil, nil
 	}
 	plan := &aiCallPlan{endpoint: classifyAIEndpoint(integration.AIProvider, path), path: path}
+	if !plan.endpoint.metered() && !aiWriteFree(integration.AIProvider, path) {
+		if !integration.AIAllowUnmetered {
+			return nil, unmeteredRejection
+		}
+		plan.unmetered = true
+	}
 	guarded := false
 	if bindingAppID != "" {
 		plan.guard, guarded = integration.BindingAIGuardrails[bindingAppID]
@@ -59,6 +84,13 @@ func planAICall(r *http.Request, integration Integration, bindingAppID, path str
 		}
 	}
 	applyFormFacts(plan.endpoint, &plan.facts, form)
+	if plan.endpoint.media == aiMediaVideo && !videoMeterable(integration, plan.facts) {
+		// A video the gateway cannot size or price is unmetered.
+		if !integration.AIAllowUnmetered {
+			return nil, unmeteredRejection
+		}
+		plan.unmetered, plan.endpoint.media = true, aiMediaNone
+	}
 	if guarded && !api.OutboundAIModelAllowed(plan.guard.AllowedModels, plan.facts.model) {
 		return nil, &aiCallRejection{http.StatusForbidden, "outbound_ai_model_not_allowed", "The model is not allowed for this app"}
 	}
@@ -120,6 +152,9 @@ func estimateAIReservation(r *http.Request, integration Integration, plan *aiCal
 			estimate.OutputTokens = api.OutboundAIDefaultOutputReserveTokens
 		}
 	}
+	// ADR-1433: the request's built-in tools reserve their fees.
+	estimate.WebSearches, estimate.FileSearches = plan.facts.tools.webSearches, plan.facts.tools.fileSearches
+	estimate.CodeSessionGB = plan.facts.tools.codeSessionGB
 	estimate.InputTokens = min(estimate.InputTokens, api.OutboundAIMaxTokensPerResponse)
 	estimate.OutputTokens = min(estimate.OutputTokens, api.OutboundAIMaxTokensPerResponse)
 	estimate.OutputImageTokens = min(estimate.OutputImageTokens, estimate.OutputTokens)
@@ -159,5 +194,21 @@ func estimateMediaReservation(estimate *AIUsage, integration Integration, plan *
 		} else {
 			estimate.OutputTokens = api.OutboundAIDefaultOutputReserveTokens
 		}
+	case aiMediaVideo:
+		// ADR-1432: a video bills its generated seconds, not tokens.
+		estimate.InputTokens = 0
+		estimate.VideoSeconds, estimate.VideoResolution = plan.facts.videoSeconds, plan.facts.videoResolution
 	}
+}
+
+// videoMeterable reports a video call the gateway can size and price: its
+// body says its seconds, and its model has a price per second at its
+// resolution (ADR-1432).
+func videoMeterable(integration Integration, facts aiCallFacts) bool {
+	if !facts.videoSized || facts.model == "" {
+		return false
+	}
+	usage := AIUsage{Model: facts.model, VideoSeconds: facts.videoSeconds, VideoResolution: facts.videoResolution}
+	price, ok := aiPriceFor(integration, usage.priceModel())
+	return ok && price.VideoSecond > 0
 }

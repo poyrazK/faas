@@ -33,6 +33,26 @@ type AIUsage struct {
 	Images            int64
 	AudioSeconds      int64
 	Characters        int64
+	// VideoSeconds is seconds of generated video, and VideoResolution the
+	// resolution they are priced at; it is not stored (ADR-1432).
+	VideoSeconds    int64
+	VideoResolution string
+	// Built-in tool uses (ADR-1433): web searches as the provider bills
+	// them (calls, queries or grounded prompts), file searches, and GB of
+	// code-interpreter container sessions.
+	WebSearches   int64
+	FileSearches  int64
+	CodeSessionGB int64
+}
+
+// priceModel is the name a call is priced under: a video call's model
+// with its resolution, so "<model>@<resolution>" prices win over the
+// model's own (ADR-1432).
+func (u AIUsage) priceModel() string {
+	if u.VideoSeconds > 0 && u.VideoResolution != "" {
+		return u.Model + "@" + u.VideoResolution
+	}
+	return u.Model
 }
 
 // BudgetTokens is the amount a response consumes from a daily token limit.
@@ -61,10 +81,43 @@ type AIUsageRecord struct {
 	Log *AIRequestLog
 	// EndUser is the call's X-Gregale-AI-User value, or empty (ADR-994).
 	EndUser string
+	// Tags are the call's usage tags, sorted by key (ADR-1436).
+	Tags []string
 	// LeaseID is the call's admission lease. It keys the settlement, so a
 	// retried settlement counts the call once, and the settlement deletes
 	// the lease (ADR-1120). Empty settles without a key.
 	LeaseID string
+	// Route is a route attempt while the route runs a canary; it adds to
+	// the target's per-minute row (ADR-1340).
+	Route *AIRouteAttemptRecord
+	// Export is the call's line for the calling app's log drains
+	// (ADR-1340).
+	Export *AILogExport
+	// Cached marks a response the cache served; it has no tokens or cost,
+	// and CacheSavedMillicents is what the provider call would have cost.
+	// PromptCacheSavedMillicents is what provider prompt caching saved on a
+	// provider call, negative when cache writes outweigh reads (ADR-1440).
+	Cached                     bool
+	CacheSavedMillicents       int64
+	PromptCacheSavedMillicents int64
+}
+
+// AIRouteAttemptRecord is one settled attempt of a route with a canary.
+// Error marks a provider status of 400 or above; TTFBMS is set for a
+// successful attempt that received a first byte.
+type AIRouteAttemptRecord struct {
+	RouteID  string
+	Position int
+	Error    bool
+	TTFBMS   *int64
+}
+
+// AILogExport is one export line and its OTLP attributes (ADR-1340).
+type AILogExport struct {
+	AppID      string
+	AccountID  string
+	Line       string
+	Attributes map[string]string
 }
 
 // AIRequestLog is the non-usage metadata of one logged AI call. It holds
@@ -168,10 +221,21 @@ const AIUsageCallerRuns = "runs"
 // no app ID either.
 const AIUsageCallerReplay = "replay"
 
+// AIUsageCallerModeration aggregates moderation checks (ADR-1340).
+const AIUsageCallerModeration = "moderation"
+
+// AIUsageCallerEvaluation aggregates evaluations' candidate and judge calls
+// (ADR-1431).
+const AIUsageCallerEvaluation = "evaluation"
+
 // appCaller reports whether a settled caller is an app ID, which has app
 // budgets, minute counters and alert webhooks.
 func appCaller(caller string) bool {
-	return caller != AIUsageCallerRuns && caller != AIUsageCallerReplay
+	switch caller {
+	case AIUsageCallerRuns, AIUsageCallerReplay, AIUsageCallerModeration, AIUsageCallerEvaluation, aiBatchReader:
+		return false
+	}
+	return true
 }
 
 // aiUsageOverflowModel collects models beyond the per-day distinct cap.
@@ -193,7 +257,8 @@ func validateAIUsageRecord(record AIUsageRecord) error {
 		return fmt.Errorf("%w: AI usage model is invalid", ErrInvalidIntegration)
 	}
 	for _, value := range []int64{usage.InputTokens, usage.CachedInputTokens, usage.CacheWriteTokens, usage.OutputTokens,
-		usage.InputImageTokens, usage.OutputImageTokens, usage.Images, usage.AudioSeconds, usage.Characters} {
+		usage.InputImageTokens, usage.OutputImageTokens, usage.Images, usage.AudioSeconds, usage.Characters, usage.VideoSeconds,
+		usage.WebSearches, usage.FileSearches, usage.CodeSessionGB} {
 		if value < 0 || value > 3*api.OutboundAIMaxTokensPerResponse {
 			return fmt.Errorf("%w: AI usage token count is out of range", ErrInvalidIntegration)
 		}
@@ -201,13 +266,50 @@ func validateAIUsageRecord(record AIUsageRecord) error {
 	if record.CostMillicents < 0 || record.CostMillicents > api.MaxOutboundAICostMillicents {
 		return fmt.Errorf("%w: AI usage cost is out of range", ErrInvalidIntegration)
 	}
+	if record.CacheSavedMillicents < 0 || record.CacheSavedMillicents > api.MaxOutboundAICostMillicents ||
+		record.PromptCacheSavedMillicents < -api.MaxOutboundAICostMillicents || record.PromptCacheSavedMillicents > api.MaxOutboundAICostMillicents ||
+		(!record.Cached && record.CacheSavedMillicents != 0) ||
+		(record.Cached && (usage.BudgetTokens() != 0 || record.CostMillicents != 0 || record.PromptCacheSavedMillicents != 0)) {
+		return fmt.Errorf("%w: AI usage cache savings are invalid", ErrInvalidIntegration)
+	}
+	if !validAITags(record.Tags) {
+		return fmt.Errorf("%w: AI usage tags are invalid", ErrInvalidIntegration)
+	}
 	if record.EndUser != "" && !api.ValidOutboundAIUserID(record.EndUser) {
 		return fmt.Errorf("%w: AI usage end user is invalid", ErrInvalidIntegration)
 	}
 	if record.LeaseID != "" && !validUUID(record.LeaseID) {
 		return fmt.Errorf("%w: AI usage lease id must be a UUID", ErrInvalidIntegration)
 	}
+	if err := validateAIRouteAttempt(record.Route); err != nil {
+		return err
+	}
+	if err := validateAILogExport(record.Export); err != nil {
+		return err
+	}
 	return validateAIRequestLog(record.Log)
+}
+
+func validateAIRouteAttempt(attempt *AIRouteAttemptRecord) error {
+	if attempt == nil {
+		return nil
+	}
+	if !validUUID(attempt.RouteID) || attempt.Position < 1 || attempt.Position > api.OutboundAIRouteTargetsMax ||
+		(attempt.TTFBMS != nil && (*attempt.TTFBMS < 0 || *attempt.TTFBMS > 1<<31-1)) {
+		return fmt.Errorf("%w: AI route attempt is out of range", ErrInvalidIntegration)
+	}
+	return nil
+}
+
+func validateAILogExport(export *AILogExport) error {
+	if export == nil {
+		return nil
+	}
+	if !validUUID(export.AppID) || !validUUID(export.AccountID) || len(export.Line) < 2 ||
+		len(export.Line) > api.OutboundAILogExportLineMaxBytes || len(export.Attributes) > aiLogExportAttributesMax {
+		return fmt.Errorf("%w: AI log export line is out of range", ErrInvalidIntegration)
+	}
+	return nil
 }
 
 // aiUsageFields covers the OpenAI chat completions, OpenAI Responses,
@@ -234,6 +336,10 @@ type aiUsageFields struct {
 
 	CacheReadInputTokens     *int64 `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"`
+	// Anthropic server tool uses (ADR-1433).
+	ServerToolUse *struct {
+		WebSearchRequests *int64 `json:"web_search_requests"`
+	} `json:"server_tool_use"`
 	// Gemini usageMetadata.
 	PromptTokenCount        *int64 `json:"promptTokenCount"`
 	CandidatesTokenCount    *int64 `json:"candidatesTokenCount"`
@@ -278,6 +384,24 @@ func geminiImageTokens(counts []geminiModalityCount) *int64 {
 type aiEnvelopeInner struct {
 	Model string         `json:"model"`
 	Usage *aiUsageFields `json:"usage"`
+	// Output is an OpenAI Responses object's output items (ADR-1433).
+	Output json.RawMessage `json:"output"`
+}
+
+// aiToolItem is one OpenAI Responses output item, as far as built-in tool
+// fees need it (ADR-1433).
+type aiToolItem struct {
+	Type        string `json:"type"`
+	ID          string `json:"id"`
+	ContainerID string `json:"container_id"`
+}
+
+// aiGeminiCandidate carries a Gemini candidate's search grounding
+// (ADR-1433).
+type aiGeminiCandidate struct {
+	GroundingMetadata *struct {
+		WebSearchQueries []string `json:"webSearchQueries"`
+	} `json:"groundingMetadata"`
 }
 
 // aiEnvelope finds usage at the top level (chat completions, Anthropic
@@ -298,6 +422,13 @@ type aiEnvelope struct {
 	// transcription's audio length (ADR-997).
 	Type     string   `json:"type"`
 	Duration *float64 `json:"duration"`
+	// Output is a Responses object's output items, or Bedrock Converse's
+	// output message, which tool counting skips; Item is one Responses
+	// stream event's item; Candidates carry Gemini search grounding
+	// (ADR-1433).
+	Output     json.RawMessage `json:"output"`
+	Item       json.RawMessage `json:"item"`
+	Candidates json.RawMessage `json:"candidates"`
 	// Predictions carries Vertex AI text-embedding token counts (ADR-995).
 	Predictions []struct {
 		Embeddings *struct {
@@ -339,6 +470,15 @@ type aiRawUsage struct {
 	inputImage, outputImage, geminiPromptImage, geminiCandidatesImage int64
 	seenOutputImage                                                   bool
 	images, audioSeconds                                              int64
+	// Built-in tool uses (ADR-1433). webSearchRequests is Anthropic's;
+	// the Responses counts take the larger of a final response's items and
+	// the items streamed one by one.
+	webSearchRequests                  int64
+	responsesWebSearch, responsesFiles int64
+	streamedTools                      map[string]string
+	containers                         []string
+	geminiQueries                      int64
+	geminiGrounded                     bool
 }
 
 func (r *aiRawUsage) merge(fields *aiUsageFields) {
@@ -378,6 +518,9 @@ func (r *aiRawUsage) merge(fields *aiUsageFields) {
 	}
 	take(&r.cacheRead, fields.CacheReadInputTokens)
 	take(&r.cacheCreation, fields.CacheCreationInputTokens)
+	if fields.ServerToolUse != nil && fields.ServerToolUse.WebSearchRequests != nil {
+		r.webSearchRequests = max(r.webSearchRequests, min(max(*fields.ServerToolUse.WebSearchRequests, 0), api.OutboundAIToolUsesPerCallMax))
+	}
 	take(&r.geminiPrompt, fields.PromptTokenCount)
 	take(&r.geminiCandidates, fields.CandidatesTokenCount)
 	take(&r.geminiCached, fields.CachedContentTokenCount)
@@ -403,6 +546,122 @@ func (r *aiRawUsage) merge(fields *aiUsageFields) {
 	} {
 		r.seenMetrics = r.seenMetrics || metric
 	}
+}
+
+// noteToolItems counts a final Responses object's web and file searches
+// and keeps its containers (ADR-1433).
+func (r *aiRawUsage) noteToolItems(raw json.RawMessage) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '[' {
+		return
+	}
+	var items []aiToolItem
+	if json.Unmarshal(trimmed, &items) != nil {
+		return
+	}
+	var web, files int64
+	for _, item := range items {
+		switch item.Type {
+		case "web_search_call":
+			web++
+		case "file_search_call":
+			files++
+		case "code_interpreter_call":
+			r.noteContainer(item.ContainerID)
+		}
+	}
+	r.responsesWebSearch = max(r.responsesWebSearch, min(web, api.OutboundAIToolUsesPerCallMax))
+	r.responsesFiles = max(r.responsesFiles, min(files, api.OutboundAIToolUsesPerCallMax))
+}
+
+// noteStreamedItem counts one Responses stream item once by its ID.
+func (r *aiRawUsage) noteStreamedItem(item *aiToolItem) {
+	if item == nil || item.ID == "" || len(r.streamedTools) >= api.OutboundAIToolUsesPerCallMax {
+		return
+	}
+	switch item.Type {
+	case "web_search_call", "file_search_call":
+		if r.streamedTools == nil {
+			r.streamedTools = make(map[string]string)
+		}
+		r.streamedTools[item.ID] = item.Type
+	case "code_interpreter_call":
+		r.noteContainer(item.ContainerID)
+	}
+}
+
+// noteContainer keeps a code-interpreter container a response used.
+func (r *aiRawUsage) noteContainer(id string) {
+	if id == "" || len(id) > 128 || len(r.containers) >= aiContainersPerResponseMax {
+		return
+	}
+	for _, seen := range r.containers {
+		if seen == id {
+			return
+		}
+	}
+	r.containers = append(r.containers, id)
+}
+
+// aiContainersPerResponseMax bounds the containers one response names.
+const aiContainersPerResponseMax = 16
+
+// noteGrounding keeps the most non-empty search queries a Gemini chunk
+// reports (ADR-1433).
+func (r *aiRawUsage) noteGrounding(candidates []aiGeminiCandidate) {
+	for _, candidate := range candidates {
+		if candidate.GroundingMetadata == nil {
+			continue
+		}
+		var queries int64
+		for _, query := range candidate.GroundingMetadata.WebSearchQueries {
+			if strings.TrimSpace(query) != "" {
+				queries++
+			}
+		}
+		if queries > 0 {
+			r.geminiGrounded = true
+			r.geminiQueries = max(r.geminiQueries, min(queries, api.OutboundAIToolUsesPerCallMax))
+		}
+	}
+}
+
+// webSearches is the web searches a response reports, as its provider
+// bills them: Gemini 3 and newer per query, Gemini 2.5 and older per
+// grounded prompt (ADR-1433).
+func (r aiRawUsage) webSearches(model string) int64 {
+	streamedWeb := int64(0)
+	for _, kind := range r.streamedTools {
+		if kind == "web_search_call" {
+			streamedWeb++
+		}
+	}
+	searches := r.webSearchRequests + max(r.responsesWebSearch, streamedWeb)
+	if r.geminiGrounded {
+		if geminiBillsPerPrompt(model) {
+			searches++
+		} else {
+			searches += r.geminiQueries
+		}
+	}
+	return min(searches, api.OutboundAIToolUsesPerCallMax)
+}
+
+func (r aiRawUsage) fileSearches() int64 {
+	streamed := int64(0)
+	for _, kind := range r.streamedTools {
+		if kind == "file_search_call" {
+			streamed++
+		}
+	}
+	return max(r.responsesFiles, streamed)
+}
+
+// geminiBillsPerPrompt reports a Gemini model whose search grounding is
+// billed per grounded prompt: Gemini 2.5 and older (ADR-1433).
+func geminiBillsPerPrompt(model string) bool {
+	model = strings.TrimPrefix(model, "models/")
+	return strings.HasPrefix(model, "gemini-1") || strings.HasPrefix(model, "gemini-2")
 }
 
 // noteAudioSeconds keeps the longest reported audio duration, rounded up.
@@ -519,6 +778,9 @@ type aiUsageObserver struct {
 	tail         []byte
 	imageMarkers markerCounter
 	parsedImages bool
+	// chatSearch marks a chat completion on a search model, which runs one
+	// web search per call (ADR-1433).
+	chatSearch bool
 }
 
 // newAIUsageObserver observes a call in the provider's default format.
@@ -778,12 +1040,27 @@ func (o *aiUsageObserver) applyEnvelope(envelope aiEnvelope) {
 	if tokens := vertexPredictionTokens(envelope); tokens != nil {
 		o.raw.merge(&aiUsageFields{PromptTokenCount: tokens})
 	}
+	// ADR-1433: built-in tool uses.
+	o.raw.noteToolItems(envelope.Output)
+	if envelope.Type == "response.output_item.done" && len(envelope.Item) > 0 {
+		var item aiToolItem
+		if json.Unmarshal(envelope.Item, &item) == nil {
+			o.raw.noteStreamedItem(&item)
+		}
+	}
+	if len(envelope.Candidates) > 0 {
+		var candidates []aiGeminiCandidate
+		if json.Unmarshal(envelope.Candidates, &candidates) == nil {
+			o.raw.noteGrounding(candidates)
+		}
+	}
 	o.noteModel(envelope.Model)
 	o.noteModel(envelope.ModelVersion)
 	for _, inner := range []*aiEnvelopeInner{envelope.Message, envelope.Response} {
 		if inner != nil {
 			o.raw.merge(inner.Usage)
 			o.noteModel(inner.Model)
+			o.raw.noteToolItems(inner.Output)
 		}
 	}
 }
@@ -823,8 +1100,18 @@ func (o *aiUsageObserver) Finish() AIUsage {
 	if usage.Model == "" {
 		usage.Model = "unknown"
 	}
+	// ADR-1433: built-in tool uses; a chat search model runs one search
+	// per call.
+	usage.WebSearches, usage.FileSearches = o.raw.webSearches(usage.Model), o.raw.fileSearches()
+	if o.chatSearch && usage.Known {
+		usage.WebSearches = max(usage.WebSearches, 1)
+	}
 	return usage
 }
+
+// containerIDs lists the code-interpreter containers a response used
+// (ADR-1433).
+func (o *aiUsageObserver) containerIDs() []string { return o.raw.containers }
 
 // FirstByteAt reports when the first response body byte was observed.
 func (o *aiUsageObserver) FirstByteAt() time.Time { return o.firstByteAt }

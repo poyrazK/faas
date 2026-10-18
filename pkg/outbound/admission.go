@@ -40,6 +40,9 @@ const (
 	// Per-end-user UTC-day AI limits (ADR-994).
 	ReasonUserDailyTokenLimit = "user_daily_token_limit"
 	ReasonUserDailyCostLimit  = "user_daily_cost_limit"
+	// ReasonTagDailyCostLimit refuses a call one of whose tags reached its
+	// daily cost limit (ADR-1436).
+	ReasonTagDailyCostLimit = "tag_daily_cost_limit"
 	// ReasonUserTrackingFull refuses a new end user once the day already
 	// tracks the maximum number of end users and per-user limits are set
 	// (ADR-996).
@@ -113,12 +116,25 @@ type Integration struct {
 	// AIRequestLogContent also keeps the start of each logged call's
 	// request and response bodies (ADR-996).
 	AIRequestLogContent bool
-	// AIContentPolicy is checked and applied before admission (ADR-997).
+	// AIContentPolicy is checked and applied before admission (ADR-997);
+	// its moderation check runs after admission (ADR-1340).
 	AIContentPolicy api.OutboundAIContentPolicy
+	// AILogExport writes each settled app call to the export outbox for the
+	// app's log drains (ADR-1340).
+	AILogExport bool
+	// AIAllowUnmetered lets through writes the gateway can neither meter
+	// nor knows to be free; otherwise they are refused (ADR-1432).
+	AIAllowUnmetered bool
+	// AIAutoPromptCache adds prompt-cache breakpoints to Claude requests
+	// that carry none (ADR-1437).
+	AIAutoPromptCache bool
 	// AIUserDailyTokenLimit and AIUserDailyCostLimit cap each end user a
 	// call names with X-Gregale-AI-User per UTC day (ADR-994).
 	AIUserDailyTokenLimit *int64
 	AIUserDailyCostLimit  *int64
+	// AITagDailyCostLimits caps the UTC-day cost of exact usage tags
+	// (ADR-1436).
+	AITagDailyCostLimits map[string]int64
 }
 
 // AIGuardrails are one app binding's AI restrictions; nil fields are unset.
@@ -225,6 +241,15 @@ func (i Integration) Validate() error {
 	}
 	if i.AIRequestLogEnabled && i.AIProvider == "" {
 		return fmt.Errorf("%w: the AI request log requires an AI provider", ErrInvalidIntegration)
+	}
+	if i.AILogExport && i.AIProvider == "" {
+		return fmt.Errorf("%w: AI log export requires an AI provider", ErrInvalidIntegration)
+	}
+	if i.AIAllowUnmetered && i.AIProvider == "" {
+		return fmt.Errorf("%w: allowing unmetered AI calls requires an AI provider", ErrInvalidIntegration)
+	}
+	if i.AIAutoPromptCache && i.AIProvider == "" {
+		return fmt.Errorf("%w: automatic prompt caching requires an AI provider", ErrInvalidIntegration)
 	}
 	if i.AIRequestLogContent && !i.AIRequestLogEnabled {
 		return fmt.Errorf("%w: AI content capture requires the request log", ErrInvalidIntegration)
@@ -333,6 +358,10 @@ type AdmissionSpec struct {
 	AIEndUser             string
 	UserDailyAITokenLimit *int64
 	UserDailyAICostLimit  *int64
+	// AITags are the call's usage tags (ADR-1436). AITagDailyCostLimits caps
+	// a tag's UTC day; the Postgres backend reads the stored limits.
+	AITags               []string
+	AITagDailyCostLimits map[string]int64
 	// BindingAppID scopes an explicit app binding budget. It is set from
 	// verified workload identity, never from a guest-controlled header.
 	BindingAppID                   string
