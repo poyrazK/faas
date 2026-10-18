@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 CREATE TABLE IF NOT EXISTS migration_cutovers (

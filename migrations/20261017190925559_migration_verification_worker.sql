@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 ALTER TABLE migration_verifications ADD COLUMN IF NOT EXISTS next_attempt_at timestamptz

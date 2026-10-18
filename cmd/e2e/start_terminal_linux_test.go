@@ -90,6 +90,16 @@ func (s *startTerminal) expect(want string) {
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 	for {
+		// Observe exit before reading the output: Wait returns only after the
+		// process's output is copied, so a process that printed want and then
+		// exited is still matched below instead of being reported as an early
+		// exit.
+		exited := false
+		select {
+		case <-s.done:
+			exited = true
+		default:
+		}
 		out := s.output.String()
 		if at := strings.Index(out[s.cursor:], want); at >= 0 {
 			s.cursor += at + len(want)
@@ -98,9 +108,11 @@ func (s *startTerminal) expect(want string) {
 		if want == "Keep building in this project." && strings.Contains(out[s.cursor:], "Your deployment is saved. Let's check its response.") {
 			s.t.Fatalf("app response check failed\n%s", s.transcript())
 		}
+		if exited {
+			s.t.Fatalf("gregale exited before %q: %v\n%s", want, s.err, s.transcript())
+		}
 		select {
 		case <-s.done:
-			s.t.Fatalf("gregale exited before %q: %v\n%s", want, s.err, s.transcript())
 		case <-timer.C:
 			s.t.Fatalf("timed out waiting for %q\n%s", want, s.transcript())
 		case <-ticker.C:

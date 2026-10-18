@@ -34,7 +34,13 @@ type Handler struct {
 }
 
 func New(store state.Store, endpoint func(context.Context, state.App, state.Deployment) (string, error), loader httpkit.AppLoader) *Handler {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Probes dial customer deployments through the egress guard, never through
+	// a replaced process-wide transport. A replaced http.DefaultTransport must
+	// not panic apid's handler construction.
+	transport := &http.Transport{}
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport = base.Clone()
+	}
 	transport.Proxy = nil
 	transport.DialContext = oci.EgressDialContext(nil)
 	return &Handler{Store: store, Loader: loader, Endpoint: endpoint, Client: &http.Client{Transport: transport, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
