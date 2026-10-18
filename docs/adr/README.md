@@ -1,5 +1,15 @@
 # Architecture Decision Records
 
+- [Node and Python stored acknowledgment policy parity](20261017213800-cross-sdk-stored-acknowledgment-policies.md)
+
+- [Stored Go acknowledgment intent retry policies](20261017212845-stored-go-acknowledgment-retry-policy.md)
+
+- [Adaptive Python acknowledgment intent retry scheduling](20261017212320-python-acknowledgment-retry-policy.md)
+
+- [Adaptive Node acknowledgment intent retry scheduling](20261017211931-node-acknowledgment-retry-policy.md)
+
+- [Adaptive Go acknowledgment intent retry scheduling](20261017211526-go-acknowledgment-retry-policy.md)
+
 - [Restart-safe Go acknowledgment recovery alerts](20261017182028-go-recovery-alert-checkpoints.md)
 
 - [Bounded Go acknowledgment intent recovery passes](20261017181200-bounded-go-intent-recovery.md)
