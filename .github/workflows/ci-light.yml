@@ -370,6 +370,7 @@ jobs:
           python3 scripts/ci/slo_gate_test.py
       - name: per-unit release selection and planning tests
         run: |
+          python3 scripts/ci/host_roles_test.py
           python3 scripts/ci/affected_units_test.py
           python3 scripts/ci/plan_unit_deploy_test.py
           python3 scripts/ci/plan_edge_rollout_test.py
