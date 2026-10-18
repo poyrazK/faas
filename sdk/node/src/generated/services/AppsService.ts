@@ -56,6 +56,7 @@ import type { DebugCriticalPathHistoryResponse } from '../models/DebugCriticalPa
 import type { DebugDependencyLatencyResponse } from '../models/DebugDependencyLatencyResponse.js';
 import type { DebugRegressionActionRequest } from '../models/DebugRegressionActionRequest.js';
 import type { DebugRegressionActionResponse } from '../models/DebugRegressionActionResponse.js';
+import type { DebugRegressionReview } from '../models/DebugRegressionReview.js';
 import type { DebugRegressionsResponse } from '../models/DebugRegressionsResponse.js';
 import type { DebugReplayRequest } from '../models/DebugReplayRequest.js';
 import type { DebugReplayResponse } from '../models/DebugReplayResponse.js';
@@ -67,6 +68,7 @@ import type { DeployTokenResponse } from '../models/DeployTokenResponse.js';
 import type { DiscoveredRoutesResponse } from '../models/DiscoveredRoutesResponse.js';
 import type { EdgeProtectionResponse } from '../models/EdgeProtectionResponse.js';
 import type { EnvironmentRouteBudgets } from '../models/EnvironmentRouteBudgets.js';
+import type { GuardedDebugRegressionActionRequest } from '../models/GuardedDebugRegressionActionRequest.js';
 import type { Issue } from '../models/Issue.js';
 import type { IssueActionRequest } from '../models/IssueActionRequest.js';
 import type { IssueDetail } from '../models/IssueDetail.js';
@@ -6154,6 +6156,8 @@ export class AppsService {
    * workflow metadata only; it never changes deployment traffic.
    * `dismissed_until` is required only for dismiss and defaults to 24h
    * when omitted. The server caps dismissals at 30 days.
+   * Use the dedicated checked actions endpoint for mandatory app/version
+   * guards. Legacy PATCH clients retain unguarded workflow transitions.
    *
    * @returns DebugRegressionActionResponse Updated regression observation.
    * @throws ApiError
@@ -6176,6 +6180,113 @@ export class AppsService {
       },
       body: requestBody,
       mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
+      },
+    });
+  }
+  /**
+   * Apply a checked regression triage action.
+   * Atomically requires the exact app identity and observation version from
+   * the review endpoint. A changed or missing observation returns 409
+   * regression_changed. Requires app write permissions, MFA and debugger
+   * entitlement. Records the review reason in native audit metadata. Retry
+   * with the exact same body after an ambiguous response to recover the
+   * original receipt. The observation update, reason and receipt commit in
+   * one database transaction. Operation identity binds the complete checked
+   * body and account, independently of the caller's Idempotency-Key header.
+   * Native replay uses the existing 24-hour cache retention. This dedicated route fails closed on
+   * older API nodes; it never falls back to the legacy unguarded PATCH.
+   * Changes triage metadata only, without changing traffic or proving health.
+   *
+   * @returns DebugRegressionActionResponse Checked triage receipt and updated observation.
+   * @throws ApiError
+   */
+  public static applyAppDebugRegressionAction({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: GuardedDebugRegressionActionRequest,
+  }): CancelablePromise<DebugRegressionActionResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/debug/regressions/actions',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
+      },
+    });
+  }
+  /**
+   * Review one exact regression workflow observation.
+   * Includes acknowledged, dismissed and resolved observations without inbox
+   * visibility filters. The opaque version changes on every database update,
+   * including detector refreshes and legacy triage actions. Supply app_id as
+   * expected_app_id and version as expected_version on the dedicated checked actions endpoint.
+   * Requires ordinary app read permissions, MFA and debugger entitlement.
+   * Read-only; no collection, traffic changes or health assessment.
+   *
+   * @returns DebugRegressionReview Exact versioned workflow observation.
+   * @throws ApiError
+   */
+  public static getAppDebugRegressionReview({
+    slug,
+    deploymentId,
+    route,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Exact retained observation deployment identity.
+     */
+    deploymentId: string,
+    /**
+     * Exact stored route label, including method when present.
+     */
+    route: string,
+  }): CancelablePromise<DebugRegressionReview> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/debug/regressions/review',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'deployment_id': deploymentId,
+        'route': route,
+      },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,

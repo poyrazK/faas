@@ -55,8 +55,8 @@ INVARIANT_PACKAGES = ("tests/property",)
 
 # Suites too large for the light tier's 10-minute budget (thousands of tests
 # each). A pull request runs only the tests related to its change, without
-# -race; the mega tier runs them in full with -race nightly and before every
-# release. Each is pinned to its own shard so their compiles never share a
+# -race; the mega tier runs them in full with -race nightly (it does not gate
+# releases). Each is pinned to its own shard so their compiles never share a
 # runner: pkg/state and pkg/apid/apidserver also keep separate PostgreSQL
 # services (pkg/state uses the shard's second one).
 SELECTIVE_SHARD = {
@@ -122,7 +122,7 @@ def select(paths, pkgs):
             changed.add(owner)
     # A global input (dependency bump, CI change) vets every package but still
     # tests only changed ones: re-running the whole tree would blow the light
-    # budget, and the mega tier tests everything nightly and before release.
+    # budget, and the mega tier tests everything nightly.
     if everything:
         vet = set(pkgs)
     else:

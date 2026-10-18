@@ -48,6 +48,13 @@ func (m *management) completeArgument(ctx context.Context, req *mcp.CompleteRequ
 	if p.Ref.Type == "ref/resource" && strings.HasPrefix(p.Ref.URI, "gregale://projects/") && p.Argument.Name == "app" && (args["project"] == "" || args["environment"] == "") {
 		return &mcp.CompleteResult{Completion: mcp.CompletionResultDetails{Values: []string{}}}, nil
 	}
+	if p.Ref.Type == "ref/resource" && p.Ref.URI == regressionResourceTemplate {
+		result, err := m.completeRequestApps(ctx, p.Argument.Value)
+		if err != nil {
+			return nil, m.contextError(err)
+		}
+		return result, nil
+	}
 	values, more, err := m.completionCandidates(ctx, p.Argument.Name, args)
 	if err != nil {
 		return nil, m.contextError(err)
@@ -111,6 +118,9 @@ func completionFields(ref *mcp.CompleteReference) (map[string]bool, error) {
 		return fields, nil
 	}
 	if ref != nil && ref.Type == "ref/resource" {
+		if ref.URI == regressionResourceTemplate {
+			return map[string]bool{"app": true}, nil
+		}
 		for _, view := range []string{"release", "health", "budgets"} {
 			if ref.URI == "gregale://default/apps/{app}/"+view {
 				return map[string]bool{"app": true}, nil

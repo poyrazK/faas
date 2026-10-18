@@ -609,6 +609,20 @@ second provider. Tracking: epic #4700.
     not depend on it.
   - Alerts: `FaasPostgresStandby*`; runbook:
     `docs/runbooks/FaasPostgresStandby.md`.
+- **Control-plane host state** (2026-10-18). The CA key, the apid HMAC keys,
+  `sealed.env` and the per-daemon secrets are in neither PostgreSQL nor the
+  release. Two copies protect them, both read from one list
+  (`deploy/ansible/vars/cp_state_files.yml`):
+  - the standby stages them on every converge, and a takeover installs them
+    before the first bootstrap;
+  - `faas-cp-state-backup` seals them daily into an age bundle and pushes it
+    off-host with the PostgreSQL backups' remote. The bundle is encrypted
+    only to operator recipients, so the control plane cannot read its own
+    backup.
+
+  A rebuild after losing both hosts restores the bundle
+  (`gregalectl backup restore-cp-state`, `cp_state_restore.yml`) before
+  bootstrap. Runbook: `docs/runbooks/ControlPlaneStateBackup.md`.
 - **Why not two control nodes (OVH + GCP)?**
   - etcd and Patroni need three members to survive losing one. With two,
     losing either stops automatic failover, and a cut between the
