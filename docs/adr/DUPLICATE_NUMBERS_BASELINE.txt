@@ -28,10 +28,6 @@
 # ADR-493 independently duplicated on merged main @ c86bdbc7c (2026-10-03).
 # ADR-606 through ADR-609 independently duplicated across merged main PRs
 # #4257 and #4259 (2026-10-06).
-# ADR-1580 independently duplicated on merged main @ fc212c23a2 (#4898,
-# 2026-10-18).
-# ADR-20261015 and ADR-20261016 independently duplicated on merged main @
-# 53116be8b3 (#4868, 2026-10-18).
 # ADR-680 independently duplicated across merged main PRs #4311 and #4317
 # (2026-10-08).
 # Refreshed 2026-10-10 for independently duplicated merged main @ c761890061: ADR-686 and ADR-911.
@@ -216,6 +212,3 @@
 1258
 1259
 1260
-1580
-20261015
-20261016
