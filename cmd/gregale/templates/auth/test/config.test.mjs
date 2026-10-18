@@ -35,6 +35,7 @@ test('builds the GoTrue environment from sealed settings', () => {
   assert.equal(g.GOTRUE_JWT_ISSUER, 'https://shop-auth.gregale.app/auth/v1')
   assert.equal(g.GOTRUE_API_HOST, '127.0.0.1')
   assert.equal(g.GOTRUE_JWT_EXP, '600')
+  assert.equal(g.GOTRUE_JWT_DEFAULT_GROUP_NAME, 'authenticated', 'tokens carry role authenticated')
   assert.equal(g.GOTRUE_DB_MAX_POOL_SIZE, '4')
   assert.equal(g.DB_NAMESPACE, 'auth')
   assert.equal(g.GOTRUE_MAILER_AUTOCONFIRM, 'true')

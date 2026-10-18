@@ -23,7 +23,7 @@ const authorizationSQLDir = "../../../cmd/gregale/templates/auth/sql"
 
 // The tables and columns of GoTrue's schema that the helpers read. The
 // template's end-to-end run applies the real migrations.
-const goTrueStub = `CREATE TABLE auth.users (id uuid PRIMARY KEY, email varchar(255), email_confirmed_at timestamptz, phone text, phone_confirmed_at timestamptz, banned_until timestamptz, deleted_at timestamptz, raw_app_meta_data jsonb, is_anonymous boolean NOT NULL DEFAULT false, is_sso_user boolean NOT NULL DEFAULT false, created_at timestamptz DEFAULT now());
+const goTrueStub = `CREATE TABLE auth.users (id uuid PRIMARY KEY, email varchar(255), email_confirmed_at timestamptz, phone text, phone_confirmed_at timestamptz, banned_until timestamptz, deleted_at timestamptz, raw_app_meta_data jsonb, is_anonymous boolean NOT NULL DEFAULT false, is_sso_user boolean NOT NULL DEFAULT false, role varchar(255), created_at timestamptz DEFAULT now());
 CREATE TABLE auth.identities (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES auth.users ON DELETE CASCADE, provider text NOT NULL, provider_id text NOT NULL);
 CREATE TABLE auth.sso_providers (id uuid PRIMARY KEY);
 CREATE TABLE auth.sso_domains (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), sso_provider_id uuid NOT NULL REFERENCES auth.sso_providers ON DELETE CASCADE, domain text NOT NULL);
