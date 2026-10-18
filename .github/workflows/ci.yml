@@ -975,7 +975,11 @@ jobs:
             gitops_acceptance: false
             state_coverage: false
             test_timeout: 30m
-            job_timeout_minutes: 45
+            # Shard b alone runs the PostgreSQL native verdict, starter TLS,
+            # fixture and GitOps compilation gates before its tests: about
+            # 28 minutes on 2026-10-18 (20 on 2026-10-17), ahead of a ~20
+            # minute test step. 45 cancelled it mid-suite.
+            job_timeout_minutes: 60
     # Keep main's bounded PostgreSQL budgets: 30 minutes for parity and
     # reconciliation, 20 minutes for CLI/daemons. The full state suite runs
     # in its four deterministic shards above.
