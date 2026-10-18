@@ -28,6 +28,16 @@ sql:
         sql_package: "pgx/v5"
         emit_methods_with_db_argument: true
         emit_empty_slices: true
+  - engine: "postgresql"
+    queries: "pkg/state/scenariopgfault/queries.sql"
+    schema: "pkg/state/scenariopgfault/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/state/scenariopgfault/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
   # Internal CI metadata, execution ledger and dormant Jobs intent adapter;
   # no task claiming or VM ownership in this package.
   - engine: "postgresql"

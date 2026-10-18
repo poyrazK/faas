@@ -77419,11 +77419,49 @@ components:
         version: { type: integer, enum: [1] }
         primary: { type: string, minLength: 3, maxLength: 40 }
         worker_termination: { $ref: '#/components/schemas/ScenarioWorkerTermination' }
+        postgres_fault: { $ref: '#/components/schemas/ScenarioPostgresFaultSpec' }
         participants:
           type: array
           minItems: 2
           maxItems: 16
           items: { $ref: '#/components/schemas/ScenarioManagedWorkParticipant' }
+    ScenarioPostgresFaultSpec:
+      description: Separately gated warm rehearsal with one managed worker and one isolated database. Disconnects existing sessions and rejects new connections before restoring access. Excludes cold start, suspend/resume and worker termination.
+      type: object
+      required: [workload, checkpoint, unavailable_ms, recover_within_ms]
+      properties:
+        workload: { type: string, minLength: 3, maxLength: 40 }
+        checkpoint: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        unavailable_ms: { type: integer, format: int64, minimum: 100, maximum: 30000 }
+        recover_within_ms: { type: integer, format: int64, minimum: 1, maximum: 120000 }
+
+    ScenarioPostgresFaultReceipt:
+      description: Durable original-owner confirmation of a database-specific connection fence and independent recovery probe. Missing proof remains inconclusive; a proven recovery exceeding the budget fails comparison.
+      type: object
+      required: [id, account_id, run_id, app_id, resource_id, deployment_id, instance_id, recorder_session_id, invocation_id, checkpoint_attempt_id, owner_id, backend_sha256, plan_sha256, spec, state, activated, recovered, closed_connections, outage_ms, recovery_ms]
+      properties:
+        id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        run_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        app_id: { type: string, format: uuid }
+        resource_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        instance_id: { type: string, format: uuid }
+        recorder_session_id: { type: string, format: uuid }
+        invocation_id: { type: string, format: uuid }
+        checkpoint_attempt_id: { type: string, format: uuid }
+        owner_id: { type: string, format: uuid }
+        backend_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        plan_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        spec: { $ref: '#/components/schemas/ScenarioPostgresFaultSpec' }
+        state: { type: string, enum: [requested, cutting, active, recovering, recovered, failed] }
+        activated: { type: boolean }
+        recovered: { type: boolean }
+        closed_connections: { type: integer, format: int64, minimum: 0 }
+        outage_ms: { type: integer, format: int64, minimum: 0, description: Confirmed active interval from disconnect acknowledgement until restoration starts. }
+        recovery_ms: { type: integer, format: int64, minimum: 0, description: Elapsed time from planned restoration through a fresh connection and privilege probe. }
+        error: { type: string }
+
     ScenarioSuspendResumeSpec:
       description: One contained in-place pause after setup or at a cooperative managed-job checkpoint. No persistent VM snapshot is written.
       type: object
@@ -77601,6 +77639,7 @@ components:
         closing: { type: boolean }
         plan: { $ref: '#/components/schemas/ScenarioManagedWorkPlan' }
         worker_fault: { $ref: '#/components/schemas/ScenarioWorkerFault' }
+        postgres_fault: { $ref: '#/components/schemas/ScenarioPostgresFaultReceipt' }
         bindings:
           type: array
           maxItems: 16
