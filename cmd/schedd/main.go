@@ -586,6 +586,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	heartbeatRetentionMetrics := heartbeatretention.NewMetrics(ops.Registry(), ops.MetricPrefix())
 	heartbeatRetention := heartbeatretention.New(store, log, heartbeatRetentionMetrics)
 	go heartbeatRetention.Run(ctx)
+	if err := startNodeLeaseKeeper(ctx, store, ownerNodeID, ops, log); err != nil {
+		return err
+	}
 	workflowMetrics := wire.NewWorkflowMetrics(ops.Registry())
 	prewarmMetrics := wire.NewPrewarmMetrics(ops.Registry())
 	privateNetworkMetrics := privatenetwork.NewMetrics(ops.Registry(), ops.MetricPrefix())

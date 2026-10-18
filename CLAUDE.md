@@ -25,6 +25,7 @@ make manifest-ansible MANIFEST=deploy/manifest/splitbox.yaml
 make ANSIBLE_INVENTORY=deploy/ansible/.generated/inventory/hosts.ini bootstrap-control-plane
 make ANSIBLE_INVENTORY=deploy/ansible/.generated/inventory/hosts.ini bootstrap-compute
 make test           # unit tests, must pass on any machine, no KVM needed
+make test-changed   # vet + test only what your diff affects (ci-light's selection); use while iterating
 make test-metal     # integration tests tagged //go:build metal — needs KVM + root
 make leakcheck      # asserts zero leaked netns/TAPs/jail uids/cgroups after tests
 make lint           # golangci-lint + custom checks (see Conventions)
@@ -176,7 +177,9 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
   `export_test.go`, because internal tests grow the larger of the two compiles. Run these builds
   one at a time, type-check with `go vet ./pkg/apid/apidserver` while iterating, and keep
   the default shared GOCACHE: per-job private caches grow to ~11 GB each and have filled
-  developer disks.
+  developer disks. Never run `go clean -cache` on it: other sessions' builds fail mid-run and
+  everyone rebuilds cold. When the disk fills, run `make clean-tmp` (it removes go-build work
+  dirs that killed builds left in $TMPDIR) and ask before clearing the cache.
 - Test fakes must not embed `state.Store`, `*state.MemStore` or `*state.PgStore`: Go generates
   a wrapper per promoted method for every such type (~3,000 for the concrete stores, ~80 MB of
   compiler memory each; this was most of apidserver's test-compile memory). Keep the store in a
