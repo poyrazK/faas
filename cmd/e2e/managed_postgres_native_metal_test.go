@@ -210,7 +210,10 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 	// literal endpoint. This isolated proxy uses only one benchmark IP.
 	proxyCIDR := netip.PrefixFrom(netip.MustParseAddr(proxy.Host), 32).String()
 	destinations := []string{proxyCIDR}
-	if status := statusOnly(t, h, key, http.MethodPatch, "/v1/apps/"+slug, api.UpdateAppRequest{EgressPorts: &ports, EgressAllowlist: &destinations}); status != http.StatusOK {
+	// Pro apps default to public_auth_mode=bearer (ADR-080) as well as
+	// require_authn; the SQL probe requests are anonymous, so open both gates.
+	openAuth := &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}
+	if status := statusOnly(t, h, key, http.MethodPatch, "/v1/apps/"+slug, api.UpdateAppRequest{EgressPorts: &ports, EgressAllowlist: &destinations, PublicAuth: openAuth}); status != http.StatusOK {
 		t.Fatalf("declare SQL destination and TCP port through app policy: status=%d", status)
 	}
 	app, err := store.AppByID(t.Context(), appID)
