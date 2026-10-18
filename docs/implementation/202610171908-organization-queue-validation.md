@@ -542,3 +542,24 @@ contract tests pass (1.668s for the latter). OpenAPI parity and duplicate-key
 validation pass. Earlier state, HTTP and race evidence remains scoped to its
 recorded source; fresh GitHub checks must qualify this merged revision. Native
 KVM and production cutover qualification remain pending.
+
+## CI credential rotation and fixture isolation
+
+Data API acceptance exposed a credential-rotation fixture collision: when the
+random original login ended in `f0`, the replacement selected the same login.
+Revoking the old login correctly terminated both sessions. Forcing that suffix
+reproduces the exact SQLSTATE 57P01 failure (0.488s). Fixed `f0`/`f1` suffixes
+keep the two logins distinct; the complete Neon provider suite passes (57.745s).
+
+Two unrelated fixtures migrated fresh schemas inside the shared test database
+while other suites retained snapshots. Concurrent index creation reached its
+five-second lock timeout. The live scheduler-notification fixture and the
+PostgreSQL reconcile helper now use `pgtest.OpenMigrated`, which the existing
+CI template mode isolates into private, fully migrated databases. The live
+notification check passes (9.102s), and all PostgreSQL reconcile cases pass
+(12.410s). This correction changes tests only; issued migrations and production
+credential revocation behavior are unchanged.
+
+On `2503dd151`, CI passes lint/vet/build and the full mail-outbox suite
+(287.689s), apid (103.946s), and selected apidserver tests (29.612s). Fresh CI
+must qualify the final fixture correction.
