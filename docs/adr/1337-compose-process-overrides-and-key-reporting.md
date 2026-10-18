@@ -6,8 +6,8 @@
   `working_dir`, `stop_signal` and `stop_grace_period`, frozen per deployment
   beside the Compose command (ADR-686). `env_file` contributes variable names,
   like `environment:`. Every other Compose key is reported as a scan warning
-  instead of being dropped silently, and `extends` and top-level `include` are
-  rejected.
+  instead of being dropped silently, including `extends` and top-level
+  `include`, whose warnings name exactly what was not loaded.
 - **Why:** The scan decoded only the keys it used and ignored the rest without
   a signal. A service declaring `user: 1000` or `entrypoint: [tini, --]` ran
   the image's own process; one declaring `volumes:` lost its data on the next
@@ -50,12 +50,19 @@
 
 `env_file` accepts a path, a list of paths, and `{path, required, format}`
 entries (`format: raw` only). Paths must stay inside the source. The scan
-parses `KEY=value`, `KEY` alone, comments, blank lines and `export` prefixes,
-keeps only the names, and merges them with `environment:` keys. Values are
-never read into the plan: they are set through `gregale env` or secrets. A
-required file that is absent from the source, commonly a git-ignored `.env`,
-produces a warning; `required: false` silences it. A malformed line fails the
-scan with its line number.
+reads the dotenv grammar Compose accepts: `KEY=value`, `KEY=` with an empty
+value, `KEY` alone, `export` prefixes, blank lines, `#` comments, an inline
+`# comment` after an unquoted value, and single- or double-quoted values with
+spaces and backslash-escaped quotes that may span lines. Quoted values are
+consumed to their closing quote, so a multi-line value (a PEM key, say) never
+yields bogus keys. It keeps only the names and merges them with
+`environment:` keys. Values are never read into the plan: they are set
+through `gregale env` or secrets. A required file that is absent from the
+source, commonly a git-ignored `.env`, produces a warning; `required: false`
+silences it. A line it cannot read, or an unterminated quote, produces a
+warning naming the file and line, and that line is skipped: such files were
+ignored before this ADR, so failing the scan would break projects that
+deploy today.
 
 ## Key reporting
 
@@ -75,17 +82,21 @@ classifies its keys:
   `build.*` keys other than `context` and `dockerfile` (including `args`,
   `target` and `secrets`) are warned: the builder builds the Dockerfile's final
   stage without build arguments.
-- **Rejected:** `extends` and top-level `include`, because the effective
-  service definitions cannot be computed and services would otherwise be
-  missing or incomplete without a signal.
+- **Not resolved, with a prominent warning:** `extends` and top-level
+  `include`. The scan does not merge the extended service or the included
+  files. The `extends` warning names the base service and, for a base in the
+  same file, the inherited keys that were not loaded (or the other file it
+  names); the `include` warning lists the files whose services were not
+  loaded. Both tell the user to inline them. Rejecting them would break
+  projects that deploy today, when these keys were already ignored.
 
 Managed database and cache services are not reported: the managed resource
 replaces the container and its keys.
 
 ## Consequences
 
-- A project using `extends` or `include` now fails its scan with an actionable
-  error instead of deploying an incomplete service set.
+- A project using `extends` or `include` keeps deploying as before, now with a
+  warning that names the settings or services it does not get.
 - Build arguments and targets remain unsupported for source builds. Carrying
   them would need builder, cache-key and frozen-profile changes, and build
   argument values would become stored configuration; that is a separate

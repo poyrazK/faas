@@ -158,7 +158,6 @@ func TestComposeEnvFileRejectsMalformedDeclaration(t *testing.T) {
 		{"env_file: [{path: app.env, required: maybe}]", nil, "required must be a boolean"},
 		{"env_file: [{path: app.env, format: json}]", nil, "format"},
 		{"env_file: {path: app.env}", nil, "env_file must be"},
-		{"env_file: app.env", []string{"app.env", "1BAD=value\n"}, "line 1 has an invalid variable declaration"},
 	} {
 		t.Run(tc.declaration, func(t *testing.T) {
 			body := "services:\n  web:\n    image: nginx:1.27\n    " + tc.declaration + "\n"
@@ -227,15 +226,90 @@ func TestComposeUnsupportedKeysWarn(t *testing.T) {
 	}
 }
 
-func TestComposeRejectsExtendsAndInclude(t *testing.T) {
-	for _, tc := range []struct{ body, want string }{
-		{"services:\n  web:\n    image: nginx:1.27\n    extends: {service: base}\n", "extends is not supported"},
-		{"include: [other.yaml]\nservices:\n  web:\n    image: nginx:1.27\n", "uses include, which is not supported"},
+func TestComposeExtendsAndIncludeWarn(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		want       []string
+	}{
+		{"same-file base names inherited keys",
+			"services:\n  base:\n    image: nginx:1.27\n    user: nginx\n    environment: {A: b}\n    ports: [80]\n  web:\n    extends: {service: base}\n    image: nginx:1.27\n    ports: [8080]\n",
+			[]string{`web: WARNING extends not applied: environment, user inherited from service "base" were not loaded; inline them into this service`}},
+		{"short form",
+			"services:\n  base:\n    image: nginx:1.27\n    working_dir: /srv\n  web:\n    extends: base\n    image: nginx:1.27\n",
+			[]string{`web: WARNING extends not applied: working_dir inherited from service "base" were not loaded`}},
+		{"other file",
+			"services:\n  web:\n    extends: {file: common.yaml, service: app}\n    image: nginx:1.27\n",
+			[]string{`web: WARNING extends not applied: settings inherited from service "app" in common.yaml were not loaded; inline them into this service`}},
+		{"unknown base",
+			"services:\n  web:\n    extends: {service: missing}\n    image: nginx:1.27\n",
+			[]string{`web: WARNING extends not applied: settings inherited from service "missing" were not loaded`}},
+		{"include paths",
+			"include:\n  - db.yaml\n  - path: [cache.yaml, queue.yaml]\nservices:\n  web:\n    image: nginx:1.27\n",
+			[]string{"compose.yaml: WARNING include not applied: services in db.yaml, cache.yaml, queue.yaml were not loaded; merge them into compose.yaml"}},
 	} {
-		_, err := scanCompose(t, tc.body)
-		if err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Fatalf("err = %v; want it to mention %q", err, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := scanCompose(t, tc.body)
+			if err != nil {
+				t.Fatalf("scan failed: %v; extends and include must only warn", err)
+			}
+			if len(result.Workloads) == 0 {
+				t.Fatalf("no workloads deployed: %+v", result)
+			}
+			for _, want := range tc.want {
+				if !containsWarning(result.Warnings, want) {
+					t.Fatalf("warnings %q lack %q", result.Warnings, want)
+				}
+			}
+		})
+	}
+}
+
+func TestEnvFileKeysDotenvSyntax(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		keys       []string
+		problems   []string
+	}{
+		{"plain, empty and bare", "A=1\nB=\nC\n", []string{"A", "B", "C"}, nil},
+		{"comments, blanks and export", "# head\n\n  export D=4\nE=5 # trailing comment\n", []string{"D", "E"}, nil},
+		{"double-quoted with spaces and escapes", `F="a b \"quoted\" # not a comment"` + "\nG=after\n", []string{"F", "G"}, nil},
+		{"single-quoted with spaces and escaped quote", `H='it\'s fine'` + "\nI=after\n", []string{"H", "I"}, nil},
+		{"multi-line double-quoted value", "J=\"line one\nNOT_A_KEY=inside\nlast line\"\nK=after\n", []string{"J", "K"}, nil},
+		{"multi-line single-quoted value", "L='-----BEGIN KEY-----\nabc=def\n-----END KEY-----'\nM=after\n", []string{"L", "M"}, nil},
+		{"CRLF line endings", "N=1\r\nO=\"x\r\ny\"\r\nP=2\r\n", []string{"N", "O", "P"}, nil},
+		{"malformed lines are skipped", "Q=1\n1BAD=x\n=nokey\nWITH SPACE=y\nR=2\n", []string{"Q", "R"},
+			[]string{"line 2: invalid variable declaration skipped", "line 3: invalid variable declaration skipped", "line 4: invalid variable declaration skipped"}},
+		{"unterminated quote is reported and the rest still read", "S=\"never closed\nT=1\n", []string{"S", "T"},
+			[]string{"line 1: unterminated quoted value"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			keys, problems := envFileKeys([]byte(tc.body))
+			if !reflect.DeepEqual(keys, tc.keys) {
+				t.Fatalf("keys = %q; want %q", keys, tc.keys)
+			}
+			if len(problems) != len(tc.problems) {
+				t.Fatalf("problems = %q; want %q", problems, tc.problems)
+			}
+			for i, want := range tc.problems {
+				if !strings.HasPrefix(problems[i], want) {
+					t.Fatalf("problem %d = %q; want prefix %q", i, problems[i], want)
+				}
+			}
+		})
+	}
+}
+
+func TestComposeEnvFileMalformedLineWarns(t *testing.T) {
+	body := "services:\n  web:\n    image: nginx:1.27\n    ports: [80]\n    env_file: app.env\n"
+	result, err := scanCompose(t, body, "app.env", "GOOD=1\n2BAD=x\nALSO_GOOD=2\n")
+	if err != nil || len(result.Workloads) != 1 {
+		t.Fatalf("scan = %+v, %v; a malformed env_file line must not fail the scan", result, err)
+	}
+	if got := result.Workloads[0].EnvKeys; !reflect.DeepEqual(got, []string{"ALSO_GOOD", "GOOD"}) {
+		t.Fatalf("env keys = %q", got)
+	}
+	if want := "web: env_file app.env line 2: invalid variable declaration skipped"; !containsWarning(result.Warnings, want) {
+		t.Fatalf("warnings %q lack %q", result.Warnings, want)
 	}
 }
 

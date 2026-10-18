@@ -150,9 +150,9 @@ func composeEnvFileKeys(fsys fs.FS, value any) ([]string, []string, error) {
 		if err != nil {
 			return nil, nil, fmt.Errorf("read env_file %s: %w", clean, err)
 		}
-		fileKeys, err := envFileKeys(body)
-		if err != nil {
-			return nil, nil, fmt.Errorf("env_file %s: %w", clean, err)
+		fileKeys, problems := envFileKeys(body)
+		for _, problem := range problems {
+			warnings = append(warnings, fmt.Sprintf("env_file %s %s", clean, problem))
 		}
 		keys = append(keys, fileKeys...)
 	}
@@ -200,24 +200,69 @@ func composeEnvFilePaths(value any) ([]composeEnvFile, error) {
 	}
 }
 
-// envFileKeys parses Compose env-file lines: KEY=value, KEY alone, blank
-// lines and # comments, with an optional "export " prefix.
-func envFileKeys(body []byte) ([]string, error) {
-	var keys []string
-	for lineNumber, raw := range strings.Split(string(body), "\n") {
-		line := strings.TrimSpace(strings.TrimSuffix(raw, "\r"))
+// envFileKeys returns the variable names declared by a Compose env file.
+// It follows the dotenv grammar Compose accepts: KEY=value, KEY= (empty),
+// KEY alone, an optional "export " prefix, blank lines, # comments, inline
+// "# comment" after an unquoted value, and single- or double-quoted values
+// with backslash-escaped quotes that may span lines. Only names matter, but
+// quoted values are consumed to their closing quote so a multi-line value
+// never yields bogus keys. A line it cannot read is reported as a problem
+// ("line N: ...") and skipped; Compose files that deployed before stay
+// deployable.
+func envFileKeys(body []byte) ([]string, []string) {
+	lines := strings.Split(strings.ReplaceAll(string(body), "\r\n", "\n"), "\n")
+	var keys, problems []string
+	for index := 0; index < len(lines); index++ {
+		lineNumber := index + 1
+		line := strings.TrimSpace(lines[index])
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
-		key, _, _ := strings.Cut(line, "=")
+		key, value, _ := strings.Cut(line, "=")
 		key = strings.TrimSpace(key)
-		if composeVariableName.FindString(key) != key || key == "" {
-			return nil, fmt.Errorf("line %d has an invalid variable declaration", lineNumber+1)
+		if key == "" || composeVariableName.FindString(key) != key {
+			problems = append(problems, fmt.Sprintf("line %d: invalid variable declaration skipped", lineNumber))
+			continue
 		}
 		keys = append(keys, key)
+		value = strings.TrimLeft(value, " \t")
+		if value == "" || (value[0] != '"' && value[0] != '\'') {
+			continue
+		}
+		end, closed := envFileQuoteEnd(lines, index, value)
+		if !closed {
+			problems = append(problems, fmt.Sprintf("line %d: unterminated quoted value; the following lines were read as declarations", lineNumber))
+			continue
+		}
+		index = end
 	}
-	return keys, nil
+	return keys, problems
+}
+
+// envFileQuoteEnd finds the line holding the closing quote of a value that
+// opens on line start. value begins with the opening quote.
+func envFileQuoteEnd(lines []string, start int, value string) (int, bool) {
+	quote := value[0]
+	text := value[1:]
+	for line := start; ; {
+		escaped := false
+		for i := 0; i < len(text); i++ {
+			switch {
+			case escaped:
+				escaped = false
+			case text[i] == '\\':
+				escaped = true
+			case text[i] == quote:
+				return line, true
+			}
+		}
+		line++
+		if line >= len(lines) {
+			return start, false
+		}
+		text = lines[line]
+	}
 }
 
 // mergeEnvKeys returns the sorted, deduplicated union of environment and

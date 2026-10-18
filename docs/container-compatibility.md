@@ -243,7 +243,9 @@ overrides on them produce a scan warning.
 environment keys, exactly like `environment:`; values never leave the source,
 so set them with `gregale env set` or secrets. An env file missing from the
 source (for example a git-ignored `.env`) is a warning, or silent with
-`required: false`.
+`required: false`. Quoted values, including multi-line double- or
+single-quoted ones, are read to their closing quote; a malformed line is
+reported with its file and line number and skipped.
 
 The scan reports every other Compose key instead of dropping it silently:
 
@@ -261,7 +263,7 @@ The scan reports every other Compose key instead of dropping it silently:
 | `labels`, `logging`, `pull_policy`, any other `platform` | Warning. |
 | `build.args`, `build.target`, `build.secrets`, `build.ssh`, `build.dockerfile_inline`, other `build.*` keys | Warning: the builder uses only `build.context` and `build.dockerfile` and builds the final stage. |
 | Any other service key | Warning: not supported. |
-| `extends`, top-level `include` | Rejected: the effective service set cannot be computed; inline the settings. |
+| `extends`, top-level `include` | Warning: not resolved. The warning names the inherited keys (or the extended file and service) and the included files whose services were not loaded; inline them. |
 
 Managed database and cache services (for example `postgres`) do not report
 their keys: the managed resource replaces the container.

@@ -168,9 +168,6 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		c = r.Compose
 		rawDoc, _ = rawDoc["compose"].(map[string]any)
 	}
-	if err := rejectComposeInclude(rawDoc, src); err != nil {
-		return nil, nil, nil, err
-	}
 	rawServices, _ := rawDoc["services"].(map[string]any)
 
 	// Deterministic service ordering.
@@ -187,6 +184,9 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		managed  []Managed
 		warnings []string
 	)
+	if warning := composeIncludeWarning(rawDoc, src); warning != "" {
+		warnings = append(warnings, warning)
+	}
 	composeEnv, envErr := readComposeEnv(fsys)
 	if envErr != nil {
 		return nil, nil, nil, envErr
@@ -298,11 +298,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			continue
 		}
 		rawService, _ := rawServices[name].(map[string]any)
-		keyWarnings, keyErr := composeServiceKeyWarnings(rawService)
-		if keyErr != nil {
-			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, keyErr)
-		}
-		for _, warning := range keyWarnings {
+		for _, warning := range composeServiceKeyWarnings(rawService, rawServices) {
 			warnings = append(warnings, "reposcan: "+src+": "+name+": "+warning)
 		}
 		var healthcheck *api.ComposeHealthcheck
