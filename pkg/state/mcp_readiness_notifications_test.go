@@ -159,7 +159,7 @@ func TestMCPReadinessNotificationRecovery(t *testing.T) {
 			t.Fatal("abandonment failed to fence worker", err)
 		}
 		if pg, ok := s.(*PgStore); ok {
-			source = NewPgStore(pg.pool)
+			source = NewPgStore(pg.pool.Pool)
 		} // Durable receipt survives a new store instance.
 		duplicate, err := source.ActMCPReadinessNotification(ctx, account.ID, app.ID, abandon, expired.Add(time.Hour))
 		if err != nil || duplicate != abandoned {

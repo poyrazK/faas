@@ -659,7 +659,6 @@
   },
   {
     "table": "app_environment_route_budgets",
-    "kind": "configuration",
     "columns": [
       "account_id",
       "app_id",
@@ -671,7 +670,8 @@
       "routes",
       "scope",
       "updated_at"
-    ]
+    ],
+    "kind": "configuration"
   },
   {
     "table": "app_environment_secret_ref_suppressions",
@@ -3648,7 +3648,7 @@
       "reason",
       "used_at"
     ],
-    "kind": "operational"
+    "kind": "configuration"
   },
   {
     "table": "deployment_mcp_task_holds",
@@ -4616,7 +4616,6 @@
   },
   {
     "table": "environment_route_budget_receipts",
-    "kind": "operational",
     "columns": [
       "account_id",
       "app_id",
@@ -4624,7 +4623,8 @@
       "request_hash",
       "request_id",
       "response"
-    ]
+    ],
+    "kind": "operational"
   },
   {
     "table": "environment_workload_graphs",
@@ -6752,6 +6752,7 @@
       "account_id",
       "ack_url",
       "app_id",
+      "async_quota_subject_id",
       "attempts",
       "completed_at",
       "created_at",
@@ -7765,6 +7766,7 @@
       "credential_generation",
       "credential_ref",
       "cutover_id",
+      "database_account_id",
       "database_id",
       "deleted_at",
       "environment_key",
@@ -8029,6 +8031,7 @@
       "lease_until",
       "name",
       "observed_generation",
+      "org_id",
       "postgres_major",
       "provider_resource_id",
       "region",
@@ -9028,7 +9031,7 @@
       "request",
       "request_id"
     ],
-    "kind": "operational"
+    "kind": "customer_data"
   },
   {
     "table": "mcp_readiness_fallback_policies",
@@ -9052,7 +9055,7 @@
       "incident_id",
       "snapshot"
     ],
-    "kind": "operational"
+    "kind": "customer_data"
   },
   {
     "table": "mcp_readiness_incident_cursors",
@@ -9091,7 +9094,7 @@
       "sequence",
       "suppression_reason"
     ],
-    "kind": "operational"
+    "kind": "customer_data"
   },
   {
     "table": "mcp_readiness_incidents",
@@ -9107,7 +9110,7 @@
       "rule_id",
       "scope"
     ],
-    "kind": "operational"
+    "kind": "customer_data"
   },
   {
     "table": "mcp_readiness_maintenance_windows",
@@ -9140,7 +9143,7 @@
       "receipt",
       "request_id"
     ],
-    "kind": "operational"
+    "kind": "customer_data"
   },
   {
     "table": "mcp_readiness_pagerduty_ack_events",
@@ -9154,7 +9157,7 @@
       "received_at",
       "rule_id"
     ],
-    "kind": "operational"
+    "kind": "customer_data"
   },
   {
     "table": "mcp_readiness_pagerduty_acknowledgements",
@@ -9664,6 +9667,7 @@
       "lease_token",
       "lease_until",
       "name",
+      "org_id",
       "physical_name",
       "public_read",
       "region",
@@ -10035,6 +10039,8 @@
       "bucket_id",
       "created_at",
       "id",
+      "issuer_access_revision",
+      "issuer_account_id",
       "kid",
       "label",
       "last_used_at",
@@ -10405,6 +10411,7 @@
   {
     "table": "org_memberships",
     "columns": [
+      "access_revision",
       "account_id",
       "invited_by_account_id",
       "joined_at",
@@ -10417,17 +10424,28 @@
   {
     "table": "orgs",
     "columns": [
+      "abuse_hold_at",
+      "abuse_hold_reason",
+      "billing_address",
+      "billing_email",
+      "business_name",
       "created_at",
       "deleted_pending",
       "id",
+      "last_quota_warning_at",
       "name",
+      "object_storage_owned_from",
+      "past_due_at",
       "personal_org",
       "personal_owner_account_id",
       "plan",
       "provider_customer_id",
+      "resource_ownership_enabled",
       "slug",
       "status",
       "stripe_subscription_item",
+      "suspended_reason",
+      "tax_id",
       "updated_at"
     ],
     "kind": "account_identity"
@@ -11850,7 +11868,6 @@
   },
   {
     "table": "project_environment_clone_checkpoint_pg_copy_retirements",
-    "kind": "operational",
     "columns": [
       "observation",
       "observation_sha256",
@@ -11860,7 +11877,8 @@
       "retired_at",
       "source_database_id",
       "state"
-    ]
+    ],
+    "kind": "operational"
   },
   {
     "table": "project_environment_clone_checkpoint_pg_credential_retirements",
@@ -13093,6 +13111,7 @@
       "max_concurrency",
       "mode",
       "name",
+      "org_id",
       "queue_name",
       "retired_at",
       "retry_policy",
@@ -13261,6 +13280,13 @@
       "updated_at"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "resource_namespaces",
+    "columns": [
+      "id"
+    ],
+    "kind": "account_identity"
   },
   {
     "table": "response_cache_purge_change_log",
@@ -13931,6 +13957,20 @@
     "kind": "operational"
   },
   {
+    "table": "scenario_postgres_faults",
+    "columns": [
+      "account_id",
+      "app_id",
+      "id",
+      "owner_id",
+      "phase",
+      "receipt",
+      "resource_id",
+      "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "scenario_postgres_fixtures",
     "columns": [
       "account_id",
@@ -13946,20 +13986,6 @@
       "run_id",
       "spec",
       "status"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "scenario_postgres_faults",
-    "columns": [
-      "account_id",
-      "app_id",
-      "id",
-      "owner_id",
-      "phase",
-      "receipt",
-      "resource_id",
-      "run_id"
     ],
     "kind": "operational"
   },
@@ -14153,21 +14179,6 @@
       "failures",
       "lease_until",
       "next_attempt_at",
-      "revision",
-      "status",
-      "updated_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "worker_recovery",
-    "columns": [
-      "app_id",
-      "claim_token",
-      "failures",
-      "lease_until",
-      "next_attempt_at",
-      "pools",
       "revision",
       "status",
       "updated_at"
@@ -14653,6 +14664,21 @@
       "expires_at",
       "provider",
       "received_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "worker_recovery",
+    "columns": [
+      "app_id",
+      "claim_token",
+      "failures",
+      "lease_until",
+      "next_attempt_at",
+      "pools",
+      "revision",
+      "status",
+      "updated_at"
     ],
     "kind": "operational"
   },

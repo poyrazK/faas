@@ -54,7 +54,7 @@ func TestWorkflowDispatchFairApplicationsAndHistoryPruning(t *testing.T) {
 		claimFairDispatchRun(t, store, first)
 		// Recreating a PgStore must not reset the app's place in service order.
 		if pg, ok := store.(*PgStore); ok {
-			store = NewPgStore(pg.pool)
+			store = NewPgStore(pg.pool.Pool)
 		}
 		if err := store.MarkWorkflowRunStatus(t.Context(), first.ID, WorkflowRunStatusSucceeded, nil, nil); err != nil {
 			t.Fatal(err)

@@ -3,9 +3,10 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Stable account-scoped project list item.
+ * Project list item with its persisted organization owner.
  */
 export type ProjectSummaryResponse = {
+  org_id?: string;
   id: string;
   slug: string;
   repo_full_name?: string;

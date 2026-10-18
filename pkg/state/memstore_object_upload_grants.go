@@ -18,6 +18,11 @@ func (m *MemStore) CreateObjectUploadGrant(ctx context.Context, g ObjectUploadGr
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectUploadGrant
+		return zero0, err
+	}
+
 	live, exists := m.objectBuckets[g.Bucket.ID]
 	if !exists || !sameObjectMutationBucket(g.Bucket, live) || !m.cloneBucketAccessibleLocked(live) {
 		return ObjectUploadGrant{}, ErrConflict
@@ -60,6 +65,11 @@ func (m *MemStore) ResolveObjectUploadGrant(ctx context.Context, hash string) (O
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectUploadGrant
+		return zero0, err
+	}
+
 	now := time.Now().UTC()
 	for _, g := range m.objectUploadGrants {
 		if g.TokenHash != hash || !g.ExpiresAt.After(now) {
@@ -87,6 +97,11 @@ func (m *MemStore) PruneExpiredObjectUploadGrants(ctx context.Context, limit int
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 int64
+		return zero0, err
+	}
+
 	var count int64
 	for id, g := range m.objectUploadGrants {
 		if !g.ExpiresAt.After(time.Now().UTC()) && count < int64(limit) {

@@ -50153,10 +50153,9 @@ paths:
       operationId: deleteOrg
       summary: Soft-delete the org.
       description: |
-        Sets `status='deleted_pending'` + `deleted_pending=true`
-        on the row (PR 5). Hard delete + GDPR purge lands in PR 8.
-        Authz: owner-only (`org.delete`). Personal orgs are
-        immutable.
+        Marks the company organization as deleted_pending. Live managed
+        PostgreSQL databases must complete deletion first. Owner-only
+        (`org.delete`); personal organizations are immutable.
       responses:
         '204': { description: Org soft-deleted. }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -50169,10 +50168,9 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: |
-            `409 Conflict` — the target org is the caller's personal
-            org (created by the PR 3 backfill); personal orgs are immutable on PATCH (name/plan).
-            immutable and cannot be modified by PATCH. Stable code
-            `org_personal_immutable`.
+            Personal organizations cannot be deleted (`org_personal_immutable`).
+            A company with live managed PostgreSQL databases must delete them
+            first (`conflict`).
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -57517,6 +57515,3071 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
 
 
+  /v1/orgs/{slug}/billing/status:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: getOrgBillingStatus
+      summary: Get organization billing status.
+      description: "Requires current organization membership and usage:read. Billing attachment belongs to the organization."
+      responses:
+        '200':
+          description: Organization billing attachment status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingStatusResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/usage:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: getOrgUsage
+      summary: Get organization monthly application usage.
+      description: "Requires current organization membership and usage:read. Historical personal usage keeps its original billing subject."
+      parameters:
+        - name: month
+          in: query
+          description: Billing month in YYYY-MM form (UTC). Defaults to the current month.
+          schema: { type: string, pattern: '^\d{4}-\d{2}$' }
+      responses:
+        '200':
+          description: Monthly usage billed to this organization.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/UsageResponse' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/invoices:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: listOrgInvoices
+      summary: List organization invoices.
+      description: "Requires owner or billing role and usage:read. Returns invoices recorded under the organization billing subject."
+      parameters:
+        - name: month
+          in: query
+          description: Optional billing month filter (UTC).
+          schema: { type: string, pattern: '^\d{4}-\d{2}$' }
+        - name: before
+          in: query
+          description: Cursor for the next older page.
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          description: Invoice page size.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+      responses:
+        '200':
+          description: One page of organization invoices, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InvoiceListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/billing/portal:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: getOrgBillingPortal
+      summary: Get the organization billing portal.
+      description: "Requires the organization owner, admin credential scope, verified email, MFA and recent step-up. The provider session uses the organization customer identity."
+      responses:
+        '200':
+          description: Organization provider portal and payment method summary.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingPortalResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/plan:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    patch:
+      tags: [orgs]
+      operationId: changeOrgPlan
+      summary: Change the organization plan after provider confirmation.
+      description: |
+        Requires the organization owner, admin credential scope, verified email,
+        MFA and recent step-up. Paid entitlements activate only after provider
+        confirmation. Existing personal subscriptions are never reassigned.
+        A payment-required response carries checkout_url or billing_portal_url.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        description: Target plan to submit to the organization billing provider.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChangePlanRequest' }
+      responses:
+        '200':
+          description: The confirmed organization plan.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrgPlanResponse' }
+        '202':
+          description: A deferred change awaiting provider confirmation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrgPlanResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{organization}/projects:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+    get:
+      tags: [projects]
+      operationId: listOrgProjects
+      summary: "List projects owned by a company organization."
+      responses:
+        '200':
+          description: "Projects visible to the current company member."
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ProjectSummaryResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    post:
+      tags: [projects]
+      operationId: applyOrgProject
+      summary: "Create or apply an organization project from uploaded source."
+      description: "Upload source and project_slug using the existing multipart contract. An adopted organization supplies the new project resource namespace and deployment budget. Database and async-route manifest bindings are rejected before personal services are resolved."
+      parameters:
+        - $ref: '#/components/parameters/OrgProjectPlanToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ProjectApplyRequest'
+      responses:
+        '200':
+          description: "Applied organization project and workload results."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplyResponse'
+              example:
+                project_id: 0123456789abcdef0123456789abcdef
+                apps:
+                  - {slug: api, id: 0123456789abcdef0123456789abcdef}
+                  - {slug: worker, id: 0123456789abcdef0123456789abcdef}
+                scan_source: compose
+                can_apply: true
+                # ADR-124 partition fields (apply surface; mirrors
+                # PlanResponse so the CLI --show-affected render
+                # doesn't have to switch DTOs between scan and
+                # apply).
+                will_deploy:
+                  - {name: api, root_dir: '', class: http, action: create}
+                  - {name: worker, root_dir: '', class: http, action: update}
+                unaffected: []
+                skipped: []
+                removed: []
+                # ADR-124 follow-up #3 — slugs that were folded in
+                # from the deployment_scope_exclusions table on this
+                # apply (operator's --persist-exclude carry-forward).
+                persisted_exclusions: []
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/CronInvalid' }
+        '403': { $ref: '#/components/responses/PlanLimit' }
+        '409': { $ref: '#/components/responses/ValidationFailed' }
+        '413': { $ref: '#/components/responses/SourceTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/orgs/{organization}/projects/{slug}:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+    get:
+      tags: [projects]
+      operationId: getOrgProject
+      summary: "Inspect an organization project and its workloads."
+      responses:
+        '200':
+          description: "Company project metadata, exclusions and recovery state."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    patch:
+      tags: [projects]
+      operationId: updateOrgProject
+      summary: "Update an organization project production branch."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProjectRequest' }
+      responses:
+        '200':
+          description: "Updated company project source settings."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [projects]
+      operationId: deleteOrgProject
+      summary: "Delete a company project and detach its workloads."
+      description: "Owners and admins may remove the company project. Its workloads remain live and are detached from the deleted project."
+      responses:
+        '204': { description: "Company project deleted; detached workloads remain live." }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/projects/{slug}/environments:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+    get:
+      tags: [projects]
+      operationId: listOrgProjectEnvironments
+      summary: "List an organization project environment registry."
+      responses:
+        '200':
+          description: "Registered environments for this company project."
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ProjectEnvironmentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    post:
+      tags: [projects]
+      operationId: createOrgProjectEnvironment
+      summary: "Create an empty organization project environment."
+      description: "Developers may create an empty environment. Creating it protected requires an owner or admin. from_environment and full cloning return a conflict until shared resource cloning is supported."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProjectEnvironmentRequest' }
+      responses:
+        '201':
+          description: "New empty company environment and protection policy."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+    get:
+      tags: [projects]
+      operationId: getOrgProjectEnvironment
+      summary: "Inspect a registered company project environment."
+      responses:
+        '200':
+          description: "Company environment metadata and current release state."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    patch:
+      tags: [projects]
+      operationId: updateOrgProjectEnvironment
+      summary: "Change protection on an organization project environment."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProjectEnvironmentRequest' }
+      responses:
+        '200':
+          description: "Updated company environment protection settings."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [projects]
+      operationId: deleteOrgProjectEnvironment
+      summary: "Delete an unused company project environment."
+      description: "An owner or admin may delete an unprotected, unused, non-production company environment. Existing release, configuration and resource guards still apply."
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202': { description: "Unused company project environment deleted." }
+        '204': { description: "Company environment removed without a response body." }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/releases:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+    get:
+      tags: [projects]
+      operationId: getOrgProjectEnvironmentReleases
+      summary: "Read live workload releases in a company environment."
+      description: "Each company workload contributes non-secret live release metadata. Stable environment URLs become available when a live deployment exists."
+      responses:
+        '200':
+          description: "Non-secret live release metadata for the company environment."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentReleaseListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/release-sets:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+    get:
+      tags: [projects]
+      operationId: listOrgProjectReleaseSets
+      summary: "List organization project release-set history."
+      description: "Company release graphs are ordered newest first. Supply next_before as before to continue through retained history."
+      parameters:
+        - $ref: '#/components/parameters/OrgProjectBefore'
+        - $ref: '#/components/parameters/OrgProjectLimit'
+      responses:
+        '200':
+          description: "Newest-first release graphs retained by this company project."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectReleaseSetListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    post:
+      tags: [projects]
+      operationId: publishOrgProjectReleaseSet
+      summary: "Activate an immutable organization project release graph."
+      description: "Every company workload must have a live deployment with revision pinning that covers the requested TTL. Earlier organization release sets stay addressable until expiry."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublishProjectReleaseSetRequest' }
+      responses:
+        '201':
+          description: "Newly activated company project deployment graph."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectReleaseSetResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/release-sets/active:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlugb08370'
+      - $ref: '#/components/parameters/OrgProjectEnvironment6f0a6f'
+    get:
+      tags: [projects]
+      operationId: getActiveOrgProjectReleaseSet
+      summary: "Read the active organization project release graph."
+      description: "The addressed company environment must have an active release graph; otherwise this operation returns 404."
+      responses:
+        '200':
+          description: "Active release graph in the requested company environment."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectReleaseSetResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/release-sets/{release}:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlugb08370'
+      - $ref: '#/components/parameters/OrgProjectEnvironment6f0a6f'
+      - $ref: '#/components/parameters/OrgProjectRelease'
+    get:
+      tags: [projects]
+      operationId: getOrgProjectReleaseSet
+      summary: "Inspect a retained organization project release set."
+      description: "Retired and expired company graphs remain inspectable for diagnosis. Inspecting one does not reactivate its routing."
+      responses:
+        '200':
+          description: "Retained company release graph, including retired or expired members."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectReleaseSetResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/state:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+    get:
+      tags: [projects]
+      operationId: getOrgProjectEnvironmentState
+      summary: "Read effective state for a company project environment."
+      description: "Returns the company environment configuration, live releases, runtime variables and secret metadata without revealing secret values."
+      responses:
+        '200':
+          description: "Effective company configuration, routes and live release references."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentStateResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/diff:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+      - $ref: '#/components/parameters/OrgProjectFrom'
+    get:
+      tags: [projects]
+      operationId: getOrgProjectEnvironmentDiff
+      summary: "Compare effective state between company project environments."
+      description: "Compares effective company environment configuration, workload releases, variables, secret metadata and declared routes."
+      responses:
+        '200':
+          description: "Non-secret effective-state differences within the company project."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentDiffResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/config:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+    get:
+      tags: [projects]
+      operationId: getOrgProjectEnvironmentConfig
+      summary: "Read organization project environment configuration."
+      responses:
+        '200':
+          description: "Latest immutable non-secret configuration for the company environment."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentConfigResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    put:
+      tags: [projects]
+      operationId: updateOrgProjectEnvironmentConfig
+      summary: "Append an organization environment configuration version."
+      description: "Publishes a new immutable company configuration snapshot. Secret-shaped keys are refused; use the reviewed application secret APIs for sensitive values."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProjectEnvironmentConfigRequest' }
+      responses:
+        '200':
+          description: "Published company environment configuration version and hash."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentConfigResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/config/diff:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+      - $ref: '#/components/parameters/OrgProjectFrom'
+    get:
+      tags: [projects]
+      operationId: getOrgProjectEnvironmentConfigDiff
+      summary: "Compare company environment configuration snapshots."
+      responses:
+        '200':
+          description: "Key-level differences between company configuration snapshots."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentConfigDiffResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotion-preview:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+      - $ref: '#/components/parameters/OrgProjectFrom'
+      - $ref: '#/components/parameters/OrgProjectSyncConfig'
+    get:
+      tags: [projects]
+      operationId: getOrgProjectEnvironmentPromotionPreview
+      summary: "Preview promotion between organization project environments."
+      description: "Builds a company promotion plan from current source and target state. Protected target environments require an owner or admin to approve the exact returned plan."
+      responses:
+        '200':
+          description: "Current company promotion plan and its bound preview token."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentPromotionPreviewResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/approvals/{approval}:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+      - $ref: '#/components/parameters/OrgProjectApproval'
+    get:
+      tags: [projects]
+      operationId: getOrgProjectEnvironmentApprovalStatus
+      summary: "Inspect a protected company environment approval."
+      description: "Reads the company approval lifecycle without returning its raw one-time approval token."
+      responses:
+        '200':
+          description: "Lifecycle metadata for a company approval, without its raw token."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentApprovalStatusResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+      - $ref: '#/components/parameters/OrgProjectPromotion'
+    get:
+      tags: [projects]
+      operationId: getOrgProjectEnvironmentPromotionStatus
+      summary: "Inspect an organization project promotion operation."
+      description: "Includes the company promotion cutover state, post-cutover verification result and safe workload checkpoints."
+      responses:
+        '200':
+          description: "Company promotion status, verification and workload checkpoints."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentPromotionStatusResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+      - $ref: '#/components/parameters/OrgProjectBeforeade0c4'
+      - $ref: '#/components/parameters/OrgProjectLimit65fc92'
+      - $ref: '#/components/parameters/OrgProjectFrom237d99'
+      - $ref: '#/components/parameters/OrgProjectStatus'
+    get:
+      tags: [projects]
+      operationId: listOrgProjectEnvironmentPromotions
+      summary: "List organization project environment promotions."
+      description: "Returns compact company promotion history. Read a specific promotion operation for its complete workload checkpoints."
+      responses:
+        '200':
+          description: "Newest-first company promotion history with continuation cursor."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentPromotionListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/projects/{slug}/delete-preview:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+    get:
+      tags: [projects]
+      operationId: previewDeleteOrgProject
+      summary: "Preview deletion of an organization project."
+      responses:
+        '200':
+          description: "Company workloads and related state affected by project deletion."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectDeletePreviewResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/workloads/{workload}/routes:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlugb08370'
+      - $ref: '#/components/parameters/OrgProjectEnvironment6f0a6f'
+      - $ref: '#/components/parameters/OrgProjectWorkload'
+    put:
+      tags: [projects]
+      operationId: updateOrgProjectEnvironmentRoutes
+      summary: "Replace declared routes in a company project environment."
+      description: "The declared contract applies to the company workload environment URLs. The ordinary app hostname keeps its application-wide contract."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProjectEnvironmentRoutePolicyRequest' }
+      responses:
+        '200':
+          description: "Updated company workload route contract and revision."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentRoutePolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/projects/{slug}/exclusions/{slug2}:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlugb08370'
+      - $ref: '#/components/parameters/OrgProjectSlug2'
+    delete:
+      tags: [projects]
+      operationId: orgProjectDeleteDeploymentScopeExclusion
+      summary: "Remove a persisted company project deployment exclusion."
+      description: "Removes a company workload exclusion saved by a previous persist-exclude deployment so a later source apply can include it again."
+      responses:
+        '200':
+          description: "Company workload exclusion removed."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: The company project or saved workload exclusion was not found; both return scope_exclusion_not_found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  # ─── Alert rules (issue #396 / ADR-045 PR 3) ─────────────────────────
+  # Per-app CRUD surface. Account-wide rules (app_id == "") appear in
+  # the per-app list endpoint but the create/update/delete endpoints
+  # pin to a specific app. The /rotate-secret action accepts a
+  # caller-supplied replacement; the response carries the masked constant +
+  # rotated_at only.
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/projects/scan:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+    post:
+      tags: [projects]
+      operationId: scanOrgProject
+      summary: "Preview an organization source upload before applying it."
+      description: "Accepts a source tarball and project_slug without mutating the organization project. Existing projects in a legacy creator namespace must use their project-specific scan URL."
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ProjectScanRequest'
+      responses:
+        '200':
+          description: "Company source scan, workload partitions and deployment plan."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanResponse'
+              example:
+                project_slug: my-app
+                scan_source: compose
+                tier: compose
+                workloads:
+                  - {name: api, root_dir: '', command: [], ports: [8080]}
+                  - {name: worker, root_dir: '', command: [], ports: []}
+                managed:
+                  - {name: db, kind: postgres, env_hint: DATABASE_URL}
+                crons:
+                  - {workload_name: nightly, schedule: "0 3 * * *", path: "/", enabled: true}
+                observed_apps: 3
+                observed_crons: 1
+                limit_apps: 5
+                limit_crons: 5
+                can_apply: true
+                plan_token: eyJoYXMiOiI...
+                # ADR-124 partition fields (preview surface).
+                will_deploy:
+                  - {name: api, root_dir: '', class: http, action: create}
+                  - {name: worker, root_dir: '', class: http, action: update}
+                unaffected:
+                  - {name: legacy-job, root_dir: jobs/legacy, class: http, action: noop, id: 0123456789abcdef0123456789abcdef}
+                skipped:
+                  - {name: risky-migration, root_dir: jobs/migrate, class: http, action: noop}
+                removed: []
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/CronInvalid' }
+        '403': { $ref: '#/components/responses/PlanLimit' }
+        '413': { $ref: '#/components/responses/SourceTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/qualifications:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+    post:
+      tags: [projects]
+      operationId: createOrgProjectEnvironmentQualification
+      summary: "Record qualification of a company project release set."
+      description: "Binds closed-schema health and smoke evidence to the exact active release set in this company environment."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProjectEnvironmentQualificationRequest' }
+      responses:
+        '201':
+          description: "Qualification evidence bound to the active company release graph."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentQualificationResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promote:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+      - $ref: '#/components/parameters/OrgProjectIdempotencyKey'
+    post:
+      tags: [projects]
+      operationId: promoteOrgProjectEnvironment
+      summary: "Promote live workloads between company project environments."
+      description: "Revalidates current company source and target state before cutover. A protected target consumes an approval bound to that exact plan. The authenticated teammate is recorded as the deployment actor."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PromoteProjectEnvironmentRequest' }
+      responses:
+        '200':
+          description: "Durable company promotion result and per-workload deployment references."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentPromotionResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+      - $ref: '#/components/parameters/OrgProjectPromotion'
+      - $ref: '#/components/parameters/OrgProjectIdempotencyKey'
+    post:
+      tags: [projects]
+      operationId: rollbackOrgProjectEnvironmentPromotion
+      summary: "Restore company workloads from a recorded promotion."
+      description: "Restores the target deployments captured before this company promotion. Membership and deployment permission are checked before replaying an existing rollback receipt."
+      responses:
+        '200':
+          description: "Company rollback result restoring captured target deployments."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentPromotionStatusResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/workloads/{workload}/policies:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlugb08370'
+      - $ref: '#/components/parameters/OrgProjectEnvironment6f0a6f'
+      - $ref: '#/components/parameters/OrgProjectWorkload'
+    put:
+      tags: [projects]
+      operationId: updateOrgProjectEnvironmentPolicies
+      summary: "Replace company environment headers and CORS policy."
+      description: "An owner or admin may replace environment-specific headers and CORS rules. An explicit empty list disables inherited rules on that company environment URL."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProjectEnvironmentEdgePolicyRequest' }
+      responses:
+        '200':
+          description: "Published company workload headers and CORS revision."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentEdgePolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/approvals:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+    post:
+      tags: [projects]
+      operationId: approveOrgProjectEnvironment
+      summary: "Approve an exact protected organization environment plan."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProjectEnvironmentApprovalRequest' }
+      responses:
+        '201':
+          description: "Company approval receipt and one-time plan-bound token."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentApprovalResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/orgs/{organization}/projects/{slug}/scan:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+    post:
+      tags: [projects]
+      operationId: scanOrgProjectDeployment
+      summary: "Preview source for an existing organization project."
+      description: "The uploaded project_slug must match the addressed company project. This preview preserves existing resource IDs and works with legacy creator namespaces after erasure."
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ProjectScanRequest'
+      responses:
+        '200':
+          description: "Deployment preview bound to the addressed company project."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanResponse'
+              example:
+                project_slug: my-app
+                scan_source: compose
+                tier: compose
+                workloads:
+                  - {name: api, root_dir: '', command: [], ports: [8080]}
+                  - {name: worker, root_dir: '', command: [], ports: []}
+                managed:
+                  - {name: db, kind: postgres, env_hint: DATABASE_URL}
+                crons:
+                  - {workload_name: nightly, schedule: "0 3 * * *", path: "/", enabled: true}
+                observed_apps: 3
+                observed_crons: 1
+                limit_apps: 5
+                limit_crons: 5
+                can_apply: true
+                plan_token: eyJoYXMiOiI...
+                # ADR-124 partition fields (preview surface).
+                will_deploy:
+                  - {name: api, root_dir: '', class: http, action: create}
+                  - {name: worker, root_dir: '', class: http, action: update}
+                unaffected:
+                  - {name: legacy-job, root_dir: jobs/legacy, class: http, action: noop, id: 0123456789abcdef0123456789abcdef}
+                skipped:
+                  - {name: risky-migration, root_dir: jobs/migrate, class: http, action: noop}
+                removed: []
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/CronInvalid' }
+        '403': { $ref: '#/components/responses/PlanLimit' }
+        '413': { $ref: '#/components/responses/SourceTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+      parameters:
+        - $ref: '#/components/parameters/OrgProjectSlug'
+  /v1/orgs/{organization}/projects/{slug}/deploy:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+    post:
+      tags: [projects]
+      operationId: deployOrgProject
+      summary: "Deploy uploaded source to an existing company project."
+      description: "Uses the existing company project resource namespace even after creator erasure. The uploaded slug must match the URL; protected environments require an exact approved plan."
+      parameters:
+        - $ref: '#/components/parameters/OrgProjectSlug'
+        - $ref: '#/components/parameters/OrgProjectPlanToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ProjectApplyRequest'
+      responses:
+        '200':
+          description: "Applied source results in the existing company resource namespace."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplyResponse'
+              example:
+                project_id: 0123456789abcdef0123456789abcdef
+                apps:
+                  - {slug: api, id: 0123456789abcdef0123456789abcdef}
+                  - {slug: worker, id: 0123456789abcdef0123456789abcdef}
+                scan_source: compose
+                can_apply: true
+                # ADR-124 partition fields (apply surface; mirrors
+                # PlanResponse so the CLI --show-affected render
+                # doesn't have to switch DTOs between scan and
+                # apply).
+                will_deploy:
+                  - {name: api, root_dir: '', class: http, action: create}
+                  - {name: worker, root_dir: '', class: http, action: update}
+                unaffected: []
+                skipped: []
+                removed: []
+                # ADR-124 follow-up #3 — slugs that were folded in
+                # from the deployment_scope_exclusions table on this
+                # apply (operator's --persist-exclude carry-forward).
+                persisted_exclusions: []
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/CronInvalid' }
+        '403': { $ref: '#/components/responses/PlanLimit' }
+        '409': { $ref: '#/components/responses/ValidationFailed' }
+        '413': { $ref: '#/components/responses/SourceTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/orgs/{organization}/postgres/databases:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to list the organization's managed postgresql databases."
+        schema: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$' }
+    get:
+      operationId: listOrgManagedPostgresDatabases
+      summary: "List the organization's managed PostgreSQL databases."
+      description: "Returns the company inventory across current and legacy storage namespaces. Current membership is required; personal databases are excluded."
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: "Result of the request to list the organization's managed PostgreSQL databases."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresDatabaseList' }
+        default:
+          description: "Problem while attempting to list the organization's managed PostgreSQL databases."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    post:
+      operationId: createOrgManagedPostgresDatabase
+      summary: "Create a database owned by the organization."
+      description: "An owner or admin reserves the database in the company namespace. Organization billing adoption, plan allowances and the shared database quota apply before provisioning."
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateManagedPostgresDatabaseRequest' }
+      responses:
+        '201':
+          description: "Result of the request to create a database owned by the organization."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresDatabase' }
+        default:
+          description: "Problem while attempting to create a database owned by the organization."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/postgres/capabilities:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to read postgresql capabilities for the company plan."
+        schema: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$' }
+    get:
+      operationId: getOrgManagedPostgresCapabilities
+      summary: "Read PostgreSQL capabilities for the company plan."
+      description: "Reports qualified provider capabilities intersected with the organization's plan. Reading capabilities does not open the provisioning rollout gate."
+      tags: [managed_postgres]
+      parameters:
+        - name: region
+          in: query
+          required: false
+          description: "Placement region used to read postgresql capabilities for the company plan."
+          schema: { type: string, maxLength: 255 }
+      responses:
+        '200':
+          description: "Result of the request to read PostgreSQL capabilities for the company plan."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresCapabilities' }
+        default:
+          description: "Problem while attempting to read PostgreSQL capabilities for the company plan."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/postgres/databases/{id}:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to inspect a company postgresql database."
+        schema: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$' }
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    get:
+      operationId: getOrgManagedPostgresDatabase
+      summary: "Inspect a company PostgreSQL database."
+      description: "Reads the database under its persisted organization owner. Existing resource and provider identities remain stable after the creator leaves."
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: "Result of the request to inspect a company PostgreSQL database."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresDatabase' }
+        default:
+          description: "Problem while attempting to inspect a company PostgreSQL database."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      operationId: deleteOrgManagedPostgresDatabase
+      summary: "Delete a company PostgreSQL resource."
+      description: "An owner or admin requests provider cleanup. Active bindings and retained restore dependencies must be removed first; accounting evidence remains available."
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: "Result of the request to delete a company PostgreSQL resource."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresDatabase' }
+        default:
+          description: "Problem while attempting to delete a company PostgreSQL resource."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/postgres/databases/{id}/bindings:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to list the company database's app bindings."
+        schema: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$' }
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    get:
+      operationId: listOrgManagedPostgresBindings
+      summary: "List the company database's app bindings."
+      description: "Returns app and environment binding metadata for this organization-owned database. Connection credentials remain sealed and are not included in the response."
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: "Result of the request to list the company database's app bindings."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresBindingList' }
+        default:
+          description: "Problem while attempting to list the company database's app bindings."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    post:
+      operationId: createOrgManagedPostgresBinding
+      summary: "Attach the company database to an app environment."
+      description: "The app and database must belong to the addressed company. Their storage namespaces may differ. Owners, admins and developers may attach bindings with the required database scope."
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateManagedPostgresBindingRequest' }
+      responses:
+        '201':
+          description: "Result of the request to attach the company database to an app environment."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresBinding' }
+        default:
+          description: "Problem while attempting to attach the company database to an app environment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/postgres/bindings/{id}:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to inspect a company database binding."
+        schema: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$' }
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    get:
+      operationId: getOrgManagedPostgresBinding
+      summary: "Inspect a company database binding."
+      description: "Resolves ownership through the binding's database before exposing metadata. Current organization membership is required even when the binding retains a creator namespace."
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: "Result of the request to inspect a company database binding."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresBinding' }
+        default:
+          description: "Problem while attempting to inspect a company database binding."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      operationId: deleteOrgManagedPostgresBinding
+      summary: "Detach a company database binding."
+      description: "Revokes the managed provider credential and removes its sealed app-secret target. Other bindings on the same company database remain usable."
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: "Result of the request to detach a company database binding."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresBinding' }
+        default:
+          description: "Problem while attempting to detach a company database binding."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/postgres/databases/{id}/resizes/{resize_id}:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to read a company database resize operation."
+        schema: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$' }
+      - $ref: '#/components/parameters/ManagedPostgresID'
+      - name: resize_id
+        in: path
+        required: true
+        description: "UUID of the resize request whose company database progress is returned."
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getOrgManagedPostgresResize
+      summary: "Read a company database resize operation."
+      description: "Returns progress for a durable resize UUID owned by this database and organization. Reading progress does not submit another resize."
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: "Result of the request to read a company database resize operation."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresResize' }
+        default:
+          description: "Problem while attempting to read a company database resize operation."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/postgres/databases/{id}/compute-policy-changes/{change_id}:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to read a company database compute-policy operation."
+        schema: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$' }
+      - $ref: '#/components/parameters/ManagedPostgresID'
+      - name: change_id
+        in: path
+        required: true
+        description: "UUID of the compute-policy change recorded for the company database."
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getOrgManagedPostgresComputePolicyChange
+      summary: "Read a company database compute-policy operation."
+      description: "Returns the durable policy change recorded for the addressed company database. The organization permission check also applies to old operation UUIDs."
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: "Result of the request to read a company database compute-policy operation."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresComputePolicyChange' }
+        default:
+          description: "Problem while attempting to read a company database compute-policy operation."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/postgres/databases/{id}/restore:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to restore the company database to a separate resource."
+        schema: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$' }
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      operationId: restoreOrgManagedPostgresDatabase
+      summary: "Restore the company database to a separate resource."
+      description: "An owner or admin creates a restore within the source database's organization. The company plan, restore window and aggregate database reservation quota are enforced."
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RestoreManagedPostgresDatabaseRequest' }
+      responses:
+        '201':
+          description: "Result of the request to restore the company database to a separate resource."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresDatabase' }
+        default:
+          description: "Problem while attempting to restore the company database to a separate resource."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/postgres/databases/{id}/resize:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to change the company database service class."
+        schema: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$' }
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      operationId: resizeOrgManagedPostgresDatabase
+      summary: "Change the company database service class."
+      description: "An owner or admin submits a durable resize request. The requested class must fit the company plan and provider capabilities; connection interruption may occur."
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResizeManagedPostgresDatabaseRequest' }
+      responses:
+        '202':
+          description: "Result of the request to change the company database service class."
+          headers:
+            Location:
+              description: Company database resize progress endpoint returned for this request
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresResize' }
+        default:
+          description: "Problem while attempting to change the company database service class."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/postgres/databases/{id}/compute-policy:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to change the company database compute policy."
+        schema: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$' }
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      operationId: changeOrgManagedPostgresComputePolicy
+      summary: "Change the company database compute policy."
+      description: "An owner or admin changes scale-to-zero policy with a durable request UUID. Current organization entitlements govern the request, including legacy databases."
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChangeManagedPostgresComputePolicyRequest' }
+      responses:
+        '202':
+          description: "Result of the request to change the company database compute policy."
+          headers:
+            Location:
+              description: Company database compute-policy progress endpoint for the accepted change
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresComputePolicyChange' }
+        default:
+          description: "Problem while attempting to change the company database compute policy."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/postgres/bindings/{id}/rotate:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to rotate a credential for a company app binding."
+        schema: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$' }
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      operationId: rotateOrgManagedPostgresBinding
+      summary: "Rotate a credential for a company app binding."
+      description: "An owner or admin starts the existing credential refresh protocol. The previous generation stays valid until runtime delivery completes; the binding ID is preserved."
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: "Result of the request to rotate a credential for a company app binding."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresBinding' }
+        default:
+          description: "Problem while attempting to rotate a credential for a company app binding."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/postgres/usage:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to read the organization's postgresql usage totals."
+        schema: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$' }
+    get:
+      operationId: getOrgManagedPostgresUsage
+      summary: "Read the organization's PostgreSQL usage totals."
+      description: "Aggregates normalized usage across company database namespaces after billing adoption. Billing seats may read these totals without receiving database names or credentials."
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: "Result of the request to read the organization's PostgreSQL usage totals."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresUsageResponse' }
+        default:
+          description: "Problem while attempting to read the organization's PostgreSQL usage totals."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/apps/{slug}/buckets:
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Company bucket catalog: Organization owning this application and its storage catalog.'
+      schema:
+        type: string
+    - name: slug
+      description: 'Company bucket catalog: App whose bucket catalog is being managed.'
+      in: path
+      required: true
+      schema:
+        type: string
+    get:
+      operationId: listOrgObjectBuckets
+      summary: List organization buckets and creation capabilities
+      description: Owners, admins, developers and viewers can inspect bucket metadata. Requires the corresponding storage scope
+        and current organization membership. Mutations require organization billing adoption. storage:manage lists every bucket.
+        storage:read/storage:write keys see only buckets with an explicit grant. Admin and dashboard sessions list every bucket.
+      tags:
+      - storage
+      responses:
+        '200':
+          description: List organization buckets and creation capabilities. Buckets across this app's environment scopes; backend
+            credentials are never exposed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectBucketList'
+        default:
+          description: List organization buckets and creation capabilities. Authentication, authorization, or storage error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    post:
+      operationId: createOrgObjectBucket
+      summary: Create a bucket for an organization application
+      description: 'Owners and admins manage bucket credentials, access grants and bucket lifecycle. Requires the corresponding
+        storage scope and current organization membership. Mutations require organization billing adoption. Requires storage:manage
+        or admin. Idempotent by app, scope and name, not
+
+        by Idempotency-Key. Retry provisioning by submitting the same name and
+
+        scope. Existing buckets retain their backend when the default changes.
+
+        '
+      tags:
+      - storage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - name
+              properties:
+                name:
+                  type: string
+                  pattern: ^[a-z][a-z0-9-]{0,62}$
+                scope:
+                  type: string
+                  default: default
+                region:
+                  type: string
+                  description: Create a bucket for an organization application. Gregale region, not upstream signing region.
+                    Omit to use the configured default.
+                public:
+                  type: boolean
+                  default: false
+                  description: Create a bucket for an organization application. Serve objects anonymously on the app hostname.
+                serve_at:
+                  type: string
+                  pattern: ^/[A-Za-z0-9][A-Za-z0-9._~/-]*$
+                  description: Create a bucket for an organization application. Immutable app path mounted when public is true.
+      responses:
+        '201':
+          description: Create a bucket for an organization application. Bucket created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectBucket'
+        '200':
+          description: Create a bucket for an organization application. Existing ready bucket
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectBucket'
+        default:
+          description: Create a bucket for an organization application. Invalid request, access denied, bucket limit/conflict,
+            or provider unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/orgs/{organization}/apps/{slug}/buckets/{bucket}:
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Company /{bucket}: Organization owning this application and its storage catalog.'
+      schema:
+        type: string
+    - name: slug
+      description: 'Company /{bucket}: App that owns the bucket to remove.'
+      in: path
+      required: true
+      schema:
+        type: string
+    - name: bucket
+      description: 'Company /{bucket}: Identifier of the empty bucket to delete.'
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    delete:
+      operationId: deleteOrgObjectBucket
+      summary: Delete an empty organization bucket
+      description: Owners and admins manage bucket credentials, access grants and bucket lifecycle. Requires the corresponding
+        storage scope and current organization membership. Mutations require organization billing adoption. Requires storage:manage
+        or admin. Never recursively deletes data. Nonempty buckets return 409. Repeat after successful deletion returns 404.
+      tags:
+      - storage
+      responses:
+        '204':
+          description: Delete an empty organization bucket. Bucket deleted
+        default:
+          description: Delete an empty organization bucket. Access denied, bucket missing/nonempty/busy, or provider unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/access-grants:
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Company /{bucket}/access-grants: Organization owning this application and its storage catalog.'
+      schema:
+        type: string
+    - name: slug
+      description: 'Company /{bucket}/access-grants: App containing the bucket access binding.'
+      in: path
+      required: true
+      schema:
+        type: string
+    - name: bucket
+      description: 'Company /{bucket}/access-grants: Bucket whose API-key grants are being managed.'
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    get:
+      operationId: listOrgObjectBucketAccessGrants
+      summary: List organization API-key bucket grants
+      description: Owners and admins manage bucket credentials, access grants and bucket lifecycle. Requires the corresponding
+        storage scope and current organization membership. Mutations require organization billing adoption. Requires storage:manage
+        or admin. Revoked keys remain visible until their key row is deleted.
+      tags:
+      - storage
+      responses:
+        '200':
+          description: List organization API-key bucket grants. Logical grants; provider credentials are never exposed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectBucketAccessGrantList'
+        default:
+          description: List organization API-key bucket grants. Access denied or bucket unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/access-grants/{key}:
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Company /{bucket}/access-grants/{key}: Organization owning this application and its storage catalog.'
+      schema:
+        type: string
+    - name: slug
+      description: 'Company /{bucket}/access-grants/{key}: App whose API-key bucket grant is being managed.'
+      in: path
+      required: true
+      schema:
+        type: string
+    - name: bucket
+      description: 'Company /{bucket}/access-grants/{key}: Bucket whose API-key grant is being managed.'
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: key
+      description: 'Company /{bucket}/access-grants/{key}: Account API-key identifier.'
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    put:
+      operationId: setOrgObjectBucketAccessGrant
+      summary: Grant an organization API key access to a bucket
+      description: Owners and admins manage bucket credentials, access grants and bucket lifecycle. Requires the corresponding
+        storage scope and current organization membership. Mutations require organization billing adoption. Requires storage:manage
+        or admin. The target key must be active or in grace and carry the storage scopes needed by the requested permission.
+        Admin keys do not need and cannot receive grants.
+      tags:
+      - storage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetObjectBucketAccessGrantRequest'
+      responses:
+        '200':
+          description: Grant an organization API key access to a bucket. Grant created or replaced
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectBucketAccessGrant'
+        default:
+          description: Grant an organization API key access to a bucket. Invalid request, missing key/bucket, scope mismatch,
+            or access denied
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    delete:
+      operationId: deleteOrgObjectBucketAccessGrant
+      summary: Revoke an organization API-key bucket grant
+      description: Owners and admins manage bucket credentials, access grants and bucket lifecycle. Requires the corresponding
+        storage scope and current organization membership. Mutations require organization billing adoption. Requires storage:manage
+        or admin. Revocation takes effect before this response returns; already-signed provider URLs remain valid until their
+        short expiry.
+      tags:
+      - storage
+      responses:
+        '204':
+          description: Revoke an organization API-key bucket grant. Grant deleted
+        default:
+          description: Revoke an organization API-key bucket grant. Grant or bucket missing, or access denied
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/s3-credentials:
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Company /{bucket}/s3-credentials: Organization owning this application and its storage catalog.'
+      schema:
+        type: string
+    - name: slug
+      description: 'Company /{bucket}/s3-credentials: App whose new S3 credential will be bucket-scoped.'
+      in: path
+      required: true
+      schema:
+        type: string
+    - name: bucket
+      description: 'Company /{bucket}/s3-credentials: Bucket receiving the S3 credential.'
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    get:
+      operationId: listOrgObjectS3Credentials
+      summary: List organization user S3 credentials
+      description: Owners and admins manage bucket credentials, access grants and bucket lifecycle. Requires the corresponding
+        storage scope and current organization membership. Mutations require organization billing adoption. Requires storage:manage
+        or admin. Secret access keys are never returned by this endpoint.
+      tags:
+      - storage
+      responses:
+        '200':
+          description: List organization user S3 credentials. Active bucket-scoped S3 credentials; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectS3CredentialList'
+        default:
+          description: List organization user S3 credentials. S3 credential listing denied or its bucket is unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    post:
+      operationId: createOrgObjectS3Credential
+      summary: Create a user S3 key for an organization bucket
+      description: Owners and admins manage bucket credentials, access grants and bucket lifecycle. Requires the corresponding
+        storage scope and current organization membership. Mutations require organization billing adoption. The secret access
+        key is returned exactly once, sealed at rest, and never recoverable through the control-plane API. At most ten active
+        credentials may exist per bucket.
+      tags:
+      - storage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateObjectS3CredentialRequest'
+      responses:
+        '201':
+          description: Create a user S3 key for an organization bucket. One-time S3 credential response; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectS3CredentialSecret'
+        default:
+          description: Create a user S3 key for an organization bucket. Invalid request, credential limit, unavailable sealing
+            key, or access denied
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}:
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Company /{bucket}/s3-credentials/{credential}: Organization owning this application and its storage catalog.'
+      schema:
+        type: string
+    - name: slug
+      description: 'Company /{bucket}/s3-credentials/{credential}: App whose S3 credential is being revoked.'
+      in: path
+      required: true
+      schema:
+        type: string
+    - name: bucket
+      description: 'Company /{bucket}/s3-credentials/{credential}: Bucket whose credential is being revoked.'
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: credential
+      description: 'Company /{bucket}/s3-credentials/{credential}: Gregale S3 credential identifier.'
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    delete:
+      operationId: revokeOrgObjectS3Credential
+      summary: Revoke an organization user S3 key
+      description: Owners and admins manage bucket credentials, access grants and bucket lifecycle. Requires the corresponding
+        storage scope and current organization membership. Mutations require organization billing adoption. Revocation is immediate
+        for new requests at s3.gregale.dev. Existing provider-signed internal requests are never exposed to the customer.
+      tags:
+      - storage
+      responses:
+        '204':
+          description: Revoke an organization user S3 key. Credential revoked
+        default:
+          description: Revoke an organization user S3 key. Credential or bucket missing, or access denied
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/compute-bindings:
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Company /{bucket}/compute-bindings: Organization owning this application and its storage catalog.'
+      schema:
+        type: string
+    - name: slug
+      description: 'Company /{bucket}/compute-bindings: App receiving the sealed storage connection settings.'
+      in: path
+      required: true
+      schema:
+        type: string
+    - name: bucket
+      description: 'Company /{bucket}/compute-bindings: Bucket exposed to the compute workload.'
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    get:
+      operationId: listOrgObjectStorageComputeBindings
+      summary: List organization application bucket bindings
+      description: Owners, admins, developers and viewers can inspect application bindings. Requires storage:manage or
+        admin and current organization membership. Secret values are never returned; only the sealed app-secret names
+        are listed.
+      tags:
+      - storage
+      responses:
+        '200':
+          description: List organization application bucket bindings. Active compute bindings; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectStorageComputeBindingList'
+        default:
+          description: List organization application bucket bindings. Binding listing denied or its bucket is unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    post:
+      operationId: createOrgObjectStorageComputeBinding
+      summary: Bind an organization bucket to its application environment
+      description: Owners, admins and developers can manage application bindings. Requires the corresponding storage scope and
+        current organization membership. Mutations require organization billing adoption. Creates a bucket-scoped Gregale S3
+        credential and injects endpoint, region, bucket, access-key, secret-key, and addressing settings as sealed app secrets.
+        The secret values are never returned.
+      tags:
+      - storage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateObjectStorageComputeBindingRequest'
+      responses:
+        '201':
+          description: Bind an organization bucket to its application environment. Compute binding created; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectStorageComputeBinding'
+        default:
+          description: Bind an organization bucket to its application environment. Invalid request, secret quota/conflict, unavailable
+            sealing key, or access denied
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}:
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Company /{bucket}/compute-bindings/{binding}: Organization owning this application and its storage catalog.'
+      schema:
+        type: string
+    - name: slug
+      description: 'Company /{bucket}/compute-bindings/{binding}: App owning the compute binding.'
+      in: path
+      required: true
+      schema:
+        type: string
+    - name: bucket
+      description: 'Company /{bucket}/compute-bindings/{binding}: Bucket attached to the compute binding.'
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: binding
+      description: 'Company /{bucket}/compute-bindings/{binding}: Opaque compute binding identifier.'
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    delete:
+      operationId: deleteOrgObjectStorageComputeBinding
+      summary: Revoke an organization application bucket binding
+      description: Owners, admins and developers can manage application bindings. Requires the corresponding storage scope and
+        current organization membership. Mutations require organization billing adoption. Revokes the bucket-scoped S3 credential
+        before removing its sealed app secrets. The operation is idempotent after revocation.
+      tags:
+      - storage
+      responses:
+        '204':
+          description: Revoke an organization application bucket binding. Binding revoked and its managed secrets removed
+        default:
+          description: Revoke an organization application bucket binding. Binding or bucket missing, or access denied
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}/rotate:
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Company /{bucket}/compute-bindings/{binding}/rotate: Organization owning this application and its storage
+        catalog.'
+      schema:
+        type: string
+    - name: slug
+      description: 'Company /{bucket}/compute-bindings/{binding}/rotate: App whose workload receives the rotated credential.'
+      in: path
+      required: true
+      schema:
+        type: string
+    - name: bucket
+      description: 'Company /{bucket}/compute-bindings/{binding}/rotate: Logical bucket whose access key is being rotated.'
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: binding
+      description: 'Company /{bucket}/compute-bindings/{binding}/rotate: Binding identifier retained across credential rotations.'
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    post:
+      operationId: rotateOrgObjectStorageComputeBinding
+      summary: Rotate an organization application bucket binding
+      description: Owners and admins can rotate application bindings. Requires the corresponding storage scope and
+        current organization membership. Mutations require organization billing adoption. Atomically replaces the
+        bucket-scoped access key and two sealed app secrets while keeping the binding and environment variable names
+        stable. For a live app, the previous key remains valid until the rolling runtime refresh drains old instances;
+        rotation_pending is true in the response. Retrying during a pending rotation requeues the same refresh. Secret
+        values are never returned.
+      tags:
+      - storage
+      responses:
+        '200':
+          description: Rotate an organization application bucket binding. Binding rotated; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectStorageComputeBinding'
+        default:
+          description: Rotate an organization application bucket binding. Binding unavailable, sealing key unavailable, or access
+            denied
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/objects:
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Company /{bucket}/objects: Organization owning this application and its storage catalog.'
+      schema:
+        type: string
+    - name: slug
+      description: 'Company /{bucket}/objects: App containing the objects being managed.'
+      in: path
+      required: true
+      schema:
+        type: string
+    - name: bucket
+      description: 'Company /{bucket}/objects: Identifier of the bucket whose objects are being managed.'
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    get:
+      operationId: listOrgBucketObjects
+      summary: List objects in an organization bucket
+      description: Owners, admins, developers and viewers can inspect bucket metadata. Requires the corresponding storage scope
+        and current organization membership. Mutations require organization billing adoption. Requires storage:read or admin.
+        Non-admin keys also require a read or read_write grant on this bucket.
+      tags:
+      - storage
+      parameters:
+      - name: prefix
+        description: List objects in an organization bucket. Only return keys starting with this prefix.
+        in: query
+        schema:
+          type: string
+          maxLength: 1024
+      - name: cursor
+        description: List objects in an organization bucket. Opaque next_cursor from the preceding page.
+        in: query
+        schema:
+          type: string
+          maxLength: 8192
+      - name: limit
+        description: List objects in an organization bucket. Maximum objects in this page.
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 100
+      responses:
+        '200':
+          description: List objects in an organization bucket. One page, not a bucket-wide usage or billing total
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - items
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - key
+                      - size_bytes
+                      - last_modified
+                      properties:
+                        key:
+                          type: string
+                        size_bytes:
+                          type: integer
+                          format: int64
+                        last_modified:
+                          type: string
+                          format: date-time
+                  next_cursor:
+                    type: string
+        default:
+          description: List objects in an organization bucket. Invalid request, access denied, bucket unavailable, or provider
+            error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/orgs/{organization}/object-storage-usage:
+    get:
+      operationId: getOrgObjectStorageUsage
+      summary: Read aggregate organization object storage usage
+      description: Owners, admins, developers, viewers and billing seats can read usage with usage:read or admin. Requires billing
+        adoption. Aggregates company buckets across their retained storage namespaces; excludes personal buckets. Reservations
+        are capacity commitments. Fresh false blocks further admission until allocated provider evidence arrives.
+      tags:
+      - storage
+      responses:
+        '200':
+          description: 'Read aggregate organization object storage usage. Organization storage accounting: Current account usage;
+            Cache-Control no-store'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectStorageUsageResponse'
+        default:
+          description: 'Read aggregate organization object storage usage. Organization storage accounting: Access denied or
+            accounting unavailable'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: Company whose aggregate object storage accounting is requested.
+      schema:
+        type: string
+
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings:
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Organization queues: Read a stage workload''s complete desired queue configuration. Company owning
+        the application or project.'
+      schema:
+        type: string
+    - name: slug
+      in: path
+      required: true
+      description: 'Organization queues: Read a stage workload''s complete desired queue configuration. Project containing
+        the workload and stage.'
+      schema:
+        type: string
+    - name: environment
+      in: path
+      required: true
+      description: 'Organization queues: Read a stage workload''s complete desired queue configuration. Registered
+        stage. Production is managed through the app queue-bindings API.'
+      schema:
+        type: string
+    - name: workload
+      in: path
+      required: true
+      description: 'Organization queues: Read a stage workload''s complete desired queue configuration. Workload application
+        slug belonging to this project.'
+      schema:
+        type: string
+    get:
+      tags:
+      - projects
+      operationId: getOrgProjectEnvironmentQueueBindings
+      summary: 'Organization queues: Read a stage workload''s complete desired queue configuration'
+      description: 'Organization queues: Read a stage workload''s complete desired queue configuration. Owners, admins,
+        developers and viewers can read metadata. Requires current membership and the corresponding credential scope.
+        Mutations require organization billing adoption. IDs, messages, retries and receipts survive creator erasure.
+        Returns logical definitions and the current workload revision. A missing
+
+        collection returns 409 environment_queue_collection_unavailable and never
+
+        inherits production queues. X-Gregale-Workload-Revision identifies the
+
+        head to use when initializing or replacing the collection.
+
+        Consumer activation is currently unavailable; saved definitions do not
+
+        activate delivery or qualify the stage for promotion.'
+      responses:
+        '200':
+          description: 'Organization queues: Read a stage workload''s complete desired queue configuration. Complete
+            stage-owned desired queue collection.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectEnvironmentQueueBindingsResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    put:
+      tags:
+      - projects
+      operationId: replaceOrgProjectEnvironmentQueueBindings
+      summary: 'Organization queues: Replace a stage workload''s complete desired queue configuration'
+      description: 'Organization queues: Replace a stage workload''s complete desired queue configuration. Owners,
+        admins and developers can configure and operate queues. Requires current membership and the corresponding
+        credential scope. Mutations require organization billing adoption. IDs, messages, retries and receipts survive
+        creator erasure. Requires expected_revision to match the complete workload settings head,
+
+        with zero for an uninitialized workload. An explicit empty bindings list
+
+        removes all stage definitions. Stale revisions and protected stages
+
+        return 409, including protected no-op writes. Definitions have logical
+
+        names and no production consumer IDs. Existing deployments retain their
+
+        pinned definitions. Consumer activation is currently unavailable.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplaceProjectEnvironmentQueueBindingsRequest'
+      responses:
+        '200':
+          description: 'Organization queues: Replace a stage workload''s complete desired queue configuration. Stored
+            desired queue definitions and their workload revision.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectEnvironmentQueueBindingsResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '402':
+          $ref: '#/components/responses/PlanFeatureGated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/orgs/{organization}/apps/{slug}/queues/send:
+    post:
+      tags:
+      - queues
+      operationId: sendOrgQueueMessage
+      summary: 'Organization queues: Enqueue a row on the per-app FIFO queue'
+      description: 'Organization queues: Enqueue a row on the per-app FIFO queue. Owners, admins and developers can
+        configure and operate queues. Requires current membership and the corresponding credential scope. Mutations
+        require organization billing adoption. IDs, messages, retries and receipts survive creator erasure. Cap-checked
+        against the plan''s MaxQueueDepth (Hobby 5, Pro 25,
+
+        Scale 100). The drain re-checks at dispatch tick. API keys require
+
+        `queues:send`, `deploy:write`, or `admin`.'
+      x-faas-queue-leases: false
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/GregaleRevision'
+      - $ref: '#/components/parameters/GregaleRelease'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueueSendRequest'
+      responses:
+        '201':
+          description: 'Organization queues: Enqueue a row on the per-app FIFO queue. The enqueued row.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueSendResponse'
+        '403':
+          $ref: '#/components/responses/PlanQueueDepth'
+        '413':
+          $ref: '#/components/responses/PlanSourceBytes'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Organization queues: Enqueue a row on the per-app FIFO queue. Company owning the application or
+        project.'
+      schema:
+        type: string
+  /v1/orgs/{organization}/apps/{slug}/queue-bindings:
+    description: 'Organization queues: List first-class queue bindings for an app. Production queue bindings. Stage
+      environment or scope queries are rejected before production access or idempotent replay. Stage definitions use
+      the project environment workload queue-bindings endpoint.'
+    get:
+      tags:
+      - queues
+      operationId: listOrgQueueBindings
+      summary: 'Organization queues: List first-class queue bindings for an app'
+      description: 'Organization queues: List first-class queue bindings for an app. Owners, admins, developers and
+        viewers can read metadata. Requires current membership and the corresponding credential scope. Mutations require
+        organization billing adoption. IDs, messages, retries and receipts survive creator erasure. Returns the durable
+        mappings between logical queues and worker/job
+
+        workloads. Bindings are the configuration source for push consumers
+
+        and queue-depth autoscaling; queue messages remain under /queues/*.
+
+        Active bindings are returned by default. Set include_retired=true to
+
+        retrieve retained identities and retirement timestamps for reviewed recovery.'
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: include_retired
+        in: query
+        required: false
+        description: 'Organization queues: List first-class queue bindings for an app. Include retained retired bindings
+          belonging to this app.'
+        schema:
+          type: boolean
+          default: false
+      responses:
+        '200':
+          description: 'Organization queues: List first-class queue bindings for an app. Queue bindings.'
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/QueueBindingResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    post:
+      tags:
+      - queues
+      operationId: createOrgQueueBinding
+      summary: 'Organization queues: Create a first-class queue binding'
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateQueueBindingRequest'
+      responses:
+        '201':
+          description: 'Organization queues: Create a first-class queue binding. Created queue binding.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueBindingResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      description: 'Organization queues: Create a first-class queue binding. Owners, admins and developers can configure
+        and operate queues. Requires current membership and the corresponding credential scope. Mutations require
+        organization billing adoption. IDs, messages, retries and receipts survive creator erasure. '
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Organization queues: List first-class queue bindings for an app. Company owning the application
+        or project.'
+      schema:
+        type: string
+  /v1/orgs/{organization}/apps/{slug}/queue-bindings/{id}:
+    description: 'Organization queues: Get one queue binding. Production queue binding identity. Stage environment
+      or scope queries are rejected; stage definitions use logical names in the project environment workload queue-bindings
+      endpoint.'
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Organization queues: Get one queue binding. Company owning the application or project.'
+      schema:
+        type: string
+    - $ref: '#/components/parameters/Slug'
+    - $ref: '#/components/parameters/Id32'
+    get:
+      tags:
+      - queues
+      operationId: getOrgQueueBinding
+      summary: 'Organization queues: Get one queue binding'
+      responses:
+        '200':
+          description: 'Organization queues: Get one queue binding. Queue binding.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueBindingResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      description: 'Organization queues: Get one queue binding. Owners, admins, developers and viewers can read metadata.
+        Requires current membership and the corresponding credential scope. Mutations require organization billing
+        adoption. IDs, messages, retries and receipts survive creator erasure. '
+    patch:
+      tags:
+      - queues
+      operationId: updateOrgQueueBinding
+      summary: 'Organization queues: Update one queue binding'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateQueueBindingRequest'
+      responses:
+        '200':
+          description: 'Organization queues: Update one queue binding. Updated queue binding.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueBindingResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      description: 'Organization queues: Update one queue binding. Owners, admins and developers can configure and
+        operate queues. Requires current membership and the corresponding credential scope. Mutations require organization
+        billing adoption. IDs, messages, retries and receipts survive creator erasure. '
+    delete:
+      tags:
+      - queues
+      operationId: deleteOrgQueueBinding
+      summary: 'Organization queues: Delete one queue binding'
+      responses:
+        '204':
+          description: 'Organization queues: Delete one queue binding. Queue binding deleted.'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      description: 'Organization queues: Delete one queue binding. Owners, admins and developers can configure and
+        operate queues. Requires current membership and the corresponding credential scope. Mutations require organization
+        billing adoption. IDs, messages, retries and receipts survive creator erasure. '
+  /v1/orgs/{organization}/apps/{slug}/queue-bindings/{id}/status:
+    description: 'Organization queues: Read queue binding consumer state and queue counters. Production consumer status.
+      Stage environment or scope queries are rejected before reading production counters.'
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Organization queues: Read queue binding consumer state and queue counters. Company owning the
+        application or project.'
+      schema:
+        type: string
+    - $ref: '#/components/parameters/Slug'
+    - $ref: '#/components/parameters/Id32'
+    get:
+      tags:
+      - queues
+      operationId: getOrgQueueBindingStatus
+      summary: 'Organization queues: Read queue binding consumer state and queue counters'
+      description: 'Organization queues: Read queue binding consumer state and queue counters. Owners, admins, developers
+        and viewers can read metadata. Requires current membership and the corresponding credential scope. Mutations
+        require organization billing adoption. IDs, messages, retries and receipts survive creator erasure. Returns
+        the durable push-consumer projection and binding-scoped
+
+        queue counters. `consumer_state` is control-plane state
+
+        (`active`, `paused`, `not_configured`, or `external`), while
+
+        `consumer_liveness` and the poll timestamps expose the scheduler''s
+
+        last-known health. A push snapshot is stale after 30 seconds without
+
+        a completed poll; pull bindings report `external` liveness.'
+      responses:
+        '200':
+          description: 'Organization queues: Read queue binding consumer state and queue counters. Queue binding status.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueBindingStatusResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/orgs/{organization}/apps/{slug}/queues/receive:
+    post:
+      tags:
+      - queues
+      operationId: receiveOrgQueueResult
+      summary: 'Organization queues: Long-poll for the next dispatched row'
+      description: 'Organization queues: Long-poll for the next dispatched row. Owners, admins and developers can
+        configure and operate queues. Requires current membership and the corresponding credential scope. Mutations
+        require organization billing adoption. IDs, messages, retries and receipts survive creator erasure. Returns
+        200 with the dequeued row, or 204 (no body) if the
+
+        server-side 30s budget elapses with no event. The customer
+
+        retries on 204.'
+      x-faas-queue-leases: true
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      responses:
+        '200':
+          description: 'Organization queues: Long-poll for the next dispatched row. A dispatched row.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueReceiveResponse'
+        '204':
+          description: 'Organization queues: Long-poll for the next dispatched row. No row dispatched within the budget.'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/PlanFeatureGated'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Organization queues: Long-poll for the next dispatched row. Company owning the application or
+        project.'
+      schema:
+        type: string
+  /v1/orgs/{organization}/apps/{slug}/queues/{id}/ack:
+    post:
+      tags:
+      - queues
+      operationId: ackOrgQueueRow
+      summary: 'Organization queues: Ack a queue row (idempotent)'
+      x-faas-queue-leases: false
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204':
+          description: 'Organization queues: Ack a queue row (idempotent). No body. The ack (or a re-ack) was accepted.'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      description: 'Organization queues: Ack a queue row (idempotent). Owners, admins and developers can configure
+        and operate queues. Requires current membership and the corresponding credential scope. Mutations require
+        organization billing adoption. IDs, messages, retries and receipts survive creator erasure. '
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Organization queues: Ack a queue row (idempotent). Company owning the application or project.'
+      schema:
+        type: string
+  /v1/orgs/{organization}/apps/{slug}/queues/{queue}/leases:
+    post:
+      tags:
+      - queues
+      operationId: leaseOrgQueueMessages
+      summary: 'Organization queues: Lease ready messages from a pull-bound queue'
+      description: 'Organization queues: Lease ready messages from a pull-bound queue. Owners, admins and developers
+        can configure and operate queues. Requires current membership and the corresponding credential scope. Mutations
+        require organization billing adoption. IDs, messages, retries and receipts survive creator erasure. Leases
+        up to `max_messages` ready messages from a queue with an
+
+        enabled pull binding on this app. Each message stays hidden for the
+
+        visibility timeout and is redelivered with a new attempt if it is not
+
+        acked, nacked or extended in time. Unexpired leases never exceed the
+
+        binding''s `max_concurrency`. An empty list means nothing is ready;
+
+        poll again with back-off. Authenticate with an API key carrying
+
+        `queues:consume`, `deploy:write` or `admin`, or with a workload
+
+        identity token for audience `gregale:queues` from a live instance of
+
+        this app.'
+      x-faas-queue-leases: true
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/QueueLeaseQueue'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueueLeaseRequest'
+      responses:
+        '200':
+          description: 'Organization queues: Lease ready messages from a pull-bound queue. Leased messages, possibly
+            none.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueLeaseResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/PlanFeatureGated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Organization queues: Lease ready messages from a pull-bound queue. Company owning the application
+        or project.'
+      schema:
+        type: string
+  /v1/orgs/{organization}/apps/{slug}/queues/{queue}/leases:ack:
+    post:
+      tags:
+      - queues
+      operationId: ackOrgQueueLeases
+      summary: 'Organization queues: Complete leased messages'
+      x-faas-queue-leases: true
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/QueueLeaseQueue'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueueLeaseReceiptsRequest'
+      responses:
+        '200':
+          description: 'Organization queues: Complete leased messages. Receipts that completed their messages, and
+            receipts that no longer own one.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueLeaseReceiptsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/PlanFeatureGated'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      description: 'Organization queues: Complete leased messages. Owners, admins and developers can configure and
+        operate queues. Requires current membership and the corresponding credential scope. Mutations require organization
+        billing adoption. IDs, messages, retries and receipts survive creator erasure. '
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Organization queues: Complete leased messages. Company owning the application or project.'
+      schema:
+        type: string
+  /v1/orgs/{organization}/apps/{slug}/queues/{queue}/leases:nack:
+    post:
+      tags:
+      - queues
+      operationId: nackOrgQueueLeases
+      summary: 'Organization queues: Return leased messages for a retry'
+      description: 'Organization queues: Return leased messages for a retry. Owners, admins and developers can configure
+        and operate queues. Requires current membership and the corresponding credential scope. Mutations require
+        organization billing adoption. IDs, messages, retries and receipts survive creator erasure. Applies the message''s
+        retry policy and the plan''s attempt budget:
+
+        the message returns to the queue after the back-off (or after
+
+        `delay_seconds` if later), or moves to the dead-letter queue once the
+
+        budget is spent. `error` is recorded as the attempt''s last error.'
+      x-faas-queue-leases: true
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/QueueLeaseQueue'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueueLeaseReceiptsRequest'
+      responses:
+        '200':
+          description: 'Organization queues: Return leased messages for a retry. Receipts whose messages went back
+            for a retry or to the dead-letter queue, and receipts that no longer own one.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueLeaseReceiptsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/PlanFeatureGated'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Organization queues: Return leased messages for a retry. Company owning the application or project.'
+      schema:
+        type: string
+  /v1/orgs/{organization}/apps/{slug}/queues/{queue}/leases:extend:
+    post:
+      tags:
+      - queues
+      operationId: extendOrgQueueLeases
+      summary: 'Organization queues: Extend the visibility timeout of leased messages'
+      x-faas-queue-leases: true
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/QueueLeaseQueue'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueueLeaseReceiptsRequest'
+      responses:
+        '200':
+          description: 'Organization queues: Extend the visibility timeout of leased messages. Receipts whose visibility
+            deadline moved, and receipts that no longer own their message.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueLeaseReceiptsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/PlanFeatureGated'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      description: 'Organization queues: Extend the visibility timeout of leased messages. Owners, admins and developers
+        can configure and operate queues. Requires current membership and the corresponding credential scope. Mutations
+        require organization billing adoption. IDs, messages, retries and receipts survive creator erasure. '
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Organization queues: Extend the visibility timeout of leased messages. Company owning the application
+        or project.'
+      schema:
+        type: string
+  /v1/orgs/{organization}/apps/{slug}/queues/state:
+    get:
+      tags:
+      - queues
+      operationId: getOrgQueueState
+      summary: 'Organization queues: Read queue depth, in-flight count, and oldest pending age'
+      description: "Organization queues: Read queue depth, in-flight count, and oldest pending age. Owners, admins,\
+        \ developers and viewers can read metadata. Requires current membership and the corresponding credential scope.\
+        \ Mutations require organization billing adoption. IDs, messages, retries and receipts survive creator erasure.\
+        \ Read-only depth / in-flight / oldest-pending stats. NO lease is\nacquired and no row is mutated \u2014 the\
+        \ response can be polled at\nany cadence without affecting drain behaviour. Free plans can\ncall this for\
+        \ diagnostics even though they cannot send."
+      x-faas-queue-leases: false
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      responses:
+        '200':
+          description: 'Organization queues: Read queue depth, in-flight count, and oldest pending age. Queue stats
+            for the app.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueStateResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Organization queues: Read queue depth, in-flight count, and oldest pending age. Company owning
+        the application or project.'
+      schema:
+        type: string
+  /v1/orgs/{organization}/apps/{slug}/queues/peek:
+    get:
+      tags:
+      - queues
+      operationId: peekOrgQueue
+      summary: 'Organization queues: List pending queue rows without acquiring a lease'
+      description: "Organization queues: List pending queue rows without acquiring a lease. Owners, admins and developers\
+        \ can configure and operate queues. Requires current membership and the corresponding credential scope. Mutations\
+        \ require organization billing adoption. IDs, messages, retries and receipts survive creator erasure. Read-only\
+        \ peek at pending rows, oldest first. Repeated calls\nreturn the same rows in the same order \u2014 the underlying\
+        \ SQL has\nno FOR UPDATE / FOR SHARE / advisory lock, so attempts is\nnever incremented and no row state changes.\
+        \ Cursor pagination\nmatches the existing `?before=<id>` convention. NOT equivalent\nto `queues/receive` \u2014\
+        \ peek never leases."
+      x-faas-queue-leases: false
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/QueueCursorLimit'
+      - $ref: '#/components/parameters/QueueCursorBefore'
+      responses:
+        '200':
+          description: 'Organization queues: List pending queue rows without acquiring a lease. A page of pending
+            rows.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueuePeekResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Organization queues: List pending queue rows without acquiring a lease. Company owning the application
+        or project.'
+      schema:
+        type: string
+  /v1/orgs/{organization}/apps/{slug}/queues/dead_letter:
+    get:
+      tags:
+      - queues
+      operationId: listOrgQueueDeadLetters
+      summary: 'Organization queues: List queue rows that exhausted the plan''s retry budget'
+      description: "Organization queues: List queue rows that exhausted the plan's retry budget. Owners, admins and\
+        \ developers can configure and operate queues. Requires current membership and the corresponding credential\
+        \ scope. Mutations require organization billing adoption. IDs, messages, retries and receipts survive creator\
+        \ erasure. Read-only list of rows in `state='dead_letter'`, newest first.\nThe drain transitions a row here\
+        \ once it has failed\n`MaxQueueAttempts` times for the app's plan (Hobby 3, Pro 10,\nScale 25). NO lease is\
+        \ acquired and no row is mutated. Replaying\na dead-letter row is out of scope for this endpoint \u2014 see\n\
+        `POST /v1/apps/{slug}/queues/dead_letter/{id}/replay`."
+      x-faas-queue-leases: false
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/QueueCursorLimit'
+      - $ref: '#/components/parameters/QueueCursorBefore'
+      responses:
+        '200':
+          description: 'Organization queues: List queue rows that exhausted the plan''s retry budget. A page of dead-letter
+            rows.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueDeadLetterResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Organization queues: List queue rows that exhausted the plan''s retry budget. Company owning the
+        application or project.'
+      schema:
+        type: string
+  /v1/orgs/{organization}/apps/{slug}/queues/dead_letter/{id}/replay:
+    post:
+      tags:
+      - queues
+      operationId: replayOrgQueueDeadLetter
+      summary: 'Organization queues: Reset a dead-letter queue row back to pending'
+      description: 'Organization queues: Reset a dead-letter queue row back to pending. Owners and admins can replay
+        dead letters. Requires current membership and the corresponding credential scope. Mutations require organization
+        billing adoption. IDs, messages, retries and receipts survive creator erasure. ADR-134 PR-C. Resets the row''s
+        `state` to `pending` with
+
+        `attempts=0`, `last_error=null`, `due_at=now()`,
+
+        `last_replayed_at=now()`. Distinct from
+
+        `POST /v1/invocations/{id}/replay`, which enqueues a NEW row
+
+        tagged Source=InvocationReplay. This endpoint mutates the
+
+        existing row in place so the dashboard''s replay history view
+
+        tracks the chain on a single row id.
+
+
+        Idempotent: a second POST after the first has succeeded
+
+        finds the row in ''pending'' and returns 404. The
+
+        Idempotency-Key middleware (issued automatically by the SDK)
+
+        covers double-POST across network retries.'
+      x-faas-queue-leases: false
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+        description: 'Organization queues: Reset a dead-letter queue row back to pending. The invocation id of the
+          dead-letter row to replay.'
+      responses:
+        '202':
+          description: 'Organization queues: Reset a dead-letter queue row back to pending. Replay accepted; row is
+            back to pending.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsyncInvokeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Organization queues: Reset a dead-letter queue row back to pending. Company owning the application
+        or project.'
+      schema:
+        type: string
+  /v1/orgs/{organization}/queue-usage:
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: Read aggregate organization queue usage. Company whose aggregate queue usage is requested.
+      schema:
+        type: string
+    get:
+      operationId: getOrgQueueUsage
+      summary: Read aggregate organization queue usage
+      tags:
+      - queues
+      description: Read aggregate organization queue usage. Owners, admins, developers, viewers and billing seats
+        can read counts with usage:read or admin. Requires billing adoption. Includes company queues across retained
+        creator namespaces and excludes personal queues. Reserved async counts include all invocation sources sharing
+        the organization cap. Pull leases use binding concurrency and do not reserve async slots.
+      responses:
+        '200':
+          description: Read aggregate organization queue usage. Current company queue counters and plan limits.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrgQueueUsageResponse'
+        default:
+          description: Read aggregate organization queue usage. Authentication, authorization or accounting error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
 components:
 
   securitySchemes:
@@ -57606,6 +60669,173 @@ components:
         example: '</v1/uploads>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md>; rel="deprecation"'
 
   parameters:
+    OrgProjectOrganization:
+      name: organization
+      in: path
+      required: true
+      description: Company organization slug that owns the addressed project; requires current membership
+        and compatible organization credentials.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 63
+        pattern: ^[a-z0-9][a-z0-9-]*$
+    OrgProjectPlanToken:
+      name: plan_token
+      in: query
+      required: false
+      description: Plan token returned by the organization source scan; must match the uploaded source and
+        addressed project.
+      schema:
+        type: string
+    OrgProjectSlug:
+      name: slug
+      in: path
+      required: true
+      description: Project slug within the organization named in the URL.
+      schema:
+        type: string
+        pattern: ^[a-z0-9][a-z0-9-]{0,62}$
+    OrgProjectEnvironment:
+      name: environment
+      in: path
+      required: true
+      description: Registered environment in the addressed organization project.
+      schema:
+        type: string
+        pattern: ^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$
+    OrgProjectBefore:
+      name: before
+      in: query
+      description: Opaque next_before cursor from this company project history.
+      schema:
+        type: string
+    OrgProjectLimit:
+      name: limit
+      in: query
+      description: Maximum company history entries returned in one page; capped at 100.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    OrgProjectSlugb08370:
+      name: slug
+      in: path
+      required: true
+      description: Project slug within the organization named in the URL. The value is resolved in the selected
+        project.
+      schema:
+        type: string
+    OrgProjectEnvironment6f0a6f:
+      name: environment
+      in: path
+      required: true
+      description: Registered environment in the addressed organization project. The value is resolved in
+        the selected project.
+      schema:
+        type: string
+    OrgProjectRelease:
+      name: release
+      in: path
+      required: true
+      description: Immutable release-set UUID retained by the company project.
+      schema:
+        type: string
+        format: uuid
+    OrgProjectFrom:
+      name: from
+      in: query
+      required: true
+      description: Source environment filter within this company project.
+      schema:
+        type: string
+        pattern: ^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$
+    OrgProjectSyncConfig:
+      name: sync_config
+      in: query
+      required: false
+      description: Copy non-secret company source configuration together with the target promotion graph.
+      schema:
+        type: boolean
+        default: false
+    OrgProjectApproval:
+      name: approval
+      in: path
+      required: true
+      description: Plan approval UUID belonging to this company project environment.
+      schema:
+        type: string
+        format: uuid
+    OrgProjectPromotion:
+      name: promotion
+      in: path
+      required: true
+      description: Durable promotion identifier in the company environment history.
+      schema:
+        type: string
+        minLength: 1
+    OrgProjectBeforeade0c4:
+      name: before
+      in: query
+      required: false
+      description: Opaque next_before cursor from this company project history. The value is resolved in the
+        selected project.
+      schema:
+        type: string
+    OrgProjectLimit65fc92:
+      name: limit
+      in: query
+      required: false
+      description: Maximum company history entries returned in one page; capped at 100. The value is resolved
+        in the selected project.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    OrgProjectFrom237d99:
+      name: from
+      in: query
+      required: false
+      description: Source environment filter within this company project. A slug pattern is validated.
+      schema:
+        type: string
+        pattern: ^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$
+    OrgProjectStatus:
+      name: status
+      in: query
+      required: false
+      description: Promotion lifecycle status to include from the company history.
+      schema:
+        type: string
+        enum:
+        - running
+        - succeeded
+        - failed
+    OrgProjectWorkload:
+      name: workload
+      in: path
+      required: true
+      description: Workload name registered in the company project environment.
+      schema:
+        type: string
+    OrgProjectSlug2:
+      name: slug2
+      in: path
+      required: true
+      description: Company workload app slug whose saved deployment exclusion is removed.
+      schema:
+        type: string
+    OrgProjectIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Company operation replay key, partitioned by the authenticated actor and credential.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
     ManagedRealtimeSlugPath: {"name": "slug", "description": "Application slug", "in": "path", "required": true, "schema": {"type": "string"}}
     ManagedRealtimeIdPath: {"name": "id", "description": "Realtime endpoint ID", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}
     ManagedRealtimeChannelPath: {"name": "channel", "description": "Channel name", "in": "path", "required": true, "schema": {"type": "string"}}
@@ -90760,10 +93990,11 @@ components:
           description: "Override the customer identity policy for selected workloads in this scan/apply pair (Hobby and above). Omitted uses Compose declarations and preserves existing app policy. Apply must repeat the same override as scan."
 
     ProjectSummaryResponse:
-      description: Stable account-scoped project list item.
+      description: Project list item with its persisted organization owner.
       type: object
       required: [id, slug, scan_source, workload_count, created_at, updated_at]
       properties:
+        org_id: { type: string, format: uuid }
         id: { type: string, pattern: '^[a-f0-9]{32}$' }
         slug: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
         repo_full_name: { type: string }
@@ -115386,6 +118617,71 @@ components:
           minimum: 0
         full:
           type: boolean
+    OrgQueueUsageResponse:
+      description: Company queue counters and current plan limits across retained application namespaces.
+      type: object
+      additionalProperties: false
+      required:
+      - organization_id
+      - plan
+      - bindings
+      - pending
+      - processing
+      - dead_letter
+      - reserved_async
+      - max_async_invocations
+      - max_triggers
+      properties:
+        organization_id:
+          type: string
+          format: uuid
+        plan:
+          type: string
+          enum:
+          - free
+          - hobby
+          - pro
+          - scale
+        bindings:
+          type: integer
+          format: int64
+          minimum: 0
+        pending:
+          type: integer
+          format: int64
+          minimum: 0
+        processing:
+          type: integer
+          format: int64
+          minimum: 0
+        dead_letter:
+          type: integer
+          format: int64
+          minimum: 0
+        reserved_async:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Reservations across all async invocation sources sharing company capacity.
+        max_async_invocations:
+          type: integer
+          format: int64
+          minimum: 0
+        max_triggers:
+          type: integer
+          format: int64
+          minimum: 0
+    OrgPlanResponse:
+      description: Provider-confirmed organization entitlements and any pending change.
+      type: object
+      required: [org_id, plan]
+      properties:
+        org_id: { type: string, format: uuid }
+        plan: { type: string, enum: [free, hobby, pro, scale] }
+        plan_change_status: { type: string }
+        requested_plan: { type: string }
+        effective_at: { type: string, format: date-time }
+
   responses:
     EdgeRulesVersionMismatch:
       description: If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.

@@ -190,7 +190,7 @@ const retentionRequestTelemetryPlanAwareBatchSQL = `DELETE FROM public.request_t
                                                    WHERE ctid IN (
                                                        SELECT rt.ctid FROM public.request_telemetry rt
                                                        JOIN public.apps a     ON a.id = rt.app_id
-                                                       JOIN public.accounts ac ON ac.id = a.account_id
+                                                       JOIN public.app_resource_accounts ac ON ac.app_id = a.id
                                                        WHERE rt.received_at < now() - (CASE ac.plan
                                                            WHEN 'free'  THEN interval '0 days'
                                                            WHEN 'hobby' THEN interval '3 days'

@@ -52,6 +52,7 @@ CREATE TABLE org_memberships(org_id uuid NOT NULL,account_id uuid NOT NULL,role 
 CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); err != nil {
 		t.Fatal(err)
 	}
+	addOrgBillingPolicyFixture(t, pool)
 	names, err := fs.Glob(migrations.FS, "*_internal_mail_*.sql")
 	if err != nil {
 		t.Fatal(err)

@@ -37,7 +37,7 @@ func (s *server) sendCertIssuanceFailedEmail(parent context.Context, log *slog.L
 	if err != nil {
 		return err
 	}
-	acct, err := s.store.AccountByID(parent, app.AccountID)
+	acct, err := state.AppResourceAccount(parent, s.store, app)
 	if err != nil {
 		return err
 	}

@@ -156,7 +156,8 @@ func (s *server) transferOrgOwnership(w http.ResponseWriter, r *http.Request, ac
 		"from_account": acct.ID,
 		"to_account":   newOwnerID,
 	})
-	updated, ok := s.rehydrateOrg(r.Context(), w, mem)
+	responseCtx := state.WithoutOrgAccessFence(r.Context())
+	updated, ok := s.rehydrateOrg(responseCtx, w, mem)
 	if !ok {
 		return
 	}

@@ -10,6 +10,36 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// statefulRestartAllowed is the host-configuration lane's guard
+// (docs/adr/20261018133100-host-configuration-lane.md): in lane mode the
+// role never restarts the postmaster.
+const statefulRestartAllowed = "faas_stateful_restart_allowed | default(true) | bool"
+
+// whenConditions returns a task's when: as its list of conditions, which
+// Ansible ANDs; a scalar when: is a list of one.
+func whenConditions(t *testing.T, task map[string]any) []string {
+	t.Helper()
+	switch when := task["when"].(type) {
+	case string:
+		return []string{when}
+	case []any:
+		out := make([]string, 0, len(when))
+		for _, c := range when {
+			s, ok := c.(string)
+			if !ok {
+				t.Fatalf("when: condition %v is not a string", c)
+			}
+			out = append(out, s)
+		}
+		return out
+	case nil:
+		return nil
+	default:
+		t.Fatalf("when: has unexpected type %T", when)
+		return nil
+	}
+}
+
 func postgresCapacityTasks(t *testing.T) []map[string]any {
 	t.Helper()
 	body, err := os.ReadFile(filepath.Join(repoRoot(t), "deploy", "ansible", "roles", "postgres_capacity", "tasks", "main.yml"))
@@ -62,27 +92,17 @@ func TestPostgresCapacityRestartFollowsTheRunningPostmaster(t *testing.T) {
 			t.Errorf("task %q must run before %q", order[i-1], name)
 		}
 	}
-	var whenParts []string
-	switch condition := byName[restart]["when"].(type) {
-	case string:
-		whenParts = append(whenParts, condition)
-	case []any:
-		for _, raw := range condition {
-			part, ok := raw.(string)
-			if !ok {
-				t.Fatalf("restart condition %v contains non-string value %T", condition, raw)
-			}
-			whenParts = append(whenParts, part)
-		}
-	default:
-		t.Fatalf("restart condition has unsupported type %T", byName[restart]["when"])
+	conditions := whenConditions(t, byName[restart])
+	compares, guarded := false, false
+	for _, c := range conditions {
+		compares = compares || (strings.Contains(c, "postgres_capacity_running.stdout") && strings.Contains(c, "postgres_capacity_live_target"))
+		guarded = guarded || strings.TrimSpace(c) == statefulRestartAllowed
 	}
-	when := strings.Join(whenParts, " and ")
-	if !strings.Contains(when, "postgres_capacity_running.stdout") || !strings.Contains(when, "postgres_capacity_live_target") {
-		t.Errorf("restart condition %q does not compare the running postmaster with the target", when)
+	if !compares {
+		t.Errorf("restart conditions %q do not compare the running postmaster with the target", conditions)
 	}
-	if !strings.Contains(when, "faas_stateful_restart_allowed") {
-		t.Errorf("restart condition %q does not honor the host-configuration lane's stateful-restart gate", when)
+	if !guarded {
+		t.Errorf("restart conditions %q lack the host-configuration lane's guard %q", conditions, statefulRestartAllowed)
 	}
 	svc, _ := byName[restart]["ansible.builtin.service"].(map[string]any)
 	if svc["state"] != "restarted" {
@@ -102,38 +122,47 @@ func TestPostgresCapacityRestartFollowsTheRunningPostmaster(t *testing.T) {
 		return
 	}
 	for _, tc := range []struct {
-		name, running        string
-		allowStatefulRestart bool
-		wantRestart          bool
+		name, running string
+		// nil leaves faas_stateful_restart_allowed unset, as a full release does.
+		allowed     *bool
+		wantRestart bool
 	}{
-		{"file written but postmaster never restarted", "100:3\n", true, true},
-		{"postmaster already on target", "160:5\n", true, false},
-		{"only the reserve differs", "160:3", true, true},
-		{"host-configuration lane cannot restart postmaster", "100:3\n", false, false},
+		{"file written but postmaster never restarted", "100:3\n", nil, true},
+		{"postmaster already on target", "160:5\n", nil, false},
+		{"only the reserve differs", "160:3", nil, true},
+		{"the lane never restarts the postmaster", "100:3\n", ptr(false), false},
+		{"explicitly allowed", "100:3\n", ptr(true), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := evalRestartCondition(t, playbookBin, targetExpr, when, tc.running, tc.allowStatefulRestart); got != tc.wantRestart {
+			if got := evalRestartCondition(t, playbookBin, targetExpr, conditions, tc.running, tc.allowed); got != tc.wantRestart {
 				t.Fatalf("restart = %v, want %v", got, tc.wantRestart)
 			}
 		})
 	}
 }
 
+func ptr[T any](v T) *T { return &v }
+
 // evalRestartCondition runs the role's exact target and restart expressions
-// for max_connections 160 and 5 reserved connections.
-func evalRestartCondition(t *testing.T, playbookBin, targetExpr, when, running string, allowStatefulRestart bool) bool {
+// (every when: condition, ANDed as Ansible does) for max_connections 160 and
+// 5 reserved connections. allowed sets faas_stateful_restart_allowed.
+func evalRestartCondition(t *testing.T, playbookBin, targetExpr string, conditions []string, running string, allowed *bool) bool {
 	t.Helper()
 	dir := t.TempDir()
 	out := filepath.Join(dir, "restart")
+	vars := map[string]any{
+		"postgres_capacity_max_connections":            "160",
+		"faas_postgres_superuser_reserved_connections": 5,
+		"postgres_capacity_running":                    map[string]any{"stdout": running},
+	}
+	if allowed != nil {
+		vars["faas_stateful_restart_allowed"] = *allowed
+	}
+	when := "(" + strings.Join(conditions, ") and (") + ")"
 	playbook := map[string]any{
 		"hosts":        "localhost",
 		"gather_facts": false,
-		"vars": map[string]any{
-			"postgres_capacity_max_connections":            "160",
-			"faas_postgres_superuser_reserved_connections": 5,
-			"postgres_capacity_running":                    map[string]any{"stdout": running},
-			"faas_stateful_restart_allowed":                allowStatefulRestart,
-		},
+		"vars":         vars,
 		"tasks": []map[string]any{
 			{"ansible.builtin.set_fact": map[string]any{"postgres_capacity_live_target": targetExpr}},
 			{"ansible.builtin.copy": map[string]any{

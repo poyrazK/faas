@@ -94,8 +94,10 @@ func TestManagedPostgresComputePolicyRoutesAndReplay(t *testing.T) {
 }
 func TestManagedPostgresComputePolicyValidationAndPlan(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanHobby)
-	(*(*e.S()).ManagedPostgres()), _, _ = resizeAPIService(t, (*e.Acct()).ID)
-	path := "/v1/postgres/databases/anything/compute-policy"
+	// ADR-202610171906 authorizes the persisted owner before validating the payload.
+	service, database, _ := resizeAPIService(t, (*e.Acct()).ID)
+	(*(*e.S()).ManagedPostgres()) = service
+	path := "/v1/postgres/databases/" + database.ID + "/compute-policy"
 	for _, tc := range []struct {
 		body   map[string]any
 		status int
@@ -109,6 +111,9 @@ func TestManagedPostgresComputePolicyValidationAndPlan(t *testing.T) {
 		if rec := e.Do(t, http.MethodPost, path, tc.body, nil); rec.Code != tc.status {
 			t.Fatal(tc.body, rec.Code, rec.Body.String())
 		}
+	}
+	if rec := e.Do(t, http.MethodPost, "/v1/postgres/databases/unknown/compute-policy", map[string]any{"request_id": "invalid"}, nil); rec.Code != http.StatusNotFound {
+		t.Fatal("unknown database bypassed ownership lookup", rec.Code, rec.Body.String())
 	}
 }
 
