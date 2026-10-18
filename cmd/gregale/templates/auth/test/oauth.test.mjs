@@ -208,3 +208,21 @@ test('a client token may check its user\'s permissions and nothing else in /auth
     await assert.rejects(route(pool, claims, method, path, {}), { status: 403, code: 'oauth_client_token' }, `${method} ${path}`)
   }
 })
+
+test('first-party tokens carry the session organization with AUTH_ORG_CLAIMS on', async () => {
+  const base = { sub: user, session_id: session, aud: 'authenticated', role: 'authenticated' }
+  const queries = []
+  let row = { id: '6f1c1a52-34c0-4a8e-9c55-2f5d7c0e4a11', slug: 'acme', role: 'admin', permissions: ['org:read', 'members:manage'] }
+  const pool = { query: async (sql, args) => { queries.push({ sql, args }); return { rows: row ? [row] : [] } } }
+  const { claims } = await accessTokenClaims(pool, { claims: base }, { orgClaims: true })
+  assert.deepEqual(claims, { ...base, org_id: row.id, org_slug: 'acme', org_role: 'admin', org_permissions: ['org:read', 'members:manage'] })
+  assert.deepEqual(queries[0].args, [session, user])
+  assert.match(queries[0].sql, /JOIN gregale_auth\.memberships m ON m\.org_id = s\.org_id AND m\.user_id = \$2/, 'the current membership decides')
+  row = null
+  assert.deepEqual((await accessTokenClaims(pool, { claims: base }, { orgClaims: true })).claims, base, 'no active organization, or no longer a member')
+  queries.length = 0
+  assert.deepEqual((await accessTokenClaims(pool, { claims: base })).claims, base, 'off: no query')
+  assert.equal(queries.length, 0)
+  const forClient = await accessTokenClaims(fakePool(), { claims: { ...base, client_id: client } }, { orgClaims: true })
+  assert.equal(forClient.claims.org_id, undefined, 'a client token never carries them')
+})
