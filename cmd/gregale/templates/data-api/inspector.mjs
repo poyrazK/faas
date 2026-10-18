@@ -34,8 +34,11 @@ async function refresh() {
   try {
     const response = await fetch('session', { headers: { Authorization: `Bearer ${key}` }, cache: 'no-store' })
     if (!response.ok) throw new Error('Open the inspector URL printed by gregale data-api dev to connect.')
+    const nextSession = await response.json()
+    // Compare live UI context only after decoding: the user can switch identity
+    // while the response body is still arriving.
     const previousContext=session && JSON.stringify([session.fingerprint,session.input_model?.revision,element('identity').value])
-    session = await response.json()
+    session = nextSession
     const identity = element('identity').value
     element('identity').replaceChildren()
     for (const [name, value] of Object.entries(session.identities)) {
