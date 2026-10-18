@@ -26,6 +26,7 @@ import type { DeadLetterEvent } from '../models/DeadLetterEvent.js';
 import type { PutBillingConnectionRequest } from '../models/PutBillingConnectionRequest.js';
 import type { PutBillingRunScheduleRequest } from '../models/PutBillingRunScheduleRequest.js';
 import type { RaiseOverageCapRequest } from '../models/RaiseOverageCapRequest.js';
+import type { SelectedTraceLookupResponse } from '../models/SelectedTraceLookupResponse.js';
 import type { SetAccountEgressAllowlistExtraRequest } from '../models/SetAccountEgressAllowlistExtraRequest.js';
 import type { StatementInvoiceListResponse } from '../models/StatementInvoiceListResponse.js';
 import type { UpdateAccountBillingInfoRequest } from '../models/UpdateAccountBillingInfoRequest.js';
@@ -351,6 +352,66 @@ export class AccountService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Look up trace metadata for explicitly selected app IDs.
+   * Requires one to five distinct canonical app IDs owned by the authenticated
+   * account. Both request and invocation SQL queries filter account and selected
+   * app IDs before ordering and limiting. No account-wide fallback, log reads,
+   * spans, payloads, arbitrary headers or queue names. Request metadata is
+   * oldest-first within plan telemetry retention; durable invocation lifecycle
+   * history has an independent oldest-first bound and no request-window filter.
+   * Returns per-source status and truncation, including empty or unavailable
+   * sources. No pagination, automatic follow-up or causal-edge inference.
+   *
+   * @returns SelectedTraceLookupResponse Selected-app metadata, including explicit per-source partial or empty results.
+   * @throws ApiError
+   */
+  public static getSelectedAppTrace({
+    traceId,
+    appId,
+    limit = 10,
+  }: {
+    /**
+     * Exact nonzero W3C trace identifier.
+     */
+    traceId: string,
+    /**
+     * Explicit app IDs, repeated as app_id parameters. All must belong to the account; an empty selection never widens to the account.
+     */
+    appId: Array<string>,
+    /**
+     * Independent oldest-first row limit for each source, after app filtering. A one-row sentinel detects truncation.
+     */
+    limit?: number,
+  }): CancelablePromise<SelectedTraceLookupResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/traces/{trace_id}/selected-apps',
+      path: {
+        'trace_id': traceId,
+      },
+      query: {
+        'app_id': appId,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });
