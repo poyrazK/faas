@@ -48,6 +48,17 @@
           {{ faas_cp_contract_probe.rc == 0
              and (faas_cp_contract_probe.stdout | trim) == faas_cp_bootstrap_contract_sha256 }}
 
+    # The lane never restarts PostgreSQL or pgbouncer: those roles report a
+    # restart-needing change in check mode and fail the run instead.
+    - name: Require the stateful restart guard in lane mode
+      ansible.builtin.assert:
+        that:
+          - not (faas_stateful_restart_allowed | default(true) | bool)
+        fail_msg: >-
+          --roles converges in the host-configuration lane, which must pass
+          faas_stateful_restart_allowed=false (docs/adr/20261018133100-host-configuration-lane.md).
+      when: faas_cp_converge_roles_requested is defined
+
     - name: Read the recorded control-plane role hashes
       ansible.builtin.command:
         argv:

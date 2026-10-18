@@ -421,6 +421,68 @@ def _topics(text, handlers):
                 yield item.group(2).strip().strip("\"'")
 
 
+RESTART_STATE = re.compile(r"\bstate:\s*['\"]?(?:restarted|stopped)\b")
+
+
+def _restarts(chunk, service):
+    """Whether one task or handler restarts or stops service: a service or
+    systemd module whose name: names it with state restarted or stopped, or
+    a systemctl (or, for PostgreSQL, pg_ctl/pg_ctlcluster) command."""
+    body = "\n".join(chunk.split("\n")[1:])
+    svc = re.escape(service)
+    if RESTART_STATE.search(body) and re.search(rf"(?m)^\s*name:\s*['\"]?[^\n]*{svc}", body):
+        return True
+    if re.search(rf"systemctl\s+(?:-[\w-]+\s+)*(?:restart|stop|try-restart|reload-or-restart|kill)\b[^\n]*{svc}", body):
+        return True
+    return service == "postgresql" and bool(re.search(r"pg_ctl(?:cluster)?\b[^\n]*\b(?:restart|stop)\b", body))
+
+
+def _chunks(text):
+    """Tasks or handlers of a file, one per `- name:` item."""
+    return [c for c in re.split(r"(?m)^(?=\s*- name:)", uncomment(text)) if c.lstrip().startswith("- name:")]
+
+
+def restart_roles(tree, group, services, roles=None):
+    """{role: [services]} for the roles of group that can restart or stop one
+    of services when they run: a task of the role (or of a role it
+    includes) does, or notifies a handler, of any role in the play, that
+    does."""
+    _, order, _ = group_plays(tree, group)
+    roles = roles or Roles(tree)
+    topics, direct = {}, {}
+    for role in order:
+        for sub in ("handlers", "tasks"):
+            for path in tree.walk(f"{ROLES}/{role}/{sub}"):
+                if not path.endswith((".yml", ".yaml")):
+                    continue
+                for chunk in _chunks(tree.text(path)):
+                    for service in services:
+                        if not _restarts(chunk, service):
+                            continue
+                        if sub == "handlers":
+                            for topic in _topics(chunk, handlers=True):
+                                topics.setdefault(topic, set()).add(service)
+                        else:
+                            direct.setdefault(role, set()).add(service)
+    found = {}
+    for role in order:
+        seen, stack = {role}, [role]
+        while stack:
+            name = stack.pop()
+            hit = set(direct.get(name, ()))
+            for path in tree.walk(f"{ROLES}/{name}/tasks"):
+                if path.endswith((".yml", ".yaml")):
+                    for topic in _topics(uncomment(tree.text(path)), handlers=False):
+                        hit |= topics.get(topic, set())
+            if hit:
+                found.setdefault(role, set()).update(hit)
+            for included in roles.own(name)[2]:
+                if included not in seen:
+                    seen.add(included)
+                    stack.append(included)
+    return {role: sorted(v) for role, v in found.items()}
+
+
 def changed(old, new, deps=None):
     """Roles whose content differs between two group_hashes results (old
     may be a host's record, or None when nothing is known), plus the roles

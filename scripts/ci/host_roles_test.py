@@ -257,6 +257,32 @@ class ChangedTest(unittest.TestCase):
                 self.assertEqual(hr.group_hashes(hr.fs_tree(root), group), want)
 
 
+class RestartRolesTest(unittest.TestCase):
+    def test_restart_roles_follow_tasks_handlers_and_notifies(self):
+        files = dict(FILES)
+        files["deploy/ansible/roles/postgres/tasks/main.yml"] = (
+            "- name: set wal_level\n  ansible.builtin.lineinfile: {path: /etc/pg.conf, line: x}\n"
+            "  notify: restart postgresql\n"
+            "- name: reload on hba\n  ansible.builtin.lineinfile: {path: /etc/hba, line: y}\n  notify: reload postgresql\n")
+        files["deploy/ansible/roles/postgres/handlers/main.yml"] = (
+            "- name: restart postgresql\n  ansible.builtin.service:\n    name: postgresql@16-main.service\n"
+            "    state: restarted\n"
+            "- name: reload postgresql\n  ansible.builtin.service:\n    name: postgresql@16-main.service\n"
+            "    state: reloaded\n")
+        # A role that restarts through a command, and one that only reloads.
+        files["deploy/ansible/roles/prometheus/tasks/main.yml"] = (
+            "- name: bounce the database\n  ansible.builtin.command: systemctl restart postgresql@16-main\n")
+        files["deploy/ansible/roles/control_plane_service/tasks/main.yml"] = (
+            "- name: reload # restarted elsewhere\n  ansible.builtin.copy: {src: a, dest: /b}\n  notify: reload postgresql\n")
+        got = hr.restart_roles(hr.dict_tree(files), "control_plane", ["postgresql", "pgbouncer"])
+        self.assertEqual(got, {"postgres": ["postgresql"], "prometheus": ["postgresql"]})
+        # Another role notifying the restart handler can restart it too.
+        files["deploy/ansible/roles/control_plane_service/tasks/main.yml"] = (
+            "- name: wal\n  ansible.builtin.copy: {src: a, dest: /b}\n  notify:\n    - restart postgresql\n")
+        got = hr.restart_roles(hr.dict_tree(files), "control_plane", ["postgresql"])
+        self.assertIn("control_plane_service", got)
+
+
 class RepositoryTest(unittest.TestCase):
     """The real deploy tree: every reference a host role makes resolves, so
     no input escapes its role's hash."""
@@ -281,6 +307,50 @@ class RepositoryTest(unittest.TestCase):
         self.assertIn("control_plane_service", cp)
         self.assertNotIn("vmmd_service", cp)
         self.assertIn("vmmd_service", compute)
+
+    def test_stateful_restart_roles_are_known(self):
+        # A new role that can restart PostgreSQL or pgbouncer must be
+        # guarded like these (test_stateful_restarts_are_guarded_in_lane_mode).
+        got = hr.restart_roles(self.tree, "control_plane", ["postgresql", "pgbouncer"], self.roles)
+        self.assertEqual(got, {"postgres": ["postgresql"], "postgres_capacity": ["postgresql"],
+                               "pgbouncer": ["pgbouncer"]})
+        self.assertEqual(hr.restart_roles(self.tree, "compute_nodes", ["postgresql", "pgbouncer"], self.roles), {})
+
+    def test_stateful_restarts_are_guarded_in_lane_mode(self):
+        # In lane mode (faas_stateful_restart_allowed false) a task that can
+        # lead to a restart only reports its change, a restarting handler
+        # does not run, a refusal handler on the same topic fails the run,
+        # and a task that restarts directly does not run.
+        guard = 'check_mode: "{{ not (faas_stateful_restart_allowed | default(true) | bool) }}"'
+        services = ["postgresql", "pgbouncer"]
+        _, order, _ = hr.group_plays(self.tree, "control_plane")
+        restart_topics, refusing = set(), set()
+        for role in order:
+            for path in self.tree.walk(f"{hr.ROLES}/{role}/handlers"):
+                for chunk in hr._chunks(self.tree.text(path)):
+                    topics = set(hr._topics(chunk, handlers=True))
+                    if any(hr._restarts(chunk, s) for s in services):
+                        restart_topics |= topics
+                        with self.subTest(handler=chunk.split("\n")[0]):
+                            self.assertIn("- faas_stateful_restart_allowed | default(true) | bool", chunk)
+                    if "ansible.builtin.fail:" in chunk and "not (faas_stateful_restart_allowed" in chunk:
+                        refusing |= topics
+        self.assertEqual(restart_topics, {"restart postgresql", "restart pgbouncer"})
+        self.assertEqual(restart_topics - refusing, set(), "a restart topic has no refusal handler")
+        for role in order:
+            for path in self.tree.walk(f"{hr.ROLES}/{role}/tasks"):
+                for chunk in hr._chunks(self.tree.text(path)):
+                    title = chunk.split("\n")[0]
+                    if set(hr._topics(chunk, handlers=False)) & restart_topics:
+                        with self.subTest(role=role, task=title):
+                            self.assertIn(guard, chunk)
+                    if any(hr._restarts(chunk, s) for s in services):
+                        with self.subTest(role=role, task=title):
+                            self.assertIn("- faas_stateful_restart_allowed | default(true) | bool", chunk)
+        capacity = self.tree.text(f"{hr.ROLES}/postgres_capacity/tasks/main.yml")
+        refuse = capacity.index("postgres capacity — refuse a postmaster restart outside a full release")
+        self.assertLess(refuse, capacity.index("- name: postgres capacity — set max_connections"),
+                        "the lane must refuse before postgresql.conf changes")
 
     def test_known_external_inputs_are_owned(self):
         cp = self.owners["control_plane"]

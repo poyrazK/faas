@@ -69,6 +69,26 @@ class PlanTest(unittest.TestCase):
                                            "commit": COMMIT, "globals": "sha256:g", "order": NEW["order"],
                                            "roles": NEW["roles"]})
 
+    def test_roles_that_can_restart_postgres(self):
+        stateful = {"postgres": ["postgresql"]}
+        base = dict(NEW, roles=dict(NEW["roles"]))
+        ok = ancestors(("a" * 40, COMMIT))
+        # postgres differs from the record but not from the full release,
+        # which converged it: a partial plan leaves it alone.
+        out, _ = phc.plan(RELEASE, host(record()), NEW, None, ok, None, stateful, base)
+        self.assertEqual((out["action"], out["roles"], out["guarded"]), ("none", [], []))
+        out, _ = phc.plan(RELEASE, host(record(roles=dict(NEW["roles"], grafana="x"))), NEW, None, ok, None,
+                          stateful, base)
+        self.assertEqual(out["roles"], ["grafana"])
+        # Converging every role runs it under the lane's restart guard.
+        out, _ = phc.plan(RELEASE, host(None), NEW, None, ok, None, stateful, base)
+        self.assertEqual((out["roles"], out["guarded"]), (NEW["order"], ["postgres"]))
+        # Changed since the full release: only a full release converges it.
+        with self.assertRaisesRegex(phc.Refused, "postgres changed since the full release and can restart postgresql"):
+            phc.plan(RELEASE, host(record()), NEW, None, ok, None, stateful, dict(base, roles=dict(NEW["roles"], postgres="old")))
+        with self.assertRaisesRegex(phc.Refused, "globals changed since the full release"):
+            phc.plan(RELEASE, host(record()), NEW, None, ok, None, stateful, dict(base, globals="sha256:old"))
+
     def test_refusals(self):
         cases = [
             ("not a unit release", dict(RELEASE, kind="other"), host(record()), None, "format 2"),
@@ -143,6 +163,29 @@ class MainTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         with open(os.path.join(out, "plan.json"), encoding="utf-8") as fh:
             return json.load(fh), out
+
+    def test_refuses_a_postgres_restart_role_changed_since_the_full_release(self):
+        # The fixture's postgres_capacity restarts PostgreSQL, like the real
+        # role; head changed its defaults since base, the full release.
+        self.run_git("checkout", "-q", "--detach", self.base)
+        self.write("deploy/ansible/roles/postgres_capacity/tasks/main.yml",
+                   "- name: restart postgresql to activate postmaster settings\n"
+                   "  ansible.builtin.service:\n    name: postgresql@16-main.service\n    state: restarted\n")
+        self.base = self.commit()
+        self.write("deploy/ansible/roles/postgres_capacity/defaults/main.yml", "budget: 89\n")
+        self.head = self.commit()
+        out = os.path.join(self.root, "refused")
+        manifest = os.path.join(self.root, "m.json")
+        state = os.path.join(self.root, "h.json")
+        with open(manifest, "w", encoding="utf-8") as fh:
+            json.dump(dict(RELEASE, base_sha=self.base, git_sha=self.head), fh)
+        with open(state, "w", encoding="utf-8") as fh:
+            json.dump({"base_git_sha": self.base, "current": self.base, "record": None}, fh)
+        proc = subprocess.run([sys.executable, str(HERE / "plan_host_config.py"), "--units-manifest", manifest,
+                               "--host-state", state, "--out", out, "--repo", self.root], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("postgres_capacity changed since the full release and can restart postgresql", proc.stderr)
+        self.assertFalse(os.path.exists(os.path.join(out, "plan.json")))
 
     def test_gate_mode_writes_gate_json(self):
         report = os.path.join(self.root, "restart.json")

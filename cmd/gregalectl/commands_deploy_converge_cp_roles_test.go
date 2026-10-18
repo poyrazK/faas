@@ -71,6 +71,12 @@ func TestConvergeControlPlaneRolesModeConvergesOnlyThoseRoles(t *testing.T) {
 	if vars["faas_join_defer_service_handlers"] != true {
 		t.Errorf("the lane restarts FaaS daemons itself, one at a time; vars = %v", vars)
 	}
+	if vars["faas_stateful_restart_allowed"] != false {
+		t.Errorf("the lane must never restart PostgreSQL or pgbouncer; vars = %v", vars)
+	}
+	if _, ok := wholeVars["faas_stateful_restart_allowed"]; ok {
+		t.Error("a full release still restarts PostgreSQL when a role needs it")
+	}
 }
 
 func TestConvergeControlPlaneRolesModeRefusesUnknownRoles(t *testing.T) {
@@ -192,5 +198,9 @@ func TestControlPlaneConvergePlaybookLaneModeRecordsNothing(t *testing.T) {
 	}
 	if !strings.Contains(playbook, "!= faas_cp_environment_sha256") {
 		t.Fatal("an operator variable or inventory change must converge every role")
+	}
+	guard := strings.Index(playbook, "- name: Require the stateful restart guard in lane mode")
+	if guard < 0 || guard > imported || !strings.Contains(playbook, "- not (faas_stateful_restart_allowed | default(true) | bool)") {
+		t.Fatal("lane mode must refuse to run without the stateful restart guard, before bootstrap.yml")
 	}
 }

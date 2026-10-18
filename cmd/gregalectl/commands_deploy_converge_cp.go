@@ -17,8 +17,9 @@ package main
 // --roles is the host-configuration lane's mode
 // (docs/adr/20261018133100-host-configuration-lane.md): only the named
 // roles of the control-plane play run, unless the host's operator
-// variables or rendered inventory changed since its role record, and the
-// playbook records nothing; the lane records the contract and the role
+// variables or rendered inventory changed since its role record, no role
+// may restart PostgreSQL or pgbouncer (faas_stateful_restart_allowed), and
+// the playbook records nothing; the lane records the contract and the role
 // hashes after its SLO gate.
 
 import (
@@ -222,6 +223,9 @@ func convergeControlPlane(ctx context.Context, opts deployConvergeControlPlaneOp
 		convergeVars["faas_cp_converge_roles_requested"] = opts.Roles
 		convergeVars["faas_cp_environment_sha256"] = report.Environment
 		convergeVars["faas_cp_record_contract"] = false
+		// The lane never restarts PostgreSQL or pgbouncer: the roles that
+		// can report the change in check mode and fail the run instead.
+		convergeVars["faas_stateful_restart_allowed"] = false
 	}
 	convergeVarsPath := filepath.Join(tempRoot, "converge-vars.json")
 	body, err := json.Marshal(convergeVars)

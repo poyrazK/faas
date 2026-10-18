@@ -39,6 +39,12 @@ Non-Go inputs map to flags (scripts/ci/release_units.json):
                docs/adr/20261018084150-unit-lane-expand-migrations.md). The
                control-plane lane applies them before it restarts anything;
                the edge lane waits for that.
+  stateful_restart
+               blocking: the range changed a control-plane role that can
+               restart PostgreSQL or pgbouncer (host_config.
+               stateful_services, host_roles.restart_roles), or every
+               role's globals. The lane never restarts those; only a full
+               release or a maintenance window does.
   host_config  deploy/ paths and bundle files a control-plane host role
                reads (scripts/ci/host_roles.py). The control-plane lane converges
                the roles whose content hash changed before anything else
@@ -312,9 +318,29 @@ def host_config_step(commits, config, host):
     return out
 
 
+def stateful_step(commits, host_step, config, host):
+    """Changed paths of the control-plane roles that can restart a stateful
+    service (PostgreSQL, pgbouncer), when the range changed one of those
+    roles, or every role through the group's globals. The lane never runs
+    such a change."""
+    group = host_step["group"]
+    if not group or not host_step["roles"]:
+        return []
+    restart = set((host.get(group) or {}).get("restart_roles") or [])
+    hit = restart & set(host_step["roles"])
+    if not hit:
+        return []
+    owners = host[group]["owners"]
+    return sorted({p for _, ps in commits for p in ps
+                   if p in owners and (hit & set(owners[p]) or "*" in owners[p])})
+
+
 def changed_roles(owners, paths):
-    """The roles owning any of paths, for a host view without hash diffs."""
+    """The roles owning any of paths, for a host view without hash diffs; a
+    global path changes every role the owners name."""
     roles = {r for p in paths for r in owners.get(p, ())}
+    if "*" in roles:
+        roles = {r for names in owners.values() for r in names}
     return {"all": "*" in roles, "roles": sorted(roles - {"*"})}
 
 
@@ -401,6 +427,9 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=Non
         flags[flag] = {"blocking": flag in ("deploy", "release_units"), "count": len(found),
                        "paths": found[:FLAG_PATH_LIMIT]}
     host_step = host_config_step(commits, config, host)
+    stateful = stateful_step(commits, host_step, config, host)
+    if stateful:
+        flags["stateful_restart"] = {"blocking": True, "count": len(stateful), "paths": stateful[:FLAG_PATH_LIMIT]}
     if recipe_shas:
         flags["build_recipe"] = {"blocking": False, "count": len(recipe_shas), "paths": ["Makefile"]}
     if claimed:
@@ -451,10 +480,11 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=Non
     }
 
 
-def host_view(base_sha, head_sha, root="."):
+def host_view(base_sha, head_sha, root=".", services=()):
     """{group: {"owners", "changed"}} for every host group: the paths each
     group's roles read at base or head, and the roles whose content hash
-    differs between them (host_roles.py). Empty when head has no bootstrap
+    differs between them (host_roles.py), and the roles that can restart one
+    of services at base or head. Empty when head has no bootstrap
     playbook."""
     head_tree = host_roles.git_tree(head_sha, root)
     if not head_tree.is_file(host_roles.BOOTSTRAP):
@@ -463,7 +493,10 @@ def host_view(base_sha, head_sha, root="."):
     view = {}
     for group in host_roles.GROUPS:
         roles = host_roles.Roles(head_tree)
-        new = host_roles.group_hashes(head_tree, group, roles)
+        try:
+            new = host_roles.group_hashes(head_tree, group, roles)
+        except ValueError:
+            continue  # no play for the group: none of its paths are host config
         owners = {p: set(r) for p, r in host_roles.group_owners(head_tree, group, roles).items()}
         try:
             old_roles = host_roles.Roles(base_tree)
@@ -472,8 +505,14 @@ def host_view(base_sha, head_sha, root="."):
                 owners.setdefault(path, set()).update(names)
         except (KeyError, ValueError):
             old = None
+        restart = set(host_roles.restart_roles(head_tree, group, services, roles))
+        try:
+            restart |= set(host_roles.restart_roles(base_tree, group, services))
+        except (KeyError, ValueError):
+            pass
         view[group] = {"owners": {p: sorted(r) for p, r in owners.items()},
-                       "changed": host_roles.changed(old, new, host_roles.notify_targets(head_tree, new["order"]))}
+                       "changed": host_roles.changed(old, new, host_roles.notify_targets(head_tree, new["order"])),
+                       "restart_roles": sorted(restart)}
     return view
 
 
@@ -501,7 +540,8 @@ def report(base, head, config_path=DEFAULT_CONFIG, root="."):
     data = None
     if directory and any(migration_lint.is_migration_file(p, directory) for _, paths in commits for p in paths):
         data = migration_lint.classify_range(root, base_sha, head_sha, directory)
-    host = host_view(base_sha, head_sha, root) if config.get("host_config") else {}
+    hc = config.get("host_config")
+    host = host_view(base_sha, head_sha, root, hc.get("stateful_services") or ()) if hc else {}
     out = analyze(commits, closures, config, exists, recipe_commits(commits, root), data, host)
     out.update(base=base_sha, head=head_sha, base_ref=base)
     return out

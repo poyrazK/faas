@@ -50,7 +50,8 @@ HOST = {
         "deploy/ansible/roles/host_hardening/tasks/main.yml": ["host_hardening"],
         "deploy/ansible/roles/control_plane_service/files/faas-apid.service": ["control_plane_service"],
         "deploy/systemd/faas-pg-basebackup.service": ["postgres_backup"],
-    }},
+        "deploy/ansible/roles/grafana/files/fleet.json": ["grafana"],
+    }, "restart_roles": ["postgres", "postgres_capacity"]},
     "compute_nodes": {"owners": {
         "deploy/ansible/bootstrap.yml": ["*"],
         "deploy/ansible/roles/vmmd_service/files/faas-vmmd.service": ["vmmd_service"],
@@ -119,9 +120,12 @@ class AnalyzeTest(unittest.TestCase):
         ("control-plane role change rides the control-plane lane",
          [("c1", ["deploy/ansible/roles/vmmd_service/x.yml", "deploy/ansible/roles/prometheus/x.yml"])],
          {}, [], [], True),
-        ("control-plane role vars change rides the lane with a daemon",
-         [("c2", ["pkg/apid/server.go"]), ("c1", ["deploy/ansible/roles/postgres_capacity/defaults/main.yml"])],
+        ("control-plane role file change rides the lane with a daemon",
+         [("c2", ["pkg/apid/server.go"]), ("c1", ["deploy/ansible/roles/grafana/files/fleet.json"])],
          {"apid": "c2"}, ["apid"], [], True),
+        ("a role that can restart PostgreSQL blocks",
+         [("c2", ["pkg/apid/server.go"]), ("c1", ["deploy/ansible/roles/postgres_capacity/defaults/main.yml"])],
+         {"apid": "c2"}, [], ["stateful_restart"], False),
         ("unit tree file a control-plane role reads is host config",
          [("c1", ["pkg/apid/server.go", "deploy/systemd/faas-pg-basebackup.service"])],
          {"apid": "c1"}, ["apid"], [], True),
@@ -222,12 +226,12 @@ class HostConfigTest(unittest.TestCase):
 
     def test_role_change_alone_deploys_the_control_plane_lane(self):
         rep = au.analyze([("c2", ["docs/quickstart.md"]),
-                          ("c1", ["deploy/ansible/roles/postgres_capacity/defaults/main.yml"])],
+                          ("c1", ["deploy/ansible/roles/grafana/files/fleet.json"])],
                          CLOSURES, CONFIG, EXISTS, host=HOST)
-        self.assertEqual(rep["host_config"], {"group": "control_plane", "roles": ["postgres_capacity"], "all": False,
+        self.assertEqual(rep["host_config"], {"group": "control_plane", "roles": ["grafana"], "all": False,
                                               "commit": "c1", "version": "host-c1"})
         self.assertEqual(rep["flags"]["host_config"],
-                         {"blocking": False, "count": 1, "paths": ["deploy/ansible/roles/postgres_capacity/defaults/main.yml"]})
+                         {"blocking": False, "count": 1, "paths": ["deploy/ansible/roles/grafana/files/fleet.json"]})
         self.assertTrue(rep["lanes"]["control-plane"]["eligible"])
         self.assertEqual(rep["lanes"]["control-plane"]["reasons"], [])
         self.assertFalse(rep["lanes"]["edge"]["eligible"])
@@ -257,11 +261,24 @@ class HostConfigTest(unittest.TestCase):
         self.assertFalse(rep["lanes"]["control-plane"]["eligible"])
         self.assertIn("no control-plane daemon changed since base", rep["lanes"]["control-plane"]["reasons"])
 
-    def test_play_change_converges_every_role(self):
+    def test_play_change_converges_every_role_so_it_blocks(self):
+        # Every role includes the ones that can restart PostgreSQL.
         rep = au.analyze([("c1", ["deploy/ansible/bootstrap.yml"])], CLOSURES, CONFIG, EXISTS, host=HOST)
         self.assertTrue(rep["host_config"]["all"])
+        self.assertEqual(rep["flags"]["stateful_restart"]["paths"], ["deploy/ansible/bootstrap.yml"])
         self.assertEqual(rep["flags"]["compute_deploy"]["paths"], ["deploy/ansible/bootstrap.yml"])
+        self.assertFalse(rep["lanes"]["control-plane"]["eligible"])
         self.assertFalse(rep["lanes"]["edge"]["eligible"])
+
+    def test_postgres_restart_roles_block_and_name_their_paths(self):
+        rep = au.analyze([("c2", ["deploy/ansible/roles/grafana/files/fleet.json"]),
+                          ("c1", ["deploy/ansible/roles/postgres_capacity/defaults/main.yml"])],
+                         CLOSURES, CONFIG, EXISTS, host=HOST)
+        self.assertEqual(rep["flags"]["stateful_restart"],
+                         {"blocking": True, "count": 1, "paths": ["deploy/ansible/roles/postgres_capacity/defaults/main.yml"]})
+        self.assertEqual(rep["host_config"]["roles"], ["grafana", "postgres_capacity"])
+        self.assertIn("stateful_restart changed since base (1 paths, e.g. deploy/ansible/roles/postgres_capacity/defaults/main.yml)",
+                      rep["lanes"]["control-plane"]["reasons"])
 
     def test_without_a_host_view_deploy_blocks(self):
         rep = au.analyze([("c1", ["pkg/apid/server.go", "deploy/ansible/roles/prometheus/x.yml"])],
@@ -291,6 +308,63 @@ class HostConfigTest(unittest.TestCase):
         self.assertFalse(rep["eligible"])
 
 
+class StatefulRestartHistoryTest(unittest.TestCase):
+    """The real postgres_capacity and grafana roles in a throwaway history,
+    classified through host_view (no Go toolchain needed)."""
+
+    def run_git(self, *args):
+        return subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True, text=True).stdout.strip()
+
+    def commit(self):
+        self.run_git("add", "-A")
+        self.run_git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "x")
+        return self.run_git("rev-parse", "HEAD")
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root)
+        self.run_git("init", "-q")
+        for role in ("postgres_capacity", "grafana"):
+            shutil.copytree(REPO / "deploy/ansible/roles" / role, pathlib.Path(self.root, "deploy/ansible/roles", role))
+        pathlib.Path(self.root, "deploy/ansible/bootstrap.yml").write_text(
+            "- name: cp\n  hosts: control_plane\n  roles:\n    - role: grafana\n    - role: postgres_capacity\n",
+            encoding="utf-8")
+        self.base = self.commit()
+
+    def report(self):
+        head = self.commit()
+        host = au.host_view(self.base, head, self.root, CONFIG_WITH_STATEFUL["host_config"]["stateful_services"])
+        commits = au.range_commits(self.base, head, self.root)
+        return au.analyze(commits, CLOSURES, CONFIG_WITH_STATEFUL, EXISTS, host=host)
+
+    def test_postgres_capacity_change_moving_max_connections_blocks_the_lane(self):
+        defaults = pathlib.Path(self.root, "deploy/ansible/roles/postgres_capacity/defaults/main.yml")
+        text = defaults.read_text(encoding="utf-8")
+        budget = re.search(r"(?m)^faas_postgres_control_plane_pool_budget: (\d+)$", text)
+        self.assertIsNotNone(budget, "postgres_capacity no longer declares the control-plane pool budget")
+        # 40 more pooled connections moves the derived max_connections on
+        # any fleet size, and only a postmaster restart applies it.
+        defaults.write_text(text.replace(budget.group(0), f"faas_postgres_control_plane_pool_budget: {int(budget.group(1)) + 40}"),
+                            encoding="utf-8")
+        rep = self.report()
+        self.assertEqual(rep["host_config"]["roles"], ["postgres_capacity"])
+        self.assertEqual(rep["blocked_by"], ["stateful_restart"])
+        self.assertEqual(rep["flags"]["stateful_restart"]["paths"],
+                         ["deploy/ansible/roles/postgres_capacity/defaults/main.yml"])
+        self.assertFalse(rep["lanes"]["control-plane"]["eligible"])
+        self.assertFalse(rep["eligible"])
+
+    def test_a_role_that_never_restarts_postgres_still_rides_the_lane(self):
+        tasks = pathlib.Path(self.root, "deploy/ansible/roles/grafana/tasks/main.yml")
+        tasks.write_text(tasks.read_text(encoding="utf-8") + "\n- name: grafana — noop\n  ansible.builtin.debug: {}\n",
+                         encoding="utf-8")
+        rep = self.report()
+        self.assertEqual(rep["host_config"]["roles"], ["grafana"])
+        self.assertEqual(rep["blocked_by"], [])
+        self.assertTrue(rep["lanes"]["control-plane"]["eligible"])
+
+
+CONFIG_WITH_STATEFUL = dict(CONFIG, host_config=dict(CONFIG["host_config"], stateful_services=["postgresql", "pgbouncer"]))
 DATA_CONFIG = dict(CONFIG, migrations_dir="migrations/")
 EXPAND = {"eligible": True, "blockers": [], "migrations": [
     {"path": "migrations/20261018000000001_a.sql", "version": 20261018000000001, "eligible": True, "blockers": []}]}

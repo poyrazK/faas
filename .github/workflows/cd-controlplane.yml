@@ -1358,6 +1358,8 @@ jobs:
             echo
             echo "Plan: **$(jq -r .action "$plan")** ($(jq -r .reason "$plan")): $(jq -r '.roles | join(", ") | if . == "" then "none" else . end' "$plan")."
             echo "Rollback target: \`$(jq -r '.previous[0:12]' "$plan")\`."
+            guarded="$(jq -r '.guarded | join(", ")' "$plan")"
+            [[ -z "$guarded" ]] || echo "Converged under the stateful-restart guard (a change that needs a PostgreSQL or pgbouncer restart fails the run): ${guarded}."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Converge the changed roles

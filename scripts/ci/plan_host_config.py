@@ -17,6 +17,14 @@ unit release's commit with that record:
             no record yet, or the record has another format or globals;
   none      every role's hash matches the record.
 
+Roles that can restart a stateful service (PostgreSQL, pgbouncer:
+release_units.json host_config.stateful_services) are refused when their
+content differs from the host's full release's, as are other globals: only
+a full release converges those. Otherwise a plan selects them only when it
+converges every role, and then with faas_stateful_restart_allowed false,
+so a change that would restart one fails the run instead
+(docs/adr/20261018133100-host-configuration-lane.md).
+
 `gregalectl deploy converge-control-plane --roles` converges the plan's
 roles at the release commit; it converges every role instead when the
 environment hash moved. After the SLO gate passes, the workflow writes
@@ -44,6 +52,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import host_roles  # noqa: E402
 import plan_unit_deploy  # noqa: E402
 
+DEFAULT_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "release_units.json")
 KIND_RELEASE = "gregale-unit-release"
 KIND_RECORD = "gregale-host-config"
 GROUP = "control_plane"
@@ -61,9 +70,12 @@ def git_is_ancestor(ancestor, descendant, root="."):
     return out.returncode == 0
 
 
-def plan(release, host, new, deps=None, is_ancestor=git_is_ancestor, previous_release=None):
+def plan(release, host, new, deps=None, is_ancestor=git_is_ancestor, previous_release=None, stateful=None,
+         full=None):
     """new is host_roles.group_hashes at the release commit; deps its
-    notify_targets."""
+    notify_targets; stateful the roles that can restart a stateful service
+    (host_roles.restart_roles); full the group_hashes of the host's full
+    release."""
     if release.get("kind") != KIND_RELEASE or release.get("format_version") != 2:
         raise Refused("not a format 2 unit release manifest")
     base, commit = release["base_sha"], release["git_sha"]
@@ -73,6 +85,16 @@ def plan(release, host, new, deps=None, is_ancestor=git_is_ancestor, previous_re
     if host["base_git_sha"] != base:
         raise Refused(f"host runs full release {host['base_git_sha']}, but this unit release is built over {base}: "
                       "deploy that full release first")
+    stateful = stateful or {}
+    if full is not None and stateful:
+        if full.get("globals") != new["globals"]:
+            raise Refused("the control-plane play's globals changed since the full release, and they reach "
+                          f"{', '.join(sorted(stateful))}, which can restart a stateful service: deploy a full release")
+        moved = [r for r in sorted(stateful) if new["roles"].get(r) != full.get("roles", {}).get(r)]
+        if moved:
+            raise Refused(f"{', '.join(moved)} changed since the full release and can restart "
+                          f"{', '.join(sorted({s for r in moved for s in stateful[r]}))}, which the lane never "
+                          "does: deploy a full release")
     record = host.get("record")
     usable = (isinstance(record, dict) and record.get("kind") == KIND_RECORD
               and record.get("format_version") == host_roles.FORMAT and record.get("group") == GROUP)
@@ -87,8 +109,12 @@ def plan(release, host, new, deps=None, is_ancestor=git_is_ancestor, previous_re
         diff = {"all": True, "roles": list(new["order"])}
         reason = "every role: the host has no role record yet"
         previous = base
+    if not diff["all"]:
+        # Their content is the full release's, which converged it.
+        diff["roles"] = [r for r in diff["roles"] if r not in stateful]
     out = {"action": "converge" if diff["roles"] else "none", "group": GROUP, "commit": commit,
-           "previous": previous, "roles": diff["roles"], "all": diff["all"], "reason": reason}
+           "previous": previous, "roles": diff["roles"], "all": diff["all"], "reason": reason,
+           "guarded": [r for r in diff["roles"] if r in stateful]}
     record_out = None
     if diff["roles"]:
         record_out = {"format_version": host_roles.FORMAT, "kind": KIND_RECORD, "group": GROUP, "commit": commit,
@@ -113,6 +139,7 @@ def main():
     ap.add_argument("--previous-release", default="",
                     help="commit of the newest full release tag before the unit release's commit")
     ap.add_argument("--repo", default=".", help="git checkout holding the release commit")
+    ap.add_argument("--config", default=DEFAULT_CONFIG, help="lane table (default scripts/ci/release_units.json)")
     args = ap.parse_args()
     if args.gate_from:
         with open(args.gate_from, encoding="utf-8") as fh:
@@ -129,10 +156,14 @@ def main():
     with open(args.host_state, encoding="utf-8") as fh:
         host = json.load(fh)
     try:
+        with open(args.config, encoding="utf-8") as fh:
+            services = (json.load(fh).get("host_config") or {}).get("stateful_services") or []
         tree = host_roles.git_tree(release["git_sha"], args.repo)
         new = host_roles.group_hashes(tree, GROUP)
+        full = host_roles.group_hashes(host_roles.git_tree(release["base_sha"], args.repo), GROUP)
         result, record = plan(release, host, new, host_roles.notify_targets(tree, new["order"]),
-                              lambda a, d: git_is_ancestor(a, d, args.repo), args.previous_release or None)
+                              lambda a, d: git_is_ancestor(a, d, args.repo), args.previous_release or None,
+                              host_roles.restart_roles(tree, GROUP, services), full)
     except (Refused, RuntimeError, ValueError, KeyError) as err:
         print(f"plan_host_config: refused: {err}", file=sys.stderr)
         return 1
