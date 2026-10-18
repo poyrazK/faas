@@ -583,6 +583,9 @@ type Engine struct {
 	// always fresh — an operator tweak to the env var doesn't
 	// require a schedd restart (the next tick picks it up).
 	deadNodeReconcilerStalenessSeconds int
+	// takeoverGuard, when set, must agree before the dead-node sweep fails a
+	// node's instances (ADR-1344 §4, phase 2).
+	takeoverGuard TakeoverGuard
 	// deadNodeSettle holds the dead-node sweep back after this schedd saw
 	// the store unavailable, until it has read the store without
 	// interruption for the staleness window, so a store outage cannot fail
@@ -1191,6 +1194,13 @@ func (e *Engine) WithWakeRateLimiter(l *WakeRateLimiter) *Engine {
 // fall back to the api.* default. The value is read at every
 // tick, so an operator can lower it mid-flight if a customer
 // complains about a billing interval they consider too long.
+// WithTakeoverGuard makes the dead-node sweep consult guard before it fails
+// a stale-looking node's instances (ADR-1344 §4, phase 2).
+func (e *Engine) WithTakeoverGuard(guard TakeoverGuard) *Engine {
+	e.takeoverGuard = guard
+	return e
+}
+
 func (e *Engine) WithDeadNodeReconcilerStalenessSeconds(seconds int) *Engine {
 	if seconds <= 0 {
 		panic(fmt.Sprintf("sched: WithDeadNodeReconcilerStalenessSeconds: seconds must be > 0, got %d", seconds))
@@ -5991,7 +6001,19 @@ func (e *Engine) ReconcileDeadNodeInstances(ctx context.Context) (int, error) {
 	}
 
 	reconciled := 0
+	mayTakeOver := map[string]bool{}
 	for _, ins := range rows {
+		// ADR-1344 §4 phase 2: one lease read per node per tick.
+		if e.takeoverGuard != nil {
+			allowed, seen := mayTakeOver[ins.NodeID]
+			if !seen {
+				allowed = e.takeoverGuard.MayTakeOver(ctx, "dead_node_sweep", ins.NodeID)
+				mayTakeOver[ins.NodeID] = allowed
+			}
+			if !allowed {
+				continue
+			}
+		}
 		recErr := e.store.FailRunningInstanceOnDeadNode(ctx, ins.ID, ins.NodeID, threshold)
 		switch {
 		case recErr == nil:
