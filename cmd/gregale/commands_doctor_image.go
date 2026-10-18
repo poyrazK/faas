@@ -39,7 +39,7 @@ func (f *doctorImageFlags) validate(fs *flag.FlagSet) error {
 	visited := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { visited[f.Name] = true })
 	if fs.NArg() > 1 || (f.image != "" && fs.NArg() != 0) {
-		return errors.New("choose one source path or --image REF; put flags before the source path")
+		return errors.New("choose one source path or --image REF")
 	}
 	if visited["image"] {
 		if _, err := reference.ParseNormalizedNamed(f.image); err != nil {
@@ -84,8 +84,8 @@ func runDoctorImageCommand(flags *doctorImageFlags, inspector doctorImageInspect
 		// Reuse the maximum credential size accepted by the platform.
 		password, err := io.ReadAll(io.LimitReader(osStdin, int64(api.MaxRegistryPasswordBytes)+1))
 		if err != nil || len(password) > api.MaxRegistryPasswordBytes || len(strings.TrimSpace(string(password))) == 0 {
-			_, _ = fmt.Fprintln(osStderr, "cannot read a nonempty registry credential within the platform size limit")
-			return 2
+			PrintUsage(osStderr, "cannot read a nonempty registry credential within the platform size limit", "doctor")
+			return 1
 		}
 		auth = &oci.BasicAuth{Username: flags.user, Password: strings.TrimRight(string(password), "\r\n")}
 	}

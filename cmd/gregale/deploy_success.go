@@ -471,6 +471,7 @@ func writeWaitedDeploymentReceiptUntilWithOptions(ctx context.Context, c *Client
 	if receipt.WaitStage != "" {
 		receipt.Recovery = newDeployRecovery(receipt.WaitStage, appSlug, final.ID, "", deadline, waitForRollout)
 		receipt.Recovery.ResumeCommand = ""
+		receipt.Recovery.NextCommand = failedDeploymentRecovery(appSlug, final).NextCommand
 		receipt.Recovery.Hint = "The deployment or rollout reached a failed terminal state. Inspect the deployment and its logs before submitting a corrected deployment."
 	}
 	if code := jsonOut(writeJSON(receipt)); code != 0 {
