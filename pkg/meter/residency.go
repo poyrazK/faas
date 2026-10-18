@@ -119,7 +119,7 @@ func residencyElapsedHours(now time.Time) float64 {
 // the loop can stop and inspect — recovery is a daemon restart for a
 // fully-stuck Store, which is heavy enough to warrant the call.
 func (r *Residency) RunOnce(ctx context.Context) (map[api.Plan]int, error) {
-	accounts, err := r.store.ListAllAccounts(ctx)
+	accounts, err := state.ListBillingResourceAccounts(ctx, r.store)
 	if err != nil {
 		return nil, err
 	}

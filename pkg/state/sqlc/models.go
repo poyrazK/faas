@@ -1073,6 +1073,24 @@ type AppRegistryCredential struct {
 	LastUsedAt        pgtype.Timestamptz
 }
 
+type AppResourceAccount struct {
+	AppID                  pgtype.UUID
+	ID                     pgtype.UUID
+	PastDueAt              pgtype.Timestamptz
+	DeletionRequestedAt    pgtype.Timestamptz
+	LastQuotaWarningAt     pgtype.Timestamptz
+	SuspendedReason        pgtype.Text
+	Plan                   string
+	Status                 string
+	AbuseHoldAt            pgtype.Timestamptz
+	AbuseHoldReason        pgtype.Text
+	EgressAllowlistExtra   int32
+	CreatedAt              pgtype.Timestamptz
+	Email                  string
+	ProviderCustomerID     pgtype.Text
+	StripeSubscriptionItem pgtype.Text
+}
+
 type AppRoutePriority struct {
 	AppID     pgtype.UUID
 	AccountID pgtype.UUID
@@ -1785,6 +1803,13 @@ type BillingQuotaWarning struct {
 	FollowupCompletedAt pgtype.Timestamptz
 	LeaseID             pgtype.UUID
 	LeaseUntil          pgtype.Timestamptz
+}
+
+type BillingResourceAccount struct {
+	ID          pgtype.UUID
+	Plan        string
+	Status      string
+	AbuseHoldAt pgtype.Timestamptz
 }
 
 // Month-end billing runs (ADR-1301): one ended UTC month billed for every customer with billable usage; worker-leased.
@@ -5571,6 +5596,7 @@ type Invocation struct {
 	EnvironmentID            pgtype.UUID
 	ReplayRootInvocationID   pgtype.UUID
 	ReplayRootCreatedAt      pgtype.Timestamptz
+	AsyncQuotaSubjectID      pgtype.UUID
 }
 
 type InvocationAttemptHistory struct {
@@ -6609,6 +6635,7 @@ type ManagedPostgresBinding struct {
 	RotationWakeID             pgtype.UUID
 	RotationCleanupReady       bool
 	CutoverID                  pgtype.UUID
+	DatabaseAccountID          pgtype.UUID
 }
 
 type ManagedPostgresCheckpointMaintenance struct {
@@ -6838,6 +6865,7 @@ type ManagedPostgresDatabase struct {
 	DataResourceID              pgtype.Text
 	CloneResourceRole           string
 	AccountingRequired          bool
+	OrgID                       pgtype.UUID
 }
 
 type ManagedPostgresHealth struct {
@@ -8059,6 +8087,7 @@ type ObjectBucket struct {
 	ServeAt                        pgtype.Text
 	EnvironmentCloneSourceBucketID pgtype.UUID
 	EnvironmentCloneOperationID    pgtype.UUID
+	OrgID                          pgtype.UUID
 }
 
 type ObjectBucketEncryption struct {
@@ -8446,28 +8475,30 @@ type ObjectStorageRequestMetric struct {
 }
 
 type ObjectStorageS3Credential struct {
-	ID                pgtype.UUID
-	AccountID         pgtype.UUID
-	BucketID          pgtype.UUID
-	AccessKeyID       string
-	SecretSealed      []byte
-	Kid               string
-	Label             string
-	Permission        string
-	Status            string
-	CreatedAt         pgtype.Timestamptz
-	LastUsedAt        pgtype.Timestamptz
-	RevokedAt         pgtype.Timestamptz
-	ManagedAppID      pgtype.UUID
-	ManagedScope      pgtype.Text
-	ManagedPrefix     pgtype.Text
-	RotationParentID  pgtype.UUID
-	RotationWakeID    pgtype.UUID
-	RotationStampedAt pgtype.Timestamptz
-	UrlRequest        []byte
-	UrlApiKeyID       pgtype.UUID
-	UrlExpiresAt      pgtype.Timestamptz
-	UrlReceiptID      pgtype.UUID
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	BucketID             pgtype.UUID
+	AccessKeyID          string
+	SecretSealed         []byte
+	Kid                  string
+	Label                string
+	Permission           string
+	Status               string
+	CreatedAt            pgtype.Timestamptz
+	LastUsedAt           pgtype.Timestamptz
+	RevokedAt            pgtype.Timestamptz
+	ManagedAppID         pgtype.UUID
+	ManagedScope         pgtype.Text
+	ManagedPrefix        pgtype.Text
+	RotationParentID     pgtype.UUID
+	RotationWakeID       pgtype.UUID
+	RotationStampedAt    pgtype.Timestamptz
+	UrlRequest           []byte
+	UrlApiKeyID          pgtype.UUID
+	UrlExpiresAt         pgtype.Timestamptz
+	UrlReceiptID         pgtype.UUID
+	IssuerAccountID      pgtype.UUID
+	IssuerAccessRevision pgtype.Int8
 }
 
 type ObjectStorageUploadGrant struct {
@@ -8709,18 +8740,29 @@ type OperatorRestartExecution struct {
 }
 
 type Org struct {
-	ID                     pgtype.UUID
-	Slug                   string
-	Name                   string
-	PersonalOrg            bool
-	PersonalOwnerAccountID pgtype.UUID
-	Plan                   string
-	Status                 string
-	ProviderCustomerID     pgtype.Text
-	StripeSubscriptionItem pgtype.Text
-	DeletedPending         bool
-	CreatedAt              pgtype.Timestamptz
-	UpdatedAt              pgtype.Timestamptz
+	ID                       pgtype.UUID
+	Slug                     string
+	Name                     string
+	PersonalOrg              bool
+	PersonalOwnerAccountID   pgtype.UUID
+	Plan                     string
+	Status                   string
+	ProviderCustomerID       pgtype.Text
+	StripeSubscriptionItem   pgtype.Text
+	DeletedPending           bool
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+	ResourceOwnershipEnabled bool
+	PastDueAt                pgtype.Timestamptz
+	LastQuotaWarningAt       pgtype.Timestamptz
+	SuspendedReason          pgtype.Text
+	AbuseHoldAt              pgtype.Timestamptz
+	AbuseHoldReason          pgtype.Text
+	BillingEmail             string
+	BusinessName             string
+	BillingAddress           string
+	TaxID                    string
+	ObjectStorageOwnedFrom   pgtype.Timestamptz
 }
 
 // Curated organization activity timeline; safe display facts only, FK-free and append-only
@@ -8782,6 +8824,7 @@ type OrgMembership struct {
 	InvitedByAccountID pgtype.UUID
 	JoinedAt           pgtype.Timestamptz
 	RemovedAt          pgtype.Timestamptz
+	AccessRevision     int64
 }
 
 type OutboundAdmissionLease struct {
@@ -11046,6 +11089,7 @@ type QueueBinding struct {
 	RetiredAt       pgtype.Timestamptz
 	DeploymentScope string
 	EnvironmentID   pgtype.UUID
+	OrgID           pgtype.UUID
 }
 
 type QueueBindingCanary struct {
@@ -11348,6 +11392,10 @@ type ReservedIpLease struct {
 	StatusDetail string
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+}
+
+type ResourceNamespace struct {
+	ID pgtype.UUID
 }
 
 type ResponseCachePurgeChangeLog struct {

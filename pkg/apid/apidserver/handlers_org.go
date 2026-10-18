@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
 	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -248,13 +249,11 @@ func (s *server) softDeleteOrg(w http.ResponseWriter, r *http.Request, acct stat
 	if !ok {
 		return
 	}
-	if err := s.store.SoftDeleteOrg(r.Context(), org.ID); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-			api.CodeCapacity,
-			"SoftDeleteOrg failed",
-			"try again; if the problem persists, contact support"))
+	if problem := postgresaccess.DeleteOrganization(r.Context(), s.store, s.managedPostgres, org); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
+
 	s.audit.Emit(r.Context(), "org.deleted", &acct.ID, map[string]any{
 		"org_id": org.ID,
 		"slug":   org.Slug,

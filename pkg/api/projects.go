@@ -8,6 +8,7 @@ import (
 // ProjectSummaryResponse is the stable account-scoped project list shape.
 type ProjectSummaryResponse struct {
 	ID               string `json:"id"`
+	OrgID            string `json:"org_id,omitempty"`
 	Slug             string `json:"slug"`
 	RepoFullName     string `json:"repo_full_name,omitempty"`
 	ProductionBranch string `json:"production_branch,omitempty"`

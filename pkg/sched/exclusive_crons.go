@@ -50,7 +50,7 @@ func (l *Loop) dispatchExclusiveCron(ctx context.Context, cron state.Cron, accou
 	if err != nil || app.AccountID != accountID {
 		return CronRun{}, state.ErrNotFound
 	}
-	account, err := l.engine.Store().AccountByID(ctx, accountID)
+	account, err := state.AppResourceAccount(ctx, l.engine.Store(), app)
 	if err != nil {
 		return CronRun{}, err
 	}
