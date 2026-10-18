@@ -3699,7 +3699,7 @@
       "reason",
       "used_at"
     ],
-    "kind": "operational"
+    "kind": "configuration"
   },
   {
     "table": "deployment_mcp_task_holds",
@@ -9180,7 +9180,7 @@
       "sequence",
       "suppression_reason"
     ],
-    "kind": "operational"
+    "kind": "data"
   },
   {
     "table": "mcp_readiness_incidents",
