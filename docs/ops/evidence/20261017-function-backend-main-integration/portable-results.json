@@ -1258,5 +1258,107 @@
     "fresh_hosted_current_head_checks": "required",
     "native_physical_acceptance": false,
     "production_activation": false
+  },
+  "generation_handoff_release_main_integration": {
+    "integrated_main": "60e81018c0a60f2040dfd6d708d7a5f0d1d97f79",
+    "tested_source_tree": "2cba47278ca70c098b385f0f205395ebc4bb1a22",
+    "function_contract_reference": "e13d5b7a9666391a8b7ab73a256804b36b95e890",
+    "function_host_scheduler_and_schema_proto_sdk_unchanged": true,
+    "phases": [
+      {
+        "name": "wire-compile",
+        "exitCode": 0,
+        "seconds": 4.771
+      },
+      {
+        "name": "wire-race",
+        "exitCode": 0,
+        "seconds": 70.921,
+        "counts": {
+          "skip": 2,
+          "pass": 7
+        },
+        "skippedTests": [
+          "TestHandoffProbeHelperProcess",
+          "TestHandoffHelperProcess"
+        ],
+        "failedTests": []
+      },
+      {
+        "name": "genslot-compile",
+        "exitCode": 0,
+        "seconds": 0.474
+      },
+      {
+        "name": "genslot-race",
+        "exitCode": 0,
+        "seconds": 1.559,
+        "counts": {
+          "pass": 4
+        },
+        "skippedTests": [],
+        "failedTests": []
+      },
+      {
+        "name": "units-compile",
+        "exitCode": 0,
+        "seconds": 44.281
+      },
+      {
+        "name": "units-race",
+        "exitCode": 0,
+        "seconds": 21.033,
+        "counts": {
+          "pass": 148,
+          "skip": 7
+        },
+        "skippedTests": [
+          "TestAnsiblePostgresModuleArgumentsExist",
+          "TestComputeEdgeFirewallStandardJinja",
+          "TestPgHbaAdmitsTheStandbyOnlyWhenDeclared",
+          "TestStandbyReplicationFirewallStandardJinja",
+          "TestPublicEdgeFrontsGatewaydPublicBehindCloudflare",
+          "TestUDPFirewallStringOptInStandardJinja",
+          "TestPublicEdgeFirewallCustomDomainsStandardJinja"
+        ],
+        "failedTests": []
+      }
+    ],
+    "renderer_followup": {
+      "counts": {
+        "pass": 23,
+        "skip": 1
+      },
+      "skips": [
+        "TestPublicEdgeFrontsGatewaydPublicBehindCloudflare"
+      ],
+      "log_sha256": "5f8913011bf2682a16e40537c0b6b6432b85c2dacd6b3914b300b59288095eb2"
+    },
+    "initial_handoff_refusal": {
+      "cause": "real cgroup memory pressure from completed build outputs and file cache",
+      "used_bytes_before": 13099790336,
+      "limit_bytes": 17179869184,
+      "used_bytes_after_cleanup": 4163010560,
+      "production_guard_unchanged": true,
+      "repeated_unchanged_test_passed": true
+    },
+    "release_fixtures": {
+      "edge_rollout_passed": 8,
+      "unit_deploy": "pass with stubbed SSH/SCP/SLO",
+      "release_verifier": "pass",
+      "real_deployment": false
+    },
+    "source_citations": {
+      "adr": "20261018074719",
+      "new_handoff_citation_files": 47,
+      "older_ci_adr_1580_preserved": true,
+      "duplicate_baseline_unchanged": true
+    },
+    "generated_units": "pass",
+    "environment_contract": "pass",
+    "documentation_links": "pass",
+    "http_documentation_fixtures_passed": 4,
+    "native_physical_acceptance": false,
+    "production_activation": false
   }
 }

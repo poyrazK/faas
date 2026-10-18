@@ -7,6 +7,36 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Two-generation hand-off on reload — 2026-10-18 (branch, not released)
+
+gatewayd-public, gatewayd-internal, apid and realtimed hand off on
+`systemctl reload`: the new release starts on the same sockets and serves new
+connections, and the old generation finishes requests and streams longer than
+the 25 s restart grace, for up to 30 minutes
+([ADR-20261018074719](adr/20261018074719-zero-downtime-daemon-restarts.md), "Two generations").
+deployctl reloads them when only the binary changed and both releases can
+hand off, and restarts otherwise. gatewayd-internal's egress ledger and usage
+outbox and realtimed's callback outbox use per-generation slots. realtimed
+closes its WebSocket sessions at the hand-off (fan-out is per process).
+Portable tests cover a 30 s request across a hand-off with no failed request,
+a refused hand-off, both gateways' drains with requests longer than the grace,
+store adoption across generations, a realtimed hand-off under load, and
+deployctl's reload-or-restart decision. Native run on fsn-4 (systemd 255,
+2026-10-18), with transient units using pkg/wire's hand-off and the real
+realtimed binary:
+- a reload under load: 235,434 requests, 0 failures; three 35 s requests and a
+  90 s SSE stream finished on the old process, and systemd adopted the new one
+  as main in 0.4 s with the watchdog satisfied;
+- two reloads 10 s apart: 0 failures;
+- a successor that never becomes ready: 0 failures, `STATUS=hand-off failed`;
+- realtimed reloaded twice under load: 0 failures;
+- a successor that crashes is restarted by systemd;
+- a restart after a hand-off drains for the 25 s grace.
+The first native run found that a successor started by the old process was an
+alien main process to systemd, which SIGKILLed it on restart; successors are
+now systemd's children. Open: apid's memory headroom (256 M), a WebSocket
+across a gateway hand-off on a real node, and a deploy through deployctl.
+
 ## Zero-downtime daemon restarts — 2026-10-17 (branch, not released)
 
 gatewayd-internal (unix socket and compute data listener), realtimed and the

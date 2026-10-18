@@ -429,6 +429,31 @@ Only the three function migrations differ from the integrated main and pass
 the expand/contract check. Native activation and physical acceptance remain
 pending.
 
+## Generation handoff and release contract compatibility (2026-10-18)
+
+Main through `60e81018c0a60f2040dfd6d708d7a5f0d1d97f79` adds generation
+handoffs and per-unit release validation. Its new daemon restart citations
+follow ADR-20261018074719. The older CI decision and duplicate baseline remain
+intact. Function host/scheduler sources, schema, SQLC configuration, protobufs,
+OpenAPI and SDK trees match the previously validated `e13d5b7a9` source.
+
+Merged tree `2cba47278ca70c098b385f0f205395ebc4bb1a22` passes seven handoff
+race tests and four generation-slot tests. Two direct helper entrypoints skip;
+the parent tests execute their subprocess paths. Daemon-unit race tests pass
+148 tests/subtests; a follow-up using the installed Python renderer passes 23
+more, with two distinct optional Ansible-related tests remaining unavailable.
+The eight edge-rollout cases and both hermetic unit-deployment/release-verifier
+shell suites pass. Their SSH, SCP and SLO execution are stubbed; no deploy runs.
+
+The first local handoff attempt correctly refused to create a successor while
+build artifacts/cache consumed about 13 GiB of the 16 GiB cgroup. Completed
+task-owned test binaries were removed and clean generated Go archive pages were
+reclaimed, reducing actual usage to about 4 GiB. The unchanged production
+headroom guard and the same handoff tests then pass. No memory limit, refusal
+threshold, assertion or deadline was changed. Generation, environment-contract
+and documentation checks pass, including four HTTP fixtures. Fresh hosted checks
+on the published exact head remain required.
+
 ## Qualification boundary
 
 Production activation remains disabled. This managed container has no supported
