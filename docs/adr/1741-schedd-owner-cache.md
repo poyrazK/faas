@@ -156,8 +156,9 @@ lease epoch. The guard has one place to add it.
 
 A boot needs its instance row before vmmd starts the VM, so the watchdog and
 crash recovery see it; the publication after the boot is the second write.
-Its bookkeeping (standards capture, scaling stamps, event, notification)
-rides in those two statements.
+Its bookkeeping (standards capture, event, notification) rides in those two
+statements. The scale-out stamp does not: it runs while vmmd boots, off
+the critical path (see Rollout).
 
 ## Alternatives considered
 
@@ -186,20 +187,63 @@ rides in those two statements.
 
 ## Rollout
 
-Done on branch `perf/schedd-owner-cache`: steps 1 to 4, and step 5's
-admission guard. Measured on real Postgres (`TestPostgresBootStatements`): a
-cold boot with the entry cached runs 41 statements in about 38 round trips,
-against 54 in about 48 without the cache; a ticketed thaw runs one statement.
-The entry also keeps the runtime values' three reads (each wake builds its
-own values from them), exists only while the cutover barrier is clear at its
-generation, and carries the workload-retirement gate's verdict, as does a
-thaw ticket. The gate is deferred only for a production wake with no
-explicit deployment, scope or bypass; when the cache misses, it runs in wake
-phase 1 before any write. What remains is
-step 5: the snapshot choice and node usage are still read,
-and the boot's bookkeeping (standards capture, a 14-statement scaling-state
-transaction) and its 9-statement publication still run as their own
-transactions.
+Steps 1 to 4 and step 5's admission guard landed first: a ticketed thaw
+runs one statement, and the entry also keeps the runtime values' three
+reads, exists only while the cutover barrier is clear at its generation,
+and carries the workload-retirement gate's verdict, as does a thaw ticket.
+The gate is deferred only for a production wake with no explicit
+deployment, scope or bypass; when the cache misses, it runs in wake phase 1
+before any write.
+
+Step 5 (2026-10-18) measures what a boot waits for, not every statement it
+runs: `TestPostgresBootStatements` gives vmmd 150 ms, as a real restore
+takes hundreds, and counts the round trips before and after it. Statements
+that run while vmmd boots are off the critical path. That corrected one
+part of this ADR: the scale-out stamp, a 17-statement transaction, already
+runs during the boot and is joined only before the publication, so folding
+it into the publication would lengthen the wake. It stays where it is.
+
+Step 5 then did three things:
+
+- A boot admitted from the cache publishes on its admission's generation:
+  the publication takes the generation's share lock after its own row
+  locks instead of the fence's three locks, values read and recomputed
+  fingerprint, and the managed Postgres barrier (an apps column) is not
+  read again. When the generation moved during the boot, nothing is
+  written and the publication goes through the barrier and the fence as
+  before, so a VM is never discarded for the coarser check.
+  `schedd_owner_cache_total{outcome="guarded_publish"|"guarded_publish_moved"}`.
+- The admission insert binds ADR-1523's snapshot-recovery lineage in its
+  own transaction, one `INSERT ... SELECT` that share-locks the deployment
+  and app, instead of a ten-statement transaction after it. A binding it
+  cannot make refuses the admission, so no instance exists unbound.
+- Independent reads run concurrently: the snapshot gate and choice, the
+  receipt checks (which reuse the wake's deployment), the node memory and
+  CPU aggregates, the standards capture and enrollment; the boot reuses the
+  receipt the choice read.
+
+Round trips on the critical path, on Postgres. The "after" column places
+from schedd's node registry, as `cmd/schedd` does; the registry alone saves
+one round trip of the difference.
+
+| wake | before step 5 | after step 5 |
+|---|---|---|
+| restore, owner cache warm | 52 (42 before vmmd, 10 after) | 31 (25 before, 6 after) |
+| cold boot, owner cache warm | 44 | 28 |
+| restore, cache off | 62 | 44 |
+| thaw, frozen fast path | 1 | 1 |
+
+What is left before vmmd, for a warm-cache restore: wake phase 1's
+running-instance lookup (1), the snapshot reads (2), the locality and
+usage reads (2), the restore-pressure lease (3: a fleet-wide advisory
+lock, the lease counts, the lease insert) and the admission transaction
+(10). Reaching section 5's two writes needs the admission transaction as
+one statement or function: node admission locks, the node advisory lock,
+the headroom reads, the insert, the binding and the generation check. The
+node advisory lock cannot share a statement with the headroom read under
+READ COMMITTED (the read's snapshot would predate the lock), so it takes a
+function. That rewrites ADR-193 and ADR-1528's admission and is left for
+a decision of its own.
 
 1. This ADR.
 2. Migration: the counter table, triggers and notification, the store
