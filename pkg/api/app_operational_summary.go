@@ -45,6 +45,7 @@ type AppOperationalIncident struct {
 }
 
 type AppOperationalRecovery struct {
+	Workers            *AppWorkerRecovery                   `json:"workers,omitempty"`
 	Coverage           string                               `json:"coverage,omitempty"`
 	RollbacksAvailable bool                                 `json:"rollbacks_available"`
 	RestartsAvailable  bool                                 `json:"restarts_available"`
