@@ -710,6 +710,14 @@ func (s *server) applySourceRefLifecycle(ctx context.Context, acct state.Account
 	}
 	staged.lifecycleChanged = true
 	staged.previousLifecycle = sourceLifecycleFields(app.Manifest)
+	if !reflect.DeepEqual(updated.BeforeCheckpoint, app.Manifest.BeforeCheckpoint) ||
+		!reflect.DeepEqual(updated.Profiling, app.Manifest.Profiling) || !reflect.DeepEqual(updated.Tracing, app.Manifest.Tracing) {
+		// As PATCH /v1/apps/{slug} does: existing process snapshots were
+		// captured with the previous checkpoint setting.
+		if _, err := state.InvalidateAppSnapshots(ctx, s.store, app.ID); err != nil {
+			return api.ErrCapacity("could not invalidate application snapshots")
+		}
+	}
 	_ = s.notif.Notify(ctx, db.NotifyAppChanged,
 		fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s","lifecycle_changed":true}`, app.Slug, app.ID))
 	return nil

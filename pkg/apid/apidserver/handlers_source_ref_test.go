@@ -896,13 +896,32 @@ func TestSourceRef_AppliesArchiveLifecycleHooks(t *testing.T) {
     path: /internal/after-restore
     timeout_ms: 2000
 `
+	live, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: e.appID, Kind: state.DeploymentKindImage, Status: state.DeployLive,
+		ImageDigest: "sha256:deadbeefcafebabe1234567890abcdef1234567890abcdef1234567890abcdef",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	for i := range 2 { // A repeat deploy with the same hooks is a no-op update.
+		snapshot, err := e.store.CreateSnapshot(context.Background(), state.Snapshot{
+			DeploymentID: live.ID, Tier: state.SnapshotTierInit, FCVersion: "test", StorageKey: []string{"snap/init-first", "snap/init-repeat"}[i],
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
 		e.gh.streamBody = nopReadCloser{bytes.NewReader(buildSourceRefTarGzWithManifest(t, manifest))}
 		rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
 			Repo: "onebox-faas/hello", Ref: "0123456789abcdef0123456789abcdef01234567",
 		})
 		if rec.Code != http.StatusAccepted {
 			t.Fatalf("deploy %d: status = %d, want 202; body=%s", i, rec.Code, rec.Body)
+		}
+		// Adding before_checkpoint retires snapshots captured without it, as
+		// PATCH does; an unchanged hook keeps the current capture.
+		latest, err := e.store.LatestSnapshotForTier(context.Background(), live.ID, state.SnapshotTierInit)
+		if reusable := err == nil && latest.ID == snapshot.ID; reusable != (i == 1) {
+			t.Fatalf("deploy %d: snapshot reusable = %v (err=%v)", i, reusable, err)
 		}
 	}
 	updated, err := e.store.AppByID(context.Background(), e.appID)
