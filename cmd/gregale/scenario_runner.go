@@ -1350,6 +1350,9 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	captureActions := func() {}
 	if scenario.Actions != nil {
 		receipt.Actions = &testActionEvidence{ManagedWorkSHA256: testManagedWorkDigest(scenario), SimulationSHA256: testSimulationPlanDigest(scenario.Actions.Simulation, members), Network: scenario.Actions.Network, Webhooks: scenario.Actions.Webhooks, PolicyVersion: 1, Status: "applied"}
+		if scenario.ManagedWork != nil && scenario.ManagedWork.PostgresFault != nil {
+			receipt.Actions.PostgresFaultSHA256 = rehearsalpg.Hash(*scenario.ManagedWork.PostgresFault)
+		}
 		names := make([]string, 0, len(members))
 		for _, member := range members {
 			names = append(names, member.Workload)

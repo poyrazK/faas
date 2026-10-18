@@ -4,7 +4,7 @@ on:
   pull_request:
     # Only this suite's own code. Shared hot paths (pkg/api, pkg/state,
     # pkg/apid, migrations, go.mod, cmd/gregale) changed on nearly every
-    # pull request; ci.yml runs this suite nightly and in the release gate.
+    # pull request; ci.yml runs this suite nightly and on dispatch.
     paths:
       - 'pkg/objectchecksum/**'
       - 'pkg/objectstorage/**'
@@ -12,7 +12,7 @@ on:
       - 'pkg/s3gateway/**'
       - 'pkg/state/*multipart*'
       - '.github/workflows/s3-multipart-integrity.yml'
-  # Nightly and release gate: ci.yml calls this workflow.
+  # Nightly and on dispatch: ci.yml calls this workflow.
   workflow_call:
   workflow_dispatch:
 

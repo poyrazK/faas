@@ -17,6 +17,7 @@ import (
 
 // Service is apid-owned. Owner loss cannot be adopted into complete evidence.
 type Service struct {
+	faultMu  sync.Mutex
 	Catalog  rehearsalpg.Catalog
 	Backend  Backend
 	OwnerID  string
@@ -132,6 +133,11 @@ func (s *Service) stop(id string) *session {
 }
 
 func (s *Service) Seal(ctx context.Context, account, run, deployment string) (rehearsalpg.Evidence, error) {
+	s.faultMu.Lock()
+	defer s.faultMu.Unlock()
+	if s.settlePostgresFault(ctx, account, run, false) != nil {
+		return rehearsalpg.Evidence{}, ErrFixture
+	}
 	r, e := s.Catalog.GetScenarioPostgres(ctx, account, run)
 	if e != nil {
 		return rehearsalpg.Evidence{}, ErrFixture
@@ -218,6 +224,11 @@ func (s *Service) failedCleanup(ctx context.Context, r rehearsalpg.Resource) {
 }
 
 func (s *Service) Delete(ctx context.Context, account, run string) error {
+	s.faultMu.Lock()
+	defer s.faultMu.Unlock()
+	if s.settlePostgresFault(ctx, account, run, true) != nil {
+		return ErrFixture
+	}
 	r, e := s.Catalog.GetScenarioPostgres(ctx, account, run)
 	if e != nil {
 		return ErrFixture
@@ -250,6 +261,9 @@ func (s *Service) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			cleanup, done := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			s.reconcilePostgresFaults(cleanup, true)
+			done()
 			s.mu.Lock()
 			var workers []*session
 			for _, w := range s.sessions {
@@ -265,6 +279,7 @@ func (s *Service) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			call, cancel := context.WithTimeout(ctx, 10*time.Second)
+			s.reconcilePostgresFaults(call, false)
 			rows, e := s.Catalog.ExpiredScenarioPostgres(call)
 			if e == nil {
 				for _, r := range rows {

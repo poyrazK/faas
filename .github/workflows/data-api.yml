@@ -4,7 +4,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     # Only this suite's own code. Shared hot paths (pkg/api, pkg/state,
     # pkg/apid, migrations, go.mod, cmd/gregale) changed on nearly every
-    # pull request; ci.yml runs this suite nightly and in the release gate.
+    # pull request; ci.yml runs this suite nightly and on dispatch.
     paths:
       - "pkg/apid/apidserver/managed_postgres_credentials*"
       - "pkg/managedpostgres/**"
@@ -28,7 +28,7 @@ on:
       - "scripts/ci/run-data-api-staging-canary.sh"
       - ".github/workflows/data-api-staging.yml"
       - ".github/workflows/data-api.yml"
-  # Nightly and release gate: ci.yml calls this workflow.
+  # Nightly and on dispatch: ci.yml calls this workflow.
   workflow_call:
   workflow_dispatch:
 # Only the newest push to a pull request is interesting; without a group every
