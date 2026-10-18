@@ -46,7 +46,6 @@ BuildByID
 BuildProvenanceByBuildID
 BumpFirst5xxCount
 BumpInstanceTailCount
-CancelDeploymentTx
 CancelInstanceMigration
 CancelInvocation
 CancelUploadSession
@@ -292,7 +291,6 @@ ListAppWebhooksForApp
 ListApps
 ListAppsByNodeID
 ListAppsWithRecentTelemetry
-ListAuditLog
 ListBuildsAwaitingImage
 ListBuildsForAccount
 ListBuildsForAccountPaged
@@ -399,7 +397,6 @@ MarkAccountEmailVerified
 MarkAllSnapshotsStaleByAppProtocol
 MarkAllSnapshotsStaleByFCVersion
 MarkAppRegistryCredentialUsed
-MarkBuildCancelled
 MarkComputeNodeInactive
 MarkDeploymentStageFailed
 MarkDomainVerified
@@ -458,7 +455,6 @@ PutManagedPostgresSecret
 QueueDeadLetter
 QueuePeek
 QueueState
-QueuedBuildsCount
 ReadActiveInstanceForWakeID
 ReadMFASecret
 ReapExpiredUploadSessions
@@ -493,7 +489,6 @@ RequestTelemetryBaselineP95ByRoute
 RequestTelemetryByDeployment
 RequestTelemetryCoverage
 RequestTelemetryErrorsByRoute
-RequeueBuild
 ResetAppWebhookDeliveryFromDead
 ResolveStaleRegressionObservations
 ResolveStatusIncident
@@ -534,7 +529,6 @@ SumOpenUploadSessionBytesByAccount
 SweepExpiredWebhookDeliveries
 SweepExpiredWorkflowEvents
 SweepExpiredWorkflowRuns
-SweepStuckRunningBuilds
 TenantSurfaceByHostname
 TouchConsumerKeyLastUsed
 TouchInstancesWithRequestDelta
@@ -552,7 +546,6 @@ UpdateAlertRule
 UpdateAppLogDrain
 UpdateAppWebhook
 UpdateBuildProvenanceSBOM
-UpdateBuildStatus
 UpdateCorsPreset
 UpdateCron
 UpdateCronWithOptions

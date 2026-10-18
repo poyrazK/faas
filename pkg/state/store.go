@@ -1005,6 +1005,14 @@ type DeploymentActivationLocker interface {
 // customer-intent tables through the methods it is given.
 type Store interface {
 	OperatorObservabilityReader
+	OperatorAlertHistoryStore
+	OperatorAlertTriageWriter
+	OperatorAlertTriageHistoryReader
+	OperatorAlertWorkloadReader
+	OperatorAlertResponseTimesReader
+	OperatorAlertRecurrenceReader
+	OperatorAlertCollectionHistoryReader
+	OperatorAlertRetentionStore
 	RecordMCPTaskPromotionHold(context.Context, string, string, MCPTaskPromotionRecovery) error
 	ClaimMCPTaskPromotionRecovery(context.Context, string) (*MCPTaskPromotionRecovery, error)
 	FinishMCPTaskPromotionRecovery(context.Context, string, int64, string) (bool, error)

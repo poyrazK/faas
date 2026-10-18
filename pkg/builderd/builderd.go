@@ -165,7 +165,8 @@ type Builderd struct {
 	// don't care about metrics; all observations guard on nil (the
 	// ObserveBuild* methods are also nil-safe). Wired in production via
 	// WithOpsMetrics from cmd/builderd.
-	ops *wire.OpsMetrics
+	ops      *wire.OpsMetrics
+	pipeline *PipelineMetrics
 	// events is the pkg/events.Platform (issue #517 / PR-C /
 	// ADR-064). When non-nil, the markSucceeded / markFailed
 	// helpers emit wake.build_succeeded / wake.build_failed on
@@ -542,10 +543,11 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 	} else {
 		build, err = b.store.ClaimQueuedBuild(ctx, buildID)
 	}
+	b.pipeline.observeClaim(ctx, "notification", err)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
-			// Already claimed (duplicate notify) or terminal. Drop
-			// silently — the other claimant owns it.
+			// Missing, already claimed/terminal, or affinity-deferred.
+			// No claim was acquired; this does not prove an empty queue.
 			return BuildResult{}, nil
 		}
 		return BuildResult{}, fmt.Errorf("builderd: claim build %s: %w", buildID, err)
@@ -555,11 +557,11 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 
 // ProcessNext is the durability-net worker surface (PR-B). It picks
 // the next queued build via SELECT … FOR UPDATE SKIP LOCKED, runs the
-// canonical pipeline, and returns ErrNotFound when the queue is
-// empty (the worker sleeps without surfacing an error). On slot
+// canonical pipeline, and returns ErrNotFound when no eligible row is
+// claimed (empty, locked or affinity-deferred). On slot
 // denial (DecideSlot returns !Allowed) the row is re-queued rather
-// than marked failed — the worker calls store.RequeueBuild right
-// after seeing ErrNoSlot so the build stays in the FIFO position
+// than marked failed — processClaimedBuild requeues before returning
+// ErrNoSlot so the build stays in the FIFO position
 // until a slot opens up. cmd/builderd's workerLoop in main.go owns
 // the cadence.
 //
@@ -585,6 +587,7 @@ func (b *Builderd) ProcessNext(ctx context.Context) (BuildResult, error) {
 	} else {
 		build, err = b.store.ClaimNextQueuedBuild(ctx)
 	}
+	b.pipeline.observeClaim(ctx, "poll", err)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return BuildResult{}, state.ErrNotFound
@@ -617,11 +620,15 @@ func (b *Builderd) stopIfBuildCancelled(ctx context.Context, claim state.Build) 
 // requeueClaim returns a worker-owned claim to the durable queue. Production
 // stores implement the claim-fenced capability; the legacy fallback preserves
 // compatibility with older state.Store implementations.
-func (b *Builderd) requeueClaim(ctx context.Context, claim state.Build) error {
+func (b *Builderd) requeueClaim(ctx context.Context, claim state.Build, reason string) error {
+	var err error
 	if fenced, ok := b.store.(state.BuildClaimRecoveryStore); ok {
-		return fenced.RequeueBuildIfClaim(ctx, claim)
+		err = fenced.RequeueBuildIfClaim(ctx, claim)
+	} else {
+		err = b.store.RequeueBuild(ctx, claim.ID)
 	}
-	return b.store.RequeueBuild(ctx, claim.ID)
+	b.pipeline.observeRequeue(ctx, reason, err)
+	return err
 }
 
 // processClaimedBuild runs the canonical pipeline for a build that
@@ -754,7 +761,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			return BuildResult{}, err
 		}
 		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("source storage unavailable — requeued (%v)\n", err))
-		if rerr := b.requeueClaim(ctx, build); rerr != nil {
+		if rerr := b.requeueClaim(ctx, build, requeueSource); rerr != nil {
 			b.log.Warn("builderd: requeue on source-storage failure", "build", build.ID, "err", rerr)
 		}
 		return BuildResult{}, err
@@ -766,7 +773,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 				return BuildResult{}, err
 			}
 			b.emitBuildLog(ctx, build.ID, fmt.Sprintf("source spool lag — requeued (%v)\n", err))
-			if rerr := b.requeueClaim(ctx, build); rerr != nil {
+			if rerr := b.requeueClaim(ctx, build, requeueSource); rerr != nil {
 				b.log.Warn("builderd: requeue on source-lag", "build", build.ID, "err", rerr)
 			}
 			return BuildResult{}, err
@@ -928,7 +935,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// running state with no live owner; the worker will
 		// never see it again. PR-C follow-up: stuck-running
 		// sweep (ADR-031).
-		if err := b.requeueClaim(ctx, build); err != nil {
+		if err := b.requeueClaim(ctx, build, requeueNoSlot); err != nil {
 			b.log.Warn("builderd: requeue on no-slot", "build", build.ID, "err", err)
 		}
 		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("no slot (%s) — requeued\n", slot.Reason))
@@ -1612,7 +1619,7 @@ func (b *Builderd) requeueClaimAfterCancellation(ctx context.Context, claim stat
 	if current.Status != state.BuildRunning || !current.StartedAt.Equal(claim.StartedAt) {
 		return
 	}
-	if err := b.requeueClaim(recoveryCtx, claim); err != nil && !errors.Is(err, state.ErrNotFound) {
+	if err := b.requeueClaim(recoveryCtx, claim, requeueCancellation); err != nil && !errors.Is(err, state.ErrNotFound) {
 		b.log.Warn("builderd: requeue cancelled claim", "build", claim.ID, "err", err)
 		return
 	}
@@ -1640,7 +1647,7 @@ func (b *Builderd) recoverClaimAfterLookupFailure(ctx context.Context, claim sta
 		return
 	}
 	if err := retryStateMutation(ctx, func() error {
-		return b.requeueClaim(ctx, claim)
+		return b.requeueClaim(ctx, claim, requeueLookup)
 	}); err != nil && !errors.Is(err, state.ErrNotFound) {
 		b.log.Warn("builderd: requeue after claim lookup failure", "build", claim.ID, "phase", phase, "err", err)
 	}

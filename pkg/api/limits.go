@@ -9468,12 +9468,163 @@ const (
 	// operator incident inbox. The inbox composes several already-bounded
 	// read paths, so its page stays small enough for a terminal or console
 	// poll while leaving the larger fleet list caps unchanged.
-	ObsIncidentLimitDefault  = 50
-	ObsIncidentLimitMax      = 200
-	ObsIncidentStuckAfter    = 5 * time.Minute
-	ObsOverviewTopN          = 5
-	ObsOverviewAuditWindow   = 24 * time.Hour
-	ObsOverviewFailureWindow = time.Hour
+	ObsIncidentLimitDefault   = 50
+	ObsIncidentLimitMax       = 200
+	ObsIncidentStuckAfter     = 5 * time.Minute
+	ObsOverviewTopN           = 5
+	ObsOverviewAuditWindow    = 24 * time.Hour
+	ObsOverviewFailureWindow  = time.Hour
+	ObsOverviewCohortWindow   = 14 * 24 * time.Hour
+	ObsOverviewNodeStaleAfter = time.Minute
+
+	ObsAlertCollectionHistoryRetention               = 30 * 24 * time.Hour
+	ObsAlertCollectionHistoryWindowDefault           = 24 * time.Hour
+	ObsAlertCollectionHistoryBudget                  = 5 * time.Second
+	ObsAlertCollectionOutcomeWriteBudget             = 2 * time.Second
+	ObsAlertCollectionOutcomeMaxAge                  = time.Minute
+	ObsAlertCollectionHistoryOutcomesMax             = 100000
+	ObsAlertCollectionHistoryIntervalsMax            = 200
+	ObsAlertCollectionHistoryPruneBatch              = 5000
+	ObsAlertCollectionFailureDetailsMax              = 20
+	ObsAlertCollectionRejectionItemsMax              = 10
+	ObsAlertCollectionRejectionMaxBytes              = 16 * 1024
+	ObsAlertCollectionRejectionStorageMaxBytes       = 32 * 1024
+	ObsAlertCollectionInterval                       = 30 * time.Second
+	ObsAlertCollectionBudget                         = 10 * time.Second
+	ObsAlertHistoryRetention                         = 30 * 24 * time.Hour
+	ObsAlertHistoryPruneBatch                        = 500
+	ObsAlertTriageSnoozeMax                          = 24 * time.Hour
+	ObsAlertTriageHistoryLimitDefault                = 25
+	ObsAlertTriageHistoryLimitMax                    = 100
+	ObsAlertTriageHistoryCursorTTL                   = 15 * time.Minute
+	ObsAlertTriageHistoryCursorMaxBytes              = 1024
+	ObsAlertTriageHistoryBudget                      = 5 * time.Second
+	ObsAlertWorkloadBudget                           = 5 * time.Second
+	ObsAlertResponseTimesBudget                      = 5 * time.Second
+	ObsAlertResponseTimesWindowDefault               = 24 * time.Hour
+	ObsAlertResponseTimesWindowMax                   = 30 * 24 * time.Hour
+	ObsAlertResponseTimesEpisodesMax                 = 1000
+	ObsAlertResponseTimesReceiptsMax                 = 10000
+	ObsAlertRecurrenceBudget                         = 5 * time.Second
+	ObsAlertRecurrenceWindowDefault                  = 24 * time.Hour
+	ObsAlertRecurrenceWindowMax                      = 30 * 24 * time.Hour
+	ObsAlertRecurrenceEpisodesMax                    = 1000
+	ObsAlertRecurrenceSeriesMax                      = 200
+	ObsAlertRecurrenceRecentMax                      = 5
+	ObsAlertWorkloadGroupMax                         = 72 // 3 statuses * 3 severities * 2 acknowledgment * 2 ownership * 2 snooze
+	ObsAlertTriageRevisionMax                  int64 = 9007199254740991
+	ObsAlertRetentionInterval                        = 30 * time.Second
+	ObsAlertRetentionBudget                          = 10 * time.Second
+	ObsAlertMaintenanceReadBudget                    = 5 * time.Second
+	ObsAlertRetentionFreshnessMaxAge                 = 2 * time.Minute
+	ObsAlertSnapshotMaxRules                         = 4096
+	ObsAlertSnapshotMaxAlerts                        = 4096
+	ObsAlertNameMaxBytes                             = 128
+	ObsAlertComponentMaxBytes                        = 64
+	ObsAlertRunbookMaxBytes                          = 2048
+
+	// Queue telemetry uses one sequential store read, independent of scrapes.
+	// Keep the freshness bound aligned with the Prometheus queue alert rules.
+	ObsBuildQueueCollectionInterval = 30 * time.Second
+	ObsBuildQueueCollectionBudget   = 3 * time.Second
+	ObsBuildQueueFreshnessMaxAge    = 2 * time.Minute
+
+	// Recovery observations have the same bounded, scrape-independent cadence.
+	ObsBuildRecoveryCollectionInterval = 30 * time.Second
+	ObsBuildRecoveryCollectionBudget   = 3 * time.Second
+	ObsBuildRecoveryFreshnessMaxAge    = 2 * time.Minute
+
+	// Image-handoff observations run independently of synchronous image work.
+	ObsBuildImageHandoffCollectionInterval = 30 * time.Second
+	ObsBuildImageHandoffCollectionBudget   = 3 * time.Second
+	ObsBuildImageHandoffFreshnessMaxAge    = 2 * time.Minute
+
+	// Durable image phase timing is observed independently of image execution.
+	ObsImagePreparationCollectionInterval = 30 * time.Second
+	ObsImagePreparationCollectionBudget   = 3 * time.Second
+	ObsImagePreparationFreshnessMaxAge    = 2 * time.Minute
+
+	ObsSnapshotPrimeCollectionInterval = 30 * time.Second
+	ObsSnapshotPrimeCollectionBudget   = 3 * time.Second
+	ObsSnapshotPrimeFreshnessMaxAge    = 2 * time.Minute
+	// Matches the existing prime recovery instance lookback, not a fleet cap.
+	ObsSnapshotPrimeInstanceLookback = 64
+
+	ObsCommandCronCollectionInterval = 30 * time.Second
+	ObsCommandCronCollectionBudget   = 3 * time.Second
+	ObsCommandCronFreshnessMaxAge    = 2 * time.Minute
+
+	ObsAppTaskCollectionInterval = 30 * time.Second
+	ObsAppTaskCollectionBudget   = 3 * time.Second
+	ObsAppTaskFreshnessMaxAge    = 2 * time.Minute
+
+	ObsPostCaptureCollectionInterval = 30 * time.Second
+	ObsPostCaptureCollectionBudget   = 3 * time.Second
+	ObsPostCaptureFreshnessMaxAge    = 2 * time.Minute
+
+	// Evidence reads over-fetch one row to make history truncation explicit.
+	ObsIncidentEvidenceLimitDefault = 25
+	ObsIncidentEvidenceLimitMax     = 100
+	ObsIncidentContextLimitDefault  = 25
+	ObsIncidentContextLimitMax      = 100
+	ObsIncidentContextWindow        = 24 * time.Hour
+	ObsIncidentContextCursorTTL     = 15 * time.Minute
+	ObsIncidentContextBudget        = 5 * time.Second
+
+	// A portable operator bundle captures bounded sections under one deadline.
+	// Current servers advertise an optional fourth rule-diagnostics section.
+	// It never follows resource pagination or arbitrary diagnostic links.
+	ObsIncidentBundleTimeoutDefault   = 30 * time.Second
+	ObsIncidentBundleTimeoutMax       = time.Minute
+	ObsIncidentBundleResponseMaxBytes = 1 << 20
+	ObsIncidentBundleMaxBytes         = 4 << 20
+
+	// Operator health has one shared Prometheus budget, including freshness
+	// reads, so an outage cannot multiply the per-query timeout by six.
+	ObsHealthPrometheusBudget    = 3 * time.Second
+	ObsHealthWindow              = 5 * time.Minute
+	ObsHealthObservationLookback = 15 * time.Minute
+	ObsHealthObservationStep     = 15 * time.Second
+	ObsHealthFreshnessMaxAge     = 2 * time.Minute
+	ObsHealthClockSkewTolerance  = 30 * time.Second
+
+	// Read-only notification observations never follow remote configuration,
+	// fetch credentials, or accept a destination from the request.
+	ObsNotificationBudget           = 3 * time.Second
+	ObsNotificationWindow           = 10 * time.Minute
+	ObsAlertmanagerResponseMaxBytes = 1 << 20
+	ObsAlertmanagerAlertsMax        = 4096
+	ObsNotificationIntegrationsMax  = 32
+
+	// Rule diagnostics assess the full bounded Prometheus rule snapshot and
+	// expose only a bounded, unhealthy-first metadata preview.
+	ObsRuleHealthBudget           = 3 * time.Second
+	ObsRuleHealthItemsMax         = 200
+	ObsRuleHealthIdentityMaxBytes = 128
+	ObsRuleHealthRunbookMaxBytes  = 512
+
+	// Expected rule coverage is explicit and bounded independently of health.
+	ObsRuleCoverageBudget = 3 * time.Second
+	// Critical input diagnostics pin reads to one time and bound work to six
+	// jobs, one always-instantiated readiness gauge each, and strict vectors.
+	ObsInputHealthBudget              = 3 * time.Second
+	ObsInputHealthMaxAge              = 120 * time.Second
+	ObsInputHealthLookback            = 10 * time.Minute
+	ObsInputHealthStep                = 15 * time.Second
+	ObsInputHealthJobsMax             = 6
+	ObsInputHealthTargetsMax          = 4096
+	ObsRuleCoverageItemsMax           = 200
+	ObsRuleCoverageExpectedSetsMax    = 8
+	ObsRuleCoverageExpectedFilesMax   = 8
+	ObsRuleCoverageExpressionMaxBytes = 16 * 1024
+	ObsRuleCoverageLabelsMax          = 64
+	ObsRuleCoverageLabelNameMaxBytes  = 128
+	ObsRuleCoverageLabelValueMaxBytes = 2048
+	ObsRuleCatalogMaxBytes            = 4 << 20
+	ObsRecordingDependentAlertsMax    = 5
+	ObsRecordingUnknownAlertsMax      = 5
+	ObsRecordingDependencyLinksMax    = 16384
+
 	// ObsIncidentWindowDefaultHours is the look-back used when an operator
 	// does not provide ?since. The API clamps explicit windows to the shared
 	// seven-day operator observability budget.

@@ -575,6 +575,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	ledger := sched.NewNodeLedger()
 	ops := wire.NewOpsMetrics("schedd")
+	appTaskMetrics := sched.NewAppTaskMetrics(ops.Registry(), appTaskEnabled, appTaskDispatchConcurrency)
+	go appTaskMetrics.RunObservation(ctx, store, log)
 	wire.BootStamps(ctx, "schedd", ops)
 	wire.RegisterDefaultOps(ops)
 	// ADR-190 follow-up: export this pool's live statistics so the
@@ -2204,7 +2206,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		backend := sched.NewRoutedVmmdAppTaskBackend(vmmRouter, engine.ResolveAppTaskRuntime)
 		appTaskCoordinator = sched.NewAppTaskCoordinator(store, backend, sched.AppTaskCoordinatorConfig{
-			Enabled: true, Owner: owner, MaxConcurrent: appTaskDispatchConcurrency,
+			Enabled: true, Owner: owner, MaxConcurrent: appTaskDispatchConcurrency, Metrics: appTaskMetrics,
 		}, log)
 		log.Info("schedd: app task dispatch enabled", "owner", owner, "max_concurrent", appTaskDispatchConcurrency)
 	}

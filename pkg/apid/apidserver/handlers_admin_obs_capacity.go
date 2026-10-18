@@ -26,14 +26,9 @@ func (s *server) obsCapacity(w http.ResponseWriter, r *http.Request, acct state.
 		api.WriteProblem(w, api.ErrCapacity("could not aggregate fleet capacity"))
 		return
 	}
-	apps, err := s.store.ListAllApps(r.Context())
+	profiles, err := s.store.OperatorCapacityProfiles(r.Context())
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not load app resource profiles"))
-		return
-	}
-	instances, err := s.store.ListAllInstances(r.Context())
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not load instance resource profiles"))
+		api.WriteProblem(w, api.ErrCapacity("could not aggregate resource profiles"))
 		return
 	}
 	protection, err := s.store.ServiceCapacityProtection(r.Context())
@@ -49,7 +44,7 @@ func (s *server) obsCapacity(w http.ResponseWriter, r *http.Request, acct state.
 			AppsTotal:        snapshot.AppsTotal,
 			TenantsTotal:     snapshot.TenantsTotal,
 			UnplacedApps:     snapshot.UnplacedApps,
-			ResourceProfiles: buildObsCapacityProfiles(apps, instances),
+			ResourceProfiles: profiles,
 		},
 		Nodes: make([]api.ObsCapacityNode, 0, len(snapshot.Nodes)),
 	}

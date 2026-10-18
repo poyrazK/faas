@@ -44,6 +44,7 @@ func (b *Builderd) acquireSlot() (SlotDecision, func(), bool) {
 	defer b.slotMu.Unlock()
 
 	if b.activeSlots >= maxBuilderSlots {
+		b.pipeline.observeAdmission("limit")
 		return SlotDecision{
 			Allowed: false,
 			Label:   "none",
@@ -56,9 +57,11 @@ func (b *Builderd) acquireSlot() (SlotDecision, func(), bool) {
 	}
 	decision := decider(b.resid, api.RAMAdmissionCeilingMB)
 	if !decision.Allowed {
+		b.pipeline.observeAdmission("policy")
 		return decision, nil, false
 	}
 	if b.activeSlots > 0 && decision.Label != "opportunistic" {
+		b.pipeline.observeAdmission("policy")
 		return SlotDecision{
 			Allowed: false,
 			Label:   "none",
@@ -70,6 +73,7 @@ func (b *Builderd) acquireSlot() (SlotDecision, func(), bool) {
 		decision.Reason = "guaranteed slot available"
 	}
 	b.activeSlots++
+	b.pipeline.observeAdmission("granted")
 
 	var once sync.Once
 	release := func() {

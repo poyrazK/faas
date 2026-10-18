@@ -141,6 +141,31 @@ func TestWriteObsHealthHuman_AbsentSubMapsFallback(t *testing.T) {
 	}
 }
 
+func TestWriteObsHealthHumanSignalStates(t *testing.T) {
+	for _, state := range []string{"healthy", "no_samples", "stale", "unavailable", "unknown", ""} {
+		t.Run(state, func(t *testing.T) {
+			snap := map[string]any{
+				"audit_log_write_total_5m": float64(0),
+				"signals": map[string]any{"audit_log_write_total_5m": map[string]any{
+					"state": state, "observed_at": "2026-10-15T12:00:00Z", "window_seconds": float64(300), "max_age_seconds": float64(120),
+				}},
+			}
+			var buf bytes.Buffer
+			writeObsHealthHuman(&buf, snap)
+			want := "audit_log_write_total_5m: unavailable state="
+			if state == "healthy" {
+				want = "audit_log_write_total_5m: 0 state=healthy"
+			}
+			if !strings.Contains(buf.String(), want) || !strings.Contains(buf.String(), "observed_at=2026-10-15T12:00:00Z window_seconds=300 max_age_seconds=120") {
+				t.Fatalf("output=%s", buf.String())
+			}
+			if !strings.Contains(buf.String(), "alerts_firing: unavailable state=unavailable") {
+				t.Fatalf("missing signal was rendered as a healthy fallback: %s", buf.String())
+			}
+		})
+	}
+}
+
 // TestCmdObsHealth_EndToEnd_JSON pins the JSON path: a real
 // httptest server serves the canonical snapshot, the CLI
 // fetches it with --json, and the stdout output is the
@@ -211,5 +236,20 @@ func TestCmdObsHealth_EndToEnd_NonOKStatus(t *testing.T) {
 
 	if got := cmdObsHealth(nil); got != 1 {
 		t.Errorf("cmdObsHealth with 403 = %d, want 1", got)
+	}
+}
+
+func TestWriteObsHealthHumanLegacyUnavailable(t *testing.T) {
+	var buf bytes.Buffer
+	writeObsHealthHuman(&buf, map[string]any{
+		"prometheus_available":        false,
+		"audit_log_write_total_5m":    float64(0),
+		"audit_log_write_failures_5m": float64(0),
+		"alerts_firing":               float64(0),
+	})
+	for _, name := range []string{"audit_log_write_total_5m", "audit_log_write_failures_5m", "alerts_firing"} {
+		if !strings.Contains(buf.String(), name+": unavailable") {
+			t.Fatalf("legacy outage rendered as observed zero: %s", buf.String())
+		}
 	}
 }
