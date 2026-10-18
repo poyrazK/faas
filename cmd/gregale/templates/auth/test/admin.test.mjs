@@ -202,3 +202,13 @@ test('lists sign-in activity newest first, for everyone or one user', async t =>
   assert.equal((await call('GET', '/admin/v1/activity?user=not-a-uuid', { key })).status, 400)
   assert.equal((await call('GET', '/admin/v1/activity')).status, 401)
 })
+
+test('serves email templates behind the admin key', async t => {
+  const { key, hash } = newAdminKey()
+  const call = await serve(t, { admin: fakeAdmin([]).admin, pool: fakePool(() => ({ rows: [] })), keys: adminKeyHashes({ AUTH_ADMIN_KEY_0A1B2C3D: hash }) })
+  assert.equal((await call('GET', '/admin/v1/emails')).status, 401)
+  const listed = await call('GET', '/admin/v1/emails', { key })
+  assert.equal(listed.status, 200)
+  assert.equal(listed.body.emails.length, 8)
+  assert.equal((await call('PATCH', '/admin/v1/emails/signup', { key, body: { body: '{{nope}}' } })).body.code, 'unknown_placeholder')
+})

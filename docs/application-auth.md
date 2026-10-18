@@ -502,6 +502,41 @@ inviter. Without a provider, flows that need email fail with
 `email_provider_unconfigured`; use OAuth providers, or `--autoconfirm` during
 development. Links and codes are never logged.
 
+### Your wording
+
+Each email has a default subject and body that you can replace, in any
+language. A template is plain text with placeholders; the Auth app escapes
+every value and lays the text out as HTML in the same simple style for every
+email, so templates cannot add markup. Separate paragraphs with a blank line.
+
+| Type | Sent when | Placeholders |
+| --- | --- | --- |
+| `signup` | someone signs up and must confirm their address | `{{app}}` `{{email}}` `{{link}}` `{{code}}` |
+| `invite` | you invite someone to create an account | `{{app}}` `{{email}}` `{{link}}` `{{code}}` |
+| `magiclink` | someone asks for a sign-in link | `{{app}}` `{{email}}` `{{link}}` `{{code}}` |
+| `recovery` | someone resets their password | `{{app}}` `{{email}}` `{{link}}` `{{code}}` |
+| `email_change` | someone changes their address (sent to both addresses) | `{{app}}` `{{email}}` `{{new_email}}` `{{link}}` `{{code}}` |
+| `code` | a one-time code is needed, such as before a sensitive change | `{{app}}` `{{email}}` `{{code}}` |
+| `security_notice` | a password, address, phone, sign-in method or second factor changes | `{{app}}` `{{email}}` `{{event}}` |
+| `organization_invitation` | a member invites someone to an organization | `{{app}}` `{{email}}` `{{org}}` `{{link}}` |
+
+When an email carries a link or code and your body does not place
+`{{link}}` or `{{code}}`, it is added at the end. Subjects take at most 150
+characters and cannot contain the link or code; bodies take at most 4,000
+bytes. Edit templates on the dashboard's **Emails** tab, or with the admin key
+from a terminal:
+
+```sh
+gregale auth emails list shop-auth
+gregale auth emails set shop-auth signup --subject 'Welcome to {{app}}' --body-file signup.txt
+gregale auth emails preview shop-auth signup --send-to you@example.com
+gregale auth emails reset shop-auth signup
+```
+
+A preview renders with example values and, with `--send-to`, goes out through
+your provider; it saves nothing. Saved templates apply to the next email, with
+no restart. They are kept in your database, in `gregale_auth.email_templates`.
+
 ## Hosted pages
 
 Send users to `https://<auth-host>/ui/sign-in?redirect_to=<your URL>`. The

@@ -4606,6 +4606,15 @@ var cliCommands = []cliCommand{
 				{Name: "list", Short: "List admin key IDs", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
 				{Name: "revoke", Short: "Revoke an admin key", Positionals: []string{"<name>", "<id>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
 			}},
+			{Name: "emails", Short: "Change the wording of the emails the Auth app sends", Subcommands: []cliSub{
+				{Name: "list", Short: "List the email types and whether each uses your wording", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "show", Short: "Show an email's subject, body and placeholders", Positionals: []string{"<name>", "<type>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "set", Short: "Change an email's subject, body or both", Positionals: []string{"<name>", "<type>"}, Flags: []cliFlag{{Name: "subject", Value: "TEXT", Short: "the subject line; placeholders such as {{app}} are filled in"}, {Name: "body", Value: "TEXT", Short: "the body text; separate paragraphs with a blank line"}, {Name: "body-file", Value: "FILE", Short: "read the body text from this file"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "reset", Short: "Return an email to the default wording", Positionals: []string{"<name>", "<type>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "preview", Short: "Render an email with example values, optionally a draft, and send it to yourself", Positionals: []string{"<name>", "<type>"}, Flags: []cliFlag{
+					{Name: "subject", Value: "TEXT", Short: "the subject line; placeholders such as {{app}} are filled in"}, {Name: "body", Value: "TEXT", Short: "the body text; separate paragraphs with a blank line"}, {Name: "body-file", Value: "FILE", Short: "read the body text from this file"}, {Name: "send-to", Value: "EMAIL", Short: "also send the preview to this address through your email provider"}, {Name: "html", Value: "FILE", Short: "write the preview's HTML version to this file"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
+				}},
+			}, Examples: []string{"gregale auth emails set shop-auth signup --subject 'Welcome to {{app}}' --body-file signup.txt", "gregale auth emails preview shop-auth signup --send-to me@example.com"}},
 			{Name: "import", Short: "Import users with their password hashes from a JSON or JSON Lines file", Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "file", Value: "FILE", Req: true, Short: "JSON array or JSON Lines file of users"},
 				{Name: "dry-run", Short: "validate the file without importing"},

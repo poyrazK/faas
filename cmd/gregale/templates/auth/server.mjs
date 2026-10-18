@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url'
 import pg from 'pg'
 import { adminKeyHashes, createAdminHandler, goTrueAdmin, goTrueError, signingKey } from './admin.mjs'
 import { createAuthzHandler, goTrueAuthenticator } from './authz.mjs'
-import { createHookServer, createMailer, hookAddress, hookEnv, newHookSecret } from './email.mjs'
+import { createHookServer, createMailer, hookAddress, hookEnv, loadEmailTemplates, newHookSecret } from './email.mjs'
 import { filterLogs } from './logs.mjs'
 import { callbackTokens, createRealtimeAuthorizer } from './realtime.mjs'
 import { storageBindings } from './storage.mjs'
@@ -216,7 +216,7 @@ export function start(env = process.env) {
   const pool = new pg.Pool({ connectionString: config.gotrueEnv.DATABASE_URL, max: limits.frontPool, idleTimeoutMillis: 5000 })
   pool.on('error', () => {})
   const accessToken = config.oauth ? payload => accessTokenClaims(pool, payload) : null
-  const hooks = createHookServer({ secret, mailer, api: config.api, app: config.app, accessToken })
+  const hooks = createHookServer({ secret, mailer, api: config.api, app: config.app, accessToken, templates: () => loadEmailTemplates(pool) })
   hooks.listen(hookAddress.port, hookAddress.host)
   const child = spawn(gotrue.binary, ['serve'], { env: { ...config.gotrueEnv, ...hookEnv(secret, { accessToken: config.oauth }), GOMEMLIMIT: goMemoryLimit() }, stdio: ['ignore', 'pipe', 'pipe'] })
   filterLogs(child.stdout, process.stdout)
@@ -231,7 +231,7 @@ export function start(env = process.env) {
   // The dashboard is served from the Gregale API origin.
   let dashboard = []
   try { dashboard = [new URL(env.AUTH_GREGALE_API_URL).origin] } catch { /* no dashboard origin sealed */ }
-  const admin = createAdminHandler({ pool, admin: goTrue, keys: adminKeyHashes(env), origins: dashboard, external: config.external })
+  const admin = createAdminHandler({ pool, admin: goTrue, keys: adminKeyHashes(env), origins: dashboard, external: config.external, emails: { mailer, api: config.api, app: config.app } })
   const scim = createScimHandler({ pool, admin: goTrue, base: config.external })
   const oauth = config.oauth ? {
     location: location => consentLocation(location, config.gotrueEnv.GOTRUE_SITE_URL, config.external),
