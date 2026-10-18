@@ -21,10 +21,6 @@ func addRuntimeSidecarSecretVersions(inputs *state.RuntimeConfigInputs, candidat
 	}
 }
 
-func (e *Engine) snapshotRuntimeConfigFresh(ctx context.Context, snap state.Snapshot) (bool, error) {
-	return e.snapshotRuntimeConfigFreshFor(ctx, snap, nil, nil)
-}
-
 // snapshotRuntimeConfigFreshFor checks snap with its deployment in hand (nil
 // reads it). The receipt and whether one is required are independent reads
 // and run concurrently (ADR-1741); a missing receipt then needs no more.
