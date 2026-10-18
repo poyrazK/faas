@@ -1,0 +1,55 @@
+# ADR-1344 §8: control-plane state backup alerts.
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/pg_backup.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: a backup older than 26 hours warns
+    interval: 1m
+    input_series:
+      - series: faas_cp_state_backup_last_success_timestamp_seconds{instance="cp-1:9100",job="node"}
+        values: 0+0x1700
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: FaasControlPlaneStateBackupStale
+        exp_alerts: []
+      - eval_time: 28h
+        alertname: FaasControlPlaneStateBackupStale
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              family: cp_state_backup
+              instance: cp-1:9100
+              job: node
+            exp_annotations:
+              summary: "The control plane's host-local state has no recent verified off-host copy"
+              description: |
+                The last verified control-plane state backup is older than 26 hours.
+                Losing the control plane now would lose every change to its keys and
+                secrets since then. Check `journalctl -u faas-cp-state-backup.service`.
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/ControlPlaneStateBackup.md"
+
+  - name: a failed backup unit warns
+    interval: 1m
+    input_series:
+      - series: node_systemd_unit_state{instance="cp-1:9100",job="node",name="faas-cp-state-backup.service",state="failed"}
+        values: 0 0 1 1 1 1 1 1 1 1
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: FaasControlPlaneStateBackupFailed
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              family: cp_state_backup
+              instance: cp-1:9100
+              job: node
+              name: faas-cp-state-backup.service
+              state: failed
+            exp_annotations:
+              summary: "The control-plane state backup failed on cp-1:9100"
+              description: |
+                faas-cp-state-backup.service failed: sealing, the off-host push or
+                its verification did not complete. Check
+                `journalctl -u faas-cp-state-backup.service`.
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/ControlPlaneStateBackup.md"

@@ -24,12 +24,15 @@
 #   4. Runs pending DB migrations
 #   5. Restarts all FaaS services
 #
-# The existing ci.yml must pass first (needs: [test] from ci.yml).
+# No CI gate here: the tag passed its pull request's light tier, and the
+# full suite (ci.yml) gates no release
+# (docs/adr/20261018104452-release-decoupled-from-full-ci.md).
 #
 # Per-unit releases (docs/adr/1650-per-unit-control-plane-releases.md):
 # with units_run_id instead of release_tag, the deploy-units job deploys a
 # signed unit release built by release-units.yml over the full release the
-# host runs, and restarts only the control-plane daemons it changed.
+# host runs, applies its lane-eligible migrations, and restarts only the
+# control-plane daemons it changed.
 
 name: cd-controlplane
 
@@ -167,9 +170,6 @@ jobs:
       # pkg/daemonunitspec (Entry.Critical) and shipped as
       # deploy/etc/daemons.json; the env lists that used to live here were
       # read by nothing (ADR-143 dead-config sweep).
-    # Only deploy if the CI workflow's test job succeeded.
-    # If ci.yml doesn't exist yet or the test job name differs, remove this.
-    # needs: test
     if: github.repository == 'poyrazK/faas' && inputs.units_run_id == ''
     # Raised from 15 for ADR-580: a changed control-plane contract runs the
     # control-plane roles before activation. An unchanged one costs under a
@@ -1207,9 +1207,16 @@ jobs:
   # the SLO gate (canary, the full gate, unless the edge lane passes
   # slo_gate=follower because a compute node went first) and rolls them back
   # to the previous binaries on a breach.
-  # Everything else, including migrations, units, roles and compute daemons,
-  # stays as the base release left it. cd-edge-units.yml calls this job with
-  # units_lane=edge for the control plane's own gateway.
+  # The data step (docs/adr/20261018084150-unit-lane-expand-migrations.md):
+  # when the range added migrations, every one declared expand and passed
+  # the lane verdict, and the control-plane lane's overlay carries the
+  # release commit's bin/migrate, which `deployctl deploy` runs before it
+  # activates or restarts anything. A failed migration fails the activation
+  # step, so nothing restarts and no SLO gate runs. Migrations are never
+  # rolled back: an expand migration is one the previous binaries run with.
+  # Everything else, including contract migrations, units, roles and compute
+  # daemons, stays as the base release left it. cd-edge-units.yml calls this
+  # job with units_lane=edge for the control plane's own gateway.
   deploy-units:
     name: Deploy unit release to Control Plane Host
     environment: ${{ inputs.deploy_environment }}
@@ -1354,6 +1361,8 @@ jobs:
             echo
             echo "Plan: **${action}** over \`$(jq -r .current "$RUNNER_TEMP/host-state.json")\` (previous release \`${previous_tag}\`)."
             echo "Restart: $(jq -r '.only | join(", ") | if . == "" then "none" else . end' "$plan")."
+            migrations="$(jq -r '.migrations // [] | length' "$plan")"
+            [[ "$migrations" == 0 ]] || echo "Migrations applied first: ${migrations} ($(jq -r '.data.version' "$UNITS_DIR/units-manifest.json")), lane-eligible expand only."
             pending="$(jq -r '[.pending[][]] | join(", ")' "$UNITS_DIR/units-manifest.json")"
             [[ -z "$pending" ]] || echo "Waiting for the next full release: ${pending}."
           } >> "$GITHUB_STEP_SUMMARY"

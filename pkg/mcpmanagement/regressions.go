@@ -29,6 +29,11 @@ func regressionSelection(args regressionsArgs) (int, error) {
 }
 
 func (m *management) listRegressions(ctx context.Context, args regressionsArgs) (any, error) {
+	return m.readRegressions(ctx, args, "")
+}
+
+// expectedAppID pins a subscription before collecting any new diagnostics.
+func (m *management) readRegressions(ctx context.Context, args regressionsArgs, expectedAppID string) (*guardedRead, error) {
 	limit, err := regressionSelection(args)
 	if err != nil {
 		return nil, err
@@ -36,6 +41,9 @@ func (m *management) listRegressions(ctx context.Context, args regressionsArgs) 
 	app, err := m.requestApp(ctx, args.App)
 	if err != nil {
 		return nil, err
+	}
+	if expectedAppID != "" && app.ID != expectedAppID {
+		return nil, invalid("identity_changed", "regression resource app identity changed; inspect before subscribing again")
 	}
 	native, err := m.client.ListAppDebugRegressions(ctx, args.App, args.Since)
 	if err != nil {

@@ -334,6 +334,9 @@ from .app_webhook_response_event_filter_item import AppWebhookResponseEventFilte
 from .app_webhook_response_retry_policy import AppWebhookResponseRetryPolicy
 from .app_webhook_response_webhook_secret_sealed_masked import AppWebhookResponseWebhookSecretSealedMasked
 from .app_webhook_retry_delivery_response import AppWebhookRetryDeliveryResponse
+from .app_worker_pool_observation import AppWorkerPoolObservation
+from .app_worker_recovery import AppWorkerRecovery
+from .app_worker_recovery_scope import AppWorkerRecoveryScope
 from .application_standard_adoption import ApplicationStandardAdoption
 from .application_standard_assignment import ApplicationStandardAssignment
 from .application_standard_assignment_list import ApplicationStandardAssignmentList
@@ -1047,6 +1050,8 @@ from .debug_regression_action_response import DebugRegressionActionResponse
 from .debug_regression_item import DebugRegressionItem
 from .debug_regression_item_kind import DebugRegressionItemKind
 from .debug_regression_item_state import DebugRegressionItemState
+from .debug_regression_review import DebugRegressionReview
+from .debug_regression_review_state import DebugRegressionReviewState
 from .debug_regressions_response import DebugRegressionsResponse
 from .debug_replay_comparison import DebugReplayComparison
 from .debug_replay_request import DebugReplayRequest
@@ -1952,6 +1957,8 @@ from .github_recovery_status_response import GithubRecoveryStatusResponse
 from .github_webhook_delivery_record import GithubWebhookDeliveryRecord
 from .github_webhook_delivery_record_status import GithubWebhookDeliveryRecordStatus
 from .grace_window_response import GraceWindowResponse
+from .guarded_debug_regression_action_request import GuardedDebugRegressionActionRequest
+from .guarded_debug_regression_action_request_action import GuardedDebugRegressionActionRequestAction
 from .image_run_response import ImageRunResponse
 from .image_run_response_image_status import ImageRunResponseImageStatus
 from .image_run_response_status import ImageRunResponseStatus
@@ -4775,6 +4782,13 @@ from .secret_scan_result import SecretScanResult
 from .security_quarantine_recovery_request import SecurityQuarantineRecoveryRequest
 from .security_quarantine_recovery_response import SecurityQuarantineRecoveryResponse
 from .security_quarantine_recovery_response_status import SecurityQuarantineRecoveryResponseStatus
+from .selected_trace_app import SelectedTraceApp
+from .selected_trace_invocation import SelectedTraceInvocation
+from .selected_trace_lookup_response import SelectedTraceLookupResponse
+from .selected_trace_lookup_response_invocations_status import SelectedTraceLookupResponseInvocationsStatus
+from .selected_trace_lookup_response_requests_status import SelectedTraceLookupResponseRequestsStatus
+from .selected_trace_lookup_response_selection import SelectedTraceLookupResponseSelection
+from .selected_trace_request import SelectedTraceRequest
 from .send_app_message_request import SendAppMessageRequest
 from .send_app_message_request_data_content_type import SendAppMessageRequestDataContentType
 from .send_app_message_request_datacontenttype import SendAppMessageRequestDatacontenttype
@@ -5185,6 +5199,7 @@ from .work_policy_list_response import WorkPolicyListResponse
 from .work_policy_response import WorkPolicyResponse
 from .work_policy_response_max_running_per_key import WorkPolicyResponseMaxRunningPerKey
 from .work_policy_response_pending_updates import WorkPolicyResponsePendingUpdates
+from .worker_admission_blocker import WorkerAdmissionBlocker
 from .worker_rollout_observation import WorkerRolloutObservation
 from .worker_rollout_observation_basis import WorkerRolloutObservationBasis
 from .worker_scaling import WorkerScaling
@@ -5859,6 +5874,9 @@ __all__ = (
     "AppWebhookResponseRetryPolicy",
     "AppWebhookResponseWebhookSecretSealedMasked",
     "AppWebhookRetryDeliveryResponse",
+    "AppWorkerPoolObservation",
+    "AppWorkerRecovery",
+    "AppWorkerRecoveryScope",
     "AssignAPIConsumerPlanRequest",
     "AssignPlatformTenantPlanRequest",
     "AsyncInvokeResponse",
@@ -6435,6 +6453,8 @@ __all__ = (
     "DebugRegressionItem",
     "DebugRegressionItemKind",
     "DebugRegressionItemState",
+    "DebugRegressionReview",
+    "DebugRegressionReviewState",
     "DebugRegressionsResponse",
     "DebugReplayComparison",
     "DebugReplayRequest",
@@ -7298,6 +7318,8 @@ __all__ = (
     "GithubWebhookDeliveryRecord",
     "GithubWebhookDeliveryRecordStatus",
     "GraceWindowResponse",
+    "GuardedDebugRegressionActionRequest",
+    "GuardedDebugRegressionActionRequestAction",
     "ImageRunResponse",
     "ImageRunResponseImageStatus",
     "ImageRunResponseStatus",
@@ -9885,6 +9907,13 @@ __all__ = (
     "SecurityQuarantineRecoveryRequest",
     "SecurityQuarantineRecoveryResponse",
     "SecurityQuarantineRecoveryResponseStatus",
+    "SelectedTraceApp",
+    "SelectedTraceInvocation",
+    "SelectedTraceLookupResponse",
+    "SelectedTraceLookupResponseInvocationsStatus",
+    "SelectedTraceLookupResponseRequestsStatus",
+    "SelectedTraceLookupResponseSelection",
+    "SelectedTraceRequest",
     "SendAppMessageRequest",
     "SendAppMessageRequestDatacontenttype",
     "SendAppMessageRequestDataContentType",
@@ -10257,6 +10286,7 @@ __all__ = (
     "WebhookAutomationReceiptResponseStatus",
     "WorkDecision",
     "WorkDecisionAction",
+    "WorkerAdmissionBlocker",
     "WorkerRolloutObservation",
     "WorkerRolloutObservationBasis",
     "WorkerScaling",

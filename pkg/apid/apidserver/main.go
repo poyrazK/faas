@@ -66,6 +66,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/grace"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/internalmail"
+
 	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/logintoken"
@@ -752,6 +754,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// block short-circuits to nil when pool is nil.
 	deps.pool = pool
 	deps.bgBefore = func(ctx context.Context, log *slog.Logger, srv *server) {
+		go srv.runMailOutbox(ctx)
 		go srv.runHostingReconciler(ctx)
 		go srv.runSafeReleaseEmergencyAbort(ctx)
 		go srv.runServiceRolloutBindingWorker(ctx)
@@ -1492,6 +1495,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithRealtimeFairUseEnabled(deps.getenv("FAAS_REALTIME_FAIR_USE_ENABLED") == "1").
 		WithTriggerBatchDeliveryEnabled(deps.getenv("FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv, resolveGithubdBridgeSock(deps.getenv, cfg)))
+	if err := srv.configureMailOutbox(ctx, deps.pool, deps.getenv); err != nil {
+		return fmt.Errorf("apid: producer mail outbox: %w", err)
+	}
+
 	srv.rehearsalNetworkEnabled = deps.getenv("FAAS_REHEARSAL_NETWORK_CONTAINMENT") == "1"
 	srv.rehearsalSimulationEnabled = deps.getenv("FAAS_REHEARSAL_ACTION_SIMULATION") == "1"
 	srv.rehearsalWorkersEnabled = deps.getenv("FAAS_REHEARSAL_WORKERS") == "1"
@@ -2181,6 +2188,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	metricsAddr := resolveMetricsAddr(deps.getenv, cfg.GetMetricsAddr(deps.getenv))
 	canaryServiceToken := strings.TrimSpace(deps.getenv("FAAS_CANARY_PROGRESSION_TOKEN"))
 	safeDeployServiceToken := strings.TrimSpace(deps.getenv("FAAS_SAFEDEPLOY_TOKEN"))
+	if metricsAddr == "" && deps.getenv(internalmail.QuotaWarningOutboxEnableEnv) == "1" {
+		return errors.New("apid: quota warning mail requires the loopback operator listener")
+	}
+	if metricsAddr == "" && deps.getenv(internalmail.NonpaymentDeletionOutboxEnableEnv) == "1" {
+		return errors.New("apid: non-payment deletion mail requires the loopback operator listener")
+	}
+	if metricsAddr == "" && deps.getenv(internalmail.AccountSuspendedOutboxEnableEnv) == "1" {
+		return errors.New("apid: suspension mail requires the loopback operator listener")
+	}
 	if metricsAddr == "" && (canaryServiceToken != "" || safeDeployServiceToken != "") {
 		return errors.New("apid: Safe Deploy service tokens require the loopback operator listener")
 	}
@@ -2203,6 +2219,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		))
 		metricsMux.Handle("/v1/internal/metrics/", srv.metricsDiscoveryHandler())
 		if err := srv.mountInternalSafeDeploy(metricsMux, metricsAddr, canaryServiceToken, safeDeployServiceToken); err != nil {
+			_ = l.Close()
+			return err
+		}
+		if err := srv.mountInternalMailQuotaWarning(metricsMux, metricsAddr, deps.getenv); err != nil {
+			_ = l.Close()
+			return err
+		}
+		if err := srv.mountInternalMailNonpaymentDeletion(metricsMux, metricsAddr, deps.getenv); err != nil {
+			_ = l.Close()
+			return err
+		}
+		if err := srv.mountInternalMailSuspension(metricsMux, metricsAddr, deps.getenv); err != nil {
 			_ = l.Close()
 			return err
 		}

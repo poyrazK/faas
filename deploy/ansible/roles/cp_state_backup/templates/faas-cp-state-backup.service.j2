@@ -1,0 +1,26 @@
+# Managed by Ansible (cp_state_backup). Local edits are overwritten.
+# ADR-1344 §8: seal the control plane's host-local state to the operator's
+# age recipients and push it off-host (docs/runbooks/ControlPlaneStateBackup.md).
+[Unit]
+Description=Gregale control-plane state backup (off-host, encrypted)
+After=network-online.target faas-pg-basebackup-push.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Root reads the 0400 secrets of every daemon user and the rclone config.
+User=root
+Group=root
+UMask=0077
+Environment=FAAS_CP_STATE_BACKUP_RECIPIENTS=/etc/faas/cp-state-backup.recipients
+Environment=FAAS_CP_STATE_BACKUP_PATHS=/etc/faas/cp-state-backup.paths
+Environment=FAAS_CP_STATE_BACKUP_DIR=/var/lib/faas/cp-state-backup
+Environment=OFF_HOST_BACKUP_REMOTE={{ faas_cp_state_backup_remote }}
+Environment=FAAS_CP_STATE_BACKUP_PATH={{ faas_cp_state_backup_path }}
+Environment=FAAS_CP_STATE_BACKUP_KEEP={{ faas_cp_state_backup_keep }}
+Environment=FAAS_OFF_HOST_BACKUP_RCLONE_CONFIG=/etc/faas/secrets/storage-box/rclone.conf
+Environment=FAAS_RCLONE_BIN=/usr/local/lib/faas/faas-rclone-backup-identity.py
+ExecStart=/usr/local/lib/faas/faas-cp-state-backup.sh
+TimeoutStartSec=30min
+StandardOutput=journal
+StandardError=journal

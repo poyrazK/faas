@@ -170,6 +170,73 @@ class AnalyzeTest(unittest.TestCase):
             au.analyze([], extra, CONFIG, EXISTS)
 
 
+DATA_CONFIG = dict(CONFIG, migrations_dir="migrations/")
+EXPAND = {"eligible": True, "blockers": [], "migrations": [
+    {"path": "migrations/20261018000000001_a.sql", "version": 20261018000000001, "eligible": True, "blockers": []}]}
+CONTRACT = {"eligible": False, "blockers": ["migrations/20261018000000001_a.sql: contract change drop-column apps.b at line 4"],
+            "migrations": [{"path": "migrations/20261018000000001_a.sql", "eligible": False}]}
+MIGRATION = "migrations/20261018000000001_a.sql"
+
+
+class DataStepTest(unittest.TestCase):
+    """Lane-eligible migrations ride the control-plane lane instead of
+    closing the range (docs/adr/20261018084150-unit-lane-expand-migrations.md)."""
+
+    CASES = [
+        # name, commits (newest first), verdict, blocked_by, control-plane eligible, edge eligible, data version
+        ("expand migration with daemons", [("c2", ["pkg/state/store.go"]), ("c1", [MIGRATION])], EXPAND,
+         [], True, True, "data-c1"),
+        ("contract migration closes both lanes", [("c2", ["pkg/state/store.go"]), ("c1", [MIGRATION])], CONTRACT,
+         ["migrations"], False, False, None),
+        ("unclassified migrations block", [("c1", ["pkg/state/store.go", MIGRATION])], None,
+         ["migrations"], False, False, None),
+        ("migration runner code still blocks", [("c1", ["pkg/state/store.go", MIGRATION, "migrations/embed.go"])], EXPAND,
+         ["migrations"], False, False, "data-c1"),
+        ("migration tests are not migrations", [("c1", ["pkg/apid/server.go", "migrations/20261018000000001_a_test.go"])],
+         None, [], True, False, None),
+        ("data alone deploys the control-plane lane", [("c1", [MIGRATION])], EXPAND, [], True, False, "data-c1"),
+        ("deploy tree still blocks", [("c1", [MIGRATION, "deploy/ansible/site.yml", "pkg/state/store.go"])], EXPAND,
+         ["deploy"], False, False, "data-c1"),
+    ]
+
+    def test_cases(self):
+        for name, commits, verdict, blocked, cp, edge, version in self.CASES:
+            with self.subTest(name):
+                rep = au.analyze(commits, CLOSURES, DATA_CONFIG, EXISTS, data=verdict)
+                self.assertEqual(rep["blocked_by"], blocked)
+                self.assertEqual(rep["lanes"]["control-plane"]["eligible"], cp)
+                self.assertEqual(rep["lanes"]["edge"]["eligible"], edge)
+                self.assertEqual(rep["data"]["version"], version)
+                # Whatever closes the control-plane lane closes the edge
+                # lane: data always goes first.
+                if rep["data"]["version"] and edge:
+                    self.assertTrue(cp)
+
+    def test_data_flag_and_version(self):
+        rep = au.analyze([("c3", ["pkg/apid/server.go"]), ("c2", [MIGRATION]), ("c1", ["pkg/state/store.go"])],
+                         CLOSURES, DATA_CONFIG, EXISTS, data=EXPAND)
+        self.assertEqual(rep["flags"]["data"], {"blocking": False, "count": 1, "paths": [MIGRATION]})
+        self.assertNotIn("migrations", rep["flags"])
+        # Migrations embed into every daemon, so in practice they change
+        # too; here only the data version follows the migration commit.
+        self.assertEqual(rep["data"]["commit"], "c2")
+        self.assertEqual(rep["data"]["migrations"], EXPAND["migrations"])
+        self.assertEqual(rep["binaries"]["apid"]["commit"], "c3")
+
+    def test_contract_reason_names_the_migration(self):
+        rep = au.analyze([("c1", ["pkg/state/store.go", MIGRATION])], CLOSURES, DATA_CONFIG, EXISTS, data=CONTRACT)
+        self.assertIn("migrations are not lane-eligible: migrations/20261018000000001_a.sql: contract change "
+                      "drop-column apps.b at line 4", rep["reasons"])
+        self.assertEqual(rep["flags"]["migrations"]["paths"], [MIGRATION])
+        self.assertNotIn("data", rep["flags"])
+
+    def test_data_only_range_is_eligible_with_no_units(self):
+        rep = au.analyze([("c1", [MIGRATION])], CLOSURES, DATA_CONFIG, EXISTS, data=EXPAND)
+        self.assertTrue(rep["eligible"])
+        self.assertEqual(rep["deployable"], [])
+        self.assertEqual(rep["lanes"]["control-plane"]["reasons"], [])
+
+
 class HelperTest(unittest.TestCase):
     def test_build_recipe_ignores_unrelated_targets(self):
         before = "GO ?= go\nDAEMONS := a b\n\ntest: ## run\n\tgo test ./...\n\nbuild-release-batch: ## x\n\tgo build -o x\n"
@@ -334,6 +401,38 @@ class EndToEndTest(unittest.TestCase):
         self.assertEqual(changed(rep), {"apid": apid, "vmmd": vmmd})
         self.assertEqual(rep["deployable"], ["apid"])
         self.assertTrue(rep["eligible"])
+
+    def data_config(self):
+        with open(self.config, encoding="utf-8") as fh:
+            config = json.load(fh)
+        config["migrations_dir"] = "migrations/"
+        with open(self.config, "w", encoding="utf-8") as fh:
+            json.dump(config, fh)
+
+    def test_report_applies_expand_migrations_and_blocks_on_contract(self):
+        self.data_config()
+        self.write("schema.sql", "CREATE TABLE public.apps (\n);\n")
+        self.commit("schema")
+        self.run_git("tag", "v0.1.0")
+        self.write("pkg/api/api.go", "package api\n\nfunc Serve() { _ = 3 }\n")
+        self.write("migrations/20261018000000001_note.sql",
+                   "-- migration-compat: expand\n-- +goose Up\nSET LOCAL lock_timeout = '5s';\n"
+                   "ALTER TABLE apps ADD COLUMN note text;\n")
+        expand = self.commit("apid + expand migration")
+        rep = au.report("v0.1.0", expand, self.config, root=self.root)
+        self.assertTrue(rep["eligible"], rep["reasons"])
+        self.assertEqual(rep["data"]["version"], f"data-{expand}")
+        self.assertEqual([m["path"] for m in rep["data"]["migrations"]], ["migrations/20261018000000001_note.sql"])
+        self.assertEqual(rep["deployable"], ["apid"])
+        # A contract migration later in the range closes the lane.
+        self.write("migrations/20261018000000002_drop.sql",
+                   "-- migration-compat: contract\n-- +goose Up\nSET LOCAL lock_timeout = '5s';\n"
+                   "ALTER TABLE apps DROP COLUMN note;\n")
+        head = self.commit("contract migration")
+        rep = au.report("v0.1.0", head, self.config, root=self.root)
+        self.assertFalse(rep["eligible"])
+        self.assertEqual(rep["blocked_by"], ["migrations"])
+        self.assertIsNone(rep["data"]["version"])
 
     def test_report_blocks_on_migrations_and_rejects_a_stale_checkout(self):
         self.write("pkg/api/api.go", "package api\n\nfunc Serve() { _ = 2 }\n")

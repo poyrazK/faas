@@ -139,6 +139,9 @@ daemons:
     # local keeps one in-process bucket per node (each node admits the full
     # burst on its own).
     # ratelimit_mode: central
+    # ADR-1520: spend those counters from local leases instead of one
+    # Postgres consult per request. Omitted renders false; needs central.
+    # ratelimit_lease: true
     # Split-box peer identities. These are intentionally separate from
     # `tls` (the daemon has no customer-facing TLS listener) and from
     # `outbound` (which models schedd's single vmmd peer).

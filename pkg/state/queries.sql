@@ -4197,7 +4197,7 @@ SELECT app_id, deployment_id, route,
        p95_ms, p95_base_ms, affected_count,
        regression_factor, first_detected_at, last_detected_at,
        state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
-       kind, error_rate_pct, error_rate_base_pct, error_count
+       kind, error_rate_pct, error_rate_base_pct, error_count, review_version
 FROM debug_regression_observations
 WHERE app_id = $1
   AND deployment_id = $2
@@ -4248,11 +4248,12 @@ SET state = $4,
 WHERE app_id = $1
   AND deployment_id = $2
   AND route = $3
+  AND (sqlc.narg(expected_version)::uuid IS NULL OR review_version = sqlc.narg(expected_version)::uuid)
 RETURNING app_id, deployment_id, route,
           p95_ms, p95_base_ms, affected_count,
           regression_factor, first_detected_at, last_detected_at,
           state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
-          kind, error_rate_pct, error_rate_base_pct, error_count;
+          kind, error_rate_pct, error_rate_base_pct, error_count, review_version;
 
 -- name: ResolveStaleRegressionObservations :many
 -- A detector pass that no longer sees a regression resolves the previous
@@ -4267,7 +4268,7 @@ RETURNING app_id, deployment_id, route,
           p95_ms, p95_base_ms, affected_count,
           regression_factor, first_detected_at, last_detected_at,
           state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
-          kind, error_rate_pct, error_rate_base_pct, error_count;
+          kind, error_rate_pct, error_rate_base_pct, error_count, review_version;
 
 -- name: ListDeploymentsForCompare :many
 -- Backs the dashboard compare panel's two `<select>` dropdowns: "pick
@@ -6060,6 +6061,41 @@ SELECT sqlc.arg(id)::uuid,
   FROM apps a
  WHERE a.id = sqlc.arg(app_id)::uuid
    AND a.account_id = sqlc.arg(account_id)::uuid
+ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+ WHERE request_id_journal.account_id = EXCLUDED.account_id
+   AND request_id_journal.app_id = EXCLUDED.app_id
+   AND request_id_journal.request_id = EXCLUDED.request_id
+   AND request_id_journal.trace_id IS NOT DISTINCT FROM EXCLUDED.trace_id
+   AND request_id_journal.received_at = EXCLUDED.received_at
+   AND request_id_journal.expires_at = EXCLUDED.expires_at
+RETURNING id;
+
+-- name: RecordRequestIDJournalBatch :many
+-- ADR-1521: RecordRequestIDJournal for many records in one statement. The
+-- same ownership join and idempotent-retry rule apply per row; a row whose app
+-- is not owned by its account, or whose id holds different content, is left
+-- out of RETURNING. Record ids must be unique within one call: ON CONFLICT DO
+-- UPDATE cannot touch the same row twice in a statement.
+INSERT INTO request_id_journal (
+    id, account_id, app_id, request_id, trace_id, received_at, expires_at
+)
+SELECT r.id,
+       a.account_id,
+       a.id,
+       r.request_id,
+       NULLIF(r.trace_id, ''),
+       r.received_at,
+       r.expires_at
+  FROM (
+         SELECT unnest(sqlc.arg(ids)::uuid[]) AS id,
+                unnest(sqlc.arg(account_ids)::uuid[]) AS account_id,
+                unnest(sqlc.arg(app_ids)::uuid[]) AS app_id,
+                unnest(sqlc.arg(request_ids)::text[]) AS request_id,
+                unnest(sqlc.arg(trace_ids)::text[]) AS trace_id,
+                unnest(sqlc.arg(received_ats)::timestamptz[]) AS received_at,
+                unnest(sqlc.arg(expires_ats)::timestamptz[]) AS expires_at
+       ) AS r
+  JOIN apps a ON a.id = r.app_id AND a.account_id = r.account_id
 ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
  WHERE request_id_journal.account_id = EXCLUDED.account_id
    AND request_id_journal.app_id = EXCLUDED.app_id
@@ -21960,6 +21996,11 @@ WHERE j.account_id = sqlc.arg(account_id)::uuid
   AND j.status <> 'deleted'
   AND r.id = sqlc.arg(run_id)::uuid
   AND t.task_index = sqlc.arg(task_index)::int;
+
+-- Identity writes use the account lock before the provider-qualified row.
+-- This matches subscription termination and SMTP lifecycle fencing.
+-- name: LockBillingIdentityAccount :one
+SELECT id::text FROM accounts WHERE id=sqlc.arg(account_id)::text::uuid FOR UPDATE;
 
 -- name: EventAckPolicyGet :one
 SELECT acknowledgment_lease_seconds FROM event_subscriptions s JOIN apps a ON a.id=s.app_id AND a.account_id=s.account_id

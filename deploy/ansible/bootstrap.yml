@@ -114,7 +114,13 @@
       when: faas_pgbouncer_enabled | default(false) | bool
     - role: postgres_backup
       when: not (faas_image_seed | default(false) | bool)
+    # ADR-1344 §8: off-host, encrypted backup of the control plane's
+    # host-local state; off until an operator age recipient is configured.
+    - role: cp_state_backup
+      when: not (faas_image_seed | default(false) | bool)
     - role: control_plane_service
+    - role: internal_mail_service
+      when: faas_internal_mail_managed | default(false) | bool
     - role: gatewayd_public_service
     - role: public_edge
     - role: s3_gateway_service

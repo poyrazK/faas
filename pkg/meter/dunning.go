@@ -21,12 +21,11 @@ package meter
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"time"
 
-	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -44,13 +43,17 @@ type DunningSender interface {
 // needs. Store is required; the rest fall back to no-op defaults
 // (mirrors pkg/grace.Params).
 type DunningParams struct {
-	Store    state.Store
-	Parker   ScheddParker
-	Mailer   DunningSender
-	Notif    Notifier
-	Interval time.Duration // default 1h
-	Now      func() time.Time
-	Log      *slog.Logger
+	NonpaymentDeletionRequested func() bool
+	NonpaymentDeletionCommands  NonpaymentDeletionCommands
+	SuspensionRequested         func() bool
+	SuspensionCommands          SuspensionCommands
+	Store                       state.Store
+	Parker                      ScheddParker
+	Mailer                      DunningSender
+	Notif                       Notifier
+	Interval                    time.Duration // default 1h
+	Now                         func() time.Time
+	Log                         *slog.Logger
 }
 
 // Dunning is the 7-day / 21-day dunning timer. Owns the ticker + the
@@ -103,7 +106,7 @@ type dunningPayload struct {
 
 // DunningPastDueToSuspendedDuration is the time-from-past_due_at
 // before the timer advances an account to suspended. Spec §4.7.
-const DunningPastDueToSuspendedDuration = 7 * 24 * time.Hour
+const DunningPastDueToSuspendedDuration = api.InternalMailDunningSuspendAfter
 
 // DunningSuspendedToDeletedDuration is the *additional* time
 // from past_due_at before the timer advances an account to
@@ -111,7 +114,7 @@ const DunningPastDueToSuspendedDuration = 7 * 24 * time.Hour
 // grace window. Stored as a delta so a back-and-forth status flip
 // doesn't accumulate drift — both transitions compare against
 // PastDueAt, never stacked elapsed.
-const DunningSuspendedToDeletedDuration = 21 * 24 * time.Hour
+const DunningSuspendedToDeletedDuration = api.InternalMailDunningDeleteAfter
 
 // Run loops on Interval until ctx is cancelled. Each tick calls
 // RunOnce; per-tick errors are logged and swallowed so a transient
@@ -178,6 +181,12 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 			if now.Sub(*acct.PastDueAt) < DunningPastDueToSuspendedDuration {
 				continue // still inside the 7-day grace
 			}
+			if handled, err := d.suspendWithNotice(ctx, acct); handled {
+				if err != nil {
+					d.p.Log.Warn("meter: durable suspension unavailable", "account", acct.ID)
+				}
+				continue
+			}
 			if err := d.p.Store.MarkDunningStep(ctx, acct.ID, state.AccountPastDue, state.AccountSuspended); err != nil {
 				if errors.Is(err, state.ErrNotFound) {
 					continue // redelivery race or status flipped under us
@@ -185,20 +194,24 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 				d.p.Log.Warn("meter: dunning suspend", "account", acct.ID, "err", err)
 				continue
 			}
-			notifyAccountAppLifecycle(ctx, d.p.Store, d.p.Notif, acct.ID, "account_suspended", d.p.Log)
-			d.parkAll(ctx, acct.ID)
-			payload, _ := json.Marshal(dunningPayload{AccountID: acct.ID, At: now.UTC().Format(time.RFC3339Nano)})
-			if err := d.p.Notif.Notify(ctx, db.NotifyBillingPastDue, string(payload)); err != nil {
-				d.p.Log.Warn("meter: dunning notify billing_past_due", "account", acct.ID, "err", err)
-			}
+			d.suspensionFollowup(ctx, acct, now)
 			d.sendSuspendedMail(ctx, acct, now)
 			d.p.Log.Info("meter: dunning past_due→suspended", "account", acct.ID)
 		case state.AccountSuspended:
 			if acct.PastDueAt == nil {
 				continue
 			}
+			if _, err := d.suspendWithNotice(ctx, acct); err != nil {
+				d.p.Log.Warn("meter: suspension follow-up unavailable", "account", acct.ID)
+			}
 			if now.Sub(*acct.PastDueAt) < DunningSuspendedToDeletedDuration {
 				continue // still inside the 21-day window
+			}
+			if handled, err := d.scheduleNonpaymentDeletion(ctx, acct); handled {
+				if err != nil {
+					d.p.Log.Warn("meter: durable non-payment deletion unavailable", "account", acct.ID)
+				}
+				continue
 			}
 			if err := d.p.Store.MarkDunningStep(ctx, acct.ID, state.AccountSuspended, state.AccountDeletedPending); err != nil {
 				if errors.Is(err, state.ErrNotFound) {
@@ -207,13 +220,15 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 				d.p.Log.Warn("meter: dunning delete_pending", "account", acct.ID, "err", err)
 				continue
 			}
-			notifyAccountAppLifecycle(ctx, d.p.Store, d.p.Notif, acct.ID, "account_deleted_pending", d.p.Log)
-			payload, _ := json.Marshal(dunningPayload{AccountID: acct.ID, At: now.UTC().Format(time.RFC3339Nano)})
-			if err := d.p.Notif.Notify(ctx, db.NotifyAccountDeletionPending, string(payload)); err != nil {
-				d.p.Log.Warn("meter: dunning notify account_deletion_pending", "account", acct.ID, "err", err)
-			}
+			d.nonpaymentDeletionFollowup(ctx, acct, now)
 			d.sendDeletionMail(ctx, acct, now)
 			d.p.Log.Info("meter: dunning suspended→deleted_pending", "account", acct.ID)
+		case state.AccountDeletedPending:
+			if acct.PastDueAt != nil {
+				if _, err := d.scheduleNonpaymentDeletion(ctx, acct); err != nil {
+					d.p.Log.Warn("meter: non-payment deletion follow-up unavailable", "account", acct.ID)
+				}
+			}
 		}
 	}
 	return nil
