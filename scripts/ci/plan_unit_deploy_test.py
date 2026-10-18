@@ -3,8 +3,10 @@
 import copy
 import importlib.util
 import pathlib
+import sys
 import unittest
 
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
 spec = importlib.util.spec_from_file_location(
     "plan_unit_deploy", pathlib.Path(__file__).with_name("plan_unit_deploy.py"))
 pud = importlib.util.module_from_spec(spec)
@@ -12,15 +14,23 @@ spec.loader.exec_module(pud)
 
 BASE = "b" * 40
 T1, T2 = "1" * 40, "2" * 40
-APID = {"version": "unit-" + "a" * 40, "services": [
+CP, NODE = "control-plane", "compute-only"
+APID = {"lane": CP, "version": "unit-" + "a" * 40, "services": [
     {"name": "apid", "readyz": "http://127.0.0.1:9101/readyz"}, {"name": "apid-clone-worker", "optional": True}]}
-METERD = {"version": "unit-" + "c" * 40, "services": [{"name": "meterd", "readyz": "http://127.0.0.1:9106/readyz"}]}
-S3 = {"version": "unit-" + "d" * 40, "services": [
+METERD = {"lane": CP, "version": "unit-" + "c" * 40, "services": [
+    {"name": "meterd", "readyz": "http://127.0.0.1:9106/readyz"}]}
+S3 = {"lane": CP, "version": "unit-" + "d" * 40, "services": [
     {"name": "s3-gatewayd", "optional": True, "readyz": "http://127.0.0.1:9096/readyz"}]}
+BRIDGED = {"lane": CP, "version": "unit-" + "9" * 40, "services": [{"name": "bridged", "optional": True}]}
+PUBLIC = {"lane": "edge", "version": "unit-" + "e" * 40, "services": [
+    {"name": "gatewayd-public", "host": CP, "readyz": "http://127.0.0.1:9092/readyz"},
+    {"name": "gatewayd-public-edge", "host": NODE, "optional": True, "readyz": "http://127.0.0.1:9092/readyz"}]}
+INTERNAL = {"lane": "edge", "version": "unit-" + "f" * 40, "services": [
+    {"name": "gatewayd-internal", "host": NODE, "readyz": "http://127.0.0.1:9090/readyz"}]}
 
 
 def release(commit=T2, **units):
-    return {"format_version": 1, "kind": pud.KIND_RELEASE, "base_sha": BASE, "git_sha": commit,
+    return {"format_version": 2, "kind": pud.KIND_RELEASE, "base_sha": BASE, "git_sha": commit,
             "units": units or {"apid": APID, "meterd": METERD}}
 
 
@@ -28,84 +38,142 @@ def full_host():
     return {"current": BASE, "base_git_sha": BASE, "unit_versions": None}
 
 
-def overlay_host(units, commit=T1, services=("apid",)):
+def overlay_host(units, commit=T1, lanes=None, replaced=("apid",)):
+    lanes = lanes or {name: CP for name in units}
     return {"current": "e" * 40, "base_git_sha": BASE, "unit_versions": {
         "kind": pud.KIND_VERSIONS, "base_sha": BASE, "git_sha": commit, "units": units,
-        "services": list(services), "verify": ["apid"]}}
+        "unit_lanes": lanes, "replaced": list(replaced)}}
 
 
 def ancestor(a, d):
     return (a, d) in {(T1, T2), (T1, T1), (T2, T2)}
 
 
-class PlanTest(unittest.TestCase):
+def cp_plan(rel, host, **kw):
+    return pud.plan(rel, host, CP, CP, ancestor, **kw)
+
+
+class ControlPlaneLaneTest(unittest.TestCase):
     def test_first_unit_release_over_a_full_release(self):
-        got = pud.plan(release(), full_host(), ancestor)
+        got = cp_plan(release(), full_host())
         self.assertEqual(got["action"], "deploy")
-        self.assertEqual(got["changed"], ["apid", "meterd"])
+        self.assertEqual(got["units"], ["apid", "meterd"])
         self.assertEqual(got["only"], ["apid", "meterd"])
         self.assertEqual(got["verify"], ["apid=http://127.0.0.1:9101/readyz", "?apid-clone-worker",
                                          "meterd=http://127.0.0.1:9106/readyz"])
+        self.assertEqual(got["gate"], [["--unit", "apid"], ["--unit", "meterd"]])
         self.assertEqual(got["expect_current"], BASE)
         self.assertEqual(set(got["replace"]), {"bin/apid", "bin/meterd", "bin/deployctl", "unit-versions.json"})
         record = got["unit_versions"]
         self.assertEqual(record["units"], {"apid": APID["version"], "meterd": METERD["version"]})
+        self.assertEqual(record["unit_lanes"], {"apid": CP, "meterd": CP})
+        self.assertEqual(record["replaced"], ["apid", "meterd"])
         self.assertEqual(record["built_over"], BASE)
-        self.assertEqual(record["services"], ["apid", "meterd"])
 
     def test_only_units_whose_version_moved_restart(self):
-        host = overlay_host({"apid": APID["version"]})
-        got = pud.plan(release(), host, ancestor)
-        self.assertEqual(got["changed"], ["meterd"])
+        got = cp_plan(release(), overlay_host({"apid": APID["version"]}))
+        self.assertEqual(got["units"], ["meterd"])
         self.assertEqual(got["only"], ["meterd"])
+        self.assertEqual(got["gate"], [["--unit", "meterd"]])
         self.assertNotIn("bin/apid", got["replace"])
-        # The recorded versions stay complete: apid's carries over.
         self.assertEqual(got["unit_versions"]["units"]["apid"], APID["version"])
 
     def test_optional_only_change_restarts_no_core_service(self):
-        got = pud.plan(release(**{"s3-gatewayd": S3}), full_host(), ancestor)
+        got = cp_plan(release(**{"s3-gatewayd": S3}), full_host())
         self.assertEqual(got["only"], [])
         self.assertEqual(got["verify"], ["?s3-gatewayd=http://127.0.0.1:9096/readyz"])
 
+    def test_gate_judges_a_unit_it_does_not_know_by_component(self):
+        got = cp_plan(release(bridged=BRIDGED), full_host())
+        self.assertEqual(got["gate"], [["--unit", "bridged", "--component", "bridged"]])
+
     def test_release_id_is_deterministic_and_depends_on_inputs(self):
-        a = pud.plan(release(), full_host(), ancestor)["release_id"]
-        self.assertEqual(a, pud.plan(release(), full_host(), ancestor)["release_id"])
+        a = cp_plan(release(), full_host())["release_id"]
+        self.assertEqual(a, cp_plan(release(), full_host())["release_id"])
         self.assertRegex(a, r"^[0-9a-f]{40}$")
         moved = copy.deepcopy(release())
         moved["units"]["meterd"]["version"] = "unit-" + "f" * 40
-        self.assertNotEqual(a, pud.plan(moved, full_host(), ancestor)["release_id"])
+        self.assertNotEqual(a, cp_plan(moved, full_host())["release_id"])
 
-    def test_nothing_changed(self):
-        self.assertEqual(pud.plan(release(apid=APID), full_host(), ancestor)["action"], "deploy")
-        host = overlay_host({"apid": APID["version"], "meterd": METERD["version"]}, services=("apid", "meterd"))
-        got = pud.plan(release(), host, ancestor)
+    def test_converge_reruns_the_active_overlays_units(self):
+        host = overlay_host({"apid": APID["version"], "meterd": METERD["version"]}, replaced=("apid", "meterd"))
+        got = cp_plan(release(), host)
         self.assertEqual(got["action"], "converge")
         self.assertEqual(got["release_id"], host["current"])
         self.assertEqual(got["only"], ["apid", "meterd"])
+        self.assertEqual(got["gate"], [["--unit", "apid"], ["--unit", "meterd"]])
         self.assertEqual(got["replace"], {})
+
+    def test_nothing_to_do_on_the_full_release(self):
+        got = pud.plan(release(), full_host(), "edge", CP, ancestor)
+        self.assertEqual(got["action"], "none")
 
     def test_refusals(self):
         cases = [
-            ("another full release", release(), full_host() | {"base_git_sha": "9" * 40}, None, "host runs full release"),
+            ("N±1: base is not the previous release", release(), full_host(), {"previous_release": "8" * 40},
+             "N±1"),
+            ("another full release", release(), full_host() | {"base_git_sha": "9" * 40}, {}, "host runs full release"),
             ("newer unit release on host", release(commit=T1), overlay_host({"apid": APID["version"]}, commit=T2),
-             None, "not an ancestor"),
+             {}, "not an ancestor"),
             ("host carries a unit this release lacks", release(apid=APID),
-             overlay_host({"meterd": METERD["version"]}), None, "does not carry: meterd"),
+             overlay_host({"meterd": METERD["version"]}), {}, "does not carry: meterd"),
             ("versions for another base", release(),
              overlay_host({}) | {"unit_versions": overlay_host({})["unit_versions"] | {"base_sha": "9" * 40}},
-             None, "another base"),
-            ("unexpected restart set", release(), full_host(), ["apid"], "not the expected apid"),
-            ("wrong kind", release() | {"kind": "other"}, full_host(), None, "not a format 1"),
+             {}, "another base"),
+            ("unexpected restart set", release(), full_host(), {"expect": ["apid"]}, "not the expected apid"),
+            ("wrong format", release() | {"format_version": 1}, full_host(), {}, "not a format 2"),
         ]
-        for name, rel, host, expect, want in cases:
+        for name, rel, host, kw, want in cases:
             with self.subTest(name):
                 with self.assertRaises(pud.Refused) as ctx:
-                    pud.plan(rel, host, ancestor, expect)
+                    cp_plan(rel, host, **kw)
                 self.assertIn(want, str(ctx.exception))
 
-    def test_expected_units_match(self):
-        got = pud.plan(release(), full_host(), ancestor, expect=["meterd", "apid"])
-        self.assertEqual(got["changed"], ["apid", "meterd"])
+    def test_previous_release_matching_the_base_passes(self):
+        self.assertEqual(cp_plan(release(), full_host(), previous_release=BASE)["action"], "deploy")
+
+
+class EdgeLaneTest(unittest.TestCase):
+    REL = release(apid=APID, **{"gatewayd-public": PUBLIC, "gatewayd-internal": INTERNAL})
+
+    def test_control_plane_lane_ignores_edge_units(self):
+        got = cp_plan(self.REL, full_host())
+        self.assertEqual(got["units"], ["apid"])
+        self.assertEqual(got["unit_versions"]["units"], {"apid": APID["version"]})
+
+    def test_edge_on_the_control_plane_follows_its_lane(self):
+        # The CP lane already ran: the control plane carries apid's overlay.
+        host = overlay_host({"apid": APID["version"]}, commit=T2)
+        got = pud.plan(self.REL, host, "edge", CP, ancestor)
+        self.assertEqual(got["units"], ["gatewayd-public"])
+        self.assertEqual(got["only"], ["gatewayd-public"])
+        self.assertEqual(got["verify"], ["gatewayd-public=http://127.0.0.1:9092/readyz"])
+        self.assertEqual(got["gate"], [["--unit", "gatewayd-public"]])
+        record = got["unit_versions"]
+        self.assertEqual(record["units"], {"apid": APID["version"], "gatewayd-public": PUBLIC["version"]})
+        self.assertEqual(record["unit_lanes"], {"apid": CP, "gatewayd-public": "edge"})
+        self.assertEqual(record["replaced"], ["gatewayd-public"])
+
+    def test_edge_on_a_compute_node(self):
+        got = pud.plan(self.REL, full_host(), "edge", NODE, ancestor)
+        self.assertEqual(got["units"], ["gatewayd-internal", "gatewayd-public"])
+        self.assertEqual(got["only"], ["gatewayd-internal"])
+        self.assertEqual(got["verify"], ["gatewayd-internal=http://127.0.0.1:9090/readyz",
+                                         "?gatewayd-public-edge=http://127.0.0.1:9092/readyz"])
+        self.assertEqual(got["gate"], [["--unit", "gatewayd-internal"], ["--unit", "gatewayd-public"]])
+        self.assertEqual(set(got["replace"]), {"bin/gatewayd-internal", "bin/gatewayd-public", "bin/deployctl",
+                                               "unit-versions.json"})
+
+    def test_a_blocked_lane_does_not_stop_the_other(self):
+        # The host's edge overlay predates a release whose edge lane is
+        # blocked (it carries no edge units); the CP lane still deploys.
+        host = overlay_host({"gatewayd-public": PUBLIC["version"]}, lanes={"gatewayd-public": "edge"},
+                            replaced=("gatewayd-public",))
+        got = cp_plan(release(apid=APID), host)
+        self.assertEqual(got["units"], ["apid"])
+        self.assertEqual(got["unit_versions"]["units"]["gatewayd-public"], PUBLIC["version"])
+        with self.assertRaises(pud.Refused):
+            pud.plan(release(apid=APID), host, "edge", CP, ancestor)
 
 
 if __name__ == "__main__":
