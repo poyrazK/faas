@@ -45,6 +45,16 @@ artifact() {
         | if $kind == "data-no-migrate" then del(.tools.migrate) else . end' \
         "$src/units-manifest.json" > "$src/m" && mv "$src/m" "$src/units-manifest.json"
       [[ "$2" != data-no-migrate ]] || rm "$src/tools/migrate" ;;
+    host|host-no-gregalectl|host-no-roles)
+      printf 'gregalectl-binary' > "$src/tools/gregalectl"
+      jq --arg g "$(sha256sum "$src/tools/gregalectl" | awk '{print $1}')" --arg kind "$2" '
+        .tools.gregalectl = {sha256: $g}
+        | .host_config = {group: "control_plane", roles: (if $kind == "host-no-roles" then [] else ["postgres_capacity"] end),
+                          all: false, commit: "1111111111111111111111111111111111111111",
+                          version: "host-1111111111111111111111111111111111111111"}
+        | if $kind == "host-no-gregalectl" then del(.tools.gregalectl) else . end' \
+        "$src/units-manifest.json" > "$src/m" && mv "$src/m" "$src/units-manifest.json"
+      [[ "$2" != host-no-gregalectl ]] || rm "$src/tools/gregalectl" ;;
   esac
   tar -czf "$dir/units.tar.gz" -C "$src" bin tools units-manifest.json
   cp "$src/units-manifest.json" "$dir/units-manifest.json"
@@ -65,7 +75,12 @@ grep -Fq -- "--certificate-identity https://github.com/poyrazK/faas/.github/work
 dir="$(artifact data data)"
 [[ "$(bash "$verifier" "$dir" 2>/dev/null)" == "$commit" ]] || fail "a release with a lane-eligible data step did not verify"
 
-for mutation in extra-binary extra-tool bad-digest bad-tool no-deployctl old-format other-manifest data-ineligible data-no-migrate; do
+dir="$(artifact host host)"
+[[ "$(bash "$verifier" "$dir" 2>/dev/null)" == "$commit" ]] || fail "a release with a host-config step did not verify"
+[[ -s "$dir/unpacked/tools/gregalectl" ]] || fail "the host-config step's gregalectl was not unpacked"
+
+for mutation in extra-binary extra-tool bad-digest bad-tool no-deployctl old-format other-manifest data-ineligible data-no-migrate \
+  host-no-gregalectl host-no-roles; do
   dir="$(artifact "$mutation" "$mutation")"
   if bash "$verifier" "$dir" >/dev/null 2>&1; then fail "verified a release with $mutation"; fi
 done

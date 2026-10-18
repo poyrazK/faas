@@ -8,12 +8,17 @@ import (
 
 var _ ProjectEnvironmentQueueDeliveryStore = (*MemStore)(nil)
 
-func (m *MemStore) ClaimNextProjectEnvironmentQueueDelivery(_ context.Context, req ProjectEnvironmentQueueDeliveryRequest) (ProjectEnvironmentQueueDelivery, error) {
+func (m *MemStore) ClaimNextProjectEnvironmentQueueDelivery(ctx context.Context, req ProjectEnvironmentQueueDeliveryRequest) (ProjectEnvironmentQueueDelivery, error) {
 	if err := validateEnvironmentQueueDeliveryRequest(req); err != nil {
 		return ProjectEnvironmentQueueDelivery{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ProjectEnvironmentQueueDelivery
+		return zero0, err
+	}
+
 	set, err := m.projectEnvironmentQueueConsumersLocked(req.AccountID, req.ProjectID, req.DeploymentID, false, true)
 	if err != nil {
 		return ProjectEnvironmentQueueDelivery{}, err
@@ -28,7 +33,7 @@ func (m *MemStore) ClaimNextProjectEnvironmentQueueDelivery(_ context.Context, r
 	if consumer.Mode != req.Mode {
 		return ProjectEnvironmentQueueDelivery{}, ErrConflict
 	}
-	account, ok := m.accounts[req.AccountID]
+	account, ok := m.queuePolicyAccountLocked(req.AccountID, set.AppID)
 	if !ok {
 		return ProjectEnvironmentQueueDelivery{}, ErrNotFound
 	}
@@ -66,7 +71,11 @@ func (m *MemStore) ClaimNextProjectEnvironmentQueueDelivery(_ context.Context, r
 	if err := m.queueClaimCapacityLocked(next); err != nil {
 		return ProjectEnvironmentQueueDelivery{}, err
 	}
-	quota, exists := m.accountAsyncQuota[req.AccountID]
+	subject := account.ResourceOwnerID()
+	quota, exists := m.accountAsyncQuota[subject]
+	if account.ResourceOwnershipEnabled {
+		quota.MaxInflight = limits.MaxAsyncInvocationsPerAccount
+	}
 	if !exists {
 		quota.MaxInflight = limits.MaxAsyncInvocationsPerAccount
 	}
@@ -83,12 +92,13 @@ func (m *MemStore) ClaimNextProjectEnvironmentQueueDelivery(_ context.Context, r
 		return ProjectEnvironmentQueueDelivery{}, ErrInvocationEnvironmentWorkIsolation
 	}
 	lease := now.Add(time.Duration(req.LeaseSeconds) * time.Second)
+	next.AsyncQuotaSubjectID = subject
 	next.State, next.QuotaReserved, next.ReceivedAt, next.LeaseExpiresAt = InvocationDispatching, true, &now, &lease
 	next.Attempts++
 	m.invocationEnvironmentQueueReceipts[next.ID] = environmentQueueReceipt{Attempt: next.Attempts, TokenHash: tokenHash, OwnerHash: ownerHash, IssuedAt: now, LeaseExpiresAt: lease}
 	m.invocations[next.ID] = next
 	quota.CurrentInflight++
-	m.accountAsyncQuota[req.AccountID] = quota
+	m.accountAsyncQuota[subject] = quota
 	return cloneEnvironmentQueueDelivery(next, consumer, token), nil
 }
 
@@ -145,7 +155,7 @@ func (m *MemStore) finishEnvironmentQueueDelivery(scope ProjectEnvironmentQueueD
 		return err
 	}
 	if lastError != nil {
-		account, ok := m.accounts[scope.AccountID]
+		account, ok := m.queuePolicyAccountLocked(scope.AccountID, set.AppID)
 		if !ok {
 			return ErrNotFound
 		}
@@ -162,6 +172,6 @@ func (m *MemStore) finishEnvironmentQueueDelivery(scope ProjectEnvironmentQueueD
 		}
 	}
 	m.invocations[id] = inv
-	m.decrementAccountAsyncInflightLocked(scope.AccountID)
+	m.decrementAccountAsyncInflightLocked(invocationAsyncSubject(inv))
 	return nil
 }

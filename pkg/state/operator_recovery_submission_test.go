@@ -17,11 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type recoverySubmissionStore interface {
-	state.Store
-	state.OperatorRecoverySubmissionStore
-	state.AuditEventOutboxStore
-}
+type recoverySubmissionStore = contractTestStore
 
 type recoverySubmissionFixture struct {
 	store    recoverySubmissionStore

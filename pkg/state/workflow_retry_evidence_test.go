@@ -182,7 +182,7 @@ func TestWorkflowRetryEvidenceRepair(t *testing.T) {
 					t.Fatal("missing review audit")
 				}
 				if pg, ok := s.(*PgStore); ok {
-					s = NewPgStore(pg.pool)
+					s = NewPgStore(pg.pool.Pool)
 					evidence = s.(WorkflowRetryEvidenceStore)
 				}
 				again, err := evidence.RepairWorkflowRetryEvidence(ctx, app.AccountID, app.ID, review.ID, action, req)

@@ -11,6 +11,7 @@ func bindingFromDeliveryRow(row sqlc.FinishManagedPostgresBindingProvisionRow) B
 	return Binding{
 		ID:                         row.ID,
 		AccountID:                  row.AccountID,
+		DatabaseAccountID:          row.DatabaseAccountID,
 		DatabaseID:                 row.DatabaseID,
 		AppID:                      row.AppID,
 		Scope:                      row.Scope,

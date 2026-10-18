@@ -50,7 +50,7 @@ func cloneEnvironmentRun(r EnvironmentGitOpsRun) EnvironmentGitOpsRun {
 	return r
 }
 
-func (m *MemStore) CreateEnvironmentGitSource(_ context.Context, accountID, projectID, environment string, spec EnvironmentGitSourceSpec) (EnvironmentGitSource, error) {
+func (m *MemStore) CreateEnvironmentGitSource(ctx context.Context, accountID, projectID, environment string, spec EnvironmentGitSourceSpec) (EnvironmentGitSource, error) {
 	if spec.Validate() != nil {
 		return EnvironmentGitSource{}, ErrInvalidArgument
 	}
@@ -59,6 +59,9 @@ func (m *MemStore) CreateEnvironmentGitSource(_ context.Context, accountID, proj
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return EnvironmentGitSource{}, err
+	}
 	return m.createEnvironmentGitSourceLocked(accountID, projectID, environment, spec)
 }
 

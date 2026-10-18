@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -45,6 +46,14 @@ func (s *server) renderProjects(w http.ResponseWriter, r *http.Request, log *slo
 	}
 	items := make([]api.ProjectSummaryResponse, 0, len(projects))
 	for _, project := range projects {
+		visible, err := projectaccess.Visible(r.Context(), s.store, acct, nil, project)
+		if err != nil {
+			renderProblem(w, log, err)
+			return
+		}
+		if !visible {
+			continue
+		}
 		apps, listErr := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
 		if listErr != nil {
 			renderProblem(w, log, listErr)
@@ -75,6 +84,15 @@ func (s *server) renderProjectDetail(w http.ResponseWriter, r *http.Request, log
 			return
 		}
 		renderProblem(w, log, err)
+		return
+	}
+	visible, err := projectaccess.Visible(r.Context(), s.store, acct, nil, project)
+	if err != nil {
+		renderProblem(w, log, err)
+		return
+	}
+	if !visible {
+		http.NotFound(w, r)
 		return
 	}
 	response, problem := s.projectResponse(r, acct, project)

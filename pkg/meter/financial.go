@@ -22,7 +22,7 @@ func (l *Loop) recordFinancialPricing(ctx context.Context, now time.Time) error 
 	if !ok {
 		return nil
 	}
-	accounts, err := l.store.ListAllAccounts(ctx)
+	accounts, err := state.ListBillingResourceAccounts(ctx, l.store)
 	if err != nil {
 		return fmt.Errorf("financial pricing accounts: %w", err)
 	}

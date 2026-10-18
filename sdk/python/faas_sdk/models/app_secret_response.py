@@ -34,6 +34,7 @@ from ..models.app_secret_response_secret_class import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.config_change_receipt import ConfigChangeReceipt
     from ..models.secret_runtime_reload_observation import SecretRuntimeReloadObservation
 
 
@@ -58,6 +59,8 @@ class AppSecretResponse:
     delivery_status: AppSecretResponseDeliveryStatus
     """Delivery state for the current delivery_version. A concurrent rotation remains pending until that exact
     version starts successfully."""
+    config_change: ConfigChangeReceipt | Unset = UNSET
+    """The config revision an env or secret write recorded and the guard watching it (ADR-1451)."""
     kid: str | Unset = UNSET
     """age-1... recipient string of the host identity that sealed this row (ADR-089). Empty for rows sealed before
     migration 00166."""
@@ -109,6 +112,10 @@ class AppSecretResponse:
         delivery_version = self.delivery_version
 
         delivery_status: str = self.delivery_status
+
+        config_change: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.config_change, Unset):
+            config_change = self.config_change.to_dict()
 
         kid = self.kid
 
@@ -174,6 +181,8 @@ class AppSecretResponse:
                 "delivery_status": delivery_status,
             }
         )
+        if config_change is not UNSET:
+            field_dict["config_change"] = config_change
         if kid is not UNSET:
             field_dict["kid"] = kid
         if value_hash is not UNSET:
@@ -211,6 +220,7 @@ class AppSecretResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.config_change_receipt import ConfigChangeReceipt
         from ..models.secret_runtime_reload_observation import SecretRuntimeReloadObservation
 
         d = dict(src_dict)
@@ -227,6 +237,13 @@ class AppSecretResponse:
         delivery_version = d.pop("delivery_version")
 
         delivery_status = check_app_secret_response_delivery_status(d.pop("delivery_status"))
+
+        _config_change = d.pop("config_change", UNSET)
+        config_change: ConfigChangeReceipt | Unset
+        if isinstance(_config_change, Unset):
+            config_change = UNSET
+        else:
+            config_change = ConfigChangeReceipt.from_dict(_config_change)
 
         kid = d.pop("kid", UNSET)
 
@@ -318,6 +335,7 @@ class AppSecretResponse:
             updated_at=updated_at,
             delivery_version=delivery_version,
             delivery_status=delivery_status,
+            config_change=config_change,
             kid=kid,
             value_hash=value_hash,
             delivered_version=delivered_version,

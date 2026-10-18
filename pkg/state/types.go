@@ -354,6 +354,9 @@ const (
 	// closes. Not wired yet; the schema CHECK accepts it so the
 	// caller can stamp it without a migration.
 	AutoRollbackReasonFirstWindowExpired AutoRollbackReason = "first_window_expired"
+	// AutoRollbackReasonPostReleaseRegression is stamped when the
+	// post-release watch rolls a completed release back (ADR-1445).
+	AutoRollbackReasonPostReleaseRegression AutoRollbackReason = "post_release_regression"
 )
 
 // IsValidAutoRollbackReason reports whether r is one of the
@@ -362,7 +365,7 @@ const (
 // on a stray value before the SQL UPDATE surfaces a 23514.
 func (r AutoRollbackReason) IsValid() bool {
 	switch r {
-	case AutoRollbackReasonThresholdExceeded, AutoRollbackReasonFirstWindowExpired:
+	case AutoRollbackReasonThresholdExceeded, AutoRollbackReasonFirstWindowExpired, AutoRollbackReasonPostReleaseRegression:
 		return true
 	default:
 		return false
@@ -442,10 +445,14 @@ const (
 
 // Account is a customer account.
 type Account struct {
-	ID     string
-	Email  string
-	Plan   api.Plan
-	Status AccountStatus
+	// ResourceOrgID is set only on a resource policy/billing projection. Such a
+	// value is never returned by AccountByID or used as a human principal.
+	ResourceOrgID            string
+	ResourceOwnershipEnabled bool
+	ID                       string
+	Email                    string
+	Plan                     api.Plan
+	Status                   AccountStatus
 	// ProviderCustomerID is the per-account `cus_…` returned by Stripe when
 	// the customer signs up (spec §4.7). The unique index makes it a
 	// stable webhook lookup key.
@@ -1274,9 +1281,8 @@ type DeployToken struct {
 type App struct {
 	ID        string
 	AccountID string
-	// OrgID is the owning organization persisted on the app row. AccountID
-	// remains the creator/legacy authorization identity; activity attribution
-	// must follow OrgID, never the caller's active org or API-key scope.
+	// AccountID is an immutable storage namespace, not a human ownership FK.
+	// OrgID owns shared authorization, runtime policy, billing and lifecycle.
 	OrgID string
 	Slug  string
 	// Visibility controls public edge exposure. Public is the default;
@@ -2000,6 +2006,11 @@ type AppManifest struct {
 	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie,omitempty"`
 	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds,omitempty"`
+	// ReleasePolicy (ADR-1446): "" / "safe" or "immediate".
+	ReleasePolicy string `json:"release_policy,omitempty"`
+	// ReleaseProbePaths (ADR-1449): GET paths the default rollout probe checks
+	// instead of "/".
+	ReleaseProbePaths []string `json:"release_probe_paths,omitempty"`
 	// FunctionConcurrency is how many requests one function worker serves
 	// at once (ADR-1342); zero keeps one.
 	FunctionConcurrency int `json:"function_concurrency,omitempty"`
@@ -2047,7 +2058,8 @@ func (m AppManifest) IsZero() bool {
 		m.StopGracePeriodS == 0 && m.StopSignal == "" &&
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
 		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" && m.PreAuthRateLimit == nil &&
-		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity && m.VersionAffinityCookie == "" && !m.VersionAffinityManagedCookie && m.RevisionPinTTLSeconds == 0
+		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity && m.VersionAffinityCookie == "" && !m.VersionAffinityManagedCookie && m.RevisionPinTTLSeconds == 0 &&
+		m.ReleasePolicy == "" && len(m.ReleaseProbePaths) == 0
 }
 
 func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
@@ -2725,6 +2737,9 @@ type Deployment struct {
 	RolloutCompletedAt   *time.Time `json:"rollout_completed_at,omitempty"`
 	RolloutAbortedAt     *time.Time `json:"rollout_aborted_at,omitempty"`
 	RolloutAbortedReason string     `json:"rollout_aborted_reason,omitempty"`
+	// RolloutDecision is the api.RolloutDecision recorded with the latest
+	// rollout transition (ADR-1447), or nil. Holds never write it.
+	RolloutDecision json.RawMessage `json:"rollout_decision,omitempty"`
 	// ServiceRolloutHandoff persists the scheduler-owned routing and drain
 	// barriers for zero-step service rollouts. Empty for ordinary canaries and
 	// stable deployments.
@@ -4548,6 +4563,8 @@ type Invocation struct {
 	// account_async_quota slot for this dispatch. It is internal lifecycle
 	// state, not part of the customer invocation representation.
 	QuotaReserved bool `json:"-"`
+	// AsyncQuotaSubjectID captures the reserved counter independently of storage ownership.
+	AsyncQuotaSubjectID string `json:"-"`
 	// WorkPolicyName and WorkKeyDigest identify an app-scoped scheduling lane.
 	// The raw application key is never persisted in this ledger.
 	WorkPolicyName     string     `json:"work_policy_name,omitempty"`
@@ -4914,6 +4931,7 @@ type QueueStats struct {
 // rows: push consumers and queue-depth autoscaling can reconcile from this
 // stable configuration without scanning customer messages.
 type QueueBinding struct {
+	OrgID string
 	// Empty retains the historical app-wide contract. Named scopes are immutable.
 	DeploymentScope string
 	// EnvironmentID retains the original catalog identity through removal/recreation.
@@ -5852,6 +5870,10 @@ const (
 	DeployMCPTaskHoldCancelled  DeploymentAuditKind = "deploy.mcp_task_hold_cancelled"
 	DeployWorkerDrainStarted    DeploymentAuditKind = "deploy.worker_drain_started"
 	DeployWorkerDrainCompleted  DeploymentAuditKind = "deploy.worker_drain_completed"
+	// DeployRolloutHeld records why a canary step is held (ADR-1447). Its
+	// data is {"decision": api.RolloutDecision}; repeats of the same rule are
+	// deduplicated for api.RolloutHoldRefreshInterval.
+	DeployRolloutHeld DeploymentAuditKind = "deploy.rollout_held"
 )
 
 // DeploymentAudit is one row of the deployment_audit table
@@ -7430,6 +7452,7 @@ const (
 type Project struct {
 	ID               string
 	AccountID        string
+	OrgID            string // persisted owner; AccountID is the stable resource namespace
 	Slug             string
 	RepoFullName     string // empty for standalone (non-bound) projects
 	ProductionBranch string // empty until BindAppRepo runs
@@ -7631,18 +7654,21 @@ const (
 // (personal_owner_account_id) WHERE personal_org = true enforces
 // exactly-one-personal-per-account at the SQL layer).
 type Org struct {
-	ID                     string
-	Slug                   string
-	Name                   string
-	Personal               bool
-	PersonalOwnerAccountID *string
-	Plan                   api.Plan
-	Status                 OrgStatus
-	ProviderCustomerID     string
-	StripeSubscriptionItem string
-	DeletedPending         bool
-	CreatedAt              time.Time
-	UpdatedAt              time.Time
+	AbuseHoldAt              *time.Time
+	AbuseHoldReason          string
+	ResourceOwnershipEnabled bool
+	ID                       string
+	Slug                     string
+	Name                     string
+	Personal                 bool
+	PersonalOwnerAccountID   *string
+	Plan                     api.Plan
+	Status                   OrgStatus
+	ProviderCustomerID       string
+	StripeSubscriptionItem   string
+	DeletedPending           bool
+	CreatedAt                time.Time
+	UpdatedAt                time.Time
 }
 
 // OrgMembership is the (org, account) join row. The pair is the PK;

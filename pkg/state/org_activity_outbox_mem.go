@@ -106,13 +106,16 @@ func (m *MemStore) EnqueueOrgActivityOutbox(_ context.Context, entry OrgActivity
 	return m.enqueueOrgActivityOutboxLocked(entry), nil
 }
 
-func (m *MemStore) UpsertAppEnvInScopeWithActivity(_ context.Context, accountID, appID, scope, key, value string, entry OrgActivity) (int64, error) {
+func (m *MemStore) UpsertAppEnvInScopeWithActivity(ctx context.Context, accountID, appID, scope, key, value string, entry OrgActivity) (int64, error) {
 	entry, err := normalizeOrgActivity(entry, time.Now())
 	if err != nil {
 		return 0, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return 0, err
+	}
 	memory, guardErr := m.gitOpsGuardScopedWriteLocked(accountID, appID, scope, []string{"variables/" + key})
 	if guardErr != nil {
 		return 0, guardErr
@@ -134,13 +137,16 @@ func (m *MemStore) UpsertAppEnvInScopeWithActivity(_ context.Context, accountID,
 	return m.enqueueOrgActivityOutboxLocked(entry), nil
 }
 
-func (m *MemStore) DeleteAppEnvInScopeWithActivity(_ context.Context, accountID, appID, scope, key string, entry OrgActivity) (int64, error) {
+func (m *MemStore) DeleteAppEnvInScopeWithActivity(ctx context.Context, accountID, appID, scope, key string, entry OrgActivity) (int64, error) {
 	entry, err := normalizeOrgActivity(entry, time.Now())
 	if err != nil {
 		return 0, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return 0, err
+	}
 	envKey := envKey{AppID: appID, Scope: scope, Key: key}
 	row, ok := m.envs[envKey]
 	if !ok || row.AccountID != accountID {

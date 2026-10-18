@@ -16,6 +16,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
+	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -596,6 +597,7 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 			"Promotion token does not match", "preview the exact source and target environments again"))
 		return
 	}
+	idempotencyKey = projectaccess.IdempotencyKey(r, idempotencyKey)
 	existing, existingWorkloads, lookupErr := s.store.ProjectEnvironmentPromotionByIdempotencyKey(r.Context(), acct.ID, projectSlug, idempotencyKey)
 	if lookupErr != nil && !errors.Is(lookupErr, state.ErrNotFound) {
 		api.WriteProblem(w, api.ErrCapacity("could not load environment promotion"))
@@ -778,6 +780,7 @@ func (s *server) rollbackProjectEnvironmentPromotion(w http.ResponseWriter, r *h
 			"Idempotency-Key required", "promotion rollbacks require an Idempotency-Key of 1..255 characters"))
 		return
 	}
+	idempotencyKey = projectaccess.IdempotencyKey(r, idempotencyKey)
 	promotion, workloads, err := s.store.ProjectEnvironmentPromotionByID(r.Context(), acct.ID, r.PathValue("slug"), r.PathValue("environment"), r.PathValue("promotion"))
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -1751,6 +1754,10 @@ func promoteProjectEnvironmentDeploymentWithTraffic(ctx context.Context, store s
 	candidate.CanaryStages = nil
 	candidate.StageState = nil
 	candidate.DeployedVia = "api"
+	if grant, ok := projectaccess.From(ctx); ok {
+		candidate.DeployedByUserID = grant.Actor.ID
+		candidate.DeployedFromIP = ""
+	}
 	candidate.Reason = projectEnvironmentPromotionDeploymentReason(promotionID)
 
 	var created state.Deployment

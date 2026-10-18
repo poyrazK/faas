@@ -100,7 +100,7 @@ func TestWorkflowInitialManualCompletion(t *testing.T) {
 					t.Fatalf("observation %v %v", processed, err)
 				}
 				if pg, ok := s.(*PgStore); ok {
-					s = NewPgStore(pg.pool)
+					s = NewPgStore(pg.pool.Pool)
 					reviews = s.(WorkflowInitialRecoveryReviewStore)
 					worker = s.(WorkflowInitialManualCompletionStore)
 				}

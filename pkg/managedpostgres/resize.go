@@ -142,12 +142,12 @@ func (s *Service) reserveComputeChange(ctx context.Context, request ResizeDataba
 		return ResizeOperation{}, err
 	}
 	if s.admitResize != nil {
-		if err := s.admitResize(ctx, request.AccountID, target); err != nil {
+		if err := s.admitResize(ctx, PolicySubject(ctx, request.AccountID), target); err != nil {
 			return ResizeOperation{}, err
 		}
 	}
 	if s.admit != nil && computeChangeRaisesCost(database.Spec, target) {
-		if err := s.admit(ctx, request.AccountID); err != nil {
+		if err := s.admit(ctx, PolicySubject(ctx, request.AccountID)); err != nil {
 			return ResizeOperation{}, err
 		}
 	}

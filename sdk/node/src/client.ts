@@ -163,6 +163,8 @@ export class FaaSClient {
     OpenAPI.BASE = baseURL.replace(/\/$/, '');
     OpenAPI.TOKEN = opts.token ?? undefined;
     OpenAPI.WITH_CREDENTIALS = false;
+    // Resource identifiers stay within one path segment, including organization routes.
+    OpenAPI.ENCODE_PATH = encodeURIComponent;
     OpenAPI.HEADERS = opts.token
       ? { Authorization: `Bearer ${opts.token}` }
       : {};

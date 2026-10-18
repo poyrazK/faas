@@ -13,6 +13,9 @@ import (
 )
 
 func (s *PgStore) CreateQueueBindingWithConsumer(ctx context.Context, in QueueBinding) (QueueBindingConsumerResult, error) {
+	if err := s.validateQueueBindingOrg(ctx, in); err != nil {
+		return QueueBindingConsumerResult{}, err
+	}
 	if in.EnvironmentID != "" {
 		if _, err := uuid.Parse(in.EnvironmentID); err != nil {
 			return QueueBindingConsumerResult{}, ErrInvalidArgument
@@ -51,6 +54,9 @@ func (s *PgStore) mutateQueueBindingConsumer(ctx context.Context, accountID, app
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
+	if _, err := queuePolicyAccountDB(ctx, tx, accountID, appID, true); err != nil {
+		return QueueBindingConsumerResult{}, err
+	}
 	environment := pgtype.UUID{}
 	scope := ""
 	if create != nil {
@@ -78,15 +84,22 @@ func (s *PgStore) mutateQueueBindingConsumerTx(ctx context.Context, tx pgx.Tx, a
 		return QueueBindingConsumerResult{}, err
 	}
 	q := sqlc.New()
+	owner, err := queuePolicyAccountDB(ctx, tx, accountID, appID, true)
+	if err != nil {
+		return QueueBindingConsumerResult{}, err
+	}
 	app, err := q.QueueConsumerLockApp(ctx, tx, sqlc.QueueConsumerLockAppParams{AppID: appUUID, AccountID: accountUUID})
 	if err != nil {
 		return QueueBindingConsumerResult{}, mapErr(err)
 	}
-	account, err := q.QueueConsumerLockAccount(ctx, tx, accountUUID)
-	if err != nil {
-		return QueueBindingConsumerResult{}, mapErr(err)
+	if !owner.ResourceOwnershipEnabled {
+		account, err := q.QueueConsumerLockAccount(ctx, tx, accountUUID)
+		if err != nil {
+			return QueueBindingConsumerResult{}, mapErr(err)
+		}
+		owner.Plan = api.Plan(account.Plan)
 	}
-	limits, _ := api.LimitsFor(api.Plan(account.Plan))
+	limits, _ := api.LimitsFor(owner.Plan)
 	var binding QueueBinding
 	wasPush := false
 	if create != nil {
@@ -122,7 +135,7 @@ func (s *PgStore) mutateQueueBindingConsumerTx(ctx context.Context, tx pgx.Tx, a
 			return QueueBindingConsumerResult{}, err
 		}
 		if len(owned) == 0 || !wasPush {
-			if err := queueConsumerCheckQuota(ctx, q, tx, appUUID, accountUUID, limits); err != nil {
+			if err := queueConsumerCheckQuota(ctx, q, tx, appUUID, mustPgUUID(owner.ResourceOwnerID()), limits); err != nil {
 				return QueueBindingConsumerResult{}, err
 			}
 		}
@@ -214,7 +227,7 @@ func queueConsumerCheckQuota(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, ap
 }
 
 func queueConsumerBindingFromSQL(row sqlc.QueueBinding) QueueBinding {
-	return QueueBinding{EnvironmentID: uuidString(row.EnvironmentID), DeploymentScope: row.DeploymentScope, ID: row.ID.String(), AccountID: row.AccountID.String(), AppID: row.AppID.String(), Name: row.Name, QueueName: row.QueueName,
+	return QueueBinding{EnvironmentID: uuidString(row.EnvironmentID), DeploymentScope: row.DeploymentScope, ID: row.ID.String(), AccountID: row.AccountID.String(), OrgID: pgUUIDString(row.OrgID), AppID: row.AppID.String(), Name: row.Name, QueueName: row.QueueName,
 		Mode: row.Mode, WorkloadClass: WorkloadClass(row.WorkloadClass), Enabled: row.Enabled, MaxConcurrency: int(row.MaxConcurrency),
 		RetiredAt:       timestamptzToTimePtr(row.RetiredAt),
 		RetryPolicyJSON: append([]byte(nil), row.RetryPolicy...), CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time}

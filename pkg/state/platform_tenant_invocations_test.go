@@ -11,10 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type tenantInvocationStore interface {
-	state.Store
-	state.PlatformTenantStore
-}
+type tenantInvocationStore = contractTestStore
 
 func TestMemPlatformTenantInvocationLifecycle(t *testing.T) {
 	testPlatformTenantInvocationLifecycle(t, state.NewMemStore(), context.Background())

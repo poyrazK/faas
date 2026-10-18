@@ -12,10 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/imagechain"
 )
 
-type artifactScanBaseTestStore interface {
-	artifactScanTestStore
-	BaseImageProducerStore
-}
+type artifactScanBaseTestStore = contractTestStore
 
 func artifactScanBaseFixture(t *testing.T, s artifactScanBaseTestStore, hooks ...registryFixtureCreateHooks) (DeploymentArtifactScanInput, BaseImageProducer, App, Deployment) {
 	return artifactScanBaseFixtureWithSidecar(t, s, false, hooks...)

@@ -19,12 +19,17 @@ func (m *MemStore) activeVersionProtectionLocked(bucket string) bool {
 	return false
 }
 
-func (m *MemStore) BeginObjectVersionProtection(_ context.Context, j ObjectVersionProtection) (ObjectVersionProtection, error) {
+func (m *MemStore) BeginObjectVersionProtection(ctx context.Context, j ObjectVersionProtection) (ObjectVersionProtection, error) {
 	if !ValidObjectVersionProtectionIntent(j) {
 		return ObjectVersionProtection{}, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectVersionProtection
+		return zero0, err
+	}
+
 	b, ok := m.objectBuckets[j.BucketID]
 	if !ok || b.AccountID != j.AccountID || b.AppID != j.AppID {
 		return ObjectVersionProtection{}, ErrNotFound
@@ -75,9 +80,14 @@ func (m *MemStore) BeginObjectVersionProtection(_ context.Context, j ObjectVersi
 	m.objectVersionProtection[j.ID] = cloneObjectVersionProtection(j)
 	return cloneObjectVersionProtection(j), nil
 }
-func (m *MemStore) GetObjectVersionProtection(_ context.Context, account, bucket, id string) (ObjectVersionProtection, error) {
+func (m *MemStore) GetObjectVersionProtection(ctx context.Context, account, bucket, id string) (ObjectVersionProtection, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectVersionProtection
+		return zero0, err
+	}
+
 	j, ok := m.objectVersionProtection[id]
 	b := m.objectBuckets[bucket]
 	if !ok || j.AccountID != account || j.BucketID != bucket || b.AccountID != account || b.State == "deleted" {
@@ -85,12 +95,17 @@ func (m *MemStore) GetObjectVersionProtection(_ context.Context, account, bucket
 	}
 	return cloneObjectVersionProtection(j), nil
 }
-func (m *MemStore) DueObjectVersionProtection(_ context.Context, limit int32) ([]ObjectVersionProtection, error) {
+func (m *MemStore) DueObjectVersionProtection(ctx context.Context, limit int32) ([]ObjectVersionProtection, error) {
 	if limit < 1 || limit > api.ObjectVersionProtectionBatch {
 		return nil, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []ObjectVersionProtection
+		return zero0, err
+	}
+
 	out := []ObjectVersionProtection{}
 	for _, j := range m.objectVersionProtection {
 		if protectionActive(j) && !j.RetryAt.After(m.clock()) && !j.LeaseUntil.After(m.clock()) {

@@ -44,7 +44,7 @@ func (s *PgStore) AcquireSnapshotRestorePressure(ctx context.Context) (SnapshotR
 func (s *PgStore) acquireSnapshotRestorePressureCounted(ctx context.Context) (SnapshotRestorePressureSession, error) {
 	l := snapshotRestorePressureLock
 	for {
-		conn, err := db.DirectPool(s.pool).Acquire(ctx)
+		conn, err := db.DirectPool(s.pool.Pool).Acquire(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("state: acquire %s connection: %w", l.what, err)
 		}

@@ -1,12 +1,16 @@
 package canary
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestEvaluateCircuitBreaker(t *testing.T) {
 	base := CircuitBreakerObservation{
 		HasStable:                 true,
 		StableDeploymentID:        "stable-1",
 		OOMSignalAvailable:        true,
+		LivenessSignalAvailable:   true,
 		CPURequestSignalAvailable: true,
 		DependencySignalAvailable: true,
 		Candidate:                 HealthWindow{Requests: 100, ServerErrors: 1, P95LatencyMS: 120, ColdBootRequests: 10, ColdBootP95LatencyMS: 900, CPURequests: 100, CPUUsec: 10_000_000},
@@ -21,6 +25,16 @@ func TestEvaluateCircuitBreaker(t *testing.T) {
 		{name: "first deployment has no rollback comparison", mutate: func(o *CircuitBreakerObservation) { o.HasStable = false }, want: CircuitBreakerAdvance},
 		{name: "oom aborts immediately", mutate: func(o *CircuitBreakerObservation) { o.OOMKills = 1 }, want: CircuitBreakerAbort},
 		{name: "missing oom signal holds", mutate: func(o *CircuitBreakerObservation) { o.OOMSignalAvailable = false }, want: CircuitBreakerHold},
+		{name: "missing liveness signal holds", mutate: func(o *CircuitBreakerObservation) { o.LivenessSignalAvailable = false }, want: CircuitBreakerHold},
+		{name: "crash loop aborts without request samples", mutate: func(o *CircuitBreakerObservation) {
+			o.CandidateLivenessRestarts = CircuitBreakerMinCrashLoopRestarts
+			o.Candidate.Requests = 0
+		}, want: CircuitBreakerAbort},
+		{name: "single restart is not a crash loop", mutate: func(o *CircuitBreakerObservation) { o.CandidateLivenessRestarts = 1 }, want: CircuitBreakerAdvance},
+		{name: "restarts matching a flapping predecessor do not abort", mutate: func(o *CircuitBreakerObservation) {
+			o.CandidateLivenessRestarts = 4
+			o.StableLivenessRestarts = 2
+		}, want: CircuitBreakerAdvance},
 		{name: "missing cpu per request signal holds", mutate: func(o *CircuitBreakerObservation) { o.CPURequestSignalAvailable = false }, want: CircuitBreakerHold},
 		{name: "missing dependency error signal holds", mutate: func(o *CircuitBreakerObservation) { o.DependencySignalAvailable = false }, want: CircuitBreakerHold},
 		{name: "insufficient cpu request samples hold", mutate: func(o *CircuitBreakerObservation) {
@@ -118,6 +132,99 @@ func TestEvaluateCircuitBreaker(t *testing.T) {
 			}
 			if got := EvaluateCircuitBreaker(observation); got.Action != tt.want {
 				t.Fatalf("EvaluateCircuitBreaker().Action = %q, want %q (decision: %+v)", got.Action, tt.want, got)
+			}
+		})
+	}
+}
+
+func TestLowTrafficAdvanceAllowed(t *testing.T) {
+	clean := CircuitBreakerObservation{HasStable: true, OOMSignalAvailable: true, LivenessSignalAvailable: true, Candidate: HealthWindow{Requests: 2}}
+	sampleHold := CircuitBreakerDecision{Action: CircuitBreakerHold, Reason: "insufficient request samples (candidate=2 stable=3; need 20 each)"}
+	tests := []struct {
+		name   string
+		d      CircuitBreakerDecision
+		mutate func(*CircuitBreakerObservation)
+		want   bool
+	}{
+		{name: "request sample hold with clean evidence", d: sampleHold, want: true},
+		{name: "cpu sample hold with clean evidence", d: CircuitBreakerDecision{Action: CircuitBreakerHold, Reason: "insufficient CPU/request samples (candidate=1 stable=1; need 20 each)"}, want: true},
+		{name: "candidate 5xx", d: sampleHold, mutate: func(o *CircuitBreakerObservation) { o.Candidate.ServerErrors = 1 }},
+		{name: "candidate probe 5xx", d: sampleHold, mutate: func(o *CircuitBreakerObservation) {
+			o.Candidate.ProbeRequests, o.Candidate.ProbeServerErrors = 5, 1
+		}},
+		{name: "oom signal unavailable", d: sampleHold, mutate: func(o *CircuitBreakerObservation) { o.OOMSignalAvailable = false }},
+		{name: "oom kill", d: sampleHold, mutate: func(o *CircuitBreakerObservation) { o.OOMKills = 1 }},
+		{name: "liveness restart", d: sampleHold, mutate: func(o *CircuitBreakerObservation) { o.CandidateLivenessRestarts = 1 }},
+		{name: "liveness signal unavailable", d: sampleHold, mutate: func(o *CircuitBreakerObservation) { o.LivenessSignalAvailable = false }},
+		{name: "signal unavailable hold", d: CircuitBreakerDecision{Action: CircuitBreakerHold, Reason: "dependency error signal unavailable"}},
+		{name: "abort", d: CircuitBreakerDecision{Action: CircuitBreakerAbort, Reason: "insufficient request samples"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			o := clean
+			if tc.mutate != nil {
+				tc.mutate(&o)
+			}
+			if got := LowTrafficAdvanceAllowed(tc.d, o); got != tc.want {
+				t.Fatalf("LowTrafficAdvanceAllowed = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// adr: 1446
+// Synthetic probes join the 5xx sample while organic traffic is below the
+// request floor: a failing quiet candidate aborts, and clean probes on both
+// sides let the stage advance without waiting for organic traffic.
+func TestProbeBackedLowTrafficEvidence(t *testing.T) {
+	quiet := CircuitBreakerObservation{
+		HasStable: true, StableDeploymentID: "stable-1", OOMSignalAvailable: true, LivenessSignalAvailable: true,
+		CPURequestSignalAvailable: true, DependencySignalAvailable: true,
+		Candidate: HealthWindow{Requests: 1}, Stable: HealthWindow{Requests: 2},
+	}
+	probes := func(cReq, cErr, sReq, sErr int64) func(*CircuitBreakerObservation) {
+		return func(o *CircuitBreakerObservation) {
+			o.Candidate.ProbeRequests, o.Candidate.ProbeServerErrors = cReq, cErr
+			o.Stable.ProbeRequests, o.Stable.ProbeServerErrors = sReq, sErr
+		}
+	}
+	tests := []struct {
+		name        string
+		mutate      func(*CircuitBreakerObservation)
+		wantAction  CircuitBreakerAction
+		wantAdvance bool
+	}{
+		{name: "failing probes abort", mutate: probes(20, 20, 20, 0), wantAction: CircuitBreakerAbort},
+		{name: "failing probes abort before the floor", mutate: probes(6, 6, 20, 0), wantAction: CircuitBreakerAbort},
+		{name: "clean probes advance", mutate: probes(20, 0, 20, 0), wantAction: CircuitBreakerHold, wantAdvance: true},
+		{name: "a rare probe 5xx is no regression", mutate: probes(30, 1, 30, 0), wantAction: CircuitBreakerHold, wantAdvance: true},
+		{name: "a shared failure is no regression", mutate: probes(20, 20, 20, 20), wantAction: CircuitBreakerHold, wantAdvance: true},
+		{name: "too few probes keep holding", mutate: probes(10, 0, 10, 0), wantAction: CircuitBreakerHold},
+		{name: "an unprobed predecessor keeps holding", mutate: probes(20, 0, 0, 0), wantAction: CircuitBreakerHold},
+		{name: "a liveness restart keeps holding", mutate: func(o *CircuitBreakerObservation) {
+			probes(20, 0, 20, 0)(o)
+			o.CandidateLivenessRestarts = 1
+		}, wantAction: CircuitBreakerHold},
+		{name: "probes never replace organic samples", mutate: func(o *CircuitBreakerObservation) {
+			o.Candidate.Requests, o.Stable.Requests = 100, 100
+			o.Candidate.CPURequests, o.Candidate.CPUUsec = 100, 1_000_000
+			o.Stable.CPURequests, o.Stable.CPUUsec = 100, 1_000_000
+			probes(20, 20, 20, 0)(o)
+		}, wantAction: CircuitBreakerAdvance},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			o := quiet
+			tc.mutate(&o)
+			d := EvaluateCircuitBreaker(o)
+			if d.Action != tc.wantAction {
+				t.Fatalf("EvaluateCircuitBreaker = %+v, want %s", d, tc.wantAction)
+			}
+			if d.Action == CircuitBreakerAbort && (!strings.HasPrefix(d.Reason, "5xx regression") || !strings.Contains(d.Reason, "synthetic probes included")) {
+				t.Fatalf("abort reason = %q, want a probe-backed 5xx regression", d.Reason)
+			}
+			if got := ProbeEvidenceAdvanceAllowed(d, o); got != tc.wantAdvance {
+				t.Fatalf("ProbeEvidenceAdvanceAllowed = %v, want %v (decision %+v)", got, tc.wantAdvance, d)
 			}
 		})
 	}

@@ -152,10 +152,7 @@ func TestMemRuntimeIncarnationPublishedReceiptRemainsFenced(t *testing.T) {
 	runtimeIncarnationPublishedReceipt(t, NewMemStore())
 }
 
-func runtimeIncarnationPublishedReceipt(t *testing.T, s interface {
-	nativeArtifactTestStore
-	InstanceApplicationStandardRuntimeReceiptStore
-}) {
+func runtimeIncarnationPublishedReceipt(t *testing.T, s contractTestStore) {
 	t.Helper()
 	ctx := t.Context()
 	ins, r := issueConsumedNativeFixture(t, s)

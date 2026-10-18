@@ -10,6 +10,12 @@ faas_postgres_primary_inventory_host: "{{ (groups['control_plane'] | default([''
 faas_postgres_primary_host: "{{ hostvars[faas_postgres_primary_inventory_host].faas_private_dns_address }}"
 faas_postgres_primary_port: 5432
 
+# Where the primary's postgres role keeps its replication certificate, and
+# where this standby pins a copy of it for sslmode=verify-full. The pinned copy
+# lives outside the data directory, which a reseed empties.
+faas_postgres_replication_tls_dir: /etc/postgresql/faas-tls
+faas_postgres_standby_primary_cert: /var/lib/postgresql/faas-primary-replication.crt
+
 # Physical slot the primary keeps for this standby (postgres role).
 faas_postgres_standby_slot: faas_standby
 
