@@ -10,7 +10,8 @@ jobs:
   qualify:
     name: managed storage Node (embedded app + gateway journey)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Allow the gateway journey and fixture race builds to finish on a cold cache.
+    timeout-minutes: 30
     env:
       GOMEMLIMIT: 2GiB
       GOGC: 10
