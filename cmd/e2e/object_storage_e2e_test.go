@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -212,8 +213,18 @@ func seedObjectStorageAccounting(t *testing.T, env objectStorageE2EEnv, accountI
 		t.Fatal("PgStore does not implement object accounting")
 	}
 	token := "e2e-inventory-" + bucket.ID
-	if err := accounting.ClaimObjectInventory(ctx, bucket.ID, token); err != nil {
-		t.Fatalf("claim object inventory: %v", err)
+	// The real daemon may own its startup inventory sweep. Wait for that
+	// lease to complete rather than racing it or replacing its authority.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		err := accounting.ClaimObjectInventory(ctx, bucket.ID, token)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, state.ErrConflict) || time.Now().After(deadline) {
+			t.Fatalf("claim object inventory: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	if err := accounting.FinishObjectInventory(ctx, bucket.ID, token, 0, 0); err != nil {
 		t.Fatalf("finish object inventory: %v", err)

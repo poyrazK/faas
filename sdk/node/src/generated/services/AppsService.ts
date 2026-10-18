@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AppBindingInventory } from '../models/AppBindingInventory.js';
+import type { AppChangeTimelineResponse } from '../models/AppChangeTimelineResponse.js';
 import type { AppErrorRequestsResponse } from '../models/AppErrorRequestsResponse.js';
 import type { AppErrorSampleResponse } from '../models/AppErrorSampleResponse.js';
 import type { AppErrorsSummaryResponse } from '../models/AppErrorsSummaryResponse.js';
@@ -43,10 +44,13 @@ import type { CreateMigrationVerificationRequest } from '../models/CreateMigrati
 import type { CreateNativeIssueTicketRequest } from '../models/CreateNativeIssueTicketRequest.js';
 import type { CreateNativeLinearIssueTicketRequest } from '../models/CreateNativeLinearIssueTicketRequest.js';
 import type { CreateQueueBindingCanaryRequest } from '../models/CreateQueueBindingCanaryRequest.js';
+import type { CreateSLORequest } from '../models/CreateSLORequest.js';
+import type { CreateSyntheticCheckRequest } from '../models/CreateSyntheticCheckRequest.js';
 import type { CreateTCPListenerRequest } from '../models/CreateTCPListenerRequest.js';
 import type { CreateUDPListenerRequest } from '../models/CreateUDPListenerRequest.js';
 import type { CustomMetricListResponse } from '../models/CustomMetricListResponse.js';
 import type { CustomMetricRequest } from '../models/CustomMetricRequest.js';
+import type { CustomMetricSeriesResponse } from '../models/CustomMetricSeriesResponse.js';
 import type { DebugCompareRequest } from '../models/DebugCompareRequest.js';
 import type { DebugCompareResponse } from '../models/DebugCompareResponse.js';
 import type { DebugCoverageResponse } from '../models/DebugCoverageResponse.js';
@@ -175,8 +179,10 @@ import type { SetRoutePrioritiesRequest } from '../models/SetRoutePrioritiesRequ
 import type { SetRouteRemovalPolicyRequest } from '../models/SetRouteRemovalPolicyRequest.js';
 import type { SetServiceWakeAheadRequest } from '../models/SetServiceWakeAheadRequest.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
+import type { SLOResponse } from '../models/SLOResponse.js';
 import type { SourceReviewRequest } from '../models/SourceReviewRequest.js';
 import type { SourceReviewResponse } from '../models/SourceReviewResponse.js';
+import type { SyntheticCheckResponse } from '../models/SyntheticCheckResponse.js';
 import type { TCPListenerResponse } from '../models/TCPListenerResponse.js';
 import type { TCPListenerTLSStatusResponse } from '../models/TCPListenerTLSStatusResponse.js';
 import type { UDPListenerResponse } from '../models/UDPListenerResponse.js';
@@ -188,6 +194,7 @@ import type { UpdateIssueTrackerAutoSyncRequest } from '../models/UpdateIssueTra
 import type { UpdateIssueTrackerLinearConnectionRequest } from '../models/UpdateIssueTrackerLinearConnectionRequest.js';
 import type { UpdateNativeIssueTrackerStatusRequest } from '../models/UpdateNativeIssueTrackerStatusRequest.js';
 import type { UpdateNativeLinearIssueTrackerStatusRequest } from '../models/UpdateNativeLinearIssueTrackerStatusRequest.js';
+import type { UpdateSyntheticCheckRequest } from '../models/UpdateSyntheticCheckRequest.js';
 import type { UpdateTCPListenerRequest } from '../models/UpdateTCPListenerRequest.js';
 import type { UpdateUDPListenerRequest } from '../models/UpdateUDPListenerRequest.js';
 import type { WakeTimelineResponse } from '../models/WakeTimelineResponse.js';
@@ -1756,6 +1763,381 @@ export class AppsService {
     });
   }
   /**
+   * Read a custom metric's history (ADR-745)
+   * ADR-745 internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
+   * otherwise 503 `custom_metric_history_unavailable`.
+   *
+   * Returns the values Prometheus recorded from pushed custom metrics over
+   * `range` (`1h`, `6h`, `24h` default, `7d`, `15d`). Only fresh pushes are
+   * recorded, so a gap means nothing was pushed then. Prometheus failure
+   * returns 200 with `source: "degraded: <reason>"` and null `points`.
+   *
+   * @returns CustomMetricSeriesResponse The recorded history.
+   * @throws ApiError
+   */
+  public static getCustomMetricSeries({
+    slug,
+    name,
+    range = '24h',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * The pushed custom metric whose history to read.
+     */
+    name: string,
+    /**
+     * History window. Default 24h.
+     */
+    range?: '1h' | '6h' | '24h' | '7d' | '15d',
+  }): CancelablePromise<CustomMetricSeriesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/custom-metrics/{name}/series',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      query: {
+        'range': range,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Ingest OTLP/HTTP metrics as custom metrics (ADR-745)
+   * ADR-745 internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
+   * otherwise 503. Point an OpenTelemetry exporter's metrics endpoint here
+   * with a `metrics:write` API key as the bearer token.
+   *
+   * Accepts an OTLP `ExportMetricsServiceRequest` as `application/x-protobuf`
+   * or `application/json` (at most 1 MiB) and answers in the same encoding.
+   * Gauges are stored as gauges and cumulative monotonic sums as counters;
+   * metric names are lowercased with `.`, `-` and `/` mapped to `_`. Delta
+   * or non-monotonic sums, histograms, data points with attributes,
+   * negative values, and names beyond the per-app limit are not stored and
+   * are reported through `partialSuccess`.
+   *
+   * @returns any The export was processed; rejected data points are reported in partialSuccess.
+   * @throws ApiError
+   */
+  public static postOtlpMetrics({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: Record<string, any>,
+  }): CancelablePromise<Record<string, any>> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/otlp/v1/metrics',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List the app's customer-defined SLOs (ADR-747)
+   * Returns every SLO defined on the app, name-ordered. Distinct from GET /v1/apps/{slug}/slo, which reports ADR-082's fixed 99.5% availability panel.
+   * @returns SLOResponse The app's SLO definitions.
+   * @throws ApiError
+   */
+  public static listSlOs({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<Array<SLOResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/slos',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Define an SLO on the app (ADR-747)
+   * Creates an availability or latency SLO with an objective between 90% and 99.99% over a rolling 7- or 30-day window. Latency thresholds are limited to the gateway histogram bucket bounds so attainment is exact. An app can hold at most 10 SLOs.
+   * @returns SLOResponse The SLO was created.
+   * @throws ApiError
+   */
+  public static createSlo({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateSLORequest,
+  }): CancelablePromise<SLOResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/slos',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        409: `The app already has an SLO with this name.`,
+        422: `The app is at its SLO cap; the problem carries limit and observed.`,
+      },
+    });
+  }
+  /**
+   * Get one customer-defined SLO and its error budget (ADR-747)
+   * Returns one SLO definition with its status: attainment and budget remaining over the window from hourly history, and live 1h/6h burn rates. An id belonging to another app returns 404.
+   * @returns SLOResponse The SLO definition.
+   * @throws ApiError
+   */
+  public static getSlo({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * SLO identifier returned when the SLO was created.
+     */
+    id: string,
+  }): CancelablePromise<SLOResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/slos/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Delete a customer-defined SLO (ADR-747)
+   * Removes the SLO and frees a slot against the per-app cap.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteSlo({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * SLO identifier returned when the SLO was created.
+     */
+    id: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/slos/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+    });
+  }
+  /**
+   * List the app's synthetic checks (ADR-748)
+   * Returns every scheduled HTTP check defined on the app, name-ordered.
+   * @returns SyntheticCheckResponse The app's synthetic checks.
+   * @throws ApiError
+   */
+  public static listSyntheticChecks({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<Array<SyntheticCheckResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/synthetics',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Define a synthetic check on the app (ADR-748)
+   * Schedules a GET or HEAD request to a path on the app's own hostname every 5, 15, or 60 minutes, through the public edge. A probe that wakes a parked app is billed like any request. An app can have at most 5 checks.
+   * @returns SyntheticCheckResponse The check was created and will run within one interval.
+   * @throws ApiError
+   */
+  public static createSyntheticCheck({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateSyntheticCheckRequest,
+  }): CancelablePromise<SyntheticCheckResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/synthetics',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        409: `The app already has a synthetic check with this name.`,
+        422: `The app is at its synthetic check cap; the problem carries limit and observed.`,
+      },
+    });
+  }
+  /**
+   * Get one synthetic check and its recent results (ADR-748)
+   * Returns one check definition with 24-hour and 7-day uptime, 24-hour p95 latency, and the last 20 runs. An id belonging to another app returns 404.
+   * @returns SyntheticCheckResponse The check definition.
+   * @throws ApiError
+   */
+  public static getSyntheticCheck({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Synthetic check identifier returned when the check was created.
+     */
+    id: string,
+  }): CancelablePromise<SyntheticCheckResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/synthetics/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Pause or resume a synthetic check (ADR-748)
+   * Sets whether the check runs. To change its path, schedule or expectations, delete and recreate it.
+   * @returns SyntheticCheckResponse The updated check.
+   * @throws ApiError
+   */
+  public static updateSyntheticCheck({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Synthetic check identifier returned when the check was created.
+     */
+    id: string,
+    requestBody: UpdateSyntheticCheckRequest,
+  }): CancelablePromise<SyntheticCheckResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/apps/{slug}/synthetics/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Delete a synthetic check (ADR-748)
+   * Removes the check and its run history.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteSyntheticCheck({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Synthetic check identifier returned when the check was created.
+     */
+    id: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/synthetics/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
    * Observe-mode decisions for each configured pre-auth policy.
    * Read-only security telemetry, available on every app plan. Each policy
    * reports how often observe mode would have blocked a request and the
@@ -1963,6 +2345,55 @@ export class AppsService {
       query: {
         'limit': limit,
         'before': before,
+      },
+    });
+  }
+  /**
+   * Read an app's change timeline.
+   * ADR-751 internal preview, enabled by `FAAS_CHANGE_TIMELINE_ENABLED=1`;
+   * otherwise 503 `change_timeline_unavailable`. Requires apps:read or
+   * admin; no MFA required.
+   *
+   * Merges deployment audit, edge-rule changes, the latest runtime-config
+   * change, route incidents, recorded health transitions, and environment
+   * and domain activity into one newest-first list. The window defaults to
+   * the last 24 hours, `until` is clamped to now, and the window is at most
+   * 7 days. At most 200 events are returned (`truncated: true` when more
+   * exist). A source that cannot be read is named in `unavailable_sources`
+   * and the remaining sources are still returned. Summaries never contain
+   * values, credentials, actors, or raw error text.
+   *
+   * @returns AppChangeTimelineResponse The change timeline; Cache-Control no-store.
+   * @returns Problem Invalid window, access denial, or the preview is disabled.
+   * @throws ApiError
+   */
+  public static getAppChangeTimeline({
+    slug,
+    since,
+    until,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Window start (RFC 3339). Defaults to 24 hours before until.
+     */
+    since?: string,
+    /**
+     * Window end (RFC 3339), exclusive. Defaults to and is clamped to now.
+     */
+    until?: string,
+  }): CancelablePromise<AppChangeTimelineResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/changes',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+        'until': until,
       },
     });
   }

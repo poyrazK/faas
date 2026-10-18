@@ -67,9 +67,18 @@ func (r *startRunner) rememberApp() error {
 	if err != nil {
 		return err
 	}
+	previous := r.statePath
 	r.statePath = startContextSessionPath(base, r.session.APIBase, r.session.AccountID, r.session.ContextKey)
 	if err := saveStartSession(r.statePath, r.session); err != nil {
 		return fmt.Errorf("app default saved but recovery record could not be updated: %w", err)
+	}
+	// The record moved to the new context key. Remove the superseded copy so
+	// one launch keeps one record, and a later start without this default
+	// cannot resume a deployment this launch has since replaced.
+	if previous != r.statePath {
+		if err := os.Remove(previous); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("app default saved but the superseded recovery record could not be removed: %w", err)
+		}
 	}
 	PrintOK(osStdout, "Remembered app %s in %s", link.App, path)
 	return nil
