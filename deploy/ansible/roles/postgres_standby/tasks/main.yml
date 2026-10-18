@@ -68,6 +68,38 @@
       {{ faas_postgres_primary_host }}:{{ faas_postgres_primary_port }}:replication:replicator:{{ faas_postgres_replication_password | replace('\\', '\\\\') | replace(':', '\\:') }}
   no_log: true
 
+# The primary's postgres role issues a self-signed replication certificate.
+# Copying it over the Ansible connection pins it: the WAL receiver and the
+# seed verify the primary against it (sslmode=verify-full), so neither the
+# network nor anything on it can read or redirect replication.
+- name: postgres_standby — read the primary's replication certificate
+  ansible.builtin.slurp:
+    src: "{{ faas_postgres_replication_tls_dir }}/server.crt"
+  delegate_to: "{{ faas_postgres_primary_inventory_host }}"
+  register: postgres_standby_primary_cert
+  failed_when: false
+
+- name: postgres_standby — require the primary's replication certificate
+  ansible.builtin.assert:
+    that:
+      - postgres_standby_primary_cert.content is defined
+    fail_msg: >-
+      {{ faas_postgres_primary_inventory_host }} has no replication
+      certificate at {{ faas_postgres_replication_tls_dir }}/server.crt.
+      Converge the control plane with postgresql.standby declared first.
+    quiet: true
+
+- name: postgres_standby — pin the primary's replication certificate
+  ansible.builtin.copy:
+    dest: "{{ faas_postgres_standby_primary_cert }}"
+    content: "{{ postgres_standby_primary_cert.content | b64decode }}"
+    owner: postgres
+    group: postgres
+    mode: "0644"
+  # The WAL receiver reads the file when it connects; restart so a reissued
+  # certificate is used now rather than at the next reconnect.
+  notify: restart postgresql
+
 - name: postgres_standby — keep the distro conf.d include
   ansible.builtin.lineinfile:
     path: "{{ postgres_config_dir }}/postgresql.conf"
@@ -162,6 +194,8 @@
       become_user: postgres
       environment:
         PGPASSFILE: /var/lib/postgresql/.pgpass
+        PGSSLMODE: verify-full
+        PGSSLROOTCERT: "{{ faas_postgres_standby_primary_cert }}"
       changed_when: false
 
     - name: postgres_standby — confirm the primary's slot is free
@@ -214,6 +248,8 @@
       become_user: postgres
       environment:
         PGPASSFILE: /var/lib/postgresql/.pgpass
+        PGSSLMODE: verify-full
+        PGSSLROOTCERT: "{{ faas_postgres_standby_primary_cert }}"
       async: "{{ faas_postgres_standby_seed_timeout }}"
       poll: 30
       changed_when: true

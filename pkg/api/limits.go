@@ -11368,9 +11368,18 @@ const (
 	// signs after authorize() allows the read or write.
 	AuthStorageURLSeconds = 60
 	// AuthAdminBodyBytes bounds one /admin/v1 request; AuthImportBatch is
-	// the most users one import request creates.
+	// the most users one import request creates; AuthAdminPageSize is the
+	// most users, organizations or activity entries one list page returns.
 	AuthAdminBodyBytes = 1 << 20
 	AuthImportBatch    = 100
+	AuthAdminPageSize  = 100
+	// AuthReauthenticationSeconds is how recent a sign-in must be for a
+	// user to delete their own account.
+	AuthReauthenticationSeconds = 600
+	// AuthEmailSubjectMaxChars and AuthEmailBodyMaxBytes bound one email
+	// template (`gregale auth emails set`).
+	AuthEmailSubjectMaxChars = 150
+	AuthEmailBodyMaxBytes    = 4000
 	// AuthImportFileMaxBytes bounds a `gregale auth import` file.
 	AuthImportFileMaxBytes = 256 << 20
 	// AuthMaxSigningKeys bounds an Auth app's ES256 keys: the signer, a
@@ -11603,6 +11612,50 @@ const (
 
 // Maximum payload-free outbox rows mirrored per source for the inspector.
 const RealtimeInspectorSampleMax = 32
+
+// Live queries (ADR-20261016151947): sealed-query bounds and live frame sizes. The SQL
+// and parameter bounds match Neon Realtime's; the sealed payload bound keeps a
+// subscribe frame well inside LiveQueryClientFrameMaxBytes.
+const (
+	LiveQuerySealDefaultTTL        = 60 * time.Second
+	LiveQuerySealMaxTTL            = 5 * time.Minute
+	LiveQuerySealClockSkew         = 30 * time.Second
+	LiveQuerySQLMaxBytes           = 32 << 10
+	LiveQueryParamsMax             = 256
+	LiveQueryParamMaxBytes         = 16 << 10
+	LiveQuerySealPayloadMaxBytes   = 48 << 10
+	LiveQueryDatabaseIDMaxBytes    = 128
+	LiveQuerySecretRotationOverlap = 24 * time.Hour
+	// A rotation may keep the previous secret for at most this long.
+	LiveQuerySecretRotationOverlapMax = 7 * 24 * time.Hour
+	LiveQuerySubscriptionIDMax        = 64
+	// A realtime endpoint routes at most this many live secrets: two per
+	// live database its app is bound to.
+	LiveQueryRoutesPerEndpoint   = 64
+	LiveQueryClientFrameMaxBytes = 80 << 10
+	LiveQueryServerFrameMaxBytes = 256 << 10
+	LiveQueryResultRowsMax       = 10000
+	// RLS mode (ADR-20261016151947): a Data API read is at most LiveQueryRESTMaxBytes
+	// and a user's token (or its claims) at most LiveQueryTokenMaxBytes.
+	LiveQueryRESTMaxBytes  = 8 << 10
+	LiveQueryTokenMaxBytes = 8 << 10
+	// A result sent whole (a new subscriber, a reset, a resubscription) is at
+	// most this many bytes of rows: half of realtimed's per-connection
+	// outbound queue, so delivering it cannot close the connection as a slow
+	// consumer on its own.
+	LiveQueryResultBytesMax = 2 << 20
+	// Starting values for the operator preview, to be set per database class
+	// from measurements before general availability.
+	LiveQuerySubscriptionsPerDatabase   = 10000
+	LiveQueryCompiledQueriesPerDatabase = 1000
+	LiveQuerySubscriptionsPerConnection = 64
+	// RLS-mode subscriptions share maintenance only with identical claims,
+	// so they have their own, lower, per-database limit.
+	LiveQueryRLSSubscriptionsPerDatabase = 2000
+	// A connection whose outbound queue holds this many frames is closed as
+	// a slow consumer.
+	LiveQueryConnectionQueueFrames = 1024
+)
 
 // Bounded backend-worker realtime consumer groups (ADR-1030).
 const (

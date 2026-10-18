@@ -431,6 +431,134 @@ generations. Existing connections may disconnect and reconnect using their
 existing credentials. Rollback of the additive migration is blocked once any
 policy history exists so completed receipts cannot silently disappear.
 
+## Live queries (ADR-20261016151947)
+
+Live queries keep a SQL result current in browsers. A customer enables them
+per database; enabling issues the database's live secret, which backends
+seal queries with. They are an operator preview and run only on native
+databases.
+
+### Rollout gate
+
+Live queries are invisible to customers until launch.
+
+- **`FAAS_LIVE_QUERIES_ACCOUNTS` on apid** lists the account UUIDs that see
+  them. It is empty by default, which means nobody. Set it to our own
+  account to test on production; `*` admits every account at launch. An
+  invalid entry stops apid at startup.
+- **Outside the list:**
+  - every live route answers exactly like an unregistered API route, for
+    any method and without credentials;
+  - the account's realtime endpoints get no live routes, so realtimed
+    answers `live.*` frames like any unknown frame;
+  - livequeryd is unreachable without a route.
+- **Kept off the public surface until launch:**
+  - the OpenAPI spec and the generated Go, Node and Python SDKs (the live
+    routes are in the spec-compliance and sdk-coverage `routeExclude`
+    lists);
+  - customer CLI help and the CLI reference, since `gregale postgres` is
+    operator-only;
+  - the `@gregale/data` package, which neither exports nor packs
+    `dist/live` and has no README section for it.
+- **Launch** means setting `*`, then restoring the spec entries, generated
+  SDKs, the `./live` exports with the React peer dependency, and the README
+  section from commits `4196fef625` and `b860a62753`.
+- Removing an account from the list hides the routes and stops new live
+  subscriptions within the 30-second endpoint reconciler. Sessions already
+  open keep their subscriptions until they close; disable the database's
+  live queries to revoke its keys at once.
+
+### Operator setup
+
+1. Generate an age identity for livequeryd on each database node. Give apid
+   only its recipient (public key) file, and point
+   `FAAS_APID_LIVE_KEY_RECIPIENT_FILE` at it. The file's mode must not grant
+   group or other write. Without it, the live routes answer
+   `live_queries_unavailable`.
+2. Set `live_hub_url` on each backend whose databases run live queries, for
+   example `"wss://live.fsn-1.internal:9480/{database_id}/live"`. apid
+   substitutes the database ID, and realtimed connects there.
+   - Backends without `live_hub_url` answer `live_queries_unsupported`.
+   - Configuration refuses `live_hub_url` on `neon` backends, because a
+     replication consumer would keep their computes awake.
+   - The fingerprint excludes `live_hub_url`, so adding it moves no
+     database.
+3. Apply migration `20261017121336518_managed_postgres_live_keys` before
+   deploying the apid that serves the routes.
+4. Run livequeryd with these flags:
+   - `-keys-dsn-file`: a file holding a read-only control-plane connection
+     string;
+   - `-keys-identity`: the age identity, mode 0400;
+   - `-listen` for realtimed, with `-tls-cert`, `-tls-key` and `-client-ca`
+     on any shared network.
+
+   It reads the database's keys every `-keys-refresh` (5 seconds), so
+   revocations reach open subscriptions within that. The metrics
+   `livequery_keys` and `livequery_key_refreshes_total{result}` show the
+   ring and its reads.
+5. Give realtimed `FAAS_REALTIME_LIVE_TLS_CA_FILE`. When livequeryd sets
+   `-client-ca`, also give it `FAAS_REALTIME_LIVE_TLS_CERT_FILE` and
+   `FAAS_REALTIME_LIVE_TLS_KEY_FILE`. Roll realtimed out before apid.
+   apid registers each endpoint with the live routes of databases bound to
+   its app, and an older realtimed rejects that field.
+
+An app reaches a database's live queries only through its own realtime
+endpoints, and only while it holds a ready binding to that database. Other
+seals are refused with `forbidden` in realtimed.
+
+### RLS mode
+
+Browsers can also subscribe to a Data API read as the signed-in user. Row-level
+security then decides the rows, with no backend seal.
+
+- **Which login a query reads as.** apid puts the app's binding logins on
+  each live route, and realtimed names the login on every query; clients
+  cannot name one.
+  - Sealed queries read as the app's read-only binding, else its
+    read-write binding. An app with neither is refused (`forbidden`).
+  - RLS-mode reads run as the app's Data API binding (ADR-650), in its
+    `api` schema unless the read names another. An app without a Data API
+    binding is refused.
+  - livequeryd refuses a login that is a superuser or bypasses row-level
+    security.
+  - Binding changes reach realtimed with the endpoint reconciler, within
+    30 seconds.
+- **livequeryd**
+  - Its database login is the superuser that `-install` needs, so it can
+    become every binding login. A login without superuser needs `SET` on
+    each.
+  - It believes a named login and RLS claims only from a client
+    certificate that `-client-ca` verified (realtimed's).
+- **Endpoint.** The app's realtime endpoint must use `oidc_jwt`. realtimed
+  verifies each token against that endpoint's issuer and JWKS before the
+  database sees its claims.
+- **Cost.** Each distinct set of claims is maintained separately. A change
+  to a table that a policy reads re-reads the sessions it affects, and a
+  policy calling a plpgsql function re-reads its sessions on every write.
+  Prefer SQL functions in policies.
+
+### Customer commands
+
+```sh
+gregale postgres live enable orders --app web    # stores GREGALE_LIVE_SECRET on web
+gregale postgres live status orders
+gregale postgres live rotate orders --overlap 24h --app web
+gregale postgres live disable orders             # revokes every live secret
+```
+
+- **Enable and rotate** return the secret once.
+  - With `--app`, the CLI stores the secret as an ordinary app secret.
+  - Otherwise, it prints the secret and the customer stores it.
+  - apid seals the secret to livequeryd's recipient and cannot read it
+    back, so a lost secret must be rotated, not recovered.
+- **Rotate** keeps the previous secret until `--overlap`: 24 hours by
+  default, at most 7 days. `--overlap 0` revokes it at once. Any older
+  secret is removed, so a database holds at most two.
+- **Disable** removes every key, and livequeryd stops opening their seals.
+- A deleting or deleted database serves no keys.
+- Each change is audited as `managed_postgres.live.enabled`, `.rotated` or
+  `.disabled`, with the key ID. Secrets are never logged.
+
 ## Failed creation custody and compensation
 
 Apply `20261007112111335_managed_postgres_creation_receipts.sql` before deploying

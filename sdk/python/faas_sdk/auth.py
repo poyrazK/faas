@@ -81,6 +81,16 @@ class AuthUnavailableError(AuthError):
 
 
 @dataclass(frozen=True)
+class Organization:
+    """A session's active organization, the user's role and its permissions."""
+
+    id: str
+    slug: str
+    role: str
+    permissions: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class Claims:
     """A verified access token's claims. ``raw`` holds every claim."""
 
@@ -97,6 +107,9 @@ class Claims:
     # its user granted it; empty for the Auth app's own sessions.
     client_id: str | None = None
     scopes: tuple[str, ...] = ()
+    # The session's active organization when the Auth app has organization
+    # claims on; a changed membership shows at the next token.
+    organization: Organization | None = None
     app_metadata: Mapping[str, Any] = field(default_factory=dict)
     user_metadata: Mapping[str, Any] = field(default_factory=dict)
     raw: Mapping[str, Any] = field(default_factory=dict)
@@ -153,6 +166,19 @@ def _json_segment(segment: str) -> dict[str, Any]:
 
 def _number(value: Any) -> float | None:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _organization(payload: Mapping[str, Any]) -> Organization | None:
+    org_id, slug, role = payload.get("org_id"), payload.get("org_slug"), payload.get("org_role")
+    if not all(isinstance(value, str) and value for value in (org_id, slug, role)):
+        return None
+    permissions = payload.get("org_permissions")
+    return Organization(
+        id=org_id,
+        slug=slug,
+        role=role,
+        permissions=tuple(p for p in permissions if isinstance(p, str)) if isinstance(permissions, list) else (),
+    )
 
 
 def _utc(seconds: float) -> datetime:
@@ -350,6 +376,7 @@ class AuthClient:
             issued_at=_utc(iat) if iat is not None else None,
             client_id=text("client_id"),
             scopes=tuple((text("scope") or "").split()),
+            organization=_organization(payload),
             app_metadata=mapping("app_metadata"),
             user_metadata=mapping("user_metadata"),
             raw=payload,
@@ -506,6 +533,7 @@ __all__ = [
     "Claims",
     "InvalidTokenError",
     "NoTokenError",
+    "Organization",
     "TokenExpiredError",
     "bearer_token",
     "resource",
