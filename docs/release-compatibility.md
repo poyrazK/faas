@@ -236,6 +236,15 @@ The unit lanes enforce the rules above in their workflows:
   restart and any SLO gate. Any other migration still blocks both lanes,
   so a contract migration ships in a full release.
 
+  Control-plane host roles ride the same lane
+  (docs/adr/20261018133100-host-configuration-lane.md). Before the data
+  step, the lane converges the roles whose content hash changed since the
+  host's record. It then restarts only the daemons whose start inputs
+  changed, one at a time, and holds the SLO gate. A role change must
+  work with the binaries the host runs, as an expand migration does: add
+  a variable an older binary ignores, and never remove one the running
+  binaries read in the same change.
+
   `release-units.yml` deploys the control-plane lane first, and the edge
   lane (`cd-edge-units.yml`) only after it. When the edge lane runs alone,
   it first checks that the control plane already runs that unit release's
