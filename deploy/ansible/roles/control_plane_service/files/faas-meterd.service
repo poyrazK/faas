@@ -21,6 +21,9 @@ AmbientCapabilities=
 EnvironmentFile=-/etc/faas/compute-db.env
 EnvironmentFile=-/etc/faas/secrets/meterd/billing.env
 EnvironmentFile=-/etc/faas/otel.env
+Environment=FAAS_INTERNAL_MAIL_QUOTA_WARNING_OUTBOX_ENABLED=0
+Environment=FAAS_INTERNAL_MAIL_NONPAYMENT_DELETION_OUTBOX_ENABLED=0
+Environment=FAAS_INTERNAL_MAIL_ACCOUNT_SUSPENDED_OUTBOX_ENABLED=0
 Environment=FAAS_BILLING_MODE=live
 Environment=FAAS_PROMETHEUS_URL=http://127.0.0.1:9095
 Environment=FAAS_HOST_AGE_IDENTITY_PATH=%d/faas_fleet_age_identity

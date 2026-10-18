@@ -352,8 +352,8 @@ func (r Request) admissionMB() int {
 // per-node RAM headroom guard (spec §4.3 / invariant §6.2-2 re-stated
 // per-node). It checks concurrency first (a per-app limit the
 // customer can act on) then per-node capacity. On success it records
-// the reservation; on failure it reserves nothing and returns a
-// *api.Problem.
+// the reservation; on failure it reserves nothing and returns an error
+// exposing *api.Problem through errors.As.
 //
 // The single-box path keeps identical behaviour: when every
 // reservation lives on the same node (the synthetic default-local),
@@ -415,7 +415,8 @@ func (l *NodeLedger) Admit(r Request) error {
 	if kindCountsConcurrency(r.Kind) {
 		capacity := l.servingCapacityLocked(r.AppID, r.EnvironmentKey, r.ProductionEnvironment, r.MaxConcurrency, limits, r.AllowConcurrencyOverlap)
 		if limit, have, refused := capacity.refusal(); !r.AllowConcurrencyRecovery && refused {
-			return api.ErrPlanLimitConcurrencyAt(limits, limit, have)
+			return explainAdmission(api.ErrPlanLimitConcurrencyAt(limits, limit, have),
+				limitBlocker("concurrency_limit", "replicas", int64(have), int64(limit)))
 		}
 	}
 
@@ -469,9 +470,9 @@ func (l *NodeLedger) Admit(r Request) error {
 	quietVCPU, quietCPU := l.quietDiscount_locked(r.NodeID)
 	vcpuUsed := quietEffective(node.usedVCPU, quietVCPU, vcpuCeiling)
 	if vcpuUsed+r.VCPU > vcpuCeiling {
-		return api.ErrCapacity(fmt.Sprintf(
+		return explainAdmission(api.ErrCapacity(fmt.Sprintf(
 			"vCPU headroom: node %q busy %d + %d requested exceeds the %d per-node vCPU budget",
-			r.NodeID, vcpuUsed, r.VCPU, vcpuCeiling))
+			r.NodeID, vcpuUsed, r.VCPU, vcpuCeiling)), resourceBlocker("node_vcpu", "vcpu", int64(r.VCPU)))
 	}
 
 	// Host CPU admission is distinct from guest-visible vCPU topology.
@@ -492,9 +493,9 @@ func (l *NodeLedger) Admit(r Request) error {
 	if reservedCPU > 0 && r.CPUBudgetMillicores > 0 &&
 		cpuUsed+reservedCPU > cpuCeiling &&
 		!r.AllowCPUOvercommitRecovery {
-		return api.ErrCapacity(fmt.Sprintf(
+		return explainAdmission(api.ErrCapacity(fmt.Sprintf(
 			"CPU headroom: node %q reserved %d millicores + %d requested (including temporary startup boost) exceeds the %d millicore physical CPU budget",
-			r.NodeID, cpuUsed, reservedCPU, cpuCeiling))
+			r.NodeID, cpuUsed, reservedCPU, cpuCeiling)), resourceBlocker("node_cpu", "cpu_millicores", int64(reservedCPU)))
 	}
 
 	l.entries[r.Instance] = &reservation{
@@ -864,9 +865,9 @@ func (l *NodeLedger) ramHeadroom_locked(r Request, node *nodeReservation, ramCei
 	want := r.admissionMB()
 	used, basis := l.admissionUsed_locked(r.NodeID, node.residentRAM, node.frozenRAM, ramCeiling)
 	if used+want > ramCeiling {
-		return api.ErrCapacity(fmt.Sprintf(
+		return explainAdmission(api.ErrCapacity(fmt.Sprintf(
 			"RAM headroom: node %q %s %d MB + %d MB requested exceeds the %d MB per-node admission ceiling",
-			r.NodeID, basis, used, want, ramCeiling))
+			r.NodeID, basis, used, want, ramCeiling)), resourceBlocker("node_ram", "ram_mb", int64(want)))
 	}
 	return nil
 }
