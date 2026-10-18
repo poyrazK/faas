@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "0aae5290f3f5c0a06859bef6cc38a59554ee94bf2bd38e58dd4fd10ccb6d7f77",
+      "revision": "eea163c1d9fc01a5765de180a1f3c660d2eb762f1e0c805e7fbfb00a1caeccc7",
       "files": [
         "faas.rules.yml"
       ],
@@ -3026,6 +3026,19 @@
           }
         },
         {
+          "id": "a3bcfedff3326ae039afd3e50b7e6c07bf4e6c30a19f04bb4a371f51692d3abd",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_safe_release",
+          "rule_name": "FaasRollbackNotRestored",
+          "definition": {
+            "expression_hash": "10fe7301ea178049f02288bca84d4f596f349639d04d483da771474fe5a8ef25",
+            "labels_hash": "d9bae89aabeb3741d42469a913d9f31af26716f4637527e00abe72be6edb0a9d",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "024b1bb582bdeb5df0d608ba289c17cc2dfd53310cdab6fb1cec1c2f86a55e76"
+          }
+        },
+        {
           "id": "a41f8026573f44aeb992ada204569354ba8358308060fa760a72a2cd367ed2ea",
           "file_name": "faas.rules.yml",
           "group_name": "faas_environment_git_sources",
@@ -3140,6 +3153,19 @@
             "for_seconds": 120,
             "keep_firing_for_seconds": 0,
             "fingerprint": "1abd088c5a5159de24ca5591f89513c50898241c91818b21347a05baa7daa07d"
+          }
+        },
+        {
+          "id": "ac74ef27809cd0437eb9e999c4b2ed0641ecca8be67ddb04fc467fb3229c1fd8",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_safe_release",
+          "rule_name": "FaasRollbackRecoverySlow",
+          "definition": {
+            "expression_hash": "10721beac614978a74222354b990da71205caf37a56138f4a9d6707c9e0b482c",
+            "labels_hash": "35102e3b8428ce4de9ce236e6a55461e1ce90ac6f2346fc0683e1278c9be7457",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "51d1d5f36eaa643fb129944d92409adbe1284fc7cfd101efc63d3c849314e9db"
           }
         },
         {
@@ -4693,7 +4719,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "47371723a2759f1b017ba39a71a5f7604b75e47337120e469e930af55f1fad42",
+      "revision": "f5700ff478824ebb83d4e1f503f74092a6e962f3c4eb9831212f7964d312cad6",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -7888,6 +7914,19 @@
           }
         },
         {
+          "id": "a3bcfedff3326ae039afd3e50b7e6c07bf4e6c30a19f04bb4a371f51692d3abd",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_safe_release",
+          "rule_name": "FaasRollbackNotRestored",
+          "definition": {
+            "expression_hash": "10fe7301ea178049f02288bca84d4f596f349639d04d483da771474fe5a8ef25",
+            "labels_hash": "d9bae89aabeb3741d42469a913d9f31af26716f4637527e00abe72be6edb0a9d",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "024b1bb582bdeb5df0d608ba289c17cc2dfd53310cdab6fb1cec1c2f86a55e76"
+          }
+        },
+        {
           "id": "a41f8026573f44aeb992ada204569354ba8358308060fa760a72a2cd367ed2ea",
           "file_name": "faas.rules.yml",
           "group_name": "faas_environment_git_sources",
@@ -8015,6 +8054,19 @@
             "for_seconds": 120,
             "keep_firing_for_seconds": 0,
             "fingerprint": "1abd088c5a5159de24ca5591f89513c50898241c91818b21347a05baa7daa07d"
+          }
+        },
+        {
+          "id": "ac74ef27809cd0437eb9e999c4b2ed0641ecca8be67ddb04fc467fb3229c1fd8",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_safe_release",
+          "rule_name": "FaasRollbackRecoverySlow",
+          "definition": {
+            "expression_hash": "10721beac614978a74222354b990da71205caf37a56138f4a9d6707c9e0b482c",
+            "labels_hash": "35102e3b8428ce4de9ce236e6a55461e1ce90ac6f2346fc0683e1278c9be7457",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "51d1d5f36eaa643fb129944d92409adbe1284fc7cfd101efc63d3c849314e9db"
           }
         },
         {
