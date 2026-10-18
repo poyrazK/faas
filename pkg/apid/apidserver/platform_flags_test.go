@@ -4,6 +4,7 @@ package apidserver_test
 // hot runtime-configuration path and evaluated without a restart.
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"slices"
@@ -15,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/platformflags"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func platformFlagRule(id string, value bool, mutate func(*platformflags.Rule)) platformflags.Rule {
@@ -177,7 +179,12 @@ func TestAIGatewayFlagAppliesPerAccountWithoutRestart(t *testing.T) {
 
 func TestCustomerFlagsReleasedPerAccount(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
-	path := "/v1/projects/missing/environments/production/flags"
+	// Project access (#4882) answers 404 for an unknown project before the
+	// release gate, so the request must name a real one.
+	if _, err := (*e.Store()).CreateProject(context.Background(), state.Project{AccountID: (*e.Acct()).ID, Slug: "released", ProductionBranch: "main", ScanSource: state.ProjectScanSourceCompose}); err != nil {
+		t.Fatal(err)
+	}
+	path := "/v1/projects/released/environments/production/flags"
 	off := e.Do(t, http.MethodGet, path, nil, nil)
 	apidserver.AssertProblem(t, off, http.StatusForbidden, api.CodeForbidden)
 	other := platformflags.Definition{Enabled: true, Rules: []platformflags.Rule{

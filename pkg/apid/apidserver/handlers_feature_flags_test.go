@@ -35,6 +35,11 @@ func TestFeatureFlagCapabilityOnlyRequiredForEnabledSubjectRules(t *testing.T) {
 // cause.
 func TestFeatureFlagsDisabledNamesTheOperatorGate(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
+	// The project must exist: project access (#4882) answers 404 for an
+	// unknown project before any handler gate runs.
+	if _, err := (*e.Store()).CreateProject(context.Background(), state.Project{AccountID: (*e.Acct()).ID, Slug: "flags", ProductionBranch: "main", ScanSource: state.ProjectScanSourceCompose}); err != nil {
+		t.Fatal(err)
+	}
 	res := e.Do(t, http.MethodGet, "/v1/projects/flags/environments/production/flags", nil, nil)
 	if res.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403: %s", res.Code, res.Body.String())
