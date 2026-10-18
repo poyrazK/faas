@@ -1860,8 +1860,11 @@ jobs:
             -o "/tmp/${PROM_TARBALL}" \
             "https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/${PROM_TARBALL}"
           echo "${PROM_TARBALL_SHA256_LINUX_AMD64}  /tmp/${PROM_TARBALL}" | sha256sum --check --strict
-          tar -xzf "/tmp/${PROM_TARBALL}" -C /tmp "prometheus-${PROM_VERSION}.linux-amd64/promtool"
+          tar -xzf "/tmp/${PROM_TARBALL}" -C /tmp \
+            "prometheus-${PROM_VERSION}.linux-amd64/promtool" \
+            "prometheus-${PROM_VERSION}.linux-amd64/prometheus"
           sudo mv "/tmp/prometheus-${PROM_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
+          sudo mv "/tmp/prometheus-${PROM_VERSION}.linux-amd64/prometheus" /usr/local/bin/prometheus
           promtool check rules \
             deploy/ansible/roles/prometheus/files/faas.rules.yml \
             deploy/ansible/roles/prometheus/files/data_repair.rules.yml \
@@ -1883,6 +1886,7 @@ jobs:
             echo "promtool test rules ${fixture}"
             promtool test rules "${fixture}"
           done
+          go test -count=1 -tags=integration ./pkg/promqlrules -run '^TestComputeMetricsDiscoveryScrapeLabels$'
 
       - name: Prometheus alert metadata check
         run: make prometheus-alert-metadata-check

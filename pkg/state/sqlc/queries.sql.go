@@ -2380,7 +2380,7 @@ VALUES ($1::uuid, $2::text,
         $5::bigint, $6::uuid, 'preparing')
 ON CONFLICT (deployment_id) DO UPDATE
 SET claim_token = EXCLUDED.claim_token, updated_at = now()
-RETURNING deployment_id, node_name, input_path, input_key, input_bytes, claim_token, phase, updated_at
+RETURNING deployment_id, node_name, input_path, input_key, input_bytes, claim_token, phase, updated_at, phase_started_at
 `
 
 type BeginImagePreparationParams struct {
@@ -2411,6 +2411,7 @@ func (q *Queries) BeginImagePreparation(ctx context.Context, db DBTX, arg BeginI
 		&i.ClaimToken,
 		&i.Phase,
 		&i.UpdatedAt,
+		&i.PhaseStartedAt,
 	)
 	return i, err
 }
@@ -23010,7 +23011,7 @@ func (q *Queries) GetGithubWebhookSecret(ctx context.Context, db DBTX, installat
 }
 
 const getImagePreparation = `-- name: GetImagePreparation :one
-SELECT deployment_id, node_name, input_path, input_key, input_bytes, claim_token, phase, updated_at FROM deployment_image_preparations
+SELECT deployment_id, node_name, input_path, input_key, input_bytes, claim_token, phase, updated_at, phase_started_at FROM deployment_image_preparations
 WHERE deployment_id = $1::uuid
 `
 
@@ -23026,6 +23027,7 @@ func (q *Queries) GetImagePreparation(ctx context.Context, db DBTX, deploymentID
 		&i.ClaimToken,
 		&i.Phase,
 		&i.UpdatedAt,
+		&i.PhaseStartedAt,
 	)
 	return i, err
 }

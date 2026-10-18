@@ -16481,6 +16481,26 @@ END $$;
 
 
 --
+-- Name: image_preparation_phase_timing(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.image_preparation_phase_timing() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        NEW.phase_started_at := clock_timestamp();
+    ELSIF NEW.phase IS DISTINCT FROM OLD.phase THEN
+        NEW.phase_started_at := clock_timestamp();
+    ELSE
+        NEW.phase_started_at := OLD.phase_started_at;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: initialize_clone_configuration_guard(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -29946,9 +29966,11 @@ CREATE TABLE public.deployment_image_preparations (
     claim_token uuid NOT NULL,
     phase text NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    phase_started_at timestamp with time zone,
     CONSTRAINT deployment_image_preparations_input_bytes_check CHECK ((input_bytes >= 0)),
     CONSTRAINT deployment_image_preparations_input_path_check CHECK ((input_path <> ''::text)),
-    CONSTRAINT deployment_image_preparations_phase_check CHECK ((phase = ANY (ARRAY['preparing'::text, 'layer_published'::text, 'scan_complete'::text, 'handed_off'::text])))
+    CONSTRAINT deployment_image_preparations_phase_check CHECK ((phase = ANY (ARRAY['preparing'::text, 'layer_published'::text, 'scan_complete'::text, 'handed_off'::text]))),
+    CONSTRAINT deployment_image_preparations_phase_started_at_check CHECK (((phase_started_at IS NULL) OR (isfinite(phase_started_at) AND (phase_started_at > '1970-01-01 00:00:00+00'::timestamp with time zone))))
 );
 
 
@@ -40196,6 +40218,110 @@ CREATE TABLE public.oidc_trust_policies (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     audit_login text NOT NULL
+);
+
+
+--
+-- Name: operator_alert_collection; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.operator_alert_collection (
+    singleton boolean DEFAULT true NOT NULL,
+    last_attempt_at timestamp with time zone,
+    last_success_at timestamp with time zone,
+    CONSTRAINT operator_alert_collection_check CHECK (((last_success_at IS NULL) OR (last_success_at <= last_attempt_at))),
+    CONSTRAINT operator_alert_collection_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: operator_alert_collection_outcomes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.operator_alert_collection_outcomes (
+    attempted_at timestamp with time zone NOT NULL,
+    outcome text NOT NULL,
+    reason text NOT NULL,
+    diagnostics jsonb,
+    CONSTRAINT operator_alert_collection_diagnostics_check CHECK (((diagnostics IS NULL) OR ((outcome = 'failure'::text) AND (reason = 'snapshot_rejected'::text) AND (jsonb_typeof(diagnostics) = 'object'::text) AND (octet_length((diagnostics)::text) <= 32768) AND (diagnostics @> '{"scope": "rejected_snapshot"}'::jsonb)))),
+    CONSTRAINT operator_alert_collection_outcomes_attempted_at_check CHECK (isfinite(attempted_at)),
+    CONSTRAINT operator_alert_collection_outcomes_check CHECK ((((outcome = 'success'::text) AND (reason = ''::text)) OR ((outcome = 'failure'::text) AND (reason <> ''::text)))),
+    CONSTRAINT operator_alert_collection_outcomes_outcome_check CHECK ((outcome = ANY (ARRAY['success'::text, 'failure'::text]))),
+    CONSTRAINT operator_alert_collection_outcomes_reason_check CHECK ((reason = ANY (ARRAY[''::text, 'collection_failed'::text, 'source_read_failed'::text, 'snapshot_rejected'::text, 'timeout'::text, 'persistence_failed'::text])))
+);
+
+
+--
+-- Name: operator_alert_episodes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.operator_alert_episodes (
+    id text NOT NULL,
+    series_id text NOT NULL,
+    rule_key text NOT NULL,
+    name text NOT NULL,
+    component text NOT NULL,
+    severity text NOT NULL,
+    account_id uuid,
+    app_id uuid,
+    node_id uuid,
+    runbook_url text NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    first_seen_at timestamp with time zone NOT NULL,
+    last_seen_at timestamp with time zone NOT NULL,
+    last_evaluated_at timestamp with time zone NOT NULL,
+    last_checked_at timestamp with time zone NOT NULL,
+    resolved_at timestamp with time zone,
+    triage_revision bigint DEFAULT 0 NOT NULL,
+    triage_acknowledged boolean DEFAULT false NOT NULL,
+    triage_owner_id uuid,
+    triage_snoozed_until timestamp with time zone,
+    triage_updated_at timestamp with time zone,
+    CONSTRAINT operator_alert_episodes_check CHECK ((last_seen_at >= first_seen_at)),
+    CONSTRAINT operator_alert_episodes_check1 CHECK ((last_evaluated_at >= started_at)),
+    CONSTRAINT operator_alert_episodes_check2 CHECK ((last_checked_at >= last_seen_at)),
+    CONSTRAINT operator_alert_episodes_check3 CHECK ((resolved_at >= started_at)),
+    CONSTRAINT operator_alert_episodes_component_check CHECK (((component ~ '^[a-zA-Z0-9_.:-]*$'::text) AND (octet_length(component) <= 64))),
+    CONSTRAINT operator_alert_episodes_first_seen_at_check CHECK (isfinite(first_seen_at)),
+    CONSTRAINT operator_alert_episodes_id_check CHECK ((id ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT operator_alert_episodes_name_check CHECK (((name ~ '^[a-zA-Z_:][a-zA-Z0-9_:]*$'::text) AND (octet_length(name) <= 128))),
+    CONSTRAINT operator_alert_episodes_rule_key_check CHECK ((rule_key ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT operator_alert_episodes_runbook_url_check CHECK ((octet_length(runbook_url) <= 2048)),
+    CONSTRAINT operator_alert_episodes_series_id_check CHECK ((series_id ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT operator_alert_episodes_severity_check CHECK ((severity = ANY (ARRAY['warning'::text, 'error'::text, 'critical'::text]))),
+    CONSTRAINT operator_alert_episodes_started_at_check CHECK (isfinite(started_at)),
+    CONSTRAINT operator_alert_episodes_triage_revision_check CHECK ((triage_revision >= 0))
+);
+
+
+--
+-- Name: operator_alert_retention_health; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.operator_alert_retention_health (
+    singleton boolean DEFAULT true NOT NULL,
+    last_attempt_at timestamp with time zone,
+    last_success_at timestamp with time zone,
+    last_pruned_episodes bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT operator_alert_retention_health_check CHECK (((last_success_at IS NULL) OR ((last_attempt_at IS NOT NULL) AND (last_success_at <= last_attempt_at)))),
+    CONSTRAINT operator_alert_retention_health_last_attempt_at_check CHECK (isfinite(last_attempt_at)),
+    CONSTRAINT operator_alert_retention_health_last_pruned_episodes_check CHECK ((last_pruned_episodes >= 0)),
+    CONSTRAINT operator_alert_retention_health_last_success_at_check CHECK (isfinite(last_success_at)),
+    CONSTRAINT operator_alert_retention_health_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: operator_alert_rule_observations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.operator_alert_rule_observations (
+    rule_key text NOT NULL,
+    evaluated_at timestamp with time zone NOT NULL,
+    episode_ids jsonb NOT NULL,
+    CONSTRAINT operator_alert_rule_observations_episode_ids_check CHECK ((jsonb_typeof(episode_ids) = 'array'::text)),
+    CONSTRAINT operator_alert_rule_observations_evaluated_at_check CHECK (isfinite(evaluated_at)),
+    CONSTRAINT operator_alert_rule_observations_rule_key_check CHECK ((rule_key ~ '^[0-9a-f]{64}$'::text))
 );
 
 
@@ -55219,6 +55345,46 @@ ALTER TABLE ONLY public.oidc_trust_policies
 
 
 --
+-- Name: operator_alert_collection_outcomes operator_alert_collection_outcomes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_alert_collection_outcomes
+    ADD CONSTRAINT operator_alert_collection_outcomes_pkey PRIMARY KEY (attempted_at);
+
+
+--
+-- Name: operator_alert_collection operator_alert_collection_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_alert_collection
+    ADD CONSTRAINT operator_alert_collection_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: operator_alert_episodes operator_alert_episodes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_alert_episodes
+    ADD CONSTRAINT operator_alert_episodes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: operator_alert_retention_health operator_alert_retention_health_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_alert_retention_health
+    ADD CONSTRAINT operator_alert_retention_health_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: operator_alert_rule_observations operator_alert_rule_observations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_alert_rule_observations
+    ADD CONSTRAINT operator_alert_rule_observations_pkey PRIMARY KEY (rule_key);
+
+
+--
 -- Name: operator_intents operator_intents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -60175,6 +60341,17 @@ CREATE INDEX audit_log_account_idx ON public.audit_log USING btree (account_id, 
 
 
 --
+-- Name: audit_log_operator_alert_triage_episode_revision_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX audit_log_operator_alert_triage_episode_revision_idx ON public.audit_log USING btree (((data ->> 'episode_id'::text)), (
+CASE
+    WHEN ((jsonb_typeof((data #> '{triage,revision}'::text[])) = 'number'::text) AND ((data #>> '{triage,revision}'::text[]) ~ '^[1-9][0-9]{0,15}$'::text)) THEN ((data #>> '{triage,revision}'::text[]))::bigint
+    ELSE NULL::bigint
+END) DESC, id DESC) WHERE (kind = 'operator.action.alert_triage'::text);
+
+
+--
 -- Name: audit_log_received_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -60382,6 +60559,13 @@ CREATE INDEX builds_deployment_started_idx ON public.builds USING btree (deploym
 --
 
 CREATE INDEX builds_deployment_status_cancelled_idx ON public.builds USING btree (deployment_id, status, cancelled_at DESC);
+
+
+--
+-- Name: builds_queued_count_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX builds_queued_count_idx ON public.builds USING btree (id) WHERE (status = 'queued'::text);
 
 
 --
@@ -62356,6 +62540,13 @@ CREATE INDEX events_instance_readiness_latest_idx ON public.events USING btree (
 --
 
 CREATE INDEX events_kind_at_idx ON public.events USING btree (kind, at DESC);
+
+
+--
+-- Name: events_operator_resource_at_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX events_operator_resource_at_id_idx ON public.events USING btree (COALESCE(NULLIF((data ->> 'target_id'::text), ''::text), NULLIF((data ->> 'run_id'::text), ''::text), NULLIF((data ->> 'deployment_id'::text), ''::text)), at DESC, id DESC) WHERE (kind ~~ 'operator.action.%'::text);
 
 
 --
@@ -65016,6 +65207,55 @@ CREATE INDEX object_write_pending_key_idx ON public.object_storage_write_admissi
 --
 
 CREATE INDEX oidc_exchanged_tokens_expires_at_idx ON public.oidc_exchanged_tokens USING btree (expires_at);
+
+
+--
+-- Name: operator_alert_episodes_activation_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX operator_alert_episodes_activation_idx ON public.operator_alert_episodes USING btree (started_at DESC, id DESC);
+
+
+--
+-- Name: operator_alert_episodes_open_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX operator_alert_episodes_open_idx ON public.operator_alert_episodes USING btree (rule_key, series_id) WHERE (resolved_at IS NULL);
+
+
+--
+-- Name: operator_alert_episodes_order_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX operator_alert_episodes_order_idx ON public.operator_alert_episodes USING btree (COALESCE(resolved_at, started_at) DESC, id DESC);
+
+
+--
+-- Name: operator_alert_episodes_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX operator_alert_episodes_retention_idx ON public.operator_alert_episodes USING btree (COALESCE(resolved_at, last_seen_at), id);
+
+
+--
+-- Name: operator_alert_episodes_rule_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX operator_alert_episodes_rule_idx ON public.operator_alert_episodes USING btree (rule_key);
+
+
+--
+-- Name: operator_alert_episodes_series_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX operator_alert_episodes_series_idx ON public.operator_alert_episodes USING btree (series_id, started_at DESC, first_seen_at DESC, id DESC);
+
+
+--
+-- Name: operator_alert_rule_observations_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX operator_alert_rule_observations_retention_idx ON public.operator_alert_rule_observations USING btree (evaluated_at, rule_key);
 
 
 --
@@ -70763,6 +71003,13 @@ CREATE TRIGGER guard_environment_workload_retirement BEFORE INSERT OR DELETE OR 
 --
 
 CREATE TRIGGER guard_managed_postgres_accounting_intent BEFORE UPDATE OF accounting_required ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_accounting_intent();
+
+
+--
+-- Name: deployment_image_preparations image_preparation_phase_timing; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER image_preparation_phase_timing BEFORE INSERT OR UPDATE ON public.deployment_image_preparations FOR EACH ROW EXECUTE FUNCTION public.image_preparation_phase_timing();
 
 
 --

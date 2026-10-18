@@ -10,6 +10,8 @@
 //	                           (--json / $FAAS_JSON=1).
 //	gregalectl obs incidents — fetch the bounded, read-only incident inbox
 //	                           (deployment/job/node/alert correlation).
+//	gregalectl obs evidence  — inspect current state and exact-resource history.
+//	gregalectl obs bundle    — export bounded incident evidence and source health.
 //	gregalectl obs overview  — fetch the bounded fleet/account KPI snapshot.
 //	gregalectl obs capacity  — fetch the bounded fleet capacity snapshot.
 //
@@ -55,8 +57,26 @@ const dispatchObs = "obs"
 // rather than cli_meta.go so the dispatcher's switch is the
 // single source of truth for subcommand routing.
 const subObsHealth = "health"
+const subObsSummary = "summary"
+const subObsCollectionHistory = "collection-history"
+const subObsRecurrence = "recurrence"
+const subObsResponseTimes = "response-times"
+const subObsNotificationHealth = "notification-health"
+const subObsRuleHealth = "rule-health"
+const subObsRuleCoverage = "rule-coverage"
+const subObsRecordingCoverage = "recording-coverage"
+
+const subObsInputHealth = "input-health"
 
 const subObsIncidents = "incidents"
+const subObsTriage = "triage"
+const subObsTriageHistory = "triage-history"
+
+const subObsEvidence = "evidence"
+
+const subObsContext = "context"
+
+const subObsBundle = "bundle"
 
 const subObsOverview = "overview"
 
@@ -77,14 +97,42 @@ const defaultAPIDURL = "http://127.0.0.1:8080"
 // for `manifest validate` without --file).
 func cmdObsDispatch(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "gregalectl obs: missing subcommand; want health|incidents|overview|capacity")
+		fmt.Fprintln(os.Stderr, "gregalectl obs: missing subcommand; want health|input-health|rule-health|rule-coverage|recording-coverage|notification-health|summary|response-times|recurrence|collection-history|incidents|triage|triage-history|evidence|context|bundle|overview|capacity")
 		return 2
 	}
 	switch args[0] {
+	case subObsRecordingCoverage:
+		return cmdObsRecordingCoverage(args[1:])
+	case subObsInputHealth:
+		return cmdObsInputHealth(args[1:])
+	case subObsRuleCoverage:
+		return cmdObsRuleCoverage(args[1:])
+	case subObsRuleHealth:
+		return cmdObsRuleHealth(args[1:])
+	case subObsNotificationHealth:
+		return cmdObsNotificationHealth(args[1:])
+	case subObsCollectionHistory:
+		return cmdObsCollectionHistory(args[1:])
+	case subObsRecurrence:
+		return cmdObsRecurrence(args[1:])
+	case subObsResponseTimes:
+		return cmdObsResponseTimes(args[1:])
+	case subObsSummary:
+		return cmdObsSummary(args[1:])
 	case subObsHealth:
 		return cmdObsHealth(args[1:])
+	case subObsTriageHistory:
+		return cmdObsTriageHistory(args[1:])
+	case subObsTriage:
+		return cmdObsTriage(args[1:])
 	case subObsIncidents:
 		return cmdObsIncidents(args[1:])
+	case subObsEvidence:
+		return cmdObsEvidence(args[1:])
+	case subObsContext:
+		return cmdObsContext(args[1:])
+	case subObsBundle:
+		return cmdObsBundle(args[1:])
 	case subObsOverview:
 		return cmdObsOverview(args[1:])
 	case subObsCapacity:
@@ -229,6 +277,10 @@ func cmdObsIncidents(args []string) int {
 	adminToken := fs.String("admin-token", "", "admin bearer (default: $FAAS_ADMIN_TOKEN)")
 	typeFilter := fs.String("type", "", "incident type: deployment|job_run|compute_node|platform_alert")
 	severity := fs.String("severity", "", "severity: warning|error|critical")
+	alertStatus := fs.String("alert-status", "", "platform alert status: firing|resolved|unknown")
+	acknowledgment := fs.String("acknowledgment", "", "platform alert workflow: acknowledged|unacknowledged")
+	ownership := fs.String("ownership", "", "platform alert ownership: owned|unowned|mine")
+	snooze := fs.String("snooze", "", "platform alert snooze: active|inactive")
 	since := fs.String("since", "", "RFC 3339 lower bound (default: last 24h; capped at 7d)")
 	cursorValue := fs.String("cursor", "", "opaque cursor returned as next_cursor")
 	limit := fs.Int("limit", api.ObsIncidentLimitDefault, "maximum incidents to return (1..200)")
@@ -254,11 +306,16 @@ func cmdObsIncidents(args []string) int {
 	if token == "" {
 		token = os.Getenv("FAAS_ADMIN_TOKEN")
 	}
-	if token == "" {
+	if token == "" && *ownership != "mine" {
 		fmt.Fprintln(os.Stderr, "gregalectl obs incidents: --admin-token (or $FAAS_ADMIN_TOKEN) required")
 		return 2
 	}
 	query := url.Values{"limit": {strconv.Itoa(*limit)}}
+	for key, value := range map[string]string{"alert_status": *alertStatus, "acknowledgment": *acknowledgment, "ownership": *ownership, "snooze": *snooze} {
+		if value != "" {
+			query.Set(key, value)
+		}
+	}
 	if strings.TrimSpace(*typeFilter) != "" {
 		query.Set("type", strings.TrimSpace(*typeFilter))
 	}
@@ -276,9 +333,18 @@ func cmdObsIncidents(args []string) int {
 		fmt.Fprintln(os.Stderr, "gregalectl obs incidents:", err)
 		return 1
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	if *ownership == "mine" {
+		session, err := loadOperatorSession()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "gregalectl obs incidents:", err)
+			return 1
+		}
+		req.AddCookie(&http.Cookie{Name: "faas_sid", Value: session.Cookie})
+	} else {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	req.Header.Set("Accept", "application/json")
-	resp, err := (&http.Client{Timeout: *timeout}).Do(req)
+	resp, err := (&http.Client{Timeout: *timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(req)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "gregalectl obs incidents: dial apid:", err)
 		return 1
@@ -431,11 +497,21 @@ func writeObsIncidentsHuman(w io.Writer, response api.ObsIncidentListResponse) {
 		_, _ = fmt.Fprintf(w, "incident_id=%s type=%s severity=%s status=%s observed_at=%s resource_id=%s resource_name=%s summary=%q",
 			item.ID, item.Type, item.Severity, item.Status, item.ObservedAt.UTC().Format(time.RFC3339),
 			item.ResourceID, item.ResourceName, item.Summary)
+		if item.Triage != nil {
+			t := item.Triage
+			_, _ = fmt.Fprintf(w, " revision=%d acknowledged=%t owned=%t owner_account_id=%s snoozed=%t", t.Revision, t.Acknowledged, t.Owned, t.OwnerAccountID, t.Snoozed)
+			if t.SnoozedUntil != nil {
+				_, _ = fmt.Fprintf(w, " snoozed_until=%s", t.SnoozedUntil.UTC().Format(time.RFC3339))
+			}
+		}
 		if item.ActionPath != "" {
 			_, _ = fmt.Fprintf(w, " action_path=%s", item.ActionPath)
 		}
 		if item.AuditPath != "" {
 			_, _ = fmt.Fprintf(w, " audit_path=%s", item.AuditPath)
+		}
+		if item.EvidencePath != "" {
+			_, _ = fmt.Fprintf(w, " evidence_path=%s", item.EvidencePath)
 		}
 		if item.RunbookURL != "" {
 			_, _ = fmt.Fprintf(w, " runbook=%s", item.RunbookURL)
@@ -535,14 +611,54 @@ func isTerminal(w *os.File) bool {
 // the order too.
 func writeObsHealthHuman(w io.Writer, snap map[string]any) {
 	_, _ = fmt.Fprintln(w, "prometheus_available:", snap["prometheus_available"])
-	_, _ = fmt.Fprintln(w, "audit_log_write_total_5m:", snap["audit_log_write_total_5m"])
-	_, _ = fmt.Fprintln(w, "audit_log_write_failures_5m:", snap["audit_log_write_failures_5m"])
+	writeObsHealthSignal(w, snap, "audit_log_write_total_5m")
+	writeObsHealthSignal(w, snap, "audit_log_write_failures_5m")
 	_, _ = fmt.Fprintln(w, "audit_log_coverage_ratio_5m:", snap["audit_log_coverage_ratio_5m"])
 	_, _ = fmt.Fprintln(w, "operator_intent_outcome_missing_total:")
 	writeObsHealthKindBlock(w, snap["operator_intent_outcome_missing_total"], false)
 	_, _ = fmt.Fprintln(w, "trace_id_completeness_ratio:")
 	writeObsHealthKindBlock(w, snap["trace_id_completeness_ratio"], true)
-	_, _ = fmt.Fprintln(w, "alerts_firing:", snap["alerts_firing"])
+	writeObsHealthSignal(w, snap, "alerts_firing")
+	writeObsMaintenanceHuman(w, snap)
+}
+
+// Legacy servers have no signals map. New responses render each field's state
+// independently, so a failed query cannot hide another signal's healthy zero.
+func writeObsHealthSignal(w io.Writer, snap map[string]any, name string) {
+	signals, hasSignals := snap["signals"].(map[string]any)
+	if !hasSignals {
+		value := snap[name]
+		if available, ok := snap["prometheus_available"].(bool); ok && !available {
+			value = "unavailable"
+		}
+		_, _ = fmt.Fprintf(w, "%s: %v\n", name, value)
+		return
+	}
+	signal, _ := signals[name].(map[string]any)
+	state, _ := signal["state"].(string)
+	reason, _ := signal["reason"].(string)
+	value := any("unavailable")
+	switch state {
+	case api.ObsHealthSignalHealthy:
+		value = snap[name]
+	case api.ObsHealthSignalStale, api.ObsHealthSignalNoSamples, api.ObsHealthSignalUnavailable:
+	default:
+		state, reason = api.ObsHealthSignalUnavailable, "missing_or_unknown_signal_state"
+	}
+	_, _ = fmt.Fprintf(w, "%s: %v state=%s", name, value, state)
+	if observed, ok := signal["observed_at"].(string); ok {
+		_, _ = fmt.Fprintf(w, " observed_at=%s", observed)
+	}
+	if window, ok := signal["window_seconds"]; ok {
+		_, _ = fmt.Fprintf(w, " window_seconds=%v", window)
+	}
+	if maxAge, ok := signal["max_age_seconds"]; ok {
+		_, _ = fmt.Fprintf(w, " max_age_seconds=%v", maxAge)
+	}
+	if reason != "" {
+		_, _ = fmt.Fprintf(w, " reason=%s", reason)
+	}
+	_, _ = fmt.Fprintln(w)
 }
 
 // writeObsHealthKindBlock renders a per-kind sub-map
