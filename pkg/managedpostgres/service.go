@@ -217,8 +217,12 @@ func (s *Service) create(ctx context.Context, request CreateRequest, reservedID 
 	if err != nil {
 		return Database{}, err
 	}
+	databaseID := reservedID
+	if databaseID == "" {
+		databaseID = s.newID()
+	}
 	database, _, err := s.store.Reserve(ctx, Database{
-		ID:                 s.newID(),
+		ID:                 databaseID,
 		AccountID:          request.AccountID,
 		OrgID:              Organization(ctx),
 		Name:               request.Name,
