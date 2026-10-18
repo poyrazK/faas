@@ -1734,5 +1734,77 @@
     "fresh_hosted_current_head_checks": "required",
     "native_physical_acceptance": false,
     "production_activation": false
+  },
+  "node_lease_main_schema_integration": {
+    "integrated_main": "622ea65b973fd6808c8b7f2ac8adc79296e84750",
+    "tested_source_tree_before_evidence": "f8ab19c7e263345bcd4b2d726bb37e0411f15480",
+    "schema_lines": 84414,
+    "schema_sha256": "c7a32e9f468add83cd34c576c34000011e0e64052676b37f327690f0a9f07d04",
+    "migration_source_digest": "575aba09fb59a4cac517be1083d75e608139352a17a09b26c9a52fa1da5b4142",
+    "main_sqlc_blocks_preserved_exactly": 19,
+    "published_nodelease_queries_preserved": true,
+    "function_query_sources_added": 3,
+    "sqlc_generation_and_drift": "pass",
+    "published_migration_bytes_preserved": true,
+    "function_versions_follow_nodelease_version": true,
+    "clone_registry": {
+      "main_policies_preserved": 947,
+      "operational_function_journals": 2,
+      "operational_rehearsal_receipts": 1,
+      "total_observed_tables": 950,
+      "duplicates_unknown_missing_column_mismatches": 0,
+      "node_lease_kind": "operational"
+    },
+    "node_lease_scope": "off by default; phase1 renew/observe only; no workload recovery or fencing",
+    "race_phases": [
+      {
+        "name": "compile",
+        "seconds": 189.221,
+        "exitCode": 0,
+        "log": "/tmp/function-pr4883-nodelease-integration.chg91y8v/compile.log"
+      },
+      {
+        "name": "nodelease-race",
+        "seconds": 1.137,
+        "exitCode": 0,
+        "log": "/tmp/function-pr4883-nodelease-integration.chg91y8v/nodelease-race.log",
+        "counts": {
+          "pass": 4
+        },
+        "failedTests": [],
+        "skippedTests": []
+      },
+      {
+        "name": "full-schedd-race",
+        "seconds": 28.277,
+        "exitCode": 0,
+        "log": "/tmp/function-pr4883-nodelease-integration.chg91y8v/full-schedd-race.log",
+        "counts": {
+          "pass": 130,
+          "skip": 1
+        },
+        "failedTests": [],
+        "skippedTests": [
+          "TestLoadSchedInternalSvcKey_SealedPath"
+        ]
+      }
+    ],
+    "compile_bounds": "5GiB/GOGC50;serial;-ldflags=-w",
+    "runtime_bounds": "2GiB/GOGC10/GOMAXPROCS2/3m",
+    "lease_race_log_sha256": "3e0be7dbce8fa6b107f99bb493a1a6ed5071103a3de9cc02291021aa36b6bbc6",
+    "scheduler_race_log_sha256": "a73f61ef282bb3d193b4f8f5d45ea4666616dd18f174c8554047f6f9fed33921",
+    "existing_root_only_skip": "TestLoadSchedInternalSvcKey_SealedPath; no /etc/faas/secrets writes attempted",
+    "scheduler_readiness_env_test_helper_unchanged": true,
+    "function_host_scheduler_engine_proto_openapi_sdk_unchanged_from": "410c47af5591e483168a051545c5a0178cc61f61",
+    "generated_daemons": "pass",
+    "environment_contract": "pass",
+    "documentation_links": "pass",
+    "http_documentation_fixtures_passed": 4,
+    "migration_policy_tests_passed": 51,
+    "adr_uniqueness": "1820 decisions,1616 distinct,164-entry baseline unchanged",
+    "destination_migration_class": "contract; full release required",
+    "fresh_hosted_current_head_checks": "required",
+    "native_physical_acceptance": false,
+    "production_activation": false
   }
 }

@@ -659,6 +659,43 @@ incomplete group attempt remains recorded in the portable results. Neither
 assertions nor deadlines are relaxed. Fresh hosted checks on the newly
 published exact head remain required. Native activation remains disabled.
 
+## Node-liveness lease schema coexistence (2026-10-18)
+
+Main `622ea65b973fd6808c8b7f2ac8adc79296e84750` is integrated after its
+node-lease migration and SQLC query source caused generated-file conflicts.
+All nineteen main SQLC blocks and the node-lease queries are preserved exactly;
+only the three function query sources are added. Clean schema replay,
+generation and drift checks pass: 84,414 lines, schema SHA-256
+`c7a32e9f468add83cd34c576c34000011e0e64052676b37f327690f0a9f07d04`,
+migration-source digest
+`575aba09fb59a4cac517be1083d75e608139352a17a09b26c9a52fa1da5b4142`.
+Published migration bytes remain unchanged; the three function versions already
+follow the new node-lease version.
+
+The actual migrated inventory exactly matches all 950 registered tables and
+columns, without duplicates or unknown/missing entries. All 947 published
+policies are intact, including the operational node lease, alongside the two
+function journals and operational rehearsal fault receipts. Node-lease phase
+one is off by default and only renews/observes; it introduces no workload
+recovery or fencing action.
+
+Tested source tree before this evidence entry: `f8ab19c7e263345bcd4b2d726bb37e0411f15480`. Serial race
+compilation with main's recommended `-ldflags=-w` passes in 189.221 seconds at
+5 GiB/GOGC 50. Four lease-keeper tests pass without skips in 1.137 seconds.
+The full scheduler command suite passes 130 tests/subtests in 28.277 seconds,
+with the existing root-only sealed-host-key test skipped. Execution retains
+2 GiB/GOGC 10, two processors and three-minute deadlines. The readiness-based
+environment-test helper is unchanged and remains covered by the full suite.
+
+Generated daemon configuration, environment and documentation checks pass,
+including four HTTP fixtures. All 51 migration-policy tests pass; ADR uniqueness
+passes with 1,820 decisions, 1,616 distinct numbers and the unchanged 164-entry
+baseline. The destination migration still requires a full release. Function
+host/scheduler-engine code, protobufs, both OpenAPI copies and SDK sources are
+unchanged from `410c47af5`, so no SDK regeneration is needed for this merge.
+Fresh exact-head hosted checks remain required; physical native acceptance and
+activation remain pending.
+
 ## Qualification boundary
 
 Production activation remains disabled. This managed container has no supported
