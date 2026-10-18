@@ -15,6 +15,7 @@ func TestMigrateUpScopesIssuedStandardsFunctions(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{
+		"application_standard_runtime_default_base",
 		"application_standard_exception_deadline", "application_standard_enroll_app",
 		"application_standard_lock_native_boot", "application_standard_runtime_snapshot",
 		"application_standard_runtime_inputs_match", "application_standard_instance_runtime_guard",
