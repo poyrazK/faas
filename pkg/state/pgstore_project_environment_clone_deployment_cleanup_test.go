@@ -6,6 +6,7 @@ package state_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -294,7 +295,7 @@ func TestPgCloneDeploymentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 		case <-ticker.C:
 		}
 	}
-	for _, borrower := range []string{"foreign_key", "soft", "soft_partition", "drain_plan", "retirement_journal", "replacement"} {
+	for _, borrower := range []string{"foreign_key", "soft", "soft_partition", "drain_plan", "retirement_journal", "scenario_cold_preparations", "scenario_recorder_sessions", "scenario_suspend_resumes", "scenario_worker_faults", "replacement"} {
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -316,6 +317,10 @@ func TestPgCloneDeploymentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 			_, err = tx.Exec(ctx, drainPlanDeploymentBorrowerSQL, id)
 		case "retirement_journal":
 			_, err = tx.Exec(ctx, "LOCK TABLE environment_workload_retirements IN ROW EXCLUSIVE MODE")
+		case "scenario_cold_preparations", "scenario_recorder_sessions", "scenario_suspend_resumes", "scenario_worker_faults":
+			// These retained rehearsal receipts have no deployment FK. Every writer
+			// must remain fenced until deletion and its receipt commit together.
+			_, err = tx.Exec(ctx, "LOCK TABLE "+borrower+" IN ROW EXCLUSIVE MODE")
 		case "replacement":
 			_, err = tx.Exec(ctx, `INSERT INTO deployments SELECT (jsonb_populate_record(NULL::deployments,to_jsonb(d)||jsonb_build_object('id',$1::text,'scope',$2::text))).* FROM deployments d WHERE d.id=$3`, id, l.Operation.TargetEnvironment, native.Plan.Workloads[0].SourceDeploymentID)
 		}
@@ -338,5 +343,51 @@ func TestPgCloneDeploymentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 	}
 	if err = s.CleanupProjectEnvironmentCloneDeploymentsForLease(t.Context(), l); err != nil {
 		t.Fatal("replay", err)
+	}
+}
+
+// Failed rehearsal receipts still retain the original deployment. A source
+// receipt must not borrow the clone target or disappear during target cleanup.
+func TestPgCloneDeploymentCleanupRetainsRehearsalEvidence(t *testing.T) {
+	for _, target := range []bool{false, true} {
+		t.Run(fmt.Sprint("target=", target), func(t *testing.T) {
+			s, pool, l, native := deploymentCleanupFixture(t)
+			workload := native.Plan.Workloads[0]
+			deploymentID := workload.SourceDeploymentID
+			if target {
+				deploymentID = workload.TargetDeploymentID
+			}
+			var before []byte
+			err := pool.QueryRow(t.Context(), `INSERT INTO scenario_worker_faults
+ (id,account_id,app_id,run_id,instance_id,deployment_id,invocation_id,checkpoint_attempt_id,recorder_session_id,state)
+ VALUES(gen_random_uuid(),$1,$2,repeat('a',32),gen_random_uuid(),$3,gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),'failed')
+ RETURNING to_jsonb(scenario_worker_faults)`, l.Operation.AccountID, workload.AppID, deploymentID).Scan(&before)
+			if err != nil {
+				t.Fatal(err)
+			}
+			report, err := s.ProjectEnvironmentCloneDeploymentBorrowersForLease(t.Context(), l)
+			want := int64(0)
+			if target {
+				want = 1
+			}
+			if err != nil || report.SoftReferences[workload.TargetDeploymentID]["scenario_worker_faults.deployment_id"] != want {
+				t.Fatal("retained rehearsal evidence miscounted", report, err)
+			}
+			err = s.CleanupProjectEnvironmentCloneDeploymentsForLease(t.Context(), l)
+			if target && !errors.Is(err, state.ErrConflict) || !target && err != nil {
+				t.Fatal("rehearsal borrower cleanup", err)
+			}
+			var live, owner, receipt bool
+			if err = pool.QueryRow(t.Context(), "SELECT EXISTS(SELECT 1 FROM deployments WHERE id=$1),EXISTS(SELECT 1 FROM deployment_runtime_environment_owners WHERE deployment_id=$1),EXISTS(SELECT 1 FROM project_environment_clone_deployment_cleanups WHERE operation_id=$2)", workload.TargetDeploymentID, l.Operation.ID).Scan(&live, &owner, &receipt); err != nil {
+				t.Fatal(err)
+			}
+			if live != target || owner != target || receipt == target {
+				t.Fatal("partial rehearsal borrower cleanup", live, owner, receipt)
+			}
+			var after []byte
+			if err = pool.QueryRow(t.Context(), "SELECT to_jsonb(f) FROM scenario_worker_faults f WHERE app_id=$1", workload.AppID).Scan(&after); err != nil || string(before) != string(after) {
+				t.Fatal("original rehearsal evidence changed", err)
+			}
+		})
 	}
 }

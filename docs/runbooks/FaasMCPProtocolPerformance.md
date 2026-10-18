@@ -7,6 +7,9 @@ app UUID. They are diagnostic evidence, not a complete host-verified request led
 Alerts indicate elevated RPC failures, slow execution, aggregation capacity
 pressure, or missing telemetry heartbeats.
 
+Alerts are internal operator warnings through existing Alertmanager routing.
+They do not automatically roll back, promote, or otherwise mutate deployments.
+
 ## Check
 
 For `FaasMCPProtocolHighErrorRate`, resolve the alert's app UUID and open its MCP
@@ -20,13 +23,6 @@ A long SSE stream alone does not fire this alert. Subscription acknowledgement
 measures setup time; background task execution is excluded. Histogram estimates
 require at least 20 observations in every evaluated five-minute window. The rule
 requires p95 above five seconds for ten minutes.
-
-For `FaasMCPProtocolAggregationCapacity`, a vmmd collector has filled its bounded
-1,024-app table. Apps expire after one hour without accepted events. Check active
-app placement and host load, and consider increasing capacity with an explicit
-cardinality budget or moving workloads. Do not restart a healthy VM to clear the
-warning: restarting the collector loses its in-memory counters and does not fix
-capacity pressure. Charts may omit dropped observations while this alert fires.
 
 No recent events can mean idle traffic, missing instrumentation, dropped output,
 or an unavailable host. Check vmmd scrape health and the starter version. Missing
@@ -42,8 +38,12 @@ pressure, adjust placement or the collector's cardinality budget after reviewing
 host capacity. Confirm error rates, execution latency and telemetry coverage have
 returned to normal before closing the incident.
 
-Alerts are internal operator warnings through existing Alertmanager routing.
-They do not automatically roll back, promote, or otherwise mutate deployments.
+For `FaasMCPProtocolAggregationCapacity`, a vmmd collector has filled its bounded
+1,024-app table. Apps expire after one hour without accepted events. Check active
+app placement and host load, and consider increasing capacity with an explicit
+cardinality budget or moving workloads. Do not restart a healthy VM to clear the
+warning: restarting the collector loses its in-memory counters and does not fix
+capacity pressure. Charts may omit dropped observations while this alert fires.
 
 ## Telemetry heartbeat loss
 

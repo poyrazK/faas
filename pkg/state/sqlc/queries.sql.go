@@ -48818,10 +48818,11 @@ func (q *Queries) LockCloneDeploymentCleanupBorrowerWriters(ctx context.Context,
 }
 
 const lockCloneDeploymentCleanupRetirementWriters = `-- name: LockCloneDeploymentCleanupRetirementWriters :exec
-LOCK TABLE environment_workload_retirements,environment_build_artifact_pins IN SHARE MODE
+LOCK TABLE environment_workload_retirements,environment_build_artifact_pins,scenario_cold_preparations,scenario_recorder_sessions,scenario_suspend_resumes,scenario_worker_faults IN SHARE MODE
 `
 
-// Deployment UUID arrays retain original artifacts without a foreign-key lock.
+// Deployment UUID arrays and rehearsal receipts retain original artifacts without
+// a foreign-key lock; exclude their writers through deletion and receipt commit.
 func (q *Queries) LockCloneDeploymentCleanupRetirementWriters(ctx context.Context, db DBTX) error {
 	_, err := db.Exec(ctx, lockCloneDeploymentCleanupRetirementWriters)
 	return err
@@ -68660,6 +68661,10 @@ SELECT jsonb_build_object(
  'route_probe_observations.deployment_id', (SELECT count(*) FROM route_probe_observations WHERE deployment_id::text=$1::uuid::text),
  'runtime_upgrade_gateway_drains.deployment_id', (SELECT count(*) FROM runtime_upgrade_gateway_drains WHERE deployment_id::text=$1::uuid::text),
  'runtime_upgrade_gateway_receipts.deployment_id', (SELECT count(*) FROM runtime_upgrade_gateway_receipts WHERE deployment_id::text=$1::uuid::text),
+ 'scenario_cold_preparations.deployment_id', (SELECT count(*) FROM scenario_cold_preparations WHERE deployment_id=$1::uuid),
+ 'scenario_recorder_sessions.deployment_id', (SELECT count(*) FROM scenario_recorder_sessions WHERE deployment_id=$1::uuid),
+ 'scenario_suspend_resumes.deployment_id', (SELECT count(*) FROM scenario_suspend_resumes WHERE deployment_id=$1::uuid),
+ 'scenario_worker_faults.deployment_id', (SELECT count(*) FROM scenario_worker_faults WHERE deployment_id=$1::uuid),
  'workflow_automation_live_suites.deployment_id', (SELECT count(*) FROM workflow_automation_live_suites WHERE deployment_id=$1::uuid),
  'workflow_automation_live_verifications.deployment_id', (SELECT count(*) FROM workflow_automation_live_verifications WHERE deployment_id=$1::uuid),
  'workflow_schedule_occurrences.deployment_id', (SELECT count(*) FROM workflow_schedule_occurrences WHERE deployment_id::text=$1::uuid::text),

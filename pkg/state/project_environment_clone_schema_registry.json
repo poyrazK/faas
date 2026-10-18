@@ -14392,7 +14392,7 @@
       "scope",
       "starts_at"
     ],
-    "kind": "operational"
+    "kind": "configuration"
   },
   {
     "table": "mcp_readiness_notification_actions",

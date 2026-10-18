@@ -18579,8 +18579,9 @@ VALUES($1,$2,$3,$4,$5,$6);
 SELECT lock_clone_deployment_cleanup_borrower_writers();
 
 -- name: LockCloneDeploymentCleanupRetirementWriters :exec
--- Deployment UUID arrays retain original artifacts without a foreign-key lock.
-LOCK TABLE environment_workload_retirements,environment_build_artifact_pins IN SHARE MODE;
+-- Deployment UUID arrays and rehearsal receipts retain original artifacts without
+-- a foreign-key lock; exclude their writers through deletion and receipt commit.
+LOCK TABLE environment_workload_retirements,environment_build_artifact_pins,scenario_cold_preparations,scenario_recorder_sessions,scenario_suspend_resumes,scenario_worker_faults IN SHARE MODE;
 
 -- name: DeleteCloneOwnedDeployments :execrows
 DELETE FROM deployments d USING project_environment_clone_workloads w
@@ -18608,6 +18609,10 @@ SELECT jsonb_build_object(
  'route_probe_observations.deployment_id', (SELECT count(*) FROM route_probe_observations WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
  'runtime_upgrade_gateway_drains.deployment_id', (SELECT count(*) FROM runtime_upgrade_gateway_drains WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
  'runtime_upgrade_gateway_receipts.deployment_id', (SELECT count(*) FROM runtime_upgrade_gateway_receipts WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
+ 'scenario_cold_preparations.deployment_id', (SELECT count(*) FROM scenario_cold_preparations WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
+ 'scenario_recorder_sessions.deployment_id', (SELECT count(*) FROM scenario_recorder_sessions WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
+ 'scenario_suspend_resumes.deployment_id', (SELECT count(*) FROM scenario_suspend_resumes WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
+ 'scenario_worker_faults.deployment_id', (SELECT count(*) FROM scenario_worker_faults WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'workflow_automation_live_suites.deployment_id', (SELECT count(*) FROM workflow_automation_live_suites WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'workflow_automation_live_verifications.deployment_id', (SELECT count(*) FROM workflow_automation_live_verifications WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'workflow_schedule_occurrences.deployment_id', (SELECT count(*) FROM workflow_schedule_occurrences WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
