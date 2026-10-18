@@ -3260,12 +3260,17 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// snapshot cache. Repeated cache misses must be visible as bounded 503s;
 	// silently forcing another cold boot defeats the backoff and can exhaust
 	// the node's RAM/capacity under a hot request loop.
+	// The gate's and the choice's reads run concurrently; the gate still
+	// decides before the choice can retire a snapshot (ADR-1741).
+	var snapshotReads wakeSnapshotReads
+	if !secretPolicyBlocksSnapshots {
+		snapshotReads = e.readWakeSnapshotInputs(ctx, dep.ID, string(acct.Plan), true)
+	}
 	var backoff state.Deployment
 	var backoffActive bool
 	if !secretPolicyBlocksSnapshots {
-		var backoffErr error
-		backoff, backoffActive, backoffErr = e.store.DeploymentSnapshotBackoffActive(ctx, dep.ID)
-		if backoffErr != nil {
+		backoff, backoffActive = snapshotReads.backoff, snapshotReads.backoffActive
+		if backoffErr := snapshotReads.backoffErr; backoffErr != nil {
 			e.log.Warn("wake: snapshot backoff gate lookup failed; proceeding without gate", "deployment_id", dep.ID, "err", backoffErr)
 		} else if backoffActive && !bypassGates && usesSnapshots {
 			if e.ops != nil {
@@ -3293,7 +3298,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	if secretPolicyBlocksSnapshots {
 		choice.coldReason = secretPolicyColdReason
 	} else {
-		choice = e.chooseWakeSnapshot(ctx, dep.ID, string(acct.Plan), e.guestRAMMB(ctx, dep.ID, app.RAMMB), app.AppProtocol)
+		choice = e.chooseWakeSnapshotFrom(ctx, snapshotReads, dep, snapshotReads.guestRAMMB(e, dep.ID, app.RAMMB), app.AppProtocol)
 	}
 	snap, haveSnap, chosenTier, coldReason := choice.snap, choice.ok, choice.tier, choice.coldReason
 	if !usesSnapshots {
@@ -3654,7 +3659,12 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	addRuntimeSidecarSecretVersions(&runtimeInputs, sidecarSecretCandidates)
 	runtimeInputs.SecretRefs = sealedEnv.References
 	var snapshotInputs *state.RuntimeConfigInputs
-	if receipts, ok := e.store.(state.RuntimeConfigReceiptStore); ok && haveSnap {
+	if receipt := choice.receipt; haveSnap && receipt.snapshotID == snap.ID {
+		if receipt.exists {
+			captured := receipt.inputs
+			snapshotInputs = &captured
+		}
+	} else if receipts, ok := e.store.(state.RuntimeConfigReceiptStore); ok && haveSnap {
 		captured, exists, err := receipts.SnapshotRuntimeConfigReceipt(ctx, snap.ID)
 		if err != nil {
 			e.rollbackAdmittedInstance(ctx, ins.ID, appID, "wake_snapshot_receipt_unavailable")
@@ -4839,9 +4849,13 @@ func (e *Engine) loadPlacementSnapshot(ctx context.Context, r Request) (placemen
 	// One pass over the fleet — use fresh vmmd capacity where available, and
 	// resolve all misses through one bulk store aggregate (Tier A1). The
 	// ledger's per-node UsedVCPU remains an independent local reservation view.
-	usedMB := e.nodeUsageForNodes(ctx, nodes)
+	// The memory and CPU aggregates are independent reads (ADR-1741).
+	var usedMB, usedCPUMillicores map[string]int64
+	concurrently(
+		func() { usedMB = e.nodeUsageForNodes(ctx, nodes) },
+		func() { usedCPUMillicores = e.nodeCPUUsageForNodes(ctx, nodes) },
+	)
 	usedVCPU := make(map[string]int64, len(nodes))
-	usedCPUMillicores := e.nodeCPUUsageForNodes(ctx, nodes)
 	for _, n := range nodes {
 		// Tier A2: per-node vCPU is ledger-authoritative. The chooser
 		// uses this to enforce compute_nodes.vcpu_budget per node;
@@ -8671,6 +8685,13 @@ var ColdReasons = []string{
 // the RAM check has side effects (it may mark the row stale), so it must
 // keep running only after the cheaper checks pass.
 func (e *Engine) snapshotRejection(ctx context.Context, snap state.Snapshot, expectedRAMMB int, appProtocol string) string {
+	return e.snapshotRejectionFor(ctx, snap, nil, expectedRAMMB, appProtocol, nil)
+}
+
+// snapshotRejectionFor is snapshotRejection with the snapshot's deployment
+// already in hand (nil reads it). A non-nil receipt receives the
+// runtime-config receipt the check read, if it read one.
+func (e *Engine) snapshotRejectionFor(ctx context.Context, snap state.Snapshot, dep *state.Deployment, expectedRAMMB int, appProtocol string, receipt *snapshotReceipt) string {
 	switch {
 	case snap.Stale:
 		return ColdReasonStale
@@ -8692,7 +8713,7 @@ func (e *Engine) snapshotRejection(ctx context.Context, snap state.Snapshot, exp
 		snap.BaseImageVersion != fcvm.FAAS_BASE_IMAGE_VERSION {
 		return ColdReasonBaseImage
 	}
-	if fresh, err := e.snapshotRuntimeConfigFresh(ctx, snap); err != nil {
+	if fresh, err := e.snapshotRuntimeConfigFreshFor(ctx, snap, dep, receipt); err != nil {
 		return ColdReasonLookupFailed
 	} else if !fresh {
 		e.retireUnrestorableSnapshot(ctx, snap, ColdReasonStale)
@@ -8726,6 +8747,17 @@ type wakeSnapshotChoice struct {
 	tier       string
 	coldReason string
 	rejected   state.Snapshot
+	// receipt is the chosen snapshot's runtime-config receipt when the
+	// choice read it. A receipt is written with its snapshot and never
+	// changes, so the boot reuses it instead of reading it again.
+	receipt snapshotReceipt
+}
+
+// snapshotReceipt is one read of a snapshot's runtime-config receipt.
+type snapshotReceipt struct {
+	snapshotID string
+	inputs     state.RuntimeConfigInputs
+	exists     bool
 }
 
 // chooseWakeSnapshot is usableSnapshotForWake plus the reason a cold boot was

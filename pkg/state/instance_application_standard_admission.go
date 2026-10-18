@@ -49,19 +49,31 @@ func CheckInstanceApplicationStandardAdmission(ctx context.Context, store Instan
 	if !sameStandardUUID(account.ID, app.AccountID) || deployment.ID != "" && !sameStandardUUID(deployment.AppID, app.ID) {
 		return ErrApplicationStandardRuntimeStale
 	}
-	capture, err := store.GetInstanceApplicationStandardAdmission(ctx, id)
-	if err != nil {
-		return fmt.Errorf("read runtime admission: %w", err)
-	}
 	reader, ok := store.(interface {
 		GetApplicationStandardEnrollment(context.Context, string, string) (ApplicationStandardEnrollment, error)
 	})
 	if !ok {
 		return fmt.Errorf("runtime enrollment reader unavailable")
 	}
-	enrollment, err := reader.GetApplicationStandardEnrollment(ctx, app.OrgID, app.ID)
-	if err != nil {
-		return fmt.Errorf("read captured runtime enrollment: %w", err)
+	// The capture and the enrollment are independent reads; a wake waits for
+	// them before vmmd, so they run concurrently (ADR-1741).
+	var (
+		capture               InstanceApplicationStandardAdmission
+		enrollment            ApplicationStandardEnrollment
+		captureErr, enrollErr error
+		enrollmentRead        = make(chan struct{})
+	)
+	go func() {
+		defer close(enrollmentRead)
+		enrollment, enrollErr = reader.GetApplicationStandardEnrollment(ctx, app.OrgID, app.ID)
+	}()
+	capture, captureErr = store.GetInstanceApplicationStandardAdmission(ctx, id)
+	<-enrollmentRead
+	if captureErr != nil {
+		return fmt.Errorf("read runtime admission: %w", captureErr)
+	}
+	if enrollErr != nil {
+		return fmt.Errorf("read captured runtime enrollment: %w", enrollErr)
 	}
 	if !ApplicationStandardEnrollmentPermitsRuntime(app, enrollment) {
 		return ErrApplicationStandardsPending
@@ -82,10 +94,11 @@ func CheckInstanceApplicationStandardAdmission(ctx context.Context, store Instan
 		delete(artifact, "scan_status")
 		delete(artifact, "scan_result_hash")
 	}
-	actual["artifact"], err = json.Marshal(artifact)
+	artifactJSON, err := json.Marshal(artifact)
 	if err != nil {
 		return err
 	}
+	actual["artifact"] = artifactJSON
 	expected := standardRuntimeCallerInputs(app, account, deployment)
 	if capture.ArtifactInputHash != "" {
 		removeStandardApprovalMirrors(expected["artifact"].(map[string]any))

@@ -409,6 +409,12 @@ func TestPostgresBootStatements(t *testing.T) {
 			const bootDuration = 150 * time.Millisecond
 			vmm := &fakeVMM{}
 			e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd")).WithNotifyInPublication()
+			// cmd/schedd places from its notification-backed node registry.
+			nodes, err := store.ActiveComputeNodes(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			e.WithNodeRegistry(NewNodeRegistry(nodes))
 			if tc.ownerCache {
 				e.WithOwnerCache()
 				first, err := e.Wake(ctx, app.ID, "", "", "")
