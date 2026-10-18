@@ -254,6 +254,9 @@ func (p *Postgres) FenceAndCapture(ctx context.Context, r rehearsalpg.Resource) 
 	}
 	defer func() { _ = admin.Close(context.WithoutCancel(ctx)) }()
 	q := sqlc.New()
+	if q.LockFixtureDatabase(ctx, admin, r.DatabaseName) != nil {
+		return nil, ErrFixture
+	}
 	// Authenticate the reader as the restricted fixture login before disabling
 	// all new connections. Customer objects never execute as an administrator.
 	password := make([]byte, 32)
@@ -336,6 +339,9 @@ func (p *Postgres) Drop(ctx context.Context, r rehearsalpg.Resource) error {
 	}
 	defer func() { _ = c.Close(context.WithoutCancel(ctx)) }()
 	q := sqlc.New()
+	if q.LockFixtureDatabase(ctx, c, r.DatabaseName) != nil {
+		return ErrFixture
+	}
 	participants, e := q.ParticipantRoles(ctx, c, r.RoleName)
 	if e != nil || len(participants) > 15 {
 		return ErrFixture

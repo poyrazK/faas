@@ -21,3 +21,10 @@ func ValidateWorkerTermination(req api.RegisterScenarioTestRequest, enabled bool
 	}
 	return nil
 }
+
+func ValidatePostgresFault(req api.RegisterScenarioTestRequest, enabled bool) *api.Problem {
+	if req.ManagedWork != nil && req.ManagedWork.PostgresFault != nil && !enabled {
+		return api.ErrCapacity("PostgreSQL fault rehearsals are disabled pending native qualification")
+	}
+	return nil
+}

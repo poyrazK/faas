@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/hostport"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
 	"github.com/onebox-faas/faas/pkg/rehearsalcold"
+	"github.com/onebox-faas/faas/pkg/rehearsalfault"
 	"github.com/onebox-faas/faas/pkg/rehearsalobj"
 	"github.com/onebox-faas/faas/pkg/rehearsalpg"
 	"github.com/onebox-faas/faas/pkg/rehearsalresume"
@@ -147,6 +148,7 @@ type jobRegistryCredentialKey struct {
 
 type MemStore struct {
 	productData                                *productMemory
+	scenarioPostgresFaults                     map[string]rehearsalfault.Row
 	scenarioManagedWork                        map[string]scenarioManagedJob
 	scenarioWorkerFaults                       map[string]rehearsalwork.WorkerFault
 	scenarioColdPreparations                   map[string]rehearsalcold.Preparation
@@ -13794,6 +13796,9 @@ func (m *MemStore) ClaimInvocation(_ context.Context, id, instanceID string, lea
 	if m.scenarioWorkerDispatchBlockedLocked(inv.AppID) {
 		return Invocation{}, ErrConflict
 	}
+	if err := m.checkScenarioPostgresFaultDispatchLocked(inv.AppID, instanceID); err != nil {
+		return Invocation{}, err
+	}
 	if instanceID == "" && m.scenarioActionPolicies[inv.AppID].Member.ManagedWorkJSON != "" {
 		inv.InstanceID = ""
 	}
@@ -14743,6 +14748,9 @@ func (m *MemStore) StampInstanceInvocation(_ context.Context, id, instanceID str
 	inv, ok := m.invocations[id]
 	if !ok || inv.State != InvocationDispatching {
 		return ErrNotFound
+	}
+	if err := m.checkScenarioPostgresFaultDispatchLocked(inv.AppID, instanceID); err != nil {
+		return err
 	}
 	inv.InstanceID = instanceID
 	m.setInvocationLocked(id, inv)
@@ -26724,6 +26732,9 @@ func (m *MemStore) ClaimInvocationWithCap(_ context.Context, id, instanceID stri
 	}
 	if m.scenarioWorkerDispatchBlockedLocked(inv.AppID) {
 		return Invocation{}, ErrConflict
+	}
+	if err := m.checkScenarioPostgresFaultDispatchLocked(inv.AppID, instanceID); err != nil {
+		return Invocation{}, err
 	}
 	if instanceID == "" && m.scenarioActionPolicies[inv.AppID].Member.ManagedWorkJSON != "" {
 		inv.InstanceID = ""

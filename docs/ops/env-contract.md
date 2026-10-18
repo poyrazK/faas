@@ -620,6 +620,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REHEARSAL_NETWORK_CONTAINMENT` | apid | `default` |  | 0 | `` | opt-in contained rehearsal enrollment; disabled pending native network qualification |
 | `FAAS_REHEARSAL_OBJECT_FIXTURES` | apid, gatewayd-internal | `default` |  | 0 | `` | opt-in isolated rehearsal object fixture API and private proxy; disabled pending native containment qualification |
 | `FAAS_REHEARSAL_POSTGRES_ADMIN_URL` | apid | `secrets-env` |  |  | `` | optional dedicated rehearsal fixture-cluster admin DSN in /etc/faas/sealed.env; never point at platform metadata or production databases |
+| `FAAS_REHEARSAL_POSTGRES_FAULTS` | apid | `default` |  | 0 | `` | opt-in contained PostgreSQL disconnect and recovery rehearsals; disabled pending native fault-injection qualification |
 | `FAAS_REHEARSAL_POSTGRES_FIXTURES` | apid, gatewayd-internal | `default` |  | 0 | `` | opt-in isolated rehearsal PostgreSQL fixture API and private proxy; disabled pending native containment qualification |
 | `FAAS_REHEARSAL_POSTGRES_PROXY_TARGET` | gatewayd-internal | `default` |  |  | `` | explicit loopback endpoint of the dedicated rehearsal fixture cluster; required only when PostgreSQL fixtures are enabled |
 | `FAAS_REHEARSAL_RUNNING_JOB_SUSPEND` | apid | `default` |  | 0 | `` | opt-in same-VM suspend/resume at a cooperative managed-job checkpoint; disabled pending native qualification |
