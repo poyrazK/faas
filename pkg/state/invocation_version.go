@@ -82,7 +82,14 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 				return inv, InvocationVersion{}, ErrInvocationEnvironmentWorkIsolation
 			}
 			if authority.QueueCanary {
-				if authority.AppID != app.ID || authority.AccountID != app.AccountID || ingress {
+				// The gateway authenticates ESM claims against the durable row.
+				// Its transport omits QueueName; recover that private identity
+				// before applying bound-queue environment and release checks.
+				if inv.Source == InvocationSource("esm") && inv.QueueName == "" {
+					inv.QueueName = authority.QueueName
+					inv.Source = InvocationQueue
+				}
+				if authority.AppID != app.ID || authority.AccountID != app.AccountID || ingress || inv.Source != InvocationQueue || authority.QueueBindingID != inv.QueueBindingID || authority.QueueName != inv.QueueName || authority.Scope != inv.DeploymentScope {
 					return inv, InvocationVersion{}, ErrConflict
 				}
 				if err := validateQueueCanaryDispatch(ctx, store, app, inv, true); err != nil {

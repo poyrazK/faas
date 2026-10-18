@@ -68,15 +68,13 @@ func (s *server) collectBindingInventory(parent context.Context, r *http.Request
 	inventory := api.AppBindingInventory{
 		App: app.Slug, Scope: scope, Complete: true, GeneratedAt: time.Now().UTC(),
 		RequestedDeploymentID: r.URL.Query().Get("deployment_id"),
-		Bindings:              serviceBindingInventory(app),
 	}
 	ctx, cancel := context.WithTimeout(parent, bindingInventoryReadTimeout)
-	revisions, err := s.serviceBindingRevisions(ctx, app)
+	deployment, selectionErr := s.bindingInventoryDeployment(ctx, app, inventory.RequestedDeploymentID)
+	items, revisions, issues, source := s.deploymentServiceInventory(ctx, app, deployment, selectionErr, inventory.RequestedDeploymentID, scope)
 	cancel()
-	if err != nil {
-		revisions = map[string]string{}
-		issue := api.BindingInventoryIssue{Type: api.BindingTypeService, Code: "query_failed", Severity: "error", Message: "Service dependency metadata could not be read."}
-		inventory.Issues = append(inventory.Issues, issue)
+	inventory.Bindings, inventory.ServiceBindingSource, inventory.Issues = items, source, issues
+	for _, issue := range issues {
 		inventory.Warnings = append(inventory.Warnings, issue.Message)
 	}
 	refreshWakeIDs := make(map[string]string)
@@ -137,7 +135,7 @@ func (s *server) collectBindingInventory(parent context.Context, r *http.Request
 		}
 	}
 	s.applyBindingRuntimeInventory(parent, r, acct, app, &inventory, refreshWakeIDs)
-	s.applyBindingVerification(parent, r, acct, app, &inventory, revisions, privateBindingIDs)
+	s.applyBindingVerification(parent, r, acct, app, deployment, selectionErr, &inventory, revisions, privateBindingIDs)
 	bindings.ApplyQueueCanaryInventory(parent, s.store, acct.ID, app.ID, &inventory)
 	s.applyBindingApplicationAdoption(parent, acct, app, &inventory, adoptionSelectors)
 	inventory.Complete = len(inventory.Issues) == 0

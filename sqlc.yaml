@@ -124,6 +124,17 @@ sql:
         emit_methods_with_db_argument: true
         emit_empty_slices: true
 
+  # Credential verification is also linked into the disposable guest binary.
+  - engine: "postgresql"
+    queries: "pkg/managedpostgres/credentialprobe/queries.sql"
+    schema: "pkg/managedpostgres/credentialprobe/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/managedpostgres/credentialprobe/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+
   # ADR-20261016151947 live-query keys; projection mirrors its migration-owned table.
   - engine: "postgresql"
     queries: "pkg/state/livekeys/queries.sql"

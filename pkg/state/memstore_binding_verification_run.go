@@ -28,7 +28,8 @@ func (m *MemStore) checkVerificationRunAuthorityLocked(account, app string, r ve
 	a := m.apps[app]
 	d := m.deployments[r.Report.DeploymentID]
 	p := m.bindingReleasePolicyLocked(app, r.Report.Scope)
-	if a.AccountID != account || a.Status == AppDeleted || d.AppID != app || d.Status != DeployLive || d.DeletedAt != nil || d.RootfsKey == "" || d.ImageDigest == "" || verificationArtifact(d.RootfsKey, d.ImageDigest, d.OverrideEnv) != r.Artifact || p.Revision != r.Report.Policy.Revision || p.Mode != "enforce" || !m.runtimeConfigChangedAt[app].Equal(*r.Report.Inventory.RuntimeFreshness.ConfigChangedAt) {
+	artifact, err := bindingVerificationArtifact(d)
+	if a.AccountID != account || a.Status == AppDeleted || d.AppID != app || d.Status != DeployLive || d.DeletedAt != nil || err != nil || artifact != r.Artifact || p.Revision != r.Report.Policy.Revision || p.Mode != "enforce" || !m.runtimeConfigChangedAt[app].Equal(*r.Report.Inventory.RuntimeFreshness.ConfigChangedAt) {
 		return ErrConflict
 	}
 	for _, admission := range r.Admissions {
@@ -76,7 +77,11 @@ func (m *MemStore) createBindingVerificationRunLocked(account, app string, in Ve
 		return api.BindingVerificationRun{}, &VerificationRunCapacityError{Limit: api.BindingVerificationRunMaxActive, Observed: active}
 	}
 	d := m.deployments[in.Report.DeploymentID]
-	r := cloneVerificationRecord(verificationRunRecord{Report: in.Report, Admissions: in.Admissions, Artifact: verificationArtifact(d.RootfsKey, d.ImageDigest, d.OverrideEnv)})
+	artifact, err := bindingVerificationArtifact(d)
+	if err != nil {
+		return api.BindingVerificationRun{}, err
+	}
+	r := cloneVerificationRecord(verificationRunRecord{Report: in.Report, Admissions: in.Admissions, Artifact: artifact})
 	r.Report.Status = "pending"
 	if err := m.checkVerificationRunAuthorityLocked(account, app, r); err != nil {
 		return api.BindingVerificationRun{}, err

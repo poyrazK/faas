@@ -11,6 +11,9 @@ import (
 // Selectors choose candidate evidence. They cannot grant permission or make
 // an unpublished release routable.
 func (s *server) selectBindingServiceTargets(r *http.Request, app state.App, caller state.Deployment, targets map[string]string) *api.Problem {
+	if caller.EnvironmentWorkloadManaged() && len(targets) != 0 {
+		return api.ErrValidation("managed service targets are selected by the active reviewed environment release")
+	}
 	if len(targets) > api.ProjectReleaseSetMaxMembers {
 		return api.ErrValidation("too many service target selectors")
 	}

@@ -2099,6 +2099,45 @@ func (q *Queries) AuthorizeDeploymentRuntimeScanInsert(ctx context.Context, db D
 	return err
 }
 
+const authorizeEnvironmentBindingRelease = `-- name: AuthorizeEnvironmentBindingRelease :one
+SELECT authorize_environment_binding_release($1::uuid,$2::uuid,$3::text,$4::jsonb)::boolean
+`
+
+type AuthorizeEnvironmentBindingReleaseParams struct {
+	GraphID      pgtype.UUID
+	ReleaseID    pgtype.UUID
+	PriorRelease string
+	Members      []byte
+}
+
+func (q *Queries) AuthorizeEnvironmentBindingRelease(ctx context.Context, db DBTX, arg AuthorizeEnvironmentBindingReleaseParams) (bool, error) {
+	row := db.QueryRow(ctx, authorizeEnvironmentBindingRelease,
+		arg.GraphID,
+		arg.ReleaseID,
+		arg.PriorRelease,
+		arg.Members,
+	)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const authorizeEnvironmentBindingTraffic = `-- name: AuthorizeEnvironmentBindingTraffic :one
+SELECT authorize_environment_binding_traffic($1::uuid,$2::uuid)::boolean
+`
+
+type AuthorizeEnvironmentBindingTrafficParams struct {
+	GraphID   pgtype.UUID
+	ReleaseID pgtype.UUID
+}
+
+func (q *Queries) AuthorizeEnvironmentBindingTraffic(ctx context.Context, db DBTX, arg AuthorizeEnvironmentBindingTrafficParams) (bool, error) {
+	row := db.QueryRow(ctx, authorizeEnvironmentBindingTraffic, arg.GraphID, arg.ReleaseID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const authorizeLifecycleTraffic = `-- name: AuthorizeLifecycleTraffic :one
 SELECT set_config('faas.lifecycle_fences',$1::text,true)::text
 `
@@ -4784,7 +4823,7 @@ UPDATE environment_workload_qualification_requests SET phase='claimed',worker_id
  reserved_instance_id=$4::uuid
 WHERE id=$5::uuid AND (phase='queued' OR lease_until<=clock_timestamp())
  AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=reserved_instance_id AND i.state NOT IN ('parked','stopped','failed'))
- AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.request_id=environment_workload_qualification_requests.id AND e.retired_at IS NULL) RETURNING id, graph_id, deployment_id, app_id, resource, artifact, frozen_inputs, execution_mode, phase, created_at, worker_id, lease_token, lease_until, attempt, reserved_instance_id
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.request_id=environment_workload_qualification_requests.id AND e.retired_at IS NULL) RETURNING id, graph_id, deployment_id, app_id, resource, artifact, frozen_inputs, execution_mode, phase, created_at, worker_id, lease_token, lease_until, attempt, reserved_instance_id, binding_context
 `
 
 type ClaimEnvironmentWorkloadQualificationParams struct {
@@ -4820,6 +4859,7 @@ func (q *Queries) ClaimEnvironmentWorkloadQualification(ctx context.Context, db 
 		&i.LeaseUntil,
 		&i.Attempt,
 		&i.ReservedInstanceID,
+		&i.BindingContext,
 	)
 	return i, err
 }
@@ -9761,9 +9801,28 @@ SELECT a.account_id, a.id, d.id, 'manual', $1::text[], false,
 FROM apps a JOIN deployments d ON d.app_id = a.id
 WHERE a.id = $6 AND a.account_id = $7
  AND a.status <> 'deleted' AND d.id = $8
- AND d.rootfs_key IS NOT NULL AND d.rootfs_key <> '' AND d.image_digest <> ''
+ AND d.rootfs_key IS NOT NULL AND d.rootfs_key <> ''
+ AND (d.image_digest <> '' OR (
+  $5::jsonb ? 'managed_service' AND d.kind='github'
+  AND d.environment_workload_runtime->'source_archive' IS NOT NULL
+  AND NOT d.environment_workload_held AND d.rootfs_bytes>0
+ ))
  AND d.status IN ('imaging', 'snapshotting', 'live', 'superseded')
  AND (NOT $9::boolean OR d.status = 'live')
+ AND (NOT ($5::jsonb ? 'managed_service') OR EXISTS (
+  SELECT 1 FROM project_release_sets release
+  JOIN project_release_members caller_member ON caller_member.release_id=release.id AND caller_member.app_id=a.id AND caller_member.deployment_id=d.id
+  JOIN project_release_members target_member ON target_member.release_id=release.id
+  JOIN active_environment_git_sources source ON source.id::text=d.environment_workload_runtime->>'source_id'
+  WHERE release.id::text=$5::jsonb->'managed_service'->>'release_id'
+   AND release.active AND release.account_id=a.account_id AND release.project_id=a.project_id
+   AND release.environment_slug=COALESCE(NULLIF(d.scope,''),'default')
+   AND source.account_id=a.account_id AND source.project_id=a.project_id AND source.mode='enforce' AND NOT source.suspended
+   AND NOT d.environment_workload_held
+   AND target_member.app_id::text=$5::jsonb->'managed_service'->>'target_app_id'
+   AND target_member.deployment_id::text=$5::jsonb->>'target_deployment_id'
+  FOR SHARE OF release, source
+ ))
 FOR SHARE OF d
 RETURNING id
 `
@@ -10376,23 +10435,29 @@ func (q *Queries) CreateEnvironmentWorkloadGraph(ctx context.Context, db DBTX, a
 }
 
 const createEnvironmentWorkloadQualification = `-- name: CreateEnvironmentWorkloadQualification :execrows
-INSERT INTO environment_workload_qualification_requests(graph_id,deployment_id,app_id,resource,artifact,frozen_inputs,execution_mode)
+INSERT INTO environment_workload_qualification_requests(graph_id,deployment_id,app_id,resource,artifact,frozen_inputs,execution_mode,binding_context)
 SELECT $1::uuid,d.id,d.app_id,$2::text,environment_workload_artifact(d),d.environment_workload_runtime,
  CASE WHEN d.environment_workload_runtime->'runtime' ? 'execution_mode'
  THEN coalesce(nullif(d.environment_workload_runtime->'runtime'->>'execution_mode',''),'request')
- ELSE coalesce(nullif(d.environment_workload_runtime->'baseline'->>'execution_mode',''),'request') END
-FROM deployments d WHERE d.id=$3::uuid
+ ELSE coalesce(nullif(d.environment_workload_runtime->'baseline'->>'execution_mode',''),'request') END, $3::jsonb
+FROM deployments d WHERE d.id=$4::uuid
 ON CONFLICT(graph_id,resource) DO NOTHING
 `
 
 type CreateEnvironmentWorkloadQualificationParams struct {
-	GraphID      pgtype.UUID
-	Resource     string
-	DeploymentID pgtype.UUID
+	GraphID        pgtype.UUID
+	Resource       string
+	BindingContext []byte
+	DeploymentID   pgtype.UUID
 }
 
 func (q *Queries) CreateEnvironmentWorkloadQualification(ctx context.Context, db DBTX, arg CreateEnvironmentWorkloadQualificationParams) (int64, error) {
-	result, err := db.Exec(ctx, createEnvironmentWorkloadQualification, arg.GraphID, arg.Resource, arg.DeploymentID)
+	result, err := db.Exec(ctx, createEnvironmentWorkloadQualification,
+		arg.GraphID,
+		arg.Resource,
+		arg.BindingContext,
+		arg.DeploymentID,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -13380,24 +13445,39 @@ func (q *Queries) EnqueueExclusiveWebhookEffect(ctx context.Context, db DBTX, ar
 }
 
 const enqueueInvocationRow = `-- name: EnqueueInvocationRow :one
-WITH replay_parent AS (
-  SELECT i.id, i.replay_root_invocation_id, coalesce(i.replay_root_created_at, i.created_at) AS root_created_at
-  FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
-  WHERE i.id=$35::uuid
-    AND i.account_id=$3::uuid AND i.app_id=$2::uuid
-    AND i.deployment_scope=coalesce(nullif($29::text, ''),
-      CASE WHEN a.project_id IS NOT NULL AND coalesce(a.preview_of_slug, '')='' THEN 'production' ELSE 'default' END)
-    AND i.platform_tenant_id IS NOT DISTINCT FROM $28::uuid
-    AND i.state IN ('failed', 'dead_letter') AND $4::text='replay'
-    AND (i.work_policy_name IS NULL OR (
-      i.work_policy_name=nullif($21::text, '')
-      AND i.work_key_digest=$22::bytea
-      AND i.work_policy_revision IS NOT DISTINCT FROM $25::bigint
-      AND i.work_fairness_digest IS NOT DISTINCT FROM $26::bytea
-      AND i.work_fairness_limit IS NOT DISTINCT FROM $27::int
-      AND i.work_expires_at IS NOT DISTINCT FROM $23::timestamptz
-    ))
-  FOR SHARE OF i, a
+WITH scenario_action_run_locks AS MATERIALIZED (
+  SELECT pg_advisory_xact_lock(hashtextextended(
+    'scenario-action-run:' || p.account_id::text || ':' || p.run_id, 0)) AS acquired
+  FROM scenario_test_action_policies p
+  WHERE p.app_id=$2::uuid AND p.managed_work_plan IS NOT NULL
+  ORDER BY p.account_id, p.run_id
+),
+scenario_action_lock_gate AS MATERIALIZED (
+  SELECT count(acquired)>=0 AS ready FROM scenario_action_run_locks
+),
+replay_parent AS (
+  SELECT parent.id, parent.replay_root_invocation_id, parent.root_created_at
+  FROM scenario_action_lock_gate gate
+  CROSS JOIN LATERAL (
+    SELECT i.id, i.replay_root_invocation_id, coalesce(i.replay_root_created_at, i.created_at) AS root_created_at
+    FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+    WHERE i.id=$35::uuid
+      AND i.account_id=$3::uuid AND i.app_id=$2::uuid
+      AND i.deployment_scope=coalesce(nullif($29::text, ''),
+        CASE WHEN a.project_id IS NOT NULL AND coalesce(a.preview_of_slug, '')='' THEN 'production' ELSE 'default' END)
+      AND i.platform_tenant_id IS NOT DISTINCT FROM $28::uuid
+      AND i.state IN ('failed', 'dead_letter') AND $4::text='replay'
+      AND (i.work_policy_name IS NULL OR (
+        i.work_policy_name=nullif($21::text, '')
+        AND i.work_key_digest=$22::bytea
+        AND i.work_policy_revision IS NOT DISTINCT FROM $25::bigint
+        AND i.work_fairness_digest IS NOT DISTINCT FROM $26::bytea
+        AND i.work_fairness_limit IS NOT DISTINCT FROM $27::int
+        AND i.work_expires_at IS NOT DISTINCT FROM $23::timestamptz
+      ))
+    FOR SHARE OF i, a
+  ) parent
+  WHERE gate.ready
 )
 INSERT INTO invocations (
   id, app_id, account_id, source, queue_name, state, method, path,
@@ -13421,8 +13501,10 @@ INSERT INTO invocations (
   $28, nullif($29::text, ''), $30,
   $31::uuid, $32::timestamptz, $33::jsonb,
   $34::uuid, replay_parent.id, coalesce(replay_parent.replay_root_invocation_id, replay_parent.id), replay_parent.root_created_at
-FROM (SELECT 1) seed LEFT JOIN replay_parent ON true
-WHERE $35::uuid IS NULL OR replay_parent.id IS NOT NULL
+FROM scenario_action_lock_gate gate
+LEFT JOIN replay_parent ON true
+WHERE gate.ready
+  AND ($35::uuid IS NULL OR replay_parent.id IS NOT NULL)
 RETURNING id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, operation_id, deployment_scope, queue_binding_id, replay_generation, outcome_code, environment_id, replay_root_invocation_id, replay_root_created_at, async_quota_subject_id
 `
 
@@ -13464,6 +13546,7 @@ type EnqueueInvocationRowParams struct {
 	ReplayedFromInvocationID pgtype.UUID
 }
 
+// Managed-work capture takes this action-run lock in its trigger; acquire it before replay-parent row locks.
 func (q *Queries) EnqueueInvocationRow(ctx context.Context, db DBTX, arg EnqueueInvocationRowParams) (Invocation, error) {
 	row := db.QueryRow(ctx, enqueueInvocationRow,
 		arg.ID,
@@ -13745,6 +13828,41 @@ type EnsureExclusiveWorkQuotaParams struct {
 func (q *Queries) EnsureExclusiveWorkQuota(ctx context.Context, db DBTX, arg EnsureExclusiveWorkQuotaParams) error {
 	_, err := db.Exec(ctx, ensureExclusiveWorkQuota, arg.AccountID, arg.MaxInflight)
 	return err
+}
+
+const environmentBindingCandidate = `-- name: EnvironmentBindingCandidate :one
+SELECT to_jsonb(d)::jsonb AS deployment, a.account_id, environment_binding_catalog_supported(d.app_id,d.scope)::boolean AS catalog_supported
+FROM deployments d JOIN apps a ON a.id=d.app_id WHERE d.id=$1::uuid
+`
+
+type EnvironmentBindingCandidateRow struct {
+	Deployment       []byte
+	AccountID        pgtype.UUID
+	CatalogSupported bool
+}
+
+func (q *Queries) EnvironmentBindingCandidate(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (EnvironmentBindingCandidateRow, error) {
+	row := db.QueryRow(ctx, environmentBindingCandidate, deploymentID)
+	var i EnvironmentBindingCandidateRow
+	err := row.Scan(&i.Deployment, &i.AccountID, &i.CatalogSupported)
+	return i, err
+}
+
+const environmentBindingReleaseRequired = `-- name: EnvironmentBindingReleaseRequired :one
+SELECT EXISTS(SELECT 1 FROM apps a JOIN app_binding_release_policies p ON p.app_id=a.id
+ WHERE a.project_id=$1::uuid AND p.scope=$2::text AND p.mode='enforce')
+`
+
+type EnvironmentBindingReleaseRequiredParams struct {
+	ProjectID pgtype.UUID
+	Scope     string
+}
+
+func (q *Queries) EnvironmentBindingReleaseRequired(ctx context.Context, db DBTX, arg EnvironmentBindingReleaseRequiredParams) (bool, error) {
+	row := db.QueryRow(ctx, environmentBindingReleaseRequired, arg.ProjectID, arg.Scope)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const environmentFieldGitOwned = `-- name: EnvironmentFieldGitOwned :one
@@ -14336,6 +14454,37 @@ func (q *Queries) EnvironmentQualificationRestoreReservation(ctx context.Context
 	return i, err
 }
 
+const environmentQualificationServiceExchanges = `-- name: EnvironmentQualificationServiceExchanges :many
+SELECT request_id,attempt,binding,route,recorded_at FROM environment_qualification_service_receipts
+WHERE request_id IN (SELECT id FROM environment_workload_qualification_requests WHERE graph_id=$1::uuid)
+`
+
+func (q *Queries) EnvironmentQualificationServiceExchanges(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]EnvironmentQualificationServiceReceipt, error) {
+	rows, err := db.Query(ctx, environmentQualificationServiceExchanges, graphID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EnvironmentQualificationServiceReceipt{}
+	for rows.Next() {
+		var i EnvironmentQualificationServiceReceipt
+		if err := rows.Scan(
+			&i.RequestID,
+			&i.Attempt,
+			&i.Binding,
+			&i.Route,
+			&i.RecordedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const environmentQualificationSmokeReceipt = `-- name: EnvironmentQualificationSmokeReceipt :one
 SELECT request_id,attempt,graph_id,capture_instance_id,instance_id,resource,policy_id,policy_sha256,result_sha256,recorded_at
 FROM environment_qualification_smoke_receipts
@@ -14746,7 +14895,7 @@ func (q *Queries) EnvironmentWorkloadQualificationEvidenceCurrent(ctx context.Co
 }
 
 const environmentWorkloadQualificationForUpdate = `-- name: EnvironmentWorkloadQualificationForUpdate :one
-SELECT id, graph_id, deployment_id, app_id, resource, artifact, frozen_inputs, execution_mode, phase, created_at, worker_id, lease_token, lease_until, attempt, reserved_instance_id FROM environment_workload_qualification_requests WHERE id=$1::uuid FOR UPDATE
+SELECT id, graph_id, deployment_id, app_id, resource, artifact, frozen_inputs, execution_mode, phase, created_at, worker_id, lease_token, lease_until, attempt, reserved_instance_id, binding_context FROM environment_workload_qualification_requests WHERE id=$1::uuid FOR UPDATE
 `
 
 func (q *Queries) EnvironmentWorkloadQualificationForUpdate(ctx context.Context, db DBTX, id pgtype.UUID) (EnvironmentWorkloadQualificationRequest, error) {
@@ -14768,6 +14917,7 @@ func (q *Queries) EnvironmentWorkloadQualificationForUpdate(ctx context.Context,
 		&i.LeaseUntil,
 		&i.Attempt,
 		&i.ReservedInstanceID,
+		&i.BindingContext,
 	)
 	return i, err
 }
@@ -14825,7 +14975,7 @@ func (q *Queries) EnvironmentWorkloadQualificationSourceForUpdate(ctx context.Co
 }
 
 const environmentWorkloadQualificationsByGraph = `-- name: EnvironmentWorkloadQualificationsByGraph :many
-SELECT id, graph_id, deployment_id, app_id, resource, artifact, frozen_inputs, execution_mode, phase, created_at, worker_id, lease_token, lease_until, attempt, reserved_instance_id FROM environment_workload_qualification_requests WHERE graph_id=$1::uuid ORDER BY resource
+SELECT id, graph_id, deployment_id, app_id, resource, artifact, frozen_inputs, execution_mode, phase, created_at, worker_id, lease_token, lease_until, attempt, reserved_instance_id, binding_context FROM environment_workload_qualification_requests WHERE graph_id=$1::uuid ORDER BY resource
 `
 
 func (q *Queries) EnvironmentWorkloadQualificationsByGraph(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]EnvironmentWorkloadQualificationRequest, error) {
@@ -14853,6 +15003,7 @@ func (q *Queries) EnvironmentWorkloadQualificationsByGraph(ctx context.Context, 
 			&i.LeaseUntil,
 			&i.Attempt,
 			&i.ReservedInstanceID,
+			&i.BindingContext,
 		); err != nil {
 			return nil, err
 		}
@@ -28462,6 +28613,33 @@ func (q *Queries) InsertDeploymentRuntimeUpgradeCutover(ctx context.Context, db 
 	return i, err
 }
 
+const insertEnvironmentBindingRelease = `-- name: InsertEnvironmentBindingRelease :one
+INSERT INTO project_release_sets(id,account_id,project_id,environment_slug,active,ttl_seconds)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::text,true,$5::integer)
+RETURNING created_at
+`
+
+type InsertEnvironmentBindingReleaseParams struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	Environment string
+	Ttl         int32
+}
+
+func (q *Queries) InsertEnvironmentBindingRelease(ctx context.Context, db DBTX, arg InsertEnvironmentBindingReleaseParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, insertEnvironmentBindingRelease,
+		arg.ID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.Environment,
+		arg.Ttl,
+	)
+	var created_at pgtype.Timestamptz
+	err := row.Scan(&created_at)
+	return created_at, err
+}
+
 const insertEnvironmentDesiredRevision = `-- name: InsertEnvironmentDesiredRevision :one
 INSERT INTO environment_desired_revisions
     (source_id, commit_sha, definition_digest, definition, approved_by)
@@ -38841,16 +39019,18 @@ FROM app_tasks
 WHERE account_id = $1 AND app_id = $2
  AND binding_verification IS NOT NULL
  AND binding_verification->>'type' = ANY($3::text[])
- AND (binding_verification->>'type' <> 'service' OR coalesce(binding_verification->>'target_deployment_id','') = coalesce($4::jsonb->>(binding_verification->>'binding'),''))
- AND (NOT $5::boolean OR deployment_id = $6::uuid)
+ AND (binding_verification->>'type' <> 'service' OR (binding_verification->'managed_service' IS NOT NULL) = $4::boolean)
+ AND (binding_verification->>'type' <> 'service' OR coalesce(binding_verification->>'target_deployment_id','') = coalesce($5::jsonb->>(binding_verification->>'binding'),''))
+ AND (NOT $6::boolean OR deployment_id = $7::uuid)
 ORDER BY binding_verification->>'type', binding_verification->>'binding', deployment_scope,
- CASE WHEN deployment_id = $6::uuid THEN 0 ELSE 1 END, created_at DESC, id DESC
+ CASE WHEN deployment_id = $7::uuid THEN 0 ELSE 1 END, created_at DESC, id DESC
 `
 
 type ListBindingVerificationTasksParams struct {
 	AccountID            pgtype.UUID
 	AppID                pgtype.UUID
 	Kinds                []string
+	ManagedService       bool
 	ServiceTargets       []byte
 	ExactDeployment      bool
 	SelectedDeploymentID pgtype.UUID
@@ -38874,6 +39054,7 @@ func (q *Queries) ListBindingVerificationTasks(ctx context.Context, db DBTX, arg
 		arg.AccountID,
 		arg.AppID,
 		arg.Kinds,
+		arg.ManagedService,
 		arg.ServiceTargets,
 		arg.ExactDeployment,
 		arg.SelectedDeploymentID,
@@ -63121,7 +63302,7 @@ SELECT jsonb_build_object(
         WHERE c.project_id = s.project_id AND c.environment_slug = e.slug ORDER BY version DESC LIMIT 1), '{}'::jsonb),
     'resources', coalesce((SELECT jsonb_agg(jsonb_build_object('resource', r.logical_name, 'app_id', r.app_id))
         FROM environment_gitops_resources r WHERE r.source_id = s.id), '[]'::jsonb),
-    'retirements', coalesce((SELECT jsonb_agg(to_jsonb(r)) FROM (SELECT DISTINCT ON(resource) id, source_id, account_id, project_id, environment_id, app_id, resource, revision_id, generation, plan_hash, phase, deployment_ids, queue_binding_ids, job_id, route_deployment_id, route_generation, expected_gateways, acknowledged_gateways, requested_at, retired_at, recovery_revision_id, recovery_generation, recovered_at FROM environment_workload_retirements WHERE source_id=s.id ORDER BY resource,generation DESC) r),'[]'::jsonb),
+    'retirements', coalesce((SELECT jsonb_agg(to_jsonb(r)) FROM (SELECT DISTINCT ON(resource) id, source_id, account_id, project_id, environment_id, app_id, resource, revision_id, generation, plan_hash, phase, deployment_ids, queue_binding_ids, job_id, route_deployment_id, route_generation, expected_gateways, acknowledged_gateways, requested_at, retired_at, recovery_revision_id, recovery_generation, recovered_at, binding_policy_context FROM environment_workload_retirements WHERE source_id=s.id ORDER BY resource,generation DESC) r),'[]'::jsonb),
     'queue_bindings', coalesce((SELECT jsonb_agg(jsonb_build_object('resource', q.resource, 'path', q.field_path, 'binding_id', q.binding_id))
         FROM environment_gitops_queue_bindings q WHERE q.source_id=s.id), '[]'::jsonb),
     'apps', coalesce((SELECT jsonb_agg(jsonb_build_object(
@@ -64185,83 +64366,6 @@ type PrepareCheckedRollbackTargetParams struct {
 func (q *Queries) PrepareCheckedRollbackTarget(ctx context.Context, db DBTX, arg PrepareCheckedRollbackTargetParams) error {
 	_, err := db.Exec(ctx, prepareCheckedRollbackTarget, arg.RolloutState, arg.Handoff, arg.TargetID)
 	return err
-}
-
-const probeManagedPostgresCredential = `-- name: ProbeManagedPostgresCredential :one
-SELECT session_user::text AS login, current_user::text AS effective_user,
- current_database()::text AS database_name, current_setting('server_version_num')::integer AS version_num,
- current_setting('transaction_read_only')::boolean AS read_only,
- current_setting('row_security')='on' AS row_security,
- has_schema_privilege(current_user,'public','USAGE') AS schema_usage,
- has_schema_privilege(current_user,'public','CREATE') AS schema_create,
- (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls OR r.rolinherit
- OR e.rolsuper OR e.rolcreatedb OR e.rolcreaterole OR e.rolreplication OR e.rolbypassrls OR e.rolinherit) AS unsafe_role,
- (($1::text<>'migration' AND has_database_privilege(current_user,current_database(),'CREATE'))
- OR has_database_privilege(current_user,current_database(),'TEMPORARY')
- OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member=r.oid
- AND ($1::text<>'migration' OR roleid<>e.oid))
- OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member=e.oid AND e.oid<>r.oid)) AS elevated_runtime,
- NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
- WHERE n.nspname='public' AND ((c.relkind IN ('r','p','v','m','f') AND NOT
- (has_table_privilege(current_user,c.oid,'SELECT') AND
- (($1::text='read_only' AND NOT (has_table_privilege(current_user,c.oid,'INSERT')
- OR has_table_privilege(current_user,c.oid,'UPDATE') OR has_table_privilege(current_user,c.oid,'DELETE')))
- OR ($1::text<>'read_only' AND has_table_privilege(current_user,c.oid,'INSERT')
- AND has_table_privilege(current_user,c.oid,'UPDATE') AND has_table_privilege(current_user,c.oid,'DELETE')))
- AND ($1::text='migration' OR
- (c.relowner<>e.oid AND NOT has_table_privilege(current_user,c.oid,'TRUNCATE')))))
- OR (c.relkind='S' AND NOT (has_sequence_privilege(current_user,c.oid,'SELECT') AND
- (($1::text='read_only' AND NOT (has_sequence_privilege(current_user,c.oid,'USAGE')
- OR has_sequence_privilege(current_user,c.oid,'UPDATE'))) OR ($1::text<>'read_only'
- AND has_sequence_privilege(current_user,c.oid,'USAGE')))))))
- AND ($1::text<>'read_only' OR NOT (
- EXISTS (SELECT 1 FROM pg_catalog.pg_namespace n WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema'
- AND has_schema_privilege(current_user,n.oid,'CREATE'))
- OR EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
- WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND
- ((c.relkind IN ('r','p','v','m','f') AND (has_table_privilege(current_user,c.oid,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
- OR has_any_column_privilege(current_user,c.oid,'INSERT,UPDATE,REFERENCES')))
- OR (c.relkind='S' AND has_sequence_privilege(current_user,c.oid,'USAGE,UPDATE'))))
- OR EXISTS (SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
- WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND p.prosecdef AND has_function_privilege(current_user,p.oid,'EXECUTE'))
- OR EXISTS (SELECT 1 FROM pg_catalog.pg_default_acl d, LATERAL aclexplode(d.defaclacl) a
- WHERE a.grantee IN (0,e.oid) AND
- ((d.defaclobjtype='r' AND a.privilege_type IN ('INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'))
- OR (d.defaclobjtype='S' AND a.privilege_type IN ('USAGE','UPDATE')))))) AS data_access
-FROM pg_catalog.pg_roles r JOIN pg_catalog.pg_roles e ON e.rolname=current_user WHERE r.rolname=session_user
-`
-
-type ProbeManagedPostgresCredentialRow struct {
-	Login           string
-	EffectiveUser   string
-	DatabaseName    string
-	VersionNum      int32
-	ReadOnly        bool
-	RowSecurity     bool
-	SchemaUsage     bool
-	SchemaCreate    bool
-	UnsafeRole      pgtype.Bool
-	ElevatedRuntime pgtype.Bool
-	DataAccess      pgtype.Bool
-}
-
-func (q *Queries) ProbeManagedPostgresCredential(ctx context.Context, db DBTX, access string) (ProbeManagedPostgresCredentialRow, error) {
-	row := db.QueryRow(ctx, probeManagedPostgresCredential, access)
-	var i ProbeManagedPostgresCredentialRow
-	err := row.Scan(
-		&i.Login,
-		&i.EffectiveUser,
-		&i.DatabaseName,
-		&i.VersionNum,
-		&i.ReadOnly,
-		&i.RowSecurity,
-		&i.SchemaUsage,
-		&i.SchemaCreate,
-		&i.UnsafeRole,
-		&i.ElevatedRuntime,
-		&i.DataAccess,
-	)
-	return i, err
 }
 
 const projectEnvironmentCloneQuota = `-- name: ProjectEnvironmentCloneQuota :many
@@ -76388,6 +76492,29 @@ func (q *Queries) RecordEnvironmentQualificationRestoreReceipt(ctx context.Conte
 	return i, err
 }
 
+const recordEnvironmentQualificationServiceExchange = `-- name: RecordEnvironmentQualificationServiceExchange :exec
+INSERT INTO environment_qualification_service_receipts(request_id,attempt,binding,route)
+VALUES($1::uuid,$2::bigint,$3::text,$4::jsonb)
+ON CONFLICT(request_id,attempt,binding) DO NOTHING
+`
+
+type RecordEnvironmentQualificationServiceExchangeParams struct {
+	RequestID pgtype.UUID
+	Attempt   int64
+	Binding   string
+	Route     []byte
+}
+
+func (q *Queries) RecordEnvironmentQualificationServiceExchange(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationServiceExchangeParams) error {
+	_, err := db.Exec(ctx, recordEnvironmentQualificationServiceExchange,
+		arg.RequestID,
+		arg.Attempt,
+		arg.Binding,
+		arg.Route,
+	)
+	return err
+}
+
 const recordEnvironmentQualificationSmokeReceipt = `-- name: RecordEnvironmentQualificationSmokeReceipt :one
 INSERT INTO environment_qualification_smoke_receipts(request_id,attempt,graph_id,capture_instance_id,instance_id,resource,policy_id,policy_sha256,result_sha256)
 VALUES($1::uuid,$2::bigint,$3::uuid,
@@ -79160,7 +79287,7 @@ func (q *Queries) RenewEnvironmentGitOpsLease(ctx context.Context, db DBTX, arg 
 const renewEnvironmentWorkloadQualification = `-- name: RenewEnvironmentWorkloadQualification :one
 UPDATE environment_workload_qualification_requests SET lease_until=greatest(lease_until,clock_timestamp()+$1::bigint*interval '1 microsecond')
 WHERE id=$2::uuid AND phase='claimed' AND lease_token=$3::text AND attempt=$4::bigint
- AND lease_until>clock_timestamp() RETURNING id, graph_id, deployment_id, app_id, resource, artifact, frozen_inputs, execution_mode, phase, created_at, worker_id, lease_token, lease_until, attempt, reserved_instance_id
+ AND lease_until>clock_timestamp() RETURNING id, graph_id, deployment_id, app_id, resource, artifact, frozen_inputs, execution_mode, phase, created_at, worker_id, lease_token, lease_until, attempt, reserved_instance_id, binding_context
 `
 
 type RenewEnvironmentWorkloadQualificationParams struct {
@@ -79194,6 +79321,7 @@ func (q *Queries) RenewEnvironmentWorkloadQualification(ctx context.Context, db 
 		&i.LeaseUntil,
 		&i.Attempt,
 		&i.ReservedInstanceID,
+		&i.BindingContext,
 	)
 	return i, err
 }

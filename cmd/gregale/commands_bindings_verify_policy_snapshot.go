@@ -177,6 +177,7 @@ func (c *bindingPolicyProbeClient) CreateAppTask(ctx context.Context, slug strin
 	if err := c.snapshot.confirm(ctx); err != nil {
 		return api.AppTaskResponse{}, err
 	}
+	pinManagedServiceRequest(c.snapshot.inventory, &request)
 	if len(request.Command) == 2 && request.Command[0] == api.AppTaskServiceBindingProbeCommand {
 		if target := c.snapshot.inventory.ServiceTargets[request.Command[1]]; target != "" {
 			request.Command = []string{api.AppTaskServiceBindingTargetProbeCommand, request.Command[1], target}
@@ -259,6 +260,12 @@ func validBindingPolicyServiceTargets(inventory api.AppBindingInventory, targets
 	seen := map[string]bool{}
 	for _, item := range inventory.Bindings {
 		if item.Type == api.BindingTypeService {
+			if item.ServiceContext != nil {
+				if _, supported := api.ManagedServiceProbeForItem(item); !supported || targets[item.Name] != "" {
+					return false
+				}
+				continue
+			}
 			if item.ServiceTargetDeploymentID != targets[item.Name] {
 				return false
 			}
