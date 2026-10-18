@@ -10426,6 +10426,7 @@
       "ai_end_user",
       "ai_reserved_cost_millicents",
       "ai_reserved_tokens",
+      "ai_tags",
       "binding_app_id",
       "created_at",
       "expires_at",
@@ -10460,6 +10461,50 @@
     "kind": "operational"
   },
   {
+    "table": "outbound_ai_access_tokens",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "expires_at",
+      "id",
+      "integration_ids",
+      "last_used_at",
+      "name",
+      "revoked_at",
+      "token_hash",
+      "token_prefix"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "outbound_ai_batches",
+    "columns": [
+      "account_id",
+      "binding_app_id",
+      "caller",
+      "checks",
+      "created_at",
+      "id",
+      "integration_id",
+      "model",
+      "next_check_at",
+      "outcome",
+      "provider",
+      "provider_batch_id",
+      "request_path",
+      "request_query",
+      "requests",
+      "reserved_cost_millicents",
+      "reserved_tokens",
+      "settled_at",
+      "settled_cost_millicents",
+      "settled_tokens",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "outbound_ai_budget_alerts",
     "columns": [
       "account_id",
@@ -10471,8 +10516,72 @@
       "integration_id",
       "limit_value",
       "period_start",
+      "tag",
       "threshold_percent",
       "used_value"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_evaluation_items",
+    "columns": [
+      "baseline_cost_millicents",
+      "baseline_output_text",
+      "baseline_ttfb_ms",
+      "candidate_cost_millicents",
+      "candidate_output_text",
+      "candidate_status",
+      "candidate_ttfb_ms",
+      "evaluation_id",
+      "log_id",
+      "ordinal",
+      "verdict"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_evaluations",
+    "columns": [
+      "account_id",
+      "baseline_cost_millicents",
+      "baseline_ttfb_calls",
+      "baseline_ttfb_ms_total",
+      "canary",
+      "canary_started",
+      "candidate_cost_millicents",
+      "candidate_errors",
+      "candidate_ttfb_calls",
+      "candidate_ttfb_ms_total",
+      "created_at",
+      "error_code",
+      "finished_at",
+      "id",
+      "judge_errors",
+      "judge_integration_id",
+      "judge_model",
+      "losses",
+      "max_loss_rate",
+      "position",
+      "route_id",
+      "sample_size",
+      "samples",
+      "started_at",
+      "state",
+      "ties",
+      "verdict",
+      "wins"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_log_exports",
+    "columns": [
+      "account_id",
+      "app_id",
+      "attributes",
+      "created_at",
+      "id",
+      "line"
     ],
     "kind": "operational"
   },
@@ -10484,8 +10593,12 @@
       "input_image_millicents_per_mtok",
       "input_millicents_per_mtok",
       "millicents_per_audio_minute",
+      "millicents_per_code_session_gb",
+      "millicents_per_file_search",
       "millicents_per_image",
       "millicents_per_million_characters",
+      "millicents_per_video_second",
+      "millicents_per_web_search",
       "model_prefix",
       "output_image_millicents_per_mtok",
       "output_millicents_per_mtok",
@@ -10577,7 +10690,39 @@
       "output_tokens",
       "route_id",
       "status",
+      "tags",
       "ttfb_ms"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_route_canaries",
+    "columns": [
+      "decided_at",
+      "max_error_rate_increase",
+      "max_latency_increase_percent",
+      "min_calls",
+      "percent",
+      "position",
+      "reason",
+      "route_id",
+      "started_at",
+      "state",
+      "window_minutes"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_route_target_minutes",
+    "columns": [
+      "calls",
+      "cost_millicents",
+      "errors",
+      "minute",
+      "position",
+      "route_id",
+      "ttfb_calls",
+      "ttfb_ms_total"
     ],
     "kind": "operational"
   },
@@ -10587,7 +10732,8 @@
       "integration_id",
       "model",
       "position",
-      "route_id"
+      "route_id",
+      "weight"
     ],
     "kind": "configuration"
   },
@@ -10598,7 +10744,9 @@
       "created_at",
       "format",
       "id",
+      "max_ttfb_ms",
       "name",
+      "strategy",
       "updated_at"
     ],
     "kind": "configuration"
@@ -10613,24 +10761,56 @@
     "kind": "operational"
   },
   {
+    "table": "outbound_ai_tag_limits",
+    "columns": [
+      "created_at",
+      "daily_cost_limit_millicents",
+      "integration_id",
+      "tag"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "outbound_ai_tag_usage_daily",
+    "columns": [
+      "cost_millicents",
+      "error_requests",
+      "input_tokens",
+      "integration_id",
+      "output_tokens",
+      "requests",
+      "tag",
+      "updated_at",
+      "usage_date"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "outbound_ai_usage_daily",
     "columns": [
       "audio_seconds",
+      "cache_saved_millicents",
       "cache_write_tokens",
       "cached_input_tokens",
+      "cached_requests",
       "caller",
       "characters",
+      "code_session_gb",
       "cost_millicents",
       "error_requests",
+      "file_searches",
       "images",
       "input_tokens",
       "integration_id",
       "model",
       "output_tokens",
+      "prompt_cache_saved_millicents",
       "requests",
       "updated_at",
       "usage_date",
-      "usage_unknown_requests"
+      "usage_unknown_requests",
+      "video_seconds",
+      "web_searches"
     ],
     "kind": "operational"
   },
@@ -10727,6 +10907,8 @@
     "table": "outbound_integrations",
     "columns": [
       "account_id",
+      "ai_allow_unmetered",
+      "ai_auto_prompt_cache",
       "ai_content_blocked_terms",
       "ai_content_email",
       "ai_content_iban",
@@ -10734,10 +10916,23 @@
       "ai_content_secret",
       "ai_daily_cost_limit_millicents",
       "ai_daily_token_limit",
+      "ai_log_export",
+      "ai_moderation_action",
+      "ai_moderation_categories",
+      "ai_moderation_integration_id",
+      "ai_moderation_kind",
+      "ai_moderation_model",
+      "ai_moderation_on_error",
       "ai_monthly_cost_limit_millicents",
       "ai_provider",
       "ai_request_log_content",
       "ai_request_log_enabled",
+      "ai_response_blocked_terms",
+      "ai_response_email",
+      "ai_response_iban",
+      "ai_response_moderation",
+      "ai_response_payment_card",
+      "ai_response_secret",
       "ai_user_daily_cost_limit_millicents",
       "ai_user_daily_token_limit",
       "allowed_methods",

@@ -5197,6 +5197,144 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/outbound/integrations/{integration}/ai-usage/tags:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration whose AI usage by tag is being read.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: getOutboundAITagUsage
+      summary: Read one UTC day of AI gateway usage by tag.
+      description: >-
+        Requires MFA and read scope (ADR-1436). Tags are the key=value pairs apps send in X-Gregale-AI-Tags; rows are
+        kept for 31 days and listed by cost, then tokens, with each tag's daily cost limit.
+      parameters:
+        - name: date
+          in: query
+          required: false
+          description: UTC day of the tag rows as YYYY-MM-DD within the last 31 days; defaults to today.
+          schema: { type: string, format: date }
+        - name: key
+          in: query
+          required: false
+          description: Read only this tag key's tags, its overflow row included.
+          schema: { type: string, maxLength: 32 }
+        - name: limit
+          in: query
+          required: false
+          description: Tag rows to return, 1 to 1000; defaults to 1000.
+          schema: { type: integer, minimum: 1, maximum: 1000 }
+      responses:
+        '200':
+          description: AI usage by tag for the selected day.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAITagUsageResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/ai-usage/tags/export:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration whose AI usage by tag is exported.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: exportOutboundAITagUsage
+      summary: Export a day range of AI gateway usage by tag.
+      description: >-
+        Requires MFA and read scope (ADR-1438). Streams every tag row of the UTC days from through to, optionally of one
+        key, ordered by day and tag, as NDJSON (the default) or CSV with the columns of OutboundAITagUsageExportRow.
+      parameters:
+        - name: from
+          in: query
+          required: false
+          description: First UTC day of the export as YYYY-MM-DD within the last 31 days; defaults to today.
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          required: false
+          description: Last UTC day of the export as YYYY-MM-DD, not before from; defaults to today.
+          schema: { type: string, format: date }
+        - name: key
+          in: query
+          required: false
+          description: Export only this tag key's rows, its overflow row included.
+          schema: { type: string, maxLength: 32 }
+        - name: format
+          in: query
+          required: false
+          description: ndjson (the default) or csv.
+          schema: { type: string, enum: [ndjson, csv] }
+      responses:
+        '200':
+          description: The tag rows of the range.
+          content:
+            application/x-ndjson:
+              schema: { $ref: '#/components/schemas/OutboundAITagUsageExportRow' }
+            text/csv:
+              schema: { type: string }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/ai-tag-limits:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the managed AI integration.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: getOutboundAITagLimits
+      summary: Read an AI integration's per-tag daily cost limits.
+      description: Requires MFA and read scope (ADR-1436).
+      responses:
+        '200':
+          description: The integration's tag limits, ordered by tag.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAITagLimits' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [outbound]
+      operationId: setOutboundAITagLimits
+      summary: Replace an AI integration's per-tag daily cost limits.
+      description: >-
+        Requires MFA and deploy-write scope (ADR-1436). A call carrying a limited tag is refused with 429
+        outbound_budget_exhausted (X-Gregale-Outbound-Rejection tag_daily_cost_limit) when the tag's settled UTC-day cost,
+        live reservations and the call's reservation would pass the limit. An empty list removes every limit.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundAITagLimitsRequest' }
+      responses:
+        '204': { description: The limits were replaced. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/outbound/integrations/{integration}/ai-alerts:
     parameters:
       - name: integration
@@ -5498,6 +5636,210 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/outbound/ai-routes/{route}/canary:
+    parameters:
+      - name: route
+        in: path
+        required: true
+        description: UUID of the AI route whose model canary is read or changed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: getOutboundAIRouteCanary
+      summary: Read an AI route's model canary with both targets' counts.
+      description: >-
+        Requires MFA and read scope. Returns the canary with the route's first target's and the canary target's settled
+        attempts over the canary's window (ADR-1340). A route without a canary is not found.
+      responses:
+        '200':
+          description: The canary and its counts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIRouteCanaryStatus' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [outbound]
+      operationId: setOutboundAIRouteCanary
+      summary: Start or replace an AI route's model canary.
+      description: >-
+        Requires MFA and deploy-write scope. The canary target receives the given share of the route's calls first and is
+        rolled back by outboundd when its error rate or time to first byte is worse than the first target's by more than
+        the margins (ADR-1340). Replacing a canary clears its counts.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundAIRouteCanaryRequest' }
+      responses:
+        '200':
+          description: The canary, active.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIRouteCanary' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [outbound]
+      operationId: deleteOutboundAIRouteCanary
+      summary: Stop an AI route's model canary.
+      description: Requires MFA and deploy-write scope. The route keeps its targets in order.
+      responses:
+        '204': { description: Canary stopped. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-routes/{route}/stats:
+    parameters:
+      - name: route
+        in: path
+        required: true
+        description: UUID of the AI route whose targets' recent attempts are read.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: getOutboundAIRouteStats
+      summary: Read an AI route's targets' recent attempts.
+      description: >-
+        Requires MFA and read scope. Returns each target's settled attempts, errors, mean time to first byte and mean cost
+        per successful attempt over the window latency and cost routes judge (ADR-1434). Attempts are counted for latency
+        and cost routes and during a canary; other routes report zeros.
+      responses:
+        '200':
+          description: The route's targets' attempts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIRouteStats' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-routes/{route}/canary/promote:
+    parameters:
+      - name: route
+        in: path
+        required: true
+        description: UUID of the AI route whose canary target becomes its first target.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [outbound]
+      operationId: promoteOutboundAIRouteCanary
+      summary: Promote an AI route's model canary.
+      description: >-
+        Requires MFA and deploy-write scope. Moves the canary target to the front of the route, keeps the other targets in
+        order, and ends the canary (ADR-1340).
+      responses:
+        '200':
+          description: The route with its new order.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIRoute' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-routes/{route}/evaluations:
+    parameters:
+      - name: route
+        in: path
+        required: true
+        description: UUID of the AI route whose target is evaluated.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: listOutboundAIEvaluations
+      summary: List an AI route's latest evaluations.
+      description: Requires MFA and read scope. Newest first, at most 100, without their samples (ADR-1431).
+      responses:
+        '200':
+          description: The route's evaluations.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIEvaluationList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [outbound]
+      operationId: createOutboundAIEvaluation
+      summary: Evaluate an AI route target before a canary.
+      description: >-
+        Requires MFA and deploy-write scope. outboundd replays the route's first target's latest captured OpenAI chat
+        completions and Responses calls on the target and asks the judge model which answer is better, in a random order
+        (ADR-1431). The evaluation passes when losses and candidate errors are at most max_loss_rate percent of the sample;
+        a passing evaluation starts its canary, if it has one, unless the route already has an active canary or the target
+        changed. Candidate and judge calls are metered and capped under the caller evaluation. The first target's
+        integration needs request_log_content.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateOutboundAIEvaluationRequest' }
+      responses:
+        '202':
+          description: The pending evaluation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIEvaluation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429':
+          description: The route reached its evaluations for the UTC day.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-evaluations/{evaluation}:
+    parameters:
+      - name: evaluation
+        in: path
+        required: true
+        description: UUID of the evaluation.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: getOutboundAIEvaluation
+      summary: Read an AI evaluation and its samples.
+      description: Requires MFA and read scope (ADR-1431). Evaluations are kept for 30 days.
+      responses:
+        '200':
+          description: The evaluation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIEvaluation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/outbound/integrations/{integration}/runs:
     parameters:
       - name: integration
@@ -5712,6 +6054,89 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/ai-access-tokens:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app the tokens act as.
+        schema: { type: string }
+    get:
+      tags: [outbound]
+      operationId: listOutboundAIAccessTokens
+      summary: List an app's AI gateway access tokens.
+      description: Requires MFA and read scope. Newest first, without their secrets (ADR-1431).
+      responses:
+        '200':
+          description: The app's tokens.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIAccessTokenList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [outbound]
+      operationId: createOutboundAIAccessToken
+      summary: Issue an AI gateway access token for an app.
+      description: >-
+        Requires MFA and deploy-write scope. A caller outside Gregale, such as local development, CI or a notebook, sets
+        its SDK's base URL to the AI gateway's public host and puts the token where the SDK puts its API key
+        (Authorization Bearer, x-api-key, x-goog-api-key or api-key). Its calls are the app's: the app's bindings,
+        guardrails, caps and content policy apply (ADR-1431). The secret is returned only in this response. An app holds
+        at most 20 live tokens.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateOutboundAIAccessTokenRequest' }
+      responses:
+        '201':
+          description: The token and its secret.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreatedOutboundAIAccessToken' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The app already has a live token with this name, or holds its most live tokens.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/ai-access-tokens/{token}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app the token acts as.
+        schema: { type: string }
+      - name: token
+        in: path
+        required: true
+        description: UUID of the access token.
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [outbound]
+      operationId: revokeOutboundAIAccessToken
+      summary: Revoke an AI gateway access token.
+      description: Requires MFA and deploy-write scope. outboundd may accept the token for up to 30 seconds more (ADR-1431).
+      responses:
+        '204': { description: Access token revoked. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /v1/apps/{slug}/outbound-bindings:
     get:
@@ -72840,6 +73265,15 @@ components:
           type: boolean
           description: Whether logged calls also keep the first 32 KiB of their request and response bodies for 3 days (ADR-996).
         ai_content_policy: { $ref: '#/components/schemas/OutboundAIContentPolicy' }
+        ai_log_export:
+          type: boolean
+          description: Whether each settled app call writes one metadata line to the app's log drains (ADR-1340).
+        ai_allow_unmetered:
+          type: boolean
+          description: Whether writes the gateway can neither meter nor knows to be free go through, outside the caps (ADR-1432).
+        ai_auto_prompt_cache:
+          type: boolean
+          description: Whether the gateway adds prompt-cache breakpoints to Claude requests that carry none (ADR-1437).
         ai_user_daily_token_limit:
           type: [integer, 'null']
           format: int64
@@ -72919,6 +73353,23 @@ components:
         request_log_content:
           type: boolean
           description: Also keep the first 32 KiB of each logged call's request and response bodies, never headers, for 3 days and at most 1,000 calls per UTC day (ADR-996). Requires request_log_enabled.
+        log_export:
+          type: boolean
+          description: Send each settled app call to the app's log drains as one JSON line of metadata, never prompts or completions, about 15 seconds after it settles (ADR-1340). Requires ai_provider.
+        allow_unmetered:
+          type: boolean
+          description: >-
+            Let through writes the gateway can neither meter nor knows to be free, such as realtime client secrets, vector
+            stores, containers, fine-tuning jobs and context caches. They are otherwise refused with 403
+            outbound_ai_endpoint_unmetered; let through, they carry X-Gregale-AI-Unmetered and their spend is outside the
+            caps (ADR-1432). Requires ai_provider.
+        auto_prompt_cache:
+          type: boolean
+          description: >-
+            Add prompt-cache breakpoints to Claude requests on the Anthropic API, Vertex AI and Amazon Bedrock that carry
+            none: after a system prompt or tool list seen again within five minutes, and after the last message of a
+            conversation that carries earlier turns or names X-Gregale-AI-Session. Prompts under about 1,024 tokens are not
+            marked; the response names the added breakpoints in X-Gregale-AI-Prompt-Cache (ADR-1437). Requires ai_provider.
         user_daily_token_limit:
           type: [integer, 'null']
           format: int64
@@ -72934,7 +73385,7 @@ components:
     OutboundAIUsageItem:
       type: object
       description: One UTC-day rollup for a caller and model. input_tokens includes cached reads and cache writes, which are also reported separately.
-      required: [caller, model, requests, error_requests, usage_unknown_requests, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, images, audio_seconds, characters]
+      required: [caller, model, requests, error_requests, usage_unknown_requests, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, images, audio_seconds, characters, video_seconds, web_searches, file_searches, code_session_gb, cached_requests, cache_saved_millicents, prompt_cache_saved_millicents]
       properties:
         caller: { type: string, description: 'App UUID, "runs" for stateless Runs, or "replay" for replayed calls (ADR-997).' }
         model: { type: string, maxLength: 128, description: 'Provider-reported model; "other" collects models beyond the daily distinct-model cap and "unknown" covers responses without one.' }
@@ -72949,6 +73400,13 @@ components:
         images: { type: integer, format: int64, minimum: 0, description: Images billed per image (ADR-997). }
         audio_seconds: { type: integer, format: int64, minimum: 0, description: Seconds of transcribed audio. }
         characters: { type: integer, format: int64, minimum: 0, description: Characters of speech input. }
+        video_seconds: { type: integer, format: int64, minimum: 0, description: Seconds of generated video (ADR-1432). }
+        web_searches: { type: integer, format: int64, minimum: 0, description: 'Web searches as the provider bills them: per call, query or grounded prompt (ADR-1433).' }
+        file_searches: { type: integer, format: int64, minimum: 0, description: File search calls (ADR-1433). }
+        code_session_gb: { type: integer, format: int64, minimum: 0, description: GB of code-interpreter container sessions (ADR-1433). }
+        cached_requests: { type: integer, format: int64, minimum: 0, description: 'Requests the response cache served, with no tokens or cost (ADR-1440).' }
+        cache_saved_millicents: { type: integer, format: int64, minimum: 0, description: 'Provider cost the response cache avoided, priced from the cached responses at the current price list.' }
+        prompt_cache_saved_millicents: { type: integer, format: int64, description: 'What provider prompt caching saved against plain input prices; negative when cache writes outweighed reads.' }
     OutboundAIUsageResponse:
       type: object
       description: One UTC day of AI gateway usage for an integration.
@@ -73143,6 +73601,32 @@ components:
         millicents_per_image: { type: integer, format: int64, minimum: 0, maximum: 10000000, description: Charged per image when a call reports no output image tokens. }
         millicents_per_audio_minute: { type: integer, format: int64, minimum: 0, maximum: 10000000, description: Charged per minute of transcribed audio. }
         millicents_per_million_characters: { type: integer, format: int64, minimum: 0, maximum: 1000000000, description: Charged per million characters of speech input. }
+        millicents_per_video_second:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 10000000
+          description: >-
+            Charged per second of generated video (ADR-1432). A model_prefix of <model>@<resolution>, such as
+            veo-3.1-generate-001@4k, prices that resolution apart.
+        millicents_per_web_search:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 10000000
+          description: 'Charged per web search as the provider bills it: per call, query or grounded prompt (ADR-1433).'
+        millicents_per_file_search:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 10000000
+          description: Charged per file search call (ADR-1433).
+        millicents_per_code_session_gb:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 10000000
+          description: Charged per GB of code-interpreter container memory per session (ADR-1433).
     PutOutboundAIPricesRequest:
       type: object
       description: Replace an integration's price list. It takes effect immediately; earlier lists stay for costs already settled.
@@ -73200,6 +73684,70 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/OutboundAIUserUsageItem' }
+    OutboundAITagUsageItem:
+      type: object
+      description: >-
+        One tag's UTC-day AI usage on an integration (ADR-1436); tokens is input plus output. A key's tags past the day's
+        cap of distinct tags add to its overflow row, <key>=~other.
+      required: [tag, requests, error_requests, input_tokens, output_tokens, tokens, cost_millicents, daily_cost_limit_millicents]
+      properties:
+        tag: { type: string, maxLength: 97 }
+        requests: { type: integer, format: int64, minimum: 0 }
+        error_requests: { type: integer, format: int64, minimum: 0 }
+        input_tokens: { type: integer, format: int64, minimum: 0 }
+        output_tokens: { type: integer, format: int64, minimum: 0 }
+        tokens: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+        daily_cost_limit_millicents: { type: [integer, 'null'], format: int64 }
+    OutboundAITagUsageResponse:
+      type: object
+      description: One UTC day of AI usage by tag, most expensive first (ADR-1436).
+      required: [usage_date, tracked_tags, items]
+      properties:
+        usage_date: { type: string, format: date }
+        tracked_tags: { type: integer, format: int64, minimum: 0, description: 'Distinct tag rows of the day, overflow rows included.' }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAITagUsageItem' }
+    OutboundAITagUsageExportRow:
+      type: object
+      description: One NDJSON line of a tag usage export (ADR-1438); CSV rows carry the same fields in this order.
+      required: [usage_date, tag, requests, error_requests, input_tokens, output_tokens, tokens, cost_millicents]
+      properties:
+        usage_date: { type: string, format: date }
+        tag: { type: string, maxLength: 97 }
+        requests: { type: integer, format: int64, minimum: 0 }
+        error_requests: { type: integer, format: int64, minimum: 0 }
+        input_tokens: { type: integer, format: int64, minimum: 0 }
+        output_tokens: { type: integer, format: int64, minimum: 0 }
+        tokens: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+    OutboundAITagLimit:
+      type: object
+      description: A UTC-day cost limit on one exact tag (ADR-1436).
+      required: [tag, daily_cost_limit_millicents]
+      properties:
+        tag:
+          type: string
+          pattern: '^[a-z][a-z0-9_.-]{0,31}=[A-Za-z0-9._:@+/-]{1,64}$'
+        daily_cost_limit_millicents: { type: integer, format: int64, minimum: 1, maximum: 1000000000000 }
+    OutboundAITagLimits:
+      type: object
+      description: An integration's per-tag daily cost limits, ordered by tag (ADR-1436).
+      required: [limits]
+      properties:
+        limits:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAITagLimit' }
+    PutOutboundAITagLimitsRequest:
+      type: object
+      description: The complete list of tag limits; an empty list removes them.
+      required: [limits]
+      properties:
+        limits:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/OutboundAITagLimit' }
     OutboundAIUserUsageExportRow:
       description: One NDJSON line of a per-end-user usage export (ADR-995); CSV rows carry the same fields in this order.
       allOf:
@@ -73215,10 +73763,15 @@ components:
       properties:
         integration_id: { type: string, format: uuid }
         model: { type: string, maxLength: 128 }
+        weight:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: A weighted route's share of first attempts for this target; 0 makes it a fallback only (ADR-1434).
     OutboundAIRoute:
       type: object
       description: An ordered list of managed AI integrations. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path} (ADR-990). An openai-format route accepts OpenAI chat completions and embeddings and translates them for each target's provider (ADR-991, ADR-995).
-      required: [id, name, format, targets, created_at, updated_at]
+      required: [id, name, format, targets, created_at, updated_at, strategy]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -73228,6 +73781,223 @@ components:
           items: { $ref: '#/components/schemas/OutboundAIRouteTarget' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        strategy:
+          type: string
+          enum: [ordered, weighted, latency, cost]
+          description: How a call picks its first target (ADR-1434).
+        max_ttfb_ms:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 600000
+          description: A cost route's latency target, or null.
+        canary:
+          description: The route's model canary, or null (ADR-1340).
+          oneOf:
+          - $ref: '#/components/schemas/OutboundAIRouteCanary'
+          - type: 'null'
+    OutboundAIRouteCanary:
+      type: object
+      description: >-
+        A route's model canary (ADR-1340). target is the 1-based route position tried first by percent of the route's
+        calls, chosen per X-Gregale-AI-Session, else X-Gregale-AI-User, else at random. outboundd rolls the canary back when,
+        after min_calls canary attempts in the window, its error rate exceeds the first target's by more than
+        max_error_rate_increase percentage points, or its mean time to first byte by more than max_latency_increase_percent.
+      required: [target, percent, max_error_rate_increase, max_latency_increase_percent, min_calls, window_minutes, state, reason, started_at, decided_at]
+      properties:
+        target: { type: integer, minimum: 2, maximum: 5 }
+        percent: { type: integer, minimum: 1, maximum: 50 }
+        max_error_rate_increase: { type: integer, minimum: 0, maximum: 100 }
+        max_latency_increase_percent: { type: [integer, 'null'], minimum: 1, maximum: 1000 }
+        min_calls: { type: integer, minimum: 10, maximum: 100000 }
+        window_minutes: { type: integer, minimum: 5, maximum: 1440 }
+        state: { type: string, enum: [active, rolled_back] }
+        reason:
+          oneOf:
+          - type: string
+            enum: [error_rate, latency]
+          - type: 'null'
+        started_at: { type: string, format: date-time }
+        decided_at: { type: [string, 'null'], format: date-time }
+    PutOutboundAIRouteCanaryRequest:
+      type: object
+      description: >-
+        Start or replace a route's model canary. Omitted margins take their defaults: 5 error-rate points, 50 calls,
+        30 minutes, and no latency margin.
+      required: [target, percent]
+      properties:
+        target: { type: integer, minimum: 2, maximum: 5, description: The 1-based route position tried first. }
+        percent: { type: integer, minimum: 1, maximum: 50 }
+        max_error_rate_increase: { type: integer, minimum: 0, maximum: 100 }
+        max_latency_increase_percent: { type: integer, minimum: 1, maximum: 1000 }
+        min_calls: { type: integer, minimum: 10, maximum: 100000 }
+        window_minutes: { type: integer, minimum: 5, maximum: 1440 }
+    OutboundAIRouteTargetStats:
+      type: object
+      description: >-
+        One target's settled attempts in a canary's or a strategy's window. Errors are attempts with a provider status of
+        400 or above; mean_ttfb_ms averages successful attempts that received a first byte, and mean_cost_millicents is
+        the cost per successful attempt; each is null without one.
+      required: [target, calls, errors, error_rate, mean_ttfb_ms, cost_millicents, mean_cost_millicents]
+      properties:
+        target: { type: integer, minimum: 1, maximum: 5 }
+        calls: { type: integer, format: int64, minimum: 0 }
+        errors: { type: integer, format: int64, minimum: 0 }
+        error_rate: { type: number, minimum: 0, maximum: 1 }
+        mean_ttfb_ms: { type: [integer, 'null'], format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+        mean_cost_millicents: { type: [integer, 'null'], format: int64, minimum: 0 }
+    OutboundAIRouteStats:
+      type: object
+      description: Each target's settled attempts since window_start, the window latency and cost routes judge (ADR-1434).
+      required: [strategy, window_start, targets]
+      properties:
+        strategy: { type: string, enum: [ordered, weighted, latency, cost] }
+        window_start: { type: string, format: date-time }
+        targets:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAIRouteTargetStats' }
+    OutboundAIRouteCanaryStatus:
+      type: object
+      description: A canary with the route's first target's and its own counts since window_start.
+      required: [canary, window_start, baseline, canary_stats]
+      properties:
+        canary: { $ref: '#/components/schemas/OutboundAIRouteCanary' }
+        window_start: { type: string, format: date-time }
+        baseline: { $ref: '#/components/schemas/OutboundAIRouteTargetStats' }
+        canary_stats: { $ref: '#/components/schemas/OutboundAIRouteTargetStats' }
+    CreateOutboundAIEvaluationRequest:
+      type: object
+      description: >-
+        Evaluate a route target against the route's first target. Omitted settings take their defaults: a sample of 20
+        and a max_loss_rate of 20. canary, when set, must name the same target and starts if the evaluation passes.
+      required: [target, judge_integration_id, judge_model]
+      properties:
+        target: { type: integer, minimum: 2, maximum: 5, description: The 1-based route position evaluated. }
+        judge_integration_id: { type: string, format: uuid, description: One of the account's enabled AI integrations. }
+        judge_model: { type: string, minLength: 1, maxLength: 128 }
+        sample_size: { type: integer, minimum: 1, maximum: 50 }
+        max_loss_rate: { type: integer, minimum: 0, maximum: 100 }
+        canary: { $ref: '#/components/schemas/PutOutboundAIRouteCanaryRequest' }
+    OutboundAIEvaluationTargetStats:
+      type: object
+      description: One side's total cost over the sample and mean time to first byte over the calls that reported one.
+      required: [cost_millicents, mean_ttfb_ms]
+      properties:
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+        mean_ttfb_ms: { type: [integer, 'null'], format: int64, minimum: 0 }
+    OutboundAIEvaluationItem:
+      type: object
+      description: >-
+        One sample: a captured call of the first target and the candidate's replay of it. A judge error counts as a tie.
+        Output texts are redacted and cut to 4 KiB.
+      required: [log_id, verdict, candidate_status, candidate_cost_millicents, candidate_ttfb_ms, baseline_cost_millicents,
+        baseline_ttfb_ms, baseline_output_text, candidate_output_text]
+      properties:
+        log_id: { type: string, format: uuid }
+        verdict: { type: string, enum: [win, tie, loss, candidate_error, judge_error] }
+        candidate_status: { type: [integer, 'null'], minimum: 100, maximum: 599 }
+        candidate_cost_millicents: { type: integer, format: int64, minimum: 0 }
+        candidate_ttfb_ms: { type: [integer, 'null'], format: int64, minimum: 0 }
+        baseline_cost_millicents: { type: integer, format: int64, minimum: 0 }
+        baseline_ttfb_ms: { type: [integer, 'null'], format: int64, minimum: 0 }
+        baseline_output_text: { type: string }
+        candidate_output_text: { type: string }
+    OutboundAIEvaluation:
+      type: object
+      description: >-
+        An evaluation of a route target (ADR-1431). verdict is set when state is done, error_code when it is failed. items
+        are returned only when one evaluation is read.
+      required: [id, route_id, target, judge_integration_id, judge_model, sample_size, max_loss_rate, canary, state, verdict,
+        error_code, samples, wins, ties, losses, candidate_errors, judge_errors, baseline, candidate, canary_started,
+        created_at, started_at, finished_at]
+      properties:
+        id: { type: string, format: uuid }
+        route_id: { type: string, format: uuid }
+        target: { type: integer, minimum: 2, maximum: 5 }
+        judge_integration_id: { type: string, format: uuid }
+        judge_model: { type: string }
+        sample_size: { type: integer, minimum: 1, maximum: 50 }
+        max_loss_rate: { type: integer, minimum: 0, maximum: 100 }
+        canary:
+          oneOf:
+          - $ref: '#/components/schemas/PutOutboundAIRouteCanaryRequest'
+          - type: 'null'
+        state: { type: string, enum: [pending, running, done, failed] }
+        verdict:
+          oneOf:
+          - type: string
+            enum: [pass, fail]
+          - type: 'null'
+        error_code: { type: [string, 'null'] }
+        samples: { type: integer, minimum: 0 }
+        wins: { type: integer, minimum: 0 }
+        ties: { type: integer, minimum: 0 }
+        losses: { type: integer, minimum: 0 }
+        candidate_errors: { type: integer, minimum: 0 }
+        judge_errors: { type: integer, minimum: 0 }
+        baseline: { $ref: '#/components/schemas/OutboundAIEvaluationTargetStats' }
+        candidate: { $ref: '#/components/schemas/OutboundAIEvaluationTargetStats' }
+        canary_started: { type: boolean }
+        created_at: { type: string, format: date-time }
+        started_at: { type: [string, 'null'], format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAIEvaluationItem' }
+    OutboundAIEvaluationList:
+      type: object
+      description: A route's latest evaluations, newest first.
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAIEvaluation' }
+    CreateOutboundAIAccessTokenRequest:
+      type: object
+      description: >-
+        Issue an access token for an app. expires_in_hours defaults to 168 (7 days). integration_ids narrows the token to
+        listed AI integrations bound to the app; empty allows every AI integration bound to the app and the account's
+        routes.
+      required: [name]
+      properties:
+        name: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
+        expires_in_hours: { type: integer, minimum: 1, maximum: 2160 }
+        integration_ids:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          items: { type: string, format: uuid }
+    OutboundAIAccessToken:
+      type: object
+      description: An issued access token. prefix is the token's first 12 characters, to recognise it.
+      required: [id, name, app_id, prefix, integration_ids, expires_at, created_at, last_used_at, revoked_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        app_id: { type: string, format: uuid }
+        prefix: { type: string }
+        integration_ids:
+          type: array
+          items: { type: string, format: uuid }
+        expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        last_used_at: { type: [string, 'null'], format: date-time }
+        revoked_at: { type: [string, 'null'], format: date-time }
+    OutboundAIAccessTokenList:
+      type: object
+      description: An app's access tokens, newest first.
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAIAccessToken' }
+    CreatedOutboundAIAccessToken:
+      type: object
+      description: A new token with its secret, which is shown only once.
+      required: [access_token, token]
+      properties:
+        access_token: { $ref: '#/components/schemas/OutboundAIAccessToken' }
+        token: { type: string, pattern: '^ggai_[A-Za-z0-9_-]{43}$' }
     OutboundAIRouteList:
       type: object
       description: The account's AI routes.
@@ -73251,9 +74021,23 @@ components:
           minItems: 1
           maxItems: 5
           items: { $ref: '#/components/schemas/OutboundAIRouteTarget' }
+        strategy:
+          type: string
+          enum: [ordered, weighted, latency, cost]
+          description: >-
+            How a call picks its first target (ADR-1434). ordered (the default) follows route order; weighted draws by target
+            weight; latency picks the healthy target with the lowest recent mean time to first byte; cost picks the healthy
+            target with the lowest recent mean cost per call. The other targets follow as fallbacks.
+        max_ttfb_ms:
+          type: integer
+          minimum: 1
+          maximum: 600000
+          description: A cost route's latency target; targets slower on average go after those within it.
     PutOutboundAIRouteTargetsRequest:
       type: object
-      description: The complete ordered target list that replaces an AI route's targets.
+      description: >-
+        The complete ordered target list that replaces an AI route's targets, with its strategy (default ordered). New
+        targets end the route's canary and reset its targets' recent attempts.
       required: [targets]
       properties:
         targets:
@@ -73261,6 +74045,15 @@ components:
           minItems: 1
           maxItems: 5
           items: { $ref: '#/components/schemas/OutboundAIRouteTarget' }
+        strategy:
+          type: string
+          enum: [ordered, weighted, latency, cost]
+          description: The route's strategy from now on, as on creation (ADR-1434); omitted means ordered.
+        max_ttfb_ms:
+          type: integer
+          minimum: 1
+          maximum: 600000
+          description: The cost route's latency target from now on, as on creation; omitted means none.
     PutOutboundBindingAIGuardrailsRequest:
       type: object
       description: Replace an app's AI guardrails on one integration (ADR-991). Null fields remove that guardrail.
@@ -73300,11 +74093,11 @@ components:
     OutboundAIBudgetAlert:
       type: object
       description: The first settlement that reached a budget threshold in its period (ADR-991). limit and used are tokens for token budgets and millicents for cost budgets.
-      required: [id, integration_id, budget, app_id, end_user, period_start, threshold_percent, limit, used, crossed_at]
+      required: [id, integration_id, budget, app_id, end_user, period_start, threshold_percent, limit, used, crossed_at, tag]
       properties:
         id: { type: string, format: uuid }
         integration_id: { type: string, format: uuid }
-        budget: { type: string, enum: [daily_tokens, app_daily_tokens, daily_cost, monthly_cost, user_daily_tokens, user_daily_cost] }
+        budget: { type: string, enum: [daily_tokens, app_daily_tokens, daily_cost, monthly_cost, user_daily_tokens, user_daily_cost, tag_daily_cost] }
         app_id: { type: [string, 'null'], format: uuid }
         end_user: { type: [string, 'null'], maxLength: 64, description: The end user of a user_daily_tokens or user_daily_cost alert (ADR-995). }
         period_start: { type: string, format: date }
@@ -73312,6 +74105,7 @@ components:
         limit: { type: integer, format: int64, minimum: 1 }
         used: { type: integer, format: int64, minimum: 0 }
         crossed_at: { type: string, format: date-time }
+        tag: { type: [string, 'null'], maxLength: 97, description: The tag of a tag_daily_cost alert (ADR-1438). }
     OutboundAIBudgetAlertList:
       type: object
       description: An integration's AI budget alerts, newest first.
@@ -73323,7 +74117,7 @@ components:
     OutboundAIRequestLogEntry:
       type: object
       description: One settled AI call's metadata (ADR-991). Its bodies are kept only when the integration captures content (ADR-996).
-      required: [id, created_at, caller, route_id, model, status, outcome, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts, end_user, content_captured]
+      required: [id, created_at, caller, route_id, model, status, outcome, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts, end_user, content_captured, tags]
       properties:
         id: { type: string, format: uuid }
         created_at: { type: string, format: date-time }
@@ -73342,6 +74136,11 @@ components:
         attempts: { type: integer, minimum: 0 }
         end_user: { type: [string, 'null'], maxLength: 64, description: The call's X-Gregale-AI-User value (ADR-994). }
         content_captured: { type: boolean, description: Whether the call's bodies can be read from its content endpoint (ADR-996). }
+        tags:
+          type: array
+          maxItems: 5
+          description: The call's X-Gregale-AI-Tags as key=value, sorted by key (ADR-1436).
+          items: { type: string, maxLength: 97 }
     OutboundAIContentBody:
       type: object
       description: The start of one captured body.
@@ -73377,6 +74176,46 @@ components:
           type: array
           maxItems: 32
           items: { type: string, minLength: 1, maxLength: 128 }
+        moderation: { $ref: '#/components/schemas/OutboundAIModeration' }
+        response: { $ref: '#/components/schemas/OutboundAIResponsePolicy' }
+    OutboundAIResponsePolicy:
+      type: object
+      description: >-
+        Checks of the text a model sends back, before the caller sees it (ADR-1435). The detectors redact or block as on
+        requests; blocked_terms block refuses a response that contains one of the policy's blocked terms; moderation runs
+        the policy's moderation check on the response, without prompt_injection, and flags or blocks it. A refused whole
+        response answers 422 outbound_ai_response_blocked or outbound_ai_response_flagged; a refused stream ends with an
+        error event. Tool call arguments and reasoning text are not checked.
+      properties:
+        email: { type: string, enum: ['', 'off', redact, block] }
+        payment_card: { type: string, enum: ['', 'off', redact, block] }
+        iban: { type: string, enum: ['', 'off', redact, block] }
+        secret: { type: string, enum: ['', 'off', redact, block] }
+        blocked_terms: { type: string, enum: ['', 'off', block] }
+        moderation:
+          type: string
+          enum: ['', 'off', flag, block]
+          description: >-
+            Uses the policy's moderation check settings, which must be complete even while moderation.action is off.
+    OutboundAIModeration:
+      type: object
+      description: >-
+        A model-based check of the request's user, tool and input text before the provider call (ADR-1340). It runs
+        through another of the account's AI integrations and is billed by that integration's provider: openai_moderation
+        calls OpenAI's /v1/moderations on an OpenAI integration; classifier asks a chat model which categories apply. flag
+        lets the call through and names the categories in X-Gregale-AI-Moderation; block refuses it with 400
+        outbound_ai_content_flagged. on_error decides what a failed check does; block answers 503
+        outbound_ai_moderation_unavailable.
+      properties:
+        action: { type: string, enum: ['', 'off', flag, block] }
+        kind: { type: string, enum: [openai_moderation, classifier] }
+        integration_id: { type: string, format: uuid }
+        model: { type: string, minLength: 1, maxLength: 128, description: Required for classifier. }
+        categories:
+          type: array
+          maxItems: 7
+          items: { type: string, enum: [prompt_injection, harassment, hate, self_harm, sexual, violence, illicit] }
+        on_error: { type: string, enum: ['', allow, block] }
     OutboundAIReplayTarget:
       type: object
       description: One integration a captured call is replayed on; a target on another provider than the captured call's needs a model.
@@ -105242,13 +106081,13 @@ components:
 
     OutboundAIBudgetThresholdWebhookPayload:
       type: object
-      description: Data delivered with outbound.ai_budget.threshold when an AI budget reaches 80% or 100% in its period (ADR-991). alert_id is stable across retries; integration budgets notify every bound app, app budgets only that app, and an end user's budget only the app whose call crossed it (ADR-995).
-      required: [alert_id, integration_id, integration_name, budget, app_id, end_user, period_start, threshold_percent, limit, used, crossed_at]
+      description: Data delivered with outbound.ai_budget.threshold when an AI budget reaches 80% or 100% in its period (ADR-991). alert_id is stable across retries; integration budgets notify every bound app, app budgets only that app, and an end user's or a tag's budget only the app whose call crossed it (ADR-995, ADR-1438).
+      required: [alert_id, integration_id, integration_name, budget, app_id, end_user, period_start, threshold_percent, limit, used, crossed_at, tag]
       properties:
         alert_id: { type: string, format: uuid }
         integration_id: { type: string, format: uuid }
         integration_name: { type: string }
-        budget: { type: string, enum: [daily_tokens, app_daily_tokens, daily_cost, monthly_cost, user_daily_tokens, user_daily_cost] }
+        budget: { type: string, enum: [daily_tokens, app_daily_tokens, daily_cost, monthly_cost, user_daily_tokens, user_daily_cost, tag_daily_cost] }
         app_id: { type: [string, 'null'], format: uuid }
         end_user: { type: [string, 'null'], maxLength: 64, description: The X-Gregale-AI-User value whose daily budget crossed the threshold (ADR-995). }
         period_start: { type: string, format: date }
@@ -105256,6 +106095,7 @@ components:
         limit: { type: integer, format: int64, minimum: 1 }
         used: { type: integer, format: int64, minimum: 0 }
         crossed_at: { type: string, format: date-time }
+        tag: { type: [string, 'null'], maxLength: 97, description: The tag whose daily cost limit crossed the threshold (ADR-1438). }
     ManagedRealtimeBatchMessageRequest:
       type: object
       required:

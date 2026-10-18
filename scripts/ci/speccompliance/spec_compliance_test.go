@@ -1635,7 +1635,12 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "alert_rollbacks.go"),
 		filepath.Join(root, "pkg", "api", "binding_application_adoption.go"),
 		filepath.Join(root, "pkg", "api", outboundBindingsFile),
-		filepath.Join(root, "pkg", "api", "outbound_ai.go"), // ADR-990/991 AI gateway prices, routes, guardrails, keys, alerts and request log
+		filepath.Join(root, "pkg", "api", "outbound_ai.go"),            // ADR-990/991 AI gateway prices, routes, guardrails, keys, alerts and request log
+		filepath.Join(root, "pkg", "api", "outbound_ai_canary.go"),     // ADR-1340 model canaries
+		filepath.Join(root, "pkg", "api", "outbound_ai_moderation.go"), // ADR-1340 moderation checks
+		filepath.Join(root, "pkg", "api", "outbound_ai_evaluations.go"),
+		filepath.Join(root, "pkg", "api", "outbound_ai_access_tokens.go"),
+		filepath.Join(root, "pkg", "api", "outbound_ai_tags.go"), // ADR-1436 usage tags and tag limits
 		filepath.Join(root, "pkg", "api", runtimeReleasesFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),

@@ -152,15 +152,14 @@ func standardReviewEmptyProject(t *testing.T, store standardReviewTestStore, see
 	if _, err := store.ValidateApplicationStandardReview(ctx, owner.PersonalOrg.ID, owner.Account.ID, p.ID, p.ApprovalHash); !errors.Is(err, ErrApplicationStandardReviewStale) {
 		t.Fatalf("empty project membership not bound: %v", err)
 	}
+	// The project cannot become mixed-organization: another account's app is
+	// refused (project_workload_owner), so a review never sees one.
 	foreign, err := store.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{Email: "review-empty-project-foreign@example.com", Plan: api.PlanPro})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateApp(ctx, App{OrgID: foreign.PersonalOrg.ID, AccountID: foreign.Account.ID, ProjectID: project.ID, Slug: "foreign-project-service", WorkloadName: "foreign", RAMMB: 128}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.PreviewApplicationStandardAssignment(ctx, owner.PersonalOrg.ID, owner.Account.ID, r); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("mixed-organization project reviewed: %v", err)
+	if _, err := store.CreateApp(ctx, App{OrgID: foreign.PersonalOrg.ID, AccountID: foreign.Account.ID, ProjectID: project.ID, Slug: "foreign-project-service", WorkloadName: "foreign", RAMMB: 128}); err == nil {
+		t.Fatal("foreign account joined the reviewed project")
 	}
 }
 
