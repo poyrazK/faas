@@ -122,7 +122,11 @@ func saveLinkContext(cwd, root string, context, previous localProjectContext, ha
 		return jsonOut(writeJSON(receipt))
 	}
 	if hadPrevious && previous.Project != context.Project {
-		PrintProgress(osStdout, "Re-linked from project %s.", previous.Project)
+		if previous.Project == "" {
+			PrintProgress(osStdout, "Replaced saved standalone app %s.", previous.App)
+		} else {
+			PrintProgress(osStdout, "Re-linked from project %s.", previous.Project)
+		}
 	}
 	PrintOK(osStdout, "Linked to project %s.", context.Project)
 	renderProjectContext(osStdout, receipt)
@@ -245,7 +249,11 @@ func cmdContext(args []string) int {
 			}
 		} else {
 			renderConnectionContext()
-			PrintOK(osStdout, "Linked project context")
+			if context.Project == "" {
+				PrintOK(osStdout, "Saved standalone app context")
+			} else {
+				PrintOK(osStdout, "Linked project context")
+			}
 			renderProjectContext(osStdout, receipt)
 			renderProjectTargeting(overview)
 		}
