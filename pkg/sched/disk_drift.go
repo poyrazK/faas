@@ -24,6 +24,11 @@
 // ops reads rate(snapshot_disk_drift_total[5m]) and alerts on a
 // non-zero rate.
 //
+// Stale snapshots inside their retention window and rows mid-deletion are
+// still owned by GC: their objects may be present and are not orphans, but
+// are not required either (H10-142). Before that, every retained capture
+// counted as an orphan on every tick.
+//
 // ListSnapshotsForGC also supplies rows that imaged is about to reclaim.
 // This sweep omits deleted apps and failed/cancelled deployments from the
 // expected set so their remaining directories are reported as drift until GC
@@ -77,6 +82,14 @@ func expectedSnapshotFiles(row state.SnapshotForGC) []string {
 // shim that fails the call to drive the error-handling branches.
 type snapshotLister interface {
 	ListSnapshotsForGC(ctx context.Context) ([]state.SnapshotForGC, error)
+}
+
+// retainedSnapshotLister lists rows that left the active set but whose
+// objects GC has not removed yet. Production stores implement it; a minimal
+// test shim may not, and then only active rows are expected.
+type retainedSnapshotLister interface {
+	ListSnapshotsStaleOlderThan(ctx context.Context, retention time.Duration) ([]state.SnapshotForGC, error)
+	ListSnapshotsPendingDelete(ctx context.Context) ([]state.SnapshotForGC, error)
 }
 
 // DiskDrift owns the read-only /srv/fc/snap vs DB drift sweep.
@@ -259,20 +272,28 @@ func (d *DiskDrift) Tick(ctx context.Context) (drift int, tickErr error) {
 		return 0, fmt.Errorf("disk-drift: list snapshots: %w", err)
 	}
 
+	retained, err := d.retainedSnapshots(ctx)
+	if err != nil {
+		d.log.Warn("disk-drift: list retained snapshots failed", "err", err)
+		return 0, fmt.Errorf("disk-drift: list retained snapshots: %w", err)
+	}
+
 	// Build the expected set keyed by deploymentID. Map → O(1) lookup
 	// when scanning the disk tree; rows is small (~tens per box).
 	expected := make(map[string]state.SnapshotForGC, len(rows))
 	for _, r := range rows {
-		if r.AppStatus == state.AppDeleted ||
-			r.DeploymentStatus == state.DeployFailed ||
-			r.DeploymentStatus == state.DeployCancelled {
+		if gcOwnsSnapshotRemoval(r) {
 			continue
 		}
-		directory := r.DeploymentID
-		if parsedDirectory, part, ok := parseSnapKey(r.StorageKey); ok && part == "mem" {
-			directory = parsedDirectory
+		expected[snapshotObjectDirectory(r)] = r
+	}
+	// Retained objects may be present but are not required: GC may already
+	// have removed a stale capture's files before its row.
+	known := make(map[string]struct{}, len(retained))
+	for _, r := range retained {
+		if !gcOwnsSnapshotRemoval(r) {
+			known[snapshotObjectDirectory(r)] = struct{}{}
 		}
-		expected[directory] = r
 	}
 
 	// When a storage backend is wired, prefer backend.List over
@@ -282,7 +303,7 @@ func (d *DiskDrift) Tick(ctx context.Context) (drift int, tickErr error) {
 	// (snap/ is content-addressed and latency-sensitive, so ADR-054
 	// keeps it on every compute node by default).
 	if d.storage != nil {
-		return d.tickWithStorage(ctx, expected, rows)
+		return d.tickWithStorage(ctx, expected, known, rows)
 	}
 
 	root := d.snapshotRoot()
@@ -300,12 +321,45 @@ func (d *DiskDrift) Tick(ctx context.Context) (drift int, tickErr error) {
 			"snap_dir", root, "err", err)
 		return 0, fmt.Errorf("disk-drift: read snapshot directory: %w", err)
 	}
-	return d.scanDiskForDrift(ctx, root, diskDirs, expected, rows)
+	return d.scanDiskForDrift(ctx, root, diskDirs, expected, known, rows)
+}
+
+// gcOwnsSnapshotRemoval reports rows whose objects GC is about to reclaim;
+// their remaining files stay visible as drift until it does.
+func gcOwnsSnapshotRemoval(r state.SnapshotForGC) bool {
+	return r.AppStatus == state.AppDeleted ||
+		r.DeploymentStatus == state.DeployFailed ||
+		r.DeploymentStatus == state.DeployCancelled
+}
+
+func snapshotObjectDirectory(r state.SnapshotForGC) string {
+	if directory, part, ok := parseSnapKey(r.StorageKey); ok && part == "mem" {
+		return directory
+	}
+	return r.DeploymentID
+}
+
+// retainedSnapshots returns stale rows still inside retention and rows whose
+// deletion is in progress: GC owns their objects until it removes them.
+func (d *DiskDrift) retainedSnapshots(ctx context.Context) ([]state.SnapshotForGC, error) {
+	lister, ok := d.store.(retainedSnapshotLister)
+	if !ok {
+		return nil, nil
+	}
+	stale, err := lister.ListSnapshotsStaleOlderThan(ctx, 0)
+	if err != nil {
+		return nil, fmt.Errorf("stale: %w", err)
+	}
+	pending, err := lister.ListSnapshotsPendingDelete(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("pending delete: %w", err)
+	}
+	return append(stale, pending...), nil
 }
 
 // scanDiskForDrift is the local os.ReadDir-based sweep used when no storage
 // backend owns snapshot enumeration.
-func (d *DiskDrift) scanDiskForDrift(ctx context.Context, root string, diskDirs []os.DirEntry, expected map[string]state.SnapshotForGC, rows []state.SnapshotForGC) (int, error) {
+func (d *DiskDrift) scanDiskForDrift(ctx context.Context, root string, diskDirs []os.DirEntry, expected map[string]state.SnapshotForGC, known map[string]struct{}, rows []state.SnapshotForGC) (int, error) {
 	drift := 0
 	type diskPart struct {
 		path string
@@ -408,6 +462,9 @@ func (d *DiskDrift) scanDiskForDrift(ctx context.Context, root string, diskDirs 
 		if _, ok := expected[objectID]; ok {
 			continue
 		}
+		if _, ok := known[objectID]; ok {
+			continue
+		}
 		reason := "orphan-snapshot-object"
 		if _, capture := terminalDirectories[objectID]; capture {
 			reason = "orphan-snapshot-capture"
@@ -479,7 +536,7 @@ func parseSnapshotDirectory(directory string) (objectID string, terminal, valid 
 // and the wire doesn't expose it. The presence check is still
 // valuable — a missing snapshot mem or vmstate is drift regardless
 // of where it lives.
-func (d *DiskDrift) tickWithStorage(ctx context.Context, expected map[string]state.SnapshotForGC, rows []state.SnapshotForGC) (int, error) {
+func (d *DiskDrift) tickWithStorage(ctx context.Context, expected map[string]state.SnapshotForGC, known map[string]struct{}, rows []state.SnapshotForGC) (int, error) {
 	keys, err := d.storage.List(ctx, "snap/")
 	if errors.Is(err, storage.ErrIncompleteEnumeration) {
 		// Repositories written before the durable OCI snapshot index can be
@@ -550,6 +607,9 @@ func (d *DiskDrift) tickWithStorage(ctx context.Context, expected map[string]sta
 		if _, ok := expected[depID]; ok {
 			continue
 		}
+		if _, ok := known[depID]; ok {
+			continue
+		}
 		drift += d.recordDrift("orphan-dep-dir", "snap/"+depID)
 	}
 
@@ -570,7 +630,9 @@ func parseSnapKey(key string) (objectID, part string, ok bool) {
 		return "", "", false
 	}
 	part = parts[len(parts)-1]
-	if part != "mem" && part != "vmstate" && part != "drive" {
+	// backing is the capture's backing-identity sidecar
+	// (state.SnapshotBackingKey), written beside mem, vmstate and drive.
+	if part != "mem" && part != "vmstate" && part != "drive" && part != "backing" {
 		return "", "", false
 	}
 	switch {

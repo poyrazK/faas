@@ -150,8 +150,8 @@ func (r *ObserverRunner) oauthSecret(ctx context.Context, job state.MCPCatalogOb
 	key := strings.TrimPrefix(ref, api.SecretRefPrefix)
 	readCtx, cancel := context.WithTimeout(ctx, api.MCPPolicyConvergenceReadTimeout)
 	defer cancel()
-	secret, err := r.Store.GetAppSecret(readCtx, job.AccountID, job.AppID, key)
-	if err != nil || secret == nil || secret.AccountID != job.AccountID || secret.AppID != job.AppID || secret.Key != key || secret.Scope != state.DefaultEnvScope || secret.ManagedPostgresBindingID != "" || secret.ManagedObjectStorageCredentialID != "" || secret.ManagedCredentialRef != "" {
+	secret, err := r.Store.GetAppSecretInScope(readCtx, job.AccountID, job.AppID, api.MCPConnectionScope(job.Snapshot.Config.Scope), key)
+	if err != nil || secret == nil || secret.AccountID != job.AccountID || secret.AppID != job.AppID || secret.Key != key || secret.Scope != api.MCPConnectionScope(job.Snapshot.Config.Scope) || secret.ManagedPostgresBindingID != "" || secret.ManagedObjectStorageCredentialID != "" || secret.ManagedCredentialRef != "" {
 		return "", "", errors.New("credential unavailable")
 	}
 	envelope, err := secretbox.OpenMulti(r.Identities(readCtx), secret.Ciphertext)

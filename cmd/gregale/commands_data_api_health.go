@@ -139,6 +139,9 @@ func cmdDataAPIHealth(args []string) int {
 	if collector.report.Failures.RateLimited > 0 {
 		report.RecentFindings = append(report.RecentFindings, "rate_limits_observed")
 	}
+	if collector.report.Failures.ConcurrencyLimited > 0 {
+		report.RecentFindings = append(report.RecentFindings, "user_concurrency_limits_observed")
+	}
 	if jsonOutput {
 		if err := writeJSON(report); err != nil {
 			return printErr("Could not write health report", err)
@@ -156,6 +159,9 @@ func cmdDataAPIHealth(args []string) int {
 		}
 		_, _ = fmt.Fprintf(osStdout, "Current findings: %s\nRecent findings (retained sample): %s\n", strings.Join(report.CurrentFindings, ", "), strings.Join(report.RecentFindings, ", "))
 		_, _ = fmt.Fprintf(osStdout, "Recent requests: %d; overload responses: %d; query timeouts: %d\n", collector.report.Summary.Requests, collector.report.Failures.Overloaded, collector.report.Failures.Timeouts)
+		if err := writeDataAPIDatabaseTimings(collector.report.DataRequests.DatabaseTimings); err != nil {
+			return printErr("Could not write database timing observations", err)
+		}
 		if report.Partial {
 			_, _ = fmt.Fprintf(osStdout, "Partial report: %s\n", strings.Join(report.PartialReasons, ", "))
 		}

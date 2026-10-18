@@ -278,6 +278,18 @@
       ]
     },
     {
+      "id": "slo-and-synthetic-signal",
+      "name": "SLO budgets and synthetic checks",
+      "category": "observability",
+      "description": "Customer SLO budgets are computed from the recorded hourly attainment, and synthetic checks record every run's outcome, status and latency.",
+      "capabilities": ["custom-slos", "synthetic-checks"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_slo_status_test.go::TestGetSLOReportsBudgetFromHourlyRows"},
+        {"kind": "test", "locator": "pkg/synthetics/runner_test.go::TestRunOnceRecordsOutcomes"}
+      ]
+    },
+    {
       "id": "snapshot-wake",
       "name": "Snapshot wake recovery",
       "category": "reliability",

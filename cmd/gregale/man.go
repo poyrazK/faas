@@ -81,7 +81,7 @@ func cmdMan(args []string) int {
 // lookupCliCommand returns the cliCommand for name. Linear scan
 // is fine — the manifest has ~50 entries.
 func lookupCliCommand(name string) (cliCommand, bool) {
-	for _, c := range cliCommands {
+	for _, c := range visibleCliCommands() {
 		if c.Name == name {
 			return c, true
 		}
@@ -182,6 +182,10 @@ func renderManCommand(w io.Writer, c cliCommand) {
 	})
 	manSection(w, "DESCRIPTION", func(w io.Writer) {
 		writeRoffParagraph(w, c.Short)
+		for _, note := range c.HelpNotes {
+			_, _ = fmt.Fprintln(w, ".PP")
+			writeRoffParagraph(w, note)
+		}
 	})
 	if len(c.Subcommands) > 0 {
 		manSection(w, "SUBCOMMANDS", func(w io.Writer) {
@@ -415,7 +419,7 @@ func suggestCommand(query string) (string, bool) {
 	bestName := ""
 	bestDist := maxDist + 1
 	tied := false
-	for _, c := range cliCommands {
+	for _, c := range visibleCliCommands() {
 		if !cliCommandAvailable(c.Name) {
 			continue
 		}

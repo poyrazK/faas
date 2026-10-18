@@ -1,9 +1,8 @@
 package builderd
 
 import (
-	"strings"
-
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sharedruntime"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -22,23 +21,21 @@ func sharedRuntimeBuildLog(v *api.SharedRuntimeVerdict) string {
 }
 
 // SharedRuntimeEnv enables building source container apps on the shared
-// runner base (docs/adr/20261017-shared-runtime-source-apps.md). Off by
+// runner base (docs/adr/1500-shared-runtime-source-apps.md). Off by
 // default until the native-metal acceptance run passes.
 const SharedRuntimeEnv = "FAAS_SOURCE_APP_SHARED_RUNTIME"
 
 // sharedSourceAppRuntime picks the runner base a source build of app runs
 // on, or "" for the app's own base. Only Node container apps without a
 // runtime or a Dockerfile qualify; job-mode boots still assume the minimal
-// base.
-func sharedSourceAppRuntime(app state.App, fw Framework, version, dockerfilePath string, env func(string) string) string {
+// base. nodeSpec is the source's Node declaration as written (.nvmrc or
+// engines.node): the parsed source version drops bare majors such as "22".
+func sharedSourceAppRuntime(app state.App, fw Framework, nodeSpec, dockerfilePath string, env func(string) string) string {
 	if env(SharedRuntimeEnv) != "1" || app.Type == state.AppTypeFunction || app.Runtime != "" ||
 		fw != FrameworkNode || dockerfilePath != "" || app.Manifest.ExecutionMode == api.ExecutionModeJob {
 		return ""
 	}
-	if major, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(version), "v"), "."); major == "22" {
-		return "node22"
-	}
-	return "node24"
+	return sharedruntime.NodeRuntimeForSpec(nodeSpec)
 }
 
 // claimedBuildRuntime is the runtime a build's export claim signs: the

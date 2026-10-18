@@ -233,7 +233,7 @@ func (r *InstanceDivergenceReconciler) liveRows(ctx context.Context) ([]state.In
 	var rows []state.Instance
 	var err error
 	if owner := r.engine.OwnerNodeID(); owner != "" {
-		rows, err = store.ListInstancesByNodeID(ctx, owner)
+		rows, err = store.ListLiveInstancesByNodeID(ctx, owner)
 	} else {
 		rows, err = store.ListAllInstances(ctx)
 	}

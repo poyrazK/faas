@@ -6,7 +6,7 @@ import { createPoolObservation } from './pool.mjs'
 // Share in-flight work without caching completed results. Reuse the existing
 // engine pool and reserved refresh reader; never create a diagnostic SQL pool.
 export function createHealth(config, upstreamPort, readyPort) {
-  const pool = createPoolObservation(readyPort, config.coordinatedRefresh ? limits.pool - 1 : limits.pool)
+  const pool = config.poolObservation ?? createPoolObservation(readyPort, config.coordinatedRefresh ? limits.pool - 1 : limits.pool)
   const pending = new Map()
   const bounded = (work, fallback) => new Promise(resolve => {
     const timer = setTimeout(() => resolve(fallback), limits.healthProbeMs)

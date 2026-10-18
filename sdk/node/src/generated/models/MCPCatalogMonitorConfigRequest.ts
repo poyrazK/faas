@@ -7,6 +7,10 @@ import type { MCPCatalogObserverConfig } from './MCPCatalogObserverConfig.js';
  * Reviewed baseline and observer settings for one independently monitored MCP role.
  */
 export type MCPCatalogMonitorConfigRequest = {
+  /**
+   * Environment selected when configuring catalog monitoring. Omit for default.
+   */
+  scope?: string;
   observer?: MCPCatalogObserverConfig;
   /**
    * Environment variable name only; credentials are never stored

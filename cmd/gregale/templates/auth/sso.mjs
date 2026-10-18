@@ -1,5 +1,6 @@
 import { limits } from './config.mjs'
 import { HTTPError } from './authz.mjs'
+import { newScimToken } from './scim.mjs'
 
 // /admin/v1/sso: organization single sign-on (ADR-1190). The owner registers
 // SAML identity providers through GoTrue's admin API and may link each one to
@@ -77,9 +78,24 @@ async function link(query, provider, org) {
 }
 
 // ssoRoute answers /admin/v1/sso[/<id>]; parts are the path's segments.
-export async function ssoRoute({ query, admin, goTrueError }, method, parts, body) {
+export async function ssoRoute({ query, admin, goTrueError, external }, method, parts, body) {
   const id = parts[1]
-  if (parts.length > 2 || (id !== undefined && !uuid.test(id))) throw new HTTPError(404, 'not_found')
+  if (parts.length > 3 || (id !== undefined && !uuid.test(id)) || (parts.length === 3 && parts[2] !== 'scim-token')) throw new HTTPError(404, 'not_found')
+  // A SCIM token lets the provider's identity provider provision its people
+  // (scim.mjs); creating one replaces the previous token.
+  if (parts[2] === 'scim-token' && method === 'POST') {
+    const [known] = await query('SELECT id FROM auth.sso_providers WHERE id = $1', [id])
+    if (!known) throw new HTTPError(404, 'not_found')
+    const { token, hash } = newScimToken()
+    await query(`INSERT INTO gregale_auth.scim_tokens (provider_id, token_hash) VALUES ($1, $2)
+      ON CONFLICT (provider_id) DO UPDATE SET token_hash = EXCLUDED.token_hash, created_at = now()`, [id, hash])
+    return [201, { token, scim_url: `${external}/scim/v2` }]
+  }
+  if (parts[2] === 'scim-token' && method === 'DELETE') {
+    await query('DELETE FROM gregale_auth.scim_tokens WHERE provider_id = $1', [id])
+    return [200, { revoked: true }]
+  }
+  if (parts[2]) throw new HTTPError(404, 'not_found')
   const call = async (verb, path, payload, ok = [200, 201]) => {
     const response = await admin(verb, path, payload)
     if (!ok.includes(response.status)) throw ssoError(response, goTrueError)

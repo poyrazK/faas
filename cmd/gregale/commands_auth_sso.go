@@ -18,7 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const authSSOUsage = "usage: gregale auth sso <list|add|update|remove> NAME [PROVIDER_ID] [--metadata-url URL | --metadata-file FILE] [--domains DOMAINS] [--org ID|SLUG|none] [--role ROLE] [--admin-key-stdin]"
+const authSSOUsage = "usage: gregale auth sso <list|add|update|remove|scim-token> NAME [PROVIDER_ID] [--revoke] [--metadata-url URL | --metadata-file FILE] [--domains DOMAINS] [--org ID|SLUG|none] [--role ROLE] [--admin-key-stdin]"
 
 var authSSOProviderID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
@@ -47,10 +47,11 @@ func cmdAuthSSO(args []string) int {
 	org := fs.String("org", "", "organization (ID or slug) its users join, or none")
 	role := fs.String("role", "member", "role its users join the organization with (not owner)")
 	keyStdin := fs.Bool("admin-key-stdin", false, "read the admin key from stdin (prompted on a terminal)")
+	fs.Bool("revoke", false, "scim-token: revoke the provider's SCIM token instead of creating one")
 	if err := parseInterspersed(fs, args[1:]); err != nil {
 		return 1
 	}
-	want := map[string]int{"list": 1, "add": 1, "update": 2, "remove": 2}[args[0]]
+	want := map[string]int{"list": 1, "add": 1, "update": 2, "remove": 2, "scim-token": 2}[args[0]]
 	if want == 0 || fs.NArg() != want || !api.ValidAppSlug(fs.Arg(0)) || (want == 2 && !authSSOProviderID.MatchString(fs.Arg(1))) {
 		PrintUsage(os.Stderr, authSSOUsage, "auth")
 		return 1
@@ -86,6 +87,17 @@ func cmdAuthSSO(args []string) int {
 // same rules again; checking here reports a mistake before the key prompt.
 func authSSOBody(command string, given map[string]bool, metadataURL, metadataFile, domains, org, role string) (map[string]any, error) {
 	body := map[string]any{}
+	if command == "scim-token" {
+		for name := range given {
+			if name != "admin-key-stdin" && name != "revoke" {
+				return nil, errors.New("scim-token takes only --revoke")
+			}
+		}
+		if given["revoke"] {
+			body["revoke"] = true
+		}
+		return body, nil
+	}
 	if command == "list" || command == "remove" {
 		if len(given) > 1 || (len(given) == 1 && !given["admin-key-stdin"]) {
 			return nil, fmt.Errorf("%s takes no provider settings", command)
@@ -167,6 +179,8 @@ func authSSORun(ctx context.Context, app api.AppResponse, origin, key, command, 
 			_, _ = fmt.Fprintf(osStdout, "%s  %s  %s\n", provider.ID, strings.Join(provider.Domains, ","), authSSOOrganization(provider))
 		}
 		return 0
+	case "scim-token":
+		return authSCIMToken(origin, key, path+"/scim-token", id, body["revoke"] == true)
 	case "remove":
 		var out map[string]any
 		if err := authAdminCall(http.MethodDelete, origin, key, path, nil, &out); err != nil {
@@ -199,6 +213,35 @@ func authSSORun(ctx context.Context, app api.AppResponse, origin, key, command, 
 	if command == "add" {
 		authSSOServiceProvider(ctx, app)
 	}
+	return 0
+}
+
+// authSCIMToken creates (replacing any previous one) or revokes the token an
+// identity provider uses to provision people through SCIM.
+func authSCIMToken(origin, key, path, id string, revoke bool) int {
+	if revoke {
+		var out map[string]any
+		if err := authAdminCall(http.MethodDelete, origin, key, path, nil, &out); err != nil {
+			return printErr("Could not revoke the SCIM token", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(map[string]any{"provider_id": id, "revoked": true}))
+		}
+		PrintOK(osStdout, "Revoked the SCIM token of identity provider %s", id)
+		return 0
+	}
+	var out struct {
+		Token   string `json:"token"`
+		SCIMURL string `json:"scim_url"`
+	}
+	if err := authAdminCall(http.MethodPost, origin, key, path, map[string]any{}, &out); err != nil {
+		return printErr("Could not create the SCIM token", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]any{"provider_id": id, "token": out.Token, "scim_url": out.SCIMURL}))
+	}
+	PrintOK(osStdout, "Created a SCIM token for identity provider %s; it replaces any previous token and is shown only now", id)
+	_, _ = fmt.Fprintf(osStdout, "Give the identity provider:\n  SCIM base URL  %s\n  bearer token   %s\n", out.SCIMURL, out.Token)
 	return 0
 }
 

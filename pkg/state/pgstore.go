@@ -3152,6 +3152,26 @@ func (s *PgStore) ListInstancesByNodeID(ctx context.Context, nodeID string) ([]I
 	return scanInstances(rows)
 }
 
+// ListLiveInstancesByNodeID is ListInstancesByNodeID filtered to live states
+// in SQL. On production, listing every instance returned about 27,000
+// parked, stopped and failed rows per call for two live ones, and schedd's
+// stats poller made that call five times a second (H10-145).
+func (s *PgStore) ListLiveInstancesByNodeID(ctx context.Context, nodeID string) ([]Instance, error) {
+	sel := `select i.id, coalesce(i.app_id::text, ''), coalesce(i.deployment_id::text, ''), i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
+		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count, i.mode, i.request_count
+		   from instances i
+		   join apps a on a.id = i.app_id
+		  where a.node_id = $1
+		    and a.status <> 'deleted'
+		    and i.state = any($2::text[])`
+	rows, err := s.pool.Query(ctx, sel, nodeID, LiveStates())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanInstances(rows)
+}
+
 // ListInstancesOnNodeID returns every instance physically resident on the
 // given compute node. It deliberately filters instances.node_id rather than
 // joining through apps.node_id: live migration commits the physical move
@@ -15430,7 +15450,7 @@ func (s *PgStore) SetAlertRuleLastEvaluated(ctx context.Context, ruleID string, 
 
 const alertDeliverySelectCols = `id, rule_id, account_id, app_id, idempotency_key, payload,
        status, attempt_count, last_status_code, last_error,
-       observed_value, fired_at, delivered_at, is_test`
+       observed_value, fired_at, delivered_at, is_test, readiness_event_id, readiness_destination, readiness_failover_reason`
 
 func scanAlertDelivery(row pgx.Row) (AlertDelivery, error) {
 	d := AlertDelivery{}
@@ -15444,7 +15464,7 @@ func scanAlertDelivery(row pgx.Row) (AlertDelivery, error) {
 	if err := row.Scan(
 		&d.ID, &d.RuleID, &d.AccountID, &appID, &d.IdempotencyKey, &payload,
 		&status, &attemptCount, &lastStatusCode, &lastError, &d.ObservedValue,
-		&d.FiredAt, &deliveredAt, &d.IsTest,
+		&d.FiredAt, &deliveredAt, &d.IsTest, &d.ReadinessEventID, &d.ReadinessDestination, &d.ReadinessFailoverReason,
 	); err != nil {
 		return AlertDelivery{}, err
 	}
@@ -15483,7 +15503,7 @@ func scanAlertDeliveries(rows pgx.Rows) ([]AlertDelivery, error) {
 		if err := rows.Scan(
 			&d.ID, &d.RuleID, &d.AccountID, &appID, &d.IdempotencyKey, &payload,
 			&status, &attemptCount, &lastStatusCode, &lastError, &d.ObservedValue,
-			&d.FiredAt, &deliveredAt, &d.IsTest,
+			&d.FiredAt, &deliveredAt, &d.IsTest, &d.ReadinessEventID, &d.ReadinessDestination, &d.ReadinessFailoverReason,
 		); err != nil {
 			return nil, err
 		}
@@ -15823,6 +15843,11 @@ func (s *PgStore) ClaimInvocation(ctx context.Context, id, instanceID string, le
 		return Invocation{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if instanceID == "" {
+		if err := sqlc.New().ResetScenarioManagedInvocationBinding(ctx, tx, id); err != nil {
+			return Invocation{}, err
+		}
+	}
 	if err := lockInvocationEnvironmentClaimDB(ctx, tx, id); err != nil {
 		return Invocation{}, err
 	}
@@ -25746,6 +25771,9 @@ func mapErr(err error) error {
 				return ErrApplicationStandardsPending
 			case "application_standard_scope_owner":
 				return ErrInvalidArgument
+
+			case "deployment_mcp_readiness_required":
+				return ErrMCPReadinessRequired
 			case "environment_gitops_job_managed":
 				return ErrEnvironmentGitManaged
 			case "environment_gitops_job_link_contract":
@@ -31971,6 +31999,11 @@ func (s *PgStore) ClaimInvocationWithCap(ctx context.Context, id, instanceID str
 		return Invocation{}, fmt.Errorf("state: invocations claim cap begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if instanceID == "" {
+		if err := sqlc.New().ResetScenarioManagedInvocationBinding(ctx, tx, id); err != nil {
+			return Invocation{}, err
+		}
+	}
 	if err := lockInvocationEnvironmentClaimDB(ctx, tx, id); err != nil {
 		return Invocation{}, err
 	}

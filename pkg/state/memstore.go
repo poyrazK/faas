@@ -26,11 +26,17 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appstandards"
 	"github.com/onebox-faas/faas/pkg/chaos"
+	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/hostport"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
+	"github.com/onebox-faas/faas/pkg/rehearsalcold"
+	"github.com/onebox-faas/faas/pkg/rehearsalobj"
+	"github.com/onebox-faas/faas/pkg/rehearsalpg"
+	"github.com/onebox-faas/faas/pkg/rehearsalresume"
+	"github.com/onebox-faas/faas/pkg/rehearsalwork"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -140,6 +146,12 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	productData                                *productMemory
+	scenarioManagedWork                        map[string]scenarioManagedJob
+	scenarioWorkerFaults                       map[string]rehearsalwork.WorkerFault
+	scenarioColdPreparations                   map[string]rehearsalcold.Preparation
+	scenarioSuspendResumes                     map[string]rehearsalresume.Receipt
+	internalCI                                 *ci.MemoryStore
 	hostingOIDCTrusts                          map[string]api.HostingOIDCTrust
 	hostingCredentials                         map[string]api.HostingAutomationCredential
 	hostingRetentionPolicies                   map[string]api.HostingRetentionPolicy
@@ -286,6 +298,7 @@ type MemStore struct {
 	eventRecoveryJobs                 map[string]*memEventRecoveryJob
 	workflowCodePins                  map[string]time.Time
 	qualificationSnapshots            map[string]EnvironmentQualificationSnapshotReceipt
+	mcpReadiness                      *memMCPReadiness
 	// Restore evidence survives cleanup of the target's runtime receipt.
 	qualificationRestoreReceipts map[string]EnvironmentQualificationRestoreReceipt
 	// Guest configuration hashes survive cleanup of private qualification VMs.
@@ -322,6 +335,12 @@ type MemStore struct {
 	// what PgStore's count(*) over (app_id) measures.
 	customMetrics               map[string]map[string]CustomMetric
 	mcpTaskCompatibilityReports map[string]MCPTaskCompatibilityReport
+	notificationChannels        map[string][]NotificationChannel // account id → channels (ADR-749), lazily made
+	alertRuleChannels           map[string][]string              // rule id → channel ids (ADR-749)
+	appSLOs                     map[string][]SLO                 // app id → definitions (ADR-747), lazily made
+	sloHours                    map[string]map[time.Time]memSLOHour
+	syntheticChecks             map[string][]SyntheticCheck // app id → checks (ADR-748), lazily made
+	syntheticRuns               map[string][]SyntheticCheckRun
 	objectBuckets               map[string]ObjectBucket
 	objectMutations             map[string]ObjectBucketMutation
 	objectNodeSettlements       map[string]ObjectNodeSettlement
@@ -384,6 +403,9 @@ type MemStore struct {
 	deployTokenByHash         map[string]DeployToken
 	apps                      map[string]App
 	scenarioTestMembers       map[string]ScenarioTestMember
+	scenarioPostgres          map[string]rehearsalpg.Resource
+	scenarioObjects           map[string]rehearsalobj.Resource
+	scenarioActionPolicies    map[string]scenarioActionPolicy
 	scenarioTestChaosPlans    map[string]chaos.Lease
 	scenarioTestChaosMatches  map[string]map[string]int64
 	previewSets               map[string]PRPreviewSet
@@ -601,8 +623,21 @@ type MemStore struct {
 	// translates a "win" into an INSERT-after-claim so two parallel
 	// claims inside the same bucket produce exactly one delivery
 	// row (mirrors the UNIQUE-index floor in Postgres).
-	alertRules      map[string]AlertRule
-	alertDeliveries map[string]AlertDelivery
+	readinessIncidents            map[string]readinessIncident
+	readinessIncidentEvents       map[string]readinessIncidentEventRecord
+	readinessIncidentCursors      map[string]time.Time
+	readinessIncidentSequence     int64
+	readinessPagerDutyAckPolicies map[string]MCPReadinessPagerDutyAcknowledgementConfig
+	readinessPagerDutyAckEvents   map[string]readinessPagerDutyAcknowledgementRecord
+	readinessPagerDutyPolicies    map[string]MCPReadinessPagerDutyConfig
+	readinessReminderDefaults     map[string]api.MCPReadinessReminderDefaults
+	readinessFallbackPolicies     map[string]MCPReadinessFallbackConfig
+	readinessMaintenance          map[string]readinessMaintenanceRecord
+	readinessNotificationActions  map[string]readinessNotificationActionRecord
+	readinessAttention            map[string]readinessAttentionRecord
+	readinessAttentionActions     map[string]readinessAttentionActionRecord
+	alertRules                    map[string]AlertRule
+	alertDeliveries               map[string]AlertDelivery
 	// appWebhooks + appWebhookDeliveries back the issue #476
 	// outbound webhook subscription + ledger surface. Keyed by
 	// webhookID / deliveryID. The unique (app_id, target_url)
@@ -1516,6 +1551,18 @@ func NewMemStore() *MemStore {
 		runtimeConfigs:                  map[string]RuntimeConfig{},
 		runtimeConfigOperations:         map[string]RuntimeConfigOperation{},
 		runtimeConfigRevisions:          []RuntimeConfigRevision{},
+		readinessMaintenance:            map[string]readinessMaintenanceRecord{},
+		readinessNotificationActions:    map[string]readinessNotificationActionRecord{},
+		readinessAttention:              map[string]readinessAttentionRecord{},
+		readinessAttentionActions:       map[string]readinessAttentionActionRecord{},
+		readinessIncidents:              map[string]readinessIncident{},
+		readinessPagerDutyAckPolicies:   map[string]MCPReadinessPagerDutyAcknowledgementConfig{},
+		readinessPagerDutyAckEvents:     map[string]readinessPagerDutyAcknowledgementRecord{},
+		readinessPagerDutyPolicies:      map[string]MCPReadinessPagerDutyConfig{},
+		readinessReminderDefaults:       map[string]api.MCPReadinessReminderDefaults{},
+		readinessFallbackPolicies:       map[string]MCPReadinessFallbackConfig{},
+		readinessIncidentEvents:         map[string]readinessIncidentEventRecord{},
+		readinessIncidentCursors:        map[string]time.Time{},
 		alertRules:                      map[string]AlertRule{},
 		alertDeliveries:                 map[string]AlertDelivery{},
 		appWebhooks:                     map[string]AppWebhook{},
@@ -4617,6 +4664,7 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(_ context.Context, apps []App
 	addressCursorsBefore := maps.Clone(m.serviceAddressCursors)
 	rollback := func(err error) ([]App, error) {
 		for _, id := range insertedIDs {
+			m.deleteScenarioWorkerFaultsForAppLocked(id)
 			delete(m.apps, id)
 			delete(m.applicationStandardEnrollments, id)
 			m.eraseStandardAppExceptionsLocked(id)
@@ -5647,6 +5695,24 @@ func (m *MemStore) ListInstancesByNodeID(_ context.Context, nodeID string) ([]In
 	var out []Instance
 	for _, ins := range m.instances {
 		if owner[ins.AppID] == nodeID {
+			out = append(out, ins)
+		}
+	}
+	return out, nil
+}
+
+// ListLiveInstancesByNodeID mirrors PgStore.ListLiveInstancesByNodeID: live
+// instances of the node's non-deleted apps.
+func (m *MemStore) ListLiveInstancesByNodeID(_ context.Context, nodeID string) ([]Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	owned := make(map[string]bool, len(m.apps))
+	for _, a := range m.apps {
+		owned[a.ID] = a.NodeID == nodeID && a.Status != AppDeleted
+	}
+	var out []Instance
+	for _, ins := range m.instances {
+		if owned[ins.AppID] && IsLive(ins.State) {
 			out = append(out, ins)
 		}
 	}
@@ -6973,6 +7039,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	m.deleteEnvironmentWorkloadIntentsLocked(id, "")
 	m.deleteWorkflowDispatchCursorsLocked(id)
 	m.deleteEventExecutionLedgerAppLocked(id)
+	m.deleteScenarioWorkerFaultsForAppLocked(id)
 	delete(m.apps, id)
 	delete(m.applicationStandardEnrollments, id)
 	m.eraseStandardAppExceptionsLocked(id)
@@ -7561,6 +7628,17 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 	proposal := d
 	if proposal.Status == "" {
 		proposal.Status = DeployPending
+	}
+	if proposal.Status == DeployLive {
+		gateSubject := proposal
+		gateSubject.Status = DeployPending
+		percent := proposal.TrafficPercent
+		if percent == 0 && !proposal.TrafficPercentExplicit && proposal.CanaryTotalSteps <= 0 && !serviceRollout {
+			percent = 100
+		}
+		if err := m.checkMCPReadinessLocked(gateSubject, percent); err != nil {
+			return Deployment{}, 0, err
+		}
 	}
 	if proposal.Status == DeployLive && m.environmentGitOpsManagedForScopeLocked(d.AppID, d.Scope) {
 		return Deployment{}, 0, ErrInvalidStateTransition
@@ -8929,6 +9007,9 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 	}
 
 	if status == DeployLive {
+		if err := m.checkMCPReadinessLocked(d, d.TrafficPercent); err != nil {
+			return err
+		}
 		if _, err := m.checkDeploymentDependenciesLocked(id, time.Now().UTC(), false); err != nil {
 			return err
 		}
@@ -9191,6 +9272,11 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	if _, gateErr := m.checkDeploymentDependenciesLocked(id, time.Now().UTC(), false); gateErr != nil {
 		return gateErr
 	}
+	if d.Status == DeployLive || (d.CanaryTotalSteps <= 0 && IsServiceRollout(d)) {
+		if err := m.checkMCPReadinessLocked(d, d.TrafficPercent); err != nil {
+			return err
+		}
+	}
 	// Build the post-transition rows locally first. The callback can fail
 	// (for example, if the canonical spec cannot be loaded); keeping all
 	// mutations local until it succeeds gives MemStore the same atomic
@@ -9283,6 +9369,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 		return err
 	}
 	if d.CanaryTotalSteps <= 0 {
+		if err := m.checkMCPReadinessLocked(d, 100); err != nil {
+			return err
+		}
 		if err := m.checkRouteRemovalTrafficLocked(map[string]int{id: 100}); err != nil {
 			return err
 		}
@@ -9347,6 +9436,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	}
 	sort.SliceStable(siblings, func(i, j int) bool { return siblings[i].ID < siblings[j].ID })
 	if len(siblings) == 0 && d.TrafficPercent != 100 {
+		if err := m.checkMCPReadinessLocked(d, 100); err != nil {
+			return err
+		}
 		// There is no previous revision to receive the residual. A
 		// first deployment cannot be meaningfully canaried, so make it
 		// a safe 100% completion instead of publishing a broken split.
@@ -9989,6 +10081,9 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 		return "", err
 	}
 	if err := m.rejectUncheckedBindingReleaseLocked(cur.AppID, cur.Scope); err != nil {
+		return "", err
+	}
+	if err := m.checkMCPReadinessLocked(m.deployments[targetID], 100); err != nil {
 		return "", err
 	}
 	if err := m.checkRouteRemovalTrafficLocked(map[string]int{targetID: 100}); err != nil {
@@ -13523,6 +13618,9 @@ func (m *MemStore) enqueueInvocationLocked(inv Invocation) (Invocation, error) {
 			m.recordEventDeliverySlotLocked(inv.ID, slot)
 		}
 	}
+	if err := m.admitScenarioManagedWorkLocked(&inv); err != nil {
+		return Invocation{}, err
+	}
 	m.setInvocationLocked(inv.ID, inv)
 	inv.ReplayRootCreatedAt = cloneEventReceiptTime(inv.ReplayRootCreatedAt)
 	return inv, nil
@@ -13681,6 +13779,12 @@ func (m *MemStore) ClaimInvocation(_ context.Context, id, instanceID string, lea
 	}
 	if _, owned := m.invocationEnvironmentQueueAdmissions[id]; owned {
 		return Invocation{}, ErrConflict
+	}
+	if m.scenarioWorkerDispatchBlockedLocked(inv.AppID) {
+		return Invocation{}, ErrConflict
+	}
+	if instanceID == "" && m.scenarioActionPolicies[inv.AppID].Member.ManagedWorkJSON != "" {
+		inv.InstanceID = ""
 	}
 	now := time.Now()
 	if inv.ReceivedAt == nil && inv.StartDeadlineAt != nil && inv.StartDeadlineAt.Before(now) {
@@ -22366,6 +22470,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			m.deleteEnvironmentSecretRefsLocked(aid, "")
 			m.deleteEnvironmentWorkloadIntentsLocked(aid, "")
 			m.deleteWorkflowDispatchCursorsLocked(aid)
+			m.deleteScenarioWorkerFaultsForAppLocked(aid)
 			delete(m.apps, aid)
 			delete(m.applicationStandardEnrollments, aid)
 			m.eraseStandardAppExceptionsLocked(aid)
@@ -22572,6 +22677,9 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		}
 	}
 	delete(m.accounts, id)
+	if m.internalCI != nil {
+		m.internalCI.RemoveAccount(id)
+	}
 	delete(m.serviceAddressCursors, id)
 	return nil
 }
@@ -22747,7 +22855,8 @@ func (m *MemStore) ListCronsForAccount(_ context.Context, accountID string) ([]C
 // same field values the PgStore does (default gen_random_uuid +
 // default now() are faked by MemStore with newID/time.Now).
 func (m *MemStore) CreateAlertRule(_ context.Context, in AlertRule) (AlertRule, error) {
-	if !validAlertRollbackWindow(in) {
+	in = defaultMCPProtocolAlert(in)
+	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) {
 		return AlertRule{}, ErrInvalidArgument
 	}
 	m.mu.Lock()
@@ -22780,7 +22889,8 @@ func (m *MemStore) CreateAlertRule(_ context.Context, in AlertRule) (AlertRule, 
 // gates the count + insert. Account-wide rules (AppID == "") skip
 // the per-app branch but still hit the per-account branch.
 func (m *MemStore) CreateAlertRuleIfUnderQuota(_ context.Context, in AlertRule, limits api.Limits) (AlertRule, error) {
-	if !validAlertRollbackWindow(in) {
+	in = defaultMCPProtocolAlert(in)
+	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) {
 		return AlertRule{}, ErrInvalidArgument
 	}
 	m.mu.Lock()
@@ -22909,6 +23019,12 @@ func (m *MemStore) UpdateAlertRule(_ context.Context, id string, p UpdateAlertRu
 	if !ok {
 		return AlertRule{}, ErrNotFound
 	}
+	if p.MCPMinCalls != nil {
+		r.MCPMinCalls = *p.MCPMinCalls
+	}
+	if p.MCPForMinutes != nil {
+		r.MCPForMinutes = *p.MCPForMinutes
+	}
 	if p.Name != nil {
 		r.Name = *p.Name
 	}
@@ -22949,7 +23065,7 @@ func (m *MemStore) UpdateAlertRule(_ context.Context, id string, p UpdateAlertRu
 	if p.PostDeployRollbackWindowSeconds != nil {
 		r.PostDeployRollbackWindowSeconds = *p.PostDeployRollbackWindowSeconds
 	}
-	if !validAlertRollbackWindow(r) {
+	if !validMCPProtocolAlert(r) || !validAlertRollbackWindow(r) {
 		return AlertRule{}, ErrInvalidArgument
 	}
 	r.UpdatedAt = time.Now()
@@ -22964,6 +23080,38 @@ func (m *MemStore) DeleteAlertRule(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.alertRules, id)
+	delete(m.readinessIncidentCursors, id)
+	delete(m.readinessPagerDutyPolicies, id)
+	delete(m.readinessPagerDutyAckPolicies, id+":primary")
+	delete(m.readinessPagerDutyAckPolicies, id+":fallback")
+	for key, event := range m.readinessPagerDutyAckEvents {
+		if event.RuleID == id {
+			delete(m.readinessPagerDutyAckEvents, key)
+		}
+	}
+	delete(m.readinessReminderDefaults, id)
+	delete(m.readinessFallbackPolicies, id)
+	for key, event := range m.readinessIncidentEvents {
+		if event.RuleID == id {
+			delete(m.readinessIncidentEvents, key)
+			for receiptKey, action := range m.readinessNotificationActions {
+				if action.Request.EventID == key {
+					delete(m.readinessNotificationActions, receiptKey)
+				}
+			}
+		}
+	}
+	for key, incident := range m.readinessIncidents {
+		if incident.RuleID == id {
+			delete(m.readinessIncidents, key)
+			delete(m.readinessAttention, key)
+			for actionKey, action := range m.readinessAttentionActions {
+				if action.IncidentID == key {
+					delete(m.readinessAttentionActions, actionKey)
+				}
+			}
+		}
+	}
 	for key, delivery := range m.alertDeliveries {
 		if delivery.RuleID == id {
 			delete(m.alertDeliveries, key)
@@ -23935,6 +24083,10 @@ func (m *MemStore) ClaimAlertFire(_ context.Context, ruleID, idempotencyKey stri
 	r, ok := m.alertRules[ruleID]
 	if !ok {
 		return "", false, ErrNotFound
+	}
+	// Fire and recovery/retry writers share the journal's unique key.
+	if _, exists := m.alertDeliveries[idempotencyKey]; exists {
+		return "", false, nil
 	}
 	cacheKey := ruleID + "\x00" + idempotencyKey
 	if _, dup := m.alertClaimKeys[cacheKey]; dup {
@@ -26525,6 +26677,12 @@ func (m *MemStore) ClaimInvocationWithCap(_ context.Context, id, instanceID stri
 	}
 	if inv.State != InvocationPending {
 		return Invocation{}, ErrNotFound
+	}
+	if m.scenarioWorkerDispatchBlockedLocked(inv.AppID) {
+		return Invocation{}, ErrConflict
+	}
+	if instanceID == "" && m.scenarioActionPolicies[inv.AppID].Member.ManagedWorkJSON != "" {
+		inv.InstanceID = ""
 	}
 	now := time.Now()
 	if inv.ReceivedAt == nil && inv.StartDeadlineAt != nil && inv.StartDeadlineAt.Before(now) {

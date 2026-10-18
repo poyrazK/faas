@@ -160,6 +160,27 @@
       "multi_arch": true,
       "digest": "sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b",
       "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS railpack-build"
+    },
+    {
+      "dockerfile": "images/ci-runner.Dockerfile",
+      "instruction": "FROM",
+      "alias": "public.ecr.aws/docker/library/golang:1.26.9",
+      "resolved_repo": "public.ecr.aws/docker/library/golang",
+      "resolved_tag": "1.26.9",
+      "platform": "linux/amd64",
+      "digest": "sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b",
+      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM public.ecr.aws/docker/library/golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS build",
+      "multi_arch": true
+    },
+    {
+      "dockerfile": "images/ci-runner.Dockerfile",
+      "instruction": "FROM",
+      "alias": "public.ecr.aws/docker/library/debian:12-slim",
+      "resolved_repo": "public.ecr.aws/docker/library/debian",
+      "resolved_tag": "12-slim",
+      "platform": "linux/amd64",
+      "digest": "sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91",
+      "pinned_in_dockerfile": "FROM public.ecr.aws/docker/library/debian:12-slim@sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91"
     }
   ]
 }

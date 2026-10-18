@@ -176,9 +176,33 @@ How it works:
   that every named alert, component and job exists in
   `deploy/ansible/roles/prometheus`.
 
-The per-unit release pipeline calls this gate after each unit's deploy.
+The per-unit release lanes
+([ADR-1650](adr/1650-per-unit-control-plane-releases.md)) call this gate after
+every host's deploy: once for the control-plane lane, then once per host in
+the edge lane before the next host starts. Each lane's first host, its
+canary, gets the full gate. Later hosts get a short follower gate. Both are
+set in `scripts/ci/release_units.json` under `gates`. They run one gate per restarted
+unit, in parallel on the control plane (Prometheus at `127.0.0.1:9095`),
+through `scripts/ci/unit_deploy.sh gate`. Exit 1 or 3 from any of them rolls
+the host's units back to the release that was active before
+(`deployctl rollback --only`) and stops the run.
 `scripts/ci/observe_rollout_availability.sh` keeps doing the black-box
-probing during the activation itself.
+probing during the control plane's activation itself.
+
+## Deploy order and skew in the unit lanes
+
+The unit lanes enforce the rules above in their workflows:
+
+- **N±1.** A unit release is refused unless it is built over the newest
+  full release tag before its commit, which is the release CI compared each
+  merge against. Units at that base and units at the unit release's commit
+  are therefore at most one release apart.
+- **Order.** Migrations block the unit lanes outright, so the data step is a
+  full release. `release-units.yml` deploys the control-plane lane first, and
+  the edge lane (`cd-edge-units.yml`) only after it. When the edge lane is
+  run alone, it first checks that the control plane already runs that unit
+  release's control-plane units. The runtime step (guest and images) always
+  waits for the next full release.
 
 ## Not covered yet
 
@@ -190,5 +214,5 @@ probing during the activation itself.
 - ADR-1344 also asks for a CI job that runs the previous release's binaries
   against the new schema, and for capability negotiation between daemons.
   Neither is built.
-- The release pipeline still has to enforce that no unit lags more than one
-  release.
+- The full release pipeline still has to enforce that no unit lags more than
+  one release. The unit lanes do enforce it.

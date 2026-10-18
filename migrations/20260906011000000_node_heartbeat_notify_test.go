@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestComputeNodeNotify_HeartbeatKeepsClients(t *testing.T) {
@@ -66,23 +67,43 @@ func TestComputeNodeNotify_HeartbeatKeepsClients(t *testing.T) {
 		}
 	}
 	check(t, 1)
+	update := func(sql string) func() error {
+		return func() error {
+			_, err := pool.Exec(ctx, sql, nodeID)
+			return err
+		}
+	}
+	// recovering -> active is a fenced completion since ADR-1527: the guard
+	// rejects a bare lifecycle UPDATE without a generation-bound receipt, so
+	// finish recovery the way the recovery runner does.
+	store := state.NewPgStore(pool)
+	completeRecovery := func() error {
+		node, err := store.NodeGet(ctx, nodeID)
+		if err != nil {
+			return err
+		}
+		_, err = store.CompleteNodeLifecycle(ctx, state.NodeLifecycleCompletion{
+			NodeID: nodeID, Generation: node.LifecycleGeneration, Lifecycle: node.Lifecycle,
+		})
+		return err
+	}
 	for _, tc := range []struct {
 		name string
-		sql  string
+		run  func() error
 		want int
 	}{
-		{"heartbeat", "UPDATE compute_nodes SET last_heartbeat_at = last_heartbeat_at + interval '30 seconds' WHERE id = $1", 0},
-		{"unchanged lifecycle", "UPDATE compute_nodes SET lifecycle = lifecycle WHERE id = $1", 0},
-		{"target rotation", "UPDATE compute_nodes SET target_url = 'unix:///run/rotated.sock' WHERE id = $1", 1},
-		{"schedd rotation", "UPDATE compute_nodes SET schedd_target_url = 'tcp://127.0.0.1:9091' WHERE id = $1", 1},
-		{"capacity change", "UPDATE compute_nodes SET mem_mb = mem_mb + 512 WHERE id = $1", 1},
-		{"deactivation", "UPDATE compute_nodes SET lifecycle = 'unavailable' WHERE id = $1", 1},
-		{"already unavailable", "UPDATE compute_nodes SET lifecycle = 'unavailable' WHERE id = $1", 0},
-		{"heartbeat with recovery", "UPDATE compute_nodes SET last_heartbeat_at = now(), lifecycle = 'recovering' WHERE id = $1", 1},
-		{"recovery complete", "UPDATE compute_nodes SET lifecycle = 'active' WHERE id = $1", 1},
+		{"heartbeat", update("UPDATE compute_nodes SET last_heartbeat_at = last_heartbeat_at + interval '30 seconds' WHERE id = $1"), 0},
+		{"unchanged lifecycle", update("UPDATE compute_nodes SET lifecycle = lifecycle WHERE id = $1"), 0},
+		{"target rotation", update("UPDATE compute_nodes SET target_url = 'unix:///run/rotated.sock' WHERE id = $1"), 1},
+		{"schedd rotation", update("UPDATE compute_nodes SET schedd_target_url = 'tcp://127.0.0.1:9091' WHERE id = $1"), 1},
+		{"capacity change", update("UPDATE compute_nodes SET mem_mb = mem_mb + 512 WHERE id = $1"), 1},
+		{"deactivation", update("UPDATE compute_nodes SET lifecycle = 'unavailable' WHERE id = $1"), 1},
+		{"already unavailable", update("UPDATE compute_nodes SET lifecycle = 'unavailable' WHERE id = $1"), 0},
+		{"heartbeat with recovery", update("UPDATE compute_nodes SET last_heartbeat_at = now(), lifecycle = 'recovering' WHERE id = $1"), 1},
+		{"recovery complete", completeRecovery, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := pool.Exec(ctx, tc.sql, nodeID); err != nil {
+			if err := tc.run(); err != nil {
 				t.Fatal(err)
 			}
 			check(t, tc.want)

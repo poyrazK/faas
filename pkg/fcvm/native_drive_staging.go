@@ -32,6 +32,9 @@ func (v *JailerVMM) nativeDriveStagingOwner(ctx context.Context, instance string
 	if owner.Generation != r.generation(instance) || owner.Revoked || owner.Authorized || owner.ResourcesRemoved {
 		return nativeLaunchRecord{}, errors.New("native loop mount: instance has no local prepared drive writer")
 	}
+	if err := r.journal.requireRepairProducerContext(ctx, owner); err != nil {
+		return nativeLaunchRecord{}, err
+	}
 	return owner, nil
 }
 

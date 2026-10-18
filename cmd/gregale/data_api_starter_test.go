@@ -20,7 +20,7 @@ func TestDataAPIStarterScaffoldIncludesApplicationWorkflows(t *testing.T) {
 	}
 	for _, file := range []string{
 		"README.md", "Procfile", "package-lock.json", "data-api.json", "data-api.requests.json", ".gitignore", ".gregaleignore",
-		"client/package-lock.json", "client/src/database.types.ts", "client/test/authorization.mjs",
+		"client/package-lock.json", "client/src/database.types.ts", "client/src/note-batch.ts", "client/test/authorization.mjs",
 		"tools/artifacts.mjs", "tools/artifact-lib.mjs",
 		".github/workflows/data-api-client.yml", ".github/workflows/data-api-preview.yml",
 	} {
@@ -73,6 +73,9 @@ func TestDataAPIStarterUploadKeepsMigrationAndExcludesClientTools(t *testing.T) 
 		t.Fatal(err)
 	}
 	entries := tarEntries(t, archive)
+	if !entries["notes/migrations/sql/0016_note_search.sql"] || !entries["notes/migrations/sql/0015_note_change_feed.sql"] || !entries["notes/migrations/sql/0014_note_atomic_batches.sql"] || !entries["notes/migrations/sql/0013_note_mutation_receipts.sql"] || !entries["notes/migrations/cleanup-receipts.mjs"] {
+		t.Fatal("migration upload missing versioned mutation/batch receipts or owner cleanup")
+	}
 	for _, file := range []string{"Dockerfile", "Procfile", "gregale.yaml", "package.json", "package-lock.json", "server.mjs", "migrations/migrate.mjs", "migrations/release.mjs", "migrations/rpc-permissions.mjs", "migrations/rpc-runtime/types.mjs", "migrations/rpc-runtime/type-render.mjs", "migrations/rpc-runtime/config.mjs", "migrations/sql/0001_notes.sql", "migrations/sql/0002_priority.sql", "migrations/sql/0003_relationships.sql", "migrations/sql/0004_tags.sql", "migrations/sql/0005_favorite_tags.sql", "migrations/sql/0006_query_indexes.sql", "migrations/sql/0007_note_versions.sql"} {
 		if !entries["notes/"+file] {
 			t.Errorf("migration upload missing %s", file)

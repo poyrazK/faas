@@ -23,7 +23,7 @@ import (
 
 func cmdMCP(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale mcp serve|connections|init|capabilities|validate|test|deploy|overview|status|monitor|diagnostics|health|retirements|access|policy|tasks|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-wait|task-cancel|watch|config|lock|diff [flags]", "mcp")
+		PrintUsage(os.Stderr, "usage: gregale mcp serve|connections|init|capabilities|validate|test|deploy|readiness|overview|status|monitor|diagnostics|health|retirements|access|policy|tasks|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-wait|task-cancel|watch|config|lock|diff [flags]", "mcp")
 		return 1
 	}
 	switch args[0] {
@@ -41,6 +41,8 @@ func cmdMCP(args []string) int {
 		return cmdMCPValidate(args[1:])
 	case "deploy":
 		return cmdMCPDeploy(args[1:])
+	case "readiness":
+		return cmdMCPReadiness(args[1:])
 	case "status":
 		return cmdMCPStatus(args[1:])
 	case "overview":
@@ -102,6 +104,7 @@ func cmdMCPInit(args []string) int {
 	jwks := fs.String("jwks-url", "", "HTTPS signing-key URL for private access")
 	resource := fs.String("resource", "", "canonical HTTPS MCP endpoint and token audience")
 	scopes := fs.String("scopes", "", "comma-separated required OAuth scopes")
+	authApp := unreleasedStringFlag(fs, "auth-app", "Gregale Auth app whose OAuth server issues the tokens; sets --auth external-oauth, --issuer and --jwks-url")
 	tasks := fs.Bool("tasks", false, "create separate web, worker and observer projects with durable Tasks enabled")
 	name := fs.String("name", "", "app slug prefix and shared task namespace (required with --tasks)")
 	if err := fs.Parse(args); err != nil {
@@ -113,8 +116,63 @@ func cmdMCPInit(args []string) int {
 	if *runtime != "node" && *runtime != "go" && *runtime != "python" {
 		return printErr("MCP init", errors.New("--language must be node, go, or python (--runtime is an alias)"))
 	}
+	if *authApp != "" {
+		given := map[string]bool{}
+		fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
+		if given["issuer"] || given["jwks-url"] || (given["auth"] && *auth != "external-oauth") {
+			return printErr("MCP init", errors.New("--auth-app replaces --auth, --issuer and --jwks-url"))
+		}
+		resolved, required, err := mcpAuthApp(*authApp, *scopes)
+		if err != nil {
+			return printErr("MCP init", err)
+		}
+		*auth, *issuer, *jwks, *scopes = "external-oauth", resolved.Issuer, resolved.JWKSURL, required
+	}
 	return runMCPInit(mcpInitOptions{Path: *dir, Runtime: *runtime, AuthMode: *auth,
 		Issuer: *issuer, JWKSURL: *jwks, Resource: *resource, Scopes: *scopes, Tasks: *tasks, Name: *name})
+}
+
+// mcpOpenIDScopes are the only scopes Gregale Auth's OAuth server issues.
+var mcpOpenIDScopes = map[string]bool{"openid": true, "email": true, "profile": true, "phone": true}
+
+// mcpAuthApp points a private MCP starter at a Gregale Auth app's OAuth
+// server. Its tokens carry the requested MCP endpoint as their audience.
+// It issues only OpenID scopes, so the starter requires openid unless the
+// caller names others of those.
+func mcpAuthApp(name, scopes string) (authIssuer, string, error) {
+	if !api.ValidAppSlug(name) {
+		return authIssuer{}, "", fmt.Errorf("invalid Auth app name %q", name)
+	}
+	client, err := authedClient()
+	if err != nil {
+		return authIssuer{}, "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	app, err := client.GetApp(ctx, name)
+	if err != nil {
+		return authIssuer{}, "", fmt.Errorf("find the Auth app: %w", err)
+	}
+	settings, err := fetchAuthSettings(ctx, app)
+	if err != nil {
+		return authIssuer{}, "", fmt.Errorf("read the Auth app's settings: %w", err)
+	}
+	if !settings.OAuth.Enabled {
+		return authIssuer{}, "", fmt.Errorf("the OAuth server of %s is off; turn it on with `gregale auth config %s --oauth-server on`", name, name)
+	}
+	if !settings.OAuth.DynamicRegistration {
+		PrintWarn(osStderr, "%s does not let clients register themselves; register each MCP client with `gregale auth oauth-clients add %s`, or turn on `--oauth-registration`", name, name)
+	}
+	if scopes == "" {
+		scopes = "openid"
+	}
+	for _, scope := range strings.Split(scopes, ",") {
+		if !mcpOpenIDScopes[strings.TrimSpace(scope)] {
+			return authIssuer{}, "", fmt.Errorf("scope %q: Gregale Auth issues only the openid, email, profile and phone scopes", scope)
+		}
+	}
+	issuer := settings.OAuth.Issuer
+	return authIssuer{Issuer: issuer, JWKSURL: issuer + "/.well-known/jwks.json"}, scopes, nil
 }
 
 func mcpToken(env string) (string, error) {

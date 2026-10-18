@@ -16,7 +16,8 @@ import { coordinateEventAcknowledgmentPreparation, preparationSettings,
 export type { EventAcknowledgmentPreparedOptions } from './event-acknowledgment-preparation.js';
 import { observePreparation } from './event-acknowledgment-preparation-events.js';
 import { saveIntent, saveNegativeIntent, intentStoreError, type EventAcknowledgmentIntentResult,
-  type EventAcknowledgmentIntentStatus, type IntentInput } from './event-acknowledgment-intent-store.js';
+  type EventAcknowledgmentIntentStatus, type IntentInput, type EventAcknowledgmentIntentStagingOptions } from './event-acknowledgment-intent-store.js';
+import { intentStagingPolicy, type EventAcknowledgmentIntentStoredRetryPolicy } from './event-acknowledgment-intent-retry-policy.js';
 
 function header(headers: Record<string, string | readonly string[] | undefined>, name: string): string {
   const entries = Object.entries(headers).filter(([key]) => key.toLowerCase() === name);
@@ -73,9 +74,10 @@ export class EventAcknowledgmentWorker {
   }
   /** Commit business writes, receipt and completion intent together. Sends no terminal callback. */
   async runDurable(pool: EventConsumerPool, handler: (transaction: EventConsumerTransaction, signal: AbortSignal) => Promise<string>,
-    options: EventAcknowledgmentWorkerOperationOptions = {}): Promise<EventAcknowledgmentIntentResult> {
+    options: EventAcknowledgmentIntentStagingOptions = {}): Promise<EventAcknowledgmentIntentResult> {
     if (typeof handler !== 'function') throw new TypeError('invalid event consumer handler');
-    return this.#operate(pool, options, signal => this.#durable(pool, signal, handler));
+    const policy = intentStagingPolicy(options);
+    return this.#operate(pool, options, signal => this.#durable(pool, signal, handler, {}, policy));
   }
   /** Complete with an independently acquired local processing lease. Stop local renewal before calling. */
   async runWithProcessingLease(pool: EventConsumerPool, lease: EventConsumerProcessingLease,
@@ -87,22 +89,24 @@ export class EventAcknowledgmentWorker {
   /** Atomically saves the receipt/intent and releases the matching unexpired processing claim. */
   async runDurableWithProcessingLease(pool: EventConsumerPool, lease: EventConsumerProcessingLease,
     handler: (transaction: EventConsumerTransaction, signal: AbortSignal) => Promise<string>,
-    options: EventAcknowledgmentWorkerOperationOptions = {}): Promise<EventAcknowledgmentIntentResult> {
+    options: EventAcknowledgmentIntentStagingOptions = {}): Promise<EventAcknowledgmentIntentResult> {
     if (typeof handler !== 'function') throw new TypeError('invalid event consumer handler');
+    const policy = intentStagingPolicy(options);
     return this.#operate(pool, options, signal => withEventConsumerProcessingLease(lease, this.#input,
-      hooks => this.#durable(pool, signal, handler, hooks)));
+      hooks => this.#durable(pool, signal, handler, hooks, policy)));
   }
   /** Own both renewal loops during side-effect-free preparation, then atomically save writes/receipt/intent. */
   async runPreparedDurable<T>(pool: EventConsumerPool, prepare: (signal: AbortSignal) => Promise<T>,
     handler: (transaction: EventConsumerTransaction, signal: AbortSignal, prepared: T) => Promise<string>,
     options: EventAcknowledgmentPreparedOptions): Promise<EventAcknowledgmentIntentResult> {
     const preparation = preparationSettings(options);
+    const policy = intentStagingPolicy(options);
     if (typeof prepare !== 'function' || typeof handler !== 'function') throw new TypeError('invalid event preparation callbacks');
     return this.#operate(pool, options, signal => observePreparation(preparation.onEvent, signal, async events => {
       const committed = async (operation: () => Promise<EventAcknowledgmentIntentResult>) => {
         const result = await operation(); events.intentCommitted(result.receipt.replayed); return result;
       };
-      try { return await committed(() => this.#durable(pool, signal)); }
+      try { return await committed(() => this.#durable(pool, signal, undefined, {}, policy)); }
       catch (error) { if (!missing(error)) throw error; }
       return coordinateEventAcknowledgmentPreparation(pool, this.#input, signal, preparation, prepare, {
         start: async work => {
@@ -113,39 +117,42 @@ export class EventAcknowledgmentWorker {
           }
           return this.#monitor(work, error => events.renewalFailed('platform', error));
         },
-        replay: workSignal => committed(() => this.#durable(pool, workSignal)),
+        replay: workSignal => committed(() => this.#durable(pool, workSignal, undefined, {}, policy)),
         complete: (lease, prepared, workSignal) => committed(() => withEventConsumerProcessingLease(lease, this.#input,
           processingHooks => this.#withIntent(hooks => eventConsumerTransaction(pool, this.#input,
-            tx => handler(tx, workSignal, prepared), { signal: workSignal }, hooks), processingHooks))),
+            tx => handler(tx, workSignal, prepared), { signal: workSignal }, hooks), processingHooks, policy))),
       }, events);
     }));
   }
   /** Receipt-only staging after uncertain COMMIT. Never invokes business code. */
-  async saveCompletionIntent(pool: EventConsumerPool, options: EventAcknowledgmentWorkerOperationOptions = {}): Promise<EventAcknowledgmentIntentResult> {
-    return this.#operate(pool, options, signal => this.#durable(pool, signal));
+  async saveCompletionIntent(pool: EventConsumerPool, options: EventAcknowledgmentIntentStagingOptions = {}): Promise<EventAcknowledgmentIntentResult> {
+    const policy = intentStagingPolicy(options);
+    return this.#operate(pool, options, signal => this.#durable(pool, signal, undefined, {}, policy));
   }
   /** Requires stopped work, known rollback and exclusive ownership. Saves locally before callback delivery. */
-  async saveRetryIntent(pool: EventConsumerPool, reason: string, options: EventAcknowledgmentWorkerOperationOptions = {}): Promise<EventAcknowledgmentIntentStatus> {
-    return this.#operate(pool, options, signal => saveNegativeIntent(pool, this.#intentInput(), 'retry', reason, signal));
+  async saveRetryIntent(pool: EventConsumerPool, reason: string, options: EventAcknowledgmentIntentStagingOptions = {}): Promise<EventAcknowledgmentIntentStatus> {
+    const policy = intentStagingPolicy(options);
+    return this.#operate(pool, options, signal => saveNegativeIntent(pool, this.#intentInput(), 'retry', reason, signal, policy));
   }
   /** Same ownership requirements as saveRetryIntent. */
-  async saveDeadLetterIntent(pool: EventConsumerPool, reason: string, options: EventAcknowledgmentWorkerOperationOptions = {}): Promise<EventAcknowledgmentIntentStatus> {
-    return this.#operate(pool, options, signal => saveNegativeIntent(pool, this.#intentInput(), 'dead-letter', reason, signal));
+  async saveDeadLetterIntent(pool: EventConsumerPool, reason: string, options: EventAcknowledgmentIntentStagingOptions = {}): Promise<EventAcknowledgmentIntentStatus> {
+    const policy = intentStagingPolicy(options);
+    return this.#operate(pool, options, signal => saveNegativeIntent(pool, this.#intentInput(), 'dead-letter', reason, signal, policy));
   }
   #intentInput(): IntentInput {
     return { input: this.#input, scope: this.#scope, delivery: this.#delivery, seconds: this.#seconds };
   }
   async #durable(pool: EventConsumerPool, signal?: AbortSignal,
     handler?: (transaction: EventConsumerTransaction, signal: AbortSignal) => Promise<string>,
-    processingHooks: EventConsumerTransactionHooks = {}): Promise<EventAcknowledgmentIntentResult> {
-    return this.#withIntent(hooks => handler === undefined ? this.#receipt(pool, signal, hooks) : this.#process(pool, handler, signal, hooks), processingHooks);
+    processingHooks: EventConsumerTransactionHooks = {}, policy?: Readonly<EventAcknowledgmentIntentStoredRetryPolicy>): Promise<EventAcknowledgmentIntentResult> {
+    return this.#withIntent(hooks => handler === undefined ? this.#receipt(pool, signal, hooks) : this.#process(pool, handler, signal, hooks), processingHooks, policy);
   }
   async #withIntent(operation: (hooks: EventConsumerTransactionHooks) => Promise<EventConsumerTransactionResult>,
-    processingHooks: EventConsumerTransactionHooks = {}): Promise<EventAcknowledgmentIntentResult> {
+    processingHooks: EventConsumerTransactionHooks = {}, policy?: Readonly<EventAcknowledgmentIntentStoredRetryPolicy>): Promise<EventAcknowledgmentIntentResult> {
     let intent: EventAcknowledgmentIntentStatus | undefined;
     const input = this.#intentInput();
     const hooks: EventConsumerTransactionHooks = { ...processingHooks, storageError: intentStoreError,
-      beforeCommit: async (tx, receipt) => { intent = await saveIntent(tx, input, 'complete', '', receipt.body); } };
+      beforeCommit: async (tx, receipt) => { intent = await saveIntent(tx, input, 'complete', '', receipt.body, policy); } };
     const receipt = await operation(hooks);
     return Object.freeze({ receiptConfirmed: true, receipt: Object.freeze(receipt), intent: intent! });
   }

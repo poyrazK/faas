@@ -32,6 +32,7 @@ type MCPCatalogObserverOAuthConfig struct {
 	Scopes                []string `json:"scopes,omitempty"`
 	Profile               string   `json:"profile,omitempty"`
 	TokenAuthMethod       string   `json:"token_auth_method,omitempty"`
+	BrowserRedirectURI    string   `json:"browser_redirect_uri,omitempty"`
 	CallbackPort          int      `json:"callback_port,omitempty"`
 	Resource              string   `json:"resource,omitempty"`
 	Issuer                string   `json:"issuer,omitempty"`
@@ -197,10 +198,11 @@ func (c *MCPCatalogObserverOAuthConfig) Validate() *Problem {
 // MCPCatalogOAuthFlow is private, expiring authorization state sealed by apid.
 // Public projections remove this entire value.
 type MCPCatalogOAuthFlow struct {
-	StateSHA256 string    `json:"state_sha256"`
-	Ciphertext  []byte    `json:"ciphertext"`
-	ExpiresAt   time.Time `json:"expires_at"`
-	Consumed    bool      `json:"consumed"`
+	BrowserSessionSHA256 string    `json:"browser_session_sha256,omitempty"`
+	StateSHA256          string    `json:"state_sha256"`
+	Ciphertext           []byte    `json:"ciphertext"`
+	ExpiresAt            time.Time `json:"expires_at"`
+	Consumed             bool      `json:"consumed"`
 }
 type MCPCatalogOAuthRequest struct {
 	Action      string `json:"action"`
@@ -244,7 +246,17 @@ type MCPCatalogOAuthCheck struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+const MCPCatalogOAuthBrowserCallbackPath = "/dashboard/mcp/oauth/callback"
+
+func ValidMCPOAuthBrowserRedirect(value string) bool {
+	u, err := url.Parse(value)
+	return err == nil && ValidMCPOAuthHTTPSURL(value) && u.Path == MCPCatalogOAuthBrowserCallbackPath && u.RawPath == ""
+}
+
 func (c *MCPCatalogObserverOAuthConfig) ValidateCompatibility() *Problem {
+	if c.BrowserRedirectURI != "" && (!c.Guided || !ValidMCPOAuthBrowserRedirect(c.BrowserRedirectURI)) {
+		return ErrValidation("browser_redirect_uri requires guided mode and an explicit HTTPS console MCP callback URL")
+	}
 	if c.Profile != "" && c.Profile != "generic" && c.Profile != "google" && c.Profile != "oidc" {
 		return ErrValidation("OAuth profile must be generic, google or oidc")
 	}

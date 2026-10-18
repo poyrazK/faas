@@ -45,6 +45,39 @@ func (r *recordingRoutedAppTaskVMM) Destroy(_ context.Context, nodeID, _ string)
 	return nil
 }
 
+func TestContainedCommandBackendRequiresNetworkPublicationBeforeDispatch(t *testing.T) {
+	for _, mode := range []string{"complete", "missing-publisher", "failed-publication"} {
+		t.Run(mode, func(t *testing.T) {
+			router := &recordingRoutedAppTaskVMM{}
+			released, published := false, false
+			backend := NewRoutedVmmdAppTaskBackend(router, func(context.Context, AppTaskRestoreRequest) (ResolvedAppTaskRuntime, error) {
+				out := ResolvedAppTaskRuntime{NodeID: "node-a", Spec: AppTaskRestoreSpec{Instance: "task", DeploymentID: "deployment", App: AppSpec{RehearsalRunID: "run"}}, release: func() { released = true }}
+				if mode != "missing-publisher" {
+					out.publish = func(context.Context, *AppTaskRestoreOutcome) error {
+						published = true
+						if mode == "failed-publication" {
+							return errors.New("network publication unavailable")
+						}
+						return nil
+					}
+				}
+				return out, nil
+			})
+			session, err := backend.Restore(t.Context(), AppTaskRestoreRequest{ID: "task", DeploymentID: "deployment"})
+			if mode == "complete" {
+				if err != nil || !published {
+					t.Fatalf("publication missing: %v", err)
+				}
+				if err := session.Destroy(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !released || router.destroyNode != "node-a" || router.executeNode != "" {
+				t.Fatalf("failed publication reached dispatch or leaked: %v %+v", err, router)
+			}
+		})
+	}
+}
+
 // adr: 385 — structured application outcomes survive the routed VM boundary.
 func TestRoutedVmmdAppTaskBackendKeepsCommandOutOfRestoreAndPinsSession(t *testing.T) {
 	router := &recordingRoutedAppTaskVMM{}

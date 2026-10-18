@@ -1,0 +1,28 @@
+{
+  "journeys": [
+    {
+      "name": "alice-journey",
+      "tenant_id": "",
+      "operation_id": "",
+      "help_request_id": "",
+      "started_at": null,
+      "steps": []
+    },
+    {
+      "name": "bob-journey",
+      "tenant_id": "",
+      "operation_id": "",
+      "help_request_id": "",
+      "started_at": null,
+      "steps": []
+    },
+    {
+      "name": "carol-journey",
+      "tenant_id": "",
+      "operation_id": "",
+      "help_request_id": "",
+      "started_at": null,
+      "steps": []
+    }
+  ]
+}

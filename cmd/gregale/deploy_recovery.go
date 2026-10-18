@@ -23,7 +23,7 @@ func recoveryArgument(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 func recoveryCLI() string {
-	if profile := currentProfile(); profile != "default" {
+	if profile := currentProfile(); profile != "default" || profileOverride != "" {
 		return "gregale --profile " + recoveryArgument(profile)
 	}
 	return "gregale"
@@ -38,6 +38,7 @@ type deployRecovery struct {
 	ResumeCommand  string `json:"resume_command,omitempty"`
 	RetryFlag      string `json:"retry_flag,omitempty"`
 	Hint           string `json:"hint"`
+	NextCommand    string `json:"next_command,omitempty"`
 }
 
 func newDeployRecovery(stage, slug, deploymentID, key string, timeout time.Duration, rollout bool) *deployRecovery {
@@ -57,6 +58,18 @@ func newDeployRecovery(stage, slug, deploymentID, key string, timeout time.Durat
 			r.Hint += " Retry the original command with this retry flag, unchanged source and options, and the same profile, endpoint, and account. Server replay retention limits still apply."
 		}
 	}
+	r.NextCommand = r.InspectCommand
+	if r.ResumeCommand != "" {
+		r.NextCommand = r.ResumeCommand
+	}
+	return r
+}
+
+func failedDeploymentRecovery(slug string, dep api.DeploymentResponse) *deployRecovery {
+	r := newDeployRecovery("deployment", slug, dep.ID, "", 0, false)
+	r.ResumeCommand = ""
+	r.NextCommand = recoveryCLI() + " logs " + recoveryArgument(slug) + " --deployment " + recoveryArgument(dep.ID) + " --explain"
+	r.Hint = "The deployment reached a failed terminal state. Read its evidence before submitting a corrected deployment."
 	return r
 }
 
@@ -119,10 +132,12 @@ func renderDeployRecoveryError(title string, e *deployRecoveryError) int {
 		// an idempotent retry flag were wrong advice (production-us
 		// hunt #9: a secret-scan 422). The server's own hint stands.
 		r.Hint, r.RetryFlag = "The server rejected this submission; nothing was deployed. Fix the reported problem and deploy again.", ""
+		r.NextCommand = ""
 	}
 	redact := errorTextRedactor()
 	r.App, r.DeploymentID, r.IdempotencyKey = redact(r.App), redact(r.DeploymentID), redact(r.IdempotencyKey)
 	r.InspectCommand, r.ResumeCommand, r.RetryFlag, r.Hint = redact(r.InspectCommand), redact(r.ResumeCommand), redact(r.RetryFlag), redact(r.Hint)
+	r.NextCommand = redact(r.NextCommand)
 	p.Hint = strings.TrimSpace(p.Hint + " " + r.Hint)
 	p = diagnosticProblem(p)
 	if jsonOutput {
@@ -141,6 +156,9 @@ func renderDeployRecoveryError(title string, e *deployRecoveryError) int {
 		}
 		if r.RetryFlag != "" {
 			PrintWarn(osStderr, "Retry flag for the original command: %s", r.RetryFlag)
+		}
+		if r.NextCommand != "" {
+			_, _ = fmt.Fprintf(osStderr, "Next step (POSIX shells):\n  %s\n", r.NextCommand)
 		}
 	}
 	return code

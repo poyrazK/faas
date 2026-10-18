@@ -58,14 +58,14 @@ test('fixture builder masks related rows, preserves the source, and feeds a boun
   assert.deepEqual((await owner.query('SELECT id,subject,body,created_at::text FROM api.notes ORDER BY id')).rows, before)
   assert.deepEqual((await owner.query('SELECT last_value::text,is_called FROM api.notes_id_seq')).rows, sequence)
   const project = join(directory, 'project'); await cp(starter, project, { recursive: true }); await rm(join(project, '.gregale'), { recursive: true, force: true })
-  await writeFile(join(project, 'migrations/sql/0011_fixture_upgrade.sql'), 'ALTER TABLE api.notes ADD COLUMN fixture_label text;')
+  await writeFile(join(project, 'migrations/sql/0017_fixture_upgrade.sql'), 'ALTER TABLE api.notes ADD COLUMN fixture_label text;')
   await execute(cli, ['data-api', 'dev', '--directory', project, '--once', '--port', '0'], { env, timeout: 120000 })
   const types = await readFile(join(project, 'client/src/database.types.ts'), 'utf8')
   const roundTripChecks = join(directory, 'roundtrip-checks.json')
   const checks = JSON.parse(assertions)
   checks.checks.push({ name: 'Mask replacement bytes round-trip', sql: `SELECT count(*)=1 AND bool_and(convert_to(body,'UTF8')=decode('${Buffer.from(safeBody).toString('hex')}','hex')) AS passed FROM api.notes WHERE id=10` })
   await writeFile(roundTripChecks, JSON.stringify(checks))
-  const preview = ['--json', 'data-api', 'migration', 'preview', '--directory', project, '--baseline', join(output, 'contract.json'), '--from-version', '10', '--fixture', join(output, 'fixture.sql'), '--data-check', roundTripChecks]
+  const preview = ['--json', 'data-api', 'migration', 'preview', '--directory', project, '--baseline', join(output, 'contract.json'), '--from-version', '16', '--fixture', join(output, 'fixture.sql'), '--data-check', roundTripChecks]
   const upgraded = JSON.parse((await execute(cli, preview, { env, timeout: 120000 })).stdout)
   assert.equal(upgraded.status, 'passed'); assert.equal(upgraded.steps.fixture.status, 'passed'); assert.equal(upgraded.steps.data.status, 'passed')
   assert.equal(upgraded.upgrade.source_fingerprint, report.source_fingerprint)

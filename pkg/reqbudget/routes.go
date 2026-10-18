@@ -24,6 +24,12 @@ func IsSyncInvokeRequest(r *http.Request) bool {
 	return ok && app != "" && !strings.Contains(app, "/") && suffix == ""
 }
 
+// IsDeploymentResponseCheckRequest identifies the bounded owner check that
+// can wait for a selected deployment to wake. Sibling reads keep short budgets.
+func IsDeploymentResponseCheckRequest(r *http.Request) bool {
+	return r != nil && r.Method == http.MethodPost && pathMatches("/v1/apps/*/deployments/*/response-check", r.URL.Path)
+}
+
 // deploySubmissionRoutes are the apid routes that receive deploy source or
 // submit a deployment. A commit unpacks and scans the whole source archive
 // several times before it records the deployment; on production-us that

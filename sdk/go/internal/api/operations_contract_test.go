@@ -26,7 +26,7 @@ func TestOperationWireContractMatchesPlatform(t *testing.T) {
 	}
 	want := operationDeclarations(t, platform)
 	got := operationDeclarations(t, "operations.go")
-	for _, file := range []string{"operation_subject.go", "operation_milestones.go", "operation_workflows.go", "operation_waits.go", "operation_limits.go"} {
+	for _, file := range []string{"operation_subject.go", "operation_milestones.go", "operation_workflows.go", "operation_waits.go", "operation_limits.go", "data_repair.go"} {
 		for name, declaration := range operationDeclarations(t, filepath.Join(root, file)) {
 			want[name] = declaration
 		}
@@ -41,6 +41,13 @@ func TestOperationWireContractMatchesPlatform(t *testing.T) {
 	}
 	if len(got) != len(want) {
 		t.Fatal("operation wire declaration set changed")
+	}
+	effects := operationDeclarations(t, filepath.Join(root, "exclusive_operations.go"))
+	sdkEffects := operationDeclarations(t, "dto.go")
+	for _, name := range []string{"ManagedOperationResult", "ManagedOperationEffect", "OperationEffectRecord", "OperationEffectPayload"} {
+		if effects[name] == "" || sdkEffects[name] != effects[name] {
+			t.Errorf("operation effect wire declaration drift: %s", name)
+		}
 	}
 	bounds := operationDeclarations(t, filepath.Join(root, "limits.go"))
 	sdkBounds := operationDeclarations(t, "operations_http.go")

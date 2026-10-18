@@ -18,7 +18,6 @@ import (
 	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
-	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -45,18 +44,29 @@ func OAuthHandler(store state.Store, loader httpkit.AppLoader, identities func(c
 				return
 			}
 		}
-		transport := http.DefaultTransport.(*http.Transport).Clone()
-		transport.Proxy = nil
-		transport.DialContext = oci.EgressDialContext(nil)
-		defer transport.CloseIdleConnections()
-		runner := ObserverRunner{Store: store, Identities: identities, Client: &http.Client{Transport: transport}}
 		ctx, cancel := context.WithTimeout(r.Context(), time.Duration(api.MCPCatalogObserverMaxTimeoutSeconds)*time.Second)
 		defer cancel()
+		if req.Action == "retry_renewal" {
+			recovery, ok := store.(state.MCPCatalogOAuthRecoveryStore)
+			if !ok {
+				respondOAuth(w, nil, state.ErrInvalidArgument)
+				return
+			}
+			out, err := recovery.RetryMCPCatalogOAuthRenewal(ctx, acct.ID, app.ID, req.Role, req.Revision)
+			respondOAuth(w, out, err)
+			return
+		}
+		runner, closeTransport := NewOAuthRunner(store, identities)
+		defer closeTransport()
 		out, err := runner.connectOAuth(ctx, acct.ID, app.ID, req)
-		respond(w, out, err)
+		respondOAuth(w, out, err)
 	}
 }
 func (r *ObserverRunner) connectOAuth(ctx context.Context, account, app string, req api.MCPCatalogOAuthRequest) (api.MCPCatalogOAuthResponse, error) {
+	return r.connectOAuthBound(ctx, account, app, req, "", "")
+}
+
+func (r *ObserverRunner) connectOAuthBound(ctx context.Context, account, app string, req api.MCPCatalogOAuthRequest, browserRedirect, browserSession string) (api.MCPCatalogOAuthResponse, error) {
 	var out api.MCPCatalogOAuthResponse
 	monitors, ok := r.Store.(state.MCPCatalogMonitorStore)
 	if !ok {
@@ -86,8 +96,8 @@ func (r *ObserverRunner) connectOAuth(ctx context.Context, account, app string, 
 		var clientCiphertext []byte
 		if cfg.ClientSecretRef != "" && cfg.ResolvedRevocationAuthMethod() != "none" {
 			key := strings.TrimPrefix(cfg.ClientSecretRef, api.SecretRefPrefix)
-			secret, e := r.Store.GetAppSecret(ctx, account, app, key)
-			if e == nil && secret != nil && secret.AccountID == account && secret.AppID == app && secret.Key == key && secret.Scope == state.DefaultEnvScope && secret.ManagedPostgresBindingID == "" && secret.ManagedObjectStorageCredentialID == "" && secret.ManagedCredentialRef == "" {
+			secret, e := r.Store.GetAppSecretInScope(ctx, account, app, api.MCPConnectionScope(view.Config.Scope), key)
+			if e == nil && secret != nil && secret.AccountID == account && secret.AppID == app && secret.Key == key && secret.Scope == api.MCPConnectionScope(view.Config.Scope) && secret.ManagedPostgresBindingID == "" && secret.ManagedObjectStorageCredentialID == "" && secret.ManagedCredentialRef == "" {
 				clientCiphertext = secret.Ciphertext
 			}
 		}
@@ -106,7 +116,11 @@ func (r *ObserverRunner) connectOAuth(ctx context.Context, account, app string, 
 		return out, errors.New("credential storage unavailable")
 	}
 	if req.Action == "begin" {
-		if !oauthLoopbackRedirect(req.RedirectURI) || !matchesOAuthCallbackPort(req.RedirectURI, cfg.CallbackPort) {
+		if browserSession != "" {
+			if cfg.BrowserRedirectURI != browserRedirect || req.RedirectURI != browserRedirect || !api.ValidMCPOAuthBrowserRedirect(browserRedirect) {
+				return out, state.ErrInvalidArgument
+			}
+		} else if !oauthLoopbackRedirect(req.RedirectURI) || !matchesOAuthCallbackPort(req.RedirectURI, cfg.CallbackPort) {
 			return out, state.ErrInvalidArgument
 		}
 		if cfg.DiscoveryURL != "" {
@@ -124,11 +138,18 @@ func (r *ObserverRunner) connectOAuth(ctx context.Context, account, app string, 
 			return out, err
 		}
 		verifier := base64.RawURLEncoding.EncodeToString(nonce)
-		sealed, e := secretbox.Seal(ids[0].Recipient(), secretbox.Envelope{"VERIFIER": verifier, "REDIRECT_URI": req.RedirectURI})
+		envelope := secretbox.Envelope{"VERIFIER": verifier, "REDIRECT_URI": req.RedirectURI}
+		if browserSession != "" {
+			envelope["BROWSER_SESSION"] = browserSession
+		}
+		sealed, e := secretbox.Seal(ids[0].Recipient(), envelope)
 		if e != nil {
 			return out, e
 		}
 		flow := api.MCPCatalogOAuthFlow{StateSHA256: digest([]byte(callbackState)), Ciphertext: sealed, ExpiresAt: time.Now().UTC().Add(time.Duration(api.MCPCatalogOAuthFlowSeconds) * time.Second)}
+		if browserSession != "" {
+			flow.BrowserSessionSHA256 = digest([]byte(browserSession))
+		}
 		// Allow a small transaction-time margin while retaining a strict five-minute lifetime.
 		flow.ExpiresAt = flow.ExpiresAt.Add(-time.Second)
 		view, err = store.ChangeMCPCatalogOAuth(ctx, account, app, role, req.Revision, "begin", "", &flow, nil)
@@ -163,16 +184,30 @@ func (r *ObserverRunner) connectOAuth(ctx context.Context, account, app string, 
 	if req.Action != "complete" || len(req.State) != 43 || (!req.Denied && !oauthTokenValue(req.Code)) {
 		return out, state.ErrInvalidArgument
 	}
+	if view.ObserverStatus == nil || view.ObserverStatus.OAuthFlow == nil {
+		return out, state.ErrMCPCatalogMonitorChanged
+	}
+	envelope, err := secretbox.OpenMulti(ids, view.ObserverStatus.OAuthFlow.Ciphertext)
+	if err != nil {
+		return out, errors.New("authorization unavailable")
+	}
+	if browserSession != "" {
+		if envelope["BROWSER_SESSION"] != browserSession || envelope["REDIRECT_URI"] != browserRedirect || cfg.BrowserRedirectURI != browserRedirect || !api.ValidMCPOAuthBrowserRedirect(browserRedirect) {
+			return out, state.ErrMCPCatalogMonitorChanged
+		}
+	} else if envelope["BROWSER_SESSION"] != "" || !oauthLoopbackRedirect(envelope["REDIRECT_URI"]) {
+		return out, state.ErrMCPCatalogMonitorChanged
+	}
 	view, err = store.ChangeMCPCatalogOAuth(ctx, account, app, role, req.Revision, "consume", digest([]byte(req.State)), nil, nil)
 	if err != nil {
 		return out, err
 	}
 	if req.Denied {
+		if browserSession != "" {
+			view, err = store.ChangeMCPCatalogOAuth(ctx, account, app, role, req.Revision, "abort", digest([]byte(req.State)), nil, nil)
+			return api.MCPCatalogOAuthResponse{State: "authorization_denied", Revision: view.Config.Revision}, err
+		}
 		return out, state.ErrInvalidArgument
-	}
-	envelope, err := secretbox.OpenMulti(ids, view.ObserverStatus.OAuthFlow.Ciphertext)
-	if err != nil || !oauthLoopbackRedirect(envelope["REDIRECT_URI"]) {
-		return out, errors.New("authorization unavailable")
 	}
 	job := state.MCPCatalogObserverJob{AccountID: account, AppID: app, Role: role, Snapshot: view}
 	clientSecret := ""
@@ -187,6 +222,7 @@ func (r *ObserverRunner) connectOAuth(ctx context.Context, account, app string, 
 	if err != nil {
 		return out, err
 	}
+	out.State = "authorization_uncertain"
 	data, exchangeErr := r.exchangeOAuthCode(ctx, cfg, req.Code, envelope["VERIFIER"], envelope["REDIRECT_URI"], clientSecret)
 	sealed, retirementErr := r.recordExchangeRetirement(ctx, account, reservation, ids, data)
 	if retirementErr != nil {
@@ -204,6 +240,9 @@ func (r *ObserverRunner) connectOAuth(ctx context.Context, account, app string, 
 	expires := now.Add(time.Duration(data.ExpiresIn) * time.Second)
 	oauth := api.MCPCatalogObserverOAuthStatus{RetirementID: reservation.ID, State: "connected", ExpiresAt: &expires, LastRenewalAt: &now, Ciphertext: sealed, SourceSHA256: digest([]byte("guided")), GrantedScopes: scopes}
 	view, err = store.ChangeMCPCatalogOAuth(ctx, account, app, role, req.Revision, "finish", digest([]byte(req.State)), nil, &oauth)
+	if err != nil {
+		return out, err
+	}
 	return api.MCPCatalogOAuthResponse{Revision: view.Config.Revision, State: "connected"}, err
 }
 func oauthLoopbackRedirect(value string) bool {
@@ -259,4 +298,12 @@ func grantedOAuthScopes(requested []string, value string) ([]string, error) {
 		}
 	}
 	return scopes, nil
+}
+
+func respondOAuth(w http.ResponseWriter, out any, err error) {
+	if errors.Is(err, state.ErrConflict) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "OAuth recovery refused", "Reload the connection; resolve uncertain issuance or wait for the current operation before retrying"))
+		return
+	}
+	respond(w, out, err)
 }
