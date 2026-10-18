@@ -4,6 +4,7 @@
 -- other AI policy switches it needs an AI provider. Additive and
 -- replay-safe.
 
+-- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin

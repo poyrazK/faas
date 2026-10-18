@@ -6,6 +6,7 @@
 -- runs through another of the account's AI integrations. Moderation calls
 -- settle under their own caller. Additive and replay-safe.
 
+-- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin

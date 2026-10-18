@@ -6,6 +6,7 @@
 -- reservations of leases carrying the tag. The request log keeps each
 -- call's tags. Additive and replay-safe.
 
+-- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin

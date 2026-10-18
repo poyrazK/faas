@@ -6,6 +6,7 @@
 -- Batches keep a created batch's reservation until outboundd settles it.
 -- Evaluation calls settle under their own caller. Additive and replay-safe.
 
+-- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin

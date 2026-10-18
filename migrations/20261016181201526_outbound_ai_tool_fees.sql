@@ -3,6 +3,7 @@
 -- search, and code-interpreter container sessions per GB), and the daily
 -- rollup counts them. Additive and replay-safe.
 
+-- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin

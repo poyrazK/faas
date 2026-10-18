@@ -6,6 +6,7 @@
 -- not moderated, so those settings must be complete when it is on. Additive
 -- and replay-safe.
 
+-- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin

@@ -4,6 +4,7 @@
 -- check gains tag_daily_cost, and the once-per-period index includes the
 -- tag. Replay-safe: the check and the index are dropped and created again.
 
+-- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin

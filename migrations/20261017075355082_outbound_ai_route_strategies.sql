@@ -3,6 +3,7 @@
 -- first (ordered, weighted, latency or cost), targets may carry a weight,
 -- and a cost route may name a latency target. Additive and replay-safe.
 
+-- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin

@@ -4,6 +4,7 @@
 -- cost, and settlement records what provider prompt caching saved, which
 -- is negative when cache writes outweigh reads. Additive and replay-safe.
 
+-- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
