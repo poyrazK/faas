@@ -1668,5 +1668,71 @@
     "fresh_hosted_current_head_checks": "required",
     "native_physical_acceptance": false,
     "production_activation": false
+  },
+  "scheduler_environment_startup_synchronization": {
+    "hosted_failure_head": "dd29f31a0b257bb4268dff11cae74447a21b2598",
+    "hosted_failure_job": 117687161440,
+    "hosted_failed_test": "TestRun_EnvMigrateLiveMaxPerTick_BadValue",
+    "cause": "fixed 200ms startup cancellation can precede environment validation",
+    "fix": "wait validation result or actual READY=1 Unixgram notification; one unchanged3s bound covers startup and drain; fail clean exit before readiness",
+    "production_schema_sdk_unchanged": true,
+    "invalid_value_assertions_preserved": true,
+    "tested_source_tree_before_evidence": "d5599d885f8e5fdf2cb0e5bbd03377c4a56261cf",
+    "compile_bounds": "5GiB/GOGC50;serial",
+    "runtime_bounds": "2GiB/GOGC10/GOMAXPROCS2/3m",
+    "validation_phases": [
+      {
+        "name": "compile",
+        "seconds": 22.84,
+        "exitCode": 0,
+        "log": "/tmp/function-pr4883-env-startup.f2eiedrh/compile.log"
+      },
+      {
+        "name": "env-race-repeat20",
+        "seconds": 180.216,
+        "exitCode": 1,
+        "log": "/tmp/function-pr4883-env-startup.f2eiedrh/env-race-repeat20.log",
+        "counts": {
+          "pass": 222,
+          "fail": 1
+        },
+        "failedTests": [
+          "TestRun_EnvHappyPath"
+        ],
+        "skippedTests": []
+      },
+      {
+        "name": "failing-env-case-race-repeat20",
+        "seconds": 33.299,
+        "exitCode": 0,
+        "counts": {
+          "pass": 20
+        },
+        "failedTests": [],
+        "skippedTests": [],
+        "log": "/tmp/function-pr4883-env-startup.f2eiedrh/failing-env-case-race-repeat20.log"
+      },
+      {
+        "name": "full-schedd-race",
+        "seconds": 34.7,
+        "exitCode": 0,
+        "counts": {
+          "pass": 130,
+          "skip": 1
+        },
+        "failedTests": [],
+        "skippedTests": [
+          "TestLoadSchedInternalSvcKey_SealedPath"
+        ],
+        "log": "/tmp/function-pr4883-env-startup.f2eiedrh/full-schedd-race.log"
+      }
+    ],
+    "initial_group_repetition": "222 passing cases before aggregate3m package timeout; incomplete, not qualified; retained historical attempt",
+    "targeted_stress_log_sha256": "1c92638cc01c315c4a11b9b293b6e8f4b83b365021261954cbb99048d8799e11",
+    "full_command_suite_log_sha256": "38bee46e0c76b51ee673c7e0b9d42c1c4df4517de43c6cb9175d2c6cee559b74",
+    "existing_root_only_skip": "TestLoadSchedInternalSvcKey_SealedPath; existing guard requires root to write /etc/faas/secrets/host.age; no host secret touched",
+    "fresh_hosted_current_head_checks": "required",
+    "native_physical_acceptance": false,
+    "production_activation": false
   }
 }

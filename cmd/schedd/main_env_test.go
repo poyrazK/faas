@@ -2,8 +2,8 @@ package main
 
 // Coverage sweep for cmd/schedd/main.go FAAS_* env-override parsing
 // + the envOr helper that PR #753 did not reach. Pattern: every
-// test injects a real pgtest pool + a working listen seam so
-// runWithDeps reaches the env-parse block before ctx cancel.
+// test injects a real pgtest pool + a working listen seam and
+// waits for validation failure or readiness before ctx cancel.
 //
 // Driven by the coverage profile on origin/main — covers ~10
 // remaining 0%-coverage branches in cmd/schedd/main.go. Stays
@@ -39,10 +39,9 @@ func envListenSeam(_ context.Context, target string, _ *tls.Config, _ string) (n
 }
 
 // runScheddWithEnv drives runWithDeps to the env-override block
-// and back. It cancels ctx once the listener is set up so the
-// function returns nil (clean drain) — unless the env was set to a
-// bad value, in which case the function returns the parse error
-// before the subscribe loop starts.
+// and back. Invalid overrides return their parse error. Valid
+// overrides must reach the daemon's readiness notification before
+// cancellation, which proves all startup env blocks executed.
 func runScheddWithEnv(t *testing.T, env map[string]string) error {
 	t.Helper()
 	pool := migratedPool(t)
@@ -55,6 +54,27 @@ func runScheddWithEnv(t *testing.T, env map[string]string) error {
 	for k, v := range env {
 		t.Setenv(k, v)
 	}
+	notifyPath := filepath.Join(dir, "notify.sock")
+	notify, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: notifyPath, Net: "unixgram"})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = notify.Close() }()
+	t.Setenv("NOTIFY_SOCKET", notifyPath)
+	ready := make(chan struct{})
+	go func() {
+		buf := make([]byte, 256)
+		for {
+			n, _, err := notify.ReadFromUnix(buf)
+			if err != nil {
+				return
+			}
+			if string(buf[:n]) == "READY=1" {
+				close(ready)
+				return
+			}
+		}
+	}()
 	deps := runDeps{
 		configPath:  cfgPath,
 		capCheck:    func() error { return nil },
@@ -66,16 +86,27 @@ func runScheddWithEnv(t *testing.T, env map[string]string) error {
 		listen:      envListenSeam,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- runWithDeps(ctx, discardLog(), deps) }()
-	// Wait for the listener to come up + env blocks to parse.
-	time.Sleep(200 * time.Millisecond)
-	cancel()
+	deadline := time.NewTimer(3 * time.Second)
+	defer deadline.Stop()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("runWithDeps exited before reporting readiness")
+		}
+		return err
+	case <-ready:
+		cancel()
+	case <-deadline.C:
+		t.Fatal("runWithDeps neither validated configuration nor became ready within 3s")
+	}
 	select {
 	case err := <-done:
 		return err
-	case <-time.After(3 * time.Second):
-		t.Fatal("runWithDeps did not return within 3s of cancel")
+	case <-deadline.C:
+		t.Fatal("runWithDeps did not finish startup and cancellation within 3s")
 		return nil
 	}
 }

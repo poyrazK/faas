@@ -631,6 +631,34 @@ was still pending when main changed, so that head was never declared green.
 Every applicable hosted check must pass on the newly published head. Physical
 native acceptance and production activation remain pending.
 
+## Scheduler environment-test startup synchronization (2026-10-18)
+
+Hosted shard-one job `117687161440` on head
+`dd29f31a0b257bb4268dff11cae74447a21b2598` found
+`TestRun_EnvMigrateLiveMaxPerTick_BadValue` returning no validation error.
+Its helper canceled startup after a fixed 200 ms, which can precede the
+scheduler's environment validation. The helper now waits for either the
+validation result or the actual systemd `READY=1` notification. A single
+three-second bound covers startup and cancellation. Invalid-value assertions
+remain intact; a clean exit before readiness also fails the test. Production
+startup, schemas, SDKs and resource/deadline settings are unchanged.
+
+Tested source tree before this evidence entry: `d5599d885f8e5fdf2cb0e5bbd03377c4a56261cf`. Serial race
+compilation passes in 22.840 seconds at 5 GiB/GOGC 50. Twenty consecutive
+executions of the previously failing case pass in 33.299 seconds without
+skips. The complete scheduler command race suite passes 130 tests/subtests
+in 34.700 seconds, with one existing skip:
+`TestLoadSchedInternalSvcKey_SealedPath` requires root to write the default
+host-secret path. That boundary remains unqualified; no host secret is touched.
+Execution retains 2 GiB/GOGC 10, two processors and three-minute suite deadlines.
+
+An initial twenty-fold repetition of the entire environment group passed 222
+cases before exceeding its aggregate three-minute suite budget. The targeted
+stress run and the full suite above provide the successful qualification; the
+incomplete group attempt remains recorded in the portable results. Neither
+assertions nor deadlines are relaxed. Fresh hosted checks on the newly
+published exact head remain required. Native activation remains disabled.
+
 ## Qualification boundary
 
 Production activation remains disabled. This managed container has no supported
