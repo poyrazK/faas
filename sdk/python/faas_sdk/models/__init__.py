@@ -140,6 +140,7 @@ from .api_key_response_status import APIKeyResponseStatus
 from .app_binding_inventory import AppBindingInventory
 from .app_binding_inventory_item import AppBindingInventoryItem
 from .app_binding_inventory_item_type import AppBindingInventoryItemType
+from .app_binding_inventory_service_binding_source import AppBindingInventoryServiceBindingSource
 from .app_binding_inventory_service_targets import AppBindingInventoryServiceTargets
 from .app_change_event import AppChangeEvent
 from .app_change_event_source import AppChangeEventSource
@@ -2512,6 +2513,7 @@ from .managed_realtime_schedules_response import ManagedRealtimeSchedulesRespons
 from .managed_realtime_signal_request import ManagedRealtimeSignalRequest
 from .managed_realtime_signal_response import ManagedRealtimeSignalResponse
 from .managed_realtime_signal_response_member_id import ManagedRealtimeSignalResponseMemberId
+from .managed_service_probe_spec import ManagedServiceProbeSpec
 from .mcp_admission_evidence import MCPAdmissionEvidence
 from .mcp_admission_evidence_outcome import MCPAdmissionEvidenceOutcome
 from .mcp_admission_evidence_version import MCPAdmissionEvidenceVersion
@@ -5023,6 +5025,14 @@ from .send_app_message_request_data_content_type import SendAppMessageRequestDat
 from .send_app_message_request_datacontenttype import SendAppMessageRequestDatacontenttype
 from .send_app_message_response import SendAppMessageResponse
 from .send_app_message_response_status import SendAppMessageResponseStatus
+from .service_authorization_check import ServiceAuthorizationCheck
+from .service_authorization_check_result import ServiceAuthorizationCheckResult
+from .service_binding_explanation import ServiceBindingExplanation
+from .service_binding_explanation_policy_source import ServiceBindingExplanationPolicySource
+from .service_binding_explanation_result import ServiceBindingExplanationResult
+from .service_binding_inventory_context import ServiceBindingInventoryContext
+from .service_binding_inventory_context_routing_status import ServiceBindingInventoryContextRoutingStatus
+from .service_binding_inventory_context_source import ServiceBindingInventoryContextSource
 from .service_binding_policy import ServiceBindingPolicy
 from .service_binding_transport import ServiceBindingTransport
 from .service_call_scope import ServiceCallScope
@@ -5808,6 +5818,7 @@ __all__ = (
     "AppBindingInventory",
     "AppBindingInventoryItem",
     "AppBindingInventoryItemType",
+    "AppBindingInventoryServiceBindingSource",
     "AppBindingInventoryServiceTargets",
     "AppChangeEvent",
     "AppChangeEventSource",
@@ -8048,6 +8059,7 @@ __all__ = (
     "ManagedRealtimeSignalRequest",
     "ManagedRealtimeSignalResponse",
     "ManagedRealtimeSignalResponseMemberId",
+    "ManagedServiceProbeSpec",
     "MCPAdmissionEvidence",
     "MCPAdmissionEvidenceOutcome",
     "MCPAdmissionEvidenceVersion",
@@ -10377,6 +10389,14 @@ __all__ = (
     "SendAppMessageRequestDataContentType",
     "SendAppMessageResponse",
     "SendAppMessageResponseStatus",
+    "ServiceAuthorizationCheck",
+    "ServiceAuthorizationCheckResult",
+    "ServiceBindingExplanation",
+    "ServiceBindingExplanationPolicySource",
+    "ServiceBindingExplanationResult",
+    "ServiceBindingInventoryContext",
+    "ServiceBindingInventoryContextRoutingStatus",
+    "ServiceBindingInventoryContextSource",
     "ServiceBindingPolicy",
     "ServiceBindingTransport",
     "ServiceCallerJWK",

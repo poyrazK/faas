@@ -15,6 +15,7 @@ import (
 // a reserved platform canary. Revision hashes binding configuration, private
 // credential revision facts and the runtime configuration change stamp.
 type BindingVerificationPin struct {
+	ManagedService       *api.ManagedServiceProbeSpec  `json:"managed_service,omitempty"`
 	TargetDeploymentID   string                        `json:"target_deployment_id,omitempty"`
 	Type                 string                        `json:"type"`
 	Binding              string                        `json:"binding"`
@@ -42,6 +43,7 @@ type BindingVerificationStore interface {
 // selectors never fall back; default inventory may retain stale prior evidence
 // when the selected deployment has no admitted probe for a binding.
 type BindingVerificationSelection struct {
+	ManagedService bool
 	ServiceTargets map[string]string
 	DeploymentID   string
 	AllowFallback  bool
@@ -104,6 +106,9 @@ func validateBindingVerificationPin(params CreateAppTaskParams) error {
 	} else if pin.OutboundProbe != nil {
 		return fmt.Errorf("%w: unexpected outbound verification spec", ErrAppTaskInvalid)
 	}
+	if pin.ManagedService != nil && (!pin.ManagedService.Valid() || pin.Type != api.BindingTypeService || pin.ManagedService.Service != pin.Binding || pin.ManagedService.CallerDeploymentID != params.DeploymentID || pin.ManagedService.TargetDeploymentID != pin.TargetDeploymentID || pin.ManagedService.ContextRevision != pin.Revision || pin.CredentialGeneration != nil || pin.ObjectStorageMode != "") {
+		return fmt.Errorf("%w: invalid managed service verification context", ErrAppTaskInvalid)
+	}
 	if (pin.Type != api.BindingTypeService && pin.Type != api.BindingTypePostgres && pin.Type != api.BindingTypeObjectStorage && pin.Type != api.BindingTypeOutbound) ||
 		pin.Binding == "" || !bindingRevisionPattern.MatchString(pin.Revision) ||
 		params.Kind != AppTaskKindManual || params.ExclusiveOperationID != "" || params.FailureRules != nil || params.OccurrenceID != "" || params.StartDeadlineAt != nil || params.CommandShell || len(params.Command) != commandLen ||
@@ -119,6 +124,10 @@ func cloneBindingVerificationPin(pin *BindingVerificationPin) *BindingVerificati
 		return nil
 	}
 	copy := *pin
+	if pin.ManagedService != nil {
+		spec := *pin.ManagedService
+		copy.ManagedService = &spec
+	}
 	if pin.OutboundProbe != nil {
 		spec := *pin.OutboundProbe
 		copy.OutboundProbe = &spec

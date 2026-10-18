@@ -1082,8 +1082,11 @@ jobs:
           python3 scripts/ci/queue-bindings-native-verdict_test.py
           python3 scripts/ci/queue-bindings-native-runner_test.py
           sh -n scripts/test-queue-bindings-native.sh
-          go test -race -p 1 ./pkg/managedpostgres/guestqualification ./pkg/e2etest/postgresstarter ./pkg/e2etest/queuestarter
-          go test -race -p 1 ./pkg/e2etest -run '^Test(PostgresGuest|StorageGuest|QueueGuest)'
+          python3 scripts/ci/managed-service-native-verdict_test.py
+          python3 scripts/ci/managed-service-native-runner_test.py
+          sh -n scripts/test-managed-service-native.sh
+          go test -race -p 1 ./pkg/managedpostgres/guestqualification ./pkg/e2etest/postgresstarter ./pkg/e2etest/queuestarter ./pkg/e2etest/servicestarter ./pkg/e2etest/testdata/helloserver
+          go test -race -p 1 ./pkg/e2etest -run '^Test(PostgresGuest|StorageGuest|QueueGuest|ServiceGuest)'
       - name: scoped PostgreSQL rehearsal fault and recovery (no KVM)
         if: matrix.id == 'b'
         env:
@@ -1121,7 +1124,7 @@ jobs:
           GOMAXPROCS: 2
         run: |
           go test -race -p 1 -tags metal,managed_postgres_native ./pkg/apid/apidserver -run '^TestManagedPostgresFixturePublicRotation$' -count=1 -v -timeout=180s
-          go test -race -p 1 -tags metal,managed_postgres_native,object_storage_native,queue_binding_native -c -o "$RUNNER_TEMP/binding-native.test" ./cmd/e2e
+          go test -race -p 1 -tags metal,managed_postgres_native,object_storage_native,queue_binding_native,managed_service_native -c -o "$RUNNER_TEMP/binding-native.test" ./cmd/e2e
       - uses: actions/setup-python@v7
         if: matrix.id == 'b'
         with:
@@ -1670,6 +1673,13 @@ jobs:
         run: bash scripts/ci/run-native-e2e_test.sh
       - name: native e2e phase partition contract
         run: bash scripts/ci/native-e2e-phases_test.sh
+      - name: native binding discovery and evidence contracts
+        run: |
+          go test -race ./scripts/ci/nativetestinventory
+          go run ./scripts/ci/nativetestinventory --check
+          python3 scripts/ci/binding-native-lane_test.py
+          python3 scripts/ci/binding-native-host_test.py
+          bash -n scripts/ci/run-binding-native.sh scripts/ci/package-binding-native-source.sh
       - name: GCP OS Login preflight contract
         run: bash scripts/ci/gcp-oslogin-preflight_test.sh
       # ---- former job `capabilities-check`: product capability registry ----

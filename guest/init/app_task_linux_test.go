@@ -22,6 +22,7 @@ func TestDecideModeAppTaskMarkerWins(t *testing.T) {
 		appTaskManifestRelativePath:   &fstest.MapFile{Data: []byte(`{"kind":"app_task","version":1}`)},
 		executionManifestRelativePath: &fstest.MapFile{Data: []byte(`{"kind":"execution","version":1}`)},
 		"etc/faas/job.json":           &fstest.MapFile{Data: []byte(`{"kind":"job"}`)},
+		"etc/faas/app.json":           &fstest.MapFile{Data: []byte(`{"execution_mode":"worker","entrypoint":["/must-not-start-worker"]}`)},
 	}
 	mode, _, err := decideMode(fsys)
 	if err != nil {

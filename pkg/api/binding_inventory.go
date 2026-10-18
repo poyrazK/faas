@@ -19,6 +19,7 @@ const (
 // snapshot or a connectivity check. Complete means every binding section
 // could be read. Omitted sections always have a structured issue.
 type AppBindingInventory struct {
+	ServiceBindingSource     string                    `json:"service_binding_source,omitempty"`
 	ServiceTargets           map[string]string         `json:"service_targets,omitempty"`
 	App                      string                    `json:"app"`
 	Scope                    string                    `json:"scope,omitempty"`
@@ -39,41 +40,69 @@ type AppBindingInventory struct {
 // Credential material, credential IDs, provider origins and raw errors are
 // deliberately absent from this contract.
 type AppBindingInventoryItem struct {
-	QueueCanary               *QueueBindingCanary         `json:"queue_canary,omitempty"`
-	QueueCanarySupported      bool                        `json:"queue_canary_supported"`
-	ServiceTargetDeploymentID string                      `json:"service_target_deployment_id,omitempty"`
-	Type                      string                      `json:"type"`
-	Name                      string                      `json:"name"`
-	Binding                   string                      `json:"binding"`
-	Scope                     string                      `json:"scope"`
-	Access                    string                      `json:"access"`
-	State                     string                      `json:"state"`
-	RuntimeStatus             string                      `json:"runtime_status"`
-	VerificationStatus        string                      `json:"verification_status"`
-	Verification              *BindingVerification        `json:"verification,omitempty"`
-	Refresh                   *BindingRefresh             `json:"refresh,omitempty"`
-	ApplicationAdoption       *BindingApplicationAdoption `json:"application_adoption,omitempty"`
-	ObservedAt                *time.Time                  `json:"observed_at,omitempty"`
-	HTTPURL                   string                      `json:"http_url,omitempty"`
-	HTTPSEnv                  string                      `json:"https_env,omitempty"`
-	HTTPSURL                  string                      `json:"https_url,omitempty"`
-	Transport                 string                      `json:"transport,omitempty"`
-	CredentialGeneration      *int64                      `json:"credential_generation,omitempty"`
-	RotationPending           *bool                       `json:"rotation_pending,omitempty"`
-	ConsumerState             string                      `json:"consumer_state,omitempty"`
-	QueueEnvironment          *string                     `json:"queue_environment,omitempty"`
-	ConsumerStateReason       string                      `json:"consumer_state_reason,omitempty"`
-	ConsumerLiveness          string                      `json:"consumer_liveness,omitempty"`
-	CredentialConfigured      *bool                       `json:"credential_configured,omitempty"`
-	OutboundProbe             *OutboundBindingProbePolicy `json:"outbound_probe,omitempty"`
-	AllowedMethods            []string                    `json:"allowed_methods,omitempty"`
-	AllowedPathPrefixes       []string                    `json:"allowed_path_prefixes,omitempty"`
+	ServiceContext            *ServiceBindingInventoryContext `json:"service_context,omitempty"`
+	QueueCanary               *QueueBindingCanary             `json:"queue_canary,omitempty"`
+	QueueCanaryReason         string                          `json:"queue_canary_reason,omitempty"`
+	QueueCanarySupported      bool                            `json:"queue_canary_supported"`
+	ServiceTargetDeploymentID string                          `json:"service_target_deployment_id,omitempty"`
+	Type                      string                          `json:"type"`
+	Name                      string                          `json:"name"`
+	Binding                   string                          `json:"binding"`
+	Scope                     string                          `json:"scope"`
+	Access                    string                          `json:"access"`
+	State                     string                          `json:"state"`
+	RuntimeStatus             string                          `json:"runtime_status"`
+	VerificationStatus        string                          `json:"verification_status"`
+	Verification              *BindingVerification            `json:"verification,omitempty"`
+	Refresh                   *BindingRefresh                 `json:"refresh,omitempty"`
+	ApplicationAdoption       *BindingApplicationAdoption     `json:"application_adoption,omitempty"`
+	ObservedAt                *time.Time                      `json:"observed_at,omitempty"`
+	HTTPURL                   string                          `json:"http_url,omitempty"`
+	HTTPSEnv                  string                          `json:"https_env,omitempty"`
+	HTTPSURL                  string                          `json:"https_url,omitempty"`
+	Transport                 string                          `json:"transport,omitempty"`
+	CredentialGeneration      *int64                          `json:"credential_generation,omitempty"`
+	RotationPending           *bool                           `json:"rotation_pending,omitempty"`
+	ConsumerState             string                          `json:"consumer_state,omitempty"`
+	QueueEnvironment          *string                         `json:"queue_environment,omitempty"`
+	ConsumerStateReason       string                          `json:"consumer_state_reason,omitempty"`
+	ConsumerLiveness          string                          `json:"consumer_liveness,omitempty"`
+	CredentialConfigured      *bool                           `json:"credential_configured,omitempty"`
+	OutboundProbe             *OutboundBindingProbePolicy     `json:"outbound_probe,omitempty"`
+	AllowedMethods            []string                        `json:"allowed_methods,omitempty"`
+	AllowedPathPrefixes       []string                        `json:"allowed_path_prefixes,omitempty"`
+}
+
+// ServiceBindingInventoryContext describes a managed deployment's frozen edge.
+// A resolved route is metadata, never connectivity or qualification evidence.
+type ServiceBindingInventoryContext struct {
+	Source                string `json:"source"`
+	CallerDeploymentID    string `json:"caller_deployment_id"`
+	TargetAppID           string `json:"target_app_id,omitempty"`
+	TargetApp             string `json:"target_app,omitempty"`
+	ReleaseID             string `json:"release_id,omitempty"`
+	Revision              string `json:"revision"`
+	RoutingStatus         string `json:"routing_status"`
+	RoutingReason         string `json:"routing_reason"`
+	VerificationSupported bool   `json:"verification_supported"`
+	VerificationContract  string `json:"verification_contract,omitempty"`
+	VerificationReason    string `json:"verification_reason"`
+}
+
+const ManagedServiceVerificationUnsupported = "managed_service_verification_unsupported"
+
+// ServiceBindingVerificationUnsupported prevents an app probe or an unknown
+// future service context from qualifying a deployment-scoped managed edge.
+func ServiceBindingVerificationUnsupported(item AppBindingInventoryItem) bool {
+	_, supported := ManagedServiceProbeForItem(item)
+	return item.Type == BindingTypeService && item.ServiceContext != nil && !supported
 }
 
 // BindingVerification describes the latest admitted platform canary, never a
 // resident application's acknowledgement. Check details contain stable status
 // values only; task output, provider errors and credential material are absent.
 type BindingVerification struct {
+	ManagedService       *ManagedServiceProbeSpec   `json:"managed_service,omitempty"`
 	TaskID               string                     `json:"task_id,omitempty"`
 	TargetDeploymentID   string                     `json:"target_deployment_id,omitempty"`
 	ObjectStorageMode    string                     `json:"object_storage_mode,omitempty"`

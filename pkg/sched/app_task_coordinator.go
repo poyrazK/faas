@@ -359,11 +359,7 @@ func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.App
 		executeTimeout += time.Duration(interactive.AttachTimeoutSeconds)*time.Second + appTaskInteractiveSlack
 	}
 	executeCtx, cancelExecute := context.WithTimeout(workCtx, executeTimeout)
-	outcome, executeErr := session.Execute(executeCtx, AppTaskExecuteRequest{
-		Command: append([]string(nil), task.Command...), CommandShell: task.CommandShell,
-		Timeout: time.Duration(task.TimeoutSeconds) * time.Second, MaxOutputBytes: task.MaxOutputBytes,
-		Interactive: interactive,
-	})
+	outcome, executeErr := c.executeTaskCommand(executeCtx, session, task, interactive)
 	c.config.Metrics.operation(executeCtx, "execute", executeErr)
 	executeTimedOut := errors.Is(executeCtx.Err(), context.DeadlineExceeded)
 	cancelExecute()

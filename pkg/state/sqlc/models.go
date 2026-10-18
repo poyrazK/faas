@@ -3717,6 +3717,28 @@ type EntityOutboxAcceptance struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type EnvironmentBindingReleaseReceipt struct {
+	ReleaseID  pgtype.UUID
+	GraphID    pgtype.UUID
+	Members    []byte
+	ValidUntil pgtype.Timestamptz
+	RecordedAt pgtype.Timestamptz
+}
+
+type EnvironmentBindingRetirementReceipt struct {
+	ReleaseID     pgtype.UUID
+	SourceID      pgtype.UUID
+	RevisionID    pgtype.UUID
+	Generation    int64
+	IntentVersion int64
+	PlanHash      string
+	PriorRelease  string
+	RetirementIds []pgtype.UUID
+	Policies      []byte
+	ValidUntil    pgtype.Timestamptz
+	RecordedAt    pgtype.Timestamptz
+}
+
 type EnvironmentDesiredRevision struct {
 	ID               pgtype.UUID
 	SourceID         pgtype.UUID
@@ -3963,6 +3985,14 @@ type EnvironmentQualificationRestoreReservation struct {
 	CreatedAt         pgtype.Timestamptz
 }
 
+type EnvironmentQualificationServiceReceipt struct {
+	RequestID  pgtype.UUID
+	Attempt    int64
+	Binding    string
+	Route      []byte
+	RecordedAt pgtype.Timestamptz
+}
+
 type EnvironmentQualificationSmokeReceipt struct {
 	RequestID         pgtype.UUID
 	Attempt           int64
@@ -4025,6 +4055,7 @@ type EnvironmentWorkloadQualificationRequest struct {
 	LeaseUntil         pgtype.Timestamptz
 	Attempt            int64
 	ReservedInstanceID pgtype.UUID
+	BindingContext     []byte
 }
 
 type EnvironmentWorkloadRetirement struct {
@@ -4051,6 +4082,7 @@ type EnvironmentWorkloadRetirement struct {
 	RecoveryRevisionID   pgtype.UUID
 	RecoveryGeneration   int64
 	RecoveredAt          pgtype.Timestamptz
+	BindingPolicyContext []byte
 }
 
 type EnvironmentWorkloadServingQueueAck struct {
