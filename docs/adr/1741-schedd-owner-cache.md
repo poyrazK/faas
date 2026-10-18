@@ -233,17 +233,62 @@ one round trip of the difference.
 | restore, cache off | 62 | 44 |
 | thaw, frozen fast path | 1 | 1 |
 
-What is left before vmmd, for a warm-cache restore: wake phase 1's
-running-instance lookup (1), the snapshot reads (2), the locality and
-usage reads (2), the restore-pressure lease (3: a fleet-wide advisory
-lock, the lease counts, the lease insert) and the admission transaction
-(10). Reaching section 5's two writes needs the admission transaction as
-one statement or function: node admission locks, the node advisory lock,
-the headroom reads, the insert, the binding and the generation check. The
-node advisory lock cannot share a statement with the headroom read under
-READ COMMITTED (the read's snapshot would predate the lock), so it takes a
-function. That rewrites ADR-193 and ADR-1528's admission and is left for
-a decision of its own.
+Step 5, second round (2026-10-18), after the owner asked to cut the
+round trips between compute nodes and the control plane further. A
+compute node's schedd talks to the control plane's Postgres for every
+statement, so each round trip crosses the network. The test now runs as a
+compute schedd does: it owns its node, places from the node registry and
+vmmd's live capacity reports, and leaves the scale-out stamp's parallel
+transaction out of the chain.
+
+- **Admission is one statement.** Migration 20261018153840637 adds
+  `admission_reserve_node` (the capacity policy lock, the node check at the
+  placement's lifecycle generation, the per-node advisory lock, then the
+  headroom read as its own statement, so it still follows the lock) and
+  `admit_wake_instance` (those checks, the insert, the ADR-1523 binding and
+  the generation check, taken last). Refusals raise with constraint names
+  mapped to the transaction's errors. The transaction path (worker
+  reservations, job instances) calls `admission_reserve_node` for its node
+  checks. A half-and-half race through both paths still fills a node
+  exactly to its ceiling.
+- **The publication is one statement.** `publish_instance_on_generation`
+  does the compare-and-swap, the config proof with the wake's event and
+  notification, the runtime-config receipt and the generation check.
+  Upgrade acceptances, standards receipts and warm or frozen thaws keep the
+  transaction.
+- **The restore-pressure lease is one round trip.**
+  `snapshot_restore_pressure_acquire` takes the fleet-wide session lock and
+  then counts in its own statement; the lease insert and the unlock finish
+  in the background, in that order, so the next holder still counts it. The
+  release deletes in the background; the TTL is authoritative.
+- **The rest overlaps.** The boot's reads of the app and deployment alone
+  (private network, runtime base, rehearsal network) and placement's
+  snapshot (nodes, usage, owner check, which uses the wake's app) load while
+  the snapshot reads run; each candidate's locality is read while it is
+  checked; the standards check hands its capture to the boot.
+
+Every function is used only after a once-per-process probe finds it, so a
+schedd that starts before its release's migrations admits as before.
+
+| wake, owner cache warm | before step 5 | after the first round | now |
+|---|---|---|---|
+| snapshot restore | 52 | 31 | 8 (7 before vmmd, 1 after) |
+| cold boot | 44 | 28 | 7 (6 before, 1 after) |
+| thaw, frozen fast path | 1 | 1 | 1 |
+
+The earlier columns predate the test's live capacity reports (which take
+two usage reads off the path) and node ownership (which adds one app read),
+so they are not exact baselines for the last column.
+
+What a warm-cache restore still waits for: wake phase 1's
+running-instance lookup, the snapshot reads with placement, the receipt
+checks with locality, the lease lock and counts, the admission, the
+standards check, and the publication after vmmd. Taking the lookup off the
+path would mean speculative reads on every wake a running instance
+answers; folding the standards check into the admission would tie the
+function to the standards capture's format; taking the lease lock earlier
+would hold the fleet-wide restore lock longer during bursts. With the
+cache cold (the first wake after a change), a restore is 27 round trips.
 
 1. This ADR.
 2. Migration: the counter table, triggers and notification, the store
