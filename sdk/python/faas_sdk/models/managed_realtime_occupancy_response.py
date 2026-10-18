@@ -19,7 +19,7 @@ class ManagedRealtimeOccupancyResponse:
 
     channels: list[ManagedRealtimeChannelOccupancy]
     partial: bool
-    """True when some active realtime nodes did not answer, so counts may be low."""
+    """True when some active realtime nodes did not answer and counts may be low."""
     nodes_queried: int
     nodes_unavailable: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

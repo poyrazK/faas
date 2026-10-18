@@ -9,7 +9,7 @@ import type { ManagedRealtimeChannelOccupancy } from './ManagedRealtimeChannelOc
 export type ManagedRealtimeOccupancyResponse = {
   channels: Array<ManagedRealtimeChannelOccupancy>;
   /**
-   * True when some active realtime nodes did not answer, so counts may be low.
+   * True when some active realtime nodes did not answer and counts may be low.
    */
   partial: boolean;
   nodes_queried: number;
