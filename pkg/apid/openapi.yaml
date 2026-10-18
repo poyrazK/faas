@@ -50348,6 +50348,466 @@ paths:
   # the operator_intent outcome-missing count, the trace_id
   # completeness ratio, and the Prometheus alert firing count.
   # Admin-only (admin scope + FAAS_ADMIN_EMAILS allowlist + MFA).
+  /v1/admin/obs/collection-history:
+    get:
+      tags: [admin]
+      operationId: getObsAlertCollectionHistory
+      summary: Inspect prospective collection outcomes and missing-observation intervals.
+      description: |
+        Requires operator read scope, MFA and the operator allowlist. Accepts one
+        optional nonempty since timestamp, default 24 hours and maximum 30 days,
+        and an optional details=true or details=false flag.
+        Reads prospective immutable collection outcomes from one read-only
+        snapshot with a five-second budget. Success commits atomically with
+        retained episode changes; failures contain closed sanitized reason codes.
+        Each outcome supplies at most 60 seconds of collection cadence evidence,
+        ending sooner at the next outcome. Missing intervals, periods before
+        recording began, expired evidence and unrecordable outages remain unknown.
+        These intervals are not continuous availability or proof of expected
+        rule inventory, metric coverage or complete incident history.
+        Microsecond duration partitions cover the full half-open [since, as_of)
+        window exactly. Counts include outcomes at since and as_of; a retained
+        carry-in outcome can contribute duration without increasing those counts.
+        Outcomes before the 30-day retention horizon or after as_of are excluded.
+        More than 100000 read outcomes returns 400 requiring a narrower since.
+        Totals precede a newest-first preview of at most 200 coalesced intervals
+        with explicit truncation. Current disabled configuration does not erase
+        historical evidence. With details=true, also returns up to 20 newest failed
+        attempts inside [since, as_of] from the same snapshot, separately from
+        coalesced intervals. Every failure counts toward the complete total,
+        including those without diagnostics. Recorded rejection diagnostics
+        describe the exact bounded source snapshot at attempted_at, never a
+        later live rule-health read. Complete rule/group counts precede up to
+        10 unhealthy rule/group items and 16 KiB of compact diagnostic JSON.
+        Missing older diagnostics and unreadable sources remain unknown.
+        Observed issues do not prove the underlying root cause or which issue
+        triggered the collector's first rejection. No raw query, evaluation
+        error, label, absolute path or arbitrary runbook URL is retained.
+        No lifecycle or triage writes occur on GET.
+      parameters:
+        - in: query
+          name: since
+          description: Inclusive collection-outcome lower bound for a prospective retained coverage window.
+          schema: { type: string, format: date-time }
+        - in: query
+          name: details
+          description: Include a bounded newest-first preview of failed attempts and their captured rejection diagnostics; accepts exactly true or false once.
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Exact cadence coverage totals and a bounded newest-first collection interval preview.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsAlertCollectionHistory' }
+        '400': { description: Invalid collection-history query or read exceeding 100000 outcomes; narrow since. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Collection-history read denied by operator scope or MFA or allowlist policy. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { description: Collection history could not be read within its bounded storage deadline. }
+
+  /v1/admin/obs/rule-health:
+    get:
+      tags: [admin]
+      operationId: getObsRuleHealth
+      summary: Diagnose current alert-rule evaluation health.
+      description: |
+        Requires operator read scope, MFA and the operator allowlist. Accepts no
+        query parameters. Assesses the complete bounded Prometheus alert-rule
+        snapshot under a three-second deadline and returns at most 200 metadata
+        items, unhealthy first. Totals cover all loaded rules before preview
+        truncation. An empty loaded-rule snapshot is unavailable, never healthy.
+        Failed, stale, unavailable, clock-invalid and structurally invalid rules
+        remain explicit; pending/firing counts are null for unhealthy rules.
+        Reported state is the last reported rule state, not proof of recovery.
+        Group names and file basenames are bounded safe text; absolute paths,
+        queries, raw evaluation errors, labels and annotations are omitted.
+        Invalid identity text is omitted and opaque hashes remain available.
+        No collection, history or triage writes occur. This current read does
+        not establish the cause of a past collection failure or completeness
+        of an expected deployed rule inventory. Source errors return HTTP 200
+        with unavailable state and null totals. Disabled configuration is explicit.
+      responses:
+        '200':
+          description: Loaded-rule assessment with complete totals and a bounded diagnostic preview.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsRuleHealthResponse' }
+        '400': { description: Alert-rule diagnostics do not accept query parameters. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Rule assessment denied by operator scope or MFA or allowlist policy. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/admin/obs/rule-coverage:
+    get:
+      tags: [admin]
+      operationId: getObsRuleCoverage
+      summary: Compare loaded alert definitions with an explicitly selected expected set.
+      description: |
+        Requires operator read scope, MFA and the operator allowlist. Without
+        expected_set, returns unknown with available versioned set metadata and
+        does not read Prometheus. Selection is per request and never establishes
+        deployment intent. gregale-core-v1 expects faas.rules.yml alerts;
+        gregale-full-v1 also expects bridge.rules.yml, pg_backup.rules.yml and
+        data_placement.yaml alerts. Both are minimum sets; additional rules are
+        allowed and counted. The embedded catalog revision identifies the exact
+        expected definitions shipped in this apid binary.
+        A complete bounded Prometheus alert-rule read and comparison share a
+        three-second deadline. Compares canonical PromQL syntax, for,
+        keep_firing_for and rule labels. Identity uses file basename, group and
+        alert name; directory relocation is ignored and basename/group collisions
+        are ambiguous. Missing fields and unattributed identities remain unknown.
+        A complete empty source is degraded with known missing rules.
+        Definitions matching the selected set are covered, independently of
+        evaluation, metric input, recording rule or notification health. Group
+        intervals, offsets, annotations and source directories are not compared.
+        Totals precede a 200-item preview ordered ambiguous, changed, missing,
+        unknown, matching, with opaque identity hashes breaking ties. Raw queries,
+        labels, errors and absolute paths are omitted. Unselected or unreadable
+        evidence returns HTTP 200 with unknown state and null totals. This read
+        never changes collection, history or triage state.
+      parameters:
+        - name: expected_set
+          in: query
+          required: false
+          description: Select exactly one known minimum expectation set; no automatic selection occurs.
+          schema: { type: string, enum: [gregale-core-v1, gregale-full-v1] }
+      responses:
+        '200':
+          description: Explicit expectation metadata with complete comparison totals or an unknown reason.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsRuleCoverage' }
+        '400': { description: Unknown or empty or repeated expected_set or another query parameter. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Rule coverage read denied by operator scope or MFA or allowlist policy. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/admin/obs/input-health:
+    get:
+      tags: [admin]
+      operationId: getObsInputHealth
+      summary: Inspect critical telemetry inputs for an explicitly selected role.
+      description: |
+        Requires operator read scope, MFA and the operator allowlist. Without an
+        explicit expected_role, returns unknown with choices and reads no source.
+        Both roles expect at least one apid, gatewayd (public gateway) and schedd
+        scrape target. Single-box also expects vmmd. Control-plane adds vmmd,
+        gatewayd-internal and schedd-compute counts from fresh apid discovery.
+        Static counts are minimums, not a complete intended inventory. Compute
+        counts do not prove target identity membership. The default Prometheus
+        collision mapping job=apid plus exported_job selects discovery evidence.
+        Missing, stale, conflicting or invalid discovery stays unknown. A fresh
+        zero registry is legitimate; omitted invalid discovery targets degrade.
+        Pins strict Prometheus queries to one time under a three-second budget
+        with at most six concurrent fixed job readers. Compares original sample
+        timestamps, distinguishing fresh up, down, stale and missing minimum
+        targets, with unexpected compute counts reported separately. Checks one
+        vetted always-instantiated daemon readiness gauge per job only on fresh
+        up targets, preserving per-target gaps. Uses a ten-minute lookback at
+        fifteen-second steps; freshness is 120 seconds. Gauge value zero is a
+        valid input and does not imply ready. Other metrics and rule evaluation
+        or notification health are unassessed. A known zero expectation with no
+        observed targets makes metric checks not applicable. Failures remain
+        unknown without cached values. Returns aggregate counts and closed codes,
+        excluding target addresses, labels, queries, URLs and raw errors. No writes.
+      parameters:
+        - name: expected_role
+          in: query
+          required: false
+          description: Operator-selected minimum role expectation; this does not discover deployment intent.
+          schema: { type: string, enum: [single-box-v1, control-plane-v1] }
+      responses:
+        '200':
+          description: Independently scoped scrape expectations and critical gauge sample evidence.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsInputHealth' }
+        '400': { description: Unknown or empty or repeated expected_role or another input health query key. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Input health read denied by operator scope or MFA or allowlist policy. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/admin/obs/recording-coverage:
+    get:
+      tags: [admin]
+      operationId: getObsRecordingCoverage
+      summary: Compare expected recording definitions and their catalog alert references.
+      description: |
+        Requires operator read scope, MFA and the operator allowlist. Select a
+        minimum expected file set explicitly with expected_set. Core selects
+        faas.rules.yml; full also selects bridge.rules.yml, pg_backup.rules.yml
+        and data_placement.yaml. Without selection, returns unknown with available
+        metadata and makes no Prometheus request. Catalog presence is not
+        deployment intent. This recording catalog has its own exact revision.
+        Reads one complete bounded /api/v1/rules?type=record source and compares
+        canonical expressions and rule labels under a shared three-second budget.
+        Omitted recording labels mean empty per the Prometheus wire contract;
+        explicit null labels or unsupported definitions remain unknown. Identity
+        uses file basename, group and recording name. Duplicate candidates or
+        basename/group collisions are ambiguous. Additional valid identities are
+        allowed. A complete empty source has known missing expected definitions.
+        Definition totals precede a 200-item preview ordered ambiguous, changed,
+        missing, unknown, matching and then identity hash. Recording comparisons
+        only report expression or labels as changed fields.
+        Each item includes at most five syntactically dependent expected alerts,
+        including transitive recording chains, with known-reference count and truncation.
+        Dependency metadata binds the exact expected alert catalog revision.
+        Nonexact metric selectors, duplicate producer names and reachable cycles
+        leave explicit mapping uncertainty; its alert preview is also capped at
+        five with full counts. Known references can coexist with uncertain links.
+        Dependencies describe selected expected catalog syntax, not current
+        deployed alert definitions, series presence, execution impact or cause.
+        Covered definitions do not prove evaluation or input or notification
+        health. Group intervals, offsets and annotations are outside comparison.
+        Source failures return unknown with null totals; selected catalog mapping
+        remains independently available. Raw queries, labels, errors, source URLs
+        and absolute paths are omitted. No collection, history or triage writes.
+      parameters:
+        - name: expected_set
+          in: query
+          required: false
+          description: Select exactly one known minimum file-set expectation for recording definitions and expected alert references.
+          schema: { type: string, enum: [gregale-core-v1, gregale-full-v1] }
+      responses:
+        '200':
+          description: Recording definition comparison and independently scoped expected alert references.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsRecordingCoverage' }
+        '400': { description: Unknown or empty or repeated expected_set or another recording coverage query key. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Recording coverage read denied by operator scope or MFA or allowlist policy. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/admin/obs/notification-health:
+    get:
+      tags: [admin]
+      operationId: getObsNotificationHealth
+      summary: Inspect alert notification pipeline evidence.
+      description: |
+        Requires operator read scope, MFA and the operator allowlist. Accepts no
+        query parameters. Reads bounded Alertmanager alert status and Prometheus
+        observations under one shared three-second deadline. Signals distinguish
+        fresh zero values from missing, invalid, stale or failed evidence.
+        Integration counters cover all receivers, including watchdog traffic;
+        counter presence does not imply that an integration is configured.
+        increases over ten minutes are extrapolated and can be fractional.
+        Healthy signal state describes evidence quality. Overall degraded means
+        an observed failure, dropped notification, unhealthy target or reload,
+        zero queue capacity or current queue pressure above 80 percent. Partial
+        means some evidence is unavailable. This read never confirms delivery
+        of a specific episode, human receipt, or external watchdog receipt.
+        Receiver configuration, addresses, webhook credentials and silence
+        comments are never read or returned. A disabled or invalidly configured
+        local Alertmanager reader is explicit. Source failures produce a partial
+        HTTP 200 observation with null unavailable values.
+      responses:
+        '200':
+          description: Independent notification signals and integration counters with evidence quality.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsNotificationHealth' }
+        '400': { description: Notification health does not accept query parameters. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Notification pipeline observation denied by operator scope or MFA or allowlist. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/admin/obs/incidents/platform_alert/recurrence:
+    get:
+      tags: [admin]
+      operationId: getObsAlertRecurrence
+      summary: Diagnose repeated retained alert activations and observed recovery gaps.
+      description: |
+        Requires operator read scope, MFA and the operator allowlist. Reads one
+        retained activation cohort between since and as_of inclusive, default
+        24 hours and maximum 30 days. Groups by rule definition and exact series;
+        changed rules and different resources never share a recurrence sequence.
+        Repeat activations equal episodes minus one within each group. Durations
+        measure activation to confirmed resolution observation. Recovery gaps
+        compare adjacent activations only when the previous confirmed resolution
+        precedes or equals the next activation; unknown recovery, overlapping
+        observations and invalid clocks are counted separately. Minimum and
+        nearest-rank median use valid whole-second samples; absent samples are
+        null. This does not establish exact recovery time, continuous collection,
+        lifetime recurrence, false positives or notification volume.
+        Cohorts above 1000 episodes return 400 requiring a narrower since.
+        Complete totals precede a preview of at most 200 series ranked by repeat
+        count descending, latest activation descending, rule key then series ID.
+        Each preview includes at most five recent episodes newest first with
+        explicit truncation. One read-only database snapshot has a five-second
+        budget. Current collection and retention metadata do not reconstruct
+        expected inventory or per-rule coverage gaps. Prospective cadence evidence
+        accompanies this report; its own 100000-outcome bound also requires a
+        narrower since on overflow. Reads perform no lifecycle or triage writes.
+      parameters:
+        - in: query
+          name: since
+          description: Inclusive recurrence activation lower bound; defaults to 24 hours before as_of.
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Complete bounded recurrence totals and a ranked series preview with evidence coverage.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsAlertRecurrence' }
+        '400': { description: Invalid recurrence window or query or cohort exceeding 1000 episodes; narrow since. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Recurrence read denied by operator scope or MFA or allowlist policy. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { description: Recurrence storage snapshot could not be read within its deadline. }
+
+  /v1/admin/obs/incidents/platform_alert/response-times:
+    get:
+      tags: [admin]
+      operationId: getObsAlertResponseTimes
+      summary: Measure retained alert acknowledgment and observed resolution timing.
+      description: |
+        Reads retained platform alert episodes activated between since and as_of,
+        inclusive. The default window is 24 hours with a maximum of 30 days.
+        Receipt coverage must prove the complete revision sequence before first
+        acknowledgment is included. Invalid timestamps are excluded from samples.
+        Unknown and unobserved outcomes remain in explicit cohort denominators.
+        Resolution measures confirmed rule recovery rather than actual repair.
+        Discrete nearest-rank percentiles use whole-second valid samples only.
+        Cohorts above 1000 episodes or 10000 matching receipts return 400 and
+        require a narrower since; results are never silently sampled. Reads
+        share one database snapshot and a five-second query budget. Retention
+        and collection metadata do not guarantee a complete historical window.
+        Prospective cadence coverage is read in the same snapshot. Its separate
+        100000-outcome read bound also returns 400 requiring a narrower since.
+      parameters:
+        - in: query
+          name: since
+          description: Inclusive activation-cohort lower bound; defaults to 24 hours before as_of.
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Retained-cohort timing totals and bounded severity/component aggregates.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsAlertResponseTimes' }
+        '400': { description: Invalid timing query or cohort above the bounded read capacity; narrow since. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Timing read denied by operator scope or MFA or allowlist policy. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { description: Response timing storage could not be read within its deadline. }
+
+  /v1/admin/obs/incidents/platform_alert/summary:
+    get:
+      tags: [admin]
+      operationId: getObsAlertWorkloadSummary
+      summary: Summarize retained platform alert workload and observation freshness.
+      description: |
+        Requires operator read authorization, MFA and the operator allowlist.
+        Counts all physically retained platform alert episodes in one database
+        snapshot, including expired rows awaiting retention cleanup. There is
+        no look-back window, pagination or query filter. Groups are exact
+        intersections of status, severity, acknowledgment, ownership and snooze.
+        Needs-attention includes unsnoozed unresolved episodes that are either
+        unacknowledged or unowned, including unknown observations. Collection
+        failure, stale rules and disabled collection cannot resolve an alert.
+        Counts are null before the first successful collection. Age is elapsed
+        time since episode activation, not time since assignment or acknowledgment.
+        SQL failure returns unavailable rather than an empty workload.
+      responses:
+        '200':
+          description: Exact retained-alert workload with bounded dimension groups and oldest evidence links.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsAlertWorkloadSummary' }
+        '400': { description: Query parameters are unsupported for this fixed scope. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: 'Summary read denied by operator scope, MFA or allowlist.' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { description: Workload storage could not be read within the summary budget. }
+
+  /v1/admin/obs/incidents/platform_alert/{id}/triage-history:
+    get:
+      tags: [admin]
+      operationId: getObsAlertTriageHistory
+      summary: Read revision-bounded triage receipts for one retained alert episode.
+      description: |
+        Requires operator read authorization, MFA and the operator allowlist.
+        Initial reads accept an immutable episode ID or a legacy series alias.
+        The response identifies the canonical episode. Cursors pin that episode
+        and the initial upper revision for 15 minutes; an alias moving to a
+        recurrence invalidates an earlier cursor. Entries are ordered by
+        descending revision even if receipt clocks move backwards. Each page
+        is a consistent database read, but retention can change between pages.
+        Coverage reports missing receipts without claiming why they disappeared.
+        History excludes actor identities and raw audit payloads.
+      parameters:
+        - in: path
+          name: id
+          description: Retained episode hash or legacy series alias resolving to its latest episode.
+          required: true
+          schema: { type: string, pattern: '^[0-9a-f]{64}$' }
+        - in: query
+          name: limit
+          description: Maximum receipts on this page; changing the limit between pages is allowed.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+        - in: query
+          name: cursor
+          description: Opaque next_cursor from this episode history; expires 15 minutes after the first page.
+          schema: { type: string, maxLength: 1024 }
+      responses:
+        '200':
+          description: Sanitized triage page with whole-snapshot receipt coverage.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsAlertTriageHistory' }
+        '400': { description: 'Invalid bounds, cursor, episode binding or expired cursor.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: 'Operator read scope, MFA or allowlist rejected.' }
+        '404': { description: No retained episode exists for this reference. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { description: Receipt storage or integrity could not be verified within the read budget. }
+
+  /v1/admin/obs/incidents/platform_alert/{id}/triage:
+    post:
+      tags: [admin]
+      operationId: mutateObsAlertTriage
+      security:
+        - cookieAuth: []
+      summary: Update human triage on one immutable retained alert episode.
+      description: |
+        Requires an allowlisted operator session, MFA with recent step-up,
+        trusted browser origin and Idempotency-Key. Bearer keys cannot mutate.
+        Series aliases cannot be mutated. Every accepted action increments the
+        episode revision and commits with its audit entry. Claims cannot take
+        over another operator's ownership. Snooze affects inbox triage only;
+        observed firing/resolved/unknown status and notification delivery remain
+        independent. Obtain the current revision from incident evidence.
+      parameters:
+        - in: path
+          name: id
+          description: Immutable retained episode ID; a series alias cannot be mutated.
+          required: true
+          schema: { type: string, pattern: '^[0-9a-f]{64}$' }
+        - in: header
+          name: Idempotency-Key
+          description: Unique request key used to replay an identical mutation receipt.
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 255 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObsAlertTriageRequest' }
+      responses:
+        '200':
+          description: Updated workflow state, independent of observed alert status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsAlertTriageResponse' }
+        '400': { description: 'Invalid action, revision, body or snooze deadline.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: 'Operator session, MFA step-up, allowlist or origin rejected.' }
+        '404': { description: Immutable episode ID is not retained. }
+        '409': { description: Revision changed or another operator owns the episode. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { description: Required storage or audit write failed; no triage mutation committed. }
+
   /v1/admin/obs/health:
     get:
       tags: [admin]
@@ -78006,11 +78466,949 @@ components:
       x-since: "2026-08"
       x-pr-cluster: "operator-obs-mega"
 
+    ObsRuleHealthResponse:
+      type: object
+      description: Point-in-time loaded-rule diagnostics with complete source totals and a bounded unhealthy-first preview.
+      required: [generated_at, scope, state, max_age_seconds, clock_skew_tolerance_seconds, totals, items, total_items, limit, truncated, limitations]
+      properties:
+        generated_at: { type: string, format: date-time }
+        scope: { type: string, const: currently_loaded_alert_rules }
+        state: { type: string, enum: [healthy, degraded, disabled, unavailable] }
+        reason: { type: string }
+        max_age_seconds: { type: integer, const: 120 }
+        clock_skew_tolerance_seconds: { type: integer, const: 30 }
+        totals:
+          description: Null for unconfigured or failed source reads; a complete empty source has known zero rules and unavailable state.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsRuleHealthTotals' }
+            - { type: 'null' }
+        items:
+          type: array
+          maxItems: 200
+          description: Invalid items precede invalid clocks then failures then stale then unavailable then healthy; group and rule hashes break ties.
+          items: { $ref: '#/components/schemas/ObsRuleHealthItem' }
+        total_items: { type: integer, minimum: 0 }
+        limit: { type: integer, const: 200 }
+        truncated: { type: boolean }
+        limitations:
+          type: array
+          items: { type: string }
+    ObsRuleHealthTotals:
+      type: object
+      description: Complete bounded source counts. Rule health categories partition rules; invalid groups include empty groups with missing or duplicate identity.
+      required: [groups, rules, healthy, failed, stale, invalid_clock, unavailable, invalid, invalid_groups]
+      properties:
+        groups: { type: integer, minimum: 0, maximum: 4096 }
+        rules: { type: integer, minimum: 0, maximum: 4096 }
+        healthy: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+        stale: { type: integer, minimum: 0 }
+        invalid_clock: { type: integer, minimum: 0 }
+        unavailable: { type: integer, minimum: 0 }
+        invalid: { type: integer, minimum: 0 }
+        invalid_groups: { type: integer, minimum: 0 }
+    ObsRuleHealthItem:
+      type: object
+      description: Safe identity and closed diagnostics for a loaded rule or an invalid empty group. Counts are null unless healthy; age is null for absent or future evaluation clocks within the accepted skew tolerance.
+      required: [kind, id, group_id, state, issues, reported_state, evaluation_age_seconds, has_evaluation_error, pending, firing]
+      properties:
+        kind: { type: string, enum: [rule, group] }
+        id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        group_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        group_name: { type: string, maxLength: 128, pattern: '^[a-zA-Z0-9_.:-]+$' }
+        file_name: { type: string, maxLength: 128, pattern: '^[a-zA-Z0-9_.:-]+$' }
+        rule_name: { type: string, maxLength: 128, pattern: '^[a-zA-Z_:][a-zA-Z0-9_:]*$' }
+        state: { type: string, enum: [healthy, failed, stale, invalid_clock, unavailable, invalid] }
+        issues:
+          type: array
+          items:
+            type: string
+            enum: [invalid_group_identity, duplicate_group_identity, duplicate_rule_identity, unexpected_rule_type, invalid_rule_definition, evaluation_failed, evaluation_unavailable, missing_evaluation, evaluation_clock_in_future, evaluation_stale, invalid_alert_observation, inconsistent_rule_state]
+        reported_state: { type: string, enum: [inactive, pending, firing, unknown] }
+        last_evaluated_at: { type: string, format: date-time }
+        evaluation_age_seconds: { type: [integer, 'null'], format: int64, minimum: 0 }
+        has_evaluation_error: { type: boolean }
+        pending: { type: [integer, 'null'], minimum: 0 }
+        firing: { type: [integer, 'null'], minimum: 0 }
+        runbook_url: { type: string, maxLength: 512 }
+
+    ObsRuleCoverage:
+      type: object
+      description: Selected expected alert definitions compared with a complete current source; covered does not imply healthy evaluations or inputs.
+      required: [generated_at, scope, fingerprint_algorithm, selection_source, state, expected_set, available_sets, totals, items, total_items, limit, truncated, limitations]
+      properties:
+        generated_at: { type: string, format: date-time }
+        scope: { type: string, const: selected_expected_alert_rules }
+        fingerprint_algorithm: { type: string, const: promql_ast_v1 }
+        selection_source: { type: string, enum: [none, explicit_request] }
+        state: { type: string, enum: [covered, degraded, partial, unknown] }
+        reason:
+          type: string
+          enum: [expected_set_not_selected, expected_catalog_unavailable, expected_set_unavailable, prometheus_not_configured, source_unavailable, deadline_exceeded, expected_rules_differ, comparison_incomplete]
+        expected_set:
+          description: Selected versioned set metadata; null when no selection or its catalog is unavailable.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsRuleCoverageSet' }
+            - { type: 'null' }
+        available_sets:
+          type: array
+          maxItems: 8
+          description: Built-in choices from this binary; their presence is not deployment intent.
+          items: { $ref: '#/components/schemas/ObsRuleCoverageSet' }
+        totals:
+          description: Null for unselected or unreadable evidence; a complete empty source instead has known missing definitions.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsRuleCoverageTotals' }
+            - { type: 'null' }
+        items:
+          type: array
+          maxItems: 200
+          description: Expected definitions ordered by ambiguity then change then absence then unknown then match; identity hashes break ties.
+          items: { $ref: '#/components/schemas/ObsRuleCoverageItem' }
+        total_items: { type: integer, minimum: 0, maximum: 4096 }
+        limit: { type: integer, const: 200 }
+        truncated: { type: boolean }
+        limitations:
+          type: array
+          items:
+            type: string
+            enum: [expectation_selected_per_request_not_deployment_evidence, selected_set_is_a_minimum_not_an_exclusive_inventory, alert_rules_only_recording_rules_not_checked, coverage_not_evaluation_metric_or_notification_health, canonical_syntax_not_semantic_equivalence, group_intervals_offsets_annotations_and_source_paths_not_compared, raw_queries_labels_and_errors_excluded, preview_bounded_totals_cover_complete_source]
+    ObsRuleCoverageSet:
+      type: object
+      description: Versioned minimum expectation set with a digest of its exact canonical definitions and safe source basenames.
+      required: [id, revision, files, expected_rules]
+      properties:
+        id: { type: string, enum: [gregale-core-v1, gregale-full-v1] }
+        revision: { type: string, pattern: '^[0-9a-f]{64}$' }
+        files:
+          type: array
+          minItems: 1
+          maxItems: 8
+          uniqueItems: true
+          description: Sorted safe source basenames selected by the expectation set.
+          items: { type: string, maxLength: 128, pattern: '^[a-zA-Z0-9_.:-]+$' }
+        expected_rules: { type: integer, minimum: 1, maximum: 4096 }
+    ObsRuleCoverageTotals:
+      type: object
+      description: Full counts before preview truncation. Expected categories partition expected_rules; additional valid identities are allowed by the minimum set.
+      required: [expected_rules, observed_rules, additional_rules, invalid_observed_rules, invalid_observed_groups, matching, missing, changed, ambiguous, unknown]
+      properties:
+        expected_rules: { type: integer, minimum: 1, maximum: 4096 }
+        observed_rules: { type: integer, minimum: 0, maximum: 4096 }
+        additional_rules: { type: integer, minimum: 0, maximum: 4096 }
+        invalid_observed_rules: { type: integer, minimum: 0, maximum: 4096 }
+        invalid_observed_groups: { type: integer, minimum: 0, maximum: 4096 }
+        matching: { type: integer, minimum: 0, maximum: 4096 }
+        missing: { type: integer, minimum: 0, maximum: 4096 }
+        changed: { type: integer, minimum: 0, maximum: 4096 }
+        ambiguous: { type: integer, minimum: 0, maximum: 4096 }
+        unknown: { type: integer, minimum: 0, maximum: 4096 }
+    ObsRuleCoverageItem:
+      type: object
+      description: One expected identity with safe catalog metadata and closed comparison evidence; these IDs are independent of historical episode rule keys.
+      required: [id, file_name, group_name, rule_name, state, expected_fingerprint, observed_candidates, changed_fields]
+      properties:
+        id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        file_name: { type: string, maxLength: 128, pattern: '^[a-zA-Z0-9_.:-]+$' }
+        group_name: { type: string, maxLength: 128, pattern: '^[a-zA-Z0-9_.:-]+$' }
+        rule_name: { type: string, maxLength: 128, pattern: '^[a-zA-Z_:][a-zA-Z0-9_:]*$' }
+        state: { type: string, enum: [matching, missing, changed, ambiguous, unknown] }
+        reason: { type: string, enum: [rule_missing, definition_changed, ambiguous_identity, source_identity_unavailable, definition_unavailable] }
+        expected_fingerprint: { type: string, pattern: '^[0-9a-f]{64}$' }
+        observed_fingerprint: { type: string, pattern: '^[0-9a-f]{64}$' }
+        observed_candidates: { type: integer, minimum: 0, maximum: 4096 }
+        changed_fields:
+          type: array
+          maxItems: 4
+          uniqueItems: true
+          description: Changed fields in expression then for then keep_firing_for then labels order; empty unless comparison is known changed.
+          items: { type: string, enum: [expression, for, keep_firing_for, labels] }
+
+    ObsInputHealth:
+      type: object
+      description: Critical telemetry sample evidence for a selected minimum deployment role expectation.
+      required: [generated_at, scope, expected_role, available_roles, state, max_age_seconds, lookback_seconds, jobs, limitations]
+      properties:
+        generated_at: { type: string, format: date-time }
+        scope: { type: string, const: selected_critical_telemetry_inputs }
+        expected_role: { type: string, enum: ['', single-box-v1, control-plane-v1] }
+        available_roles:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: { type: string, enum: [single-box-v1, control-plane-v1] }
+        state: { type: string, enum: [healthy, degraded, partial, unknown] }
+        reason: { type: string, enum: [expected_role_not_selected, expected_role_unavailable] }
+        max_age_seconds: { type: integer, const: 120 }
+        lookback_seconds: { type: integer, const: 600 }
+        jobs:
+          type: array
+          maxItems: 6
+          description: Fixed selected job inventory; empty before role selection, with full aggregate counts and no target preview.
+          items: { $ref: '#/components/schemas/ObsInputJob' }
+        limitations:
+          type: array
+          items:
+            type: string
+            enum: [role_selected_per_request_not_deployment_evidence, static_expectations_are_minimum_one_not_full_inventory, discovery_counts_not_target_identity_membership, default_scrape_job_collision_uses_exported_job, readiness_sample_presence_not_readiness_value, metric_checks_cover_fresh_up_targets_only, one_vetted_idle_safe_gauge_per_selected_job_not_all_rule_inputs, historical_samples_bounded_by_lookback, raw_labels_queries_urls_and_errors_excluded]
+    ObsInputJob:
+      type: object
+      description: One selected job's independent expectation, scrape and gauge evidence.
+      required: [job, state, expectation, targets, metrics]
+      properties:
+        job: { type: string, enum: [apid, gatewayd, schedd, gatewayd-internal, schedd-compute, vmmd] }
+        state: { type: string, enum: [healthy, degraded, partial, unknown] }
+        expectation: { $ref: '#/components/schemas/ObsInputExpectation' }
+        targets: { $ref: '#/components/schemas/ObsInputTargets' }
+        metrics:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items: { $ref: '#/components/schemas/ObsInputMetric' }
+    ObsInputExpectation:
+      type: object
+      description: Explicit static minimum or validated fresh compute discovery count; unknown counts remain null.
+      required: [source, state, minimum_targets, invalid_targets, observed_at]
+      properties:
+        source: { type: string, enum: [explicit_minimum, compute_discovery] }
+        state: { type: string, enum: [healthy, degraded, unknown] }
+        reason: { type: string, enum: [discovery_unavailable, discovery_missing, discovery_invalid, discovery_stale, discovery_invalid_targets] }
+        minimum_targets:
+          description: Minimum expected returned scrape targets; null when fresh discovery cannot establish a count.
+          oneOf:
+            - { type: integer, minimum: 0, maximum: 4096 }
+            - { type: 'null' }
+        invalid_targets:
+          description: Omitted invalid compute registry rows; null for static minimums or unavailable discovery.
+          oneOf:
+            - { type: integer, minimum: 0, maximum: 4096 }
+            - { type: 'null' }
+        observed_at:
+          description: Oldest original discovery sample or successful refresh time; null without validated discovery.
+          oneOf:
+            - { type: string, format: date-time }
+            - { type: 'null' }
+    ObsInputTargets:
+      type: object
+      description: Configured scrape coverage with known failures retained independently of unknown expectations.
+      required: [state, counts]
+      properties:
+        state: { type: string, enum: [healthy, degraded, partial, unknown] }
+        reason: { type: string, enum: [source_unavailable, invalid_evidence, scrape_coverage_gap, inventory_count_mismatch, expectation_unavailable] }
+        counts:
+          description: Complete strict scrape vector counts; null when source evidence is unavailable or invalid.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsInputTargetCounts' }
+            - { type: 'null' }
+    ObsInputTargetCounts:
+      type: object
+      description: Original scrape freshness partition; missing minimum is separate from observed target failures.
+      required: [observed, fresh_up, down, stale, missing_minimum, extra]
+      properties:
+        observed: { type: integer, minimum: 0, maximum: 4096 }
+        fresh_up: { type: integer, minimum: 0, maximum: 4096 }
+        down: { type: integer, minimum: 0, maximum: 4096 }
+        stale: { type: integer, minimum: 0, maximum: 4096 }
+        missing_minimum:
+          description: Expected minimum less observed count, clamped at zero; null if the expectation is unknown.
+          oneOf:
+            - { type: integer, minimum: 0, maximum: 4096 }
+            - { type: 'null' }
+        extra:
+          description: Observed count above fresh discovery count; null for static minimums or unknown expectations.
+          oneOf:
+            - { type: integer, minimum: 0, maximum: 4096 }
+            - { type: 'null' }
+    ObsInputMetric:
+      type: object
+      description: Presence and freshness of one idle-safe readiness gauge on each fresh successful scrape target.
+      required: [metric, state, counts]
+      properties:
+        metric: { type: string, enum: [apid_daemon_ready, gatewayd_public_daemon_ready, gatewayd_daemon_ready, schedd_daemon_ready, vmmd_daemon_ready] }
+        state: { type: string, enum: [healthy, degraded, unknown, not_applicable] }
+        reason: { type: string, enum: [target_evidence_unavailable, no_fresh_up_targets, zero_expected_targets, source_unavailable, invalid_evidence, metric_sample_gap] }
+        counts:
+          description: Gauge sample partition over all fresh up targets; null if this metric assessment is unknown.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsInputMetricCounts' }
+            - { type: 'null' }
+    ObsInputMetricCounts:
+      type: object
+      description: Per-target sample coverage before aggregation; freshness uses original sample times in bounded history.
+      required: [expected, fresh, missing, stale]
+      properties:
+        expected: { type: integer, minimum: 0, maximum: 4096 }
+        fresh: { type: integer, minimum: 0, maximum: 4096 }
+        missing: { type: integer, minimum: 0, maximum: 4096 }
+        stale: { type: integer, minimum: 0, maximum: 4096 }
+
+    ObsRecordingCoverage:
+      type: object
+      description: Recording definition coverage with separately scoped expected syntactic alert dependencies.
+      required: [generated_at, scope, fingerprint_algorithm, selection_source, state, expected_set, available_sets, totals, items, total_items, limit, truncated, dependencies, limitations]
+      properties:
+        generated_at: { type: string, format: date-time }
+        scope: { type: string, const: selected_expected_recording_rules }
+        fingerprint_algorithm: { type: string, const: promql_ast_v1 }
+        selection_source: { type: string, enum: [none, explicit_request] }
+        state: { type: string, enum: [covered, degraded, partial, unknown] }
+        reason:
+          type: string
+          enum: [expected_set_not_selected, expected_catalog_unavailable, expected_set_unavailable, prometheus_not_configured, source_unavailable, deadline_exceeded, expected_rules_differ, comparison_incomplete]
+        expected_set:
+          description: Recording expectation profile metadata; null before selection or when its catalog cannot be loaded.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsRuleCoverageSet' }
+            - { type: 'null' }
+        available_sets:
+          type: array
+          maxItems: 8
+          description: Recording profile choices embedded in this binary; choices do not establish installed inventory.
+          items: { $ref: '#/components/schemas/ObsRuleCoverageSet' }
+        totals:
+          description: Unknown without a comparable selected recording source; a complete source with zero rows has known missing rules.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsRuleCoverageTotals' }
+            - { type: 'null' }
+        items:
+          type: array
+          maxItems: 200
+          description: Recording comparisons sorted by ambiguity then change then absence then unknown then match and finally identity hash.
+          items: { $ref: '#/components/schemas/ObsRecordingCoverageItem' }
+        total_items: { type: integer, minimum: 0, maximum: 4096 }
+        limit: { type: integer, const: 200 }
+        truncated: { type: boolean }
+        dependencies:
+          description: Independent expected syntax mapping available once a valid catalog set is selected; null without a usable selection.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsRecordingDependencyMapping' }
+            - { type: 'null' }
+        limitations:
+          type: array
+          items:
+            type: string
+            enum: [expectation_selected_per_request_not_deployment_evidence, selected_set_is_a_minimum_not_an_exclusive_inventory, recording_definitions_not_evaluation_or_metric_health, dependencies_are_expected_catalog_syntax_not_proven_impact, nonexact_selectors_duplicate_names_and_cycles_leave_uncertainty, missing_recording_labels_are_empty_per_prometheus_wire_contract, group_intervals_offsets_annotations_and_source_paths_not_compared, raw_queries_labels_and_errors_excluded, previews_bounded_totals_cover_complete_inputs]
+    ObsRecordingCoverageItem:
+      type: object
+      description: One expected recording definition and its bounded direct or transitive expected alert references; references do not prove runtime impact.
+      required: [comparison, dependent_alerts]
+      properties:
+        comparison: { $ref: '#/components/schemas/ObsRuleCoverageItem' }
+        dependent_alerts:
+          description: Known expected syntactic references; partial mapping can leave additional unresolved dependencies.
+          $ref: '#/components/schemas/ObsRecordingAlertReferences'
+    ObsRecordingAlertReference:
+      type: object
+      description: Safe expected alert identity from the selected catalog; independent of historical episode keys.
+      required: [id, file_name, group_name, rule_name]
+      properties:
+        id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        file_name: { type: string, maxLength: 128, pattern: '^[a-zA-Z0-9_.:-]+$' }
+        group_name: { type: string, maxLength: 128, pattern: '^[a-zA-Z0-9_.:-]+$' }
+        rule_name: { type: string, maxLength: 128, pattern: '^[a-zA-Z_:][a-zA-Z0-9_:]*$' }
+    ObsRecordingAlertReferences:
+      type: object
+      description: Complete count of this known catalog reference list before its five-item preview; unresolved dependencies can remain outside a dependent-alert list.
+      required: [items, total_items, limit, truncated]
+      properties:
+        items:
+          type: array
+          maxItems: 5
+          items: { $ref: '#/components/schemas/ObsRecordingAlertReference' }
+        total_items: { type: integer, minimum: 0, maximum: 4096 }
+        limit: { type: integer, const: 5 }
+        truncated: { type: boolean }
+    ObsRecordingDependencyMapping:
+      type: object
+      description: Expected catalog reference completeness; partial means some selected alerts have unresolved syntactic recording dependencies.
+      required: [scope, state, alert_set_revision, total_alerts, uncertain_alerts]
+      properties:
+        scope: { type: string, const: selected_expected_catalog_syntax }
+        state: { type: string, enum: [complete, partial] }
+        alert_set_revision: { type: string, pattern: '^[0-9a-f]{64}$' }
+        total_alerts: { type: integer, minimum: 1, maximum: 4096 }
+        uncertain_alerts: { $ref: '#/components/schemas/ObsRecordingAlertReferences' }
+
+    ObsNotificationHealth:
+      type: object
+      description: Current pipeline evidence without per-episode delivery or human receipt claims.
+      required: [generated_at, state, window_seconds, alertmanager_api, signals, integrations, limitations]
+      properties:
+        generated_at: { type: string, format: date-time }
+        state: { type: string, enum: [healthy, partial, degraded] }
+        window_seconds: { type: integer, const: 600 }
+        alertmanager_api: { $ref: '#/components/schemas/ObsNotificationAPIStatus' }
+        signals:
+          type: object
+          description: Fixed signals for target availability, config reload, queue length and capacity, dropped alerts, notification attempts and failures.
+          additionalProperties: { $ref: '#/components/schemas/ObsNotificationSignal' }
+        integrations:
+          type: array
+          maxItems: 32
+          description: Observed integration types ordered by name; missing counters remain unknown.
+          items: { $ref: '#/components/schemas/ObsNotificationIntegration' }
+        limitations:
+          type: array
+          items: { type: string }
+    ObsNotificationAPIStatus:
+      type: object
+      description: Reachability and bounded validity of the local alert-status API; does not establish notification receiver readiness.
+      required: [state]
+      properties:
+        state: { type: string, enum: [healthy, disabled, unavailable] }
+        reason: { type: string }
+        observed_at: { type: string, format: date-time }
+    ObsNotificationSignal:
+      type: object
+      description: A usable value requires healthy evidence; null distinguishes missing or stale evidence from a fresh zero. Observed time comes from the oldest underlying last-observed sample across matching series.
+      required: [state, value, window_seconds, max_age_seconds]
+      properties:
+        state: { type: string, enum: [healthy, no_samples, stale, unavailable] }
+        reason: { type: string }
+        value: { type: [number, 'null'], minimum: 0 }
+        observed_at: { type: string, format: date-time }
+        window_seconds: { type: integer, enum: [0, 600] }
+        max_age_seconds: { type: integer, const: 120 }
+    ObsNotificationIntegration:
+      type: object
+      description: Attempts and failures for a reviewed integration type across all receivers. Counter presence does not establish configuration; receiver names and addresses are omitted.
+      required: [integration, attempts, failures]
+      properties:
+        integration:
+          type: string
+          enum: [email, pushover, slack, webhook, pagerduty, opsgenie, victorops, wechat, telegram, discord, webex, sns, msteams, msteamsv2, rocketchat, jira]
+        attempts: { $ref: '#/components/schemas/ObsNotificationSignal' }
+        failures: { $ref: '#/components/schemas/ObsNotificationSignal' }
+    ObsAlertSuppression:
+      type: object
+      description: |
+        Optional suppression field of private platform-alert incident evidence.
+        Current suppression requires exact verification of the immutable episode
+        against fresh Prometheus rules plus an unambiguous exact-label match in
+        Alertmanager. Changed or external labels remain unmatched. StartsAt must
+        fall within the current activation at millisecond wire precision and now;
+        updatedAt must be fresh and
+        endsAt in the future. Resolved episodes are historical and not applicable.
+        Silenced and inhibited booleans are null unless current state is verified.
+        Suppression is independent of operator triage snooze and delivery receipt.
+      required: [state, checked_at, silenced, inhibited]
+      properties:
+        state:
+          type: string
+          enum: [active, suppressed, unprocessed, unmatched, stale, unavailable, disabled, not_applicable, unknown]
+        reason: { type: string }
+        checked_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        silenced: { type: [boolean, 'null'] }
+        inhibited: { type: [boolean, 'null'] }
+
+    ObsHealthSignal:
+      type: object
+      description: |
+        Evidence for one Prometheus-derived health value. Freshness uses the
+        oldest last-observed counter sample or faas.rules.yml rule-group
+        evaluation across series, never the aggregate query's output timestamp.
+        Historical observations are searched with a bounded 15-minute range.
+        Removed series/groups can conservatively hold a signal stale until
+        that history expires. A healthy state describes fresh query evidence,
+        not whether the metric's value indicates an operational problem.
+      required: [state, window_seconds, max_age_seconds]
+      properties:
+        state:
+          type: string
+          enum: [healthy, no_samples, stale, unavailable]
+          description: |
+            Healthy means a valid value and an observation no older than
+            max_age_seconds. No_samples means a missing observation or too
+            few range samples. Stale means a known observation is too old.
+            Unavailable means missing configuration, a failed query, or invalid
+            upstream values. No last-good values are cached across requests.
+        observed_at:
+          type: string
+          format: date-time
+          description: Underlying observation time (UTC), when known; retained for stale evidence.
+        window_seconds:
+          type: integer
+          minimum: 0
+          description: Aggregation window; 300 for audit counters, 0 for the instantaneous alert count.
+        max_age_seconds:
+          type: integer
+          minimum: 1
+          description: Freshness threshold; currently 120 seconds.
+        reason:
+          type: string
+          description: Closed reason code for non-healthy signals; never raw upstream errors.
+          enum:
+            - not_configured
+            - query_failed
+            - missing_observation
+            - insufficient_samples
+            - observation_stale
+            - invalid_observation
+            - observation_in_future
+            - invalid_value
+
     # Obs-Meta + Trace-IDs Mega-PR / C7 — meta-obs health
     # snapshot. Wire shape for GET /v1/admin/obs/health.
     # Closed-set fields: every response carries the same key names.
     # Prometheus-derived numeric fallbacks remain stable for compatibility,
-    # while prometheus_available tells consumers whether they are live data.
+    # while signals describes the evidence for each metric independently.
+    ObsAlertTriage:
+      type: object
+      description: Human workflow on one retained alert episode, independent of observed alert status.
+      required: [revision, acknowledged, owned, snoozed, as_of]
+      properties:
+        revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        acknowledged: { type: boolean }
+        owned: { type: boolean }
+        owner_account_id: { type: string, format: uuid }
+        snoozed_until: { type: string, format: date-time }
+        snoozed: { type: boolean }
+        updated_at: { type: string, format: date-time }
+        as_of: { type: string, format: date-time }
+    ObsAlertTriageRequest:
+      type: object
+      description: One revision-checked triage action on an exact retained episode ID.
+      additionalProperties: false
+      required: [action, expected_revision]
+      properties:
+        action:
+          type: string
+          enum: [acknowledge, unacknowledge, claim, release, snooze, unsnooze]
+        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740990 }
+        snoozed_until:
+          type: string
+          format: date-time
+          description: Required only for snooze; strictly future and at most 24 hours ahead.
+    ObsAlertTriageResponse:
+      type: object
+      description: Committed triage revision and workflow snapshot returned to an operator.
+      required: [incident_id, triage]
+      properties:
+        incident_id: { type: string }
+        triage: { $ref: '#/components/schemas/ObsAlertTriage' }
+    ObsAlertCollectionCoverage:
+      type: object
+      description: Exact prospective cadence-evidence partition of a requested retained window; no continuous-availability claim.
+      required: [since, as_of, scope, state, max_age_seconds, retention_seconds, window_microseconds, successful_observation_microseconds, failed_observation_microseconds, unknown_microseconds, successes, failures, limitations]
+      properties:
+        since: { type: string, format: date-time }
+        as_of: { type: string, format: date-time }
+        scope: { type: string, enum: [recorded_collection_cadence] }
+        state:
+          type: string
+          enum: [observed, partial, unknown]
+          description: Observed means every interval has recent successful outcome evidence; partial includes failed or missing intervals; unknown has no fresh duration evidence.
+        max_age_seconds: { type: integer, format: int64, const: 60 }
+        retention_seconds: { type: integer, format: int64, const: 2592000 }
+        window_microseconds: { type: integer, format: int64, minimum: 1, maximum: 2592000000000 }
+        successful_observation_microseconds: { type: integer, format: int64, minimum: 0, maximum: 2592000000000 }
+        failed_observation_microseconds: { type: integer, format: int64, minimum: 0, maximum: 2592000000000 }
+        unknown_microseconds: { type: integer, format: int64, minimum: 0, maximum: 2592000000000 }
+        successes: { type: integer, format: int64, minimum: 0, maximum: 100000 }
+        failures: { type: integer, format: int64, minimum: 0, maximum: 100000 }
+        limitations:
+          type: array
+          items: { type: string }
+    ObsAlertCollectionHistoryInterval:
+      type: object
+      description: Half-open coalesced interval of fresh outcome evidence or unknown observation coverage.
+      required: [from, until, state, reason]
+      properties:
+        from: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        state: { type: string, enum: [success, failure, unknown] }
+        reason:
+          type: string
+          enum: ['', collection_failed, source_read_failed, snapshot_rejected, timeout, persistence_failed, no_recent_outcome]
+          description: Empty on successful observations; failures retain only closed codes; unknown intervals have no_recent_outcome without an inferred cause.
+    ObsAlertCollectionHistory:
+      type: object
+      description: Complete bounded collection cadence totals with a newest-first interval preview and current collection metadata.
+      required: [coverage, collection, items, total_intervals, limit, truncated]
+      properties:
+        failure_details:
+          description: Opt-in failed-attempt evidence from the same read snapshot; omitted unless details=true and absent on older servers.
+          $ref: '#/components/schemas/ObsAlertCollectionFailureDetails'
+        coverage: { $ref: '#/components/schemas/ObsAlertCollectionCoverage' }
+        collection: { $ref: '#/components/schemas/ObsAlertCollectionHealth' }
+        items:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items: { $ref: '#/components/schemas/ObsAlertCollectionHistoryInterval' }
+        total_intervals: { type: integer, minimum: 1, maximum: 200001 }
+        limit: { type: integer, const: 200 }
+        truncated: { type: boolean, description: Whether older coalesced intervals are omitted from this preview while coverage totals remain complete. }
+    ObsAlertCollectionFailureDetails:
+      type: object
+      description: Failed attempts within the inclusive requested window, independent of cadence carry-in and coalesced intervals.
+      required: [items, total_failures, limit, truncated, limitations]
+      properties:
+        items:
+          type: array
+          maxItems: 20
+          description: Newest failed attempts first; diagnostics may be unknown on any item.
+          items: { $ref: '#/components/schemas/ObsAlertCollectionFailure' }
+        total_failures: { type: integer, format: int64, minimum: 0, maximum: 100000, description: Complete failed-attempt count matching coverage.failures before preview truncation. }
+        limit: { type: integer, const: 20 }
+        truncated: { type: boolean, description: Whether older failed attempts are omitted from the details preview. }
+        limitations:
+          type: array
+          items: { type: string }
+    ObsAlertCollectionFailure:
+      type: object
+      description: One immutable failed-attempt receipt with optional sanitized evidence captured from its rejected source snapshot.
+      required: [attempted_at, reason, diagnostics_state, diagnostics]
+      properties:
+        attempted_at: { type: string, format: date-time }
+        reason: { type: string, enum: [collection_failed, source_read_failed, snapshot_rejected, timeout, persistence_failed] }
+        diagnostics_state: { type: string, enum: [recorded, unknown], description: Recorded only when typed historical rejection evidence is present; unknown never implies healthy rules. }
+        diagnostics:
+          description: Null for old receipts or failures without a rejected readable source; present only for snapshot_rejected.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsAlertCollectionRejection' }
+            - { type: 'null' }
+    ObsAlertCollectionRejection:
+      type: object
+      description: Sanitized observations from the exact rejected source; complete counts and an unhealthy-first preview, bounded to 16 KiB of compact JSON.
+      required: [scope, reason, totals, items, total_items, limit, truncated]
+      properties:
+        scope: { type: string, enum: [rejected_snapshot] }
+        reason: { type: string, enum: [rule_diagnostics_present, no_alert_rules_observed, collector_validation_failed], description: "Distinguishes observed rule issues, a known empty loaded inventory, and rejection without a matching rule-level diagnostic." }
+        totals: { $ref: '#/components/schemas/ObsRuleHealthTotals' }
+        items:
+          type: array
+          maxItems: 10
+          description: Unhealthy rules and invalid empty groups, ordered by issue priority then hashed group and item identity; ages refer to attempted_at.
+          items: { $ref: '#/components/schemas/ObsRuleHealthItem' }
+        total_items: { type: integer, minimum: 0, maximum: 8192, description: Complete count of unhealthy diagnostic items before the persisted preview is bounded. }
+        limit: { type: integer, const: 10 }
+        truncated: { type: boolean, description: Whether the item or byte bound omitted diagnostic items included in complete totals. }
+    ObsAlertRecurrence:
+      type: object
+      description: Retained activation-cohort recurrence evidence with complete totals and a ranked preview.
+      required: [as_of, since, scope, percentile_method, limitations, collection, retention, totals, items, truncated]
+      properties:
+        coverage:
+          description: Prospective collection cadence evidence from the same snapshot; absent on older servers and never proof of complete alert history.
+          $ref: '#/components/schemas/ObsAlertCollectionCoverage'
+        as_of: { type: string, format: date-time }
+        since: { type: string, format: date-time }
+        scope: { type: string, enum: [retained_activation_cohort] }
+        percentile_method: { type: string, enum: [nearest_rank_whole_seconds] }
+        limitations:
+          type: array
+          items: { type: string }
+        collection: { $ref: '#/components/schemas/ObsAlertCollectionHealth' }
+        retention: { $ref: '#/components/schemas/ObsAlertRetentionHealth' }
+        totals:
+          description: Null before the first successful collection; a known quiet retained cohort has zero counts and null statistics.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsAlertRecurrenceTotals' }
+            - { type: 'null' }
+        items:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/ObsAlertRecurrenceSeries' }
+        truncated: { type: boolean, description: Whether the ranked preview omits series included in complete totals. }
+    ObsAlertRecurrenceTotals:
+      type: object
+      description: Complete cohort counts across distinct rule-definition and exact-series groups.
+      required: [series, repeated_series, metrics]
+      properties:
+        series: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        repeated_series: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        metrics: { $ref: '#/components/schemas/ObsAlertRecurrenceMetrics' }
+    ObsAlertRecurrenceMetrics:
+      type: object
+      description: Episode denominator and adjacent-repeat denominator with independent evidence partitions.
+      required: [episodes, repeat_activations, unresolved, unknown_observation, duration, recovery_gap]
+      properties:
+        episodes: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        repeat_activations: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        unresolved: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        unknown_observation: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        duration: { $ref: '#/components/schemas/ObsAlertRecurrenceDuration' }
+        recovery_gap: { $ref: '#/components/schemas/ObsAlertRecurrenceGap' }
+    ObsAlertRecurrenceDuration:
+      type: object
+      description: Episode partition and valid activation-to-resolution observation statistics.
+      required: [samples, not_observed, invalid_clock, min_seconds, p50_seconds]
+      properties:
+        samples: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        not_observed: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        invalid_clock: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        min_seconds: { type: [integer, 'null'], format: int64, minimum: 0 }
+        p50_seconds: { type: [integer, 'null'], format: int64, minimum: 0 }
+    ObsAlertRecurrenceGap:
+      type: object
+      description: Adjacent-repeat partition; valid samples measure confirmed resolution observation to next activation.
+      required: [samples, unconfirmed_recovery, resolution_overlap, invalid_clock, min_seconds, p50_seconds]
+      properties:
+        samples: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        unconfirmed_recovery: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        resolution_overlap: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        invalid_clock: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        min_seconds: { type: [integer, 'null'], format: int64, minimum: 0 }
+        p50_seconds: { type: [integer, 'null'], format: int64, minimum: 0 }
+    ObsAlertRecurrenceSeries:
+      type: object
+      description: Exact rule/series recurrence group with safe resource identity and a bounded newest-first episode preview.
+      required: [rule_key, series_id, name, severity, component, first_activation_at, last_activation_at, metrics, recent_episodes, recent_episodes_truncated]
+      properties:
+        rule_key: { type: string, pattern: '^[0-9a-f]{64}$' }
+        series_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        name: { type: string, maxLength: 128 }
+        severity: { type: string, enum: [critical, error, warning] }
+        component: { type: string, maxLength: 64 }
+        account_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        node_id: { type: string, format: uuid }
+        first_activation_at: { type: string, format: date-time }
+        last_activation_at: { type: string, format: date-time }
+        metrics: { $ref: '#/components/schemas/ObsAlertRecurrenceMetrics' }
+        recent_episodes:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items: { $ref: '#/components/schemas/ObsAlertRecurrenceEpisode' }
+        recent_episodes_truncated: { type: boolean, description: Whether older cohort episodes of this series were omitted from the preview. }
+    ObsAlertRecurrenceEpisode:
+      type: object
+      description: Immutable retained episode reference for recurrence investigation without raw source payloads or workflow identities.
+      required: [episode_id, status, started_at, resolved_at, evidence_path]
+      properties:
+        episode_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        status: { type: string, enum: [firing, resolved, unknown] }
+        started_at: { type: string, format: date-time }
+        resolved_at: { type: [string, 'null'], format: date-time }
+        evidence_path: { type: string }
+    ObsAlertResponseTimes:
+      type: object
+      description: Atomic retained activation-cohort timing with explicit evidence and sample limitations.
+      required: [as_of, since, scope, duration_basis, percentile_method, limitations, collection, retention, totals, groups]
+      properties:
+        coverage:
+          description: Collection cadence evidence captured with this timing cohort; older servers omit it and retained timing samples do not imply complete monitoring.
+          $ref: '#/components/schemas/ObsAlertCollectionCoverage'
+        as_of: { type: string, format: date-time }
+        since: { type: string, format: date-time }
+        scope: { type: string, enum: [retained_activation_cohort] }
+        duration_basis: { type: string, enum: [episode_activation] }
+        percentile_method: { type: string, enum: [nearest_rank_whole_seconds] }
+        limitations:
+          type: array
+          items: { type: string }
+        collection: { $ref: '#/components/schemas/ObsAlertCollectionHealth' }
+        retention: { $ref: '#/components/schemas/ObsAlertRetentionHealth' }
+        totals:
+          description: Null before any successful collection; a known quiet retained cohort has zero counts and null percentiles.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsAlertResponseAggregate' }
+            - { type: 'null' }
+        groups:
+          type: array
+          maxItems: 1000
+          items: { $ref: '#/components/schemas/ObsAlertResponseGroup' }
+    ObsAlertResponseAggregate:
+      type: object
+      description: One cohort denominator shared by independent acknowledgment and observed recovery classifications.
+      required: [episodes, unresolved, unknown_observation, acknowledgment, resolution, receipt_coverage]
+      properties:
+        episodes: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        unresolved: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        unknown_observation: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        acknowledgment: { $ref: '#/components/schemas/ObsAlertResponseMetric' }
+        resolution: { $ref: '#/components/schemas/ObsAlertResponseMetric' }
+        receipt_coverage: { $ref: '#/components/schemas/ObsAlertResponseCoverage' }
+    ObsAlertResponseMetric:
+      type: object
+      description: Complete cohort partition and valid-sample percentiles without substituting zeros for missing evidence.
+      required: [samples, not_observed, unknown, invalid_clock, p50_seconds, p95_seconds]
+      properties:
+        samples: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        not_observed: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        unknown: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        invalid_clock: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        p50_seconds: { type: [integer, 'null'], format: int64, minimum: 0 }
+        p95_seconds: { type: [integer, 'null'], format: int64, minimum: 0 }
+    ObsAlertResponseCoverage:
+      type: object
+      description: Disjoint receipt-evidence classifications against each episode's saved workflow revision.
+      required: [complete_episodes, gapped_episodes, invalid_receipt_episodes, missing_revisions]
+      properties:
+        complete_episodes: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        gapped_episodes: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        invalid_receipt_episodes: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        missing_revisions: { type: integer, format: int64, minimum: 0 }
+    ObsAlertResponseGroup:
+      type: object
+      description: One nonempty severity/component timing group with no actor identities or raw audit data.
+      required: [severity, component, metrics]
+      properties:
+        severity: { type: string, enum: [critical, error, warning] }
+        component: { type: string, maxLength: 64 }
+        metrics: { $ref: '#/components/schemas/ObsAlertResponseAggregate' }
+    ObsAlertWorkloadSummary:
+      type: object
+      description: Atomic retained-alert workload snapshot with explicit collection and cleanup coverage.
+      required: [as_of, scope, age_basis, collection, retention, counts, groups, oldest_unacknowledged, oldest_unowned]
+      properties:
+        as_of: { type: string, format: date-time }
+        scope: { type: string, enum: [retained_platform_alert_episodes] }
+        age_basis: { type: string, enum: [episode_started_at] }
+        collection: { $ref: '#/components/schemas/ObsAlertCollectionHealth' }
+        retention: { $ref: '#/components/schemas/ObsAlertRetentionHealth' }
+        counts:
+          description: Null until a successful collection has established a retained observation scope.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsAlertWorkloadCounts' }
+            - { type: 'null' }
+        groups:
+          type: array
+          maxItems: 72
+          items: { $ref: '#/components/schemas/ObsAlertWorkloadGroup' }
+        oldest_unacknowledged:
+          description: Oldest unsnoozed unresolved unacknowledged episode; null when absent or scope is unknown.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsAlertWorkloadOldest' }
+            - { type: 'null' }
+        oldest_unowned:
+          description: Oldest unsnoozed unresolved unowned episode; null when absent or scope is unknown.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsAlertWorkloadOldest' }
+            - { type: 'null' }
+    ObsAlertWorkloadCounts:
+      type: object
+      description: Whole-retention episode totals and an attention union that counts each episode once.
+      required: [total, firing, unknown, resolved, needs_attention]
+      properties:
+        total: { type: integer, format: int64, minimum: 0 }
+        firing: { type: integer, format: int64, minimum: 0 }
+        unknown: { type: integer, format: int64, minimum: 0 }
+        resolved: { type: integer, format: int64, minimum: 0 }
+        needs_attention:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Unsnoozed unresolved episodes that are unacknowledged or unowned; unknown status is included.
+    ObsAlertWorkloadGroup:
+      type: object
+      description: Nonempty retained-alert bucket for one exact status and workflow combination.
+      required: [status, severity, acknowledged, owned, snoozed, count]
+      properties:
+        status: { type: string, enum: [firing, resolved, unknown] }
+        severity: { type: string, enum: [critical, error, warning] }
+        acknowledged: { type: boolean }
+        owned: { type: boolean }
+        snoozed: { type: boolean }
+        count: { type: integer, format: int64, minimum: 1 }
+    ObsAlertWorkloadOldest:
+      type: object
+      description: Sanitized oldest eligible episode reference ordered by activation time then immutable ID.
+      required: [incident_id, status, severity, started_at, age_seconds, evidence_path]
+      properties:
+        incident_id: { type: string }
+        status: { type: string, enum: [firing, unknown] }
+        severity: { type: string, enum: [critical, error, warning] }
+        started_at: { type: string, format: date-time }
+        age_seconds: { type: integer, format: int64, minimum: 0 }
+        evidence_path: { type: string }
+    ObsAlertTriageHistory:
+      type: object
+      description: One episode-bound page of workflow receipts with a fixed upper revision and explicit retention gaps.
+      required: [incident_id, generated_at, snapshot_at, snapshot_revision, current_revision, items, limit, truncated, next_cursor, history_path, coverage]
+      properties:
+        incident_id: { type: string }
+        generated_at: { type: string, format: date-time }
+        snapshot_at:
+          type: string
+          format: date-time
+          description: First page clock retained across cursor requests; it is not a persistent database snapshot.
+        snapshot_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        current_revision:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 9007199254740991
+          description: Current episode revision in this page read; can exceed snapshot_revision on subsequent pages.
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/ObsAlertTriageHistoryEntry' }
+        limit: { type: integer, minimum: 1, maximum: 100 }
+        truncated: { type: boolean }
+        next_cursor: { type: string }
+        history_path: { type: string }
+        coverage: { $ref: '#/components/schemas/ObsAlertTriageHistoryCoverage' }
+    ObsAlertTriageHistoryEntry:
+      type: object
+      description: Sanitized post-action workflow flags from a durable receipt without actor or owner identities.
+      required: [id, revision, action, at, acknowledged, owned]
+      properties:
+        id: { type: string, format: uuid }
+        revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        action:
+          type: string
+          enum: [acknowledge, unacknowledge, claim, release, snooze, unsnooze]
+        at: { type: string, format: date-time }
+        acknowledged: { type: boolean }
+        owned: { type: boolean }
+        snoozed_until: { type: string, format: date-time }
+        trace_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        trace_path: { type: string }
+    ObsAlertTriageHistoryCoverage:
+      type: object
+      description: Retained receipt counts across revisions one through snapshot_revision independent of page truncation.
+      required: [state, available_entries, missing_entries]
+      properties:
+        state: { type: string, enum: [complete, gaps] }
+        reason: { type: string, enum: [missing_receipts] }
+        available_entries: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        missing_entries: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        oldest_available_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        newest_available_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+    ObsAlertEpisode:
+      type: object
+      description: Immutable recurrence identity and retained observation clocks on a private operator incident.
+      required: [series_id, started_at, first_seen_at, last_seen_at, last_evaluated_at, observation_state]
+      properties:
+        series_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        started_at: { type: string, format: date-time }
+        first_seen_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        last_evaluated_at: { type: string, format: date-time }
+        resolved_at: { type: string, format: date-time }
+        observation_state: { type: string, enum: [current, unknown, historical] }
+    ObsAlertCollectionHealth:
+      type: object
+      description: Durable collection receipt and explicit producer configuration or health state.
+      required: [state]
+      properties:
+        diagnostics_path:
+          type: string
+          const: /v1/admin/obs/rule-health
+          description: Known private diagnostics route advertised as an optional bundle feature marker; reads do not establish past failure causation.
+        state: { type: string, enum: [current, unknown] }
+        collection_state: { type: string, enum: [disabled, never_collected, current, failed, stale, unknown] }
+        reason: { type: string }
+        last_attempt_at: { type: string, format: date-time }
+        last_success_at: { type: string, format: date-time }
+    ObsAlertRetentionHealth:
+      type: object
+      description: Independent retention receipt and exact expired-episode backlog at the snapshot cutoff.
+      required: [state, as_of, cutoff, last_pruned_episodes, expired_episodes]
+      properties:
+        state: { type: string, enum: [never_run, current, failed, stale, unknown] }
+        reason: { type: string }
+        as_of: { type: string, format: date-time }
+        cutoff: { type: string, format: date-time }
+        last_attempt_at: { type: string, format: date-time }
+        last_success_at: { type: string, format: date-time }
+        last_pruned_episodes: { type: [integer, 'null'], format: int64, minimum: 0 }
+        expired_episodes: { type: integer, format: int64, minimum: 0 }
+        oldest_expired_at: { type: string, format: date-time }
     ObsHealthResponse:
       description: |
         Wire shape for GET /v1/admin/obs/health (admin scope +
@@ -78039,29 +79437,31 @@ components:
         generated_at:
           type: string
           format: date-time
-          description: Snapshot timestamp (UTC, RFC 3339).
+          description: Response generation timestamp (UTC, RFC 3339); not a telemetry observation time.
         prometheus_available:
           type: boolean
           description: |
-            True only when every PromQL query used for this snapshot
-            completed successfully. False means Prometheus-derived numeric
-            fields are fallback values and must not be interpreted as
-            observed telemetry.
+            True only when all three Prometheus signals are healthy with
+            fresh underlying observations. When false, consult each signal:
+            healthy values remain usable and other numeric values are zero
+            compatibility fallbacks. On legacy responses without signals,
+            false makes all Prometheus-derived values unavailable.
         audit_log_write_total_5m:
           type: integer
           format: int64
           minimum: 0
           description: |
             Increase of apid_audit_log_write_total over the trailing 5m
-            window. 0 when the audit pipeline has been silent in the
-            window. Check `prometheus_available` before interpreting it.
+            window. Zero activity is a healthy zero only when the matching
+            signals entry is healthy; otherwise zero is a compatibility fallback.
         audit_log_write_failures_5m:
           type: integer
           format: int64
           minimum: 0
           description: |
             Increase of apid_audit_log_write_failures_total over the trailing
-            5m window. Check `prometheus_available` before interpreting it.
+            5m window. Interpret only when the matching signals entry is
+            healthy, or prometheus_available is true on a legacy response.
         audit_log_coverage_ratio_5m:
           type: number
           format: double
@@ -78112,8 +79512,24 @@ components:
           minimum: 0
           description: |
             Count of Prometheus alert rules in the firing state
-            via PromQL ALERTS{alertstate="firing"}. Check
-            `prometheus_available` before interpreting a zero value.
+            via PromQL ALERTS{alertstate="firing"}, excluding watchdog and
+            info-only rules. A fresh faas.rules.yml evaluation heartbeat is
+            required for the matching signal to be healthy, including when
+            no alerts fire. This describes source freshness, not alert severity.
+        alert_history:
+          $ref: '#/components/schemas/ObsAlertCollectionHealth'
+        alert_retention:
+          $ref: '#/components/schemas/ObsAlertRetentionHealth'
+        signals:
+          type: object
+          description: |
+            Independent evidence for audit_log_write_total_5m,
+            audit_log_write_failures_5m, and alerts_firing. Present on new
+            servers; optional for compatibility with older responses.
+            Only healthy signal values are usable. SQL-derived fields remain
+            independent; a database read failure returns 503.
+          additionalProperties:
+            $ref: '#/components/schemas/ObsHealthSignal'
       x-since: "2026-08"
       x-pr-cluster: "obs-meta-trace-ids"
 

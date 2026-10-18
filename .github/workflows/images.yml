@@ -588,7 +588,9 @@ jobs:
   runtime-source-contract:
     name: runtime source contract
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Cold dependency downloads and compilation can exceed five minutes.
+    # The test process below keeps its separate two-minute execution limit.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
@@ -596,6 +598,17 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+
+      - name: restore Go build and module cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-runtime-source-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}
+          restore-keys: |
+            go-light-test-3-${{ runner.os }}-
+            go-light-test-1-${{ runner.os }}-
 
       # These tests exercise the builder-produced source-artifact handoff:
       # dependency-complete Node/Python source stays intact, Go's /app/server

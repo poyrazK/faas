@@ -34,9 +34,7 @@ var daemonMetricPrefixes = []string{
 // knownUnemittedAlertMetrics are dead alert inputs: each maps a metric no
 // code emits to the reason. Fix the producer or the rule, then delete the
 // entry; the test fails once the metric resolves so the list cannot rot.
-var knownUnemittedAlertMetrics = map[string]string{
-	"faas_build_queue_depth": "FaasBuildQueueDepthHigh: QueuedBuildsCount is only served by GET /v1/admin/obs/builder-heartbeats; no Prometheus gauge exports it",
-}
+var knownUnemittedAlertMetrics = map[string]string{}
 
 var promqlKeywords = map[string]bool{
 	"sum": true, "min": true, "max": true, "avg": true, "count": true, "stddev": true,

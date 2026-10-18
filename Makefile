@@ -1742,6 +1742,13 @@ check-operation-sdk-schema:
 check-durable-entity-sdk-contract:
 	python3 scripts/gen-durable-entity-contract.py --check
 
+.PHONY: obs-rule-catalog-generate obs-rule-catalog-check
+obs-rule-catalog-generate: ## Regenerate the explicit operator alert expectation sets
+	$(GO) run ./cmd/obs-rule-catalog -root .
+
+obs-rule-catalog-check: ## Verify the operator alert catalog matches shipped sources
+	$(GO) run ./cmd/obs-rule-catalog -root . -check
+
 .PHONY: test-data-repair-native
 test-data-repair-native: ## Repair rehearsal acceptance on a designated native Linux KVM host
 	@GO="$(GO)" "$${PYTHON:-python3}" scripts/ci/run-data-repair-native.py
