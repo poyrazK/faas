@@ -2093,6 +2093,8 @@ var methodRouteMap = map[string]string{
 	// the verb so the per-resource list family stays consistent
 	// (ListAppDebugRegressions reads as a sibling of
 	// ListAppDebugRequests).
+	"POST /v1/apps/{slug}/debug/regressions/actions":      "ApplyAppDebugRegressionAction",
+	"GET /v1/apps/{slug}/debug/regressions/review":        "GetAppDebugRegressionReview",
 	"GET /v1/apps/{slug}/debug/regressions":               "ListAppDebugRegressions",
 	"POST /v1/apps/{slug}/debug/compare":                  "CompareAppDebugDeployments",
 	"POST /v1/apps/{slug}/debug/requests/{req_id}/replay": "ReplayAppDebugRequest",
@@ -2111,10 +2113,11 @@ var methodRouteMap = map[string]string{
 	// the /metrics entry above which is the 5m dashboard panel.
 	// Per-app pattern mirrors GetAppMetrics; account-scoped
 	// mirrors GetAccountUsage (the usage account-scoped family).
-	"GET /v1/apps/{slug}/slo":           "GetAppSLO",
-	"GET /v1/account/slo":               "GetAccountSLO",
-	"GET /v1/account/rate-limits":       "GetAccountRateLimits",
-	"GET /v1/account/traces/{trace_id}": "GetAccountTrace",
+	"GET /v1/apps/{slug}/slo":                         "GetAppSLO",
+	"GET /v1/account/slo":                             "GetAccountSLO",
+	"GET /v1/account/rate-limits":                     "GetAccountRateLimits",
+	"GET /v1/account/traces/{trace_id}":               "GetAccountTrace",
+	"GET /v1/account/traces/{trace_id}/selected-apps": "GetSelectedAppTrace",
 
 	// ADR-093 — per-route observability inside an app. The
 	// auto-derivation would produce GetAppsSlugRoutes

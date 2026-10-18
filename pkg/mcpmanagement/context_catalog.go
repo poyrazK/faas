@@ -19,6 +19,7 @@ func registerContextCatalog(s *mcp.Server, m *management) {
 		s.AddResource(r, m.readContextResource)
 	}
 	s.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: "gregale://projects/{project}/environments/{environment}/inventory", Name: "gregale_environment_inventory", MIMEType: "application/json"}, m.readContextResource)
+	s.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: regressionResourceTemplate, Name: "gregale_app_regressions", Description: "Bounded app-wide native-visible regression snapshot across environments; separate diagnostic consent required. Disappearance does not prove recovery. Explicit modern subscriptions invalidate this snapshot; reread after changes or reconnecting.", MIMEType: "application/json"}, m.readContextResource)
 	for _, view := range []string{"release", "health", "budgets"} {
 		s.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: "gregale://default/apps/{app}/" + view, Name: "gregale_default_" + view, MIMEType: "application/json"}, m.readContextResource)
 		s.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: "gregale://projects/{project}/environments/{environment}/apps/{app}/" + view, Name: "gregale_environment_" + view, MIMEType: "application/json"}, m.readContextResource)
@@ -45,6 +46,9 @@ func parseContextURI(uri string) (appArgs, string, error) {
 		return args, "inventory", nil
 	}
 	parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+	if u.Host == "apps" && len(parts) == 2 && parts[1] == "regressions" && validateSegment(parts[0], "app") == nil {
+		return appArgs{App: parts[0]}, "regressions", nil
+	}
 	view := ""
 	if u.Host == "default" && len(parts) == 3 && parts[0] == "apps" {
 		args.App, view = parts[1], parts[2]
@@ -83,6 +87,10 @@ func (m *management) readContextResource(ctx context.Context, req *mcp.ReadResou
 	if err := m.authorizeArgs(ctx, args); err != nil {
 		return nil, m.contextError(err)
 	}
+	value, err = checkedResourceValue(ctx, value)
+	if err != nil {
+		return nil, m.contextError(err)
+	}
 	data, err := m.safeOutput(value)
 	if err != nil {
 		return nil, m.contextError(err)
@@ -98,6 +106,8 @@ func (m *management) contextResourceValue(ctx context.Context, args appArgs, vie
 	switch view {
 	case "context":
 		return m.connection(ctx, noArgs{})
+	case "regressions":
+		return m.regressionResource(ctx, args, "")
 	case "inventory":
 		if args.Environment != "" {
 			return m.getEnvironment(ctx, environmentArgs{Project: args.Project, Environment: args.Environment})
