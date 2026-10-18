@@ -28,6 +28,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"deployment_build_dependency_gates": CloneSchemaOperational,
 		"deployment_public_build_urls":      CloneSchemaConfiguration,
 		"migration_cutovers":                CloneSchemaOperational,
+		"data_repair_rehearsals":            CloneSchemaOperational,
 		"migration_verifications":           CloneSchemaOperational,
 		"project_migrations":                CloneSchemaOperational,
 

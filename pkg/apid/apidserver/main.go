@@ -1513,6 +1513,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := srv.configureOperations(*cfg, deps.getenv); err != nil {
 		return err
 	}
+	if err := srv.configureDataRepair(*cfg, deps.getenv); err != nil {
+		return err
+	}
 	srv.operation.StartOperationNotifications(ctx)
 	srv.configureProductControl(*cfg, deps.getenv)
 	if err := srv.configureFeatureFlags(*cfg, deps.getenv); err != nil {
@@ -2520,7 +2523,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()
 	// The drain lets a connection faas-apid.socket handed over just before
 	// shutdown deliver its request; net/http drops one it reads after
-	// Shutdown began (ADR-1580).
+	// Shutdown began (ADR-1736).
 	httpDrain := wire.NewHTTPDrain(httpSrv)
 	errc := make(chan error, 1)
 	go func() {

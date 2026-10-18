@@ -43,6 +43,7 @@ type (
 	OperationArtifactRequest                 = api.OperationArtifactRequest
 	OperationDeliveryResponse                = api.OperationDeliveryResponse
 	OperationResponse                        = api.OperationResponse
+	OperationDataRepair                      = api.OperationDataRepair
 	OperationApprovalSpec                    = api.OperationApprovalSpec
 	OperationWaitingState                    = api.OperationWaitingState
 	OperationApprovalRequest                 = api.OperationApprovalRequest

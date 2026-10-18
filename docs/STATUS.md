@@ -21,7 +21,7 @@ public-to-internal H2C hop resends requests that crossed a graceful GOAWAY,
 wake RPCs wait out a schedd restart, outboundd and bridged drain before
 exiting, and HTTP daemons answer requests on connections accepted just before
 shutdown instead of closing them
-([ADR-1580](adr/1580-zero-downtime-daemon-restarts.md)). Portable
+([ADR-1736](adr/1736-zero-downtime-daemon-restarts.md)). Portable
 restart-under-load tests show no failed requests. On fsn-4 (systemd 255),
 gatewayd-internal's synth server behind a socket unit and a TCP schedd
 listener behind a socket unit each restarted five times under load with 0 of

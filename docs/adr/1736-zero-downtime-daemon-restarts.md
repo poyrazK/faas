@@ -1,4 +1,4 @@
-# ADR-1580: Zero-downtime daemon restarts
+# ADR-1736: Zero-downtime daemon restarts
 
 Date: 2026-10-17
 Status: Accepted

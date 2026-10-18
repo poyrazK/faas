@@ -64,6 +64,7 @@ const (
 	modeJob
 	modeExecution
 	modeAppTask
+	modeDataRepair
 )
 
 // main is guest PID 1. Any fatal error here panics the VM (panic=1 in boot args
@@ -115,6 +116,9 @@ func boot() error {
 		return err
 	}
 	guestStage(fmt.Sprintf("mode-%d", mode))
+	if mode == modeDataRepair {
+		return runDataRepairGuest(slog.Default())
+	}
 	var extensionHooks *extensionLifecycle
 	var afterRestore atomic.Pointer[afterRestoreRuntime]
 	if mode == modeApp {
@@ -740,6 +744,19 @@ func errorKind(err error) string {
 // fs.FS rejects absolute paths, and the real os.DirFS("/") used
 // at boot happily accepts the relative form on Linux.
 func decideMode(fsys fs.FS) (bootMode, api.BuildManifest, error) {
+	if data, err := fs.ReadFile(fsys, dataRepairManifestRelativePath); err == nil {
+		if err = validateDataRepairManifest(data); err != nil {
+			return modeDataRepair, api.BuildManifest{}, err
+		}
+		for _, other := range []string{appTaskManifestRelativePath, executionManifestRelativePath, "etc/faas/job.json", "etc/faas/build.json"} {
+			if _, err = fs.Stat(fsys, other); !errors.Is(err, fs.ErrNotExist) {
+				return modeDataRepair, api.BuildManifest{}, errors.New("conflicting repair guest mode")
+			}
+		}
+		return modeDataRepair, api.BuildManifest{}, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return modeDataRepair, api.BuildManifest{}, err
+	}
 	if data, err := fs.ReadFile(fsys, appTaskManifestRelativePath); err == nil {
 		if markerErr := validateAppTaskManifest(data); markerErr != nil {
 			return modeAppTask, api.BuildManifest{}, fmt.Errorf("invalid app task manifest: %w", markerErr)

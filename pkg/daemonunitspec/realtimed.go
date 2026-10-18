@@ -11,7 +11,7 @@ func UnitRealtimed() daemonunit.Unit {
 		Description:   "onebox-faas realtimed — managed realtime connection owner",
 		Documentation: "https://gregale.dev/docs/ops/realtime",
 		// faas-realtimed.socket is opt-in with gatewayd-internal's
-		// (faas_compute_durable_listeners, ADR-1580).
+		// (faas_compute_durable_listeners, ADR-1736).
 		After: []string{"faas-cp.slice", "faas-vmmd.service"},
 		Wants: []string{"faas-cp.slice", "faas-vmmd.service"},
 

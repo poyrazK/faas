@@ -58,7 +58,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		// local dependency.
 		// faas-gatewayd-internal.socket is opt-in: the gatewayd_internal_service
 		// role adds Wants=/After= on it in a drop-in when
-		// faas_compute_durable_listeners is on (ADR-1580).
+		// faas_compute_durable_listeners is on (ADR-1736).
 		After:                 []string{"faas-cp.slice", "network-online.target", "faas-vmmd.service", "faas-realtimed.service"},
 		Wants:                 []string{"faas-cp.slice", "faas-vmmd.service", "faas-realtimed.service"},
 		StartLimitIntervalSec: "60s",
