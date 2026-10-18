@@ -90,7 +90,7 @@ func (s *PgStore) SetIssueSlackRoutingPolicy(ctx context.Context, app, owner str
 func (s *PgStore) PreviewIssueSlackRouting(ctx context.Context, app, owner string, in PutIssueSlackRoutingPolicy, sample IssueSlackRoutingSample) (IssueSlackRoutingPreview, error) {
 	out := IssueSlackRoutingPreview{Outcome: "unrouted", Revision: in.Revision, InstallationRevision: in.InstallationRevision}
 	rules, err := NormalizeIssueSlackRoutingRules(in.Rules)
-	if err != nil || !ApplicationSlackEvent(sample.Event) || !ValidSlackRoutingEnvironment(sample.Environment) || (sample.FrequencyRuleKey != "" && (!ValidSlackRoutingKey(sample.FrequencyRuleKey) || sample.Event != "frequency_threshold_reached")) {
+	if err != nil || !ApplicationSlackEvent(sample.Event) || !ValidSlackRoutingEnvironment(sample.Environment) || !validSlackThresholdRuleKey(sample.Event, sample.FrequencyRuleKey) {
 		return out, ErrInvalidArgument
 	}
 	in.Rules = rules

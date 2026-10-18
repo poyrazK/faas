@@ -2142,6 +2142,13 @@ type Querier interface {
 	IssueAssigneeAllowed(ctx context.Context, db DBTX, arg IssueAssigneeAllowedParams) (bool, error)
 	IssueAttribution(ctx context.Context, db DBTX, arg IssueAttributionParams) ([]IssueAttributionRow, error)
 	IssueCanonicalID(ctx context.Context, db DBTX, arg IssueCanonicalIDParams) (pgtype.UUID, error)
+	IssueCompoundCount(ctx context.Context, db DBTX, arg IssueCompoundCountParams) (IssueCompoundCountRow, error)
+	IssueCompoundLastAlert(ctx context.Context, db DBTX, arg IssueCompoundLastAlertParams) (pgtype.Timestamptz, error)
+	IssueCompoundPolicy(ctx context.Context, db DBTX, arg IssueCompoundPolicyParams) (IssueCompoundPolicyRow, error)
+	IssueCompoundPruneReceipts(ctx context.Context, db DBTX, arg IssueCompoundPruneReceiptsParams) error
+	IssueCompoundPutPolicy(ctx context.Context, db DBTX, arg IssueCompoundPutPolicyParams) error
+	IssueCompoundRecordAlert(ctx context.Context, db DBTX, arg IssueCompoundRecordAlertParams) error
+	IssueCompoundSnoozed(ctx context.Context, db DBTX, arg IssueCompoundSnoozedParams) (bool, error)
 	IssueCount(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	IssueCountEvents(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	IssueCountReadySourceMaps(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)

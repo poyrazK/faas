@@ -509,8 +509,10 @@ type BuildResult struct {
 	// Runtime is the runtime the artifact was built FROM: the app's own, or
 	// the shared runner base it was built on (H10-140). The export claim
 	// signs it.
-	Runtime  string
-	DevPatch *api.DevPatchSourceMap
+	Runtime                    string
+	DevPatch                   *api.DevPatchSourceMap
+	IssueSourceMaps            *api.PublishIssueSourceMapsRequest
+	IssueSourceMapsImageSHA256 string
 }
 
 // ProcessOne claims the next queued build (or processes the buildID passed in
@@ -867,6 +869,21 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if watch.Command != "" {
 		b.emitBuildLog(ctx, build.ID, "watch mode: building a development image that starts "+watch.Command+"\n")
 	}
+	sourceMaps, mapsErr := buildIssueSourceMapConfig(dep.SourcePath, dep.SourceRoot)
+	if mapsErr == nil && sourceMaps != nil && (fw != FrameworkNode || watch.Command != "") {
+		mapsErr = errors.New("automatic source maps require a production Node source build")
+	}
+	if mapsErr != nil {
+		b.markFailed(ctx, build, state.FailureUserError, "source-map build config: "+mapsErr.Error(), buildStart)
+		return BuildResult{}, mapsErr
+	}
+	if sourceMaps != nil {
+		if _, ok := b.store.(state.BuildIssueSourceMapStore); !ok {
+			mapsErr = errors.New("source-map build publication store unavailable")
+			b.markFailed(ctx, build, state.FailureInfra, mapsErr.Error(), buildStart)
+			return BuildResult{}, mapsErr
+		}
+	}
 
 	// The cache recipe includes the selected member as well as the complete
 	// source context. Sibling apps can share archive bytes without sharing
@@ -888,6 +905,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		Function:        app.Type == state.AppTypeFunction,
 		DevWatchCommand: watch.Command,
 		DevWatchHost:    watch.Host,
+	}
+	if sourceMaps != nil {
+		recipe.IssueSourceMapsDirectory = sourceMaps.Directory
 	}
 	buildEnvironment, cacheAvailable := b.resolveBuildEnvironment()
 	if cacheAvailable {
@@ -918,7 +938,8 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			BuildResult{BuildID: build.ID, LayerPath: cached.Path, LayerBytes: cached.Bytes, CacheHit: true,
 				BuildkitVer: cached.Toolchain.BuildkitVer, RailpackVer: cached.Toolchain.RailpackVer,
 				BuilderBaseDigest: buildEnvironment.BaseDigest, RuntimeBaseRef: runtimeBaseRef, Runtime: runtimeName,
-				DevPatch: cached.Toolchain.DevPatch}, buildStart)
+				DevPatch:        cached.Toolchain.DevPatch,
+				IssueSourceMaps: cached.Toolchain.IssueSourceMaps, IssueSourceMapsImageSHA256: cached.Toolchain.IssueSourceMapsImageSHA256}, buildStart)
 		if completeErr != nil || completed.BuildID == "" {
 			b.cache.ReleaseLease(cached.Path)
 		}
@@ -988,6 +1009,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		Framework:             fw,
 		Runtime:               runtimeName,
 		RuntimeBaseRef:        runtimeBaseRef,
+		IssueSourceMaps:       sourceMaps,
 		Function:              app.Type == state.AppTypeFunction,
 		SharedRuntime:         sharedRuntime != "",
 		DevWatchCommand:       watch.Command,
@@ -1266,11 +1288,19 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		}
 	}
 
-	result, err := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,
-		BuildResult{BuildID: build.ID, LayerPath: out.OCIImage, LayerBytes: artifactBytes,
-			BuildkitVer: out.BuildkitVer, RailpackVer: out.RailpackVer,
-			BuilderBaseDigest: buildEnvironment.BaseDigest, RuntimeBaseRef: runtimeBaseRef, Runtime: runtimeName,
-			DevPatch: out.DevPatch}, buildStart)
+	buildResult := BuildResult{BuildID: build.ID, LayerPath: out.OCIImage, LayerBytes: artifactBytes,
+		BuildkitVer: out.BuildkitVer, RailpackVer: out.RailpackVer,
+		BuilderBaseDigest: buildEnvironment.BaseDigest, RuntimeBaseRef: runtimeBaseRef, Runtime: runtimeName,
+		DevPatch: out.DevPatch}
+	if sourceMaps != nil {
+		set, digest, mapsErr := readBuildIssueSourceMaps(out.OCIImage, vmReq)
+		if mapsErr != nil {
+			b.markFailed(ctx, build, state.FailureInfra, "source-map build handoff: "+mapsErr.Error(), buildStart)
+			return BuildResult{}, mapsErr
+		}
+		buildResult.IssueSourceMaps, buildResult.IssueSourceMapsImageSHA256 = &set.Request, digest
+	}
+	result, err := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver, buildResult, buildStart)
 	if err != nil || result.BuildID == "" {
 		return result, err
 	}
@@ -1279,9 +1309,12 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// the successful deployment intact but deliberately skips cache publication.
 	if cacheAvailable && b.buildEnvironmentStillCurrent(buildEnvironment) {
 		if err := b.cache.StoreBuildWithToolchain(recipe, out.OCIImage, artifactBytes, CacheToolchain{
-			BuildkitVer: result.BuildkitVer,
-			RailpackVer: result.RailpackVer,
-			DevPatch:    result.DevPatch,
+			BuildkitVer:                result.BuildkitVer,
+			RailpackVer:                result.RailpackVer,
+			DevPatch:                   result.DevPatch,
+			IssueSourceMaps:            result.IssueSourceMaps,
+			IssueSourceMapsDigest:      buildIssueSourceMapMetadata(result.IssueSourceMaps),
+			IssueSourceMapsImageSHA256: result.IssueSourceMapsImageSHA256,
 		}); err != nil {
 			b.log.Warn("builderd: cache store failed (continuing)", "err", err)
 		}
@@ -1326,6 +1359,14 @@ func (b *Builderd) lookupCurrentCacheEntry(recipe BuildCacheRecipe, environment 
 	}
 	if !ok {
 		return CacheEntry{}, outcome, false
+	}
+	if recipe.IssueSourceMapsDirectory != "" && !validCachedIssueSourceMaps(cached, recipe.IssueSourceMapsDirectory) {
+		b.cache.ReleaseLease(cached.Path)
+		return CacheEntry{}, cacheOutcomeInvalidated, false
+	}
+	if recipe.IssueSourceMapsDirectory == "" {
+		cached.Toolchain.IssueSourceMaps = nil
+		cached.Toolchain.IssueSourceMapsImageSHA256 = ""
 	}
 	if !b.buildEnvironmentStillCurrent(environment) {
 		b.cache.ReleaseLease(cached.Path)
@@ -1595,10 +1636,21 @@ func (b *Builderd) completeBuild(ctx context.Context, build state.Build, dep sta
 		DevPatch: result.DevPatch,
 	}
 	if err := retryStateMutation(ctx, func() error {
+		if result.IssueSourceMaps != nil {
+			st, ok := b.store.(state.BuildIssueSourceMapStore)
+			if !ok {
+				return errors.New("source-map build publication store unavailable")
+			}
+			return st.CompleteBuildWithIssueSourceMaps(ctx, build, result.LayerPath, sched.AppLayerKey(app.Slug, dep.ID), result.LayerBytes, prov,
+				state.BuildIssueSourceMapPublication{AccountID: app.AccountID, AppID: app.ID, Request: *result.IssueSourceMaps})
+		}
 		return b.store.CompleteBuild(ctx, build, result.LayerPath, sched.AppLayerKey(app.Slug, dep.ID), result.LayerBytes, prov)
 	}); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return BuildResult{}, nil
+		}
+		if result.IssueSourceMaps != nil && (errors.Is(err, state.ErrIssueSourceMapsConflict) || errors.Is(err, state.ErrIssueQuota) || errors.Is(err, state.ErrInvalidArgument)) {
+			b.markFailed(ctx, build, state.FailureUserError, "source-map publication: "+err.Error(), buildStart)
 		}
 		b.ops.ObserveProvenanceWrite("error")
 		return BuildResult{}, fmt.Errorf("builderd: commit build completion: %w", err)
@@ -1609,6 +1661,9 @@ func (b *Builderd) completeBuild(ctx context.Context, build state.Build, dep sta
 		code = "cache_hit"
 	}
 	b.observeSucceeded(ctx, build.ID, code, buildStart)
+	if result.IssueSourceMaps != nil {
+		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("source maps ready (%d maps)\n", len(result.IssueSourceMaps.Manifest.Artifacts)))
+	}
 	if b.notif != nil {
 		if err := b.notif.Notify(ctx, db.NotifySnapshotBoot, b.snapshotBootPayload(app.ID, dep.ID)); err != nil {
 			b.log.Warn("builderd: image notification failed; durable imaged poll will recover", "build", build.ID, "err", err)

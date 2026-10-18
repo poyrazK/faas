@@ -969,6 +969,9 @@ func runBuildOnce(m api.BuildManifest) error {
 	if err := os.MkdirAll(m.OutDir, 0o755); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("mkdir outdir: %w", err), "")
 	}
+	if err := prepareBuildIssueSourceMaps(m); err != nil {
+		return writeAndPoweroff(m, err, "")
+	}
 	// BuildKit is launched rootless inside a user namespace. The build
 	// workspace is disposable VM-local state, and OCI-to-ext4 materialisation
 	// can preserve an image owner that does not match the mapped worker uid.
@@ -1311,6 +1314,9 @@ func runBuildOnce(m api.BuildManifest) error {
 				err = errors.Join(err, fmt.Errorf("restore Railpack config: %w", restoreErr))
 			}
 		}
+	}
+	if err == nil {
+		err = exportBuildIssueSourceMaps(m)
 	}
 	if err == nil && m.KeepWarm {
 		// The direct ext4 mount is needed while BuildKit runs, but it must
@@ -1793,6 +1799,11 @@ func buildArgv(m api.BuildManifest) []string {
 		build += " --import-cache " + shellQuote("type=local,src=/build/cache")
 	}
 	output := " --output type=oci,dest=" + shellQuote(filepath.Join(m.OutDir, "image.tar")) + " --progress plain"
+	if m.IssueSourceMaps != nil {
+		// Both exporters consume the same final LLB result; source directories
+		// and intermediate stages cannot describe the deployed bundle bytes.
+		output += " --output " + shellQuote("type=local,dest="+buildIssueSourceMapRootfs)
+	}
 	if !m.DependencyCache {
 		return []string{"/bin/sh", "-c", "set -x; " + prepare + " && exec " + build + output}
 	}

@@ -192,6 +192,7 @@ sql:
       - "pkg/state/issue_application_escalation_queries.sql"
       - "pkg/state/issue_application_reminder_queries.sql"
       - "pkg/state/issue_application_triage_queries.sql"
+      - "pkg/state/issue_compound_alert_queries.sql"
       - "pkg/state/issue_frequency_alert_queries.sql"
       - "pkg/state/issue_lifecycle_alert_queries.sql"
       - "pkg/state/issue_release_health_queries.sql"

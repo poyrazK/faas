@@ -49,8 +49,9 @@ type VMRequest struct {
 	Framework             Framework
 	Runtime               string // app runtime id (node22, python312, go124-alpine, ...)
 	RuntimeBaseRef        string // resolved OCI ref used by Railpack for this build
-	Function              bool   // handler build; allows markerless Node/Python sources
-	SharedRuntime         bool   // container app built on a shared runner base (H10-140)
+	IssueSourceMaps       *api.IssueSourceMapBuildConfig
+	Function              bool // handler build; allows markerless Node/Python sources
+	SharedRuntime         bool // container app built on a shared runner base (H10-140)
 	// DevWatchCommand builds a watch-mode developer image (ADR-1170).
 	DevWatchCommand string
 	// DevWatchHost is the developer app's public hostname for that image.

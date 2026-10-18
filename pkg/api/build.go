@@ -16,6 +16,26 @@ const BuildEntropyPath = "/etc/faas/entropy.seed"
 // removing the chroot.
 const BuildDonePath = "/etc/faas/build-done.json"
 
+// IssueSourceMapBuildConfigFile is read from the selected source root, before
+// customer build commands run. It opts a Node source build into publication.
+const IssueSourceMapBuildConfigFile = "gregale.issue-source-maps.json"
+
+// BuildIssueSourceMapsFile is a sanitized sidecar in the existing build export.
+const BuildIssueSourceMapsFile = "issue-source-maps.json"
+
+type IssueSourceMapBuildConfig struct {
+	Version   int    `json:"version"`
+	Directory string `json:"directory"`
+}
+
+type BuildIssueSourceMaps struct {
+	BuildID      string                        `json:"build_id"`
+	DeploymentID string                        `json:"deployment_id"`
+	SourceSHA256 string                        `json:"source_sha256"`
+	ImageSHA256  string                        `json:"image_sha256"`
+	Request      PublishIssueSourceMapsRequest `json:"request"`
+}
+
 // BuildFramework picks which in-VM build engine the builder VM invokes.
 // SchemaVersion'd for forward compat — additive enum slots only.
 type BuildFramework string
@@ -60,6 +80,11 @@ type BuildManifest struct {
 	// the pinned Gregale runner base used during image materialisation.
 	Runtime        string `json:"runtime,omitempty"`
 	RuntimeBaseRef string `json:"runtime_base_ref,omitempty"`
+	// Source-map publication uses a second, VM-local exporter of the SAME
+	// BuildKit result. Older guests omit the sidecar and fail the host's opt-in
+	// readiness check rather than silently publishing an unsymbolicated build.
+	IssueSourceMaps *IssueSourceMapBuildConfig `json:"issue_source_maps,omitempty"`
+	SourceSHA256    string                     `json:"source_sha256,omitempty"`
 	// Function identifies source builds whose public contract is a handler
 	// rather than a long-running process. The guest uses this bit to provide a
 	// deterministic copy-only plan for handler-only Node/Python sources that

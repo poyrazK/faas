@@ -10484,6 +10484,15 @@ const (
 	IssueMaxClockSkew     = 5 * time.Minute
 )
 
+// Offline grouping evaluation and reviewed partition snapshots (ADR-1744).
+const (
+	IssueGroupingEvaluationCasesMax         = 10000
+	IssueGroupingEvaluationCorpusMaxBytes   = 8 << 20
+	IssueGroupingEvaluationBaselineMaxBytes = 8 << 20
+	IssueGroupingEvaluationCaseIDMaxBytes   = 128
+	IssueGroupingEvaluationJSONDepthMax     = 64
+)
+
 // Deployment-local Node source-map registration (ADR-1113). SDK mirrors these
 // bounds; map artifacts and source content never enter ingestion.
 const (
@@ -10501,6 +10510,17 @@ const (
 	IssueTagsMax                   = 16
 	IssueTagKeyMaxBytes            = 64
 	IssueTagValueMaxBytes          = 128
+)
+
+// Match Node build discovery's bundle hashing bounds (ADR-1742).
+const (
+	IssueSourceMapBundleMaxBytes      = 16 << 20
+	IssueSourceMapBundlesMaxBytes     = 64 << 20
+	IssueSourceMapDiscoveryEntriesMax = 4096
+	IssueSourceMapBuildConfigMaxBytes = 4096
+	// Includes build binding fields or cache toolchain metadata around the
+	// bounded, sanitized publication request.
+	IssueSourceMapBuildMetadataMaxBytes = IssueSourceMapsUploadMaxBytes + (64 << 10)
 )
 
 // IssueGroupMembersMax bounds reversible manual group links (ADR-1114).
@@ -12464,6 +12484,9 @@ const (
 
 // Issue frequency alert bounds cap configuration and per-capture evaluation work.
 const (
+	IssueApplicationSlackMaxEvents        = 5
+	IssueCompoundAlertMaxRules            = 10
+	IssueCompoundAlertMaxCustomers        = IssueImpactAlertMaxCustomers
 	IssueFrequencyAlertMaxRules           = 10
 	IssueFrequencyAlertMaxEvents          = 100000
 	IssueFrequencyAlertMinWindowSeconds   = 60
