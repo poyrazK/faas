@@ -1625,27 +1625,15 @@ func applyManifestLifecycle(ctx context.Context, client manifestScalingClient, s
 	if err != nil {
 		return err
 	}
-	if !ok || m == nil || ((m.Lifecycle == nil || m.Lifecycle.Empty()) && m.Worker == nil && m.Profiling == nil) {
+	if !ok || m == nil {
+		return nil
+	}
+	desired, apply := m.LifecycleRequest()
+	if !apply {
 		return nil
 	}
 	if err := m.Validate(); err != nil {
 		return err
-	}
-	desired := api.UpdateAppRequest{}
-	if m.Lifecycle != nil && !m.Lifecycle.Empty() {
-		desired = m.Lifecycle.ToAPI()
-	}
-	if m.Worker != nil {
-		workerMode := api.ExecutionModeWorker
-		desired.ExecutionMode = &workerMode
-		desired.WorkerReplicas = m.Worker.Scale.ToAPI()
-		if drainTimeout := m.Worker.DrainTimeoutSeconds(); drainTimeout > 0 {
-			desired.StopGracePeriodS = &drainTimeout
-		}
-		if m.Worker.StopSignal != "" {
-			sig := m.Worker.StopSignal
-			desired.StopSignal = &sig
-		}
 	}
 	current, err := client.GetApp(ctx, slug)
 	if err != nil {
