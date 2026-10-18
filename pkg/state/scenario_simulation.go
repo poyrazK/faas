@@ -144,6 +144,9 @@ func (s *PgStore) BeginScenarioSimulation(ctx context.Context, req api.ScenarioS
 		return empty, ErrConflict
 	}
 	if d.Attempt.Status == "pending" {
+		if err = armScenarioPostgresFault(ctx, tx, req, &d); err != nil {
+			return empty, err
+		}
 		if err = armScenarioWorkerFault(ctx, tx, req, &d); err != nil {
 			return empty, err
 		}
@@ -205,6 +208,11 @@ func (s *PgStore) FinishScenarioSimulation(ctx context.Context, req api.Scenario
 	if n != 1 {
 		return ErrConflict
 	}
+	if status == "interrupted" {
+		if err = interruptScenarioPostgresFault(ctx, tx, req, id); err != nil {
+			return err
+		}
+	}
 	return tx.Commit(ctx)
 }
 
@@ -256,6 +264,9 @@ func (m *MemStore) BeginScenarioSimulation(ctx context.Context, req api.Scenario
 		request.Status = "failed"
 	}
 	recorder.Requests[req.RecorderRequestID] = request
+	if err := m.armScenarioPostgresFaultLocked(p, req, &d); err != nil {
+		return empty, err
+	}
 	if err := m.armScenarioWorkerFaultLocked(p, req, &d); err != nil {
 		return empty, err
 	}
@@ -302,6 +313,9 @@ func (m *MemStore) FinishScenarioSimulation(ctx context.Context, req api.Scenari
 			}
 			recorder.Requests[req.RecorderRequestID] = request
 			m.scenarioActionPolicies[p.Member.AppID] = p
+			if status == "interrupted" {
+				m.interruptScenarioPostgresFaultLocked(req, id)
+			}
 			return nil
 		}
 	}

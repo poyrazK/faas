@@ -1775,6 +1775,13 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	for name, schema := range map[string]string{"WorkerTermination": "ScenarioWorkerTermination", "WorkerFault": "ScenarioWorkerFault"} {
 		dtos[schema] = workDTOs[name]
 	}
+	postgresFaultDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "rehearsalfault", "postgres.go")})
+	if err != nil {
+		t.Fatalf("scan rehearsal PostgreSQL fault DTOs: %v", err)
+	}
+	for name, schema := range map[string]string{"Postgres": "ScenarioPostgresFaultSpec", "Receipt": "ScenarioPostgresFaultReceipt"} {
+		dtos[schema] = postgresFaultDTOs[name]
+	}
 	postgresDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "rehearsalpg", "protocol.go")})
 	if err != nil {
 		t.Fatalf("scan rehearsal PostgreSQL DTOs: %v", err)
