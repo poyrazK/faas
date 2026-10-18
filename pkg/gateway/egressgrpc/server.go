@@ -256,7 +256,7 @@ func (s *Server) AckBytes(_ context.Context, req *egresspb.AckBytesRequest) (*eg
 }
 
 // Flush moves what the sink holds into the replay ledger, so a generation
-// that stops serving meterd (a hand-off's old generation, ADR-20261018074719) or exits
+// that stops serving meterd (a hand-off's old generation, ADR-1580) or exits
 // keeps every record for whichever generation replays the ledger next.
 func (s *Server) Flush() error {
 	if s.sink == nil {

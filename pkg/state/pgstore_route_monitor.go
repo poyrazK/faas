@@ -39,9 +39,9 @@ func pgRouteMonitorOwner(ctx context.Context, tx pgx.Tx, accountID, appID string
 	var a, b []byte
 	var err error
 	if lock {
-		a, err = q.LockRoutePolicyAccount(ctx, tx, accountID)
+		a, err = q.LockRoutePolicyAccount(ctx, tx, sqlc.LockRoutePolicyAccountParams{AccountID: accountID, AppID: appID})
 	} else {
-		a, err = q.ReadRoutePolicyAccount(ctx, tx, accountID)
+		a, err = q.ReadRoutePolicyAccount(ctx, tx, sqlc.ReadRoutePolicyAccountParams{AccountID: accountID, AppID: appID})
 	}
 	if err != nil {
 		return RoutePolicySnapshot{}, routePolicyReadError(err)

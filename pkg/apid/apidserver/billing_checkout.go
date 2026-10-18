@@ -26,7 +26,7 @@ var errNoHostedCheckout = errors.New("apid: hosted checkout unavailable")
 func (s *server) hostedCheckoutAvailable(acct state.Account, plan api.Plan) bool {
 	return s.billingProvider != nil &&
 		s.billingProvider.Capabilities().Has(billing.CapHostedCheckout) &&
-		acct.Plan.RequiresBillingUpgradeTo(plan)
+		(acct.Plan.RequiresBillingUpgradeTo(plan) || (acct.ResourceOrgID != "" && plan != api.PlanFree && acct.StripeSubscriptionItem == ""))
 }
 
 // beginHostedCheckout ensures the provider customer exists, stamps its ID

@@ -484,7 +484,7 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		// The control-plane role renders this and faas-schedd.socket's
 		// ListenStream from one variable, so the durable socket always
-		// carries the address schedd serves (ADR-20261018074719).
+		// carries the address schedd serves (ADR-1580).
 		if v := os.Getenv("FAAS_SCHEDD_LISTEN_ADDR"); v != "" {
 			c.ListenAddr = v
 		}

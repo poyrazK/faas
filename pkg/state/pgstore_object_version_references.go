@@ -26,11 +26,11 @@ func (s *PgStore) RecordObjectVersions(ctx context.Context, account, bucket stri
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
-	// Bucket before account, matching configuration, deletion and inventory intent.
-	if _, err = q.ObjectVersionBucketOwned(ctx, tx, sqlc.ObjectVersionBucketOwnedParams{ID: mustPgUUID(bucket), AccountID: mustPgUUID(account)}); err != nil {
+	// Financial owner and namespace precede the bucket's reference fence.
+	if _, err = lockObjectUsageScope(ctx, tx, mustPgUUID(account), mustPgUUID(bucket)); err != nil {
 		return nil, mapErr(err)
 	}
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(account)); err != nil {
+	if _, err = q.ObjectVersionBucketOwned(ctx, tx, sqlc.ObjectVersionBucketOwnedParams{ID: mustPgUUID(bucket), AccountID: mustPgUUID(account)}); err != nil {
 		return nil, mapErr(err)
 	}
 	out, err := recordObjectVersionsTx(ctx, tx, bucket, items)

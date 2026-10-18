@@ -270,7 +270,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 
 // renderScheddListenVars hands the control plane's schedd bind to the
 // control_plane_service role, which renders it into both schedd's
-// FAAS_SCHEDD_LISTEN_ADDR and faas-schedd.socket (ADR-20261018074719). The renderer
+// FAAS_SCHEDD_LISTEN_ADDR and faas-schedd.socket (ADR-1580). The renderer
 // writes the same bind into schedd.toml, so the three cannot disagree.
 func renderScheddListenVars(m *manifest.Manifest) string {
 	if m.Daemons.Schedd == nil || m.Daemons.Schedd.Bind == "" {

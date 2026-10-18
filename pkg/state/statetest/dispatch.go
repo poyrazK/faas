@@ -18,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyinventory"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyroles"
 	"github.com/onebox-faas/faas/pkg/objectstorage/grantrevocation"
+	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -35,6 +36,8 @@ var memDispatched = map[string]bool{
 	"BindInstanceSnapshotRecovery":                            true,
 	"CompleteOperatorPark":                                    true,
 	"CompleteOperatorRestart":                                 true,
+	"ListProjectsForOrg":                                      true,
+	"ProjectByOrgSlug":                                        true,
 	"ProcessNextWorkflowInitialManualCompletion":              true,
 	"AcceptEntityOutboxDelivery":                              true,
 	"AccountPasswordByAccountID":                              true,
@@ -133,6 +136,51 @@ var memDispatched = map[string]bool{
 	"StampOperationExecutionAttempt":                          true,
 	"UpdateAccountProviderCustomerID":                         true,
 	"WarmPoolReconciliationAppIDs":                            true,
+	"AppTaskAttachByTask":                                     true,
+	"ColdWakeRatePctSince":                                    true,
+	"CountNewErrorFingerprintsSince":                          true,
+	"DailyCostCents":                                          true,
+	"DeleteSnapshotsByID":                                     true,
+	"DeploymentRuntimeUpgradeTarget":                          true,
+	"FailDeploymentWithHostingReceipt":                        true,
+	"GetApplicationStandardEnrollment":                        true,
+	"GetApplicationStandardSnapshotCapture":                   true,
+	"GetFreshBaseImageScan":                                   true,
+	"GetFreshBuildExportPublication":                          true,
+	"GetFreshDeploymentRuntimeProducerInputs":                 true,
+	"GetFreshDeploymentRuntimeScan":                           true,
+	"GetInstanceApplicationStandardAdmission":                 true,
+	"GetInstanceApplicationStandardRuntimeReceipt":            true,
+	"IssueApplicationStandardSnapshotCapture":                 true,
+	"JobClaimLegacyArtifactVerification":                      true,
+	"JobClaimPendingImageMaterialization":                     true,
+	"JobFinishLegacyArtifactVerification":                     true,
+	"JobPublishImageMaterialization":                          true,
+	"JobRenewImageMaterializationLease":                       true,
+	"JobRetryLegacyArtifactVerification":                      true,
+	"LatestAppEgressPolicyRevision":                           true,
+	"LatestSnapshotForTier":                                   true,
+	"ListAppDeploymentAuditBetween":                           true,
+	"ListMCPReadinessMonitoring":                              true,
+	"ListPendingApplicationStandardEgress":                    true,
+	"ListSnapshotsForGC":                                      true,
+	"MCPConnectionHealth":                                     true,
+	"MarkOldSnapshotsStale":                                   true,
+	"PublishApplicationStandardSnapshotCapture":               true,
+	"PublishBaseImageProducer":                                true,
+	"PublishBaseImageScan":                                    true,
+	"PublishDeploymentRuntimeScan":                            true,
+	"PublishSnapshotIfRuntimeFresh":                           true,
+	"RecordApplicationStandardEgress":                         true,
+	"RecordDeploymentRegistryVerification":                    true,
+	"RuntimeReleaseQualification":                             true,
+	"SetDeploymentFailed":                                     true,
+	"UpdateDeploymentHostingVerification":                     true,
+	"UpsertDeploymentHostingReceipt":                          true,
+	"ValidateDeploymentRuntimeUpgradeBaseline":                true,
+	"WorkflowAlertSnapshot":                                   true,
+	"WorkflowRecoveryReviewCompletionNotificationAllowed":     true,
+	"WorkflowRecoveryReviewNotificationAllowed":               true,
 }
 
 func (s *Mem) CompleteOperatorRestart(ctx context.Context, completion state.OperatorRestartCompletion) (state.OperatorRestartResult, error) {
@@ -1032,6 +1080,8 @@ var pgDispatched = map[string]bool{
 	"ResolveInstanceMigrationCommit":                                     true,
 	"ScenarioWebhookDeliveryBlocked":                                     true,
 	"SubmitOperatorRecovery":                                             true,
+	"ListProjectsForOrg":                                                 true,
+	"ProjectByOrgSlug":                                                   true,
 	"AbandonProjectEnvironmentCloneConfigurationFence":                   true,
 	"AbandonProjectEnvironmentCloneObjectWriteFences":                    true,
 	"AcquireProjectEnvironmentCloneConfigurationFence":                   true,
@@ -2386,6 +2436,8 @@ func (s *Pg) WithdrawProjectEnvironmentCloneCheckpointPgBindings(p0 context.Cont
 var storeDispatched = map[string]bool{
 	"ScenarioWebhookDeliveryBlocked":                true,
 	"SubmitOperatorRecovery":                        true,
+	"ListProjectsForOrg":                            true,
+	"ProjectByOrgSlug":                              true,
 	"MCPPolicyConvergenceSnapshot":                  true,
 	"LatestAccountEdgeRulePolicyPosition":           true,
 	"LatestEdgeRuleChangeID":                        true,
@@ -2436,6 +2488,11 @@ var storeDispatched = map[string]bool{
 	"UpdateProjectEnvironmentPromotionVerification": true,
 	"UsageByAccount":                                true,
 	"UsageSLOForAccount":                            true,
+	"ClaimDueAppWebhookDeliveries":                  true,
+	"CreateInstanceWithMode":                        true,
+	"ListAppEnvInScope":                             true,
+	"ListAppTrustedSignersForApp":                   true,
+	"ListDeploymentsForOperator":                    true,
 }
 
 func (s *Store) AccountByID(p0 context.Context, p1 string) (state.Account, error) {
@@ -3058,4 +3115,508 @@ func (s *Mem) CompleteOperatorPark(ctx context.Context, completion state.Operato
 		return override.CompleteOperatorPark(ctx, completion)
 	}
 	return s.MemStore.CompleteOperatorPark(ctx, completion)
+}
+
+func (s *Mem) ProjectByOrgSlug(ctx context.Context, orgID, slug string) (state.Project, error) {
+	if override, ok := s.over.(interface {
+		ProjectByOrgSlug(context.Context, string, string) (state.Project, error)
+	}); ok {
+		return override.ProjectByOrgSlug(ctx, orgID, slug)
+	}
+	return s.MemStore.ProjectByOrgSlug(ctx, orgID, slug)
+}
+
+func (s *Mem) ListProjectsForOrg(ctx context.Context, orgID string) ([]state.Project, error) {
+	if override, ok := s.over.(interface {
+		ListProjectsForOrg(context.Context, string) ([]state.Project, error)
+	}); ok {
+		return override.ListProjectsForOrg(ctx, orgID)
+	}
+	return s.MemStore.ListProjectsForOrg(ctx, orgID)
+}
+
+func (s *Pg) ProjectByOrgSlug(ctx context.Context, orgID, slug string) (state.Project, error) {
+	if override, ok := s.over.(interface {
+		ProjectByOrgSlug(context.Context, string, string) (state.Project, error)
+	}); ok {
+		return override.ProjectByOrgSlug(ctx, orgID, slug)
+	}
+	return s.PgStore.ProjectByOrgSlug(ctx, orgID, slug)
+}
+
+func (s *Pg) ListProjectsForOrg(ctx context.Context, orgID string) ([]state.Project, error) {
+	if override, ok := s.over.(interface {
+		ListProjectsForOrg(context.Context, string) ([]state.Project, error)
+	}); ok {
+		return override.ListProjectsForOrg(ctx, orgID)
+	}
+	return s.PgStore.ListProjectsForOrg(ctx, orgID)
+}
+
+func (s *Store) ProjectByOrgSlug(ctx context.Context, orgID, slug string) (state.Project, error) {
+	if override, ok := s.over.(interface {
+		ProjectByOrgSlug(context.Context, string, string) (state.Project, error)
+	}); ok {
+		return override.ProjectByOrgSlug(ctx, orgID, slug)
+	}
+	return s.Store.ProjectByOrgSlug(ctx, orgID, slug)
+}
+
+func (s *Store) ListProjectsForOrg(ctx context.Context, orgID string) ([]state.Project, error) {
+	if override, ok := s.over.(interface {
+		ListProjectsForOrg(context.Context, string) ([]state.Project, error)
+	}); ok {
+		return override.ListProjectsForOrg(ctx, orgID)
+	}
+	return s.Store.ListProjectsForOrg(ctx, orgID)
+}
+
+func (s *Mem) AppTaskAttachByTask(p0 context.Context, p1 string) (state.AppTaskAttach, error) {
+	if o, ok := s.over.(interface {
+		AppTaskAttachByTask(context.Context, string) (state.AppTaskAttach, error)
+	}); ok {
+		return o.AppTaskAttachByTask(p0, p1)
+	}
+	return s.MemStore.AppTaskAttachByTask(p0, p1)
+}
+
+func (s *Mem) ColdWakeRatePctSince(p0 context.Context, p1 string, p2 string, p3 time.Time) (float64, error) {
+	if o, ok := s.over.(interface {
+		ColdWakeRatePctSince(context.Context, string, string, time.Time) (float64, error)
+	}); ok {
+		return o.ColdWakeRatePctSince(p0, p1, p2, p3)
+	}
+	return s.MemStore.ColdWakeRatePctSince(p0, p1, p2, p3)
+}
+
+func (s *Mem) CountNewErrorFingerprintsSince(p0 context.Context, p1 string, p2 string, p3 time.Time) (int, error) {
+	if o, ok := s.over.(interface {
+		CountNewErrorFingerprintsSince(context.Context, string, string, time.Time) (int, error)
+	}); ok {
+		return o.CountNewErrorFingerprintsSince(p0, p1, p2, p3)
+	}
+	return s.MemStore.CountNewErrorFingerprintsSince(p0, p1, p2, p3)
+}
+
+func (s *Mem) DailyCostCents(p0 context.Context, p1 string, p2 string, p3 time.Time) (int64, error) {
+	if o, ok := s.over.(interface {
+		DailyCostCents(context.Context, string, string, time.Time) (int64, error)
+	}); ok {
+		return o.DailyCostCents(p0, p1, p2, p3)
+	}
+	return s.MemStore.DailyCostCents(p0, p1, p2, p3)
+}
+
+func (s *Mem) DeleteSnapshotsByID(p0 context.Context, p1 []string) (int64, error) {
+	if o, ok := s.over.(interface {
+		DeleteSnapshotsByID(context.Context, []string) (int64, error)
+	}); ok {
+		return o.DeleteSnapshotsByID(p0, p1)
+	}
+	return s.MemStore.DeleteSnapshotsByID(p0, p1)
+}
+
+func (s *Mem) DeploymentRuntimeUpgradeTarget(p0 context.Context, p1 string) (state.RuntimeRelease, error) {
+	if o, ok := s.over.(interface {
+		DeploymentRuntimeUpgradeTarget(context.Context, string) (state.RuntimeRelease, error)
+	}); ok {
+		return o.DeploymentRuntimeUpgradeTarget(p0, p1)
+	}
+	return s.MemStore.DeploymentRuntimeUpgradeTarget(p0, p1)
+}
+
+func (s *Mem) FailDeploymentWithHostingReceipt(p0 context.Context, p1 string, p2 []byte, p3 string, p4 string) (bool, error) {
+	if o, ok := s.over.(interface {
+		FailDeploymentWithHostingReceipt(context.Context, string, []byte, string, string) (bool, error)
+	}); ok {
+		return o.FailDeploymentWithHostingReceipt(p0, p1, p2, p3, p4)
+	}
+	return s.MemStore.FailDeploymentWithHostingReceipt(p0, p1, p2, p3, p4)
+}
+
+func (s *Mem) GetApplicationStandardEnrollment(p0 context.Context, p1 string, p2 string) (state.ApplicationStandardEnrollment, error) {
+	if o, ok := s.over.(interface {
+		GetApplicationStandardEnrollment(context.Context, string, string) (state.ApplicationStandardEnrollment, error)
+	}); ok {
+		return o.GetApplicationStandardEnrollment(p0, p1, p2)
+	}
+	return s.MemStore.GetApplicationStandardEnrollment(p0, p1, p2)
+}
+
+func (s *Mem) GetApplicationStandardSnapshotCapture(p0 context.Context, p1 string, p2 string, p3 string, p4 string) (state.ApplicationStandardSnapshotCaptureRecord, error) {
+	if o, ok := s.over.(interface {
+		GetApplicationStandardSnapshotCapture(context.Context, string, string, string, string) (state.ApplicationStandardSnapshotCaptureRecord, error)
+	}); ok {
+		return o.GetApplicationStandardSnapshotCapture(p0, p1, p2, p3, p4)
+	}
+	return s.MemStore.GetApplicationStandardSnapshotCapture(p0, p1, p2, p3, p4)
+}
+
+func (s *Mem) GetFreshBaseImageScan(p0 context.Context, p1 string, p2 string) (state.BaseImageScan, error) {
+	if o, ok := s.over.(interface {
+		GetFreshBaseImageScan(context.Context, string, string) (state.BaseImageScan, error)
+	}); ok {
+		return o.GetFreshBaseImageScan(p0, p1, p2)
+	}
+	return s.MemStore.GetFreshBaseImageScan(p0, p1, p2)
+}
+
+func (s *Mem) GetFreshBuildExportPublication(p0 context.Context, p1 string, p2 string, p3 string, p4 string) (state.BuildExportPublication, error) {
+	if o, ok := s.over.(interface {
+		GetFreshBuildExportPublication(context.Context, string, string, string, string) (state.BuildExportPublication, error)
+	}); ok {
+		return o.GetFreshBuildExportPublication(p0, p1, p2, p3, p4)
+	}
+	return s.MemStore.GetFreshBuildExportPublication(p0, p1, p2, p3, p4)
+}
+
+func (s *Mem) GetFreshDeploymentRuntimeProducerInputs(p0 context.Context, p1 string, p2 string, p3 string) (state.DeploymentRuntimeProducerInputs, error) {
+	if o, ok := s.over.(interface {
+		GetFreshDeploymentRuntimeProducerInputs(context.Context, string, string, string) (state.DeploymentRuntimeProducerInputs, error)
+	}); ok {
+		return o.GetFreshDeploymentRuntimeProducerInputs(p0, p1, p2, p3)
+	}
+	return s.MemStore.GetFreshDeploymentRuntimeProducerInputs(p0, p1, p2, p3)
+}
+
+func (s *Mem) GetFreshDeploymentRuntimeScan(p0 context.Context, p1 string, p2 string, p3 string) (state.DeploymentRuntimeScanEvidence, error) {
+	if o, ok := s.over.(interface {
+		GetFreshDeploymentRuntimeScan(context.Context, string, string, string) (state.DeploymentRuntimeScanEvidence, error)
+	}); ok {
+		return o.GetFreshDeploymentRuntimeScan(p0, p1, p2, p3)
+	}
+	return s.MemStore.GetFreshDeploymentRuntimeScan(p0, p1, p2, p3)
+}
+
+func (s *Mem) GetInstanceApplicationStandardAdmission(p0 context.Context, p1 string) (state.InstanceApplicationStandardAdmission, error) {
+	if o, ok := s.over.(interface {
+		GetInstanceApplicationStandardAdmission(context.Context, string) (state.InstanceApplicationStandardAdmission, error)
+	}); ok {
+		return o.GetInstanceApplicationStandardAdmission(p0, p1)
+	}
+	return s.MemStore.GetInstanceApplicationStandardAdmission(p0, p1)
+}
+
+func (s *Mem) GetInstanceApplicationStandardRuntimeReceipt(p0 context.Context, p1 string) (runtimeadmission.Receipt, error) {
+	if o, ok := s.over.(interface {
+		GetInstanceApplicationStandardRuntimeReceipt(context.Context, string) (runtimeadmission.Receipt, error)
+	}); ok {
+		return o.GetInstanceApplicationStandardRuntimeReceipt(p0, p1)
+	}
+	return s.MemStore.GetInstanceApplicationStandardRuntimeReceipt(p0, p1)
+}
+
+func (s *Mem) IssueApplicationStandardSnapshotCapture(p0 context.Context, p1 string, p2 state.ApplicationStandardSnapshotCaptureRequest) (runtimeadmission.SnapshotGrant, error) {
+	if o, ok := s.over.(interface {
+		IssueApplicationStandardSnapshotCapture(context.Context, string, state.ApplicationStandardSnapshotCaptureRequest) (runtimeadmission.SnapshotGrant, error)
+	}); ok {
+		return o.IssueApplicationStandardSnapshotCapture(p0, p1, p2)
+	}
+	return s.MemStore.IssueApplicationStandardSnapshotCapture(p0, p1, p2)
+}
+
+func (s *Mem) JobClaimLegacyArtifactVerification(p0 context.Context, p1 int, p2 string, p3 time.Duration) ([]state.Job, error) {
+	if o, ok := s.over.(interface {
+		JobClaimLegacyArtifactVerification(context.Context, int, string, time.Duration) ([]state.Job, error)
+	}); ok {
+		return o.JobClaimLegacyArtifactVerification(p0, p1, p2, p3)
+	}
+	return s.MemStore.JobClaimLegacyArtifactVerification(p0, p1, p2, p3)
+}
+
+func (s *Mem) JobClaimPendingImageMaterialization(p0 context.Context, p1 int, p2 string, p3 time.Duration) ([]state.Job, error) {
+	if o, ok := s.over.(interface {
+		JobClaimPendingImageMaterialization(context.Context, int, string, time.Duration) ([]state.Job, error)
+	}); ok {
+		return o.JobClaimPendingImageMaterialization(p0, p1, p2, p3)
+	}
+	return s.MemStore.JobClaimPendingImageMaterialization(p0, p1, p2, p3)
+}
+
+func (s *Mem) JobFinishLegacyArtifactVerification(p0 context.Context, p1 string, p2 string, p3 string, p4 string, p5 bool, p6 string) (state.Job, error) {
+	if o, ok := s.over.(interface {
+		JobFinishLegacyArtifactVerification(context.Context, string, string, string, string, bool, string) (state.Job, error)
+	}); ok {
+		return o.JobFinishLegacyArtifactVerification(p0, p1, p2, p3, p4, p5, p6)
+	}
+	return s.MemStore.JobFinishLegacyArtifactVerification(p0, p1, p2, p3, p4, p5, p6)
+}
+
+func (s *Mem) JobPublishImageMaterialization(p0 context.Context, p1 string, p2 string, p3 string, p4 int, p5 string, p6 string) (state.Job, error) {
+	if o, ok := s.over.(interface {
+		JobPublishImageMaterialization(context.Context, string, string, string, int, string, string) (state.Job, error)
+	}); ok {
+		return o.JobPublishImageMaterialization(p0, p1, p2, p3, p4, p5, p6)
+	}
+	return s.MemStore.JobPublishImageMaterialization(p0, p1, p2, p3, p4, p5, p6)
+}
+
+func (s *Mem) JobRenewImageMaterializationLease(p0 context.Context, p1 string, p2 string, p3 string, p4 int, p5 time.Duration) error {
+	if o, ok := s.over.(interface {
+		JobRenewImageMaterializationLease(context.Context, string, string, string, int, time.Duration) error
+	}); ok {
+		return o.JobRenewImageMaterializationLease(p0, p1, p2, p3, p4, p5)
+	}
+	return s.MemStore.JobRenewImageMaterializationLease(p0, p1, p2, p3, p4, p5)
+}
+
+func (s *Mem) JobRetryLegacyArtifactVerification(p0 context.Context, p1 string, p2 string, p3 string, p4 string, p5 time.Time) (state.Job, error) {
+	if o, ok := s.over.(interface {
+		JobRetryLegacyArtifactVerification(context.Context, string, string, string, string, time.Time) (state.Job, error)
+	}); ok {
+		return o.JobRetryLegacyArtifactVerification(p0, p1, p2, p3, p4, p5)
+	}
+	return s.MemStore.JobRetryLegacyArtifactVerification(p0, p1, p2, p3, p4, p5)
+}
+
+func (s *Mem) LatestAppEgressPolicyRevision(p0 context.Context, p1 string) (int64, error) {
+	if o, ok := s.over.(interface {
+		LatestAppEgressPolicyRevision(context.Context, string) (int64, error)
+	}); ok {
+		return o.LatestAppEgressPolicyRevision(p0, p1)
+	}
+	return s.MemStore.LatestAppEgressPolicyRevision(p0, p1)
+}
+
+func (s *Mem) LatestSnapshotForTier(p0 context.Context, p1 string, p2 string) (state.Snapshot, error) {
+	if o, ok := s.over.(interface {
+		LatestSnapshotForTier(context.Context, string, string) (state.Snapshot, error)
+	}); ok {
+		return o.LatestSnapshotForTier(p0, p1, p2)
+	}
+	return s.MemStore.LatestSnapshotForTier(p0, p1, p2)
+}
+
+func (s *Mem) ListAppDeploymentAuditBetween(p0 context.Context, p1 string, p2 string, p3 time.Time, p4 time.Time, p5 int) ([]state.AppChangeRow, error) {
+	if o, ok := s.over.(interface {
+		ListAppDeploymentAuditBetween(context.Context, string, string, time.Time, time.Time, int) ([]state.AppChangeRow, error)
+	}); ok {
+		return o.ListAppDeploymentAuditBetween(p0, p1, p2, p3, p4, p5)
+	}
+	return s.MemStore.ListAppDeploymentAuditBetween(p0, p1, p2, p3, p4, p5)
+}
+
+func (s *Mem) ListMCPReadinessMonitoring(p0 context.Context, p1 string, p2 string, p3 string, p4 ...string) ([]api.MCPReadinessMonitorStatus, error) {
+	if o, ok := s.over.(interface {
+		ListMCPReadinessMonitoring(context.Context, string, string, string, ...string) ([]api.MCPReadinessMonitorStatus, error)
+	}); ok {
+		return o.ListMCPReadinessMonitoring(p0, p1, p2, p3, p4...)
+	}
+	return s.MemStore.ListMCPReadinessMonitoring(p0, p1, p2, p3, p4...)
+}
+
+func (s *Mem) ListPendingApplicationStandardEgress(p0 context.Context, p1 string) ([]state.ApplicationStandardEgressTarget, error) {
+	if o, ok := s.over.(interface {
+		ListPendingApplicationStandardEgress(context.Context, string) ([]state.ApplicationStandardEgressTarget, error)
+	}); ok {
+		return o.ListPendingApplicationStandardEgress(p0, p1)
+	}
+	return s.MemStore.ListPendingApplicationStandardEgress(p0, p1)
+}
+
+func (s *Mem) ListSnapshotsForGC(p0 context.Context) ([]state.SnapshotForGC, error) {
+	if o, ok := s.over.(interface {
+		ListSnapshotsForGC(context.Context) ([]state.SnapshotForGC, error)
+	}); ok {
+		return o.ListSnapshotsForGC(p0)
+	}
+	return s.MemStore.ListSnapshotsForGC(p0)
+}
+
+func (s *Mem) MCPConnectionHealth(p0 context.Context, p1 string, p2 string, p3 int, p4 time.Time) (api.MCPConnectionHealthSnapshot, error) {
+	if o, ok := s.over.(interface {
+		MCPConnectionHealth(context.Context, string, string, int, time.Time) (api.MCPConnectionHealthSnapshot, error)
+	}); ok {
+		return o.MCPConnectionHealth(p0, p1, p2, p3, p4)
+	}
+	return s.MemStore.MCPConnectionHealth(p0, p1, p2, p3, p4)
+}
+
+func (s *Mem) MarkOldSnapshotsStale(p0 context.Context, p1 []string) (int64, error) {
+	if o, ok := s.over.(interface {
+		MarkOldSnapshotsStale(context.Context, []string) (int64, error)
+	}); ok {
+		return o.MarkOldSnapshotsStale(p0, p1)
+	}
+	return s.MemStore.MarkOldSnapshotsStale(p0, p1)
+}
+
+func (s *Mem) PublishApplicationStandardSnapshotCapture(p0 context.Context, p1 runtimeadmission.SnapshotAcknowledgment) error {
+	if o, ok := s.over.(interface {
+		PublishApplicationStandardSnapshotCapture(context.Context, runtimeadmission.SnapshotAcknowledgment) error
+	}); ok {
+		return o.PublishApplicationStandardSnapshotCapture(p0, p1)
+	}
+	return s.MemStore.PublishApplicationStandardSnapshotCapture(p0, p1)
+}
+
+func (s *Mem) PublishBaseImageProducer(p0 context.Context, p1 state.BaseImageProducerInput) (state.BaseImageProducer, error) {
+	if o, ok := s.over.(interface {
+		PublishBaseImageProducer(context.Context, state.BaseImageProducerInput) (state.BaseImageProducer, error)
+	}); ok {
+		return o.PublishBaseImageProducer(p0, p1)
+	}
+	return s.MemStore.PublishBaseImageProducer(p0, p1)
+}
+
+func (s *Mem) PublishBaseImageScan(p0 context.Context, p1 state.BaseImageScanInput) (state.BaseImageScan, error) {
+	if o, ok := s.over.(interface {
+		PublishBaseImageScan(context.Context, state.BaseImageScanInput) (state.BaseImageScan, error)
+	}); ok {
+		return o.PublishBaseImageScan(p0, p1)
+	}
+	return s.MemStore.PublishBaseImageScan(p0, p1)
+}
+
+func (s *Mem) PublishDeploymentRuntimeScan(p0 context.Context, p1 state.DeploymentRuntimeScanInput) (state.DeploymentRuntimeScan, error) {
+	if o, ok := s.over.(interface {
+		PublishDeploymentRuntimeScan(context.Context, state.DeploymentRuntimeScanInput) (state.DeploymentRuntimeScan, error)
+	}); ok {
+		return o.PublishDeploymentRuntimeScan(p0, p1)
+	}
+	return s.MemStore.PublishDeploymentRuntimeScan(p0, p1)
+}
+
+func (s *Mem) PublishSnapshotIfRuntimeFresh(p0 context.Context, p1 state.Snapshot, p2 string, p3 time.Time) (state.Snapshot, error) {
+	if o, ok := s.over.(interface {
+		PublishSnapshotIfRuntimeFresh(context.Context, state.Snapshot, string, time.Time) (state.Snapshot, error)
+	}); ok {
+		return o.PublishSnapshotIfRuntimeFresh(p0, p1, p2, p3)
+	}
+	return s.MemStore.PublishSnapshotIfRuntimeFresh(p0, p1, p2, p3)
+}
+
+func (s *Mem) RecordApplicationStandardEgress(p0 context.Context, p1 state.ApplicationStandardEgressTarget, p2 runtimeadmission.EgressReceipt) (state.ApplicationStandardEgressObservation, error) {
+	if o, ok := s.over.(interface {
+		RecordApplicationStandardEgress(context.Context, state.ApplicationStandardEgressTarget, runtimeadmission.EgressReceipt) (state.ApplicationStandardEgressObservation, error)
+	}); ok {
+		return o.RecordApplicationStandardEgress(p0, p1, p2)
+	}
+	return s.MemStore.RecordApplicationStandardEgress(p0, p1, p2)
+}
+
+func (s *Mem) RecordDeploymentRegistryVerification(p0 context.Context, p1 state.DeploymentRegistryVerificationInput) (state.DeploymentRegistryVerification, error) {
+	if o, ok := s.over.(interface {
+		RecordDeploymentRegistryVerification(context.Context, state.DeploymentRegistryVerificationInput) (state.DeploymentRegistryVerification, error)
+	}); ok {
+		return o.RecordDeploymentRegistryVerification(p0, p1)
+	}
+	return s.MemStore.RecordDeploymentRegistryVerification(p0, p1)
+}
+
+func (s *Mem) RuntimeReleaseQualification(p0 context.Context, p1 string) (state.RuntimeReleaseQualification, error) {
+	if o, ok := s.over.(interface {
+		RuntimeReleaseQualification(context.Context, string) (state.RuntimeReleaseQualification, error)
+	}); ok {
+		return o.RuntimeReleaseQualification(p0, p1)
+	}
+	return s.MemStore.RuntimeReleaseQualification(p0, p1)
+}
+
+func (s *Mem) SetDeploymentFailed(p0 context.Context, p1 string, p2 string, p3 string) (state.Deployment, error) {
+	if o, ok := s.over.(interface {
+		SetDeploymentFailed(context.Context, string, string, string) (state.Deployment, error)
+	}); ok {
+		return o.SetDeploymentFailed(p0, p1, p2, p3)
+	}
+	return s.MemStore.SetDeploymentFailed(p0, p1, p2, p3)
+}
+
+func (s *Mem) UpdateDeploymentHostingVerification(p0 context.Context, p1 string, p2 state.HostingVerificationUpdate) (state.HostingVerificationProgress, error) {
+	if o, ok := s.over.(interface {
+		UpdateDeploymentHostingVerification(context.Context, string, state.HostingVerificationUpdate) (state.HostingVerificationProgress, error)
+	}); ok {
+		return o.UpdateDeploymentHostingVerification(p0, p1, p2)
+	}
+	return s.MemStore.UpdateDeploymentHostingVerification(p0, p1, p2)
+}
+
+func (s *Mem) UpsertDeploymentHostingReceipt(p0 context.Context, p1 string, p2 []byte) (state.Deployment, error) {
+	if o, ok := s.over.(interface {
+		UpsertDeploymentHostingReceipt(context.Context, string, []byte) (state.Deployment, error)
+	}); ok {
+		return o.UpsertDeploymentHostingReceipt(p0, p1, p2)
+	}
+	return s.MemStore.UpsertDeploymentHostingReceipt(p0, p1, p2)
+}
+
+func (s *Mem) ValidateDeploymentRuntimeUpgradeBaseline(p0 context.Context, p1 string) error {
+	if o, ok := s.over.(interface {
+		ValidateDeploymentRuntimeUpgradeBaseline(context.Context, string) error
+	}); ok {
+		return o.ValidateDeploymentRuntimeUpgradeBaseline(p0, p1)
+	}
+	return s.MemStore.ValidateDeploymentRuntimeUpgradeBaseline(p0, p1)
+}
+
+func (s *Mem) WorkflowAlertSnapshot(p0 context.Context, p1 string, p2 string, p3 time.Time, p4 time.Time) (state.WorkflowAlertSnapshot, error) {
+	if o, ok := s.over.(interface {
+		WorkflowAlertSnapshot(context.Context, string, string, time.Time, time.Time) (state.WorkflowAlertSnapshot, error)
+	}); ok {
+		return o.WorkflowAlertSnapshot(p0, p1, p2, p3, p4)
+	}
+	return s.MemStore.WorkflowAlertSnapshot(p0, p1, p2, p3, p4)
+}
+
+func (s *Mem) WorkflowRecoveryReviewCompletionNotificationAllowed(p0 context.Context, p1 state.AppWebhookDelivery) (bool, string, error) {
+	if o, ok := s.over.(interface {
+		WorkflowRecoveryReviewCompletionNotificationAllowed(context.Context, state.AppWebhookDelivery) (bool, string, error)
+	}); ok {
+		return o.WorkflowRecoveryReviewCompletionNotificationAllowed(p0, p1)
+	}
+	return s.MemStore.WorkflowRecoveryReviewCompletionNotificationAllowed(p0, p1)
+}
+
+func (s *Mem) WorkflowRecoveryReviewNotificationAllowed(p0 context.Context, p1 state.AppWebhookDelivery, p2 time.Time) (bool, string, error) {
+	if o, ok := s.over.(interface {
+		WorkflowRecoveryReviewNotificationAllowed(context.Context, state.AppWebhookDelivery, time.Time) (bool, string, error)
+	}); ok {
+		return o.WorkflowRecoveryReviewNotificationAllowed(p0, p1, p2)
+	}
+	return s.MemStore.WorkflowRecoveryReviewNotificationAllowed(p0, p1, p2)
+}
+
+func (s *Store) ClaimDueAppWebhookDeliveries(p0 context.Context, p1 int, p2 time.Time) ([]state.AppWebhookDelivery, error) {
+	if o, ok := s.over.(interface {
+		ClaimDueAppWebhookDeliveries(context.Context, int, time.Time) ([]state.AppWebhookDelivery, error)
+	}); ok {
+		return o.ClaimDueAppWebhookDeliveries(p0, p1, p2)
+	}
+	return s.Store.ClaimDueAppWebhookDeliveries(p0, p1, p2)
+}
+
+func (s *Store) CreateInstanceWithMode(p0 context.Context, p1 string, p2 string, p3 string, p4 int, p5 string, p6 string, p7 string) (state.Instance, error) {
+	if o, ok := s.over.(interface {
+		CreateInstanceWithMode(context.Context, string, string, string, int, string, string, string) (state.Instance, error)
+	}); ok {
+		return o.CreateInstanceWithMode(p0, p1, p2, p3, p4, p5, p6, p7)
+	}
+	return s.Store.CreateInstanceWithMode(p0, p1, p2, p3, p4, p5, p6, p7)
+}
+
+func (s *Store) ListAppEnvInScope(p0 context.Context, p1 string, p2 string, p3 string) ([]state.AppEnv, error) {
+	if o, ok := s.over.(interface {
+		ListAppEnvInScope(context.Context, string, string, string) ([]state.AppEnv, error)
+	}); ok {
+		return o.ListAppEnvInScope(p0, p1, p2, p3)
+	}
+	return s.Store.ListAppEnvInScope(p0, p1, p2, p3)
+}
+
+func (s *Store) ListAppTrustedSignersForApp(p0 context.Context, p1 string) ([]state.AppTrustedSigner, error) {
+	if o, ok := s.over.(interface {
+		ListAppTrustedSignersForApp(context.Context, string) ([]state.AppTrustedSigner, error)
+	}); ok {
+		return o.ListAppTrustedSignersForApp(p0, p1)
+	}
+	return s.Store.ListAppTrustedSignersForApp(p0, p1)
+}
+
+func (s *Store) ListDeploymentsForOperator(p0 context.Context, p1 state.OperatorDeploymentFilter) ([]state.Deployment, error) {
+	if o, ok := s.over.(interface {
+		ListDeploymentsForOperator(context.Context, state.OperatorDeploymentFilter) ([]state.Deployment, error)
+	}); ok {
+		return o.ListDeploymentsForOperator(p0, p1)
+	}
+	return s.Store.ListDeploymentsForOperator(p0, p1)
 }

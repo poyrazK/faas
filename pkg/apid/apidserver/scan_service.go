@@ -46,6 +46,8 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/githubd"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -1101,7 +1103,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			// surface. routeKindForRequest + ClientIP
 			// are the same single source of truth used by
 			// every other HTTP-routed deploy path.
-			ActorUserID:         acct.ID,
+			ActorUserID:         actorAccount(r, acct).ID,
 			ActorVia:            routeKindForRequest(r),
 			ActorFromIP:         middleware.ClientIP(r),
 			ReleaseCommand:      releaseCommand.command,
@@ -1268,6 +1270,16 @@ func (s *server) scanService(
 	req, prob := parseScanMultipart(r, acct, limits)
 	if prob != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, prob
+	}
+	if prob := projectaccess.ValidateScan(r, s.store, acct, req.ProjectSlug); prob != nil {
+		_ = os.Remove(req.SourcePath)
+		_ = os.RemoveAll(req.ScanDir)
+		return nil, state.Project{}, nil, nil, nil, nil, prob
+	}
+	if _, shared := projectaccess.From(r.Context()); shared && (req.InstallID != 0 || req.RepoFullName != "") {
+		_ = os.Remove(req.SourcePath)
+		_ = os.RemoveAll(req.ScanDir)
+		return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict, api.CodeConflict, "Repository ownership migration required", "upload project source without a personal GitHub installation binding")
 	}
 	if prob := s.validateProjectDeploymentEnvironment(r.Context(), acct, req.ProjectSlug, req.Environment); prob != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, prob
@@ -1535,11 +1547,34 @@ func (s *server) scanService(
 	// `acctApps` slice is reused by computeAffectedPartition
 	// below (Unaffected + Skipped + Removed loops) — one DB
 	// round-trip per scan.
-	acctApps, listErr := s.store.ListApps(r.Context(), acct.ID)
+	acctApps, listErr := projectaccess.Apps(r.Context(), s.store, acct.ID)
 	if listErr != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, customerInternalProblem(s.log, "list apps for project scan",
 			"Gregale could not load your apps for this project scan.",
 			"Retry the scan in a moment; if it continues, contact support.", listErr)
+	}
+	if _, shared := projectaccess.From(r.Context()); shared {
+		acctApps = projectaccess.FilterScanApps(r.Context(), acctApps)
+	} else {
+		acctApps, listErr = appaccess.VisibleApps(r, s.store, actorAccount(r, acct), acctApps)
+		if listErr != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not filter project scan resources")
+		}
+		personal := acctApps[:0]
+		for _, app := range acctApps {
+			if app.OrgID == "" {
+				personal = append(personal, app)
+				continue
+			}
+			org, err := s.store.OrgByID(r.Context(), app.OrgID)
+			if err != nil {
+				return nil, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not load project scan ownership")
+			}
+			if org.Personal {
+				personal = append(personal, app)
+			}
+		}
+		acctApps = personal
 	}
 	// Resolve managed-Postgres declarations before project/app mutation.
 	// This makes scan previews honest and prevents a missing database,
@@ -1660,7 +1695,19 @@ func (s *server) scanService(
 	// can_apply computation: apps + crons must fit under the plan
 	// caps AND crons must be allowed. We mirror store.ApplyProjectPlan's
 	// pre-check (no Tx here — the store is authoritative).
-	observedApps, appCountErr := s.store.CountDeployedApps(r.Context(), acct.ID)
+	var observedApps int
+	var appCountErr error
+	if _, shared := projectaccess.From(r.Context()); shared {
+		observedApps = 0
+		for _, app := range acctApps {
+			if (app.Status == state.AppActive || app.Status == state.AppEvictedCold) && !state.IsDeveloperApp(app) && app.PreviewOfSlug == "" {
+				observedApps++
+			}
+		}
+	}
+	if _, shared := projectaccess.From(r.Context()); !shared {
+		observedApps, appCountErr = s.store.CountDeployedApps(r.Context(), acct.ID)
+	}
 	if appCountErr != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, customerInternalProblem(s.log, "count apps for project scan",
 			"Gregale could not check your account's app capacity.",
@@ -1984,6 +2031,7 @@ func (s *server) scanService(
 
 	project := state.Project{
 		AccountID:        acct.ID,
+		OrgID:            projectaccess.OrganizationID(r.Context()),
 		Slug:             req.ProjectSlug,
 		RepoFullName:     req.RepoFullName,
 		ProductionBranch: req.ProdBranch,

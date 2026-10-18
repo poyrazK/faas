@@ -27,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -1170,8 +1171,8 @@ func TestReconcileStaleDeploymentsCancelsOrphanAndKeepsActiveBuild(t *testing.T)
 // passthroughs so the wrapper is invisible to anything that doesn't
 // need to read the counters.
 type countingStore struct {
-	*state.MemStore
-	counts map[string]int
+	MemStore *state.MemStore
+	counts   map[string]int
 }
 
 func newCountingStore() *countingStore {
@@ -1221,17 +1222,13 @@ func (s *countingStore) total() int {
 // seedEvictionCandidate inserts one account + one app + 4 deployments +
 // 4 snapshots. With the three-deployment rollback window, the oldest
 // snapshot is evictable in a single GC tick.
-func seedEvictionCandidate(t *testing.T, store state.Store, slug string) {
+func seedEvictionCandidate(t *testing.T, s *countingStore, slug string) {
 	t.Helper()
-	s, ok := store.(*countingStore)
-	if !ok {
-		t.Fatalf("seedEvictionCandidate: store is not *countingStore")
-	}
-	acct, err := s.CreateAccount(context.Background(), slug+"@x.com", "pro")
+	acct, err := s.MemStore.CreateAccount(context.Background(), slug+"@x.com", "pro")
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := s.CreateApp(context.Background(), state.App{
+	app, err := s.MemStore.CreateApp(context.Background(), state.App{
 		AccountID: acct.ID, Slug: slug, RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
 	})
 	if err != nil {
@@ -1239,13 +1236,13 @@ func seedEvictionCandidate(t *testing.T, store state.Store, slug string) {
 	}
 	base := time.Now().Add(-time.Hour)
 	for i := 0; i < 4; i++ {
-		dep, err := s.CreateDeployment(context.Background(), state.Deployment{
+		dep, err := s.MemStore.CreateDeployment(context.Background(), state.Deployment{
 			AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:" + slug + string(rune('a'+i)),
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = s.CreateSnapshot(context.Background(), state.Snapshot{
+		_, err = s.MemStore.CreateSnapshot(context.Background(), state.Snapshot{
 			DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
 			FCVersion:  "1.8.0",
 			StorageKey: state.SnapMemKey(dep.ID),
@@ -1266,11 +1263,11 @@ func seedEvictionCandidate(t *testing.T, store state.Store, slug string) {
 // is intentional and tiny.
 func seedEvictionCandidateB(b *testing.B, store *countingStore, slug string) {
 	b.Helper()
-	acct, err := store.CreateAccount(context.Background(), slug+"@x.com", "pro")
+	acct, err := store.MemStore.CreateAccount(context.Background(), slug+"@x.com", "pro")
 	if err != nil {
 		b.Fatal(err)
 	}
-	app, err := store.CreateApp(context.Background(), state.App{
+	app, err := store.MemStore.CreateApp(context.Background(), state.App{
 		AccountID: acct.ID, Slug: slug, RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
 	})
 	if err != nil {
@@ -1278,13 +1275,13 @@ func seedEvictionCandidateB(b *testing.B, store *countingStore, slug string) {
 	}
 	base := time.Now().Add(-time.Hour)
 	for i := 0; i < 4; i++ {
-		dep, err := store.CreateDeployment(context.Background(), state.Deployment{
+		dep, err := store.MemStore.CreateDeployment(context.Background(), state.Deployment{
 			AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:" + slug + string(rune('a'+i)),
 		})
 		if err != nil {
 			b.Fatal(err)
 		}
-		_, err = store.CreateSnapshot(context.Background(), state.Snapshot{
+		_, err = store.MemStore.CreateSnapshot(context.Background(), state.Snapshot{
 			DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
 			FCVersion:  "1.8.0",
 			StorageKey: state.SnapMemKey(dep.ID),
@@ -1327,7 +1324,7 @@ func TestRunGCTick_PerEvictionSQLCount(t *testing.T) {
 	gcCh := make(chan time.Time, 1)
 	gcCh <- time.Unix(0, 0)
 	loop := &Loop{
-		store: store,
+		store: statetest.NewMem(store),
 		log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 		now:   func() time.Time { return time.Unix(0, 0) },
 		lvUsedPct: func(ctx context.Context) (float64, error) {
@@ -1336,7 +1333,7 @@ func TestRunGCTick_PerEvictionSQLCount(t *testing.T) {
 		appsRoot: appsRoot,
 		gcCh:     gcCh,
 		handler: &Handler{
-			store:    store,
+			store:    statetest.NewMem(store),
 			log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 			appsRoot: appsRoot,
 			storage:  be,
@@ -1492,14 +1489,14 @@ func BenchmarkLoopRunGCTick_FallbackSQLCost(b *testing.B) {
 		gcCh := make(chan time.Time, 1)
 		gcCh <- time.Unix(0, 0)
 		loop := &Loop{
-			store:     store,
+			store:     statetest.NewMem(store),
 			log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 			now:       func() time.Time { return time.Unix(0, 0) },
 			lvUsedPct: func(ctx context.Context) (float64, error) { return 50.0, nil },
 			appsRoot:  appsRoot,
 			gcCh:      gcCh,
 			handler: &Handler{
-				store:    store,
+				store:    statetest.NewMem(store),
 				log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 				appsRoot: appsRoot,
 				storage:  be,

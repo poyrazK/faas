@@ -16,7 +16,7 @@ func (s *PostgresStore) BeginAccounting(ctx context.Context, databaseID, leaseTo
 	if err != nil {
 		return err
 	}
-	count, err := sqlc.New().BeginManagedPostgresAccounting(ctx, s.pool, sqlc.BeginManagedPostgresAccountingParams{
+	count, err := sqlc.New().BeginManagedPostgresAccounting(ctx, s.catalog, sqlc.BeginManagedPostgresAccountingParams{
 		ID: id, LeaseToken: leaseToken, Now: pgtype.Timestamptz{Time: now, Valid: true},
 	})
 	if err != nil {
@@ -40,7 +40,7 @@ func (s *PostgresStore) RecordDiscoveredResource(ctx context.Context, expected D
 	if err != nil {
 		return err
 	}
-	count, err := sqlc.New().RecordManagedPostgresDiscoveredResource(ctx, s.pool, sqlc.RecordManagedPostgresDiscoveredResourceParams{
+	count, err := sqlc.New().RecordManagedPostgresDiscoveredResource(ctx, s.catalog, sqlc.RecordManagedPostgresDiscoveredResourceParams{
 		ID: id, AccountID: account, BackendID: expected.BackendID, BackendFingerprint: expected.BackendFingerprint,
 		ProviderResourceID: providerResourceID, Now: pgtype.Timestamptz{Time: now, Valid: true},
 	})

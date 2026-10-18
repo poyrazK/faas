@@ -12,15 +12,25 @@ import (
 var _ ObjectStorageAccountingStore = (*MemStore)(nil)
 var _ ObjectStorageBillingStore = (*MemStore)(nil)
 
-func (m *MemStore) ObjectUsage(_ context.Context, account string, now time.Time) (ObjectUsageSnapshot, error) {
+func (m *MemStore) ObjectUsage(ctx context.Context, account string, now time.Time) (ObjectUsageSnapshot, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectUsageSnapshot
+		return zero0, err
+	}
+
 	return m.objectUsageLocked(account, now), nil
 }
 
-func (m *MemStore) ObjectUsageForPeriod(_ context.Context, account string, periodStart time.Time) (ObjectUsageSnapshot, error) {
+func (m *MemStore) ObjectUsageForPeriod(ctx context.Context, account string, periodStart time.Time) (ObjectUsageSnapshot, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectUsageSnapshot
+		return zero0, err
+	}
+
 	return m.objectUsageLockedForPeriod(account, periodStart), nil
 }
 
@@ -34,8 +44,11 @@ func (m *MemStore) objectUsageLockedForPeriod(account string, periodStart time.T
 	if acct, ok := m.accounts[account]; ok {
 		out.PlanLimits = objectStoragePlanLimits(acct.Plan)
 	}
+	if org, ok := m.orgs[account]; ok && !org.Personal && org.ResourceOwnershipEnabled {
+		out.PlanLimits = objectStoragePlanLimits(org.Plan)
+	}
 	for _, b := range m.objectBuckets {
-		if b.AccountID == account {
+		if m.objectBillingSubjectForPeriodLocked(b, periodStart) == account {
 			u := m.objectUsage[b.ID]
 			u.Bucket = b
 			u.RequestCount = m.objectProviderRequests[objectProviderRequestKey(b.ID, periodStart)]
@@ -54,7 +67,7 @@ func (m *MemStore) objectUsageLockedForPeriod(account string, periodStart time.T
 	}
 	latest := map[string]api.ObjectStorageUsageReport{}
 	for _, r := range m.objectReports {
-		if r.AccountID == account && r.PeriodStart.Equal(periodStart) && r.ObservedAt.After(latest[r.BackendID].ObservedAt) {
+		if r.AccountID == account && m.objectReportCurrentLocked(account, r.PeriodStart, r.ObservedAt) && r.PeriodStart.Equal(periodStart) && r.ObservedAt.After(latest[r.BackendID].ObservedAt) {
 			latest[r.BackendID] = r
 		}
 	}
@@ -64,9 +77,14 @@ func (m *MemStore) objectUsageLockedForPeriod(account string, periodStart time.T
 	return out
 }
 
-func (m *MemStore) GetObjectStorageBillingPeriod(_ context.Context, account string, periodStart time.Time) (ObjectStorageBillingRecord, error) {
+func (m *MemStore) GetObjectStorageBillingPeriod(ctx context.Context, account string, periodStart time.Time) (ObjectStorageBillingRecord, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectStorageBillingRecord
+		return zero0, err
+	}
+
 	if m.objectStorageBilling == nil {
 		return ObjectStorageBillingRecord{}, ErrNotFound
 	}
@@ -77,9 +95,14 @@ func (m *MemStore) GetObjectStorageBillingPeriod(_ context.Context, account stri
 	return record, nil
 }
 
-func (m *MemStore) RecordObjectStorageBillingPeriod(_ context.Context, record ObjectStorageBillingRecord) (ObjectStorageBillingRecord, error) {
+func (m *MemStore) RecordObjectStorageBillingPeriod(ctx context.Context, record ObjectStorageBillingRecord) (ObjectStorageBillingRecord, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectStorageBillingRecord
+		return zero0, err
+	}
+
 	record = normalizeObjectStorageBillingRecord(record)
 	if err := validateObjectStorageBillingRecord(record); err != nil {
 		return ObjectStorageBillingRecord{}, err
@@ -105,9 +128,14 @@ func objectBillingKey(account string, periodStart time.Time) string {
 	return account + "\x00" + ObjectStoragePeriod(periodStart).Format(time.RFC3339)
 }
 
-func (m *MemStore) GetObjectStorageBillingDelivery(_ context.Context, provider, billingRecordID string) (ObjectStorageBillingDelivery, error) {
+func (m *MemStore) GetObjectStorageBillingDelivery(ctx context.Context, provider, billingRecordID string) (ObjectStorageBillingDelivery, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectStorageBillingDelivery
+		return zero0, err
+	}
+
 	record, ok := m.objectStorageBillingDeliveries[objectStorageBillingDeliveryKey(provider, billingRecordID)]
 	if !ok {
 		return ObjectStorageBillingDelivery{}, ErrNotFound
@@ -115,9 +143,14 @@ func (m *MemStore) GetObjectStorageBillingDelivery(_ context.Context, provider, 
 	return record, nil
 }
 
-func (m *MemStore) RecordObjectStorageBillingDelivery(_ context.Context, delivery ObjectStorageBillingDelivery) (ObjectStorageBillingDelivery, error) {
+func (m *MemStore) RecordObjectStorageBillingDelivery(ctx context.Context, delivery ObjectStorageBillingDelivery) (ObjectStorageBillingDelivery, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectStorageBillingDelivery
+		return zero0, err
+	}
+
 	delivery = normalizeObjectStorageBillingDelivery(delivery)
 	if err := validateObjectStorageBillingDelivery(delivery); err != nil {
 		return ObjectStorageBillingDelivery{}, err
@@ -140,18 +173,27 @@ func objectStorageBillingDeliveryKey(provider, billingRecordID string) string {
 	return provider + "\x00" + billingRecordID
 }
 
-func (m *MemStore) AdmitObjectURL(_ context.Context, account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy) error {
+func (m *MemStore) AdmitObjectURL(ctx context.Context, account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	return m.admitObjectURLLocked(account, bucket, key, size, put, p, "")
 }
 
 func (m *MemStore) admitObjectURLLocked(account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy, token string) error {
 	now := time.Now().UTC()
+	owned, ok := m.objectBuckets[bucket]
+	if !ok || owned.AccountID != account {
+		return ErrNotFound
+	}
+	subject := m.objectBillingSubjectLocked(owned)
 	if put && (m.objectCapacityFencedLocked(bucket) || m.objectWriteKeyFencedLocked(bucket, key, token) || token == "" && m.objectBucketDefaultRequiresTrackingLocked(bucket)) {
 		return ErrConflict
 	}
-	s := m.objectUsageLocked(account, now)
+	s := m.objectUsageLocked(subject, now)
 	hash := objectKeyHash(key)
 	old, exists := m.objectGrants[bucket][hash]
 	all := versionAdmissionMode(s, bucket)
@@ -186,13 +228,17 @@ func (m *MemStore) admitObjectURLLocked(account, bucket, key string, size int64,
 	if m.objectAuthorizations == nil {
 		m.objectAuthorizations = map[string]int64{}
 	}
-	m.objectAuthorizations[account+ObjectStoragePeriod(now).String()]++
+	m.objectAuthorizations[subject+ObjectStoragePeriod(now).String()]++
 	return nil
 }
 
-func (m *MemStore) RecordObjectUsageReport(_ context.Context, r api.ObjectStorageUsageReport) error {
+func (m *MemStore) RecordObjectUsageReport(ctx context.Context, r api.ObjectStorageUsageReport) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	r = normalizeObjectReport(r)
 	if !validObjectReport(r, time.Now()) {
 		return ErrConflict
@@ -205,6 +251,9 @@ func (m *MemStore) RecordObjectUsageReport(_ context.Context, r api.ObjectStorag
 			return ErrConflict
 		}
 	}
+	if !m.objectReportCurrentLocked(r.AccountID, r.PeriodStart, r.ObservedAt) {
+		return ErrConflict
+	}
 	if err := checkObjectReport(m.objectUsageLocked(r.AccountID, r.ObservedAt), r); err != nil {
 		return err
 	}
@@ -212,12 +261,17 @@ func (m *MemStore) RecordObjectUsageReport(_ context.Context, r api.ObjectStorag
 	return nil
 }
 
-func (m *MemStore) DueObjectInventories(_ context.Context, limit int32) ([]ObjectBucket, error) {
+func (m *MemStore) DueObjectInventories(ctx context.Context, limit int32) ([]ObjectBucket, error) {
 	if limit < 1 || limit > 100 {
 		return nil, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []ObjectBucket
+		return zero0, err
+	}
+
 	now := time.Now()
 	out := []ObjectBucket{}
 	for _, b := range m.objectBuckets {
@@ -236,9 +290,13 @@ func (m *MemStore) DueObjectInventories(_ context.Context, limit int32) ([]Objec
 	return out, nil
 }
 
-func (m *MemStore) ClaimObjectInventory(_ context.Context, bucket, token string) error {
+func (m *MemStore) ClaimObjectInventory(ctx context.Context, bucket, token string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	u := m.objectUsage[bucket]
 	if m.objectCapacityFencedLocked(bucket) || token == "" || m.objectBuckets[bucket].State != "ready" || u.LeaseUntil.After(time.Now()) {
 		return ErrConflict
@@ -253,9 +311,13 @@ func (m *MemStore) ClaimObjectInventory(_ context.Context, bucket, token string)
 	return nil
 }
 
-func (m *MemStore) FinishObjectInventory(_ context.Context, bucket, token string, bytes, objects int64) error {
+func (m *MemStore) FinishObjectInventory(ctx context.Context, bucket, token string, bytes, objects int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	u := m.objectUsage[bucket]
 	if m.versionAccountingStatusLocked(bucket).VersionsObserved || u.InventoryScope == ObjectInventoryAllVersions || m.objectCapacityFencedLocked(bucket) || token == "" || u.Token != token || !u.LeaseUntil.After(time.Now()) || m.objectBuckets[bucket].State != "ready" || bytes < 0 || objects < 0 || bytes > api.MaxObjectStoragePolicyValue || objects > api.MaxObjectStoragePolicyValue {
 		return ErrConflict

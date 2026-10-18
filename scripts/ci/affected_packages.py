@@ -78,13 +78,17 @@ SELECTIVE_WEIGHT = 6
 # scripts as text. Those files are no Go package's input, so without this a
 # change to one ran none of the tests that read it: PR #4926 changed
 # scripts/ci/unit_deploy.sh and broke cmd/gregalectl's unit-lane contract
-# test unseen by the light tier.
-TEXT_CONTRACT_PACKAGES = ("cmd/gregalectl",)
+# test unseen by the light tier. PR #4950 then changed postgres_capacity's
+# tasks and broke pkg/daemonunitspec's role test the same way; pkg/db's tests
+# read that role's pool budgets.
+TEXT_CONTRACT_PACKAGES = ("cmd/gregalectl", "pkg/daemonunitspec", "pkg/db")
 
 # The ways those tests name a repository file: filepath.Join climbing from the
-# package directory to the repository root (or from a repoRoot variable),
-# readRepoFile(t, parts...) and readWorkflow(t, name).
-REPO_JOIN = re.compile(r"\b(filepath\.Join|readRepoFile|readWorkflow)\(([^()]*)\)")
+# package directory to the repository root, or from the repository root by
+# name (REPO_ROOTS), readRepoFile(t, parts...) and readWorkflow(t, name). One
+# level of call nesting is allowed for filepath.Join(repoRoot(t), ...).
+REPO_JOIN = re.compile(r"\b(filepath\.Join|readRepoFile|readWorkflow)\(((?:[^()]|\([^()]*\))*)\)")
+REPO_ROOTS = ("repoRoot", "repoRoot(t)", "repoRoot()", "root", "repo")
 GO_STRING = re.compile(r'^"([^"\\*]*)"$')
 
 # Relative cost of a package's race test run, used only to balance shards.
@@ -147,11 +151,14 @@ def text_inputs(pkg_dir, root="."):
                 parts = ['".github"', '"workflows"'] + args[1:]
             elif args[:len(climb)] == climb:
                 parts = args[len(climb):]
-            elif args[:1] == ["repoRoot"]:
+            elif args[:1] and args[0] in REPO_ROOTS:
                 parts = args[1:]
             else:
                 continue
             path = literal_path(parts)
+            # A literal directory (a role) covers every file under it.
+            if path and not path.endswith("/") and os.path.isdir(os.path.join(root, path)):
+                path += "/"
             if path:
                 found.add(path)
     return found

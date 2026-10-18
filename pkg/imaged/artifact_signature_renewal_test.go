@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type retainedRenewalTestPuller struct {
@@ -134,7 +135,7 @@ func TestProducedSignatureRenewalUsesRotatedKeyForExactRetainedSubject(t *testin
 }
 
 type dueBaseRenewalStore struct {
-	*state.MemStore
+	MemStore  *state.MemStore
 	due       bool
 	published int
 }
@@ -167,7 +168,7 @@ func TestProducedBaseFactCollectionRefreshesLeaseWhenDue(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &dueBaseRenewalStore{MemStore: th.store, due: true}
-	h.store = store
+	h.store = statetest.NewMem(store)
 	calls := 0
 	h.WithGrypeRun(func(context.Context, string) (*ScanResult, error) { calls++; return producedScanResult(t, false), nil })
 	if err := collectProducedFixtureScans(t, h, th); err != nil {

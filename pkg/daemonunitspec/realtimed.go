@@ -11,12 +11,12 @@ func UnitRealtimed() daemonunit.Unit {
 		Description:   "onebox-faas realtimed — managed realtime connection owner",
 		Documentation: "https://gregale.dev/docs/ops/realtime",
 		// faas-realtimed.socket is opt-in with gatewayd-internal's
-		// (faas_compute_durable_listeners, ADR-20261018074719).
+		// (faas_compute_durable_listeners, ADR-1580).
 		After: []string{"faas-cp.slice", "faas-vmmd.service"},
 		Wants: []string{"faas-cp.slice", "faas-vmmd.service"},
 
 		// Type=notify lets `systemctl reload` hand off to a second
-		// generation, which becomes the main process once ready (ADR-20261018074719).
+		// generation, which becomes the main process once ready (ADR-1580).
 		Type:         "notify",
 		NotifyAccess: "main",
 		ExecReload:   handoffReload,

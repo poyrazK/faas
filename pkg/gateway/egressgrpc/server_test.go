@@ -86,7 +86,7 @@ func TestPersistentServerReplaysAcrossProcessRestartUntilAck(t *testing.T) {
 	}
 }
 
-// ADR-20261018074719: a hand-off's old generation flushes what its sink holds into its
+// ADR-1580: a hand-off's old generation flushes what its sink holds into its
 // own ledger; the generation serving meterd absorbs that ledger with the same
 // event IDs, and absorbing it twice adds nothing.
 func TestAbsorbMovesAnOldGenerationsLedgerWithItsEventIDs(t *testing.T) {

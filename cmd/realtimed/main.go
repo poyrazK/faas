@@ -18,6 +18,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/apidgrpc"
 	"github.com/onebox-faas/faas/pkg/genslot"
+	"github.com/onebox-faas/faas/pkg/livequery/liveproxy"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/role"
@@ -36,7 +37,7 @@ func main() {
 
 func run(ctx context.Context, log *slog.Logger) error {
 	// stopping is the unit's SIGTERM. ctx also ends once a two-generation
-	// hand-off's successor serves (ADR-20261018074719).
+	// hand-off's successor serves (ADR-1580).
 	stopping := ctx
 	ctx, endGeneration := context.WithCancel(ctx)
 	defer endGeneration()
@@ -69,7 +70,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}
 	}
 	// Each generation owns a slot of the outbox, so a hand-off's two
-	// generations never deliver the same callback file (ADR-20261018074719).
+	// generations never deliver the same callback file (ADR-1580).
 	outboxSlot, err := genslot.Acquire(outboxRoot)
 	if err != nil {
 		return fmt.Errorf("realtimed: claim callback outbox: %w", err)
@@ -134,7 +135,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 		routeReporter = reader
 		fleetClient = reader
 	}
+	// Live queries (ADR-20261016151947): apid registers each endpoint with the live
+	// routes of databases bound to its app.
+	proxy, err := liveProxy(os.Getenv, log)
+	if err != nil {
+		return err
+	}
+	proxy.Metrics = liveproxy.NewMetrics(ops.Registry())
+	defer proxy.Close()
 	manager := realtime.NewManager(realtime.Config{
+		Live:                 liveproxy.ForRealtime(proxy),
 		MaxConnections:       envInt("FAAS_REALTIME_MAX_CONNECTIONS", 10_000),
 		MaxMessageBytes:      int64(envInt("FAAS_REALTIME_MAX_MESSAGE_BYTES", 1<<20)),
 		OutboundQueue:        envInt("FAAS_REALTIME_OUTBOUND_QUEUE", 64),
@@ -218,7 +228,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}, callbackReplayRestarts.Inc)
 	}()
 	// The drains let a connection accepted just before shutdown deliver its
-	// request; net/http drops one it reads after Shutdown began (ADR-20261018074719).
+	// request; net/http drops one it reads after Shutdown began (ADR-1580).
 	// During a hand-off the successor accepts on the same sockets.
 	serverDrain, healthDrain := wire.NewHTTPDrain(server), wire.NewHTTPDrain(healthServer)
 	serverErr := make(chan error, 2)
@@ -295,7 +305,7 @@ func listenRealtimeSocket(path string) (net.Listener, error) {
 		_ = l.Close()
 		return nil, err
 	}
-	wire.Share(l) // a hand-off successor serves the same socket (ADR-20261018074719)
+	wire.Share(l) // a hand-off successor serves the same socket (ADR-1580)
 	return l, nil
 }
 

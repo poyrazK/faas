@@ -55,6 +55,7 @@ func TestPgCloneSchemaRegistryCoversMigratedApplicationTablesAndFailsBeforeReser
 		{Table: "app_mcp_readiness_policy_history", Code: "isolated_strategy_unavailable"},
 		{Table: "mcp_readiness_fallback_policies", Code: "isolated_strategy_unavailable"},
 		{Table: "mcp_readiness_maintenance_windows", Code: "isolated_strategy_unavailable"},
+		{Table: "mcp_readiness_incident_events", Code: "isolated_data_strategy_unavailable"},
 		{Table: "mcp_readiness_pagerduty_acknowledgements", Code: "isolated_strategy_unavailable"},
 		{Table: "mcp_readiness_pagerduty_policies", Code: "isolated_strategy_unavailable"},
 		{Table: "mcp_readiness_reminder_defaults", Code: "isolated_strategy_unavailable"},

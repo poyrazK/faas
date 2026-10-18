@@ -211,7 +211,7 @@ func (l *egressGRPCListener) start(ctx context.Context) error {
 	var err error
 	if isUnixSocketPath(l.socketPath) {
 		// A hand-off successor serves the socket its predecessor listens on
-		// (ADR-20261018074719); removing the path would strand meterd's dial.
+		// (ADR-1580); removing the path would strand meterd's dial.
 		if inherited, ok, err := wire.InheritedListener("unix", l.socketPath); err != nil {
 			return fmt.Errorf("egress: %w", err)
 		} else if ok {

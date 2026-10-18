@@ -35,6 +35,8 @@ class OutboundAIBudgetAlert:
     limit: int
     used: int
     crossed_at: datetime.datetime
+    tag: None | str
+    """The tag of a tag_daily_cost alert (ADR-1438)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -63,6 +65,9 @@ class OutboundAIBudgetAlert:
 
         crossed_at = self.crossed_at.isoformat()
 
+        tag: None | str
+        tag = self.tag
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -77,6 +82,7 @@ class OutboundAIBudgetAlert:
                 "limit": limit,
                 "used": used,
                 "crossed_at": crossed_at,
+                "tag": tag,
             }
         )
 
@@ -123,6 +129,13 @@ class OutboundAIBudgetAlert:
 
         crossed_at = datetime.datetime.fromisoformat(d.pop("crossed_at"))
 
+        def _parse_tag(data: object) -> None | str:
+            if data is None:
+                return data
+            return cast(None | str, data)
+
+        tag = _parse_tag(d.pop("tag"))
+
         outbound_ai_budget_alert = cls(
             id=id,
             integration_id=integration_id,
@@ -134,6 +147,7 @@ class OutboundAIBudgetAlert:
             limit=limit,
             used=used,
             crossed_at=crossed_at,
+            tag=tag,
         )
 
         outbound_ai_budget_alert.additional_properties = d

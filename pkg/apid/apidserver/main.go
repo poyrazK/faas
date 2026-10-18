@@ -588,7 +588,7 @@ func Main() {
 	cloneWorker := flag.Bool("clone-worker", false, "run the bounded project-environment clone worker without API listeners")
 	runtimeUpgradeWorker := flag.Bool("runtime-upgrade-worker", false, "run the private runtime upgrade worker without API listeners; requires native qualification for each operation")
 	// The API mode hands off on reload; the worker modes' units do not
-	// reload (ADR-20261018074719).
+	// reload (ADR-1580).
 	wire.HandoffDaemon("apid", func(ctx context.Context, log *slog.Logger) error {
 		if *cloneWorker && *runtimeUpgradeWorker {
 			return errors.New("apid: worker modes are mutually exclusive")
@@ -1177,7 +1177,7 @@ func dpaPathFromEnv(getenv func(string) string) string {
 
 func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// stopping is the unit's SIGTERM. ctx also ends once a two-generation
-	// hand-off's successor serves (ADR-20261018074719): this generation's background
+	// hand-off's successor serves (ADR-1580): this generation's background
 	// work stops with it while its requests finish.
 	stopping := ctx
 	ctx, endGeneration := context.WithCancel(ctx)
@@ -1578,6 +1578,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}
 	srv.WithManagedPostgres(managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector)
+	if err := srv.configureLiveQueries(deps.pool, deps.getenv); err != nil {
+		return fmt.Errorf("apid live queries configuration: %w", err)
+	}
 	srv.WithResendWebhookSecret(resendSecret)
 	// Issue #246 acceptance item 8: wire the meterd-owned bounce
 	// handler so Resend bounce / complaint events feed the
@@ -2557,7 +2560,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()
 	// The drain lets a connection faas-apid.socket handed over just before
 	// shutdown deliver its request; net/http drops one it reads after
-	// Shutdown began (ADR-20261018074719).
+	// Shutdown began (ADR-1580).
 	httpDrain := wire.NewHTTPDrain(httpSrv)
 	// Requests run under streamsCtx so a hand-off's old generation can end
 	// its SSE streams and long polls before its drain bound cuts them.

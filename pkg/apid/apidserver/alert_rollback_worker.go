@@ -50,7 +50,7 @@ func (s *server) alertRollbackCheck(ctx context.Context, operation api.AlertRoll
 	if app.AccountID != operation.AccountID {
 		return "failed", "alert_rollback_rule_invalid", nil, nil
 	}
-	acct, err := s.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, s.store, app)
 	if err != nil {
 		return "", "", nil, err
 	}

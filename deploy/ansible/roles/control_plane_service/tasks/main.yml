@@ -280,7 +280,7 @@
     enabled: true
   when: control_plane_apid_enabled.rc == 0
 
-# ADR-20261018074719: faas_schedd_listen_addr is schedd's listen address. The same
+# ADR-1580: faas_schedd_listen_addr is schedd's listen address. The same
 # variable renders schedd's FAAS_SCHEDD_LISTEN_ADDR and faas-schedd.socket's
 # ListenStream, so the durable socket always carries the address schedd
 # serves (schedd refuses an inherited socket it does not serve). Empty keeps

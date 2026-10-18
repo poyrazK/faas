@@ -584,6 +584,9 @@ type Engine struct {
 	// always fresh — an operator tweak to the env var doesn't
 	// require a schedd restart (the next tick picks it up).
 	deadNodeReconcilerStalenessSeconds int
+	// takeoverGuard, when set, must agree before the dead-node sweep fails a
+	// node's instances (ADR-1344 §4, phase 2).
+	takeoverGuard TakeoverGuard
 	// deadNodeSettle holds the dead-node sweep back after this schedd saw
 	// the store unavailable, until it has read the store without
 	// interruption for the staleness window, so a store outage cannot fail
@@ -1192,6 +1195,13 @@ func (e *Engine) WithWakeRateLimiter(l *WakeRateLimiter) *Engine {
 // fall back to the api.* default. The value is read at every
 // tick, so an operator can lower it mid-flight if a customer
 // complains about a billing interval they consider too long.
+// WithTakeoverGuard makes the dead-node sweep consult guard before it fails
+// a stale-looking node's instances (ADR-1344 §4, phase 2).
+func (e *Engine) WithTakeoverGuard(guard TakeoverGuard) *Engine {
+	e.takeoverGuard = guard
+	return e
+}
+
 func (e *Engine) WithDeadNodeReconcilerStalenessSeconds(seconds int) *Engine {
 	if seconds <= 0 {
 		panic(fmt.Sprintf("sched: WithDeadNodeReconcilerStalenessSeconds: seconds must be > 0, got %d", seconds))
@@ -2361,7 +2371,7 @@ func (e *Engine) ensureWake(ctx context.Context, appID, deploymentID string, wak
 			out.Err = fmt.Errorf("sched: EnsureWake: verify app lifecycle after boot: %w", readErr)
 			return out, out.Err
 		}
-		latestAccount, accountErr := e.store.AccountByID(leaderCtx, latestApp.AccountID)
+		latestAccount, accountErr := state.AppResourceAccount(leaderCtx, e.store, latestApp)
 		if accountErr != nil {
 			out.Err = fmt.Errorf("sched: EnsureWake: verify account lifecycle after boot: %w", accountErr)
 			return out, out.Err
@@ -4923,7 +4933,7 @@ func (e *Engine) ClaimUnplaced(ctx context.Context, appID string) error {
 			"app_id", appID, "ram_mb", app.RAMMB)
 		return nil
 	}
-	acct, err := e.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil {
 		return fmt.Errorf("sched: claim unplaced: lookup account: %w", err)
 	}
@@ -5422,7 +5432,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 			return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: live deployment: %w", err)
 		}
 	}
-	acct, err := e.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil {
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: account by id: %w", err)
 	}
@@ -6009,7 +6019,19 @@ func (e *Engine) ReconcileDeadNodeInstances(ctx context.Context) (int, error) {
 	}
 
 	reconciled := 0
+	mayTakeOver := map[string]bool{}
 	for _, ins := range rows {
+		// ADR-1344 §4 phase 2: one lease read per node per tick.
+		if e.takeoverGuard != nil {
+			allowed, seen := mayTakeOver[ins.NodeID]
+			if !seen {
+				allowed = e.takeoverGuard.MayTakeOver(ctx, "dead_node_sweep", ins.NodeID)
+				mayTakeOver[ins.NodeID] = allowed
+			}
+			if !allowed {
+				continue
+			}
+		}
 		recErr := e.store.FailRunningInstanceOnDeadNode(ctx, ins.ID, ins.NodeID, threshold)
 		switch {
 		case recErr == nil:
@@ -6687,7 +6709,7 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 	if !e.ownsApp(app) {
 		return 0, nil
 	}
-	account, accountErr := e.store.AccountByID(ctx, app.AccountID)
+	account, accountErr := state.AppResourceAccount(ctx, e.store, app)
 	if accountErr != nil {
 		return 0, fmt.Errorf("sched: park app: load account %s: %w", app.AccountID, accountErr)
 	}
@@ -6707,7 +6729,7 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 	if !e.ownsApp(app) {
 		return 0, nil
 	}
-	account, accountErr = e.store.AccountByID(ctx, app.AccountID)
+	account, accountErr = state.AppResourceAccount(ctx, e.store, app)
 	if accountErr != nil {
 		return 0, fmt.Errorf("sched: park app: reload account %s: %w", app.AccountID, accountErr)
 	}
@@ -6871,7 +6893,7 @@ func (e *Engine) ReconcileLifecycleInstance(ctx context.Context, instanceID stri
 	// removed. That preserves the account-deletion terminal state expected by
 	// the grace-period hard-delete walk.
 	accountDeleting := false
-	account, accountErr := e.store.AccountByID(ctx, app.AccountID)
+	account, accountErr := state.AppResourceAccount(ctx, e.store, app)
 	if accountErr != nil && !errors.Is(accountErr, state.ErrNotFound) {
 		return false, fmt.Errorf("sched: lifecycle reconcile: load account %s: %w", app.AccountID, accountErr)
 	}
@@ -7459,7 +7481,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 		if !e.ownsApp(app) {
 			continue
 		}
-		acct, err := e.store.AccountByID(ctx, app.AccountID)
+		acct, err := state.AppResourceAccount(ctx, e.store, app)
 		if err != nil {
 			continue
 		}
@@ -8047,7 +8069,7 @@ func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instan
 	if !app.WarmSnapshotEnabled {
 		return SnapshotBytes{}, nil
 	}
-	acct, err := e.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil {
 		return SnapshotBytes{}, fmt.Errorf("sched: warm capture: load account: %w", err)
 	}
@@ -8244,7 +8266,7 @@ func (e *Engine) resolveAppAccount(ctx context.Context, appID string) (state.App
 	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
 		return state.App{}, state.Account{}, api.Limits{}, err
 	}
-	acct, err := e.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil {
 		return state.App{}, state.Account{}, api.Limits{}, fmt.Errorf("sched: resolve app: account: %w", err)
 	}

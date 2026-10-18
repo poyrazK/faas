@@ -696,6 +696,38 @@ unchanged from `410c47af5`, so no SDK regeneration is needed for this merge.
 Fresh exact-head hosted checks remain required; physical native acceptance and
 activation remain pending.
 
+## Current main conflict resolution (2026-10-18)
+
+Main `d3ccdb1d8e03b8515a711ffdcf7c13871256e83d` is integrated. The deployctl
+restart loop now uses main's `restartOne` helper with hand-off enabled; that
+helper retains the PR's preload, ownership, hand-off/fallback and readiness
+steps. PostgreSQL constraint mapping keeps both the organization ownership
+error and the function migration conflict. The clone-schema registry keeps
+main's latest classifications and columns, plus the two function migration
+tables; it has 961 unique policies. Its expected-blocker test also includes
+main's MCP incident-event case. SQLC retains every main query source and adds
+the three function migration sources. The migration-source digest was
+recomputed as `3a39625c798c3b258496ca8031a4b3d1d93a4e071a97a636a635e8ecb7ffd117`.
+
+The daemon restart decision is back at its canonical ADR-1580 path and
+references now use 1580; main's internal-CI recovery decision remains ADR-1592.
+Historical evidence keeps the earlier revision's ADR number. Main's APID
+memory change is retained: its 45% hand-off threshold is unchanged, with a
+bounded 60-second wait, 512 MiB unit cap and 256 MiB per-process GOMEMLIMIT.
+
+Tested source tree before this evidence entry: `2727f66f7882af5dbcafae154740b83b54419c78`.
+`make SQLC=/workspace/faas-env/task-tools/sqlc sqlc-check` passes. Focused
+race tests pass for the memory hand-off wait, deployctl hand-off/restart
+selection and APID unit memory contract. ADR uniqueness passes with 1,841
+records, 1,637 distinct numbers and the unchanged 164-entry duplicate
+baseline; the environment-contract check passes. The canonical schema source
+digest test passes, and the docs-links check passes all four fixtures. Main
+subsequently advanced to `c746937a74080c71c26e65a0dca89646cbee950b`; that
+commit only changes two scheduler tests outside the conflict set. The changed
+PostgreSQL clone registry has not been replayed against a local database on
+this source tree; fresh hosted checks remain required. Native activation
+remains disabled.
+
 ## Qualification boundary
 
 Production activation remains disabled. This managed container has no supported

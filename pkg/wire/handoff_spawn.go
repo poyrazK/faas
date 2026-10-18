@@ -19,7 +19,7 @@ const handoffSpawnEnv = "FAAS_HANDOFF_SPAWN"
 // treats a main process it did not start as alien: on stop it sends SIGTERM
 // and then SIGKILL at once, without waiting for a drain, and it cannot learn
 // the process's exit status for Restart= (measured on systemd 255; see
-// docs/adr/20261018074719-zero-downtime-daemon-restarts.md). So the old generation
+// docs/adr/1580-zero-downtime-daemon-restarts.md). So the old generation
 // starts an intermediate copy of the binary, which starts the successor,
 // reports its PID on the ready pipe and exits. The orphaned successor is
 // re-parented to PID 1 before it reports ready and is handed the unit.

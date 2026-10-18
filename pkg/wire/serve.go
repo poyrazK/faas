@@ -17,7 +17,7 @@ import (
 // ListenAndServe does exits too early: ListenAndServe returns
 // http.ErrServerClosed as soon as Shutdown begins, and wire.Daemon then exits
 // the process under the requests still in flight
-// (docs/adr/20261018074719-zero-downtime-daemon-restarts.md).
+// (docs/adr/1580-zero-downtime-daemon-restarts.md).
 func ServeUntilShutdown(ctx context.Context, server *http.Server, listener net.Listener, grace time.Duration, stops ...func(context.Context)) error {
 	drain := NewHTTPDrain(server)
 	served := make(chan error, 1)

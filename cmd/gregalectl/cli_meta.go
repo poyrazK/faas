@@ -447,6 +447,7 @@ var cliCommands = []cliCommand{
 					{Name: "ssh-user", Short: "SSH user (default root)"},
 					{Name: "ssh-key", Short: "SSH private key"},
 					{Name: "repo-root", Short: "repository root containing deploy/ansible"},
+					{Name: "roles", Short: "converge only these comma-separated control-plane roles and record nothing (host-configuration lane)"},
 					{Name: "json", Short: "emit structured JSON"},
 				},
 			},

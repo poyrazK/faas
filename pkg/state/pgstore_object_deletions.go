@@ -70,7 +70,10 @@ func (s *PgStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, pol
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
-	if _, e = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(j.AccountID)); e != nil {
+	if _, e = q.ObjectStorageLockScope(ctx, tx, sqlc.ObjectStorageLockScopeParams{BucketID: mustPgUUID(j.BucketID), AccountID: mustPgUUID(j.AccountID)}); e != nil {
+		return ObjectDeletion{}, false, mapErr(e)
+	}
+	if _, e = lockObjectUsageScope(ctx, tx, mustPgUUID(j.AccountID), mustPgUUID(j.BucketID)); e != nil {
 		return ObjectDeletion{}, false, mapErr(e)
 	}
 	if _, e = q.ObjectCapacityLockBucket(ctx, tx, sqlc.ObjectCapacityLockBucketParams{ID: mustPgUUID(j.BucketID), AccountID: mustPgUUID(j.AccountID), AppID: mustPgUUID(j.AppID)}); e != nil {
@@ -150,7 +153,7 @@ func (s *PgStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, pol
 	if e != nil {
 		return j, false, e
 	}
-	snapshot, e := readObjectUsage(ctx, tx, j.AccountID, now.Time)
+	snapshot, e := readObjectBucketUsage(ctx, tx, j.AccountID, j.BucketID, now.Time)
 	if e != nil {
 		return j, false, e
 	}
@@ -212,7 +215,7 @@ func (s *PgStore) mutateDeletion(ctx context.Context, id string, fn func(pgx.Tx,
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
-	if _, e = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(j.AccountID)); e != nil {
+	if _, e = lockObjectUsageScope(ctx, tx, mustPgUUID(j.AccountID), mustPgUUID(j.BucketID)); e != nil {
 		return j, mapErr(e)
 	}
 	if j.Lifecycle != nil {

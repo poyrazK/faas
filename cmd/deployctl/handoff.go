@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-// Two-generation hand-off (docs/adr/20261018074719-zero-downtime-daemon-restarts.md).
+// Two-generation hand-off (docs/adr/1580-zero-downtime-daemon-restarts.md).
 // A daemon whose unit reloads by hand-off is reloaded instead of restarted
 // when nothing it read at start has changed: the successor inherits the old
 // process's environment, credentials and sockets, so only a new binary can
@@ -23,6 +23,13 @@ import (
 
 // handoffPollInterval is how often a reload's progress is read.
 var handoffPollInterval = 250 * time.Millisecond
+
+// handoffWaitBound is how long a reload may take before deployctl restarts
+// instead: the daemon may first wait out a memory spike, then give its
+// successor the readiness bound.
+func handoffWaitBound() time.Duration {
+	return time.Duration(api.HandoffMemoryWaitSeconds+api.HandoffReadyTimeoutSeconds)*time.Second + handoffWaitSlack
+}
 
 // handoffWaitSlack covers the successor's exec and systemd's adoption on top
 // of the readiness bound the daemon itself enforces.
@@ -159,7 +166,7 @@ func (r hostRuntime) reloadByHandoff(ctx context.Context, service string) (bool,
 	if err := runCommand(ctx, "systemctl", "reload", serviceFilePrefix+service+serviceFileSuffix); err != nil {
 		return false, "", err
 	}
-	waitCtx, cancel := context.WithTimeout(ctx, time.Duration(api.HandoffReadyTimeoutSeconds)*time.Second+handoffWaitSlack)
+	waitCtx, cancel := context.WithTimeout(ctx, handoffWaitBound())
 	defer cancel()
 	for {
 		select {

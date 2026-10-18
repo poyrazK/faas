@@ -30,7 +30,7 @@ func (s *PostgresStore) ImportUsage(ctx context.Context, command UsageImportComm
 	if err != nil {
 		return UsageImportResult{}, err
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.catalog.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return UsageImportResult{}, mapPostgresError(err)
 	}
@@ -157,7 +157,7 @@ func (s *PostgresStore) ReplayUsageImport(ctx context.Context, accountID, actor 
 	if err != nil {
 		return UsageImportResult{}, err
 	}
-	receipt, err := sqlc.New().GetManagedPostgresUsageImport(ctx, s.pool, sqlc.GetManagedPostgresUsageImportParams{AccountID: account, ImportID: id})
+	receipt, err := sqlc.New().GetManagedPostgresUsageImport(ctx, s.catalog, sqlc.GetManagedPostgresUsageImportParams{AccountID: account, ImportID: id})
 	if err != nil {
 		return UsageImportResult{}, mapPostgresError(err)
 	}

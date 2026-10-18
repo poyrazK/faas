@@ -17,10 +17,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type snapshotAdmissionBoundaryStore struct {
-	*state.MemStore
+	MemStore                         *state.MemStore
 	grant                            runtimeadmission.SnapshotGrant
 	issued, published                bool
 	issueErr, publishErr, receiptErr error
@@ -99,7 +100,7 @@ func snapshotAdmissionBoundaryFixture(t *testing.T) (*Engine, *snapshotAdmission
 	}
 	s := &snapshotAdmissionBoundaryStore{MemStore: base, grant: g}
 	v := &snapshotAdmissionBoundaryVMM{fakeVMM: &fakeVMM{}, store: s}
-	return newEngine(t, s, v, &fakeNotifier{}, g.FCVersion), s, v, ins
+	return newEngine(t, statetest.NewMem(s), v, &fakeNotifier{}, g.FCVersion), s, v, ins
 }
 
 func TestStandardSnapshotAdmissionSavesGrantAndAcknowledgmentBeforePublication(t *testing.T) {

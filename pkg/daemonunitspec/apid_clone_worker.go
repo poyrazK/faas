@@ -46,7 +46,7 @@ func UnitApidCloneWorker() daemonunit.Unit {
 		{Name: "faas_host_hmac_key", Path: "/etc/faas/secrets/host.hmac.key"},
 	}
 	u.ReadWritePaths = []string{"/var/spool/faas/apid-clone-worker"}
-	// The clone worker serves no requests and does not hand off (ADR-20261018074719).
+	// The clone worker serves no requests and does not hand off (ADR-1580).
 	u.NotifyAccess, u.ExecReload, u.OOMPolicy = "", "", ""
 	return u
 }

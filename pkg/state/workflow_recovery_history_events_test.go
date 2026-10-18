@@ -83,7 +83,7 @@ func TestWorkflowRecoveryDurablePolicyHistory(t *testing.T) {
 			if _, err = pg.pool.Exec(ctx, "DELETE FROM event_recovery_jobs WHERE id=$1", review.JobID); err != nil {
 				t.Fatal(err)
 			}
-			s = NewPgStore(pg.pool)
+			s = NewPgStore(pg.pool.Pool)
 		}
 		out, err := s.(WorkflowRecoveryHistoryStore).GetWorkflowRecoveryHistory(ctx, app.AccountID, app.ID, api.WorkflowRecoveryHistoryOptions{PolicyVersion: 1})
 		if err != nil || len(out.Entries) != 1 || out.Entries[0].ID != events[0].ID || out.Entries[0].Policy == nil {
@@ -130,7 +130,7 @@ func TestWorkflowRecoveryDurableReasonTransitions(t *testing.T) {
 			t.Fatalf("transitions %+v", first)
 		}
 		if pg, ok := s.(*PgStore); ok {
-			s = NewPgStore(pg.pool)
+			s = NewPgStore(pg.pool.Pool)
 		}
 		runAutomaticPolicy(t, s, now.Add(2*time.Minute))
 		if got := durableRecoveryEvents(t, s, app.ID); len(got) != len(first) {

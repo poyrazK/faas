@@ -70,7 +70,7 @@ func (s *server) prepareCapturedClonePostgresBinding(ctx context.Context, store 
 	if s.managedPostgresBindings == nil || setSecretRecipient == nil || hostHMACKey == nil || hostSecretRecipient() == nil || len(hostHMACKeyBytes()) == 0 {
 		return state.ProjectEnvironmentClonePostgresBindingPreparation{}, managedpostgres.ErrUnavailable
 	}
-	account, err := s.store.AccountByID(ctx, lease.Operation.AccountID)
+	account, err := state.ProjectResourceAccountByID(ctx, s.store, lease.Operation.ProjectID)
 	if err != nil {
 		return state.ProjectEnvironmentClonePostgresBindingPreparation{}, err
 	}

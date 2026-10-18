@@ -40,7 +40,7 @@ func UnitGatewaydPublic() daemonunit.Unit {
 
 		Type: "notify",
 		// `systemctl reload` hands off to a second generation that serves
-		// new connections while this one finishes its own (ADR-20261018074719).
+		// new connections while this one finishes its own (ADR-1580).
 		NotifyAccess: "main",
 		ExecReload:   handoffReload,
 		OOMPolicy:    "continue",

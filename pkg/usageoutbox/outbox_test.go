@@ -220,7 +220,7 @@ func TestTornFinalAppendIsTruncatedButCorruptCompleteRecordFails(t *testing.T) {
 	}
 }
 
-// ADR-20261018074719: the generation that adopts a hand-off's old outbox delivers only
+// ADR-1580: the generation that adopts a hand-off's old outbox delivers only
 // its unacknowledged events, after its own, and the old outbox ends empty.
 func TestAbsorbMovesOnlyUnacknowledgedEvents(t *testing.T) {
 	root := t.TempDir()

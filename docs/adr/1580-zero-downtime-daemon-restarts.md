@@ -1,13 +1,9 @@
-# ADR-20261018074719: Zero-downtime daemon restarts
+# ADR-1580: Zero-downtime daemon restarts
 
 Date: 2026-10-17 (two-generation hand-off added 2026-10-18)
 Status: Accepted
 Related: ADR-068 (issue #607, apid and gatewayd-public socket activation),
 ADR-015, ADR-070, ADR-079, ADR-190, ADR-790
-
-Renumbered from ADR-1580 on 2026-10-18 because that identifier already belongs
-to [internal CI automation admission recovery](1580-internal-ci-automation-admission-recovery.md).
-The daemon restart decision and its activation gates are unchanged.
 
 ## Context
 
@@ -106,10 +102,11 @@ daemons still refused connections, or failed requests, while they restarted:
 `systemctl reload faas-<daemon>` runs `ExecReload=/bin/kill -USR2 $MAINPID`.
 The daemon (`wire.HandoffRequests`, `wire.Handoff`):
 
-1. Refuses when its cgroup's `memory.current` exceeds
+1. Waits while its cgroup's `memory.current` exceeds
    `api.HandoffMaxMemoryPercent` (45 %) of `memory.max`: both generations
-   share the unit's `MemoryMax`. It reports `STATUS=hand-off failed at …`
-   and keeps serving.
+   share the unit's `MemoryMax`. It returns freed heap to the OS and checks
+   again every 2 s for up to `api.HandoffMemoryWaitSeconds` (60 s), then
+   refuses, reports `STATUS=hand-off failed at …` and keeps serving.
 2. Duplicates every listening socket it serves (inherited from a socket unit
    or bound itself and registered with `wire.Share`) with `F_DUPFD_CLOEXEC`,
    keeping the shared open file description non-blocking, and marks unix
@@ -188,8 +185,8 @@ reload fails.
 ### Memory and CPU on one control-plane host
 
 The two generations share the unit's cgroup, so a hand-off never raises the
-host's commitment above the unit's `MemoryMax`: 512 M for both gateways and
-realtimed, 256 M for apid, all inside `faas-cp.slice`. The 45 % check
+host's commitment above the unit's `MemoryMax`: 512 M for both gateways,
+realtimed and apid, all inside `faas-cp.slice`. The 45 % check
 leaves the successor at least as much as the old generation used; the old
 generation's memory falls as its requests finish. If the kernel still
 OOM-kills one of them, `OOMPolicy=continue` keeps the other running (systemd's
@@ -197,10 +194,9 @@ default would stop the unit); a killed main process restarts as before.
 deployctl reloads one daemon at a time, so at most one daemon starts a second
 generation at once, though earlier ones may still be draining. There is no
 CPU quota on these units: the successor's start-up (cache loads, and apid's
-migrations) overlaps a draining process that is mostly idle. apid's
-256 M leaves little room: when apid uses more than 115 M a reload falls back
-to a restart, and its `MemoryMax` should rise before relying on hand-off
-there.
+migrations) overlaps a draining process that is mostly idle. apid's cap
+and its `GOMEMLIMIT` of 256 MiB per process are sized from production use in
+ADR 20261018132058; its hand-off threshold is 230 MB.
 
 ### Deploys
 
