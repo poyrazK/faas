@@ -341,7 +341,7 @@ func (l *Loop) triggerPlanResolver(ctx context.Context) func(string) api.Plan {
 		if appErr != nil {
 			return api.PlanFree
 		}
-		acct, acctErr := l.engine.Store().AccountByID(ctx, app.AccountID)
+		acct, acctErr := state.AppResourceAccount(ctx, l.engine.Store(), app)
 		if acctErr != nil {
 			return api.PlanFree
 		}

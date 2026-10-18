@@ -672,6 +672,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SCHEDD_LISTEN_ADDR` | schedd | `dropin` |  |  | `` | rendered with faas-schedd.socket's ListenStream from faas_schedd_listen_addr (ADR-1580) |
 | `FAAS_SCHEDD_NODE_INVENTORY_ENFORCE` | schedd, shared | `dropin` |  | 0 | `` | ADR-419; control-plane and compute-only roles deliver the signed process-inventory canary switch; enable only after native recovery qualification |
 | `FAAS_SCHEDD_NODE_LEASE` | schedd | `default` |  |  | `` | ADR-1344 §4 P3 phase 1: the node-local schedd renews its node's liveness lease; off by default and observe-only |
+| `FAAS_SCHEDD_NODE_LEASE_GUARD` | schedd | `default` |  |  | `` | ADR-1344 §4 P3 phase 2: the stale-peer observer and dead-node sweep leave a node alone while its lease is live; turn on only once every node renews; off by default |
 | `FAAS_SCHEDD_RECONCILE_ENFORCE` | schedd, shared | `default` |  |  | `` | ADR-191; "1" lets the instance-divergence sweep write. Default off ships the sweep report-only: it counts and logs what it would repair and touches no row |
 | `FAAS_SCHEDD_ROLE` | schedd, shared | `dropin` |  |  | `` |  |
 | `FAAS_SCHEDD_SOCKET` | gatewayd-internal | `dropin` |  |  | `` |  |

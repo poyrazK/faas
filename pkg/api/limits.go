@@ -6652,6 +6652,11 @@ const (
 	NodeLeaseRenewInterval = 10 * time.Second
 	NodeLeaseFenceMargin   = 5 * time.Second
 	NodeLeaseMaxTTL        = 10 * time.Minute
+	// NodeLeaseTakeoverMargin is how long after a lease's expiry, on database
+	// time, peers wait before acting on the node being gone (phase 2). The
+	// node fences itself NodeLeaseFenceMargin before expiry, so its work has
+	// stopped well before any peer takes it over.
+	NodeLeaseTakeoverMargin = 10 * time.Second
 
 	// InstanceDivergenceIntervalSeconds is the cadence of the ADR-191
 	// sweep that finds live rows the owning vmmd is not reporting.

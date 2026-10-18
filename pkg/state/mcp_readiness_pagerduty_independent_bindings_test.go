@@ -48,7 +48,7 @@ func TestMCPReadinessPagerDutyIndependentBindings(t *testing.T) {
 					}
 				}
 				if pg, ok := s.(*PgStore); ok {
-					s = NewPgStore(pg.pool)
+					s = NewPgStore(pg.pool.Pool)
 					incoming = s.(MCPReadinessPagerDutyAcknowledgementStore)
 				}
 				legacy, err := incoming.ReadMCPReadinessPagerDutyAcknowledgementReceiver(ctx, f.rule.ID)

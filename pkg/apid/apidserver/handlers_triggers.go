@@ -69,6 +69,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
+	"github.com/onebox-faas/faas/pkg/apid/queueaccess"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -680,46 +681,7 @@ func validTriggerKind(kind api.TriggerKind) bool {
 // so a cross-account probe has the same not-found response as the
 // item endpoint.
 func (s *server) listTriggers(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	query := r.URL.Query()
-	appID := query.Get("app_id")
-	kind := api.TriggerKind(query.Get("kind"))
-	if kind != "" && !validTriggerKind(kind) {
-		// The public list contract treats an unknown filter value as
-		// an empty result, preserving the same semantics as a valid
-		// filter that currently matches no rows.
-		writeJSON(w, http.StatusOK, []api.Trigger{})
-		return
-	}
-	var apps []state.App
-	var err error
-	if appID != "" {
-		app, appErr := s.store.AppByID(r.Context(), appID)
-		if appErr != nil || app.AccountID != acct.ID {
-			s.notFound(w, "no such app")
-			return
-		}
-		apps = []state.App{app}
-	} else {
-		apps, err = s.store.ListApps(r.Context(), acct.ID)
-		if err != nil {
-			api.WriteProblem(w, api.ErrCapacity("could not list triggers"))
-			return
-		}
-	}
-	out := make([]api.Trigger, 0)
-	for _, app := range apps {
-		ts, err := s.store.ListTriggersForApp(r.Context(), app.ID)
-		if err != nil {
-			continue
-		}
-		for _, t := range ts {
-			if kind != "" && api.TriggerKind(t.Kind) != kind {
-				continue
-			}
-			out = append(out, triggerResponse(t))
-		}
-	}
-	writeJSON(w, http.StatusOK, out)
+	queueaccess.ListPersonalTriggers(s.store, triggerResponse)(w, r, acct)
 }
 
 // --- getTrigger ------------------------------------------------------------

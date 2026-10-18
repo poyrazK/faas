@@ -188,6 +188,7 @@ func TestMigration_00074_3_PartialUniqueFires(t *testing.T) {
 	migrateUpOnce(ctx, t, pool)
 
 	acctID := seedAccount(t, ctx, pool)
+	seedPersonalOrg(t, ctx, pool, acctID)
 
 	projID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
@@ -281,6 +282,7 @@ func TestMigration_00074_5_BackfillSynthesizesProjects(t *testing.T) {
 	migrateUpOnce(ctx, t, pool)
 
 	boundAcctID := seedAccount(t, ctx, pool)
+	seedPersonalOrg(t, ctx, pool, boundAcctID)
 	boundApp1 := uuid.NewString()
 	boundApp2 := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
