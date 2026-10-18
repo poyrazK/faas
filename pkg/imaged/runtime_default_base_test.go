@@ -13,9 +13,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
-type runtimeDefaultBaseAbsentStore struct{ state.Store }
+type runtimeDefaultBaseAbsentStore struct{ Store state.Store }
 
 func TestRuntimeDefaultBaseRequiresCurrentIntentBootLayoutAndBytes(t *testing.T) {
 	for _, mode := range []string{"complete", "storage drift", "guest init drift", "configured source changed", "missing runtime", "missing producer", "tag resolved", "tag unavailable", "pinned registry outage"} {
@@ -44,7 +45,7 @@ func TestRuntimeDefaultBaseRequiresCurrentIntentBootLayoutAndBytes(t *testing.T)
 			case "missing runtime":
 				runtime = "node22"
 			case "missing producer":
-				h.store = runtimeDefaultBaseAbsentStore{h.store}
+				h.store = statetest.NewStore(runtimeDefaultBaseAbsentStore{h.store})
 			case "tag resolved", "tag unavailable":
 				h.WithDeployBaseRef("registry.example/base:development")
 				if mode == "tag unavailable" {

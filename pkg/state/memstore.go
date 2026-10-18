@@ -611,6 +611,7 @@ type MemStore struct {
 	operatorParks               map[string]OperatorParkExecution
 	operatorNodes               map[string]OperatorNodeResult
 	nodeLifecycleCompletions    map[nodeLifecycleCompletionKey]NodeLifecycleCompletionResult
+	nodeLeases                  map[string]NodeLease
 	operatorRecoverySubmissions map[string]operatorRecoverySubmissionRow
 	snapshotRecoveryGenerations map[string]int64
 	instanceSnapshotRecovery    map[string]instanceSnapshotRecovery
