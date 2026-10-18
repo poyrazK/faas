@@ -17,10 +17,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type publicationRenewalRaceStore struct {
-	*state.MemStore
+	MemStore                *state.MemStore
 	renewedAfterPublication chan struct{}
 	once                    sync.Once
 }
@@ -56,11 +57,11 @@ func TestMaterializationCommittedPublicationSurvivesRenewalConflict(t *testing.T
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			store := &publicationRenewalRaceStore{MemStore: state.NewMemStore(), renewedAfterPublication: make(chan struct{})}
-			acct, err := store.CreateAccount(ctx, "publication-race@example.com", api.PlanPro)
+			acct, err := store.MemStore.CreateAccount(ctx, "publication-race@example.com", api.PlanPro)
 			if err != nil {
 				t.Fatal(err)
 			}
-			job, err := store.JobCreate(ctx, acct.ID, "publication-race", "batch", "registry.example/worker:latest", []string{"/bin/worker"}, 256, 60, 2, 1, nil)
+			job, err := store.MemStore.JobCreate(ctx, acct.ID, "publication-race", "batch", "registry.example/worker:latest", []string{"/bin/worker"}, 256, 60, 2, 1, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -68,7 +69,7 @@ func TestMaterializationCommittedPublicationSurvivesRenewalConflict(t *testing.T
 			root := t.TempDir()
 			backend := mustLocalStorage(t, root)
 			var logs bytes.Buffer
-			h := New(store, &fakeNotifier{}, puller, &fakeBuilder{bytesOut: 123}, "./guest-init", root, slog.New(slog.NewTextHandler(&logs, nil))).WithStorage(backend)
+			h := New(statetest.NewMem(store), &fakeNotifier{}, puller, &fakeBuilder{bytesOut: 123}, "./guest-init", root, slog.New(slog.NewTextHandler(&logs, nil))).WithStorage(backend)
 			h.jobMaterializationLeaseOverride = time.Second
 			if mode == "single" {
 				err = h.MaterializeJob(ctx, job.ID)
@@ -81,7 +82,7 @@ func TestMaterializationCommittedPublicationSurvivesRenewalConflict(t *testing.T
 			if strings.Contains(logs.String(), "lease renewal failed") {
 				t.Fatalf("committed publication logged failure: %s", logs.String())
 			}
-			ready, err := store.JobGetByID(ctx, job.ID)
+			ready, err := store.MemStore.JobGetByID(ctx, job.ID)
 			if err != nil || ready.ImageMaterializationStatus != "ready" || ready.ImageResolvedDigest != puller.digest || ready.ImageStorageKey == "" {
 				t.Fatalf("publication lost: %+v %v", ready, err)
 			}

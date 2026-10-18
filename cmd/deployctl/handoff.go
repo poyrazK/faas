@@ -24,6 +24,13 @@ import (
 // handoffPollInterval is how often a reload's progress is read.
 var handoffPollInterval = 250 * time.Millisecond
 
+// handoffWaitBound is how long a reload may take before deployctl restarts
+// instead: the daemon may first wait out a memory spike, then give its
+// successor the readiness bound.
+func handoffWaitBound() time.Duration {
+	return time.Duration(api.HandoffMemoryWaitSeconds+api.HandoffReadyTimeoutSeconds)*time.Second + handoffWaitSlack
+}
+
 // handoffWaitSlack covers the successor's exec and systemd's adoption on top
 // of the readiness bound the daemon itself enforces.
 const handoffWaitSlack = 30 * time.Second
@@ -159,7 +166,7 @@ func (r hostRuntime) reloadByHandoff(ctx context.Context, service string) (bool,
 	if err := runCommand(ctx, "systemctl", "reload", serviceFilePrefix+service+serviceFileSuffix); err != nil {
 		return false, "", err
 	}
-	waitCtx, cancel := context.WithTimeout(ctx, time.Duration(api.HandoffReadyTimeoutSeconds)*time.Second+handoffWaitSlack)
+	waitCtx, cancel := context.WithTimeout(ctx, handoffWaitBound())
 	defer cancel()
 	for {
 		select {

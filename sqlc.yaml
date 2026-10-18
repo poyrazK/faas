@@ -205,6 +205,7 @@ sql:
       - "pkg/state/migration_verification_queries.sql"
       - "pkg/state/native_issue_ticket_queries.sql"
       - "pkg/state/node_admission_queries.sql"
+      - "pkg/state/node_lease_queries.sql"
       - "pkg/state/node_lifecycle_completion_queries.sql"
       - "pkg/state/operation_timeline_queries.sql"
       - "pkg/state/operation_webhook_queries.sql"

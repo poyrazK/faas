@@ -1456,6 +1456,7 @@ type Querier interface {
 	GetMigrationCutover(ctx context.Context, db DBTX, arg GetMigrationCutoverParams) (GetMigrationCutoverRow, error)
 	GetMigrationVerification(ctx context.Context, db DBTX, arg GetMigrationVerificationParams) (GetMigrationVerificationRow, error)
 	GetNativeWorkflowRun(ctx context.Context, db DBTX, id pgtype.UUID) (WorkflowRun, error)
+	GetNodeLease(ctx context.Context, db DBTX, nodeID pgtype.UUID) (GetNodeLeaseRow, error)
 	GetNotificationChannel(ctx context.Context, db DBTX, arg GetNotificationChannelParams) (NotificationChannel, error)
 	// Bearer hot-path lookup. Filters past-TTL rows out at the SQL
 	// layer so the pg contract is "WHERE expires_at > NOW()". The
@@ -4536,6 +4537,11 @@ type Querier interface {
 	RenewEnvironmentGitOpsLease(ctx context.Context, db DBTX, arg RenewEnvironmentGitOpsLeaseParams) (int64, error)
 	RenewEnvironmentWorkloadQualification(ctx context.Context, db DBTX, arg RenewEnvironmentWorkloadQualificationParams) (EnvironmentWorkloadQualificationRequest, error)
 	RenewInvocationLease(ctx context.Context, db DBTX, arg RenewInvocationLeaseParams) (int64, error)
+	// ADR-1344 §4 (P3): compute-node liveness leases, on database time.
+	// RenewNodeLease renews the caller's lease, or takes it over with the next
+	// epoch once the previous holder's lease has expired. While another holder's
+	// lease is live the conflict update is skipped and no row is returned.
+	RenewNodeLease(ctx context.Context, db DBTX, arg RenewNodeLeaseParams) (RenewNodeLeaseRow, error)
 	// Materialize the locked row before evaluating expiry. A valid predicate
 	// evaluated before waiting for a row lock must not resurrect an expired lease.
 	RenewNotificationClaim(ctx context.Context, db DBTX, arg RenewNotificationClaimParams) (int64, error)

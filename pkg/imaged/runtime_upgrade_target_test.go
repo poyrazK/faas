@@ -14,11 +14,12 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 type failedRuntimeUpgradeStore struct {
-	*state.MemStore
+	MemStore *state.MemStore
 }
 
 func (s failedRuntimeUpgradeStore) DeploymentRuntimeUpgradeTarget(context.Context, string) (state.RuntimeRelease, error) {
@@ -148,7 +149,7 @@ func TestRuntimeUpgradeImageUsesExactTargetAcrossGuestInitChange(t *testing.T) {
 	if _, err := f.h.prepareFunctionRuntimeRelease(t.Context(), app, dep, app.Runtime, key); err == nil {
 		t.Fatal("repaired corrupt target with another generation")
 	}
-	f.h.store = failedRuntimeUpgradeStore{MemStore: s}
+	f.h.store = statetest.NewMem(failedRuntimeUpgradeStore{MemStore: s})
 	if _, err := f.h.prepareFunctionRuntimeRelease(t.Context(), app, dep, app.Runtime, key); err == nil {
 		t.Fatal("database outage became unpinned fallback")
 	}

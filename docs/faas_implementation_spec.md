@@ -1954,7 +1954,7 @@ request therefore does not create an instance transition or resident usage.
 | Slice | Budget | Contents |
 |---|---|---|
 | `system.slice` | 2,048 MB | OS, sshd, journald, node_exporter, chrony |
-| `faas-cp.slice` | 6,144 MB | postgres 1,536 · gatewayd-public + gatewayd-internal 512 · apid 256 · schedd 128 · vmmd 256 · builderd 128 · meterd 256 · imaged 512 (spikes during flatten) · loki/promtail agents 256 · slack 2,304 → **1 guaranteed builder VM (2,048 + 8) lives here** |
+| `faas-cp.slice` | 6,144 MB | postgres 1,536 · gatewayd-public + gatewayd-internal 512 · apid 384 (two generations during a reload, ADR 20261018132058) · schedd 128 · vmmd 256 · builderd 128 · meterd 256 · imaged 512 (spikes during flatten) · loki/promtail agents 256 · slack 2,176 → **1 guaranteed builder VM (2,048 + 8) lives here** |
 | `faas-tenant.slice` | 57,344 MB (`memory.max`, hard fence) | tenant microVMs; **schedd admits measured memory only to 47,600 MB** (85 % of the model's 56 GB budget; reservations up to twice that, ADR-909) |
 | headroom (inside tenant slice, above admission line) | ≈ 8.4 GB | tenant spike absorption and restore safety margin; builder VMs do not borrow from this slice |
 
