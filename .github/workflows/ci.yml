@@ -2827,10 +2827,10 @@ jobs:
   e2e-shard1:
     name: e2e (shard 1 — 18 tests)
     runs-on: ubuntu-latest
-    # The test command has a 15m package timeout; leave runner cleanup
-    # headroom so slow shared runners fail with the test result instead of
-    # being cancelled by the job budget first.
-    timeout-minutes: 20
+    # Keep the 15m package deadline, with bounded time for cold race builds
+    # and runner setup. The previous 20m job cap cancelled the command
+    # before it could report its test result.
+    timeout-minutes: 30
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
