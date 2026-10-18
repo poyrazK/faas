@@ -174,7 +174,7 @@ func TestStartSelectedDotenvIsSealedBeforeUpload(t *testing.T) {
 			api.WriteProblem(w, api.NewProblem(404, "not_found", "Not found", "No resource"))
 		}
 	})
-	pipeStdin(t, "\n4\n"+filepath.Join(source, ".env")+"\ny\n3\n")
+	pipeStdin(t, "4\n"+filepath.Join(source, ".env")+"\ny\n3\n")
 	_ = cmdStart(nil)
 	if !sealed || !uploaded || strings.Contains(stdout.String()+stderr(), fakeStripeLiveKey) {
 		t.Fatal("selected dotenv was not sealed and uploaded with values kept out of output")

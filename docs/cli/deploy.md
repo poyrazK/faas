@@ -40,8 +40,10 @@ per read and do not guarantee that capacity will remain available after review.
 Start uses the selected source's nearest `.gregale/project.json` when it is linked
 with `gregale link`. It verifies the project, workload membership, and any named
 environment, then shows that target in the review. A project without a default
-app offers a workload picker when needed. Picking a workload for this launch
-does not change your linked defaults. A link in the original working directory
+app offers a workload picker when needed. After a successful launch finishes,
+Start remembers the selected app next to the source, including standalone apps.
+It preserves conflicting saved defaults and keeps accepted-deployment recovery
+available. A link in the original working directory
 does not apply to a different source tree you select.
 
 Without a link, the app name comes from the selected directory and the environment
@@ -225,6 +227,11 @@ when needed.
 
 ## Source-root semantics
 
+App and environment defaults come from the selected source directory's nearest
+saved context. `--name` and `--environment` override those defaults. Selecting
+`--path` does not replace a saved app name with the directory name or inherit an
+unrelated environment from the caller's directory.
+
 When cwd is inside a git repository with an `origin` remote, `gregale
 deploy` without a source selector still ships the
 **committed tree at HEAD from the repo root**, preserving the original
@@ -311,6 +318,26 @@ use `--worktree` when the plan reports that local changes are excluded. JSON
 output remains a single machine-readable deployment receipt and does not
 include this human preflight block. A dirty checkout also prints an exclusion
 warning to stderr, including with `--json`, so a script's stdout stays parseable.
+
+## Understand a preview
+
+`deploy --plan` and `deploy --dry-run` show the same connection, app,
+environment, source, and local-change summary. Their verification differs:
+
+- `--plan` performs local inference without authentication. It does not check
+  the app's current remote configuration or guarantee build success.
+- `--dry-run` compares supported changes against remote state. It does not run
+  the build or verify readiness, and state can change before deployment.
+
+The single-app diff engine cannot compare named project environments. A saved
+or explicit named environment produces an explanation; use a project preview,
+or `--environment=` to intentionally compare the default scope. It never silently
+switches a named environment to the default scope.
+
+Structured previews retain their existing fields and add summary metadata.
+Scale plans and secret-update previews use the same human summary and explain
+their verification limits. Secret previews compare key metadata without reading
+remote secret values or verifying their delivery.
 
 ## Safe production rollouts
 
@@ -600,6 +627,11 @@ Submission failures now include recovery details: the stage (`upload`,
 `submission`, or `deployment`), app, any confirmed deployment ID, an inspection
 command, and the logical idempotency key when that transport uses one.
 In JSON mode, these appear in the stderr Problem object's `recovery` field.
+Its `next_command` identifies the recommended action: resume observation of an
+accepted deployment, or inspect history when acceptance is unknown. Failed
+deployment receipts recommend logs for that exact deployment instead of waiting
+again. `inspect --errors` includes the same recovery data alongside its existing
+deployment fields, including when the server has not recorded a failure code.
 
 If no deployment ID was confirmed, inspect the app's history before retrying:
 

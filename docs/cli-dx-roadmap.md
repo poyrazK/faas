@@ -1,6 +1,6 @@
 # Gregale CLI simplicity and developer experience roadmap
 
-**Status:** proposed feature goals
+**Status:** implemented
 
 **Date:** 2026-10-18
 
@@ -15,8 +15,25 @@ previews, recovery commands, and GitHub workflow generation. These five goals
 extend those capabilities into a consistent daily experience.
 
 This roadmap complements the [API hosting roadmap](api-hosting-roadmap.md) and
-the [UX specification](faas_ux_spec.md). It defines proposed CLI work; it does
-not mark the features below as implemented.
+the [UX specification](faas_ux_spec.md). The gaps below describe the starting
+point. The current implementation adds all five workflows:
+
+- Source-based targeting, standalone app defaults after `start`, and the
+  interactive app picker for `metrics`.
+- Shared local checks in `dev`, source-based session defaults, and exact
+  inspection and stop commands on exit.
+- Common preview summaries for deploy, scale, and secret updates, with explicit
+  verification limits and rejection of unsupported environment comparisons.
+- Recommended recovery commands in deployment and failure-inspection receipts,
+  including failures whose cause is not yet recorded.
+- `dev setup --save [--dry-run]` for portable manifest defaults, plus GitHub
+  workflow generation that preserves supported target and source choices.
+
+See [CLI configuration](cli-config.md), [daily development](gregale-dev.md), and
+[GitHub source deployment](source-ref.md) for usage. Local setup saving is bounded
+to supported YAML dev settings; workflow generation explicitly rejects choices
+the Action cannot represent. Existing development performance targets remain
+unchanged and require separate measurement.
 
 ## Feature goals
 

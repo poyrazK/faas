@@ -137,7 +137,7 @@ func run(args []string) (status int) {
 	jsonUsageHelp = hasHelpFlag(args)
 	invokedCommandPath = publicCommandPath(args)
 	if len(args) == 0 {
-		fmt.Fprint(osStdout, topLevelUsage(false))
+		_, _ = fmt.Fprint(osStdout, topLevelUsage(false))
 		return 0
 	}
 	if !cliCommandAvailable(args[0]) {
@@ -168,11 +168,11 @@ func run(args []string) (status int) {
 				"version": wire.Version, "git_sha": wire.GitSHA, "build_time": wire.BuildTime,
 			}))
 		}
-		fmt.Fprintf(osStdout, "gregale %s\n", wire.Version)
+		_, _ = fmt.Fprintf(osStdout, "gregale %s\n", wire.Version)
 		return 0
 	case "help", "--help", "-h":
 		if len(args) == 1 || (len(args) == 2 && (args[1] == "--all" || hasHelpFlag(args[1:]))) {
-			fmt.Fprint(osStdout, topLevelUsage(len(args) == 2 && args[1] == "--all"))
+			_, _ = fmt.Fprint(osStdout, topLevelUsage(len(args) == 2 && args[1] == "--all"))
 			return 0
 		}
 		if command, ok := lookupCliCommand(args[1]); ok && cliCommandAvailable(command.Name) {

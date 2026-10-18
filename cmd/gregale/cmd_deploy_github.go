@@ -24,11 +24,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // githubActionVersion is the moving major Action tag maintained by the
@@ -73,6 +77,8 @@ type githubSnippetEnv struct {
 	// (when non-empty) regardless of env.Runner.
 	ConcreteRepository string
 	ConcreteSHA        string
+	APIBase            string
+	Environment        string
 }
 
 // detectGithubSnippetEnv reads the runner env. The two GITHUB_REPOSITORY
@@ -139,10 +145,16 @@ func renderGithubSnippet(env githubSnippetEnv, app, pinnedSHA string, actionVers
 	}
 	pinLine := fmt.Sprintf("# pin this Action for reproducibility: %s/%s@%s\n", githubActionRepo, githubActionPath, actionRef)
 
-	// API base placeholder. The customer fills in their actual host
-	// (different for Hobby/Pro/Scale deployments). The README's
-	// "Before you commit" section explains the substitution.
-	apiBase := defaultAPIBase
+	// Carry the selected connection into CI, falling back to the public
+	// endpoint for callers that use the renderer without CLI configuration.
+	apiBase := env.APIBase
+	if apiBase == "" {
+		apiBase = defaultAPIBase
+	}
+	jobEnvironment := env.Environment
+	if jobEnvironment == "" {
+		jobEnvironment = "production"
+	}
 
 	// The generated workflow grants GitHub's id-token permission so the
 	// Action can exchange a short-lived OIDC assertion for a Gregale
@@ -159,13 +171,13 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: gregale-${{ github.repository }}-%s-production
+  group: gregale-${{ github.repository }}-%s-%s
   cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-22.04
-    environment: production             # opt-in; remove if not using GitHub Environments
+    environment: %s                     # GitHub Environment approval rules apply
     permissions:
       contents: read
       checks: write                    # publish the deployment link in GitHub Checks
@@ -175,7 +187,9 @@ jobs:
         with:
           api-base: %s
           app: %s
-          # repo / ref default to ${{ github.repository }} / ${{ github.sha }}
+          repo: %s
+          ref: %s
+          environment: %s
           # Keep the job open until the deployment reaches a terminal state.
           wait: "true"
 `,
@@ -183,11 +197,36 @@ jobs:
 		githubActionRepo, githubActionPath, actionRef,
 		pinLine,
 		app,
+		jobEnvironment,
+		githubWorkflowValue(jobEnvironment),
 		usesRef,
 		versionComment,
-		apiBase,
-		app,
+		githubWorkflowValue(apiBase),
+		githubWorkflowValue(app),
+		githubWorkflowValue(repoExpr),
+		githubWorkflowValue(refExpr),
+		githubWorkflowValue(env.Environment),
 	)
+}
+
+func githubWorkflowValue(value string) string {
+	body, _ := json.Marshal(value)
+	return string(body)
+}
+
+func validateGithubSnippetFlags(explicit map[string]bool) error {
+	allowed := map[string]bool{"github": true, "name": true, "repo": true, "ref": true, "environment": true, "pinned-sha": true, "pin-action": true, "json": true}
+	var unsupported []string
+	for name := range explicit {
+		if !allowed[name] {
+			unsupported = append(unsupported, "--"+name)
+		}
+	}
+	if len(unsupported) != 0 {
+		sort.Strings(unsupported)
+		return fmt.Errorf("--github cannot preserve %s; configure these choices explicitly in CI before deploying", strings.Join(unsupported, ", "))
+	}
+	return nil
 }
 
 // cmdDeployGithubSnippet is the CLI entry point. Parses the deploy
@@ -201,6 +240,8 @@ func cmdDeployGithubSnippet(ctx context.Context, args []string) int {
 	app := fs.String("app", "", "app slug (required)")
 	repo := fs.String("repo", "", "override snippet repo (default: ${{ github.repository }} or GITHUB_REPOSITORY)")
 	ref := fs.String("ref", "", "override snippet ref (default: ${{ github.sha }} or GITHUB_SHA)")
+	environment := fs.String("environment", "", "registered Gregale project environment")
+	asJSON := fs.Bool("json", false, "emit a structured workflow receipt")
 	pinnedSHA := fs.String("pinned-sha", "", "pin the generated Action to this full 40-character commit SHA")
 	pinAction := fs.Bool("pin-action", false, "resolve the current v0 deploy Action tag to its commit SHA")
 	if err := fs.Parse(args); err != nil {
@@ -213,6 +254,13 @@ func cmdDeployGithubSnippet(ctx context.Context, args []string) int {
 	if *app == "" {
 		PrintFail(osStderr, "missing --app (the snippet generator needs a slug to embed)")
 		return 1
+	}
+	if !api.ValidAppSlug(*app) || (*environment != "" && !api.ValidProjectEnvironmentSlug(*environment)) {
+		return printErr("Invalid workflow target", errors.New("use a valid app and registered project environment slug"))
+	}
+	endpoint, err := validateConfigAPIBase(apiBase())
+	if err != nil {
+		return printErr("Invalid workflow API address", err)
 	}
 	if *pinnedSHA != "" {
 		sha, err := normalizeGithubActionSHA(*pinnedSHA)
@@ -246,7 +294,33 @@ func cmdDeployGithubSnippet(ctx context.Context, args []string) int {
 	if *ref != "" {
 		env.ConcreteSHA = *ref
 	}
-	_, _ = fmt.Fprint(osStdout, renderGithubSnippet(env, *app, *pinnedSHA, actionVersionComment))
+	for _, repo := range []string{env.Repository, env.ConcreteRepository} {
+		if repo != "" {
+			if err := validateRepoSlug(repo); err != nil {
+				return printErr("Invalid workflow repository", err)
+			}
+		}
+	}
+	for _, ref := range []string{env.SHA, env.ConcreteSHA} {
+		if ref != "" {
+			if err := validateGitHubRef(ref); err != nil {
+				return printErr("Invalid workflow ref", err)
+			}
+			if strings.Contains(ref, "${{") {
+				return printErr("Invalid workflow ref", errors.New("pass a literal Git ref, not a workflow expression"))
+			}
+		}
+	}
+	env.APIBase, env.Environment = endpoint, *environment
+	workflow := renderGithubSnippet(env, *app, *pinnedSHA, actionVersionComment)
+	if jsonOutput || *asJSON {
+		return jsonOut(writeJSON(struct {
+			App         string `json:"app"`
+			Environment string `json:"environment"`
+			Workflow    string `json:"workflow"`
+		}{*app, *environment, workflow}))
+	}
+	_, _ = fmt.Fprint(osStdout, workflow)
 	return 0
 }
 

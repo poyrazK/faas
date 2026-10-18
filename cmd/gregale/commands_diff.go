@@ -43,6 +43,7 @@ import (
 // into cmdDiff. Kept small so the diff path doesn't grow a
 // second flag-set surface.
 type diffCLIOptions struct {
+	Preview             *cliPreviewSummary
 	QueueCanaryBindings []string
 	Slug                string
 	AppShape            shape
@@ -263,6 +264,12 @@ func runDiff(ctx context.Context, client *api.Client, opts diffCLIOptions) int {
 	if baselineErr != nil && !opts.Lenient {
 		return printErr("Could not read baseline", baselineErr)
 	}
+	if baselineErr != nil && opts.Preview != nil {
+		preview := *opts.Preview
+		preview.Verification = "partial remote comparison"
+		preview.Limits = "Remote baseline could not be read; current settings are unknown. " + preview.Limits
+		opts.Preview = &preview
+	}
 
 	// 2. Pending projection. The gregale.yaml triggers fan-out
 	// populates Pending.Crons (mirrors deployManifestTriggers).
@@ -322,10 +329,11 @@ func runDiff(ctx context.Context, client *api.Client, opts diffCLIOptions) int {
 
 	// 5. Render.
 	if opts.JSON {
-		if err := deploydiff.RenderJSON(osStdout, d); err != nil {
+		if err := renderDiffPreviewJSON(osStdout, d, opts.Preview); err != nil {
 			return printErr("Could not encode diff", err)
 		}
 	} else {
+		renderCLIPreview(osStdout, opts.Preview)
 		renderDeployReadiness(osStderr, opts, d)
 		deploydiff.RenderText(osStdout, d)
 	}
@@ -606,10 +614,11 @@ func runServerDiff(ctx context.Context, client *api.Client, opts diffCLIOptions)
 		addSafeReleasePreview(ctx, client, opts, baseline, &synthetic)
 	}
 	if opts.JSON {
-		if err := deploydiff.RenderJSON(osStdout, synthetic); err != nil {
+		if err := renderDiffPreviewJSON(osStdout, synthetic, opts.Preview); err != nil {
 			return printErr("Could not encode diff", err)
 		}
 	} else {
+		renderCLIPreview(osStdout, opts.Preview)
 		renderDeployReadiness(osStderr, opts, synthetic)
 		deploydiff.RenderText(osStdout, synthetic)
 	}

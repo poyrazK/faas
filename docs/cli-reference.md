@@ -8354,7 +8354,7 @@ run `gregale delayed-task add` against the developer app
 
 preflight a project and prepare the first developer environment
 
-`gregale dev setup [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--start] [--once] [--no-logs] [--open] [--bucket <NAME>] [--postgres] [--postgres-region <REGION>] [--ttl <DURATION>]`
+`gregale dev setup [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--start] [--save] [--dry-run] [--once] [--no-logs] [--open] [--bucket <NAME>] [--postgres] [--postgres-region <REGION>] [--ttl <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -8363,6 +8363,8 @@ preflight a project and prepare the first developer environment
 | `--env-file <PATH>` | validate and sync developer secrets |  |
 | `--service-override-file <PATH>` | validate and sync service URLs |  |
 | `--start` | start after preflight |  |
+| `--save` | save portable developer defaults in gregale.yaml |  |
+| `--dry-run` | preview saved defaults; requires --save |  |
 | `--once` | sync once and exit |  |
 | `--no-logs` | do not attach runtime logs |  |
 | `--open` | open the verified URL |  |

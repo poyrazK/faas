@@ -113,6 +113,12 @@ func validatePresetUpdateTargets(target localProjectContext, appSet, environment
 	defer stop()
 	ctx, cancel := context.WithTimeout(signalCtx, 30*time.Second)
 	defer cancel()
+	if target.Project == "" {
+		if err := target.validate(); err != nil {
+			return err
+		}
+		return verifyStandaloneContextApp(ctx, client, target.App)
+	}
 	project, err := client.GetProject(ctx, target.Project)
 	if err != nil {
 		return fmt.Errorf("read preset project: %w", err)

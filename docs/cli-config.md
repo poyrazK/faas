@@ -53,6 +53,35 @@ an `invocation_wait_timeout` Problem to stderr. Ctrl-C exits with `130`.
 Stopping the CLI wait leaves the invocation running; inspect it later with
 `gregale invocations get <id>`.
 
+## Project and app defaults
+
+Finishing a successful `gregale start [path]` remembers the confirmed app in the
+selected source directory's `.gregale/project.json` and ignores `.gregale/` in
+Git. A conflicting saved app is preserved. From that source directory, these
+commands reuse the app:
+
+```sh
+gregale logs --follow
+gregale metrics
+gregale inspect
+gregale deploy
+```
+
+`deploy --path DIR`, `dev --path DIR`, and `dev setup --path DIR` resolve defaults
+from the selected directory and its ancestors. Explicit target options take
+precedence. `gregale context` explains the saved defaults; `context --verify`
+checks them against the current connection. Use `context set --app SLUG` to
+change the app, `unlink` to remove the local default, or `link PROJECT --app SLUG`
+to select a project. A saved environment affects only commands that support it;
+ordinary app logs and metrics are not filtered by that environment.
+
+Project links retain the version-1 format. Standalone apps use version 2 with
+an app and no project or environment. Older CLIs reject that format. These local
+defaults contain no credentials and are separate from shareable settings in
+`gregale.yaml`. When no app is saved, interactive `metrics` uses the same app
+picker as `logs` and `inspect`; JSON and non-interactive runs require an explicit
+or saved target.
+
 ## Connection profiles
 
 Use a named connection to keep API endpoints and login credentials separate:

@@ -74,6 +74,9 @@ func cmdStart(args []string) (code int) {
 	if err != nil {
 		return printErr("Could not locate session", err)
 	}
+	if err := validateStartScopeBeforeLogin(scope, statePath); err != nil {
+		return printErr("Could not read project directory", err)
+	}
 	lock, err := lockStartSession(statePath)
 	if err != nil {
 		return printErr("Could not open session", err)
@@ -584,10 +587,10 @@ func (r *startRunner) resume() int {
 
 func (r *startRunner) printRecovery() {
 	if pending := r.session.PendingSubmission; pending != nil {
-		PrintProgress(osStdout, "Run gregale start again from %s to check the pending launch.", r.session.ScopePath)
-		PrintProgress(osStdout, "Inspect app history: gregale deployments --app %s", safetext.ShellSingleQuote(r.session.AppSlug))
+		PrintProgress(osStdout, "Check the pending launch: %s start %s", recoveryCLI(), recoveryArgument(r.session.ScopePath))
+		PrintProgress(osStdout, "Inspect app history: %s deployments --app %s", recoveryCLI(), recoveryArgument(r.session.AppSlug))
 		if r.session.DeploymentID != "" {
-			PrintProgress(osStdout, "Previously accepted deployment: gregale deployment %s", safetext.ShellSingleQuote(r.session.DeploymentID))
+			PrintProgress(osStdout, "Previously accepted deployment: %s deployment %s", recoveryCLI(), recoveryArgument(r.session.DeploymentID))
 		}
 		r.printPreviouslyVerified()
 		return
@@ -655,6 +658,9 @@ func (r *startRunner) recoverFailure(code int) (int, bool) {
 }
 
 func (r *startRunner) finish() {
+	if err := r.rememberApp(); err != nil {
+		PrintWarn(osStdout, "App is live, but its local default could not be saved: %v", err)
+	}
 	cli, source, app := recoveryCLI(), recoveryArgument(r.session.SourcePath), recoveryArgument(r.session.AppSlug)
 	_, _ = fmt.Fprintf(osStdout, "\nKeep building\n  Update: %s deploy --path %s --source=worktree --name %s --environment=%s\n  Logs:   %s logs %s --deployment %s --follow\n", cli, source, app, recoveryArgument(r.session.Environment), cli, app, recoveryArgument(r.session.DeploymentID))
 	if r.session.Environment == "" {

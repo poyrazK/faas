@@ -15,10 +15,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/markers"
+	"gopkg.in/yaml.v3"
 )
 
-// devSetupReceipt is the local, side-effect-free plan produced by
-// `gregale dev setup`. It contains paths, filenames, counts and safe resource
+// devSetupReceipt is the local plan produced by `gregale dev setup`.
+// Optional --save records its local write in SavedConfig. It contains paths,
+// filenames, counts and safe resource
 // plans: config files are validated but secret values never enter the receipt.
 type devSetupReceipt struct {
 	Buckets                 []api.DevBucketRequest `json:"buckets,omitempty"`
@@ -45,6 +47,7 @@ type devSetupReceipt struct {
 	Warnings                []string               `json:"warnings,omitempty"`
 	ConfigPresent           bool                   `json:"config_present"`
 	Doctor                  *devSetupDoctorSummary `json:"doctor,omitempty"`
+	SavedConfig             *devSetupSavedConfig   `json:"saved_config,omitempty"`
 }
 
 type devSetupHosting struct {
@@ -62,7 +65,7 @@ type devSetupDoctorSummary struct {
 	Errors   int           `json:"errors"`
 }
 
-const devSetupUsage = "usage: gregale dev setup [--path DIR] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--bucket NAME] [--start] [--once] [--no-logs] [--open] [--postgres [--postgres-region REGION]] [--ttl DURATION]"
+const devSetupUsage = "usage: gregale dev setup [--path DIR] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--bucket NAME] [--start] [--save [--dry-run]] [--once] [--no-logs] [--open] [--postgres [--postgres-region REGION]] [--ttl DURATION]"
 
 // cmdDevSetup prepares the first developer environment without making a
 // remote mutation. --start hands the validated, exact plan to cmdDev, which
@@ -74,6 +77,8 @@ func cmdDevSetup(args []string) int {
 	envFile := fs.String("env-file", "", "validate and sync KEY=VALUE entries as developer secrets")
 	serviceOverrideFile := fs.String("service-override-file", "", "validate and sync service URLs as developer secrets")
 	start := fs.Bool("start", false, "start the developer environment after preflight")
+	save := fs.Bool("save", false, "save portable developer defaults in gregale.yaml")
+	dryRun := fs.Bool("dry-run", false, "preview saved developer defaults; requires --save")
 	once := fs.Bool("once", false, "start, sync once, and exit")
 	noLogs := fs.Bool("no-logs", false, "do not attach the live runtime log stream when starting")
 	open := fs.Bool("open", false, "open the developer environment URL after the first live sync")
@@ -91,6 +96,9 @@ func cmdDevSetup(args []string) int {
 		return 2
 	}
 	explicitFlags := flagSetWasSet(fs)
+	if *dryRun && (!*save || *start) {
+		return printErr("Invalid flags", errors.New("--dry-run requires --save and cannot be combined with --start"))
+	}
 	if *once && !*start {
 		return printErr("Invalid flags", errors.New("--once requires --start"))
 	}
@@ -104,13 +112,17 @@ func cmdDevSetup(args []string) int {
 	if err != nil {
 		return printErr("Could not read current directory", err)
 	}
-	linkedContext, _, linkedErr := linkedProjectContext(cwd)
-	if linkedErr != nil && !errors.Is(linkedErr, errProjectContextNotFound) {
-		return printErr("Could not read local project context", linkedErr)
-	}
 	sourceDir, err := resolveDeploySourceDir(cwd, *sourcePath)
 	if err != nil {
 		return printErr("Invalid developer source", err)
+	}
+	var linkedContext localProjectContext
+	linkedErr := errProjectContextNotFound
+	if *name == "" {
+		linkedContext, _, linkedErr = linkedProjectContext(sourceDir)
+		if linkedErr != nil && !errors.Is(linkedErr, errProjectContextNotFound) {
+			return printErr("Could not read local project context", linkedErr)
+		}
 	}
 	manifest, err := loadDevManifest(sourceDir)
 	if err != nil {
@@ -184,6 +196,16 @@ func cmdDevSetup(args []string) int {
 		receipt.Ready = false
 		receipt.Warnings = append(receipt.Warnings, "local source checks found errors; fix them before starting")
 	}
+	if *save && receipt.Doctor.Errors == 0 {
+		receipt.SavedConfig, err = saveDevSetup(receipt, *withPostgres, *postgresRegion, *dryRun)
+		if err != nil {
+			return printErr("Could not save developer setup", err)
+		}
+		if explicitFlags["name"] {
+			receipt.Warnings = append(receipt.Warnings, "--name selects this local developer session; teammates can choose their own session name")
+		}
+	}
+	localSaveReady := *save && !*start && receipt.Doctor.Errors == 0
 
 	if jsonOutput {
 		if *start {
@@ -193,7 +215,7 @@ func cmdDevSetup(args []string) int {
 		} else if err := writeJSON(receipt); err != nil {
 			return jsonOut(err)
 		}
-		if !receipt.Ready {
+		if !receipt.Ready && !localSaveReady {
 			return 1
 		}
 		if *start {
@@ -203,7 +225,16 @@ func cmdDevSetup(args []string) int {
 	}
 
 	renderDevSetup(osStdout, osStderr, receipt)
-	if !receipt.Ready {
+	if receipt.SavedConfig != nil {
+		action := "Saved"
+		if *dryRun {
+			action = "Would save"
+		}
+		PrintProgress(osStdout, "%s portable developer defaults in %s", action, receipt.SavedConfig.Path)
+		data, _ := yaml.Marshal(receipt.SavedConfig.Values)
+		_, _ = fmt.Fprint(osStdout, string(data))
+	}
+	if !receipt.Ready && !localSaveReady {
 		return 1
 	}
 	if !*start {

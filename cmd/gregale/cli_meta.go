@@ -2518,6 +2518,8 @@ var cliCommands = []cliCommand{
 				{Name: "env-file", Short: "validate and sync developer secrets", Value: "PATH"},
 				{Name: "service-override-file", Short: "validate and sync service URLs", Value: "PATH"},
 				{Name: "start", Short: "start after preflight"},
+				{Name: "save", Short: "save portable developer defaults in gregale.yaml"},
+				{Name: "dry-run", Short: "preview saved defaults; requires --save"},
 				{Name: "once", Short: "sync once and exit"},
 				{Name: "no-logs", Short: "do not attach runtime logs"},
 				{Name: "open", Short: "open the verified URL"},

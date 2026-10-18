@@ -18,6 +18,12 @@ whether to update it or create an app with another name. The review shows your
 account's app allowance and compute usage when available. Build logs are available
 through `gregale logs`.
 
+After you finish, Start remembers the app in the selected source directory.
+From there, `gregale logs --follow`, `gregale metrics`, `gregale inspect`, and
+`gregale deploy` reuse that target. Use `gregale context` to see or change your
+defaults. For an isolated edit-and-reload loop, run `gregale dev`; see
+[reusable development setup](gregale-dev.md#save-setup-for-the-next-session-or-a-teammate).
+
 Start checks server compatibility before review and again before remote changes.
 An incompatible installation or verification-service outage stops submission with
 guidance; an earlier saved launch remains recoverable. Update the installation or
