@@ -1951,6 +1951,18 @@ type CustomerOperationCodePin struct {
 	ExpiresAt    pgtype.Timestamptz
 }
 
+type CustomerOperationConcurrencyPolicy struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	Scope            string
+	Operation        string
+	PlatformTenantID pgtype.UUID
+	MaxRunning       int32
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type CustomerOperationDefinition struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
@@ -2022,6 +2034,16 @@ type CustomerOperationMilestone struct {
 	OccurredAt    pgtype.Timestamptz
 	CreatedAt     pgtype.Timestamptz
 	Fingerprint   string
+}
+
+type CustomerOperationQueue struct {
+	OperationID      pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	Scope            string
+	Operation        string
+	PlatformTenantID pgtype.UUID
+	QueuedAt         pgtype.Timestamptz
 }
 
 type CustomerOperationRecovery struct {

@@ -2230,6 +2230,21 @@
     "kind": "operational"
   },
   {
+    "table": "customer_operation_concurrency_policies",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "max_running",
+      "operation",
+      "platform_tenant_id",
+      "scope",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "customer_operation_definitions",
     "columns": [
       "account_id",
@@ -2320,6 +2335,19 @@
       "occurred_at",
       "operation_id",
       "payload"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "customer_operation_queue",
+    "columns": [
+      "account_id",
+      "app_id",
+      "operation",
+      "operation_id",
+      "platform_tenant_id",
+      "queued_at",
+      "scope"
     ],
     "kind": "operational"
   },

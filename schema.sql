@@ -23698,6 +23698,26 @@ CREATE TABLE public.customer_operation_code_pins (
 
 
 --
+-- Name: customer_operation_concurrency_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_concurrency_policies (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    operation text NOT NULL,
+    platform_tenant_id uuid,
+    max_running integer NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_concurrency_policies_max_running_check CHECK (((max_running >= 1) AND (max_running <= 1000))),
+    CONSTRAINT customer_operation_concurrency_policies_operation_check CHECK ((operation ~ '^[a-z][a-z0-9-]{0,63}$'::text)),
+    CONSTRAINT customer_operation_concurrency_policies_scope_check CHECK (((length(scope) >= 1) AND (length(scope) <= 64)))
+);
+
+
+--
 -- Name: customer_operation_definitions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -23835,6 +23855,21 @@ CREATE TABLE public.customer_operation_milestones (
     CONSTRAINT customer_operation_milestones_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,63}$'::text)),
     CONSTRAINT customer_operation_milestones_occurred_at_check CHECK (isfinite(occurred_at)),
     CONSTRAINT customer_operation_milestones_payload_check CHECK (((octet_length((payload)::text) >= 1) AND (octet_length((payload)::text) <= 8192)))
+);
+
+
+--
+-- Name: customer_operation_queue; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_queue (
+    operation_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    operation text NOT NULL,
+    platform_tenant_id uuid NOT NULL,
+    queued_at timestamp with time zone NOT NULL
 );
 
 
@@ -40001,6 +40036,14 @@ ALTER TABLE ONLY public.customer_operation_code_pins
 
 
 --
+-- Name: customer_operation_concurrency_policies customer_operation_concurrency_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_concurrency_policies
+    ADD CONSTRAINT customer_operation_concurrency_policies_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: customer_operation_definitions customer_operation_definition_app_id_scope_name_deployment__key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -40086,6 +40129,14 @@ ALTER TABLE ONLY public.customer_operation_milestones
 
 ALTER TABLE ONLY public.customer_operation_milestones
     ADD CONSTRAINT customer_operation_milestones_pkey PRIMARY KEY (operation_id, id);
+
+
+--
+-- Name: customer_operation_queue customer_operation_queue_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_queue
+    ADD CONSTRAINT customer_operation_queue_pkey PRIMARY KEY (operation_id);
 
 
 --
@@ -48078,6 +48129,20 @@ CREATE INDEX customer_operation_code_pins_expiry_idx ON public.customer_operatio
 
 
 --
+-- Name: customer_operation_concurrency_customer_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX customer_operation_concurrency_customer_key ON public.customer_operation_concurrency_policies USING btree (app_id, scope, operation, platform_tenant_id) WHERE (platform_tenant_id IS NOT NULL);
+
+
+--
+-- Name: customer_operation_concurrency_default_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX customer_operation_concurrency_default_key ON public.customer_operation_concurrency_policies USING btree (app_id, scope, operation) WHERE (platform_tenant_id IS NULL);
+
+
+--
 -- Name: customer_operation_definitions_route_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -48131,6 +48196,20 @@ CREATE INDEX customer_operation_idempotency_retention_idx ON public.customer_ope
 --
 
 CREATE INDEX customer_operation_milestones_history_idx ON public.customer_operation_milestones USING btree (operation_id, created_at DESC, id DESC);
+
+
+--
+-- Name: customer_operation_queue_group_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_queue_group_idx ON public.customer_operation_queue USING btree (app_id, scope, operation, platform_tenant_id, queued_at, operation_id);
+
+
+--
+-- Name: customer_operation_queue_tenant_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_queue_tenant_idx ON public.customer_operation_queue USING btree (platform_tenant_id, queued_at);
 
 
 --
@@ -48285,6 +48364,13 @@ CREATE INDEX customer_operations_retention_idx ON public.customer_operations USI
 --
 
 CREATE INDEX customer_operations_tenant_idx ON public.customer_operations USING btree (platform_tenant_id, created_at DESC, id DESC);
+
+
+--
+-- Name: customer_operations_tenant_in_flight_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operations_tenant_in_flight_idx ON public.customer_operations USING btree (platform_tenant_id, app_id) WHERE (state = ANY (ARRAY['accepted'::text, 'running'::text, 'requires_reconciliation'::text]));
 
 
 --
@@ -60769,6 +60855,30 @@ ALTER TABLE ONLY public.customer_operation_code_pins
 
 
 --
+-- Name: customer_operation_concurrency_policies customer_operation_concurrency_policies_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_concurrency_policies
+    ADD CONSTRAINT customer_operation_concurrency_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_concurrency_policies customer_operation_concurrency_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_concurrency_policies
+    ADD CONSTRAINT customer_operation_concurrency_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_concurrency_policies customer_operation_concurrency_policies_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_concurrency_policies
+    ADD CONSTRAINT customer_operation_concurrency_policies_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
 -- Name: customer_operation_definitions customer_operation_definitions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -60886,6 +60996,38 @@ ALTER TABLE ONLY public.customer_operation_job_executions
 
 ALTER TABLE ONLY public.customer_operation_milestones
     ADD CONSTRAINT customer_operation_milestones_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_queue customer_operation_queue_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_queue
+    ADD CONSTRAINT customer_operation_queue_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_queue customer_operation_queue_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_queue
+    ADD CONSTRAINT customer_operation_queue_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_queue customer_operation_queue_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_queue
+    ADD CONSTRAINT customer_operation_queue_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_queue customer_operation_queue_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_queue
+    ADD CONSTRAINT customer_operation_queue_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
 
 
 --

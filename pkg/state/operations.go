@@ -63,6 +63,9 @@ type Operation struct {
 	// LimitExceeded is set by the deadline sweeper before it stops a
 	// workflow run, so the projection settles failed rather than cancelled.
 	LimitExceeded string `json:"limit_exceeded,omitempty"`
+	// dispatchHold, set only during admission, is the due time of a queued
+	// Operation's backend (ADR-20261018210500).
+	dispatchHold time.Time
 }
 
 // operationRecordJSON adds the normalized backend identity consumed by the
