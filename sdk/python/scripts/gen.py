@@ -845,12 +845,7 @@ from .commit import CommitEventRouting, ainsert_commit_event, insert_commit_even
 from .customer_operations import (
     CustomerOperationConflictError,
     CustomerOperationPublicationError,
-    CustomerOperationRequest,
     CustomerOperationTransaction,
-    awith_customer_operation_transaction,
-    customer_operation_receipt_schema,
-    customer_operation_request_digest,
-    customer_operation_request_from_headers,
 )
 from .dev_bridge import (
     DEV_BRIDGE_CONTEXT_HEADER,
