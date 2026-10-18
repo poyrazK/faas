@@ -44,11 +44,12 @@ class CreateAlertRuleRequest:
     oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.
    """
     comparison: CreateAlertRuleRequestComparison
+    """above_baseline and below_baseline (ADR-744, preview behind FAAS_ANOMALY_ALERTS_ENABLED) compare against the
+    median of the same metric at the same time of day over the previous 7 days; threshold is then a multiplier
+    (1.5-20 above, 0.05-0.67 below). Supported for error_rate_pct, latency_p95_ms, latency_p99_ms, cold_start_pct
+    and request_count (below_baseline: request_count only)."""
     threshold: float
     window_spec: CreateAlertRuleRequestWindowSpec
-    webhook_url: str
-    webhook_secret: str
-    """Plaintext HMAC secret (max 256 bytes). Sealed at rest; never echoed."""
     mcp_readiness_scope: str | Unset = UNSET
     """Readiness environment requested when creating this alert. Immutable readiness environment selector. Omitted
     or empty means every environment; default selects only default. Valid only for mcp_readiness_unhealthy."""
@@ -73,6 +74,23 @@ class CreateAlertRuleRequest:
     enabled: bool | Unset = UNSET
     failure_source: CreateAlertRuleRequestFailureSource | Unset = UNSET
     """Required when metric == failed_invocations; omit otherwise (xor_chk)."""
+    custom_metric_name: str | Unset = UNSET
+    """Required when metric is custom_metric; omit otherwise. A gauge is compared on its average over the window
+    and a counter on its per-second rate. custom_metric rules support webhook action only and windows up to 24h."""
+    slo_id: UUID | Unset = UNSET
+    """Required for slo_budget_burn (multi-window burn rate; 14.4 is the paging threshold) and
+    slo_budget_remaining_pct (percent of the error budget left); names one of this app's SLOs. The rule window_spec
+    is ignored for these metrics."""
+    synthetic_check_id: UUID | Unset = UNSET
+    """Required for synthetic_check_consecutive_failures (failed runs since the last success; window_spec ignored)
+    and synthetic_check_latency_p95_ms (p95 of successful runs in the window); names one of this app's checks."""
+    webhook_url: str | Unset = UNSET
+    """Signed webhook destination. Required with webhook_secret unless channel_ids is set."""
+    channel_ids: list[UUID] | Unset = UNSET
+    """Notification channels (ADR-749) to deliver fires and resolves to. With at least one, webhook_url and
+    webhook_secret may be omitted."""
+    webhook_secret: str | Unset = UNSET
+    """Plaintext HMAC secret (max 256 bytes). Sealed at rest; never echoed."""
     cooldown_minutes: int | Unset = UNSET
     action: CreateAlertRuleRequestAction | Unset = "webhook"
     """What to do when the rule fires. Omit to default to webhook. Pre-auth target and MCP task, event consumer,
@@ -89,10 +107,6 @@ class CreateAlertRuleRequest:
         threshold = self.threshold
 
         window_spec: str = self.window_spec
-
-        webhook_url = self.webhook_url
-
-        webhook_secret = self.webhook_secret
 
         mcp_readiness_scope = self.mcp_readiness_scope
 
@@ -116,6 +130,27 @@ class CreateAlertRuleRequest:
         if not isinstance(self.failure_source, Unset):
             failure_source = self.failure_source
 
+        custom_metric_name = self.custom_metric_name
+
+        slo_id: str | Unset = UNSET
+        if not isinstance(self.slo_id, Unset):
+            slo_id = str(self.slo_id)
+
+        synthetic_check_id: str | Unset = UNSET
+        if not isinstance(self.synthetic_check_id, Unset):
+            synthetic_check_id = str(self.synthetic_check_id)
+
+        webhook_url = self.webhook_url
+
+        channel_ids: list[str] | Unset = UNSET
+        if not isinstance(self.channel_ids, Unset):
+            channel_ids = []
+            for channel_ids_item_data in self.channel_ids:
+                channel_ids_item = str(channel_ids_item_data)
+                channel_ids.append(channel_ids_item)
+
+        webhook_secret = self.webhook_secret
+
         cooldown_minutes = self.cooldown_minutes
 
         action: str | Unset = UNSET
@@ -131,8 +166,6 @@ class CreateAlertRuleRequest:
                 "comparison": comparison,
                 "threshold": threshold,
                 "window_spec": window_spec,
-                "webhook_url": webhook_url,
-                "webhook_secret": webhook_secret,
             }
         )
         if mcp_readiness_scope is not UNSET:
@@ -151,6 +184,18 @@ class CreateAlertRuleRequest:
             field_dict["enabled"] = enabled
         if failure_source is not UNSET:
             field_dict["failure_source"] = failure_source
+        if custom_metric_name is not UNSET:
+            field_dict["custom_metric_name"] = custom_metric_name
+        if slo_id is not UNSET:
+            field_dict["slo_id"] = slo_id
+        if synthetic_check_id is not UNSET:
+            field_dict["synthetic_check_id"] = synthetic_check_id
+        if webhook_url is not UNSET:
+            field_dict["webhook_url"] = webhook_url
+        if channel_ids is not UNSET:
+            field_dict["channel_ids"] = channel_ids
+        if webhook_secret is not UNSET:
+            field_dict["webhook_secret"] = webhook_secret
         if cooldown_minutes is not UNSET:
             field_dict["cooldown_minutes"] = cooldown_minutes
         if action is not UNSET:
@@ -170,10 +215,6 @@ class CreateAlertRuleRequest:
         threshold = d.pop("threshold")
 
         window_spec = check_create_alert_rule_request_window_spec(d.pop("window_spec"))
-
-        webhook_url = d.pop("webhook_url")
-
-        webhook_secret = d.pop("webhook_secret")
 
         mcp_readiness_scope = d.pop("mcp_readiness_scope", UNSET)
 
@@ -206,6 +247,35 @@ class CreateAlertRuleRequest:
         else:
             failure_source = check_create_alert_rule_request_failure_source(_failure_source)
 
+        custom_metric_name = d.pop("custom_metric_name", UNSET)
+
+        _slo_id = d.pop("slo_id", UNSET)
+        slo_id: UUID | Unset
+        if isinstance(_slo_id, Unset):
+            slo_id = UNSET
+        else:
+            slo_id = UUID(_slo_id)
+
+        _synthetic_check_id = d.pop("synthetic_check_id", UNSET)
+        synthetic_check_id: UUID | Unset
+        if isinstance(_synthetic_check_id, Unset):
+            synthetic_check_id = UNSET
+        else:
+            synthetic_check_id = UUID(_synthetic_check_id)
+
+        webhook_url = d.pop("webhook_url", UNSET)
+
+        _channel_ids = d.pop("channel_ids", UNSET)
+        channel_ids: list[UUID] | Unset = UNSET
+        if _channel_ids is not UNSET:
+            channel_ids = []
+            for channel_ids_item_data in _channel_ids:
+                channel_ids_item = UUID(channel_ids_item_data)
+
+                channel_ids.append(channel_ids_item)
+
+        webhook_secret = d.pop("webhook_secret", UNSET)
+
         cooldown_minutes = d.pop("cooldown_minutes", UNSET)
 
         _action = d.pop("action", UNSET)
@@ -221,8 +291,6 @@ class CreateAlertRuleRequest:
             comparison=comparison,
             threshold=threshold,
             window_spec=window_spec,
-            webhook_url=webhook_url,
-            webhook_secret=webhook_secret,
             mcp_readiness_scope=mcp_readiness_scope,
             mcp_min_calls=mcp_min_calls,
             mcp_for_minutes=mcp_for_minutes,
@@ -231,6 +299,12 @@ class CreateAlertRuleRequest:
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
             enabled=enabled,
             failure_source=failure_source,
+            custom_metric_name=custom_metric_name,
+            slo_id=slo_id,
+            synthetic_check_id=synthetic_check_id,
+            webhook_url=webhook_url,
+            channel_ids=channel_ids,
+            webhook_secret=webhook_secret,
             cooldown_minutes=cooldown_minutes,
             action=action,
         )

@@ -265,9 +265,17 @@ type AlertRule struct {
 	PostDeployRollbackWindowSeconds int32
 	EventSubscriptionID             pgtype.UUID
 	EdgeRuleID                      pgtype.UUID
+	CustomMetricName                pgtype.Text
+	SloID                           pgtype.UUID
+	SyntheticCheckID                pgtype.UUID
 	McpMinCalls                     int32
 	McpForMinutes                   int32
 	McpReadinessScope               string
+}
+
+type AlertRuleChannel struct {
+	RuleID    pgtype.UUID
+	ChannelID pgtype.UUID
 }
 
 type ApiConsumer struct {
@@ -699,6 +707,7 @@ type AppCustomMetric struct {
 	Name       string
 	Value      float64
 	ObservedAt pgtype.Timestamptz
+	Kind       string
 }
 
 type AppDefaultDomain struct {
@@ -1185,6 +1194,26 @@ type AppServiceWakeAhead struct {
 	AccountID pgtype.UUID
 	Enabled   bool
 	UpdatedAt pgtype.Timestamptz
+}
+
+type AppSlo struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	Name               string
+	Sli                string
+	LatencyThresholdMs pgtype.Int4
+	ObjectiveBp        int32
+	WindowDays         int32
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
+type AppSloHourly struct {
+	SloID pgtype.UUID
+	Hour  pgtype.Timestamptz
+	Good  int64
+	Total int64
 }
 
 type AppTask struct {
@@ -7637,6 +7666,22 @@ type NodeLifecycleCompletion struct {
 	AuditOutboxID    int64
 }
 
+type NotificationChannel struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	Name            string
+	Kind            string
+	TargetSealed    []byte
+	TargetHint      string
+	PagerdutyRegion pgtype.Text
+	Email           pgtype.Text
+	LastDeliveredAt pgtype.Timestamptz
+	LastError       pgtype.Text
+	LastErrorAt     pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type NotificationOutbox struct {
 	ID          int64
 	Channel     string
@@ -11735,6 +11780,30 @@ type StripePushDedupe struct {
 	Hour      pgtype.Timestamptz
 	PushedAt  pgtype.Timestamptz
 	OrgID     pgtype.UUID
+}
+
+type SyntheticCheck struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	Name            string
+	Method          string
+	Path            string
+	ExpectedStatus  pgtype.Int4
+	TimeoutMs       int32
+	IntervalSeconds int32
+	Enabled         bool
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type SyntheticCheckRun struct {
+	CheckID    pgtype.UUID
+	StartedAt  pgtype.Timestamptz
+	Ok         bool
+	StatusCode int32
+	LatencyMs  int32
+	ErrorClass string
 }
 
 type TenantHostname struct {

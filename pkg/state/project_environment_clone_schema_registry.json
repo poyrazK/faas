@@ -140,11 +140,11 @@
       "last_status_code",
       "observed_value",
       "payload",
-      "rule_id",
-      "status",
       "readiness_destination",
       "readiness_event_id",
-      "readiness_failover_reason"
+      "readiness_failover_reason",
+      "rule_id",
+      "status"
     ],
     "kind": "operational"
   },
@@ -188,6 +188,14 @@
     "kind": "operational"
   },
   {
+    "table": "alert_rule_channels",
+    "columns": [
+      "channel_id",
+      "rule_id"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "alert_rules",
     "columns": [
       "account_id",
@@ -196,6 +204,7 @@
       "comparison",
       "cooldown_minutes",
       "created_at",
+      "custom_metric_name",
       "edge_rule_id",
       "enabled",
       "event_subscription_id",
@@ -203,19 +212,21 @@
       "id",
       "last_evaluated_at",
       "last_fired_at",
+      "mcp_for_minutes",
+      "mcp_min_calls",
+      "mcp_readiness_scope",
       "metric",
       "name",
       "org_id",
       "post_deploy_rollback_window_seconds",
+      "slo_id",
       "state",
+      "synthetic_check_id",
       "threshold",
       "updated_at",
       "webhook_secret_sealed",
       "webhook_url",
-      "window_spec",
-      "mcp_for_minutes",
-      "mcp_min_calls",
-      "mcp_readiness_scope"
+      "window_spec"
     ],
     "kind": "configuration"
   },
@@ -612,6 +623,7 @@
     "table": "app_custom_metrics",
     "columns": [
       "app_id",
+      "kind",
       "name",
       "observed_at",
       "value"
@@ -1167,6 +1179,32 @@
       "app_id",
       "enabled",
       "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "app_slo_hourly",
+    "columns": [
+      "good",
+      "hour",
+      "slo_id",
+      "total"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_slos",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "latency_threshold_ms",
+      "name",
+      "objective_bp",
+      "sli",
+      "updated_at",
+      "window_days"
     ],
     "kind": "configuration"
   },
@@ -7387,6 +7425,245 @@
     "kind": "operational"
   },
   {
+    "table": "app_mcp_readiness_policies",
+    "columns": [
+      "app_id",
+      "policy",
+      "scope"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "app_mcp_readiness_policy_history",
+    "columns": [
+      "app_id",
+      "policy",
+      "recorded_at",
+      "revision",
+      "scope"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "deployment_mcp_readiness_evidence",
+    "columns": [
+      "artifact_sha256",
+      "deployment_id",
+      "evidence",
+      "observed_at",
+      "passed",
+      "policy_revision",
+      "role"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "deployment_mcp_readiness_monitors",
+    "columns": [
+      "deployment_id",
+      "lease_id",
+      "lease_until",
+      "next_probe_at",
+      "role",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "deployment_mcp_readiness_overrides",
+    "columns": [
+      "artifact_sha256",
+      "created_at",
+      "created_by",
+      "deployment_id",
+      "expires_at",
+      "id",
+      "policy_revision",
+      "reason",
+      "used_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "mcp_readiness_attention_actions",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "incident_id",
+      "receipt",
+      "request",
+      "request_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "mcp_readiness_fallback_policies",
+    "columns": [
+      "after_failures",
+      "enabled",
+      "fingerprint",
+      "integration_key_sealed",
+      "provider",
+      "region",
+      "rule_id",
+      "version",
+      "webhook_secret_sealed",
+      "webhook_url"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "mcp_readiness_incident_attention",
+    "columns": [
+      "incident_id",
+      "snapshot"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "mcp_readiness_incident_cursors",
+    "columns": [
+      "last_observed_at",
+      "rule_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "mcp_readiness_incident_events",
+    "columns": [
+      "attempt_count",
+      "available_at",
+      "delivery_routing",
+      "delivery_status",
+      "delivery_version",
+      "destination_deliveries",
+      "id",
+      "imported",
+      "incident_id",
+      "kind",
+      "last_attempt_at",
+      "last_delivery_id",
+      "last_operator_action",
+      "last_status_code",
+      "lease_token",
+      "lease_until",
+      "maintenance_window_ids",
+      "notification_reason",
+      "observed_value",
+      "occurred_at",
+      "payload",
+      "reminder_number",
+      "rule_id",
+      "sequence",
+      "suppression_reason"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "mcp_readiness_incidents",
+    "columns": [
+      "account_id",
+      "app_id",
+      "coverage",
+      "delivery_routing",
+      "id",
+      "maintenance_pending",
+      "opened_at",
+      "resolved_at",
+      "rule_id",
+      "scope"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "mcp_readiness_maintenance_windows",
+    "columns": [
+      "account_id",
+      "app_id",
+      "cancel_reason",
+      "cancelled_at",
+      "cancelled_by",
+      "created_at",
+      "created_by",
+      "ends_at",
+      "id",
+      "reason",
+      "scope",
+      "starts_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "mcp_readiness_notification_actions",
+    "columns": [
+      "account_id",
+      "action",
+      "app_id",
+      "destination",
+      "event_id",
+      "expected_version",
+      "reason",
+      "receipt",
+      "request_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "mcp_readiness_pagerduty_ack_events",
+    "columns": [
+      "delivery_destination",
+      "digest",
+      "event_id",
+      "id",
+      "incident_id",
+      "receipt",
+      "received_at",
+      "rule_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "mcp_readiness_pagerduty_acknowledgements",
+    "columns": [
+      "destination",
+      "enabled",
+      "fallback_version",
+      "fingerprint",
+      "legacy_receiver",
+      "pagerduty_version",
+      "region",
+      "rule_id",
+      "service_id",
+      "signing_secret_sealed",
+      "sync_unacknowledgements",
+      "version"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "mcp_readiness_pagerduty_policies",
+    "columns": [
+      "enabled",
+      "fingerprint",
+      "integration_key_sealed",
+      "region",
+      "rule_id",
+      "version"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "mcp_readiness_reminder_defaults",
+    "columns": [
+      "interval_seconds",
+      "max_reminders",
+      "rule_id",
+      "version"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "mcp_oauth_retirements",
     "columns": [
       "account_id",
@@ -7558,6 +7835,25 @@
       "updated_at"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "notification_channels",
+    "columns": [
+      "account_id",
+      "created_at",
+      "email",
+      "id",
+      "kind",
+      "last_delivered_at",
+      "last_error",
+      "last_error_at",
+      "name",
+      "pagerduty_region",
+      "target_hint",
+      "target_sealed",
+      "updated_at"
+    ],
+    "kind": "configuration"
   },
   {
     "table": "notification_outbox",
@@ -11739,6 +12035,36 @@
     "kind": "operational"
   },
   {
+    "table": "synthetic_check_runs",
+    "columns": [
+      "check_id",
+      "error_class",
+      "latency_ms",
+      "ok",
+      "started_at",
+      "status_code"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "synthetic_checks",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "enabled",
+      "expected_status",
+      "id",
+      "interval_seconds",
+      "method",
+      "name",
+      "path",
+      "timeout_ms",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "tenant_hostnames",
     "columns": [
       "challenge_token",
@@ -14318,244 +14644,5 @@
       "resource_key"
     ],
     "kind": "operational"
-  },
-  {
-    "table": "app_mcp_readiness_policies",
-    "columns": [
-      "app_id",
-      "policy",
-      "scope"
-    ],
-    "kind": "configuration"
-  },
-  {
-    "table": "app_mcp_readiness_policy_history",
-    "columns": [
-      "app_id",
-      "policy",
-      "recorded_at",
-      "revision",
-      "scope"
-    ],
-    "kind": "configuration"
-  },
-  {
-    "table": "deployment_mcp_readiness_evidence",
-    "columns": [
-      "artifact_sha256",
-      "deployment_id",
-      "evidence",
-      "observed_at",
-      "passed",
-      "policy_revision",
-      "role"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "deployment_mcp_readiness_monitors",
-    "columns": [
-      "deployment_id",
-      "lease_id",
-      "lease_until",
-      "next_probe_at",
-      "role",
-      "status"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "deployment_mcp_readiness_overrides",
-    "columns": [
-      "artifact_sha256",
-      "created_at",
-      "created_by",
-      "deployment_id",
-      "expires_at",
-      "id",
-      "policy_revision",
-      "reason",
-      "used_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "mcp_readiness_attention_actions",
-    "columns": [
-      "account_id",
-      "app_id",
-      "created_at",
-      "incident_id",
-      "receipt",
-      "request",
-      "request_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "mcp_readiness_fallback_policies",
-    "columns": [
-      "after_failures",
-      "enabled",
-      "fingerprint",
-      "integration_key_sealed",
-      "provider",
-      "region",
-      "rule_id",
-      "version",
-      "webhook_secret_sealed",
-      "webhook_url"
-    ],
-    "kind": "configuration"
-  },
-  {
-    "table": "mcp_readiness_incident_attention",
-    "columns": [
-      "incident_id",
-      "snapshot"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "mcp_readiness_incident_cursors",
-    "columns": [
-      "last_observed_at",
-      "rule_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "mcp_readiness_incident_events",
-    "columns": [
-      "attempt_count",
-      "available_at",
-      "delivery_routing",
-      "delivery_status",
-      "delivery_version",
-      "destination_deliveries",
-      "id",
-      "imported",
-      "incident_id",
-      "kind",
-      "last_attempt_at",
-      "last_delivery_id",
-      "last_operator_action",
-      "last_status_code",
-      "lease_token",
-      "lease_until",
-      "maintenance_window_ids",
-      "notification_reason",
-      "observed_value",
-      "occurred_at",
-      "payload",
-      "reminder_number",
-      "rule_id",
-      "sequence",
-      "suppression_reason"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "mcp_readiness_incidents",
-    "columns": [
-      "account_id",
-      "app_id",
-      "coverage",
-      "delivery_routing",
-      "id",
-      "maintenance_pending",
-      "opened_at",
-      "resolved_at",
-      "rule_id",
-      "scope"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "mcp_readiness_maintenance_windows",
-    "columns": [
-      "account_id",
-      "app_id",
-      "cancel_reason",
-      "cancelled_at",
-      "cancelled_by",
-      "created_at",
-      "created_by",
-      "ends_at",
-      "id",
-      "reason",
-      "scope",
-      "starts_at"
-    ],
-    "kind": "configuration"
-  },
-  {
-    "table": "mcp_readiness_notification_actions",
-    "columns": [
-      "account_id",
-      "action",
-      "app_id",
-      "destination",
-      "event_id",
-      "expected_version",
-      "reason",
-      "receipt",
-      "request_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "mcp_readiness_pagerduty_ack_events",
-    "columns": [
-      "delivery_destination",
-      "digest",
-      "event_id",
-      "id",
-      "incident_id",
-      "receipt",
-      "received_at",
-      "rule_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "mcp_readiness_pagerduty_acknowledgements",
-    "columns": [
-      "destination",
-      "enabled",
-      "fallback_version",
-      "fingerprint",
-      "legacy_receiver",
-      "pagerduty_version",
-      "region",
-      "rule_id",
-      "service_id",
-      "signing_secret_sealed",
-      "sync_unacknowledgements",
-      "version"
-    ],
-    "kind": "configuration"
-  },
-  {
-    "table": "mcp_readiness_pagerduty_policies",
-    "columns": [
-      "enabled",
-      "fingerprint",
-      "integration_key_sealed",
-      "region",
-      "rule_id",
-      "version"
-    ],
-    "kind": "configuration"
-  },
-  {
-    "table": "mcp_readiness_reminder_defaults",
-    "columns": [
-      "interval_seconds",
-      "max_reminders",
-      "rule_id",
-      "version"
-    ],
-    "kind": "configuration"
   }
 ]

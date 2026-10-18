@@ -531,6 +531,15 @@ func run(args []string) (status int) {
 		return cmdGithubWebhookSecret(args[1:])
 	case "account":
 		return cmdAccount(args[1:])
+	case "channels":
+		// ADR-749: Slack, PagerDuty and email alert destinations.
+		return cmdChannels(args[1:])
+	case "slos":
+		// ADR-747: customer-defined SLO definitions (distinct from `slo`).
+		return cmdSLOs(args[1:])
+	case "synthetics":
+		// ADR-748: scheduled HTTP checks against the app.
+		return cmdSynthetics(args[1:])
 	case "alerts":
 		// Tier C: per-app alert rules (list|add|info|update|rm|
 		// rotate-secret). Mirrors `webhooks` for dispatcher shape;
