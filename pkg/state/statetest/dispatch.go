@@ -38,6 +38,9 @@ var memDispatched = map[string]bool{
 	"ProcessNextWorkflowInitialManualCompletion":              true,
 	"AcceptEntityOutboxDelivery":                              true,
 	"AccountPasswordByAccountID":                              true,
+	"DeploymentSidecarRAMs":                                   true,
+	"ListBillingWindowInstances":                              true,
+	"ListInstancesForApp":                                     true,
 	"ActiveComputeNodes":                                      true,
 	"ActivePrewarmFloor":                                      true,
 	"ActiveProjectReleaseSet":                                 true,
@@ -1024,6 +1027,33 @@ func (s *Mem) WarmPoolReconciliationAppIDs(p0 context.Context, p1 string) ([]str
 		return o.WarmPoolReconciliationAppIDs(p0, p1)
 	}
 	return s.MemStore.WarmPoolReconciliationAppIDs(p0, p1)
+}
+
+func (s *Mem) DeploymentSidecarRAMs(p0 context.Context, p1 string) ([]int, error) {
+	if o, ok := s.over.(interface {
+		DeploymentSidecarRAMs(context.Context, string) ([]int, error)
+	}); ok {
+		return o.DeploymentSidecarRAMs(p0, p1)
+	}
+	return s.MemStore.DeploymentSidecarRAMs(p0, p1)
+}
+
+func (s *Mem) ListBillingWindowInstances(p0 context.Context, p1, p2 time.Time) ([]state.Instance, error) {
+	if o, ok := s.over.(interface {
+		ListBillingWindowInstances(context.Context, time.Time, time.Time) ([]state.Instance, error)
+	}); ok {
+		return o.ListBillingWindowInstances(p0, p1, p2)
+	}
+	return s.MemStore.ListBillingWindowInstances(p0, p1, p2)
+}
+
+func (s *Mem) ListInstancesForApp(p0 context.Context, p1 string) ([]state.Instance, error) {
+	if o, ok := s.over.(interface {
+		ListInstancesForApp(context.Context, string) ([]state.Instance, error)
+	}); ok {
+		return o.ListInstancesForApp(p0, p1)
+	}
+	return s.MemStore.ListInstancesForApp(p0, p1)
 }
 
 // pgDispatched lists the methods Pg forwards to its override.

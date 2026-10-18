@@ -17250,6 +17250,36 @@ func (s *PgStore) ListInstancesForApp(ctx context.Context, appID string) ([]Inst
 	return scanInstances(rows)
 }
 
+// ListBillingWindowInstances returns, across every app, the instances a meter
+// roll of [since, end) can write a row for: live instances, instances with
+// lifecycle-ledger residency in the window, and instances parked or stopped in
+// it. The meter passes since as the rolled minute less its catch-up window, so
+// an instance that ended recently still drains the telemetry its sources hold.
+// It replaces one ListInstancesForApp per app per rolled minute, which carried
+// every retained wake of every app to the meter. Rows are grouped by app,
+// newest start first within an app, as ListInstancesForApp orders them.
+func (s *PgStore) ListBillingWindowInstances(ctx context.Context, since, end time.Time) ([]Instance, error) {
+	rows, err := s.pool.Query(ctx,
+		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
+		   from instances
+		  where app_id is not null
+		    and (state = any($1::text[])
+		         or parked_at >= $2
+		         or terminal_at >= $2
+		         or id in (select instance_id
+		                     from instance_billing_intervals
+		                    where started_at < $3
+		                      and coalesce(ended_at, $3) > $2))
+		  order by app_id, started_at desc`,
+		LiveStates(), since.UTC(), end.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanInstances(rows)
+}
+
 // ListActiveInstancesForApp is the customer `ps` read path. It filters at the
 // database boundary so years of parked/stopped wake history cannot make a
 // current-state request unbounded.
