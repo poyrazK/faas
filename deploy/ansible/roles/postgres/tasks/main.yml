@@ -212,8 +212,9 @@
       host    faas            faas                                    {{ cidr }}                scram-sha-256
       {% endfor %}
       {% if faas_postgres_standby_address | default('') %}
-      # ADR-1344 §8: the warm standby streams WAL from this address only.
-      host    replication     replicator      {{ faas_postgres_standby_address }}/{{ '128' if ':' in faas_postgres_standby_address else '32' }}            scram-sha-256
+      # ADR-1344 §8: the warm standby streams WAL from this address only, over
+      # TLS (the standby verifies the certificate issued below).
+      hostssl replication     replicator      {{ faas_postgres_standby_address }}/{{ '128' if ':' in faas_postgres_standby_address else '32' }}            scram-sha-256
       {% endif %}
       host    all             all             127.0.0.1/32            reject
       host    all             all             ::1/128                 reject
@@ -498,6 +499,153 @@
   become_user: postgres
   when:
     - faas_postgres_standby_address | default('')
+    - not (faas_postgres_standby_mode | default(false) | bool)
+
+# Replication TLS. The standby connects with sslmode=verify-full against this
+# self-signed certificate, which postgres_standby copies from here over the
+# Ansible connection, and pg_hba admits the replicator over TLS only. WAL is
+# therefore encrypted and the primary authenticated whatever network carries
+# it: a `static` overlay has no encryption of its own. Ubuntu's default
+# snakeoil certificate is neither verifiable nor stable, so it is not used.
+#
+# The certificate is reissued when it is missing, when the names the standby
+# dials change, or within 30 days of expiry; the standby then needs a
+# converge to pin the new one (docs/runbooks/FaasPostgresStandby.md).
+- name: postgres — replication TLS names and paths — ADR-1344
+  ansible.builtin.set_fact:
+    postgres_replication_tls_dir: "{{ faas_postgres_replication_tls_dir | default('/etc/postgresql/faas-tls') }}"
+    # The names the standby dials: by default the address the discovery play
+    # published (postgres_standby's faas_postgres_primary_host) and the
+    # inventory name. Override when the standby uses another address.
+    postgres_replication_tls_san: >-
+      {%- for name in (faas_postgres_replication_tls_names | default([faas_private_dns_address | default(''), inventory_hostname])) | select | unique -%}{{ 'IP:' if (name is match('^[0-9.]+$') or ':' in name) else 'DNS:' }}{{ name }}{{ '' if loop.last else ',' }}{%- endfor -%}
+  when:
+    - faas_postgres_standby_address | default('')
+    - not (faas_postgres_standby_mode | default(false) | bool)
+
+- name: postgres — replication TLS directory — ADR-1344
+  ansible.builtin.file:
+    path: "{{ postgres_replication_tls_dir }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0700"
+  when:
+    - faas_postgres_standby_address | default('')
+    - not (faas_postgres_standby_mode | default(false) | bool)
+
+- name: postgres — read the names on the replication certificate — ADR-1344
+  ansible.builtin.slurp:
+    src: "{{ postgres_replication_tls_dir }}/server.san"
+  register: postgres_replication_tls_current_san
+  failed_when: false
+  when:
+    - faas_postgres_standby_address | default('')
+    - not (faas_postgres_standby_mode | default(false) | bool)
+
+- name: postgres — check the replication certificate is valid for 30 more days — ADR-1344
+  ansible.builtin.command:
+    argv: [openssl, x509, -noout, -checkend, "2592000", -in, "{{ postgres_replication_tls_dir }}/server.crt"]
+  register: postgres_replication_tls_checkend
+  changed_when: false
+  failed_when: false
+  when:
+    - faas_postgres_standby_address | default('')
+    - not (faas_postgres_standby_mode | default(false) | bool)
+
+# Written beside the live pair and renamed over it, so a failed run never
+# leaves a key that does not match its certificate (PostgreSQL would then
+# refuse to start).
+- name: postgres — issue the replication certificate — ADR-1344
+  ansible.builtin.command:
+    argv:
+      - sh
+      - -ec
+      - |
+        umask 077
+        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+          -days 3650 -subj "/CN=$3" -addext "subjectAltName=$2" \
+          -keyout "$1/server.key.new" -out "$1/server.crt.new"
+        mv "$1/server.key.new" "$1/server.key"
+        mv "$1/server.crt.new" "$1/server.crt"
+      - sh
+      - "{{ postgres_replication_tls_dir }}"
+      - "{{ postgres_replication_tls_san }}"
+      - "faas-postgres-replication-{{ inventory_hostname }}"
+  become: true
+  become_user: postgres
+  changed_when: true
+  notify: reload postgresql
+  when:
+    - faas_postgres_standby_address | default('')
+    - not (faas_postgres_standby_mode | default(false) | bool)
+    - >-
+      postgres_replication_tls_checkend.rc != 0
+      or (postgres_replication_tls_current_san.content | default('') | b64decode | trim) != postgres_replication_tls_san
+
+- name: postgres — record the names on the replication certificate — ADR-1344
+  ansible.builtin.copy:
+    dest: "{{ postgres_replication_tls_dir }}/server.san"
+    content: "{{ postgres_replication_tls_san }}\n"
+    owner: postgres
+    group: postgres
+    mode: "0600"
+  when:
+    - faas_postgres_standby_address | default('')
+    - not (faas_postgres_standby_mode | default(false) | bool)
+
+# PostgreSQL refuses a key that its group or others can read.
+- name: postgres — restrict the replication key — ADR-1344
+  ansible.builtin.file:
+    path: "{{ postgres_replication_tls_dir }}/server.key"
+    owner: postgres
+    group: postgres
+    mode: "0600"
+  when:
+    - faas_postgres_standby_address | default('')
+    - not (faas_postgres_standby_mode | default(false) | bool)
+
+# Ubuntu's postgresql.conf already ends with this include; the standby role
+# asserts the same line.
+- name: postgres — keep the distro conf.d include (replication TLS) — ADR-1344
+  ansible.builtin.lineinfile:
+    path: "{{ postgres_config_dir }}/postgresql.conf"
+    regexp: "^#?include_dir\\s*="
+    line: "include_dir = 'conf.d'"
+    create: false
+  failed_when: false  # chroot/CI may not have the conf file
+  notify: reload postgresql
+  when:
+    - faas_postgres_standby_address | default('')
+    - not (faas_postgres_standby_mode | default(false) | bool)
+
+# ssl and the certificate paths are reload-only (PGC_SIGHUP). A reload that
+# cannot load the files keeps the previous TLS configuration.
+- name: postgres — serve the replication certificate (reload-only) — ADR-1344
+  ansible.builtin.copy:
+    dest: "{{ postgres_config_dir }}/conf.d/80-faas-replication-tls.conf"
+    owner: postgres
+    group: postgres
+    mode: "0644"
+    content: |
+      # Managed by Ansible (postgres). ADR-1344 §8: the warm standby verifies
+      # this certificate (sslmode=verify-full). Removed with postgresql.standby.
+      ssl = on
+      ssl_cert_file = '{{ postgres_replication_tls_dir }}/server.crt'
+      ssl_key_file = '{{ postgres_replication_tls_dir }}/server.key'
+  failed_when: false  # chroot/CI may not have the conf directory
+  notify: reload postgresql
+  when:
+    - faas_postgres_standby_address | default('')
+    - not (faas_postgres_standby_mode | default(false) | bool)
+
+- name: postgres — stop serving the replication certificate without a standby (reload-only) — ADR-1344
+  ansible.builtin.file:
+    path: "{{ postgres_config_dir }}/conf.d/80-faas-replication-tls.conf"
+    state: absent
+  notify: reload postgresql
+  when:
+    - not (faas_postgres_standby_address | default(''))
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 # Removing postgresql.standby from the manifest must also drop the slot: an

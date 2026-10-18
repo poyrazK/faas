@@ -107,8 +107,8 @@ if sys.argv[2]:
 print(Template(sys.argv[1]).render(**kw), end="")
 `
 		for _, tc := range []struct{ address, want string }{
-			{"10.42.0.9", "host    replication     replicator      10.42.0.9/32"},
-			{"fd00::9", "host    replication     replicator      fd00::9/128"},
+			{"10.42.0.9", "hostssl replication     replicator      10.42.0.9/32"},
+			{"fd00::9", "hostssl replication     replicator      fd00::9/128"},
 			{"", ""},
 		} {
 			out, err := exec.Command("python3", "-c", script, content, tc.address).CombinedOutput()
@@ -194,7 +194,7 @@ func TestPostgresStandbySettingsFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"primary_conninfo", "passfile=/var/lib/postgresql/.pgpass", "primary_slot_name", "hot_standby = on", "faas_postgres_standby_mirrored_settings"} {
+	for _, want := range []string{"primary_conninfo", "passfile=/var/lib/postgresql/.pgpass", "sslmode=verify-full sslrootcert={{ faas_postgres_standby_primary_cert }}", "primary_slot_name", "hot_standby = on", "faas_postgres_standby_mirrored_settings"} {
 		if !strings.Contains(string(template), want) {
 			t.Errorf("standby settings template missing %q", want)
 		}
