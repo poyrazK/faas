@@ -146,6 +146,7 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	productData                                *productMemory
 	scenarioManagedWork                        map[string]scenarioManagedJob
 	scenarioWorkerFaults                       map[string]rehearsalwork.WorkerFault
 	scenarioColdPreparations                   map[string]rehearsalcold.Preparation

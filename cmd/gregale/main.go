@@ -443,6 +443,8 @@ func run(args []string) (status int) {
 		return cmdTenantSurfaces(args[1:])
 	case "flags":
 		return cmdFlags(args[1:])
+	case "product":
+		return cmdProduct(args[1:])
 	case "platform-tenants":
 		return cmdPlatformTenants(args[1:])
 	case "consumers":

@@ -39,6 +39,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
+	"github.com/onebox-faas/faas/pkg/apid/product"
 	"github.com/onebox-faas/faas/pkg/apid/statementinvoices"
 	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
 	"github.com/onebox-faas/faas/pkg/billing"
@@ -1428,6 +1429,12 @@ func StageApplyTarball(ctx context.Context, scanDir, accountID, projectID string
 // WorkloadTrust exposes workload-trust setting precedence (ADR-1141).
 func WorkloadTrust(cfg Config, getenv func(string) string, pathEnv, path, issuerEnv, issuer string) (string, string) {
 	return workloadTrust(cfg, getenv, pathEnv, path, issuerEnv, issuer)
+}
+
+func (r *server) ProductControl() *product.Service { return &r.productControl }
+
+func (r *server) ConfigureProductEmail(getenv func(string) string) error {
+	return r.configureProductEmail(getenv)
 }
 
 func (s *server) RehearsalNetworkEnabled() *bool { return &s.rehearsalNetworkEnabled }

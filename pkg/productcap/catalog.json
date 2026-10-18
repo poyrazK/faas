@@ -440,6 +440,17 @@
       "acceptance_test": "cmd/gatewayd-internal/backend_test.go::TestPgRouter_InternalAppIsNotPubliclyRouted"
     },
     {
+      "id": "product-control",
+      "name": "Gregale Product Control",
+      "category": "product",
+      "description": "Internally guide setup with verified Auth workspaces, manage live role permissions, delegated customer teams and owner-offered self-service plan changes, preserve accepted prices and consumed starts, inspect readiness and activation, and control confirmed execution, recoverable requests, reviewed statements, credits and invoice handoffs through customer and owner consoles.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/ops/product-control",
+      "operator_flag": "FAAS_PRODUCT_CONTROL_ENABLED",
+      "acceptance_test": "pkg/apid/apidserver/product_control_test.go::TestProductControlInternalBoundary"
+    },
+    {
       "id": "production-route-monitoring",
       "name": "Production route budgets",
       "category": "observability",
