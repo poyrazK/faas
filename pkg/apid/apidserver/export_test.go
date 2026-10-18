@@ -1088,6 +1088,18 @@ func (r *server) HandleBillingEventWithOptions(p0 context.Context, p1 billing.Ev
 }
 func (r *server) Handler() http.Handler { return r.handler() }
 
+func (r *server) ConfigureMailOutbox(ctx context.Context, pool *pgxpool.Pool, getenv func(string) string) error {
+	return r.configureMailOutbox(ctx, pool, getenv)
+}
+
+func (r *server) SendDeployFailedEmail(ctx context.Context, id string) error {
+	return sendDeployFailedEmail(ctx, r, deploymentFailedEmailPayload{DeploymentID: id})
+}
+
+func (r *server) CaptureDeploymentFailureMail(ctx context.Context) error {
+	return r.deletionMailOutbox.CaptureDeploymentFailures(ctx)
+}
+
 func (r *server) GitOpsDashboardRequestForTest(request *http.Request) (any, string, error) {
 	body, _, method, err := r.environmentGitOpsDashboardRequest(request)
 	return body, method, err
@@ -1440,6 +1452,18 @@ func StageApplyTarball(ctx context.Context, scanDir, accountID, projectID string
 // WorkloadTrust exposes workload-trust setting precedence (ADR-1141).
 func WorkloadTrust(cfg Config, getenv func(string) string, pathEnv, path, issuerEnv, issuer string) (string, string) {
 	return workloadTrust(cfg, getenv, pathEnv, path, issuerEnv, issuer)
+}
+
+func (r *server) MountInternalMailSuspension(mux *http.ServeMux, addr string, getenv func(string) string) error {
+	return r.mountInternalMailSuspension(mux, addr, getenv)
+}
+
+func (r *server) MountInternalMailNonpaymentDeletion(mux *http.ServeMux, addr string, getenv func(string) string) error {
+	return r.mountInternalMailNonpaymentDeletion(mux, addr, getenv)
+}
+
+func (r *server) MountInternalMailQuotaWarning(mux *http.ServeMux, addr string, getenv func(string) string) error {
+	return r.mountInternalMailQuotaWarning(mux, addr, getenv)
 }
 
 func (r *server) ProductControl() *product.Service { return &r.productControl }
