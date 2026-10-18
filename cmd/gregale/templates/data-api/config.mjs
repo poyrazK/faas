@@ -1,7 +1,38 @@
 import { randomBytes } from 'node:crypto'
 
 // Mirrors pkg/api/limits.go; TestDataAPIRuntimeBounds checks this contract.
-export const limits = Object.freeze({ pool: 2, connectionReportMs: 5000, connectionReportIntervalMs: 15000, connectionReportBytes: 4096, rows: 1000, bodyBytes: 1048576, responseBytes: 16777216, outputBytes: 1048576, queryMs: 15000, lockMs: 5000, relations: 1000, columns: 10000, types: 20000, queuedRequests: 8, admissionWaitMs: 1000, overloadRetrySeconds: 1, healthProbeMs: 2000, healthBytes: 8192, rateLimitDefaultPerSecond: 10, rateLimitDefaultBurst: 20, rateLimitMaxPerSecond: 1000, rateLimitMaxBurst: 1000, rateLimitMaxSubjects: 4096, rateLimitSweepMs: 1000, userConcurrencyMaxSubjects: 4096, userConcurrencyCooldownMs: 15000 })
+export const limits = Object.freeze({ pool: 2, connectionReportMs: 5000, connectionReportIntervalMs: 15000, connectionReportBytes: 4096, rows: 1000, bodyBytes: 1048576, responseBytes: 16777216, outputBytes: 1048576, queryMs: 15000, lockMs: 5000, relations: 1000, columns: 10000, types: 20000, queuedRequests: 8, admissionWaitMs: 1000, overloadRetrySeconds: 1, healthProbeMs: 2000, healthBytes: 8192, rateLimitDefaultPerSecond: 10, rateLimitDefaultBurst: 20, rateLimitMaxPerSecond: 1000, rateLimitMaxBurst: 1000, rateLimitMaxSubjects: 4096, rateLimitSweepMs: 1000, userConcurrencyMaxSubjects: 4096, userConcurrencyCooldownMs: 15000, publicReadMaxRelations: 64, serverKeySubjectMaxBytes: 255 })
+
+export const relationPart = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/
+const schemaPart = /^[a-z][a-z0-9_]{0,62}$/
+
+// Owner allowlist of schema-qualified relations readable without a token.
+export function publicReadConfig(value, schemas) {
+  if (value === undefined) return null
+  const invalid = () => { throw new Error('Invalid DATA_API_PUBLIC_READ') }
+  if (typeof value !== 'string' || !value) return invalid()
+  const names = value.split(',')
+  if (names.length > limits.publicReadMaxRelations || new Set(names).size !== names.length) return invalid()
+  const relations = names.map(name => {
+    const [schema, relation, ...extra] = name.split('.')
+    if (extra.length || !schemaPart.test(schema ?? '') || !relationPart.test(relation ?? '') || !schemas.includes(schema)) return invalid()
+    return Object.freeze({ schema, relation })
+  })
+  return Object.freeze(relations)
+}
+
+// Only SHA-256 hashes of server keys reach the runtime, in two rotation slots.
+export function serverKeyConfig(env) {
+  const slots = []
+  for (const [slot, name] of [['a', 'DATA_API_SERVER_KEY_A_SHA256'], ['b', 'DATA_API_SERVER_KEY_B_SHA256']]) {
+    const value = env[name]
+    if (value === undefined) continue
+    if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) throw new Error(`Invalid ${name}`)
+    slots.push(Object.freeze({ slot, hash: Buffer.from(value, 'hex') }))
+  }
+  if (slots.length === 2 && slots[0].hash.equals(slots[1].hash)) throw new Error('Server key slots must differ')
+  return slots.length ? Object.freeze(slots) : null
+}
 
 export function userConcurrencyPolicy(value, capacity = limits.pool) {
   if (value === undefined || value === null) return null
@@ -107,10 +138,14 @@ export function runtimeConfig(env) {
   const queryShapes = env.DATA_API_QUERY_SHAPES === '1'
   const coordinatedRefresh = env.DATA_API_COORDINATED_REFRESH === '1'
   const sqlDeadline = env.DATA_API_SQL_DEADLINE === '1'
+  if (env.DATA_API_AGGREGATES !== undefined && env.DATA_API_AGGREGATES !== '1') throw new Error('Invalid aggregates setting')
+  const aggregates = env.DATA_API_AGGREGATES === '1'
+  // HTTP aborts cannot stop an expensive aggregate; the SQL deadline can.
+  if (aggregates && !sqlDeadline) throw new Error('Aggregates require DATA_API_SQL_DEADLINE=1')
   if (schemas.includes('gregale_data_api')) throw new Error('Refresh control schema cannot be exposed')
   const secret = randomBytes(32)
-  return { connection, role, schemas, auth, secret, coordinatedRefresh, sqlDeadline, queryShapes, connectionObservation: connectionObservationConfig(env), rateLimit: rateLimitConfig(env), userConcurrency: userConcurrencyConfig(env, coordinatedRefresh ? limits.pool - 1 : limits.pool), acceptedContracts: acceptedContracts(env.DATA_API_ACCEPTED_CONTRACTS), origins: (env.DATA_API_ALLOWED_ORIGINS ?? '').split(',').filter(Boolean),
+  return { connection, role, schemas, auth, secret, coordinatedRefresh, sqlDeadline, queryShapes, aggregates, publicRead: publicReadConfig(env.DATA_API_PUBLIC_READ, schemas), serverKeys: serverKeyConfig(env), connectionObservation: connectionObservationConfig(env), rateLimit: rateLimitConfig(env), userConcurrency: userConcurrencyConfig(env, coordinatedRefresh ? limits.pool - 1 : limits.pool), acceptedContracts: acceptedContracts(env.DATA_API_ACCEPTED_CONTRACTS), origins: (env.DATA_API_ALLOWED_ORIGINS ?? '').split(',').filter(Boolean),
     postgrestEnv: { PGRST_DB_URI: connection, PGRST_DB_SCHEMAS: schemas.join(','), PGRST_JWT_SECRET: secret.toString('base64url'),
       PGRST_SERVER_HOST: '127.0.0.1', PGRST_SERVER_PORT: '3000', PGRST_ADMIN_SERVER_PORT: '3001', PGRST_SERVER_TIMING_ENABLED: 'true',
-      PGRST_DB_POOL: String(coordinatedRefresh ? limits.pool - 1 : limits.pool), PGRST_DB_MAX_ROWS: String(limits.rows), ...(sqlDeadline ? { PGRST_DB_PRE_REQUEST: 'gregale_data_api.check_deadline_request', PGRST_DB_CONFIG: 'false' } : coordinatedRefresh ? { PGRST_DB_PRE_REQUEST: 'gregale_data_api.check_request' } : {}), PGRST_DB_CHANNEL_ENABLED: 'false', PGRST_DB_PREPARED_STATEMENTS: 'false' } }
+      PGRST_DB_POOL: String(coordinatedRefresh ? limits.pool - 1 : limits.pool), PGRST_DB_MAX_ROWS: String(limits.rows), ...(sqlDeadline ? { PGRST_DB_PRE_REQUEST: 'gregale_data_api.check_deadline_request', PGRST_DB_CONFIG: 'false' } : coordinatedRefresh ? { PGRST_DB_PRE_REQUEST: 'gregale_data_api.check_request' } : {}), PGRST_DB_CHANNEL_ENABLED: 'false', PGRST_DB_PREPARED_STATEMENTS: 'false', ...(aggregates ? { PGRST_DB_AGGREGATES_ENABLED: 'true' } : {}) } }
 }

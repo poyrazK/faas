@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Data API public reads, server keys, aggregates, single-app projects and Python/Go clients](20261018170742-data-api-access-modes-and-clients.md)
+
 - [Preserve request identity in response caching](20261017214848-response-cache-request-identity.md)
 
 - [Restart-safe Go acknowledgment recovery alerts](20261017182028-go-recovery-alert-checkpoints.md)

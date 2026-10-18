@@ -4,7 +4,7 @@ import { spawn, execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { pathToFileURL } from 'node:url'
 import { createRemoteJWKSet, jwtVerify, SignJWT } from 'jose'
-import { traceRequest, markRequest, markQueryShape, markDatabaseTimings, requestID, runtimeFailure } from './logging.mjs'
+import { traceRequest, markRequest, markAccess, markQueryShape, markDatabaseTimings, requestID, runtimeFailure } from './logging.mjs'
 import { parseDatabaseTimings, unknownDatabaseTimings } from './database-timing.mjs'
 import { inspect, fingerprint, enrichOpenAPI } from './types.mjs'
 import { runtimeConfig, servingContracts, limits } from './config.mjs'
@@ -17,12 +17,15 @@ import { createRateLimiter, admitRateLimit } from './rate-limit.mjs'
 import { createUserConcurrency, admitUserConcurrency } from './user-concurrency.mjs'
 import { qualifiedConnectionEngine, startConnectionReporter } from './connection-observations.mjs'
 import { createPoolObservation } from './pool.mjs'
+import { publicReadTarget, clientKey, matchServerKey, serverSubject, checkPublicRelations } from './access.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
   const servingFingerprint = config.fingerprint
   const acceptedFingerprints = servingContracts(config)
   const health = createHealth(config, upstreamPort, readyPort)
   const rateLimiter = createRateLimiter(config.rateLimit)
+  // Anonymous clients always have a budget and never use subject tracking slots.
+  const anonymousLimiter = config.publicRead ? createRateLimiter(config.rateLimit ?? { perSecond: limits.rateLimitDefaultPerSecond, burst: limits.rateLimitDefaultBurst }) : null
   const userConcurrency = createUserConcurrency(config.userConcurrency, config.coordinatedRefresh ? limits.pool - 1 : limits.pool)
   const admitted = createAdmission(config.coordinatedRefresh ? limits.pool - 1 : limits.pool, res => {
     res.setHeader('Retry-After', String(limits.overloadRetrySeconds))
@@ -67,7 +70,22 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     if (!['GET', 'HEAD', 'POST', 'PATCH', 'DELETE'].includes(req.method)) return problem(res, 405, 'method_not_allowed')
     if (['/__gregale/schema', '/openapi.json'].includes(req.url) && req.method !== 'GET') return problem(res, 405, 'method_not_allowed')
     const token = req.headers.authorization?.match(/^Bearer ([^\s]+)$/i)?.[1]
-    if (!token) return problem(res, 401, 'token_required')
+    let access = 'user', serverKeySlot = null, subject = null
+    if (req.headers.authorization === undefined) {
+      // Never downgrade a present but invalid credential to anonymous access.
+      const target = publicReadTarget(req, config)
+      if (target.code) return problem(res, target.code === 'public_read_not_allowed' ? 403 : 401, target.code)
+      access = 'anonymous'
+    } else if (!token) return problem(res, 401, 'token_required')
+    else if (token.startsWith('gdsk_')) {
+      access = 'server'
+      if (req.headers.origin !== undefined) return problem(res, 403, 'server_key_browser_forbidden')
+      serverKeySlot = matchServerKey(config.serverKeys, token)
+      const named = serverSubject(req.headers['x-gregale-subject'])
+      if (!serverKeySlot || named.invalid) return problem(res, 401, 'token_invalid')
+      subject = named.subject
+    }
+    markAccess(res, { kind: access, ...(serverKeySlot ? { server_key_slot: serverKeySlot } : {}) })
     const declared = Number(req.headers['content-length'] ?? 0)
     if (!Number.isSafeInteger(declared) || declared < 0 || declared > limits.bodyBytes) return problem(res, 413, 'request_too_large')
     return admitted(req, res, async () => {
@@ -77,23 +95,33 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       })
       let userLease
       try {
-        let payload
-        try { payload = await verify(token) } catch {
-          if (deadline.check()) problem(res, 401, 'token_invalid')
-          return
+        let payload, concurrencyKey = null
+        if (access === 'user') {
+          try { payload = await verify(token) } catch {
+            if (deadline.check()) problem(res, 401, 'token_invalid')
+            return
+          }
+          if (!deadline.check()) return
+          if (typeof payload.sub !== 'string' || !payload.sub || typeof payload.exp !== 'number') return problem(res, 401, 'token_invalid')
+          if (payload.gregale_read_only !== undefined && typeof payload.gregale_read_only !== 'boolean') return problem(res, 401, 'token_invalid')
+          if (!admitRateLimit(rateLimiter, payload.sub, res, problem)) return
+          if (payload.gregale_read_only === true && !['GET','HEAD'].includes(req.method)) return problem(res, 403, 'read_only_identity')
+          concurrencyKey = payload.sub
+        } else if (access === 'anonymous') {
+          const client = ['anonymous', clientKey(req)]
+          if (!admitRateLimit(anonymousLimiter, client, res, problem)) return
+          concurrencyKey = client
         }
-        if (!deadline.check()) return
-        if (typeof payload.sub !== 'string' || !payload.sub || typeof payload.exp !== 'number') return problem(res, 401, 'token_invalid')
-        if (payload.gregale_read_only !== undefined && typeof payload.gregale_read_only !== 'boolean') return problem(res, 401, 'token_invalid')
-        if (!admitRateLimit(rateLimiter, payload.sub, res, problem)) return
-        if (payload.gregale_read_only === true && !['GET','HEAD'].includes(req.method)) return problem(res, 403, 'read_only_identity')
         if (guarded) {
           if (!/^[a-f0-9]{64}$/.test(servingFingerprint ?? '')) return problem(res, 503, 'serving_contract_unavailable')
           if (guarded[1] !== servingFingerprint && !acceptedFingerprints.has(guarded[1])) return problem(res, 409, 'schema_contract_mismatch')
           if (rpc && !config.functions?.some(f => f.schema === rpc.schema && f.name === rpc.name)) return problem(res, 404, 'not_found')
         }
-        userLease = admitUserConcurrency(userConcurrency, payload.sub, req, res, problem)
-        if (userLease === false) return
+        // Trusted server keys skip per-user budgets, never HTTP admission.
+        if (concurrencyKey !== null) {
+          userLease = admitUserConcurrency(userConcurrency, concurrencyKey, req, res, problem)
+          if (userLease === false) return
+        }
         if (req.url.startsWith('/rest/v1/')) markQueryShape(req, res, config)
         if (req.url === '/__gregale/schema') {
           if (!/^[a-f0-9]{64}$/.test(servingFingerprint ?? '')) return problem(res, 503, 'serving_contract_unavailable')
@@ -110,7 +138,12 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
         if (!deadline.enter('signing')) return
         // Only the binding login may become the SQL role. External role claims
         // cannot select an administrator, owner or another application's role.
-        const claims = { ...payload, role: config.role }
+        const expires = Math.ceil(Date.now() / 1000) + Math.ceil(limits.queryMs / 1000) + 5
+        const claims = access === 'user' ? { ...payload, role: config.role } : { role: config.role, exp: expires, ...(subject !== null ? { sub: subject } : {}) }
+        // Access kinds and the server-key slot are gateway-owned claims.
+        delete claims.gregale_server_key
+        claims.gregale_access = access
+        if (serverKeySlot) claims.gregale_server_key = serverKeySlot
         // A caller cannot extend or enable the internal SQL retry deadline.
         delete claims.gregale_sql_deadline
         if (config.sqlDeadline) claims.gregale_sql_deadline = { version: 1, expires_at_ms: deadline.expiresAt, coordinated_refresh: config.coordinatedRefresh === true }
@@ -252,6 +285,12 @@ export async function main(env = process.env) {
     if (!qualifiedConnectionEngine(stdout)) throw new Error('Unsupported connection observation engine')
   }
   if (config.sqlDeadline) await checkSQLDeadlineConnection(config.connection, { coordinatedRefresh: config.coordinatedRefresh })
+  if (config.publicRead) {
+    try { await checkPublicRelations(config.connection, config.publicRead) } catch (error) {
+      runtimeFailure('data_api_public_read_unsafe')
+      throw Object.assign(new Error('Unsafe public read configuration'), { cause: error, reported: true })
+    }
+  }
   const snapshot = await inspect(config.connection, config.schemas)
   config.snapshot = snapshot
   config.functions = snapshot.functions
@@ -292,4 +331,4 @@ export function tokenVerifier(auth, keys) {
   return async token => (await jwtVerify(token, keys, { issuer: auth.issuer, audience: auth.audience, algorithms: ['RS256', 'ES256'], requiredClaims: ['sub', 'exp'] })).payload
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(() => { runtimeFailure('data_api_configuration_invalid'); process.exitCode = 1 })
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(error => { if (error?.reported !== true) runtimeFailure('data_api_configuration_invalid'); process.exitCode = 1 })

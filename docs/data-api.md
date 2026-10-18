@@ -977,6 +977,206 @@ Use application access tokens. Gregale owner keys manage the app and export
 types; they do not authenticate its data endpoint. The client supports
 PostgREST filters, projections, pagination and relationship queries.
 
+## Public reads
+
+By default every data request needs an application JWT. To serve catalog,
+pricing or other public data to visitors without a session, list the relations
+anyone may read:
+
+```sh
+gregale data-api configure shop-data --public-read api.products,api.categories
+```
+
+`configure` stores the setting and requests a fresh restart (`--no-restart` skips
+it). `gregale data-api create` accepts the same `--public-read` flag, and
+`--no-public-read` turns the feature off again.
+
+A request without an `Authorization` header is then anonymous, but only when it
+is a `GET` or `HEAD` of a listed relation. Every other unauthenticated request
+still returns `401 token_required`, including RPCs, OpenAPI, writes and unlisted
+relations. A present but invalid token is never treated as anonymous. Embedded
+resources in `select` must also be listed: `select=*,categories(name)` works,
+while `select=*,orders(*)` returns `403 public_read_not_allowed` before any SQL
+runs.
+
+The runtime refuses to start (`data_api_public_read_unsafe`) unless each listed
+relation is a table with row-level security enabled or a view created with
+`security_invoker`. That check proves PostgreSQL owns the decision; it does not
+prove your policies are right. Anonymous requests carry no `sub` claim, so
+policies keyed only on the subject return no rows to them. Grant public rows
+explicitly through the gateway-owned `gregale_access` claim:
+
+```sql
+ALTER TABLE api.products ENABLE ROW LEVEL SECURITY;
+CREATE POLICY public_catalog ON api.products FOR SELECT
+  USING (published AND (current_setting('request.jwt.claims', true)::jsonb ->> 'gregale_access') = 'anonymous');
+CREATE POLICY signed_in_catalog ON api.products FOR SELECT
+  USING ((current_setting('request.jwt.claims', true)::jsonb ->> 'gregale_access') = 'user');
+```
+
+`gregale_access` is `user`, `anonymous` or `server`. The gateway sets it and
+overwrites any value an application token tries to supply. Every access kind
+still uses the binding's restricted SQL login.
+
+Anonymous traffic is always rate limited per client address, using the address
+the Gregale edge stamps on each request (IPv6 is grouped by /64). The limit is
+your `DATA_API_RATE_LIMIT_*` policy, or 10 requests per second with a burst of
+20 when you have not set one. Anonymous budgets are tracked separately from
+signed-in users. Request logs and `data-api diagnostics` record the access kind,
+never client addresses.
+
+Add `"public_read": ["api.products"]` to `data-api.dev.json` to try anonymous
+reads in `gregale data-api dev`; the same RLS check runs locally.
+
+## Server keys for trusted backends
+
+Backends, jobs and webhooks can call the same API with a server key instead of
+a user JWT:
+
+```sh
+gregale data-api server-key create shop-data
+```
+
+The CLI generates the key locally and prints it once. Only its SHA-256 hash is
+stored, as a sealed app secret, in one of two slots (`a` and `b`), and the
+runtime restarts fresh to load it. Send the key as `Authorization: Bearer
+gdsk_…` from server-side code only. Requests that also carry an `Origin` header
+are rejected with `403 server_key_browser_forbidden`, so browser code cannot use
+a key by accident.
+
+Server keys do not bypass row-level security; the serving login cannot. A
+request matches policies that grant `gregale_access = 'server'`:
+
+```sql
+CREATE POLICY backend_orders ON api.orders
+  USING ((current_setting('request.jwt.claims', true)::jsonb ->> 'gregale_access') = 'server');
+```
+
+To act for one user, add `X-Gregale-Subject: USER_ID` (1–255 characters). The
+gateway sets `sub`, so your ordinary user policies apply. Server-key requests
+skip per-user rate limits and per-user concurrency, but not HTTP admission or
+the 15-second deadline.
+
+Rotate without downtime: create a second key (it takes the free slot), deploy it
+to your backends, then revoke the old slot. Logs and diagnostics show which slot
+each request used (`server_key_slot`), so you can confirm the old key is idle
+first.
+
+```sh
+gregale data-api server-key list shop-data
+gregale data-api server-key create shop-data            # fills the free slot
+gregale data-api server-key revoke shop-data --slot a   # after backends moved
+```
+
+With both slots in use, `create` refuses unless you pass `--replace-oldest`.
+`revoke --slot all` removes every key.
+
+## Aggregates
+
+Aggregate queries are off by default. Turn them on with:
+
+```sh
+gregale data-api configure shop-data --aggregates on
+```
+
+Then a read can group and total rows, for example
+`GET /rest/v1/orders?select=status,count()` or
+`select=customer_id,total:amount.sum()`. Rows are grouped by the
+non-aggregated columns you select, and RLS applies before aggregation, so each
+caller totals only the rows they can read.
+
+Aggregates require the [SQL deadline](#sql-deadlines-across-transaction-retries).
+An HTTP timeout cannot stop an expensive aggregate inside PostgreSQL, but the
+per-request `statement_timeout` can. Install the deadline functions first:
+`configure --aggregates on` enables `DATA_API_SQL_DEADLINE=1`, and a runtime
+whose hook is missing refuses to start. Row, response-size, rate-limit and
+admission bounds are unchanged. Generated row types describe table columns, so
+type aggregate results in your client code. `--aggregates off` turns them off
+and leaves the SQL deadline in place.
+
+## Single-app projects
+
+A Data API normally uses two apps: the API and a migration app whose release
+task applies your SQL. A single-app project runs both in one app, which fits
+plans with one deployed app:
+
+```sh
+gregale data-api create shop-data --database shop-db \
+  --issuer https://identity.example.com/ \
+  --jwks-url https://identity.example.com/.well-known/jwks.json \
+  --audience shop --migrations migrations
+```
+
+The app holds two bindings to the same database:
+
+- `DATABASE_URL` uses the restricted `data_api` login and serves requests.
+- `MIGRATION_DATABASE_URL` uses the `migration` login, which is delivered only
+  to release tasks.
+
+The CLI uploads the pinned runtime together with your `migrations` directory and
+declares `release: node migrations/release.mjs`. Every deployment therefore
+applies migrations first, and its new instances load the new schema when they
+start; no separate refresh is needed. Ship later schema changes with:
+
+```sh
+gregale data-api deploy shop-data --migrations migrations
+```
+
+The starter's `migrations` directory (`migrate.mjs`, `release.mjs`,
+`rpc-permissions.mjs` and `sql/`) works as is. Use `--release-command` for
+another entrypoint. Release scripts run in the runtime image, so they may import
+only Node built-ins and the bundled `pg` driver. Hidden files, `node_modules`
+and links are not uploaded. A failed release blocks the deployment but keeps
+migrations that already committed.
+
+To convert an existing two-app project, rerun
+`gregale data-api create NAME --database DB --resume --migrations migrations`
+with your original issuer settings, and point the `migrate.command` in
+`data-api.json` at `gregale data-api deploy`. Old instances keep serving the
+previous schema until the new deployment is ready, so follow the
+[compatible rollout](#accept-older-clients-during-a-compatible-rollout) guidance
+for breaking changes. Coordinated refresh remains a two-app feature.
+
+## Python and Go clients
+
+Generate a typed client for backends written in Python or Go:
+
+```sh
+gregale data-api types shop-data --language python --output shop_data.py
+gregale data-api types shop-data --language go --package shopdata --output shopdata/client.go
+```
+
+Both languages render from the same fingerprinted contract as the TypeScript
+types. The deployed app exports the contract; no credentials reach your machine.
+To render offline from a saved contract (for example in CI), pass
+`--snapshot-file contract.json` instead of the app name. Commit the file and
+use `--check` to fail CI when it is stale.
+
+Generated files use only the standard library: Python 3.9+ with `urllib`, Go
+1.21+ with `net/http`. Each file includes row, insert and update types, enums,
+composites, typed RPC methods and a small client:
+
+```python
+import os
+
+from shop_data import DataClient
+
+backend = DataClient("https://shop-data.example.com", server_key=os.environ["SHOP_SERVER_KEY"])
+open_orders = backend.orders().select("id,total").eq("status", "open").order("id", descending=True).limit(50).get()
+```
+
+```go
+client := &shopdata.Client{BaseURL: "https://shop-data.example.com", ServerKey: os.Getenv("SHOP_SERVER_KEY")}
+orders, err := client.Orders().Select("id,total").Eq("status", "open").Limit(50).Get(ctx)
+```
+
+Use `access_token` (Python) or `AccessToken` (Go) to call as an application
+user, or `subject` / `Subject` with a server key to act for one. Updates and
+deletes refuse to run without a filter. The clients never retry writes:
+reconcile an uncertain write before you replay it, as with the TypeScript SDK.
+Go update structs leave `nil` fields unchanged; to set a column to `NULL`, use
+`client.Relation(schema, name)` with a map.
+
 ## Refresh after a migration
 
 ```sh

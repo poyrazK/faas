@@ -14,11 +14,12 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dataapi/clientgen"
 )
 
 func cmdDataAPI(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale data-api <create|types|diff|check|refresh|sync|status|rotation|health|replay|diagnostics|dev|install|onboard|migration|fixture|explain|verify|transaction>", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api <create|deploy|configure|server-key|types|diff|check|refresh|sync|status|rotation|health|replay|diagnostics|dev|install|onboard|migration|fixture|explain|verify|transaction>", "data-api")
 		return 1
 	}
 	switch args[0] {
@@ -58,10 +59,16 @@ func cmdDataAPI(args []string) int {
 		return cmdDataAPIDiagnostics(args[1:])
 	case "status":
 		return cmdDataAPIStatus(args[1:])
+	case "configure":
+		return cmdDataAPIConfigure(args[1:])
+	case "server-key":
+		return cmdDataAPIServerKey(args[1:])
+	case "deploy":
+		return cmdDataAPIDeploy(args[1:])
 	case "sync":
 		return cmdDataAPISync(args[1:])
 	default:
-		return printErr("Unknown Data API command", fmt.Errorf("use create, types, diff, refresh, sync, status, rotation, health, replay, diagnostics, check, dev, install, onboard, migration, fixture, explain, verify or transaction"))
+		return printErr("Unknown Data API command", fmt.Errorf("use create, deploy, configure, server-key, types, diff, refresh, sync, status, rotation, health, replay, diagnostics, check, dev, install, onboard, migration, fixture, explain, verify or transaction"))
 	}
 }
 
@@ -136,6 +143,10 @@ func cmdDataAPICreate(args []string) int {
 	origins := fs.String("origins", "", "comma-separated allowed browser origins")
 	resume := fs.Bool("resume", false, "resume configuration and deployment of an existing app")
 	authApp := unreleasedStringFlag(fs, "auth", "Auth app whose tokens to verify (replaces --issuer, --jwks-url and --audience)")
+	publicRead := fs.String("public-read", "", "comma-separated schema.relation list readable without a token")
+	aggregates := fs.Bool("aggregates", false, "enable aggregate queries (also enables the SQL deadline)")
+	migrations := fs.String("migrations", "", "single-app project: migration directory run as this app's release task")
+	releaseCommand := fs.String("release-command", dataAPIDefaultReleaseCommand, "single-app release command run with "+dataAPIMigrationEnv)
 	if err := fs.Parse(normalizeDataAPITypeArgs(args)); err != nil {
 		return 1
 	}
@@ -146,6 +157,14 @@ func cmdDataAPICreate(args []string) int {
 	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || *database == "" || *schema != "api" || api.ValidateScope(*scope) != nil || (*authApp == "" && !explicitIssuer) {
 		PrintUsage(os.Stderr, dataAPICreateUsage(), "data-api")
 		return 1
+	}
+	if *publicRead != "" && !validDataAPIPublicRead(*publicRead) {
+		return printErr("Invalid --public-read", fmt.Errorf("list at most %d unique schema.relation names", api.DataAPIPublicReadMaxRelations))
+	}
+	if *migrations != "" {
+		if _, err := checkedDataAPIMigrations(*migrations, *releaseCommand); err != nil {
+			return printErr("Invalid --migrations", err)
+		}
 	}
 	for _, origin := range strings.Split(*origins, ",") {
 		if origin != "" && !dataAPIOrigin(origin) {
@@ -194,8 +213,18 @@ func cmdDataAPICreate(args []string) int {
 	}
 	// Retain partially configured intent on failure: the ordinary app and
 	// binding recovery paths own cleanup and retries, never an ad-hoc rollback.
-	if err := configureDataAPI(ctx, client, app, db.ID, *scope, map[string]string{"DATA_API_SCHEMAS": *schema, "DATA_API_ISSUER": *issuer, "DATA_API_JWKS_URL": *jwks, "DATA_API_AUDIENCE": *audience, "DATA_API_ALLOWED_ORIGINS": *origins}); err != nil {
+	settings := map[string]string{"DATA_API_SCHEMAS": *schema, "DATA_API_ISSUER": *issuer, "DATA_API_JWKS_URL": *jwks, "DATA_API_AUDIENCE": *audience, "DATA_API_ALLOWED_ORIGINS": *origins, "DATA_API_PUBLIC_READ": *publicRead}
+	if *aggregates {
+		settings["DATA_API_SQL_DEADLINE"], settings["DATA_API_AGGREGATES"] = "1", "1"
+	}
+	if err := configureDataAPI(ctx, client, app, db.ID, *scope, settings); err != nil {
 		return printErr("Data API configuration failed; the app is retained for recovery", err)
+	}
+	if *migrations != "" {
+		if err := attachDataAPIMigrationBinding(ctx, client, app, db.ID, *scope); err != nil {
+			return printErr("Migration binding failed; the app is retained for recovery", err)
+		}
+		return deploySingleAppDataAPI(ctx, app.Slug, *scope, *migrations, *releaseCommand, "15m")
 	}
 	deployArgs := []string{"--name", app.Slug, "--template", "data-api", "--dockerfile", "--healthcheck-path", "/healthz", "--no-doctor"}
 	if *scope != api.DefaultEnvScope {
@@ -226,6 +255,15 @@ func configureDataAPI(ctx context.Context, client *api.Client, app api.AppRespon
 			return err
 		}
 	}
+	// Optional owner opt-ins are stored only when requested; absence keeps them off.
+	for _, key := range []string{"DATA_API_PUBLIC_READ", "DATA_API_SQL_DEADLINE", "DATA_API_AGGREGATES"} {
+		if settings[key] == "" {
+			continue
+		}
+		if err = client.SetSecretWithScope(ctx, app.Slug, key, settings[key], scope); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -247,14 +285,27 @@ func cmdDataAPITypes(args []string) int {
 	check := fs.Bool("check", false, "fail if --output differs from the database contract")
 	snapshot := fs.Bool("snapshot", false, "export a JSON contract baseline for data-api diff")
 	validators := fs.Bool("validators", false, "include typed runtime table and RPC argument validators")
+	language := fs.String("language", "typescript", "client language: typescript, python or go")
+	pkg := fs.String("package", "gregaledata", "Go package name for --language go")
+	snapshotFile := fs.String("snapshot-file", "", "render Python or Go from a saved snapshot without contacting the API")
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum task wait")
 	// This command never downloads credentials or introspects customer SQL
 	// from apid. A bounded manual task runs inside the selected app revision.
 	if err := fs.Parse(normalizeDataAPITypeArgs(args)); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || (*check && *output == "") || (*snapshot && *validators) || *timeout <= 0 || *timeout > time.Hour {
-		PrintUsage(os.Stderr, "usage: gregale data-api types NAME [--output FILE] [--check] [--snapshot | --validators] [--timeout DURATION]", "data-api")
+	usage := "usage: gregale data-api types NAME [--output FILE] [--check] [--snapshot | --validators] [--timeout DURATION]\n       gregale data-api types [NAME | --snapshot-file FILE] --language python|go [--package NAME] [--output FILE [--check]]"
+	if *language != "typescript" {
+		// Python and Go render from the contract snapshot, locally or via the app task.
+		named := fs.NArg() == 1 && api.ValidAppSlug(fs.Arg(0))
+		if !dataAPIDiagnosticAllowed(*language, "python", "go") || named == (*snapshotFile != "") || fs.NArg() > 1 || *snapshot || *validators || (*check && *output == "") || (*language == "python" && *pkg != "gregaledata") || !clientgen.GoPackageValid(*pkg) || *timeout <= 0 || *timeout > time.Hour {
+			PrintUsage(os.Stderr, usage, "data-api")
+			return 1
+		}
+		return dataAPIClientTypes(fs.Arg(0), *language, *pkg, *snapshotFile, *output, *check, *timeout)
+	}
+	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || (*check && *output == "") || (*snapshot && *validators) || *snapshotFile != "" || *pkg != "gregaledata" || *timeout <= 0 || *timeout > time.Hour {
+		PrintUsage(os.Stderr, usage, "data-api")
 		return 1
 	}
 	client, err := authedClient()

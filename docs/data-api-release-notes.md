@@ -3,6 +3,34 @@
 This change completes the current core Data API development slice. It does not
 publish artifacts or establish hosted staging acceptance.
 
+## Public reads, server keys, aggregates, single-app projects and Python/Go clients
+
+[ADR 20261018170742](adr/20261018170742-data-api-access-modes-and-clients.md)
+closes five product gaps, all opt-in:
+
+- **Public reads.** `--public-read` lists relations that anonymous `GET`/`HEAD`
+  requests may read. Startup requires RLS tables or security-invoker views.
+  Embeddings must also be listed, and every anonymous client is rate limited.
+- **Server keys.** `data-api server-key create|list|revoke` manages two
+  hash-only rotation slots for trusted backends. RLS still applies, keys are
+  refused when sent with an `Origin` header, and `X-Gregale-Subject` acts for
+  one user.
+- **Aggregates.** `--aggregates` enables PostgREST aggregates and requires the
+  SQL deadline, so expensive queries are cancelled inside PostgreSQL.
+- **Single-app projects.** `--migrations` and `data-api deploy` run migrations
+  as the Data API app's own release task, using a release-only
+  `MIGRATION_DATABASE_URL`.
+- **Python and Go clients.** `data-api types --language python|go` renders
+  standard-library clients from the fingerprinted contract, offline with
+  `--snapshot-file`.
+
+Every request now carries a gateway-owned `gregale_access` claim (`user`,
+`anonymous` or `server`) for policies. Logs and `data-api diagnostics` report
+access kinds and the server-key slot, never subjects, addresses or keys.
+Runtime tests cover anonymous, server-key and claim-spoofing paths. Clientgen
+tests type-check the generated Go and run both clients end to end against a
+fake API. Hosted acceptance remains open, as for the rest of the Data API.
+
 ## Database connection-budget preflight
 
 New read-only management endpoints report a database-wide canonical connection

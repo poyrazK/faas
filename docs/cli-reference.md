@@ -14909,7 +14909,7 @@ gregale data-api dev --port 0 --check --once
 
 Deploy a managed PostgREST Data API
 
-`gregale data-api create --database <DATABASE> [--schema <SCHEMA>] [--scope <SCOPE>] [--issuer <HTTPS_URL>] [--jwks-url <HTTPS_URL>] [--audience <AUDIENCE>] [--origins <ORIGINS>] [--resume] <name>`
+`gregale data-api create --database <DATABASE> [--schema <SCHEMA>] [--scope <SCOPE>] [--issuer <HTTPS_URL>] [--jwks-url <HTTPS_URL>] [--audience <AUDIENCE>] [--origins <ORIGINS>] [--resume] [--public-read <SCHEMA.RELATION[,...]>] [--aggregates] [--migrations <DIR>] [--release-command <COMMAND>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -14921,20 +14921,105 @@ Deploy a managed PostgREST Data API
 | `--audience <AUDIENCE>` | application JWT audience |  |
 | `--origins <ORIGINS>` | comma-separated browser origins |  |
 | `--resume` | resume configuration and deployment of an existing app |  |
+| `--public-read <SCHEMA.RELATION[,...]>` | relations readable without a token (RLS tables or security-invoker views) |  |
+| `--aggregates` | enable aggregate queries; requires installed SQL deadline functions |  |
+| `--migrations <DIR>` | single-app project: run this migration directory as the app&#39;s release task |  |
+| `--release-command <COMMAND>` | single-app release command (default node migrations/release.mjs) |  |
 
-### data-api types
+Examples:
 
-Generate types in an owner-authenticated app task
+```sh
+gregale data-api create shop-data --database shop-db --issuer https://id.example.com/ --jwks-url https://id.example.com/jwks.json --audience shop --migrations migrations
+```
 
-`gregale data-api types [--output <FILE>] [--check] [--snapshot] [--validators] [--timeout <DURATION>] <name>`
+### data-api deploy
+
+Deploy a single-app Data API with its migrations as the release task
+
+`gregale data-api deploy --migrations <DIR> [--release-command <COMMAND>] [--scope <SCOPE>] [--timeout <DURATION>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--output <FILE>` | generated TypeScript or snapshot output |  |
+| `--migrations <DIR>` | migration directory run with MIGRATION_DATABASE_URL | required |
+| `--release-command <COMMAND>` | release command (default node migrations/release.mjs) |  |
+| `--scope <SCOPE>` | environment scope |  |
+| `--timeout <DURATION>` | deployment and release wait (default 15m) |  |
+
+### data-api configure
+
+Change public reads or aggregates and fresh-restart the runtime
+
+`gregale data-api configure [--public-read <SCHEMA.RELATION[,...]>] [--no-public-read] [--aggregates <on|off>] [--scope <SCOPE>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--public-read <SCHEMA.RELATION[,...]>` | relations readable without a token |  |
+| `--no-public-read` | disable anonymous reads |  |
+| `--aggregates <on|off>` | aggregate queries; on also enables the SQL deadline | one of `on` · `off` |
+| `--scope <SCOPE>` | environment scope |  |
+| `--no-restart` | store settings without a fresh restart |  |
+
+### data-api server-key
+
+Manage server keys for trusted backends (RLS still applies)
+
+#### data-api server-key create
+
+Generate a key, store its hash in a free slot and show the key once
+
+`gregale data-api server-key create [--replace-oldest] [--scope <SCOPE>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--replace-oldest` | replace the older slot when both are in use |  |
+| `--scope <SCOPE>` | environment scope |  |
+| `--no-restart` | store the hash without a fresh restart |  |
+
+#### data-api server-key list
+
+Show which key slots are in use
+
+`gregale data-api server-key list [--scope <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+#### data-api server-key revoke
+
+Remove a key slot
+
+`gregale data-api server-key revoke --slot <a|b|all> [--scope <SCOPE>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--slot <a|b|all>` | slot to revoke | required; one of `a` · `b` · `all` |
+| `--scope <SCOPE>` | environment scope |  |
+| `--no-restart` | remove the hash without a fresh restart |  |
+
+### data-api types
+
+Generate TypeScript types or Python/Go clients from the database contract
+
+`gregale data-api types [--output <FILE>] [--check] [--snapshot] [--validators] [--language <LANGUAGE>] [--package <NAME>] [--snapshot-file <FILE>] [--timeout <DURATION>] [<name>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--output <FILE>` | generated TypeScript, Python, Go or snapshot output |  |
 | `--check` | fail if the output file is stale |  |
 | `--snapshot` | export a JSON baseline for data-api diff |  |
 | `--validators` | include typed runtime table and RPC argument validators |  |
+| `--language <LANGUAGE>` | client language (default typescript) | one of `typescript` · `python` · `go` |
+| `--package <NAME>` | Go package name (default gregaledata) |  |
+| `--snapshot-file <FILE>` | render Python or Go from a saved snapshot without contacting the API |  |
 | `--timeout <DURATION>` | task wait deadline (default 2m) |  |
+
+Examples:
+
+```sh
+gregale data-api types shop-data --language python --output shop_data.py
+gregale data-api types --snapshot-file contract.json --language go --package shopdata --output shopdata/client.go
+```
 
 ### data-api check
 
