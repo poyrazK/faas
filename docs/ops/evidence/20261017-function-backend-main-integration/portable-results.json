@@ -948,5 +948,57 @@
     "full_shard_and_hosted_ci": "pending; cancelled source is not counted as green",
     "native_acceptance": false,
     "production_activation": false
+  },
+  "scheduler_sql_fixture_isolation": {
+    "source": {
+      "source_base": "bea394b506b0f37deb7c0e855184ee76cfee29ef",
+      "fixture_patch_sha256": "0f248c77015620c954a661678a4b175d023284488597dfc031db4e3e979aab89",
+      "tests": {
+        "github.com/onebox-faas/faas/cmd/schedd": {
+          "passed": 129,
+          "skipped": [
+            "TestLoadSchedInternalSvcKey_SealedPath"
+          ],
+          "failed": [],
+          "conclusion": "pass",
+          "elapsed_seconds": 37.012
+        },
+        "github.com/onebox-faas/faas/pkg/sched": {
+          "passed": 3149,
+          "skipped": [
+            "TestFunctionExecutionWarmRecoveryResealsParkAdmission",
+            "TestReconcileExpiredMigrations_ConflictOnPeerRollback"
+          ],
+          "failed": [],
+          "conclusion": "pass",
+          "elapsed_seconds": 303.448
+        }
+      },
+      "runtime": "2GiB/GOGC10/GOMAXPROCS2/p4/10m",
+      "native_execution": false
+    },
+    "reproduced_failures": [
+      "cmd/schedd.TestRun_EnvMigrateLiveLeaseSeconds_BadValue",
+      "pkg/sched.TestRunOperatorIntentCompletenessTick_FixesColumnRef"
+    ],
+    "reproduced_cause": "shared-schema migration 20261017181315007 CREATE INDEX CONCURRENTLY lock timeout while other tests held snapshots",
+    "correction": "use existing OpenMigrated helper for private database isolation under the existing CI opt-in; retain db.MigrateUp for non-template fallback, all assertions and explicit FAAS_SKIP_PG_TESTS behavior",
+    "total_passed_tests": 3278,
+    "failed_tests": [],
+    "non_template_operator_metric_case": {
+      "result": "pass",
+      "elapsed_seconds": 18.137,
+      "fresh_schema_migration": true
+    },
+    "local_compiler_phase_validation": {
+      "source": "bea394b506b0f37deb7c0e855184ee76cfee29ef",
+      "binding_four_binaries_compile_only_seconds": 141.971,
+      "binding_tests_seconds": 13.197,
+      "binding_manifest_tests_seconds": 7.326,
+      "main_ten_package_preparation_seconds": 364.191
+    },
+    "full_local_ordinary_shard": "not accepted as a complete pass; managed tmpfs/process-umask and TEST-NET probe results differ from hosted runner; hosted full affected selection unchanged and required on final head",
+    "native_acceptance": false,
+    "production_activation": false
   }
 }

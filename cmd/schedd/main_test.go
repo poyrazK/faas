@@ -44,10 +44,16 @@ func shortDir(t *testing.T) string {
 	return short
 }
 
-// migratedPool returns a pgtest pool with the schema migrated, or skips.
+// migratedPool uses private database clones when the template fixture is enabled.
+// These orchestration tests need the full schema, not migration replay in a
+// shared database where concurrent index builds wait on other tests' snapshots.
 func migratedPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	pool := pgtest.Open(t)
+	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
+		t.Skip("FAAS_SKIP_PG_TESTS set; skipping Postgres integration test")
+	}
+	pool := pgtest.OpenMigrated(t)
+	// OpenMigrated falls back to an empty isolated schema without the opt-in.
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

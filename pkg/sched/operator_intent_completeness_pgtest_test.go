@@ -18,7 +18,7 @@
 //     the gauge for "park_instance" (the stored kind after the
 //     prefix-strip in observeTraceCompletenessRatio) hits 0.5.
 //
-// Uses pgtest.Open so the test skips via the standard
+// Uses pgtest.OpenMigrated so the test skips via the standard
 // FAAS_SKIP_PG_TESTS convention when Postgres is unreachable —
 // no `make test` regression in environments without a cluster.
 //
@@ -31,6 +31,7 @@ package sched
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -47,7 +48,12 @@ import (
 // be unset for park_instance because the row processing skipped
 // the body on query error).
 func TestRunOperatorIntentCompletenessTick_FixesColumnRef(t *testing.T) {
-	pool := pgtest.Open(t)
+	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
+		t.Skip("FAAS_SKIP_PG_TESTS set; skipping Postgres integration test")
+	}
+	// The template fixture gives this query its own fully migrated database,
+	// avoiding concurrent index builds alongside other tests' snapshots.
+	pool := pgtest.OpenMigrated(t)
 	defer pool.Close()
 	ctx := context.Background()
 	if err := db.MigrateUp(ctx, pool); err != nil {

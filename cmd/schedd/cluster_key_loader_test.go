@@ -20,8 +20,6 @@ import (
 
 	"filippo.io/age"
 
-	"github.com/onebox-faas/faas/pkg/db"
-	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/internalsvc"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -37,10 +35,7 @@ import (
 // would silently mint JWTs that no gatewayd-internal can
 // verify — the cross-box mint/verify would diverge silently.
 func TestLoadClusterInternalSvcKey_RoundTrip(t *testing.T) {
-	pool := pgtest.Open(t)
-	if err := db.MigrateUp(context.Background(), pool); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	pool := migratedPool(t)
 	store := state.NewPgStore(pool)
 
 	ctx := context.Background()
@@ -115,10 +110,7 @@ func TestLoadClusterInternalSvcKey_RoundTrip(t *testing.T) {
 }
 
 func TestNewSchedInternalSvcMinterFailsClosedForForeignFleetEnvelope(t *testing.T) {
-	pool := pgtest.Open(t)
-	if err := db.MigrateUp(context.Background(), pool); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	pool := migratedPool(t)
 	store := state.NewPgStore(pool)
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -186,10 +178,7 @@ func TestScheddHostAgeKeyDirFallsBackToCanonicalPath(t *testing.T) {
 // which the minter-side caller (newSchedInternalSvcMinter)
 // translates into "fall back to per-host FAAS_INTERNAL_SVC_KEY_PATH".
 func TestLoadClusterInternalSvcKey_EmptyTableReturnsErrClusterKeyUnavailable(t *testing.T) {
-	pool := pgtest.Open(t)
-	if err := db.MigrateUp(context.Background(), pool); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	pool := migratedPool(t)
 	store := state.NewPgStore(pool)
 
 	ctx := context.Background()
@@ -210,10 +199,7 @@ func TestLoadClusterInternalSvcKey_EmptyTableReturnsErrClusterKeyUnavailable(t *
 // rotation; loud refusal at boot prevents a silent cross-box
 // auth break.
 func TestLoadClusterInternalSvcKey_RefusesKidMismatch(t *testing.T) {
-	pool := pgtest.Open(t)
-	if err := db.MigrateUp(context.Background(), pool); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	pool := migratedPool(t)
 	store := state.NewPgStore(pool)
 
 	ctx := context.Background()

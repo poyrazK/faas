@@ -316,6 +316,36 @@ selector tests pass. The full affected shard selection and fresh-head hosted
 CI must verify the correction. This is a compiler-budget correction, not a
 transient-infrastructure retry or native qualification.
 
+## Scheduler SQL fixture isolation
+
+With CI's PostgreSQL lock capacity and process umask, the broader local run
+reproduced two remaining failures in scheduler fixtures. Both replayed
+`20261017181315007_mcp_readiness_incident_timeline.sql` in separate schemas of
+one database while other tests held snapshots; its concurrent index build hit
+the unchanged five-second lock timeout.
+
+The scheduler entrypoint/cluster-key fixtures and operator trace-completeness
+fixture now use the existing `OpenMigrated` helper. CI's existing template
+opt-in gives every test a private database cloned from the complete migrated
+schema. `db.MigrateUp` remains in the helpers so the non-template path still
+migrates a fresh isolated schema. Existing skip opt-outs, assertions, runtime
+settings and deadlines are retained. Migration-focused fixtures are unchanged.
+
+The full ordinary race suites pass 129 entrypoint and 3,149 scheduler
+tests/subtests with zero failures, using 2 GiB/GOGC 10, two processors, package
+parallelism four and ten-minute deadlines. Three existing qualification/path
+skips remain recorded in the machine-readable evidence. The operator metric
+case also passes with the template opt-in disabled, including fresh schema
+migration. The fixture patch SHA-256 is
+`0f248c77015620c954a661678a4b175d023284488597dfc031db4e3e979aab89`
+against source `bea394b506b0f37deb7c0e855184ee76cfee29ef`.
+
+The broader local ordinary shard is not counted as a complete pass: the managed
+container's temporary filesystem/process umask and TEST-NET probe behavior
+differ from the hosted runner. The hosted gate retains the entire affected
+shard and must pass on the new exact head. No native filesystem or KVM
+acceptance is supplied by these fixture checks.
+
 ## Qualification boundary
 
 Production activation remains disabled. This managed container has no supported
