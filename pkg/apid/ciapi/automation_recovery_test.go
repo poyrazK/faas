@@ -1,4 +1,4 @@
-// ADR-202610180816: operator recovery is scoped, idempotent and independent of compute.
+// ADR-1592: operator recovery is scoped, idempotent and independent of compute.
 package ciapi_test
 
 import (

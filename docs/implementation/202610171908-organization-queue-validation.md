@@ -459,3 +459,12 @@ classes. All seven unreleased ownership migrations are marked `contract`, so
 these maintenance cutovers require a full release. Only comments and the source
 fingerprint change; SQL, the canonical database schema and runtime code are
 unchanged from the qualified `9472bb1c4` revision.
+
+Main through `88c804c71` publishes CI recovery ADR-1592 and mail ADRs
+`2026101501`/`2026101601`. Current files and citations follow those identifiers;
+earlier identifiers above describe their recorded revisions. The merge retains
+the ownership SQL, canonical schema, generated bindings and SDKs byte-for-byte.
+Main's replaced-transport readiness probes pass (0.053s), all 41 launcher tests
+pass (0.974s), and its stricter migration validator accepts the seven contract
+migrations. ADR uniqueness holds at 1812 files, 1608 distinct identifiers and
+the unchanged 164-duplicate baseline. Fresh CI must qualify the merged source.

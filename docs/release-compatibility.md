@@ -108,6 +108,32 @@ section. A table, view or index that does not exist in the base's
 | `lock-timeout` | an `ALTER TABLE`, a non-concurrent `CREATE`/`DROP INDEX`, `CREATE`/`DROP TRIGGER`, `CREATE OR REPLACE VIEW`, `LOCK`, `REINDEX` or similar on an existing table, with no `lock_timeout` set before it; a `lock_timeout` of 0 or more than 10 s | start the Up section with `SET LOCAL lock_timeout = '5s';` |
 | `index-build` | `CREATE INDEX`, `ADD PRIMARY KEY` or `ADD UNIQUE` on an existing table | `CREATE INDEX CONCURRENTLY` in a `-- +goose NO TRANSACTION` migration, then `ADD CONSTRAINT … USING INDEX` |
 | `concurrently-in-transaction` | `CONCURRENTLY` without `-- +goose NO TRANSACTION` | add the directive |
+| `compat-marker` | no `-- migration-compat:` class, or more than one; a migration marked `expand` that makes a contract change or waives `lock-timeout` or `concurrently-in-transaction` (cannot be waived) | declare the class; mark a contract change `contract` |
+
+**Compatibility class.** Every new migration says, once, which kind it is
+([ADR 20261018084150](adr/20261018084150-unit-lane-expand-migrations.md)):
+
+```sql
+-- migration-compat: expand
+```
+
+`expand` claims that the previous release runs correctly against the
+schema the migration produces. A per-unit release may then apply it before
+the next full release. `contract` means only a full release applies it.
+The linter rejects an `expand` migration that does any of these:
+
+- drops or renames anything that existed before, whether or not code
+  references it;
+- changes a column type;
+- waives `not-null`;
+- truncates a table;
+- drops a function, type, sequence, trigger or unique constraint that it
+  does not create again;
+- drops a column default.
+
+What no linter sees is the author's claim to make: a trigger function's
+`pg_notify` payload, a new CHECK or foreign key, a backfill that changes a
+value's meaning.
 
 Why `lock_timeout` matters: without it, an `ALTER` queues behind one
 long-running transaction, and every later query on that table queues behind
@@ -197,12 +223,27 @@ The unit lanes enforce the rules above in their workflows:
   full release tag before its commit, which is the release CI compared each
   merge against. Units at that base and units at the unit release's commit
   are therefore at most one release apart.
-- **Order.** Migrations block the unit lanes outright, so the data step is a
-  full release. `release-units.yml` deploys the control-plane lane first, and
-  the edge lane (`cd-edge-units.yml`) only after it. When the edge lane is
-  run alone, it first checks that the control plane already runs that unit
-  release's control-plane units. The runtime step (guest and images) always
-  waits for the next full release.
+- **Order.** The data step rides the control-plane lane. A range whose
+  migrations are all lane-eligible counts as eligible. Lane-eligible means:
+  - each migration is marked `expand`;
+  - it makes no contract change;
+  - it has no finding left against the base release's schema;
+  - it waives neither `lock-timeout` nor `concurrently-in-transaction`.
+
+  The control-plane lane's `deployctl deploy` applies those migrations
+  with the release commit's `bin/migrate`, under the advisory lock, before
+  it restarts anything. A failed migration stops the lane before any
+  restart and any SLO gate. Any other migration still blocks both lanes,
+  so a contract migration ships in a full release.
+
+  `release-units.yml` deploys the control-plane lane first, and the edge
+  lane (`cd-edge-units.yml`) only after it. When the edge lane runs alone,
+  it first checks that the control plane already runs that unit release's
+  control-plane units and has applied its migrations. The runtime step
+  (guest and images) always waits for the next full release. A rollback
+  restores binaries, never the schema. The previous binaries run against an
+  expand-only schema, and their startup migration ignores ledger versions
+  they do not embed.
 
 ## Not covered yet
 

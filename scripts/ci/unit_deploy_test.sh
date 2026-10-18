@@ -85,6 +85,20 @@ for want in \
   grep -Fq -- "$want" "$test_root/activate.sh" || fail "activation script lacks: $want"
 done
 
+# 1a. A plan with a data step overlays bin/migrate, which deployctl deploy
+#     runs before it activates anything.
+jq '.replace["bin/migrate"] = "bin/migrate" | .gate += [["--unit", "migrations"]]' "$plan" > "$test_root/data.json"
+bash "$helper" script "$test_root/data.json" "$stage" "$test_root/data.sh"
+grep -Fq "bin/migrate=$stage/bin/migrate" "$test_root/data.sh" || fail "data step does not overlay bin/migrate"
+
+# 1b. Migrations alone restart and verify no unit.
+jq '.units = [] | .only = [] | .verify = [] | .replace = {"bin/migrate": "bin/migrate", "bin/deployctl": "bin/deployctl", "unit-versions.json": "unit-versions.json"}' \
+  "$plan" > "$test_root/data-only.json"
+bash "$helper" script "$test_root/data-only.json" "$stage" "$test_root/data-only.sh"
+bash -n "$test_root/data-only.sh" || fail "data-only activation script does not parse"
+grep -Fq "deploy --only '' --expect-current" "$test_root/data-only.sh" || fail "data-only plan does not deploy with an empty --only"
+if grep -q unit-release-verify "$test_root/data-only.sh"; then fail "data-only plan verifies units it did not restart"; fi
+
 # 2. A converge plan re-activates the active overlay without assembling one.
 jq '.action = "converge" | .replace = {} | .release_id = .expect_current' "$plan" > "$test_root/converge.json"
 bash "$helper" script "$test_root/converge.json" "$stage" "$test_root/converge.sh"
@@ -149,5 +163,24 @@ grep -Fq "$stage/bin/deployctl rollback --only 'apid,meterd'" "$test_root/rollba
 grep -Fq "unit-release-verify.sh \"\$(readlink -f /opt/faas/current)\" apid=http://127.0.0.1:9101/readyz" "$test_root/rollback.sh" \
   || fail "rollback does not verify the restored release"
 grep -q "sudo -n bash" "$helper" || fail "non-root hosts must run through sudo"
+CAPTURE="$test_root/rollback-data.sh" UNIT_SSH_TARGET=deploy@node.example \
+  bash "$test_root/helper-capture.sh" rollback "$test_root/data-only.json" "$stage"
+bash -n "$test_root/rollback-data.sh" || fail "data-only rollback script does not parse"
+if grep -q unit-release-verify "$test_root/rollback-data.sh"; then fail "data-only rollback verifies no unit it restored"; fi
+
+# 6. Staging copies the plan's binaries, and tools/migrate as bin/migrate
+#    when the plan applies migrations.
+units="$test_root/units"
+mkdir -p "$units/bin" "$units/tools"
+for f in bin/apid bin/meterd tools/migrate tools/deployctl; do echo "$f" > "$units/$f"; done
+echo '{}' > "$test_root/unit-versions.json"
+remote_stage="$(bash "$helper" stage "$test_root/data.json" "$units" "$units/tools/deployctl")"
+[[ "$(cat "$remote_stage/bin/migrate")" == tools/migrate && "$(cat "$remote_stage/bin/apid")" == bin/apid ]] \
+  || fail "staging did not place tools/migrate at bin/migrate"
+bash "$helper" cleanup "$remote_stage"
+remote_stage="$(bash "$helper" stage "$plan" "$units" "$units/tools/deployctl")"
+[[ ! -e "$remote_stage/bin/migrate" ]] || fail "a plan without a data step staged bin/migrate"
+bash "$helper" cleanup "$remote_stage"
+[[ ! -e "$remote_stage" ]] || fail "cleanup left the stage dir"
 
 echo "unit_deploy tests passed"
