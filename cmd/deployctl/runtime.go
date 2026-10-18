@@ -59,7 +59,7 @@ var legacyManagedServices = []string{"gatewayd", "spool-sync"}
 // bundles. An older rollback bundle can omit a socket that a newer release
 // installed, so topology reconciliation must retire the stale listener before
 // restarting the older daemon that binds the address itself.
-var managedSocketUnits = []string{"faas-apid.socket", "faas-gatewayd-public.socket"}
+var managedSocketUnits = []string{"faas-apid.socket", "faas-gatewayd-public.socket", "faas-schedd.socket"}
 
 func managedServiceNames() []string {
 	// OptionalRegistry services are operator-owned add-ons. Their absence from
