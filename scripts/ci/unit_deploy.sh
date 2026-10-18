@@ -102,6 +102,11 @@ cmd_stage() {
   if [[ "$(plan_field "$plan" .action)" == deploy ]]; then
     install -m 0644 "$(dirname "$plan")/unit-versions.json" "$local_stage/unit-versions.json"
   fi
+  # The data step: deployctl deploy runs the overlay's bin/migrate before it
+  # activates anything (docs/adr/20261018084150-unit-lane-expand-migrations.md).
+  if jq -e '.replace["bin/migrate"]' "$plan" >/dev/null; then
+    install -m 0755 "$units/tools/migrate" "$local_stage/bin/migrate"
+  fi
   install -m 0755 "$deployctl" "$local_stage/bin/deployctl"
   install -m 0755 "$repo_root/scripts/unit-release-verify.sh" "$local_stage/unit-release-verify.sh"
   tar --create --gzip --file "$local_stage.tar.gz" --directory "$local_stage" .
@@ -116,6 +121,8 @@ cmd_stage() {
 # The activation script runs on the host as root. It assembles the overlay
 # (deploy), activates it restarting only the plan's services, and gates each
 # unit's processes and readiness; a failed unit gate rolls straight back.
+# deployctl deploy applies the overlay's migrations first, so a failed
+# migration stops the script before any restart.
 cmd_script() {
   local plan="$1" stage="$2" out="$3" release_id expect only commit release_dir files="" specs=""
   release_id="$(plan_field "$plan" .release_id)"
@@ -139,12 +146,15 @@ cmd_script() {
     fi
     echo "${release_dir}/bin/deployctl deploy --only '${only}' --expect-current ${expect} ${release_id}"
     echo "if [[ -n \"\${ROLLOUT_ACTIVATION_MARKER:-}\" ]]; then touch \"\$ROLLOUT_ACTIVATION_MARKER\"; fi"
-    echo "if ! bash ${stage}/unit-release-verify.sh ${release_dir}${specs}; then"
-    echo "  ${stage}/bin/deployctl rollback --only '${only}'"
-    # Put optional units back on the release now active, too.
-    echo "  bash ${stage}/unit-release-verify.sh \"\$(readlink -f /opt/faas/current)\"${specs} || true"
-    echo '  exit 1'
-    echo 'fi'
+    # A plan that only applies migrations restarts and verifies no unit.
+    if [[ -n "$specs" ]]; then
+      echo "if ! bash ${stage}/unit-release-verify.sh ${release_dir}${specs}; then"
+      echo "  ${stage}/bin/deployctl rollback --only '${only}'"
+      # Put optional units back on the release now active, too.
+      echo "  bash ${stage}/unit-release-verify.sh \"\$(readlink -f /opt/faas/current)\"${specs} || true"
+      echo '  exit 1'
+      echo 'fi'
+    fi
   } > "$out"
 }
 
@@ -230,7 +240,7 @@ cmd_rollback() {
     echo 'set -euo pipefail'
     # The staged deployctl: a full release on a compute host ships none.
     echo "${stage}/bin/deployctl rollback --only '${only}'"
-    echo "bash ${stage}/unit-release-verify.sh \"\$(readlink -f /opt/faas/current)\"${specs}"
+    [[ -z "$specs" ]] || echo "bash ${stage}/unit-release-verify.sh \"\$(readlink -f /opt/faas/current)\"${specs}"
   } > "$script"
   cmd_run "$script"
   rm -f -- "$script"

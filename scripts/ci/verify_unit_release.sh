@@ -37,6 +37,16 @@ jq -e '.tools.deployctl.sha256' "$manifest" >/dev/null || {
   echo "verify_unit_release: the release carries no deployctl" >&2
   exit 1
 }
+# Migrations ride a unit release only with a lane-eligible verdict and the
+# migrate tool built at the release commit
+# (docs/adr/20261018084150-unit-lane-expand-migrations.md).
+if jq -e '(.data.migrations // []) | length > 0' "$manifest" >/dev/null; then
+  jq -e '.data.eligible == true and (.data.version | type == "string") and all(.data.migrations[]; .eligible == true)
+         and (.tools.migrate.sha256 | type == "string")' "$manifest" >/dev/null || {
+    echo "verify_unit_release: the release carries migrations without a lane-eligible verdict and tools/migrate" >&2
+    exit 1
+  }
+fi
 jq -r '(.units | to_entries[] | "\(.value.sha256)  bin/\(.key)"), (.tools | to_entries[] | "\(.value.sha256)  tools/\(.key)")' "$manifest" \
   | (cd "$dir/unpacked" && sha256sum -c --quiet -) >&2
 if [[ "$(find "$dir/unpacked/bin" -type f | wc -l | tr -d ' ')" -ne "$(jq '.units | length' "$manifest")" ||

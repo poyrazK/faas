@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -64,7 +65,7 @@ var ErrMigrationLockNotHeld = errors.New("db: migration lock not held")
 // Errors:
 //   - nil pool  → "db: AcquireMigrationLock: nil pool"
 //   - pool.Acquire failure → wrapped
-//   - pg_advisory_lock failure → wrapped (after rolling back the pinned conn)
+//   - pg_try_advisory_lock failure → wrapped (after releasing the pinned conn)
 //
 // The helper does NOT acquire the goose shim or call MigrateUp — the
 // caller composes them. The lock and the migration are separate concerns
@@ -86,14 +87,28 @@ func AcquireMigrationLock(ctx context.Context, pool *pgxpool.Pool) (release func
 		return nil, fmt.Errorf("db: acquire pool conn for migration lock: %w", err)
 	}
 
-	// Use the session-scoped variant: returns at session end OR explicit
-	// unlock. We use ExecContext (not QueryRowContext.Scan) because the
-	// variant returns void — the boolean "acquired" parameter is irrelevant
-	// when we use the blocking form (the try-form is pg_try_advisory_lock,
-	// which we deliberately do NOT use here).
-	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", MigrationLockKey); err != nil {
-		conn.Release()
-		return nil, fmt.Errorf("db: pg_advisory_lock(%d): %w", MigrationLockKey, err)
+	// A blocking pg_advisory_lock SELECT retains a snapshot while waiting.
+	// CREATE INDEX CONCURRENTLY in the current holder's migration then waits
+	// for that snapshot, while the waiter needs this holder to release its
+	// lock. Poll the same session lock with short statements and wait in Go
+	// so contenders cannot prevent the current migration from completing.
+	poll := time.NewTicker(migrationLockPollInterval)
+	defer poll.Stop()
+	for {
+		var acquired bool
+		if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", MigrationLockKey).Scan(&acquired); err != nil {
+			conn.Release()
+			return nil, fmt.Errorf("db: pg_try_advisory_lock(%d): %w", MigrationLockKey, err)
+		}
+		if acquired {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			conn.Release()
+			return nil, fmt.Errorf("db: wait for migration lock: %w", ctx.Err())
+		case <-poll.C:
+		}
 	}
 
 	var released bool
@@ -135,3 +150,5 @@ func AcquireMigrationLock(ctx context.Context, pool *pgxpool.Pool) (release func
 // the network or Postgres itself is gone, in which case the daemon is
 // about to die anyway and the caller will log the timeout.
 const pgxLockUnlockTimeout = 5 * 1_000_000_000 // 5s in ns; matches pgxpool default
+
+const migrationLockPollInterval = 100 * time.Millisecond

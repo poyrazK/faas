@@ -7,11 +7,16 @@ Severity: warn after failed writes exceed 1/min for 2 minutes.
 
 ## Impact
 
-The exact public `x-faas-request-id` mapping is a mandatory write before
-the gateway sends work to the guest. A failed write returns 503 and the
-guest is not invoked for that request. The alert is fleet-wide by design;
-the metric has only the closed `result` label and never records app IDs,
-request IDs, paths, or payloads.
+The exact public `x-faas-request-id` mapping is a debugging index. Since
+ADR-634 the gateway queues it and still serves the request when the write
+fails; since ADR-1521 the queue writes records to apid in batches of up to
+128. A failed record means its request ID may not resolve in the debugger.
+The alert fires when failed records are above 1 per minute and above 5% of
+all records for 2 minutes. It is fleet-wide by design; the metric has only
+the closed `result` label (`recorded`, `rejected`, `failed`, `dropped`) and
+never records app IDs, request IDs, paths, or payloads. `rejected` records
+were refused by apid (malformed, app not owned by the account, or the plan
+keeps no debugger data) and do not page.
 
 ## Verify
 
@@ -39,11 +44,12 @@ histogram_quantile(
    failures usually mean the journal insert is being rejected or the
    apid listener is unavailable; correlate with Postgres capacity and
    apid database error metrics.
-3. Confirm the counters return to zero failure rate and journal-write
-   latency is below the gateway's 2-second RPC deadline before closing
-   the alert.
+3. If gatewayd-internal logs `apid has no batch RPC`, the control plane's
+   apid predates ADR-1521 and the gateway is writing one record per RPC. That
+   is expected during a rollout; it is not the cause of failures.
+4. Confirm the counters return to a low failure share and the batch write
+   latency is below the gateway's 2-second RPC deadline before closing the
+   alert.
 
-Do not bypass or make this write best-effort to clear the alert: that
-would allow a request to execute without the exact lookup record the
-public debugger promises. Requests rejected at this gate have not been
-forwarded to the guest, so callers can retry after the write path recovers.
+Do not make the gateway wait for the journal to clear the alert: ADR-634
+keeps the journal off the request's critical path on purpose.

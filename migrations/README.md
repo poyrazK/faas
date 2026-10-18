@@ -59,6 +59,12 @@ Goose against its existing effects. CI also runs the recovery refusal tests.
 
 ## Authoring contract
 
+- Declare the compatibility class once in every new migration:
+  `-- migration-compat: expand` when the previous release runs correctly
+  against the new schema (a per-unit release may apply it before the next
+  full release), or `-- migration-compat: contract` when only a full
+  release may. `make migration-lint` checks the claim; see
+  [ADR 20261018084150](../docs/adr/20261018084150-unit-lane-expand-migrations.md).
 - Prefer additive expand migrations. Backfill separately, deploy compatible
   code, and contract only after every old binary is gone.
 - New migrations must be replay-safe; CI removes their ledger rows and runs

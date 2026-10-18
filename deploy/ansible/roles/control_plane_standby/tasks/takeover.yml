@@ -13,6 +13,9 @@
   register: control_plane_standby_recovery
   changed_when: false
   failed_when: (control_plane_standby_recovery.stdout | trim) != 'f'
+  # A rebuild from the off-host backup installs the files before PostgreSQL
+  # exists (cp_state_restore.yml); a standby takeover always checks.
+  when: control_plane_standby_require_promoted | bool
 
 - name: control_plane_standby — read the staging index
   ansible.builtin.slurp:
