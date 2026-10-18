@@ -51,5 +51,6 @@ func (e *Engine) createWithNodePlacement(ctx context.Context, request Request, r
 		}
 		ctx = context.WithValue(ctx, freshNodePlacementKey{}, true)
 	}
-	return state.Instance{}, Placement{}, nil, api.ErrCapacity("The node fleet changed during placement; retry admission")
+	return state.Instance{}, Placement{}, nil, explainAdmission(api.ErrCapacity("The node fleet changed during placement; retry admission"),
+		api.WorkerAdmissionBlocker{Code: "placement_changed"})
 }

@@ -316,6 +316,9 @@ type Querier interface {
 	// The broker batch is authoritative: claiming an unrelated due row would
 	// lease it without dispatching it and block its actual broker delivery.
 	ClaimTriggerRecordsByItems(ctx context.Context, db DBTX, arg ClaimTriggerRecordsByItemsParams) ([]ClaimTriggerRecordsByItemsRow, error)
+	// Claims always allow an event to inspect demand and drain surplus workers.
+	// The returned failure deadline gates new admission inside the reconciler.
+	ClaimWorkerRecovery(ctx context.Context, db DBTX, arg ClaimWorkerRecoveryParams) (WorkerRecovery, error)
 	ClearAppSecretRuntimeProcessAck(ctx context.Context, db DBTX, arg ClearAppSecretRuntimeProcessAckParams) (int64, error)
 	ClearApplicationStandardControlBindings(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	ClearInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) error
@@ -412,6 +415,7 @@ type Querier interface {
 	CompleteProjectEnvironmentClonePublication(ctx context.Context, db DBTX, arg CompleteProjectEnvironmentClonePublicationParams) (int64, error)
 	CompleteScenarioWorkerFault(ctx context.Context, db DBTX, arg CompleteScenarioWorkerFaultParams) (int64, error)
 	CompleteServiceRecovery(ctx context.Context, db DBTX, arg CompleteServiceRecoveryParams) (int64, error)
+	CompleteWorkerRecovery(ctx context.Context, db DBTX, arg CompleteWorkerRecoveryParams) (int64, error)
 	CompleteWorkflowForEach(ctx context.Context, db DBTX, arg CompleteWorkflowForEachParams) error
 	CompleteWorkflowJoin(ctx context.Context, db DBTX, arg CompleteWorkflowJoinParams) error
 	// The parent run lock serializes this consumption with guest reporting and
@@ -2891,6 +2895,7 @@ type Querier interface {
 	ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListTriggersForAppRow, error)
 	ListUDPListenersForApp(ctx context.Context, db DBTX, appID string) ([]AppUdpListener, error)
 	ListWarmPoolReconciliationAppIDs(ctx context.Context, db DBTX, nodeID string) ([]string, error)
+	ListWorkerRecoveryApps(ctx context.Context, db DBTX, arg ListWorkerRecoveryAppsParams) ([]pgtype.UUID, error)
 	ListWorkflowAutomationHealthFailedSteps(ctx context.Context, db DBTX, arg ListWorkflowAutomationHealthFailedStepsParams) ([]ListWorkflowAutomationHealthFailedStepsRow, error)
 	ListWorkflowAutomationHealthRecentRuns(ctx context.Context, db DBTX, arg ListWorkflowAutomationHealthRecentRunsParams) ([]ListWorkflowAutomationHealthRecentRunsRow, error)
 	ListWorkflowAutomationRevisions(ctx context.Context, db DBTX, arg ListWorkflowAutomationRevisionsParams) ([]WorkflowAutomationRevision, error)
@@ -4495,6 +4500,12 @@ type Querier interface {
 	// caller-generated record UUID makes an RPC retry idempotent without
 	// collapsing two customer requests that happen to reuse a public ID.
 	RecordRequestIDJournal(ctx context.Context, db DBTX, arg RecordRequestIDJournalParams) (pgtype.UUID, error)
+	// ADR-1521: RecordRequestIDJournal for many records in one statement. The
+	// same ownership join and idempotent-retry rule apply per row; a row whose app
+	// is not owned by its account, or whose id holds different content, is left
+	// out of RETURNING. Record ids must be unique within one call: ON CONFLICT DO
+	// UPDATE cannot touch the same row twice in a statement.
+	RecordRequestIDJournalBatch(ctx context.Context, db DBTX, arg RecordRequestIDJournalBatchParams) ([]pgtype.UUID, error)
 	RecordRouteProbeObservation(ctx context.Context, db DBTX, arg RecordRouteProbeObservationParams) error
 	// Operator-owned native runtime qualification (ADR-739), never customer intent.
 	RecordRuntimeReleaseQualification(ctx context.Context, db DBTX, arg RecordRuntimeReleaseQualificationParams) (RuntimeReleaseQualification, error)
@@ -5282,6 +5293,11 @@ type Querier interface {
 	WorkerAdmissionCount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	WorkerAdmissionLockAccount(ctx context.Context, db DBTX, arg WorkerAdmissionLockAccountParams) (WorkerAdmissionLockAccountRow, error)
 	WorkerPoolHistory(ctx context.Context, db DBTX, arg WorkerPoolHistoryParams) (WorkerPoolHistoryRow, error)
+	WorkerRecoveryByApp(ctx context.Context, db DBTX, appID pgtype.UUID) (WorkerRecovery, error)
+	// Aggregate only eligible apps owned by this scheduler, including candidates
+	// that have never acquired a lease. Live leases and persisted retry deadlines
+	// suppress overdue detection until they expire plus the discovery grace.
+	WorkerRecoverySummary(ctx context.Context, db DBTX, arg WorkerRecoverySummaryParams) (WorkerRecoverySummaryRow, error)
 	WorkflowAlertSnapshot(ctx context.Context, db DBTX, arg WorkflowAlertSnapshotParams) (WorkflowAlertSnapshotRow, error)
 	WorkflowControlSteps(ctx context.Context, db DBTX, runID pgtype.UUID) ([]WorkflowControlStepsRow, error)
 	// Recheck after acquiring the workflow concurrency lock. Earlier workers can

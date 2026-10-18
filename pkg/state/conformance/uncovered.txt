@@ -334,7 +334,6 @@ ListExpiredTriggerRecordsForReaper
 ListGdprRequestsForAccount
 ListGitHubInstallationsForAccount
 ListGithubInstallBindingsForAccount
-ListInstancesByNodeID
 ListInstancesByStatesOlderThan
 ListInstancesForAccount
 ListInstancesForAccountPaged

@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "f0c151d44d2d2bd73db4561064a29fe29fb7c2438ced1fa42400e4d2240cfb0f",
+      "revision": "0aae5290f3f5c0a06859bef6cc38a59554ee94bf2bd38e58dd4fd10ccb6d7f77",
       "files": [
         "faas.rules.yml"
       ],
@@ -439,6 +439,19 @@
           }
         },
         {
+          "id": "1402f61a4526a2740c804ee41c6442a9bbc431481ff04031e9b90c62470b4aa5",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_worker_recovery",
+          "rule_name": "FaasWorkerPoolUnderCapacity",
+          "definition": {
+            "expression_hash": "e49f63fb4d23671ab110e1585df9124af5fcbbd197aa874cdd5de5cb0b943672",
+            "labels_hash": "44dd39535f6064fdadd5df2b1a3bd3a9fcd8a746a84e28fe71bdc8764bc41e4a",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e2bb3ec6322b70b3e0d67da0e62b6f473473bcd698218740e1bd0f61b980a7eb"
+          }
+        },
+        {
           "id": "1424096bc806228a49b93aa76c035162f13ac70183a01ff76e5cde7adf51aaec",
           "file_name": "faas.rules.yml",
           "group_name": "outbound_webhook_delivery",
@@ -475,6 +488,19 @@
             "for_seconds": 0,
             "keep_firing_for_seconds": 0,
             "fingerprint": "4babccc330de73c656e95c79e8042832d83bb45d84723632a6be1d4e7915ee15"
+          }
+        },
+        {
+          "id": "172008b990b22162c31868a9421aeee25aaf2cf49e2391d2f2c7fb1a69c5b76d",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_worker_recovery",
+          "rule_name": "FaasWorkerRecoveryObservationUnavailable",
+          "definition": {
+            "expression_hash": "562323747b526e8ef5ddeb762d5f61db88e58b1cfbb1be51d7b511a10aaac373",
+            "labels_hash": "44dd39535f6064fdadd5df2b1a3bd3a9fcd8a746a84e28fe71bdc8764bc41e4a",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "ebdf25806f3a458622883a5ed8e0ea4dbb40ee8db79dff785b01a49bcd9aaf19"
           }
         },
         {
@@ -1151,6 +1177,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "16e2b836d33997305ec073c650cbc352be2fcaa2f4f562a602f614cc3cc60bc9"
+          }
+        },
+        {
+          "id": "3b6f397d847e301dccb2e68ac0f77d283c9aa2e95d1032a9e298958f085204fa",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_worker_recovery",
+          "rule_name": "FaasWorkerRecoveryStalled",
+          "definition": {
+            "expression_hash": "fa4e1ac5f18e5c798ce44b7f241c150e1577aa54fd21a10cd86a5ffd136c2ce0",
+            "labels_hash": "44dd39535f6064fdadd5df2b1a3bd3a9fcd8a746a84e28fe71bdc8764bc41e4a",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "7252dc8f003ac993ec7ef9a043ee20801861e71f15183fe378f74243d146b7fb"
           }
         },
         {
@@ -3928,11 +3967,11 @@
           "group_name": "request_id_journal",
           "rule_name": "FaasRequestIDJournalWriteFailures",
           "definition": {
-            "expression_hash": "1efe98934fe27c7eb9e10376506c5326304fee3d59433e6f28134260b26339d7",
+            "expression_hash": "b2c4f75c18cf4219022cdee57b297ef444f952b92f11929732105c6dddaf995f",
             "labels_hash": "cea8ff552db49a5ff78573ffa49bd703d56d49b7d42af04384edb6cf49d94442",
             "for_seconds": 120,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "ad85532f2a4e22f40b0994585663384d46a1029db5254d3fc1cc61f42a2b8623"
+            "fingerprint": "1432ee0f4ee93eda3eed268a11cc19e408bd2c73c3ba0af657af6ae0668d57a7"
           }
         },
         {
@@ -4654,7 +4693,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "f87fa41670773ff7d43a04ec64fe04e6d1e1fad9f927e03b0e13bcf7961ea391",
+      "revision": "b6b8894572fb65dd5ad82aaff6cb69a4222bbaeea4f78c6a84540733a76d38b5",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -5106,6 +5145,19 @@
           }
         },
         {
+          "id": "1402f61a4526a2740c804ee41c6442a9bbc431481ff04031e9b90c62470b4aa5",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_worker_recovery",
+          "rule_name": "FaasWorkerPoolUnderCapacity",
+          "definition": {
+            "expression_hash": "e49f63fb4d23671ab110e1585df9124af5fcbbd197aa874cdd5de5cb0b943672",
+            "labels_hash": "44dd39535f6064fdadd5df2b1a3bd3a9fcd8a746a84e28fe71bdc8764bc41e4a",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e2bb3ec6322b70b3e0d67da0e62b6f473473bcd698218740e1bd0f61b980a7eb"
+          }
+        },
+        {
           "id": "1424096bc806228a49b93aa76c035162f13ac70183a01ff76e5cde7adf51aaec",
           "file_name": "faas.rules.yml",
           "group_name": "outbound_webhook_delivery",
@@ -5155,6 +5207,19 @@
             "for_seconds": 0,
             "keep_firing_for_seconds": 0,
             "fingerprint": "4babccc330de73c656e95c79e8042832d83bb45d84723632a6be1d4e7915ee15"
+          }
+        },
+        {
+          "id": "172008b990b22162c31868a9421aeee25aaf2cf49e2391d2f2c7fb1a69c5b76d",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_worker_recovery",
+          "rule_name": "FaasWorkerRecoveryObservationUnavailable",
+          "definition": {
+            "expression_hash": "562323747b526e8ef5ddeb762d5f61db88e58b1cfbb1be51d7b511a10aaac373",
+            "labels_hash": "44dd39535f6064fdadd5df2b1a3bd3a9fcd8a746a84e28fe71bdc8764bc41e4a",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "ebdf25806f3a458622883a5ed8e0ea4dbb40ee8db79dff785b01a49bcd9aaf19"
           }
         },
         {
@@ -5883,6 +5948,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "16e2b836d33997305ec073c650cbc352be2fcaa2f4f562a602f614cc3cc60bc9"
+          }
+        },
+        {
+          "id": "3b6f397d847e301dccb2e68ac0f77d283c9aa2e95d1032a9e298958f085204fa",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_worker_recovery",
+          "rule_name": "FaasWorkerRecoveryStalled",
+          "definition": {
+            "expression_hash": "fa4e1ac5f18e5c798ce44b7f241c150e1577aa54fd21a10cd86a5ffd136c2ce0",
+            "labels_hash": "44dd39535f6064fdadd5df2b1a3bd3a9fcd8a746a84e28fe71bdc8764bc41e4a",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "7252dc8f003ac993ec7ef9a043ee20801861e71f15183fe378f74243d146b7fb"
           }
         },
         {
@@ -8803,11 +8881,11 @@
           "group_name": "request_id_journal",
           "rule_name": "FaasRequestIDJournalWriteFailures",
           "definition": {
-            "expression_hash": "1efe98934fe27c7eb9e10376506c5326304fee3d59433e6f28134260b26339d7",
+            "expression_hash": "b2c4f75c18cf4219022cdee57b297ef444f952b92f11929732105c6dddaf995f",
             "labels_hash": "cea8ff552db49a5ff78573ffa49bd703d56d49b7d42af04384edb6cf49d94442",
             "for_seconds": 120,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "ad85532f2a4e22f40b0994585663384d46a1029db5254d3fc1cc61f42a2b8623"
+            "fingerprint": "1432ee0f4ee93eda3eed268a11cc19e408bd2c73c3ba0af657af6ae0668d57a7"
           }
         },
         {

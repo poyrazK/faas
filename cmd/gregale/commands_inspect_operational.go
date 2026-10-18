@@ -35,6 +35,7 @@ func renderInspectOperational(w io.Writer, summary *api.AppOperationalSummary) {
 }
 
 func renderInspectRecovery(w io.Writer, recovery api.AppOperationalRecovery) {
+	renderInspectWorkerRecovery(w, recovery.Workers)
 	if !recovery.RollbacksAvailable {
 		_, _ = fmt.Fprintln(w, "  rollbacks: unavailable")
 	} else if len(recovery.Rollbacks) == 0 {

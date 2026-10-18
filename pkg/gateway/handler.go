@@ -1535,6 +1535,21 @@ func (h *Handler) WithCentralBackend(central CentralBackend) *Handler {
 	return h
 }
 
+// WithRateLimitLeasing makes every Limiter the Handler owns spend central
+// tokens from local leases (ADR-1520) instead of consulting Postgres per
+// request. It matters only after WithCentralBackend installed a backend that
+// grants tokens in batches. Call before serving requests.
+func (h *Handler) WithRateLimitLeasing(cfg LeaseConfig) *Handler {
+	var observer LeaseObserver
+	if h.metrics != nil {
+		observer = h.metrics
+	}
+	for _, limiter := range h.limiters() {
+		limiter.EnableLeasing(cfg, observer)
+	}
+	return h
+}
+
 // WithPreAuthCentralBackend enables the separately opt-in, shared source
 // budget on exact pre-auth routes. It is wired at boot even when the general
 // app/account limiter remains in local mode. A nil backend leaves those routes

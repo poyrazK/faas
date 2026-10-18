@@ -1271,6 +1271,7 @@ type MemStore struct {
 	realtimeTickets                 map[string]storedRealtimeTicket
 	realtimeChannelWebhookFilters   map[string]RealtimeChannelWebhookFilter
 	managedRealtimeAccess           map[string]map[string]ManagedRealtimeAccess
+	workerRecovery                  map[string]WorkerRecovery
 }
 
 // installRepoKey mirrors the projects_install_repo_uniq partial index
@@ -7043,6 +7044,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 		}
 	}
 	delete(m.serviceRecovery, id)
+	delete(m.workerRecovery, id)
 	m.deleteEnvironmentSecretRefsLocked(id, "")
 	m.deleteEnvironmentWorkloadIntentsLocked(id, "")
 	m.deleteWorkflowDispatchCursorsLocked(id)
@@ -22478,6 +22480,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for aid, a := range m.apps {
 		if a.AccountID == id {
 			delete(m.serviceRecovery, aid)
+			delete(m.workerRecovery, aid)
 			m.deleteEnvironmentSecretRefsLocked(aid, "")
 			m.deleteEnvironmentWorkloadIntentsLocked(aid, "")
 			m.deleteWorkflowDispatchCursorsLocked(aid)
