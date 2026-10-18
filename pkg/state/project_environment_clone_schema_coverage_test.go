@@ -38,6 +38,10 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"operator_recovery_submissions": CloneSchemaOperational,
 		"operator_restart_executions":   CloneSchemaOperational,
 
+		// ADR-1344: a node's liveness lease and fencing epoch retain their
+		// original physical owner; cloning cannot create lease authority.
+		"node_leases": CloneSchemaOperational,
+
 		// ADR-1562: retain delivery of original physical storage settlements.
 		"object_node_settlement_outbox": CloneSchemaOperational,
 
