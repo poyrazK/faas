@@ -6,6 +6,7 @@
 -- scope and marks those snapshots stale, as an app variable write does. The
 -- trigger covers every writer: the config API, promotions and their
 -- rollbacks, clones and GitOps apply.
+-- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
