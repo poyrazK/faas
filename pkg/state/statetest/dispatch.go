@@ -3781,7 +3781,6 @@ func (s *Store) ListDeploymentsForOperator(p0 context.Context, p1 state.Operator
 	return s.Store.ListDeploymentsForOperator(p0, p1)
 }
 
-
 func (s *Store) ProjectByOrgSlug(ctx context.Context, orgID, slug string) (state.Project, error) {
 	if override, ok := s.over.(interface {
 		ProjectByOrgSlug(context.Context, string, string) (state.Project, error)
