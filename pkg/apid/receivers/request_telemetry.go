@@ -168,61 +168,76 @@ func (r *requestTelemetryReceiver) RecordConsumerUsage(ctx context.Context, req 
 // bypasses the optional telemetry kill switch and telemetry sampling/rate caps:
 // otherwise the identity guarantee would silently degrade to best effort.
 func (r *requestTelemetryReceiver) RecordRequestIDJournal(ctx context.Context, req *apidpb.RecordRequestIDJournalRequest) (*apidpb.RecordRequestIDJournalResponse, error) {
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request ID journal record is required")
-	}
-	recordID, err := uuid.Parse(req.GetRecordId())
+	entry, err := parseRequestIDJournalRecord(req, time.Now().UTC())
 	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, "record_id must be a UUID")
+		return nil, err
 	}
-	accountID, err := uuid.Parse(req.GetAccountId())
-	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, "account_id must be a UUID")
-	}
-	appID, err := uuid.Parse(req.GetAppId())
-	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, "app_id must be a UUID")
-	}
-	requestID := req.GetRequestId()
-	if len(requestID) == 0 || len(requestID) > 128 || strings.IndexFunc(requestID, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
-		return nil, status.Error(codes.InvalidArgument, "request_id must be 1..128 bytes without control characters")
-	}
-	traceID := req.GetTraceId()
-	if traceID != "" {
-		decoded, decodeErr := hex.DecodeString(traceID)
-		if decodeErr != nil || len(traceID) != 32 || strings.ToLower(traceID) != traceID || allZeroBytes(decoded) {
-			return nil, status.Error(codes.InvalidArgument, "trace_id must be a non-zero lowercase W3C trace id")
-		}
-	}
-	receivedAt := time.UnixMilli(req.GetReceivedAtUnixMs()).UTC()
-	if req.GetReceivedAtUnixMs() <= 0 || receivedAt.After(time.Now().UTC().Add(time.Minute)) {
-		return nil, status.Error(codes.InvalidArgument, "received_at must be a valid request timestamp")
-	}
-	account, err := r.store.AccountByID(ctx, accountID.String())
+	account, err := r.store.AccountByID(ctx, entry.AccountID)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "resolve request ID journal account: %v", err)
 	}
-	limits := api.MustLimitsFor(account.Plan)
-	if !limits.DebugTelemetryEnabled || limits.DebugTelemetryRetentionDays <= 0 {
+	retention := requestIDJournalRetention(account.Plan)
+	if retention <= 0 {
 		return &apidpb.RecordRequestIDJournalResponse{Recorded: false}, nil
 	}
 	journal, ok := r.store.(state.RequestIDJournalWriter)
 	if !ok {
 		return nil, status.Error(codes.Unavailable, "durable request ID journal is unavailable")
 	}
-	entry := state.RequestIDJournalEntry{
-		ID:         recordID.String(),
-		AccountID:  accountID.String(),
-		AppID:      appID.String(),
-		RequestID:  requestID,
-		TraceID:    traceID,
-		ReceivedAt: receivedAt,
-		ExpiresAt:  receivedAt.Add(time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour),
-	}
+	entry.ExpiresAt = entry.ReceivedAt.Add(retention)
 	if err := journal.RecordRequestIDJournal(ctx, entry); err != nil {
 		return nil, status.Errorf(codes.Unavailable, "persist request ID journal: %v", err)
 	}
 	return &apidpb.RecordRequestIDJournalResponse{Recorded: true}, nil
+}
+
+// parseRequestIDJournalRecord validates one wire record into an entry without
+// its expiry, which depends on the account's plan. Errors are InvalidArgument.
+func parseRequestIDJournalRecord(req *apidpb.RecordRequestIDJournalRequest, now time.Time) (state.RequestIDJournalEntry, error) {
+	if req == nil {
+		return state.RequestIDJournalEntry{}, status.Error(codes.InvalidArgument, "request ID journal record is required")
+	}
+	recordID, err := uuid.Parse(req.GetRecordId())
+	if err != nil {
+		return state.RequestIDJournalEntry{}, status.Error(codes.InvalidArgument, "record_id must be a UUID")
+	}
+	accountID, err := uuid.Parse(req.GetAccountId())
+	if err != nil {
+		return state.RequestIDJournalEntry{}, status.Error(codes.InvalidArgument, "account_id must be a UUID")
+	}
+	appID, err := uuid.Parse(req.GetAppId())
+	if err != nil {
+		return state.RequestIDJournalEntry{}, status.Error(codes.InvalidArgument, "app_id must be a UUID")
+	}
+	requestID := req.GetRequestId()
+	if len(requestID) == 0 || len(requestID) > 128 || strings.IndexFunc(requestID, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
+		return state.RequestIDJournalEntry{}, status.Error(codes.InvalidArgument, "request_id must be 1..128 bytes without control characters")
+	}
+	traceID := req.GetTraceId()
+	if traceID != "" {
+		decoded, decodeErr := hex.DecodeString(traceID)
+		if decodeErr != nil || len(traceID) != 32 || strings.ToLower(traceID) != traceID || allZeroBytes(decoded) {
+			return state.RequestIDJournalEntry{}, status.Error(codes.InvalidArgument, "trace_id must be a non-zero lowercase W3C trace id")
+		}
+	}
+	receivedAt := time.UnixMilli(req.GetReceivedAtUnixMs()).UTC()
+	if req.GetReceivedAtUnixMs() <= 0 || receivedAt.After(now.Add(time.Minute)) {
+		return state.RequestIDJournalEntry{}, status.Error(codes.InvalidArgument, "received_at must be a valid request timestamp")
+	}
+	return state.RequestIDJournalEntry{
+		ID: recordID.String(), AccountID: accountID.String(), AppID: appID.String(),
+		RequestID: requestID, TraceID: traceID, ReceivedAt: receivedAt,
+	}, nil
+}
+
+// requestIDJournalRetention is the request-time debugger retention of plan;
+// zero means the plan has no debugger entitlement.
+func requestIDJournalRetention(plan api.Plan) time.Duration {
+	limits := api.MustLimitsFor(plan)
+	if !limits.DebugTelemetryEnabled || limits.DebugTelemetryRetentionDays <= 0 {
+		return 0
+	}
+	return time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
 }
 
 func allZeroBytes(value []byte) bool {

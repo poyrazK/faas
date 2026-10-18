@@ -12,6 +12,8 @@ gatewayd_route_metrics_enabled: true
 # ADR-143: streaming responses are a paid Hobby+ feature; production is on.
 gatewayd_streaming_enabled: true
 gatewayd_ratelimit_mode: central
+# ADR-1520 rate-limit token leasing; requires gatewayd_ratelimit_mode central.
+gatewayd_ratelimit_lease: false
 
 # ADR-20261018072701: hold gatewayd-internal's unix socket and split-box data listener
 # (faas_gateway_listen), and realtimed's socket, in systemd sockets so a
