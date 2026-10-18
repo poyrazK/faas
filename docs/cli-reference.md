@@ -13726,6 +13726,62 @@ gregale logs views save runtime-errors --since 1h --level error
 gregale logs my-api --view runtime-errors
 ```
 
+### logs search
+
+Search the app&#39;s log events by text, level, route, status, release, request or trace (ADR-20261018083536)
+
+`gregale logs search [--app <SLUG>] [--q <TEXT>] [--since <15m|6h|3d|RFC3339>] [--until <RFC3339>] [--source <SOURCE>] [--level <LEVELS>] [--route <ROUTE>] [--status <502|5xx>] [--deployment <ID>] [--request <ID>] [--trace <TRACE_ID>] [--limit <N>] [--cursor <CURSOR>] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional; defaults to linked context) |  |
+| `--q <TEXT>` | case-insensitive text the message contains (2..256 characters; windows up to 24h) |  |
+| `--since <15m|6h|3d|RFC3339>` | window start: lookback or RFC3339 (default 1h) |  |
+| `--until <RFC3339>` | window end (default now) |  |
+| `--source <SOURCE>` | ledger source | one of `runtime` · `build` · `deploy` · `http` · `network` · `dns` |
+| `--level <LEVELS>` | comma list of levels (trace, debug, info, warn, error, fatal) |  |
+| `--route <ROUTE>` | exact route template, e.g. /checkout/{id} |  |
+| `--status <502|5xx>` | HTTP status or class |  |
+| `--deployment <ID>` | deployment id |  |
+| `--request <ID>` | request id or trace id |  |
+| `--trace <TRACE_ID>` | W3C trace id |  |
+| `--limit <N>` | events per page (1..200) |  |
+| `--cursor <CURSOR>` | next_cursor from the previous page |  |
+
+Examples:
+
+```sh
+gregale logs search my-api --level error --since 6h
+gregale logs search my-api --q timeout --status 5xx --since 2h --json
+```
+
+### logs facets
+
+Count matching log events by source, level, status class and route
+
+`gregale logs facets [--app <SLUG>] [--q <TEXT>] [--since <15m|6h|3d|RFC3339>] [--until <RFC3339>] [--source <SOURCE>] [--level <LEVELS>] [--route <ROUTE>] [--status <502|5xx>] [--deployment <ID>] [--request <ID>] [--trace <TRACE_ID>] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional; defaults to linked context) |  |
+| `--q <TEXT>` | case-insensitive text the message contains (2..256 characters; windows up to 24h) |  |
+| `--since <15m|6h|3d|RFC3339>` | window start: lookback or RFC3339 (default 1h) |  |
+| `--until <RFC3339>` | window end (default now) |  |
+| `--source <SOURCE>` | ledger source | one of `runtime` · `build` · `deploy` · `http` · `network` · `dns` |
+| `--level <LEVELS>` | comma list of levels (trace, debug, info, warn, error, fatal) |  |
+| `--route <ROUTE>` | exact route template, e.g. /checkout/{id} |  |
+| `--status <502|5xx>` | HTTP status or class |  |
+| `--deployment <ID>` | deployment id |  |
+| `--request <ID>` | request id or trace id |  |
+| `--trace <TRACE_ID>` | W3C trace id |  |
+
+Examples:
+
+```sh
+gregale logs facets my-api --since 24h
+gregale logs facets my-api --source http --status 5xx --since 7d
+```
+
 ### logs defaults
 
 Show or manage the project-local preferred log view

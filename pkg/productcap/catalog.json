@@ -64,17 +64,6 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_change_timeline_test.go::TestGetChangeTimeline_MergesSources"
     },
     {
-      "id": "log-search",
-      "name": "Log search",
-      "category": "observability",
-      "description": "Search an app's logs by text, level, route, status, release, request, and trace, and count the matches by facet, across the plan's log retention.",
-      "maturity": "internal",
-      "plans": [],
-      "docs_url": "/docs/adr/20261018083536-customer-log-search",
-      "operator_flag": "FAAS_LOG_SEARCH_ENABLED",
-      "acceptance_test": "pkg/apid/logsearch/service_test.go::TestSearchPagesNewestFirst"
-    },
-    {
       "id": "circuit-breaking",
       "name": "Circuit breaking",
       "category": "edge",
@@ -365,6 +354,17 @@
       ],
       "docs_url": "/docs/issues",
       "acceptance_test": "pkg/apid/apidserver/handlers_issues_integration_test.go::TestIssueEndToEndPostgres"
+    },
+    {
+      "id": "log-search",
+      "name": "Log search",
+      "category": "observability",
+      "description": "Search an app's logs by text, level, route, status, release, request, and trace, and count the matches by facet, across the plan's log retention.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261018083536-customer-log-search",
+      "operator_flag": "FAAS_LOG_SEARCH_ENABLED",
+      "acceptance_test": "pkg/apid/logsearch/service_test.go::TestSearchPagesNewestFirst"
     },
     {
       "id": "managed-exclusive-operations",
