@@ -173,7 +173,6 @@ func mapAdmissionFunctionError(err error, nodeID string) (error, bool) {
 	return nil, false
 }
 
-
 func undefinedFunction(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "42883"
