@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -123,12 +124,32 @@ func DialContext(ctx context.Context, target string, tlsCfg *tls.Config) (*Clien
 	if target == "" {
 		return nil, errors.New("scheddgrpc: empty schedd target")
 	}
-	conn, err := wire.DialContext(ctx, target, tlsCfg)
+	conn, err := wire.DialContext(ctx, target, tlsCfg, grpc.WithConnectParams(schedulerConnectParams))
 	if err != nil {
 		return nil, fmt.Errorf("scheddgrpc: dial schedd %q: %w", target, err)
 	}
 	return &Client{conn: conn, cli: scheddpb.NewScheddClient(conn)}, nil
 }
+
+// A schedd restart (every rollout) must not fail the wakes behind it. The
+// request-path RPCs wait for the connection to become ready within their own
+// deadline, which the gateway's wake hold bounds, instead of failing fast
+// while schedd is down; reconnect attempts stay at most a second apart so a
+// wake proceeds as soon as the replacement listens. A socket-activated
+// schedd keeps the connect from failing at all
+// (docs/adr/2026101801-zero-downtime-daemon-restarts.md).
+var (
+	waitForScheduler       = grpc.WaitForReady(true)
+	schedulerConnectParams = grpc.ConnectParams{
+		Backoff: backoff.Config{
+			BaseDelay:  100 * time.Millisecond,
+			Multiplier: 1.6,
+			Jitter:     0.2,
+			MaxDelay:   time.Second,
+		},
+		MinConnectTimeout: 5 * time.Second,
+	}
+)
 
 // NewClient wraps an already-dialed connection (used by bufconn tests).
 func NewClient(conn *grpc.ClientConn) *Client {
@@ -167,7 +188,7 @@ func (c *Client) Wake(ctx context.Context, appID, deploymentID, scope string) (i
 	// envelope, warm/synthetic callers that still use Wake reach schedd with an
 	// empty request_id even though the gateway already stamped it on ctx.
 	ctx = withWakeCorrelation(ctx, "")
-	resp, err := c.cli.Wake(ctx, &scheddpb.WakeRequest{AppId: appID, DeploymentId: deploymentID, Scope: scope})
+	resp, err := c.cli.Wake(ctx, &scheddpb.WakeRequest{AppId: appID, DeploymentId: deploymentID, Scope: scope}, waitForScheduler)
 	if err != nil {
 		return "", "", "", "", 0, liftErr(err)
 	}
@@ -179,7 +200,7 @@ func (c *Client) Wake(ctx context.Context, appID, deploymentID, scope string) (i
 // newer callers can preserve the scheduler-authored deployment metadata.
 func (c *Client) WakeWithIdentity(ctx context.Context, appID, deploymentID, scope string) (instanceID, nodeID, deploymentIDOut, wakeID string, port int, identity api.PlatformIdentity, err error) {
 	ctx = withWakeCorrelation(ctx, "")
-	resp, err := c.cli.Wake(ctx, &scheddpb.WakeRequest{AppId: appID, DeploymentId: deploymentID, Scope: scope})
+	resp, err := c.cli.Wake(ctx, &scheddpb.WakeRequest{AppId: appID, DeploymentId: deploymentID, Scope: scope}, waitForScheduler)
 	if err != nil {
 		return "", "", "", "", 0, api.PlatformIdentity{}, liftErr(err)
 	}
@@ -221,7 +242,7 @@ func (c *Client) WakeWithIdentity(ctx context.Context, appID, deploymentID, scop
 // ADR-016.
 func (c *Client) AdmitInstance(ctx context.Context, appID, deploymentID, scope, trigger string) (instanceID, nodeID, deploymentIDOut, wakeID string, method int32, atCapacity bool, port int, err error) {
 	ctx = withWakeCorrelation(ctx, trigger)
-	resp, err := c.cli.AdmitInstance(ctx, &scheddpb.AdmitInstanceRequest{AppId: appID, DeploymentId: deploymentID, Scope: scope, Trigger: trigger})
+	resp, err := c.cli.AdmitInstance(ctx, &scheddpb.AdmitInstanceRequest{AppId: appID, DeploymentId: deploymentID, Scope: scope, Trigger: trigger}, waitForScheduler)
 	if err != nil {
 		return "", "", "", "", 0, false, 0, liftErr(err)
 	}
@@ -234,7 +255,7 @@ func (c *Client) AdmitInstance(ctx context.Context, appID, deploymentID, scope, 
 // scheduler's authoritative deployment identity on every request.
 func (c *Client) AdmitInstanceWithIdentity(ctx context.Context, appID, deploymentID, scope, trigger string) (instanceID, nodeID, deploymentIDOut, wakeID string, method int32, atCapacity bool, port int, identity api.PlatformIdentity, err error) {
 	ctx = withWakeCorrelation(ctx, trigger)
-	resp, err := c.cli.AdmitInstance(ctx, &scheddpb.AdmitInstanceRequest{AppId: appID, DeploymentId: deploymentID, Scope: scope, Trigger: trigger})
+	resp, err := c.cli.AdmitInstance(ctx, &scheddpb.AdmitInstanceRequest{AppId: appID, DeploymentId: deploymentID, Scope: scope, Trigger: trigger}, waitForScheduler)
 	if err != nil {
 		return "", "", "", "", 0, false, 0, api.PlatformIdentity{}, liftErr(err)
 	}
@@ -277,7 +298,7 @@ func (c *Client) AdmitInstances(ctx context.Context, appID, scope, trigger strin
 				Scope:             scope,
 				Trigger:           trigger,
 				BurstContinuation: true,
-			})
+			}, waitForScheduler)
 			if callErr != nil {
 				callErr = liftErr(callErr)
 				if report != nil {
@@ -332,7 +353,7 @@ func (c *Client) AdmitInstancesWithIdentity(ctx context.Context, appID, scope, t
 				Scope:             scope,
 				Trigger:           trigger,
 				BurstContinuation: true,
-			})
+			}, waitForScheduler)
 			if callErr != nil {
 				callErr = liftErr(callErr)
 				if report != nil {
@@ -364,7 +385,7 @@ func (c *Client) AdmitInstancesWithIdentity(ctx context.Context, appID, scope, t
 // stamped on the emitted wake.boot_started / wake.boot_completed events.
 func (c *Client) EnsureWake(ctx context.Context, appID, trigger string) (instanceID, nodeID, deploymentIDOut, wakeID string, method int32, port int, err error) {
 	ctx = withWakeCorrelation(ctx, trigger)
-	resp, err := c.cli.EnsureWake(ctx, &scheddpb.EnsureWakeRequest{AppId: appID, Trigger: trigger})
+	resp, err := c.cli.EnsureWake(ctx, &scheddpb.EnsureWakeRequest{AppId: appID, Trigger: trigger}, waitForScheduler)
 	if err != nil {
 		return "", "", "", "", 0, 0, liftErr(err)
 	}
@@ -376,7 +397,7 @@ func (c *Client) EnsureWake(ctx context.Context, appID, trigger string) (instanc
 // the identity returned by schedd for the gateway target cache.
 func (c *Client) EnsureWakeWithIdentity(ctx context.Context, appID, trigger string) (instanceID, nodeID, deploymentIDOut, wakeID string, method int32, port int, identity api.PlatformIdentity, err error) {
 	ctx = withWakeCorrelation(ctx, trigger)
-	resp, err := c.cli.EnsureWake(ctx, &scheddpb.EnsureWakeRequest{AppId: appID, Trigger: trigger})
+	resp, err := c.cli.EnsureWake(ctx, &scheddpb.EnsureWakeRequest{AppId: appID, Trigger: trigger}, waitForScheduler)
 	if err != nil {
 		return "", "", "", "", 0, 0, api.PlatformIdentity{}, liftErr(err)
 	}
@@ -396,7 +417,7 @@ func (c *Client) AdmitMirrorInstance(ctx context.Context, appID, mirrorDeploymen
 		DeploymentId: mirrorDeploymentID,
 		IsMirror:     true,
 		MirrorRuleId: mirrorRuleID,
-	})
+	}, waitForScheduler)
 	if err != nil {
 		return "", "", liftErr(err)
 	}
@@ -413,7 +434,7 @@ func (c *Client) AdmitMirrorInstanceTarget(ctx context.Context, appID, mirrorDep
 		DeploymentId: mirrorDeploymentID,
 		IsMirror:     true,
 		MirrorRuleId: mirrorRuleID,
-	})
+	}, waitForScheduler)
 	if err != nil {
 		return "", "", "", "", 0, liftErr(err)
 	}
@@ -432,7 +453,7 @@ func (c *Client) ReportActivity(ctx context.Context, touches []state.InstanceTou
 			RequestDelta: t.RequestDelta,
 		})
 	}
-	resp, err := c.cli.ReportActivity(ctx, &scheddpb.ReportActivityRequest{Touches: pb})
+	resp, err := c.cli.ReportActivity(ctx, &scheddpb.ReportActivityRequest{Touches: pb}, waitForScheduler)
 	if err != nil {
 		return 0, liftErr(err)
 	}

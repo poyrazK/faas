@@ -433,7 +433,8 @@ type Instance struct {
 	// restore/cold-boot path. ExecuteExecution refuses ordinary app instances;
 	// this prevents a caller from turning a networked long-lived app VM into a
 	// one-shot guest by guessing its instance id.
-	ExecutionOnly bool
+	ExecutionOnly  bool
+	DataRepairOnly bool
 	// ExecutionID is the Runs execution principal (the one-shot instance ID).
 	// The lease and grant list are host-only broker inputs and must never be
 	// serialized into guest-visible state.
@@ -778,6 +779,7 @@ type Manager struct {
 	computeLeases                   map[string]*localComputeLease
 	computeRecoveryMu               sync.Mutex // serializes reconstruction of missing local receipts
 	computeBypassGuard              func(context.Context, string) error
+	dataRepair                      *dataRepairRuntime
 	rehearsalNetworkPolicies        RehearsalNetworkPolicyStore
 	rehearsalRecorders              map[string]*rehearsalrecorder.Session
 	// outboundRelayEnabled advertises vmmd's streaming relay to
@@ -3380,6 +3382,7 @@ func (m *Manager) preparesWakeStateBeforeBoot() bool {
 // *Path fields used, so single-box behaviour is preserved. Field
 // names changed from *Path → *Key to match the new semantics.
 type WakeRequest struct {
+	dataRepairOnly bool
 	RehearsalRunID string // exact durable containment run; ordinary legacy callers may omit it
 	Instance       string
 	// Set only by WakeAdmitted after validating and consuming its grant.
@@ -4958,7 +4961,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	inst := &Instance{
 		publicForwardTarget: publicTarget,
 		Lease:               lease, Net: nc, Method: method,
-		ExecutionOnly: req.ExecutionOnly, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused,
+		ExecutionOnly: req.ExecutionOnly, DataRepairOnly: req.dataRepairOnly, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused,
 		ExecutionID:                     executionID,
 		ExecutionLeaseToken:             req.ExecutionLeaseToken,
 		ExecutionOutboundIntegrationIDs: append([]string(nil), req.ExecutionOutboundIntegrationIDs...),

@@ -62,6 +62,15 @@ from .customer_operations import (
     CustomerOperationPublicationError,
     CustomerOperationTransaction,
 )
+from .data_repair import awith_data_repair_capture, with_data_repair_capture
+from .data_repair_readiness import acheck_data_repair_capture, check_data_repair_capture
+from .data_repair_transactions import (
+    DataRepairCaptureError,
+    awith_repairable_customer_operation_transaction,
+    awith_repairable_operation_transaction,
+    with_repairable_customer_operation_transaction,
+    with_repairable_operation_transaction,
+)
 from .dev_bridge import (
     DEV_BRIDGE_CONTEXT_HEADER,
     AsyncDevBridgeTransport,
@@ -232,6 +241,15 @@ __all__ = (
     "operation_request_digest",
     "operation_request_from_headers",
     "with_operation_transaction",
+    "with_data_repair_capture",
+    "awith_data_repair_capture",
+    "check_data_repair_capture",
+    "acheck_data_repair_capture",
+    "DataRepairCaptureError",
+    "with_repairable_operation_transaction",
+    "awith_repairable_operation_transaction",
+    "with_repairable_customer_operation_transaction",
+    "awith_repairable_customer_operation_transaction",
     "CustomerOperationConflictError",
     "CustomerOperationPublicationError",
     "CustomerOperationRequest",

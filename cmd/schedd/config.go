@@ -482,6 +482,12 @@ func LoadConfig(path string) (*Config, error) {
 		if v := os.Getenv("FAAS_HOST_AGE_IDENTITY_PATH"); v != "" {
 			c.HostAgeIdentityPath = v
 		}
+		// The control-plane role renders this and faas-schedd.socket's
+		// ListenStream from one variable, so the durable socket always
+		// carries the address schedd serves (ADR-2026101801).
+		if v := os.Getenv("FAAS_SCHEDD_LISTEN_ADDR"); v != "" {
+			c.ListenAddr = v
+		}
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {

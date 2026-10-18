@@ -47,3 +47,8 @@ faas_custom_domain_addresses: []
 faas_workload_identity_source_dir: ""
 faas_workload_jwks_path: /etc/faas/workload-identity.jwks.json
 faas_workload_identity_issuer: ""
+# ADR-2026101801: schedd's listen address, rendered into both schedd's
+# FAAS_SCHEDD_LISTEN_ADDR and faas-schedd.socket. The split-box manifest sets
+# it from daemons.schedd.bind. Empty keeps schedd.toml in charge and leaves the
+# durable socket off.
+faas_schedd_listen_addr: ""

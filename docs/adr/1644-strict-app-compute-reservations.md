@@ -73,8 +73,10 @@ generation. Funding remains held and billing stays bounded. Native acceptance
 must test this. Subscription, storage, egress, taxes, independent job resources
 and builds are outside this app compute contract.
 
-Dedicated qualification restore and qualification job boot lack funding and
-fail closed for strict apps. Routed admission compares the node's live incarnation
+Dedicated qualification restore, qualification job boot and data-repair rehearsals
+lack funding and fail closed for strict apps. Repair admission checks the original
+app's budget and rehearsal containment before claiming a sandbox; held previews
+cannot reserve repair capacity. Routed admission compares the node's live incarnation
 with its financial authority. Roll out matching owners before activation; older
 schedulers/meters must not handle strict policies.
 

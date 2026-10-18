@@ -11,6 +11,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 )
 
@@ -22,7 +23,7 @@ func (p *InternalReverseProxy) serveUpgrade(w http.ResponseWriter, r *http.Reque
 	// The compute gateway's raw bridge or realtimed owns the upgraded session's
 	// idle and maximum-age bounds. Detach only the ordinary request budget once
 	// a valid 101 arrives; client cancellation still tears down the tunnel.
-	streamCtx, detachBudget, _, cancelStream := newStreamSession(r.Context(), 0, 0)
+	streamCtx, detachBudget, _, cancelStream := newStreamSession(drain.WithShutdownNotice(r.Context(), p.Drain), 0, 0)
 	defer cancelStream()
 
 	// Never pool a rejected upgrade under the logical gatewayd-internal host:
@@ -71,6 +72,9 @@ func (p *InternalReverseProxy) serveUpgrade(w http.ResponseWriter, r *http.Reque
 			}
 			if resp.StatusCode == http.StatusSwitchingProtocols {
 				detachBudget()
+				// httputil closes the tunnel when streamCtx ends; WebSocket
+				// clients reconnect to the replacement process.
+				drain.EndOnShutdown(streamCtx, cancelStream)
 			} else if edgeTransportStatus(r, resp.StatusCode) {
 				w.Header().Set(edgeOriginalStatusHeader, strconv.Itoa(resp.StatusCode))
 				resp.StatusCode = edgeOrigin504TransportStatus

@@ -130,6 +130,9 @@ func (m *Manager) RecoverNativeQualificationArtifactRetirementPage(ctx context.C
 }
 
 func (m *Manager) prepareNativeLease(ctx context.Context, lease Lease) error {
+	if handled, err := m.prepareDataRepairNativeLease(ctx, lease); handled {
+		return err
+	}
 	if v := m.nativeVMM(); v != nil {
 		return v.prepareNativeLease(ctx, lease)
 	}

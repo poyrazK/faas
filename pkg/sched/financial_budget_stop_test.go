@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func seedBudgetPreview(t *testing.T, s *state.MemStore) (state.Account, state.App, state.Deployment) {
+func seedBudgetPreview(t *testing.T, s state.Store) (state.Account, state.App, state.Deployment) {
 	t.Helper()
 	a, err := s.CreateAccount(t.Context(), "preview-budget@example.test", api.PlanPro)
 	if err != nil {
@@ -28,7 +28,10 @@ func seedBudgetPreview(t *testing.T, s *state.MemStore) (state.Account, state.Ap
 	return a, app, d
 }
 
-func crossPreviewBudget(t *testing.T, s *state.MemStore, account string, now time.Time, drain int) state.FinancialBudget {
+func crossPreviewBudget(t *testing.T, s interface {
+	state.FinancialBudgetStore
+	state.FinancialBudgetMonitorStore
+}, account string, now time.Time, drain int) state.FinancialBudget {
 	t.Helper()
 	spec := financial.BudgetSpec{Name: "Preview compute", Scope: financial.BudgetScope{Kind: "account"}, Currency: "USD", Meters: []string{"compute"}, Basis: "gross_usage", LimitMillicents: 100, Mode: "monitored", Action: "stop_previews", ResumeRule: "manual", DrainSeconds: drain, Enabled: true}
 	p, err := s.CreateFinancialBudget(t.Context(), account, uuid.NewString(), "editor", spec)
