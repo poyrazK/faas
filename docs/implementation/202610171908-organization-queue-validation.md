@@ -486,3 +486,27 @@ with race detection (240.263s), managed PostgreSQL (265.568s), reconciliation
 (185.655s), apid (72.774s) and 150 selected state regressions (168.537s) on
 `2fbc5bce0`; only the partial mail fixtures failed there. Fresh GitHub checks
 must qualify the fixture correction.
+
+## Integration with regression triage and selected traces
+
+Main through `3eadd00f3` is integrated, including host-state backup and the new
+MCP regression/trace diagnostics. Its regression review-version migration adds
+one column to an existing operational table. All 947 unique policies and their
+column sets match a fresh migrated database. Canonical schema generation
+(85,323 lines), the union of 114 state query files, deterministic SQLC checks
+and migration lint pass.
+
+Account-level trace diagnostics retain a personal-resource boundary. A company
+application can preserve its original creator's namespace UUID, so UUID equality
+alone cannot authorize reading its traces after offboarding. The domain now
+checks the personal organization and owner before reading evidence and again
+before returning it. Company and unresolved organizations fail closed. The
+regression failed before the guard (three cases performed two evidence reads)
+and passes afterward; the complete domain suite passes (0.020s). The HTTP
+creator-offboarding regression also covers the new account-level endpoint.
+
+Full Node and pinned Python generation reproduce the merged clients without
+drift. Node build, three diagnostic client tests and 68 Python Auth,
+organization, MCP, regression-triage and trace tests pass. ADR uniqueness,
+twelve systemd units and seven durable-listener checks pass. Broader ownership,
+migration recovery, HTTP and fresh GitHub checks must qualify this integration.

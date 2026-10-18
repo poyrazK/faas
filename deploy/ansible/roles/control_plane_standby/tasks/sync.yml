@@ -4,6 +4,10 @@
 # primary through delegation, so the contents pass through the controller's
 # memory only, never its disk.
 
+- name: control_plane_standby — load the control-plane state list
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/vars/cp_state_files.yml"
+
 - name: control_plane_standby — inspect the synced directories on the primary
   ansible.builtin.stat:
     path: "{{ item }}"

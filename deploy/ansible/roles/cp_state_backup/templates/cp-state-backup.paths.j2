@@ -1,0 +1,10 @@
+# Managed by Ansible (cp_state_backup). Local edits are overwritten.
+# ADR-1344 §8: the control plane's host-local state, from
+# deploy/ansible/vars/cp_state_files.yml. One absolute path per line; a
+# directory takes every file below it; "!path" excludes.
+{% for p in faas_cp_state_trees + faas_cp_state_files + (faas_cp_state_extra_files | default([])) %}
+{{ p }}
+{% endfor %}
+{% for p in faas_cp_state_exclude %}
+!{{ p }}
+{% endfor %}
