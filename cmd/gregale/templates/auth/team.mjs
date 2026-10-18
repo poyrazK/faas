@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { limits } from './config.mjs'
-import { invitationMessage } from './email.mjs'
+import { invitationMessage, loadEmailTemplates } from './email.mjs'
 
 export class TeamError extends Error {
   constructor(status, code) { super(code); this.status = status; this.code = code }
@@ -64,7 +64,7 @@ async function apply(client, org, request, invitations, before) {
   const token = randomBytes(32).toString('base64url'), digest = createHash('sha256').update(Buffer.from(token, 'base64url')).digest()
   const { rows: [created] } = await client.query('SELECT i.id,i.email,i.role,i.expires_at,o.name AS org_name FROM gregale_auth.invite($1,$2,$3,$4,$5) i JOIN gregale_auth.organizations o ON o.id=i.org_id', [org, request.email, request.role, digest, request.expires_in])
   const { org_name: orgName, ...fields } = created
-  if (invitations.mailer) await invitations.mailer.send(invitationMessage(fields.email, { external: invitations.external, app: invitations.app, orgName, token }), `invitation-${fields.id}`)
+  if (invitations.mailer) await invitations.mailer.send(invitationMessage(fields.email, { external: invitations.external, app: invitations.app, orgName, token, templates: await loadEmailTemplates(client) }), `invitation-${fields.id}`)
   return { ...fields, delivered: Boolean(invitations.mailer), before_role: '', after_role: fields.role, ...(invitations.mailer ? {} : { token }) }
 }
 
