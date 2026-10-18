@@ -168,8 +168,9 @@ The same run passed required shards 2 and 3, while shard 1 exhausted its
 authorization, database and managed PostgreSQL tests. Its scheduler and related
 CLI tests had not finished. The PR shard allowance is now 30 minutes; main keeps
 40 minutes. Every test command, race setting and per-test timeout is retained.
-Changing the workflow intentionally selects full-module lint, so the lint job
-allows 60 minutes while retaining each package's existing lint timeout. A YAML
+The lint job allows 60 minutes for broad changes on cold caches while retaining
+each selected package's existing lint timeout. It consumes the selector's
+`changed` output; full-tree coverage remains in the mega tier. A YAML
 semantic comparison verifies that only these job limits change executable
 workflow behavior. Fresh CI must qualify the resulting source before merge.
 
@@ -210,3 +211,33 @@ replay of the seven renumbered migrations and ownership down/up recovery pass
 generation/build, full Go SDK tests/vet, 42 Python Auth/organization client tests
 and 36 CI selector tests pass. These local reruns use Go 1.26.9 and PostgreSQL 16
 without race detection. The fresh GitHub checks must pass before merge.
+
+## Integration with internal Product Control
+
+Main through `f63c75848` is integrated, including scoped launches and the
+default-off internal Product Control service. Product email uses the underlying
+PostgreSQL pool. All nine ownership erasure-guard definitions retain blockers
+for its twelve account-scoped tables. A new regression verifies that an
+unreviewed Product Control revision blocks both identity-erasure entry points
+and preserves the revision after offboarding.
+
+The merged clone registry initially contained eleven identical rehearsal
+entries twice. The duplicate entries are removed while retaining every policy
+and column classification. Its 877 unique table policies match the migrated
+database catalogue exactly. Focused Product Control, rehearsal and CI erasure
+tests plus clone-registry coverage pass (11.753s). The preceding broader
+organization/Product Control state run passed all cases except the duplicate
+registry check, which the focused rerun resolves.
+
+Fresh canonical schema and SQL generation/checks, migration lint, OpenAPI
+duplicate-key/parity checks, Node generation/build, full Go SDK tests/vet and
+42 Python Auth/organization client tests pass. Migration apply-and-walk,
+replay of all seven ownership migrations and ownership down/up recovery pass
+(26.101s). Product Control migrations precede the ownership migration range,
+so no further renumbering is needed. These local checks use Go 1.26.9 and
+PostgreSQL 16 without race detection.
+
+CI comments now describe its actual selected-package lint scope; a YAML
+semantic comparison confirms that these comment corrections do not change
+workflow behavior. Fresh GitHub checks must qualify this integrated source
+before merge. Production deployment and native KVM acceptance remain pending.

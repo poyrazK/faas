@@ -25,8 +25,9 @@ name: ci-light
 #                             on workflow_dispatch, and from release.yml
 #                             before any release tag publishes.
 #
-# Package selection lives in scripts/ci/affected_packages.py. A change to
-# go.mod, go.sum, the selector or this workflow selects every package.
+# Package selection lives in scripts/ci/affected_packages.py. This workflow
+# lints changed packages and compiles selected importers within a budget;
+# the mega tier owns full-tree coverage, including global-input changes.
 #
 # Required checks on main are the job names below; a job skipped because
 # nothing relevant changed reports as passing.
@@ -109,12 +110,12 @@ jobs:
   lint:
     name: "light: lint, vet, build"
     runs-on: ubuntu-latest
-    # golangci-lint (govet included) runs on changed packages, or the whole
-    # module when global inputs change. Importer compilation is bounded below;
+    # golangci-lint (govet included) runs on changed packages.
+    # Importer compilation is bounded below;
     # the mega tier vets the whole tree. Main also warms the three large
     # packages' analysis cache.
-    # CI configuration changes lint the whole module. Cold caches and broad
-    # API/state changes need room for every package; per-package limits remain.
+    # Cold caches and broad API/state changes need room for every selected
+    # package; per-package limits remain.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7

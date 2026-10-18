@@ -54,6 +54,36 @@ VALUES ($1,$2,'unreviewed','sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 	}
 }
 
+func TestPostgresOrgResourceUnreviewedProductControlBlocksErasure(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	store := state.NewPgStore(pool)
+	f := setupOffboarding(t, store)
+	ctx := t.Context()
+	if err := store.UpdateAccountProviderCustomerID(ctx, f.org.ID, "cus_product_guard"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateAccountStripeSubscriptionItem(ctx, f.org.ID, "si_product_guard"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO product_control_revisions(account_id,app_id,revision,spec)
+VALUES ($1,$2,'unreviewed','{}'::jsonb)`, f.actor.ID, f.app.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RemoveOrgMember(ctx, f.org.ID, f.actor.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkAccountDeletionPending(ctx, f.actor.ID); !errors.Is(err, state.ErrOrgAppOwnershipPending) {
+		t.Fatalf("unreviewed Product Control allowed erasure: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM accounts WHERE id=$1`, f.actor.ID); err == nil {
+		t.Fatal("raw account deletion bypassed Product Control ownership guard")
+	}
+	var exists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM product_control_revisions WHERE app_id=$1)`, f.app.ID).Scan(&exists); err != nil || !exists {
+		t.Fatalf("Product Control ownership guard discarded the revision: %v", err)
+	}
+}
+
 func TestPostgresOrgResourceUnreviewedRehearsalBlocksErasure(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	store := state.NewPgStore(pool)

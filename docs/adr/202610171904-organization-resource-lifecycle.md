@@ -51,6 +51,10 @@ Rehearsal policies and fixture/runtime journals likewise remain unreviewed.
 Their account references block erasure, including completed fixture evidence
 that the rehearsal service could otherwise purge.
 
+Internal Product Control revisions, customer/billing records, onboarding,
+notifications and email preferences also require separate ownership coverage.
+Their account references block erasure while that coverage remains unreviewed.
+
 Denormalized core child organization references follow the app root. The
 migration repairs legacy personal-org references without changing billing
 subject UUIDs, encrypted bytes or usage quantities. New writes enforce the same
