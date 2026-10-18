@@ -26,6 +26,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -68,11 +69,25 @@ func main() {
 	probeContract := flag.Bool("probe-contract", false, "report this exec probe process to the local fixture server")
 	noHealthz := flag.Bool("no-healthz", false, "omit the /healthz endpoint")
 	queueAck := flag.Bool("queue-ack", false, "acknowledge push-queue fixture deliveries without returning customer data")
+	workerMarker := flag.Bool("worker-startup-marker", false, "record ordinary worker startup for native task isolation checks")
+	workerIsolation := flag.Bool("assert-worker-task-isolation", false, "require a fresh task guest without a worker entrypoint or queue listener")
 	gitOpsResilience := flag.Bool("gitops-resilience", false, "allow bounded native acceptance request and queue delays")
 	durableCounter := flag.Bool("durable-counter", false, "serve pure durable entity transitions")
 	echoSession := flag.Bool("echo-session", false, "run the interactive app-task fixture instead of serving")
 	identityProbe := flag.Bool("identity-probe", false, "serve /identity, which fetches a workload identity token from guest-init")
 	flag.Parse()
+	if *workerIsolation {
+		if err := assertWorkerTaskIsolation(workerStartupMarker, "127.0.0.1:8080"); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println(`{"worker_entrypoint_started":false,"worker_listener_started":false}`)
+		return
+	}
+	if *workerMarker {
+		if err := os.WriteFile(workerStartupMarker, []byte("started\n"), 0o600); err != nil {
+			log.Fatal(err)
+		}
+	}
 	if *echoSession {
 		runEchoSession()
 		return

@@ -30,7 +30,13 @@ type queueCanarySnapshot struct {
 	BatchSize, BatchWindow, Concurrency                                       int
 	Retry                                                                     json.RawMessage
 	DeploymentID, RootfsKey, ImageDigest                                      string
+	Artifact                                                                  string
 	OverrideEnv                                                               json.RawMessage
+	ConsumerClass                                                             string
+	ManagedRuntime                                                            json.RawMessage
+	ReleaseID, ServiceRevision                                                string
+	SourceGeneration                                                          int64
+	PolicyRevision                                                            int64
 }
 type queueCanaryRecord struct {
 	Report                api.QueueBindingCanary
@@ -50,16 +56,20 @@ func validateQueueCanaryRequest(req api.CreateQueueBindingCanaryRequest) error {
 func queueCanarySupported(s queueCanarySnapshot) bool {
 	var env map[string]string
 	var bindings []string
-	return s.RootfsKey != "" && s.ImageDigest != "" && json.Unmarshal(s.OverrideEnv, &env) == nil &&
+	return s.Artifact != "" && json.Unmarshal(s.OverrideEnv, &env) == nil &&
 		json.Unmarshal([]byte(env[api.QueueCanaryCapabilityEnv]), &bindings) == nil && slices.Contains(bindings, s.Name)
 }
 func newQueueCanary(s queueCanarySnapshot, req api.CreateQueueBindingCanaryRequest, accountID, appID string) (queueCanaryRecord, Invocation) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	id := uuid.NewString()
 	expires := now.Add(time.Duration(req.TTLSeconds) * time.Second)
-	headers, _ := json.Marshal(map[string]string{api.RevisionHeader: s.DeploymentID})
+	pin := map[string]string{api.RevisionHeader: s.DeploymentID}
+	if s.ReleaseID != "" {
+		pin = map[string]string{api.ReleaseHeader: s.ReleaseID}
+	}
+	headers, _ := json.Marshal(pin)
 	payload, _ := json.Marshal(map[string]string{"gregale_queue_canary": "v1", "canary_id": id, "binding": s.Name})
-	r := queueCanaryRecord{Report: api.QueueBindingCanary{ID: id, Binding: s.Name, DeploymentID: s.DeploymentID, Scope: s.Scope, Status: "published", PublishedAt: now, ExpiresAt: expires}, Snapshot: s}
+	r := queueCanaryRecord{Report: api.QueueBindingCanary{ID: id, Binding: s.Name, DeploymentID: s.DeploymentID, Scope: s.Scope, ReleaseID: s.ReleaseID, Status: "published", PublishedAt: now, ExpiresAt: expires}, Snapshot: s}
 	inv := Invocation{ID: id, AppID: appID, AccountID: accountID, Source: InvocationQueue, QueueBindingID: s.BindingID, QueueName: s.QueueName, DeploymentScope: s.Scope,
 		State: InvocationPending, Method: "POST", Path: "/", Payload: payload, Headers: headers, DueAt: now, CreatedAt: now, DeadlineAt: &expires, RetryPolicyJSON: json.RawMessage(`{"max_attempts":1}`)}
 	return r, inv
@@ -108,7 +118,8 @@ func queueCanaryStatus(r queueCanaryRecord, inv Invocation, current *queueCanary
 }
 
 func QueueCanaryDeploymentSupports(dep Deployment, binding string) bool {
-	return queueCanarySupported(queueCanarySnapshot{Name: binding, OverrideEnv: dep.OverrideEnv, RootfsKey: dep.RootfsKey, ImageDigest: dep.ImageDigest})
+	artifact, err := bindingVerificationArtifact(dep)
+	return err == nil && queueCanarySupported(queueCanarySnapshot{Name: binding, OverrideEnv: dep.OverrideEnv, Artifact: artifact})
 }
 
 // Preserve the producer's plan queue-depth limit and safe error metadata.

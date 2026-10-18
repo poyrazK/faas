@@ -872,6 +872,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/deployments/{id}/promote-with-application-ack":          "PromoteDeploymentWithBindings",
 	"POST /v1/deployments/{id}/promote":                               "PromoteDeploymentWithBindings",
 	"GET /v1/apps/{slug}/bindings":                                    "GetAppBindingInventory",
+	"GET /v1/apps/{slug}/bindings/services/{service}/explanation":     "ExplainAppServiceBinding",
 	"GET /v1/apps/{slug}/bindings/release-policy":                     "GetBindingReleasePolicy",
 	"PUT /v1/apps/{slug}/bindings/release-policy":                     "SetBindingReleasePolicy",
 	"PUT /v1/apps/{slug}/bindings/release-policy-with-object-storage": "SetObjectStorageBindingReleasePolicy",

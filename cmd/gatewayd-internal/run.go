@@ -819,13 +819,20 @@ func (a *synthAdapter) restoreDurableQueueIdentity(ctx context.Context, appID st
 	if stored.ID != inv.ID || stored.AppID != appID ||
 		(stored.Source != state.InvocationQueue && stored.Source != state.InvocationDelayedTask) ||
 		stored.State != state.InvocationDispatching || stored.Attempts != inv.Attempts ||
-		stored.ReplayGeneration != inv.ReplayGeneration || !bytes.Equal(stored.Payload, inv.Payload) {
+		stored.ReplayGeneration != inv.ReplayGeneration || stored.LeaseExpiresAt == nil || !stored.LeaseExpiresAt.After(time.Now()) || !bytes.Equal(stored.Payload, inv.Payload) {
 		return inv, state.ErrConflict
 	}
 	inv.AccountID = stored.AccountID
 	inv.PlatformTenantID = stored.PlatformTenantID
 	inv.DeploymentScope = stored.DeploymentScope
 	inv.QueueBindingID = stored.QueueBindingID
+	// Named bound work must enter the environment resolver as queue work.
+	// The ESM transport omits its queue identity; all claim and payload checks
+	// above apply before recovering the durable origin. Unbound/delayed ESM
+	// deliveries retain their existing transport semantics.
+	if stored.Source == state.InvocationQueue && stored.QueueBindingID != "" {
+		inv.Source, inv.QueueName = state.InvocationQueue, stored.QueueName
+	}
 	return inv, nil
 }
 
@@ -3957,6 +3964,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {
 			identityResolver := newServiceProxyCallerIdentityResolver(pgStore.ListAllInstances, cfg.NodeName)
 			identityResolver.lookup = pgStore.LiveServiceCallersByHostIP
+			if cfg.NodeName != "" {
+				identityResolver.lookup = newServiceProxyLiveLookup(pgStore, deps.nodeCache.cache, newLocalNodeID(pgStore, cfg.NodeName))
+			}
 			serviceProxyConfig.ResolveCallerIdentity = func(ctx context.Context, remote string) (string, string, error) {
 				if err := ordinaryQualificationCallerGuard(ctx, pgStore, cfg.NodeName, remote); err != nil {
 					return "", "", err

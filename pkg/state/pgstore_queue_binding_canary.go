@@ -18,7 +18,40 @@ func queueCanarySnapshotDB(ctx context.Context, db sqlc.DBTX, account, app, depl
 	if err != nil {
 		return s, mapErr(err)
 	}
-	err = json.Unmarshal(raw, &s)
+	if err = json.Unmarshal(raw.Snapshot, &s); err != nil {
+		return s, err
+	}
+	dep, err := bindingVerificationDeploymentJSON(raw.Deployment)
+	if err != nil {
+		return s, err
+	}
+	s.Artifact, err = bindingVerificationArtifact(dep)
+	if err != nil {
+		return s, ErrNotFound
+	}
+	if len(s.ManagedRuntime) == 0 || string(s.ManagedRuntime) == "null" {
+		s.ManagedRuntime = nil
+		return s, nil
+	}
+	q := sqlc.New()
+	authority, err := q.QueueCanaryManagedAuthority(ctx, db, sqlc.QueueCanaryManagedAuthorityParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), DeploymentID: mustPgUUID(deployment)})
+	if err != nil {
+		return s, mapErr(err)
+	}
+	if err = managedQueueCanarySnapshot(&s, dep); err != nil {
+		return s, err
+	}
+	s.ReleaseID, s.SourceGeneration = authority.ReleaseID, authority.Generation
+	s.ServiceRevision, err = q.ReadServiceBindingRevision(ctx, db, sqlc.ReadServiceBindingRevisionParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app)})
+	if err != nil {
+		return s, mapErr(err)
+	}
+	rawPolicy, err := q.ReadBindingReleasePolicy(ctx, db, sqlc.ReadBindingReleasePolicyParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), Scope: s.Scope})
+	if err != nil {
+		return s, mapErr(err)
+	}
+	policy, err := decodeBindingReleasePolicy(rawPolicy, app, s.Scope)
+	s.PolicyRevision = policy.Revision
 	return s, err
 }
 func (s *PgStore) CreateQueueBindingCanary(ctx context.Context, account, app string, req api.CreateQueueBindingCanaryRequest) (api.QueueBindingCanary, error) {
@@ -99,7 +132,7 @@ func (s *PgStore) GetQueueBindingCanary(ctx context.Context, account, app, id st
 		return api.QueueBindingCanary{}, err
 	}
 	r := queueCanaryRecord{Snapshot: snap, Cancelled: row.Cancelled, CompletedDeploymentID: pgUUIDString(row.CompletedDeploymentID), CompletedAttempt: int(row.CompletedAttempt.Int32), CompletedGeneration: row.CompletedGeneration.Int64,
-		Report: api.QueueBindingCanary{ID: id, Binding: snap.Name, DeploymentID: snap.DeploymentID, Scope: snap.Scope, PublishedAt: row.PublishedAt.Time, ExpiresAt: row.ExpiresAt.Time}}
+		Report: api.QueueBindingCanary{ID: id, Binding: snap.Name, DeploymentID: snap.DeploymentID, Scope: snap.Scope, ReleaseID: snap.ReleaseID, PublishedAt: row.PublishedAt.Time, ExpiresAt: row.ExpiresAt.Time}}
 	inv := Invocation{State: InvocationState(row.InvocationState), Attempts: int(row.Attempts), ReplayGeneration: row.ReplayGeneration, ReceivedAt: invocationTimePointer(row.ReceivedAt), CompletedAt: invocationTimePointer(row.CompletedAt)}
 	current, err := queueCanarySnapshotDB(ctx, s.pool, account, app, snap.DeploymentID, snap.Name)
 	if errors.Is(err, ErrNotFound) {
@@ -156,8 +189,18 @@ func validateQueueCanaryDispatch(ctx context.Context, store invocationAppReader,
 		return ErrConflict
 	}
 	pin, release, err := invocationPinHeaders(headers)
-	if err != nil || pin != r.DeploymentID || release != "" {
+	if err != nil {
 		return ErrConflict
 	}
+	// Dispatch must retain the exact private ledger pin. A release ID is
+	// accepted only for a persisted managed canary, never a customer marker.
+	if r.ReleaseID != "" {
+		if release != r.ReleaseID || pin != "" {
+			return ErrConflict
+		}
+	} else if pin != r.DeploymentID || release != "" {
+		return ErrConflict
+	}
+
 	return nil
 }

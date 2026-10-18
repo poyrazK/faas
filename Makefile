@@ -71,6 +71,10 @@ test-object-storage-native: ## Run strict shipped storage starter rotation, snap
 test-queue-bindings-native: ## Run strict shipped queue worker completion, recovery and release acceptance
 	@GO="$(GO)" sh scripts/test-queue-bindings-native.sh
 
+.PHONY: test-managed-service-native
+test-managed-service-native: ## Run isolated reviewed managed HTTPS guest and CLI acceptance
+	@GO="$(GO)" sh scripts/test-managed-service-native.sh
+
 test-customer-platform: ## Run the two-customer starter acceptance with disposable PostgreSQL databases (no KVM)
 	@GO="$(GO)" sh scripts/test-customer-platform.sh
 

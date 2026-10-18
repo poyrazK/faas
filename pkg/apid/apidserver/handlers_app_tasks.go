@@ -160,7 +160,7 @@ func (s *server) admitAppTaskWithAttach(r *http.Request, acct state.Account, app
 		return state.AppTask{}, api.ErrInternal("could not encode outbound probe")
 	}
 	row, err := s.store.CreateAppTask(r.Context(), state.CreateAppTaskParams{
-		RequireLiveDeployment: resolved.VerificationDeploymentID != "" || resolved.SmokeDeploymentID != "",
+		RequireLiveDeployment: resolved.VerificationDeploymentID != "" || resolved.SmokeDeploymentID != "" || pin != nil && pin.ManagedService != nil,
 		BindingVerification:   pin,
 		AccountID:             acct.ID,
 		AppID:                 app.ID,

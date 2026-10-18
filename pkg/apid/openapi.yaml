@@ -4852,12 +4852,77 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/apps/{slug}/bindings/services/{service}/explanation:
+    get:
+      tags: [apps]
+      operationId: explainAppServiceBinding
+      summary: Explain service authorization for an exact caller deployment.
+      description: |
+        Read-only policy and routing observation using the gateway app authorizer,
+        managed environment binding resolver and project release resolver. Requires
+        apps:read or admin and completed MFA. The deployment must belong to the
+        selected app. Its environment is inferred; scope, when supplied, asserts
+        that environment. Managed deployments never fall back to global app names.
+        Target identities are returned only within the selected account. Policy
+        denials and incomplete contexts return 200 with result denied or
+        indeterminate. Missing or foreign caller deployments return 404. Previews,
+        qualification guests and development bridges are not evaluated. No tasks,
+        guest requests, writes or provider calls occur. Separate metadata reads
+        are not an atomic snapshot, caller authentication, runtime adoption or
+        connectivity evidence. Unpinned routes do not select a target deployment.
+        Responses use Cache-Control: no-store.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - name: service
+          in: path
+          required: true
+          description: Logical service workload for managed deployments, otherwise target app slug.
+          schema: { type: string }
+        - name: deployment_id
+          in: query
+          required: true
+          description: Exact app-owned caller deployment UUID. This selector does not establish live caller identity.
+          schema: { type: string, format: uuid }
+        - name: scope
+          in: query
+          description: Optional assertion of the selected deployment environment. A mismatch produces a denied explanation.
+          schema: { type: string }
+        - name: method
+          in: query
+          description: HTTP method to evaluate against the target scope.
+          schema: { type: string, default: GET }
+        - name: path
+          in: query
+          description: Origin-form request path. Ambiguous paths are rejected; query values are omitted from the report.
+          schema: { type: string, default: / }
+      responses:
+        '200':
+          description: Sanitized policy and routing explanation, without connectivity claims.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceBindingExplanation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/bindings:
     get:
       tags: [apps]
       operationId: getAppBindingInventory
       summary: Inspect all runtime resource bindings attached to an app.
       description: |
+        Service entries use the selected deployment's frozen environment graph
+        when managed; without deployment_id the current live deployment is selected.
+        Logical service names remain distinct from physical target app identities.
+        service_context reports the reviewed route and a context revision, never
+        connectivity evidence. Ordinary task-probe verification of managed services
+        is unsupported and app-scoped receipts are excluded. Managed target routes
+        cannot be overridden through service_targets. Invalid frozen context or
+        unreadable routes make complete=false without falling back to app settings.
         Read-only, best-effort metadata for service, PostgreSQL, object-storage,
         queue and outbound bindings. Requires apps:read or admin. PostgreSQL
         sections additionally require managed-postgres:read or admin; object
@@ -4876,7 +4941,7 @@ paths:
         - $ref: '#/components/parameters/Slug'
         - name: deployment_id
           in: query
-          description: Select evidence for this exact app-owned, materialized live deployment, including zero-traffic candidates. No fallback to evidence from another deployment. Omit to use the manual-task selection.
+          description: Select the service namespace and evidence for this exact app-owned, materialized live deployment, including zero-traffic candidates. No fallback to evidence from another deployment. Omit to use the manual-task selection.
           schema: { type: string, format: uuid }
         - name: service_targets
           in: query
@@ -65984,11 +66049,79 @@ components:
         gateway_state: { type: string, enum: [active, converging, unknown, unobserved] }
         gateway_generation: { type: integer, format: int64 }
 
+    ServiceAuthorizationCheck:
+      type: object
+      description: Stable rule and sanitized reason from a service policy observation.
+      required: [rule, result, reason]
+      properties:
+        rule: { type: string }
+        result: { type: string, enum: [allowed, denied, indeterminate] }
+        reason: { type: string }
+        setting: { type: string }
+        hint: { type: string }
+    ServiceBindingExplanation:
+      type: object
+      description: Separate-read policy and routing observation, not live identity, guest adoption or connectivity evidence.
+      required: [caller, target, method, path, result, scope, checked_at, checks, limitations]
+      properties:
+        caller: { type: string }
+        target: { type: string, description: 'Requested service name, which may differ from the resolved physical app slug.' }
+        method: { type: string }
+        path: { type: string, description: 'Decoded request path without query values.' }
+        result: { type: string, enum: [allowed, denied, indeterminate] }
+        scope: { type: string, description: 'Environment of the exact caller deployment.' }
+        checked_at: { type: string, format: date-time }
+        caller_fingerprint: { type: string, description: 'Observed app settings fingerprint; frozen environment policy may override these settings.' }
+        target_fingerprint: { type: string, description: 'Observed target app settings fingerprint; not a frozen release policy digest.' }
+        caller_deployment_id: { type: string, format: uuid }
+        target_app_id: { type: string, format: uuid }
+        target_deployment_id: { type: string, format: uuid, description: 'Absent when the service route is unpinned or unavailable.' }
+        release_id: { type: string, format: uuid, description: 'Resolved release, including retained project releases when permitted by the gateway.' }
+        policy_source: { type: string, enum: [app, environment_release] }
+        canonical_transport: { $ref: '#/components/schemas/ServiceBindingTransport' }
+        checks:
+          type: array
+          items: { $ref: '#/components/schemas/ServiceAuthorizationCheck' }
+        limitations: { type: string }
+    ServiceBindingInventoryContext:
+      type: object
+      description: Frozen deployment service edge and current reviewed route metadata. Only the named managed verification contract can qualify this context; ordinary app receipts cannot.
+      required: [source, caller_deployment_id, revision, routing_status, routing_reason, verification_supported, verification_reason]
+      properties:
+        source: { type: string, enum: [environment_release] }
+        caller_deployment_id: { type: string, format: uuid }
+        target_app_id: { type: string, format: uuid, description: 'Account-owned frozen target app; omitted when unreadable or foreign.' }
+        target_app: { type: string, description: 'Physical target app slug; the binding name remains the logical workload.' }
+        release_id: { type: string, format: uuid, description: 'Active reviewed release selected by the managed route resolver, when available.' }
+        revision: { type: string, description: 'Opaque digest of reviewed graph identities and public edge facts; changes invalidate a verification review. Not a connectivity receipt or authorization capability.' }
+        routing_status: { type: string, enum: [resolved, denied, unavailable] }
+        routing_reason: { type: string, description: 'Stable sanitized reason for managed route resolution.' }
+        verification_supported: { type: boolean, description: 'True only for an active request/service or worker caller with a supported frozen HTTPS edge to a request/service target.' }
+        verification_contract: { type: string, description: 'managed-https-v1 identifies the supported managed guest probe contract. Missing or unknown contracts remain unsupported.' }
+        verification_reason: { type: string, description: 'Empty for a supported managed contract; otherwise managed_service_verification_unsupported.' }
+    ManagedServiceProbeSpec:
+      type: object
+      description: Server-selected frozen context for a managed HTTPS route probe. Contains no credentials or application request. Changing context or policy invalidates the receipt.
+      required: [version, caller_deployment_id, scope, service, binding, target_app_id, target_deployment_id, release_id, context_revision]
+      properties:
+        version: { type: integer, description: 'Managed probe contract version; currently 1.' }
+        caller_deployment_id: { type: string, format: uuid }
+        scope: { type: string }
+        service: { type: string, description: Logical frozen service workload. }
+        binding: { type: string, description: 'Frozen environment key, including custom keys.' }
+        target_app_id: { type: string, format: uuid }
+        target_deployment_id: { type: string, format: uuid }
+        release_id: { type: string, format: uuid }
+        context_revision: { type: string, pattern: '^[a-f0-9]{64}$' }
     AppBindingInventory:
       type: object
       description: Best-effort app binding metadata with explicit completeness and sanitized section issues.
       required: [app, generated_at, complete, bindings]
       properties:
+        service_binding_source:
+          type: string
+          enum: [app, environment_release, unavailable]
+          description: Source used for the service namespace. Managed empty or unreadable namespaces never fall back to app settings.
         service_targets:
           type: object
           description: Applied exact service target selectors; absent for ordinary evidence selection.
@@ -66185,6 +66318,7 @@ components:
       description: Sanitized durable evidence from the latest admitted service, PostgreSQL or object-storage task guest canary. Object-storage verification records bucket listing or explicitly requested permission-aware object operations and cleanup; inspect checks for coverage. Resident application adoption is not checked.
       required: [result, source, deployment_id, scope]
       properties:
+        managed_service: { $ref: '#/components/schemas/ManagedServiceProbeSpec' }
         task_id: { type: string, format: uuid, description: Original probe task identity for pending observation and durable receipts. }
         target_deployment_id: { type: string, format: uuid, description: Service recipient qualified by the probe; absent for legacy any-replica evidence. }
         object_storage_mode: { type: string, enum: [read, write, read_write], description: 'Object operation level admitted for this stored verification; missing values denote a legacy listing canary and do not qualify required write operations.' }
@@ -66219,9 +66353,11 @@ components:
       description: Public binding configuration with separately reported runtime observations and verification status.
       required: [type, name, binding, scope, access, state, runtime_status, verification_status]
       properties:
-        service_target_deployment_id: { type: string, format: uuid, description: Exact candidate service recipient required by this inventory selection. }
+        service_context: { $ref: '#/components/schemas/ServiceBindingInventoryContext' }
+        service_target_deployment_id: { type: string, format: uuid, description: Exact service recipient selected explicitly or resolved from the managed reviewed release. }
         queue_canary: { $ref: '#/components/schemas/QueueBindingCanary' }
-        queue_canary_supported: { type: boolean }
+        queue_canary_supported: { type: boolean, description: Whether the exact selected deployment and current consumer can admit a canary. }
+        queue_canary_reason: { type: string, description: Sanitized reason canary publication is unavailable. }
         queue_environment: { type: string, description: 'Explicit queue environment; empty means shared legacy binding. Distinguishes app-wide scope from an environment named app. Consumer-readiness policies require this field; older inventories omit it.' }
         type: { type: string, enum: [service, postgres, object_storage, queue, outbound] }
         name: { type: string }
@@ -66230,7 +66366,7 @@ components:
         access: { type: string }
         state: { type: string, description: 'Configuration or provisioning state; never evidence of connectivity.' }
         runtime_status: { type: string, description: 'Last-known queue consumer liveness (healthy, stale or degraded), otherwise unknown.' }
-        verification_status: { type: string, description: 'Latest platform canary: passed, failed, unknown or stale. Deployment or configuration changes invalidate old evidence. Inventory does not run probes.' }
+        verification_status: { type: string, description: 'Latest platform canary: passed, failed, unknown or stale. Managed edges without a known verification contract remain unsupported. Deployment or configuration changes invalidate old evidence. Inventory does not run probes.' }
         verification: { $ref: '#/components/schemas/BindingVerification' }
         refresh: { $ref: '#/components/schemas/BindingRefresh' }
         application_adoption: { $ref: '#/components/schemas/BindingApplicationAdoption' }
@@ -110633,6 +110769,7 @@ components:
         binding: { type: string }
         deployment_id: { type: string, format: uuid }
         scope: { type: string }
+        release_id: { type: string, format: uuid, description: Exact active reviewed release for a managed worker canary. }
         status: { type: string, enum: [published, dispatching, succeeded, failed, blocked, expired, cancelled] }
         reason: { type: string }
         published_at: { type: string, format: date-time }
