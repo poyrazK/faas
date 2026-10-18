@@ -12644,3 +12644,22 @@ const ServiceMapDefaultRange = "1h"
 
 // ServiceMapHighErrorRatePct is the edge error rate the dashboard highlights.
 const ServiceMapHighErrorRatePct = 5.0
+
+// Durable worker recovery is bounded independently of events and queue polling.
+const (
+	// Diagnostics become unknown after fifteen minutes without a pool observation.
+	WorkerRecoveryObservationFreshnessSeconds = 900
+	// Bound persisted per-pool refusal evidence, including a cooldown marker.
+	WorkerAdmissionBlockersMax = 16
+	// A retry/lease is overdue only after discovery has had a minute to reclaim it.
+	WorkerRecoveryOverdueGraceSeconds     = 60
+	WorkerRecoveryMetricsFreshnessSeconds = 60
+	WorkerRecoveryPollIntervalSeconds     = 5
+	WorkerRecoveryHealthyIntervalSeconds  = 30
+	WorkerRecoveryRetryBaseSeconds        = 5
+	WorkerRecoveryRetryMaxSeconds         = 300
+	WorkerRecoveryAttemptTimeoutSeconds   = 600
+	WorkerRecoveryFailureCountMax         = 32
+	WorkerRecoveryConcurrentApps          = 8
+	WorkerRecoveryBatchSize               = 32
+)

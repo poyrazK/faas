@@ -64572,6 +64572,7 @@ components:
       description: Bounded app-scoped pending rollbacks and pending or failed restart handoffs. Availability and truncation are explicit; accepted work does not establish completed recovery.
       required: [rollbacks_available, restarts_available, rollbacks_truncated, restarts_truncated, rollbacks, restarts]
       properties:
+        workers: { $ref: '#/components/schemas/AppWorkerRecovery' }
         coverage: { type: string, description: Explicit scoped summaries include only attributable operations; app-wide restarts are excluded. }
         rollbacks_available: { type: boolean }
         restarts_available: { type: boolean }
@@ -64585,6 +64586,54 @@ components:
           type: array
           maxItems: 10
           items: { $ref: '#/components/schemas/RuntimeConfigRestartStatusResponse' }
+    AppWorkerRecovery:
+      type: object
+      description: Read-only app-wide worker retry status and last scheduler pool observations. Environment selection filters pools; retry status remains app-wide. Missing evidence never establishes health.
+      required: [available, eligible, scope, status, failures, pools]
+      properties:
+        available: { type: boolean }
+        eligible: { type: boolean, description: Whether the app and account permit automatic recovery. }
+        scope: { type: string, enum: [app] }
+        status: { type: string, description: Last app-wide recovery outcome; unknown and not_observed indicate missing evidence. }
+        reason: { type: string }
+        failures: { type: integer, minimum: 0, maximum: 32 }
+        next_attempt_at: { type: string, format: date-time }
+        lease_until: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        pools:
+          type: array
+          items: { $ref: '#/components/schemas/AppWorkerPoolObservation' }
+    AppWorkerPoolObservation:
+      type: object
+      description: Last scheduler target after environment scaling and cooldowns, before account or physical capacity admission. Counts describe that observation time; stale after fifteen minutes. Running counts only the target generation; predecessor and stopping residents count as draining.
+      required: [scope, observed_at, stale, desired, running, starting, draining]
+      properties:
+        scope: { type: string }
+        deployment_id: { type: string }
+        observed_at: { type: string, format: date-time }
+        stale: { type: boolean }
+        desired: { type: integer, minimum: 0 }
+        running: { type: integer, minimum: 0 }
+        starting: { type: integer, minimum: 0 }
+        draining: { type: integer, minimum: 0 }
+        blockers:
+          type: array
+          maxItems: 16
+          description: Last actual admission refusals for this pool. Absent evidence is unknown. A cooldown can retain earlier refusals with their original timestamps; these are not a fresh capacity forecast. Cleared when target slots are satisfied.
+          items: { $ref: '#/components/schemas/WorkerAdmissionBlocker' }
+    WorkerAdmissionBlocker:
+      type: object
+      description: Scheduler-owned admission evidence. Codes currently include account_worker_limit, concurrency_limit, node_ram, node_vcpu, node_cpu, no_admitting_nodes, node_ports, placement_changed, spend_cap, retry_cooldown, admission_refused and deployment_unavailable. Node constraints omit host identities and fleet usage. Values for account and concurrency budgets describe the actual decision, including residents still draining.
+      required: [code, observed_at]
+      properties:
+        code: { type: string }
+        observed_at: { type: string, format: date-time }
+        stale: { type: boolean, description: "Whether this refusal observation is older than fifteen minutes, independently of the pool counts." }
+        resource: { type: string, description: "Units for numeric evidence, such as replicas, ram_mb, vcpu, cpu_millicores or cents." }
+        requested: { type: integer, format: int64, minimum: 0 }
+        used: { type: integer, format: int64, minimum: 0 }
+        limit: { type: integer, format: int64, minimum: 0 }
+        retry_at: { type: string, format: date-time, description: App-wide admission cooldown deadline when code is retry_cooldown. }
     AppOperationalRollback:
       type: object
       description: Pending checked rollback progress with stable codes and target selection; free-form reasons and blocker diagnostics are omitted.

@@ -7,6 +7,102 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Worker admission explanations — 2026-10-18
+
+Worker pool recovery now records the actual admission blockers per environment:
+account worker and concurrency limits, node RAM/vCPU/CPU constraints, unavailable
+nodes, placement changes, listener ports, spend caps and retry cooldowns. Account
+and concurrency decisions include usage/limits when observed; node evidence
+includes requested resources without host identities or fleet usage. Cooldowns
+retain earlier refusal times, and independent staleness stays visible even with
+fresh pool counts. Scoped passes preserve neighboring evidence; satisfied slots
+and zero targets clear blockers.
+
+The operational-summary API, `gregale inspect` and watch, generated Node/Python
+SDKs and recovery runbook expose these explanations and actions. Evidence reuses
+the existing pool JSON under the same lease/revision fences. No additional
+migration is needed; the two prior worker recovery migrations still precede the
+control plane. This change is not deployed. Native recovery qualification remains
+separate and pending.
+
+Portable validation passes 163 scheduler checks, including scheduler restart using
+PostgreSQL and node-generation admission safeguards, 32 CLI inspect/watch checks
+and 16 shared memory/PostgreSQL recovery contracts, with no skips. HTTP authorization/MFA,
+environment selection and read-only checks pass. Generated Node/Python SDK round
+trips cover new evidence and older responses; regeneration is deterministic.
+OpenAPI parity, protocol compatibility against the branch base and operator-doc
+gates pass. Scoped production lint passes with zero issues.
+
+## Worker recovery diagnostics — 2026-10-17
+
+Worker recovery now records per-environment scheduler targets and resident counts
+with observation times. The operational-summary API and CLI inspect/watch expose
+app-wide retry progress while keeping environment pool observations separate.
+Missing and stale evidence remain explicit. Owner-scoped aggregate metrics and
+internal warning alerts cover missing capacity, overdue retry/lease deadlines
+and unavailable observations; zero targets and inactive workloads do not create
+capacity deficits. The existing service/worker recovery runbook documents these
+signals and investigation steps. Apply the additive observation migration before
+upgrading schedd and apid. This change is not deployed.
+
+Portable validation includes 68 scheduler checks and 30 CLI inspect/watch checks
+with no skips, plus 16 shared worker/service recovery contracts on memory and
+PostgreSQL stores. API authorization/MFA, environment selection and read-only
+behavior pass; fresh schema replay, generated SQL, OpenAPI parity and protocol
+compatibility against the branch base are checked. Promtool fixtures and typed
+Node/Python SDK round trips pass, and SDK regeneration is deterministic. Native
+worker availability qualification remains separate as documented below. Scoped
+production lint passes with zero issues.
+
+## Durable worker-pool recovery — 2026-10-17
+
+Worker recovery now persists retry deadlines, failure counts and app leases.
+Bounded startup and periodic sweeps restore pools after capacity returns without
+another event. Existing scoped demand, account and node admission remain
+authoritative; cooldown still permits scale-in and zero floors. Captured worker
+environments and unfinished mode-change cleanup remain discoverable.
+
+Validation includes 64 scheduler checks with no skips, PostgreSQL restart
+recovery, and the shared worker/service recovery contracts on memory and
+PostgreSQL stores. Generated SQL, schema replay, migration compatibility and
+protocol compatibility against the branch base are checked. Apply the additive
+migration before upgrading schedd. Native KVM availability qualification remains
+separate and pending; this change is not deployed.
+
+## Native M9 automatic drain gate — 2026-10-18
+
+The [automatic drain drill](ops/native-m9-acceptance.md#automatic-node-drain-and-controller-restart)
+now drives the real admin drain/progress API and installed schedulers. It pauses
+the destination controller to verify a pending, non-admitting drain with retained
+source work, then replaces that controller and waits for automatic migration.
+The serving fixture must preserve its in-memory receipt. Maintenance completion
+requires physical source retirement, zero source resources/cleanup leases and the
+generation-bound immutable completion/audit receipt. Both peers must pass leak
+checks, and restoration verifies both vmmd and schedd. Successful runs leave the
+source in maintenance; no automatic activation or forced cleanup is performed.
+
+Portable drain verdict, API, peer guard/restoration and existing migration tests,
+race tests, tagged native compilation and scoped lint are verified. The existing
+CI target includes the new contracts in both tiers. Native execution remains
+pending because this workspace has no KVM device or designated fleet credentials.
+Nothing deployed; no native availability or customer traffic SLO is claimed.
+
+## Native M9 migration recovery gate — 2026-10-18
+
+The [first live migration drill](ops/native-m9-acceptance.md) now has a dedicated
+two-peer harness: real scheduler/vmmd migration, a discarded successful source
+acknowledgement, vmmd process death/restart, receipt replay, return migration and
+replacement-generation protection. An in-memory HTTP fixture detects cold
+fallback and duplicate operations. The drill observes retained source capacity,
+then requires zero residents/capacity/source leases and successful leak checks on
+both peers. Native host/artifact identities, phase proofs and independent
+restoration enter a strict private report; required skips cannot qualify.
+
+Portable gate/fixture/fault-guard tests and tagged native compilation are verified.
+Both CI tiers run these harness checks. Native execution remains pending: this
+workspace has no KVM device or designated peer credentials. Host power loss,
+partitions, automatic recovery-policy and drain qualification remain separate.
+The earlier heartbeat smoke is available separately. Nothing deployed.
 ## Product Control customer work history — 2026-10-17
 
 [ADR-1727](adr/1727-product-control-customer-work-history.md) adds a private

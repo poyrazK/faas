@@ -328,6 +328,9 @@ from .app_webhook_response_event_filter_item import AppWebhookResponseEventFilte
 from .app_webhook_response_retry_policy import AppWebhookResponseRetryPolicy
 from .app_webhook_response_webhook_secret_sealed_masked import AppWebhookResponseWebhookSecretSealedMasked
 from .app_webhook_retry_delivery_response import AppWebhookRetryDeliveryResponse
+from .app_worker_pool_observation import AppWorkerPoolObservation
+from .app_worker_recovery import AppWorkerRecovery
+from .app_worker_recovery_scope import AppWorkerRecoveryScope
 from .application_standard_adoption import ApplicationStandardAdoption
 from .application_standard_assignment import ApplicationStandardAssignment
 from .application_standard_assignment_list import ApplicationStandardAssignmentList
@@ -5002,6 +5005,7 @@ from .work_policy_list_response import WorkPolicyListResponse
 from .work_policy_response import WorkPolicyResponse
 from .work_policy_response_max_running_per_key import WorkPolicyResponseMaxRunningPerKey
 from .work_policy_response_pending_updates import WorkPolicyResponsePendingUpdates
+from .worker_admission_blocker import WorkerAdmissionBlocker
 from .worker_rollout_observation import WorkerRolloutObservation
 from .worker_rollout_observation_basis import WorkerRolloutObservationBasis
 from .worker_scaling import WorkerScaling
@@ -5670,6 +5674,9 @@ __all__ = (
     "AppWebhookResponseRetryPolicy",
     "AppWebhookResponseWebhookSecretSealedMasked",
     "AppWebhookRetryDeliveryResponse",
+    "AppWorkerPoolObservation",
+    "AppWorkerRecovery",
+    "AppWorkerRecoveryScope",
     "AssignAPIConsumerPlanRequest",
     "AssignPlatformTenantPlanRequest",
     "AsyncInvokeResponse",
@@ -9903,6 +9910,7 @@ __all__ = (
     "WebhookAutomationReceiptResponseStatus",
     "WorkDecision",
     "WorkDecisionAction",
+    "WorkerAdmissionBlocker",
     "WorkerRolloutObservation",
     "WorkerRolloutObservationBasis",
     "WorkerScaling",
