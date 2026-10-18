@@ -29,7 +29,7 @@ func (s *Service) tagStore(w http.ResponseWriter) (state.OutboundAITagStore, boo
 }
 
 // GetTagUsage lists one UTC day's usage tags by cost, with their limits
-// (ADR-1410).
+// (ADR-1436).
 func (s *Service) GetTagUsage(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	integrationID, ok := integrationPathID(w, r)
 	if !ok {
@@ -71,7 +71,7 @@ func tagUsageResponse(usage state.OutboundAITagUsage) api.OutboundAITagUsageResp
 	return out
 }
 
-// GetTagLimits returns an integration's tag limits (ADR-1410).
+// GetTagLimits returns an integration's tag limits (ADR-1436).
 func (s *Service) GetTagLimits(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	integrationID, ok := integrationPathID(w, r)
 	if !ok {
@@ -93,7 +93,7 @@ func (s *Service) GetTagLimits(w http.ResponseWriter, r *http.Request, acct stat
 	}
 }
 
-// PutTagLimits replaces an integration's tag limits (ADR-1410).
+// PutTagLimits replaces an integration's tag limits (ADR-1436).
 func (s *Service) PutTagLimits(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	integrationID, ok := integrationPathID(w, r)
 	if !ok {
@@ -117,7 +117,7 @@ const tagExportInvalidDetail = "from and to must be YYYY-MM-DD UTC days within t
 
 // ExportTagUsage streams the tag rows of the UTC days ?from= through ?to=
 // (both default to today), optionally of one ?key=, as NDJSON (the
-// default) or CSV, ordered by day and tag (ADR-1430).
+// default) or CSV, ordered by day and tag (ADR-1438).
 func (s *Service) ExportTagUsage(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	integrationID, ok := integrationPathID(w, r)
 	if !ok {

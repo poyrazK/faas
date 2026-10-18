@@ -267,7 +267,7 @@ func parseAIRouteTargets(values []string) ([]api.OutboundAIRouteTarget, error) {
 }
 
 // aiRouteStrategyUsage names the strategy flags of create and set
-// (ADR-1390).
+// (ADR-1434).
 const aiRouteStrategyUsage = "[--strategy ordered|weighted|latency|cost] [--weights 70,30] [--max-ttfb-ms N]"
 
 // routingFlags are the strategy flags of create and set.
@@ -378,7 +378,7 @@ func cmdAIRoutesSet(client *api.Client, args []string) int {
 }
 
 // cmdAIRoutesStats shows each target's attempts over the strategy window
-// (ADR-1390).
+// (ADR-1434).
 func cmdAIRoutesStats(client *api.Client, args []string) int {
 	if len(args) != 1 {
 		return printErr("Invalid ai routes stats arguments", errors.New("usage: gregale ai routes stats <route-id>"))

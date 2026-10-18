@@ -33,11 +33,11 @@ type aiLogExportLine struct {
 	RouteTarget       int    `json:"route_target,omitempty"`
 	Canary            bool   `json:"canary,omitempty"`
 	EndUser           string `json:"end_user,omitempty"`
-	// Tags are the call's usage tags by key (ADR-1410).
+	// Tags are the call's usage tags by key (ADR-1436).
 	Tags                 map[string]string `json:"tags,omitempty"`
 	Moderation           string            `json:"moderation,omitempty"`
 	ModerationCategories []string          `json:"moderation_categories,omitempty"`
-	// ADR-1400: the response check's result, what it found and the
+	// ADR-1435: the response check's result, what it found and the
 	// categories its moderation flagged.
 	ResponseCheck                string   `json:"response_check,omitempty"`
 	ResponseFindings             []string `json:"response_findings,omitempty"`

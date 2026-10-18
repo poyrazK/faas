@@ -1,6 +1,6 @@
 package outbound
 
-// adr: 1380 — built-in tool uses are counted from OpenAI, Anthropic and
+// adr: 1433 — built-in tool uses are counted from OpenAI, Anthropic and
 // Gemini responses, reserved from the tools a request declares, priced per
 // use, and a reused code-interpreter container is charged once per session.
 

@@ -41,7 +41,7 @@ const (
 	ReasonUserDailyTokenLimit = "user_daily_token_limit"
 	ReasonUserDailyCostLimit  = "user_daily_cost_limit"
 	// ReasonTagDailyCostLimit refuses a call one of whose tags reached its
-	// daily cost limit (ADR-1410).
+	// daily cost limit (ADR-1436).
 	ReasonTagDailyCostLimit = "tag_daily_cost_limit"
 	// ReasonUserTrackingFull refuses a new end user once the day already
 	// tracks the maximum number of end users and per-user limits are set
@@ -123,17 +123,17 @@ type Integration struct {
 	// app's log drains (ADR-1340).
 	AILogExport bool
 	// AIAllowUnmetered lets through writes the gateway can neither meter
-	// nor knows to be free; otherwise they are refused (ADR-1370).
+	// nor knows to be free; otherwise they are refused (ADR-1432).
 	AIAllowUnmetered bool
 	// AIAutoPromptCache adds prompt-cache breakpoints to Claude requests
-	// that carry none (ADR-1420).
+	// that carry none (ADR-1437).
 	AIAutoPromptCache bool
 	// AIUserDailyTokenLimit and AIUserDailyCostLimit cap each end user a
 	// call names with X-Gregale-AI-User per UTC day (ADR-994).
 	AIUserDailyTokenLimit *int64
 	AIUserDailyCostLimit  *int64
 	// AITagDailyCostLimits caps the UTC-day cost of exact usage tags
-	// (ADR-1410).
+	// (ADR-1436).
 	AITagDailyCostLimits map[string]int64
 }
 
@@ -358,7 +358,7 @@ type AdmissionSpec struct {
 	AIEndUser             string
 	UserDailyAITokenLimit *int64
 	UserDailyAICostLimit  *int64
-	// AITags are the call's usage tags (ADR-1410). AITagDailyCostLimits caps
+	// AITags are the call's usage tags (ADR-1436). AITagDailyCostLimits caps
 	// a tag's UTC day; the Postgres backend reads the stored limits.
 	AITags               []string
 	AITagDailyCostLimits map[string]int64

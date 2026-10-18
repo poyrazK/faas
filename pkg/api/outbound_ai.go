@@ -43,10 +43,10 @@ type OutboundAIPriceEntry struct {
 	MillicentsPerAudioMinute       *int64 `json:"millicents_per_audio_minute,omitempty"`
 	MillicentsPerMillionCharacters *int64 `json:"millicents_per_million_characters,omitempty"`
 	// MillicentsPerVideoSecond prices each second of generated video
-	// (ADR-1370). A model prefix may name a resolution after "@", such as
+	// (ADR-1432). A model prefix may name a resolution after "@", such as
 	// "veo-3.1-generate-001@4k", which wins for calls at that resolution.
 	MillicentsPerVideoSecond *int64 `json:"millicents_per_video_second,omitempty"`
-	// Built-in tool prices (ADR-1380): per web search (a call, query or
+	// Built-in tool prices (ADR-1433): per web search (a call, query or
 	// grounded prompt, as the provider bills it), per file search, and per
 	// GB of code-interpreter container memory per session.
 	MillicentsPerWebSearch     *int64 `json:"millicents_per_web_search,omitempty"`
@@ -130,7 +130,7 @@ const (
 // compared without case, is blocked. The gateway checks the string values
 // of buffered JSON bodies and the text fields of multipart forms.
 // Moderation adds a model-based check (ADR-1340), and Response checks the
-// model's output (ADR-1400).
+// model's output (ADR-1435).
 type OutboundAIContentPolicy struct {
 	Email        string                   `json:"email"`
 	PaymentCard  string                   `json:"payment_card"`
@@ -142,7 +142,7 @@ type OutboundAIContentPolicy struct {
 }
 
 // OutboundAIResponsePolicy checks the text a model sends back before the
-// caller sees it (ADR-1400). The detectors redact or block as on requests;
+// caller sees it (ADR-1435). The detectors redact or block as on requests;
 // BlockedTerms blocks a response holding one of the policy's terms; and
 // Moderation flags or blocks it with the policy's moderation check.
 type OutboundAIResponsePolicy struct {
@@ -188,7 +188,7 @@ func (p OutboundAIResponsePolicy) valid() bool {
 
 // Normalized replaces empty actions with off and a nil term list with an
 // empty one. The moderation check keeps its settings while responses use
-// them (ADR-1400).
+// them (ADR-1435).
 func (p OutboundAIContentPolicy) Normalized() OutboundAIContentPolicy {
 	for _, action := range []*string{&p.Email, &p.PaymentCard, &p.IBAN, &p.Secret} {
 		if *action == "" {
@@ -271,11 +271,11 @@ type OutboundAIRouteTarget struct {
 	IntegrationID string `json:"integration_id"`
 	Model         string `json:"model,omitempty"`
 	// Weight is the target's share of first attempts on a weighted route,
-	// from 0 to 100 (ADR-1390).
+	// from 0 to 100 (ADR-1434).
 	Weight *int `json:"weight,omitempty"`
 }
 
-// Route strategies (ADR-1390): how a route picks the target a call tries
+// Route strategies (ADR-1434): how a route picks the target a call tries
 // first. The other targets follow as fallbacks in route order.
 const (
 	OutboundAIRouteStrategyOrdered  = "ordered"
@@ -326,7 +326,7 @@ type OutboundAIRoute struct {
 	// Canary is the route's model canary, if it has one (ADR-1340).
 	Canary *OutboundAIRouteCanary `json:"canary"`
 	// Strategy picks the target each call tries first; MaxTTFBMS is a cost
-	// route's latency target (ADR-1390).
+	// route's latency target (ADR-1434).
 	Strategy  string `json:"strategy"`
 	MaxTTFBMS *int   `json:"max_ttfb_ms"`
 }
@@ -342,13 +342,13 @@ type CreateOutboundAIRouteRequest struct {
 	Format  string                  `json:"format,omitempty"`
 	Targets []OutboundAIRouteTarget `json:"targets"`
 	// Strategy defaults to "ordered"; MaxTTFBMS is a cost route's latency
-	// target (ADR-1390).
+	// target (ADR-1434).
 	Strategy  string `json:"strategy,omitempty"`
 	MaxTTFBMS *int   `json:"max_ttfb_ms,omitempty"`
 }
 
 // PutOutboundAIRouteTargetsRequest replaces a route's ordered targets and
-// its strategy, which defaults to "ordered" (ADR-1390).
+// its strategy, which defaults to "ordered" (ADR-1434).
 type PutOutboundAIRouteTargetsRequest struct {
 	Targets   []OutboundAIRouteTarget `json:"targets"`
 	Strategy  string                  `json:"strategy,omitempty"`
@@ -528,7 +528,7 @@ const (
 	OutboundAIBudgetUserDailyTokens = "user_daily_tokens"
 	OutboundAIBudgetUserDailyCost   = "user_daily_cost"
 	// OutboundAIBudgetTagDailyCost is one tag's UTC-day cost limit
-	// (ADR-1430); its alerts name Tag.
+	// (ADR-1438); its alerts name Tag.
 	OutboundAIBudgetTagDailyCost = "tag_daily_cost"
 )
 
@@ -551,7 +551,7 @@ type OutboundAIBudgetAlert struct {
 	Limit            int64     `json:"limit"`
 	Used             int64     `json:"used"`
 	CrossedAt        time.Time `json:"crossed_at"`
-	// Tag is the tag of a tag_daily_cost alert (ADR-1430).
+	// Tag is the tag of a tag_daily_cost alert (ADR-1438).
 	Tag *string `json:"tag"`
 }
 
@@ -574,7 +574,7 @@ type OutboundAIBudgetThresholdWebhookPayload struct {
 	Used             int64     `json:"used"`
 	CrossedAt        time.Time `json:"crossed_at"`
 	// Tag is the tag whose daily cost limit crossed the threshold
-	// (ADR-1430).
+	// (ADR-1438).
 	Tag *string `json:"tag"`
 }
 
@@ -599,7 +599,7 @@ type OutboundAIRequestLogEntry struct {
 	Attempts          int       `json:"attempts"`
 	// EndUser is the call's X-Gregale-AI-User value, when sent (ADR-994).
 	EndUser *string `json:"end_user"`
-	// Tags are the call's X-Gregale-AI-Tags, sorted by key (ADR-1410).
+	// Tags are the call's X-Gregale-AI-Tags, sorted by key (ADR-1436).
 	Tags []string `json:"tags"`
 	// ContentCaptured reports that the call's bodies can be read (ADR-996).
 	ContentCaptured bool `json:"content_captured"`

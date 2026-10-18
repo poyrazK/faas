@@ -11,7 +11,7 @@ import (
 
 var _ OutboundAIAccessTokenStore = (*PgStore)(nil)
 
-// CreateOutboundAIAccessToken stores an app's access token (ADR-1360).
+// CreateOutboundAIAccessToken stores an app's access token (ADR-1431).
 func (s *PgStore) CreateOutboundAIAccessToken(ctx context.Context, token OutboundAIAccessToken) (OutboundAIAccessToken, error) {
 	if len(token.TokenHash) != 32 || len(token.IntegrationIDs) > api.OutboundAIAccessTokenIntegrationsMax {
 		return OutboundAIAccessToken{}, ErrInvalidArgument

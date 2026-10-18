@@ -13,7 +13,7 @@ import (
 )
 
 // aiCallTags reads an AI call's optional X-Gregale-AI-Tags header
-// (ADR-1410): one header of at most OutboundAITagsPerCall key=value tags.
+// (ADR-1436): one header of at most OutboundAITagsPerCall key=value tags.
 // The gateway never forwards X-Gregale-* headers.
 func aiCallTags(r *http.Request, integration Integration) ([]string, bool) {
 	if integration.AIProvider == "" {
@@ -146,7 +146,7 @@ func scanAITagState(results pgx.BatchResults) ([]aiTagState, error) {
 // tag gets its own row while the integration tracks fewer than
 // OutboundAITagsPerDay tags today, or when it has a limit; otherwise it
 // adds to its key's overflow row. Each row comes back with its day cost and
-// its tag's limit, for budget alerts (ADR-1430).
+// its tag's limit, for budget alerts (ADR-1438).
 func queueAITagUsageRollup(batch *pgx.Batch, integrationID uuid.UUID, record AIUsageRecord) {
 	var errorRequests int64
 	if record.Outcome == AIUsageOutcomeError {

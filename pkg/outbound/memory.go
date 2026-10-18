@@ -53,7 +53,7 @@ type memoryState struct {
 	monthlyAICost            int64
 	aiUsage                  map[memoryAIUsageKey]AIUsageTotals
 	// userUsage is today's per-end-user rollup (ADR-994), and tagUsage the
-	// per-tag one, with the tags the latest admissions limited (ADR-1410).
+	// per-tag one, with the tags the latest admissions limited (ADR-1436).
 	userUsage      map[string]AIUserUsageTotals
 	tagUsage       map[string]AIUserUsageTotals
 	tagLimits      map[string]int64
@@ -69,7 +69,7 @@ type memoryState struct {
 	// settledLeases keys today's settlements (ADR-1120).
 	settledLeases map[string]struct{}
 	// batches keep created batches' reservations until they settle
-	// (ADR-1360).
+	// (ADR-1431).
 	batches     map[string]*memoryBatch
 	initialized bool
 }
@@ -86,9 +86,9 @@ type AIUsageTotals struct {
 	CostMillicents                                                 int64
 	// Media usage (ADR-997).
 	Images, AudioSeconds, Characters int64
-	// VideoSeconds is seconds of generated video (ADR-1370).
+	// VideoSeconds is seconds of generated video (ADR-1432).
 	VideoSeconds int64
-	// Built-in tool uses (ADR-1380).
+	// Built-in tool uses (ADR-1433).
 	WebSearches, FileSearches, CodeSessionGB int64
 	// Cache hits and what caching saved (ADR-1440).
 	CachedRequests, CacheSavedMillicents, PromptCacheSavedMillicents int64
@@ -757,7 +757,7 @@ func (s *memoryState) tagStates(spec AdmissionSpec) []aiTagState {
 }
 
 // recordTagUsage adds a call to one tag's rollup, or to its key's overflow
-// row past the day's cap of distinct tags (ADR-1410).
+// row past the day's cap of distinct tags (ADR-1436).
 func (s *memoryState) recordTagUsage(tag string, record AIUsageRecord) aiTagDay {
 	_, limited := s.tagLimits[tag]
 	if _, exists := s.tagUsage[tag]; !exists && !limited && len(s.tagUsage) >= api.OutboundAITagsPerDay {

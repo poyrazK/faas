@@ -5209,7 +5209,7 @@ paths:
       operationId: getOutboundAITagUsage
       summary: Read one UTC day of AI gateway usage by tag.
       description: >-
-        Requires MFA and read scope (ADR-1410). Tags are the key=value pairs apps send in X-Gregale-AI-Tags; rows are
+        Requires MFA and read scope (ADR-1436). Tags are the key=value pairs apps send in X-Gregale-AI-Tags; rows are
         kept for 31 days and listed by cost, then tokens, with each tag's daily cost limit.
       parameters:
         - name: date
@@ -5252,7 +5252,7 @@ paths:
       operationId: exportOutboundAITagUsage
       summary: Export a day range of AI gateway usage by tag.
       description: >-
-        Requires MFA and read scope (ADR-1430). Streams every tag row of the UTC days from through to, optionally of one
+        Requires MFA and read scope (ADR-1438). Streams every tag row of the UTC days from through to, optionally of one
         key, ordered by day and tag, as NDJSON (the default) or CSV with the columns of OutboundAITagUsageExportRow.
       parameters:
         - name: from
@@ -5301,7 +5301,7 @@ paths:
       tags: [outbound]
       operationId: getOutboundAITagLimits
       summary: Read an AI integration's per-tag daily cost limits.
-      description: Requires MFA and read scope (ADR-1410).
+      description: Requires MFA and read scope (ADR-1436).
       responses:
         '200':
           description: The integration's tag limits, ordered by tag.
@@ -5318,7 +5318,7 @@ paths:
       operationId: setOutboundAITagLimits
       summary: Replace an AI integration's per-tag daily cost limits.
       description: >-
-        Requires MFA and deploy-write scope (ADR-1410). A call carrying a limited tag is refused with 429
+        Requires MFA and deploy-write scope (ADR-1436). A call carrying a limited tag is refused with 429
         outbound_budget_exhausted (X-Gregale-Outbound-Rejection tag_daily_cost_limit) when the tag's settled UTC-day cost,
         live reservations and the call's reservation would pass the limit. An empty list removes every limit.
       requestBody:
@@ -5714,7 +5714,7 @@ paths:
       summary: Read an AI route's targets' recent attempts.
       description: >-
         Requires MFA and read scope. Returns each target's settled attempts, errors, mean time to first byte and mean cost
-        per successful attempt over the window latency and cost routes judge (ADR-1390). Attempts are counted for latency
+        per successful attempt over the window latency and cost routes judge (ADR-1434). Attempts are counted for latency
         and cost routes and during a canary; other routes report zeros.
       responses:
         '200':
@@ -5768,7 +5768,7 @@ paths:
       tags: [outbound]
       operationId: listOutboundAIEvaluations
       summary: List an AI route's latest evaluations.
-      description: Requires MFA and read scope. Newest first, at most 100, without their samples (ADR-1360).
+      description: Requires MFA and read scope. Newest first, at most 100, without their samples (ADR-1431).
       responses:
         '200':
           description: The route's evaluations.
@@ -5788,7 +5788,7 @@ paths:
       description: >-
         Requires MFA and deploy-write scope. outboundd replays the route's first target's latest captured OpenAI chat
         completions and Responses calls on the target and asks the judge model which answer is better, in a random order
-        (ADR-1360). The evaluation passes when losses and candidate errors are at most max_loss_rate percent of the sample;
+        (ADR-1431). The evaluation passes when losses and candidate errors are at most max_loss_rate percent of the sample;
         a passing evaluation starts its canary, if it has one, unless the route already has an active canary or the target
         changed. Candidate and judge calls are metered and capped under the caller evaluation. The first target's
         integration needs request_log_content.
@@ -5826,7 +5826,7 @@ paths:
       tags: [outbound]
       operationId: getOutboundAIEvaluation
       summary: Read an AI evaluation and its samples.
-      description: Requires MFA and read scope (ADR-1360). Evaluations are kept for 30 days.
+      description: Requires MFA and read scope (ADR-1431). Evaluations are kept for 30 days.
       responses:
         '200':
           description: The evaluation.
@@ -6066,7 +6066,7 @@ paths:
       tags: [outbound]
       operationId: listOutboundAIAccessTokens
       summary: List an app's AI gateway access tokens.
-      description: Requires MFA and read scope. Newest first, without their secrets (ADR-1360).
+      description: Requires MFA and read scope. Newest first, without their secrets (ADR-1431).
       responses:
         '200':
           description: The app's tokens.
@@ -6087,7 +6087,7 @@ paths:
         Requires MFA and deploy-write scope. A caller outside Gregale, such as local development, CI or a notebook, sets
         its SDK's base URL to the AI gateway's public host and puts the token where the SDK puts its API key
         (Authorization Bearer, x-api-key, x-goog-api-key or api-key). Its calls are the app's: the app's bindings,
-        guardrails, caps and content policy apply (ADR-1360). The secret is returned only in this response. An app holds
+        guardrails, caps and content policy apply (ADR-1431). The secret is returned only in this response. An app holds
         at most 20 live tokens.
       requestBody:
         required: true
@@ -6128,7 +6128,7 @@ paths:
       tags: [outbound]
       operationId: revokeOutboundAIAccessToken
       summary: Revoke an AI gateway access token.
-      description: Requires MFA and deploy-write scope. outboundd may accept the token for up to 30 seconds more (ADR-1360).
+      description: Requires MFA and deploy-write scope. outboundd may accept the token for up to 30 seconds more (ADR-1431).
       responses:
         '204': { description: Access token revoked. }
         '400': { $ref: '#/components/responses/ValidationFailed' }
@@ -69952,10 +69952,10 @@ components:
           description: Whether each settled app call writes one metadata line to the app's log drains (ADR-1340).
         ai_allow_unmetered:
           type: boolean
-          description: Whether writes the gateway can neither meter nor knows to be free go through, outside the caps (ADR-1370).
+          description: Whether writes the gateway can neither meter nor knows to be free go through, outside the caps (ADR-1432).
         ai_auto_prompt_cache:
           type: boolean
-          description: Whether the gateway adds prompt-cache breakpoints to Claude requests that carry none (ADR-1420).
+          description: Whether the gateway adds prompt-cache breakpoints to Claude requests that carry none (ADR-1437).
         ai_user_daily_token_limit:
           type: [integer, 'null']
           format: int64
@@ -70044,14 +70044,14 @@ components:
             Let through writes the gateway can neither meter nor knows to be free, such as realtime client secrets, vector
             stores, containers, fine-tuning jobs and context caches. They are otherwise refused with 403
             outbound_ai_endpoint_unmetered; let through, they carry X-Gregale-AI-Unmetered and their spend is outside the
-            caps (ADR-1370). Requires ai_provider.
+            caps (ADR-1432). Requires ai_provider.
         auto_prompt_cache:
           type: boolean
           description: >-
             Add prompt-cache breakpoints to Claude requests on the Anthropic API, Vertex AI and Amazon Bedrock that carry
             none: after a system prompt or tool list seen again within five minutes, and after the last message of a
             conversation that carries earlier turns or names X-Gregale-AI-Session. Prompts under about 1,024 tokens are not
-            marked; the response names the added breakpoints in X-Gregale-AI-Prompt-Cache (ADR-1420). Requires ai_provider.
+            marked; the response names the added breakpoints in X-Gregale-AI-Prompt-Cache (ADR-1437). Requires ai_provider.
         user_daily_token_limit:
           type: [integer, 'null']
           format: int64
@@ -70082,10 +70082,10 @@ components:
         images: { type: integer, format: int64, minimum: 0, description: Images billed per image (ADR-997). }
         audio_seconds: { type: integer, format: int64, minimum: 0, description: Seconds of transcribed audio. }
         characters: { type: integer, format: int64, minimum: 0, description: Characters of speech input. }
-        video_seconds: { type: integer, format: int64, minimum: 0, description: Seconds of generated video (ADR-1370). }
-        web_searches: { type: integer, format: int64, minimum: 0, description: 'Web searches as the provider bills them: per call, query or grounded prompt (ADR-1380).' }
-        file_searches: { type: integer, format: int64, minimum: 0, description: File search calls (ADR-1380). }
-        code_session_gb: { type: integer, format: int64, minimum: 0, description: GB of code-interpreter container sessions (ADR-1380). }
+        video_seconds: { type: integer, format: int64, minimum: 0, description: Seconds of generated video (ADR-1432). }
+        web_searches: { type: integer, format: int64, minimum: 0, description: 'Web searches as the provider bills them: per call, query or grounded prompt (ADR-1433).' }
+        file_searches: { type: integer, format: int64, minimum: 0, description: File search calls (ADR-1433). }
+        code_session_gb: { type: integer, format: int64, minimum: 0, description: GB of code-interpreter container sessions (ADR-1433). }
         cached_requests: { type: integer, format: int64, minimum: 0, description: 'Requests the response cache served, with no tokens or cost (ADR-1440).' }
         cache_saved_millicents: { type: integer, format: int64, minimum: 0, description: 'Provider cost the response cache avoided, priced from the cached responses at the current price list.' }
         prompt_cache_saved_millicents: { type: integer, format: int64, description: 'What provider prompt caching saved against plain input prices; negative when cache writes outweighed reads.' }
@@ -70289,26 +70289,26 @@ components:
           minimum: 0
           maximum: 10000000
           description: >-
-            Charged per second of generated video (ADR-1370). A model_prefix of <model>@<resolution>, such as
+            Charged per second of generated video (ADR-1432). A model_prefix of <model>@<resolution>, such as
             veo-3.1-generate-001@4k, prices that resolution apart.
         millicents_per_web_search:
           type: integer
           format: int64
           minimum: 0
           maximum: 10000000
-          description: 'Charged per web search as the provider bills it: per call, query or grounded prompt (ADR-1380).'
+          description: 'Charged per web search as the provider bills it: per call, query or grounded prompt (ADR-1433).'
         millicents_per_file_search:
           type: integer
           format: int64
           minimum: 0
           maximum: 10000000
-          description: Charged per file search call (ADR-1380).
+          description: Charged per file search call (ADR-1433).
         millicents_per_code_session_gb:
           type: integer
           format: int64
           minimum: 0
           maximum: 10000000
-          description: Charged per GB of code-interpreter container memory per session (ADR-1380).
+          description: Charged per GB of code-interpreter container memory per session (ADR-1433).
     PutOutboundAIPricesRequest:
       type: object
       description: Replace an integration's price list. It takes effect immediately; earlier lists stay for costs already settled.
@@ -70369,7 +70369,7 @@ components:
     OutboundAITagUsageItem:
       type: object
       description: >-
-        One tag's UTC-day AI usage on an integration (ADR-1410); tokens is input plus output. A key's tags past the day's
+        One tag's UTC-day AI usage on an integration (ADR-1436); tokens is input plus output. A key's tags past the day's
         cap of distinct tags add to its overflow row, <key>=~other.
       required: [tag, requests, error_requests, input_tokens, output_tokens, tokens, cost_millicents, daily_cost_limit_millicents]
       properties:
@@ -70383,7 +70383,7 @@ components:
         daily_cost_limit_millicents: { type: [integer, 'null'], format: int64 }
     OutboundAITagUsageResponse:
       type: object
-      description: One UTC day of AI usage by tag, most expensive first (ADR-1410).
+      description: One UTC day of AI usage by tag, most expensive first (ADR-1436).
       required: [usage_date, tracked_tags, items]
       properties:
         usage_date: { type: string, format: date }
@@ -70393,7 +70393,7 @@ components:
           items: { $ref: '#/components/schemas/OutboundAITagUsageItem' }
     OutboundAITagUsageExportRow:
       type: object
-      description: One NDJSON line of a tag usage export (ADR-1430); CSV rows carry the same fields in this order.
+      description: One NDJSON line of a tag usage export (ADR-1438); CSV rows carry the same fields in this order.
       required: [usage_date, tag, requests, error_requests, input_tokens, output_tokens, tokens, cost_millicents]
       properties:
         usage_date: { type: string, format: date }
@@ -70406,7 +70406,7 @@ components:
         cost_millicents: { type: integer, format: int64, minimum: 0 }
     OutboundAITagLimit:
       type: object
-      description: A UTC-day cost limit on one exact tag (ADR-1410).
+      description: A UTC-day cost limit on one exact tag (ADR-1436).
       required: [tag, daily_cost_limit_millicents]
       properties:
         tag:
@@ -70415,7 +70415,7 @@ components:
         daily_cost_limit_millicents: { type: integer, format: int64, minimum: 1, maximum: 1000000000000 }
     OutboundAITagLimits:
       type: object
-      description: An integration's per-tag daily cost limits, ordered by tag (ADR-1410).
+      description: An integration's per-tag daily cost limits, ordered by tag (ADR-1436).
       required: [limits]
       properties:
         limits:
@@ -70449,7 +70449,7 @@ components:
           type: integer
           minimum: 0
           maximum: 100
-          description: A weighted route's share of first attempts for this target; 0 makes it a fallback only (ADR-1390).
+          description: A weighted route's share of first attempts for this target; 0 makes it a fallback only (ADR-1434).
     OutboundAIRoute:
       type: object
       description: An ordered list of managed AI integrations. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path} (ADR-990). An openai-format route accepts OpenAI chat completions and embeddings and translates them for each target's provider (ADR-991, ADR-995).
@@ -70466,7 +70466,7 @@ components:
         strategy:
           type: string
           enum: [ordered, weighted, latency, cost]
-          description: How a call picks its first target (ADR-1390).
+          description: How a call picks its first target (ADR-1434).
         max_ttfb_ms:
           type: [integer, 'null']
           minimum: 1
@@ -70530,7 +70530,7 @@ components:
         mean_cost_millicents: { type: [integer, 'null'], format: int64, minimum: 0 }
     OutboundAIRouteStats:
       type: object
-      description: Each target's settled attempts since window_start, the window latency and cost routes judge (ADR-1390).
+      description: Each target's settled attempts since window_start, the window latency and cost routes judge (ADR-1434).
       required: [strategy, window_start, targets]
       properties:
         strategy: { type: string, enum: [ordered, weighted, latency, cost] }
@@ -70587,7 +70587,7 @@ components:
     OutboundAIEvaluation:
       type: object
       description: >-
-        An evaluation of a route target (ADR-1360). verdict is set when state is done, error_code when it is failed. items
+        An evaluation of a route target (ADR-1431). verdict is set when state is done, error_code when it is failed. items
         are returned only when one evaluation is read.
       required: [id, route_id, target, judge_integration_id, judge_model, sample_size, max_loss_rate, canary, state, verdict,
         error_code, samples, wins, ties, losses, candidate_errors, judge_errors, baseline, candidate, canary_started,
@@ -70707,7 +70707,7 @@ components:
           type: string
           enum: [ordered, weighted, latency, cost]
           description: >-
-            How a call picks its first target (ADR-1390). ordered (the default) follows route order; weighted draws by target
+            How a call picks its first target (ADR-1434). ordered (the default) follows route order; weighted draws by target
             weight; latency picks the healthy target with the lowest recent mean time to first byte; cost picks the healthy
             target with the lowest recent mean cost per call. The other targets follow as fallbacks.
         max_ttfb_ms:
@@ -70730,7 +70730,7 @@ components:
         strategy:
           type: string
           enum: [ordered, weighted, latency, cost]
-          description: The route's strategy from now on, as on creation (ADR-1390); omitted means ordered.
+          description: The route's strategy from now on, as on creation (ADR-1434); omitted means ordered.
         max_ttfb_ms:
           type: integer
           minimum: 1
@@ -70787,7 +70787,7 @@ components:
         limit: { type: integer, format: int64, minimum: 1 }
         used: { type: integer, format: int64, minimum: 0 }
         crossed_at: { type: string, format: date-time }
-        tag: { type: [string, 'null'], maxLength: 97, description: The tag of a tag_daily_cost alert (ADR-1430). }
+        tag: { type: [string, 'null'], maxLength: 97, description: The tag of a tag_daily_cost alert (ADR-1438). }
     OutboundAIBudgetAlertList:
       type: object
       description: An integration's AI budget alerts, newest first.
@@ -70821,7 +70821,7 @@ components:
         tags:
           type: array
           maxItems: 5
-          description: The call's X-Gregale-AI-Tags as key=value, sorted by key (ADR-1410).
+          description: The call's X-Gregale-AI-Tags as key=value, sorted by key (ADR-1436).
           items: { type: string, maxLength: 97 }
     OutboundAIContentBody:
       type: object
@@ -70863,7 +70863,7 @@ components:
     OutboundAIResponsePolicy:
       type: object
       description: >-
-        Checks of the text a model sends back, before the caller sees it (ADR-1400). The detectors redact or block as on
+        Checks of the text a model sends back, before the caller sees it (ADR-1435). The detectors redact or block as on
         requests; blocked_terms block refuses a response that contains one of the policy's blocked terms; moderation runs
         the policy's moderation check on the response, without prompt_injection, and flags or blocks it. A refused whole
         response answers 422 outbound_ai_response_blocked or outbound_ai_response_flagged; a refused stream ends with an
@@ -102723,7 +102723,7 @@ components:
 
     OutboundAIBudgetThresholdWebhookPayload:
       type: object
-      description: Data delivered with outbound.ai_budget.threshold when an AI budget reaches 80% or 100% in its period (ADR-991). alert_id is stable across retries; integration budgets notify every bound app, app budgets only that app, and an end user's or a tag's budget only the app whose call crossed it (ADR-995, ADR-1430).
+      description: Data delivered with outbound.ai_budget.threshold when an AI budget reaches 80% or 100% in its period (ADR-991). alert_id is stable across retries; integration budgets notify every bound app, app budgets only that app, and an end user's or a tag's budget only the app whose call crossed it (ADR-995, ADR-1438).
       required: [alert_id, integration_id, integration_name, budget, app_id, end_user, period_start, threshold_percent, limit, used, crossed_at, tag]
       properties:
         alert_id: { type: string, format: uuid }
@@ -102737,7 +102737,7 @@ components:
         limit: { type: integer, format: int64, minimum: 1 }
         used: { type: integer, format: int64, minimum: 0 }
         crossed_at: { type: string, format: date-time }
-        tag: { type: [string, 'null'], maxLength: 97, description: The tag whose daily cost limit crossed the threshold (ADR-1430). }
+        tag: { type: [string, 'null'], maxLength: 97, description: The tag whose daily cost limit crossed the threshold (ADR-1438). }
     ManagedRealtimeBatchMessageRequest:
       type: object
       required:

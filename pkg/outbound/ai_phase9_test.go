@@ -1,6 +1,6 @@
 package outbound
 
-// adr: 1360 — batches reserve their estimate before the provider call and
+// adr: 1431 — batches reserve their estimate before the provider call and
 // settle actual usage once the provider ends them; access tokens act as
 // their app on the public listener; evaluations judge a candidate target
 // against the first target's captured calls.

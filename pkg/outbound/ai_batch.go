@@ -19,7 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// AIBatch is a provider batch the gateway reserved for (ADR-1360). Path and
+// AIBatch is a provider batch the gateway reserved for (ADR-1431). Path and
 // RawQuery are the creation call's escaped provider path and query; status
 // and results reads are built from them.
 type AIBatch struct {
@@ -287,7 +287,7 @@ func batchSibling(path, suffix string) string {
 	return strings.TrimSuffix(path, "/batches") + suffix
 }
 
-// estimateBatch sizes a batch creation call before admission (ADR-1360):
+// estimateBatch sizes a batch creation call before admission (ADR-1431):
 // Anthropic's requests from the body, OpenAI's from its input file, which
 // it reads from the provider.
 func (h *Handler) estimateBatch(ctx context.Context, integration Integration, path, rawQuery string, ai *aiRequest) (batchEstimate, *aiCallRejection) {
@@ -427,7 +427,7 @@ func batchProviderID(body []byte) string {
 	return created.ID
 }
 
-// AIBatchWorker settles batches once their provider ends them (ADR-1360).
+// AIBatchWorker settles batches once their provider ends them (ADR-1431).
 // Every outboundd replica may run it: claims skip locked batches, and each
 // model's settlement is keyed by the batch.
 type AIBatchWorker struct {
@@ -668,7 +668,7 @@ func (r *batchResultReader) endLine() {
 	total.CachedInputTokens += usage.CachedInputTokens
 	total.CacheWriteTokens += usage.CacheWriteTokens
 	total.OutputTokens += usage.OutputTokens
-	// ADR-1380: a batch request's web and file searches.
+	// ADR-1433: a batch request's web and file searches.
 	total.WebSearches += usage.WebSearches
 	total.FileSearches += usage.FileSearches
 	r.totals[usage.Model] = total

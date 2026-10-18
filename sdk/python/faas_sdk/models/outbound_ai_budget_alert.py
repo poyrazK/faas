@@ -36,7 +36,7 @@ class OutboundAIBudgetAlert:
     used: int
     crossed_at: datetime.datetime
     tag: None | str
-    """The tag of a tag_daily_cost alert (ADR-1430)."""
+    """The tag of a tag_daily_cost alert (ADR-1438)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

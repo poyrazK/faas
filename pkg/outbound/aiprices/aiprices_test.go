@@ -2,7 +2,7 @@ package aiprices
 
 // adr: 994 — the embedded catalog parses, covers every gateway provider and
 // resolves dated, versioned and region-prefixed model names to a family.
-// adr: 1370 — Veo rows carry a price per second, with resolutions priced
+// adr: 1432 — Veo rows carry a price per second, with resolutions priced
 // apart under "<model>@<resolution>".
 
 import (
@@ -43,7 +43,7 @@ func TestDefaultCatalogCoversEveryProvider(t *testing.T) {
 			t.Errorf("Lookup(%s, %s) = %+v, %v", tc.provider, tc.model, entry, ok)
 		}
 	}
-	// adr: 1380 — models carry built-in tool prices.
+	// adr: 1433 — models carry built-in tool prices.
 	for provider, model := range map[string]string{api.OutboundAIProviderOpenAI: "gpt-5", api.OutboundAIProviderAnthropic: "claude-sonnet-4-5",
 		api.OutboundAIProviderGemini: "gemini-2.5-flash"} {
 		entry, ok := catalog.Lookup(provider, model)

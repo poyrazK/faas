@@ -88,7 +88,7 @@ def sync_detailed(
 ) -> Response[OutboundAIEvaluation | Problem]:
     """Read an AI evaluation and its samples.
 
-     Requires MFA and read scope (ADR-1360). Evaluations are kept for 30 days.
+     Requires MFA and read scope (ADR-1431). Evaluations are kept for 30 days.
 
     Args:
         evaluation (UUID):
@@ -119,7 +119,7 @@ def sync(
 ) -> OutboundAIEvaluation | Problem | None:
     """Read an AI evaluation and its samples.
 
-     Requires MFA and read scope (ADR-1360). Evaluations are kept for 30 days.
+     Requires MFA and read scope (ADR-1431). Evaluations are kept for 30 days.
 
     Args:
         evaluation (UUID):
@@ -145,7 +145,7 @@ async def asyncio_detailed(
 ) -> Response[OutboundAIEvaluation | Problem]:
     """Read an AI evaluation and its samples.
 
-     Requires MFA and read scope (ADR-1360). Evaluations are kept for 30 days.
+     Requires MFA and read scope (ADR-1431). Evaluations are kept for 30 days.
 
     Args:
         evaluation (UUID):
@@ -174,7 +174,7 @@ async def asyncio(
 ) -> OutboundAIEvaluation | Problem | None:
     """Read an AI evaluation and its samples.
 
-     Requires MFA and read scope (ADR-1360). Evaluations are kept for 30 days.
+     Requires MFA and read scope (ADR-1431). Evaluations are kept for 30 days.
 
     Args:
         evaluation (UUID):

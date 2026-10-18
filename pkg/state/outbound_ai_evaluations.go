@@ -12,7 +12,7 @@ import (
 var ErrOutboundAIEvaluationLimit = errors.New("state: outbound AI evaluation limit reached")
 
 // OutboundAIEvaluation is an evaluation of a route target against the
-// route's first target (ADR-1360). apid creates it; outboundd claims it and
+// route's first target (ADR-1431). apid creates it; outboundd claims it and
 // writes the totals and items. Position is the candidate's 1-based route
 // position; Canary, when set, starts on it if the evaluation passes.
 type OutboundAIEvaluation struct {

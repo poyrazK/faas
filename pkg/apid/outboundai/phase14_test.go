@@ -1,6 +1,6 @@
 package outboundai
 
-// adr: 1410 — apid lists a day's usage by tag with each tag's limit and
+// adr: 1436 — apid lists a day's usage by tag with each tag's limit and
 // replaces an integration's per-tag daily cost limits.
 
 import (

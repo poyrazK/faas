@@ -1,6 +1,6 @@
 package outboundai
 
-// adr: 1390 — routes are created and replaced with a strategy, weights and
+// adr: 1434 — routes are created and replaced with a strategy, weights and
 // a cost route's latency target; invalid combinations are refused; and a
 // route's targets' window counts are readable.
 

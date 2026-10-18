@@ -1,6 +1,6 @@
 package outboundai
 
-// adr: 1360 — apid issues access tokens for an app, showing the secret
+// adr: 1431 — apid issues access tokens for an app, showing the secret
 // once, and records evaluations of a route target within the daily limit.
 
 import (

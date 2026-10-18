@@ -1,5 +1,5 @@
 -- filename: 20261016181201526_outbound_ai_tool_fees.sql
--- ADR-1380: price lists price built-in tools per use (web search, file
+-- ADR-1433: price lists price built-in tools per use (web search, file
 -- search, and code-interpreter container sessions per GB), and the daily
 -- rollup counts them. Additive and replay-safe.
 

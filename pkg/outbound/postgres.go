@@ -318,7 +318,7 @@ type admissionLock struct {
 	endUser       string
 	userLimited   bool
 	// tags are the call's usage tags, whose limits admission reads
-	// (ADR-1410).
+	// (ADR-1436).
 	tags []string
 }
 
@@ -400,7 +400,7 @@ func lockAdmissionState(ctx context.Context, tx pgx.Tx, lock admissionLock) (loc
 		WITH expired AS (
 		    DELETE FROM outbound_admission_leases WHERE integration_id = $1 AND expires_at <= $2 RETURNING lease_id)
 		SELECT count(*)::int, COALESCE(min(expires_at), $2),
-		       -- ADR-1360: a created batch's reservation counts until it settles.
+		       -- ADR-1431: a created batch's reservation counts until it settles.
 		       (COALESCE(sum(ai_reserved_tokens), 0) +
 		        (SELECT COALESCE(sum(reserved_tokens), 0) FROM outbound_ai_batches
 		          WHERE integration_id = $1 AND state <> 'settled'))::bigint,

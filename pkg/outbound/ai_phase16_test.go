@@ -1,6 +1,6 @@
 package outbound
 
-// adr: 1430 — a tag's daily cost limit alerts at 80% and 100% once per tag
+// adr: 1438 — a tag's daily cost limit alerts at 80% and 100% once per tag
 // and day, and overflow rows never alert.
 
 import (

@@ -1,4 +1,4 @@
-// commands_ai_tokens.go — `gregale ai tokens` (ADR-1360): access tokens that
+// commands_ai_tokens.go — `gregale ai tokens` (ADR-1431): access tokens that
 // let local development, CI or a notebook call the AI gateway as an app.
 
 package main

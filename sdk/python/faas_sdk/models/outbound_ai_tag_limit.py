@@ -11,7 +11,7 @@ T = TypeVar("T", bound="OutboundAITagLimit")
 
 @_attrs_define
 class OutboundAITagLimit:
-    """A UTC-day cost limit on one exact tag (ADR-1410)."""
+    """A UTC-day cost limit on one exact tag (ADR-1436)."""
 
     tag: str
     daily_cost_limit_millicents: int

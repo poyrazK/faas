@@ -143,7 +143,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		}, []string{"integration_id", "kind", "action"}),
 		aiMedia: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_media_total",
-			Help: "Settled AI media usage by integration and kind (images, audio_seconds, characters, or video_seconds) (ADR-997, ADR-1370).",
+			Help: "Settled AI media usage by integration and kind (images, audio_seconds, characters, or video_seconds) (ADR-997, ADR-1432).",
 		}, []string{"integration_id", "kind"}),
 		aiReplays: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_replays_total",
@@ -151,23 +151,23 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		}, []string{"state"}),
 		aiEvaluations: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_evaluations_total",
-			Help: "AI evaluations the worker finished, by result (pass, fail, or failed) (ADR-1360).",
+			Help: "AI evaluations the worker finished, by result (pass, fail, or failed) (ADR-1431).",
 		}, []string{"result"}),
 		aiBatches: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_batches_settled_total",
-			Help: "Provider batches the worker settled, by outcome (known, unknown, or error) (ADR-1360).",
+			Help: "Provider batches the worker settled, by outcome (known, unknown, or error) (ADR-1431).",
 		}, []string{"outcome"}),
 		aiUnmetered: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_unmetered_calls_total",
-			Help: "Writes on AI integrations let through unmetered because the AI policy allows them, by integration (ADR-1370).",
+			Help: "Writes on AI integrations let through unmetered because the AI policy allows them, by integration (ADR-1432).",
 		}, []string{"integration_id"}),
 		aiToolUses: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_tool_uses_total",
-			Help: "Settled built-in tool uses by integration and tool (web_searches, file_searches, or code_session_gb) (ADR-1380).",
+			Help: "Settled built-in tool uses by integration and tool (web_searches, file_searches, or code_session_gb) (ADR-1433).",
 		}, []string{"integration_id", "tool"}),
 		aiRouteCalls: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_route_calls_total",
-			Help: "AI route calls by strategy and how the first target was picked (ordered, weighted, best, explore, or canary) (ADR-1390).",
+			Help: "AI route calls by strategy and how the first target was picked (ordered, weighted, best, explore, or canary) (ADR-1434).",
 		}, []string{"strategy", "pick"}),
 		aiCanaryCalls: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_route_canary_calls_total",
@@ -183,15 +183,15 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		}, []string{"integration_id"}),
 		aiPromptCacheMarks: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_prompt_cache_marks_total",
-			Help: "Prompt-cache breakpoints the gateway added to Claude requests by integration and mark (prefix or conversation) (ADR-1420).",
+			Help: "Prompt-cache breakpoints the gateway added to Claude requests by integration and mark (prefix or conversation) (ADR-1437).",
 		}, []string{"integration_id", "mark"}),
 		aiResponseChecks: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_response_checks_total",
-			Help: "AI response checks by integration and result (passed, redacted, flagged, error, unchecked, or blocked) (ADR-1400).",
+			Help: "AI response checks by integration and result (passed, redacted, flagged, error, unchecked, or blocked) (ADR-1435).",
 		}, []string{"integration_id", "result"}),
 		aiResponseFindings: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_response_findings_total",
-			Help: "AI response check findings by integration, detector (email, payment_card, iban, secret, or blocked_term) and action (redacted or blocked) (ADR-1400).",
+			Help: "AI response check findings by integration, detector (email, payment_card, iban, secret, or blocked_term) and action (redacted or blocked) (ADR-1435).",
 		}, []string{"integration_id", "kind", "action"}),
 		aiModeration: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_moderation_total",
@@ -456,7 +456,7 @@ func (m *Metrics) ObserveAIResponseCacheSaved(integrationID string, millicents i
 }
 
 // ObserveAIPromptCacheMark counts one breakpoint the gateway added
-// (ADR-1420).
+// (ADR-1437).
 func (m *Metrics) ObserveAIPromptCacheMark(integrationID, mark string) {
 	if m == nil || m.aiPromptCacheMarks == nil {
 		return
@@ -464,7 +464,7 @@ func (m *Metrics) ObserveAIPromptCacheMark(integrationID, mark string) {
 	m.aiPromptCacheMarks.WithLabelValues(integrationID, mark).Inc()
 }
 
-// ObserveAIResponseCheck counts one response check's result (ADR-1400).
+// ObserveAIResponseCheck counts one response check's result (ADR-1435).
 func (m *Metrics) ObserveAIResponseCheck(integrationID, result string) {
 	if m == nil || m.aiResponseChecks == nil {
 		return

@@ -1,4 +1,4 @@
-# ADR-1390 · AI gateway phase 12: weighted, latency and cost route strategies
+# ADR-1434 · AI gateway phase 12: weighted, latency and cost route strategies
 
 - **Status:** accepted
 - **Date:** 2026-10-17

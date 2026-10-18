@@ -215,7 +215,7 @@ type aiSettlementPlan struct {
 
 // queueAIRouteAttempt adds a route attempt to its target's row for the
 // current UTC minute while the route's canary is active, or when its
-// strategy judges targets by these rows (ADR-1390). Otherwise, or for a
+// strategy judges targets by these rows (ADR-1434). Otherwise, or for a
 // route deleted meanwhile, it writes nothing: the table has no foreign key,
 // so a settlement never fails on it.
 func queueAIRouteAttempt(batch *pgx.Batch, record AIUsageRecord) {
@@ -594,17 +594,17 @@ func (b *PostgresBackend) PruneAIUsage(ctx context.Context) (int64, error) {
 		// ADR-997: replays and their results.
 		{`DELETE FROM outbound_ai_replays WHERE created_at < now() - make_interval(days => $1::int)`, api.OutboundAIReplayRetentionDays},
 		{`DELETE FROM outbound_ai_user_usage_daily WHERE usage_date < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},
-		// ADR-1410: tag rows follow the per-user rollup retention.
+		// ADR-1436: tag rows follow the per-user rollup retention.
 		{`DELETE FROM outbound_ai_tag_usage_daily WHERE usage_date < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},
 		// ADR-995: end users' alerts follow the per-user rollup retention, and
-		// tags' alerts the tag rollup's (ADR-1430).
+		// tags' alerts the tag rollup's (ADR-1438).
 		{`DELETE FROM outbound_ai_budget_alerts WHERE (end_user IS NOT NULL OR tag IS NOT NULL) AND period_start < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},
 		// ADR-1120: a settled call's key only has to outlive its retries.
 		{`DELETE FROM outbound_ai_settlements WHERE settled_at < now() - make_interval(mins => $1::int)`, api.OutboundAISettlementKeyRetentionMinutes},
 		// ADR-1340: canary rows and export lines.
 		{`DELETE FROM outbound_ai_route_target_minutes WHERE minute < now() - make_interval(hours => $1::int)`, api.OutboundAIRouteStatsRetentionHours},
 		{`DELETE FROM outbound_ai_log_exports WHERE created_at < now() - make_interval(hours => $1::int)`, api.OutboundAILogExportRetentionHours},
-		// ADR-1360: settled batches, evaluations with their items, and
+		// ADR-1431: settled batches, evaluations with their items, and
 		// tokens that expired or were revoked.
 		{`DELETE FROM outbound_ai_batches WHERE state = 'settled' AND settled_at < now() - make_interval(days => $1::int)`, api.OutboundAIBatchRetentionDays},
 		{`DELETE FROM outbound_ai_evaluations WHERE created_at < now() - make_interval(days => $1::int)`, api.OutboundAIEvaluationRetentionDays},

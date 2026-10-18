@@ -1,8 +1,8 @@
-# ADR-1380 · AI gateway phase 11: price built-in tool fees
+# ADR-1433 · AI gateway phase 11: price built-in tool fees
 
 - **Status:** accepted
 - **Date:** 2026-10-16
-- **Relates to:** ADR-990 (price lists), ADR-991 (hard caps), ADR-994 (price catalog), ADR-1370 (unmetered calls)
+- **Relates to:** ADR-990 (price lists), ADR-991 (hard caps), ADR-994 (price catalog), ADR-1432 (unmetered calls)
 - **Decision:**
   - **Built-in tools are counted, priced and reserved.** A metered call can run provider tools that are billed per use on top of tokens. The gateway now counts them from the response, prices them and reserves them before the call.
     - **Web search:**
@@ -19,7 +19,7 @@
     - a code interpreter: one session at its memory.
   - **Settlement** charges the counted uses. A container is charged once per `OutboundAIContainerSessionMinutes` window per outboundd process, so a container reused across turns is not charged again within its session.
 - **Why:**
-  - Hard caps are the gateway's main promise (ADR-991), and ADR-1370 closed the endpoints the gateway could not meter. Inside metered calls, tools were still free in the gateway's numbers: at $10 to $35 per 1,000 searches and $0.03 to $1.92 per container session, an agent that searches in a loop could pass a cost cap many times over without the gateway seeing it.
+  - Hard caps are the gateway's main promise (ADR-991), and ADR-1432 closed the endpoints the gateway could not meter. Inside metered calls, tools were still free in the gateway's numbers: at $10 to $35 per 1,000 searches and $0.03 to $1.92 per container session, an agent that searches in a loop could pass a cost cap many times over without the gateway seeing it.
 - **Consequences:**
   - **Free allowances are not modeled.** Gemini's free grounding (1,500 prompts a day on 2.5, 5,000 queries a month on Gemini 3) is charged like the rest. Caps err on the safe side and reports can overstate spend for low-volume customers.
   - **Not covered:**

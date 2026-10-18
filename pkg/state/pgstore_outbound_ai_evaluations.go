@@ -39,7 +39,7 @@ func scanOutboundAIEvaluation(row pgx.Row) (OutboundAIEvaluation, error) {
 	return e, nil
 }
 
-// CreateOutboundAIEvaluation records a pending evaluation (ADR-1360).
+// CreateOutboundAIEvaluation records a pending evaluation (ADR-1431).
 func (s *PgStore) CreateOutboundAIEvaluation(ctx context.Context, evaluation OutboundAIEvaluation) (OutboundAIEvaluation, error) {
 	var canary []byte
 	if evaluation.Canary != nil {

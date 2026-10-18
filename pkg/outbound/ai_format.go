@@ -39,7 +39,7 @@ const (
 	aiMediaTranscription
 	// aiMediaSpeech is text to speech.
 	aiMediaSpeech
-	// aiMediaVideo is Veo video generation, billed per second (ADR-1370).
+	// aiMediaVideo is Veo video generation, billed per second (ADR-1432).
 	aiMediaVideo
 )
 
@@ -61,7 +61,7 @@ type aiEndpoint struct {
 	// media marks an image, transcription or speech endpoint (ADR-997).
 	media aiMediaKind
 	// batch marks a batch creation endpoint: it reserves the batch's
-	// estimate and settles when the batch ends (ADR-1360).
+	// estimate and settles when the batch ends (ADR-1431).
 	batch bool
 }
 
@@ -126,11 +126,11 @@ func openAIEndpoint(path string) aiEndpoint {
 func (e aiEndpoint) billable() bool { return e.generation || e.embedding || e.media != aiMediaNone }
 
 // metered reports an endpoint whose charges the gateway reserves and
-// settles (ADR-1370): a billable call or a batch.
+// settles (ADR-1432): a billable call or a batch.
 func (e aiEndpoint) metered() bool { return e.billable() || e.batch }
 
 // videoModel reports a Veo video model served by predictLongRunning
-// (ADR-1370).
+// (ADR-1432).
 func videoModel(model string) bool { return strings.Contains(model, "veo") }
 
 // imagenModel reports an Imagen image model served by predict (ADR-997).
@@ -223,16 +223,16 @@ type aiCallFacts struct {
 	characters int64
 	// videoSeconds is the generated seconds a video call asks for, its
 	// duration times its videos, at videoResolution; videoSized is false
-	// when the body does not say (ADR-1370).
+	// when the body does not say (ADR-1432).
 	videoSeconds    int64
 	videoResolution string
 	videoSized      bool
 	// tools is the built-in tool uses the request declares and reserves
-	// (ADR-1380).
+	// (ADR-1433).
 	tools aiToolReserve
 }
 
-// aiToolReserve is what a request's built-in tools reserve (ADR-1380):
+// aiToolReserve is what a request's built-in tools reserve (ADR-1433):
 // web searches, file searches and GB of code-interpreter container
 // sessions. chatSearch marks a chat completion on a search model, which
 // runs one search per call; codeGB is the container memory a session is
@@ -290,7 +290,7 @@ func readAICallFacts(endpoint aiEndpoint, body []byte) aiCallFacts {
 }
 
 // readToolReserve reads the built-in tools a generation request declares
-// (ADR-1380): OpenAI Responses web_search, file_search and code_interpreter
+// (ADR-1433): OpenAI Responses web_search, file_search and code_interpreter
 // tools, a chat completion on a search model, Anthropic web_search with its
 // max_uses, and Gemini google_search grounding.
 func readToolReserve(endpoint aiEndpoint, model string, fields map[string]json.RawMessage) aiToolReserve {
@@ -418,7 +418,7 @@ func jsonIntOrString(raw json.RawMessage, fallback int64) (int64, bool) {
 	return whole, err == nil
 }
 
-// aiWriteFree reports a write a provider does not charge for (ADR-1370):
+// aiWriteFree reports a write a provider does not charge for (ADR-1432):
 // uploads, token counting, moderation, cancellations and metadata updates.
 // Every other write the gateway does not meter is refused unless the AI
 // policy allows unmetered calls.

@@ -8,7 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// memoryBatch is a batch's reservation in the memory backend (ADR-1360).
+// memoryBatch is a batch's reservation in the memory backend (ADR-1431).
 type memoryBatch struct {
 	batch     AIBatch
 	open      bool

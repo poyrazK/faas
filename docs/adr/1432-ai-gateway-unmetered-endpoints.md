@@ -1,11 +1,11 @@
-# ADR-1370 · AI gateway phase 10: refuse paid calls the gateway cannot meter, and meter video generation
+# ADR-1432 · AI gateway phase 10: refuse paid calls the gateway cannot meter, and meter video generation
 
 - **Status:** accepted
 - **Date:** 2026-10-16
-- **Relates to:** ADR-991 (hard caps), ADR-996 (unknown usage), ADR-997 (media metering), ADR-1360 (batches)
+- **Relates to:** ADR-991 (hard caps), ADR-996 (unknown usage), ADR-997 (media metering), ADR-1431 (batches)
 - **Decision:**
   - **Writes on an AI integration are metered, known free, or refused.** A `POST` to an AI integration goes through only when the gateway either meters its endpoint or knows it to be free of charge.
-    - **Metered:** generation, embeddings, images, audio and batches (ADR-997, ADR-1360), and now video generation.
+    - **Metered:** generation, embeddings, images, audio and batches (ADR-997, ADR-1431), and now video generation.
     - **Known free:** an explicit list per provider (see below): file uploads, token counting, moderation, cancellations, conversation and metadata updates.
     - **Refused:** every other `POST`, and every `PUT` or `PATCH`, with `403 outbound_ai_endpoint_unmetered`. This covers endpoints that are paid but cannot be capped, such as realtime client secrets, vector stores, containers, fine-tuning, context caches, Gemini batch mode and Vertex batch and tuning jobs, and also any endpoint a provider adds later.
     - Reads (`GET`, `HEAD`) and `DELETE` are unchanged.
@@ -16,7 +16,7 @@
     - A successful creation settles at that amount as known usage. The provider bills the generated seconds, and the operation's later result carries no usage.
     - A video call the gateway cannot size (body unreadable or larger than `OutboundAIVideoBodyMaxBytes`) or price (no price per second) is unmetered: refused unless `allow_unmetered`.
 - **Why:**
-  - Hard caps are the gateway's main promise (ADR-991). Before this ADR, a `POST` the gateway did not recognize passed through unmetered. Batches were one such hole (ADR-1360). Others remain: a realtime client secret lets a browser spend with the provider directly; vector stores, containers and context caches bill storage by the hour; video generation costs up to several euros a call.
+  - Hard caps are the gateway's main promise (ADR-991). Before this ADR, a `POST` the gateway did not recognize passed through unmetered. Batches were one such hole (ADR-1431). Others remain: a realtime client secret lets a browser spend with the provider directly; vector stores, containers and context caches bill storage by the hour; video generation costs up to several euros a call.
   - Listing paid endpoints one by one loses to providers adding new ones. Listing what is metered or free, and refusing the rest, keeps a cap honest by default.
   - Veo is the only widely available video API the gateway serves. OpenAI shut down Sora and its Videos API on 2026-09-24, so OpenAI video needs no metering.
 - **Consequences:**

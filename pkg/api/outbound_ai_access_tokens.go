@@ -9,13 +9,13 @@ import (
 )
 
 // OutboundAIAccessTokenPrefix starts every AI gateway access token
-// (ADR-1360), so secret scanners can recognise one.
+// (ADR-1431), so secret scanners can recognise one.
 const OutboundAIAccessTokenPrefix = "ggai_"
 
 var outboundAIAccessTokenName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 // CreateOutboundAIAccessTokenRequest issues a token that lets a caller
-// outside Gregale act as one app on the AI gateway (ADR-1360).
+// outside Gregale act as one app on the AI gateway (ADR-1431).
 // IntegrationIDs narrows it to listed AI integrations; empty allows every
 // AI integration bound to the app, and the account's routes.
 type CreateOutboundAIAccessTokenRequest struct {

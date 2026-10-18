@@ -1,6 +1,6 @@
 package outbound
 
-// adr: 1430 — Postgres settlement records a limited tag's 80% and 100%
+// adr: 1438 — Postgres settlement records a limited tag's 80% and 100%
 // alerts once, naming the tag, and exports usage by tag over a day range.
 
 import (

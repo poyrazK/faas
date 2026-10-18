@@ -34,10 +34,10 @@ type AIUsage struct {
 	AudioSeconds      int64
 	Characters        int64
 	// VideoSeconds is seconds of generated video, and VideoResolution the
-	// resolution they are priced at; it is not stored (ADR-1370).
+	// resolution they are priced at; it is not stored (ADR-1432).
 	VideoSeconds    int64
 	VideoResolution string
-	// Built-in tool uses (ADR-1380): web searches as the provider bills
+	// Built-in tool uses (ADR-1433): web searches as the provider bills
 	// them (calls, queries or grounded prompts), file searches, and GB of
 	// code-interpreter container sessions.
 	WebSearches   int64
@@ -47,7 +47,7 @@ type AIUsage struct {
 
 // priceModel is the name a call is priced under: a video call's model
 // with its resolution, so "<model>@<resolution>" prices win over the
-// model's own (ADR-1370).
+// model's own (ADR-1432).
 func (u AIUsage) priceModel() string {
 	if u.VideoSeconds > 0 && u.VideoResolution != "" {
 		return u.Model + "@" + u.VideoResolution
@@ -81,7 +81,7 @@ type AIUsageRecord struct {
 	Log *AIRequestLog
 	// EndUser is the call's X-Gregale-AI-User value, or empty (ADR-994).
 	EndUser string
-	// Tags are the call's usage tags, sorted by key (ADR-1410).
+	// Tags are the call's usage tags, sorted by key (ADR-1436).
 	Tags []string
 	// LeaseID is the call's admission lease. It keys the settlement, so a
 	// retried settlement counts the call once, and the settlement deletes
@@ -225,7 +225,7 @@ const AIUsageCallerReplay = "replay"
 const AIUsageCallerModeration = "moderation"
 
 // AIUsageCallerEvaluation aggregates evaluations' candidate and judge calls
-// (ADR-1360).
+// (ADR-1431).
 const AIUsageCallerEvaluation = "evaluation"
 
 // appCaller reports whether a settled caller is an app ID, which has app
@@ -336,7 +336,7 @@ type aiUsageFields struct {
 
 	CacheReadInputTokens     *int64 `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"`
-	// Anthropic server tool uses (ADR-1380).
+	// Anthropic server tool uses (ADR-1433).
 	ServerToolUse *struct {
 		WebSearchRequests *int64 `json:"web_search_requests"`
 	} `json:"server_tool_use"`
@@ -384,12 +384,12 @@ func geminiImageTokens(counts []geminiModalityCount) *int64 {
 type aiEnvelopeInner struct {
 	Model string         `json:"model"`
 	Usage *aiUsageFields `json:"usage"`
-	// Output is an OpenAI Responses object's output items (ADR-1380).
+	// Output is an OpenAI Responses object's output items (ADR-1433).
 	Output json.RawMessage `json:"output"`
 }
 
 // aiToolItem is one OpenAI Responses output item, as far as built-in tool
-// fees need it (ADR-1380).
+// fees need it (ADR-1433).
 type aiToolItem struct {
 	Type        string `json:"type"`
 	ID          string `json:"id"`
@@ -397,7 +397,7 @@ type aiToolItem struct {
 }
 
 // aiGeminiCandidate carries a Gemini candidate's search grounding
-// (ADR-1380).
+// (ADR-1433).
 type aiGeminiCandidate struct {
 	GroundingMetadata *struct {
 		WebSearchQueries []string `json:"webSearchQueries"`
@@ -425,7 +425,7 @@ type aiEnvelope struct {
 	// Output is a Responses object's output items, or Bedrock Converse's
 	// output message, which tool counting skips; Item is one Responses
 	// stream event's item; Candidates carry Gemini search grounding
-	// (ADR-1380).
+	// (ADR-1433).
 	Output     json.RawMessage `json:"output"`
 	Item       json.RawMessage `json:"item"`
 	Candidates json.RawMessage `json:"candidates"`
@@ -470,7 +470,7 @@ type aiRawUsage struct {
 	inputImage, outputImage, geminiPromptImage, geminiCandidatesImage int64
 	seenOutputImage                                                   bool
 	images, audioSeconds                                              int64
-	// Built-in tool uses (ADR-1380). webSearchRequests is Anthropic's;
+	// Built-in tool uses (ADR-1433). webSearchRequests is Anthropic's;
 	// the Responses counts take the larger of a final response's items and
 	// the items streamed one by one.
 	webSearchRequests                  int64
@@ -549,7 +549,7 @@ func (r *aiRawUsage) merge(fields *aiUsageFields) {
 }
 
 // noteToolItems counts a final Responses object's web and file searches
-// and keeps its containers (ADR-1380).
+// and keeps its containers (ADR-1433).
 func (r *aiRawUsage) noteToolItems(raw json.RawMessage) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || trimmed[0] != '[' {
@@ -607,7 +607,7 @@ func (r *aiRawUsage) noteContainer(id string) {
 const aiContainersPerResponseMax = 16
 
 // noteGrounding keeps the most non-empty search queries a Gemini chunk
-// reports (ADR-1380).
+// reports (ADR-1433).
 func (r *aiRawUsage) noteGrounding(candidates []aiGeminiCandidate) {
 	for _, candidate := range candidates {
 		if candidate.GroundingMetadata == nil {
@@ -628,7 +628,7 @@ func (r *aiRawUsage) noteGrounding(candidates []aiGeminiCandidate) {
 
 // webSearches is the web searches a response reports, as its provider
 // bills them: Gemini 3 and newer per query, Gemini 2.5 and older per
-// grounded prompt (ADR-1380).
+// grounded prompt (ADR-1433).
 func (r aiRawUsage) webSearches(model string) int64 {
 	streamedWeb := int64(0)
 	for _, kind := range r.streamedTools {
@@ -658,7 +658,7 @@ func (r aiRawUsage) fileSearches() int64 {
 }
 
 // geminiBillsPerPrompt reports a Gemini model whose search grounding is
-// billed per grounded prompt: Gemini 2.5 and older (ADR-1380).
+// billed per grounded prompt: Gemini 2.5 and older (ADR-1433).
 func geminiBillsPerPrompt(model string) bool {
 	model = strings.TrimPrefix(model, "models/")
 	return strings.HasPrefix(model, "gemini-1") || strings.HasPrefix(model, "gemini-2")
@@ -779,7 +779,7 @@ type aiUsageObserver struct {
 	imageMarkers markerCounter
 	parsedImages bool
 	// chatSearch marks a chat completion on a search model, which runs one
-	// web search per call (ADR-1380).
+	// web search per call (ADR-1433).
 	chatSearch bool
 }
 
@@ -1040,7 +1040,7 @@ func (o *aiUsageObserver) applyEnvelope(envelope aiEnvelope) {
 	if tokens := vertexPredictionTokens(envelope); tokens != nil {
 		o.raw.merge(&aiUsageFields{PromptTokenCount: tokens})
 	}
-	// ADR-1380: built-in tool uses.
+	// ADR-1433: built-in tool uses.
 	o.raw.noteToolItems(envelope.Output)
 	if envelope.Type == "response.output_item.done" && len(envelope.Item) > 0 {
 		var item aiToolItem
@@ -1100,7 +1100,7 @@ func (o *aiUsageObserver) Finish() AIUsage {
 	if usage.Model == "" {
 		usage.Model = "unknown"
 	}
-	// ADR-1380: built-in tool uses; a chat search model runs one search
+	// ADR-1433: built-in tool uses; a chat search model runs one search
 	// per call.
 	usage.WebSearches, usage.FileSearches = o.raw.webSearches(usage.Model), o.raw.fileSearches()
 	if o.chatSearch && usage.Known {
@@ -1110,7 +1110,7 @@ func (o *aiUsageObserver) Finish() AIUsage {
 }
 
 // containerIDs lists the code-interpreter containers a response used
-// (ADR-1380).
+// (ADR-1433).
 func (o *aiUsageObserver) containerIDs() []string { return o.raw.containers }
 
 // FirstByteAt reports when the first response body byte was observed.

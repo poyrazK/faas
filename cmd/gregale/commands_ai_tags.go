@@ -1,6 +1,6 @@
 // commands_ai_tags.go — `gregale ai tags` and `gregale ai tag-limits`: one
 // UTC day of AI usage by X-Gregale-AI-Tags tag, and per-tag daily cost
-// limits (ADR-1410).
+// limits (ADR-1436).
 
 package main
 
@@ -54,7 +54,7 @@ func cmdAITags(args []string) int {
 }
 
 // cmdAITagsExport writes a day range of usage by tag to stdout, CSV by
-// default, for chargeback reports (ADR-1430).
+// default, for chargeback reports (ADR-1438).
 func cmdAITagsExport(args []string) int {
 	fs := newFlagSet("ai tags export", flag.ContinueOnError)
 	from := fs.String("from", "", "first UTC day within the last 31 days (default today)")

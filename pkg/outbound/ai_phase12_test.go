@@ -1,6 +1,6 @@
 package outbound
 
-// adr: 1390 — a route's strategy picks the target each call tries first:
+// adr: 1434 — a route's strategy picks the target each call tries first:
 // by weight (sticky per session or user), by lowest recent time to first
 // byte, or by lowest recent cost within a latency target; targets without
 // data are explored and unhealthy ones tried last.

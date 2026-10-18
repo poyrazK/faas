@@ -1,5 +1,5 @@
 -- filename: 20261017140827519_outbound_ai_tag_alerts.sql
--- ADR-1430: AI gateway phase 16. A tag with a daily cost limit alerts at
+-- ADR-1438: AI gateway phase 16. A tag with a daily cost limit alerts at
 -- 80% and 100% like the other budgets: alert rows gain the tag, the budget
 -- check gains tag_daily_cost, and the once-per-period index includes the
 -- tag. Replay-safe: the check and the index are dropped and created again.

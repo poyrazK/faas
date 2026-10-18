@@ -33,7 +33,7 @@ export type OutboundAIRequestLogEntry = {
    */
   content_captured: boolean;
   /**
-   * The call's X-Gregale-AI-Tags as key=value, sorted by key (ADR-1410).
+   * The call's X-Gregale-AI-Tags as key=value, sorted by key (ADR-1436).
    */
   tags: Array<string>;
 };

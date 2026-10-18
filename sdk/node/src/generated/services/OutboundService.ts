@@ -715,7 +715,7 @@ export class OutboundService {
   }
   /**
    * Read one UTC day of AI gateway usage by tag.
-   * Requires MFA and read scope (ADR-1410). Tags are the key=value pairs apps send in X-Gregale-AI-Tags; rows are kept for 31 days and listed by cost, then tokens, with each tag's daily cost limit.
+   * Requires MFA and read scope (ADR-1436). Tags are the key=value pairs apps send in X-Gregale-AI-Tags; rows are kept for 31 days and listed by cost, then tokens, with each tag's daily cost limit.
    * @returns OutboundAITagUsageResponse AI usage by tag for the selected day.
    * @throws ApiError
    */
@@ -768,7 +768,7 @@ export class OutboundService {
   }
   /**
    * Export a day range of AI gateway usage by tag.
-   * Requires MFA and read scope (ADR-1430). Streams every tag row of the UTC days from through to, optionally of one key, ordered by day and tag, as NDJSON (the default) or CSV with the columns of OutboundAITagUsageExportRow.
+   * Requires MFA and read scope (ADR-1438). Streams every tag row of the UTC days from through to, optionally of one key, ordered by day and tag, as NDJSON (the default) or CSV with the columns of OutboundAITagUsageExportRow.
    * @returns OutboundAITagUsageExportRow The tag rows of the range.
    * @throws ApiError
    */
@@ -827,7 +827,7 @@ export class OutboundService {
   }
   /**
    * Read an AI integration's per-tag daily cost limits.
-   * Requires MFA and read scope (ADR-1410).
+   * Requires MFA and read scope (ADR-1436).
    * @returns OutboundAITagLimits The integration's tag limits, ordered by tag.
    * @throws ApiError
    */
@@ -859,7 +859,7 @@ export class OutboundService {
   }
   /**
    * Replace an AI integration's per-tag daily cost limits.
-   * Requires MFA and deploy-write scope (ADR-1410). A call carrying a limited tag is refused with 429 outbound_budget_exhausted (X-Gregale-Outbound-Rejection tag_daily_cost_limit) when the tag's settled UTC-day cost, live reservations and the call's reservation would pass the limit. An empty list removes every limit.
+   * Requires MFA and deploy-write scope (ADR-1436). A call carrying a limited tag is refused with 429 outbound_budget_exhausted (X-Gregale-Outbound-Rejection tag_daily_cost_limit) when the tag's settled UTC-day cost, live reservations and the call's reservation would pass the limit. An empty list removes every limit.
    * @returns void
    * @throws ApiError
    */
@@ -1395,7 +1395,7 @@ export class OutboundService {
   }
   /**
    * Read an AI route's targets' recent attempts.
-   * Requires MFA and read scope. Returns each target's settled attempts, errors, mean time to first byte and mean cost per successful attempt over the window latency and cost routes judge (ADR-1390). Attempts are counted for latency and cost routes and during a canary; other routes report zeros.
+   * Requires MFA and read scope. Returns each target's settled attempts, errors, mean time to first byte and mean cost per successful attempt over the window latency and cost routes judge (ADR-1434). Attempts are counted for latency and cost routes and during a canary; other routes report zeros.
    * @returns OutboundAIRouteStats The route's targets' attempts.
    * @throws ApiError
    */
@@ -1462,7 +1462,7 @@ export class OutboundService {
   }
   /**
    * List an AI route's latest evaluations.
-   * Requires MFA and read scope. Newest first, at most 100, without their samples (ADR-1360).
+   * Requires MFA and read scope. Newest first, at most 100, without their samples (ADR-1431).
    * @returns OutboundAIEvaluationList The route's evaluations.
    * @throws ApiError
    */
@@ -1495,7 +1495,7 @@ export class OutboundService {
   }
   /**
    * Evaluate an AI route target before a canary.
-   * Requires MFA and deploy-write scope. outboundd replays the route's first target's latest captured OpenAI chat completions and Responses calls on the target and asks the judge model which answer is better, in a random order (ADR-1360). The evaluation passes when losses and candidate errors are at most max_loss_rate percent of the sample; a passing evaluation starts its canary, if it has one, unless the route already has an active canary or the target changed. Candidate and judge calls are metered and capped under the caller evaluation. The first target's integration needs request_log_content.
+   * Requires MFA and deploy-write scope. outboundd replays the route's first target's latest captured OpenAI chat completions and Responses calls on the target and asks the judge model which answer is better, in a random order (ADR-1431). The evaluation passes when losses and candidate errors are at most max_loss_rate percent of the sample; a passing evaluation starts its canary, if it has one, unless the route already has an active canary or the target changed. Candidate and judge calls are metered and capped under the caller evaluation. The first target's integration needs request_log_content.
    * @returns OutboundAIEvaluation The pending evaluation.
    * @throws ApiError
    */
@@ -1533,7 +1533,7 @@ export class OutboundService {
   }
   /**
    * Read an AI evaluation and its samples.
-   * Requires MFA and read scope (ADR-1360). Evaluations are kept for 30 days.
+   * Requires MFA and read scope (ADR-1431). Evaluations are kept for 30 days.
    * @returns OutboundAIEvaluation The evaluation.
    * @throws ApiError
    */
@@ -1664,7 +1664,7 @@ export class OutboundService {
   }
   /**
    * List an app's AI gateway access tokens.
-   * Requires MFA and read scope. Newest first, without their secrets (ADR-1360).
+   * Requires MFA and read scope. Newest first, without their secrets (ADR-1431).
    * @returns OutboundAIAccessTokenList The app's tokens.
    * @throws ApiError
    */
@@ -1697,7 +1697,7 @@ export class OutboundService {
   }
   /**
    * Issue an AI gateway access token for an app.
-   * Requires MFA and deploy-write scope. A caller outside Gregale, such as local development, CI or a notebook, sets its SDK's base URL to the AI gateway's public host and puts the token where the SDK puts its API key (Authorization Bearer, x-api-key, x-goog-api-key or api-key). Its calls are the app's: the app's bindings, guardrails, caps and content policy apply (ADR-1360). The secret is returned only in this response. An app holds at most 20 live tokens.
+   * Requires MFA and deploy-write scope. A caller outside Gregale, such as local development, CI or a notebook, sets its SDK's base URL to the AI gateway's public host and puts the token where the SDK puts its API key (Authorization Bearer, x-api-key, x-goog-api-key or api-key). Its calls are the app's: the app's bindings, guardrails, caps and content policy apply (ADR-1431). The secret is returned only in this response. An app holds at most 20 live tokens.
    * @returns CreatedOutboundAIAccessToken The token and its secret.
    * @throws ApiError
    */
@@ -1735,7 +1735,7 @@ export class OutboundService {
   }
   /**
    * Revoke an AI gateway access token.
-   * Requires MFA and deploy-write scope. outboundd may accept the token for up to 30 seconds more (ADR-1360).
+   * Requires MFA and deploy-write scope. outboundd may accept the token for up to 30 seconds more (ADR-1431).
    * @returns void
    * @throws ApiError
    */

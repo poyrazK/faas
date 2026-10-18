@@ -1,5 +1,5 @@
 -- filename: 20261017094431207_outbound_ai_response_guardrails.sql
--- ADR-1400: AI gateway phase 13. The content policy checks model responses:
+-- ADR-1435: AI gateway phase 13. The content policy checks model responses:
 -- the request detectors redact or block in generated text, blocked terms
 -- block it, and the policy's moderation check flags or blocks it. Response
 -- moderation uses the stored moderation settings even while requests are

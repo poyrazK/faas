@@ -1,6 +1,6 @@
 package outbound
 
-// adr: 1370 — allow_unmetered and per-second video prices round-trip
+// adr: 1432 — allow_unmetered and per-second video prices round-trip
 // through Postgres to the resolver, and settled video seconds roll up.
 
 import (

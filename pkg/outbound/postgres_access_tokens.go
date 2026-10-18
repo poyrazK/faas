@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// AIAccessToken reads a live token by the hash of its secret (ADR-1360).
+// AIAccessToken reads a live token by the hash of its secret (ADR-1431).
 func (b *PostgresBackend) AIAccessToken(ctx context.Context, hash [32]byte) (AIAccessToken, error) {
 	var token AIAccessToken
 	var integrations []uuid.UUID

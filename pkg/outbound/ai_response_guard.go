@@ -17,14 +17,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/outbound/airedact"
 )
 
-// Response check headers (ADR-1400): the redactions a whole response got,
+// Response check headers (ADR-1435): the redactions a whole response got,
 // and its moderation result.
 const (
 	AIResponseRedactionsHeader = "X-Gregale-AI-Response-Redactions"
 	AIResponseModerationHeader = "X-Gregale-AI-Response-Moderation"
 )
 
-// Response check results (ADR-1400), as the metric and export line name
+// Response check results (ADR-1435), as the metric and export line name
 // them, from least to most severe.
 const (
 	aiResponsePassed    = "passed"
@@ -38,7 +38,7 @@ const (
 var aiResponseSeverity = []string{"", aiResponsePassed, aiResponseRedacted, aiResponseFlagged, aiResponseError,
 	aiResponseUnchecked, aiResponseBlocked}
 
-// Refusals of checked responses (ADR-1400).
+// Refusals of checked responses (ADR-1435).
 const (
 	aiResponseBlockedCode   = "outbound_ai_response_blocked"
 	aiResponseFlaggedCode   = "outbound_ai_response_flagged"
@@ -198,7 +198,7 @@ const (
 )
 
 // responseModerator runs the policy's moderation check on response text,
-// with the categories that apply to responses (ADR-1400).
+// with the categories that apply to responses (ADR-1435).
 func (h *Handler) responseModerator(ctx context.Context, integration Integration) func(string) ([]string, error) {
 	policy := integration.AIContentPolicy.Normalized().Moderation
 	policy.Categories = api.OutboundAIModerationResponseCategories(policy.Categories)
@@ -218,7 +218,7 @@ func moderationResponseText(parts []string) string {
 }
 
 // applyResponseCheck checks a response before any byte reaches the
-// caller: a whole body now, a stream as it is copied (ADR-1400). It returns
+// caller: a whole body now, a stream as it is copied (ADR-1435). It returns
 // false after writing a refusal.
 func (h *Handler) applyResponseCheck(ctx context.Context, w http.ResponseWriter, integration Integration, plan *aiCallPlan,
 	resp *http.Response, check *aiResponseCheck, metricIntegrationID string) bool {

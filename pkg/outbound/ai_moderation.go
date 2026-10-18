@@ -18,7 +18,7 @@ import (
 )
 
 // AIUnmeteredHeader marks a write the gateway let through without metering
-// because the AI policy allows it (ADR-1370).
+// because the AI policy allows it (ADR-1432).
 const AIUnmeteredHeader = "X-Gregale-AI-Unmetered"
 
 // AIModerationHeader names a moderated call's result: "passed",
@@ -42,7 +42,7 @@ type aiModerationOutcome struct {
 
 // internalPrincipal marks an in-process call the gateway makes for an
 // account: a moderation check (ADR-1340), an evaluation's candidate or judge
-// call, or a batch's status and results reads (ADR-1360). caller names its
+// call, or a batch's status and results reads (ADR-1431). caller names its
 // usage; outcome, when set, receives the call's settlement.
 type internalPrincipal struct {
 	accountID string
@@ -123,7 +123,7 @@ func (h *Handler) moderateAICall(ctx context.Context, w http.ResponseWriter, int
 // runModeration sends text to the policy's moderation integration in
 // process, so the check is admitted, capped and metered like any call of
 // that integration, and returns the policy's categories the check found.
-// response marks text a model produced (ADR-1400).
+// response marks text a model produced (ADR-1435).
 func (h *Handler) runModeration(ctx context.Context, accountID string, policy api.OutboundAIModeration, text string,
 	response bool) ([]string, error) {
 	if policy.IntegrationID == "" {

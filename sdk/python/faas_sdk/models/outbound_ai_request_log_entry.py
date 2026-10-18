@@ -41,7 +41,7 @@ class OutboundAIRequestLogEntry:
     content_captured: bool
     """Whether the call's bodies can be read from its content endpoint (ADR-996)."""
     tags: list[str]
-    """The call's X-Gregale-AI-Tags as key=value, sorted by key (ADR-1410)."""
+    """The call's X-Gregale-AI-Tags as key=value, sorted by key (ADR-1436)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

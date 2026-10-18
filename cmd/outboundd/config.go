@@ -46,7 +46,7 @@ type Config struct {
 	// entitled account. FAAS_AI_GATEWAY_ACCOUNTS overrides it.
 	AIGatewayAccounts []string `toml:"ai_gateway_accounts"`
 	// PublicListenAddr enables the AI gateway's public listener for callers
-	// outside Gregale that present an access token (ADR-1360). It must be a
+	// outside Gregale that present an access token (ADR-1431). It must be a
 	// loopback address: Caddy terminates TLS in front of it.
 	PublicListenAddr string `toml:"public_listen_addr"`
 }
@@ -155,10 +155,10 @@ type IntegrationConfig struct {
 	AIProvider                     string        `toml:"ai_provider"`
 	AIDailyTokenLimit              int64         `toml:"ai_daily_token_limit"`
 	// AIAllowUnmetered lets through writes the gateway cannot meter
-	// (ADR-1370).
+	// (ADR-1432).
 	AIAllowUnmetered bool `toml:"ai_allow_unmetered"`
 	// AIAutoPromptCache adds prompt-cache breakpoints to Claude requests
-	// (ADR-1420).
+	// (ADR-1437).
 	AIAutoPromptCache bool  `toml:"ai_auto_prompt_cache"`
 	Enabled           *bool `toml:"enabled"`
 }

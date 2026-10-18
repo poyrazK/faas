@@ -126,7 +126,7 @@ type aiSettlement struct {
 	started  time.Time
 	routeID  string
 	// endUser is the call's X-Gregale-AI-User value (ADR-994), and tags its
-	// X-Gregale-AI-Tags (ADR-1410).
+	// X-Gregale-AI-Tags (ADR-1436).
 	endUser string
 	tags    []string
 	// reserve and billable let a billable call whose usage cannot be read
@@ -137,11 +137,11 @@ type aiSettlement struct {
 	// which the binary audio response does not report (ADR-997).
 	media      aiMediaKind
 	characters int64
-	// video is a video call's seconds and resolution (ADR-1370).
+	// video is a video call's seconds and resolution (ADR-1432).
 	videoSeconds    int64
 	videoResolution string
 	// codeGB is the memory a code-interpreter session is charged at
-	// (ADR-1380).
+	// (ADR-1433).
 	codeGB int64
 	// leaseID keys the settlement (ADR-1120).
 	leaseID string
@@ -150,7 +150,7 @@ type aiSettlement struct {
 	route      routeAttempt
 	moderation aiModerationOutcome
 	// response is the response check's result, filled as the response is
-	// sent (ADR-1400); nil when the response is not checked.
+	// sent (ADR-1435); nil when the response is not checked.
 	response *aiResponseCheck
 	// cacheHit marks a response the cache served (ADR-1440).
 	cacheHit bool
@@ -172,7 +172,7 @@ func speechUsage(integration Integration, settlement aiSettlement, status int, u
 
 // videoUsage settles a created video at the seconds it asked for: the
 // provider bills them, and the operation it returns reports no usage
-// (ADR-1370).
+// (ADR-1432).
 func videoUsage(settlement aiSettlement, status int, usage AIUsage, outcome AIUsageOutcome) (AIUsage, AIUsageOutcome) {
 	if settlement.media != aiMediaVideo || status < 200 || status > 299 {
 		return usage, outcome
@@ -183,7 +183,7 @@ func videoUsage(settlement aiSettlement, status int, usage AIUsage, outcome AIUs
 
 // aiContainerSessions remembers the code-interpreter containers this
 // process charged, so a container a conversation reuses is charged once per
-// session window (ADR-1380). It is bounded and starts over when full.
+// session window (ADR-1433). It is bounded and starts over when full.
 type aiContainerSessions struct {
 	mu   sync.Mutex
 	seen map[string]time.Time
@@ -248,7 +248,7 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 	usage, outcome = speechUsage(integration, settlement, status, usage, outcome)
 	usage, outcome = videoUsage(settlement, status, usage, outcome)
 	if outcome != AIUsageOutcomeError {
-		// ADR-1380: a container is charged once per session window.
+		// ADR-1433: a container is charged once per session window.
 		usage.CodeSessionGB = h.aiContainers.charge(integration.ID, observer.containerIDs(), time.Now()) * max(settlement.codeGB, 1)
 	}
 	cost := aiCallCostMillicents(integration, usage)

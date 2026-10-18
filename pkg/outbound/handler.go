@@ -74,12 +74,12 @@ type Handler struct {
 	// (ADR-998).
 	AIGatewayRollout AIGatewayRollout
 	// aiContainers charges each code-interpreter container once per
-	// session window (ADR-1380).
+	// session window (ADR-1433).
 	aiContainers aiContainerSessions
 	// promptPrefixes remembers repeated prompt prefixes for automatic
-	// prompt caching (ADR-1420).
+	// prompt caching (ADR-1437).
 	promptPrefixes promptPrefixes
-	// routeRandom replaces the routing draw in tests (ADR-1390).
+	// routeRandom replaces the routing draw in tests (ADR-1434).
 	routeRandom func(int) int
 }
 
@@ -241,7 +241,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusForbidden, "outbound_replay_not_authorized", "The replay cannot use this outbound integration", "")
 		return
 	}
-	// ADR-1340, ADR-1360: the gateway's own checks, evaluations and batch
+	// ADR-1340, ADR-1431: the gateway's own checks, evaluations and batch
 	// reads call in process for the account's own customer AI
 	// integrations, like a replay.
 	internal, isInternal := internalPrincipalFromContext(r.Context())
@@ -362,7 +362,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if aiPlan != nil {
 		h.observeContentPolicy(w, metricIntegrationID, aiPlan.content)
 		if aiPlan.unmetered {
-			// ADR-1370: the AI policy lets this write through outside the caps.
+			// ADR-1432: the AI policy lets this write through outside the caps.
 			w.Header().Set(AIUnmeteredHeader, "allowed")
 			h.Metrics.ObserveAIUnmetered(metricIntegrationID)
 		}
@@ -373,13 +373,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if marks := h.applyPromptCache(r, integration, aiPlan, aiReq); len(marks) > 0 {
-		// ADR-1420: the breakpoints the gateway added for the provider's cache.
+		// ADR-1437: the breakpoints the gateway added for the provider's cache.
 		w.Header().Set(AIPromptCacheHeader, strings.Join(marks, ","))
 		for _, mark := range marks {
 			h.Metrics.ObserveAIPromptCacheMark(metricIntegrationID, mark)
 		}
 	}
-	// ADR-1360: a batch creation is admitted at the batch's estimate.
+	// ADR-1431: a batch creation is admitted at the batch's estimate.
 	var batch *AIBatch
 	if aiPlan != nil && aiPlan.endpoint.batch {
 		if batch, ok = h.planBatch(w, r, integration, aiPlan, aiReq, path, appID, bindingAppID, metricIntegrationID); !ok {
@@ -514,7 +514,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	upstreamReq.Header = forwardedHeaders(r.Header)
 	if integration.AIProvider != "" {
-		// ADR-1400: the transport negotiates compression and decompresses, so
+		// ADR-1435: the transport negotiates compression and decompresses, so
 		// usage and response checks read plain bytes.
 		upstreamReq.Header.Del("Accept-Encoding")
 	}
@@ -758,7 +758,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) callerAppID(w http.ResponseWriter, r *http.Request, integration Integration) (string, bool) {
 	if token, ok := accessTokenFromContext(r.Context()); ok {
-		// ADR-1360: an access token acts as its app, on AI integrations only.
+		// ADR-1431: an access token acts as its app, on AI integrations only.
 		if !token.allows(integration) {
 			writeProblem(w, http.StatusForbidden, "outbound_access_token_not_allowed", "This access token cannot use this outbound integration", "")
 			return "", false

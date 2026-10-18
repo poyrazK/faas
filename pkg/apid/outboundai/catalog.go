@@ -39,7 +39,7 @@ func (s *Service) GetPriceCatalog(w http.ResponseWriter, r *http.Request, _ stat
 			MillicentsPerImage: copyInt64(entry.Price.Image), MillicentsPerAudioMinute: copyInt64(entry.Price.AudioMinute),
 			MillicentsPerMillionCharacters: copyInt64(entry.Price.Characters),
 			MillicentsPerVideoSecond:       copyInt64(entry.Price.VideoSecond),
-			// ADR-1380 built-in tool prices.
+			// ADR-1433 built-in tool prices.
 			MillicentsPerWebSearch: copyInt64(entry.Price.WebSearch), MillicentsPerFileSearch: copyInt64(entry.Price.FileSearch),
 			MillicentsPerCodeSessionGB: copyInt64(entry.Price.CodeSessionGB)})
 	}

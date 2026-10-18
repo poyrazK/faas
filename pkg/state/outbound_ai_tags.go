@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// OutboundAITagUsageItem is one tag's UTC day (ADR-1410). DailyCostLimit is
+// OutboundAITagUsageItem is one tag's UTC day (ADR-1436). DailyCostLimit is
 // the tag's limit, or nil.
 type OutboundAITagUsageItem struct {
 	Tag            string
@@ -21,7 +21,7 @@ type OutboundAITagUsageItem struct {
 	DailyCostLimit *int64
 }
 
-// OutboundAITagUsageRow is one tag's UTC day in an export (ADR-1430).
+// OutboundAITagUsageRow is one tag's UTC day in an export (ADR-1438).
 type OutboundAITagUsageRow struct {
 	UsageDate string
 	OutboundAITagUsageItem
@@ -35,7 +35,7 @@ type OutboundAITagUsage struct {
 }
 
 // OutboundAITagStore reads the per-tag rollups outboundd writes and owns an
-// integration's tag limits (ADR-1410). An empty key lists every key's tags.
+// integration's tag limits (ADR-1436). An empty key lists every key's tags.
 type OutboundAITagStore interface {
 	GetOutboundAITagUsage(ctx context.Context, accountID, integrationID, usageDate, key string, limit int) (OutboundAITagUsage, error)
 	ListOutboundAITagLimits(ctx context.Context, accountID, integrationID string) ([]api.OutboundAITagLimit, error)
@@ -43,7 +43,7 @@ type OutboundAITagStore interface {
 	// integration; an empty list removes them.
 	SetOutboundAITagLimits(ctx context.Context, accountID, integrationID string, limits []api.OutboundAITagLimit) error
 	// ExportOutboundAITagUsage visits every tag row of the UTC days from
-	// through to, optionally of one key, ordered by day and tag (ADR-1430).
+	// through to, optionally of one key, ordered by day and tag (ADR-1438).
 	// It returns ErrNotFound or ErrInvalidArgument before visiting any row.
 	ExportOutboundAITagUsage(ctx context.Context, accountID, integrationID, from, to, key string, visit func(OutboundAITagUsageRow) error) error
 }

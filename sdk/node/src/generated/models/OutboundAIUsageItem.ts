@@ -41,19 +41,19 @@ export type OutboundAIUsageItem = {
    */
   characters: number;
   /**
-   * Seconds of generated video (ADR-1370).
+   * Seconds of generated video (ADR-1432).
    */
   video_seconds: number;
   /**
-   * Web searches as the provider bills them: per call, query or grounded prompt (ADR-1380).
+   * Web searches as the provider bills them: per call, query or grounded prompt (ADR-1433).
    */
   web_searches: number;
   /**
-   * File search calls (ADR-1380).
+   * File search calls (ADR-1433).
    */
   file_searches: number;
   /**
-   * GB of code-interpreter container sessions (ADR-1380).
+   * GB of code-interpreter container sessions (ADR-1433).
    */
   code_session_gb: number;
   /**

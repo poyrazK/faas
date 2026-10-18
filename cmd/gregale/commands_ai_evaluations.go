@@ -1,4 +1,4 @@
-// commands_ai_evaluations.go — `gregale ai evaluate` (ADR-1360): judge a
+// commands_ai_evaluations.go — `gregale ai evaluate` (ADR-1431): judge a
 // route target against the route's first target on recent captured calls,
 // optionally starting a canary when it passes.
 

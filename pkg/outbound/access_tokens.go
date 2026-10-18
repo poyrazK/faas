@@ -15,7 +15,7 @@ import (
 // ErrAIAccessTokenNotFound reports an unknown, revoked or expired token.
 var ErrAIAccessTokenNotFound = errors.New("outbound: AI access token not found")
 
-// AIAccessToken is a live access token (ADR-1360). An empty integration set
+// AIAccessToken is a live access token (ADR-1431). An empty integration set
 // allows every AI integration bound to the app.
 type AIAccessToken struct {
 	ID             string
@@ -95,7 +95,7 @@ func validAccessTokenShape(token string) bool {
 }
 
 // PublicHandler serves callers outside Gregale that present an AI gateway
-// access token (ADR-1360): only AI integration and route paths, as the
+// access token (ADR-1431): only AI integration and route paths, as the
 // token's app, with every key header removed before the provider credential
 // is added. outboundd runs it on its optional public listener.
 type PublicHandler struct {

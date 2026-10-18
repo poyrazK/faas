@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// OutboundAITagsHeader names an AI call's usage tags (ADR-1410):
+// OutboundAITagsHeader names an AI call's usage tags (ADR-1436):
 // "key=value[,key=value...]".
 const OutboundAITagsHeader = "X-Gregale-AI-Tags"
 
@@ -71,7 +71,7 @@ func OutboundAITagKey(tag string) string {
 	return key
 }
 
-// OutboundAITagLimit caps one tag's UTC-day cost (ADR-1410).
+// OutboundAITagLimit caps one tag's UTC-day cost (ADR-1436).
 type OutboundAITagLimit struct {
 	Tag                      string `json:"tag"`
 	DailyCostLimitMillicents int64  `json:"daily_cost_limit_millicents"`
@@ -105,7 +105,7 @@ func ValidOutboundAITagLimits(limits []OutboundAITagLimit) bool {
 	return true
 }
 
-// OutboundAITagUsageItem is one tag's UTC day (ADR-1410).
+// OutboundAITagUsageItem is one tag's UTC day (ADR-1436).
 type OutboundAITagUsageItem struct {
 	Tag                      string `json:"tag"`
 	Requests                 int64  `json:"requests"`
@@ -118,7 +118,7 @@ type OutboundAITagUsageItem struct {
 }
 
 // OutboundAITagUsageExportRow is one NDJSON line of a tag usage export
-// (ADR-1430); the CSV export has the same columns in this order.
+// (ADR-1438); the CSV export has the same columns in this order.
 type OutboundAITagUsageExportRow struct {
 	UsageDate      string `json:"usage_date"`
 	Tag            string `json:"tag"`

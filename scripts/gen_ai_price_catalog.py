@@ -13,10 +13,10 @@ reference rate and rounded up, so a budget never under-counts:
 - image prices per image;
 - audio prices per minute of input audio;
 - character prices per million input characters;
-- video prices per second of generated video (ADR-1370), for the providers
+- video prices per second of generated video (ADR-1432), for the providers
   whose video calls the gateway meters, with a "<model>@<resolution>" row
   for each resolution LiteLLM prices apart;
-- built-in tool prices (ADR-1380): per web search from LiteLLM's
+- built-in tool prices (ADR-1433): per web search from LiteLLM's
   search_context_cost_per_query (the dearest context size), and for
   OpenAI and Azure OpenAI models the file search price and the price per GB
   code-interpreter container session.
@@ -60,11 +60,11 @@ PROVIDERS = {
 }
 MODES = {"chat", "completion", "responses", "embedding", "image_generation", "audio_transcription", "audio_speech"}
 AUDIO_MODES = {"audio_transcription", "audio_speech"}
-# Video generation is metered for Veo on Gemini and Vertex (ADR-1370).
+# Video generation is metered for Veo on Gemini and Vertex (ADR-1432).
 VIDEO_MODE = "video_generation"
 VIDEO_PROVIDERS = {"gemini", "vertex"}
 VIDEO_TIER_PREFIX = "output_cost_per_second_"
-# Built-in tools (ADR-1380). File search has no LiteLLM model entry: OpenAI's
+# Built-in tools (ADR-1433). File search has no LiteLLM model entry: OpenAI's
 # pricing page lists $2.50 per 1,000 calls (read 2026-10-16). The container
 # price per GB session is LiteLLM's openai/container
 # code_interpreter_cost_per_session, which prices a 1 GB container.
@@ -96,7 +96,7 @@ def optional(entry, field, convert_fn, usd_per_eur, scale=1):
 
 
 def media_prices(entry, usd_per_eur):
-    """input_image, output_image, image, audio_minute, characters (ADR-997), video_second (ADR-1370)."""
+    """input_image, output_image, image, audio_minute, characters (ADR-997), video_second (ADR-1432)."""
     if entry.get("mode") == VIDEO_MODE:
         return [None, None, None, None, None, video_price(entry, usd_per_eur)]
     return [
@@ -130,7 +130,7 @@ def video_tiers(entry, usd_per_eur):
 
 
 def tool_prices(entry, gateway, usd_per_eur, container_usd):
-    """web_search, file_search, code_session_gb (ADR-1380)."""
+    """web_search, file_search, code_session_gb (ADR-1433)."""
     web_search = None
     search = entry.get("search_context_cost_per_query")
     if isinstance(search, dict):

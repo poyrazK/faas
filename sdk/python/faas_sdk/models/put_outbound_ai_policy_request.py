@@ -39,12 +39,12 @@ class PutOutboundAIPolicyRequest:
     """Let through writes the gateway can neither meter nor knows to be free, such as realtime client secrets,
     vector stores, containers, fine-tuning jobs and context caches. They are otherwise refused with 403
     outbound_ai_endpoint_unmetered; let through, they carry X-Gregale-AI-Unmetered and their spend is outside the
-    caps (ADR-1370). Requires ai_provider."""
+    caps (ADR-1432). Requires ai_provider."""
     auto_prompt_cache: bool | Unset = UNSET
     """Add prompt-cache breakpoints to Claude requests on the Anthropic API, Vertex AI and Amazon Bedrock that
     carry none: after a system prompt or tool list seen again within five minutes, and after the last message of a
     conversation that carries earlier turns or names X-Gregale-AI-Session. Prompts under about 1,024 tokens are not
-    marked; the response names the added breakpoints in X-Gregale-AI-Prompt-Cache (ADR-1420). Requires ai_provider.
+    marked; the response names the added breakpoints in X-Gregale-AI-Prompt-Cache (ADR-1437). Requires ai_provider.
    """
     user_daily_token_limit: int | None | Unset = UNSET
     """Per-end-user UTC-day token limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider."""

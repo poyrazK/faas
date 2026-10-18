@@ -39,13 +39,13 @@ class OutboundAIUsageItem:
     characters: int
     """Characters of speech input."""
     video_seconds: int
-    """Seconds of generated video (ADR-1370)."""
+    """Seconds of generated video (ADR-1432)."""
     web_searches: int
-    """Web searches as the provider bills them: per call, query or grounded prompt (ADR-1380)."""
+    """Web searches as the provider bills them: per call, query or grounded prompt (ADR-1433)."""
     file_searches: int
-    """File search calls (ADR-1380)."""
+    """File search calls (ADR-1433)."""
     code_session_gb: int
-    """GB of code-interpreter container sessions (ADR-1380)."""
+    """GB of code-interpreter container sessions (ADR-1433)."""
     cached_requests: int
     """Requests the response cache served, with no tokens or cost (ADR-1440)."""
     cache_saved_millicents: int

@@ -1,5 +1,5 @@
 -- filename: 20261017121242318_outbound_ai_usage_tags.sql
--- ADR-1410: AI gateway phase 14. AI calls name up to five key=value usage
+-- ADR-1436: AI gateway phase 14. AI calls name up to five key=value usage
 -- tags. Settlement rolls usage up per tag and UTC day, with a bounded
 -- number of tags per integration and day and a per-key overflow row; exact
 -- tags can carry a daily cost limit that admission enforces with the live

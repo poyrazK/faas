@@ -103,7 +103,7 @@ func (m *MemStore) SetOutboundAIRouteTargets(_ context.Context, accountID, route
 }
 
 // OutboundAIRouteStats reports no attempts: the memory store keeps no
-// per-minute rows (ADR-1390).
+// per-minute rows (ADR-1434).
 func (m *MemStore) OutboundAIRouteStats(_ context.Context, accountID, routeID string) (OutboundAIRouteStatsWindow, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

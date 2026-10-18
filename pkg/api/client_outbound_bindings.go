@@ -157,7 +157,7 @@ func (c *Client) GetOutboundAIPriceCatalog(ctx context.Context, provider, model 
 // GetOutboundAIUserUsage lists one UTC day's AI usage by end user; an empty
 // date is today and an empty endUser lists the top users (ADR-994).
 // GetOutboundAITagUsage reads one UTC day's usage by tag, optionally for
-// one tag key (ADR-1410).
+// one tag key (ADR-1436).
 func (c *Client) GetOutboundAITagUsage(ctx context.Context, integrationID, date, key string, limit int) (OutboundAITagUsageResponse, error) {
 	query := url.Values{}
 	if date != "" {
@@ -178,7 +178,7 @@ func (c *Client) GetOutboundAITagUsage(ctx context.Context, integrationID, date,
 }
 
 // ExportOutboundAITagUsage returns a day range of usage by tag as NDJSON
-// or CSV, optionally for one key (ADR-1430).
+// or CSV, optionally for one key (ADR-1438).
 func (c *Client) ExportOutboundAITagUsage(ctx context.Context, integrationID, from, to, key, format string) ([]byte, error) {
 	query := url.Values{}
 	for name, value := range map[string]string{"from": from, "to": to, "key": key, "format": format} {
@@ -194,14 +194,14 @@ func (c *Client) ExportOutboundAITagUsage(ctx context.Context, integrationID, fr
 	return out, c.doBytes(ctx, "GET", path, nil, &out)
 }
 
-// GetOutboundAITagLimits reads an integration's tag limits (ADR-1410).
+// GetOutboundAITagLimits reads an integration's tag limits (ADR-1436).
 func (c *Client) GetOutboundAITagLimits(ctx context.Context, integrationID string) (OutboundAITagLimits, error) {
 	var out OutboundAITagLimits
 	return out, c.do(ctx, "GET", "/v1/outbound/integrations/"+url.PathEscape(integrationID)+"/ai-tag-limits", nil, &out)
 }
 
 // SetOutboundAITagLimits replaces an integration's tag limits; an empty
-// list removes them (ADR-1410).
+// list removes them (ADR-1436).
 func (c *Client) SetOutboundAITagLimits(ctx context.Context, integrationID string, limits []OutboundAITagLimit) error {
 	if limits == nil {
 		limits = []OutboundAITagLimit{}
@@ -267,7 +267,7 @@ func (c *Client) SetOutboundAIRouteTargets(ctx context.Context, routeID string, 
 }
 
 // SetOutboundAIRouteRouting replaces a route's targets and its strategy
-// (ADR-1390).
+// (ADR-1434).
 func (c *Client) SetOutboundAIRouteRouting(ctx context.Context, routeID string, req PutOutboundAIRouteTargetsRequest) error {
 	return c.do(ctx, "PUT", "/v1/outbound/ai-routes/"+url.PathEscape(routeID)+"/targets", req, nil)
 }
@@ -298,7 +298,7 @@ func (c *Client) PromoteOutboundAIRouteCanary(ctx context.Context, routeID strin
 }
 
 // CreateOutboundAIEvaluation evaluates a route target against the route's
-// first target (ADR-1360). The evaluation runs later; read it back with
+// first target (ADR-1431). The evaluation runs later; read it back with
 // GetOutboundAIEvaluation.
 func (c *Client) CreateOutboundAIEvaluation(ctx context.Context, routeID string, req CreateOutboundAIEvaluationRequest) (OutboundAIEvaluation, error) {
 	var out OutboundAIEvaluation
@@ -318,7 +318,7 @@ func (c *Client) GetOutboundAIEvaluation(ctx context.Context, evaluationID strin
 }
 
 // CreateOutboundAIAccessToken issues an AI gateway access token for an app
-// (ADR-1360). The secret is returned only here.
+// (ADR-1431). The secret is returned only here.
 func (c *Client) CreateOutboundAIAccessToken(ctx context.Context, appSlug string, req CreateOutboundAIAccessTokenRequest) (CreatedOutboundAIAccessToken, error) {
 	var out CreatedOutboundAIAccessToken
 	return out, c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(appSlug)+"/ai-access-tokens", req, &out)
@@ -336,7 +336,7 @@ func (c *Client) RevokeOutboundAIAccessToken(ctx context.Context, appSlug, token
 }
 
 // GetOutboundAIRouteStats returns each route target's settled attempts
-// over the window latency and cost routes judge (ADR-1390).
+// over the window latency and cost routes judge (ADR-1434).
 func (c *Client) GetOutboundAIRouteStats(ctx context.Context, routeID string) (OutboundAIRouteStats, error) {
 	var out OutboundAIRouteStats
 	return out, c.do(ctx, "GET", "/v1/outbound/ai-routes/"+url.PathEscape(routeID)+"/stats", nil, &out)

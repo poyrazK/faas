@@ -1194,7 +1194,7 @@ const (
 	// the per-million-token ceiling.
 	MaxOutboundAIPriceMillicentsPerImage       int64 = 10_000_000
 	MaxOutboundAIPriceMillicentsPerAudioMinute int64 = 10_000_000
-	// Video (ADR-1370): the ceiling of a price per second of video; the
+	// Video (ADR-1432): the ceiling of a price per second of video; the
 	// largest video request body the gateway reads to size it; the
 	// duration a request without one reserves; and the bounds of one
 	// request's seconds per video and videos.
@@ -1203,7 +1203,7 @@ const (
 	OutboundAIVideoDefaultSeconds                    = 8
 	OutboundAIVideoSecondsMax                        = 600
 	OutboundAIVideosPerCallMax                       = 8
-	// Built-in tools (ADR-1380): the uses a request that declares a tool
+	// Built-in tools (ADR-1433): the uses a request that declares a tool
 	// reserves when it names no limit; how long a code-interpreter
 	// container's session is charged once; the largest container memory in
 	// GB; the uses one response may report; and the ceiling of a price per
@@ -1218,7 +1218,7 @@ const (
 	// AI fallback routes (ADR-990).
 	OutboundAIRouteTargetsMax     = 5
 	MaxOutboundAIRoutesPerAccount = 25
-	// Route strategies (ADR-1390): the window latency and cost routes judge
+	// Route strategies (ADR-1434): the window latency and cost routes judge
 	// targets over; the attempts a target needs in it to be judged; the
 	// error rate above which it is unhealthy; the share of calls that try a
 	// target without data first; the largest target weight; and the largest
@@ -1255,7 +1255,7 @@ const (
 	OutboundAIUsersPerDay            = 10_000
 	OutboundAIUserUsageRetentionDays = 31
 	OutboundAIUserUsagePageMax       = 1_000
-	// Usage tags (ADR-1410): tags per call, the longest key and value, the
+	// Usage tags (ADR-1436): tags per call, the longest key and value, the
 	// distinct tags one integration tracks per UTC day (later ones add to
 	// their key's overflow row), and the tag limits per integration. Tag
 	// rows follow OutboundAIUserUsageRetentionDays.
@@ -1265,7 +1265,7 @@ const (
 	OutboundAITagsPerDay       = 1_000
 	OutboundAITagLimitsMax     = 20
 	OutboundAITagUsagePageMax  = 1_000
-	// Automatic prompt caching (ADR-1420): the estimated prompt or prefix
+	// Automatic prompt caching (ADR-1437): the estimated prompt or prefix
 	// tokens below which no breakpoint is added, and the cache lifetime a
 	// repeated prefix must recur within.
 	OutboundAIPromptCacheMinTokens       = 1_024
@@ -1342,14 +1342,14 @@ const (
 	// first, and the deadline of the check's call.
 	OutboundAIModerationTextMaxBytes       = 32 << 10
 	OutboundAIModerationCallTimeoutSeconds = 10
-	// Response guardrails (ADR-1400): the largest whole response read
+	// Response guardrails (ADR-1435): the largest whole response read
 	// before release, the text of a stream channel held back so a finding
 	// split across events is caught, and how far back each stream scan
 	// reads.
 	OutboundAIResponseCheckMaxBytes     int64 = 4 << 20
 	OutboundAIResponseHoldBackBytes           = 512
 	OutboundAIResponseScanLookbackBytes       = 8 << 10
-	// Batches (ADR-1360): the share of the list price a batch costs; the
+	// Batches (ADR-1431): the share of the list price a batch costs; the
 	// largest OpenAI input file read at creation, Anthropic batch body and
 	// JSONL line the gateway parses; how often open batches are polled and
 	// how long one may stay open before it settles at its reservation; how
@@ -1363,7 +1363,7 @@ const (
 	OutboundAIBatchAbandonHours               = 72
 	OutboundAIBatchPendingExpiryMinutes       = 60
 	OutboundAIBatchRetentionDays              = 7
-	// Access tokens (ADR-1360): tokens per app, the longest and default
+	// Access tokens (ADR-1431): tokens per app, the longest and default
 	// lifetime, the integrations one token may name, how long outboundd
 	// caches a token check, and how long expired or revoked tokens stay.
 	OutboundAIAccessTokensPerApp         = 20
@@ -1372,7 +1372,7 @@ const (
 	OutboundAIAccessTokenIntegrationsMax = 32
 	OutboundAIAccessTokenCacheSeconds    = 30
 	OutboundAIAccessTokenRetentionDays   = 30
-	// Evaluations (ADR-1360): the largest and default sample, the default
+	// Evaluations (ADR-1431): the largest and default sample, the default
 	// loss-rate threshold, evaluations per route and UTC day, how long they
 	// stay, the deadline of one candidate or judge call, how long one may
 	// run before it fails as interrupted, how many samples run at once, and

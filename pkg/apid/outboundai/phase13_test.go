@@ -1,6 +1,6 @@
 package outboundai
 
-// adr: 1400 — the content policy stores a response section; response
+// adr: 1435 — the content policy stores a response section; response
 // moderation keeps the check's settings while requests are not moderated,
 // and needs a complete check.
 

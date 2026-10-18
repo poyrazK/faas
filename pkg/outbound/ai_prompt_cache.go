@@ -13,7 +13,7 @@ import (
 )
 
 // AIPromptCacheHeader names the prompt-cache breakpoints the gateway added
-// to a call (ADR-1420).
+// to a call (ADR-1437).
 const AIPromptCacheHeader = "X-Gregale-AI-Prompt-Cache"
 
 // Breakpoints the gateway adds, as the header and metric name them.
@@ -64,7 +64,7 @@ func promptCacheTokens(size int) int64 { return int64(size) / api.OutboundAIRese
 
 // applyPromptCache adds breakpoints to a buffered Claude request whose
 // integration turned automatic prompt caching on, and returns the marks it
-// added (ADR-1420). A request that already marks its own cache is left as
+// added (ADR-1437). A request that already marks its own cache is left as
 // it is.
 func (h *Handler) applyPromptCache(r *http.Request, integration Integration, plan *aiCallPlan, ai *aiRequest) []string {
 	if !integration.AIAutoPromptCache || plan == nil || ai == nil || !plan.endpoint.generation || plan.endpoint.batch {

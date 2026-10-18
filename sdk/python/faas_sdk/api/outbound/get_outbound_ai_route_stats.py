@@ -89,7 +89,7 @@ def sync_detailed(
     """Read an AI route's targets' recent attempts.
 
      Requires MFA and read scope. Returns each target's settled attempts, errors, mean time to first byte
-    and mean cost per successful attempt over the window latency and cost routes judge (ADR-1390).
+    and mean cost per successful attempt over the window latency and cost routes judge (ADR-1434).
     Attempts are counted for latency and cost routes and during a canary; other routes report zeros.
 
     Args:
@@ -122,7 +122,7 @@ def sync(
     """Read an AI route's targets' recent attempts.
 
      Requires MFA and read scope. Returns each target's settled attempts, errors, mean time to first byte
-    and mean cost per successful attempt over the window latency and cost routes judge (ADR-1390).
+    and mean cost per successful attempt over the window latency and cost routes judge (ADR-1434).
     Attempts are counted for latency and cost routes and during a canary; other routes report zeros.
 
     Args:
@@ -150,7 +150,7 @@ async def asyncio_detailed(
     """Read an AI route's targets' recent attempts.
 
      Requires MFA and read scope. Returns each target's settled attempts, errors, mean time to first byte
-    and mean cost per successful attempt over the window latency and cost routes judge (ADR-1390).
+    and mean cost per successful attempt over the window latency and cost routes judge (ADR-1434).
     Attempts are counted for latency and cost routes and during a canary; other routes report zeros.
 
     Args:
@@ -181,7 +181,7 @@ async def asyncio(
     """Read an AI route's targets' recent attempts.
 
      Requires MFA and read scope. Returns each target's settled attempts, errors, mean time to first byte
-    and mean cost per successful attempt over the window latency and cost routes judge (ADR-1390).
+    and mean cost per successful attempt over the window latency and cost routes judge (ADR-1434).
     Attempts are counted for latency and cost routes and during a canary; other routes report zeros.
 
     Args:

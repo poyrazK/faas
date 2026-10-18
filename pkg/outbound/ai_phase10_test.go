@@ -1,6 +1,6 @@
 package outbound
 
-// adr: 1370 — a write on an AI integration goes through only to a metered
+// adr: 1432 — a write on an AI integration goes through only to a metered
 // or known-free endpoint unless the AI policy allows unmetered calls, and
 // Veo video generation reserves and settles its seconds at the price for
 // its resolution.

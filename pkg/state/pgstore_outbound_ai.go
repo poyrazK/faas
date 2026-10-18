@@ -32,7 +32,7 @@ func (s *PgStore) SetOutboundAIPolicy(ctx context.Context, accountID, integratio
 		       ai_user_daily_cost_limit_millicents = $9, ai_request_log_content = $10, ai_log_export = $11,
 		       ai_allow_unmetered = $12, ai_auto_prompt_cache = $13,
 		       -- ADR-997: turning AI handling off also clears the content policy,
-		       -- its moderation check (ADR-1340) and its response checks (ADR-1400).
+		       -- its moderation check (ADR-1340) and its response checks (ADR-1435).
 		       ai_moderation_action = CASE WHEN $3 = '' THEN 'off' ELSE ai_moderation_action END,
 		       ai_moderation_kind = CASE WHEN $3 = '' THEN NULL ELSE ai_moderation_kind END,
 		       ai_moderation_integration_id = CASE WHEN $3 = '' THEN NULL ELSE ai_moderation_integration_id END,
@@ -263,7 +263,7 @@ var _ OutboundAIContentPolicyStore = (*PgStore)(nil)
 
 // SetOutboundAIContentPolicy replaces a customer AI integration's content
 // guardrails (ADR-997), moderation check (ADR-1340) and response checks
-// (ADR-1400). An active policy needs an AI provider, and a moderation check
+// (ADR-1435). An active policy needs an AI provider, and a moderation check
 // that requests or responses use names one of the account's own enabled
 // customer AI integrations: an OpenAI one for openai_moderation. Bumping
 // updated_at gives outboundd a new policy revision.

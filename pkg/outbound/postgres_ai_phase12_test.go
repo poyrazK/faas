@@ -1,6 +1,6 @@
 package outbound
 
-// adr: 1390 — a route stores its strategy, weights and latency target; the
+// adr: 1434 — a route stores its strategy, weights and latency target; the
 // route query reads a latency or cost route's window counts; settlements
 // count those routes' attempts without a canary; and new targets reset them.
 

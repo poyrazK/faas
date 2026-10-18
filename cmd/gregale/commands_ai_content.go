@@ -1,5 +1,5 @@
 // commands_ai_content.go — `gregale ai content-policy` (ADR-997): an AI
-// integration's content guardrails, with response checks (ADR-1400).
+// integration's content guardrails, with response checks (ADR-1435).
 
 package main
 
@@ -84,7 +84,7 @@ func cmdAIContentPolicy(args []string) int {
 }
 
 // responseFlagValues are the content-policy flags of the response checks
-// (ADR-1400); empty values keep the stored setting.
+// (ADR-1435); empty values keep the stored setting.
 type responseFlagValues struct {
 	email, card, iban, secrets, terms, moderation *string
 }

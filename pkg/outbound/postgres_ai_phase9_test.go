@@ -1,6 +1,6 @@
 package outbound
 
-// adr: 1360 — outboundd finds live access tokens by hash only; an open
+// adr: 1431 — outboundd finds live access tokens by hash only; an open
 // batch's reservation counts in admission until it settles; evaluations are
 // claimed with replayable captures, finished once, and start their canary
 // only on a pass for an unchanged target.

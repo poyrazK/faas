@@ -1,6 +1,6 @@
 package outbound
 
-// adr: 1420 — the AI policy stores automatic prompt caching, the resolver
+// adr: 1437 — the AI policy stores automatic prompt caching, the resolver
 // reads it, and the database refuses it without an AI provider.
 
 import (

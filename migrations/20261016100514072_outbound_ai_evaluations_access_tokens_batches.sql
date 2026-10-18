@@ -1,5 +1,5 @@
 -- filename: 20261016100514072_outbound_ai_evaluations_access_tokens_batches.sql
--- ADR-1360: AI gateway phase 9. Evaluations replay captured calls on a
+-- ADR-1431: AI gateway phase 9. Evaluations replay captured calls on a
 -- route's candidate target and judge both answers; apid inserts one,
 -- outboundd claims it and writes the items. Access tokens let callers
 -- outside Gregale act as one app; apid writes hashes, outboundd reads them.

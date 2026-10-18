@@ -26,7 +26,7 @@ func (r *PostgresRouteResolver) Route(ctx context.Context, routeID string) (AIRo
 	if err != nil {
 		return AIRoute{}, ErrRouteNotFound
 	}
-	// ADR-1390: a latency or cost route reads its targets' window counts in
+	// ADR-1434: a latency or cost route reads its targets' window counts in
 	// the same query, so routing adds no round trip.
 	rows, err := r.pool.Query(ctx, `
 		SELECT route.account_id::text, route.format, route.strategy, route.max_ttfb_ms,

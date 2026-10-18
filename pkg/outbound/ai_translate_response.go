@@ -467,7 +467,7 @@ type translatingWriter struct {
 	data       []byte
 	frames     awsEventStreamReader
 	wrote      bool
-	// aborted marks a stream a response check ended (ADR-1400).
+	// aborted marks a stream a response check ended (ADR-1435).
 	aborted bool
 }
 
@@ -567,7 +567,7 @@ func (w *translatingWriter) writeEvents(p []byte) {
 }
 
 // dispatch translates one provider event. A response check's error event
-// ends the translated stream with an OpenAI error event (ADR-1400).
+// ends the translated stream with an OpenAI error event (ADR-1435).
 func (w *translatingWriter) dispatch(data []byte) {
 	if w.aborted {
 		return

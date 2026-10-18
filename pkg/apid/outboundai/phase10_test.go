@@ -1,6 +1,6 @@
 package outboundai
 
-// adr: 1370 — the AI policy stores allow_unmetered, which needs a provider,
+// adr: 1432 — the AI policy stores allow_unmetered, which needs a provider,
 // and price lists take a price per second of video.
 
 import (

@@ -15,7 +15,7 @@ var _ AIEvaluationStore = (*PostgresBackend)(nil)
 
 // ClaimAIEvaluation fails evaluations that stopped mid-run, then claims the
 // oldest pending one with the route's two targets and the first target's
-// latest replayable captures (ADR-1360). An evaluation whose target is gone
+// latest replayable captures (ADR-1431). An evaluation whose target is gone
 // fails without a claim.
 func (b *PostgresBackend) ClaimAIEvaluation(ctx context.Context) (AIEvaluationJob, bool, error) {
 	if _, err := b.pool.Exec(ctx, `

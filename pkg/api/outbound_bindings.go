@@ -73,10 +73,10 @@ type OutboundIntegrationOffer struct {
 	// (ADR-1340).
 	AILogExport bool `json:"ai_log_export"`
 	// AIAllowUnmetered lets through writes the gateway cannot meter, outside
-	// the caps (ADR-1370).
+	// the caps (ADR-1432).
 	AIAllowUnmetered bool `json:"ai_allow_unmetered"`
 	// AIAutoPromptCache adds prompt-cache breakpoints to Claude requests
-	// that carry none (ADR-1420).
+	// that carry none (ADR-1437).
 	AIAutoPromptCache bool `json:"ai_auto_prompt_cache"`
 }
 
@@ -136,11 +136,11 @@ type PutOutboundAIPolicyRequest struct {
 	LogExport bool `json:"log_export,omitempty"`
 	// AllowUnmetered lets through writes the gateway can neither meter nor
 	// knows to be free, such as realtime client secrets, vector stores or
-	// fine-tuning jobs. Their spend is outside the caps (ADR-1370).
+	// fine-tuning jobs. Their spend is outside the caps (ADR-1432).
 	AllowUnmetered bool `json:"allow_unmetered,omitempty"`
 	// AutoPromptCache adds prompt-cache breakpoints to Claude requests that
 	// carry none: after a repeated system prompt or tool list, and after the
-	// last message of a continuing conversation (ADR-1420).
+	// last message of a continuing conversation (ADR-1437).
 	AutoPromptCache bool `json:"auto_prompt_cache,omitempty"`
 }
 
@@ -175,9 +175,9 @@ type OutboundAIUsageItem struct {
 	Images       int64 `json:"images"`
 	AudioSeconds int64 `json:"audio_seconds"`
 	Characters   int64 `json:"characters"`
-	// VideoSeconds is seconds of generated video (ADR-1370).
+	// VideoSeconds is seconds of generated video (ADR-1432).
 	VideoSeconds int64 `json:"video_seconds"`
-	// Built-in tool uses (ADR-1380): web searches as the provider bills
+	// Built-in tool uses (ADR-1433): web searches as the provider bills
 	// them, file searches, and GB of code-interpreter container sessions.
 	WebSearches   int64 `json:"web_searches"`
 	FileSearches  int64 `json:"file_searches"`

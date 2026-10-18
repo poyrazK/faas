@@ -57,7 +57,7 @@ func (m OutboundAIModeration) Normalized() OutboundAIModeration {
 }
 
 // normalized keeps an off check's settings when responses use it
-// (ADR-1400).
+// (ADR-1435).
 func (m OutboundAIModeration) normalized(keep bool) OutboundAIModeration {
 	if m.Action == "" {
 		m.Action = OutboundAIModerationOff
@@ -75,7 +75,7 @@ func (m OutboundAIModeration) normalized(keep bool) OutboundAIModeration {
 }
 
 // OutboundAIModerationResponseCategories is a check's categories that
-// apply to responses: all but prompt_injection (ADR-1400).
+// apply to responses: all but prompt_injection (ADR-1435).
 func OutboundAIModerationResponseCategories(categories []string) []string {
 	out := make([]string, 0, len(categories))
 	for _, category := range categories {
@@ -100,7 +100,7 @@ func (m OutboundAIModeration) Valid() bool {
 
 // validFor also checks an off check's settings when responses use it: they
 // need a category besides prompt_injection, which responses skip
-// (ADR-1400).
+// (ADR-1435).
 func (m OutboundAIModeration) validFor(responses bool) bool {
 	m = m.normalized(responses)
 	if m.OnError != OutboundAIModerationOnErrorAllow && m.OnError != OutboundAIModerationOnErrorBlock {

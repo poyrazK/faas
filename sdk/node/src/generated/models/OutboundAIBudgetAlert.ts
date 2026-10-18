@@ -20,7 +20,7 @@ export type OutboundAIBudgetAlert = {
   used: number;
   crossed_at: string;
   /**
-   * The tag of a tag_daily_cost alert (ADR-1430).
+   * The tag of a tag_daily_cost alert (ADR-1438).
    */
   tag: string | null;
 };

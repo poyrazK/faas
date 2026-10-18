@@ -1,5 +1,5 @@
 -- filename: 20261016170317543_outbound_ai_unmetered_video.sql
--- ADR-1370: an AI integration refuses writes the gateway cannot meter
+-- ADR-1432: an AI integration refuses writes the gateway cannot meter
 -- unless its AI policy allows them, and video generation is priced per
 -- second and rolled up in seconds. Additive and replay-safe.
 

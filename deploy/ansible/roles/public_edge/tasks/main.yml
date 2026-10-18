@@ -151,7 +151,7 @@
   when: faas_public_edge_enabled | bool
   notify: reload caddy for public edge
 
-# ADR-1360: a separate block, so turning the AI host off removes only it.
+# ADR-1431: a separate block, so turning the AI host off removes only it.
 # A more specific host than the platform wildcard, so Caddy serves it here.
 - name: public_edge — manage the AI gateway public host
   ansible.builtin.blockinfile:

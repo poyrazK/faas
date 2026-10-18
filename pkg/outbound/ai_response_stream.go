@@ -14,7 +14,7 @@ import (
 )
 
 // responseStreamGuard applies the response policy to a streamed response
-// event by event (ADR-1400). It keeps each channel's text, releases an
+// event by event (ADR-1435). It keeps each channel's text, releases an
 // event once OutboundAIResponseHoldBackBytes more text of its channels has
 // arrived or the stream ended, and rewrites held events to redact. A block
 // drops the held events and ends the stream with an error event. With

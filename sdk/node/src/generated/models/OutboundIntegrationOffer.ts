@@ -65,11 +65,11 @@ export type OutboundIntegrationOffer = {
    */
   ai_log_export?: boolean;
   /**
-   * Whether writes the gateway can neither meter nor knows to be free go through, outside the caps (ADR-1370).
+   * Whether writes the gateway can neither meter nor knows to be free go through, outside the caps (ADR-1432).
    */
   ai_allow_unmetered?: boolean;
   /**
-   * Whether the gateway adds prompt-cache breakpoints to Claude requests that carry none (ADR-1420).
+   * Whether the gateway adds prompt-cache breakpoints to Claude requests that carry none (ADR-1437).
    */
   ai_auto_prompt_cache?: boolean;
   /**

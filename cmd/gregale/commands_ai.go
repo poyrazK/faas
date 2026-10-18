@@ -254,7 +254,7 @@ func formatSaved(millicents int64) string {
 }
 
 // formatMediaUsage lists a rollup's images, audio seconds and characters
-// (ADR-997), video seconds (ADR-1370) and built-in tool uses (ADR-1380),
+// (ADR-997), video seconds (ADR-1432) and built-in tool uses (ADR-1433),
 // or "-".
 func formatMediaUsage(item api.OutboundAIUsageItem) string {
 	var parts []string

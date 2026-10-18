@@ -31,7 +31,7 @@ func (s *Service) accessTokenStore(w http.ResponseWriter) (state.OutboundAIAcces
 }
 
 // newAccessToken returns a token and the SHA-256 hash outboundd looks it up
-// by (ADR-1360).
+// by (ADR-1431).
 func newAccessToken() (string, [32]byte, error) {
 	secret := make([]byte, 32)
 	if _, err := rand.Read(secret); err != nil {

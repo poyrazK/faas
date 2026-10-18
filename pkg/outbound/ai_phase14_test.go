@@ -1,6 +1,6 @@
 package outbound
 
-// adr: 1410 — AI calls name usage tags in X-Gregale-AI-Tags; settlement
+// adr: 1436 — AI calls name usage tags in X-Gregale-AI-Tags; settlement
 // rolls usage up per tag with a bounded number of tags, the request log and
 // export line carry them, and exact tags' daily cost limits refuse calls at
 // admission.

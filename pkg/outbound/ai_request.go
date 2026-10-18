@@ -46,10 +46,10 @@ func readAIRequest(r *http.Request, integration Integration, path string) (*aiRe
 	limit := api.OutboundAIRequestBufferMaxBytes
 	switch endpoint := classifyAIEndpoint(integration.AIProvider, path); {
 	case endpoint.batch:
-		// ADR-1360: a batch creation is sized from its body.
+		// ADR-1431: a batch creation is sized from its body.
 		limit = api.OutboundAIBatchBodyMaxBytes
 	case endpoint.media == aiMediaVideo:
-		// ADR-1370: a video request carries its images or source video.
+		// ADR-1432: a video request carries its images or source video.
 		limit = api.OutboundAIVideoBodyMaxBytes
 	}
 	if r.ContentLength > limit {

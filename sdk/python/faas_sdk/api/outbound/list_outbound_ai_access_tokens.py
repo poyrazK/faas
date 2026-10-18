@@ -87,7 +87,7 @@ def sync_detailed(
 ) -> Response[OutboundAIAccessTokenList | Problem]:
     """List an app's AI gateway access tokens.
 
-     Requires MFA and read scope. Newest first, without their secrets (ADR-1360).
+     Requires MFA and read scope. Newest first, without their secrets (ADR-1431).
 
     Args:
         slug (str):
@@ -118,7 +118,7 @@ def sync(
 ) -> OutboundAIAccessTokenList | Problem | None:
     """List an app's AI gateway access tokens.
 
-     Requires MFA and read scope. Newest first, without their secrets (ADR-1360).
+     Requires MFA and read scope. Newest first, without their secrets (ADR-1431).
 
     Args:
         slug (str):
@@ -144,7 +144,7 @@ async def asyncio_detailed(
 ) -> Response[OutboundAIAccessTokenList | Problem]:
     """List an app's AI gateway access tokens.
 
-     Requires MFA and read scope. Newest first, without their secrets (ADR-1360).
+     Requires MFA and read scope. Newest first, without their secrets (ADR-1431).
 
     Args:
         slug (str):
@@ -173,7 +173,7 @@ async def asyncio(
 ) -> OutboundAIAccessTokenList | Problem | None:
     """List an app's AI gateway access tokens.
 
-     Requires MFA and read scope. Newest first, without their secrets (ADR-1360).
+     Requires MFA and read scope. Newest first, without their secrets (ADR-1431).
 
     Args:
         slug (str):

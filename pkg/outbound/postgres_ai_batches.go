@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// ReserveAIBatch stores a pending batch and its reservation (ADR-1360).
+// ReserveAIBatch stores a pending batch and its reservation (ADR-1431).
 // Admission counts it from this commit until SettleAIBatch.
 func (b *PostgresBackend) ReserveAIBatch(ctx context.Context, batch AIBatch) error {
 	id, err := uuid.Parse(batch.ID)

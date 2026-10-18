@@ -1,5 +1,5 @@
 -- filename: 20261017131606271_outbound_ai_auto_prompt_cache.sql
--- ADR-1420: AI gateway phase 15. An AI integration can let the gateway add
+-- ADR-1437: AI gateway phase 15. An AI integration can let the gateway add
 -- prompt-cache breakpoints to Claude requests that carry none. Like the
 -- other AI policy switches it needs an AI provider. Additive and
 -- replay-safe.

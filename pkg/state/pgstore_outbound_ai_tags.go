@@ -9,7 +9,7 @@ import (
 
 var _ OutboundAITagStore = (*PgStore)(nil)
 
-// GetOutboundAITagUsage reads one UTC day of per-tag rollups (ADR-1410),
+// GetOutboundAITagUsage reads one UTC day of per-tag rollups (ADR-1436),
 // ordered by cost, then tokens, then tag, with each tag's limit.
 func (s *PgStore) GetOutboundAITagUsage(ctx context.Context, accountID, integrationID, usageDate, key string, limit int) (OutboundAITagUsage, error) {
 	usageDate, ok := outboundAITagUsageQuery(usageDate, key, time.Now())
@@ -110,7 +110,7 @@ func (s *PgStore) SetOutboundAITagLimits(ctx context.Context, accountID, integra
 const outboundAITagExportBatch = 2000
 
 // ExportOutboundAITagUsage pages the range by (usage_date, tag), so a whole
-// retention window of capped rows streams without being held (ADR-1430).
+// retention window of capped rows streams without being held (ADR-1438).
 func (s *PgStore) ExportOutboundAITagUsage(ctx context.Context, accountID, integrationID, from, to, key string,
 	visit func(OutboundAITagUsageRow) error) error {
 	from, to, ok := outboundAITagExportRange(from, to, key, time.Now())

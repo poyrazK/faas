@@ -1,5 +1,5 @@
 -- filename: 20261017075355082_outbound_ai_route_strategies.sql
--- ADR-1390: an AI route has a strategy that picks the target a call tries
+-- ADR-1434: an AI route has a strategy that picks the target a call tries
 -- first (ordered, weighted, latency or cost), targets may carry a weight,
 -- and a cost route may name a latency target. Additive and replay-safe.
 

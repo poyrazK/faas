@@ -34,14 +34,14 @@ class OutboundAIPriceEntry:
     millicents_per_million_characters: int | Unset = UNSET
     """Charged per million characters of speech input."""
     millicents_per_video_second: int | Unset = UNSET
-    """Charged per second of generated video (ADR-1370). A model_prefix of <model>@<resolution>, such as
+    """Charged per second of generated video (ADR-1432). A model_prefix of <model>@<resolution>, such as
     veo-3.1-generate-001@4k, prices that resolution apart."""
     millicents_per_web_search: int | Unset = UNSET
-    """Charged per web search as the provider bills it: per call, query or grounded prompt (ADR-1380)."""
+    """Charged per web search as the provider bills it: per call, query or grounded prompt (ADR-1433)."""
     millicents_per_file_search: int | Unset = UNSET
-    """Charged per file search call (ADR-1380)."""
+    """Charged per file search call (ADR-1433)."""
     millicents_per_code_session_gb: int | Unset = UNSET
-    """Charged per GB of code-interpreter container memory per session (ADR-1380)."""
+    """Charged per GB of code-interpreter container memory per session (ADR-1433)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

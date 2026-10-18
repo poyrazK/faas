@@ -73,9 +73,9 @@ class OutboundIntegrationOffer:
     ai_log_export: bool | Unset = UNSET
     """Whether each settled app call writes one metadata line to the app's log drains (ADR-1340)."""
     ai_allow_unmetered: bool | Unset = UNSET
-    """Whether writes the gateway can neither meter nor knows to be free go through, outside the caps (ADR-1370)."""
+    """Whether writes the gateway can neither meter nor knows to be free go through, outside the caps (ADR-1432)."""
     ai_auto_prompt_cache: bool | Unset = UNSET
-    """Whether the gateway adds prompt-cache breakpoints to Claude requests that carry none (ADR-1420)."""
+    """Whether the gateway adds prompt-cache breakpoints to Claude requests that carry none (ADR-1437)."""
     ai_user_daily_token_limit: int | None | Unset = UNSET
     """UTC-day input plus output token limit for each end user named by X-Gregale-AI-User (ADR-994)."""
     ai_user_daily_cost_limit_millicents: int | None | Unset = UNSET

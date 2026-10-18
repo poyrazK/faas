@@ -48,10 +48,10 @@ type OutboundIntegrationOffer struct {
 	// and moderation check (ADR-1340).
 	AIContentPolicy api.OutboundAIContentPolicy
 	// AIAllowUnmetered lets through writes the gateway cannot meter
-	// (ADR-1370).
+	// (ADR-1432).
 	AIAllowUnmetered bool
 	// AIAutoPromptCache adds prompt-cache breakpoints to Claude requests
-	// (ADR-1420).
+	// (ADR-1437).
 	AIAutoPromptCache bool
 	// AILogExport sends settled app calls to the app's log drains
 	// (ADR-1340).
@@ -82,9 +82,9 @@ type OutboundAIUsageItem struct {
 	Images       int64
 	AudioSeconds int64
 	Characters   int64
-	// VideoSeconds is seconds of generated video (ADR-1370).
+	// VideoSeconds is seconds of generated video (ADR-1432).
 	VideoSeconds int64
-	// Built-in tool uses (ADR-1380).
+	// Built-in tool uses (ADR-1433).
 	WebSearches   int64
 	FileSearches  int64
 	CodeSessionGB int64
@@ -131,10 +131,10 @@ type OutboundAIPolicy struct {
 	// requires a provider (ADR-1340).
 	LogExport bool
 	// AllowUnmetered lets through writes the gateway cannot meter; it
-	// requires a provider (ADR-1370).
+	// requires a provider (ADR-1432).
 	AllowUnmetered bool
 	// AutoPromptCache adds prompt-cache breakpoints to Claude requests; it
-	// requires a provider (ADR-1420).
+	// requires a provider (ADR-1437).
 	AutoPromptCache bool
 }
 

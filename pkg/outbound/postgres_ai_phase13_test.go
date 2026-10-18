@@ -1,6 +1,6 @@
 package outbound
 
-// adr: 1400 — the content policy's response section is stored, read by the
+// adr: 1435 — the content policy's response section is stored, read by the
 // resolver with the moderation settings it uses while requests are not
 // moderated, checked by the database, and cleared with AI handling.
 

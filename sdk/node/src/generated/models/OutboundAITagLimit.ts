@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A UTC-day cost limit on one exact tag (ADR-1410).
+ * A UTC-day cost limit on one exact tag (ADR-1436).
  */
 export type OutboundAITagLimit = {
   tag: string;

@@ -28,7 +28,7 @@ class PutOutboundAIRouteTargetsRequest:
 
     targets: list[OutboundAIRouteTarget]
     strategy: PutOutboundAIRouteTargetsRequestStrategy | Unset = UNSET
-    """The route's strategy from now on, as on creation (ADR-1390); omitted means ordered."""
+    """The route's strategy from now on, as on creation (ADR-1434); omitted means ordered."""
     max_ttfb_ms: int | Unset = UNSET
     """The cost route's latency target from now on, as on creation; omitted means none."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

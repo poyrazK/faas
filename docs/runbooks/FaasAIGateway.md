@@ -101,7 +101,7 @@ These ADR-1340 features are customer settings; none pages.
 
 ## Batches, access tokens and evaluations
 
-These ADR-1360 features are customer settings; none pages.
+These ADR-1431 features are customer settings; none pages.
 
 - **Batches.** `outbound_ai_batches_settled_total{outcome="unknown"}` rising
   means batches reach 72 hours without the provider ending them, or the
@@ -122,7 +122,7 @@ These ADR-1360 features are customer settings; none pages.
 
 ## Unmetered calls
 
-ADR-1370 refuses writes the gateway cannot meter; none pages.
+ADR-1432 refuses writes the gateway cannot meter; none pages.
 
 - **Refusals.** `outbound_rejections_total{reason="outbound_ai_endpoint_unmetered"}`
   counts them. A customer whose SDK needs an endpoint outside the lists (the

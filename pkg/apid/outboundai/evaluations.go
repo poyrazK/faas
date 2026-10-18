@@ -23,7 +23,7 @@ func (s *Service) evaluationStore(w http.ResponseWriter) (state.OutboundAIEvalua
 }
 
 // CreateEvaluation records an evaluation of a route target against the
-// route's first target; outboundd runs it (ADR-1360).
+// route's first target; outboundd runs it (ADR-1431).
 func (s *Service) CreateEvaluation(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	routeID, ok := routePathID(w, r)
 	if !ok {

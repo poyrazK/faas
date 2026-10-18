@@ -1,8 +1,8 @@
-# ADR-1420 · AI gateway phase 15: automatic prompt caching for Claude
+# ADR-1437 · AI gateway phase 15: automatic prompt caching for Claude
 
 - **Status:** accepted
 - **Date:** 2026-10-17
-- **Relates to:** ADR-990 (AI policy), ADR-991 (OpenAI-format routes), ADR-1400 (request rewriting before admission)
+- **Relates to:** ADR-990 (AI policy), ADR-991 (OpenAI-format routes), ADR-1435 (request rewriting before admission)
 - **Decision:**
   - **Opt-in.** The AI policy gains `auto_prompt_cache` (default off).
     - With it on, the gateway adds prompt-cache breakpoints to Claude requests that carry none.

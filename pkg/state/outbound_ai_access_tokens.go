@@ -10,7 +10,7 @@ import (
 var ErrOutboundAIAccessTokenLimit = errors.New("state: outbound AI access token limit reached")
 
 // OutboundAIAccessToken is an AI gateway access token for one app
-// (ADR-1360). TokenHash is the SHA-256 of the secret, which is never
+// (ADR-1431). TokenHash is the SHA-256 of the secret, which is never
 // stored. apid owns the lifecycle; outboundd reads the hash.
 type OutboundAIAccessToken struct {
 	ID             string

@@ -48,7 +48,7 @@ type OutboundAIBudgetAlert struct {
 	Budget        string
 	AppID         string
 	EndUser       string
-	// Tag is the tag of a tag_daily_cost alert (ADR-1430).
+	// Tag is the tag of a tag_daily_cost alert (ADR-1438).
 	Tag              string
 	PeriodStart      time.Time
 	ThresholdPercent int32
@@ -76,7 +76,7 @@ type OutboundAIRequestLogEntry struct {
 	Attempts          int
 	// EndUser is empty when the call named no end user (ADR-994).
 	EndUser string
-	// Tags are the call's usage tags (ADR-1410).
+	// Tags are the call's usage tags (ADR-1436).
 	Tags []string
 	// ContentCaptured reports stored bodies for the call (ADR-996).
 	ContentCaptured bool

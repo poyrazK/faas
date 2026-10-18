@@ -188,7 +188,7 @@ func outboundAIRouteTargetsTx(ctx context.Context, tx pgx.Tx, routeID string) ([
 // target's and the canary target's counts over its window: from the later
 // of the canary's start and the window's start, by whole minutes, up to the
 // minute it was decided, since latency and cost routes keep counting
-// (ADR-1390).
+// (ADR-1434).
 func (s *PgStore) OutboundAIRouteCanaryStatus(ctx context.Context, accountID, routeID string) (OutboundAIRouteCanaryStatus, error) {
 	var scan outboundAIRouteCanaryScan
 	var windowStart time.Time

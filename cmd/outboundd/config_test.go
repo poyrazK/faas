@@ -232,7 +232,7 @@ func TestCustomerSealedSourceRequiresManagedPolicyWithoutOperatorKey(t *testing.
 	}
 }
 
-// adr: 1360 — the access-token listener sits behind the TLS proxy, so it
+// adr: 1431 — the access-token listener sits behind the TLS proxy, so it
 // must bind loopback.
 func TestLoadConfigRequiresLoopbackPublicListener(t *testing.T) {
 	for addr, ok := range map[string]bool{

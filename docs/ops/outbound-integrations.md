@@ -604,7 +604,7 @@ Larger bodies stream exactly as before, without these features.
 
 `gregale ai policy <id> --prompt-cache on` (or `auto_prompt_cache` in the AI
 policy) lets the gateway add prompt-cache breakpoints to Claude requests that
-carry none (ADR-1420). It covers:
+carry none (ADR-1437). It covers:
 
 - the Anthropic Messages API;
 - Vertex AI's Anthropic endpoints;
@@ -885,7 +885,7 @@ from `faas_sdk`. `opaqueAIUserId` turns an e-mail address into a stable
 ## AI usage tags
 
 An AI call can name up to five tags with `X-Gregale-AI-Tags:
-feature=search,tier=free` (ADR-1410):
+feature=search,tier=free` (ADR-1436):
 
 - A key is 1 to 32 lowercase letters, digits, `_`, `.` or `-` that starts with
   a letter. A value is 1 to 64 letters, digits or `. _ : @ + / -`.
@@ -915,7 +915,7 @@ to 20 limits; `--remove` drops one and `--clear` drops them all.
   tag, use the per-end-user limits above.
 
 **Alerts.** A tag with a limit alerts at 80% and 100% of it, once per tag, UTC
-day and threshold (ADR-1430):
+day and threshold (ADR-1438):
 
 - the budget is `tag_daily_cost`, and the alert names the `tag`;
 - the `outbound.ai_budget.threshold` webhook carries `tag` and goes only to
@@ -1008,7 +1008,7 @@ always replaced with `[REDACTED:kind]` (ADR-997).
 
 A hard cap holds only for calls the gateway meters, so a write on an AI
 integration goes through only when the gateway meters its endpoint or knows it
-to be free (ADR-1370).
+to be free (ADR-1432).
 
 - **Metered:** chat completions, Responses, completions, embeddings, images,
   audio, batches, and Veo video generation.
@@ -1036,7 +1036,7 @@ integrations take `ai_allow_unmetered` in `outboundd.toml`.
 
 Providers bill some built-in tools per use, on top of tokens. The gateway
 counts these uses from each response, prices them, and reserves them before the
-call (ADR-1380).
+call (ADR-1433).
 
 | Tool | Counted from | Typical price |
 | --- | --- | --- |
@@ -1092,7 +1092,7 @@ like chat calls:
   per audio second (Whisper) or in tokens (gpt-4o-transcribe).
 - **Speech:** `audio/speech`, billed per input character (tts-1) or settled
   at its reservation when the model has no character price.
-- **Video:** Veo `predictLongRunning` on Gemini and Vertex AI (ADR-1370),
+- **Video:** Veo `predictLongRunning` on Gemini and Vertex AI (ADR-1432),
   billed per second of generated video at the price for its resolution.
 
 Price lists take media prices next to token prices:
@@ -1172,7 +1172,7 @@ action.
 `gregale ai content-policy <id> --response-email redact --response-secrets
 block --response-terms block --response-moderation flag` (or `response` in
 `PUT .../ai-content-policy`) checks what the model sends back before the
-caller sees it (ADR-1400):
+caller sees it (ADR-1435):
 
 - **Detectors:** `email`, `payment_card`, `iban` and `secret` redact or block
   as on requests.
@@ -1297,7 +1297,7 @@ Per-minute rows are kept for 48 hours.
 
 `gregale ai routes set <route-id> --target <a> --target <b> --strategy latency`
 (or `strategy` in `PUT /v1/outbound/ai-routes/{route}/targets`) picks the
-target each call tries first (ADR-1390). The other targets follow in route
+target each call tries first (ADR-1434). The other targets follow in route
 order as fallbacks.
 
 - **`ordered`:** the default; route order.
@@ -1405,7 +1405,7 @@ to the content policy (ADR-1340).
 ## AI batches
 
 OpenAI and Azure OpenAI `POST .../batches` and Anthropic
-`POST .../v1/messages/batches` are AI calls (ADR-1360). Before ADR-1360 they
+`POST .../v1/messages/batches` are AI calls (ADR-1431). Before ADR-1431 they
 passed through unmetered, so batch spend skipped every cap.
 
 - **Estimate:** each request counts its body bytes at 4 bytes per token, plus
@@ -1451,7 +1451,7 @@ passed through unmetered, so batch spend skipped every cap.
 ## AI access tokens
 
 An access token lets a caller outside Gregale act as one app on the AI gateway:
-local development, CI or a notebook (ADR-1360).
+local development, CI or a notebook (ADR-1431).
 `gregale ai tokens create --app my-api --name laptop --expires-in-hours 24`
 (or `POST /v1/apps/{slug}/ai-access-tokens`) issues one.
 
@@ -1496,7 +1496,7 @@ local development, CI or a notebook (ADR-1360).
 `gregale ai evaluate <route-id> --position 2 --judge <id> --judge-model gpt-5
 --canary-percent 10` (or `POST /v1/outbound/ai-routes/{route}/evaluations`)
 evaluates a route target against the route's first target before any user
-sees it (ADR-1360). It waits for the verdict; `gregale ai evaluate show
+sees it (ADR-1431). It waits for the verdict; `gregale ai evaluate show
 <evaluation-id>` reads it again and `gregale ai evaluate list <route-id>` lists
 a route's evaluations.
 

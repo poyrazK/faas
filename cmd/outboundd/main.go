@@ -221,7 +221,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// worse than their route's first target.
 	canaryEvaluator := &outbound.AIRouteCanaryEvaluator{Store: backend, Metrics: outboundMetrics, Log: log}
 	go canaryEvaluator.Run(ctx)
-	// ADR-1360: provider batches are settled here once they finish, and
+	// ADR-1431: provider batches are settled here once they finish, and
 	// evaluations replay captured calls against a candidate model.
 	batchWorker := &outbound.AIBatchWorker{Backend: backend, Usage: backend, Handler: handler, Log: log}
 	go batchWorker.Run(ctx)
@@ -299,7 +299,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 }
 
 // startPublicServer serves access-token callers on the public listener when
-// one is configured (ADR-1360). It carries no control or metrics endpoints.
+// one is configured (ADR-1431). It carries no control or metrics endpoints.
 func startPublicServer(cfg *Config, handler *outbound.Handler, tokens outbound.AIAccessTokenStore, log *slog.Logger) *http.Server {
 	if cfg.PublicListenAddr == "" {
 		return nil

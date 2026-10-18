@@ -16,12 +16,12 @@ var ErrOutboundAIRouteLimit = errors.New("state: outbound AI route limit reached
 type OutboundAIRouteTarget struct {
 	IntegrationID string
 	Model         string
-	// Weight is the target's weight on a weighted route (ADR-1390).
+	// Weight is the target's weight on a weighted route (ADR-1434).
 	Weight *int
 }
 
 // OutboundAIRouteRouting is a route's strategy and a cost route's latency
-// target (ADR-1390).
+// target (ADR-1434).
 type OutboundAIRouteRouting struct {
 	Strategy  string
 	MaxTTFBMS *int
@@ -41,7 +41,7 @@ type OutboundAIRoute struct {
 	// Canary is the route's model canary, if any (ADR-1340).
 	Canary *OutboundAIRouteCanary
 	// Strategy and MaxTTFBMS pick the target each call tries first
-	// (ADR-1390).
+	// (ADR-1434).
 	Strategy  string
 	MaxTTFBMS *int
 }
@@ -73,7 +73,7 @@ type OutboundAIRouteTargetStats struct {
 }
 
 // OutboundAIRouteStatsWindow is each target's settled attempts since
-// WindowStart (ADR-1390).
+// WindowStart (ADR-1434).
 type OutboundAIRouteStatsWindow struct {
 	Strategy    string
 	WindowStart time.Time
@@ -108,7 +108,7 @@ type OutboundAIRouteStore interface {
 	PromoteOutboundAIRouteCanary(ctx context.Context, accountID, routeID string) (OutboundAIRoute, error)
 	OutboundAIRouteCanaryStatus(ctx context.Context, accountID, routeID string) (OutboundAIRouteCanaryStatus, error)
 	// OutboundAIRouteStats returns each target's counts over the strategy
-	// window (ADR-1390).
+	// window (ADR-1434).
 	OutboundAIRouteStats(ctx context.Context, accountID, routeID string) (OutboundAIRouteStatsWindow, error)
 }
 
@@ -147,7 +147,7 @@ func validOutboundAIRouteShape(targets []OutboundAIRouteTarget) bool {
 }
 
 // normalizeOutboundAIRouteRouting defaults an empty strategy to ordered and
-// checks it with the targets' weights (ADR-1390).
+// checks it with the targets' weights (ADR-1434).
 func normalizeOutboundAIRouteRouting(routing OutboundAIRouteRouting, targets []OutboundAIRouteTarget) (OutboundAIRouteRouting, bool) {
 	if routing.Strategy == "" {
 		routing.Strategy = api.OutboundAIRouteStrategyOrdered

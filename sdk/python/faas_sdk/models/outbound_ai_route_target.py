@@ -19,7 +19,7 @@ class OutboundAIRouteTarget:
     integration_id: UUID
     model: str | Unset = UNSET
     weight: int | Unset = UNSET
-    """A weighted route's share of first attempts for this target; 0 makes it a fallback only (ADR-1390)."""
+    """A weighted route's share of first attempts for this target; 0 makes it a fallback only (ADR-1434)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

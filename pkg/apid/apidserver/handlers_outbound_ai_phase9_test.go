@@ -1,6 +1,6 @@
 package apidserver_test
 
-// adr: 1360 — access tokens and evaluations are served behind the AI
+// adr: 1431 — access tokens and evaluations are served behind the AI
 // gateway release gate, on the app and route paths the spec names.
 
 import (

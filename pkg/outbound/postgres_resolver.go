@@ -278,7 +278,7 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 		DailyAITokenLimit: positiveLimit(aiDailyTokenLimitValue), DailyAICostLimit: positiveLimit(aiDailyCostLimitValue),
 		MonthlyAICostLimit: positiveLimit(aiMonthlyCostLimitValue), AIUserDailyTokenLimit: positiveLimit(aiUserTokenLimitValue),
 		AIUserDailyCostLimit: positiveLimit(aiUserCostLimitValue)}
-	// ADR-1410: the integration's tag limits.
+	// ADR-1436: the integration's tag limits.
 	for index, tag := range tagLimitTags {
 		if index < len(tagLimitCosts) {
 			if i.AITagDailyCostLimits == nil {

@@ -1,6 +1,6 @@
 package outbound
 
-// adr: 1400 — response checks redact or block the generated text of whole
+// adr: 1435 — response checks redact or block the generated text of whole
 // responses and streams, end a blocked stream with an error event that
 // OpenAI-format routes translate, run the moderation check on answers, and
 // read provider bytes uncompressed.

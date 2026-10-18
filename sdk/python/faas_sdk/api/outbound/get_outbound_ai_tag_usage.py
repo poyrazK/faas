@@ -110,7 +110,7 @@ def sync_detailed(
 ) -> Response[OutboundAITagUsageResponse | Problem]:
     """Read one UTC day of AI gateway usage by tag.
 
-     Requires MFA and read scope (ADR-1410). Tags are the key=value pairs apps send in X-Gregale-AI-Tags;
+     Requires MFA and read scope (ADR-1436). Tags are the key=value pairs apps send in X-Gregale-AI-Tags;
     rows are kept for 31 days and listed by cost, then tokens, with each tag's daily cost limit.
 
     Args:
@@ -151,7 +151,7 @@ def sync(
 ) -> OutboundAITagUsageResponse | Problem | None:
     """Read one UTC day of AI gateway usage by tag.
 
-     Requires MFA and read scope (ADR-1410). Tags are the key=value pairs apps send in X-Gregale-AI-Tags;
+     Requires MFA and read scope (ADR-1436). Tags are the key=value pairs apps send in X-Gregale-AI-Tags;
     rows are kept for 31 days and listed by cost, then tokens, with each tag's daily cost limit.
 
     Args:
@@ -187,7 +187,7 @@ async def asyncio_detailed(
 ) -> Response[OutboundAITagUsageResponse | Problem]:
     """Read one UTC day of AI gateway usage by tag.
 
-     Requires MFA and read scope (ADR-1410). Tags are the key=value pairs apps send in X-Gregale-AI-Tags;
+     Requires MFA and read scope (ADR-1436). Tags are the key=value pairs apps send in X-Gregale-AI-Tags;
     rows are kept for 31 days and listed by cost, then tokens, with each tag's daily cost limit.
 
     Args:
@@ -226,7 +226,7 @@ async def asyncio(
 ) -> OutboundAITagUsageResponse | Problem | None:
     """Read one UTC day of AI gateway usage by tag.
 
-     Requires MFA and read scope (ADR-1410). Tags are the key=value pairs apps send in X-Gregale-AI-Tags;
+     Requires MFA and read scope (ADR-1436). Tags are the key=value pairs apps send in X-Gregale-AI-Tags;
     rows are kept for 31 days and listed by cost, then tokens, with each tag's daily cost limit.
 
     Args:

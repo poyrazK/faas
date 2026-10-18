@@ -41,7 +41,7 @@ type AIRoute struct {
 	// Strategy picks the target each call tries first; MaxTTFBMS is a cost
 	// route's latency target. Weights hold a weighted route's target
 	// weights and Stats a latency or cost route's window counts, both by
-	// position (ADR-1390).
+	// position (ADR-1434).
 	Strategy  string
 	MaxTTFBMS *int
 	Weights   []int
@@ -147,7 +147,7 @@ func parseRoutePath(escapedPath string) (string, string, bool) {
 }
 
 // routeCallerAccount names the account of a caller that may use routes:
-// a relay caller (ADR-989) or an access token's app (ADR-1360). Their
+// a relay caller (ADR-989) or an access token's app (ADR-1431). Their
 // identity is not tied to one integration.
 func routeCallerAccount(ctx context.Context) (string, bool) {
 	if token, ok := accessTokenFromContext(ctx); ok {
@@ -200,7 +200,7 @@ func (h *Handler) serveRoute(w http.ResponseWriter, r *http.Request) {
 	if canaryFirst {
 		w.Header().Set(RouteCanaryHeader, "1")
 	}
-	// ADR-1390: the strategy orders the targets; a chosen canary goes first.
+	// ADR-1434: the strategy orders the targets; a chosen canary goes first.
 	steps, pick := planRouteSteps(route, r, canaryFirst, h.routeIntN)
 	h.Metrics.ObserveAIRouteCall(route.Strategy, pick)
 	if !replayable {

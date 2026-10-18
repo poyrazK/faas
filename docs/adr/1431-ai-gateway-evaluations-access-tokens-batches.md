@@ -1,4 +1,4 @@
-# ADR-1360 · AI gateway phase 9: evaluations before a canary, access tokens for callers outside Gregale, and batch APIs
+# ADR-1431 · AI gateway phase 9: evaluations before a canary, access tokens for callers outside Gregale, and batch APIs
 
 - **Status:** accepted
 - **Date:** 2026-10-16

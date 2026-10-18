@@ -46,7 +46,7 @@ metrics_addr = "127.0.0.1:9108"
 # FAAS_AI_GATEWAY_ACCOUNTS (comma-separated) overrides this setting.
 # ai_gateway_accounts = ["00000000-0000-0000-0000-000000000000"]
 #
-# ADR-1360 public listener for callers outside Gregale (local development,
+# ADR-1431 public listener for callers outside Gregale (local development,
 # CI, notebooks) that present an app's AI gateway access token. It serves
 # only /i/ and /r/ paths and must be a loopback address: Caddy terminates
 # TLS for the public host in front of it (public_edge role,
@@ -99,7 +99,7 @@ metrics_addr = "127.0.0.1:9108"
 # retry_budget_per_minute = 0 # optional shared extra-attempt bucket; 0 disables
 # ai_provider = "openai" # optional AI gateway mode: "openai" (compatible wire format) or "anthropic" (ADR-988)
 # ai_daily_token_limit = 0 # optional UTC-day input+output token limit; requires ai_provider; 0 disables
-# ai_allow_unmetered = false # let through writes the gateway cannot meter, outside the caps (ADR-1370)
+# ai_allow_unmetered = false # let through writes the gateway cannot meter, outside the caps (ADR-1432)
 # enabled = true
 # request_timeout defaults to 30s when omitted; enabled defaults to true.
 # To let the account provide and rotate the provider Authorization value,

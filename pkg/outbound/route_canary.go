@@ -82,7 +82,7 @@ type AIRouteCanaryJudgement struct {
 }
 
 // AIRouteTargetCounts sums one target's settled attempts. CostMillicents
-// is their cost, which cost routes rank by (ADR-1390).
+// is their cost, which cost routes rank by (ADR-1434).
 type AIRouteTargetCounts struct {
 	Calls, Errors, TTFBCalls, TTFBMSTotal int64
 	CostMillicents                        int64

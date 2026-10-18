@@ -34,7 +34,7 @@ class CreateOutboundAIRouteRequest:
     gemini, bedrock and vertex targets, every target but openai must name its model, and a vertex target's
     integration must name one /v1/projects/{project}/locations/{location} path prefix (ADR-991, ADR-995)."""
     strategy: CreateOutboundAIRouteRequestStrategy | Unset = UNSET
-    """How a call picks its first target (ADR-1390). ordered (the default) follows route order; weighted draws by
+    """How a call picks its first target (ADR-1434). ordered (the default) follows route order; weighted draws by
     target weight; latency picks the healthy target with the lowest recent mean time to first byte; cost picks the
     healthy target with the lowest recent mean cost per call. The other targets follow as fallbacks."""
     max_ttfb_ms: int | Unset = UNSET

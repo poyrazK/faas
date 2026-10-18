@@ -1,6 +1,6 @@
 package outboundai
 
-// adr: 1420 — the AI policy stores automatic prompt caching, which needs an
+// adr: 1437 — the AI policy stores automatic prompt caching, which needs an
 // AI provider.
 
 import (

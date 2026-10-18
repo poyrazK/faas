@@ -105,7 +105,7 @@ def sync_detailed(
      Requires MFA and deploy-write scope. A caller outside Gregale, such as local development, CI or a
     notebook, sets its SDK's base URL to the AI gateway's public host and puts the token where the SDK
     puts its API key (Authorization Bearer, x-api-key, x-goog-api-key or api-key). Its calls are the
-    app's: the app's bindings, guardrails, caps and content policy apply (ADR-1360). The secret is
+    app's: the app's bindings, guardrails, caps and content policy apply (ADR-1431). The secret is
     returned only in this response. An app holds at most 20 live tokens.
 
     Args:
@@ -146,7 +146,7 @@ def sync(
      Requires MFA and deploy-write scope. A caller outside Gregale, such as local development, CI or a
     notebook, sets its SDK's base URL to the AI gateway's public host and puts the token where the SDK
     puts its API key (Authorization Bearer, x-api-key, x-goog-api-key or api-key). Its calls are the
-    app's: the app's bindings, guardrails, caps and content policy apply (ADR-1360). The secret is
+    app's: the app's bindings, guardrails, caps and content policy apply (ADR-1431). The secret is
     returned only in this response. An app holds at most 20 live tokens.
 
     Args:
@@ -182,7 +182,7 @@ async def asyncio_detailed(
      Requires MFA and deploy-write scope. A caller outside Gregale, such as local development, CI or a
     notebook, sets its SDK's base URL to the AI gateway's public host and puts the token where the SDK
     puts its API key (Authorization Bearer, x-api-key, x-goog-api-key or api-key). Its calls are the
-    app's: the app's bindings, guardrails, caps and content policy apply (ADR-1360). The secret is
+    app's: the app's bindings, guardrails, caps and content policy apply (ADR-1431). The secret is
     returned only in this response. An app holds at most 20 live tokens.
 
     Args:
@@ -221,7 +221,7 @@ async def asyncio(
      Requires MFA and deploy-write scope. A caller outside Gregale, such as local development, CI or a
     notebook, sets its SDK's base URL to the AI gateway's public host and puts the token where the SDK
     puts its API key (Authorization Bearer, x-api-key, x-goog-api-key or api-key). Its calls are the
-    app's: the app's bindings, guardrails, caps and content policy apply (ADR-1360). The secret is
+    app's: the app's bindings, guardrails, caps and content policy apply (ADR-1431). The secret is
     returned only in this response. An app holds at most 20 live tokens.
 
     Args:

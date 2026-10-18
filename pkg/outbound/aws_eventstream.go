@@ -154,7 +154,7 @@ func awsEventStreamHeaderValue(valueType byte, rest []byte) (value, after []byte
 
 // encodeAWSEventMessage frames headers and a payload as one event-stream
 // message with its prelude and message CRCs, for a response check that
-// rewrites or ends a Bedrock stream (ADR-1400). Messages are bounded by
+// rewrites or ends a Bedrock stream (ADR-1435). Messages are bounded by
 // OutboundAIResponseCheckMaxBytes, so the lengths fit.
 func encodeAWSEventMessage(headers, payload []byte) []byte {
 	total := awsEventStreamPreludeBytes + len(headers) + len(payload) + awsEventStreamTrailerBytes
@@ -175,7 +175,7 @@ func awsEventStreamStringHeader(name, value string) []byte {
 }
 
 // awsGatewayException ends a Bedrock stream with an exception message that
-// AWS SDKs raise, naming the gateway's error code (ADR-1400).
+// AWS SDKs raise, naming the gateway's error code (ADR-1435).
 func awsGatewayException(code, message string) []byte {
 	var headers []byte
 	headers = append(headers, awsEventStreamStringHeader(":message-type", "exception")...)

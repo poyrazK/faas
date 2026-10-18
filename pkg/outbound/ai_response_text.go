@@ -8,7 +8,7 @@ import (
 )
 
 // responseTextLoc is one generated text in a decoded response body or
-// stream event (ADR-1400): the string holder[key]. channel names the
+// stream event (ADR-1435): the string holder[key]. channel names the
 // streamed text a delta continues, one per choice, output part or content
 // block; a whole text has none.
 type responseTextLoc struct {
@@ -169,7 +169,7 @@ func pathKeys(keys ...string) []string { return keys }
 // responseClosedChannels names the channels a stream event ends: an
 // Anthropic content block's stop, a Responses API text's done event, or a
 // Bedrock content block's stop. Their last text is released without
-// waiting for more (ADR-1400).
+// waiting for more (ADR-1435).
 func responseClosedChannels(format aiWireFormat, value any, eventType string) []string {
 	root, _ := value.(map[string]any)
 	if root == nil {

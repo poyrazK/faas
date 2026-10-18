@@ -14,7 +14,7 @@ import (
 // an absent output-image price with the output price. The other media
 // prices (ADR-997) are zero when absent: Image per image, AudioMinute per
 // minute of input audio and Characters per million input characters, and
-// VideoSecond per second of generated video (ADR-1370).
+// VideoSecond per second of generated video (ADR-1432).
 type AIPrice struct {
 	ModelPrefix string
 	Input       int64
@@ -27,7 +27,7 @@ type AIPrice struct {
 	AudioMinute int64
 	Characters  int64
 	VideoSecond int64
-	// Built-in tool prices (ADR-1380): per web search, per file search and
+	// Built-in tool prices (ADR-1433): per web search, per file search and
 	// per GB container session; zero when absent.
 	WebSearch     int64
 	FileSearch    int64

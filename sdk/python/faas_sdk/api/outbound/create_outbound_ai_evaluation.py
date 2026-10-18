@@ -105,7 +105,7 @@ def sync_detailed(
 
      Requires MFA and deploy-write scope. outboundd replays the route's first target's latest captured
     OpenAI chat completions and Responses calls on the target and asks the judge model which answer is
-    better, in a random order (ADR-1360). The evaluation passes when losses and candidate errors are at
+    better, in a random order (ADR-1431). The evaluation passes when losses and candidate errors are at
     most max_loss_rate percent of the sample; a passing evaluation starts its canary, if it has one,
     unless the route already has an active canary or the target changed. Candidate and judge calls are
     metered and capped under the caller evaluation. The first target's integration needs
@@ -147,7 +147,7 @@ def sync(
 
      Requires MFA and deploy-write scope. outboundd replays the route's first target's latest captured
     OpenAI chat completions and Responses calls on the target and asks the judge model which answer is
-    better, in a random order (ADR-1360). The evaluation passes when losses and candidate errors are at
+    better, in a random order (ADR-1431). The evaluation passes when losses and candidate errors are at
     most max_loss_rate percent of the sample; a passing evaluation starts its canary, if it has one,
     unless the route already has an active canary or the target changed. Candidate and judge calls are
     metered and capped under the caller evaluation. The first target's integration needs
@@ -184,7 +184,7 @@ async def asyncio_detailed(
 
      Requires MFA and deploy-write scope. outboundd replays the route's first target's latest captured
     OpenAI chat completions and Responses calls on the target and asks the judge model which answer is
-    better, in a random order (ADR-1360). The evaluation passes when losses and candidate errors are at
+    better, in a random order (ADR-1431). The evaluation passes when losses and candidate errors are at
     most max_loss_rate percent of the sample; a passing evaluation starts its canary, if it has one,
     unless the route already has an active canary or the target changed. Candidate and judge calls are
     metered and capped under the caller evaluation. The first target's integration needs
@@ -224,7 +224,7 @@ async def asyncio(
 
      Requires MFA and deploy-write scope. outboundd replays the route's first target's latest captured
     OpenAI chat completions and Responses calls on the target and asks the judge model which answer is
-    better, in a random order (ADR-1360). The evaluation passes when losses and candidate errors are at
+    better, in a random order (ADR-1431). The evaluation passes when losses and candidate errors are at
     most max_loss_rate percent of the sample; a passing evaluation starts its canary, if it has one,
     unless the route already has an active canary or the target changed. Candidate and judge calls are
     metered and capped under the caller evaluation. The first target's integration needs

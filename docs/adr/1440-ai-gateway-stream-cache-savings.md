@@ -2,12 +2,12 @@
 
 - **Status:** accepted
 - **Date:** 2026-10-17
-- **Relates to:** ADR-294 (response cache), ADR-990 (AI cache, prices), ADR-1400 (response checks), ADR-1420 (prompt caching)
+- **Relates to:** ADR-294 (response cache), ADR-990 (AI cache, prices), ADR-1435 (response checks), ADR-1437 (prompt caching)
 - **Decision:**
   - **Streams are cached too.** With `response_cache_ttl_seconds` set, an identical streaming AI request is cached like a non-streaming one: same buffered JSON body, caller and headers, through the same per-process, bounded cache.
     - Server-sent events and Bedrock event streams are both covered.
     - The provider stream is copied into the entry as it is forwarded, so the first call is not delayed. The entry is kept only when the stream ends cleanly within the entry bound.
-    - A stream that errors, that the caller abandons, that a response check ends (ADR-1400), or that grows past the bound is dropped.
+    - A stream that errors, that the caller abandons, that a response check ends (ADR-1435), or that grows past the bound is dropped.
     - A hit replays the stored bytes at once; response checks apply to hits as to misses.
   - **Cache hits settle.**
     - A hit was not settled at all before. Now it adds one cached request to the caller's and model's UTC-day row, with no tokens and no cost.
@@ -19,7 +19,7 @@
 - **Why:**
   - Most AI calls stream, so the response cache missed most of the traffic it could serve.
   - Hits were invisible: they neither appeared in usage nor showed what the cache saved.
-  - Prompt caching (ADR-1420) is only worth turning on if its effect is visible in money, not only in token counts.
+  - Prompt caching (ADR-1437) is only worth turning on if its effect is visible in money, not only in token counts.
 - **Consequences:**
   - **Replay is not paced.** A cached stream arrives as fast as the connection allows. Clients reading events see the same events in the same order.
   - **Entries stay bounded.** Each entry holds at most 1 MiB in a 32 MiB cache per outboundd process; longer streams are never cached. Concurrent fills share the existing fill slots, and a stream that finds none is forwarded without caching.

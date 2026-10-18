@@ -35,7 +35,7 @@ class OutboundAIRoute:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     strategy: OutboundAIRouteStrategy
-    """How a call picks its first target (ADR-1390)."""
+    """How a call picks its first target (ADR-1434)."""
     max_ttfb_ms: int | None | Unset = UNSET
     """A cost route's latency target, or null."""
     canary: None | OutboundAIRouteCanary | Unset = UNSET

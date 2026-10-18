@@ -143,7 +143,7 @@ func (s *Service) PutRouteTargets(w http.ResponseWriter, r *http.Request, acct s
 }
 
 // GetRouteStats returns each target's attempts over the window latency and
-// cost routes judge (ADR-1390).
+// cost routes judge (ADR-1434).
 func (s *Service) GetRouteStats(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	routeID, ok := routePathID(w, r)
 	if !ok {

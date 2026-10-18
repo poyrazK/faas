@@ -12,7 +12,7 @@ import (
 
 var _ OutboundAIEvaluationStore = (*MemStore)(nil)
 
-// CreateOutboundAIEvaluation mirrors the PgStore checks (ADR-1360). Nothing
+// CreateOutboundAIEvaluation mirrors the PgStore checks (ADR-1431). Nothing
 // runs memory evaluations; tests seed results with SeedOutboundAIEvaluation.
 func (m *MemStore) CreateOutboundAIEvaluation(_ context.Context, evaluation OutboundAIEvaluation) (OutboundAIEvaluation, error) {
 	m.mu.Lock()

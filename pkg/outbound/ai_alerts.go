@@ -17,7 +17,7 @@ type AIBudgetAlert struct {
 	Budget        string
 	AppID         string
 	// EndUser names the end user of a per-user budget (ADR-995), and Tag
-	// the tag of a tag budget (ADR-1430).
+	// the tag of a tag budget (ADR-1438).
 	EndUser          string
 	Tag              string
 	PeriodStart      time.Time
@@ -67,7 +67,7 @@ type aiBudgetCrossing struct {
 	after       int64
 	// endUser names the end user of a per-user budget (ADR-995).
 	endUser string
-	// tag names the tag of a tag budget (ADR-1430).
+	// tag names the tag of a tag budget (ADR-1438).
 	tag string
 }
 
@@ -107,7 +107,7 @@ type aiTagDay struct {
 }
 
 // tagBudgetCrossings lists the limited tags' cost changes for a settlement
-// (ADR-1430). Overflow rows have no limits, so they never alert.
+// (ADR-1438). Overflow rows have no limits, so they never alert.
 func tagBudgetCrossings(days []aiTagDay, day time.Time, cost int64) []aiBudgetCrossing {
 	var crossings []aiBudgetCrossing
 	for _, tag := range days {

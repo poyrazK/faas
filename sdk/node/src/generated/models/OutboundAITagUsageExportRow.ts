@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One NDJSON line of a tag usage export (ADR-1430); CSV rows carry the same fields in this order.
+ * One NDJSON line of a tag usage export (ADR-1438); CSV rows carry the same fields in this order.
  */
 export type OutboundAITagUsageExportRow = {
   usage_date: string;

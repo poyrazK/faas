@@ -86,7 +86,7 @@ def sync_detailed(
     """Revoke an AI gateway access token.
 
      Requires MFA and deploy-write scope. outboundd may accept the token for up to 30 seconds more
-    (ADR-1360).
+    (ADR-1431).
 
     Args:
         slug (str):
@@ -121,7 +121,7 @@ def sync(
     """Revoke an AI gateway access token.
 
      Requires MFA and deploy-write scope. outboundd may accept the token for up to 30 seconds more
-    (ADR-1360).
+    (ADR-1431).
 
     Args:
         slug (str):
@@ -151,7 +151,7 @@ async def asyncio_detailed(
     """Revoke an AI gateway access token.
 
      Requires MFA and deploy-write scope. outboundd may accept the token for up to 30 seconds more
-    (ADR-1360).
+    (ADR-1431).
 
     Args:
         slug (str):
@@ -184,7 +184,7 @@ async def asyncio(
     """Revoke an AI gateway access token.
 
      Requires MFA and deploy-write scope. outboundd may accept the token for up to 30 seconds more
-    (ADR-1360).
+    (ADR-1431).
 
     Args:
         slug (str):

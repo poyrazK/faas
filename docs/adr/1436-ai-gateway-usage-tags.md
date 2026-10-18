@@ -1,4 +1,4 @@
-# ADR-1410 · AI gateway phase 14: usage tags and per-tag cost limits
+# ADR-1436 · AI gateway phase 14: usage tags and per-tag cost limits
 
 - **Status:** accepted
 - **Date:** 2026-10-17

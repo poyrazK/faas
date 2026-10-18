@@ -1,6 +1,6 @@
 package outbound
 
-// adr: 1420 — with automatic prompt caching on, the gateway marks a Claude
+// adr: 1437 — with automatic prompt caching on, the gateway marks a Claude
 // request's repeated system prompt or tools and a continuing conversation's
 // last block, on the Anthropic, Vertex and Bedrock wire forms, and leaves
 // short prompts and caller-marked requests alone.

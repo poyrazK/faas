@@ -11,7 +11,7 @@ T = TypeVar("T", bound="OutboundAITagUsageItem")
 
 @_attrs_define
 class OutboundAITagUsageItem:
-    """One tag's UTC-day AI usage on an integration (ADR-1410); tokens is input plus output. A key's tags past the day's
+    """One tag's UTC-day AI usage on an integration (ADR-1436); tokens is input plus output. A key's tags past the day's
     cap of distinct tags add to its overflow row, <key>=~other.
 
     """

@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Evaluation states, verdicts and sample verdicts (ADR-1360).
+// Evaluation states, verdicts and sample verdicts (ADR-1431).
 const (
 	OutboundAIEvaluationPending = "pending"
 	OutboundAIEvaluationRunning = "running"
@@ -71,7 +71,7 @@ type OutboundAIEvaluationTargetStats struct {
 	MeanTTFBMS     *int64 `json:"mean_ttfb_ms"`
 }
 
-// OutboundAIEvaluation is an evaluation of a route target (ADR-1360). The
+// OutboundAIEvaluation is an evaluation of a route target (ADR-1431). The
 // baseline is the route's first target as captured; the candidate is the
 // evaluated target. Verdict is set when State is done, ErrorCode when it is
 // failed. Items are returned only when one evaluation is read.

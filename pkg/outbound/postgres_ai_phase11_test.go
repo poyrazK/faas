@@ -1,6 +1,6 @@
 package outbound
 
-// adr: 1380 — tool prices round-trip through Postgres to the resolver, and
+// adr: 1433 — tool prices round-trip through Postgres to the resolver, and
 // settled tool uses roll up by day.
 
 import (

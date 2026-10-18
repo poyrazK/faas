@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// How a route call's first target was picked (ADR-1390), as
+// How a route call's first target was picked (ADR-1434), as
 // outbound_ai_route_calls_total labels it.
 const (
 	routePickOrdered  = "ordered"
@@ -21,7 +21,7 @@ const (
 
 // routeTracksStats reports a route whose settled attempts add to its
 // per-minute target rows: one with a canary (ADR-1340) or one whose
-// strategy judges targets by them (ADR-1390).
+// strategy judges targets by them (ADR-1434).
 func routeTracksStats(route AIRoute) bool {
 	return route.Canary != nil || route.Strategy == api.OutboundAIRouteStrategyLatency || route.Strategy == api.OutboundAIRouteStrategyCost
 }
@@ -165,7 +165,7 @@ func withFirst(order []int, position int) []int {
 }
 
 // planRouteSteps orders one call's targets: the canary first when chosen
-// (ADR-1340), then the strategy's order (ADR-1390). It returns how the first
+// (ADR-1340), then the strategy's order (ADR-1434). It returns how the first
 // target was picked.
 func planRouteSteps(route AIRoute, r *http.Request, canaryFirst bool, intN func(int) int) ([]routeStep, string) {
 	order, pick := routeStrategyOrder(route, r, intN)

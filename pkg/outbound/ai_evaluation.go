@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// Evaluations (ADR-1360): apid records an evaluation of one route target
+// Evaluations (ADR-1431): apid records an evaluation of one route target
 // against the route's first target; outboundd's worker claims it, replays
 // the first target's latest captured calls on the candidate, and asks a
 // judge model which of the two answers is better. Candidate and judge calls

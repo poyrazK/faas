@@ -15,7 +15,7 @@ export type OutboundAIRoute = {
   created_at: string;
   updated_at: string;
   /**
-   * How a call picks its first target (ADR-1390).
+   * How a call picks its first target (ADR-1434).
    */
   strategy: 'ordered' | 'weighted' | 'latency' | 'cost';
   /**

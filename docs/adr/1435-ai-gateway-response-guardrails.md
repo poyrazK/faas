@@ -1,4 +1,4 @@
-# ADR-1400 · AI gateway phase 13: response guardrails
+# ADR-1435 · AI gateway phase 13: response guardrails
 
 - **Status:** accepted
 - **Date:** 2026-10-17

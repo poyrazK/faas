@@ -158,7 +158,7 @@ func (s *PgStore) CreateOutboundAIRoute(ctx context.Context, route OutboundAIRou
 }
 
 // SetOutboundAIRouteTargets replaces a route's ordered targets and its
-// strategy (ADR-1390).
+// strategy (ADR-1434).
 func (s *PgStore) SetOutboundAIRouteTargets(ctx context.Context, accountID, routeID string, targets []OutboundAIRouteTarget,
 	routing OutboundAIRouteRouting) error {
 	routing, routingOK := normalizeOutboundAIRouteRouting(routing, targets)
@@ -191,7 +191,7 @@ func (s *PgStore) SetOutboundAIRouteTargets(ctx context.Context, accountID, rout
 		return err
 	}
 	// ADR-1340: new targets end the canary and clear the per-target counts;
-	// their positions named the old targets (ADR-1390).
+	// their positions named the old targets (ADR-1434).
 	if _, err := endOutboundAIRouteCanary(ctx, tx, routeID); err != nil {
 		return err
 	}
@@ -203,7 +203,7 @@ func (s *PgStore) SetOutboundAIRouteTargets(ctx context.Context, accountID, rout
 }
 
 // OutboundAIRouteStats returns each target's settled attempts over the
-// strategy window, from the minute the window starts (ADR-1390).
+// strategy window, from the minute the window starts (ADR-1434).
 func (s *PgStore) OutboundAIRouteStats(ctx context.Context, accountID, routeID string) (OutboundAIRouteStatsWindow, error) {
 	var window OutboundAIRouteStatsWindow
 	var targets int

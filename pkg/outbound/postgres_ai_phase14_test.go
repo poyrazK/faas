@@ -1,6 +1,6 @@
 package outbound
 
-// adr: 1410 — Postgres settles tagged calls into per-tag rows and the
+// adr: 1436 — Postgres settles tagged calls into per-tag rows and the
 // request log, admits against exact tags' daily cost limits with the live
 // reservations of tagged leases, reads limits into the resolver, and
 // checks tags in the database.
