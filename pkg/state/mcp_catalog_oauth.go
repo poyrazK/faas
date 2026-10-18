@@ -28,6 +28,14 @@ func changeCatalogOAuth(root *api.MCPCatalogMonitorSnapshot, role, revision, act
 	status := *view.ObserverStatus
 	switch action {
 	case "begin":
+		if flow != nil && flow.BrowserSessionSHA256 != "" {
+			if len(flow.BrowserSessionSHA256) != 64 {
+				return ErrInvalidArgument
+			}
+			if status.LeaseUntil != nil && status.LeaseUntil.After(at) || status.OAuthFlow != nil && status.OAuthFlow.Consumed && status.OAuthFlow.ExpiresAt.After(at) {
+				return ErrConflict
+			}
+		}
 		if view.OAuthLifecycle != nil && view.OAuthLifecycle.Revocation != nil && view.OAuthLifecycle.Revocation.State == "pending" {
 			return ErrMCPCatalogMonitorChanged
 		}
@@ -35,19 +43,25 @@ func changeCatalogOAuth(root *api.MCPCatalogMonitorSnapshot, role, revision, act
 			return ErrInvalidArgument
 		}
 		status.OAuthFlow = flow
-	case "consume", "finish":
+	case "consume", "finish", "abort":
 		pending := status.OAuthFlow
 		if pending == nil || !pending.ExpiresAt.After(at) || len(hash) != 64 || subtle.ConstantTimeCompare([]byte(hash), []byte(pending.StateSHA256)) != 1 {
 			return ErrMCPCatalogMonitorChanged
 		}
-		if action == "consume" {
+		switch action {
+		case "abort":
+			if !pending.Consumed {
+				return ErrMCPCatalogMonitorChanged
+			}
+			status.OAuthFlow = nil
+		case "consume":
 			if pending.Consumed {
 				return ErrMCPCatalogMonitorChanged
 			}
 			copy := *pending
 			copy.Consumed = true
 			status.OAuthFlow = &copy
-		} else {
+		default:
 			if !pending.Consumed || oauth == nil || oauth.State != "connected" || oauth.ExpiresAt == nil || !oauth.ExpiresAt.After(at) || oauth.LastRenewalAt == nil || len(oauth.Ciphertext) == 0 || len(oauth.Ciphertext) > api.MCPCatalogOAuthMaxResponseBytes || len(oauth.SourceSHA256) != 64 {
 				return ErrInvalidArgument
 			}

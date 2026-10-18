@@ -29,17 +29,18 @@ func mcpStarterCapabilities() []mcpStarterCapability {
 		all("catalogs", "Tools, resources, URI templates and prompts", "supported"),
 		all("completions", "Bounded prompt and resource-template completions", "supported"),
 		all("progress", "Streamed tool progress", "supported"),
+		all("protocol_telemetry", "Bounded protocol outcomes, execution/stream timing and request correlation", "supported"),
 		all("external_oauth", "External OAuth JWT validation and protected-resource metadata", "supported"),
 		all("entry_scopes", "Caller-scoped tools, resources, prompts and completions", "supported"),
 		all("origin_allowlist", "Reject browser Origin by default; explicit exact-origin allowlist", "supported"),
-		{"cors_preflight", "Browser CORS preflight and protocol header exposure", "supported", "not supported", "not supported"},
+		all("cors_preflight", "Browser CORS preflight and protocol header exposure", "supported"),
 		all("durable_tasks", "Encrypted PostgreSQL Tasks and separate web/worker/observer roles", "opt-in; Tasks use modern protocol"),
 		all("task_input", "Durable task form input and resume", "opt-in; requires client form support"),
 		all("subscriptions", "Task/resource updates and catalog list-change subscriptions", "modern protocol"),
 		all("catalog_integrity", "Runtime catalog revision, digest and expected-digest readiness gate", "supported; process-local catalog"),
 		all("shared_resource_updates", "Updates across web replicas for application-owned resources", "requires application-supplied shared adapter"),
 		all("scale_to_zero", "Task workers scale from zero using backlog metrics", "requires separate always-on observer and database"),
-		{"schema_setup", "Task schema initialization", "separate migration credential", "runtime initializes schema", "runtime initializes schema"},
+		all("schema_setup", "Task schema initialization", "separate migration credential"),
 		all("stateful_sessions", "Instance-local MCP sessions", "not supported by hosting profile"),
 		all("managed_oauth", "Hosted login, consent, token issuance and refresh", "external provider required"),
 	}
@@ -108,6 +109,6 @@ func renderMCPStarterCapabilities(w io.Writer) error {
 			return err
 		}
 	}
-	_, err = io.WriteString(w, "\nAll starters default to public access and disabled Tasks. Use `mcp init --auth external-oauth` to configure private access and `--tasks --name <prefix>` to scaffold a split durable stack. Origin allowlisting alone does not provide a complete browser CORS integration in Go/Python.\n\nCatalog hashes cover advertised definitions and policy, not handler code. Application handlers must validate arguments and business-data ownership. External side effects need Task-ID idempotency because recovery can replay work. Runtime catalog mutations and default application-resource update adapters are process-local.\n\nPortable protocol, SDK and PostgreSQL checks do not establish native Firecracker cold boot/restore or real provider/client login interoperability. Follow [release qualification](ops/mcp-release-qualification.md) for the evidence required before promoting hosting maturity. This command does not inspect release evidence.\n")
+	_, err = io.WriteString(w, "\nAll starters default to public access and disabled Tasks. Use `mcp init --auth external-oauth` to configure private access and `--tasks --name <prefix>` to scaffold a split durable stack. Browser CORS requires an exact allowed origin; preflight does not replace bearer authorization.\n\nCatalog hashes cover advertised definitions and policy, not handler code. Application handlers must validate arguments and business-data ownership. External side effects need Task-ID idempotency because recovery can replay work. Runtime catalog mutations and default application-resource update adapters are process-local.\n\nPortable protocol, SDK and PostgreSQL checks do not establish native Firecracker cold boot/restore or real provider/client login interoperability. Follow [release qualification](ops/mcp-release-qualification.md) for the evidence required before promoting hosting maturity. This command does not inspect release evidence.\n")
 	return err
 }

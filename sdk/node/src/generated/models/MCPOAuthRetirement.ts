@@ -8,6 +8,10 @@ import type { MCPOAuthRetirementEvent } from './MCPOAuthRetirementEvent.js';
  * Account-owned grant retirement metadata surviving app deletion; sealed data is omitted from public responses.
  */
 export type MCPOAuthRetirement = {
+  /**
+   * Environment of the retired MCP OAuth connection. Empty means default.
+   */
+  scope?: string;
   id: string;
   app_id: string;
   app_slug: string;

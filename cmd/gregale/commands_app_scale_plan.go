@@ -38,6 +38,7 @@ type appScaleResidentUsage struct {
 }
 
 type appScalePlanView struct {
+	Context       *cliPreviewSummary     `json:"context,omitempty"`
 	SchemaVersion int                    `json:"schema_version"`
 	AppSlug       string                 `json:"app_slug"`
 	Environment   string                 `json:"environment,omitempty"`
@@ -91,6 +92,7 @@ func cmdAppScalePlan(client *Client, appClient environmentAppClient, slug, envir
 		"This preview changes no app settings. Remove --plan to apply the same flags.",
 		"Resident usage excludes request-driven compute, egress and included plan usage; this is not a total bill estimate.",
 	}}
+	view.Context = newCLIPreview("remote comparison", slug, environment, "app settings", "", "Permissions, plan limits, and current configuration are rechecked when applying settings.")
 	account, accountErr := client.Whoami(context.Background())
 	if accountErr == nil {
 		view.AccountPlan = account.Plan
@@ -106,7 +108,10 @@ func cmdAppScalePlan(client *Client, appClient environmentAppClient, slug, envir
 	}
 	var saved appScaleSavedPlan
 	if outputPath != "" {
-		saved = appScaleSavedPlan{SchemaVersion: 1, AppSlug: slug, Environment: environment, Request: request, Preview: view}
+		// Keep version-1 saved plans readable by older strict decoders.
+		savedPreview := view
+		savedPreview.Context = nil
+		saved = appScaleSavedPlan{SchemaVersion: 1, AppSlug: slug, Environment: environment, Request: request, Preview: savedPreview}
 		if environment != "" {
 			if appClient.revision == nil || *appClient.revision < 0 {
 				return printErr("Could not save app settings plan", errors.New("the environment read did not return a workload revision"))
@@ -129,6 +134,7 @@ func cmdAppScalePlan(client *Client, appClient environmentAppClient, slug, envir
 		}
 		return jsonOut(writeJSON(view))
 	}
+	renderCLIPreview(osStdout, view.Context)
 	printAppScalePlan(osStdout, view)
 	if outputPath != "" {
 		PrintOK(osStdout, "Saved reusable plan to %s", outputPath)

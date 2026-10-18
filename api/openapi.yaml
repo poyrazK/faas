@@ -330,6 +330,819 @@ security:
   - bearerAuth: []
 
 paths:
+  /v1/apps/{slug}/alerts/{id}/mcp-readiness-pagerduty-acknowledgements:
+    parameters:
+      - {name: slug, in: path, required: true, description: Application owning the PagerDuty acknowledgement subscription., schema: {type: string}}
+      - {name: id, in: path, required: true, description: Readiness rule receiving signed PagerDuty acknowledgements., schema: {type: string, format: uuid}}
+    get:
+      tags: [mcp]
+      operationId: getMCPReadinessPagerDutyAcknowledgements
+      summary: Read masked PagerDuty webhook acknowledgement settings
+      parameters:
+        - {name: destination, in: query, description: Select an independent primary or fallback binding. Omit to read the binding owning the original callback URL., schema: {type: string, enum: [primary, fallback]}}
+      description: Read scope and MFA required. Version zero is disabled. The stable relative webhook path is returned before configuration; concatenate it with the trusted API origin when creating the PagerDuty v3 subscription.
+      responses:
+        '200':
+          description: Current masked acknowledgement webhook binding
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPReadinessPagerDutyAcknowledgementPolicy'}
+        '400': {description: Invalid getMCPReadinessPagerDutyAcknowledgements parameters or body}
+        '401': {description: Authentication required for getMCPReadinessPagerDutyAcknowledgements}
+        '403': {description: Insufficient scope or MFA for getMCPReadinessPagerDutyAcknowledgements}
+        '404': {description: No owned rule for getMCPReadinessPagerDutyAcknowledgements}
+    put:
+      tags: [mcp]
+      operationId: setMCPReadinessPagerDutyAcknowledgements
+      summary: Configure signed PagerDuty acknowledgement sync
+      description: Admin scope and MFA required. Enable with the selected primary or fallback native PagerDuty version, service ID and write-only v3 subscription signing secret. Destination defaults to primary; fallback requires expected_fallback_version instead of expected_pagerduty_version and matches only incidents with activated fallback. The server binds the native receiver fingerprint and region. Only the supplied current signing secret is accepted; use a fresh secret to rotate credentials. Each destination has independent secrets and policy versions. Saving one leaves the other unchanged. Disabling clears only the selected destination credentials immediately; when destination is omitted on disable, the original callback binding is selected. Signed acknowledgements stop reminders only for a matching pinned incident. Optional sync_unacknowledgements accepts signed incident.unacknowledged events. Reminders resume within the existing interval and budget only after every tracked provider acknowledgement clears. Existing untracked or manual acknowledgements require local release. Monitoring and recovery remain driven by readiness probes.
+      requestBody:
+        required: true
+        description: Complete replacement of the signed acknowledgement binding and credential.
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SetMCPReadinessPagerDutyAcknowledgementsRequest'}
+      responses:
+        '200':
+          description: Saved acknowledgement webhook binding with its new version
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPReadinessPagerDutyAcknowledgementPolicy'}
+        '400': {description: Invalid setMCPReadinessPagerDutyAcknowledgements parameters or body}
+        '401': {description: Authentication required for setMCPReadinessPagerDutyAcknowledgements}
+        '403': {description: Insufficient scope or MFA for setMCPReadinessPagerDutyAcknowledgements}
+        '404': {description: No owned rule for setMCPReadinessPagerDutyAcknowledgements}
+        '409': {description: Webhook policy or selected receiver version changed; reload both bindings}
+  /v1/apps/{slug}/alerts/{id}/mcp-readiness-pagerduty-acknowledgements/events:
+    parameters:
+      - {name: slug, in: path, required: true, description: Application owning PagerDuty acknowledgement receipts., schema: {type: string}}
+      - {name: id, in: path, required: true, description: Readiness rule whose provider acknowledgement history is listed., schema: {type: string, format: uuid}}
+    get:
+      tags: [mcp]
+      operationId: listMCPReadinessPagerDutyAcknowledgementEvents
+      summary: Inspect PagerDuty acknowledgement event receipts
+      description: Read scope and MFA required. Bounded immutable provider decisions ordered by receipt time and ID; raw webhook bodies, signatures, credentials and actor details are never retained.
+      parameters:
+        - {name: before, in: query, description: Exclusive opaque cursor from the preceding provider event page., schema: {type: string}}
+        - {name: limit, in: query, description: Maximum provider event receipts in this page., schema: {type: integer, minimum: 1, maximum: 50, default: 20}}
+      responses:
+        '200':
+          description: Retained provider acknowledgement event page
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPReadinessPagerDutyAcknowledgementEvents'}
+        '400': {description: Invalid listMCPReadinessPagerDutyAcknowledgementEvents parameters or body}
+        '401': {description: Authentication required for listMCPReadinessPagerDutyAcknowledgementEvents}
+        '403': {description: Insufficient scope or MFA for listMCPReadinessPagerDutyAcknowledgementEvents}
+        '404': {description: No owned rule for listMCPReadinessPagerDutyAcknowledgementEvents}
+  /v1/apps/{slug}/alerts/{id}/mcp-readiness-pagerduty:
+    parameters:
+      - name: slug
+        description: Application owning the native PagerDuty configuration.
+        in: path
+        required: true
+        schema: {type: string}
+      - name: id
+        description: Readiness webhook rule whose selected native PagerDuty receiver is configured.
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      tags: [mcp]
+      operationId: getMCPReadinessPagerDuty
+      summary: Inspect masked PagerDuty readiness configuration
+      description: Read scope and MFA required. Version zero is unconfigured and uses webhook primary. Integration keys and fingerprints are never returned. Only owned application readiness webhook rules are supported, including disabled rules.
+      responses:
+        '200':
+          description: Current masked PagerDuty primary receiver policy
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPReadinessPagerDutyPolicy'}
+        '400': {description: Invalid PagerDuty rule identifier or unsupported query parameters}
+        '401': {description: Authenticate to read native PagerDuty settings}
+        '403': {description: Native PagerDuty reads require read scope and MFA}
+        '404': {description: No owned readiness rule matches the PagerDuty configuration request}
+    put:
+      tags: [mcp]
+      operationId: setMCPReadinessPagerDuty
+      summary: Configure native PagerDuty primary delivery
+      description: Admin scope and MFA required. Enable using a write-only 32-character Events API v2 integration key for the selected US or EU endpoint (US by default). Configuration is pinned at an incident's first delivery attempt; changes and disabling affect unattempted incidents. Existing pinned receivers continue receiving recovery. Webhook and distinct native PagerDuty fallback remain available. Keys are encrypted with a dedicated namespace. Upgrade all readiness evaluators before enabling. PagerDuty acceptance does not confirm paging. A separate signed acknowledgement webhook policy can synchronize operator acknowledgement.
+      requestBody:
+        required: true
+        description: Complete PagerDuty configuration replacement fenced by its current version.
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SetMCPReadinessPagerDutyRequest'}
+      responses:
+        '200':
+          description: Updated version and masked PagerDuty integration configuration
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPReadinessPagerDutyPolicy'}
+        '400': {description: Invalid PagerDuty key or versioned replacement settings}
+        '401': {description: Authenticate before replacing the native PagerDuty receiver}
+        '403': {description: PagerDuty configuration writes require admin scope and MFA}
+        '404': {description: Requested PagerDuty rule does not belong to this application}
+        '409': {description: PagerDuty policy version changed; reload its current configuration}
+  /v1/apps/{slug}/alerts/{id}/mcp-readiness-reminder-defaults:
+    parameters:
+      - name: slug
+        description: Application owning the reminder defaults rule.
+        in: path
+        required: true
+        schema: {type: string}
+      - name: id
+        description: Readiness webhook rule whose future incidents inherit reminders.
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      tags: [mcp]
+      operationId: getMCPReadinessReminderDefaults
+      summary: Read rule reminder defaults
+      description: Read scope and MFA required. Returns version zero and a disabled policy when unconfigured. Current settings apply only when an incident opens; existing incidents retain their captured policy and overrides. Only MCP readiness webhook rules support defaults.
+      responses:
+        '200':
+          description: Current reminder defaults for future incidents
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPReadinessReminderDefaults'}
+        '400': {description: Invalid reminder defaults rule or query parameters}
+        '401': {description: Authenticate to inspect reminder defaults}
+        '403': {description: Reminder defaults inspection requires read scope and MFA}
+        '404': {description: Reminder defaults rule was not found in this application}
+    put:
+      tags: [mcp]
+      operationId: setMCPReadinessReminderDefaults
+      summary: Replace reminder defaults for future incidents
+      description: Admin scope and MFA required. Expected version fences configuration changes; zero is valid when unconfigured. A zero interval and zero budget disable defaults. Enabled policies use a 60–86400 second interval and 1–10 lifetime reminders per incident. Changes never alter existing incidents or reset their reminder budget. New incidents capture the policy and version atomically when they open. Upgrade all readiness evaluators before enabling defaults.
+      requestBody:
+        description: Current defaults version and complete replacement reminder policy.
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SetMCPReadinessReminderDefaultsRequest'}
+      responses:
+        '200':
+          description: Versioned replacement of rule reminder defaults
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPReadinessReminderDefaults'}
+        '400': {description: Invalid defaults interval or lifetime reminder budget}
+        '401': {description: Authenticate before replacing reminder defaults}
+        '403': {description: Reminder defaults changes require admin scope and MFA}
+        '404': {description: Target reminder defaults rule is not owned by this application}
+        '409': {description: Reminder defaults version changed; refresh the current configuration}
+  /v1/apps/{slug}/alerts/{id}/mcp-readiness-fallback:
+    parameters:
+      - name: slug
+        description: Application that owns the readiness webhook rule.
+        in: path
+        required: true
+        schema: {type: string}
+      - name: id
+        description: Readiness webhook alert rule UUID.
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      tags: [mcp]
+      operationId: getMCPReadinessFallback
+      summary: Inspect a readiness fallback destination policy
+      description: Read scope and MFA required. Returns version zero and disabled when unconfigured. Signing credentials are masked. The policy applies when an incident first claims delivery; existing incident receiver URLs stay pinned.
+      responses:
+        '200':
+          description: Current masked readiness fallback policy
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPReadinessFallbackPolicy'}
+        '400': {description: Invalid fallback rule identifier or unsupported rule family}
+        '401': {description: Authenticate to inspect a fallback destination}
+        '403': {description: Fallback inspection requires read scope and MFA}
+        '404': {description: No owned application and readiness rule match this fallback lookup}
+    put:
+      tags: [mcp]
+      operationId: setMCPReadinessFallback
+      summary: Replace a readiness fallback destination policy
+      description: Admin scope and MFA required. expected_version fences concurrent edits. Enable selects webhook (default) with a distinct public HTTP(S) destination and signing secret, or PagerDuty with a separate integration key and optional US/EU region. Primary and fallback cannot select the same PagerDuty integration. Threshold counts completed failed primary dispatch claims per logical event. Changes apply to incidents not yet attempted; a new webhook secret for the same URL also supplies ongoing pinned deliveries. PagerDuty provider, region and integration identity stay pinned; credential re-encryption for the identical integration refreshes ongoing deliveries. Disabling affects new incidents; disable the alert rule to pause existing deliveries. Upgrade all evaluators before enabling fallback.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SetMCPReadinessFallbackRequest'}
+      responses:
+        '200':
+          description: Replaced fallback policy with its incremented version
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPReadinessFallbackPolicy'}
+        '400': {description: Invalid fallback destination or failure threshold}
+        '401': {description: Authenticate to change readiness fallback delivery}
+        '403': {description: Changing fallback delivery requires admin scope and MFA}
+        '404': {description: Application or rule for the fallback change is not owned}
+        '409': {description: Fallback policy version changed; refresh before replacing it}
+        '503': {description: Fallback secret sealing or persistence is unavailable}
+  /v1/apps/{slug}/mcp-readiness-attention:
+    get:
+      tags: [mcp]
+      operationId: listMCPReadinessAttention
+      summary: List incident acknowledgement and reminder state
+      description: Read scope and MFA required. Lists open incidents by default in ascending incident UUID order. Environment filters include all-environment incidents. State is separate from readiness and notification delivery. The next reminder time is eligibility only; fresh matching unhealthy evidence and no outstanding notification for this incident are required.
+      parameters:
+        - name: slug
+          description: Application owning the readiness incidents.
+          in: path
+          required: true
+          schema: {type: string}
+        - name: scope
+          description: Environment; omission includes every environment.
+          in: query
+          schema: {type: string}
+        - name: after
+          description: Incident UUID from next_after on the previous page.
+          in: query
+          schema: {type: string, format: uuid}
+        - name: limit
+          description: Maximum number of incidents in this page.
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 50, default: 20}
+        - name: include_resolved
+          description: Include resolved incidents and their retained attention state.
+          in: query
+          schema: {type: boolean, default: false}
+      responses:
+        '200':
+          description: Current attention state from a consistent snapshot
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPReadinessAttentionPage'}
+        '400': {description: Invalid incident attention filters or cursor}
+        '401': {description: Authenticate to inspect incident attention}
+        '403': {description: Incident attention inspection requires read scope and MFA}
+        '404': {description: Application owning the incident attention was not found}
+  /v1/apps/{slug}/mcp-readiness-incidents/{id}/attention-actions:
+    parameters:
+      - name: slug
+        description: Application owning this incident.
+        in: path
+        required: true
+        schema: {type: string}
+      - name: id
+        description: Readiness incident UUID.
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      tags: [mcp]
+      operationId: listMCPReadinessAttentionHistory
+      summary: Read audited incident attention decisions
+      description: Read scope and MFA required. Immutable decisions ordered by creation time and request UUID descending. History remains available after resolution. Ordinary evaluator observations and reminder creation do not add operator decisions.
+      parameters:
+        - name: before
+          description: Opaque next_before cursor from the previous history page.
+          in: query
+          schema: {type: string}
+        - name: limit
+          description: Maximum number of retained attention decisions in this page.
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 50, default: 20}
+      responses:
+        '200':
+          description: Retained incident attention decisions
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPReadinessAttentionHistory'}
+        '400': {description: Invalid incident attention history cursor}
+        '401': {description: Authenticate to read incident attention history}
+        '403': {description: Incident attention history requires read scope and MFA}
+        '404': {description: Attention history incident was not found in this application}
+    post:
+      tags: [mcp]
+      operationId: actMCPReadinessAttention
+      summary: Acknowledge an incident or configure finite reminders
+      description: Admin scope and MFA required. New decisions require an open readiness webhook incident and its current attention version. Disabled rules may be configured but cannot create or deliver reminders. Identical app-scoped request UUID retries return their durable receipt even after expiry or recovery; changed requests conflict. Acknowledgement only prevents reminder creation and suppresses unleased reminders. In-flight delivery may finish. Initial failure and recovery notifications retain their behavior. Reminders inherit optional rule defaults at incident opening and may be overridden per incident. Their lifetime creation budget never resets. Configure zero interval and zero budget to disable. Absolute acknowledgement expiry must be in the future and no more than 30 days away; omission acknowledges indefinitely. Native paging and fallback destinations are not configured here.
+      requestBody:
+        description: Version-fenced decision with a stable idempotency UUID and retained reason.
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/MCPReadinessAttentionAction'}
+      responses:
+        '200':
+          description: Original durable incident attention receipt
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPReadinessAttentionReceipt'}
+        '400': {description: Invalid acknowledgement expiry or reminder policy}
+        '401': {description: Authenticate before changing incident attention}
+        '403': {description: Incident attention decisions require admin scope and MFA}
+        '404': {description: Incident for this attention decision was not found}
+        '409': {description: Incident resolved or version or idempotency request changed}
+  /v1/apps/{slug}/mcp-readiness-notifications:
+    get:
+      tags: [mcp]
+      operationId: listMCPReadinessNotificationQueues
+      summary: Inspect readiness notification queue health
+      description: Read scope and MFA required. Returns a consistent snapshot ordered by rule UUID. Environment filters include all-environment rules with their whole queue so a blocking head is visible. Counts exclude delivered, suppressed and abandoned events. Maintenance is reported without mutating queued events.
+      parameters:
+        - name: slug
+          description: Application whose readiness notification queues are inspected.
+          in: path
+          required: true
+          schema: {type: string}
+        - name: scope
+          description: Environment filter; omitted includes every rule and all-environment rules always remain visible.
+          in: query
+          schema: {type: string, maxLength: 40}
+        - name: after
+          description: Rule UUID returned as next_after on the preceding queue page.
+          in: query
+          schema: {type: string, format: uuid}
+        - name: limit
+          description: Maximum readiness notification queues per page.
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 50, default: 20}
+      responses:
+        '200':
+          description: Snapshot of readiness notification delivery queues
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPReadinessNotificationQueues'}
+        '400': {description: Invalid notification queue environment or rule cursor}
+        '401': {description: Authenticate to inspect readiness notification delivery}
+        '403': {description: Queue inspection requires read scope and completed MFA}
+        '404': {description: Application for notification queue inspection was not found}
+  /v1/apps/{slug}/mcp-readiness-notifications/actions:
+    post:
+      tags: [mcp]
+      operationId: actMCPReadinessNotification
+      summary: Retry or abandon a readiness receiver or event
+      description: Admin scope and MFA required. With destination supplied the action changes only that receiver head and preserves other receivers. Omit destination to act on the oldest whole event. Retry makes a failed or expired-lease head eligible on the next evaluator pass. Abandon permanently stops the selected deliveries while retaining incident history. Actions recheck the selected queue order and lease plus rule enablement and maintenance. The shared event version fences stale requests. Reusing a request ID with the identical payload including destination returns the durable receipt; changed payload conflicts. A receipt confirms the decision rather than webhook delivery.
+      parameters:
+        - name: slug
+          description: Application owning the notification recovery decision.
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        description: Stable request ID, current head version and retained operator reason.
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/MCPReadinessNotificationAction'}
+      responses:
+        '200':
+          description: Original durable notification recovery receipt
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPReadinessNotificationReceipt'}
+        '400': {description: Invalid notification recovery request or operator reason}
+        '401': {description: Authenticate before requesting notification recovery}
+        '403': {description: Notification recovery requires admin scope and completed MFA}
+        '404': {description: Recovery event does not belong to the requested application}
+        '409': {description: Queue head changed or recovery is prevented by its current state}
+  /v1/apps/{slug}/mcp-readiness-maintenance:
+    parameters:
+      - name: slug
+        description: Application owning the maintenance window history.
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      tags: [mcp]
+      operationId: listMCPReadinessMaintenance
+      summary: List readiness maintenance windows for an environment
+      description: Newest created first, including expired and cancelled windows. Read scope and MFA required.
+      parameters:
+        - name: scope
+          description: Exact environment whose maintenance windows are listed.
+          in: query
+          schema: {type: string, default: default, maxLength: 40}
+        - name: before
+          description: Opaque maintenance-history cursor returned as next_before.
+          in: query
+          schema: {type: string, maxLength: 160}
+        - name: limit
+          description: Maximum number of maintenance windows in the response.
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 50, default: 20}
+      responses:
+        '200':
+          description: Maintenance window history
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPReadinessMaintenancePage'}
+        '400': {description: Invalid maintenance environment or history cursor}
+        '401': {description: Authenticate to read maintenance window history}
+        '403': {description: Maintenance history requires read scope and MFA}
+        '404': {description: Application for maintenance history was not found}
+    post:
+      tags: [mcp]
+      operationId: createMCPReadinessMaintenance
+      summary: Schedule maintenance or temporarily silence readiness notifications
+      description: Admin scope and MFA required. Monitoring and incident recording continue. Windows match exact environments and end automatically. An omitted start begins now; duration is at most 720 hours. Notifications already claimed may complete.
+      requestBody:
+        description: Environment, finite time interval and reason for notification muting.
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateMCPReadinessMaintenanceRequest'}
+      responses:
+        '201':
+          description: Scheduled maintenance window
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPReadinessMaintenanceWindow'}
+        '400': {description: 'Invalid maintenance start, end, environment or reason'}
+        '401': {description: Authenticate before scheduling a maintenance window}
+        '403': {description: Scheduling maintenance requires admin scope and MFA}
+        '404': {description: Application for the new maintenance window was not found}
+  /v1/apps/{slug}/mcp-readiness-maintenance/{id}/cancel:
+    post:
+      tags: [mcp]
+      operationId: cancelMCPReadinessMaintenance
+      summary: Cancel a readiness maintenance window
+      description: Admin scope and MFA required. Cancellation preserves the window and original cancellation attribution. Other overlapping windows remain effective.
+      parameters:
+        - name: slug
+          description: Application owning the window to cancel.
+          in: path
+          required: true
+          schema: {type: string}
+        - name: id
+          description: UUID of the retained maintenance window.
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        description: Reason retained with the original cancellation attribution.
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CancelMCPReadinessMaintenanceRequest'}
+      responses:
+        '200':
+          description: Cancelled window, including attribution
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPReadinessMaintenanceWindow'}
+        '400': {description: Invalid maintenance window ID or cancellation reason}
+        '401': {description: Authenticate before cancelling a maintenance window}
+        '403': {description: Cancelling maintenance requires admin scope and MFA}
+        '404': {description: Maintenance window does not belong to the requested application}
+        '409': {description: The maintenance window ended before cancellation}
+  /v1/apps/{slug}/mcp-readiness-incidents:
+    get:
+      operationId: listMCPReadinessIncidents
+      summary: List readiness incident events and notification status
+      description: Newest logical events first, independently of notification success. Retries update delivery status without adding timeline rows. Omitting scope lists every environment.
+      parameters:
+        - name: slug
+          description: "Application owning the requested readiness incident history."
+          in: path
+          required: true
+          schema: {type: string}
+        - name: scope
+          description: "Exact environment selected for readiness incident history. Omission selects default."
+          in: query
+          schema: {type: string, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'}
+        - name: before
+          in: query
+          schema: {type: string, maxLength: 160}
+          description: Opaque keyset cursor returned as next_before.
+        - name: limit
+          description: "Maximum number of entries returned in this readiness incident history page."
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 50, default: 20}
+      responses:
+        '200':
+          description: Bounded incident event timeline
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPReadinessIncidentTimeline'}
+        '400': {description: Invalid environment or cursor}
+        '401': {description: "Authenticate to list retained MCP readiness incident events."}
+        '403': {description: Read scope and MFA required}
+        '404': {description: Owned app not found}
+  /v1/apps/{slug}/mcp-readiness-policy/history:
+    parameters:
+    - name: slug
+      description: "Application owning the requested readiness policy revision history."
+      in: path
+      required: true
+      schema:
+        type: string
+    - name: scope
+      description: "Exact environment selected for readiness policy revision history. Omission selects default."
+      in: query
+      required: false
+      schema:
+        type: string
+        maxLength: 40
+        pattern: ^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$
+    get:
+      operationId: listMCPReadinessPolicyHistory
+      summary: List recent policy revisions for one environment
+      responses:
+        '200':
+          description: Readiness policy result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPReadinessPolicyHistory'
+        '400':
+          description: Invalid scope, cursor, revisions or reason
+        '404':
+          description: Owned app or scoped revision not found
+        '409':
+          description: Current policy revision changed
+      parameters:
+      - name: before_revision
+        description: "Revision cursor returned by the preceding policy-history page."
+        in: query
+        required: false
+        schema:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+      - name: limit
+        description: "Maximum number of entries returned in this readiness policy revision history page."
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 20
+  /v1/apps/{slug}/mcp-readiness-policy/history/{revision}:
+    parameters:
+    - name: slug
+      description: "Application owning the requested one historical readiness policy revision."
+      in: path
+      required: true
+      schema:
+        type: string
+    - name: scope
+      description: "Exact environment selected for one historical readiness policy revision. Omission selects default."
+      in: query
+      required: false
+      schema:
+        type: string
+        maxLength: 40
+        pattern: ^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$
+    - name: revision
+      description: "Historical policy revision UUID selected for one historical readiness policy revision."
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+    get:
+      operationId: getMCPReadinessPolicyRevision
+      summary: Read one immutable environment policy revision
+      responses:
+        '200':
+          description: "Configuration and audit context for the requested historical policy revision."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPReadinessPolicy'
+        '400':
+          description: "The historical policy revision or its environment is invalid."
+        '404':
+          description: "The requested historical policy revision was not found for this application."
+        '409':
+          description: "The requested historical revision conflicts with current readiness state."
+  /v1/apps/{slug}/mcp-readiness-policy/diff:
+    parameters:
+    - name: slug
+      description: "Application owning the requested readiness policy revision comparison."
+      in: path
+      required: true
+      schema:
+        type: string
+    - name: scope
+      description: "Exact environment selected for readiness policy revision comparison. Omission selects default."
+      in: query
+      required: false
+      schema:
+        type: string
+        maxLength: 40
+        pattern: ^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$
+    get:
+      operationId: diffMCPReadinessPolicy
+      summary: Compare configuration between two revisions; omitted to_revision selects current
+      responses:
+        '200':
+          description: "Field changes between the selected readiness policy revisions."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPReadinessPolicyDiff'
+        '400':
+          description: "Invalid policy comparison environment or revision pair."
+        '404':
+          description: "A policy selected for comparison was not found for this application."
+        '409':
+          description: "Policy comparison could not use the expected current revision."
+      parameters:
+      - name: from_revision
+        description: "Historical readiness policy revision used as the comparison baseline."
+        in: query
+        required: true
+        schema:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+      - name: to_revision
+        description: "Comparison policy revision UUID; omission compares against the current policy."
+        in: query
+        required: false
+        schema:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+  /v1/apps/{slug}/mcp-readiness-policy/history/{revision}/restore:
+    parameters:
+    - name: slug
+      description: "Application owning the requested readiness policy restoration."
+      in: path
+      required: true
+      schema:
+        type: string
+    - name: scope
+      description: "Exact environment selected for readiness policy restoration. Omission selects default."
+      in: query
+      required: false
+      schema:
+        type: string
+        maxLength: 40
+        pattern: ^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$
+    - name: revision
+      description: "Historical policy revision UUID selected for readiness policy restoration."
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+    post:
+      operationId: restoreMCPReadinessPolicy
+      summary: Restore historical configuration as a new audited revision requiring fresh probes
+      responses:
+        '200':
+          description: "New policy revision restored from the requested historical configuration."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPReadinessPolicy'
+        '400':
+          description: "Invalid policy restore environment, revision or audit reason."
+        '404':
+          description: "The policy revision selected for restoration was not found."
+        '409':
+          description: "The current readiness policy revision changed before restoration."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestoreMCPReadinessPolicyRequest'
+      description: Requires admin scope and applicable MFA. Expected revision must match the current policy in
+        the same environment. Restores configuration only, validates current OAuth bindings and app
+        applicability, and records a new revision, author, time, reason and restored_from. Existing evidence and
+        emergency overrides cannot authorize traffic under the new revision.
+  /v1/apps/{slug}/mcp-readiness-policy:
+    parameters:
+    - name: slug
+      description: "Application owning the requested current environment readiness policy."
+      in: path
+      required: true
+      schema:
+        type: string
+    - name: scope
+      in: query
+      required: false
+      description: Environment policy to select. Defaults to default; PUT body and query must agree.
+      schema:
+        type: string
+        maxLength: 40
+        pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
+    get:
+      operationId: getMCPReadinessPolicy
+      summary: Read the opt-in platform readiness promotion policy
+      responses:
+        '200':
+          description: Readiness result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPReadinessPolicy'
+        '404':
+          description: Owned application not found
+    put:
+      operationId: setMCPReadinessPolicy
+      summary: Administratively configure readiness with a revision CAS and audit reason
+      description: Requires admin scope and applicable MFA. Every update creates a new revision and invalidates prior
+        readiness evidence only in the selected environment. Deploy candidates at zero traffic before probing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetMCPReadinessPolicyRequest'
+      responses:
+        '200':
+          description: "Readiness policy configuration saved as a new environment revision."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPReadinessPolicy'
+        '400':
+          description: Invalid policy
+        '409':
+          description: Policy revision changed
+  /v1/deployments/{id}/mcp-readiness:
+    parameters:
+    - name: id
+      description: "Deployment UUID selected for deployment readiness evidence and probes."
+      in: path
+      required: true
+      schema:
+        type: string
+    get:
+      operationId: getMCPReadiness
+      summary: Read retained role evidence and emergency override audit for an owned deployment
+      responses:
+        '200':
+          description: "Retained policy-bound readiness evidence for the selected deployment."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPReadinessSnapshot'
+        '404':
+          description: Owned deployment not found
+    post:
+      operationId: probeMCPReadiness
+      summary: Run a server-side read-only role probe and retain revision-bound readiness evidence
+      description: Requires deploy write scope and applicable MFA. A failed probe is retained with passed=false. Raw
+        client observations are never accepted. The endpoint is platform-generated; credentials and response bodies are
+        not retained.
+      parameters:
+      - name: MCP-Probe-Authorization
+        in: header
+        required: false
+        schema:
+          type: string
+          maxLength: 8192
+        description: Separate scoped MCP bearer token, never the platform API key.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MCPReadinessProbeRequest'
+      responses:
+        '200':
+          description: "Readiness evidence recorded from the completed deployment probe."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPReadinessEvidence'
+        '400':
+          description: Invalid or unconfigured role
+        '404':
+          description: "Owned deployment or configured probe role was not found."
+        '409':
+          description: Policy or deployment changed during probe
+        '503':
+          description: Probe or evidence store unavailable
+  /v1/deployments/{id}/mcp-readiness-overrides:
+    parameters:
+    - name: id
+      description: "Deployment UUID selected for audited deployment readiness overrides."
+      in: path
+      required: true
+      schema:
+        type: string
+    post:
+      operationId: overrideMCPReadiness
+      summary: Create an audited five-minute readiness override for one traffic increase
+      description: Requires admin scope and applicable MFA. Bound to the current artifact and policy revision. Other
+        admission guards remain enforced. Consumed atomically with a successful traffic mutation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MCPReadinessOverrideRequest'
+      responses:
+        '201':
+          description: "Audited readiness override created for this deployment."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPReadinessOverride'
+        '404':
+          description: Owned live deployment not found
+        '409':
+          description: Policy changed or is disabled
   /v1/mcp/admissions/{id}:
     get:
       operationId: getMCPAdmissionReceipt
@@ -56337,8 +57150,852 @@ components:
         processing_state: { type: string, enum: [waiting, delivering, processing, expired, completed, failed, dead_letter, cancelled, superseded], description: Processing phase derived from the retained claim and current database clock. }
         lease_expires_at: { type: string, format: date-time, description: Current invocation lease expiry; absent after expiry recovery. }
         deadline_at: { type: string, format: date-time, description: Absolute one-hour processing deadline of the matching attempt. }
+
+    MCPReadinessOAuthConnection:
+      type: object
+      additionalProperties: false
+      description: App-local managed OAuth connection in the default environment scope, pinned to its current revision.
+      required: [role, revision]
+      properties:
+        scope:
+          type: string
+          maxLength: 40
+          pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
+          description: Connection environment. Omission preserves the default environment.
+        role: {type: string, minLength: 1, maxLength: 64}
+        revision: {type: string, format: uuid}
+    MCPReadinessMonitorConfig:
+      description: "Schedule, failure threshold and connection settings for continuous readiness probes."
+      type: object
+      additionalProperties: false
+      properties:
+        oauth_connections:
+          type: object
+          maxProperties: 32
+          description: Environment scope to pinned connection. Mutually exclusive with oauth_connection and secret_ref. Missing environments fail closed.
+          additionalProperties:
+            $ref: '#/components/schemas/MCPReadinessOAuthConnection'
+        oauth_connection:
+          $ref: "#/components/schemas/MCPReadinessOAuthConnection"
+        enabled:
+          type: boolean
+        interval_seconds:
+          type: integer
+          minimum: 60
+          maximum: 3600
+        failure_threshold:
+          type: integer
+          minimum: 1
+          maximum: 10
+        secret_ref:
+          type: string
+          description: Scoped app-secret reference; no plaintext credentials.
+      required:
+      - enabled
+      - interval_seconds
+      - failure_threshold
+    MCPReadinessMonitorObservation:
+      description: "One retained observation from a continuous readiness probe."
+      type: object
+      additionalProperties: false
+      properties:
+        observed_at:
+          type: string
+          format: date-time
+        passed:
+          type: boolean
+        reason:
+          type: string
+      required:
+      - observed_at
+      - passed
+    MCPReadinessIncidentTimeline:
+      description: "Paginated logical readiness events independent of notification delivery success."
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          maxItems: 50
+          items: {$ref: '#/components/schemas/MCPReadinessIncidentEvent'}
+        next_before: {type: string}
+    CreateMCPReadinessMaintenanceRequest:
+      description: Exact-environment notification silence with a finite time range and audit reason.
+      type: object
+      additionalProperties: false
+      required: [ends_at, reason]
+      properties:
+        scope: {type: string, default: default, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'}
+        starts_at: {type: string, format: date-time, description: Omit to start now. Past starts older than one minute are rejected.}
+        ends_at: {type: string, format: date-time, description: Future end within 720 hours of start.}
+        reason: {type: string, minLength: 1, maxLength: 500, description: Nonblank UTF-8 reason of at most 500 bytes.}
+    CancelMCPReadinessMaintenanceRequest:
+      description: Reason for ending a maintenance window before its scheduled expiry.
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: {type: string, minLength: 1, maxLength: 500}
+    MCPReadinessMaintenanceWindow:
+      description: Retained maintenance interval with its creator and optional cancellation attribution.
+      type: object
+      required: [id, scope, starts_at, ends_at, reason, created_by, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        scope: {type: string}
+        starts_at: {type: string, format: date-time}
+        ends_at: {type: string, format: date-time}
+        reason: {type: string}
+        created_by: {type: string, format: uuid, description: Account that scheduled the window.}
+        created_at: {type: string, format: date-time}
+        cancelled_at: {type: string, format: date-time}
+        cancelled_by: {type: string, format: uuid}
+        cancel_reason: {type: string}
+    MCPReadinessMaintenancePage:
+      description: Bounded page of maintenance windows ordered by creation time and ID.
+      type: object
+      required: [windows]
+      properties:
+        windows: {type: array, maxItems: 50, items: {$ref: '#/components/schemas/MCPReadinessMaintenanceWindow'}}
+        next_before: {type: string}
+    SetMCPReadinessPagerDutyAcknowledgementsRequest:
+      description: Version-fenced replacement of a PagerDuty acknowledgement webhook binding and write-only signing secret.
+      type: object
+      additionalProperties: false
+      required: [expected_version, enabled]
+      properties:
+        sync_unacknowledgements: {type: boolean, default: false, description: Opt in to signed incident.unacknowledged events for this destination. Only tracked provider acknowledgements can be released; other destination and manual acknowledgements remain protected.}
+        destination: {type: string, enum: [primary, fallback], description: Native PagerDuty receiver to bind or disable. Enabling defaults to primary; disabling without a destination selects the original callback binding.}
+        expected_fallback_version: {type: integer, format: int64, minimum: 1, description: Required for fallback binding instead of expected_pagerduty_version; must match an enabled native PagerDuty fallback.}
+        expected_version: {type: integer, format: int64, minimum: 0, maximum: 9223372036854775806, description: Current selected destination acknowledgement policy version; zero denotes unconfigured.}
+        enabled: {type: boolean, description: Enable signed inbound acknowledgements or immediately revoke the current signing secret.}
+        expected_pagerduty_version: {type: integer, format: int64, minimum: 1, description: Current enabled native primary PagerDuty version; required for primary binding. Omit for fallback or disabled policies.}
+        service_id: {type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9_-]{1,128}$', description: PagerDuty service selected by the webhook subscription filter; required only when enabling.}
+        signing_secret: {type: string, minLength: 16, maxLength: 1024, pattern: '^[!-~]{16,1024}$', writeOnly: true, description: Exact ASCII v3 webhook subscription signing secret from PagerDuty; required when enabling and omitted when disabling.}
+    MCPReadinessPagerDutyAcknowledgementPolicy:
+      description: Current revocable webhook binding with a masked secret and the relative signed-ingress path.
+      type: object
+      required: [version, enabled, webhook_path]
+      properties:
+        sync_unacknowledgements: {type: boolean, default: false, description: Whether this destination currently accepts signed provider unacknowledgements. False or absent preserves acknowledgement-only behavior; true releases only matching tracked provider ownership.}
+        destination: {type: string, enum: [primary, fallback], description: Selected native PagerDuty destination, retained when disabled.}
+        fallback_version: {type: integer, format: int64, minimum: 1, description: Captured fallback configuration version; present for a fallback binding.}
+        version: {type: integer, format: int64, minimum: 0}
+        enabled: {type: boolean}
+        webhook_path: {type: string, description: Relative signed callback URL for this binding; explicit destination reads always return a destination-specific URL. Existing original callback URLs remain bound to their original destination.}
+        pagerduty_version: {type: integer, format: int64, minimum: 1, description: Native primary receiver version captured when the acknowledgement binding was saved; omitted for fallback binding.}
+        region: {type: string, enum: [us, eu], description: Regional PagerDuty receiver bound to this enabled webhook policy.}
+        service_id: {type: string, description: Exact provider service accepted by the enabled webhook binding.}
+        signing_secret_masked: {type: string, enum: ['***'], description: Fixed mask for an enabled signing credential; no plaintext or ciphertext is returned.}
+    MCPReadinessPagerDutyAcknowledgementEvent:
+      description: Immutable minimal receipt committed atomically with any provider acknowledgement and reminder suppression.
+      type: object
+      required: [id, event_id, incident_id, provider_incident_id, occurred_at, received_at, policy_version, outcome, attention_version, region, service_id]
+      properties:
+        action: {type: string, enum: [acknowledge, release], description: Provider decision; absent on legacy acknowledgement receipts. Release event receipts are independent per destination.}
+        destination: {type: string, enum: [primary, fallback], description: Authenticated pinned receiver; absent on legacy primary receipts.}
+        region: {type: string, enum: [us, eu], description: Authenticated receiver region retained in this provider event receipt.}
+        service_id: {type: string, description: Authenticated PagerDuty service retained in this provider event receipt.}
+        id: {type: string, format: uuid}
+        event_id: {type: string, maxLength: 128}
+        incident_id: {type: string, format: uuid}
+        provider_incident_id: {type: string, maxLength: 128}
+        occurred_at: {type: string, format: date-time}
+        received_at: {type: string, format: date-time}
+        policy_version: {type: integer, format: int64, minimum: 1}
+        outcome: {type: string, enum: [acknowledged, already_acknowledged, stale, resolved, released, retained, not_acknowledged]}
+        attention_version: {type: integer, format: int64, minimum: 0}
+    MCPReadinessPagerDutyAcknowledgementHold:
+      description: Minimal ownership of an active provider acknowledgement; no credentials or integration fingerprints are exposed.
+      type: object
+      required: [destination, provider_incident_id, provider_event_id, service_id, region, occurred_at, received_at, policy_version, release_sync_enabled]
+      properties:
+        destination: {type: string, enum: [primary, fallback]}
+        provider_incident_id: {type: string, maxLength: 128}
+        provider_event_id: {type: string, maxLength: 128}
+        service_id: {type: string, maxLength: 128}
+        region: {type: string, enum: [us, eu]}
+        occurred_at: {type: string, format: date-time}
+        received_at: {type: string, format: date-time}
+        policy_version: {type: integer, format: int64, minimum: 1}
+        release_sync_enabled: {type: boolean, description: False requires local release; includes acknowledgement-only bindings and ambiguous ownership.}
+    MCPReadinessPagerDutyAcknowledgementEvents:
+      description: Receipt page scoped to an owned readiness rule; next_before is absent on its final page.
+      type: object
+      required: [events]
+      properties:
+        events: {type: array, maxItems: 50, items: {$ref: '#/components/schemas/MCPReadinessPagerDutyAcknowledgementEvent'}}
+        next_before: {type: string}
+    SetMCPReadinessPagerDutyRequest:
+      description: Version-fenced PagerDuty primary receiver configuration with write-only credentials.
+      type: object
+      additionalProperties: false
+      required: [expected_version, enabled]
+      properties:
+        expected_version: {type: integer, format: int64, minimum: 0, maximum: 9223372036854775806, description: Current native PagerDuty policy version; zero is valid for first configuration.}
+        enabled: {type: boolean, description: Select PagerDuty primary for incidents not yet attempted; false restores webhook primary.}
+        integration_key: {type: string, minLength: 32, maxLength: 32, pattern: '^[A-Za-z0-9]{32}$', writeOnly: true, description: Events API v2 key for the selected region; required when enabling and omitted when disabling.}
+        region: {type: string, enum: [us, eu], description: Events API region for this replacement configuration; defaults to US when omitted. Omit when disabling.}
+    MCPReadinessPagerDutyPolicy:
+      description: Masked native PagerDuty settings without plaintext, ciphertext or receiver fingerprint.
+      type: object
+      required: [version, enabled, region]
+      properties:
+        version: {type: integer, format: int64, minimum: 0, description: Monotonic PagerDuty receiver policy version; zero denotes webhook primary without native configuration.}
+        enabled: {type: boolean}
+        region: {type: string, enum: [us, eu], description: Effective Events API region; US for unconfigured or disabled policies.}
+        integration_key_masked: {type: string, enum: ['***'], description: Fixed mask returned only for an enabled PagerDuty integration.}
+    MCPReadinessReminderDefaults:
+      description: Versioned reminder policy captured when a new readiness webhook incident opens.
+      type: object
+      required: [version, reminder_policy]
+      properties:
+        version: {type: integer, format: int64, minimum: 0, description: Zero means no defaults have been configured for this rule.}
+        reminder_policy: {$ref: '#/components/schemas/MCPReadinessReminderPolicy'}
+    SetMCPReadinessReminderDefaultsRequest:
+      description: Complete replacement of rule reminder defaults with optimistic concurrency control.
+      type: object
+      additionalProperties: false
+      required: [expected_version, reminder_policy]
+      properties:
+        expected_version: {type: integer, format: int64, minimum: 0, maximum: 9223372036854775806, description: Current rule defaults version; required even when it is zero.}
+        reminder_policy: {$ref: '#/components/schemas/MCPReadinessReminderPolicy'}
+    MCPReadinessReminderPolicy:
+      description: "Per-incident lifetime creation budget. Both zero disables; otherwise interval is 60–86400 seconds and budget is 1–10. Reconfiguration never resets the count."
+      type: object
+      additionalProperties: false
+      required: [interval_seconds, max_reminders]
+      properties:
+        interval_seconds: {type: integer, minimum: 0, maximum: 86400}
+        max_reminders: {type: integer, minimum: 0, maximum: 10}
+    MCPReadinessAcknowledgement:
+      description: Retained acknowledgement metadata independent of readiness state.
+      type: object
+      required: [request_id, created_by, created_at, reason]
+      properties:
+        source: {type: string, enum: [pagerduty], description: Provider provenance for this MCPReadinessAcknowledgement; absence denotes a local account action.}
+        provider_event_id: {type: string, maxLength: 128, description: PagerDuty event associated with this MCPReadinessAcknowledgement.}
+        provider_incident_id: {type: string, maxLength: 128, description: Provider incident associated with this MCPReadinessAcknowledgement.}
+        provider_occurred_at: {type: string, format: date-time, description: Signed provider event time retained in this MCPReadinessAcknowledgement.}
+        request_id: {type: string, format: uuid}
+        created_by: {type: string, format: uuid}
+        created_at: {type: string, format: date-time}
+        reason: {type: string}
+        expires_at: {type: string, format: date-time, description: Omitted for acknowledgement until release or incident resolution.}
+    MCPReadinessAttentionAction:
+      description: "Version-fenced attention decision. Acknowledge accepts optional expires_at; configure_reminders requires reminder_policy; release accepts neither."
+      type: object
+      additionalProperties: false
+      required: [request_id, expected_version, action, reason]
+      properties:
+        request_id: {type: string, format: uuid, description: Reuse this UUID and identical body when retrying the same decision.}
+        expected_version: {type: integer, format: int64, minimum: 0, description: Current incident attention version; zero is valid.}
+        action: {type: string, enum: [acknowledge, release, configure_reminders]}
+        reason: {type: string, minLength: 1, maxLength: 500, description: Nonblank explanation limited to 500 UTF-8 bytes.}
+        expires_at: {type: string, format: date-time, description: Optional absolute acknowledgement expiry within the next 30 days.}
+        reminder_policy: {$ref: '#/components/schemas/MCPReadinessReminderPolicy'}
+    MCPReadinessAttentionReceipt:
+      description: Immutable attention decision retained transactionally with the incident state change.
+      type: object
+      required: [request_id, incident_id, action, reason, created_by, created_at, version]
+      properties:
+        source: {type: string, enum: [pagerduty], description: Provider provenance for this MCPReadinessAttentionReceipt; absence denotes a local account action.}
+        provider_event_id: {type: string, maxLength: 128, description: PagerDuty event associated with this MCPReadinessAttentionReceipt.}
+        provider_incident_id: {type: string, maxLength: 128, description: Provider incident associated with this MCPReadinessAttentionReceipt.}
+        provider_occurred_at: {type: string, format: date-time, description: Signed provider event time retained in this MCPReadinessAttentionReceipt.}
+        request_id: {type: string, format: uuid}
+        incident_id: {type: string, format: uuid}
+        action: {type: string, enum: [acknowledge, release, configure_reminders]}
+        reason: {type: string}
+        created_by: {type: string, format: uuid}
+        created_at: {type: string, format: date-time}
+        version: {type: integer, format: int64, minimum: 1}
+        expires_at: {type: string, format: date-time}
+        reminder_policy: {$ref: '#/components/schemas/MCPReadinessReminderPolicy'}
+    MCPReadinessIncidentAttention:
+      description: "Incident acknowledgement and durable reminder schedule. Version changes on decisions and reminder creation, not routine evidence updates."
+      type: object
+      required: [incident_id, rule_id, rule_name, rule_enabled, opened_at, version, state, reminder_policy, reminders_created]
+      properties:
+        provider_acknowledgements: {type: array, maxItems: 2, description: Active tracked PagerDuty acknowledgements in primary then fallback order. Every remaining acknowledgement prevents automatic reminder resumption., items: {$ref: '#/components/schemas/MCPReadinessPagerDutyAcknowledgementHold'}}
+        reminder_policy_source: {type: string, enum: [rule_default, incident_override, legacy], description: Whether the current incident policy was inherited or explicitly overridden; legacy denotes unavailable pre-upgrade provenance.}
+        reminder_defaults_version: {type: integer, format: int64, minimum: 0, description: Rule defaults version captured at incident opening; retained after an incident override and absent for older incidents.}
+        incident_id: {type: string, format: uuid}
+        rule_id: {type: string, format: uuid}
+        rule_name: {type: string}
+        rule_enabled: {type: boolean}
+        mcp_readiness_scope: {type: string, description: Incident environment; omission covers every environment.}
+        opened_at: {type: string, format: date-time}
+        resolved_at: {type: string, format: date-time}
+        version: {type: integer, format: int64, minimum: 0}
+        state: {type: string, enum: [unacknowledged, acknowledged, expired, resolved]}
+        acknowledgement: {$ref: '#/components/schemas/MCPReadinessAcknowledgement'}
+        reminder_policy: {$ref: '#/components/schemas/MCPReadinessReminderPolicy'}
+        reminders_created: {type: integer, minimum: 0, maximum: 10}
+        next_reminder_at: {type: string, format: date-time, description: Earliest eligibility subject to fresh evidence and queue state.}
+        last_observed_at: {type: string, format: date-time}
+        last_unhealthy_at: {type: string, format: date-time, description: Latest matching unhealthy evidence; omitted after healthy or coverage-changed observations.}
+        last_action: {$ref: '#/components/schemas/MCPReadinessAttentionReceipt'}
+    MCPReadinessAttentionPage:
+      description: Bounded page of readiness incident attention ordered by incident UUID ascending.
+      type: object
+      required: [incidents]
+      properties:
+        incidents: {type: array, maxItems: 50, items: {$ref: '#/components/schemas/MCPReadinessIncidentAttention'}}
+        next_after: {type: string, format: uuid}
+    MCPReadinessAttentionHistory:
+      description: Bounded immutable history of incident attention decisions.
+      type: object
+      required: [actions]
+      properties:
+        actions: {type: array, maxItems: 50, items: {$ref: '#/components/schemas/MCPReadinessAttentionReceipt'}}
+        next_before: {type: string}
+    MCPReadinessNotificationAction:
+      description: Version-fenced decision against a receiver head or the oldest event using an app-scoped idempotency key.
+      type: object
+      additionalProperties: false
+      required: [request_id, event_id, action, expected_version, reason]
+      properties:
+        destination: {type: string, enum: [primary, fallback], description: Selected receiver queue; omitted for an event-wide decision.}
+        request_id: {type: string, format: uuid, description: Reuse this UUID and the identical request body when retrying the same decision.}
+        event_id: {type: string, format: uuid}
+        action: {type: string, enum: [retry, abandon]}
+        expected_version: {type: integer, format: int64, minimum: 0, description: Current head delivery_version from queue inspection.}
+        reason: {type: string, minLength: 1, maxLength: 500, description: Nonblank operator explanation limited to 500 UTF-8 bytes.}
+    MCPReadinessNotificationReceipt:
+      description: Immutable recovery decision retained transactionally with the queue change.
+      type: object
+      required: [request_id, event_id, action, reason, created_at, created_by, delivery_version]
+      properties:
+        destination: {type: string, enum: [primary, fallback], description: Receiver selected by the retained decision; absent for a whole-event receipt.}
+        request_id: {type: string, format: uuid}
+        event_id: {type: string, format: uuid}
+        action: {type: string, enum: [retry, abandon]}
+        reason: {type: string}
+        created_at: {type: string, format: date-time}
+        created_by: {type: string, format: uuid}
+        delivery_version: {type: integer, format: int64, minimum: 0}
+    MCPReadinessNotificationQueue:
+      description: One readiness webhook rule and its full outstanding queue independent of incident health.
+      type: object
+      required: [rule_id, name, enabled, outstanding_count, blocked_count, oldest_age_seconds, state, can_retry, can_abandon]
+      properties:
+        destinations: {type: array, maxItems: 2, items: {$ref: '#/components/schemas/MCPReadinessDestinationQueue'}, description: Ordered receiver queues including fallback reservations awaiting the primary outcome.}
+        rule_id: {type: string, format: uuid}
+        name: {type: string}
+        mcp_readiness_scope: {type: string, description: Omitted for an all-environment rule.}
+        enabled: {type: boolean}
+        outstanding_count: {type: integer, format: int64, minimum: 0}
+        blocked_count: {type: integer, format: int64, minimum: 0, description: Events newer than the oldest event; inspect destinations for actual receiver blocking.}
+        oldest_age_seconds: {type: number, minimum: 0}
+        state: {type: string, enum: [idle, ready, delayed, delivering, paused, maintenance]}
+        failure_kind: {type: string, enum: [http_4xx, http_5xx, http_other, transport, lease_expired], description: Safe failure classification without webhook URLs or remote response bodies.}
+        can_retry: {type: boolean, description: Snapshot hint; the action transaction rechecks current eligibility.}
+        can_abandon: {type: boolean, description: Whether the current snapshot permits permanent abandonment.}
+        head: {$ref: '#/components/schemas/MCPReadinessIncidentEvent'}
+    MCPReadinessDestinationDelivery:
+      description: Safe persisted progress for one event receiver without ownership tokens or credentials.
+      type: object
+      required: [destination, status, attempt_count]
+      properties:
+        provider: {type: string, enum: [webhook, pagerduty], description: Transport for this receiver delivery; omission denotes a legacy webhook.}
+        provider_status: {type: string, enum: [pending, delivering, retrying, accepted, suppressed, abandoned, superseded], description: PagerDuty transport progress; accepted means a validated 202 acknowledgement rather than a confirmed page.}
+        destination: {type: string, enum: [primary, fallback]}
+        status: {type: string, enum: [pending, failed, delivering, delivered, suppressed, abandoned, superseded]}
+        attempt_count: {type: integer, minimum: 0}
+        last_status_code: {type: integer}
+        last_delivery_id: {type: string, format: uuid}
+        next_attempt_at: {type: string, format: date-time}
+        lease_until: {type: string, format: date-time}
+    MCPReadinessDestinationQueue:
+      description: One ordered receiver lane; waiting_primary reserves order until primary succeeds or fails over.
+      type: object
+      required: [destination, outstanding_count, blocked_count, state, can_retry, can_abandon]
+      properties:
+        provider: {type: string, enum: [webhook, pagerduty], description: Native transport of this queue head; omitted for an idle receiver or legacy inspection.}
+        destination: {type: string, enum: [primary, fallback]}
+        outstanding_count: {type: integer, format: int64, minimum: 0}
+        blocked_count: {type: integer, format: int64, minimum: 0}
+        state: {type: string, enum: [idle, ready, delayed, delivering, paused, maintenance, waiting_primary, waiting_receiver]}
+        failure_kind: {type: string, enum: [http_4xx, http_5xx, http_other, transport, lease_expired]}
+        can_retry: {type: boolean}
+        can_abandon: {type: boolean}
+        head: {$ref: '#/components/schemas/MCPReadinessIncidentEvent'}
+    MCPReadinessNotificationQueues:
+      description: Bounded notification queue page from a consistent database snapshot.
+      type: object
+      required: [observed_at, queues]
+      properties:
+        observed_at: {type: string, format: date-time}
+        queues: {type: array, maxItems: 50, items: {$ref: '#/components/schemas/MCPReadinessNotificationQueue'}}
+        next_after: {type: string, format: uuid}
+    SetMCPReadinessFallbackRequest:
+      description: "Optimistically versioned fallback replacement. Webhook requires webhook_url and webhook_secret. PagerDuty requires provider=pagerduty and integration_key with optional region. Enabled policies require after_failures; disabling omits all destination fields."
+      type: object
+      additionalProperties: false
+      required: [expected_version, enabled]
+      properties:
+        provider: {type: string, enum: [webhook, pagerduty], description: Destination provider; omitted means webhook. Omit when disabling.}
+        region: {type: string, enum: [us, eu], description: PagerDuty region; defaults to US. Omit for webhook or disabled policies.}
+        integration_key: {type: string, minLength: 32, maxLength: 32, pattern: '^[A-Za-z0-9]{32}$', writeOnly: true, description: PagerDuty fallback Events API key; omit webhook fields when selecting this provider.}
+        expected_version: {type: integer, format: int64, minimum: 0, maximum: 9223372036854775806, description: Current fallback policy version; zero is valid for an unconfigured rule.}
+        enabled: {type: boolean, description: Whether unclaimed incidents should acquire a fallback destination.}
+        webhook_url: {type: string, format: uri, maxLength: 2048, description: Public webhook fallback receiver URL; required for webhook only and must differ from the primary webhook address.}
+        webhook_secret: {type: string, minLength: 1, maxLength: 256, writeOnly: true, description: Fallback HMAC signing material; required only when enabling or replacing a webhook policy.}
+        after_failures: {type: integer, minimum: 1, maximum: 10, description: Completed unsuccessful primary dispatch claims before switching this incident to fallback.}
+    MCPReadinessFallbackPolicy:
+      description: Masked rule configuration for readiness incidents whose delivery has not yet been attempted.
+      type: object
+      required: [version, enabled]
+      properties:
+        provider: {type: string, enum: [webhook, pagerduty], description: Configured fallback provider; omitted when disabled.}
+        region: {type: string, enum: [us, eu], description: Configured PagerDuty fallback region.}
+        integration_key_masked: {type: string, enum: ['***'], description: Fixed mask for the PagerDuty fallback credential.}
+        version: {type: integer, format: int64, minimum: 0, description: Monotonic fallback configuration version.}
+        enabled: {type: boolean, description: Whether this configuration supplies a fallback to new delivery incidents.}
+        webhook_url: {type: string, format: uri, description: Configured public fallback address; omitted when disabled.}
+        webhook_secret_sealed_masked: {type: string, description: Constant mask for the stored fallback secret; omitted when disabled.}
+        after_failures: {type: integer, minimum: 1, maximum: 10, description: Configured threshold of completed failed primary dispatches.}
+    MCPReadinessDeliveryRouting:
+      description: Credential-free destination progress for one immutable readiness event. A recovery can remain pending after fallback succeeds while the previously informed primary is still outstanding.
+      type: object
+      required: [policy_version, primary_attempts, fallback_attempts, primary_failures, primary_delivered, fallback_delivered]
+      properties:
+        pagerduty_version: {type: integer, format: int64, minimum: 0, description: Native primary policy version pinned at first delivery; omitted for legacy webhook routing.}
+        policy_version: {type: integer, format: int64, minimum: 0, description: Fallback configuration version captured when this incident first claimed delivery.}
+        last_destination: {type: string, enum: [primary, fallback], description: Receiver role used for this event's most recent dispatch claim.}
+        failover_reason: {type: string, enum: [primary_failure_threshold, incident_sticky_fallback, recovery_to_primary, primary_queue_blocked], description: Explanation for selecting a receiver after failover; omitted for ordinary primary delivery.}
+        primary_attempts: {type: integer, minimum: 0, description: Number of primary dispatch claims including expired leases.}
+        fallback_attempts: {type: integer, minimum: 0, description: Number of fallback dispatch claims for this logical event.}
+        primary_failures: {type: integer, minimum: 0, description: Number of fenced unsuccessful primary completions for this event.}
+        primary_delivered: {type: boolean, description: Whether primary accepted this event in a completed delivery claim.}
+        fallback_delivered: {type: boolean, description: Whether fallback accepted this event in a completed delivery claim.}
+    MCPReadinessIncidentEvent:
+      description: "Readiness incident transition or continuation with current notification status."
+      type: object
+      required: [id, incident_id, event_id, event, rule_id, scopes, occurred_at, incident_status, delivery_status, attempt_count, subjects]
+      properties:
+        destination_deliveries: {type: array, maxItems: 2, items: {$ref: '#/components/schemas/MCPReadinessDestinationDelivery'}, description: Materialized receiver progress with independent retry and lease times.}
+        delivery_routing: {$ref: '#/components/schemas/MCPReadinessDeliveryRouting'}
+        id: {type: string, format: uuid, description: Logical event ID.}
+        incident_id: {type: string, format: uuid}
+        event_id: {type: string, format: uuid, description: Stable across retries; also the signed webhook ID.}
+        event: {type: string, enum: [alert.fired, alert.resolved]}
+        rule_id: {type: string, format: uuid}
+        mcp_readiness_scope: {type: string, description: Empty or omitted selects all environments.}
+        scopes: {type: array, items: {type: string}}
+        occurred_at: {type: string, format: date-time, description: Logical event time, retained across retries.}
+        attempted_at: {type: string, format: date-time}
+        incident_status: {type: string, enum: [open, resolved], description: Current incident state independent of notification success.}
+        delivery_status: {type: string, enum: [pending, delivering, delivered, failed, suppressed, abandoned]}
+        delivery_version: {type: integer, format: int64, minimum: 0, description: "Changes on claims, completions, suppression and operator decisions."}
+        last_operator_action: {$ref: '#/components/schemas/MCPReadinessNotificationReceipt'}
+        attempt_count: {type: integer, minimum: 0}
+        maintenance_window_ids: {type: array, items: {type: string, format: uuid}, description: Windows responsible for suppressing this notification.}
+        suppression_reason: {type: string, enum: [maintenance, maintenance_recovered, acknowledged, incident_resolved, reminders_disabled, reminder_obsolete]}
+        notification_reason: {type: string, enum: [maintenance_ended, reminder]}
+        reminder_number: {type: integer, minimum: 1, maximum: 10, description: Per-incident reminder creation number; omitted for ordinary notifications.}
+        next_attempt_at: {type: string, format: date-time, description: Next eligible delivery time. Omitted for all terminal delivery states.}
+        last_delivery_id: {type: string, format: uuid}
+        last_status_code: {type: integer}
+        subjects:
+          type: array
+          maxItems: 50
+          items: {$ref: '#/components/schemas/MCPReadinessMonitorStatus'}
+    MCPReadinessMonitorStatus:
+      description: "Current policy-bound monitoring state and recent probe history for a deployment role."
+      type: object
+      additionalProperties: false
+      properties:
+        scope:
+          type: string
+          maxLength: 40
+          pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
+          description: Readiness environment. Omission selects default.
+        oauth_connection:
+          $ref: "#/components/schemas/MCPReadinessOAuthConnection"
+        recovery_action:
+          type: string
+          enum: [reconnect, review_binding, review_connection]
+        deployment_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+        policy_revision:
+          type: string
+          format: uuid
+        artifact_sha256:
+          type: string
+        next_probe_at:
+          type: string
+          format: date-time
+        last_success_at:
+          type: string
+          format: date-time
+        consecutive_failures:
+          type: integer
+        failure_threshold:
+          type: integer
+        state:
+          type: string
+          enum:
+          - pending
+          - healthy
+          - degraded
+          - firing
+          - stale
+        reason:
+          type: string
+        history:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/MCPReadinessMonitorObservation'
+      required:
+      - deployment_id
+      - role
+      - policy_revision
+      - next_probe_at
+      - consecutive_failures
+      - failure_threshold
+      - state
+      - history
+
+    MCPReadinessRole:
+      description: "Role-specific protocol, catalog and monitoring requirements in a readiness policy."
+      type: object
+      additionalProperties: false
+      properties:
+        monitor:
+          $ref: "#/components/schemas/MCPReadinessMonitorConfig"
+        name:
+          type: string
+          pattern: ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$
+        protocol_version:
+          type: string
+          enum:
+          - '2026-07-28'
+          - '2025-11-25'
+        catalog_format:
+          type: integer
+          enum:
+          - 1
+          - 2
+        catalog_sha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+      required:
+      - name
+      - protocol_version
+      - catalog_format
+      - catalog_sha256
+    MCPReadinessPolicyHistory:
+      description: "Bounded page of saved environment readiness policy revisions."
+      type: object
+      additionalProperties: false
+      required:
+      - policies
+      properties:
+        policies:
+          type: array
+          items:
+            $ref: '#/components/schemas/MCPReadinessPolicy'
+        next_before_revision:
+          type: string
+          description: Use as before_revision for the next page; absent on the last page
+    RestoreMCPReadinessPolicyRequest:
+      description: "Historical policy restore request guarded by the expected current revision and an audit reason."
+      type: object
+      additionalProperties: false
+      required:
+      - expected_revision
+      - reason
+      properties:
+        scope:
+          type: string
+          maxLength: 40
+          pattern: ^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$
+        expected_revision:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 512
+    MCPReadinessPolicyChange:
+      description: "One field change between two readiness policy configurations."
+      type: object
+      additionalProperties: false
+      required:
+      - path
+      - before
+      - after
+      properties:
+        path:
+          type: string
+          description: JSON Pointer configuration field or role; role order and audit fields are ignored
+        before: {}
+        after: {}
+    MCPReadinessPolicyDiff:
+      description: "Configuration differences between the selected readiness policy revisions."
+      type: object
+      additionalProperties: false
+      required:
+      - scope
+      - from_revision
+      - to_revision
+      - changes
+      properties:
+        scope:
+          type: string
+          maxLength: 40
+          pattern: ^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$
+        from_revision:
+          type: string
+        to_revision:
+          type: string
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/MCPReadinessPolicyChange'
+    MCPReadinessPolicy:
+      description: "Saved environment readiness requirements with revision and audit context."
+      type: object
+      additionalProperties: false
+      properties:
+        restored_from:
+          type: string
+          description: Historical source revision for a restore; audit metadata is always newly recorded.
+        scope:
+          type: string
+          maxLength: 40
+          pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
+          description: "Environment to which this saved readiness policy applies. Omitted means default."
+        revision:
+          type: string
+        enabled:
+          type: boolean
+        endpoint:
+          type: string
+          maxLength: 256
+        max_age_seconds:
+          type: integer
+          minimum: 60
+          maximum: 3600
+        roles:
+          type: array
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/MCPReadinessRole'
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 512
+        updated_at:
+          type: string
+          format: date-time
+        updated_by:
+          type: string
+      required:
+      - revision
+      - enabled
+      - endpoint
+      - max_age_seconds
+      - roles
+      - updated_at
+    SetMCPReadinessPolicyRequest:
+      description: "Replacement readiness configuration with expected-revision concurrency control."
+      type: object
+      additionalProperties: false
+      properties:
+        scope:
+          type: string
+          maxLength: 40
+          pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
+          description: "Environment whose readiness policy is replaced by this request. Omit for default."
+        expected_revision:
+          type: string
+        enabled:
+          type: boolean
+        endpoint:
+          type: string
+          maxLength: 256
+        max_age_seconds:
+          type: integer
+          minimum: 60
+          maximum: 3600
+        roles:
+          type: array
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/MCPReadinessRole'
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 512
+      required:
+      - expected_revision
+      - enabled
+      - endpoint
+      - max_age_seconds
+      - roles
+      - reason
+    MCPReadinessCheck:
+      description: "Result of one protocol or catalog check in readiness evidence."
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum:
+          - passed
+          - failed
+        detail:
+          type: string
+      required:
+      - name
+      - status
+    MCPReadinessEvidence:
+      description: "Platform-recorded readiness results bound to deployment configuration and probe policy."
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        deployment_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+        policy_revision:
+          type: string
+          format: uuid
+        artifact_sha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        protocol_version:
+          type: string
+        catalog_format:
+          type: integer
+        catalog_sha256:
+          type: string
+        passed:
+          type: boolean
+        observed_at:
+          type: string
+          format: date-time
+        checks:
+          type: array
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/MCPReadinessCheck'
+      required:
+      - id
+      - deployment_id
+      - role
+      - policy_revision
+      - artifact_sha256
+      - protocol_version
+      - catalog_format
+      - passed
+      - observed_at
+      - checks
+    MCPReadinessOverride:
+      description: "Retained audited readiness override for a deployment."
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        deployment_id:
+          type: string
+          format: uuid
+        policy_revision:
+          type: string
+          format: uuid
+        artifact_sha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        reason:
+          type: string
+        created_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        used_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - deployment_id
+      - policy_revision
+      - artifact_sha256
+      - reason
+      - created_by
+      - created_at
+      - expires_at
+    MCPReadinessSnapshot:
+      description: "Environment readiness policy together with retained evidence and overrides."
+      type: object
+      additionalProperties: false
+      properties:
+        monitoring:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: "#/components/schemas/MCPReadinessMonitorStatus"
+        policy:
+          $ref: '#/components/schemas/MCPReadinessPolicy'
+        evidence:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/MCPReadinessEvidence'
+        overrides:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/MCPReadinessOverride'
+      required:
+      - policy
+      - evidence
+      - overrides
+    MCPReadinessProbeRequest:
+      description: "Role selection and options for a platform-executed deployment readiness probe."
+      type: object
+      additionalProperties: false
+      properties:
+        role:
+          type: string
+      required:
+      - role
+    MCPReadinessOverrideRequest:
+      description: "Request to record an audited readiness override for a deployment."
+      type: object
+      additionalProperties: false
+      properties:
+        expected_revision:
+          type: string
+          format: uuid
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 512
+      required:
+      - expected_revision
+      - reason
     MCPCatalogObserverOAuthConfig:
-      description: Explicit OAuth refresh grant for one app and role; credentials are app default-scope secret references.
+      description: Explicit OAuth refresh grant for one app and role; credentials are app secret references in the connection environment.
       type: object
       required: [token_endpoint, client_id]
       properties:
@@ -56353,6 +58010,7 @@ components:
         scopes: {type: array, maxItems: 16, items: {type: string, maxLength: 128}}
         profile: {type: string, enum: [generic, google, oidc], description: Explicit provider behavior; Google requests offline consent and OIDC adds openid and offline_access}
         token_auth_method: {type: string, enum: [none, client_secret_basic, client_secret_post], description: Explicit token authentication; defaults to public none or confidential basic except Google confidential post}
+        browser_redirect_uri: {type: string, format: uri, maxLength: 512, description: Registered HTTPS console callback for guided browser authorization; omitted for loopback flows}
         callback_port: {type: integer, minimum: 0, maximum: 65535, description: Guided loopback callback port; 0 chooses a dynamic port}
         resource: {type: string, format: uri, maxLength: 512, description: Reviewed HTTPS MCP resource indicator sent unchanged in authorization, code exchange and renewal}
         issuer: {type: string, format: uri, maxLength: 512, description: Reviewed provider issuer paired with discovery_url}
@@ -56362,6 +58020,11 @@ components:
       type: object
       required: [enabled, revision, baseline, baseline_sha256, freshness_seconds]
       properties:
+        scope:
+          type: string
+          maxLength: 40
+          pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
+          description: "Environment watched by this configured MCP catalog monitor. Defaults to default."
         observer: {$ref: '#/components/schemas/MCPCatalogObserverConfig'}
         token_env: {type: string, maxLength: 128, description: Token environment reference selected by observers; no secret value is retained}
         role: {type: string, pattern: "^[a-z][a-z0-9_-]{0,31}$", default: default}
@@ -56461,6 +58124,11 @@ components:
       type: object
       required: [enabled, baseline, freshness_seconds]
       properties:
+        scope:
+          type: string
+          maxLength: 40
+          pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
+          description: "Environment selected when configuring catalog monitoring. Omit for default."
         observer: {$ref: '#/components/schemas/MCPCatalogObserverConfig'}
         token_env: {type: string, maxLength: 128, description: Environment variable name only; credentials are never stored}
         role: {type: string, pattern: "^[a-z][a-z0-9_-]{0,31}$", default: default}
@@ -56524,13 +58192,18 @@ components:
         interval_seconds: {type: integer, minimum: 30, maximum: 3600, default: 30}
         timeout_seconds: {type: integer, minimum: 1, maximum: 30, default: 10}
         endpoint: {type: string, maxLength: 512, default: /mcp}
-        secret_ref: {type: string, description: App default-scope secret named secret:NAME; its current value is loaded for each check}
+        secret_ref: {type: string, description: App secret in the connection environment named secret:NAME; its current value is loaded for each check}
         oauth: {$ref: '#/components/schemas/MCPCatalogObserverOAuthConfig'}
     MCPOAuthRetirement:
       description: Account-owned grant retirement metadata surviving app deletion; sealed data is omitted from public responses.
       type: object
       required: [id, app_id, app_slug, role, reason, state, created_at, retain_until, revocation, allow_active_grant_revocation, history]
       properties:
+        scope:
+          type: string
+          maxLength: 40
+          pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
+          description: "Environment of the retired MCP OAuth connection. Empty means default."
         id: {type: string, format: uuid}
         app_id: {type: string, format: uuid}
         app_slug: {type: string}
@@ -56579,6 +58252,7 @@ components:
       type: object
       required: [state_sha256, ciphertext, expires_at, consumed]
       properties:
+        browser_session_sha256: {type: string, readOnly: true, description: Internal browser session binding hash; the entire flow is omitted from public projections}
         state_sha256: {type: string, readOnly: true}
         ciphertext: {type: string, format: byte, readOnly: true}
         expires_at: {type: string, format: date-time, readOnly: true}
@@ -56647,6 +58321,11 @@ components:
       description: Actionable connection health metadata without sealed grants or provider responses.
       required: [id, app_id, app_slug, role, kind, state, recovery_action, recovery_path]
       properties:
+        scope:
+          type: string
+          maxLength: 40
+          pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
+          description: "Environment containing the MCP connection with this health issue. Empty means default."
         id: {type: string}
         app_id: {type: string, format: uuid}
         app_slug: {type: string}
@@ -89386,6 +91065,21 @@ components:
         - created_at
         - updated_at
       properties:
+        mcp_readiness_scope:
+          type: string
+          maxLength: 40
+          pattern: '^$|^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
+          description: Immutable readiness environment selector. Omitted or empty means every environment; default selects only default. Valid only for mcp_readiness_unhealthy.
+        mcp_min_calls:
+          type: integer
+          minimum: 20
+          maximum: 1000000
+          description: "MCP protocol alerts only. Minimum observations in every rolling window; defaults to 20 on create. Latency uses measured executions. Omit for other metrics."
+        mcp_for_minutes:
+          type: integer
+          minimum: 1
+          maximum: 60
+          description: "MCP protocol alerts only. Continuous breach duration sampled every 30 seconds; defaults to 10 on create. Missing observations interrupt eligibility. Webhook action, app scope, gt/gte and windows 5m/15m/1h are required. Error thresholds are percent (0..100), execution p95 thresholds are milliseconds (0..300000)."
         event_subscription_id:
           type: string
           format: uuid
@@ -89435,6 +91129,15 @@ components:
             - mcp_task_promotion_hold_age_seconds
             - mcp_policy_unconverged_gateways
             - mcp_policy_unverified
+            - mcp_protocol_error_rate_pct
+            - mcp_protocol_execution_p95_ms
+            - mcp_readiness_unhealthy
+            - mcp_catalog_drift
+            - mcp_catalog_monitor_unavailable
+            - mcp_oauth_reauthorization_required
+            - mcp_oauth_renewal_failed
+            - mcp_oauth_retirement_expiring
+            - mcp_oauth_issuance_unknown
             - pre_auth_pressure
             - edge_validation_failures
             - edge_rejections
@@ -89515,6 +91218,21 @@ components:
       type: object
       required: [name, metric, comparison, threshold, window_spec, webhook_url, webhook_secret]
       properties:
+        mcp_readiness_scope:
+          type: string
+          maxLength: 40
+          pattern: '^$|^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
+          description: "Readiness environment requested when creating this alert. Immutable readiness environment selector. Omitted or empty means every environment; default selects only default. Valid only for mcp_readiness_unhealthy."
+        mcp_min_calls:
+          type: integer
+          minimum: 20
+          maximum: 1000000
+          description: "Observation minimum requested for the new protocol alert. MCP protocol alerts only. Minimum observations in every rolling window; defaults to 20 on create. Latency uses measured executions. Omit for other metrics."
+        mcp_for_minutes:
+          type: integer
+          minimum: 1
+          maximum: 60
+          description: "Sustained duration requested for the new protocol alert. MCP protocol alerts only. Continuous breach duration sampled every 30 seconds; defaults to 10 on create. Missing observations interrupt eligibility. Webhook action, app scope, gt/gte and windows 5m/15m/1h are required. Error thresholds are percent (0..100), execution p95 thresholds are milliseconds (0..300000)."
         event_subscription_id:
           type: string
           format: uuid
@@ -89533,7 +91251,7 @@ components:
         metric:
           type: string
           description: 'Selected metric for the existing alert rule. MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, edge_rule_hits, edge_rule_log_hits]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double, example: 500 }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -89563,6 +91281,21 @@ components:
       description: 'Partial update — every field is optional. Omitted means leave alone.'
       type: object
       properties:
+        mcp_readiness_scope:
+          type: string
+          maxLength: 40
+          pattern: '^$|^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
+          description: Immutable environment selector. If supplied it must equal the current value; create a new rule to select another environment.
+        mcp_min_calls:
+          type: integer
+          minimum: 20
+          maximum: 1000000
+          description: "Replacement observation minimum for the existing protocol alert. MCP protocol alerts only. Minimum observations in every rolling window; defaults to 20 on create. Latency uses measured executions. Omit for other metrics."
+        mcp_for_minutes:
+          type: integer
+          minimum: 1
+          maximum: 60
+          description: "Replacement sustained duration for the existing protocol alert. MCP protocol alerts only. Continuous breach duration sampled every 30 seconds; defaults to 10 on create. Missing observations interrupt eligibility. Webhook action, app scope, gt/gte and windows 5m/15m/1h are required. Error thresholds are percent (0..100), execution p95 thresholds are milliseconds (0..300000)."
         post_deploy_rollback_window_seconds:
           type: integer
           minimum: 0
@@ -89573,7 +91306,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400. MCP task metrics are notification-only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, edge_rule_hits, edge_rule_log_hits]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -89618,6 +91351,9 @@ components:
       type: object
       required: [id, rule_id, account_id, idempotency_key, status, attempt_count, observed_value, fired_at, is_test]
       properties:
+        readiness_event_id: {type: string, format: uuid, description: Stable readiness logical event associated with this physical delivery.}
+        readiness_destination: {type: string, enum: [primary, fallback], description: Selected receiver role for this physical readiness dispatch.}
+        readiness_failover_reason: {type: string, enum: [primary_failure_threshold, incident_sticky_fallback, recovery_to_primary, primary_queue_blocked], description: Destination selection reason recorded on this physical readiness delivery.}
         id: { type: string, format: uuid }
         rule_id: { type: string, format: uuid }
         account_id: { type: string, format: uuid }
