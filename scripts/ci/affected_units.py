@@ -24,10 +24,17 @@ from, and a deploy can tell whether the host already runs that version.
 
 Non-Go inputs map to flags (scripts/ci/release_units.json):
 
-  blocking  migrations, deploy/ (units, roles, rules), the files
-            cd-controlplane copies into its bundle, and the release
-            tarball's own contents. Any of these since base makes the range
-            ineligible: the per-unit lane reuses them from the base release.
+  blocking  deploy/ (units, roles, rules), the files cd-controlplane
+            copies into its bundle, the release tarball's own contents, and
+            migrations that are not lane-eligible. Any of these since base
+            makes the range ineligible: the per-unit lane reuses them from
+            the base release.
+  data      migrations added since base when every one is lane-eligible
+            (check_migration_expand_contract.classify_range: declared
+            `-- migration-compat: expand`, no contract change, no unwaived
+            finding; docs/adr/20261018084150-unit-lane-expand-migrations.md).
+            The control-plane lane applies them before it restarts anything;
+            the edge lane waits for that.
   pending   guest/, images/, kernel, and deploy/ roles only compute hosts
             run (compute_only_paths). They ship with the next full release
             and do not stop control-plane units from deploying alone. A
@@ -53,6 +60,8 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_CONFIG = os.path.join(HERE, "release_units.json")
+sys.path.insert(0, HERE)
+import check_migration_expand_contract as migration_lint  # noqa: E402
 
 LANES = ("control-plane", "edge", "shared", "compute", "tool")
 # Lanes a unit release deploys, in deploy order.
@@ -244,9 +253,28 @@ def matches(path, prefixes):
     return any(path == p or (p.endswith("/") and path.startswith(p)) for p in prefixes)
 
 
-def analyze(commits, closures, config, exists, recipe_shas=frozenset()):
+def data_step(commits, config, verdict):
+    """The migrations of a range and whether a unit release may apply them.
+    verdict is classify_range's result, or None when the range was not
+    classified (every migration then blocks)."""
+    directory = config.get("migrations_dir")
+    paths = sorted({p for _, ps in commits for p in ps
+                    if directory and migration_lint.is_migration_file(p, directory)})
+    if not paths:
+        return {"paths": [], "eligible": True, "migrations": [], "blockers": [], "commit": None, "version": None}
+    verdict = verdict or {"eligible": False, "migrations": [], "blockers": ["migrations were not classified"]}
+    eligible = bool(verdict["eligible"])
+    migrations = verdict["migrations"] if eligible else []
+    # The data version moves only when a migration file does.
+    commit = next((sha for sha, ps in commits if any(p in paths for p in ps)), None) if migrations else None
+    return {"paths": paths, "eligible": eligible, "migrations": verdict["migrations"],
+            "blockers": verdict["blockers"], "commit": commit, "version": f"data-{commit}" if commit else None}
+
+
+def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=None):
     """The report for a range. commits are newest first; closures map each
-    binary to (package dirs, input files) at head; exists is head's file set."""
+    binary to (package dirs, input files) at head; exists is head's file set;
+    data is classify_range's verdict on the range's migrations."""
     global_inputs = set(config.get("global_inputs") or [])
     binaries = {}
     for name, entry in sorted(config["binaries"].items()):
@@ -270,7 +298,10 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset()):
 
     flags = {}
     compute_only = config.get("compute_only_paths") or []
-    changed_paths = {p for _, paths in commits for p in paths}
+    step = data_step(commits, config, data)
+    # Lane-eligible migrations are the data step, not a blocking change.
+    claimed = set(step["paths"]) if step["eligible"] else set()
+    changed_paths = {p for _, paths in commits for p in paths} - claimed
     # A deploy/ role that only compute hosts run cannot change the control
     # plane: it waits for the full release instead of blocking the lane.
     groups = [("compute_deploy", False, compute_only)]
@@ -284,8 +315,11 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset()):
             flags[flag] = {"blocking": blocking, "count": len(found), "paths": found[:FLAG_PATH_LIMIT]}
     if recipe_shas:
         flags["build_recipe"] = {"blocking": False, "count": len(recipe_shas), "paths": ["Makefile"]}
+    if claimed:
+        flags["data"] = {"blocking": False, "count": len(claimed), "paths": step["paths"][:FLAG_PATH_LIMIT]}
 
     blocking = sorted(f for f, v in flags.items() if v["blocking"])
+    has_data = bool(step["version"])
     lanes = {}
     for lane in DEPLOY_LANES:
         changed = sorted(n for n, b in binaries.items() if b["changed"] and b["lane"] == lane)
@@ -293,9 +327,16 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset()):
         # role those hosts run waits for the full release that converges it.
         blocked = sorted(blocking + (["compute_deploy"] if lane == "edge" and "compute_deploy" in flags else []))
         reasons = [f"{f} changed since base ({flags[f]['count']} paths, e.g. {flags[f]['paths'][0]})" for f in blocked]
-        if not changed:
+        if "migrations" in blocked and step["blockers"]:
+            reasons.append(f"migrations are not lane-eligible: {step['blockers'][0]}")
+        # Deploy order: the control-plane lane applies the data step, so it
+        # deploys even when no daemon of its own changed. Whatever blocks it
+        # blocks the edge lane too, which therefore never goes ahead of it
+        # (cd-edge-units.yml checks the control plane before any gateway).
+        carries = bool(changed) or (lane == "control-plane" and has_data)
+        if not carries:
             reasons.append(f"no {lane} daemon changed since base")
-        lanes[lane] = {"changed": changed, "blocked_by": blocked, "eligible": bool(changed) and not blocked,
+        lanes[lane] = {"changed": changed, "blocked_by": blocked, "eligible": carries and not blocked,
                        "reasons": reasons}
     deployable = sorted(n for lane in lanes.values() if lane["eligible"] for n in lane["changed"])
     pending = {lane: sorted(n for n, b in binaries.items() if b["changed"] and b["lane"] == lane)
@@ -303,9 +344,11 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset()):
     for lane, v in lanes.items():
         pending[lane] = [] if v["eligible"] else v["changed"]
     eligible = any(lane["eligible"] for lane in lanes.values())
+    del step["paths"]
     return {
         "format_version": 2,
         "binaries": binaries,
+        "data": step,
         "flags": flags,
         "lanes": lanes,
         "deployable": deployable,
@@ -337,7 +380,11 @@ def report(base, head, config_path=DEFAULT_CONFIG, root="."):
     closures = binary_closures(daemons, clis, module_path(root), root)
     commits = range_commits(base_sha, head_sha, root)
     exists = set(git("ls-tree", "-r", "--name-only", head_sha, root=root).splitlines())
-    out = analyze(commits, closures, config, exists, recipe_commits(commits, root))
+    directory = config.get("migrations_dir")
+    data = None
+    if directory and any(migration_lint.is_migration_file(p, directory) for _, paths in commits for p in paths):
+        data = migration_lint.classify_range(root, base_sha, head_sha, directory)
+    out = analyze(commits, closures, config, exists, recipe_commits(commits, root), data)
     out.update(base=base_sha, head=head_sha, base_ref=base)
     return out
 
@@ -348,8 +395,14 @@ def summary(rep):
         if b["changed"]:
             lines.append(f"  {name:20} {b['lane']:14} {b['commit'][:12]}")
     for flag, v in sorted(rep["flags"].items()):
+        if flag == "data":
+            continue
         kind = "blocking" if v["blocking"] else "pending"
         lines.append(f"  flag {flag} ({kind}): {v['count']} paths, e.g. {v['paths'][0]}")
+    data = rep.get("data") or {}
+    if data.get("migrations"):
+        state = f"applied first, {data['version']}" if data["eligible"] else "blocking: " + "; ".join(data["blockers"][:3])
+        lines.append(f"  data: {len(data['migrations'])} migrations ({state})")
     for lane, v in rep["lanes"].items():
         state = "eligible" if v["eligible"] else "not eligible: " + "; ".join(v["reasons"])
         lines.append(f"{lane} lane: {' '.join(v['changed']) or '<none>'} ({state})")

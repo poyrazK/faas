@@ -60,6 +60,8 @@
     "follower": {"duration": "90s", "max_hold": "30s"}
   },
   "global_inputs": ["go.mod", "go.sum"],
+  "_migrations_comment": "Goose migrations (*.sql directly in migrations_dir). When every one added since base is lane-eligible (declared -- migration-compat: expand, no contract change; docs/adr/20261018084150-unit-lane-expand-migrations.md), they are the data step the control-plane lane applies before restarting anything. Otherwise they block like any other path under blocking_paths.migrations.",
+  "migrations_dir": "migrations/",
   "blocking_paths": {
     "go_modules": ["go.mod", "go.sum"],
     "migrations": ["migrations/"],
