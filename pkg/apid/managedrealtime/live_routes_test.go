@@ -40,7 +40,9 @@ func TestEndpointRegistrationCarriesLiveRoutes(t *testing.T) {
 		t.Fatalf("live routes = %v", got)
 	}
 
-	s.LiveRoutes = func(context.Context, string, string) ([]realtime.LiveRoute, error) { return nil, errors.New("database down") }
+	s.LiveRoutes = func(context.Context, string, string) ([]realtime.LiveRoute, error) {
+		return nil, errors.New("database down")
+	}
 	if err := s.syncManagedRealtimeEndpoint(ctx, row); err == nil {
 		t.Fatal("a failed route lookup registered the endpoint")
 	}
