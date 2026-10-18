@@ -16,6 +16,7 @@ type Metrics struct {
 	registry      *prometheus.Registry
 	webhookEvents *prometheus.CounterVec
 	scheduleFires *prometheus.CounterVec
+	queueReleases prometheus.Counter
 }
 
 func NewMetrics(registry *prometheus.Registry, prefix string) *Metrics {
@@ -27,7 +28,11 @@ func NewMetrics(registry *prometheus.Registry, prefix string) *Metrics {
 		Name: prefix + "_customer_operation_schedule_fires_total",
 		Help: "Operation schedule fires by result: admitted, refused (recorded on the schedule) or error (retried after the lease lapses).",
 	}, "result")
-	return &Metrics{registry: registry, webhookEvents: events, scheduleFires: fires}
+	releases := registerCounterVec(registry, prometheus.CounterOpts{
+		Name: prefix + "_customer_operation_queue_releases_total",
+		Help: "Queued Operations started by the per-customer concurrency releaser.",
+	}).WithLabelValues()
+	return &Metrics{registry: registry, webhookEvents: events, scheduleFires: fires, queueReleases: releases}
 }
 
 func registerCounterVec(registry *prometheus.Registry, opts prometheus.CounterOpts, labels ...string) *prometheus.CounterVec {
@@ -40,6 +45,13 @@ func registerCounterVec(registry *prometheus.Registry, opts prometheus.CounterOp
 		counter = existing.ExistingCollector.(*prometheus.CounterVec)
 	}
 	return counter
+}
+
+func (m *Metrics) operationQueueReleases(n int) {
+	if m == nil || n <= 0 {
+		return
+	}
+	m.queueReleases.Add(float64(n))
 }
 
 func (m *Metrics) scheduleFire(result string) {

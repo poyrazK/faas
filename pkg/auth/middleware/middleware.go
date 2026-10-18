@@ -797,6 +797,10 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 	if suffix == "customer-operation-signals" {
 		return method == http.MethodPost
 	}
+	// ADR-20261018210500: a customer reads its own queued Operations.
+	if suffix == "customer-operation-queue" {
+		return method == http.MethodGet
+	}
 	// ADR-20261018161833: a customer manages its own Operation schedules.
 	// apid hides these routes unless the account is allowlisted.
 	if suffix == "customer-operation-schedules" {
