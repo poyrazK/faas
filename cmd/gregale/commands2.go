@@ -1111,7 +1111,7 @@ func validateDeploySourceSelection(sourcePath string, worktree bool, image, arch
 	if archive != "" {
 		selected = append(selected, "--tarball")
 	}
-	if repo != "" {
+	if repo != "" && !githubSnippet {
 		selected = append(selected, "--repo")
 	}
 	if templateName != "" {
@@ -1120,7 +1120,7 @@ func validateDeploySourceSelection(sourcePath string, worktree bool, image, arch
 	if githubSnippet {
 		selected = append(selected, "--github")
 	}
-	if ref != "" && repo == "" {
+	if ref != "" && repo == "" && !githubSnippet {
 		return errors.New("--ref requires --repo")
 	}
 	if sourceBranch != "" && repo == "" {
@@ -2530,7 +2530,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	deployedBy := fs.String("deployed-by", "", "operator label (auto-resolved from `git config user.name` when in a repo)")
 	prNumber := fs.Int("pr-number", 0, "PR number (positive int; 0 = absent). Default unset; CI paths stamp via the GitHub Action.")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale deploy [--plan|--dry-run|--diff|--create-only|--safe|--no-traffic] [--platform-tenant-required|--no-platform-tenant-required] [--doctor-strict|--no-doctor] [--path DIR] [--source auto|head|worktree] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF [--source-branch BRANCH] | --template NAME [--repository OWNER/NAME --install-id N --production-branch BRANCH]", "deploy")
+		// newFlagSet already renders the error and help hint, or one JSON
+		// problem. A second usage message would corrupt structured stderr.
 		return 1
 	}
 	// Deploy has no positional arguments. Go's flag parser stops at the
@@ -2621,18 +2622,22 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *mcpTaskMigrationOverride && (*diff || *simplePlan || *githubSnippet) {
 		return printErr("Invalid flags", errors.New("--mcp-task-migration-override requires a single-app deployment and cannot be used with preview, --plan, or --github"))
 	}
-	// A linked environment is meaningful for real deployments and project
-	// previews. The single-app diff engine has no environment input, so keep
-	// its existing read-only behavior when the scope was not explicit.
-	if !explicit["environment"] && (!preview || projectRequested) {
-		resolvedEnvironment, resolveErr := resolveEnvironmentFlagOrContext(*environment)
+	// Resolve one environment for preview and deployment. The single-app
+	// diff engine cannot compare named environments, so refuse that target
+	// instead of silently comparing the default scope.
+	contextDir, contextErr := deployContextDirectory(*sourcePath)
+	if contextErr != nil {
+		return printErr("Could not resolve deploy source", contextErr)
+	}
+	if !explicit["environment"] {
+		resolvedEnvironment, resolveErr := resolveEnvironmentFromContext(*environment, contextDir)
 		if resolveErr != nil {
 			return printErr("Could not read local project context", resolveErr)
 		}
 		*environment = resolvedEnvironment
 	}
 	if *environment != "" && *diff && !projectRequested && *repo == "" {
-		return printErr("Invalid flags", fmt.Errorf("--environment cannot be combined with --dry-run or --diff"))
+		return printErr("Unsupported preview environment", fmt.Errorf("single-app --dry-run and --diff cannot compare environment %q; use a project preview, or pass --environment= to explicitly preview the default scope", *environment))
 	}
 	// --strict / --lenient mutex. Same rationale as
 	// --require-authn / --no-require-authn above.
@@ -2931,12 +2936,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	slug := *name
 	if slug == "" {
-		cwdForContext, cwdErr := os.Getwd()
-		if cwdErr != nil {
-			return printErr("Could not read current directory", cwdErr)
-		}
 		var nameErr error
-		slug, nameErr = linkedDefaultAppName(cwdForContext)
+		slug, nameErr = linkedDefaultAppName(contextDir)
 		if nameErr != nil {
 			return printErr("Could not read local project context", nameErr)
 		}
@@ -2967,6 +2968,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// customer can run `gregale deploy --github --name my-app` without
 	// a --ref. The slug is the only required input.
 	if *githubSnippet {
+		if err := validateGithubSnippetFlags(explicit); err != nil {
+			return printErr("Unsupported workflow options", err)
+		}
 		if platformTenantRequiredPtr != nil {
 			return printErr("Invalid flags", fmt.Errorf("--platform-tenant-required and --no-platform-tenant-required cannot be combined with --github"))
 		}
@@ -2980,6 +2984,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Invalid flags", fmt.Errorf("--no-traffic cannot be combined with --github; add deployment traffic policy to the generated workflow explicitly"))
 		}
 		snippetArgs := []string{"--app", slug}
+		if *diffJSON {
+			snippetArgs = append(snippetArgs, "--json")
+		}
+		for _, pair := range [][2]string{{"--repo", *repo}, {"--ref", *ref}, {"--environment", *environment}} {
+			if pair[1] != "" {
+				snippetArgs = append(snippetArgs, pair[0], pair[1])
+			}
+		}
 		if *pinnedActionSHA != "" {
 			snippetArgs = append(snippetArgs, "--pinned-sha", *pinnedActionSHA)
 		}
@@ -3222,9 +3234,6 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if sourceErr != nil {
 			return printErr("Invalid deploy source", sourceErr)
 		}
-		if *name == "" {
-			slug = sanitizeSlug(filepath.Base(sourceDir))
-		}
 		// Resolve workspace membership independently of GitHub provenance so
 		// --worktree also gets the same repository context when the repo has no
 		// origin. Only an explicitly selected workload can expand the upload
@@ -3417,7 +3426,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if planErr != nil {
 			return printErr("Could not resolve simple app plan", planErr)
 		}
-		return renderSimpleAppPlan(osStdout, plan, jsonOutput || *diffJSON)
+		source, changes := deployPreflightSource(prov, *worktree, dirtyFileCount, *image, *templateName, originalTarball, *sourcePath)
+		preview := newCLIPreview("local inference", slug, *environment, source, changes, "No login or remote state checked; resource defaults and runtime inference are not a deployment guarantee.")
+		deploymentPreviewTargetSources(preview, contextDir, *name != "", explicit["environment"])
+		return renderSimpleAppPlan(osStdout, plan, jsonOutput || *diffJSON, preview)
 	}
 	if (deployRuntime != "" || deployHandler != "") && !deployFunction {
 		functionSource := localZeroConfig && detectShape(sourceDir) == shapeFunction
@@ -3842,6 +3854,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				*diffStrict || !*diffLenient, *noTriggers, *environment, platformTenantRequiredPtr)
 		}
 		opts := buildDiffOptionsWithLifecycle(slug, resolvedShape, deployRuntime, deployHandler, *image, sourceDir, requireAuthnPtr, appProtocolPtr, *profile, *vcpu, *executionMode, *restartPolicy, *startupDeadlineS, *maxRetries)
+		source, changes := deployPreflightSource(prov, *worktree, dirtyFileCount, *image, *templateName, originalTarball, *sourcePath)
+		opts.Preview = newCLIPreview("remote comparison", slug, "", source, changes, "Compares current remote settings; build execution and readiness are not verified. State can change before deployment.")
+		deploymentPreviewTargetSources(opts.Preview, contextDir, *name != "", explicit["environment"])
 		opts.BuildPlan = buildPreviewBuildPlan(sourceDir, resolvedShape, deployRuntime, deployHandler, sourceSHA256, *image != "", *dockerfile)
 		opts.TrafficPercent = optTrafficPercent(*trafficPercent)
 		opts.Canary = canarySpec

@@ -10,9 +10,9 @@ jobs:
   qualify:
     name: managed storage Node (embedded app + gateway journey)
     runs-on: ubuntu-latest
-    # Cold runs compile both regular and race dependency graphs before the
-    # gateway and fixture contracts finish.
-    timeout-minutes: 20
+    # A cold cache compiles both the gateway journey and native fixture race
+    # binaries; allow both sets of checks to finish on hosted runners.
+    timeout-minutes: 30
     env:
       GOMEMLIMIT: 2GiB
       GOGC: 10
