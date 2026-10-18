@@ -519,6 +519,7 @@ export type { DebugGuestExecutionEvidence } from './models/DebugGuestExecutionEv
 export type { DebugRegressionActionRequest } from './models/DebugRegressionActionRequest.js';
 export type { DebugRegressionActionResponse } from './models/DebugRegressionActionResponse.js';
 export type { DebugRegressionItem } from './models/DebugRegressionItem.js';
+export type { DebugRegressionReview } from './models/DebugRegressionReview.js';
 export type { DebugRegressionsResponse } from './models/DebugRegressionsResponse.js';
 export type { DebugReplayComparison } from './models/DebugReplayComparison.js';
 export type { DebugReplayRequest } from './models/DebugReplayRequest.js';
@@ -940,6 +941,7 @@ export type { GithubWebhookDeliveryRecord } from './models/GithubWebhookDelivery
 export type { GraceWindowResponse } from './models/GraceWindowResponse.js';
 export type { GregaleRelease } from './models/GregaleRelease.js';
 export type { GregaleRevision } from './models/GregaleRevision.js';
+export type { GuardedDebugRegressionActionRequest } from './models/GuardedDebugRegressionActionRequest.js';
 export type { Id32 } from './models/Id32.js';
 export type { IdempotencyKey } from './models/IdempotencyKey.js';
 export type { ImageRunResponse } from './models/ImageRunResponse.js';
@@ -2381,6 +2383,10 @@ export type { SecretRuntimeReloadObservation } from './models/SecretRuntimeReloa
 export type { SecretScanResult } from './models/SecretScanResult.js';
 export type { SecurityQuarantineRecoveryRequest } from './models/SecurityQuarantineRecoveryRequest.js';
 export type { SecurityQuarantineRecoveryResponse } from './models/SecurityQuarantineRecoveryResponse.js';
+export type { SelectedTraceApp } from './models/SelectedTraceApp.js';
+export type { SelectedTraceInvocation } from './models/SelectedTraceInvocation.js';
+export type { SelectedTraceLookupResponse } from './models/SelectedTraceLookupResponse.js';
+export type { SelectedTraceRequest } from './models/SelectedTraceRequest.js';
 export type { SendAppMessageRequest } from './models/SendAppMessageRequest.js';
 export type { SendAppMessageResponse } from './models/SendAppMessageResponse.js';
 export type { ServiceBindingPolicy } from './models/ServiceBindingPolicy.js';

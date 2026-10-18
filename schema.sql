@@ -27235,6 +27235,8 @@ CREATE TABLE public.debug_regression_observations (
     error_rate_pct numeric(5,2) DEFAULT 0 NOT NULL,
     error_rate_base_pct numeric(5,2) DEFAULT 0 NOT NULL,
     error_count integer DEFAULT 0 NOT NULL,
+    review_version uuid DEFAULT '00000000-0000-0000-0000-000000000001'::uuid NOT NULL,
+    CONSTRAINT debug_regression_review_version_nonzero CHECK ((review_version <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT debug_regression_observations_affected_count_check CHECK ((affected_count >= 0)),
     CONSTRAINT debug_regression_observations_error_count_check CHECK ((error_count >= 0)),
     CONSTRAINT debug_regression_observations_error_rate_base_pct_check CHECK (((error_rate_base_pct >= (0)::numeric) AND (error_rate_base_pct <= (100)::numeric))),
@@ -78514,3 +78516,14 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 --
 --
+
+-- Management regression review invalidation (ADR-20261017210000).
+CREATE FUNCTION public.advance_regression_review_version() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    NEW.review_version := gen_random_uuid();
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER regression_review_version BEFORE INSERT OR UPDATE ON public.debug_regression_observations
+    FOR EACH ROW EXECUTE FUNCTION public.advance_regression_review_version();

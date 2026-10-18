@@ -1473,3 +1473,13 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR 202610171900: Release compatibility gates (N±1, deploy order, skew and migration checks, SLO gate)](202610171900-release-compatibility-gates.md)
 
 - [ADR-1650: Per-unit control-plane releases](1650-per-unit-control-plane-releases.md)
+
+- [ADR-20261017210000: Reviewed regression triage through management MCP](20261017210000-management-mcp-regression-triage.md)
+
+- [ADR-20261017222622: Consented regression resource snapshots and subscriptions](20261017222622-management-mcp-regression-resources.md)
+
+- [ADR-20261017224029: Selected-app regression inbox through management MCP](20261017224029-management-mcp-fleet-regressions.md)
+
+- [ADR-20261017232000: Incident evidence bundles through management MCP](20261017232000-management-mcp-incident-bundles.md)
+
+- [ADR-20261017233500: Explicit selected-app traces through management MCP](20261017233500-management-mcp-selected-traces.md)
