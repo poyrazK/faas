@@ -1514,6 +1514,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	srv.operation.StartOperationNotifications(ctx)
+	srv.configureProductControl(*cfg, deps.getenv)
 	if err := srv.configureFeatureFlags(*cfg, deps.getenv); err != nil {
 		return err
 	}
@@ -1915,6 +1916,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	} else {
 		log.Warn("FAAS_HOST_AGE_IDENTITY_PATH unset — MFA /confirm, /verify, /disable, /recover will return 503")
+	}
+
+	if err := srv.configureProductEmail(deps.getenv); err != nil {
+		return fmt.Errorf("apid: configure product email: %w", err)
+	}
+	if srv.productControl.Enabled && srv.productControl.EmailTransport != nil {
+		go srv.runProductEmail(ctx)
 	}
 
 	// ADR-117 PR-C: load the host HMAC key so sealAndPersist

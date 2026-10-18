@@ -15,8 +15,35 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// WithProductCustomer is for the internal Product Control Application Auth
+// bridge, after verifying the live session and mapping current organization
+// membership to an account-owned active tenant. It never grants owner scopes.
+type ProductCustomerIdentity struct {
+	TenantID, OrganizationID, AuthApp, AuthAppID, ProductSlug string
+	Access                                                    api.ProductCustomerAccess
+}
+type productCustomerContextKey struct{}
+
+func ProductCustomerFromContext(ctx context.Context) (ProductCustomerIdentity, bool) {
+	identity, ok := ctx.Value(productCustomerContextKey{}).(ProductCustomerIdentity)
+	return identity, ok
+}
+
+func WithProductCustomer(ctx context.Context, acct state.Account, identity ProductCustomerIdentity) context.Context {
+	ctx = context.WithValue(ctx, productCustomerContextKey{}, identity)
+	key := &state.APIKey{AccountID: acct.ID, PlatformTenantID: identity.TenantID}
+	if identity.Access.Permissions.ViewWork {
+		key.Scopes = append(key.Scopes, api.ScopePlatformTenantOperationsRead)
+	}
+	if identity.Access.Permissions.RunWork {
+		key.Scopes = append(key.Scopes, api.ScopePlatformTenantOperationsManage)
+	}
+	return withPrincipal(ctx, principal{Acct: acct, Key: key})
+}
 
 // ConsumerIdentity is the stable end-customer identity resolved by the
 // gateway's consumer-key gate. It deliberately contains identifiers and the

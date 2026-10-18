@@ -273,7 +273,7 @@ resources created for this run, using their recorded identities.
 ## Review and rollout
 
 Review the CLI and response-check contract changes together with
-[ADR-20261017233200](../adr/20261017233200-owner-authorized-deployment-response-checks.md). Attach
+[ADR-1658](../adr/1658-owner-authorized-deployment-response-checks.md). Attach
 local gate output and live results to the review; incomplete live evidence stays
 explicitly pending. Follow the
 [release readiness checklist](release-readiness-checklist.md) for signed bundles

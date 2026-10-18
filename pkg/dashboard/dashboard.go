@@ -1469,6 +1469,7 @@ type AppCostOverviewRow struct {
 
 // AppDetailData combines the bits the app detail page renders.
 type AppDetailData struct {
+	ProductControlURL  string
 	ProfilingAvailable bool
 	// ApplicationAuth shows the application Auth screens' link, a dark
 	// launch (api.ApplicationAuthEnabled).
