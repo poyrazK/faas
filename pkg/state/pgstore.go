@@ -44,13 +44,16 @@ import (
 // is safe for concurrent use.
 type PgStore struct {
 	pool *pgxpool.Pool
+	// admission remembers whether the database has the instance admission
+	// functions (ADR-1741).
+	admission *admissionFunctionProbe
 }
 
 // NewPgStore wraps a pool. The pool is owned by the caller; PgStore does not
 // close it on shutdown so daemons can share a single pool across a Store and
 // their LISTEN goroutine.
 func NewPgStore(pool *pgxpool.Pool) *PgStore {
-	return &PgStore{pool: pool}
+	return &PgStore{pool: pool, admission: &admissionFunctionProbe{}}
 }
 
 // Ping tests database connectivity through the underlying connection pool.
@@ -17127,6 +17130,13 @@ func (s *PgStore) CreateInstanceWithMode(ctx context.Context, appID, deploymentI
 	if mode == string(InstanceModeWorker) && State(state).CountsForRAM() {
 		reserve = func(tx pgx.Tx) error {
 			return reserveAccountWorker(ctx, tx, appID, deploymentID)
+		}
+	}
+	// ADR-1741: a resident admission without a worker reservation is one
+	// statement when the database has the admission functions.
+	if reserve == nil && IsLive(strings.ToLower(state)) {
+		if inst, handled, err := s.admitWakeInstance(ctx, appID, deploymentID, state, ramMB, nodeID, wakeID, mode); handled {
+			return inst, err
 		}
 	}
 	return s.insertInstanceWithReservations(ctx, nodeID, state, ramMB, reserve, func(q instanceInserter) (Instance, error) {

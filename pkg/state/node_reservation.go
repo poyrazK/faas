@@ -152,60 +152,19 @@ func (s *PgStore) insertInstanceWithReservationsOnce(
 		return insert(s.pool)
 	}
 
+	useAdmissionFunctions := s.admissionFunctionsUsable(ctx)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Instance{}, fmt.Errorf("state: node reservation: begin (node=%s): %w", nodeID, err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := checkNodeAdmissionDB(ctx, tx, nodeID); err != nil {
-		return Instance{}, err
+	// ADR-1741: one statement when the database has the admission functions.
+	reserveNode := reserveNodeStatementsDB
+	if useAdmissionFunctions {
+		reserveNode = reserveNodeDB
 	}
-
-	if nodeUsageCounts(State(newState)) {
-		// Taken before the sum so a peer admitting to the same node blocks here
-		// rather than reading the same pre-insert total we are about to act on.
-		// pg_advisory_xact_lock releases on COMMIT or ROLLBACK, so every return
-		// path below — including the deferred Rollback — drops it.
-		if _, err := tx.Exec(ctx,
-			`select pg_advisory_xact_lock($1, hashtext($2))`,
-			nodeReservationLockClass, nodeID,
-		); err != nil {
-			return Instance{}, fmt.Errorf("state: node reservation: lock node %s: %w", nodeID, err)
-		}
-
-		// One round trip for both halves: the ceiling is on compute_nodes and the
-		// sum is an instances aggregate over instances_live_node_id_idx, whose
-		// partial predicate is the same four states listed here.
-		var ceilingMB, usedMB int64
-		err = tx.QueryRow(ctx, `
-		select n.admission_ceiling_mb::bigint,
-		       coalesce((select sum(i.ram_mb + $2)
-		                   from instances i
-		                  where i.node_id = n.id
-		                    and i.state in ('waking','cold_booting','running','draining','warm')), 0)::bigint
-		  from compute_nodes n
-		 where n.id = $1`,
-			nodeID, api.PerVMOverheadMB,
-		).Scan(&ceilingMB, &usedMB)
-		switch {
-		case errors.Is(err, pgx.ErrNoRows):
-			// No such node. Fall through to the insert and let the FK speak.
-		case err != nil:
-			return Instance{}, fmt.Errorf("state: node reservation: read headroom (node=%s): %w", nodeID, err)
-		default:
-			residentExtra, err := sqlc.New().MigrationAdmissionResidentRAM(ctx, tx, mustPgUUID(nodeID))
-			if err != nil {
-				return Instance{}, mapErr(err)
-			}
-			usedMB += residentExtra
-			admitMB := int64(ramMB) + int64(api.PerVMOverheadMB)
-			if ceilingMB > 0 && usedMB+admitMB > ceilingMB {
-				return Instance{}, fmt.Errorf(
-					"state: %w: node=%s used_mb=%d admit_mb=%d ceiling_mb=%d",
-					ErrNodeCapacity, nodeID, usedMB, admitMB, ceilingMB,
-				)
-			}
-		}
+	if err := reserveNode(ctx, tx, nodeID, newState, ramMB); err != nil {
+		return Instance{}, err
 	}
 	if reserve != nil {
 		if err := reserve(tx); err != nil {
@@ -235,6 +194,62 @@ func (s *PgStore) insertInstanceWithReservationsOnce(
 		recovery.bound = true
 	}
 	return inst, nil
+}
+
+// reserveNodeStatementsDB is reserveNodeDB as separate statements, for a
+// database without the admission functions (ADR-1741).
+func reserveNodeStatementsDB(ctx context.Context, tx pgx.Tx, nodeID, newState string, ramMB int) error {
+	if err := checkNodeAdmissionDB(ctx, tx, nodeID); err != nil {
+		return err
+	}
+
+	if nodeUsageCounts(State(newState)) {
+		// Taken before the sum so a peer admitting to the same node blocks here
+		// rather than reading the same pre-insert total we are about to act on.
+		// pg_advisory_xact_lock releases on COMMIT or ROLLBACK, so every return
+		// path below — including the deferred Rollback — drops it.
+		if _, err := tx.Exec(ctx,
+			`select pg_advisory_xact_lock($1, hashtext($2))`,
+			nodeReservationLockClass, nodeID,
+		); err != nil {
+			return fmt.Errorf("state: node reservation: lock node %s: %w", nodeID, err)
+		}
+
+		// One round trip for both halves: the ceiling is on compute_nodes and the
+		// sum is an instances aggregate over instances_live_node_id_idx, whose
+		// partial predicate is the same four states listed here.
+		var ceilingMB, usedMB int64
+		err := tx.QueryRow(ctx, `
+		select n.admission_ceiling_mb::bigint,
+		       coalesce((select sum(i.ram_mb + $2)
+		                   from instances i
+		                  where i.node_id = n.id
+		                    and i.state in ('waking','cold_booting','running','draining','warm')), 0)::bigint
+		  from compute_nodes n
+		 where n.id = $1`,
+			nodeID, api.PerVMOverheadMB,
+		).Scan(&ceilingMB, &usedMB)
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			// No such node. Fall through to the insert and let the FK speak.
+		case err != nil:
+			return fmt.Errorf("state: node reservation: read headroom (node=%s): %w", nodeID, err)
+		default:
+			residentExtra, err := sqlc.New().MigrationAdmissionResidentRAM(ctx, tx, mustPgUUID(nodeID))
+			if err != nil {
+				return mapErr(err)
+			}
+			usedMB += residentExtra
+			admitMB := int64(ramMB) + int64(api.PerVMOverheadMB)
+			if ceilingMB > 0 && usedMB+admitMB > ceilingMB {
+				return fmt.Errorf(
+					"state: %w: node=%s used_mb=%d admit_mb=%d ceiling_mb=%d",
+					ErrNodeCapacity, nodeID, usedMB, admitMB, ceilingMB,
+				)
+			}
+		}
+	}
+	return nil
 }
 
 // checkNodeReservationLocked is the MemStore mirror of the PgStore guard. The
