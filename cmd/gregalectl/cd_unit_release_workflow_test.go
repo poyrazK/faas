@@ -94,10 +94,26 @@ func TestUnitReleaseIsSignedOnlyByMainAndVerifiedBeforeUse(t *testing.T) {
 	}
 }
 
+// shellFunc returns a bash function's text, from its "NAME() {" line to the
+// closing brace at the start of a line.
+func shellFunc(t *testing.T, script, name string) string {
+	t.Helper()
+	start := strings.Index(script, "\n"+name+"() {\n")
+	if start < 0 {
+		t.Fatalf("shell function %q not found", name)
+	}
+	body := script[start+1:]
+	end := strings.Index(body, "\n}\n")
+	if end < 0 {
+		t.Fatalf("shell function %q is not closed", name)
+	}
+	return body[:end+2]
+}
+
 // TestUnitLaneRestartsOnlyPlannedServicesOverTheExpectedRelease: the host
 // step must compare-and-swap against the release the plan was made over,
 // restart only planned services, gate each one, and roll back on a failed
-// gate.
+// gate. Migrations follow TestUnitLaneMigratesOnlyThroughDeployctlsOwnStep.
 func TestUnitLaneRestartsOnlyPlannedServicesOverTheExpectedRelease(t *testing.T) {
 	helper := readRepoFile(t, "scripts", "ci", "unit_deploy.sh")
 	orderedIn(t, "unit_deploy.sh activation script", helper,
@@ -107,9 +123,68 @@ func TestUnitLaneRestartsOnlyPlannedServicesOverTheExpectedRelease(t *testing.T)
 		"unit-release-verify.sh ${release_dir}${specs}",
 		"deployctl rollback --only '${only}'",
 	)
-	for _, forbidden := range []string{"migrate", "converge-control-plane", "kgv rotate", "fleet-seal"} {
+	for _, forbidden := range []string{"converge-control-plane", "kgv rotate", "fleet-seal"} {
 		if strings.Contains(helper, forbidden) {
 			t.Errorf("the unit lanes must leave %q to the full lane", forbidden)
+		}
+	}
+}
+
+// TestUnitLaneMigratesOnlyThroughDeployctlsOwnStep: the data step
+// (docs/adr/20261018084150-unit-lane-expand-migrations.md §3, §4). The unit
+// lanes add no migration runner of their own. The host helper only stages
+// the signed release's tools/migrate as the overlay's bin/migrate when the
+// plan replaces it; `deployctl deploy` (pinned above, before any restart or
+// gate) runs it under the deploy and advisory locks. Nothing else in the
+// helper, and nothing on rollback, touches the schema. Contract migrations
+// stay on the full lane: the verifier and the planner refuse a release that
+// carries any migration without a lane-eligible (expand-only) verdict, and
+// only the control-plane lane on the control plane applies the data step.
+func TestUnitLaneMigratesOnlyThroughDeployctlsOwnStep(t *testing.T) {
+	helper := readRepoFile(t, "scripts", "ci", "unit_deploy.sh")
+	staging := []string{
+		`if jq -e '.replace["bin/migrate"]' "$plan" >/dev/null; then`,
+		`install -m 0755 "$units/tools/migrate" "$local_stage/bin/migrate"`,
+	}
+	orderedIn(t, "unit_deploy.sh stage", shellFunc(t, helper, "cmd_stage"), staging...)
+	for i, line := range strings.Split(helper, "\n") {
+		code := strings.TrimSpace(line)
+		if strings.HasPrefix(code, "#") || !strings.Contains(strings.ToLower(code), "migrat") {
+			continue
+		}
+		if code != staging[0] && code != staging[1] {
+			t.Errorf("unit_deploy.sh:%d: the unit lanes apply migrations only through deployctl deploy's own step, found %q", i+1, code)
+		}
+	}
+	for _, line := range staging {
+		if got := strings.Count(helper, line); got != 1 {
+			t.Errorf("unit_deploy.sh stages bin/migrate %d times with %q, want once in cmd_stage", got, line)
+		}
+	}
+	if strings.Contains(strings.ToLower(helper), "goose") {
+		t.Error("the unit lanes must not run a migration runner of their own")
+	}
+	if strings.Contains(strings.ToLower(shellFunc(t, helper, "cmd_rollback")), "migrat") {
+		t.Error("a unit rollback restores binaries, never the schema")
+	}
+
+	verifier := readRepoFile(t, "scripts", "ci", "verify_unit_release.sh")
+	for _, required := range []string{
+		"all(.data.migrations[]; .eligible == true)",
+		`(.tools.migrate.sha256 | type == "string")`,
+	} {
+		if !strings.Contains(verifier, required) {
+			t.Errorf("verify_unit_release.sh must refuse migrations without a lane-eligible verdict: missing %q", required)
+		}
+	}
+	planner := readRepoFile(t, "scripts", "ci", "plan_unit_deploy.py")
+	for _, required := range []string{
+		"not all(m.get(\"eligible\") for m in migrations)",
+		"only a full release applies them",
+		`lane == "control-plane" and host_role == "control-plane"`,
+	} {
+		if !strings.Contains(planner, required) {
+			t.Errorf("plan_unit_deploy.py must apply only lane-eligible migrations, on the control-plane lane: missing %q", required)
 		}
 	}
 }
