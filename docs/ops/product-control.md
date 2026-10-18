@@ -1319,6 +1319,49 @@ provider's idempotency. External rounding remains the invoicer's responsibility.
 Do not export existing request rate-card statements as a second charge for the
 same product work; these ledgers are independent and are never automatically added.
 
+### Export a statement to your own billing provider
+
+Instead of a manual handoff, a finalized statement can be invoiced in the
+account's own Stripe, Paddle or Lago
+([ADR-20261018212918](../adr/20261018212918-product-control-payment-collection.md)).
+Connect the provider once with `PUT /v1/account/billing-connections/{provider}`;
+its collection mode and Stripe automatic tax apply as for other statement exports
+([ADR-1311](../adr/1311-statement-invoice-collection.md),
+[ADR-1313](../adr/1313-stripe-automatic-tax-on-exports.md)).
+
+```sh
+gregale product statements export --app exports --tenant TENANT_UUID --period 2026-09 \
+  --document STATEMENT_UUID --provider paddle [--customer ctm_01...]
+gregale product statements export-status --app exports --tenant TENANT_UUID --period 2026-09 \
+  --document STATEMENT_UUID --json
+```
+
+The owner API is `POST /v1/apps/{slug}/product/billing/documents/{document}/invoice?period=YYYY-MM`
+with `{"tenant_id","provider","customer"}` and the matching `GET` with `tenant_id`.
+
+- The customer defaults to the tenant's external reference when it is one of
+  the provider's customer IDs (`cus_…`, `ctm_…` or a Lago external customer ID);
+  otherwise pass `--customer`.
+- Each invoice line is one feature and plan at one admitted price: charged
+  successes times that price, rounded to the cent with a rounding item where
+  needed. Failed, cancelled, waived and unresolved runs are never invoiced.
+- The provider invoice ID becomes the statement's handoff. A statement is
+  either handed off by hand or exported, never both: a manual handoff blocks
+  export, and an export cannot be replaced.
+- A retry with the same provider resumes the same invoice; another provider
+  conflicts. The export row exists before any provider call, so a lost
+  response never creates a second invoice.
+- Credit notes are not exported. Record them with `statements handoff` after
+  issuing the credit in the provider. Paddle and Lago reject negative documents.
+- `export-status` and `GET /v1/account/statement-invoices` show the provider's
+  payment status, amount remaining, due date and hosted invoice link, synced by
+  the existing payment-status worker
+  ([ADR-1504](../adr/1504-statement-invoice-payment-status.md)).
+
+Gregale still does not collect money, calculate tax or act as merchant of record;
+the owner's provider does. Paddle exports stay drafts to finish in Paddle;
+Stripe and Lago can collect when the connection's collection mode asks them to.
+
 The customer portal's **Statements and credits** section reads a selected month
 and explicitly pages through finalized documents. It shows provisional charges
 when the month has not closed or been finalized, and separates finalized charges

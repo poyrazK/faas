@@ -208,6 +208,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/apps/{slug}/product/email-deliveries/{delivery}/retry":           true,
 	"GET /v1/apps/{slug}/product/billing/documents":                            true,
 	"GET /v1/apps/{slug}/product/billing/documents/{document}/handoff":         true,
+	"GET /v1/apps/{slug}/product/billing/documents/{document}/invoice":         true,
 	"GET /v1/apps/{slug}/product/billing/receipts":                             true,
 	"POST /v1/apps/{slug}/product/onboarding/workspaces":                       true,
 	"POST /v1/apps/{slug}/product/onboarding/preview":                          true,
@@ -264,6 +265,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/product-control/customer/{slug}/billing":                          true,
 	"POST /v1/apps/{slug}/product/billing/credits":                             true,
 	"POST /v1/apps/{slug}/product/billing/documents/{document}/handoff":        true,
+	"POST /v1/apps/{slug}/product/billing/documents/{document}/invoice":        true,
 	"POST /v1/apps/{slug}/product/billing/receipts/{operation}/waive":          true,
 	"POST /v1/apps/{slug}/product/billing/statements/finalize":                 true,
 	// ADR-1701: internal Product Control pilot; absent from the public SDK contract.

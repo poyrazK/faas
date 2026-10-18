@@ -142,6 +142,51 @@ func (s *Service) BillingGetHandoff(w http.ResponseWriter, r *http.Request, acct
 	billingRespond(w, value, err)
 }
 
+// BillingExport exports a finalized statement to the account's own Stripe,
+// Paddle or Lago; the provider invoice becomes its handoff
+// (ADR-20261018212918). A retry resumes the same provider invoice.
+func (s *Service) BillingExport(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	var req api.ProductInvoiceExportRequest
+	if !operation.DecodeOperationBody(w, r, &req, api.ProductControlAuthBodyBytes) {
+		return
+	}
+	_, scope, ok := s.billing(w, r, acct, req.TenantID, requestPeriod(r))
+	if !ok {
+		return
+	}
+	if s.ExportInvoice == nil {
+		api.WriteProblem(w, api.ErrCapacity("statement invoice exports are unavailable"))
+		return
+	}
+	value, problem := s.ExportInvoice(r.Context(), acct, scope, r.PathValue("document"), req.Provider, req.Customer)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	s.Host.EmitAudit(r.Context(), "product.billing.invoice_exported", &acct.ID, map[string]any{"app_id": scope.AppID, "tenant_id": scope.TenantID,
+		"document_id": value.StatementID, "provider": value.Provider, "invoice_id": value.InvoiceID, "livemode": value.Livemode})
+	httpkit.WriteJSON(w, http.StatusOK, value)
+}
+
+// BillingGetExport reads a statement's export and its provider payment
+// status (ADR-1504).
+func (s *Service) BillingGetExport(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	_, scope, ok := s.billing(w, r, acct, r.URL.Query().Get("tenant_id"), requestPeriod(r))
+	if !ok {
+		return
+	}
+	if s.InvoiceExport == nil {
+		api.WriteProblem(w, api.ErrCapacity("statement invoice exports are unavailable"))
+		return
+	}
+	value, problem := s.InvoiceExport(r.Context(), acct, scope, r.PathValue("document"))
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	httpkit.WriteJSON(w, http.StatusOK, value)
+}
+
 func (s *Service) CustomerBilling(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	tenant, ok := httpkit.PlatformTenantSelfID(w, r)
 	if !ok {

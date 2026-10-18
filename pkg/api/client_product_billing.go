@@ -62,6 +62,20 @@ func (c *Client) GetProductBillingHandoff(ctx context.Context, app, tenant, peri
 	return out, err
 }
 
+// ExportProductStatement invoices a finalized statement in the account's
+// connected billing provider (ADR-20261018212918); retries resume it.
+func (c *Client) ExportProductStatement(ctx context.Context, app, period, document string, req ProductInvoiceExportRequest) (StatementInvoiceExportResponse, error) {
+	var out StatementInvoiceExportResponse
+	err := c.do(ctx, http.MethodPost, productBillingPath(app, req.TenantID, period, "documents/"+url.PathEscape(document)+"/invoice", ""), req, &out)
+	return out, err
+}
+
+func (c *Client) GetProductStatementExport(ctx context.Context, app, tenant, period, document string) (StatementInvoiceExportResponse, error) {
+	var out StatementInvoiceExportResponse
+	err := c.do(ctx, http.MethodGet, productBillingPath(app, tenant, period, "documents/"+url.PathEscape(document)+"/invoice", ""), nil, &out)
+	return out, err
+}
+
 func (c *Client) GetProductCustomerBilling(ctx context.Context, app, period, cursor string) (ProductCustomerBilling, error) {
 	var out ProductCustomerBilling
 	query := url.Values{"app": {app}, "period": {period}, "cursor": {cursor}}

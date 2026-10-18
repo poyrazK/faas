@@ -46443,7 +46443,7 @@ CREATE TABLE public.usage_statement_invoice_exports (
     CONSTRAINT usage_statement_invoice_exports_payment_amounts_chk CHECK ((((amount_paid_minor IS NULL) OR (amount_paid_minor >= 0)) AND ((amount_remaining_minor IS NULL) OR (amount_remaining_minor >= 0)))),
     CONSTRAINT usage_statement_invoice_exports_payment_status_chk CHECK (((payment_status IS NULL) OR (payment_status = ANY (ARRAY['draft'::text, 'open'::text, 'paid'::text, 'void'::text, 'uncollectible'::text, 'deleted'::text])))),
     CONSTRAINT usage_statement_invoice_exports_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'lago'::text]))),
-    CONSTRAINT usage_statement_invoice_exports_source_chk CHECK ((source_kind = ANY (ARRAY['app_consumer'::text, 'platform_tenant'::text]))),
+    CONSTRAINT usage_statement_invoice_exports_source_chk CHECK ((source_kind = ANY (ARRAY['app_consumer'::text, 'platform_tenant'::text, 'product_control'::text]))),
     CONSTRAINT usage_statement_invoice_exports_status_chk CHECK ((status = ANY (ARRAY['creating'::text, 'completed'::text])))
 );
 

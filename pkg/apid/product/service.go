@@ -40,6 +40,10 @@ type Service struct {
 	OwnerSessions      func() *session.Manager
 	OwnerRender        func(http.ResponseWriter, *http.Request, state.Account, dashboard.ProductControlData)
 	OperationDoctor    func(context.Context, state.Account, state.OperationDefinition, state.PlatformTenant) (api.OperationDoctorResponse, error)
+	// ExportInvoice and InvoiceExport reach statement invoice exports
+	// (ADR-20261018212918): document, provider and customer, or document.
+	ExportInvoice func(context.Context, state.Account, state.ProductBillingScope, string, string, string) (api.StatementInvoiceExportResponse, *api.Problem)
+	InvoiceExport func(context.Context, state.Account, state.ProductBillingScope, string) (api.StatementInvoiceExportResponse, *api.Problem)
 }
 
 func (s *Service) Start(w http.ResponseWriter, r *http.Request, acct state.Account) {

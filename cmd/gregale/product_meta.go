@@ -86,5 +86,10 @@ func productBillingCLIManifest(app cliFlag) []cliSub {
 		{Name: "credit", Short: "Issue a credit note against a finalized successful run", Flags: []cliFlag{app, tenant, period, operation, reason, {Name: "id", Value: "UUID", Req: true, Short: "stable credit note ID; preserve for retries"}, {Name: "amount-millicents", Value: "N", Req: true, Short: "positive credit amount"}}},
 		{Name: "handoff", Short: "Record one invoice reference for a statement or credit note", Flags: []cliFlag{app, tenant, period, document, {Name: "invoice-id", Value: "REFERENCE", Req: true, Short: "stable external invoice or credit note reference"}}},
 		{Name: "handoff-status", Short: "Recover the retained invoice handoff after a lost response", Flags: []cliFlag{app, tenant, period, document}},
+		{Name: "export", Short: "Invoice a finalized statement in the account's Stripe, Paddle or Lago; the invoice becomes its handoff", Flags: []cliFlag{app, tenant, period,
+			{Name: "document", Value: "UUID", Req: true, Short: "finalized statement"},
+			{Name: "provider", Value: "NAME", Req: true, Short: "connected billing provider: stripe, paddle or lago"},
+			{Name: "customer", Value: "ID", Short: "provider customer ID (default the tenant's external reference)"}}},
+		{Name: "export-status", Short: "Read a statement's exported invoice and its payment status", Flags: []cliFlag{app, tenant, period, document}},
 	}
 }

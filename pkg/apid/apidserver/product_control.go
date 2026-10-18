@@ -69,6 +69,8 @@ func (s *server) registerProductControl(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/apps/{slug}/product/billing/credits", write(p.BillingCredit))
 	mux.HandleFunc("POST /v1/apps/{slug}/product/billing/documents/{document}/handoff", write(p.BillingHandoff))
 	mux.HandleFunc("GET /v1/apps/{slug}/product/billing/documents/{document}/handoff", read(p.BillingGetHandoff))
+	mux.HandleFunc("POST /v1/apps/{slug}/product/billing/documents/{document}/invoice", write(p.BillingExport))
+	mux.HandleFunc("GET /v1/apps/{slug}/product/billing/documents/{document}/invoice", read(p.BillingGetExport))
 	mux.HandleFunc("GET /v1/platform-tenant-self/product/billing", p.Gate(s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(p.CustomerBilling))))
 	mux.HandleFunc("GET /v1/platform-tenant-self/product", p.Gate(s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(p.Portal))))
 	mux.HandleFunc("POST /v1/platform-tenant-self/product/start", p.Gate(s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(p.Start))))

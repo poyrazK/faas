@@ -32,10 +32,14 @@ func productBillingFlags(fs *flag.FlagSet, c *productCommand) {
 			fs.StringVar(&c.billingID, "id", "", "stable credit note UUID; preserve for retries")
 			fs.Int64Var(&c.amountMillicents, "amount-millicents", 0, "positive credit amount in millicents")
 		}
-	case "statements handoff", "statements handoff-status":
+	case "statements handoff", "statements handoff-status", "statements export", "statements export-status":
 		fs.StringVar(&c.document, "document", "", "finalized statement or credit note UUID")
 		if c.verb == "statements handoff" {
 			fs.StringVar(&c.invoice, "invoice-id", "", "stable external invoice or credit note reference; preserve for retries")
+		}
+		if c.verb == "statements export" {
+			fs.StringVar(&c.billingProvider, "provider", "", "account billing connection: stripe, paddle or lago")
+			fs.StringVar(&c.billingCustomer, "customer", "", "provider customer ID (default the tenant's external reference)")
 		}
 	}
 }
@@ -66,9 +70,15 @@ func validateProductBillingCommand(c productCommand) error {
 		if c.verb == "statements credit" && (!validID(c.billingID) || c.amountMillicents <= 0 || c.amountMillicents > api.ProductControlMaxUnitPriceMillicents) {
 			return errors.New("--id must be a stable credit UUID and --amount-millicents must fit the per-operation price limit")
 		}
-	case "statements handoff", "statements handoff-status":
+	case "statements handoff", "statements handoff-status", "statements export", "statements export-status":
 		if !validID(c.document) {
 			return errors.New("--document UUID is required")
+		}
+		if c.verb == "statements export" && c.billingProvider != "stripe" && c.billingProvider != "paddle" && c.billingProvider != "lago" {
+			return errors.New("--provider must be stripe, paddle or lago")
+		}
+		if c.verb == "statements export" && (c.billingCustomer != strings.TrimSpace(c.billingCustomer) || len(c.billingCustomer) > api.ProductControlInvoiceReferenceMaxBytes) {
+			return errors.New("--customer must be a provider customer ID of at most 255 bytes")
 		}
 		if c.verb == "statements handoff" && (strings.TrimSpace(c.invoice) == "" || len(c.invoice) > api.ProductControlInvoiceReferenceMaxBytes) {
 			return errors.New("--invoice-id of at most 255 bytes is required")
@@ -102,6 +112,10 @@ func runProductBillingCommand(ctx context.Context, client *Client, c productComm
 		return client.HandoffProductBilling(ctx, c.app, c.period, c.document, api.ProductHandoffRequest{TenantID: c.tenant, ExternalInvoiceID: c.invoice})
 	case "statements handoff-status":
 		return client.GetProductBillingHandoff(ctx, c.app, c.tenant, c.period, c.document)
+	case "statements export":
+		return client.ExportProductStatement(ctx, c.app, c.period, c.document, api.ProductInvoiceExportRequest{TenantID: c.tenant, Provider: c.billingProvider, Customer: c.billingCustomer})
+	case "statements export-status":
+		return client.GetProductStatementExport(ctx, c.app, c.tenant, c.period, c.document)
 	}
 	return nil, errors.New("unsupported billing command")
 }

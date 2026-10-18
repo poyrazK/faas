@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -78,5 +79,61 @@ func TestTenantStatementInvoiceRoundingAndCurrency(t *testing.T) {
 	}
 	if got := millicentsToCents(-1500); got != -2 {
 		t.Fatalf("millicentsToCents(-1500) = %d, want -2", got)
+	}
+}
+
+// adr: 20261018212918
+func TestProductControlStatementInvoiceLinesAndRounding(t *testing.T) {
+	line := func(feature, revision, plan string, price, succeeded, failed, waived int64) api.ProductBillingLine {
+		return api.ProductBillingLine{Feature: feature, Revision: revision, Plan: plan, UnitPriceMillicents: price,
+			Starts: succeeded + failed + waived, Succeeded: succeeded, Failed: failed, Waived: waived, AmountMillicents: succeeded * price}
+	}
+	doc := api.ProductBillingDocument{Kind: "statement", Currency: "EUR", AmountMillicents: 3*1500 + 1500, Snapshot: &api.ProductBillingReview{Lines: []api.ProductBillingLine{
+		line("export", "rev-a", "starter", 1500, 2, 4, 1),
+		line("export", "rev-b", "starter", 1500, 1, 0, 0), // same price, newer catalog revision: shares the line
+		line("export", "rev-b", "pro", 1500, 1, 0, 0),
+		line("validate", "rev-b", "pro", 0, 7, 0, 0),
+		line("export", "rev-b", "pro", 9000, 0, 3, 0), // failures only: not invoiced
+	}}}
+	inv, err := ProductControlStatementInvoice(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []StatementInvoiceLine{
+		{Label: "successful export runs on plan pro", Units: 1, PriceMillicentsPerUnit: 1500, AmountMillicents: 1500, AmountMinor: 2},
+		{Label: "successful export runs on plan starter", Units: 3, PriceMillicentsPerUnit: 1500, AmountMillicents: 4500, AmountMinor: 5},
+		{Label: "successful validate runs on plan pro", Units: 7},
+	}
+	if len(inv.Lines) != len(want) {
+		t.Fatalf("lines = %+v", inv.Lines)
+	}
+	for i := range want {
+		if inv.Lines[i] != want[i] {
+			t.Fatalf("line %d = %+v, want %+v", i, inv.Lines[i], want[i])
+		}
+	}
+	// 1.5 and 4.5 cents round to 2 and 5; the 6-cent total needs a -1 rounding item.
+	if inv.Currency != "EUR" || inv.TotalMinor != 6 || inv.RoundingMinor != -1 {
+		t.Fatalf("invoice = %+v", inv)
+	}
+	credit := api.ProductBillingDocument{Kind: "credit_note", Currency: "EUR", AmountMillicents: -1500}
+	if _, err := ProductControlStatementInvoice(credit); !errors.Is(err, ErrStatementNotInvoiceable) {
+		t.Fatalf("credit note err = %v", err)
+	}
+	if _, err := ProductControlStatementInvoice(api.ProductBillingDocument{Kind: "statement", Currency: "EUR"}); !errors.Is(err, ErrStatementNotInvoiceable) {
+		t.Fatalf("statement without snapshot err = %v", err)
+	}
+	mismatch := doc
+	mismatch.AmountMillicents++
+	if _, err := ProductControlStatementInvoice(mismatch); !errors.Is(err, ErrStatementNotInvoiceable) {
+		t.Fatalf("total mismatch err = %v", err)
+	}
+	empty := api.ProductBillingDocument{Kind: "statement", Currency: "EUR", Snapshot: &api.ProductBillingReview{Lines: []api.ProductBillingLine{line("export", "rev-a", "starter", 1500, 0, 2, 0)}}}
+	if _, err := ProductControlStatementInvoice(empty); !errors.Is(err, ErrStatementNotInvoiceable) {
+		t.Fatalf("statement without successes err = %v", err)
+	}
+	doc.Currency = "JPY"
+	if _, err := ProductControlStatementInvoice(doc); !errors.Is(err, ErrInvoiceCurrencyUnsupported) {
+		t.Fatalf("JPY err = %v", err)
 	}
 }

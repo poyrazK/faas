@@ -164,6 +164,22 @@ func (m *MemStore) ListProductBillingDocuments(_ context.Context, scope ProductB
 	return cloneProductBilling(out), nil
 }
 
+func (m *MemStore) GetProductBillingDocument(_ context.Context, scope ProductBillingScope, id string) (api.ProductBillingDocument, error) {
+	if !validProductUUID(id) {
+		return api.ProductBillingDocument{}, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, err := m.productBillingScopeLocked(scope); err != nil {
+		return api.ProductBillingDocument{}, err
+	}
+	row, ok := m.productLocked().documents[id]
+	if !ok || !productMemoryDocumentInScope(row, scope) {
+		return api.ProductBillingDocument{}, ErrNotFound
+	}
+	return cloneProductBilling(row.document), nil
+}
+
 func (m *MemStore) FinalizeProductBilling(_ context.Context, scope ProductBillingScope, expected string) (api.ProductBillingDocument, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

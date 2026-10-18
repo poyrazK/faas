@@ -23,7 +23,7 @@ import (
 type productCommand struct {
 	verb, app, file, definition, tenant, plan, revision, period, cursor, feature, input, key string
 	operation, scope, authApp, authOrg, quote                                                string
-	reviewHash, reason, billingID, document, invoice                                         string
+	reviewHash, reason, billingID, document, invoice, billingProvider, billingCustomer       string
 	output, policyFile, helpID                                                               string
 	emailStatus, deliveryID                                                                  string
 	failedAttempt                                                                            int
@@ -117,7 +117,7 @@ func parseProductCommand(args []string) (productCommand, error) {
 		fs.StringVar(&c.authOrg, "auth-org", "", "Application Auth organization UUID (empty unlinks login)")
 		fs.StringVar(&c.revision, "revision", "", "catalog revision (default current)")
 		fs.BoolVar(&c.suspended, "suspended", false, "pause new feature starts")
-	case "statements list", "statements review", "statements receipts", "statements finalize", "statements waive", "statements credit", "statements handoff", "statements handoff-status":
+	case "statements list", "statements review", "statements receipts", "statements finalize", "statements waive", "statements credit", "statements handoff", "statements handoff-status", "statements export", "statements export-status":
 		productBillingFlags(fs, &c)
 	case "usage":
 		fs.StringVar(&c.tenant, "tenant", "", "customer platform tenant UUID")
@@ -383,7 +383,7 @@ func runProductCommand(ctx context.Context, client *Client, c productCommand) (a
 		return client.SetProductCustomer(ctx, c.app, api.ProductCustomer{TenantID: c.tenant, Plan: c.plan, Revision: c.revision, Suspended: c.suspended, AuthOrganizationID: c.authOrg})
 	case "customers onboard", "customers workspaces", "customers onboarding":
 		return runProductOnboardingCommand(ctx, client, c)
-	case "statements list", "statements review", "statements receipts", "statements finalize", "statements waive", "statements credit", "statements handoff", "statements handoff-status":
+	case "statements list", "statements review", "statements receipts", "statements finalize", "statements waive", "statements credit", "statements handoff", "statements handoff-status", "statements export", "statements export-status":
 		return runProductBillingCommand(ctx, client, c)
 	case "usage":
 		var usage api.ProductUsage

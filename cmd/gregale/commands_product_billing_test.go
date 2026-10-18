@@ -28,6 +28,8 @@ func TestProductBillingCommandContract(t *testing.T) {
 		{"credit", []string{"--id", credit, "--operation", operation, "--amount-millicents", "5000", "--reason", "service credit"}, "POST", "credits", map[string]any{"id": credit, "tenant_id": tenant, "operation_id": operation, "amount_millicents": json.Number("5000"), "reason": "service credit"}},
 		{"handoff", []string{"--document", document, "--invoice-id", "invoice 1/owner"}, "POST", "documents/" + document + "/handoff", map[string]any{"tenant_id": tenant, "external_invoice_id": "invoice 1/owner"}},
 		{"handoff-status", []string{"--document", document}, "GET", "documents/" + document + "/handoff", nil},
+		{"export", []string{"--document", document, "--provider", "paddle", "--customer", "ctm_01acme"}, "POST", "documents/" + document + "/invoice", map[string]any{"tenant_id": tenant, "provider": "paddle", "customer": "ctm_01acme"}},
+		{"export-status", []string{"--document", document}, "GET", "documents/" + document + "/invoice", nil},
 	} {
 		t.Run(tc.verb, func(t *testing.T) {
 			calls := 0
@@ -67,7 +69,8 @@ func TestProductBillingCommandContract(t *testing.T) {
 			}
 		})
 	}
-	for _, flags := range [][]string{{"finalize"}, {"credit", "--id", credit, "--operation", operation, "--amount-millicents", "-1", "--reason", "credit"}, {"credit", "--operation", operation, "--amount-millicents", "5000", "--reason", "credit"}, {"waive", "--operation", operation}, {"handoff", "--document", document}} {
+	for _, flags := range [][]string{{"finalize"}, {"credit", "--id", credit, "--operation", operation, "--amount-millicents", "-1", "--reason", "credit"}, {"credit", "--operation", operation, "--amount-millicents", "5000", "--reason", "credit"}, {"waive", "--operation", operation}, {"handoff", "--document", document},
+		{"export", "--document", document}, {"export", "--document", document, "--provider", "chargebee"}, {"export", "--provider", "stripe"}} {
 		args := append([]string{"statements", flags[0], "--app", "exports", "--tenant", tenant}, flags[1:]...)
 		if _, err := parseProductCommand(args); err == nil {
 			t.Errorf("accepted unsafe billing command: %q", args)

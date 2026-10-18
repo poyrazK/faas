@@ -1348,6 +1348,8 @@ func newServerWithDeps(
 	s.productControl.OwnerSessions = func() *session.Manager { return s.sessions }
 	s.productControl.OwnerRender = s.renderProductOwner
 	s.productControl.OperationDoctor = s.operation.ObserveProductDefinitionDoctor
+	s.productControl.ExportInvoice = s.statementInvoices.ExportProductStatement
+	s.productControl.InvoiceExport = s.statementInvoices.GetProductStatementExport
 	s.dataRepair.Host = operationHost{s}
 	s.edgeRules.Host = edgeRulesHost{s}
 	s.queueLeases.Host = queueLeasesHost{s}

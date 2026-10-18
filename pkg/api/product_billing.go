@@ -90,6 +90,16 @@ type ProductInvoiceHandoff struct {
 	CreatedAt         time.Time `json:"created_at"`
 }
 
+// ProductInvoiceExportRequest exports a finalized statement to the account's
+// own billing provider (ADR-20261018212918). Provider defaults to stripe;
+// customer defaults to the tenant's external reference when it is one of
+// that provider's customer IDs.
+type ProductInvoiceExportRequest struct {
+	TenantID string `json:"tenant_id"`
+	Provider string `json:"provider,omitempty"`
+	Customer string `json:"customer,omitempty"`
+}
+
 type ProductHandoffRequest struct {
 	TenantID          string `json:"tenant_id"`
 	ExternalInvoiceID string `json:"external_invoice_id"`
