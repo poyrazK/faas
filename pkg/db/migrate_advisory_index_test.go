@@ -1,115 +1,118 @@
 package db
 
-// spec: §5
-
 import (
 	"context"
-	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-// A migration waiter must preserve exclusion without retaining a snapshot
-// that prevents the current holder from building a concurrent index.
-func TestAcquireMigrationLockWaiterAllowsConcurrentIndex(t *testing.T) {
+// A migrator waiting for the fleet lock must not keep a snapshot that prevents
+// the lock holder's nontransactional concurrent index builds from completing.
+func TestAcquireMigrationLock_ContendersAllowConcurrentIndex(t *testing.T) {
 	pool := pgtest.OpenDatabase(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	if _, err := pool.Exec(ctx, "CREATE TABLE migration_index_probe(id bigint); INSERT INTO migration_index_probe VALUES(1)"); err != nil {
-		t.Fatal(err)
-	}
-	cfg := pool.Config()
-	if cfg.ConnConfig.RuntimeParams == nil {
-		cfg.ConnConfig.RuntimeParams = map[string]string{}
-	}
-	cfg.ConnConfig.RuntimeParams["application_name"] = "migration-index-waiter"
-	cfg.MaxConns = 1
-	waiterPool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(waiterPool.Close)
-	first, err := AcquireMigrationLock(ctx, pool)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = first(context.Background()) })
-	done := make(chan error, 1)
-	go func() {
-		release, err := AcquireMigrationLock(ctx, waiterPool)
-		if err == nil {
-			err = release(ctx)
-		}
-		done <- err
-	}()
-	for {
-		var attempted bool
-		err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity
-			WHERE datname=current_database() AND application_name='migration-index-waiter'
-			AND query LIKE '%advisory_lock%')`).Scan(&attempted)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if attempted {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatal("waiter did not attempt the migration lock", ctx.Err())
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
-	indexCtx, cancelIndex := context.WithTimeout(ctx, 5*time.Second)
-	defer cancelIndex()
-	if _, err := pool.Exec(indexCtx, "CREATE INDEX CONCURRENTLY migration_index_probe_idx ON migration_index_probe(id)"); err != nil {
-		t.Fatal("migration lock waiter blocked concurrent index", err)
-	}
-	select {
-	case err := <-done:
-		t.Fatal("waiter passed the migration gate before release", err)
-	default:
-	}
-	if err := first(ctx); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal("waiter failed after holder released", err)
-		}
-	case <-ctx.Done():
-		t.Fatal("waiter did not acquire the released lock", ctx.Err())
-	}
-}
-
-func TestAcquireMigrationLockCancelledWaitReleasesConnection(t *testing.T) {
-	pool := pgtest.OpenDatabase(t)
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-	defer cancel()
-	first, err := AcquireMigrationLock(ctx, pool)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = first(context.Background()) })
-	waitCtx, cancelWait := context.WithTimeout(ctx, 150*time.Millisecond)
-	defer cancelWait()
-	if _, err := AcquireMigrationLock(waitCtx, pool); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatal("cancelled waiter did not return its deadline", err)
-	}
-	if acquired := DirectPool(pool).Stat().AcquiredConns(); acquired != 1 {
-		t.Fatalf("cancelled waiter retained a connection: %d acquired, want only the holder", acquired)
-	}
-	if err := first(ctx); err != nil {
+	if _, err := pool.Exec(ctx, `CREATE TABLE migration_index_probe (id integer)`); err != nil {
 		t.Fatal(err)
 	}
 	release, err := AcquireMigrationLock(ctx, pool)
 	if err != nil {
-		t.Fatal("lock unavailable after cancelling waiter", err)
+		t.Fatal(err)
+	}
+	waitCtx, stop := context.WithCancel(ctx)
+	const contenders = 2
+	done := make(chan error, contenders)
+	var wg sync.WaitGroup
+	defer func() {
+		stop()
+		_ = release(context.WithoutCancel(ctx))
+		wg.Wait()
+	}()
+	for range contenders {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r, err := AcquireMigrationLock(waitCtx, pool)
+			if err == nil {
+				err = r(context.WithoutCancel(waitCtx))
+			}
+			done <- err
+		}()
+	}
+
+	// Wait until all pinned sessions have executed a query. The observer uses a
+	// fourth connection and excludes itself, so this works for both blocking
+	// acquisition and acquisition that leaves the waiting sessions idle.
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		var sessions int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity
+WHERE datname=current_database() AND pid<>pg_backend_pid() AND query_start IS NOT NULL`).Scan(&sessions); err != nil {
+			t.Fatal(err)
+		}
+		if pool.Stat().AcquiredConns() >= contenders+1 && sessions >= contenders+1 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-tick.C:
+		}
+	}
+	indexCtx, cancelIndex := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelIndex()
+	if _, err := pool.Exec(indexCtx, `CREATE INDEX CONCURRENTLY migration_index_probe_idx ON migration_index_probe (id)`); err != nil {
+		t.Fatalf("migration-lock contenders blocked the concurrent index: %v", err)
 	}
 	if err := release(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for range contenders {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+}
+
+func TestAcquireMigrationLock_CancelledReleaseDoesNotStrandLock(t *testing.T) {
+	pool := pgtest.OpenDatabase(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	release, err := AcquireMigrationLock(ctx, pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelled, stop := context.WithCancel(ctx)
+	stop()
+	if err := release(cancelled); err == nil {
+		t.Fatal("unlock with a cancelled context unexpectedly succeeded")
+	}
+
+	// A different pool guarantees the next attempt uses another PostgreSQL
+	// session rather than reentering a leaked advisory lock on the old session.
+	other, err := pgxpool.NewWithConfig(ctx, pool.Config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	acquireCtx, cancelAcquire := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelAcquire()
+	next, err := AcquireMigrationLock(acquireCtx, other)
+	if err != nil {
+		t.Fatalf("cancelled release stranded the migration lock: %v", err)
+	}
+	if err := next(ctx); err != nil {
 		t.Fatal(err)
 	}
 }

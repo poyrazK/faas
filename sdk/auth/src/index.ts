@@ -48,16 +48,34 @@ export type FactorChallenge = Readonly<{ id: string; type: string; expires_at?: 
 export type RecoveryCodes = Readonly<{ id: string; type: string; total: number; remaining?: number; codes?: readonly string[] }>
 export type AssuranceLevel = Readonly<{ current: 'aal1' | 'aal2' | null; next: 'aal1' | 'aal2' | null }>
 
-/** aal reads the assurance level of an access token without verifying it. */
-function aal(token: string): 'aal1' | 'aal2' {
+/** payload reads an access token's claims without verifying them. */
+function payload(token: string): Record<string, unknown> {
   try {
     const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
-    return JSON.parse(atob(part + '='.repeat((4 - part.length % 4) % 4))).aal === 'aal2' ? 'aal2' : 'aal1'
-  } catch { return 'aal1' }
+    const claims = JSON.parse(atob(part + '='.repeat((4 - part.length % 4) % 4)))
+    return claims && typeof claims === 'object' ? claims : {}
+  } catch { return {} }
+}
+
+/** aal reads the assurance level of an access token without verifying it. */
+function aal(token: string): 'aal1' | 'aal2' {
+  return payload(token).aal === 'aal2' ? 'aal2' : 'aal1'
+}
+
+/** The organization a session acts in, from its token's org_* claims. */
+export type ActiveOrganization = Readonly<{ id: string; slug: string; role: string; permissions: readonly string[] }>
+
+function activeOrganization(token: string): ActiveOrganization | null {
+  const c = payload(token)
+  if (typeof c.org_id !== 'string' || typeof c.org_slug !== 'string' || typeof c.org_role !== 'string') return null
+  const permissions = Array.isArray(c.org_permissions) ? c.org_permissions.filter((p): p is string => typeof p === 'string') : []
+  return { id: c.org_id, slug: c.org_slug, role: c.org_role, permissions }
 }
 
 /** A third-party app (an OAuth client) the user allowed to use their account. */
 export type ConnectedApp = Readonly<{ client: { id: string; name: string; uri?: string; logo_uri?: string }; scopes: string[]; granted_at: string }>
+/** One of the signed-in user's own sessions; current is the one making the call. */
+export type UserSession = Readonly<{ id: string; created_at: string; last_active_at: string; user_agent: string | null; ip: string | null; aal: string | null; current: boolean }>
 
 export type Organization = Readonly<{ id: string; slug: string; name: string; role?: string; created_at: string }>
 export type Member = Readonly<{ user_id: string; email: string; role: string; created_at: string }>
@@ -285,9 +303,16 @@ export function createAuthClient(options: AuthClientOptions) {
      */
     mfa: {
       listFactors: async (): Promise<Factor[]> => (await call<{ factors?: Factor[] }>('GET', '/auth/v1/user', { token: await bearer() })).factors ?? [],
-      /** Starts enrolling an authenticator app; show totp.qr_code, then challenge and verify to activate it. */
-      enrollTOTP: async (input: { friendlyName?: string; issuer?: string } = {}): Promise<TOTPEnrollment> =>
-        call<TOTPEnrollment>('POST', '/auth/v1/factors', { token: await bearer(), body: { factor_type: 'totp', ...(input.friendlyName ? { friendly_name: input.friendlyName } : {}), ...(input.issuer ? { issuer: input.issuer } : {}) } }),
+      /**
+       * Starts enrolling an authenticator app; show totp.qr_code (an image
+       * URL) or totp.secret, then challenge and verify to activate it.
+       */
+      enrollTOTP: async (input: { friendlyName?: string; issuer?: string } = {}): Promise<TOTPEnrollment> => {
+        const enrollment = await call<TOTPEnrollment>('POST', '/auth/v1/factors', { token: await bearer(), body: { factor_type: 'totp', ...(input.friendlyName ? { friendly_name: input.friendlyName } : {}), ...(input.issuer ? { issuer: input.issuer } : {}) } })
+        // GoTrue v2.197.0 returns the QR code as SVG markup.
+        const qr = enrollment.totp.qr_code
+        return { ...enrollment, totp: { ...enrollment.totp, qr_code: qr.startsWith('data:') ? qr : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(qr)}` } }
+      },
       /** Starts enrolling a phone for SMS codes; challenge and verify to activate it. */
       enrollPhone: async (input: { phone: string; friendlyName?: string }): Promise<Factor> =>
         call<Factor>('POST', '/auth/v1/factors', { token: await bearer(), body: { factor_type: 'phone', phone: input.phone, ...(input.friendlyName ? { friendly_name: input.friendlyName } : {}) } }),
@@ -359,6 +384,14 @@ export function createAuthClient(options: AuthClientOptions) {
       return withRedirect(`${origin}/ui/sign-in`, input.redirectTo)
     },
     /**
+     * The hosted account page, where people change their email address and
+     * password, second factors, passkeys, sign-in methods, connected apps and
+     * sessions. It signs in on its own; Back returns to redirectTo.
+     */
+    hostedAccountUrl(input: { redirectTo?: string } = {}): string {
+      return withRedirect(`${origin}/ui/account`, input.redirectTo)
+    },
+    /**
      * Completes a redirect from the hosted pages, a magic link or OAuth: reads
      * the session from the URL fragment, stores it and removes it from the
      * address bar. Returns null when the URL carries no session.
@@ -389,24 +422,62 @@ export function createAuthClient(options: AuthClientOptions) {
     async resetPasswordForEmail(email: string, input: { redirectTo?: string } & Captcha = {}): Promise<void> {
       await call('POST', withRedirect('/auth/v1/recover', input.redirectTo ?? `${origin}/ui/reset-password`), { body: { email, ...captcha(input) } })
     },
-    /** Ends this session, or every session of the user with scope "global". */
-    async signOut(input: { scope?: 'local' | 'global' } = {}): Promise<void> {
+    /**
+     * Ends this session, every session of the user with scope "global", or
+     * every session but this one with scope "others".
+     */
+    async signOut(input: { scope?: 'local' | 'global' | 'others' } = {}): Promise<void> {
       const session = parseSession(await store.get())
       try {
         if (session) await call('POST', `/auth/v1/logout?scope=${input.scope ?? 'local'}`, { token: session.accessToken })
       } catch (err) {
         if (!(err instanceof AuthError) || err.status >= 500) throw err
       } finally {
-        await clear()
+        if (input.scope !== 'others') await clear()
       }
     },
     onAuthStateChange(listener: (event: AuthEvent, session: Session | null) => void): () => void {
       listeners.add(listener)
       return () => { listeners.delete(listener) }
     },
+    /**
+     * The signed-in user's own sessions, most recently active first. Ending
+     * one signs that device out; end this one with signOut().
+     */
+    sessions: {
+      list: async () => (await authz<{ sessions: UserSession[] }>('GET', '/sessions')).sessions,
+      revoke: (session: string) => authz<null>('DELETE', `/sessions/${id(session)}`),
+    },
+    /**
+     * Deletes the signed-in user's account, when the Auth app allows it. The
+     * session must come from a sign-in in the last ten minutes (with the
+     * second step, if the user has one), else this fails with
+     * reauthentication_required; the last owner of an organization with
+     * other members gets last_owner. Clears the stored session.
+     */
+    async deleteAccount(): Promise<{ organizations_deleted: number }> {
+      const result = await authz<{ deleted: boolean; organizations_deleted: number }>('DELETE', '/account')
+      await clear()
+      return { organizations_deleted: result.organizations_deleted }
+    },
     organizations: {
       list: async () => (await authz<{ organizations: Organization[] }>('GET', '/orgs')).organizations,
       create: (input: { slug: string; name: string }) => authz<Organization>('POST', '/orgs', input),
+      /**
+       * Makes org (one the user belongs to) the session's active
+       * organization, or none with null, and refreshes the session so its
+       * token carries it. Needs organization claims on in the Auth app.
+       */
+      setActive: async (org: string | null): Promise<ActiveOrganization | null> => {
+        await authz('POST', '/active-organization', { org })
+        const session = await refresh()
+        return session ? activeOrganization(session.accessToken) : null
+      },
+      /** The session's active organization, read from its token; null when none. */
+      active: async (): Promise<ActiveOrganization | null> => {
+        const session = await getSession()
+        return session ? activeOrganization(session.accessToken) : null
+      },
     },
     members: {
       list: async (org: string) => (await authz<{ members: Member[] }>('GET', `/orgs/${id(org)}/members`)).members,

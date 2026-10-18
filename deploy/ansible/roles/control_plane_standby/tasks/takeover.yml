@@ -89,6 +89,12 @@
     label: "{{ item.path }}"
   changed_when: true
 
+- name: control_plane_standby — read the primary's recorded release
+  ansible.builtin.slurp:
+    src: "{{ faas_standby_stage_dir }}/release.json"
+  register: control_plane_standby_recorded_release
+  failed_when: false
+
 - name: control_plane_standby — next steps
   ansible.builtin.debug:
     msg: >-
@@ -96,3 +102,12 @@
       from {{ control_plane_standby_index.primary }}. Make this host the
       control plane in the manifest, render, and bootstrap it
       (docs/runbooks/ControlPlaneFailover.md).
+      {% if control_plane_standby_recorded_release.content is defined %}
+      {%- set release = control_plane_standby_recorded_release.content | b64decode | from_json -%}
+      Then deploy the release {{ release.primary }} last ran, commit
+      {{ release.git_sha }} (manifest {{ release.manifest_hash }}){{ ', per-unit versions ' ~ (release.unit_versions | to_json) if release.unit_versions else '' }},
+      with CP_HOST set to this host.
+      {% else %}
+      No release was recorded for {{ control_plane_standby_index.primary }}:
+      deploy the release it ran, from the CD history.
+      {% endif %}
