@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -220,6 +221,18 @@ type JobRunOptions struct {
 	// WORKDIR overrides (ADR-1790).
 	ProcessUser    string
 	ProcessWorkdir string
+}
+
+// validateJobRunProcess mirrors the job_runs process CHECKs (ADR-1790) so
+// both stores reject the same overrides.
+func validateJobRunProcess(opts JobRunOptions) error {
+	if len(opts.ProcessUser) > api.ImageRunUserMaxBytes || strings.ContainsRune(opts.ProcessUser, 0) {
+		return fmt.Errorf("%w: process user is invalid", ErrInvalidArgument)
+	}
+	if err := api.ValidateImageRunWorkdir(opts.ProcessWorkdir); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+	}
+	return nil
 }
 
 // JobInput binds an ordered input identity to one task. InputRef is passed to

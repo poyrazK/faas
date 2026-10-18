@@ -831,6 +831,9 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 	if len(inputs) > 0 && len(inputs) != tasks {
 		return JobRun{}, nil, fmt.Errorf("state: input count %d must equal tasks %d", len(inputs), tasks)
 	}
+	if err := validateJobRunProcess(opts); err != nil {
+		return JobRun{}, nil, err
+	}
 	if err := validateJobRunAttach(opts, tasks, retryMaxOverride); err != nil {
 		return JobRun{}, nil, err
 	}
