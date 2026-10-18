@@ -306,3 +306,23 @@ with the pinned 0.29.0 generator pass; 61 Python Auth, organization and MCP
 readiness client tests pass. These local reruns use Go 1.26.9 and PostgreSQL 16
 without race detection. Fresh PR checks must qualify the integrated source
 before merge; production deployment and native KVM acceptance remain pending.
+
+## Concurrent migration-lock regression
+
+CI exposed a snapshot dependency between waiting fleet migrators and MCP's
+nontransactional concurrent index build. A blocking advisory-lock query retained
+its statement snapshot while the lock owner waited for that snapshot to finish.
+The existing three-migrator regression reproduced the index lock timeout locally.
+
+Migration-lock acquisition now polls `pg_try_advisory_lock` on the same pinned
+direct-pool session and key, completing each unsuccessful query before waiting.
+Acquisition and unlock errors close an uncertain lock-owning session before
+returning its pool slot. Cancellation therefore cannot strand an advisory lock
+on an idle pooled connection. Serialization and migration SQL are unchanged.
+
+Two PostgreSQL regressions prove that contenders permit a concurrent index build
+and that cancellation during release does not block a separate pool. Both failed
+against the previous helper. After the fix, these tests and the existing
+three-migrator regression pass with race detection (12.889s); the entire database
+package also passes with race detection (79.838s). The configured database-package
+linter reports zero issues.

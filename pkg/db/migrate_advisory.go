@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -53,18 +54,14 @@ var ErrMigrationLockNotHeld = errors.New("db: migration lock not held")
 // Context cancellation:
 //   - Before the lock is acquired: returns ctx.Err() immediately. No
 //     connection is held.
-//   - After the lock is acquired: the caller is expected to invoke the
-//     release closure (which still runs the unlock on the live pinned
-//     connection — pg_advisory_unlock does not require a live ctx, only
-//     a live connection). If the caller forgets, the connection returns
-//     to the pool when its reference is GC'd, and the session ends, so
-//     PG auto-releases the lock at connection close. We log a warning
-//     in the test harness to catch the "forgot to release" bug.
+//   - After the lock is acquired: the caller must invoke the release closure.
+//     If the unlock fails, that session is closed before returning its pool
+//     slot, so cancellation cannot strand an advisory lock on an idle session.
 //
 // Errors:
 //   - nil pool  → "db: AcquireMigrationLock: nil pool"
 //   - pool.Acquire failure → wrapped
-//   - pg_advisory_lock failure → wrapped (after rolling back the pinned conn)
+//   - advisory-lock query failure → wrapped after closing the pinned session
 //
 // The helper does NOT acquire the goose shim or call MigrateUp — the
 // caller composes them. The lock and the migration are separate concerns
@@ -86,14 +83,27 @@ func AcquireMigrationLock(ctx context.Context, pool *pgxpool.Pool) (release func
 		return nil, fmt.Errorf("db: acquire pool conn for migration lock: %w", err)
 	}
 
-	// Use the session-scoped variant: returns at session end OR explicit
-	// unlock. We use ExecContext (not QueryRowContext.Scan) because the
-	// variant returns void — the boolean "acquired" parameter is irrelevant
-	// when we use the blocking form (the try-form is pg_try_advisory_lock,
-	// which we deliberately do NOT use here).
-	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", MigrationLockKey); err != nil {
-		conn.Release()
-		return nil, fmt.Errorf("db: pg_advisory_lock(%d): %w", MigrationLockKey, err)
+	// Blocking pg_advisory_lock keeps a statement snapshot while waiting.
+	// CREATE INDEX CONCURRENTLY can then wait for that snapshot while its
+	// migrator owns this lock. Complete each failed try before waiting so
+	// competing daemons do not prevent the current migrator from progressing.
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		var acquired bool
+		if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", MigrationLockKey).Scan(&acquired); err != nil {
+			discardMigrationLockConn(ctx, conn)
+			return nil, fmt.Errorf("db: pg_try_advisory_lock(%d): %w", MigrationLockKey, err)
+		}
+		if acquired {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			conn.Release() // the last completed try did not acquire the lock
+			return nil, fmt.Errorf("db: wait for migration lock: %w", ctx.Err())
+		case <-tick.C:
+		}
 	}
 
 	var released bool
@@ -103,35 +113,31 @@ func AcquireMigrationLock(ctx context.Context, pool *pgxpool.Pool) (release func
 		}
 		released = true
 
-		// Bound the unlock round-trip with the caller's release ctx +
-		// pgxLockUnlockTimeout. If releaseCtx is already cancelled, the
-		// Exec errors with ctx.Err() — that's fine, the conn is still
-		// released below and PG auto-frees the lock at session end, so
-		// the lock cannot leak. Using a context.Background() here would
-		// be wrong: pgx checks cancellation and an unlock-after-shutdown
-		// would silently block the shutdown wait group.
+		// Respect the caller's release deadline. A failed unlock closes the
+		// session; returning a healthy but still-locked connection to the pool
+		// would otherwise strand the migration lock after cancellation.
 		unlockCtx, cancel := context.WithTimeout(releaseCtx, pgxLockUnlockTimeout)
 		defer cancel()
 
 		_, err := conn.Exec(unlockCtx, "SELECT pg_advisory_unlock($1)", MigrationLockKey)
-		// Always release the connection — even if the unlock Exec errored,
-		// the connection must go back to the pool. PG auto-releases the
-		// lock at session end if the unlock call raced a network error,
-		// so leaking the conn is the only way the lock would survive.
-		conn.Release()
 		if err != nil {
+			discardMigrationLockConn(releaseCtx, conn)
 			return fmt.Errorf("db: pg_advisory_unlock(%d): %w", MigrationLockKey, err)
 		}
+		conn.Release()
 		return nil
 	}
 	return release, nil
 }
 
-// pgxLockUnlockTimeout bounds the unlock round-trip during release. The
-// unlock is a single Exec on a pinned connection we already own; under
-// healthy Postgres this is sub-millisecond. Five seconds is the safety
-// margin: a hung connection returns to the pool after this window and
-// PG's session-end auto-release frees the lock. Anything longer means
-// the network or Postgres itself is gone, in which case the daemon is
-// about to die anyway and the caller will log the timeout.
-const pgxLockUnlockTimeout = 5 * 1_000_000_000 // 5s in ns; matches pgxpool default
+// A failed query may have acquired the lock before the client lost its reply.
+// End the session rather than returning an uncertain lock owner to the pool.
+func discardMigrationLockConn(parent context.Context, conn *pgxpool.Conn) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), pgxLockUnlockTimeout)
+	defer cancel()
+	_ = conn.Conn().Close(ctx)
+	conn.Release()
+}
+
+// Bound both the unlock round-trip and closing an uncertain lock owner.
+const pgxLockUnlockTimeout = 5 * time.Second
