@@ -66,6 +66,12 @@ func testAppRuntimeGeneration(t *testing.T, store runtimeAppEnvTestStore) {
 		{name: "project environment removed", moves: true, change: func(ctx context.Context, f runtimeAppEnvFixture) error {
 			return store.DeleteProjectEnvironment(ctx, f.account.ID, f.project.ID, "other")
 		}},
+		// An operator cold boot (ADR-1523) advances the deployment's recovery
+		// generation; thaw tickets and owner cache entries rely on it moving.
+		{name: "operator cold boot", moves: true, change: func(ctx context.Context, f runtimeAppEnvFixture) error {
+			_, err := store.(state.SnapshotRecoveryStore).InvalidateSnapshotRecovery(ctx, f.deployments["production"].ID)
+			return err
+		}},
 		{name: "snapshot miss recorded", change: func(ctx context.Context, f runtimeAppEnvFixture) error {
 			return store.DeploymentRecordSnapshotMiss(ctx, f.deployments["production"].ID, time.Now().Add(time.Minute))
 		}},
