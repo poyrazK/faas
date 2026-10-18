@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/canary"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -86,6 +87,9 @@ func (a *canaryStoreAdapter) CircuitBreakerObservation(ctx context.Context, row 
 	if err != nil {
 		return canary.CircuitBreakerObservation{}, fmt.Errorf("canary health: read candidate telemetry: %w", err)
 	}
+	if err := a.addProbeEvidence(ctx, row, since, now, &out); err != nil {
+		return canary.CircuitBreakerObservation{}, fmt.Errorf("canary health: read synthetic probe totals: %w", err)
+	}
 	_, out.CPURequestSignalAvailable = a.store.(canaryHealthTelemetrySummaryReader)
 
 	if a.promQL == nil {
@@ -122,6 +126,24 @@ func (a *canaryStoreAdapter) CircuitBreakerObservation(ctx context.Context, row 
 	}
 	out.OOMSignalAvailable = true
 
+	// ADR-1446 crash-loop gate: liveness-driven restarts need no request
+	// sample, so they catch a crash-looping release on a quiet app. The same
+	// always-present sentinel series proves the family is exported.
+	livenessCoverage, err := a.promQL.QueryScalar(ctx, `(count({__name__=~".*_liveness_restarts_total"}) or vector(0))`)
+	if err != nil {
+		return canary.CircuitBreakerObservation{}, fmt.Errorf("canary health: query liveness restart metric coverage: %w", err)
+	}
+	if livenessCoverage <= 0 {
+		return out, nil
+	}
+	if out.CandidateLivenessRestarts, err = a.livenessRestarts(ctx, row.AppID, row.ID, int(window.Seconds())); err != nil {
+		return canary.CircuitBreakerObservation{}, fmt.Errorf("canary health: query candidate liveness restarts: %w", err)
+	}
+	if out.StableLivenessRestarts, err = a.livenessRestarts(ctx, row.AppID, out.StableDeploymentID, int(window.Seconds())); err != nil {
+		return canary.CircuitBreakerObservation{}, fmt.Errorf("canary health: query stable liveness restarts: %w", err)
+	}
+	out.LivenessSignalAvailable = true
+
 	dependencyCoverageQuery := `(count({__name__=~".*_service_dependency_calls_total"}) or vector(0))`
 	dependencyCoverage, err := a.promQL.QueryScalar(ctx, dependencyCoverageQuery)
 	if err != nil {
@@ -144,6 +166,44 @@ func (a *canaryStoreAdapter) CircuitBreakerObservation(ctx context.Context, row 
 	out.Stable.DependencyErrors = stableErrors
 	out.DependencySignalAvailable = true
 	return out, nil
+}
+
+// addProbeEvidence adds the stage's synthetic probe responses (ADR-1446:
+// apid's default probe, plus any ADR-847 route probes). Evidence counts only
+// when both sides were probed and fewer than half of either side's probes
+// were rejected by the app's own auth, the ADR-847 rule for "unknown".
+func (a *canaryStoreAdapter) addProbeEvidence(ctx context.Context, row canary.CanaryRow, since, now time.Time, out *canary.CircuitBreakerObservation) error {
+	probes, ok := a.store.(state.DefaultRouteProbeStore)
+	if !ok {
+		return nil
+	}
+	candidate, stable, err := probes.RouteProbeTotals(ctx, row.AppID, row.ID, out.StableDeploymentID, since, now)
+	if err != nil {
+		return err
+	}
+	if !probeEvidenceUsable(candidate) || !probeEvidenceUsable(stable) {
+		return nil
+	}
+	out.Candidate.ProbeRequests = candidate.Requests - candidate.Unauthenticated
+	out.Candidate.ProbeServerErrors = candidate.ServerErrors
+	out.Stable.ProbeRequests = stable.Requests - stable.Unauthenticated
+	out.Stable.ProbeServerErrors = stable.ServerErrors
+	return nil
+}
+
+func probeEvidenceUsable(t state.RouteProbeTotal) bool {
+	return t.Requests > 0 && float64(t.Unauthenticated) < api.RouteHealthProbeUnauthenticatedShare*float64(t.Requests)
+}
+
+func (a *canaryStoreAdapter) livenessRestarts(ctx context.Context, appID, deploymentID string, windowSeconds int) (float64, error) {
+	query := fmt.Sprintf(
+		`(sum(increase({__name__=~".*_liveness_restarts_total",app=%s,deployment=%s}[%ds])) or vector(0))`,
+		strconv.Quote(appID), strconv.Quote(deploymentID), windowSeconds)
+	value, err := a.promQL.QueryScalar(ctx, query)
+	if err != nil {
+		return 0, err
+	}
+	return math.Max(0, value), nil
 }
 
 func (a *canaryStoreAdapter) dependencyCallSummary(ctx context.Context, appID, deploymentID string, windowSeconds int) (calls, errors int64, err error) {

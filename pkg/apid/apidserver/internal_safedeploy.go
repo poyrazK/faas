@@ -34,6 +34,8 @@ func (s *server) mountInternalSafeDeploy(mux *http.ServeMux, listenerAddr, canar
 		internalSafeDeployAuth(actionToken, s.internalSafeDeployReady))
 	mux.HandleFunc("POST /v1/internal/safe-deploy/deployments/{id}/canary/advance",
 		internalSafeDeployAuth(canaryToken, s.internalAdvanceCanary))
+	mux.HandleFunc("POST /v1/internal/safe-deploy/deployments/{id}/canary/hold",
+		internalSafeDeployAuth(canaryToken, s.internalRecordRolloutHold))
 	mux.HandleFunc("POST /v1/internal/safe-deploy/deployments/{id}/route-health/recover",
 		internalSafeDeployAuth(actionToken, s.internalRecoverCanaryRouteHealth))
 	mux.HandleFunc("POST /v1/internal/safe-deploy/deployments/{id}/rollouts/recover",
@@ -87,7 +89,7 @@ func internalSafeDeployAuth(token string, next http.HandlerFunc) http.HandlerFun
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		next(w, r)
+		next(w, r.WithContext(context.WithValue(r.Context(), internalSafeDeployRequestKey{}, true)))
 	}
 }
 

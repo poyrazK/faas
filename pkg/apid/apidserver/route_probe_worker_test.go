@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/routehealth"
 	"github.com/onebox-faas/faas/pkg/routeprobe"
@@ -89,6 +90,9 @@ func (s *sparseReportStore) GetRouteHealthReport(_ context.Context, _, _, deploy
 
 // adr: 847
 func TestRouteProbeWorkerProbesSparseSelectorsOncePerMinute(t *testing.T) {
+	// The fixture app is on the safe release policy; turn the ADR-1446
+	// default probe off so only the ADR-847 selectors are probed.
+	t.Setenv(release.DefaultEnabledEnv, "false")
 	old := routeProbeChallengeDelay
 	routeProbeChallengeDelay = 0
 	t.Cleanup(func() { routeProbeChallengeDelay = old })

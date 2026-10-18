@@ -49,6 +49,7 @@ BumpInstanceTailCount
 CancelInstanceMigration
 CancelInvocation
 CancelUploadSession
+CheckOrgAccess
 CheckWebhookReplay
 ClaimNextPendingRun
 ClearDeployment
@@ -137,7 +138,6 @@ DeleteAppLogDrain
 DeleteAppOpenAPIDoc
 DeleteAppRegistryCredential
 DeleteAppSecret
-DeleteAppSecretInScope
 DeleteAppTrustedSigner
 DeleteAppWebhook
 DeleteComputeNode
@@ -364,6 +364,7 @@ ListOrphanedJobInstances
 ListOwnedCronsByNodeID
 ListPendingTenantHostnames
 ListProjectsForAccount
+ListProjectsForOrg
 ListRecentEventsForAccount
 ListRequestTelemetryByAccountTrace
 ListRequestTelemetryByApp
@@ -431,6 +432,7 @@ OperatorAuditTraceCoverage
 OperatorIntentOutcomeMissingCounts
 OperatorOverviewActivity
 OperatorTenantCounts
+OrgAccessSnapshot
 OrgByID
 OrgByPersonalAccount
 OrgBySlug
@@ -439,6 +441,7 @@ PaddleOverageDedupeSchema
 PerAccountRateLimitAggregate
 Ping
 ProjectByID
+ProjectByOrgSlug
 ProjectByRepo
 ProjectBySlug
 ProjectEnvironmentApprovalByID
@@ -500,7 +503,6 @@ RotateOrgAPIKey
 RotateOrgAPIKeyWithProvenance
 RunningInstanceForApp
 SafedeployListPendingRollouts
-SafedeployStampRollout
 ScheduleWorkflowRun
 SetAccountEgressAllowlistExtra
 SetAccountKeyGraceWindow
