@@ -316,6 +316,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"data_pipeline_setups":                     CloneSchemaOperational,
 		"data_pipelines":                           CloneSchemaConfiguration,
 		"data_repair_rehearsals":                   CloneSchemaOperational,
+		"managed_postgres_live_keys":               CloneSchemaOperational,
 		"deployment_mcp_readiness_evidence":        CloneSchemaOperational,
 		"deployment_mcp_readiness_monitors":        CloneSchemaOperational,
 		"deployment_mcp_readiness_overrides":       CloneSchemaOperational,

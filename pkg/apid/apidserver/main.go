@@ -1586,6 +1586,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}
 	srv.WithManagedPostgres(managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector)
+	if err := srv.configureLiveQueries(deps.pool, deps.getenv); err != nil {
+		return fmt.Errorf("apid live queries configuration: %w", err)
+	}
 	if err := srv.configureDataPipelines(*cfg, deps.pool); err != nil {
 		return err
 	}
