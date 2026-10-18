@@ -7,8 +7,46 @@ from faas_sdk.api.managed_postgres import (
     get_managed_postgres_connection_budget,
 )
 from faas_sdk.client import AuthenticatedClient
+from faas_sdk.models.connection_budget_capacity import ConnectionBudgetCapacity
 from faas_sdk.models.data_api_connection_budgets import DataAPIConnectionBudgets
 from faas_sdk.models.managed_postgres_connection_budget import ManagedPostgresConnectionBudget
+
+
+def test_verified_zero_capacity_preserves_source_and_freshness() -> None:
+    value = {
+        "state": "verified",
+        "usable_connections": 0,
+        "source": "provider_api",
+        "checked_at": "2026-10-17T09:00:00+00:00",
+        "expires_at": "2026-10-17T09:00:30+00:00",
+    }
+    capacity = ConnectionBudgetCapacity.from_dict(value)
+    assert capacity.usable_connections == 0
+    assert capacity.to_dict() == value
+
+
+def test_runtime_coverage_preserves_reported_demand_and_missing_consumers() -> None:
+    from faas_sdk.models.connection_budget_demand import ConnectionBudgetDemand
+
+    value = {
+        "data_api_resident_estimate": 4,
+        "data_api_wake_estimate": 6,
+        "auth_wake_estimate": 0,
+        "control_headroom": 1,
+        "migration_headroom": 0,
+        "modeled_peak_connections": 7,
+        "runtime_observations": {
+            "state": "partial",
+            "source": "workload_report",
+            "observed_instances": 1,
+            "unobserved_instances": 1,
+            "parked_instances": 1,
+            "configured_connections": 2,
+            "checked_at": "2026-10-17T09:00:00+00:00",
+            "expires_at": "2026-10-17T09:00:30+00:00",
+        },
+    }
+    assert ConnectionBudgetDemand.from_dict(value).to_dict() == value
 
 
 def test_budget_clients_preserve_unknown_capacity_without_inventing_zero() -> None:

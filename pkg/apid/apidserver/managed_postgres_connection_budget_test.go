@@ -84,3 +84,18 @@ func TestConnectionBudgetAPIIsReadOnlyAccountScopedAndCredentialFree(t *testing.
 		t.Fatal("read-only report changed the binding", unchanged, err)
 	}
 }
+
+func TestRuntimeConnectionReportRouteRejectsCustomerCredentials(t *testing.T) {
+	env := apidserver.Setup(t, api.PlanPro)
+	for _, authorization := range []string{"", "Bearer fp_customer-key"} {
+		r := httptest.NewRequest(http.MethodPost, "/v1/runtime/data-api/connection-observations", strings.NewReader(`{}`))
+		if authorization != "" {
+			r.Header.Set("Authorization", authorization)
+		}
+		w := httptest.NewRecorder()
+		(*env.H()).ServeHTTP(w, r)
+		if w.Code != http.StatusUnauthorized {
+			t.Fatal(w.Code, w.Body.String())
+		}
+	}
+}

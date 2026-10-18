@@ -1056,7 +1056,9 @@ func (w *serviceProxyTraceResponseWriter) WriteHeader(status int) {
 	if w.status != 0 {
 		return
 	}
-	w.status = status
+	if !isInformationalStatus(status) {
+		w.status = status
+	}
 	w.ResponseWriter.WriteHeader(status)
 }
 
@@ -1590,7 +1592,7 @@ type serviceProxyUpgradeProbeWriter struct {
 }
 
 func (w *serviceProxyUpgradeProbeWriter) WriteHeader(status int) {
-	if w.status == 0 {
+	if w.status == 0 && !isInformationalStatus(status) {
 		w.status = status
 		if w.onResponse != nil {
 			w.onResponse(status)
@@ -1661,6 +1663,8 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 	limit := maxAttempts
 	rerouted := false
 	frozenRetried := false
+	var previous *serviceProxyResponseWriter
+	retryMinRemaining := policy.MinRemaining
 	for attempt := 0; attempt < limit; attempt++ {
 		endpoint, ok := p.pick(appID, endpoints)
 		if !ok && !rerouted {
@@ -1686,17 +1690,29 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 		}
 		forwardReq := request
 		if attempt > 0 {
+			if !retryTimeAvailable(request, retryMinRemaining, p.now()) {
+				p.metrics.IncRetryExhausted(RetrySkipBudget)
+				previous.commit()
+				previous.commitTrailers()
+				return
+			}
 			var err error
 			forwardReq, err = replayRequest(request)
 			if err != nil {
 				p.metrics.IncRetryExhausted(RetrySkipBodyNotReplay)
+				previous.commit()
+				previous.commitTrailers()
 				return
 			}
 		}
+		retryMinRemaining = policy.MinRemaining
 		applyServiceEndpointIdentity(forwardReq, target, endpoint, caller)
 		signal := &staleTargetSignal{}
 		signal.onStale = func() { p.retireEndpoint(appID, endpoint.InstanceID, signal.frozen.Load()) }
 		buffer := newServiceProxyResponseWriter(w)
+		// Retain this response until the next request is ready to forward;
+		// rewinding its body or refreshing its route can still fail.
+		previous = buffer
 		// withStaleTargetSignal intentionally inherits the inbound request
 		// context so the bridge can report a stale target to this retry loop.
 		forwardReq = forwardReq.WithContext(withStaleTargetSignal(forwardReq.Context(), signal)) //nolint:contextcheck // request context is deliberately wrapped with request-local stale-target state.
@@ -1720,18 +1736,27 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			buffer.commitTrailers()
 			return
 		}
-		if buffer.committed {
+		if buffer.committed || buffer.interimSent {
 			p.metrics.IncRetryExhausted(RetrySkipCommitted)
+			buffer.commit()
 			buffer.commitTrailers()
 			return
 		}
 		if signal.frozen.Load() && !frozenRetried {
 			// The guest never saw a request vmmd refused as frozen, so one
 			// retry on a thawed replica sits outside the retry policy.
+			// It must still respect cancellation and the request deadline.
+			if !retryTimeAvailable(request, 0, p.now()) {
+				p.metrics.IncRetryExhausted(RetrySkipBudget)
+				buffer.commit()
+				buffer.commitTrailers()
+				return
+			}
 			frozenRetried = true
 			if next, ok := p.frozenRetryEndpoints(request, appID, deploymentID, endpoint.InstanceID, endpoints); ok {
 				endpoints = next
 				limit++
+				retryMinRemaining = 0
 				continue
 			}
 		}
@@ -1744,13 +1769,7 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			buffer.commitTrailers()
 			return
 		}
-		remaining := time.Duration(1<<63 - 1)
-		if budget, ok := reqbudget.FromContext(request.Context()); ok {
-			remaining = budget.Remaining(p.now())
-		} else if deadline, ok := request.Context().Deadline(); ok {
-			remaining = deadline.Sub(p.now())
-		}
-		if remaining < policy.MinRemaining {
+		if !retryTimeAvailable(request, policy.MinRemaining, p.now()) {
 			p.metrics.IncRetryExhausted(RetrySkipBudget)
 			buffer.commit()
 			buffer.commitTrailers()
@@ -2117,12 +2136,13 @@ func serviceProxyGRPCStatus(header http.Header) (string, bool) {
 }
 
 type serviceProxyResponseWriter struct {
-	onResponse func(int)
-	dst        http.ResponseWriter
-	header     http.Header
-	status     int
-	committed  bool
-	buffer     bytes.Buffer
+	onResponse  func(int)
+	dst         http.ResponseWriter
+	header      http.Header
+	status      int
+	committed   bool
+	interimSent bool
+	buffer      bytes.Buffer
 }
 
 func newServiceProxyResponseWriter(dst http.ResponseWriter) *serviceProxyResponseWriter {
@@ -2133,6 +2153,15 @@ func (w *serviceProxyResponseWriter) Header() http.Header { return w.header }
 
 func (w *serviceProxyResponseWriter) WriteHeader(status int) {
 	if w.status != 0 {
+		return
+	}
+	if isInformationalStatus(status) {
+		header := w.dst.Header().Clone()
+		for key, values := range w.header {
+			header[key] = values
+		}
+		writeInformationalResponse(w.dst, status, header)
+		w.interimSent = true
 		return
 	}
 	w.status = status
@@ -2172,20 +2201,14 @@ func (w *serviceProxyResponseWriter) Flush() {
 // after the headers. Go records an undeclared trailer as an ordinary header
 // key carrying http.TrailerPrefix, and a declared one appears as a new plain
 // key after the response starts. Either way it lands in this buffer's own map
-// and never reaches the client unless it is copied across afterwards --
-// which for gRPC means the caller reads a complete stream carrying no
-// grpc-status and has to infer success.
+// and never reaches the client unless it is copied across afterwards.
+// Declared trailer values may also change after commit: replaying an initial
+// grpc-status=0 instead of the final error would report a failed RPC as success.
 func (w *serviceProxyResponseWriter) commitTrailers() {
 	if !w.committed {
 		return
 	}
-	dst := w.dst.Header()
-	for key, values := range w.header {
-		if _, present := dst[key]; present && !strings.HasPrefix(key, http.TrailerPrefix) {
-			continue
-		}
-		dst[key] = append([]string(nil), values...)
-	}
+	copyBufferedResponseTrailers(w.dst.Header(), w.header)
 }
 
 func (w *serviceProxyResponseWriter) Unwrap() http.ResponseWriter { return w.dst }

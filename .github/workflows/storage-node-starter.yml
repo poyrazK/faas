@@ -10,8 +10,8 @@ jobs:
   qualify:
     name: managed storage Node (embedded app + gateway journey)
     runs-on: ubuntu-latest
-    # Cold race builds of the gateway and native fixture packages share this
-    # budget with the starter journey; keep each test's own timeout unchanged.
+    # A cold cache compiles both the gateway journey and native fixture race
+    # binaries; allow both sets of checks to finish on hosted runners.
     timeout-minutes: 30
     env:
       GOMEMLIMIT: 2GiB
@@ -28,6 +28,7 @@ jobs:
           key: go-storage-starter-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}
           restore-keys: |
             go-light-test-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-test-2-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-e2e-${{ runner.os }}-
       - uses: actions/setup-go@v7
         with:

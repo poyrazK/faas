@@ -198,6 +198,26 @@ From the repo where you want the workflow, run:
 gregale deploy --github --name my-app > .github/workflows/deploy.yml
 ```
 
+The generator reuses the saved app, selected connection's API address, and
+registered project environment. Override them with `--name`, the global
+`--profile`, and `--environment`. `--repo OWNER/NAME` and `--ref REF` are emitted
+as actual Action inputs. For example:
+
+```sh
+gregale --profile staging deploy --github --name my-app --environment staging --repo example/backend --ref release/v1
+gregale --json deploy --github --name my-app
+```
+
+The JSON form returns `app`, `environment`, and the generated `workflow` text.
+The default Action pin supports these inputs; a custom `--pinned-sha` must also
+support the inputs in the generated workflow.
+Generation writes no files or remote resources; redirection in the first example
+is performed by the shell. Unsupported settings, including a local source path,
+resource overrides, and worktree mode, are rejected rather than omitted. The
+generated Action deploys a repository ref, not local working files. Its GitHub
+Environment matches an explicit Gregale environment; otherwise the workflow
+keeps the `production` GitHub Environment gate.
+
 The CLI emits a copy-paste workflow body to stdout. When run
 inside an Actions runner (the `GITHUB_REPOSITORY` +
 `GITHUB_SHA` env vars are set), the snippet hard-codes
@@ -218,15 +238,12 @@ ecosystems are preserved, and `--dry-run` previews both files.
 
 ### What goes in the snippet
 
-- `api-key: ${{ secrets.GREGALE_API_KEY }}` — never a literal.
-  Provision a deploy-scoped API key in the Gregale dashboard
-  and add it to the workflow's environment secrets.
-- `api-base: https://api.faas.example` — substitute your
-  control-plane host. Hobby/Pro/Scale customers each have a
-  different host. The snippet's `api-base` placeholder is a
-  string the customer is expected to edit.
-- `app: my-app` — the slug from `gregale connect`. The snippet
-  generator picks the slug from `--name` / cwd.
+- `id-token: write` — the Action uses GitHub OIDC by default. No stored CLI
+  credential or secret value is copied into the workflow. Configure the required
+  repository binding as described below.
+- `api-base` — the effective API address from the selected connection.
+- `app` — the explicit name, saved app, or directory-derived default.
+- `repo`, `ref`, and `environment` — the selected source and deployment scope.
 - `wait: "true"` — the generated workflow waits for a terminal result, so
   the job reports a failed release as failed. Set it to `"false"` only for
   an explicit queue-only workflow; its Check Run is named

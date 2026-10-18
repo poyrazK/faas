@@ -1,0 +1,183 @@
+# One owner scope per target; never sum duplicate monitors into a global backlog.
+groups:
+  - name: gregale_event_recovery
+    interval: 30s
+    rules:
+      - record: gregale_event_recovery:evidence_eligible
+        expr: |
+          (min by (job, instance) (up{gregale_event_recovery="true"}) == 1)
+          and on (job, instance)
+          (min by (job, instance) (gregale_event_acknowledgment_recovery_read_success{gregale_event_recovery="true"}) == 1)
+          and on (job, instance)
+          (min by (job, instance) (gregale_event_acknowledgment_recovery_evidence_eligible{gregale_event_recovery="true"}) == 1)
+          and on (job, instance)
+          (min by (job, instance) (gregale_event_acknowledgment_recovery_complete{gregale_event_recovery="true"}) == 1)
+          and on (job, instance)
+          (max by (job, instance) (gregale_event_acknowledgment_recovery_observation_timestamp_seconds{gregale_event_recovery="true"}) <= time())
+          and on (job, instance)
+          ((time() - min by (job, instance) (gregale_event_acknowledgment_recovery_observation_timestamp_seconds{gregale_event_recovery="true"}))
+            <= on (job, instance) min by (job, instance) (gregale_event_acknowledgment_recovery_max_observation_age_seconds{gregale_event_recovery="true"}))
+          and on (job, instance)
+          (max by (job, instance) (gregale_event_acknowledgment_recovery_observation_age_seconds{gregale_event_recovery="true"})
+            <= on (job, instance) min by (job, instance) (gregale_event_acknowledgment_recovery_max_observation_age_seconds{gregale_event_recovery="true"}))
+
+      - record: gregale_event_recovery:parked
+        expr: |
+          max by (job, instance) (gregale_event_acknowledgment_recovery_parked{gregale_event_recovery="true"})
+          and on (job, instance) gregale_event_recovery:evidence_eligible
+      - record: gregale_event_recovery:due
+        expr: |
+          max by (job, instance) (gregale_event_acknowledgment_recovery_due{gregale_event_recovery="true"})
+          and on (job, instance) gregale_event_recovery:evidence_eligible
+      - record: gregale_event_recovery:stalled
+        expr: |
+          max by (job, instance) (gregale_event_acknowledgment_recovery_stalled{gregale_event_recovery="true"})
+          and on (job, instance) gregale_event_recovery:evidence_eligible
+      - record: gregale_event_recovery:outstanding
+        expr: |
+          max by (job, instance) (gregale_event_acknowledgment_recovery_outstanding{gregale_event_recovery="true"})
+          and on (job, instance) gregale_event_recovery:evidence_eligible
+
+      - alert: GregaleEventRecoveryParked
+        expr: gregale_event_recovery:parked >= 1
+        for: 5m
+        labels:
+          severity: warn
+          family: event_recovery
+        annotations:
+          summary: "Acknowledgment callbacks need operator attention"
+          description: "{{ $labels.job }} / {{ $labels.instance }} has retained parked callbacks. Inspect scoped metadata and authorize any larger claim grant explicitly."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/GregaleEventRecovery.md"
+      - alert: GregaleEventRecoveryDueBacklog
+        expr: gregale_event_recovery:due >= 100
+        for: 5m
+        labels:
+          severity: warn
+          family: event_recovery
+        annotations:
+          summary: "Acknowledgment callback backlog remains due"
+          description: "{{ $labels.job }} / {{ $labels.instance }} has at least 100 due callbacks in complete fresh evidence. Check the recovery host and dependencies."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/GregaleEventRecovery.md"
+      - alert: GregaleEventRecoveryStalled
+        expr: gregale_event_recovery:stalled >= 1
+        for: 5m
+        labels:
+          severity: warn
+          family: event_recovery
+        annotations:
+          summary: "Acknowledgment callback recovery is stalled"
+          description: "{{ $labels.job }} / {{ $labels.instance }} has eligible work older than the configured stall interval. Parked work is counted separately."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/GregaleEventRecovery.md"
+      - alert: GregaleEventRecoveryEvidenceUnavailable
+        expr: |
+          (min by (job, instance) (up{gregale_event_recovery="true"}) == 1)
+          unless on (job, instance) gregale_event_recovery:evidence_eligible
+        for: 2m
+        labels:
+          severity: warn
+          family: event_recovery
+        annotations:
+          summary: "Recovery health evidence is unavailable"
+          description: "{{ $labels.job }} / {{ $labels.instance }} is reachable but recovery health is missing, failed, incomplete, stale or non-advancing. Missing backlog is unknown."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/GregaleEventRecovery.md"
+      - alert: GregaleEventRecoveryScrapeDown
+        expr: min by (job, instance) (up{gregale_event_recovery="true"}) == 0
+        for: 5m
+        labels:
+          severity: warn
+          family: event_recovery
+        annotations:
+          summary: "Recovery health scrape is down"
+          description: "Prometheus cannot scrape {{ $labels.job }} / {{ $labels.instance }}. Restore observation access before interpreting backlog."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/GregaleEventRecovery.md"
+      - alert: GregaleEventRecoveryTargetsMissing
+        expr: absent(up{gregale_event_recovery="true"})
+        for: 10m
+        labels:
+          severity: warn
+          family: event_recovery
+        annotations:
+          summary: "No recovery health monitoring targets exist"
+          description: "No opted-in recovery targets are discovered. Check expected inventory; absence does not establish an empty backlog."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/GregaleEventRecovery.md"
+
+  # Independent from database-health evidence; opt in only actual pass observers.
+  - name: gregale_event_recovery_worker
+    interval: 30s
+    rules:
+      - record: gregale_event_recovery:worker_evidence_eligible
+        expr: |
+          (min by (job, instance) (up{gregale_event_recovery_worker="true"}) == 1)
+          and on (job, instance)
+          (min by (job, instance) (gregale_event_acknowledgment_recovery_worker_clock_valid{gregale_event_recovery_worker="true"}) == 1)
+          and on (job, instance)
+          (max by (job, instance) (gregale_event_acknowledgment_recovery_worker_activity_timestamp_seconds{gregale_event_recovery_worker="true"}) <= time())
+          and on (job, instance)
+          (min by (job, instance) (gregale_event_acknowledgment_recovery_worker_activity_age_seconds{gregale_event_recovery_worker="true"}) >= 0)
+          and on (job, instance)
+          (min by (job, instance) (gregale_event_acknowledgment_recovery_worker_max_idle_seconds{gregale_event_recovery_worker="true"}) > 0)
+          and on (job, instance)
+          (min by (job, instance) (gregale_event_acknowledgment_recovery_worker_max_pass_seconds{gregale_event_recovery_worker="true"}) > 0)
+          and on (job, instance)
+          ((max by (job, instance) (gregale_event_acknowledgment_recovery_worker_in_flight{gregale_event_recovery_worker="true"}) == 0)
+            or (max by (job, instance) (gregale_event_acknowledgment_recovery_worker_in_flight{gregale_event_recovery_worker="true"}) == 1))
+      - record: gregale_event_recovery:worker_activity_age_seconds
+        expr: |
+          (
+            max by (job, instance) (gregale_event_acknowledgment_recovery_worker_activity_age_seconds{gregale_event_recovery_worker="true"})
+            + on (job, instance) clamp_min(
+              (time() - min by (job, instance) (gregale_event_acknowledgment_recovery_worker_activity_timestamp_seconds{gregale_event_recovery_worker="true"}))
+              - on (job, instance) max by (job, instance) (gregale_event_acknowledgment_recovery_worker_activity_age_seconds{gregale_event_recovery_worker="true"}), 0)
+          ) and on (job, instance) gregale_event_recovery:worker_evidence_eligible
+      - record: gregale_event_recovery:worker_overdue
+        expr: |
+          (
+            (gregale_event_recovery:worker_activity_age_seconds
+              > bool on (job, instance) min by (job, instance) (gregale_event_acknowledgment_recovery_worker_max_idle_seconds{gregale_event_recovery_worker="true"}))
+            and on (job, instance)
+            (max by (job, instance) (gregale_event_acknowledgment_recovery_worker_in_flight{gregale_event_recovery_worker="true"}) == 0)
+          ) or (
+            (gregale_event_recovery:worker_activity_age_seconds
+              > bool on (job, instance) min by (job, instance) (gregale_event_acknowledgment_recovery_worker_max_pass_seconds{gregale_event_recovery_worker="true"}))
+            and on (job, instance)
+            (max by (job, instance) (gregale_event_acknowledgment_recovery_worker_in_flight{gregale_event_recovery_worker="true"}) == 1)
+          )
+      - alert: GregaleEventRecoveryWorkerOverdue
+        expr: gregale_event_recovery:worker_overdue == 1
+        for: 2m
+        labels:
+          severity: warn
+          family: event_recovery
+        annotations:
+          summary: "Recovery worker activity is overdue"
+          description: "{{ $labels.job }} / {{ $labels.instance }} exceeded its first/next-pass idle gap or in-flight duration. Health polling cannot refresh worker activity. Inspect scheduling and joined work; do not overlap an unreturned pass."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/GregaleEventRecovery.md"
+      - alert: GregaleEventRecoveryWorkerEvidenceUnavailable
+        expr: |
+          (min by (job, instance) (up{gregale_event_recovery_worker="true"}) == 1)
+          unless on (job, instance) gregale_event_recovery:worker_evidence_eligible
+        for: 2m
+        labels:
+          severity: warn
+          family: event_recovery
+        annotations:
+          summary: "Recovery worker activity evidence is unavailable"
+          description: "{{ $labels.job }} / {{ $labels.instance }} is reachable but opted-in worker timing is absent, invalid or ahead of Prometheus. Missing worker evidence is independent from database health-read failure."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/GregaleEventRecovery.md"
+      - alert: GregaleEventRecoveryWorkerPassFailed
+        expr: |
+          (
+            (max by (job, instance) (gregale_event_acknowledgment_recovery_worker_last_pass_failed{gregale_event_recovery_worker="true"}) > 0)
+            or (max by (job, instance) (gregale_event_acknowledgment_recovery_worker_last_pass_commit_unknown{gregale_event_recovery_worker="true"}) > 0)
+            or (max by (job, instance) (gregale_event_acknowledgment_recovery_worker_last_pass_cleanup_failures{gregale_event_recovery_worker="true"}) > 0)
+          ) and on (job, instance) gregale_event_recovery:worker_evidence_eligible
+          and on (job, instance)
+          (min by (job, instance) (gregale_event_acknowledgment_recovery_worker_last_pass_result_valid{gregale_event_recovery_worker="true"}) == 1)
+        for: 2m
+        labels:
+          severity: warn
+          family: event_recovery
+        annotations:
+          summary: "Latest joined recovery pass reports a failure"
+          description: "{{ $labels.job }} / {{ $labels.instance }} retains failed, unknown-COMMIT or Node pool-cleanup failures in its latest returned pass. Inspect original scalar progress/error and retained evidence before scheduling again. Counts are per-pass gauges and cleanup can overlap known outcomes."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/GregaleEventRecovery.md"

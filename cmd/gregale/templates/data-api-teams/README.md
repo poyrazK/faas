@@ -56,6 +56,45 @@ and choose **Reload**, then **Next page**. Pages use tenant-scoped UUID order an
 an exclusive cursor. They are not a snapshot: inserts or status changes between
 pages can change which rows appear. Filters reset the page cursor.
 
+## Order summaries through the Data API
+
+Migration `0012_team_order_summary.sql` adds the read-only
+`summarize_team_orders` RPC. Apply the migration, approve its EXECUTE grant
+through the normal owner workflow, refresh the runtime and regenerate types.
+
+```ts
+import { teamsClient } from './orders.js'
+import { parseOrderSummary } from './order-summary.js'
+
+const team = teamsClient({ url, accessToken }, 'shop-a')
+const filters = { status: 'submitted' as const, minimum: 100 }
+const controller = new AbortController()
+const result = await team.summary(filters).abortSignal(controller.signal)
+if (result.error) throw result.error
+const summary = parseOrderSummary(result.data[0], team.tenant, filters)
+// summary.order_count and summary.total_cents are exact decimal strings.
+// summary.by_status contains draft, submitted and fulfilled buckets.
+```
+
+Summaries include every matching accessible order, independently of list-page
+limits. Status and minimum/maximum whole-cent filters are optional; ranges are
+inclusive, with the existing integer amount range of 0–2,147,483,647 per order.
+Use `{}` for all orders. Pass the same filters to the response parser. Counts
+and summed cents remain strings; use `BigInt` for exact arithmetic. Empty teams
+and empty matching sets return zeros for the overall result and all statuses.
+
+Current database membership controls access, including for unchanged JWTs after
+revocation. Members may read summaries. The order table's current RLS policy
+also applies. Missing membership returns HTTP 403. Empty/null team IDs and
+invalid ranges return HTTP 400. Requests preserve native errors, cancellation
+and explicit retry control. Results use one statement snapshot. Requests already
+in flight can finish with their earlier view after a concurrent membership change.
+
+The existing 15-second statement/request budget applies. A small response still
+can require scanning many rows, so broad queries on large teams may time out.
+Failed calls return no partial or cached totals. Status enum changes require
+reviewing the paired parser alongside regenerated types.
+
 ## Team administration
 
 Choose **Load members** as an owner. The directory shows this team's user IDs,
