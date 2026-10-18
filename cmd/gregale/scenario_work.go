@@ -36,6 +36,14 @@ func validateTestManagedWork(s testScenario) error {
 	if err := api.ValidateScenarioWorkerTermination(*s.ManagedWork, s.Actions.Simulation); err != nil {
 		return err
 	}
+	if s.ManagedWork.PostgresFault != nil {
+		if s.PostgresFixture == nil || s.SuspendResume != nil {
+			return errors.New("postgres_fault requires isolated PostgreSQL and no suspend/resume")
+		}
+		if err := api.ValidateScenarioPostgresFault(api.RegisterScenarioTestRequest{ManagedWork: s.ManagedWork, Simulation: s.Actions.Simulation}); err != nil {
+			return err
+		}
+	}
 	for _, p := range s.ManagedWork.Participants {
 		service := s.Services[p.Workload]
 		if p.Async && len(service.AsyncRoutes) == 0 {
@@ -88,4 +96,11 @@ func validateTestManagedWorkBindings(r testRunReceipt, e *rehearsalwork.Evidence
 		}
 	}
 	return nil
+}
+
+func testPostgresFaultBudgetError(e *rehearsalwork.Evidence) string {
+	if e != nil && e.PostgresFault != nil && e.PostgresFault.Validate() == nil && e.PostgresFault.RecoveryMS > e.PostgresFault.Spec.RecoverWithinMS {
+		return "PostgreSQL recovery budget exceeded"
+	}
+	return ""
 }

@@ -58,6 +58,7 @@
                    COALESCE(pg_last_wal_receive_lsn()::text, 'none'),
                    COALESCE(pg_last_wal_replay_lsn()::text, 'none'),
                    COALESCE(extract(epoch FROM now() - pg_last_xact_replay_timestamp())::bigint::text, 'none')
+      become: true
       become_user: postgres
       register: promote_standby_state
       changed_when: false
@@ -161,6 +162,7 @@
           - -t
           - -c
           - "SELECT pg_last_wal_replay_lsn() > '{{ hostvars[groups['control_plane'][0]].promote_primary_checkpoint_lsn }}'::pg_lsn"
+      become: true
       become_user: postgres
       register: promote_caught_up
       changed_when: false
@@ -172,6 +174,7 @@
     - name: Promote the standby to primary
       ansible.builtin.command:
         argv: [psql, -X, -A, -t, -v, ON_ERROR_STOP=1, -c, "SELECT pg_promote(true, 120)"]
+      become: true
       become_user: postgres
       register: promote_result
       changed_when: true
@@ -180,6 +183,7 @@
     - name: Confirm the new primary accepts writes
       ansible.builtin.command:
         argv: [psql, -X, -A, -t, -c, "SELECT pg_is_in_recovery()"]
+      become: true
       become_user: postgres
       register: promote_recovery
       changed_when: false

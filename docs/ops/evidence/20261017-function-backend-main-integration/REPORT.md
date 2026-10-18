@@ -580,6 +580,57 @@ head. Hosted worker/TLS SQL tests and guarded native compilation passed on
 `c68bd0016`; every applicable hosted check must pass again on the fresh head.
 Physical native acceptance and production activation remain pending.
 
+## Rehearsal schema coexistence and source authority (2026-10-18)
+
+Main `a7aa553e2847c5dc265593c3efd2954cb915eb29` is integrated after its
+new PostgreSQL rehearsal migration conflicted with the migration digest. The
+canonical schema is replayed in the owned disposable database: 84,382 lines,
+SHA-256 `b14c4a23e73a79f1ef0d2006d82c7d8e3734d887d52d68ea42ec09cac45e16d4`,
+migration-source digest
+`37711e5df864ef032913f702bd55590e214651e81c82ed7a77a7f31e08b2480c`.
+All nineteen published SQLC blocks are preserved exactly, with only the three
+function query sources added; generation and drift checks pass. Published
+migration bytes remain unchanged.
+
+The actual migrated inventory exposed one unregistered main table:
+`scenario_postgres_faults`. Its fault/recovery receipts bind their original
+account, app, run, resource and owner. It is explicitly operational, alongside
+other rehearsal receipts, so cloning retains that authority at its source.
+All 946 published registry records are intact. With the two function journals
+and this rehearsal record, all 949 observed tables and every column match the
+registry exactly; there are no duplicate, missing or unknown entries.
+
+Tested source tree before this evidence entry: `18bc1b4f0929cd923b12367a8e55582024453f8e`. Serial race
+compilation succeeds in 551.610 seconds at 5 GiB/GOGC 50. All six schema-policy
+and real PostgreSQL coverage tests/subtests pass in 21.474 seconds, including
+unknown-column, unowned-table, indirect-table and renamed-table refusal before
+reservation. All seven release-workflow tests pass in 1.220 seconds, including
+main's stricter ban on running migrations outside deployctl. Both suites use
+2 GiB/GOGC 10, two processors and three-minute execution deadlines, with zero
+skips or failures in the successful executions.
+
+The first SQL attempt could not create its fixture database because the shared
+workspace filesystem filled after compilation. With Go idle, only 1,445 old
+generated Go archives (4.0 GiB, validated archive headers, older than two hours)
+were removed. Modules, tool executables, test binaries and source remain intact.
+The same compiled SQL tests then pass; no assertion, timeout or resource limit
+changes. The failed infrastructure attempt remains in the portable results.
+
+Both SDKs are regenerated for main's new rehearsal API fields and models;
+TypeScript builds, Python compiles and canonical starter-helper drift checks
+pass. The two OpenAPI copies retain main's source. Migration compatibility and
+all 51 policy tests pass; the destination migration remains contract-classified
+and requires a full release. Generated daemon configuration, environment and
+documentation checks pass, including four HTTP fixtures. The affected-package
+selector passes all 19 tests. ADR uniqueness passes with 1,820 decisions, 1,616
+distinct numbers and the unchanged 164-entry duplicate baseline.
+
+Function host/scheduler/protobuf sources are unchanged from `e406b27ed`.
+Successful hosted checks on that earlier head are historical: the image workflow
+was still pending when main changed, so that head was never declared green.
+Every applicable hosted check must pass on the newly published head. Physical
+native acceptance and production activation remain pending.
+
 ## Qualification boundary
 
 Production activation remains disabled. This managed container has no supported

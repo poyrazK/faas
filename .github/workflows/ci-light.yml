@@ -21,9 +21,10 @@ name: ci-light
 #   ci.yml (mega)             the complete suite: every unit shard with -race,
 #                             vet and build of the whole tree, e2e, migration
 #                             history, container/UDP contracts, flags, load,
-#                             SDK acceptance, ops/infra gates. Runs nightly,
-#                             on workflow_dispatch, and from release.yml
-#                             before any release tag publishes.
+#                             SDK acceptance, ops/infra gates. Runs nightly
+#                             and on workflow_dispatch. It gates no release
+#                             (ADR 20261018104452): this tier is the only
+#                             pre-release CI.
 #
 # Package selection lives in scripts/ci/affected_packages.py. A change to
 # go.mod, go.sum, the selector or this workflow selects every package.
@@ -181,12 +182,11 @@ jobs:
       # No separate `go vet`: golangci-lint below runs govet on every changed
       # package (test files included). Type-checking their importers meant
       # compiling 200+ packages whenever pkg/api changed (25 minutes); the
-      # mega tier (ci.yml) builds and vets the whole tree nightly and before
-      # every release.
+      # mega tier (ci.yml) builds and vets the whole tree nightly.
       # Same linter, rules and per-package invocation as the mega tier's
       # sharded `Go lint` jobs (scripts/ci/lint_go_shard.py), restricted to the
-      # packages this change touches. The complete tree is linted nightly and
-      # before every release; a lint-config change is validated here by
+      # packages this change touches. The complete tree is linted nightly;
+      # a lint-config change is validated here by
       # `config verify` and fully exercised by the next mega run.
       - name: install linter
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
@@ -221,7 +221,7 @@ jobs:
       # importer breaks when an exported name it uses changes under it (a
       # signature, a field, a constant), so vet exactly those importers
       # (scripts/ci/select_importers.py); a body edit selects none. The mega
-      # tier vets every package nightly and before every release.
+      # tier vets every package nightly.
       #
       # A change to a widely used API can select ~100 importers and recompile
       # most of the module (11 minutes at 4 cores for #4809). The check runs
@@ -669,7 +669,7 @@ jobs:
       # The managed-Postgres fixture API check and the GitOps native e2e
       # compile build apidserver and cmd/e2e under extra build tags, which
       # nothing caches: 18 minutes on their own. The mega tier runs both (pg
-      # shard 2b), nightly and before every release.
+      # shard 2b) nightly.
       # Two kinds of package per shard:
       #   - changed packages (and the §6.2 invariants in tests/property when
       #     anything in their import tree changed) run in full with -race;

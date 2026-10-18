@@ -27,7 +27,8 @@ UPDATE scenario_worker_faults SET state='failed' WHERE id=sqlc.arg(id)::text::uu
 -- name: ScenarioWorkerDispatchBlocked :one
 SELECT coalesce(EXISTS(SELECT 1 FROM scenario_worker_faults f WHERE f.app_id=sqlc.arg(app_id)::text::uuid AND
  (f.state<>'terminated' OR EXISTS(SELECT 1 FROM instances i WHERE i.id=f.instance_id AND i.state IN ('waking','cold_booting','running','draining'))))
- OR EXISTS(SELECT 1 FROM scenario_suspend_resumes r WHERE r.app_id=sqlc.arg(app_id)::text::uuid AND r.invocation_id IS NOT NULL AND r.state<>'complete'),false)::boolean AS blocked;
+ OR EXISTS(SELECT 1 FROM scenario_suspend_resumes r WHERE r.app_id=sqlc.arg(app_id)::text::uuid AND r.invocation_id IS NOT NULL AND r.state<>'complete')
+ OR EXISTS(SELECT 1 FROM scenario_postgres_faults f WHERE f.app_id=sqlc.arg(app_id)::text::uuid AND f.phase IN ('requested','cutting')),false)::boolean AS blocked;
 
 -- name: ScenarioWorkerCheckpoint :one
 SELECT p.account_id::text AS account_id,p.app_id::text AS app_id,p.run_id,p.workload_name,i.deployment_id::text AS deployment_id,i.id::text AS instance_id,v.id::text AS invocation_id,r.id::text AS recorder_session_id

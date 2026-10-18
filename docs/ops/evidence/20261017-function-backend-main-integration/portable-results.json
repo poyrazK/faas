@@ -1573,5 +1573,100 @@
     "fresh_hosted_current_head_checks": "required",
     "native_physical_acceptance": false,
     "production_activation": false
+  },
+  "rehearsal_main_schema_integration": {
+    "integrated_main": "a7aa553e2847c5dc265593c3efd2954cb915eb29",
+    "tested_source_tree_before_evidence": "18bc1b4f0929cd923b12367a8e55582024453f8e",
+    "schema_lines": 84382,
+    "schema_sha256": "b14c4a23e73a79f1ef0d2006d82c7d8e3734d887d52d68ea42ec09cac45e16d4",
+    "migration_source_digest": "37711e5df864ef032913f702bd55590e214651e81c82ed7a77a7f31e08b2480c",
+    "published_sqlc_blocks_preserved_exactly": 19,
+    "function_query_sources_added": 3,
+    "sqlc_generation_and_drift": "pass",
+    "published_migrations_preserved": true,
+    "clone_registry": {
+      "main_records_preserved": 946,
+      "function_journals": 2,
+      "rehearsal_receipt_records": 1,
+      "total_observed_tables": 949,
+      "unregistered_before_fix": [
+        "scenario_postgres_faults"
+      ],
+      "new_policy_kind": "operational",
+      "duplicates_missing_unknown_column_mismatches_after_fix": 0
+    },
+    "race_phases": [
+      {
+        "name": "compile",
+        "seconds": 551.61,
+        "exitCode": 0,
+        "log": "/tmp/function-pr4883-pgfault-integration.sysznupa/compile.log"
+      },
+      {
+        "name": "state-schema-race",
+        "seconds": 0.403,
+        "exitCode": 1,
+        "log": "/tmp/function-pr4883-pgfault-integration.sysznupa/state-schema-race.log",
+        "counts": {
+          "pass": 1,
+          "fail": 1
+        },
+        "failedTests": [
+          "TestPgCloneSchemaRegistryCoversMigratedApplicationTablesAndFailsBeforeReservation"
+        ],
+        "skippedTests": []
+      },
+      {
+        "name": "release-policy-race",
+        "seconds": 1.22,
+        "exitCode": 0,
+        "counts": {
+          "pass": 7
+        },
+        "log": "/tmp/function-pr4883-pgfault-integration.sysznupa/release-policy-race.log"
+      },
+      {
+        "name": "state-schema-race-storage-retry",
+        "seconds": 21.474,
+        "exitCode": 0,
+        "counts": {
+          "pass": 6
+        },
+        "failedTests": [],
+        "skippedTests": [],
+        "log": "/tmp/function-pr4883-pgfault-integration.sysznupa/state-schema-race-storage-retry.log"
+      }
+    ],
+    "initial_sql_failure": "fixture database could not be created: shared workspace filesystem full; SQLSTATE53100; no source assertion failure",
+    "storage_recovery": {
+      "go_idle": true,
+      "old_generated_archives_removed": 1445,
+      "archive_gib": 4.0,
+      "min_age_hours": 2,
+      "archive_magic_verified": true,
+      "modules_tools_test_binaries_source_preserved": true,
+      "same_compiled_tests_reused": true
+    },
+    "compile_bounds": "5GiB/GOGC50;serial",
+    "runtime_bounds": "2GiB/GOGC10/GOMAXPROCS2/3m",
+    "successful_schema_race_log_sha256": "b5273046b1ef35fcd28d71b60e51680b8a5029a20765641b75a4141f08c42708",
+    "successful_release_race_log_sha256": "711430b7c6d2c2a0d731887c4ba4093bc15f73eb1024b6164b90fdc7c2e0e753",
+    "sdk_regeneration": "both regenerated for newer upstream API fields and models",
+    "node_build_python_compile_starter_helpers": "pass",
+    "openapi_copies_match_main": true,
+    "migration_compatibility": "pass; destination contract requires full release",
+    "migration_policy_tests_passed": 51,
+    "generated_daemons": "pass",
+    "environment_contract": "pass",
+    "documentation_links": "pass",
+    "http_documentation_fixtures_passed": 4,
+    "affected_package_selector_tests_passed": 19,
+    "adr_uniqueness": "1820 decisions,1616 distinct,164-entry baseline unchanged",
+    "function_host_scheduler_proto_unchanged": true,
+    "prior_hosted_head": "e406b27ed5104418714290d43fc37935b1046168",
+    "prior_hosted_head_never_all_green": "images workflow remained pending before main changed",
+    "fresh_hosted_current_head_checks": "required",
+    "native_physical_acceptance": false,
+    "production_activation": false
   }
 }

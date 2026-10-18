@@ -1967,6 +1967,55 @@ x86 KVM host and staged metal-test images. It complements the portable store,
 relay, scheduler, retry and effect-comparison suites; it does not replace the
 preceding containment, credential-delivery and resource qualification gates.
 
+### Rehearse PostgreSQL disconnect and recovery
+
+On a contained warm managed-worker scenario with an isolated `postgres_fixture`,
+add this to `managed_work`:
+
+```yaml
+postgres_fault:
+  workload: worker
+  checkpoint: after-commit
+  unavailable_ms: 1000
+  recover_within_ms: 5000
+```
+
+Declare exactly two participants, primary and one async worker, both with
+`postgres: read_write`. The matching simulation must use integration `checkpoint`,
+adapter `http`, method `POST` and one undelayed HTTP 200 response. Await
+`GREGALE_OUTBOUND_URL + "/i/checkpoint/after-commit"` with a JSON object body and
+at least a 35-second deadline. Its response releases after independent confirmation
+that existing sessions were terminated and new connections are refused.
+
+The fence affects the generated database shared by both participants. Committed
+rows survive; open transactions roll back. Restoration retains credentials and
+checks a fresh connection and role privileges. The worker must handle idle pool
+errors and use its real retry policy. Later attempts should resume after the
+commit, rather than repeat the checkpoint. Allow backoff for collector scheduling
+delay: the qualification fixture uses three seconds for a one-second outage.
+
+V1 permits one warm job on its original worker. Additional jobs, replacement
+workers, cold start, suspend/resume and worker termination cannot combine with
+this fault. Unavailability accepts 100–30,000 ms and recovery 1–120,000 ms.
+`outage_ms` records the confirmed active interval before restoration starts;
+`recovery_ms` includes scheduling delay after the planned restore time through
+the recovery probe. This models a
+database connection fence; server crashes and arbitrary network faults need
+their own adapters.
+
+The receipt appears under
+`actions.evidence.snapshot.managed_work.postgres_fault`. SQL, objects, retries and
+simulated actions still compare independently. Missing activation/recovery,
+interrupted checkpoints, owner loss or failed cleanup cannot pass. Confirmed
+recovery over budget fails even if both revisions exceed it. Disabling enrollment
+leaves recovery and expiry cleanup active.
+
+Admission remains **off pending native qualification**. The additional apid flag
+is `FAAS_REHEARSAL_POSTGRES_FAULTS=1`. See the
+[complete recipe](../tests/scenario-acceptance/rehearsal-running-job/gregale-postgres-fault-test.yaml),
+[native coordinator](rehearsal-native-acceptance.md) (`--journey postgres-recovery`)
+and [ADR-20261018000200](adr/20261018000200-rehearsal-postgres-fault-recovery.md).
+
 ### Rehearse contained cold starts
 
 Cold-start support remains **disabled pending native qualification**. After the
@@ -2177,6 +2226,12 @@ JSON and HTML retain its identities for inspection. Missing evidence cannot be
 replaced by a fresh VM or a reconstructed collector. See
 [ADR-20261017201015](adr/20261017201015-rehearsal-running-job-suspend.md).
 
+The [native running-job acceptance journey](rehearsal-native-acceptance.md)
+combines this checkpoint with contained commands, a real HTTP job retry,
+PostgreSQL and object fixtures, and a duplicate-notification candidate. It
+requires a passing control comparison, the specific captured regression and
+confirmed cleanup on a dedicated native installation. Portable checks and
+offline fixture preparation do not qualify that installation or enable rollout.
 
 ### Start and stop the app with the test
 

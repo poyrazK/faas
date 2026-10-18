@@ -14153,6 +14153,20 @@
     "kind": "operational"
   },
   {
+    "table": "scenario_postgres_faults",
+    "columns": [
+      "account_id",
+      "app_id",
+      "id",
+      "owner_id",
+      "phase",
+      "receipt",
+      "resource_id",
+      "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "scenario_postgres_fixtures",
     "columns": [
       "account_id",

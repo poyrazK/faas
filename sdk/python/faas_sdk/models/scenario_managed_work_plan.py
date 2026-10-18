@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.scenario_managed_work_participant import ScenarioManagedWorkParticipant
+    from ..models.scenario_postgres_fault_spec import ScenarioPostgresFaultSpec
     from ..models.scenario_worker_termination import ScenarioWorkerTermination
 
 
@@ -33,6 +34,10 @@ class ScenarioManagedWorkPlan:
     worker_termination: ScenarioWorkerTermination | Unset = UNSET
     """One cooperative worker termination at a named POST HTTP simulation checkpoint. The target must execute one
     job and recover on a fresh VM; rollout is separately operator gated."""
+    postgres_fault: ScenarioPostgresFaultSpec | Unset = UNSET
+    """Separately gated warm rehearsal with one managed worker and one isolated database. Disconnects existing
+    sessions and rejects new connections before restoring access. Excludes cold start, suspend/resume and worker
+    termination."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -49,6 +54,10 @@ class ScenarioManagedWorkPlan:
         if not isinstance(self.worker_termination, Unset):
             worker_termination = self.worker_termination.to_dict()
 
+        postgres_fault: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.postgres_fault, Unset):
+            postgres_fault = self.postgres_fault.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -60,12 +69,15 @@ class ScenarioManagedWorkPlan:
         )
         if worker_termination is not UNSET:
             field_dict["worker_termination"] = worker_termination
+        if postgres_fault is not UNSET:
+            field_dict["postgres_fault"] = postgres_fault
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.scenario_managed_work_participant import ScenarioManagedWorkParticipant
+        from ..models.scenario_postgres_fault_spec import ScenarioPostgresFaultSpec
         from ..models.scenario_worker_termination import ScenarioWorkerTermination
 
         d = dict(src_dict)
@@ -87,11 +99,19 @@ class ScenarioManagedWorkPlan:
         else:
             worker_termination = ScenarioWorkerTermination.from_dict(_worker_termination)
 
+        _postgres_fault = d.pop("postgres_fault", UNSET)
+        postgres_fault: ScenarioPostgresFaultSpec | Unset
+        if isinstance(_postgres_fault, Unset):
+            postgres_fault = UNSET
+        else:
+            postgres_fault = ScenarioPostgresFaultSpec.from_dict(_postgres_fault)
+
         scenario_managed_work_plan = cls(
             version=version,
             primary=primary,
             participants=participants,
             worker_termination=worker_termination,
+            postgres_fault=postgres_fault,
         )
 
         scenario_managed_work_plan.additional_properties = d

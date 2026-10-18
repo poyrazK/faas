@@ -660,7 +660,6 @@ from .cancel_deployment_request import CancelDeploymentRequest
 from .cancel_deployment_request_reason import CancelDeploymentRequestReason
 from .cancel_deployment_response_200 import CancelDeploymentResponse200
 from .cancel_event_execution_lineage_retry_job_request import CancelEventExecutionLineageRetryJobRequest
-
 from .cancel_mcp_readiness_maintenance_request import CancelMCPReadinessMaintenanceRequest
 from .cancel_pending_work_request import CancelPendingWorkRequest
 from .cancel_pending_work_response import CancelPendingWorkResponse
@@ -4694,6 +4693,9 @@ from .scenario_postgres_delta_inserted_item import ScenarioPostgresDeltaInserted
 from .scenario_postgres_evidence import ScenarioPostgresEvidence
 from .scenario_postgres_evidence_provenance import ScenarioPostgresEvidenceProvenance
 from .scenario_postgres_evidence_status import ScenarioPostgresEvidenceStatus
+from .scenario_postgres_fault_receipt import ScenarioPostgresFaultReceipt
+from .scenario_postgres_fault_receipt_state import ScenarioPostgresFaultReceiptState
+from .scenario_postgres_fault_spec import ScenarioPostgresFaultSpec
 from .scenario_postgres_receipt import ScenarioPostgresReceipt
 from .scenario_postgres_receipt_version import ScenarioPostgresReceiptVersion
 from .scenario_postgres_snapshot import ScenarioPostgresSnapshot
@@ -6079,7 +6081,6 @@ __all__ = (
     "CancelDeploymentRequestReason",
     "CancelDeploymentResponse200",
     "CancelEventExecutionLineageRetryJobRequest",
-
     "CancelMCPReadinessMaintenanceRequest",
     "CancelPendingWorkRequest",
     "CancelPendingWorkResponse",
@@ -9813,6 +9814,9 @@ __all__ = (
     "ScenarioPostgresEvidence",
     "ScenarioPostgresEvidenceProvenance",
     "ScenarioPostgresEvidenceStatus",
+    "ScenarioPostgresFaultReceipt",
+    "ScenarioPostgresFaultReceiptState",
+    "ScenarioPostgresFaultSpec",
     "ScenarioPostgresReceipt",
     "ScenarioPostgresReceiptVersion",
     "ScenarioPostgresSnapshot",

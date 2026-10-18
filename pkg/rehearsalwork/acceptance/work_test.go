@@ -24,6 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/rehearsalcold"
+	"github.com/onebox-faas/faas/pkg/rehearsalfault"
 	"github.com/onebox-faas/faas/pkg/rehearsalobj"
 	objruntime "github.com/onebox-faas/faas/pkg/rehearsalobj/runtime"
 	"github.com/onebox-faas/faas/pkg/rehearsalpg"
@@ -51,7 +52,7 @@ type fixture struct {
 	workerSession  *rehearsalrecorder.Session
 }
 
-type fixtureFeatures struct{ cold, termination, unbooted, resume, running bool }
+type fixtureFeatures struct{ cold, termination, unbooted, resume, running, postgresFault bool }
 
 func newFixture(t *testing.T, backend string, resources bool, terminate ...bool) *fixture {
 	t.Helper()
@@ -77,6 +78,9 @@ func newFeatureFixture(t *testing.T, backend string, resources bool, features fi
 		t.Fatal(err)
 	}
 	names := []string{"primary", "worker", "reader", "unbound"}
+	if features.postgresFault {
+		names = []string{"primary", "worker"}
+	}
 	participants := make([]rehearsalwork.Participant, 0, len(names))
 	members := make([]state.ScenarioTestMember, 0, len(names))
 	expires := time.Now().Add(time.Hour)
@@ -96,6 +100,9 @@ func newFeatureFixture(t *testing.T, backend string, resources bool, features fi
 		participants = append(participants, p)
 	}
 	plan := rehearsalwork.Plan{Version: 1, Primary: "primary", Participants: participants}
+	if features.postgresFault {
+		plan.PostgresFault = &rehearsalfault.Postgres{Workload: "worker", Checkpoint: "after-commit", UnavailableMS: 100, RecoverWithinMS: 5000}
+	}
 	withTermination := features.termination
 	if withTermination {
 		plan.WorkerTermination = &rehearsalwork.WorkerTermination{Workload: "worker", Checkpoint: "after-commit"}
@@ -105,7 +112,7 @@ func newFeatureFixture(t *testing.T, backend string, resources bool, features fi
 		t.Fatal(e)
 	}
 	fixtures := []api.ScenarioSimulationFixture{{Workload: "worker", Name: "notify", Integration: "email", Adapter: "resend", Method: "POST", Path: "/emails", Responses: []api.ScenarioSimulationResponse{{Status: 200}}}}
-	if withTermination || features.running {
+	if withTermination || features.running || features.postgresFault {
 		fixtures = append(fixtures, api.ScenarioSimulationFixture{Workload: "worker", Name: "after-commit", Integration: "checkpoint", Adapter: "http", Method: "POST", Path: "/after-commit", Responses: []api.ScenarioSimulationResponse{{Status: 200}}})
 	}
 	simulation, _, e := api.NormalizeScenarioSimulationPlan(api.ScenarioSimulationPlan{Version: 1, Fixtures: fixtures}, names)
@@ -144,6 +151,9 @@ func newFeatureFixture(t *testing.T, backend string, resources bool, features fi
 	}
 	if resources {
 		f.createResources(t)
+		if features.postgresFault {
+			go f.postgres.Run(ctx)
+		}
 	}
 	node, e := f.store.CreateComputeNode(ctx, state.ComputeNode{Name: "workers-" + uuid.NewString(), TargetURL: "unix:///tmp/rehearsal-worker-test.sock", VPCPUs: 4, MemMB: 4096, MaxConcurrency: 20, AdmissionCeilingMB: 4096, VCPUBudget: 4, Lifecycle: state.NodeLifecycleActive})
 	if e != nil {
@@ -169,7 +179,7 @@ func newFeatureFixture(t *testing.T, backend string, resources bool, features fi
 		}
 		id := rehearsalrecorder.Identity{AccountID: f.account.ID, RunID: f.run, AppID: a.ID, DeploymentID: dep.ID, InstanceID: i.ID}
 		f.identities[name] = id
-		if (withTermination || features.running) && name == "worker" {
+		if (withTermination || features.running || features.postgresFault) && name == "worker" {
 			f.workerSession, e = rehearsalrecorder.Start(ctx, ctx, f.store.(rehearsalrecorder.Store), id)
 			if e != nil {
 				t.Fatal(e)
@@ -186,7 +196,7 @@ func newFeatureFixture(t *testing.T, backend string, resources bool, features fi
 			}
 			f.recorders[name] = session
 		}
-		if features.resume || features.running {
+		if features.resume || features.running || features.postgresFault {
 			values, readErr := f.store.RuntimeAppValuesForDeployment(ctx, f.account.ID, a.ID, dep.ID)
 			if readErr != nil {
 				t.Fatal(readErr)
