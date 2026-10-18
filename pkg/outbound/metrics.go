@@ -202,6 +202,14 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Help: "Settled AI calls written to the log-drain export outbox, by integration (ADR-1340).",
 		}, []string{"integration_id"}),
 	}
+	// The alert rules read these by reason or outcome alone. A series that
+	// starts at zero lets increase() see a process's first event.
+	for _, reason := range []string{api.OutboundAIRouteCanaryReasonErrorRate, api.OutboundAIRouteCanaryReasonLatency} {
+		m.aiCanaryRollbacks.WithLabelValues(reason)
+	}
+	for _, outcome := range []AIUsageOutcome{AIUsageOutcomeKnown, AIUsageOutcomeUnknown, AIUsageOutcomeError} {
+		m.aiBatches.WithLabelValues(string(outcome))
+	}
 	collectors := []prometheus.Collector{
 		m.admissions,
 		m.rejections,
