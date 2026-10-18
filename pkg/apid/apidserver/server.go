@@ -94,6 +94,7 @@ type server struct {
 	rehearsalSimulationEnabled             bool
 	rehearsalWorkersEnabled                bool
 	rehearsalWorkerFaultsEnabled           bool
+	rehearsalPostgresFaultsEnabled         bool
 	rehearsalColdStartEnabled              bool
 	rehearsalSuspendResumeEnabled          bool
 	rehearsalRunningSuspendEnabled         bool

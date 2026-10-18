@@ -59,6 +59,9 @@ func (h *SimulationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status := "completed"
+	if decision.PostgresFaultID != "" && waitPostgresFault(r.Context(), h.Store, req, decision.PostgresFaultID, decision.Attempt.ID) != nil {
+		status = "interrupted"
+	}
 	if !waitSimulationResponse(r.Context(), decision.Response.DelayMS) {
 		status = "interrupted"
 	}
