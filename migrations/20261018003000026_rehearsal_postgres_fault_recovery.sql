@@ -1,4 +1,5 @@
 -- filename: 20261018003000026_rehearsal_postgres_fault_recovery.sql
+-- migration-compat: expand
 
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
