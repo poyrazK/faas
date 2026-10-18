@@ -282,6 +282,16 @@ compiler phase within the unchanged job budget for that source. All applicable
 hosted checks must pass again on the new combined head before merge. Native
 compilation supplies no physical execution or production activation evidence.
 
+The subsequent combined-source race check identified seventeen unregistered MCP
+readiness tables and six new alert columns in the live clone inventory. The
+registry now names every exact column: seven policy/maintenance tables retain
+configuration isolation blockers, and ten deployment/incident/delivery tables
+remain operational source state. Alert rules and deliveries retain their prior
+configuration and operational classifications. The existing regression contract
+checks these boundaries and all seven isolation blockers; unknown tables and
+columns must still fail before an operation is reserved. Fresh-head hosted CI
+and the corrected combined-source race run must verify this inventory change.
+
 ## Qualification boundary
 
 Production activation remains disabled. This managed container has no supported

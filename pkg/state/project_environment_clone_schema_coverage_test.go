@@ -6,6 +6,8 @@
 // adr: 695
 // adr: 708
 // adr: 1701 — commercial configuration needs isolation; user email consent is not copied.
+// adr: 20261017191514 — MCP readiness policies need isolated environment strategies.
+// adr: 20261017191527 — provider receipts and incident decisions retain source authority.
 package state
 
 import (
@@ -20,6 +22,24 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
+		// Readiness settings need isolation; one-use deployment and delivery authority stays at its source.
+		"app_mcp_readiness_policies":               CloneSchemaConfiguration,
+		"app_mcp_readiness_policy_history":         CloneSchemaConfiguration,
+		"mcp_readiness_fallback_policies":          CloneSchemaConfiguration,
+		"mcp_readiness_maintenance_windows":        CloneSchemaConfiguration,
+		"mcp_readiness_pagerduty_acknowledgements": CloneSchemaConfiguration,
+		"mcp_readiness_pagerduty_policies":         CloneSchemaConfiguration,
+		"mcp_readiness_reminder_defaults":          CloneSchemaConfiguration,
+		"deployment_mcp_readiness_evidence":        CloneSchemaOperational,
+		"deployment_mcp_readiness_monitors":        CloneSchemaOperational,
+		"deployment_mcp_readiness_overrides":       CloneSchemaOperational,
+		"mcp_readiness_attention_actions":          CloneSchemaOperational,
+		"mcp_readiness_incident_attention":         CloneSchemaOperational,
+		"mcp_readiness_incident_cursors":           CloneSchemaOperational,
+		"mcp_readiness_incident_events":            CloneSchemaOperational,
+		"mcp_readiness_incidents":                  CloneSchemaOperational,
+		"mcp_readiness_notification_actions":       CloneSchemaOperational,
+		"mcp_readiness_pagerduty_ack_events":       CloneSchemaOperational,
 		// Function capture and destination authority stay with their original instance.
 		"function_migration_sources":      CloneSchemaOperational,
 		"function_migration_destinations": CloneSchemaOperational,

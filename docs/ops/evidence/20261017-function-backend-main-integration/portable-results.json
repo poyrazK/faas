@@ -852,5 +852,31 @@
     "combined_head_hosted_ci": "required before merge; no success claimed here",
     "native_acceptance": false,
     "production_activation": false
+  },
+  "mcp_clone_inventory_correction": {
+    "reproduced_source": "89685bc744022eefbb82e151c3a76f32b1bf8079",
+    "failure": "migrated clone inventory rejected 17 unregistered MCP readiness tables and 6 alert columns",
+    "initial_state_run": {
+      "passed_tests": 71,
+      "failed_tests": [
+        "TestPgCloneSchemaRegistryCoversMigratedApplicationTablesAndFailsBeforeReservation"
+      ],
+      "skipped_tests": []
+    },
+    "fix": {
+      "new_tables": 17,
+      "new_columns": 6,
+      "configuration_tables_with_isolation_blockers": 7,
+      "operational_source_tables": 10,
+      "existing_alert_table_kinds_preserved": true
+    },
+    "static_validation": {
+      "registry_valid": true,
+      "changed_table_column_sets_equal_canonical_schema": 19
+    },
+    "regression_contract": "existing type-boundary and live full-schema tests now cover MCP policies and all seven configuration blockers; unknown/missing schema still fails before reservation",
+    "corrected_source_validation": "pending local race rerun and all applicable exact-head hosted CI; no success claimed here",
+    "native_acceptance": false,
+    "production_activation": false
   }
 }
