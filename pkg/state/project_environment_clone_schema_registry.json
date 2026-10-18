@@ -2833,6 +2833,30 @@
     "kind": "operational"
   },
   {
+    "table": "data_api_runtime_connection_observations",
+    "columns": [
+      "account_id",
+      "backend_fingerprint",
+      "binding_id",
+      "credential_generation",
+      "data_resource_id",
+      "database_generation",
+      "database_id",
+      "deployment_id",
+      "engine_connections",
+      "expires_at",
+      "instance_id",
+      "node_id",
+      "observed_at",
+      "provider_identity_id",
+      "refresh_connections",
+      "runtime_model",
+      "state",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "data_upstreams",
     "columns": [
       "account_id",
@@ -6194,6 +6218,25 @@
       "source_provider_resource_id",
       "state",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_connection_capacity",
+    "columns": [
+      "account_id",
+      "backend_fingerprint",
+      "backend_id",
+      "checked_at",
+      "data_resource_id",
+      "database_id",
+      "evidence",
+      "expires_at",
+      "generation",
+      "lease_token",
+      "lease_until",
+      "provider_resource_id",
+      "state"
     ],
     "kind": "operational"
   },

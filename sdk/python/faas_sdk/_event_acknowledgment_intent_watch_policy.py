@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from ._event_deadline_policy import timestamp
@@ -14,7 +14,7 @@ from .event_acknowledgment_intent_health import (
     _options as health_options,
 )
 
-Metric = Literal["due_backlog", "stalled_recovery"]
+Metric = Literal["due_backlog", "stalled_recovery", "parked_intents"]
 Change = Literal["unknown", "confirmation_lost", "firing", "resolved"]
 Loss = Literal["read_failed", "incomplete", "stale", "out_of_order", "sample_gap"]
 Reason = Literal[
@@ -31,6 +31,8 @@ class EventAcknowledgmentIntentWatchOptions:
     query_timeout_ms: int = 5000
     max_age_ms: int | None = None
     sustain_ms: int | None = None
+    # Keyword-only preserves positional options, including inherited checkpoint callbacks.
+    parked_threshold: int = field(default=0, kw_only=True)
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,7 @@ class Policy:
     query_timeout_ms: int
     max_age_ms: int
     sustain_ms: int
+    parked_threshold: int = 0
 
 
 def _integer(value: int, minimum: int, maximum: int) -> bool:
@@ -77,12 +80,13 @@ def policy(options: EventAcknowledgmentIntentWatchOptions) -> Policy:
     if not isinstance(options, EventAcknowledgmentIntentWatchOptions):
         raise ValueError("invalid acknowledgment intent watch policy")
     limit, stall = health_options(options.health)
-    due, stalled = options.due_threshold, options.stalled_threshold
+    due, stalled, parked = options.due_threshold, options.stalled_threshold, options.parked_threshold
     poll, query = options.poll_interval_ms, options.query_timeout_ms
     if (
         not _integer(due, 0, limit)
         or not _integer(stalled, 0, limit)
-        or due == stalled == 0
+        or not _integer(parked, 0, limit)
+        or due == stalled == parked == 0
         or not _integer(poll, 100, 60000)
         or not _integer(query, 10, 30000)
     ):
@@ -91,7 +95,7 @@ def policy(options: EventAcknowledgmentIntentWatchOptions) -> Policy:
     sustain = max(30000, poll) if options.sustain_ms is None else options.sustain_ms
     if not _integer(age, max(2 * poll, query), 300000) or not _integer(sustain, poll, 86400000):
         raise ValueError("invalid acknowledgment intent watch policy")
-    return Policy(EventAcknowledgmentIntentHealthOptions(limit, stall), due, stalled, poll, query, age, sustain)
+    return Policy(EventAcknowledgmentIntentHealthOptions(limit, stall), due, stalled, poll, query, age, sustain, parked)
 
 
 def evidence(

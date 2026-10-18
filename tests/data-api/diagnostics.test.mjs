@@ -62,7 +62,7 @@ test('diagnostics consumes real runtime request records without exposing applica
   assert.equal(report.authentication.requests, 1)
   assert.equal(report.by_route.health.requests, 2)
   assert.equal(report.ignored, 1)
-  assert.deepEqual(report.failures, { authentication: 1, timeouts: 2, unavailable: 3, contract_mismatch: 1, upstream: 1, overloaded: 2, refresh_paused: 1, refresh_unavailable: 1, response_too_large: 0, rate_limited: 0 })
+  assert.deepEqual(report.failures, { authentication: 1, timeouts: 2, unavailable: 3, contract_mismatch: 1, upstream: 1, overloaded: 2, refresh_paused: 1, refresh_unavailable: 1, response_too_large: 0, rate_limited: 0, concurrency_limited: 0 })
   assert.deepEqual(report.admission, { observed: 3, admitted: 1, queue_full: 1, queue_timeout: 1, cancelled: 0, peak_active: 2, peak_queued: 8, wait_ms: { p50: 1, p95: 1000, p99: 1000 } })
   assert.deepEqual(report.deadlines, { observed: 1, dispatched: 0, by_phase: { verification: 1 } })
   assert.ok(report.summary.latency_ms.p50 >= 0)

@@ -8,7 +8,7 @@
 export type ManagedPostgresCutoverMember = {
   source_binding_id: string;
   environment_key: string;
-  access: 'read_write' | 'read_only' | 'migration' | 'data_api';
+  access: 'read_write' | 'read_only' | 'migration' | 'data_api' | 'auth';
   state: 'pending' | 'sealed' | 'revoked';
   verified_at?: string;
 };

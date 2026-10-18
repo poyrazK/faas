@@ -8,6 +8,23 @@ and configure recovery with [Go intents](event-acknowledgment-intents.md),
 These helpers only read local metadata: they do not claim work, send callbacks,
 repair rows, or install tables.
 
+For Go, Node and Python [v2 retry budgets](event-acknowledgment-retry-budgets.md), bounded health
+also includes parked work in `Outstanding` and reports `Parked` separately.
+Parked rows are excluded from due/scheduled/leased/expired/stalled eligibility
+metrics. Go/Node/Python watches can opt into `ParkedThreshold` / `parkedThreshold` /
+`parked_threshold` for `parked_intents` alerts, including
+[Go](event-acknowledgment-go-checkpoints.md#parked-intent-alerts),
+[Node](event-acknowledgment-node-checkpoints.md#parked-intent-alerts) and
+[Python checkpointed notifications](event-acknowledgment-python-checkpoints.md#parked-intent-alerts).
+Use current budget-aware diagnostics for enabled scopes.
+
+For cache-only Prometheus scraping, use the
+[Go concurrent exporter](event-acknowledgment-go-recovery-prometheus.md),
+[Node exporter](event-acknowledgment-node-recovery-prometheus.md) or
+[Python exporter](event-acknowledgment-python-recovery-prometheus.md). All share
+thirteen metadata gauges and the same evidence/missing-data rules with a common
+alert/dashboard pack. Polling and listener lifetime remain application-owned.
+
 ```go
 health, err := faas.GetEventAcknowledgmentIntentHealth(ctx, db, accountID, appID,
     faas.EventAcknowledgmentIntentHealthOptions{
@@ -24,6 +41,7 @@ return faas.WatchEventAcknowledgmentIntentHealth(ctx, db, accountID, appID,
     faas.EventAcknowledgmentIntentWatchOptions{
         DueThreshold: 100,
         StalledThreshold: 1,
+        ParkedThreshold: 1,
         Sustain: 30 * time.Second,
     }, func(alert faas.EventAcknowledgmentIntentAlert) {
         // Record locally or hand off promptly to your application's alert system.
@@ -53,7 +71,7 @@ option to select its default; zero is rejected. The output includes the chosen
 `scanLimit` and `stallAfterSeconds`.
 
 Node returns the same metrics and coverage semantics as Go using camelCase:
-`outstanding`, `pending`, `unconfirmed`, `due`, `leased`, `scheduled`,
+`outstanding`, `pending`, `unconfirmed`, `parked`, `due`, `leased`, `scheduled`,
 `expiredClaims`, `stalled`, `invalidRows`, `oldestOutstandingAt`,
 `oldestOutstandingAgeSeconds`, `oldestEligibleAt` and `oldestOverdueAgeSeconds`.
 The immutable result also binds normalized `accountId` / `appId` and database
@@ -153,12 +171,12 @@ configuration and notification delivery remain application-owned. See the
 ## Reading the summary
 
 Each owner-scoped read uses one PostgreSQL statement, snapshot, and database clock.
-It samples unfinished (`pending` or `unconfirmed`) rows ordered by next attempt,
+It samples unfinished (`pending`, `unconfirmed`, and v2 `parked`) rows ordered by next attempt,
 invocation, generation, and attempt. Terminal history cannot crowd out unfinished
 work. Defaults are 1,000 rows and a five-minute stall interval; accepted ranges are
 1–10,000 rows and one second–24 hours.
 
-- `Outstanding`, `Pending`, and `Unconfirmed` describe retained unfinished intents.
+- `Outstanding`, `Pending`, and `Unconfirmed` describe retained unfinished intents; Go additionally reports `Parked` and includes it in outstanding work.
 - `Leased` counts live recovery claims. `Due` counts eligible work without a live
   claim. `Scheduled` counts future eligibility without a live claim.
 - Eligibility begins at the latest of creation, next attempt, and claim expiry.
@@ -183,8 +201,13 @@ tokens, or claim secrets appear in these summaries.
 ## Watching sustained conditions
 
 Thresholds are opt-in counts: zero disables a condition, at least one must be
-positive, and neither may exceed the scan limit. Metrics are `due_backlog` and
-`stalled_recovery`; equality breaches the threshold.
+positive, and no threshold may exceed the scan limit. All SDKs support
+`due_backlog`, `stalled_recovery` and `parked_intents` through the respective
+thresholds, including parked-only watches. Equality breaches the threshold.
+Missing/incomplete evidence cannot confirm any condition, including
+a parked lower bound already above its threshold. A sustained parked-count
+resolution does not establish callback confirmation: operator resume or newer
+staging can remove work from parked state.
 
 The watch polls sequentially with a per-query timeout. Defaults are five seconds
 between completed polls, a five-second query timeout, freshness of the greater of
@@ -225,6 +248,7 @@ try {
     health: { scanLimit: 1000, stallAfterMs: 300000 },
     dueThreshold: 100,
     stalledThreshold: 1,
+    parkedThreshold: 1,
     sustainMs: 30000,
   }, async (alert, signal) => {
     signal.throwIfAborted();
@@ -244,12 +268,12 @@ The watch starts with one immediate read and runs until cancellation or a local
 callback failure. It performs only the read-only health query; it never claims or
 repairs intents, sends platform acknowledgment callbacks, or executes business work.
 Use a recoverable monitoring host; the function does not keep a parked VM awake.
-One watch has at most two conditions, with options copied before its first await.
+One Node watch has at most three conditions, with options copied before its first await.
 
 | Option | Range and default |
 | --- | --- |
 | `health.scanLimit`, `health.stallAfterMs` | Same bounds/defaults as the Node summary. |
-| `dueThreshold`, `stalledThreshold` | Integer counts 0..scanLimit; default 0 disables. Enable at least one. |
+| `dueThreshold`, `stalledThreshold`, `parkedThreshold` | Integer counts 0..scanLimit; default 0 disables. Enable at least one. |
 | `pollIntervalMs` | Whole milliseconds 100..60000; default 5000 after completed reads and callbacks. |
 | `queryTimeoutMs` | Cooperative read deadline, whole milliseconds 10..30000; default 5000, including acquisition. |
 | `maxAgeMs` | Whole milliseconds from max(2*pollIntervalMs, queryTimeoutMs) through 300000; default max(3*pollIntervalMs, 2*queryTimeoutMs). |
@@ -266,7 +290,7 @@ is fresh. Both firing and resolution need at least two eligible samples spanning
 
 Each alert is immutable metadata with `accountId`, `appId`, `metric`, `change`,
 `reason`, `at`, `value`, `threshold`, and optional `health`. Metrics are
-`due_backlog` and `stalled_recovery`. `at` records local observation completion;
+`due_backlog`, `stalled_recovery` and `parked_intents`. `at` records local observation completion;
 `health.observedAt` remains the database observation time. No token, payload,
 invocation identity, SQL diagnostic or raw read error is included.
 
@@ -331,7 +355,7 @@ async def notify(alert, cancel):
 await awatch_event_acknowledgment_intent_health(
     connection_scope, account_id, app_id,
     EventAcknowledgmentIntentWatchOptions(
-        due_threshold=100, stalled_threshold=1, sustain_ms=30000,
+        due_threshold=100, stalled_threshold=1, parked_threshold=1, sustain_ms=30000,
     ),
     notify, stop_event=shutdown,
 )
@@ -350,7 +374,7 @@ The immutable options use snake_case and the same bounds as Node:
 | Option | Range and default |
 | --- | --- |
 | `health` | `EventAcknowledgmentIntentHealthOptions`; `None` selects summary defaults. |
-| `due_threshold`, `stalled_threshold` | Native integer counts 0..scan_limit; default 0 disables. Enable at least one. |
+| `due_threshold`, `stalled_threshold`, `parked_threshold` | Native integer counts 0..scan_limit; default 0 disables. Enable at least one. `parked_threshold` is keyword-only. |
 | `poll_interval_ms` | Whole milliseconds 100..60000; default 5000 after completed reads/callbacks. |
 | `query_timeout_ms` | Whole milliseconds 10..30000; default 5000, including acquisition, query and cleanup. |
 | `max_age_ms` | max(2*poll_interval_ms, query_timeout_ms)..300000; `None` defaults to max(3*poll_interval_ms, 2*query_timeout_ms). |
@@ -358,7 +382,7 @@ The immutable options use snake_case and the same bounds as Node:
 
 Options, nested health settings and normalized owner scope are copied before the
 first await. Booleans/floats are rejected where integer settings are required.
-Threshold equality breaches. A watch has at most two conditions and starts with
+Threshold equality breaches. A watch has at most three conditions and starts with
 one immediate read when awaited. It installs no timer, host or loop on import.
 
 The query deadline sets cooperative cancellation and also checks actual monotonic
@@ -381,7 +405,8 @@ incident; the application owns its incident reconciliation policy.
 
 Frozen `EventAcknowledgmentIntentAlert` values contain `account_id`, `app_id`,
 `metric`, `change`, `reason`, local completion time `at`, `value`, `threshold` and
-optional frozen `health`. Metrics/changes/reasons match the Node table above.
+optional frozen `health`. Metrics/changes/reasons match the Node table above,
+including `parked_intents`.
 `at` stays tied to that observation if notification is slow; `health.observed_at`
 is the database time. Read failures attach `health=None` and `value=0`, which is
 not evidence of zero backlog. Incomplete/stale snapshots may accompany unknown
@@ -434,3 +459,19 @@ Node applications can use the separate opt-in
 [checkpointed Node watch](event-acknowledgment-node-checkpoints.md) for stable
 incident identity and replayable pending notifications across restarts.
 The ordinary watches retain their in-memory behavior.
+
+## Node and Python budget exhaustion
+
+Node and Python can export cached recovery health through their
+[Node](event-acknowledgment-node-recovery-prometheus.md) and
+[Python Prometheus formatters](event-acknowledgment-python-recovery-prometheus.md),
+using shared [backlog/unknown-evidence rules and dashboard](../examples/event-acknowledgment-monitoring/README.md#recovery-health-node).
+
+Current Node and Python summaries include `parked` in `outstanding`, matching Go budget
+health. Parked work is excluded from due, leased, scheduled, expired-claim, stalled
+and oldest-eligible evidence, but remains in oldest-outstanding evidence and the
+bounded sample. Node/Python watches accept `parkedThreshold` / `parked_threshold`,
+including [Node](event-acknowledgment-node-checkpoints.md#parked-intent-alerts) and
+[Python checkpoint outbox alerts](event-acknowledgment-python-checkpoints.md#parked-intent-alerts).
+See [Node budget installation and operator resume](event-acknowledgment-retry-budgets.md#node-budgets-and-guarded-resume)
+and the [Python contract](event-acknowledgment-retry-budgets.md#python-budgets-and-guarded-resume).

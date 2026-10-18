@@ -2,6 +2,8 @@
 
 Generated from the CLI's command manifest by `gregale man --markdown`. Do not edit by hand.
 
+Local help: `gregale deploy --help` and `gregale app --help` show common tasks. Add `--all` to see every option grouped by purpose, or use `gregale help deploy --all`. This reference always lists every option.
+
 Automation: put `--non-interactive` before the command to disable prompts and browser launches; use `--json` for structured output. Required confirmations must be supplied explicitly. Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. See [CLI configuration](cli-config.md) for connection profiles and environment precedence.
 
 | Command | What it does |
@@ -25,7 +27,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`send`](#send) | Reliably send work to another Gregale application |
 | [`deliver`](#deliver) | Reliably deliver an event to a registered webhook |
 | [`apps`](#apps) | List your apps |
-| [`app`](#app) | Get/update one app or run a deployment-attached command |
+| [`app`](#app) | Inspect an app, change settings, or manage its runtime |
 | [`billing`](#billing) | Manage billing (portal, invoices, subscription, card on file) |
 | [`canary`](#canary) | Inspect profiling gates, advance canary stages, or simulate a preset |
 | [`build`](#build) | Inspect builds (build status\|list\|provenance\|sbom) |
@@ -1387,12 +1389,13 @@ gregale menu
 
 Get your first app live with a few guided prompts
 
-`gregale start`
+`gregale start [path]`
 
 Examples:
 
 ```sh
 gregale start
+gregale start ./my-api
 ```
 
 
@@ -4501,34 +4504,38 @@ Show app streaming classification
 
 ## app
 
-Get/update one app or run a deployment-attached command
+Inspect an app, change settings, or manage its runtime
 
-`gregale app <slug> [<subcommand>] [--concurrency] [--environment <SLUG>] [--visibility <public|internal>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--cpu-millicores <250|500|1000>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--idle <SEC>] [--request-timeout <SEC>] [--function-concurrency <N>] [--revision-pin-ttl <DURATION>] [--require-signed <value>] [--security-policy <value>] [--basic-user <USER>] [--basic-pass <PASS>] [--min <N>] [--autoscale-target-rps <N>] [--autoscale-target-cpu-pct <1..100>] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests <N>] [--warm-snapshot-min-ms <MS>] [--warm-pool-size <N>] [--eviction-priority <best_effort|reserved>] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode <optional|required>] [--only-declared-routes] [--no-only-declared-routes] [--head-wakes[=true|false]] [--crawler-policy <wake|cached|block>] [--pre-auth <off|observe|enforce>] [--pre-auth-rps <N>] [--pre-auth-burst <N>] [--health-path <PATH>] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol <http1|http2|grpc>] [--public-auth <open|bearer|basic|ip_allowlist|internal_only>] [--ip-allowlist <CIDR>]... [--overflow-node <NAME>]`
+`gregale app <slug> [<subcommand>] [--concurrency] [--environment <SLUG>] [--visibility <public|internal>] [--profile <SIZE>] [--ram <MB>] [--cpu-millicores <250|500|1000>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--idle <SEC>] [--request-timeout <SEC>] [--function-concurrency <N>] [--revision-pin-ttl <DURATION>] [--require-signed <true|false>] [--security-policy <value>] [--basic-user <USER>] [--basic-pass <PASS>] [--min <N>] [--autoscale-target-rps <N>] [--autoscale-target-cpu-pct <1..100>] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests <N>] [--warm-snapshot-min-ms <MS>] [--warm-pool-size <N>] [--eviction-priority <best_effort|reserved>] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode <optional|required>] [--only-declared-routes] [--no-only-declared-routes] [--head-wakes[=true|false]] [--crawler-policy <wake|cached|block>] [--pre-auth <off|observe|enforce>] [--pre-auth-rps <N>] [--pre-auth-burst <N>] [--health-path <PATH>] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol <http1|http2|grpc>] [--public-auth <open|bearer|basic|ip_allowlist|internal_only>] [--ip-allowlist <CIDR>]... [--overflow-node <NAME>]`
+
+Without update flags, shows the app. Omitted settings stay unchanged.
+
+Connection: use --profile NAME before the command; RAM/CPU: use --profile SIZE after the command.
 
 | Flag | Meaning | |
 |---|---|---|
 | `--concurrency` | print only the per-VM concurrency bound for the app&#39;s plan |  |
-| `--environment <SLUG>` | read or edit desired workload settings in a project environment |  |
+| `--environment <SLUG>` | read or edit this project environment |  |
 | `--visibility <public|internal>` | set public edge exposure | one of `public` · `internal` |
-| `--profile <micro|small|medium|large|xlarge>` | set a named RAM/CPU profile | one of `micro` · `small` · `medium` · `large` · `xlarge` |
+| `--profile <SIZE>` | set RAM/CPU resource size | one of `micro` · `small` · `medium` · `large` · `xlarge` |
 | `--ram <MB>` | set RAM in MB |  |
 | `--cpu-millicores <250|500|1000>` | set sustained CPU allowance | one of `250` · `500` · `1000` |
-| `--max-concurrency <N>` | set max_concurrency |  |
+| `--max-concurrency <N>` | set maximum concurrent requests |  |
 | `--concurrency-overflow <value>` | set saturated concurrency behavior | one of `queue` · `drop` |
-| `--max-queue-depth <N>` | set maximum warm-saturation waiters |  |
-| `--max-queue-wait <DURATION>` | set maximum warm-saturation wait as a duration |  |
-| `--max-queue-wait-ms <N>` | set maximum queued concurrency wait |  |
+| `--max-queue-depth <N>` | set maximum queued requests (0 uses plan default) |  |
+| `--max-queue-wait <DURATION>` | set queue wait, e.g. 750ms (0 uses plan default); excludes --max-queue-wait-ms |  |
+| `--max-queue-wait-ms <N>` | set queue wait in milliseconds (0 uses plan default); excludes --max-queue-wait |  |
 | `--wake-max-queue-depth <N>` | set per-app cold-wake waiter cap |  |
 | `--wake-max-queue-wait-seconds <N>` | set per-app cold-wake wait budget |  |
 | `--idle <SEC>` | set idle timeout in seconds |  |
 | `--request-timeout <SEC>` | set per-app request timeout in seconds |  |
 | `--function-concurrency <N>` | set requests one Node/Python function worker serves at once |  |
 | `--revision-pin-ttl <DURATION>` | revision pin lifetime; 0 disables, maximum 168h |  |
-| `--require-signed <value>` | toggle require_signed | one of `true` · `false` |
+| `--require-signed <true|false>` | require signed images on deploy | one of `true` · `false` |
 | `--security-policy <value>` | deploy posture policy | one of `off` · `warn` · `enforce` |
 | `--basic-user <USER>` | basic-auth username (required with --public-auth=basic) |  |
 | `--basic-pass <PASS>` | basic-auth password (required with --public-auth=basic) |  |
-| `--min <N>` | set minimum warm instances (Pro/Scale only) |  |
+| `--min <N>` | set minimum warm instances (Pro/Scale; 0 scales to zero) |  |
 | `--autoscale-target-rps <N>` | set per-instance RPS scale-up target; 0 disables |  |
 | `--autoscale-target-cpu-pct <1..100>` | set per-instance CPU scale-up target; 0 disables |  |
 | `--warm-snapshot` | enable the warm-snapshot tier |  |
@@ -4568,15 +4575,14 @@ Get/update one app or run a deployment-attached command
 Examples:
 
 ```sh
-gregale app my-api --maintenance
+gregale app my-api
+gregale app my-api scale --interactive
 gregale app my-api --environment staging --ram 512
-gregale app my-api --no-maintenance --streaming-enabled --websocket-enabled --route-metrics
-gregale app my-api --consumer-auth-mode required --json
 ```
 
 ### app health
 
-Explain default-scope serving health and missing evidence
+Check serving health and readiness
 
 `gregale app <slug> health [--check] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--history] [--limit <N>] [--before <CURSOR>] [--environment <SLUG>]`
 
@@ -4617,19 +4623,19 @@ gregale app my-api changes --since 2026-10-08T12:00:00Z --json
 
 ### app scale
 
-Preview, save, apply or update app resource and runtime settings
+Preview or change resources and settings
 
-`gregale app <slug> scale [--interactive] [--plan] [--out <PATH>] [--apply <PATH>] [--confirm] [--environment <SLUG>] [--profile <PROFILE>] [--ram <MB>] [--cpu-millicores <250|500|1000>] [--max-concurrency <N>] [--concurrency-overflow <POLICY>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <MS>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <SECONDS>] [--idle <SECONDS>] [--request-timeout <SECONDS>] [--min <N>] [--autoscale-target-rps <N>] [--autoscale-target-cpu-pct <1..100>] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests <N>] [--warm-snapshot-min-ms <MS>] [--warm-pool-size <N>] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy <POLICY>] [--health-path <PATH>] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol <PROTOCOL>]`
+`gregale app <slug> scale [--interactive] [--plan] [--out <PATH>] [--apply <PATH>] [--confirm] [--environment <SLUG>] [--profile <SIZE>] [--ram <MB>] [--cpu-millicores <250|500|1000>] [--max-concurrency <N>] [--concurrency-overflow <POLICY>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <MS>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <SECONDS>] [--idle <SECONDS>] [--request-timeout <SECONDS>] [--min <N>] [--autoscale-target-rps <N>] [--autoscale-target-cpu-pct <1..100>] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests <N>] [--warm-snapshot-min-ms <MS>] [--warm-pool-size <N>] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy <POLICY>] [--health-path <PATH>] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol <PROTOCOL>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--interactive` | choose resource settings with a guided preview and confirmation |  |
+| `--interactive` | choose settings with a preview and confirmation; accepts only --environment |  |
 | `--plan` | show changes and supported plan effects without applying them |  |
 | `--out <PATH>` | write a reusable plan JSON to a new file (requires --plan) |  |
 | `--apply <PATH>` | apply a saved scale plan JSON file |  |
 | `--confirm` | confirm applying the saved plan (requires --apply) |  |
 | `--environment <SLUG>` | edit desired workload settings in a project environment |  |
-| `--profile <PROFILE>` | named RAM/CPU profile | one of `micro` · `small` · `medium` · `large` · `xlarge` |
+| `--profile <SIZE>` | RAM/CPU resource size (connection --profile goes before app) | one of `micro` · `small` · `medium` · `large` · `xlarge` |
 | `--ram <MB>` | RAM in MB |  |
 | `--cpu-millicores <250|500|1000>` | sustained CPU allowance | one of `250` · `500` · `1000` |
 | `--max-concurrency <N>` | maximum concurrent requests |  |
@@ -4698,7 +4704,7 @@ gregale app my-api rename my-api-v2
 
 ### app restart
 
-Request a snapshot restart, or track a fresh runtime-configuration restart
+Restart from a snapshot or fresh configuration
 
 `gregale app <slug> restart <status> [--fresh] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--json]`
 
@@ -4726,7 +4732,7 @@ Follow an accepted fresh restart without submitting another request
 
 ### app exec
 
-Run a one-off command against the live deployment
+Run a command against the live deployment
 
 `gregale app <slug> exec [--interactive] [--tty] [--shell] [--detach] [--timeout-seconds <N>] [--max-output-bytes <N>] [--operation-policy <NAME>] [--operation-key <JSON>] [--equivalence-key <KEY>] [--idempotency-key <KEY>] [--poll-interval <D>] [--wait-timeout <D>]`
 
@@ -8244,20 +8250,24 @@ Retry a failed deployment from a specific stage (--from=&lt;stage&gt;)
 
 Deploy an app, function, or project
 
-`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--execution-mode <request|service|worker|job>] [--restart-policy <no|on-failure|always|unless-stopped>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--queue-canary-binding <NAME>]... [--healthcheck-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <SERVICE>] [--disable-startup-cpu-boost] [--mcp-task-migration-override] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--plan] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
+`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <SIZE>] [--vcpu <N>] [--execution-mode <MODE>] [--restart-policy <POLICY>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--queue-canary-binding <NAME>]... [--healthcheck-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <SERVICE>] [--disable-startup-cpu-boost] [--mcp-task-migration-override] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <DURATION>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--plan] [--dry-run] [--yes] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
+
+Source defaults to committed HEAD when origin exists; otherwise local files. Use --source=worktree to include local changes.
+
+Connection: use --profile NAME before the command; RAM/CPU: use --profile SIZE after the command.
 
 | Flag | Meaning | |
 |---|---|---|
-| `--image <REF>` | deploy from a container image reference |  |
+| `--image <REF>` | deploy a digest-pinned container image |  |
 | `--tarball <PATH>` | deploy from a source tarball |  |
-| `--path <DIR>` | deploy a selected local source directory (relative to the current directory) |  |
+| `--path <DIR>` | source directory (default: current directory) |  |
 | `--source <auto|head|worktree>` | local source policy (default: auto) | one of `auto` · `head` · `worktree` |
 | `--worktree` | deploy the selected source directory from the working tree, including local changes |  |
-| `--repo <OWNER/NAME>` | deploy from a GitHub repo |  |
-| `--repository <OWNER/NAME>` | GitHub owner/name to bind to a project |  |
-| `--install-id <N>` | GitHub installation id for a project binding |  |
-| `--production-branch <BRANCH>` | production branch for a project binding |  |
-| `--ref <REF>` | git ref for --repo (branch, tag, or 40-char SHA) |  |
+| `--repo <OWNER/NAME>` | deploy a GitHub repository (requires --ref) |  |
+| `--repository <OWNER/NAME>` | bind a project to GitHub (requires --install-id) |  |
+| `--install-id <N>` | GitHub installation ID (requires --repository) |  |
+| `--production-branch <BRANCH>` | production branch for a project binding (default: main) |  |
+| `--ref <REF>` | branch, tag, or 40-character SHA (required with --repo) |  |
 | `--source-branch <BRANCH>` | reject promotion if the branch for a pinned --ref moves |  |
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--pinned-sha <SHA>` | with --github only, pin the generated Action to this full 40-character commit SHA |  |
@@ -8266,28 +8276,27 @@ Deploy an app, function, or project
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--runtime <RUNTIME>` | function runtime | one of `node22` · `python312` · `go124` · `go124-alpine` · `node24` · `python313` · `binary` |
 | `--handler <HANDLER>` | function handler |  |
-| `--name <SLUG>` | app name (default: selected source directory, or current directory) |  |
-| `--profile <PROFILE>` | named app resource profile | one of `micro` · `small` · `medium` · `large` · `xlarge` |
+| `--name <SLUG>` | app slug (default: source directory name) |  |
+| `--profile <SIZE>` | RAM/CPU size for one app; excludes --repo and project deploys | one of `micro` · `small` · `medium` · `large` · `xlarge` |
 | `--vcpu <N>` | assert the plan guest vCPU shape (omit to use the plan default) |  |
-| `--execution-mode <request|service|worker|job>` | app lifecycle mode |  |
-| `--restart-policy <no|on-failure|always|unless-stopped>` | app restart policy |  |
+| `--execution-mode <MODE>` | app lifecycle mode | one of `request` · `service` · `worker` · `job` |
+| `--restart-policy <POLICY>` | app restart policy | one of `no` · `on-failure` · `always` · `unless-stopped` |
 | `--startup-deadline-s <SECONDS>` | maximum startup seconds (0 uses plan default) |  |
 | `--max-retries <N>` | maximum restart attempts (0 uses plan default) |  |
 | `--function` | deploy as a function; skip shape auto-detection |  |
 | `--app` | deploy as an app; skip shape auto-detection |  |
-| `--yes` | skip the apply confirmation prompt |  |
 | `--only <SLUGS>` | workloads to apply; retain unselected project workloads (comma-separated) |  |
 | `--project` | deploy all detected workloads as one project (slug defaults from --name or source) |  |
 | `--environment <SLUG>` | deploy to a registered project environment (defaults to linked context) |  |
 | `--reason <text>` | free-text deploy reason (≤280 chars) |  |
-| `--tag <TAG>` | annotation tag (incident_recovery\|hotfix\|scheduled_maintenance\|compliance_hold\|partner_request) | one of `incident_recovery` · `hotfix` · `scheduled_maintenance` · `compliance_hold` · `partner_request` |
+| `--tag <TAG>` | deployment annotation tag | one of `incident_recovery` · `hotfix` · `scheduled_maintenance` · `compliance_hold` · `partner_request` |
 | `--deployed-by <NAME>` | operator label (auto-resolved from git config user.name) |  |
 | `--pr-number <N>` | GitHub PR number (positive int; 0 = absent). CI paths stamp via the GitHub Action. |  |
 | `--exclude <SLUGS>` | omit workloads (comma-separated slugs; cannot combine with --only) |  |
 | `--show-affected` | show workloads that deploy, stay unchanged, or are removed |  |
 | `--persist-exclude` | save --exclude slugs for future project deploys |  |
 | `--project-slug <SLUG>` | kebab slug for the project (one-key provision) |  |
-| `--canary-preset <PRESET>` | canary ladder preset | one of `none` · `slow` · `balanced` · `aggressive` · `1-10-50-100` · `custom` |
+| `--canary-preset <PRESET>` | canary rollout ladder (default: none) | one of `none` · `slow` · `balanced` · `aggressive` · `1-10-50-100` · `custom` |
 | `--canary-stages <STAGES>` | custom percent@duration canary stages (requires --canary-preset custom) |  |
 | `--safe` | deploy with the balanced health-gated rollout and first-wake 5xx rollback |  |
 | `--require-authn` | require bearer auth on every request |  |
@@ -8301,23 +8310,24 @@ Deploy an app, function, or project
 | `--queue-canary-binding <NAME>` | declare safe queue canary support for this deployment |  |
 | `--healthcheck-path <PATH>` | startup HTTP readiness path |  |
 | `--healthcheck-grpc` | use standard gRPC health for startup readiness |  |
-| `--healthcheck-grpc-service <SERVICE>` | service name for --healthcheck-grpc; empty checks overall health |  |
+| `--healthcheck-grpc-service <SERVICE>` | service name (requires --healthcheck-grpc; default: overall server) |  |
 | `--disable-startup-cpu-boost` | disable temporary CPU boost during VM startup |  |
 | `--mcp-task-migration-override` | allow this deployment to replace incompatible MCP task workers once |  |
 | `--no-triggers` | skip gregale.yaml trigger and async-route changes |  |
 | `--wait` | wait for deployment to become live (default) |  |
 | `--no-wait` | return after deployment is queued |  |
 | `--create-only` | create or reserve the app without uploading a deployment |  |
-| `--timeout <SECONDS>` | maximum wait seconds for deploy (default 1200) |  |
+| `--timeout <DURATION>` | readiness wait limit; seconds or duration, e.g. 10m (default: 1200s; maximum: 24h) |  |
 | `--idempotency-key <KEY>` | stable logical retry key for this deployment |  |
 | `--secrets-file <PATH>` | seal KEY=VALUE pairs before the first deployment |  |
-| `--secret-scan <on|off>` | scan .env files before packing | one of `on` · `off` |
-| `--diff` | preview what would change without deploying |  |
-| `--dry-run` | run deploy preflight without uploading or changing remote state |  |
-| `--plan` | show local stateless app defaults without login or remote changes |  |
-| `--strict` | fail on diff schema/quota/env breaks |  |
-| `--lenient` | return success even when diff has breaks |  |
-| `--server-diff` | compute deploy diff on apid |  |
+| `--secret-scan <on|off>` | scan .env files before packing (default: on) | one of `on` · `off` |
+| `--diff` | alias of --dry-run |  |
+| `--plan` | preview local app defaults; no login needed |  |
+| `--dry-run` | check against remote state without deploying |  |
+| `--yes` | skip the apply confirmation prompt |  |
+| `--strict` | fail on schema/quota/env breaks (default with --dry-run, --diff, or --server-diff) |  |
+| `--lenient` | allow diff breaks; requires --dry-run, --diff, or --server-diff; excludes --strict |  |
+| `--server-diff` | preview changes using the server diff engine |  |
 | `--doctor-strict` | run doctor before deploy and abort on errors |  |
 | `--no-doctor` | skip the automatic local doctor preflight |  |
 
@@ -8555,7 +8565,7 @@ run `gregale delayed-task add` against the developer app
 
 preflight a project and prepare the first developer environment
 
-`gregale dev setup [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--start] [--once] [--no-logs] [--open] [--bucket <NAME>] [--postgres] [--postgres-region <REGION>] [--ttl <DURATION>]`
+`gregale dev setup [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--start] [--save] [--dry-run] [--once] [--no-logs] [--open] [--bucket <NAME>] [--postgres] [--postgres-region <REGION>] [--ttl <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -8564,6 +8574,8 @@ preflight a project and prepare the first developer environment
 | `--env-file <PATH>` | validate and sync developer secrets |  |
 | `--service-override-file <PATH>` | validate and sync service URLs |  |
 | `--start` | start after preflight |  |
+| `--save` | save portable developer defaults in gregale.yaml |  |
+| `--dry-run` | preview saved defaults; requires --save |  |
 | `--once` | sync once and exit |  |
 | `--no-logs` | do not attach runtime logs |  |
 | `--open` | open the verified URL |  |
@@ -14155,12 +14167,40 @@ Build a typed atomic business-operation starter
 
 Generate an editable tenant-scoped order/inventory RPC package
 
-`gregale data-api transaction init --name <NAME> --output <DIR>`
+`gregale data-api transaction init --name <NAME> --output <DIR> [--contract <VERSION>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--name <NAME>` | new function/table prefix | required |
 | `--output <DIR>` | new transaction package directory | required |
+| `--contract <VERSION>` | receipt contract (default v1) | one of `v1` · `v2` |
+
+### data-api rotation
+
+Inspect credential rotation prerequisites and rollout evidence
+
+#### data-api rotation preflight
+
+Check owner catalog prerequisites and current binding rollout
+
+`gregale data-api rotation preflight --binding <UUID> --owner-check <FILE> [--timeout <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--binding <UUID>` | managed Data API binding UUID | required |
+| `--owner-check <FILE>` | trusted local read-only owner preflight command configuration | required |
+| `--timeout <DURATION>` | check deadline (default 2m, maximum 1h) |  |
+
+#### data-api rotation status
+
+Inspect binding refresh and credential retirement metadata
+
+`gregale data-api rotation status --binding <UUID> [--timeout <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--binding <UUID>` | managed Data API binding UUID | required |
+| `--timeout <DURATION>` | check deadline (default 2m, maximum 1h) |  |
 
 ### data-api verify
 

@@ -160,6 +160,10 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"synthetic_checks":                         CloneSchemaConfiguration,
 		"synthetic_check_runs":                     CloneSchemaOperational,
 
+		// Capacity and runtime observations are source-bound, expiring evidence.
+		"managed_postgres_connection_capacity":     CloneSchemaOperational,
+		"data_api_runtime_connection_observations": CloneSchemaOperational,
+
 		"object_bucket_encryption":                           CloneSchemaConfiguration,
 		"object_bucket_lifecycle":                            CloneSchemaConfiguration,
 		"object_bucket_notifications":                        CloneSchemaConfiguration,

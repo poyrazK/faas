@@ -23,6 +23,7 @@ export interface EventAcknowledgmentIntentHealth {
   readonly outstanding: number;
   readonly pending: number;
   readonly unconfirmed: number;
+  readonly parked: number;
   readonly due: number;
   readonly leased: number;
   readonly scheduled: number;
@@ -39,7 +40,7 @@ export interface EventAcknowledgmentIntentHealth {
 const healthQuery = `WITH clock AS MATERIALIZED (SELECT clock_timestamp() AS observed_at), sample AS MATERIALIZED (
  SELECT state,next_attempt_at,claim_expires_at,created_at,updated_at,invocation_id,replay_generation,attempt
  FROM public.gregale_event_acknowledgment_intents
- WHERE account_id=$1::uuid AND app_id=$2::uuid AND state IN ('pending','unconfirmed')
+ WHERE account_id=$1::uuid AND app_id=$2::uuid AND state IN ('pending','unconfirmed','parked')
  ORDER BY next_attempt_at,invocation_id,replay_generation,attempt LIMIT $3::integer+1
  ), classified AS (
  SELECT *,greatest(created_at,next_attempt_at,coalesce(claim_expires_at,next_attempt_at)) AS eligible_at
@@ -48,16 +49,17 @@ const healthQuery = `WITH clock AS MATERIALIZED (SELECT clock_timestamp() AS obs
  count(s.state)::integer AS outstanding,
  count(*) FILTER(WHERE s.state='pending')::integer AS pending,
  count(*) FILTER(WHERE s.state='unconfirmed')::integer AS unconfirmed,
- count(*) FILTER(WHERE s.eligible_at<=c.observed_at AND (s.claim_expires_at IS NULL OR s.claim_expires_at<=c.observed_at))::integer AS due,
- count(*) FILTER(WHERE s.claim_expires_at>c.observed_at)::integer AS leased,
- count(*) FILTER(WHERE s.eligible_at>c.observed_at AND (s.claim_expires_at IS NULL OR s.claim_expires_at<=c.observed_at))::integer AS scheduled,
- count(*) FILTER(WHERE s.claim_expires_at<=c.observed_at)::integer AS expired_claims,
- count(*) FILTER(WHERE s.eligible_at<=c.observed_at-$4::double precision*interval '1 second' AND (s.claim_expires_at IS NULL OR s.claim_expires_at<=c.observed_at))::integer AS stalled,
+ count(*) FILTER(WHERE s.state='parked')::integer AS parked,
+ count(*) FILTER(WHERE s.state IN ('pending','unconfirmed') AND s.eligible_at<=c.observed_at AND (s.claim_expires_at IS NULL OR s.claim_expires_at<=c.observed_at))::integer AS due,
+ count(*) FILTER(WHERE s.state IN ('pending','unconfirmed') AND s.claim_expires_at>c.observed_at)::integer AS leased,
+ count(*) FILTER(WHERE s.state IN ('pending','unconfirmed') AND s.eligible_at>c.observed_at AND (s.claim_expires_at IS NULL OR s.claim_expires_at<=c.observed_at))::integer AS scheduled,
+ count(*) FILTER(WHERE s.state IN ('pending','unconfirmed') AND s.claim_expires_at<=c.observed_at)::integer AS expired_claims,
+ count(*) FILTER(WHERE s.state IN ('pending','unconfirmed') AND s.eligible_at<=c.observed_at-$4::double precision*interval '1 second' AND (s.claim_expires_at IS NULL OR s.claim_expires_at<=c.observed_at))::integer AS stalled,
  count(*) FILTER(WHERE s.created_at>c.observed_at OR s.updated_at>c.observed_at OR s.updated_at<s.created_at OR NOT isfinite(s.created_at) OR NOT isfinite(s.updated_at) OR NOT isfinite(s.next_attempt_at) OR (s.claim_expires_at IS NOT NULL AND NOT isfinite(s.claim_expires_at)))::integer AS invalid_rows,
  min(s.created_at) FILTER(WHERE isfinite(s.created_at))::timestamptz AS oldest_outstanding_at,
  coalesce(greatest(0,extract(epoch FROM c.observed_at-min(s.created_at) FILTER(WHERE isfinite(s.created_at)))),0)::double precision AS oldest_outstanding_age_seconds,
- min(s.eligible_at) FILTER(WHERE isfinite(s.eligible_at) AND s.eligible_at<=c.observed_at AND (s.claim_expires_at IS NULL OR s.claim_expires_at<=c.observed_at))::timestamptz AS oldest_eligible_at,
- coalesce(greatest(0,extract(epoch FROM c.observed_at-min(s.eligible_at) FILTER(WHERE isfinite(s.eligible_at) AND s.eligible_at<=c.observed_at AND (s.claim_expires_at IS NULL OR s.claim_expires_at<=c.observed_at)))),0)::double precision AS oldest_overdue_age_seconds
+ min(s.eligible_at) FILTER(WHERE s.state IN ('pending','unconfirmed') AND isfinite(s.eligible_at) AND s.eligible_at<=c.observed_at AND (s.claim_expires_at IS NULL OR s.claim_expires_at<=c.observed_at))::timestamptz AS oldest_eligible_at,
+ coalesce(greatest(0,extract(epoch FROM c.observed_at-min(s.eligible_at) FILTER(WHERE s.state IN ('pending','unconfirmed') AND isfinite(s.eligible_at) AND s.eligible_at<=c.observed_at AND (s.claim_expires_at IS NULL OR s.claim_expires_at<=c.observed_at)))),0)::double precision AS oldest_overdue_age_seconds
  FROM clock c LEFT JOIN classified s ON true GROUP BY c.observed_at`;
 
 function count(value: unknown, limit: number): number {
@@ -75,8 +77,8 @@ function summary(row: Record<string, unknown> | undefined, accountId: string, ap
   const unconfirmed = count(row.unconfirmed, scanLimit), due = count(row.due, scanLimit);
   const leased = count(row.leased, scanLimit), scheduled = count(row.scheduled, scanLimit);
   const expiredClaims = count(row.expired_claims, scanLimit), stalled = count(row.stalled, scanLimit);
-  const invalidRows = count(row.invalid_rows, scanLimit);
-  if (pending + unconfirmed !== outstanding || due + leased + scheduled !== outstanding
+  const invalidRows = count(row.invalid_rows, scanLimit), parked = count(row.parked, scanLimit);
+  if (pending + unconfirmed + parked !== outstanding || due + leased + scheduled + parked !== outstanding
     || expiredClaims > due + scheduled || stalled > due || invalidRows > outstanding
     || row.truncated && outstanding !== scanLimit) throw intentStoreError();
   const oldestOutstandingAt = row.oldest_outstanding_at === null ? undefined : intentInstant(row.oldest_outstanding_at);
@@ -93,7 +95,7 @@ function summary(row: Record<string, unknown> | undefined, accountId: string, ap
       || oldestOverdueAgeSeconds > oldestOutstandingAgeSeconds)) throw intentStoreError();
   return Object.freeze({ accountId, appId, observedAt, coverage: 'bounded_retained_unfinished_intents',
     complete: !row.truncated && invalidRows === 0, truncated: row.truncated, scanLimit, invalidRows,
-    outstanding, pending, unconfirmed, due, leased, scheduled, expiredClaims, stalled, stallAfterSeconds: stallAfterMs / 1000,
+    outstanding, pending, unconfirmed, parked, due, leased, scheduled, expiredClaims, stalled, stallAfterSeconds: stallAfterMs / 1000,
     ...(oldestOutstandingAt === undefined ? {} : { oldestOutstandingAt }), oldestOutstandingAgeSeconds,
     ...(oldestEligibleAt === undefined ? {} : { oldestEligibleAt }), oldestOverdueAgeSeconds });
 }

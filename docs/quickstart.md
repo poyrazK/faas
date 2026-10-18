@@ -5,18 +5,24 @@ guided path from an existing project to a URL is:
 
 ```bash
 curl -fsSL https://get.gregale.dev | sh
-cd my-api
-gregale start
+gregale start ./my-api
 ```
 
-`start` takes no flags. Choose your project or a starter, review the launch,
-and confirm. It handles browser login when needed, picks the app name and access
+Run `gregale start` inside your project, or pass its directory as shown above.
+An unambiguous app is selected automatically; multiple candidates offer a picker.
+Review the launch and confirm. It handles browser login when needed, picks the app name and access
 defaults, checks the source, shows compact launch progress, and automatically tests
 the first response. It finishes with the response, elapsed time, useful follow-up
 commands, and the tested URL when public ingress was verified. If the inferred app name already exists, choose
 whether to update it or create an app with another name. The review shows your
 account's app allowance and compute usage when available. Build logs are available
 through `gregale logs`.
+
+After you finish, Start remembers the app in the selected source directory.
+From there, `gregale logs --follow`, `gregale metrics`, `gregale inspect`, and
+`gregale deploy` reuse that target. Use `gregale context` to see or change your
+defaults. For an isolated edit-and-reload loop, run `gregale dev`; see
+[reusable development setup](gregale-dev.md#save-setup-for-the-next-session-or-a-teammate).
 
 Start checks server compatibility before review and again before remote changes.
 An incompatible installation or verification-service outage stops submission with
@@ -32,10 +38,11 @@ offers a workload picker. The review shows the selected target; configuration
 checks, secret uploads, and deployment use that environment. An unlinked source
 uses the `default` environment, even when selected from another linked directory.
 
-No project handy? Choose **Create a starter** inside the session. Node.js, Python,
-and Go HTTP apps are available. A starter also offers an optional greeting change:
-type your greeting and confirm one edit-and-deploy preview to see it live. Press
-Enter to finish instead. `start` deploys your working files, including
+No project handy? Run `gregale start` from an empty directory and choose
+**Create a starter**. Node.js, Python, and Go HTTP apps are available. A starter
+also offers an optional greeting change: type your greeting and confirm one
+edit-and-deploy preview to see it live. Press Enter to finish instead.
+`start` deploys your working files, including
 uncommitted changes; use `gregale deploy --dry-run` to preview the inferred build.
 
 For your own project, the first successful response offers **Finish** or
@@ -45,8 +52,8 @@ and environment. Start checks the new deployment and offers the same loop again.
 An interrupted or failed update keeps the accepted ID and the previous successful
 check's deployment ID for recovery.
 
-Interrupted after deployment was accepted? Run `gregale start` again from the same
-directory and choose **Continue**. Source blockers offer a fix or recheck only when
+Interrupted after deployment was accepted? Repeat `gregale start [path]` with the same
+original project directory and choose **Continue**. Source blockers offer a fix or recheck only when
 needed. A failed first request offers a retry using the accepted deployment and a
 short log preview. For deployment options, private access changes, and automation,
 use the regular `gregale deploy` and `gregale app` commands. See

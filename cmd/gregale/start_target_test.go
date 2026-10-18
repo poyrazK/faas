@@ -84,9 +84,9 @@ func TestStartReviewedTargetCannotBeReplacedBeforeDeployment(t *testing.T) {
 					http.NotFound(w, r)
 				}
 			})
-			input := "\ny\n"
+			input := "y\n"
 			if existing {
-				input = "\n2\ny\n"
+				input = "2\ny\n"
 			}
 			pipeStdin(t, input)
 			if code := cmdStart(nil); code == 0 || otherWrites != 0 || (creates == 1) == existing {
