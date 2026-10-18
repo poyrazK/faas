@@ -1,0 +1,15 @@
+# Alternative Node job for the combined actual-pass observer on loopback 9466.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 30s
+rule_files:
+  - recovery.rules.yml
+scrape_configs:
+  - job_name: gregale-event-recovery-node-worker
+    metrics_path: /metrics
+    honor_labels: false
+    static_configs:
+      - targets: ['127.0.0.1:9466']
+        labels:
+          gregale_event_recovery: 'true'
+          gregale_event_recovery_worker: 'true'

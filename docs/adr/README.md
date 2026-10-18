@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Preserve request identity in response caching](20261017214848-response-cache-request-identity.md)
+
 - [Restart-safe Go acknowledgment recovery alerts](20261017182028-go-recovery-alert-checkpoints.md)
 
 - [Bounded Go acknowledgment intent recovery passes](20261017181200-bounded-go-intent-recovery.md)
@@ -1000,7 +1002,57 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1026: Later eligibility observations for workflow failures](1026-workflow-failure-eligibility-observer.md)
 - [ADR-1259: Reviewed first recovery from captured workflow failures](1259-reviewed-initial-workflow-recovery.md)
 
+## Data API execution and recovery
+
+- [ADR-1660: Data API connection-capacity observations](1660-data-api-connection-capacity-observations.md)
+
+- [ADR-1661: Data API runtime connection-demand observations](1661-data-api-runtime-connection-demand.md)
+
+- [ADR-1662: Data API database timing telemetry](1662-data-api-database-timing-telemetry.md)
+
+- [ADR-1663: Data API per-user concurrent request limits](1663-data-api-user-concurrency-limits.md)
+
+- [ADR-1664: Data API lock waits and contention recovery](1664-data-api-lock-contention-policy.md)
+
+- [ADR-1665: Data API deadlines across SQL transaction retries](1665-data-api-sql-retry-deadlines.md)
+
+- [ADR-1666: Owner-approved deadline grants during credential rotation](1666-data-api-deadline-grant-rotation.md)
+
+- [ADR-1667: Coordinated SQL refresh across credential rotation](1667-data-api-coordinated-refresh-rotation.md)
+
+- [ADR-1668: Read-only Data API rotation preflight](1668-data-api-rotation-preflight.md)
+
+- [ADR-1669: Read-only mutation receipt recovery](1669-data-api-read-only-mutation-recovery.md)
+
+- [ADR-1670: Versioned Data API replay expiry](1670-data-api-versioned-replay-expiry.md)
+
+- [ADR-1671: Versioned update and delete receipts](1671-data-api-versioned-update-delete-receipts.md)
+
+- [ADR-1672: Recoverable atomic note batches](1672-data-api-atomic-note-batches.md)
+
+- [ADR-1673: V2 Data API transaction generation](1673-data-api-v2-transaction-generator.md)
+
+- [ADR-1674: Durable client mutation recovery](1674-data-api-durable-mutation-journal.md)
+
+- [ADR-1675: Data API receipt storage diagnostics](1675-data-api-receipt-storage-diagnostics.md)
+
+- [ADR-1676: Incremental note change feed](1676-data-api-incremental-note-change-feed.md)
+
+- [ADR-1677: Ranked, indexed note search under RLS](1677-data-api-ranked-note-search.md)
+
+- [ADR-1678: Read-only team order aggregation](1678-data-api-team-order-aggregation.md)
+
 ## Events and delivery
+
+- [Node and Python stored acknowledgment policy parity](20261017213800-cross-sdk-stored-acknowledgment-policies.md)
+
+- [Stored Go acknowledgment intent retry policies](20261017212845-stored-go-acknowledgment-retry-policy.md)
+
+- [Adaptive Python acknowledgment intent retry scheduling](20261017212320-python-acknowledgment-retry-policy.md)
+
+- [Adaptive Node acknowledgment intent retry scheduling](20261017211931-node-acknowledgment-retry-policy.md)
+
+- [Adaptive Go acknowledgment intent retry scheduling](20261017211526-go-acknowledgment-retry-policy.md)
 
 - [ADR-606: Independent event recipient routing and recovery](606-independent-event-recipient-routing.md)
 - [ADR-607: Unified event receipt inspection](607-unified-event-receipts.md)

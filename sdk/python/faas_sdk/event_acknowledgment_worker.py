@@ -25,6 +25,12 @@ from ._event_acknowledgment_protocol import (
     settings,
 )
 from .client import AuthenticatedClient
+from .event_acknowledgment_intent_retry_policy import (
+    EventAcknowledgmentIntentRetryBudget,
+    EventAcknowledgmentIntentRetryPolicy,
+    EventAcknowledgmentIntentStoredRetryPolicy,
+    _staging_policy,
+)
 from .event_acknowledgment_intents import (
     EventAcknowledgmentIntentResult,
     EventAcknowledgmentIntentStatus,
@@ -211,19 +217,33 @@ class AsyncEventAcknowledgmentWorker:
         return await self._operate(complete, stop_event)
 
     async def run_durable(
-        self, connection: Any, handler: Handler, *, stop_event: asyncio.Event | None = None
+        self,
+        connection: Any,
+        handler: Handler,
+        *,
+        stop_event: asyncio.Event | None = None,
+        retry_policy: EventAcknowledgmentIntentRetryPolicy | None = None,
+        retry_budget: EventAcknowledgmentIntentRetryBudget | None = None,
     ) -> EventAcknowledgmentIntentResult:
         """Atomically commit business SQL, receipt and saved completion. Sends no terminal callback."""
         if not callable(handler):
             raise ValueError("invalid event consumer handler")
 
-        return await self._operate(lambda control: self._durable(connection, handler, control), stop_event)
+        policy = _staging_policy(retry_policy, retry_budget)
+        return await self._operate(
+            lambda control: self._durable(connection, handler, control, policy=policy), stop_event
+        )
 
     async def _durable(
-        self, connection: Any, handler: Handler, control: Control, hooks: _EventConsumerTransactionHooks | None = None
+        self,
+        connection: Any,
+        handler: Handler,
+        control: Control,
+        hooks: _EventConsumerTransactionHooks | None = None,
+        policy: EventAcknowledgmentIntentStoredRetryPolicy | None = None,
     ) -> EventAcknowledgmentIntentResult:
         try:
-            return await self._stage(connection, None, control, hooks)
+            return await self._stage(connection, None, control, hooks, policy)
         except EventAcknowledgmentWorkerError as error:
             if error.code != "event_consumer_receipt_missing":
                 raise
@@ -235,6 +255,7 @@ class AsyncEventAcknowledgmentWorker:
                 lambda cursor: handler(cursor, EventAcknowledgmentWorkerCancellation(control)),
                 control,
                 hooks,
+                policy,
             )
         except EventConsumerCommitUnknownError:
             raise
@@ -252,22 +273,32 @@ class AsyncEventAcknowledgmentWorker:
         handler: Handler,
         *,
         stop_event: asyncio.Event | None = None,
+        retry_policy: EventAcknowledgmentIntentRetryPolicy | None = None,
+        retry_budget: EventAcknowledgmentIntentRetryBudget | None = None,
     ) -> EventAcknowledgmentIntentResult:
         """Commit writes, receipt, unexpired claim removal and completion intent together."""
         if not isinstance(lease, EventConsumerProcessingLease) or not callable(handler):
             raise ValueError("invalid processing lease or event consumer handler")
 
+        policy = _staging_policy(retry_policy, retry_budget)
+
         async def process(control: Control) -> EventAcknowledgmentIntentResult:
             async with lease._use(self._input, control) as hooks:
-                return await self._durable(connection, handler, control, hooks)
+                return await self._durable(connection, handler, control, hooks, policy)
 
         return await self._operate(process, stop_event)
 
     async def save_completion_intent(
-        self, connection: Any, *, stop_event: asyncio.Event | None = None
+        self,
+        connection: Any,
+        *,
+        stop_event: asyncio.Event | None = None,
+        retry_policy: EventAcknowledgmentIntentRetryPolicy | None = None,
+        retry_budget: EventAcknowledgmentIntentRetryBudget | None = None,
     ) -> EventAcknowledgmentIntentResult:
         """Stage a committed receipt after unknown COMMIT. Never invokes business code."""
-        return await self._operate(lambda control: self._stage(connection, None, control), stop_event)
+        policy = _staging_policy(retry_policy, retry_budget)
+        return await self._operate(lambda control: self._stage(connection, None, control, policy=policy), stop_event)
 
     async def run_prepared_durable(
         self,
@@ -277,15 +308,20 @@ class AsyncEventAcknowledgmentWorker:
         options: EventAcknowledgmentPreparedOptions,
         *,
         stop_event: asyncio.Event | None = None,
+        retry_policy: EventAcknowledgmentIntentRetryPolicy | None = None,
+        retry_budget: EventAcknowledgmentIntentRetryBudget | None = None,
     ) -> EventAcknowledgmentIntentResult:
         """Own both lease lifetimes during preparation, then atomically stage fenced completion."""
         settings = _settings(options)
+        policy = _staging_policy(retry_policy, retry_budget)
         if not callable(connection_factory) or not callable(prepare) or not callable(handler):
             raise ValueError("invalid acknowledgment preparation factory or callbacks")
         return await self._operate(
             lambda control: observe_preparation(
                 settings.on_event,
-                lambda events: _run_prepared(self, connection_factory, prepare, handler, settings, control, events),
+                lambda events: _run_prepared(
+                    self, connection_factory, prepare, handler, settings, control, events, policy
+                ),
             ),
             stop_event,
         )
@@ -296,6 +332,7 @@ class AsyncEventAcknowledgmentWorker:
         handler: Callable[[Any], Awaitable[bytes | str]] | None,
         control: Control,
         hooks: _EventConsumerTransactionHooks | None = None,
+        policy: EventAcknowledgmentIntentStoredRetryPolicy | None = None,
     ) -> EventAcknowledgmentIntentResult:
         intent = None
 
@@ -315,6 +352,7 @@ class AsyncEventAcknowledgmentWorker:
                 self._token,
                 receipt,
                 control,
+                policy,
             )
 
         unknown = False
@@ -343,25 +381,53 @@ class AsyncEventAcknowledgmentWorker:
         return await self._reject(connection, "retry", reason, stop_event)
 
     async def save_retry_intent(
-        self, connection: Any, reason: str, *, stop_event: asyncio.Event | None = None
+        self,
+        connection: Any,
+        reason: str,
+        *,
+        stop_event: asyncio.Event | None = None,
+        retry_policy: EventAcknowledgmentIntentRetryPolicy | None = None,
+        retry_budget: EventAcknowledgmentIntentRetryBudget | None = None,
     ) -> EventAcknowledgmentIntentStatus:
         """Persist an explicit decision after known rollback, stopped work and exclusive ownership."""
-        return await self._save_rejection(connection, "retry", reason, stop_event)
+        policy = _staging_policy(retry_policy, retry_budget)
+        return await self._save_rejection(connection, "retry", reason, stop_event, policy)
 
     async def save_dead_letter_intent(
-        self, connection: Any, reason: str, *, stop_event: asyncio.Event | None = None
+        self,
+        connection: Any,
+        reason: str,
+        *,
+        stop_event: asyncio.Event | None = None,
+        retry_policy: EventAcknowledgmentIntentRetryPolicy | None = None,
+        retry_budget: EventAcknowledgmentIntentRetryBudget | None = None,
     ) -> EventAcknowledgmentIntentStatus:
         """Same preconditions as save_retry_intent. Sends no callback or platform renewal."""
-        return await self._save_rejection(connection, "dead-letter", reason, stop_event)
+        policy = _staging_policy(retry_policy, retry_budget)
+        return await self._save_rejection(connection, "dead-letter", reason, stop_event, policy)
 
     async def _save_rejection(
-        self, connection: Any, action: str, reason: str, stop_event: asyncio.Event | None
+        self,
+        connection: Any,
+        action: str,
+        reason: str,
+        stop_event: asyncio.Event | None,
+        policy: EventAcknowledgmentIntentStoredRetryPolicy | None = None,
     ) -> EventAcknowledgmentIntentStatus:
         if not reason_code(reason):
             raise ValueError("invalid event acknowledgment failure reason")
         return await self._operate(
             lambda control: _save_negative(
-                connection, self._input, self._delivery, self._slug, self._seconds, self._token, action, reason, control
+                connection,
+                self._input,
+                self._delivery,
+                self._slug,
+                self._seconds,
+                self._token,
+                action,
+                reason,
+                control,
+                policy,
             ),
             stop_event,
         )

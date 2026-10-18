@@ -230,6 +230,9 @@ func TestBindingServiceRotationRetainsOldIdentityUntilRuntimeRefreshCompletes(t 
 	if provider.lastIssueRequest.IdentityKey == bindingCredentialIdentity(ready) {
 		t.Fatalf("rotation reused the old provider identity: %+v", provider.lastIssueRequest)
 	}
+	if provider.lastIssueRequest.BindingID != ready.ID {
+		t.Fatalf("rotation lost the stable binding policy identity: %+v", provider.lastIssueRequest)
+	}
 
 	// API retries reuse the in-flight rotation instead of minting generation 3.
 	retry, err := service.Rotate(context.Background(), ready.AccountID, ready.ID)
@@ -252,6 +255,40 @@ func TestBindingServiceRotationRetainsOldIdentityUntilRuntimeRefreshCompletes(t 
 	}
 	if retired.State != BindingStateReady || retired.RotationPreviousGeneration != 0 || retired.RotationWakeID != "" || retired.RotationCleanupReady {
 		t.Fatalf("retirement left rotation pending: %+v", retired)
+	}
+}
+
+func TestBindingServiceFailedCredentialPreparationDoesNotPublishOrRetire(t *testing.T) {
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	enabled := true
+	provider := &bindingProvider{}
+	store := &failFinishBindingStore{MemoryStore: NewMemoryStore()}
+	service, _, database := readyBindingFixture(t, provider, store, &now, &enabled)
+	ready, err := service.Create(context.Background(), CreateBindingRequest{
+		AccountID: "account-a", DatabaseID: database.ID, AppID: "app-a",
+		Scope: "production", EnvironmentKey: "DATABASE_URL", Access: CredentialReadWrite,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := service.sink.(*bindingCredentialSink)
+	oldRef := "secret-" + bindingCredentialIdentity(ready)
+	provider.credentialErr = ErrConflict // e.g. owner-approved deadline hooks drifted
+	if _, err := service.Rotate(context.Background(), ready.AccountID, ready.ID); !errors.Is(err, ErrConflict) {
+		t.Fatal("preparation failure was lost", err)
+	}
+	if sink.putCalls != 1 || provider.revokeCalls != 0 || len(sink.references) != 1 || sink.references[oldRef].ID != ready.ID {
+		t.Fatal("failed preparation published or retired a credential", sink.putCalls, provider.revokeCalls, sink.references)
+	}
+	if provider.lastIssueRequest.BindingID != ready.ID {
+		t.Fatal("preparation lost owner policy identity")
+	}
+	candidate := provider.lastIssueRequest.IdentityKey
+	provider.credentialErr = nil
+	now = now.Add(2 * time.Hour)
+	rotated, err := service.Rotate(context.Background(), ready.AccountID, ready.ID)
+	if err != nil || rotated.CredentialGeneration != 2 || provider.lastIssueRequest.IdentityKey != candidate || sink.putCalls != 2 || provider.revokeCalls != 0 {
+		t.Fatalf("preparation retry did not resume generation two: %+v err=%v", rotated, err)
 	}
 }
 

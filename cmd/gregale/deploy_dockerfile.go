@@ -39,7 +39,7 @@ func validateExplicitDockerfileArchive(path, sourceRoot string) error {
 		if err != nil {
 			return fmt.Errorf("read source archive: %w", err)
 		}
-		name := strings.TrimPrefix(strings.TrimSuffix(hdr.Name, "/"), "./")
+		name := strings.TrimSuffix(faastarball.TrimLeadingDotSlash(hdr.Name), "/")
 		want := "Dockerfile"
 		if logicalRoot != "" {
 			want = strings.TrimSuffix(logicalRoot, "/") + "/Dockerfile"

@@ -1053,18 +1053,18 @@ func TestStatusRecorder_MaybeFlush_FirstFlushUnconditional(t *testing.T) {
 		flushBytes:     1 << 20, // never bytes-based
 		flushInterval:  time.Hour,
 		firstFlush:     true,
-		writeDeadline:  time.Second, // so the deadline-install branch clears firstFlush
+		writeDeadline:  time.Second,
 	}
 	rec.Write([]byte(""))
 	if flusher.flushed != 1 {
 		t.Errorf("firstFlush should fire exactly once: flushed=%d", flusher.flushed)
 	}
 	if rec.firstFlush {
-		t.Error("firstFlush should be cleared after firing when writeDeadline>0")
+		t.Error("firstFlush should be cleared after firing")
 	}
 }
 
-func TestStatusRecorder_DoFlush_InstallsWriteDeadlineOnce(t *testing.T) {
+func TestStatusRecorder_DoFlush_UnsupportedWriteDeadline(t *testing.T) {
 	flusher := &fakeFlusher{ResponseWriter: httptest.NewRecorder()}
 	rec := &statusRecorder{
 		ResponseWriter: flusher,
@@ -1076,7 +1076,10 @@ func TestStatusRecorder_DoFlush_InstallsWriteDeadlineOnce(t *testing.T) {
 		t.Error("firstFlush not cleared after first doFlush")
 	}
 	rec.lastFlushedBytes = rec.Bytes // pretend 0 bytes flushed
-	rec.doFlush()                    // second flush — no deadline re-install attempt
+	rec.doFlush()                    // unsupported deadlines must not prevent another flush
+	if flusher.flushed != 2 {
+		t.Errorf("flushes = %d, want 2", flusher.flushed)
+	}
 }
 
 func TestStatusRecorder_DoFlush_NoWriteDeadlineSkipsController(t *testing.T) {
@@ -1084,8 +1087,7 @@ func TestStatusRecorder_DoFlush_NoWriteDeadlineSkipsController(t *testing.T) {
 	// guard against controllers that don't support the call).
 	flusher := &fakeFlusher{ResponseWriter: httptest.NewRecorder()}
 	rec := &statusRecorder{ResponseWriter: flusher, flusher: flusher}
-	// firstFlush defaults to true (zero value); deadline=0 →
-	// controller branch skipped silently.
+	// No deadline is configured, so the controller branch is skipped.
 	rec.doFlush()
 }
 

@@ -18,3 +18,11 @@ func (s *server) appDataAPIConnectionBudget(w http.ResponseWriter, r *http.Reque
 	}
 	postgresapi.ConnectionBudgetHandler{Service: s.managedPostgresBindings, Problem: managedPostgresProblem}.App(w, r, acct, app)
 }
+
+func (s *server) reportDataAPIRuntimeConnections(w http.ResponseWriter, r *http.Request) {
+	var service postgresapi.RuntimeConnectionRecorder
+	if s.managedPostgresBindings != nil {
+		service = s.managedPostgresBindings
+	}
+	postgresapi.RuntimeConnectionHandler{Service: service, Verifier: s.workloadVerifier, Problem: managedPostgresProblem}.Report(w, r)
+}

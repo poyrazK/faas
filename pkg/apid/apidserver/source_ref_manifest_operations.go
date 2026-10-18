@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"io"
 	"path"
-	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
+	"github.com/onebox-faas/faas/pkg/tarball"
 )
 
 func resolveSourceOperations(sourcePath, manifestPath, slug string, plan api.Plan, m *gregalemanifest.Manifest) error {
@@ -61,7 +61,7 @@ func readOperationSourceSchemas(sourcePath string, names map[string]bool, limit 
 		if err != nil {
 			return nil, err
 		}
-		name := strings.TrimPrefix(header.Name, "./")
+		name := tarball.TrimLeadingDotSlash(header.Name)
 		if !names[name] {
 			continue
 		}

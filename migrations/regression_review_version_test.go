@@ -75,6 +75,41 @@ func TestRegressionReviewVersionFastDefaultAndLegacyHistory(t *testing.T) {
 		if recreated == inserted {
 			t.Fatal("recreated lifecycle reused version")
 		}
+		// A repeated Up must not rotate stored versions or replace a later fence.
+		if _, err := tx.Exec(t.Context(), `
+ALTER TABLE debug_regression_observations DROP CONSTRAINT debug_regression_review_version_nonzero;
+ALTER TABLE debug_regression_observations ADD CONSTRAINT debug_regression_review_version_nonzero
+    CHECK (review_version <> '00000000-0000-0000-0000-000000000000'::uuid AND id > 0);
+CREATE OR REPLACE FUNCTION advance_regression_review_version() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.id <= 0 THEN RAISE EXCEPTION 'later review fence'; END IF;
+    NEW.review_version := gen_random_uuid();
+    RETURN NEW;
+END;
+$$;
+ALTER TABLE debug_regression_observations ENABLE ALWAYS TRIGGER regression_review_version;
+`); err != nil {
+			t.Fatal(err)
+		}
+		fingerprint := func() string {
+			t.Helper()
+			var value string
+			if err := tx.QueryRow(t.Context(), `SELECT
+    (SELECT string_agg(id::text || ':' || review_version::text, ',' ORDER BY id) FROM debug_regression_observations) ||
+    pg_get_functiondef('advance_regression_review_version()'::regprocedure) ||
+    (SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='debug_regression_observations'::regclass AND conname='debug_regression_review_version_nonzero') ||
+    (SELECT tgenabled::text || pg_get_triggerdef(oid) FROM pg_trigger WHERE tgrelid='debug_regression_observations'::regclass AND tgname='regression_review_version')`).Scan(&value); err != nil {
+				t.Fatal(err)
+			}
+			return value
+		}
+		original := fingerprint()
+		if _, err := tx.Exec(t.Context(), up); err != nil {
+			t.Fatal(err)
+		}
+		if fingerprint() != original {
+			t.Fatal("migration replay changed stored versions or replaced a later fence")
+		}
 	}
 	check()
 	if _, err := tx.Exec(t.Context(), down); err != nil {
