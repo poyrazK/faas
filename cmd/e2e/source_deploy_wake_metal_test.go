@@ -200,10 +200,16 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 			if dep.RuntimeBase != "node22" {
 				t.Fatalf("deployment runtime_base = %q, want node22 (the shared runner base)", dep.RuntimeBase)
 			}
-			// The fixture's /app is a few files; Railpack's mise Node alone
-			// is ~200 MB, so a layer this small held only /app.
-			if dep.RootfsBytes <= 0 || dep.RootfsBytes > 32<<20 {
-				t.Fatalf("app layer = %d bytes, want an /app-only layer under 32 MiB", dep.RootfsBytes)
+			// Every app layer carries guest-init as /sbin/init (rootfs.Build).
+			// Beyond that the fixture's /app is a few files, while Railpack's
+			// mise Node alone is ~200 MB, so a layer within 8 MiB of
+			// guest-init held only /app.
+			guestInit, err := os.Stat(os.Getenv("FAAS_GUEST_INIT"))
+			if err != nil {
+				t.Fatalf("stat FAAS_GUEST_INIT: %v", err)
+			}
+			if limit := guestInit.Size() + 8<<20; dep.RootfsBytes <= 0 || dep.RootfsBytes > limit {
+				t.Fatalf("app layer = %d bytes, want guest-init (%d) plus an /app-only tree, at most %d", dep.RootfsBytes, guestInit.Size(), limit)
 			}
 			t.Logf("source-deployed-live: shared runtime node22, app layer %d bytes", dep.RootfsBytes)
 		}

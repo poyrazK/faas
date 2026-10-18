@@ -1,22 +1,29 @@
 import http from 'node:http'
 import { refreshStatusReader, refreshTokenHash } from './refresh.mjs'
-import { spawn } from 'node:child_process'
+import { spawn, execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { pathToFileURL } from 'node:url'
 import { createRemoteJWKSet, jwtVerify, SignJWT } from 'jose'
-import { traceRequest, markRequest, markQueryShape, requestID, runtimeFailure } from './logging.mjs'
+import { traceRequest, markRequest, markQueryShape, markDatabaseTimings, requestID, runtimeFailure } from './logging.mjs'
+import { parseDatabaseTimings, unknownDatabaseTimings } from './database-timing.mjs'
 import { inspect, fingerprint, enrichOpenAPI } from './types.mjs'
 import { runtimeConfig, servingContracts, limits } from './config.mjs'
 import { createAdmission } from './admission.mjs'
 import { createHealth } from './health.mjs'
 import { createDeadline } from './deadline.mjs'
+import { checkSQLDeadlineConnection } from './sql-deadline.mjs'
 import { streamResponse } from './response-limit.mjs'
 import { createRateLimiter, admitRateLimit } from './rate-limit.mjs'
+import { createUserConcurrency, admitUserConcurrency } from './user-concurrency.mjs'
+import { qualifiedConnectionEngine, startConnectionReporter } from './connection-observations.mjs'
+import { createPoolObservation } from './pool.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
   const servingFingerprint = config.fingerprint
   const acceptedFingerprints = servingContracts(config)
   const health = createHealth(config, upstreamPort, readyPort)
   const rateLimiter = createRateLimiter(config.rateLimit)
+  const userConcurrency = createUserConcurrency(config.userConcurrency, config.coordinatedRefresh ? limits.pool - 1 : limits.pool)
   const admitted = createAdmission(config.coordinatedRefresh ? limits.pool - 1 : limits.pool, res => {
     res.setHeader('Retry-After', String(limits.overloadRetrySeconds))
     problem(res, 503, 'data_api_overloaded')
@@ -68,6 +75,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
         if (!res.headersSent) res.setHeader('Connection', 'close')
         problem(res, 504, 'request_deadline_exceeded')
       })
+      let userLease
       try {
         let payload
         try { payload = await verify(token) } catch {
@@ -84,21 +92,28 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
           if (guarded[1] !== servingFingerprint && !acceptedFingerprints.has(guarded[1])) return problem(res, 409, 'schema_contract_mismatch')
           if (rpc && !config.functions?.some(f => f.schema === rpc.schema && f.name === rpc.name)) return problem(res, 404, 'not_found')
         }
+        userLease = admitUserConcurrency(userConcurrency, payload.sub, req, res, problem)
+        if (userLease === false) return
         if (req.url.startsWith('/rest/v1/')) markQueryShape(req, res, config)
         if (req.url === '/__gregale/schema') {
           if (!/^[a-f0-9]{64}$/.test(servingFingerprint ?? '')) return problem(res, 503, 'serving_contract_unavailable')
           try {
             if (!deadline.enter('refresh')) return
+            if (config.refreshStatus) userLease?.dispatched()
             const gate = config.refreshStatus ? await config.refreshStatus(req.headers['x-gregale-refresh-token']) : null
+            userLease?.completed()
             if (!deadline.enter('readiness')) return
-            return readiness(res, health, { version: 1, fingerprint: servingFingerprint, ...(gate ? { refresh_protocol: 1, refresh_paused: gate.paused, refresh_verified: gate.owns_pause === true, refresh_fingerprint: gate.fingerprint } : {}) }, deadline)
+            return await readiness(res, health, { version: 1, fingerprint: servingFingerprint, ...(gate ? { refresh_protocol: 1, refresh_paused: gate.paused, refresh_verified: gate.owns_pause === true, refresh_fingerprint: gate.fingerprint } : {}) }, deadline, userLease)
           } catch { return problem(res, 503, 'data_api_refresh_unavailable') }
         }
-        if (!await admitRefreshRequest(config, req, res, deadline)) return
+        if (!await admitRefreshRequest(config, req, res, deadline, userLease)) return
         if (!deadline.enter('signing')) return
         // Only the binding login may become the SQL role. External role claims
         // cannot select an administrator, owner or another application's role.
         const claims = { ...payload, role: config.role }
+        // A caller cannot extend or enable the internal SQL retry deadline.
+        delete claims.gregale_sql_deadline
+        if (config.sqlDeadline) claims.gregale_sql_deadline = { version: 1, expires_at_ms: deadline.expiresAt, coordinated_refresh: config.coordinatedRefresh === true }
         // Never accept reserved coordination claims from an application JWT.
         if (config.coordinatedRefresh) {
           delete claims.gregale_refresh_hash
@@ -109,8 +124,9 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
         }
         const internal = await new SignJWT(claims).setProtectedHeader({ alg: 'HS256' }).sign(new TextEncoder().encode(config.secret.toString('base64url')))
         if (!deadline.check()) return
-        proxy(req, res, internal, upstreamPort, config, guarded ? `/__gregale/contract/${guarded[1]}/rest/v1` : '/rest/v1', deadline)
+        proxy(req, res, internal, upstreamPort, config, guarded ? `/__gregale/contract/${guarded[1]}/rest/v1` : '/rest/v1', deadline, userLease)
       } catch { problem(res, 503, 'data_api_unavailable') }
+      finally { if (userLease) userLease.settled() }
     })
   })
 }
@@ -118,12 +134,14 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
 // A deliberate pause is an admission decision, not an engine failure.
 // PostgREST recovers its pool/schema cache for HTTP 503 responses, so block
 // known paused traffic here. Its SQL pre-request hook still fences races.
-async function admitRefreshRequest(config, req, res, deadline) {
+async function admitRefreshRequest(config, req, res, deadline, userLease) {
   if (!config.coordinatedRefresh) return true
   try {
     if (!deadline.enter('refresh')) return false
     if (typeof config.refreshStatus !== 'function') throw new Error('Refresh reader unavailable')
+    userLease?.dispatched()
     const gate = await config.refreshStatus(req.headers['x-gregale-refresh-token'])
+    userLease?.completed()
     if (!deadline.check()) return false
     if (!gate || typeof gate.paused !== 'boolean' || !/^[a-f0-9]{64}$/.test(gate.fingerprint ?? '')) throw new Error('Invalid refresh state')
     if (gate.paused && gate.owns_pause !== true) {
@@ -151,14 +169,17 @@ function healthResponse(res, status, body) {
   res.end(JSON.stringify(body))
 }
 
-async function readiness(res, health, contract = {}, deadline) {
-  const ready = await health.sql() === 'ready'
+async function readiness(res, health, contract = {}, deadline, userLease) {
+  userLease?.dispatched()
+  const sql = await health.sql()
+  if (sql !== 'unknown') userLease?.completed()
+  const ready = sql === 'ready'
   if (deadline && !deadline.check()) return
   if (!ready) markRequest(res, 'data_api_unavailable')
   return healthResponse(res, ready ? 200 : 503, { ready, ...(ready ? contract : {}) })
 }
 
-function proxy(req, res, token, port, config, restBasePath, deadline) {
+function proxy(req, res, token, port, config, restBasePath, deadline, userLease) {
   const declared = Number(req.headers['content-length'] ?? 0)
   if (!Number.isSafeInteger(declared) || declared < 0 || declared > limits.bodyBytes) return problem(res, 413, 'request_too_large')
   const headers = { authorization: `Bearer ${token}` }
@@ -167,10 +188,14 @@ function proxy(req, res, token, port, config, restBasePath, deadline) {
   for (const name of ['accept', 'content-type', 'prefer', 'range', 'range-unit', 'accept-profile', 'content-profile']) if (req.headers[name]) headers[name] = req.headers[name]
   const path = req.url === '/openapi.json' ? '/' : req.url.slice('/rest/v1'.length)
   if (!deadline.enter('upstream') || !deadline.dispatch()) return
+  userLease?.dispatched()
+  markDatabaseTimings(res, unknownDatabaseTimings('no_response'))
   // The total deadline owns expiry and aborts this request. A second socket
   // timer can fire early and preempt its stable response and deadline evidence.
   const upstream = http.request({ hostname: '127.0.0.1', port, path, method: req.method, headers, signal: deadline.signal }, response => {
+    userLease?.completed()
     if (!deadline.enter('streaming')) { response.destroy(); return }
+    markDatabaseTimings(res, parseDatabaseTimings(response.headers['server-timing']))
     response.on('data', () => deadline.check())
     if (req.method === 'GET' && path.split('?')[0] === '/' && response.statusCode === 200) return openAPISpec(response, res, config, restBasePath, deadline)
     if (response.statusCode >= 400) markRequest(res, 'upstream_error')
@@ -222,6 +247,11 @@ function openAPISpec(response, res, config, restBasePath, deadline) {
 
 export async function main(env = process.env) {
   const config = runtimeConfig(env)
+  if (config.connectionObservation || config.sqlDeadline) {
+    const { stdout } = await promisify(execFile)(env.DATA_API_POSTGREST_BIN || '/usr/local/bin/postgrest', ['--version'], { timeout: limits.connectionReportMs, maxBuffer: limits.healthBytes })
+    if (!qualifiedConnectionEngine(stdout)) throw new Error('Unsupported connection observation engine')
+  }
+  if (config.sqlDeadline) await checkSQLDeadlineConnection(config.connection, { coordinatedRefresh: config.coordinatedRefresh })
   const snapshot = await inspect(config.connection, config.schemas)
   config.snapshot = snapshot
   config.functions = snapshot.functions
@@ -236,11 +266,14 @@ export async function main(env = process.env) {
     config.refreshStatus = refresh.read
   }
   const jwks = createRemoteJWKSet(config.auth.jwks, { timeoutDuration: 3000, cacheMaxAge: 300000 })
+  config.poolObservation = createPoolObservation(3001, config.coordinatedRefresh ? limits.pool - 1 : limits.pool)
   const verify = tokenVerifier(config.auth, jwks)
   // Avoid inheriting arbitrary PGRST_* overrides from application secrets.
   const childEnv = Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith('PGRST_')))
   const child = spawn(env.DATA_API_POSTGREST_BIN || '/usr/local/bin/postgrest', [], { env: { ...childEnv, ...config.postgrestEnv }, stdio: ['ignore', 'ignore', 'ignore'] })
   const server = createServer(config, verify)
+  const stopReporting = startConnectionReporter(config)
+  server.on('close', stopReporting)
   server.on('close', () => { void refresh?.close() })
   let stopping = false
   server.requestTimeout = limits.queryMs + 5000

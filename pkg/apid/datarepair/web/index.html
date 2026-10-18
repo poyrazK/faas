@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gregale selective repair</title><link rel="stylesheet" href="/app.css">
+<main><header><p class="brand">GREGALE · INTERNAL</p><h1>Selective data repair</h1><p>Review and reverse recorded field updates while preserving later edits.</p></header>
+<p><label>Executor token <input id="token" type="password" autocomplete="off"></label></p>
+<section aria-labelledby="doctor-heading"><h2 id="doctor-heading">Executor readiness</h2>
+<p>Inspect the configuration for one declared table. This read-only executor report does not prepare, rehearse or approve a repair. Check writer permissions and session settings separately through the SDK capture readiness helper.</p>
+<form id="doctor-form"><label>Qualified table <input id="doctor-table" placeholder="public.products" required autocomplete="off"></label><button>Check configuration</button></form>
+<p id="doctor-message" role="status" aria-live="polite"></p>
+<div class="table-scroll"><table><caption>Configuration observations only. Resolve blocked and unknown findings before relying on this setup.</caption><thead><tr><th>Check</th><th>Status</th><th>Finding</th><th>Objects</th><th>Next action</th></tr></thead><tbody id="doctor-results"></tbody></table></div></section>
+<section aria-labelledby="source-heading"><h2 id="source-heading">Find a recorded operation</h2>
+<form id="source-search" class="source-filters">
+<label>Release <input id="source-release" autocomplete="off"></label><label>Table <input id="source-table" placeholder="public.products" autocomplete="off"></label>
+<label>Since (inclusive) <input id="source-since" placeholder="2026-10-17T00:00:00Z"></label><label>Before (exclusive) <input id="source-before" placeholder="2026-10-18T00:00:00Z"></label><button>Find captures</button>
+</form><p id="source-message" role="status" aria-live="polite"></p>
+<div class="table-scroll"><table><caption>Capture metadata. Recorded change counts do not establish repair eligibility.</caption><thead><tr><th>Operation</th><th>Release</th><th>Table</th><th>Captured</th><th>Recorded changes</th><th>Availability</th><th>Existing repairs</th><th>Action</th></tr></thead><tbody id="source-results"></tbody></table></div>
+<p><button id="source-next" disabled>Next page</button></p></section>
+<section aria-labelledby="history-heading"><h2 id="history-heading">Find repair history</h2>
+<form id="history-search"><label>Original operation ID <input id="history-source" autocomplete="off" required size="40"></label><button>Find repairs</button></form>
+<p id="history-message" role="status" aria-live="polite"></p>
+<div class="table-scroll"><table><caption>Retained source metadata. Approval, closure and commit are separate facts; expiry does not prove rollback.</caption><thead><tr><th>Plan</th><th>Selection</th><th>Approval</th><th>Replacement links</th><th>Apply result</th><th>Payload and expiry</th><th>Execution history</th><th>Read</th></tr></thead><tbody id="history-results"></tbody></table></div>
+<p><button id="history-next" disabled>Next page</button></p></section>
+<p><label>Original operation ID <input id="operation"></label> <button id="plan">Prepare repair plan</button></p>
+<p><label>Existing plan ID <input id="plan-id"></label> <button id="load">Load plan</button></p>
+<p id="status" role="status"></p><pre id="summary"></pre>
+<section id="validation-review" hidden><h2>Plan freshness</h2><button id="validate" disabled>Check freshness</button><p id="validation-message" role="status" aria-live="polite"></p>
+<div id="validation-table" class="table-scroll" hidden><table><caption>Current drift in the original candidate set. The saved plan remains unchanged.</caption><thead><tr><th>Record</th><th>Expected version</th><th>Observed version</th><th>Change</th></tr></thead><tbody id="validation-rows"></tbody></table></div></section>
+<section id="resolution-review" hidden><h2>Apply outcome</h2><p id="resolution-summary" role="status"></p><button id="resolve" disabled>Resolve apply outcome</button></section>
+<section id="verification-review" hidden><h2>Committed repair verification</h2><p id="verification-receipt"></p><button id="verify" disabled>Verify repaired records</button><p id="verification-message" role="status" aria-live="polite"></p>
+<div id="verification-table" class="table-scroll" hidden><table><caption>Observations of repaired records at the reported time. The committed receipt remains unchanged.</caption><thead><tr><th>Record</th><th>Version after repair</th><th>Observed version</th><th>Observation</th></tr></thead><tbody id="verification-rows"></tbody></table></div></section>
+<section id="replacement-review" hidden><h2>Replacement plan</h2><p id="replacement-summary"></p>
+<p><label>Replacement ID (save before submitting) <input id="replacement-id" autocomplete="off" size="40"></label> <button id="replace" disabled>Prepare replacement plan</button></p></section>
+<section id="check-review" hidden><h2>Declared checks</h2><p id="check-message" role="status"></p>
+<div class="table-scroll"><table><caption>Names and query hashes are frozen in the plan. Live apply runs the same checks again.</caption><thead><tr><th>Check</th><th>Query SHA-256</th><th>Rehearsal</th><th>Live correction</th></tr></thead><tbody id="check-rows"></tbody></table></div></section>
+<p><label>Show records <select id="row-filter"><option value="all">All records</option><option value="conflict">Conflicts</option><option value="unavailable">Missing records</option><option value="candidate">Candidates</option></select></label> <span id="row-count"></span></p>
+<div class="table-scroll"><table><caption>The correction includes all candidate records. Observed values are frozen at preparation; apply checks versions again.</caption><thead><tr><th>Record</th><th>Status</th><th>Previous status</th><th>Reason</th><th>Versions</th><th>Recorded after operation</th><th>Observed at preparation</th><th>Restore values</th></tr></thead><tbody id="rows"></tbody></table></div>
+<p><button id="rehearse" disabled>Rehearse correction</button></p>
+<p><label><input id="reviewed" type="checkbox">I reviewed the exact candidate records and restoration values above.</label> <button id="approve" disabled>Approve this plan</button></p>
+<p><label>Repair operation ID <input id="repair-id" readonly></label> <button id="apply" disabled>Apply approved correction</button></p>
+<p>The repair ID is saved in the page URL before applying. Preserve that URL. After an uncertain response, reload the plan and resolve its outcome using the same ID.</p>
+</main><script src="/sources.js" defer></script><script src="/doctor.js" defer></script><script src="/history.js" defer></script><script src="/checks.js" defer></script><script src="/validation.js" defer></script><script src="/verification.js" defer></script><script src="/replacement.js" defer></script><script src="/resolution.js" defer></script><script src="/app.js" defer></script></html>

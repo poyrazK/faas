@@ -21,7 +21,7 @@ const saved = await loadOwnedCheckpoint();
 const result = await watchEventAcknowledgmentIntentHealthWithCheckpoint(pool, accountId, appId, {
   signal,
   health: { scanLimit: 1000, stallAfterMs: 300000 },
-  dueThreshold: 100, stalledThreshold: 1, sustainMs: 30000,
+  dueThreshold: 100, stalledThreshold: 1, parkedThreshold: 1, sustainMs: 30000,
   resume: saved == null ? undefined : validateEventAcknowledgmentIntentCheckpoint(saved),
   pollAcknowledgments: (checkpoint, callbackSignal) => readOwnedAcknowledgments(checkpoint, callbackSignal),
   onProgress: async (progress, callbackSignal) => {
@@ -53,13 +53,32 @@ apply unchanged. No platform client or credentials are needed for the health rea
 
 ## Checkpoint contents and validation
 
-Version 1 uses kind `gregale.node.event-acknowledgment-intent-watch` and is distinct
+Both versions use kind `gregale.node.event-acknowledgment-intent-watch` and are distinct
 from deadline-watch, Go/CLI and non-checkpointed recovery watch state. It contains:
 
 - Normalized owner scope, complete effective policy and a random session UUID.
 - A monotonic safe-integer notification sequence and timestamp high-water mark.
-- Up to two condition records with historical values and unresolved incident IDs.
+- Condition records with historical values and unresolved incident IDs.
 - Ordered `pending` lifecycle notifications and retained `acknowledged` receipts.
+
+| Format | Selection and conditions |
+| --- | --- |
+| Version 1 | `parkedThreshold` is zero or omitted. The normalized policy omits that field and preserves the existing JSON field order, with one or two due/stalled conditions. |
+| Version 2 | `parkedThreshold` is positive. The complete policy includes that threshold, with one through three enabled conditions in due, stalled, parked order. |
+
+The validator rejects a version/selection mismatch: version 1 cannot enable
+parked alerts and version 2 cannot omit or disable them. Policy counts must be
+integers within the health scan limit. Other saved policy settings remain
+explicit; missing fields do not acquire current defaults. Older Node validators
+reject version 2. Upgrade every host that can resume or acknowledge such a
+checkpoint before enabling parked alerts. Monitoring format versions are
+independent of retry-policy versions, and Node snapshots remain distinct from Go.
+
+Changing thresholds requires a new watch session. A version 1 checkpoint cannot
+resume with parked alerts enabled, and changing only its version is invalid.
+Finish/reconcile the old session and retain its checkpoint, unresolved incidents
+and pending notifications under the application's writer fence before starting
+the new selection. Do not discard pending events or synthesize resolutions.
 
 `validateEventAcknowledgmentIntentCheckpoint(unknown)` validates bounds, policy,
 timestamps, sequences, incident lineage, threshold values and acknowledgment order.
@@ -102,6 +121,28 @@ Notifications are historical transitions and can be replayed before current
 reconfirmation; replay does not assert that their old evidence remains fresh.
 Deliver pending notifications in sequence order and make downstream delivery
 idempotent by incident ID plus sequence (and owner scope where appropriate).
+
+### Parked-intent alerts
+
+Set `parkedThreshold` to an integer count from 1 through the effective health
+`scanLimit`. Zero/omission disables it; due and stalled thresholds may both be
+zero for a parked-only watch. Metric `parked_intents` uses the bounded health
+`parked` count, with equality breaching the threshold. Due/stalled values exclude
+parked work, so clearing automatic backlog cannot clear a parked incident.
+
+Opening/recovery need the same complete, fresh, advancing observations across
+`sustainMs` as other metrics. Failed reads, invalid/truncated coverage, stale,
+repeated/regressing timestamps and polling gaps leave confirmation unknown and
+retain unresolved identity. An incomplete lower bound above the threshold still
+cannot open an incident. Startup replays pending parked notifications before any
+health read and requires fresh proof before reconfirming or resolving the retained
+incident. The existing outbox and safe sequence bounds reserve resolution capacity.
+
+A resolution describes only a sustained count below the threshold. An operator
+budget resume or newer staging can reduce parked count without confirming the
+callback or business outcome. This monitor reads metadata; it does not grant
+claims, resume work or send platform callbacks. The ordinary Node watch also
+accepts `parkedThreshold` with invocation-local notifications.
 
 ## Exact acknowledgments and capacity
 
@@ -182,4 +223,5 @@ VM awake or changes delivery ordering/deduplication. See the
 [checkpoint integration example](../examples/event-acknowledgment-node/README.md#persist-recovery-alert-checkpoints).
 Local validation is SDK build, generation, packaging and static checks; restart,
 notification replay, storage fencing and timing require hosted acceptance before
-release.
+release, including parked-only/mixed conditions, incomplete evidence, operator
+resume/supersession and version 1/version 2 compatibility.

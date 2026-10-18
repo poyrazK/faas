@@ -1,0 +1,209 @@
+# .github/workflows/release-units.yml — per-unit control-plane releases
+# (docs/adr/1650-per-unit-control-plane-releases.md).
+#
+# Every push to main builds and signs only the daemons whose Go inputs
+# changed since the full release production runs (the base), each stamped
+# with its unit version, in two lanes: control-plane daemons, and the edge
+# (gatewayd-public, gatewayd-internal). The signed tarball is a workflow
+# artifact. cd-controlplane.yml deploys the control-plane lane with
+# `units_run_id`, then cd-edge-units.yml the edge lane host by host, each
+# held on the SLO gate. Full releases (release.yml on a v*.*.* tag) are
+# unchanged and remain the only path for migrations, deploy/ changes,
+# dependency bumps and the other compute daemons; this workflow says so and
+# exits when a range needs one.
+#
+# The base defaults to the newest full release tag reachable from the
+# commit, the release CI checked every merge against. The deploy refuses any
+# other base (N±1, docs/release-compatibility.md), and a host that does not
+# run it: roll that full release out first.
+#
+# Unit releases are cumulative over the base, so a newer one supersedes an
+# older one: an in-progress build is cancelled by the next push. A deploy
+# already started is never cancelled (cd-controlplane's own concurrency).
+#
+# Gate: the merged commit passed the pull request's required light tier.
+# The mega tier (ci.yml) still gates every full release tag and runs nightly.
+
+name: release-units
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "Full release the control plane runs (tag or commit). Default: newest v* tag reachable from main."
+        required: false
+        type: string
+      deploy_environment:
+        description: "Also deploy the unit release to this environment: production or production-us (empty: build only)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+  actions: read
+
+jobs:
+  build:
+    name: Build and sign changed control-plane units
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    concurrency:
+      group: release-units-build
+      cancel-in-progress: true
+    outputs:
+      eligible: ${{ steps.detect.outputs.eligible }}
+      deployable: ${{ steps.detect.outputs.deployable }}
+      control_plane: ${{ steps.detect.outputs.control_plane }}
+      edge: ${{ steps.detect.outputs.edge }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Unit versions walk first-parent history back to the base tag.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: Restore main-branch Go build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+          key: go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-lint-${{ runner.os }}-
+
+      - name: Select changed units
+        id: detect
+        env:
+          BASE_INPUT: ${{ inputs.base }}
+          OUT_DIR: ${{ runner.temp }}/gregale-units
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUT_DIR"
+          base="${BASE_INPUT:-}"
+          if [[ -z "$base" ]]; then
+            base="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' HEAD)"
+          fi
+          python3 scripts/ci/affected_units.py --base "$base" --head HEAD --output "$OUT_DIR/report.json"
+          eligible="$(jq -r .eligible "$OUT_DIR/report.json")"
+          deployable="$(jq -r '.deployable | join(",")' "$OUT_DIR/report.json")"
+          {
+            echo "eligible=$eligible"
+            echo "deployable=$deployable"
+            echo "control_plane=$(jq -r '.lanes["control-plane"].eligible' "$OUT_DIR/report.json")"
+            echo "edge=$(jq -r '.lanes.edge.eligible' "$OUT_DIR/report.json")"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "## Unit release for \`${GITHUB_SHA:0:12}\` over \`$base\`"
+            echo
+            echo "| binary | lane | unit version |"
+            echo "| --- | --- | --- |"
+            jq -r '.binaries | to_entries[] | select(.value.changed) | "| \(.key) | \(.value.lane) | `\(.value.commit[0:12])` |"' "$OUT_DIR/report.json"
+            echo
+            if [[ "$eligible" == true ]]; then
+              echo "Deployable as a unit release: **${deployable}**."
+              jq -r '.lanes | to_entries[] | "- \(.key) lane: \(if .value.eligible then (.value.changed | join(", ")) else "not deployable: " + (.value.reasons | join("; ")) end)"' "$OUT_DIR/report.json"
+            else
+              echo "Not deployable as a unit release: $(jq -r '.reasons | join("; ")' "$OUT_DIR/report.json")."
+            fi
+            pending="$(jq -r '[.pending[][]] | join(", ")' "$OUT_DIR/report.json")"
+            [[ -z "$pending" ]] || echo "Waiting for the next full release: ${pending}."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build unit binaries
+        if: steps.detect.outputs.eligible == 'true'
+        env:
+          REPORT: ${{ runner.temp }}/gregale-units/report.json
+          OUT_DIR: ${{ runner.temp }}/gregale-units/release
+        run: scripts/build-unit-release.sh
+
+      - name: Install pinned cosign
+        if: steps.detect.outputs.eligible == 'true'
+        env:
+          COSIGN_VERSION: "2.4.1"
+          COSIGN_SHA256: "8b24b946dd5809c6bd93de08033bcf6bc0ed7d336b7785787c080f574b89249b"
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release-tools"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            -o "$RUNNER_TEMP/release-tools/cosign" \
+            "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+          echo "${COSIGN_SHA256}  $RUNNER_TEMP/release-tools/cosign" | sha256sum -c -
+          chmod 0755 "$RUNNER_TEMP/release-tools/cosign"
+          echo "$RUNNER_TEMP/release-tools" >> "$GITHUB_PATH"
+
+      - name: Sign unit release with GitHub OIDC
+        if: steps.detect.outputs.eligible == 'true'
+        env:
+          OUT_DIR: ${{ runner.temp }}/gregale-units/release
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes \
+            --bundle "$OUT_DIR/units.cosign.bundle" \
+            "$OUT_DIR/units.tar.gz"
+          # cd-controlplane accepts only this workflow on main.
+          cosign verify-blob \
+            --bundle "$OUT_DIR/units.cosign.bundle" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-units.yml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$OUT_DIR/units.tar.gz"
+          (cd "$OUT_DIR" && sha256sum units.tar.gz units.cosign.bundle units-manifest.json > SHA256SUMS)
+
+      - name: Upload unit release
+        if: steps.detect.outputs.eligible == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gregale-unit-release
+          path: ${{ runner.temp }}/gregale-units/release/
+          if-no-files-found: error
+          retention-days: 30
+
+  # Deploy order (docs/release-compatibility.md): the control-plane lane,
+  # held on its SLO gate, then the edge lane host by host. Automatic deploys
+  # are opt-in: set the repository variable UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT
+  # (production or production-us), or dispatch with deploy_environment. The
+  # environment's protection rules still apply.
+  deploy:
+    name: Deploy the control-plane lane
+    needs: [build]
+    if: >-
+      needs.build.outputs.eligible == 'true' &&
+      (inputs.deploy_environment != '' || (github.event_name == 'push' && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != ''))
+    uses: ./.github/workflows/cd-controlplane.yml
+    with:
+      deploy_environment: ${{ inputs.deploy_environment || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT }}
+      units_run_id: ${{ github.run_id }}
+      units_lane: control-plane
+    secrets: inherit
+    permissions:
+      contents: read
+      actions: read
+
+  deploy-edge:
+    name: Deploy the edge lane
+    needs: [build, deploy]
+    if: needs.build.outputs.edge == 'true'
+    uses: ./.github/workflows/cd-edge-units.yml
+    with:
+      deploy_environment: ${{ inputs.deploy_environment || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT }}
+      units_run_id: ${{ github.run_id }}
+    secrets: inherit
+    permissions:
+      contents: read
+      actions: read

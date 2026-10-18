@@ -103,6 +103,10 @@ type Server struct {
 	// Deliveries is the durable delivery inbox. When wired, the HTTP handler
 	// acknowledges after Enqueue and the worker performs fetch/scan/build work.
 	Deliveries WebhookDeliveryStore
+	// RecordCI is invoked only after App HMAC verification and durable inbox
+	// insertion, before acknowledgement. It records compact CI source evidence;
+	// apid creates the run intent asynchronously. Nil keeps CI entirely inert.
+	RecordCI func(context.Context, WebhookDelivery) error
 
 	// ReadyFunc + ReasonFunc are the /readyz hooks (issue #571
 	// PR-A2). Wired by cmd/githubd/main.go to
@@ -468,6 +472,16 @@ func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "internal", http.StatusInternalServerError)
 			observe(enqueueErr)
 			return
+		}
+		// CI trusts only GitHub App deliveries. Legacy installation-scoped
+		// senders cannot authenticate another installation's payload identity.
+		if s.RecordCI != nil && len(s.WebhookSecret) > 0 {
+			if err := s.RecordCI(r.Context(), WebhookDelivery{DeliveryID: deliveryID, EventType: eventType, Payload: body}); err != nil {
+				s.Log.Warn("githubd CI source journal unavailable", "err", err)
+				http.Error(w, "CI source journal unavailable", http.StatusServiceUnavailable)
+				observe(err)
+				return
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)

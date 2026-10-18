@@ -1900,7 +1900,13 @@ type Store interface {
 	PreviewAppByProjectWorkload(ctx context.Context, accountID, projectID string, previewPRNumber int, workloadName string) (App, error)
 	// Scenario test members form an explicit, fail-closed service namespace.
 	// Registration accepts only live developer previews and is atomic.
+	// Retained network containment is read before every application boot.
+	ScenarioRehearsalNetworkRun(context.Context, string) (string, error)
+
 	RegisterScenarioTestMembers(ctx context.Context, accountID, runID string, members []ScenarioTestMember) error
+	// ScenarioWebhookDeliveryBlocked consults retained capture authority, including
+	// after namespace cleanup. Errors must prevent all outbound transmission.
+	ScenarioWebhookDeliveryBlocked(ctx context.Context, appID, webhookID string) (bool, error)
 	ScenarioTestMemberByApp(ctx context.Context, appID string) (ScenarioTestMember, error)
 	ScenarioTestAppByWorkload(ctx context.Context, accountID, runID, workload string) (App, error)
 	SetScenarioTestChaosPlan(ctx context.Context, accountID, runID string, plan chaos.Plan) (chaos.Lease, error)
@@ -2099,6 +2105,11 @@ type Store interface {
 	// both want "instances I'm responsible for" rather than the
 	// fleet-wide ListAllInstances.
 	ListInstancesByNodeID(ctx context.Context, nodeID string) ([]Instance, error)
+	// ListLiveInstancesByNodeID is ListInstancesByNodeID limited to live
+	// instances (IsLive) at the database boundary. Callers that only act on
+	// resident VMs use it so terminal wake history does not travel on every
+	// tick (H10-145).
+	ListLiveInstancesByNodeID(ctx context.Context, nodeID string) ([]Instance, error)
 	// ListInstancesOnNodeID returns every instance whose physical
 	// instances.node_id matches nodeID, regardless of the owning app's
 	// scheduler owner. This is the safety/observability view for drains:

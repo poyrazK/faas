@@ -16,6 +16,7 @@ import (
 )
 
 func TestDashboardAuthSigningKeysAndEmail(t *testing.T) {
+	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "1")
 	identity, restore := apidserver.WithTestIdentities(t)
 	t.Cleanup(restore)
 	e := apidserver.Setup(t, api.PlanPro)

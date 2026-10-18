@@ -1802,6 +1802,31 @@ func (q *Queries) ApplyGatewayUsageEvent(ctx context.Context, db DBTX, arg Apply
 	return result.RowsAffected(), nil
 }
 
+const applyMCPNotificationAction = `-- name: ApplyMCPNotificationAction :exec
+UPDATE mcp_readiness_incident_events SET delivery_version=$1,delivery_status=$2,
+ available_at=$3,lease_token=NULL,lease_until=NULL,last_operator_action=$4
+WHERE id=$5
+`
+
+type ApplyMCPNotificationActionParams struct {
+	DeliveryVersion int64
+	DeliveryStatus  string
+	AvailableAt     pgtype.Timestamptz
+	Receipt         []byte
+	EventID         pgtype.UUID
+}
+
+func (q *Queries) ApplyMCPNotificationAction(ctx context.Context, db DBTX, arg ApplyMCPNotificationActionParams) error {
+	_, err := db.Exec(ctx, applyMCPNotificationAction,
+		arg.DeliveryVersion,
+		arg.DeliveryStatus,
+		arg.AvailableAt,
+		arg.Receipt,
+		arg.EventID,
+	)
+	return err
+}
+
 const applyRegressionAction = `-- name: ApplyRegressionAction :one
 UPDATE debug_regression_observations
 SET state = $4,
@@ -4920,6 +4945,33 @@ func (q *Queries) ClaimLegacyPendingWorkflowRun(ctx context.Context, db DBTX) (W
 	return i, err
 }
 
+const claimMCPRouteEvent = `-- name: ClaimMCPRouteEvent :exec
+UPDATE mcp_readiness_incident_events SET delivery_version=delivery_version+1,attempt_count=$2,lease_token=$3,lease_until=$4,delivery_status='pending',last_delivery_id=$5,last_attempt_at=$6,delivery_routing=$7 WHERE id=$1
+`
+
+type ClaimMCPRouteEventParams struct {
+	ID              pgtype.UUID
+	AttemptCount    int32
+	LeaseToken      pgtype.UUID
+	LeaseUntil      pgtype.Timestamptz
+	LastDeliveryID  pgtype.UUID
+	LastAttemptAt   pgtype.Timestamptz
+	DeliveryRouting []byte
+}
+
+func (q *Queries) ClaimMCPRouteEvent(ctx context.Context, db DBTX, arg ClaimMCPRouteEventParams) error {
+	_, err := db.Exec(ctx, claimMCPRouteEvent,
+		arg.ID,
+		arg.AttemptCount,
+		arg.LeaseToken,
+		arg.LeaseUntil,
+		arg.LastDeliveryID,
+		arg.LastAttemptAt,
+		arg.DeliveryRouting,
+	)
+	return err
+}
+
 const claimManagedPostgresBindingRetirement = `-- name: ClaimManagedPostgresBindingRetirement :one
 UPDATE managed_postgres_bindings AS binding SET state = 'retiring',
  lease_token = $1::text, lease_until = $2::timestamptz,
@@ -6921,6 +6973,9 @@ const cloneEnvironmentCleanupHasScopeBorrowers = `-- name: CloneEnvironmentClean
 WITH scoped_apps AS (SELECT id FROM apps WHERE project_id=$2::uuid)
 SELECT
  (EXISTS(SELECT 1 FROM app_binding_release_policies p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM app_mcp_readiness_policies p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM mcp_readiness_incidents p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM mcp_readiness_maintenance_windows p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
  OR EXISTS(SELECT 1 FROM binding_verification_runs p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
  OR EXISTS(SELECT 1 FROM project_binding_verification_runs p WHERE p.project_id=$2::uuid AND p.environment_slug=$1::text)
  OR EXISTS(SELECT 1 FROM app_tasks p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=$1::text)
@@ -6975,7 +7030,8 @@ type CloneEnvironmentCleanupHasScopeBorrowersParams struct {
 
 // Original clone journals and historical secret/runtime-change tombstones are
 // retained evidence, as are production_lifecycle_reviews attached to retained
-// deployments. All other known operational references must close first.
+// deployments and append-only binding/MCP readiness policy history. All other
+// known operational references must close first.
 func (q *Queries) CloneEnvironmentCleanupHasScopeBorrowers(ctx context.Context, db DBTX, arg CloneEnvironmentCleanupHasScopeBorrowersParams) (bool, error) {
 	row := db.QueryRow(ctx, cloneEnvironmentCleanupHasScopeBorrowers,
 		arg.Environment,
@@ -8334,6 +8390,52 @@ func (q *Queries) CompleteLayerArtifactDeletion(ctx context.Context, db DBTX, ar
 	return result.RowsAffected(), nil
 }
 
+const completeMCPProviderDelivery = `-- name: CompleteMCPProviderDelivery :exec
+UPDATE alert_deliveries SET status=$1,attempt_count=1,last_status_code=$2,last_error=$3,delivered_at=$4 WHERE id=$5
+`
+
+type CompleteMCPProviderDeliveryParams struct {
+	Status      string
+	StatusCode  pgtype.Int4
+	LastError   pgtype.Text
+	DeliveredAt pgtype.Timestamptz
+	ID          pgtype.UUID
+}
+
+func (q *Queries) CompleteMCPProviderDelivery(ctx context.Context, db DBTX, arg CompleteMCPProviderDeliveryParams) error {
+	_, err := db.Exec(ctx, completeMCPProviderDelivery,
+		arg.Status,
+		arg.StatusCode,
+		arg.LastError,
+		arg.DeliveredAt,
+		arg.ID,
+	)
+	return err
+}
+
+const completeMCPRouteEvent = `-- name: CompleteMCPRouteEvent :exec
+UPDATE mcp_readiness_incident_events SET delivery_version=delivery_version+1,delivery_status=$2,last_status_code=$3,lease_token=NULL,lease_until=NULL,available_at=$4,delivery_routing=$5 WHERE id=$1
+`
+
+type CompleteMCPRouteEventParams struct {
+	ID              pgtype.UUID
+	DeliveryStatus  string
+	LastStatusCode  pgtype.Int4
+	AvailableAt     pgtype.Timestamptz
+	DeliveryRouting []byte
+}
+
+func (q *Queries) CompleteMCPRouteEvent(ctx context.Context, db DBTX, arg CompleteMCPRouteEventParams) error {
+	_, err := db.Exec(ctx, completeMCPRouteEvent,
+		arg.ID,
+		arg.DeliveryStatus,
+		arg.LastStatusCode,
+		arg.AvailableAt,
+		arg.DeliveryRouting,
+	)
+	return err
+}
+
 const completeManagedPostgresResize = `-- name: CompleteManagedPostgresResize :execrows
 UPDATE managed_postgres_resizes SET state='succeeded',completed_at=$1::timestamptz
 WHERE id=$2::uuid AND database_id=$3::uuid AND generation=$4::bigint AND state='pending'
@@ -8924,6 +9026,17 @@ WHERE account_id=$1::text::uuid AND state IN ('pending','running')
 
 func (q *Queries) CountExclusiveWorkPending(ctx context.Context, db DBTX, accountID string) (int64, error) {
 	row := db.QueryRow(ctx, countExclusiveWorkPending, accountID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countMCPPagerDutyAcknowledgementEvents = `-- name: CountMCPPagerDutyAcknowledgementEvents :one
+SELECT count(*) FROM mcp_readiness_pagerduty_ack_events WHERE incident_id=$1
+`
+
+func (q *Queries) CountMCPPagerDutyAcknowledgementEvents(ctx context.Context, db DBTX, incidentID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, countMCPPagerDutyAcknowledgementEvents, incidentID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -11776,6 +11889,17 @@ func (q *Queries) DeleteAccountEnvironmentGitSources(ctx context.Context, db DBT
 	return err
 }
 
+const deleteAlertRuleChannels = `-- name: DeleteAlertRuleChannels :exec
+
+DELETE FROM alert_rule_channels WHERE rule_id = $1::uuid
+`
+
+// ADR-749 slice 2: alert rule -> notification channel bindings.
+func (q *Queries) DeleteAlertRuleChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteAlertRuleChannels, ruleID)
+	return err
+}
+
 const deleteApp = `-- name: DeleteApp :exec
 update apps
 set status = 'deleted',
@@ -11825,6 +11949,23 @@ DELETE FROM app_errors WHERE id = ANY($1::uuid[])
 func (q *Queries) DeleteAppErrorsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.UUID) error {
 	_, err := db.Exec(ctx, deleteAppErrorsByIDs, dollar_1)
 	return err
+}
+
+const deleteAppSLO = `-- name: DeleteAppSLO :execrows
+DELETE FROM app_slos WHERE app_id = $1::uuid AND id = $2::uuid
+`
+
+type DeleteAppSLOParams struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) DeleteAppSLO(ctx context.Context, db DBTX, arg DeleteAppSLOParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteAppSLO, arg.AppID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteAutomation = `-- name: DeleteAutomation :exec
@@ -12544,6 +12685,23 @@ func (q *Queries) DeleteGitLabOAuthConnection(ctx context.Context, db DBTX, acco
 	return result.RowsAffected(), nil
 }
 
+const deleteNotificationChannel = `-- name: DeleteNotificationChannel :execrows
+DELETE FROM notification_channels WHERE account_id = $1::uuid AND id = $2::uuid
+`
+
+type DeleteNotificationChannelParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) DeleteNotificationChannel(ctx context.Context, db DBTX, arg DeleteNotificationChannelParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteNotificationChannel, arg.AccountID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteOIDCExchangedToken = `-- name: DeleteOIDCExchangedToken :exec
 delete from oidc_exchanged_tokens where id = $1
 `
@@ -12639,6 +12797,23 @@ func (q *Queries) DeleteReadinessSubscription(ctx context.Context, db DBTX, arg 
 		arg.Scope,
 		arg.Tenant,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteSyntheticCheck = `-- name: DeleteSyntheticCheck :execrows
+DELETE FROM synthetic_checks WHERE app_id = $1::uuid AND id = $2::uuid
+`
+
+type DeleteSyntheticCheckParams struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) DeleteSyntheticCheck(ctx context.Context, db DBTX, arg DeleteSyntheticCheckParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteSyntheticCheck, arg.AppID, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -17787,6 +17962,15 @@ func (q *Queries) FailCheckedRollbackTarget(ctx context.Context, db DBTX, target
 	return err
 }
 
+const failIncompleteMCPRouteDelivery = `-- name: FailIncompleteMCPRouteDelivery :exec
+UPDATE alert_deliveries SET status='failed',last_error='dispatch incomplete' WHERE id=$1
+`
+
+func (q *Queries) FailIncompleteMCPRouteDelivery(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, failIncompleteMCPRouteDelivery, id)
+	return err
+}
+
 const failNotificationClaim = `-- name: FailNotificationClaim :execrows
 WITH owned AS MATERIALIZED (
     SELECT id, lease_until FROM notification_outbox
@@ -20036,6 +20220,33 @@ func (q *Queries) GetAppErrorSample(ctx context.Context, db DBTX, arg GetAppErro
 	return i, err
 }
 
+const getAppSLO = `-- name: GetAppSLO :one
+SELECT id, account_id, app_id, name, sli, latency_threshold_ms, objective_bp, window_days, created_at, updated_at FROM app_slos WHERE app_id = $1::uuid AND id = $2::uuid
+`
+
+type GetAppSLOParams struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) GetAppSLO(ctx context.Context, db DBTX, arg GetAppSLOParams) (AppSlo, error) {
+	row := db.QueryRow(ctx, getAppSLO, arg.AppID, arg.ID)
+	var i AppSlo
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Sli,
+		&i.LatencyThresholdMs,
+		&i.ObjectiveBp,
+		&i.WindowDays,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getAppSecretRevocation = `-- name: GetAppSecretRevocation :one
 SELECT id::text, account_id::text, app_id::text, scope, key, created_at
   FROM app_secret_revocations
@@ -20105,7 +20316,7 @@ func (q *Queries) GetApplicationStandardAssignmentInventory(ctx context.Context,
 const getApplicationStandardConsumerRoster = `-- name: GetApplicationStandardConsumerRoster :one
 WITH read_clock AS MATERIALIZED (SELECT clock_timestamp() AS read_at),
  app_scope AS MATERIALIZED (
- SELECT a.id, a.account_id, a.slug, a.type, a.runtime, a.ram_mb, a.idle_timeout_s, a.max_concurrency, a.status, a.created_at, a.manifest, a.github_install_id, a.github_repo_full_name, a.github_production_branch, a.min_instances, a.egress_allowlist, a.autoscale_target_rps, a.autoscale_target_cpu_pct, a.github_install_binding_id, a.github_install_account_id, a.github_install_linked_at, a.project_id, a.root_dir, a.workload_name, a.workload_class, a.start_command, a.streaming_enabled, a.scaling_policy, a.last_scale_out_at, a.last_scale_in_at, a.require_signed, a.node_id, a.reassigned_at, a.org_id, a.migrated_at, a.warm_snapshot_enabled, a.warm_snapshot_min_requests, a.warm_snapshot_min_ms, a.eviction_priority, a.require_authn, a.public_auth_mode, a.public_auth_basic, a.websocket_enabled, a.auth_default_flipped_at, a.overflow_node, a.route_metrics_enabled, a.preview_of_slug, a.preview_pr_number, a.preview_pr_state, a.preview_expires_at, a.cors_default_enabled, a.cors_default_origins, a.maintenance_mode, a.public_auth_ip_allowlist, a.static_egress_ip, a.static_egress_ip_set_at, a.preview_destroy_commented_at, a.app_protocol, a.cpu_millicores, a.last_deploy_failed_email_at, a.deleted_at, a.delete_grace_until, a.consumer_auth_mode, a.only_declared_routes, a.declared_routes, a.purge_claimed_at, a.visibility, a.retry_policy, a.warm_pool_size, a.security_policy, a.egress_allowlist_revision, a.scaling_policy_revision, a.app_cpu_policy_revision, a.request_rate_limit_rps, a.request_rate_limit_burst, a.github_owner_id, a.github_repo_id, a.park_transition_id, a.wake_transition_id, a.egress_ports, a.platform_tenant_required, a.managed_postgres_admission_cutover_id, a.managed_postgres_admission_fenced_at, a.service_address_index,e.desired_revision,e.persisted_revision,e.effective_hash,e.state AS enrollment_state
+ SELECT a.id, a.account_id, a.slug, a.type, a.runtime, a.ram_mb, a.idle_timeout_s, a.max_concurrency, a.status, a.created_at, a.manifest, a.github_install_id, a.github_repo_full_name, a.github_production_branch, a.min_instances, a.egress_allowlist, a.autoscale_target_rps, a.autoscale_target_cpu_pct, a.github_install_binding_id, a.github_install_account_id, a.github_install_linked_at, a.project_id, a.root_dir, a.workload_name, a.workload_class, a.start_command, a.streaming_enabled, a.scaling_policy, a.last_scale_out_at, a.last_scale_in_at, a.require_signed, a.node_id, a.reassigned_at, a.org_id, a.migrated_at, a.warm_snapshot_enabled, a.warm_snapshot_min_requests, a.warm_snapshot_min_ms, a.eviction_priority, a.require_authn, a.public_auth_mode, a.public_auth_basic, a.websocket_enabled, a.auth_default_flipped_at, a.overflow_node, a.route_metrics_enabled, a.preview_of_slug, a.preview_pr_number, a.preview_pr_state, a.preview_expires_at, a.cors_default_enabled, a.cors_default_origins, a.maintenance_mode, a.public_auth_ip_allowlist, a.static_egress_ip, a.static_egress_ip_set_at, a.preview_destroy_commented_at, a.app_protocol, a.cpu_millicores, a.last_deploy_failed_email_at, a.deleted_at, a.delete_grace_until, a.consumer_auth_mode, a.only_declared_routes, a.declared_routes, a.purge_claimed_at, a.visibility, a.retry_policy, a.warm_pool_size, a.security_policy, a.egress_allowlist_revision, a.scaling_policy_revision, a.app_cpu_policy_revision, a.request_rate_limit_rps, a.request_rate_limit_burst, a.github_owner_id, a.github_repo_id, a.park_transition_id, a.wake_transition_id, a.egress_ports, a.platform_tenant_required, a.managed_postgres_admission_cutover_id, a.managed_postgres_admission_fenced_at, a.service_address_index, a.deployment_mail_revision,e.desired_revision,e.persisted_revision,e.effective_hash,e.state AS enrollment_state
  FROM apps a LEFT JOIN app_application_standards e ON e.app_id=a.id
  WHERE a.id=$1::uuid AND a.org_id=$2::uuid AND a.status<>'deleted'
  ), live AS MATERIALIZED (
@@ -23257,6 +23468,36 @@ func (q *Queries) GetNativeWorkflowRun(ctx context.Context, db DBTX, id pgtype.U
 	return i, err
 }
 
+const getNotificationChannel = `-- name: GetNotificationChannel :one
+SELECT id, account_id, name, kind, target_sealed, target_hint, pagerduty_region, email, last_delivered_at, last_error, last_error_at, created_at, updated_at FROM notification_channels WHERE account_id = $1::uuid AND id = $2::uuid
+`
+
+type GetNotificationChannelParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) GetNotificationChannel(ctx context.Context, db DBTX, arg GetNotificationChannelParams) (NotificationChannel, error) {
+	row := db.QueryRow(ctx, getNotificationChannel, arg.AccountID, arg.ID)
+	var i NotificationChannel
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Kind,
+		&i.TargetSealed,
+		&i.TargetHint,
+		&i.PagerdutyRegion,
+		&i.Email,
+		&i.LastDeliveredAt,
+		&i.LastError,
+		&i.LastErrorAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getOIDCExchangedTokenByHash = `-- name: GetOIDCExchangedTokenByHash :one
 select id, account_id, token_hash, expires_at, issuer_url, subject,
        audience, coalesce(jti, '') as jti, scopes, created_at
@@ -23951,6 +24192,35 @@ func (q *Queries) GetSourceBuildRootfsPointer(ctx context.Context, db DBTX, depl
 	return artifact_id, err
 }
 
+const getSyntheticCheck = `-- name: GetSyntheticCheck :one
+SELECT id, account_id, app_id, name, method, path, expected_status, timeout_ms, interval_seconds, enabled, created_at, updated_at FROM synthetic_checks WHERE app_id = $1::uuid AND id = $2::uuid
+`
+
+type GetSyntheticCheckParams struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) GetSyntheticCheck(ctx context.Context, db DBTX, arg GetSyntheticCheckParams) (SyntheticCheck, error) {
+	row := db.QueryRow(ctx, getSyntheticCheck, arg.AppID, arg.ID)
+	var i SyntheticCheck
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Method,
+		&i.Path,
+		&i.ExpectedStatus,
+		&i.TimeoutMs,
+		&i.IntervalSeconds,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getTenantWorkflowScheduleCursor = `-- name: GetTenantWorkflowScheduleCursor :one
 SELECT app_id, platform_tenant_id, workflow_name, deployment_id, trigger_snapshot, last_evaluated_at, scheduled_for, status, last_run_id, updated_at, last_admitted_at FROM platform_tenant_workflow_schedule_cursors
 WHERE app_id = $1::uuid AND platform_tenant_id = $2::uuid
@@ -24535,6 +24805,32 @@ func (q *Queries) HasApplicationStandardQueuedTarget(ctx context.Context, db DBT
 	return column_1, err
 }
 
+const hasEarlierMCPNotification = `-- name: HasEarlierMCPNotification :one
+SELECT EXISTS(SELECT 1 FROM mcp_readiness_incident_events e JOIN mcp_readiness_incidents i ON i.id=e.incident_id
+WHERE e.rule_id=$1 AND e.sequence<$2
+ AND e.delivery_status NOT IN ('delivered','suppressed','abandoned')
+ AND i.account_id=$3 AND i.app_id=$4)
+`
+
+type HasEarlierMCPNotificationParams struct {
+	RuleID    pgtype.UUID
+	Sequence  int64
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) HasEarlierMCPNotification(ctx context.Context, db DBTX, arg HasEarlierMCPNotificationParams) (bool, error) {
+	row := db.QueryRow(ctx, hasEarlierMCPNotification,
+		arg.RuleID,
+		arg.Sequence,
+		arg.AccountID,
+		arg.AppID,
+	)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const hasEnvironmentGitOpsRuntimeDrift = `-- name: HasEnvironmentGitOpsRuntimeDrift :one
 SELECT EXISTS(SELECT 1 FROM environment_gitops_runtime_targets WHERE source_id = $1::uuid
 AND (stale_residents > 0 OR starting_residents > 0 OR stale_snapshots > 0)
@@ -24651,6 +24947,30 @@ func (q *Queries) HasPendingEnvironmentGitOpsRuntime(ctx context.Context, db DBT
 	var pending bool
 	err := row.Scan(&pending)
 	return pending, err
+}
+
+const hasPendingMCPIncidentNotification = `-- name: HasPendingMCPIncidentNotification :one
+SELECT EXISTS(SELECT 1 FROM mcp_readiness_incident_events e JOIN mcp_readiness_incidents i ON i.id=e.incident_id
+WHERE e.rule_id=$1 AND e.incident_id=$2 AND i.account_id=$3 AND i.app_id=$4 AND e.delivery_status NOT IN ('delivered','suppressed','abandoned'))
+`
+
+type HasPendingMCPIncidentNotificationParams struct {
+	RuleID     pgtype.UUID
+	IncidentID pgtype.UUID
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+}
+
+func (q *Queries) HasPendingMCPIncidentNotification(ctx context.Context, db DBTX, arg HasPendingMCPIncidentNotificationParams) (bool, error) {
+	row := db.QueryRow(ctx, hasPendingMCPIncidentNotification,
+		arg.RuleID,
+		arg.IncidentID,
+		arg.AccountID,
+		arg.AppID,
+	)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const hasProjectEnvironmentClonePostgresVerificationAttempts = `-- name: HasProjectEnvironmentClonePostgresVerificationAttempts :one
@@ -24909,6 +25229,25 @@ func (q *Queries) InsertAlertRollback(ctx context.Context, db DBTX, arg InsertAl
 	return err
 }
 
+const insertAlertRuleChannels = `-- name: InsertAlertRuleChannels :exec
+INSERT INTO alert_rule_channels (rule_id, channel_id)
+SELECT r.id, c.id FROM alert_rules r
+JOIN notification_channels c ON c.account_id = r.account_id AND c.id = ANY ($1::uuid[])
+WHERE r.id = $2::uuid
+ON CONFLICT DO NOTHING
+`
+
+type InsertAlertRuleChannelsParams struct {
+	ChannelIds []pgtype.UUID
+	RuleID     pgtype.UUID
+}
+
+// Only channels owned by the rule's account are bound.
+func (q *Queries) InsertAlertRuleChannels(ctx context.Context, db DBTX, arg InsertAlertRuleChannelsParams) error {
+	_, err := db.Exec(ctx, insertAlertRuleChannels, arg.ChannelIds, arg.RuleID)
+	return err
+}
+
 const insertAppErrorRequest = `-- name: InsertAppErrorRequest :exec
 INSERT INTO app_error_requests (
     id, account_id, app_id, fingerprint, request_id, received_at,
@@ -25002,6 +25341,56 @@ func (q *Queries) InsertAppHealthHistory(ctx context.Context, db DBTX, arg Inser
 		arg.Entry,
 	)
 	return err
+}
+
+const insertAppSLO = `-- name: InsertAppSLO :one
+
+INSERT INTO app_slos (account_id, app_id, name, sli, latency_threshold_ms, objective_bp, window_days)
+SELECT $1::uuid, $2::uuid, $3::text, $4::text,
+ $5::integer, $6::integer, $7::integer
+WHERE (SELECT count(*) FROM app_slos WHERE app_id = $2::uuid) < $8::integer
+RETURNING id, account_id, app_id, name, sli, latency_threshold_ms, objective_bp, window_days, created_at, updated_at
+`
+
+type InsertAppSLOParams struct {
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	Name               string
+	Sli                string
+	LatencyThresholdMs pgtype.Int4
+	ObjectiveBp        int32
+	WindowDays         int32
+	MaxPerApp          int32
+}
+
+// ADR-747: customer-defined SLO definitions (apid is the only writer).
+// The per-app cap is enforced inside the insert, so two concurrent creates
+// cannot both pass a count taken before either row exists.
+func (q *Queries) InsertAppSLO(ctx context.Context, db DBTX, arg InsertAppSLOParams) (AppSlo, error) {
+	row := db.QueryRow(ctx, insertAppSLO,
+		arg.AccountID,
+		arg.AppID,
+		arg.Name,
+		arg.Sli,
+		arg.LatencyThresholdMs,
+		arg.ObjectiveBp,
+		arg.WindowDays,
+		arg.MaxPerApp,
+	)
+	var i AppSlo
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Sli,
+		&i.LatencyThresholdMs,
+		&i.ObjectiveBp,
+		&i.WindowDays,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const insertApplicationStandardApprovedAssignment = `-- name: InsertApplicationStandardApprovedAssignment :exec
@@ -26792,11 +27181,11 @@ func (q *Queries) InsertComputeNodeHeartbeat(ctx context.Context, db DBTX, arg I
 
 const insertCustomerAlertRule = `-- name: InsertCustomerAlertRule :one
 INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
- edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds)
+ edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope)
 VALUES($1,$2,$3,$4,$5,$6,
  $7,$8,$9,$10,$11,$12,$13,
- $14,$15,$16,$17)
-RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id
+ $14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope
 `
 
 type InsertCustomerAlertRuleParams struct {
@@ -26817,6 +27206,12 @@ type InsertCustomerAlertRuleParams struct {
 	CooldownMinutes                 int32
 	State                           string
 	PostDeployRollbackWindowSeconds int32
+	CustomMetricName                pgtype.Text
+	SloID                           pgtype.UUID
+	SyntheticCheckID                pgtype.UUID
+	McpMinCalls                     int32
+	McpForMinutes                   int32
+	McpReadinessScope               string
 }
 
 func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg InsertCustomerAlertRuleParams) (AlertRule, error) {
@@ -26838,6 +27233,12 @@ func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg Inse
 		arg.CooldownMinutes,
 		arg.State,
 		arg.PostDeployRollbackWindowSeconds,
+		arg.CustomMetricName,
+		arg.SloID,
+		arg.SyntheticCheckID,
+		arg.McpMinCalls,
+		arg.McpForMinutes,
+		arg.McpReadinessScope,
 	)
 	var i AlertRule
 	err := row.Scan(
@@ -26864,6 +27265,12 @@ func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg Inse
 		&i.PostDeployRollbackWindowSeconds,
 		&i.EventSubscriptionID,
 		&i.EdgeRuleID,
+		&i.CustomMetricName,
+		&i.SloID,
+		&i.SyntheticCheckID,
+		&i.McpMinCalls,
+		&i.McpForMinutes,
+		&i.McpReadinessScope,
 	)
 	return i, err
 }
@@ -28375,20 +28782,22 @@ func (q *Queries) InsertEventWorkflowRun(ctx context.Context, db DBTX, arg Inser
 }
 
 const insertExclusiveWorkEffect = `-- name: InsertExclusiveWorkEffect :exec
-INSERT INTO exclusive_work_effects(id,operation_id,generation,name,payload,webhook_id,event_type)
+INSERT INTO exclusive_work_effects(id,operation_id,generation,name,payload,webhook_id,event_type,rehearsal_run_id,receiver_sha256)
 VALUES($1::text::uuid,$2::text::uuid,
 $3::bigint,$4::text,$5::jsonb,
-nullif($6::text,'')::uuid,nullif($7::text,''))
+nullif($6::text,'')::uuid,nullif($7::text,''),$8::text,$9::text)
 `
 
 type InsertExclusiveWorkEffectParams struct {
-	ID          string
-	OperationID string
-	Generation  int64
-	Name        string
-	Payload     []byte
-	WebhookID   string
-	EventType   string
+	ID             string
+	OperationID    string
+	Generation     int64
+	Name           string
+	Payload        []byte
+	WebhookID      string
+	EventType      string
+	RehearsalRunID string
+	ReceiverSha256 string
 }
 
 func (q *Queries) InsertExclusiveWorkEffect(ctx context.Context, db DBTX, arg InsertExclusiveWorkEffectParams) error {
@@ -28400,6 +28809,8 @@ func (q *Queries) InsertExclusiveWorkEffect(ctx context.Context, db DBTX, arg In
 		arg.Payload,
 		arg.WebhookID,
 		arg.EventType,
+		arg.RehearsalRunID,
+		arg.ReceiverSha256,
 	)
 	return err
 }
@@ -28619,6 +29030,161 @@ func (q *Queries) InsertInvoiceHistorySnapshot(ctx context.Context, db DBTX, arg
 	var i InsertInvoiceHistorySnapshotRow
 	err := row.Scan(&i.ID, &i.UpdatedAt)
 	return i, err
+}
+
+const insertMCPAttentionAction = `-- name: InsertMCPAttentionAction :exec
+INSERT INTO mcp_readiness_attention_actions(app_id,account_id,request_id,incident_id,request,receipt,created_at)
+VALUES($1,$2,$3,$4,$5,$6,$7)
+`
+
+type InsertMCPAttentionActionParams struct {
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+	RequestID  pgtype.UUID
+	IncidentID pgtype.UUID
+	Request    []byte
+	Receipt    []byte
+	CreatedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) InsertMCPAttentionAction(ctx context.Context, db DBTX, arg InsertMCPAttentionActionParams) error {
+	_, err := db.Exec(ctx, insertMCPAttentionAction,
+		arg.AppID,
+		arg.AccountID,
+		arg.RequestID,
+		arg.IncidentID,
+		arg.Request,
+		arg.Receipt,
+		arg.CreatedAt,
+	)
+	return err
+}
+
+const insertMCPNotificationAction = `-- name: InsertMCPNotificationAction :exec
+INSERT INTO mcp_readiness_notification_actions(app_id,account_id,request_id,event_id,action,expected_version,reason,receipt,destination)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+`
+
+type InsertMCPNotificationActionParams struct {
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	RequestID       pgtype.UUID
+	EventID         pgtype.UUID
+	Action          string
+	ExpectedVersion int64
+	Reason          string
+	Receipt         []byte
+	Destination     string
+}
+
+func (q *Queries) InsertMCPNotificationAction(ctx context.Context, db DBTX, arg InsertMCPNotificationActionParams) error {
+	_, err := db.Exec(ctx, insertMCPNotificationAction,
+		arg.AppID,
+		arg.AccountID,
+		arg.RequestID,
+		arg.EventID,
+		arg.Action,
+		arg.ExpectedVersion,
+		arg.Reason,
+		arg.Receipt,
+		arg.Destination,
+	)
+	return err
+}
+
+const insertMCPPagerDutyAcknowledgementEvent = `-- name: InsertMCPPagerDutyAcknowledgementEvent :exec
+INSERT INTO mcp_readiness_pagerduty_ack_events(rule_id,event_id,id,incident_id,digest,receipt,received_at,delivery_destination) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+`
+
+type InsertMCPPagerDutyAcknowledgementEventParams struct {
+	RuleID              pgtype.UUID
+	EventID             string
+	ID                  pgtype.UUID
+	IncidentID          pgtype.UUID
+	Digest              string
+	Receipt             []byte
+	ReceivedAt          pgtype.Timestamptz
+	DeliveryDestination string
+}
+
+func (q *Queries) InsertMCPPagerDutyAcknowledgementEvent(ctx context.Context, db DBTX, arg InsertMCPPagerDutyAcknowledgementEventParams) error {
+	_, err := db.Exec(ctx, insertMCPPagerDutyAcknowledgementEvent,
+		arg.RuleID,
+		arg.EventID,
+		arg.ID,
+		arg.IncidentID,
+		arg.Digest,
+		arg.Receipt,
+		arg.ReceivedAt,
+		arg.DeliveryDestination,
+	)
+	return err
+}
+
+const insertMCPReadinessReminder = `-- name: InsertMCPReadinessReminder :exec
+INSERT INTO mcp_readiness_incident_events(id,incident_id,rule_id,kind,occurred_at,payload,observed_value,available_at,notification_reason,reminder_number)
+VALUES($1,$2,$3,'alert.fired',$4,$5,$6,$4,'reminder',$7)
+`
+
+type InsertMCPReadinessReminderParams struct {
+	ID             pgtype.UUID
+	IncidentID     pgtype.UUID
+	RuleID         pgtype.UUID
+	OccurredAt     pgtype.Timestamptz
+	Payload        []byte
+	ObservedValue  float64
+	ReminderNumber int32
+}
+
+func (q *Queries) InsertMCPReadinessReminder(ctx context.Context, db DBTX, arg InsertMCPReadinessReminderParams) error {
+	_, err := db.Exec(ctx, insertMCPReadinessReminder,
+		arg.ID,
+		arg.IncidentID,
+		arg.RuleID,
+		arg.OccurredAt,
+		arg.Payload,
+		arg.ObservedValue,
+		arg.ReminderNumber,
+	)
+	return err
+}
+
+const insertMCPRouteDelivery = `-- name: InsertMCPRouteDelivery :one
+INSERT INTO alert_deliveries(id,rule_id,account_id,app_id,idempotency_key,payload,status,observed_value,fired_at,readiness_event_id,readiness_destination,readiness_failover_reason)
+VALUES($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11) RETURNING id
+`
+
+type InsertMCPRouteDeliveryParams struct {
+	ID                      pgtype.UUID
+	RuleID                  pgtype.UUID
+	AccountID               pgtype.UUID
+	AppID                   pgtype.UUID
+	IdempotencyKey          string
+	Payload                 []byte
+	ObservedValue           float64
+	FiredAt                 pgtype.Timestamptz
+	ReadinessEventID        string
+	ReadinessDestination    string
+	ReadinessFailoverReason string
+}
+
+func (q *Queries) InsertMCPRouteDelivery(ctx context.Context, db DBTX, arg InsertMCPRouteDeliveryParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, insertMCPRouteDelivery,
+		arg.ID,
+		arg.RuleID,
+		arg.AccountID,
+		arg.AppID,
+		arg.IdempotencyKey,
+		arg.Payload,
+		arg.ObservedValue,
+		arg.FiredAt,
+		arg.ReadinessEventID,
+		arg.ReadinessDestination,
+		arg.ReadinessFailoverReason,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const insertManagedPostgresAccountingReconciliation = `-- name: InsertManagedPostgresAccountingReconciliation :exec
@@ -29043,6 +29609,58 @@ func (q *Queries) InsertManagedPostgresUsageImport(ctx context.Context, db DBTX,
 		arg.CreatedAt,
 	)
 	return err
+}
+
+const insertNotificationChannel = `-- name: InsertNotificationChannel :one
+
+INSERT INTO notification_channels (account_id, name, kind, target_sealed, target_hint, pagerduty_region, email)
+SELECT $1::uuid, $2::text, $3::text, $4::bytea,
+ $5::text, $6::text, $7::text
+WHERE (SELECT count(*) FROM notification_channels WHERE account_id = $1::uuid) < $8::integer
+RETURNING id, account_id, name, kind, target_sealed, target_hint, pagerduty_region, email, last_delivered_at, last_error, last_error_at, created_at, updated_at
+`
+
+type InsertNotificationChannelParams struct {
+	AccountID       pgtype.UUID
+	Name            string
+	Kind            string
+	TargetSealed    []byte
+	TargetHint      string
+	PagerdutyRegion pgtype.Text
+	Email           pgtype.Text
+	MaxPerAccount   int32
+}
+
+// ADR-749: alert notification channels (apid writes definitions).
+// The per-account cap is enforced inside the insert.
+func (q *Queries) InsertNotificationChannel(ctx context.Context, db DBTX, arg InsertNotificationChannelParams) (NotificationChannel, error) {
+	row := db.QueryRow(ctx, insertNotificationChannel,
+		arg.AccountID,
+		arg.Name,
+		arg.Kind,
+		arg.TargetSealed,
+		arg.TargetHint,
+		arg.PagerdutyRegion,
+		arg.Email,
+		arg.MaxPerAccount,
+	)
+	var i NotificationChannel
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Kind,
+		&i.TargetSealed,
+		&i.TargetHint,
+		&i.PagerdutyRegion,
+		&i.Email,
+		&i.LastDeliveredAt,
+		&i.LastError,
+		&i.LastErrorAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const insertOIDCExchangedToken = `-- name: InsertOIDCExchangedToken :one
@@ -31582,6 +32200,87 @@ func (q *Queries) InsertSourceBuildRootfs(ctx context.Context, db DBTX, arg Inse
 	return i, err
 }
 
+const insertSyntheticCheck = `-- name: InsertSyntheticCheck :one
+
+INSERT INTO synthetic_checks (account_id, app_id, name, method, path, expected_status, timeout_ms, interval_seconds)
+SELECT $1::uuid, $2::uuid, $3::text, $4::text, $5::text,
+ $6::integer, $7::integer, $8::integer
+WHERE (SELECT count(*) FROM synthetic_checks WHERE app_id = $2::uuid) < $9::integer
+RETURNING id, account_id, app_id, name, method, path, expected_status, timeout_ms, interval_seconds, enabled, created_at, updated_at
+`
+
+type InsertSyntheticCheckParams struct {
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	Name            string
+	Method          string
+	Path            string
+	ExpectedStatus  pgtype.Int4
+	TimeoutMs       int32
+	IntervalSeconds int32
+	MaxPerApp       int32
+}
+
+// ADR-748: synthetic check definitions (apid is the only writer).
+// The per-app cap is enforced inside the insert, like app_slos.
+func (q *Queries) InsertSyntheticCheck(ctx context.Context, db DBTX, arg InsertSyntheticCheckParams) (SyntheticCheck, error) {
+	row := db.QueryRow(ctx, insertSyntheticCheck,
+		arg.AccountID,
+		arg.AppID,
+		arg.Name,
+		arg.Method,
+		arg.Path,
+		arg.ExpectedStatus,
+		arg.TimeoutMs,
+		arg.IntervalSeconds,
+		arg.MaxPerApp,
+	)
+	var i SyntheticCheck
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Method,
+		&i.Path,
+		&i.ExpectedStatus,
+		&i.TimeoutMs,
+		&i.IntervalSeconds,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const insertSyntheticCheckRun = `-- name: InsertSyntheticCheckRun :exec
+INSERT INTO synthetic_check_runs (check_id, started_at, ok, status_code, latency_ms, error_class)
+VALUES ($1::uuid, $2::timestamptz, $3::boolean,
+ $4::integer, $5::integer, $6::text)
+ON CONFLICT (check_id, started_at) DO NOTHING
+`
+
+type InsertSyntheticCheckRunParams struct {
+	CheckID    pgtype.UUID
+	StartedAt  pgtype.Timestamptz
+	Ok         bool
+	StatusCode int32
+	LatencyMs  int32
+	ErrorClass string
+}
+
+func (q *Queries) InsertSyntheticCheckRun(ctx context.Context, db DBTX, arg InsertSyntheticCheckRunParams) error {
+	_, err := db.Exec(ctx, insertSyntheticCheckRun,
+		arg.CheckID,
+		arg.StartedAt,
+		arg.Ok,
+		arg.StatusCode,
+		arg.LatencyMs,
+		arg.ErrorClass,
+	)
+	return err
+}
+
 const insertTenantScheduledWorkflowRun = `-- name: InsertTenantScheduledWorkflowRun :one
 INSERT INTO workflow_runs (id, app_id, platform_tenant_id, deployment_id, workflow_name, status, input, definition_snapshot, scheduled_for)
 VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::text,
@@ -31793,27 +32492,29 @@ func (q *Queries) InsertWorkflowAutomationRevision(ctx context.Context, db DBTX,
 
 const insertWorkflowOperationEffect = `-- name: InsertWorkflowOperationEffect :exec
 INSERT INTO workflow_operation_effects(
- id,account_id,app_id,run_id,step_name,operation_id,generation,name,payload,webhook_id,event_type
+ id,account_id,app_id,run_id,step_name,operation_id,generation,name,payload,webhook_id,event_type,rehearsal_run_id,receiver_sha256
 ) VALUES(
  $1::text::uuid,$2::text::uuid,$3::text::uuid,
  $4::text::uuid,$5::text,$6::text::uuid,
  $7::bigint,$8::text,$9::jsonb,
- $10::text::uuid,$11::text
+ $10::text::uuid,$11::text,$12::text,$13::text
 )
 `
 
 type InsertWorkflowOperationEffectParams struct {
-	ID          string
-	AccountID   string
-	AppID       string
-	RunID       string
-	StepName    string
-	OperationID string
-	Generation  int64
-	Name        string
-	Payload     []byte
-	WebhookID   string
-	EventType   string
+	ID             string
+	AccountID      string
+	AppID          string
+	RunID          string
+	StepName       string
+	OperationID    string
+	Generation     int64
+	Name           string
+	Payload        []byte
+	WebhookID      string
+	EventType      string
+	RehearsalRunID string
+	ReceiverSha256 string
 }
 
 func (q *Queries) InsertWorkflowOperationEffect(ctx context.Context, db DBTX, arg InsertWorkflowOperationEffectParams) error {
@@ -31829,6 +32530,8 @@ func (q *Queries) InsertWorkflowOperationEffect(ctx context.Context, db DBTX, ar
 		arg.Payload,
 		arg.WebhookID,
 		arg.EventType,
+		arg.RehearsalRunID,
+		arg.ReceiverSha256,
 	)
 	return err
 }
@@ -35769,12 +36472,12 @@ SELECT jsonb_build_object(
    'next_attempt_at', CASE WHEN delivery.status IN ('pending','failed') THEN delivery.next_attempt_at END
  ))) AS summary
 FROM customer_operations o
-JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+LEFT JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
 LEFT JOIN app_webhook_deliveries delivery ON delivery.id=nullif(o.record->'completion_delivery'->>'delivery_id','')::uuid
  AND delivery.account_id=o.account_id AND delivery.app_id=o.app_id
 WHERE o.account_id=$1::uuid AND ($2::text='' OR o.platform_tenant_id::text=$2::text)
- AND o.app_id=$3::uuid AND d.scope=$4::text
- AND ($5::text='' OR d.name=$5::text)
+ AND o.app_id=$3::uuid AND coalesce(d.scope,o.record->>'scope')=$4::text
+ AND ($5::text='' OR coalesce(d.name,o.record->>'name')=$5::text)
  AND ($6::text='' OR o.state=$6::text)
  AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$7::timestamptz)
  AND ($8::timestamptz IS NULL OR
@@ -35850,15 +36553,15 @@ SELECT jsonb_build_object(
    'next_attempt_at', CASE WHEN delivery.status IN ('pending','failed') THEN delivery.next_attempt_at END
  ))) AS summary
 FROM customer_operations o
-JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+LEFT JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
 LEFT JOIN app_webhook_deliveries delivery ON delivery.id=nullif(o.record->'completion_delivery'->>'delivery_id','')::uuid
  AND delivery.account_id=o.account_id AND delivery.app_id=o.app_id
 WHERE o.account_id=$1::uuid AND ($2::text='' OR o.platform_tenant_id::text=$2::text)
- AND o.app_id=$3::uuid AND d.scope=$4::text
+ AND o.app_id=$3::uuid AND coalesce(d.scope,o.record->>'scope')=$4::text
  AND o.record ? 'subject'
  AND (o.record #>> '{subject,type}')=$5::text
  AND (o.record #>> '{subject,id}')=$6::text
- AND ($7::text='' OR d.name=$7::text)
+ AND ($7::text='' OR coalesce(d.name,o.record->>'name')=$7::text)
  AND ($8::text='' OR o.state=$8::text)
  AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$9::timestamptz)
  AND ($10::timestamptz IS NULL OR
@@ -36078,6 +36781,82 @@ func (q *Queries) ListAlertRollbacks(ctx context.Context, db DBTX, arg ListAlert
 	return items, nil
 }
 
+const listAlertRuleChannels = `-- name: ListAlertRuleChannels :many
+SELECT c.id, c.account_id, c.name, c.kind, c.target_sealed, c.target_hint, c.pagerduty_region, c.email, c.last_delivered_at, c.last_error, c.last_error_at, c.created_at, c.updated_at FROM alert_rule_channels b JOIN notification_channels c ON c.id = b.channel_id
+WHERE b.rule_id = $1::uuid ORDER BY c.name
+`
+
+func (q *Queries) ListAlertRuleChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) ([]NotificationChannel, error) {
+	rows, err := db.Query(ctx, listAlertRuleChannels, ruleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NotificationChannel{}
+	for rows.Next() {
+		var i NotificationChannel
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Name,
+			&i.Kind,
+			&i.TargetSealed,
+			&i.TargetHint,
+			&i.PagerdutyRegion,
+			&i.Email,
+			&i.LastDeliveredAt,
+			&i.LastError,
+			&i.LastErrorAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllAppSLOs = `-- name: ListAllAppSLOs :many
+
+SELECT id, account_id, app_id, name, sli, latency_threshold_ms, objective_bp, window_days, created_at, updated_at FROM app_slos ORDER BY id
+`
+
+// ADR-747 slice 2: hourly SLO budget rows (meterd is the only writer).
+func (q *Queries) ListAllAppSLOs(ctx context.Context, db DBTX) ([]AppSlo, error) {
+	rows, err := db.Query(ctx, listAllAppSLOs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppSlo{}
+	for rows.Next() {
+		var i AppSlo
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Sli,
+			&i.LatencyThresholdMs,
+			&i.ObjectiveBp,
+			&i.WindowDays,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAllEventsPaged = `-- name: ListAllEventsPaged :many
 select id, at, actor, kind, subject, data
 from events
@@ -36146,6 +36925,125 @@ func (q *Queries) ListAllEventsPaged(ctx context.Context, db DBTX, arg ListAllEv
 			&i.Kind,
 			&i.Subject,
 			&i.Data,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAppDeploymentAuditBetween = `-- name: ListAppDeploymentAuditBetween :many
+SELECT da.id, da.deployment_id::text AS deployment_id, da.kind, da.at
+FROM deployment_audit da
+JOIN deployments d ON d.id = da.deployment_id
+JOIN apps a ON a.id = d.app_id
+WHERE a.id = $1::text::uuid
+  AND a.account_id = $2::text::uuid
+  AND da.at >= $3::timestamptz
+  AND da.at < $4::timestamptz
+ORDER BY da.at DESC, da.id DESC
+LIMIT $5::int
+`
+
+type ListAppDeploymentAuditBetweenParams struct {
+	AppID     string
+	AccountID string
+	Since     pgtype.Timestamptz
+	Until     pgtype.Timestamptz
+	RowLimit  int32
+}
+
+type ListAppDeploymentAuditBetweenRow struct {
+	ID           int64
+	DeploymentID string
+	Kind         string
+	At           pgtype.Timestamptz
+}
+
+// ADR-751 change timeline: one app's deployment_audit rows in [since, until).
+func (q *Queries) ListAppDeploymentAuditBetween(ctx context.Context, db DBTX, arg ListAppDeploymentAuditBetweenParams) ([]ListAppDeploymentAuditBetweenRow, error) {
+	rows, err := db.Query(ctx, listAppDeploymentAuditBetween,
+		arg.AppID,
+		arg.AccountID,
+		arg.Since,
+		arg.Until,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAppDeploymentAuditBetweenRow{}
+	for rows.Next() {
+		var i ListAppDeploymentAuditBetweenRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeploymentID,
+			&i.Kind,
+			&i.At,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAppEdgeRuleChangesBetween = `-- name: ListAppEdgeRuleChangesBetween :many
+SELECT e.id, e.rule_id::text AS rule_id, e.operation, e.created_at
+FROM edge_rule_change_log e
+JOIN apps a ON a.id = e.app_id
+WHERE a.id = $1::text::uuid
+  AND a.account_id = $2::text::uuid
+  AND e.created_at >= $3::timestamptz
+  AND e.created_at < $4::timestamptz
+ORDER BY e.created_at DESC, e.id DESC
+LIMIT $5::int
+`
+
+type ListAppEdgeRuleChangesBetweenParams struct {
+	AppID     string
+	AccountID string
+	Since     pgtype.Timestamptz
+	Until     pgtype.Timestamptz
+	RowLimit  int32
+}
+
+type ListAppEdgeRuleChangesBetweenRow struct {
+	ID        int64
+	RuleID    string
+	Operation string
+	CreatedAt pgtype.Timestamptz
+}
+
+// ADR-751 change timeline: one app's edge-rule mutations in [since, until).
+func (q *Queries) ListAppEdgeRuleChangesBetween(ctx context.Context, db DBTX, arg ListAppEdgeRuleChangesBetweenParams) ([]ListAppEdgeRuleChangesBetweenRow, error) {
+	rows, err := db.Query(ctx, listAppEdgeRuleChangesBetween,
+		arg.AppID,
+		arg.AccountID,
+		arg.Since,
+		arg.Until,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAppEdgeRuleChangesBetweenRow{}
+	for rows.Next() {
+		var i ListAppEdgeRuleChangesBetweenRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RuleID,
+			&i.Operation,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -36554,6 +37452,41 @@ func (q *Queries) ListAppPendingRollbacks(ctx context.Context, db DBTX, arg List
 	return items, nil
 }
 
+const listAppSLOs = `-- name: ListAppSLOs :many
+SELECT id, account_id, app_id, name, sli, latency_threshold_ms, objective_bp, window_days, created_at, updated_at FROM app_slos WHERE app_id = $1::uuid ORDER BY name
+`
+
+func (q *Queries) ListAppSLOs(ctx context.Context, db DBTX, appID pgtype.UUID) ([]AppSlo, error) {
+	rows, err := db.Query(ctx, listAppSLOs, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppSlo{}
+	for rows.Next() {
+		var i AppSlo
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Sli,
+			&i.LatencyThresholdMs,
+			&i.ObjectiveBp,
+			&i.WindowDays,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAppSecretRevocationTargets = `-- name: ListAppSecretRevocationTargets :many
 SELECT instance_id::text, workload_name, runtime_state, reload_support,
        status, coalesce(ack_revision, ''), ack_at, coalesce(error_code, '')
@@ -36929,6 +37862,162 @@ func (q *Queries) ListAppSecretsWithBindingAccessInScope(ctx context.Context, db
 			&i.UpdatedAt,
 			&i.SecretClass,
 			&i.ManagedPostgresAccess,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAppWakeHistoryPage = `-- name: ListAppWakeHistoryPage :many
+WITH page AS MATERIALIZED (
+ SELECT id, app_id, wake_id, state, started_at FROM instances
+ WHERE app_id = $1::uuid
+   AND started_at >= $2::timestamptz
+   AND started_at <= $3::timestamptz
+   AND ($4::text = '' OR (started_at,id) < ($5::timestamptz, NULLIF($4::text,'')::uuid))
+ ORDER BY started_at DESC, id DESC LIMIT $6::int
+)
+SELECT p.id::text AS instance_id, p.app_id::text AS app_id, p.wake_id::text AS wake_id,
+       p.state, p.started_at, bs.data AS boot_data, bs.at AS boot_at,
+       (bs.id IS NOT NULL)::boolean AS has_meta, bc.at AS completed_at
+FROM page p
+LEFT JOIN LATERAL (
+ SELECT id, data, at FROM events
+ WHERE kind = 'wake.boot_started' AND data->>'app_id' = p.app_id::text AND data->>'wake_id' = p.wake_id::text
+ ORDER BY (actor = 'schedd') DESC, at ASC, id ASC LIMIT 1
+) bs ON true
+LEFT JOIN LATERAL (
+ SELECT at FROM events
+ WHERE kind = 'wake.boot_completed' AND data->>'app_id' = p.app_id::text AND data->>'wake_id' = p.wake_id::text
+ ORDER BY at ASC, id ASC LIMIT 1
+) bc ON true
+ORDER BY p.started_at DESC, p.id DESC
+`
+
+type ListAppWakeHistoryPageParams struct {
+	AppID     pgtype.UUID
+	Since     pgtype.Timestamptz
+	Until     pgtype.Timestamptz
+	AfterID   string
+	AfterAt   pgtype.Timestamptz
+	PageLimit int32
+}
+
+type ListAppWakeHistoryPageRow struct {
+	InstanceID  string
+	AppID       string
+	WakeID      string
+	State       string
+	StartedAt   pgtype.Timestamptz
+	BootData    []byte
+	BootAt      pgtype.Timestamptz
+	HasMeta     bool
+	CompletedAt pgtype.Timestamptz
+}
+
+// ADR-1638: retained history is scoped and windowed before limiting. Metadata
+// is scoped to the same app for both the canonical boot and completion reads.
+func (q *Queries) ListAppWakeHistoryPage(ctx context.Context, db DBTX, arg ListAppWakeHistoryPageParams) ([]ListAppWakeHistoryPageRow, error) {
+	rows, err := db.Query(ctx, listAppWakeHistoryPage,
+		arg.AppID,
+		arg.Since,
+		arg.Until,
+		arg.AfterID,
+		arg.AfterAt,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAppWakeHistoryPageRow{}
+	for rows.Next() {
+		var i ListAppWakeHistoryPageRow
+		if err := rows.Scan(
+			&i.InstanceID,
+			&i.AppID,
+			&i.WakeID,
+			&i.State,
+			&i.StartedAt,
+			&i.BootData,
+			&i.BootAt,
+			&i.HasMeta,
+			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAppWakeTimelinePage = `-- name: ListAppWakeTimelinePage :many
+WITH wake_events AS (
+  SELECT id, at, actor, kind, subject, data,
+         row_number() OVER (PARTITION BY kind ORDER BY (actor = 'schedd') DESC, at ASC, id ASC) AS boot_rank
+  FROM events
+  WHERE data->>'wake_id' = $5::text
+    AND data->>'app_id' = $6::text
+)
+SELECT id, at, actor, kind, subject, data
+FROM wake_events
+WHERE (kind <> 'wake.boot_started' OR boot_rank = 1)
+  AND at > $1::timestamptz
+  AND ($2::bigint = 0 OR (at, id) > ($3::timestamptz, $2::bigint))
+ORDER BY at ASC, id ASC
+LIMIT $4::int
+`
+
+type ListAppWakeTimelinePageParams struct {
+	Since     pgtype.Timestamptz
+	AfterID   int64
+	AfterAt   pgtype.Timestamptz
+	PageLimit int32
+	WakeID    string
+	AppID     string
+}
+
+type ListAppWakeTimelinePageRow struct {
+	ID      int64
+	At      pgtype.Timestamptz
+	Actor   string
+	Kind    string
+	Subject pgtype.UUID
+	Data    []byte
+}
+
+// ADR-1637: app scope/canonical selection before a total-order seek and limit.
+func (q *Queries) ListAppWakeTimelinePage(ctx context.Context, db DBTX, arg ListAppWakeTimelinePageParams) ([]ListAppWakeTimelinePageRow, error) {
+	rows, err := db.Query(ctx, listAppWakeTimelinePage,
+		arg.Since,
+		arg.AfterID,
+		arg.AfterAt,
+		arg.PageLimit,
+		arg.WakeID,
+		arg.AppID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAppWakeTimelinePageRow{}
+	for rows.Next() {
+		var i ListAppWakeTimelinePageRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.At,
+			&i.Actor,
+			&i.Kind,
+			&i.Subject,
+			&i.Data,
 		); err != nil {
 			return nil, err
 		}
@@ -38235,7 +39324,7 @@ func (q *Queries) ListCronsForApp(ctx context.Context, db DBTX, appID pgtype.UUI
 }
 
 const listCustomerAlertRulesByPreset = `-- name: ListCustomerAlertRulesByPreset :many
-SELECT r.id, r.account_id, r.app_id, r.name, r.enabled, r.metric, r.comparison, r.threshold, r.window_spec, r.failure_source, r.webhook_url, r.webhook_secret_sealed, r.cooldown_minutes, r.state, r.last_fired_at, r.last_evaluated_at, r.created_at, r.updated_at, r.org_id, r.action, r.post_deploy_rollback_window_seconds, r.event_subscription_id, r.edge_rule_id FROM alert_rules r WHERE r.account_id=$1 AND r.app_id=$2
+SELECT r.id, r.account_id, r.app_id, r.name, r.enabled, r.metric, r.comparison, r.threshold, r.window_spec, r.failure_source, r.webhook_url, r.webhook_secret_sealed, r.cooldown_minutes, r.state, r.last_fired_at, r.last_evaluated_at, r.created_at, r.updated_at, r.org_id, r.action, r.post_deploy_rollback_window_seconds, r.event_subscription_id, r.edge_rule_id, r.custom_metric_name, r.slo_id, r.synthetic_check_id, r.mcp_min_calls, r.mcp_for_minutes, r.mcp_readiness_scope FROM alert_rules r WHERE r.account_id=$1 AND r.app_id=$2
  AND r.name LIKE (SELECT p.display_name||' (%' FROM alert_presets p WHERE p.name=$3)
  ORDER BY r.created_at DESC LIMIT 2
 `
@@ -38279,6 +39368,12 @@ func (q *Queries) ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, a
 			&i.PostDeployRollbackWindowSeconds,
 			&i.EventSubscriptionID,
 			&i.EdgeRuleID,
+			&i.CustomMetricName,
+			&i.SloID,
+			&i.SyntheticCheckID,
+			&i.McpMinCalls,
+			&i.McpForMinutes,
+			&i.McpReadinessScope,
 		); err != nil {
 			return nil, err
 		}
@@ -38291,7 +39386,7 @@ func (q *Queries) ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, a
 }
 
 const listCustomerAlertRulesForAccount = `-- name: ListCustomerAlertRulesForAccount :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id FROM alert_rules WHERE account_id=$1 ORDER BY created_at DESC
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope FROM alert_rules WHERE account_id=$1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]AlertRule, error) {
@@ -38327,6 +39422,12 @@ func (q *Queries) ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX,
 			&i.PostDeployRollbackWindowSeconds,
 			&i.EventSubscriptionID,
 			&i.EdgeRuleID,
+			&i.CustomMetricName,
+			&i.SloID,
+			&i.SyntheticCheckID,
+			&i.McpMinCalls,
+			&i.McpForMinutes,
+			&i.McpReadinessScope,
 		); err != nil {
 			return nil, err
 		}
@@ -40411,7 +41512,7 @@ func (q *Queries) ListEnabledCrons(ctx context.Context, db DBTX) ([]ListEnabledC
 }
 
 const listEnabledCustomerAlertRules = `-- name: ListEnabledCustomerAlertRules :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id FROM alert_rules WHERE enabled=true ORDER BY account_id
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope FROM alert_rules WHERE enabled=true ORDER BY account_id
 `
 
 func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([]AlertRule, error) {
@@ -40447,6 +41548,12 @@ func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([
 			&i.PostDeployRollbackWindowSeconds,
 			&i.EventSubscriptionID,
 			&i.EdgeRuleID,
+			&i.CustomMetricName,
+			&i.SloID,
+			&i.SyntheticCheckID,
+			&i.McpMinCalls,
+			&i.McpForMinutes,
+			&i.McpReadinessScope,
 		); err != nil {
 			return nil, err
 		}
@@ -41133,7 +42240,8 @@ func (q *Queries) ListExclusiveWorkActive(ctx context.Context, db DBTX, keyID st
 const listExclusiveWorkEffects = `-- name: ListExclusiveWorkEffects :many
 SELECT e.id::text,e.name,e.generation,coalesce(e.webhook_id::text,'')::text AS webhook_id,
  coalesce(e.event_type,'')::text AS event_type,
- CASE WHEN e.webhook_id IS NULL THEN 'recorded' ELSE coalesce(d.status,'unavailable') END::text AS status,
+ CASE WHEN e.rehearsal_run_id<>'' THEN 'captured' WHEN e.webhook_id IS NULL THEN 'recorded' ELSE coalesce(d.status,'unavailable') END::text AS status,
+ e.rehearsal_run_id,
  coalesce(d.attempt,0)::integer AS attempt,coalesce(d.last_error,'')::text AS last_error
 FROM exclusive_work_effects e JOIN exclusive_work_operations o ON o.id=e.operation_id
 LEFT JOIN app_webhook_deliveries d ON d.id=e.id AND d.webhook_id=e.webhook_id AND d.account_id=o.account_id
@@ -41147,14 +42255,15 @@ type ListExclusiveWorkEffectsParams struct {
 }
 
 type ListExclusiveWorkEffectsRow struct {
-	EID        string
-	Name       string
-	Generation int64
-	WebhookID  string
-	EventType  string
-	Status     string
-	Attempt    int32
-	LastError  string
+	EID            string
+	Name           string
+	Generation     int64
+	WebhookID      string
+	EventType      string
+	Status         string
+	RehearsalRunID string
+	Attempt        int32
+	LastError      string
 }
 
 func (q *Queries) ListExclusiveWorkEffects(ctx context.Context, db DBTX, arg ListExclusiveWorkEffectsParams) ([]ListExclusiveWorkEffectsRow, error) {
@@ -41173,6 +42282,7 @@ func (q *Queries) ListExclusiveWorkEffects(ctx context.Context, db DBTX, arg Lis
 			&i.WebhookID,
 			&i.EventType,
 			&i.Status,
+			&i.RehearsalRunID,
 			&i.Attempt,
 			&i.LastError,
 		); err != nil {
@@ -41702,7 +42812,7 @@ func (q *Queries) ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInv
 }
 
 const listLatestDeploymentPerApp = `-- name: ListLatestDeploymentPerApp :many
-select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token, d.environment_workload_held, d.snapshot_recovery_generation, d.runtime_base
+select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token, d.environment_workload_held, d.snapshot_recovery_generation, d.runtime_base, d.mail_failure_revision, d.mail_failed_at, d.mail_failure_account_id, d.mail_failure_account_revision, d.mail_failure_app_revision, d.mail_failure_success_revision
 from deployments d
 join apps a on a.id = d.app_id
 where a.account_id = $1 and a.status <> 'deleted' and d.deleted_at IS NULL
@@ -41820,6 +42930,380 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 			&i.EnvironmentWorkloadHeld,
 			&i.SnapshotRecoveryGeneration,
 			&i.RuntimeBase,
+			&i.MailFailureRevision,
+			&i.MailFailedAt,
+			&i.MailFailureAccountID,
+			&i.MailFailureAccountRevision,
+			&i.MailFailureAppRevision,
+			&i.MailFailureSuccessRevision,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMCPAttentionActions = `-- name: ListMCPAttentionActions :many
+SELECT receipt FROM mcp_readiness_attention_actions WHERE account_id=$1 AND app_id=$2 AND incident_id=$3
+AND ($4::timestamptz IS NULL OR (created_at,request_id)<($4,$5::uuid))
+ORDER BY created_at DESC,request_id DESC LIMIT $6
+`
+
+type ListMCPAttentionActionsParams struct {
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	IncidentID pgtype.UUID
+	BeforeAt   pgtype.Timestamptz
+	BeforeID   pgtype.UUID
+	PageLimit  int32
+}
+
+func (q *Queries) ListMCPAttentionActions(ctx context.Context, db DBTX, arg ListMCPAttentionActionsParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listMCPAttentionActions,
+		arg.AccountID,
+		arg.AppID,
+		arg.IncidentID,
+		arg.BeforeAt,
+		arg.BeforeID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var receipt []byte
+		if err := rows.Scan(&receipt); err != nil {
+			return nil, err
+		}
+		items = append(items, receipt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMCPAttentionIncidents = `-- name: ListMCPAttentionIncidents :many
+SELECT i.id, i.rule_id, i.account_id, i.app_id, i.scope, i.coverage, i.opened_at, i.resolved_at, i.maintenance_pending, i.delivery_routing,r.name,r.enabled,coalesce(a.snapshot,'{}'::jsonb)::jsonb AS snapshot
+FROM mcp_readiness_incidents i JOIN alert_rules r ON r.id=i.rule_id AND r.account_id=i.account_id AND r.app_id=i.app_id LEFT JOIN mcp_readiness_incident_attention a ON a.incident_id=i.id
+WHERE i.account_id=$1 AND i.app_id=$2
+AND ($3::boolean OR i.resolved_at IS NULL)
+AND ($4::text='' OR i.scope='' OR i.scope=$4)
+AND ($5::uuid IS NULL OR i.id>$5) ORDER BY i.id LIMIT $6
+`
+
+type ListMCPAttentionIncidentsParams struct {
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	IncludeResolved bool
+	Scope           string
+	AfterID         pgtype.UUID
+	PageLimit       int32
+}
+
+type ListMCPAttentionIncidentsRow struct {
+	McpReadinessIncident McpReadinessIncident
+	Name                 string
+	Enabled              bool
+	Snapshot             []byte
+}
+
+func (q *Queries) ListMCPAttentionIncidents(ctx context.Context, db DBTX, arg ListMCPAttentionIncidentsParams) ([]ListMCPAttentionIncidentsRow, error) {
+	rows, err := db.Query(ctx, listMCPAttentionIncidents,
+		arg.AccountID,
+		arg.AppID,
+		arg.IncludeResolved,
+		arg.Scope,
+		arg.AfterID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMCPAttentionIncidentsRow{}
+	for rows.Next() {
+		var i ListMCPAttentionIncidentsRow
+		if err := rows.Scan(
+			&i.McpReadinessIncident.ID,
+			&i.McpReadinessIncident.RuleID,
+			&i.McpReadinessIncident.AccountID,
+			&i.McpReadinessIncident.AppID,
+			&i.McpReadinessIncident.Scope,
+			&i.McpReadinessIncident.Coverage,
+			&i.McpReadinessIncident.OpenedAt,
+			&i.McpReadinessIncident.ResolvedAt,
+			&i.McpReadinessIncident.MaintenancePending,
+			&i.McpReadinessIncident.DeliveryRouting,
+			&i.Name,
+			&i.Enabled,
+			&i.Snapshot,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMCPDestinationEvents = `-- name: ListMCPDestinationEvents :many
+SELECT e.id, e.incident_id, e.rule_id, e.kind, e.sequence, e.occurred_at, e.payload, e.observed_value, e.delivery_status, e.attempt_count, e.available_at, e.lease_token, e.lease_until, e.last_delivery_id, e.last_attempt_at, e.last_status_code, e.imported, e.maintenance_window_ids, e.suppression_reason, e.notification_reason, e.delivery_version, e.last_operator_action, e.reminder_number, e.delivery_routing, e.destination_deliveries,i.id, i.rule_id, i.account_id, i.app_id, i.scope, i.coverage, i.opened_at, i.resolved_at, i.maintenance_pending, i.delivery_routing FROM mcp_readiness_incident_events e JOIN mcp_readiness_incidents i ON i.id=e.incident_id
+WHERE e.rule_id=$1 AND i.account_id=$2 AND i.app_id=$3
+AND e.delivery_status NOT IN ('delivered','suppressed','abandoned') ORDER BY e.sequence
+`
+
+type ListMCPDestinationEventsParams struct {
+	RuleID    pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+type ListMCPDestinationEventsRow struct {
+	McpReadinessIncidentEvent McpReadinessIncidentEvent
+	McpReadinessIncident      McpReadinessIncident
+}
+
+func (q *Queries) ListMCPDestinationEvents(ctx context.Context, db DBTX, arg ListMCPDestinationEventsParams) ([]ListMCPDestinationEventsRow, error) {
+	rows, err := db.Query(ctx, listMCPDestinationEvents, arg.RuleID, arg.AccountID, arg.AppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMCPDestinationEventsRow{}
+	for rows.Next() {
+		var i ListMCPDestinationEventsRow
+		if err := rows.Scan(
+			&i.McpReadinessIncidentEvent.ID,
+			&i.McpReadinessIncidentEvent.IncidentID,
+			&i.McpReadinessIncidentEvent.RuleID,
+			&i.McpReadinessIncidentEvent.Kind,
+			&i.McpReadinessIncidentEvent.Sequence,
+			&i.McpReadinessIncidentEvent.OccurredAt,
+			&i.McpReadinessIncidentEvent.Payload,
+			&i.McpReadinessIncidentEvent.ObservedValue,
+			&i.McpReadinessIncidentEvent.DeliveryStatus,
+			&i.McpReadinessIncidentEvent.AttemptCount,
+			&i.McpReadinessIncidentEvent.AvailableAt,
+			&i.McpReadinessIncidentEvent.LeaseToken,
+			&i.McpReadinessIncidentEvent.LeaseUntil,
+			&i.McpReadinessIncidentEvent.LastDeliveryID,
+			&i.McpReadinessIncidentEvent.LastAttemptAt,
+			&i.McpReadinessIncidentEvent.LastStatusCode,
+			&i.McpReadinessIncidentEvent.Imported,
+			&i.McpReadinessIncidentEvent.MaintenanceWindowIds,
+			&i.McpReadinessIncidentEvent.SuppressionReason,
+			&i.McpReadinessIncidentEvent.NotificationReason,
+			&i.McpReadinessIncidentEvent.DeliveryVersion,
+			&i.McpReadinessIncidentEvent.LastOperatorAction,
+			&i.McpReadinessIncidentEvent.ReminderNumber,
+			&i.McpReadinessIncidentEvent.DeliveryRouting,
+			&i.McpReadinessIncidentEvent.DestinationDeliveries,
+			&i.McpReadinessIncident.ID,
+			&i.McpReadinessIncident.RuleID,
+			&i.McpReadinessIncident.AccountID,
+			&i.McpReadinessIncident.AppID,
+			&i.McpReadinessIncident.Scope,
+			&i.McpReadinessIncident.Coverage,
+			&i.McpReadinessIncident.OpenedAt,
+			&i.McpReadinessIncident.ResolvedAt,
+			&i.McpReadinessIncident.MaintenancePending,
+			&i.McpReadinessIncident.DeliveryRouting,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMCPNotificationRules = `-- name: ListMCPNotificationRules :many
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope FROM alert_rules WHERE account_id=$1 AND app_id=$2
+ AND metric='mcp_readiness_unhealthy' AND action='webhook'
+ AND ($3::text='' OR mcp_readiness_scope='' OR mcp_readiness_scope=$3)
+ AND ($4::uuid IS NULL OR id>$4)
+ ORDER BY id LIMIT $5
+`
+
+type ListMCPNotificationRulesParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Scope     string
+	AfterID   pgtype.UUID
+	PageLimit int32
+}
+
+func (q *Queries) ListMCPNotificationRules(ctx context.Context, db DBTX, arg ListMCPNotificationRulesParams) ([]AlertRule, error) {
+	rows, err := db.Query(ctx, listMCPNotificationRules,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.AfterID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AlertRule{}
+	for rows.Next() {
+		var i AlertRule
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Enabled,
+			&i.Metric,
+			&i.Comparison,
+			&i.Threshold,
+			&i.WindowSpec,
+			&i.FailureSource,
+			&i.WebhookUrl,
+			&i.WebhookSecretSealed,
+			&i.CooldownMinutes,
+			&i.State,
+			&i.LastFiredAt,
+			&i.LastEvaluatedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.OrgID,
+			&i.Action,
+			&i.PostDeployRollbackWindowSeconds,
+			&i.EventSubscriptionID,
+			&i.EdgeRuleID,
+			&i.CustomMetricName,
+			&i.SloID,
+			&i.SyntheticCheckID,
+			&i.McpMinCalls,
+			&i.McpForMinutes,
+			&i.McpReadinessScope,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMCPPagerDutyAcknowledgementEvents = `-- name: ListMCPPagerDutyAcknowledgementEvents :many
+SELECT receipt FROM mcp_readiness_pagerduty_ack_events WHERE rule_id=$1
+AND ($2::timestamptz IS NULL OR received_at<$2 OR (received_at=$2 AND id<$3))
+ORDER BY received_at DESC,id DESC LIMIT $4
+`
+
+type ListMCPPagerDutyAcknowledgementEventsParams struct {
+	RuleID    pgtype.UUID
+	BeforeAt  pgtype.Timestamptz
+	BeforeID  pgtype.UUID
+	PageLimit int32
+}
+
+func (q *Queries) ListMCPPagerDutyAcknowledgementEvents(ctx context.Context, db DBTX, arg ListMCPPagerDutyAcknowledgementEventsParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listMCPPagerDutyAcknowledgementEvents,
+		arg.RuleID,
+		arg.BeforeAt,
+		arg.BeforeID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var receipt []byte
+		if err := rows.Scan(&receipt); err != nil {
+			return nil, err
+		}
+		items = append(items, receipt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMCPQueuedReminders = `-- name: ListMCPQueuedReminders :many
+SELECT e.id, e.incident_id, e.rule_id, e.kind, e.sequence, e.occurred_at, e.payload, e.observed_value, e.delivery_status, e.attempt_count, e.available_at, e.lease_token, e.lease_until, e.last_delivery_id, e.last_attempt_at, e.last_status_code, e.imported, e.maintenance_window_ids, e.suppression_reason, e.notification_reason, e.delivery_version, e.last_operator_action, e.reminder_number, e.delivery_routing, e.destination_deliveries,i.id, i.rule_id, i.account_id, i.app_id, i.scope, i.coverage, i.opened_at, i.resolved_at, i.maintenance_pending, i.delivery_routing,coalesce(a.snapshot,'{}'::jsonb)::jsonb AS snapshot
+FROM mcp_readiness_incident_events e JOIN mcp_readiness_incidents i ON i.id=e.incident_id
+LEFT JOIN mcp_readiness_incident_attention a ON a.incident_id=i.id
+WHERE e.rule_id=$1 AND i.account_id=$2 AND i.app_id=$3
+AND e.notification_reason='reminder' AND e.delivery_status NOT IN ('delivered','suppressed','abandoned') ORDER BY e.sequence FOR UPDATE OF e
+`
+
+type ListMCPQueuedRemindersParams struct {
+	RuleID    pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+type ListMCPQueuedRemindersRow struct {
+	McpReadinessIncidentEvent McpReadinessIncidentEvent
+	McpReadinessIncident      McpReadinessIncident
+	Snapshot                  []byte
+}
+
+func (q *Queries) ListMCPQueuedReminders(ctx context.Context, db DBTX, arg ListMCPQueuedRemindersParams) ([]ListMCPQueuedRemindersRow, error) {
+	rows, err := db.Query(ctx, listMCPQueuedReminders, arg.RuleID, arg.AccountID, arg.AppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMCPQueuedRemindersRow{}
+	for rows.Next() {
+		var i ListMCPQueuedRemindersRow
+		if err := rows.Scan(
+			&i.McpReadinessIncidentEvent.ID,
+			&i.McpReadinessIncidentEvent.IncidentID,
+			&i.McpReadinessIncidentEvent.RuleID,
+			&i.McpReadinessIncidentEvent.Kind,
+			&i.McpReadinessIncidentEvent.Sequence,
+			&i.McpReadinessIncidentEvent.OccurredAt,
+			&i.McpReadinessIncidentEvent.Payload,
+			&i.McpReadinessIncidentEvent.ObservedValue,
+			&i.McpReadinessIncidentEvent.DeliveryStatus,
+			&i.McpReadinessIncidentEvent.AttemptCount,
+			&i.McpReadinessIncidentEvent.AvailableAt,
+			&i.McpReadinessIncidentEvent.LeaseToken,
+			&i.McpReadinessIncidentEvent.LeaseUntil,
+			&i.McpReadinessIncidentEvent.LastDeliveryID,
+			&i.McpReadinessIncidentEvent.LastAttemptAt,
+			&i.McpReadinessIncidentEvent.LastStatusCode,
+			&i.McpReadinessIncidentEvent.Imported,
+			&i.McpReadinessIncidentEvent.MaintenanceWindowIds,
+			&i.McpReadinessIncidentEvent.SuppressionReason,
+			&i.McpReadinessIncidentEvent.NotificationReason,
+			&i.McpReadinessIncidentEvent.DeliveryVersion,
+			&i.McpReadinessIncidentEvent.LastOperatorAction,
+			&i.McpReadinessIncidentEvent.ReminderNumber,
+			&i.McpReadinessIncidentEvent.DeliveryRouting,
+			&i.McpReadinessIncidentEvent.DestinationDeliveries,
+			&i.McpReadinessIncident.ID,
+			&i.McpReadinessIncident.RuleID,
+			&i.McpReadinessIncident.AccountID,
+			&i.McpReadinessIncident.AppID,
+			&i.McpReadinessIncident.Scope,
+			&i.McpReadinessIncident.Coverage,
+			&i.McpReadinessIncident.OpenedAt,
+			&i.McpReadinessIncident.ResolvedAt,
+			&i.McpReadinessIncident.MaintenancePending,
+			&i.McpReadinessIncident.DeliveryRouting,
+			&i.Snapshot,
 		); err != nil {
 			return nil, err
 		}
@@ -42415,6 +43899,44 @@ func (q *Queries) ListMatchingEventWorkflows(ctx context.Context, db DBTX, arg L
 			return nil, err
 		}
 		items = append(items, recipient)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listNotificationChannels = `-- name: ListNotificationChannels :many
+SELECT id, account_id, name, kind, target_sealed, target_hint, pagerduty_region, email, last_delivered_at, last_error, last_error_at, created_at, updated_at FROM notification_channels WHERE account_id = $1::uuid ORDER BY name
+`
+
+func (q *Queries) ListNotificationChannels(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]NotificationChannel, error) {
+	rows, err := db.Query(ctx, listNotificationChannels, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NotificationChannel{}
+	for rows.Next() {
+		var i NotificationChannel
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Name,
+			&i.Kind,
+			&i.TargetSealed,
+			&i.TargetHint,
+			&i.PagerdutyRegion,
+			&i.Email,
+			&i.LastDeliveredAt,
+			&i.LastError,
+			&i.LastErrorAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -43362,15 +44884,15 @@ SELECT jsonb_build_object(
    'next_attempt_at', CASE WHEN delivery.status IN ('pending','failed') THEN delivery.next_attempt_at END
  ))) AS summary
 FROM customer_operations o
-JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+LEFT JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
 LEFT JOIN app_webhook_deliveries delivery ON delivery.id=nullif(o.record->'completion_delivery'->>'delivery_id','')::uuid
  AND delivery.account_id=o.account_id AND delivery.app_id=o.app_id
 WHERE o.account_id=$1::uuid AND o.platform_tenant_id=$2::uuid
- AND o.app_id=$3::uuid AND d.scope=$4::text
+ AND o.app_id=$3::uuid AND coalesce(d.scope,o.record->>'scope')=$4::text
  AND o.record ? 'subject'
  AND (o.record #>> '{subject,type}')=$5::text
  AND (o.record #>> '{subject,id}')=$6::text
- AND ($7::text='' OR d.name=$7::text)
+ AND ($7::text='' OR coalesce(d.name,o.record->>'name')=$7::text)
  AND ($8::text='' OR o.state=$8::text)
  AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$9::timestamptz)
  AND ($10::timestamptz IS NULL OR
@@ -44789,6 +46311,70 @@ func (q *Queries) ListRouteProbeTargets(ctx context.Context, db DBTX, batchLimit
 	return items, nil
 }
 
+const listRunnableSyntheticChecks = `-- name: ListRunnableSyntheticChecks :many
+
+SELECT c.id, c.account_id, c.app_id, c.name, c.method, c.path, c.expected_status, c.timeout_ms, c.interval_seconds, c.enabled, c.created_at, c.updated_at, a.slug AS app_slug,
+ (SELECT max(r.started_at) FROM synthetic_check_runs r WHERE r.check_id = c.id)::timestamptz AS last_run_at
+FROM synthetic_checks c JOIN apps a ON a.id = c.app_id
+WHERE c.enabled AND a.status <> 'deleted'
+ORDER BY c.id
+`
+
+type ListRunnableSyntheticChecksRow struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	Name            string
+	Method          string
+	Path            string
+	ExpectedStatus  pgtype.Int4
+	TimeoutMs       int32
+	IntervalSeconds int32
+	Enabled         bool
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	AppSlug         string
+	LastRunAt       pgtype.Timestamptz
+}
+
+// ADR-748 slice 2: synthetic check runs (meterd is the only writer).
+// Every enabled check on a live app, with its app slug and last run time;
+// the runner decides which are due.
+func (q *Queries) ListRunnableSyntheticChecks(ctx context.Context, db DBTX) ([]ListRunnableSyntheticChecksRow, error) {
+	rows, err := db.Query(ctx, listRunnableSyntheticChecks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRunnableSyntheticChecksRow{}
+	for rows.Next() {
+		var i ListRunnableSyntheticChecksRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Method,
+			&i.Path,
+			&i.ExpectedStatus,
+			&i.TimeoutMs,
+			&i.IntervalSeconds,
+			&i.Enabled,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AppSlug,
+			&i.LastRunAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRuntimeReleases = `-- name: ListRuntimeReleases :many
 SELECT id, runtime, architecture, source_ref, guest_init_sha256, layout_version, base_sha256, created_at FROM runtime_releases WHERE runtime=$1 AND architecture=$2 ORDER BY created_at DESC,id LIMIT $3
 `
@@ -44887,6 +46473,35 @@ func (q *Queries) ListRuntimeUpgradeGatewayRepairApps(ctx context.Context, db DB
 			return nil, err
 		}
 		items = append(items, d_app_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSLOHourStarts = `-- name: ListSLOHourStarts :many
+SELECT hour FROM app_slo_hourly WHERE slo_id = $1::uuid AND hour >= $2::timestamptz
+`
+
+type ListSLOHourStartsParams struct {
+	SloID pgtype.UUID
+	Since pgtype.Timestamptz
+}
+
+func (q *Queries) ListSLOHourStarts(ctx context.Context, db DBTX, arg ListSLOHourStartsParams) ([]pgtype.Timestamptz, error) {
+	rows, err := db.Query(ctx, listSLOHourStarts, arg.SloID, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.Timestamptz{}
+	for rows.Next() {
+		var hour pgtype.Timestamptz
+		if err := rows.Scan(&hour); err != nil {
+			return nil, err
+		}
+		items = append(items, hour)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -44997,6 +46612,80 @@ func (q *Queries) ListSnapshotDeploymentIDs(ctx context.Context, db DBTX) ([]str
 			return nil, err
 		}
 		items = append(items, deployment_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSyntheticCheckRuns = `-- name: ListSyntheticCheckRuns :many
+SELECT check_id, started_at, ok, status_code, latency_ms, error_class FROM synthetic_check_runs WHERE check_id = $1::uuid
+ORDER BY started_at DESC LIMIT $2::integer
+`
+
+type ListSyntheticCheckRunsParams struct {
+	CheckID pgtype.UUID
+	MaxRows int32
+}
+
+func (q *Queries) ListSyntheticCheckRuns(ctx context.Context, db DBTX, arg ListSyntheticCheckRunsParams) ([]SyntheticCheckRun, error) {
+	rows, err := db.Query(ctx, listSyntheticCheckRuns, arg.CheckID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SyntheticCheckRun{}
+	for rows.Next() {
+		var i SyntheticCheckRun
+		if err := rows.Scan(
+			&i.CheckID,
+			&i.StartedAt,
+			&i.Ok,
+			&i.StatusCode,
+			&i.LatencyMs,
+			&i.ErrorClass,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSyntheticChecks = `-- name: ListSyntheticChecks :many
+SELECT id, account_id, app_id, name, method, path, expected_status, timeout_ms, interval_seconds, enabled, created_at, updated_at FROM synthetic_checks WHERE app_id = $1::uuid ORDER BY name
+`
+
+func (q *Queries) ListSyntheticChecks(ctx context.Context, db DBTX, appID pgtype.UUID) ([]SyntheticCheck, error) {
+	rows, err := db.Query(ctx, listSyntheticChecks, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SyntheticCheck{}
+	for rows.Next() {
+		var i SyntheticCheck
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Method,
+			&i.Path,
+			&i.ExpectedStatus,
+			&i.TimeoutMs,
+			&i.IntervalSeconds,
+			&i.Enabled,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -45618,8 +47307,9 @@ func (q *Queries) ListWorkflowAutomationRevisions(ctx context.Context, db DBTX, 
 
 const listWorkflowOperationEffects = `-- name: ListWorkflowOperationEffects :many
 SELECT e.id::text AS id,e.name,e.generation,e.webhook_id::text AS webhook_id,
- e.id::text AS delivery_id,e.event_type AS type,
- coalesce(d.status,'unavailable')::text AS status,coalesce(d.attempt,0)::integer AS attempt,
+ CASE WHEN e.rehearsal_run_id<>'' THEN '' ELSE e.id::text END AS delivery_id,e.event_type AS type,
+ CASE WHEN e.rehearsal_run_id<>'' THEN 'captured' ELSE coalesce(d.status,'unavailable') END::text AS status,
+ e.rehearsal_run_id,coalesce(d.attempt,0)::integer AS attempt,
  coalesce(d.last_error,'')::text AS last_error
 FROM workflow_operation_effects e
 LEFT JOIN app_webhook_deliveries d ON d.id=e.id AND d.webhook_id=e.webhook_id
@@ -45634,15 +47324,16 @@ type ListWorkflowOperationEffectsParams struct {
 }
 
 type ListWorkflowOperationEffectsRow struct {
-	ID         string
-	Name       string
-	Generation int64
-	WebhookID  string
-	DeliveryID string
-	Type       string
-	Status     string
-	Attempt    int32
-	LastError  string
+	ID             string
+	Name           string
+	Generation     int64
+	WebhookID      string
+	DeliveryID     string
+	Type           string
+	Status         string
+	RehearsalRunID string
+	Attempt        int32
+	LastError      string
 }
 
 func (q *Queries) ListWorkflowOperationEffects(ctx context.Context, db DBTX, arg ListWorkflowOperationEffectsParams) ([]ListWorkflowOperationEffectsRow, error) {
@@ -45662,6 +47353,7 @@ func (q *Queries) ListWorkflowOperationEffects(ctx context.Context, db DBTX, arg
 			&i.DeliveryID,
 			&i.Type,
 			&i.Status,
+			&i.RehearsalRunID,
 			&i.Attempt,
 			&i.LastError,
 		); err != nil {
@@ -46642,6 +48334,19 @@ func (q *Queries) LockApplicationStandardWorkerOperation(ctx context.Context, db
 	return id, err
 }
 
+const lockBillingIdentityAccount = `-- name: LockBillingIdentityAccount :one
+SELECT id::text FROM accounts WHERE id=$1::text::uuid FOR UPDATE
+`
+
+// Identity writes use the account lock before the provider-qualified row.
+// This matches subscription termination and SMTP lifecycle fencing.
+func (q *Queries) LockBillingIdentityAccount(ctx context.Context, db DBTX, accountID string) (string, error) {
+	row := db.QueryRow(ctx, lockBillingIdentityAccount, accountID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockBindingPromotionRevision = `-- name: LockBindingPromotionRevision :one
 SELECT (r.epoch::text || ':' || r.revision::text)::text AS revision
 FROM app_binding_promotion_revisions r JOIN apps a ON a.id=r.app_id
@@ -46924,6 +48629,18 @@ SELECT lock_clone_environment_cleanup_scope_borrowers()
 
 func (q *Queries) LockCloneEnvironmentCleanupScopeBorrowers(ctx context.Context, db DBTX) error {
 	_, err := db.Exec(ctx, lockCloneEnvironmentCleanupScopeBorrowers)
+	return err
+}
+
+const lockCloneMCPReadinessEnvironmentCleanupBorrowers = `-- name: LockCloneMCPReadinessEnvironmentCleanupBorrowers :exec
+LOCK TABLE app_mcp_readiness_policies,mcp_readiness_incidents,mcp_readiness_maintenance_windows IN SHARE MODE
+`
+
+// Environment-scoped MCP readiness policies, incidents and maintenance windows
+// were also added after the migration-owned writer fence. Their scope-only rows
+// have no environment foreign key, so keep their writers out of the deletion window.
+func (q *Queries) LockCloneMCPReadinessEnvironmentCleanupBorrowers(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, lockCloneMCPReadinessEnvironmentCleanupBorrowers)
 	return err
 }
 
@@ -48504,6 +50221,43 @@ func (q *Queries) LockLifecycleSuccessorProject(ctx context.Context, db DBTX, pr
 	var id string
 	err := row.Scan(&id)
 	return id, err
+}
+
+const lockMCPNotificationEvent = `-- name: LockMCPNotificationEvent :one
+SELECT id, incident_id, rule_id, kind, sequence, occurred_at, payload, observed_value, delivery_status, attempt_count, available_at, lease_token, lease_until, last_delivery_id, last_attempt_at, last_status_code, imported, maintenance_window_ids, suppression_reason, notification_reason, delivery_version, last_operator_action, reminder_number, delivery_routing, destination_deliveries FROM mcp_readiness_incident_events WHERE id=$1 FOR UPDATE
+`
+
+func (q *Queries) LockMCPNotificationEvent(ctx context.Context, db DBTX, eventID pgtype.UUID) (McpReadinessIncidentEvent, error) {
+	row := db.QueryRow(ctx, lockMCPNotificationEvent, eventID)
+	var i McpReadinessIncidentEvent
+	err := row.Scan(
+		&i.ID,
+		&i.IncidentID,
+		&i.RuleID,
+		&i.Kind,
+		&i.Sequence,
+		&i.OccurredAt,
+		&i.Payload,
+		&i.ObservedValue,
+		&i.DeliveryStatus,
+		&i.AttemptCount,
+		&i.AvailableAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.LastDeliveryID,
+		&i.LastAttemptAt,
+		&i.LastStatusCode,
+		&i.Imported,
+		&i.MaintenanceWindowIds,
+		&i.SuppressionReason,
+		&i.NotificationReason,
+		&i.DeliveryVersion,
+		&i.LastOperatorAction,
+		&i.ReminderNumber,
+		&i.DeliveryRouting,
+		&i.DestinationDeliveries,
+	)
+	return i, err
 }
 
 const lockManagedPostgresCustomerDatabase = `-- name: LockManagedPostgresCustomerDatabase :one
@@ -51673,6 +53427,20 @@ AND workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,
 // attempt closure and running-step reset in that order in one transaction.
 func (q *Queries) MarkLegacyWorkflowOutboundUnknown(ctx context.Context, db DBTX, runID pgtype.UUID) error {
 	_, err := db.Exec(ctx, markLegacyWorkflowOutboundUnknown, runID)
+	return err
+}
+
+const markMCPReadinessReminderFired = `-- name: MarkMCPReadinessReminderFired :exec
+UPDATE alert_rules SET last_fired_at=$1 WHERE id=$2
+`
+
+type MarkMCPReadinessReminderFiredParams struct {
+	FiredAt pgtype.Timestamptz
+	RuleID  pgtype.UUID
+}
+
+func (q *Queries) MarkMCPReadinessReminderFired(ctx context.Context, db DBTX, arg MarkMCPReadinessReminderFiredParams) error {
+	_, err := db.Exec(ctx, markMCPReadinessReminderFired, arg.FiredAt, arg.RuleID)
 	return err
 }
 
@@ -62306,6 +64074,7 @@ func (q *Queries) PruneAppRuntimeUpgradeGatewayDrains(ctx context.Context, db DB
 const pruneCustomerOperationEvents = `-- name: PruneCustomerOperationEvents :execrows
 WITH doomed AS (SELECT e.operation_id,e.sequence FROM customer_operation_events e JOIN customer_operations o ON o.id=e.operation_id
  WHERE (o.record->>'event_expires_at')::timestamptz<=$1::timestamptz
+ AND COALESCE(o.record->'data_repair'->>'phase','') NOT IN ('replacing','resolving')
  ORDER BY e.created_at,e.operation_id,e.sequence LIMIT $2::integer)
 DELETE FROM customer_operation_events e USING doomed d WHERE e.operation_id=d.operation_id AND e.sequence=d.sequence
 `
@@ -62365,6 +64134,8 @@ func (q *Queries) PruneCustomerOperationStreams(ctx context.Context, db DBTX, ar
 const pruneCustomerOperations = `-- name: PruneCustomerOperations :execrows
 WITH doomed AS (SELECT id FROM customer_operations
  WHERE expires_at<=$1::timestamptz AND state IN ('succeeded','failed','cancelled','requires_reconciliation')
+ AND COALESCE(record->'data_repair'->>'phase','') NOT IN ('replacing','resolving')
+ AND NOT EXISTS (SELECT 1 FROM data_repair_rehearsals r WHERE r.operation_id=customer_operations.id AND r.phase IN ('queued','running','cleanup','publishing'))
  ORDER BY expires_at,id LIMIT $2::integer FOR UPDATE SKIP LOCKED)
 DELETE FROM customer_operations o USING doomed d WHERE o.id=d.id
 `
@@ -63212,6 +64983,30 @@ WHERE c.account_id=$1::uuid
 func (q *Queries) PurgeAccountManagedPostgresCreationReceipts(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
 	_, err := db.Exec(ctx, purgeAccountManagedPostgresCreationReceipts, accountID)
 	return err
+}
+
+const purgeSLOHoursBefore = `-- name: PurgeSLOHoursBefore :execrows
+DELETE FROM app_slo_hourly WHERE hour < $1::timestamptz
+`
+
+func (q *Queries) PurgeSLOHoursBefore(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error) {
+	result, err := db.Exec(ctx, purgeSLOHoursBefore, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const purgeSyntheticCheckRunsBefore = `-- name: PurgeSyntheticCheckRunsBefore :execrows
+DELETE FROM synthetic_check_runs WHERE started_at < $1::timestamptz
+`
+
+func (q *Queries) PurgeSyntheticCheckRunsBefore(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error) {
+	result, err := db.Exec(ctx, purgeSyntheticCheckRunsBefore, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const putCustomerOperationIdempotency = `-- name: PutCustomerOperationIdempotency :exec
@@ -66531,8 +68326,12 @@ func (q *Queries) ReadCloneConfigurationOwnershipSnapshot(ctx context.Context, d
 const readCloneDeploymentBorrowers = `-- name: ReadCloneDeploymentBorrowers :one
 SELECT (jsonb_build_object(
     'binding_verification_runs_deployment_id_fkey', (SELECT count(*) FROM binding_verification_runs WHERE deployment_id = $1::uuid),
+    'data_api_runtime_connection_observations_deployment_id_fkey', (SELECT count(*) FROM data_api_runtime_connection_observations WHERE deployment_id = $1::uuid),
     'deployment_mcp_task_holds_deployment_id_fkey', (SELECT count(*) FROM deployment_mcp_task_holds WHERE deployment_id = $1::uuid),
     'deployment_mcp_task_migration_overrides_deployment_id_fkey', (SELECT count(*) FROM deployment_mcp_task_migration_overrides WHERE deployment_id = $1::uuid),
+    'deployment_mcp_readiness_evidence_deployment_id_fkey', (SELECT count(*) FROM deployment_mcp_readiness_evidence WHERE deployment_id = $1::uuid),
+    'deployment_mcp_readiness_monitors_deployment_id_fkey', (SELECT count(*) FROM deployment_mcp_readiness_monitors WHERE deployment_id = $1::uuid),
+    'deployment_mcp_readiness_overrides_deployment_id_fkey', (SELECT count(*) FROM deployment_mcp_readiness_overrides WHERE deployment_id = $1::uuid),
     'dev_source_manifests_deployment_id_fkey', (SELECT count(*) FROM dev_source_manifests WHERE deployment_id = $1::uuid),
     'dev_source_patches_base_deployment_id_fkey', (SELECT count(*) FROM dev_source_patches WHERE base_deployment_id = $1::uuid),
     'profile_canary_checks_deployment_id_fkey', (SELECT count(*) FROM profile_canary_checks WHERE deployment_id = $1::uuid),
@@ -66683,6 +68482,10 @@ SELECT jsonb_build_object(
  'project_environment_promotion_workloads.target_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE target_deployment_id=$1::uuid::text),
  'request_audit_events.deployment_id', (SELECT count(*) FROM request_audit_events WHERE deployment_id=$1::uuid),
  'request_telemetry.deployment_id', (SELECT count(*) FROM request_telemetry WHERE deployment_id=$1::uuid),
+ 'scenario_cold_preparations.deployment_id', (SELECT count(*) FROM scenario_cold_preparations WHERE deployment_id=$1::uuid),
+ 'scenario_recorder_sessions.deployment_id', (SELECT count(*) FROM scenario_recorder_sessions WHERE deployment_id=$1::uuid),
+ 'scenario_suspend_resumes.deployment_id', (SELECT count(*) FROM scenario_suspend_resumes WHERE deployment_id=$1::uuid),
+ 'scenario_worker_faults.deployment_id', (SELECT count(*) FROM scenario_worker_faults WHERE deployment_id=$1::uuid),
  'upload_commit_outcomes.deployment_id', (SELECT count(*) FROM upload_commit_outcomes WHERE deployment_id=$1::uuid::text),
  'upload_sessions.deployment_id', (SELECT count(*) FROM upload_sessions WHERE deployment_id=$1::uuid::text),
  'instance_application_standard_admissions.deployment_id', (SELECT count(*) FROM instance_application_standard_admissions WHERE deployment_id=$1::uuid)
@@ -66722,9 +68525,9 @@ func (q *Queries) ReadCloneEnvironmentCleanup(ctx context.Context, db DBTX, oper
 
 const readCloneEnvironmentMetadataBorrowers = `-- name: ReadCloneEnvironmentMetadataBorrowers :one
 WITH scoped_apps AS (
- SELECT id FROM apps WHERE project_id=$3::uuid
+ SELECT id FROM apps WHERE project_id=$2::uuid
 ), scoped_deployments AS (
- SELECT d.id,d.app_id FROM deployments d WHERE d.app_id IN (SELECT id FROM scoped_apps) AND d.scope=$2::text
+ SELECT d.id,d.app_id FROM deployments d WHERE d.app_id IN (SELECT id FROM scoped_apps) AND d.scope=$3::text
 )
 SELECT
  (SELECT count(*) FROM app_environment_route_budgets p WHERE p.environment_id=$1::uuid) AS app_environment_route_budgets,
@@ -66739,26 +68542,27 @@ SELECT
  (SELECT count(*) FROM environment_workload_graphs p WHERE p.environment_id=$1::uuid) AS environment_workload_graphs,
  (SELECT count(*) FROM environment_workload_retirements p WHERE p.environment_id=$1::uuid) AS environment_workload_retirements,
  (SELECT count(*) FROM feature_flag_versions p WHERE p.environment_id=$1::uuid) AS feature_flag_versions,
+ (SELECT count(*) FROM hosting_sites p WHERE p.project_id=$2::uuid AND p.environment=$3::text) AS hosting_sites,
  (SELECT count(*) FROM invocation_environment_queue_admissions p WHERE p.environment_id=$1::uuid) AS invocation_environment_queue_admissions,
  (SELECT count(*) FROM invocation_work_environment_admissions p WHERE p.environment_id=$1::uuid) AS invocation_work_environment_admissions,
  (SELECT count(*) FROM invocation_work_environment_domains p WHERE p.environment_id=$1::uuid) AS invocation_work_environment_domains,
- (SELECT count(*) FROM invocations p WHERE p.environment_id=$1::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=$2::text)) AS invocations,
- (SELECT count(*) FROM project_environment_edge_policies p WHERE p.project_id=$3::uuid AND p.environment_slug=$2::text) AS project_environment_edge_policies,
- (SELECT count(*) FROM project_environment_qualifications p WHERE p.project_id=$3::uuid AND p.environment_slug=$2::text) AS project_environment_qualifications,
+ (SELECT count(*) FROM invocations p WHERE p.environment_id=$1::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=$3::text)) AS invocations,
+ (SELECT count(*) FROM project_environment_edge_policies p WHERE p.project_id=$2::uuid AND p.environment_slug=$3::text) AS project_environment_edge_policies,
+ (SELECT count(*) FROM project_environment_qualifications p WHERE p.project_id=$2::uuid AND p.environment_slug=$3::text) AS project_environment_qualifications,
  (SELECT count(*) FROM project_environment_queue_runtime_sets p WHERE p.environment_id=$1::uuid) AS project_environment_queue_runtime_sets,
- (SELECT count(*) FROM project_environment_route_policies p WHERE p.project_id=$3::uuid AND p.environment_slug=$2::text) AS project_environment_route_policies,
+ (SELECT count(*) FROM project_environment_route_policies p WHERE p.project_id=$2::uuid AND p.environment_slug=$3::text) AS project_environment_route_policies,
  (SELECT count(*) FROM project_environment_workload_specs p WHERE p.environment_id=$1::uuid) AS project_environment_workload_specs,
- (SELECT count(*) FROM project_release_sets p WHERE p.project_id=$3::uuid AND p.environment_slug=$2::text) AS project_release_sets,
- (SELECT count(*) FROM project_release_stages p WHERE p.project_id=$3::uuid AND p.environment_slug=$2::text) AS project_release_stages,
- (SELECT count(*) FROM runtime_environment_scaling_states p WHERE p.environment_id=$1::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$2::text)) AS runtime_environment_scaling_states,
+ (SELECT count(*) FROM project_release_sets p WHERE p.project_id=$2::uuid AND p.environment_slug=$3::text) AS project_release_sets,
+ (SELECT count(*) FROM project_release_stages p WHERE p.project_id=$2::uuid AND p.environment_slug=$3::text) AS project_release_stages,
+ (SELECT count(*) FROM runtime_environment_scaling_states p WHERE p.environment_id=$1::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$3::text)) AS runtime_environment_scaling_states,
  (SELECT count(*) FROM scoped_deployments d WHERE EXISTS(SELECT 1 FROM project_environment_clone_workloads w WHERE w.operation_id=$4::uuid AND w.app_id=d.app_id AND w.target_deployment_id=d.id)) AS owned_deployments,
  (SELECT count(*) FROM scoped_deployments d WHERE NOT EXISTS(SELECT 1 FROM project_environment_clone_workloads w WHERE w.operation_id=$4::uuid AND w.app_id=d.app_id AND w.target_deployment_id=d.id)) AS foreign_deployments
 `
 
 type ReadCloneEnvironmentMetadataBorrowersParams struct {
 	EnvironmentID pgtype.UUID
-	Environment   string
 	ProjectID     pgtype.UUID
+	Environment   string
 	OperationID   pgtype.UUID
 }
 
@@ -66775,6 +68579,7 @@ type ReadCloneEnvironmentMetadataBorrowersRow struct {
 	EnvironmentWorkloadGraphs            int64
 	EnvironmentWorkloadRetirements       int64
 	FeatureFlagVersions                  int64
+	HostingSites                         int64
 	InvocationEnvironmentQueueAdmissions int64
 	InvocationWorkEnvironmentAdmissions  int64
 	InvocationWorkEnvironmentDomains     int64
@@ -66796,8 +68601,8 @@ type ReadCloneEnvironmentMetadataBorrowersRow struct {
 func (q *Queries) ReadCloneEnvironmentMetadataBorrowers(ctx context.Context, db DBTX, arg ReadCloneEnvironmentMetadataBorrowersParams) (ReadCloneEnvironmentMetadataBorrowersRow, error) {
 	row := db.QueryRow(ctx, readCloneEnvironmentMetadataBorrowers,
 		arg.EnvironmentID,
-		arg.Environment,
 		arg.ProjectID,
+		arg.Environment,
 		arg.OperationID,
 	)
 	var i ReadCloneEnvironmentMetadataBorrowersRow
@@ -66814,6 +68619,7 @@ func (q *Queries) ReadCloneEnvironmentMetadataBorrowers(ctx context.Context, db 
 		&i.EnvironmentWorkloadGraphs,
 		&i.EnvironmentWorkloadRetirements,
 		&i.FeatureFlagVersions,
+		&i.HostingSites,
 		&i.InvocationEnvironmentQueueAdmissions,
 		&i.InvocationWorkEnvironmentAdmissions,
 		&i.InvocationWorkEnvironmentDomains,
@@ -67075,7 +68881,7 @@ func (q *Queries) ReadCloneWorkloadConfigurationBorrowers(ctx context.Context, d
 }
 
 const readCustomerAlertRule = `-- name: ReadCustomerAlertRule :one
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id FROM alert_rules WHERE id=$1
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope FROM alert_rules WHERE id=$1
 `
 
 func (q *Queries) ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.UUID) (AlertRule, error) {
@@ -67105,6 +68911,12 @@ func (q *Queries) ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.
 		&i.PostDeployRollbackWindowSeconds,
 		&i.EventSubscriptionID,
 		&i.EdgeRuleID,
+		&i.CustomMetricName,
+		&i.SloID,
+		&i.SyntheticCheckID,
+		&i.McpMinCalls,
+		&i.McpForMinutes,
+		&i.McpReadinessScope,
 	)
 	return i, err
 }
@@ -68224,6 +70036,480 @@ func (q *Queries) ReadLifecycleTrafficInputs(ctx context.Context, db DBTX, appID
 	var inputs []byte
 	err := row.Scan(&inputs)
 	return inputs, err
+}
+
+const readMCPAttentionAction = `-- name: ReadMCPAttentionAction :one
+SELECT app_id, account_id, request_id, incident_id, request, receipt, created_at FROM mcp_readiness_attention_actions WHERE app_id=$1 AND request_id=$2
+`
+
+type ReadMCPAttentionActionParams struct {
+	AppID     pgtype.UUID
+	RequestID pgtype.UUID
+}
+
+func (q *Queries) ReadMCPAttentionAction(ctx context.Context, db DBTX, arg ReadMCPAttentionActionParams) (McpReadinessAttentionAction, error) {
+	row := db.QueryRow(ctx, readMCPAttentionAction, arg.AppID, arg.RequestID)
+	var i McpReadinessAttentionAction
+	err := row.Scan(
+		&i.AppID,
+		&i.AccountID,
+		&i.RequestID,
+		&i.IncidentID,
+		&i.Request,
+		&i.Receipt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const readMCPAttentionIncident = `-- name: ReadMCPAttentionIncident :one
+SELECT id, rule_id, account_id, app_id, scope, coverage, opened_at, resolved_at, maintenance_pending, delivery_routing FROM mcp_readiness_incidents WHERE id=$1 AND account_id=$2 AND app_id=$3
+`
+
+type ReadMCPAttentionIncidentParams struct {
+	IncidentID pgtype.UUID
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+}
+
+func (q *Queries) ReadMCPAttentionIncident(ctx context.Context, db DBTX, arg ReadMCPAttentionIncidentParams) (McpReadinessIncident, error) {
+	row := db.QueryRow(ctx, readMCPAttentionIncident, arg.IncidentID, arg.AccountID, arg.AppID)
+	var i McpReadinessIncident
+	err := row.Scan(
+		&i.ID,
+		&i.RuleID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Scope,
+		&i.Coverage,
+		&i.OpenedAt,
+		&i.ResolvedAt,
+		&i.MaintenancePending,
+		&i.DeliveryRouting,
+	)
+	return i, err
+}
+
+const readMCPAttentionSnapshot = `-- name: ReadMCPAttentionSnapshot :one
+SELECT snapshot FROM mcp_readiness_incident_attention WHERE incident_id=$1
+`
+
+func (q *Queries) ReadMCPAttentionSnapshot(ctx context.Context, db DBTX, incidentID pgtype.UUID) ([]byte, error) {
+	row := db.QueryRow(ctx, readMCPAttentionSnapshot, incidentID)
+	var snapshot []byte
+	err := row.Scan(&snapshot)
+	return snapshot, err
+}
+
+const readMCPDeliveryEvent = `-- name: ReadMCPDeliveryEvent :one
+SELECT id, incident_id, rule_id, kind, sequence, occurred_at, payload, observed_value, delivery_status, attempt_count, available_at, lease_token, lease_until, last_delivery_id, last_attempt_at, last_status_code, imported, maintenance_window_ids, suppression_reason, notification_reason, delivery_version, last_operator_action, reminder_number, delivery_routing, destination_deliveries FROM mcp_readiness_incident_events WHERE id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadMCPDeliveryEvent(ctx context.Context, db DBTX, id pgtype.UUID) (McpReadinessIncidentEvent, error) {
+	row := db.QueryRow(ctx, readMCPDeliveryEvent, id)
+	var i McpReadinessIncidentEvent
+	err := row.Scan(
+		&i.ID,
+		&i.IncidentID,
+		&i.RuleID,
+		&i.Kind,
+		&i.Sequence,
+		&i.OccurredAt,
+		&i.Payload,
+		&i.ObservedValue,
+		&i.DeliveryStatus,
+		&i.AttemptCount,
+		&i.AvailableAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.LastDeliveryID,
+		&i.LastAttemptAt,
+		&i.LastStatusCode,
+		&i.Imported,
+		&i.MaintenanceWindowIds,
+		&i.SuppressionReason,
+		&i.NotificationReason,
+		&i.DeliveryVersion,
+		&i.LastOperatorAction,
+		&i.ReminderNumber,
+		&i.DeliveryRouting,
+		&i.DestinationDeliveries,
+	)
+	return i, err
+}
+
+const readMCPDeliveryHead = `-- name: ReadMCPDeliveryHead :one
+SELECT e.id, e.incident_id, e.rule_id, e.kind, e.sequence, e.occurred_at, e.payload, e.observed_value, e.delivery_status, e.attempt_count, e.available_at, e.lease_token, e.lease_until, e.last_delivery_id, e.last_attempt_at, e.last_status_code, e.imported, e.maintenance_window_ids, e.suppression_reason, e.notification_reason, e.delivery_version, e.last_operator_action, e.reminder_number, e.delivery_routing, e.destination_deliveries FROM mcp_readiness_incident_events e WHERE e.rule_id=$1 AND e.delivery_status NOT IN ('delivered','suppressed','abandoned')
+AND e.incident_id IN(SELECT i.id FROM mcp_readiness_incidents i WHERE i.account_id=$2 AND i.app_id=$3) ORDER BY e.sequence LIMIT 1 FOR UPDATE
+`
+
+type ReadMCPDeliveryHeadParams struct {
+	RuleID    pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) ReadMCPDeliveryHead(ctx context.Context, db DBTX, arg ReadMCPDeliveryHeadParams) (McpReadinessIncidentEvent, error) {
+	row := db.QueryRow(ctx, readMCPDeliveryHead, arg.RuleID, arg.AccountID, arg.AppID)
+	var i McpReadinessIncidentEvent
+	err := row.Scan(
+		&i.ID,
+		&i.IncidentID,
+		&i.RuleID,
+		&i.Kind,
+		&i.Sequence,
+		&i.OccurredAt,
+		&i.Payload,
+		&i.ObservedValue,
+		&i.DeliveryStatus,
+		&i.AttemptCount,
+		&i.AvailableAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.LastDeliveryID,
+		&i.LastAttemptAt,
+		&i.LastStatusCode,
+		&i.Imported,
+		&i.MaintenanceWindowIds,
+		&i.SuppressionReason,
+		&i.NotificationReason,
+		&i.DeliveryVersion,
+		&i.LastOperatorAction,
+		&i.ReminderNumber,
+		&i.DeliveryRouting,
+		&i.DestinationDeliveries,
+	)
+	return i, err
+}
+
+const readMCPDeliveryRuleID = `-- name: ReadMCPDeliveryRuleID :one
+SELECT rule_id FROM mcp_readiness_incident_events WHERE id=$1
+`
+
+func (q *Queries) ReadMCPDeliveryRuleID(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, readMCPDeliveryRuleID, id)
+	var rule_id pgtype.UUID
+	err := row.Scan(&rule_id)
+	return rule_id, err
+}
+
+const readMCPFallbackPolicy = `-- name: ReadMCPFallbackPolicy :one
+SELECT rule_id, version, enabled, webhook_url, webhook_secret_sealed, after_failures, provider, region, integration_key_sealed, fingerprint FROM mcp_readiness_fallback_policies WHERE rule_id=$1
+`
+
+func (q *Queries) ReadMCPFallbackPolicy(ctx context.Context, db DBTX, ruleID pgtype.UUID) (McpReadinessFallbackPolicy, error) {
+	row := db.QueryRow(ctx, readMCPFallbackPolicy, ruleID)
+	var i McpReadinessFallbackPolicy
+	err := row.Scan(
+		&i.RuleID,
+		&i.Version,
+		&i.Enabled,
+		&i.WebhookUrl,
+		&i.WebhookSecretSealed,
+		&i.AfterFailures,
+		&i.Provider,
+		&i.Region,
+		&i.IntegrationKeySealed,
+		&i.Fingerprint,
+	)
+	return i, err
+}
+
+const readMCPIncidentRouting = `-- name: ReadMCPIncidentRouting :one
+SELECT delivery_routing FROM mcp_readiness_incidents WHERE id=$1
+`
+
+func (q *Queries) ReadMCPIncidentRouting(ctx context.Context, db DBTX, id pgtype.UUID) ([]byte, error) {
+	row := db.QueryRow(ctx, readMCPIncidentRouting, id)
+	var delivery_routing []byte
+	err := row.Scan(&delivery_routing)
+	return delivery_routing, err
+}
+
+const readMCPNotificationAction = `-- name: ReadMCPNotificationAction :one
+SELECT app_id, account_id, request_id, event_id, action, expected_version, reason, receipt, destination FROM mcp_readiness_notification_actions WHERE app_id=$1 AND request_id=$2
+`
+
+type ReadMCPNotificationActionParams struct {
+	AppID     pgtype.UUID
+	RequestID pgtype.UUID
+}
+
+func (q *Queries) ReadMCPNotificationAction(ctx context.Context, db DBTX, arg ReadMCPNotificationActionParams) (McpReadinessNotificationAction, error) {
+	row := db.QueryRow(ctx, readMCPNotificationAction, arg.AppID, arg.RequestID)
+	var i McpReadinessNotificationAction
+	err := row.Scan(
+		&i.AppID,
+		&i.AccountID,
+		&i.RequestID,
+		&i.EventID,
+		&i.Action,
+		&i.ExpectedVersion,
+		&i.Reason,
+		&i.Receipt,
+		&i.Destination,
+	)
+	return i, err
+}
+
+const readMCPNotificationEventRule = `-- name: ReadMCPNotificationEventRule :one
+SELECT e.rule_id FROM mcp_readiness_incident_events e JOIN mcp_readiness_incidents i ON i.id=e.incident_id
+WHERE e.id=$1 AND i.account_id=$2 AND i.app_id=$3
+`
+
+type ReadMCPNotificationEventRuleParams struct {
+	EventID   pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) ReadMCPNotificationEventRule(ctx context.Context, db DBTX, arg ReadMCPNotificationEventRuleParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, readMCPNotificationEventRule, arg.EventID, arg.AccountID, arg.AppID)
+	var rule_id pgtype.UUID
+	err := row.Scan(&rule_id)
+	return rule_id, err
+}
+
+const readMCPNotificationHead = `-- name: ReadMCPNotificationHead :one
+SELECT e.id, e.incident_id, e.rule_id, e.kind, e.sequence, e.occurred_at, e.payload, e.observed_value, e.delivery_status, e.attempt_count, e.available_at, e.lease_token, e.lease_until, e.last_delivery_id, e.last_attempt_at, e.last_status_code, e.imported, e.maintenance_window_ids, e.suppression_reason, e.notification_reason, e.delivery_version, e.last_operator_action, e.reminder_number, e.delivery_routing, e.destination_deliveries, count(*) OVER() AS outstanding_count,
+ (min(e.occurred_at) OVER())::timestamptz AS oldest_at,i.resolved_at
+FROM mcp_readiness_incident_events e JOIN mcp_readiness_incidents i ON i.id=e.incident_id
+WHERE e.rule_id=$1 AND i.account_id=$2 AND i.app_id=$3
+ AND e.delivery_status NOT IN ('delivered','suppressed','abandoned')
+ORDER BY e.sequence LIMIT 1
+`
+
+type ReadMCPNotificationHeadParams struct {
+	RuleID    pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+type ReadMCPNotificationHeadRow struct {
+	McpReadinessIncidentEvent McpReadinessIncidentEvent
+	OutstandingCount          int64
+	OldestAt                  pgtype.Timestamptz
+	ResolvedAt                pgtype.Timestamptz
+}
+
+func (q *Queries) ReadMCPNotificationHead(ctx context.Context, db DBTX, arg ReadMCPNotificationHeadParams) (ReadMCPNotificationHeadRow, error) {
+	row := db.QueryRow(ctx, readMCPNotificationHead, arg.RuleID, arg.AccountID, arg.AppID)
+	var i ReadMCPNotificationHeadRow
+	err := row.Scan(
+		&i.McpReadinessIncidentEvent.ID,
+		&i.McpReadinessIncidentEvent.IncidentID,
+		&i.McpReadinessIncidentEvent.RuleID,
+		&i.McpReadinessIncidentEvent.Kind,
+		&i.McpReadinessIncidentEvent.Sequence,
+		&i.McpReadinessIncidentEvent.OccurredAt,
+		&i.McpReadinessIncidentEvent.Payload,
+		&i.McpReadinessIncidentEvent.ObservedValue,
+		&i.McpReadinessIncidentEvent.DeliveryStatus,
+		&i.McpReadinessIncidentEvent.AttemptCount,
+		&i.McpReadinessIncidentEvent.AvailableAt,
+		&i.McpReadinessIncidentEvent.LeaseToken,
+		&i.McpReadinessIncidentEvent.LeaseUntil,
+		&i.McpReadinessIncidentEvent.LastDeliveryID,
+		&i.McpReadinessIncidentEvent.LastAttemptAt,
+		&i.McpReadinessIncidentEvent.LastStatusCode,
+		&i.McpReadinessIncidentEvent.Imported,
+		&i.McpReadinessIncidentEvent.MaintenanceWindowIds,
+		&i.McpReadinessIncidentEvent.SuppressionReason,
+		&i.McpReadinessIncidentEvent.NotificationReason,
+		&i.McpReadinessIncidentEvent.DeliveryVersion,
+		&i.McpReadinessIncidentEvent.LastOperatorAction,
+		&i.McpReadinessIncidentEvent.ReminderNumber,
+		&i.McpReadinessIncidentEvent.DeliveryRouting,
+		&i.McpReadinessIncidentEvent.DestinationDeliveries,
+		&i.OutstandingCount,
+		&i.OldestAt,
+		&i.ResolvedAt,
+	)
+	return i, err
+}
+
+const readMCPNotificationOwnedApp = `-- name: ReadMCPNotificationOwnedApp :one
+SELECT id FROM apps WHERE id=$1 AND account_id=$2 AND status<>'deleted'
+`
+
+type ReadMCPNotificationOwnedAppParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ReadMCPNotificationOwnedApp(ctx context.Context, db DBTX, arg ReadMCPNotificationOwnedAppParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, readMCPNotificationOwnedApp, arg.AppID, arg.AccountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const readMCPPagerDutyAcknowledgementEvent = `-- name: ReadMCPPagerDutyAcknowledgementEvent :one
+SELECT rule_id, event_id, id, incident_id, digest, receipt, received_at, delivery_destination FROM mcp_readiness_pagerduty_ack_events WHERE rule_id=$1 AND event_id=$2 ORDER BY delivery_destination LIMIT 1
+`
+
+type ReadMCPPagerDutyAcknowledgementEventParams struct {
+	RuleID  pgtype.UUID
+	EventID string
+}
+
+func (q *Queries) ReadMCPPagerDutyAcknowledgementEvent(ctx context.Context, db DBTX, arg ReadMCPPagerDutyAcknowledgementEventParams) (McpReadinessPagerdutyAckEvent, error) {
+	row := db.QueryRow(ctx, readMCPPagerDutyAcknowledgementEvent, arg.RuleID, arg.EventID)
+	var i McpReadinessPagerdutyAckEvent
+	err := row.Scan(
+		&i.RuleID,
+		&i.EventID,
+		&i.ID,
+		&i.IncidentID,
+		&i.Digest,
+		&i.Receipt,
+		&i.ReceivedAt,
+		&i.DeliveryDestination,
+	)
+	return i, err
+}
+
+const readMCPPagerDutyAcknowledgementReceiver = `-- name: ReadMCPPagerDutyAcknowledgementReceiver :one
+SELECT p.rule_id, p.version, p.enabled, p.signing_secret_sealed, p.pagerduty_version, p.region, p.fingerprint, p.service_id, p.destination, p.fallback_version, p.legacy_receiver, p.sync_unacknowledgements,r.account_id,r.app_id FROM mcp_readiness_pagerduty_acknowledgements p JOIN alert_rules r ON r.id=p.rule_id JOIN apps a ON a.id=r.app_id AND a.account_id=r.account_id
+WHERE p.rule_id=$1 AND (($2::text='' AND p.legacy_receiver) OR p.destination=$2) AND p.enabled AND a.status<>'deleted' AND r.metric='mcp_readiness_unhealthy' AND r.action='webhook'
+`
+
+type ReadMCPPagerDutyAcknowledgementReceiverParams struct {
+	RuleID      pgtype.UUID
+	Destination string
+}
+
+type ReadMCPPagerDutyAcknowledgementReceiverRow struct {
+	McpReadinessPagerdutyAcknowledgement McpReadinessPagerdutyAcknowledgement
+	AccountID                            pgtype.UUID
+	AppID                                pgtype.UUID
+}
+
+func (q *Queries) ReadMCPPagerDutyAcknowledgementReceiver(ctx context.Context, db DBTX, arg ReadMCPPagerDutyAcknowledgementReceiverParams) (ReadMCPPagerDutyAcknowledgementReceiverRow, error) {
+	row := db.QueryRow(ctx, readMCPPagerDutyAcknowledgementReceiver, arg.RuleID, arg.Destination)
+	var i ReadMCPPagerDutyAcknowledgementReceiverRow
+	err := row.Scan(
+		&i.McpReadinessPagerdutyAcknowledgement.RuleID,
+		&i.McpReadinessPagerdutyAcknowledgement.Version,
+		&i.McpReadinessPagerdutyAcknowledgement.Enabled,
+		&i.McpReadinessPagerdutyAcknowledgement.SigningSecretSealed,
+		&i.McpReadinessPagerdutyAcknowledgement.PagerdutyVersion,
+		&i.McpReadinessPagerdutyAcknowledgement.Region,
+		&i.McpReadinessPagerdutyAcknowledgement.Fingerprint,
+		&i.McpReadinessPagerdutyAcknowledgement.ServiceID,
+		&i.McpReadinessPagerdutyAcknowledgement.Destination,
+		&i.McpReadinessPagerdutyAcknowledgement.FallbackVersion,
+		&i.McpReadinessPagerdutyAcknowledgement.LegacyReceiver,
+		&i.McpReadinessPagerdutyAcknowledgement.SyncUnacknowledgements,
+		&i.AccountID,
+		&i.AppID,
+	)
+	return i, err
+}
+
+const readMCPPagerDutyAcknowledgements = `-- name: ReadMCPPagerDutyAcknowledgements :one
+SELECT rule_id, version, enabled, signing_secret_sealed, pagerduty_version, region, fingerprint, service_id, destination, fallback_version, legacy_receiver, sync_unacknowledgements FROM mcp_readiness_pagerduty_acknowledgements WHERE rule_id=$1 AND (($2::text='' AND legacy_receiver) OR destination=$2)
+`
+
+type ReadMCPPagerDutyAcknowledgementsParams struct {
+	RuleID      pgtype.UUID
+	Destination string
+}
+
+func (q *Queries) ReadMCPPagerDutyAcknowledgements(ctx context.Context, db DBTX, arg ReadMCPPagerDutyAcknowledgementsParams) (McpReadinessPagerdutyAcknowledgement, error) {
+	row := db.QueryRow(ctx, readMCPPagerDutyAcknowledgements, arg.RuleID, arg.Destination)
+	var i McpReadinessPagerdutyAcknowledgement
+	err := row.Scan(
+		&i.RuleID,
+		&i.Version,
+		&i.Enabled,
+		&i.SigningSecretSealed,
+		&i.PagerdutyVersion,
+		&i.Region,
+		&i.Fingerprint,
+		&i.ServiceID,
+		&i.Destination,
+		&i.FallbackVersion,
+		&i.LegacyReceiver,
+		&i.SyncUnacknowledgements,
+	)
+	return i, err
+}
+
+const readMCPPagerDutyPolicy = `-- name: ReadMCPPagerDutyPolicy :one
+SELECT rule_id, version, enabled, integration_key_sealed, fingerprint, region FROM mcp_readiness_pagerduty_policies WHERE rule_id=$1
+`
+
+func (q *Queries) ReadMCPPagerDutyPolicy(ctx context.Context, db DBTX, ruleID pgtype.UUID) (McpReadinessPagerdutyPolicy, error) {
+	row := db.QueryRow(ctx, readMCPPagerDutyPolicy, ruleID)
+	var i McpReadinessPagerdutyPolicy
+	err := row.Scan(
+		&i.RuleID,
+		&i.Version,
+		&i.Enabled,
+		&i.IntegrationKeySealed,
+		&i.Fingerprint,
+		&i.Region,
+	)
+	return i, err
+}
+
+const readMCPPagerDutyReleaseEvent = `-- name: ReadMCPPagerDutyReleaseEvent :one
+SELECT rule_id, event_id, id, incident_id, digest, receipt, received_at, delivery_destination FROM mcp_readiness_pagerduty_ack_events WHERE rule_id=$1 AND event_id=$2 AND delivery_destination=$3
+`
+
+type ReadMCPPagerDutyReleaseEventParams struct {
+	RuleID              pgtype.UUID
+	EventID             string
+	DeliveryDestination string
+}
+
+func (q *Queries) ReadMCPPagerDutyReleaseEvent(ctx context.Context, db DBTX, arg ReadMCPPagerDutyReleaseEventParams) (McpReadinessPagerdutyAckEvent, error) {
+	row := db.QueryRow(ctx, readMCPPagerDutyReleaseEvent, arg.RuleID, arg.EventID, arg.DeliveryDestination)
+	var i McpReadinessPagerdutyAckEvent
+	err := row.Scan(
+		&i.RuleID,
+		&i.EventID,
+		&i.ID,
+		&i.IncidentID,
+		&i.Digest,
+		&i.Receipt,
+		&i.ReceivedAt,
+		&i.DeliveryDestination,
+	)
+	return i, err
+}
+
+const readMCPReminderDefaults = `-- name: ReadMCPReminderDefaults :one
+SELECT rule_id, version, interval_seconds, max_reminders FROM mcp_readiness_reminder_defaults WHERE rule_id=$1
+`
+
+func (q *Queries) ReadMCPReminderDefaults(ctx context.Context, db DBTX, ruleID pgtype.UUID) (McpReadinessReminderDefault, error) {
+	row := db.QueryRow(ctx, readMCPReminderDefaults, ruleID)
+	var i McpReadinessReminderDefault
+	err := row.Scan(
+		&i.RuleID,
+		&i.Version,
+		&i.IntervalSeconds,
+		&i.MaxReminders,
+	)
+	return i, err
+}
+
+const readMCPRouteDeliveryResult = `-- name: ReadMCPRouteDeliveryResult :one
+SELECT status,last_status_code FROM alert_deliveries WHERE id=$1
+`
+
+type ReadMCPRouteDeliveryResultRow struct {
+	Status         string
+	LastStatusCode pgtype.Int4
+}
+
+func (q *Queries) ReadMCPRouteDeliveryResult(ctx context.Context, db DBTX, id pgtype.UUID) (ReadMCPRouteDeliveryResultRow, error) {
+	row := db.QueryRow(ctx, readMCPRouteDeliveryResult, id)
+	var i ReadMCPRouteDeliveryResultRow
+	err := row.Scan(&i.Status, &i.LastStatusCode)
+	return i, err
 }
 
 const readManagedPostgresCloneRestoreProof = `-- name: ReadManagedPostgresCloneRestoreProof :one
@@ -74099,6 +76385,26 @@ func (q *Queries) RecordManagedPostgresSharedUsage(ctx context.Context, db DBTX,
 	return result.RowsAffected(), nil
 }
 
+const recordNotificationChannelDelivery = `-- name: RecordNotificationChannelDelivery :exec
+UPDATE notification_channels SET
+ last_delivered_at = CASE WHEN $1::text IS NULL THEN $2::timestamptz ELSE last_delivered_at END,
+ last_error = CASE WHEN $1::text IS NULL THEN last_error ELSE left($1::text, 256) END,
+ last_error_at = CASE WHEN $1::text IS NULL THEN last_error_at ELSE $2::timestamptz END
+WHERE id = $3::uuid
+`
+
+type RecordNotificationChannelDeliveryParams struct {
+	Err pgtype.Text
+	At  pgtype.Timestamptz
+	ID  pgtype.UUID
+}
+
+// meterd and apid's test send record the latest outcome; err NULL = success.
+func (q *Queries) RecordNotificationChannelDelivery(ctx context.Context, db DBTX, arg RecordNotificationChannelDeliveryParams) error {
+	_, err := db.Exec(ctx, recordNotificationChannelDelivery, arg.Err, arg.At, arg.ID)
+	return err
+}
+
 const recordProjectEnvironmentClonePostgresArchive = `-- name: RecordProjectEnvironmentClonePostgresArchive :one
 UPDATE project_environment_clone_postgres_archives a SET state='retained',retained_at=clock_timestamp(),
     plaintext_bytes=$1::bigint,ciphertext_bytes=$2::bigint,ciphertext_sha256=$3::text
@@ -76862,7 +79168,10 @@ WITH filtered AS (
            method,
            COALESCE(SUM(request_count), 0)::bigint AS requests,
            COALESCE(SUM(request_count) FILTER (WHERE status >= 400), 0)::bigint AS error_requests,
-           COALESCE(SUM(request_count) FILTER (WHERE cold_boot), 0)::bigint AS cold_boots
+           COALESCE(SUM(request_count) FILTER (WHERE cold_boot), 0)::bigint AS cold_boots,
+           -- Total gateway-observed request time; route cost is allocated by
+           -- this share (ADR-743) because time, not request count, holds RAM.
+           COALESCE(SUM(latency_ms::bigint * request_count), 0)::bigint AS request_time_ms
     FROM assigned
     GROUP BY dimension, method
 )
@@ -76871,6 +79180,7 @@ SELECT totals.dimension,
        totals.requests,
        totals.error_requests,
        totals.cold_boots,
+       totals.request_time_ms,
        percentiles.p50_ms,
        percentiles.p95_ms,
        percentiles.p99_ms,
@@ -76906,6 +79216,7 @@ type RequestTelemetryAnalyticsByDimensionRow struct {
 	Requests            int64
 	ErrorRequests       int64
 	ColdBoots           int64
+	RequestTimeMs       int64
 	P50Ms               int32
 	P95Ms               int32
 	P99Ms               int32
@@ -76944,6 +79255,7 @@ func (q *Queries) RequestTelemetryAnalyticsByDimension(ctx context.Context, db D
 			&i.Requests,
 			&i.ErrorRequests,
 			&i.ColdBoots,
+			&i.RequestTimeMs,
 			&i.P50Ms,
 			&i.P95Ms,
 			&i.P99Ms,
@@ -78844,7 +81156,7 @@ func (q *Queries) RetainProjectEnvironmentClonePostgresSnapshot(ctx context.Cont
 
 const retainedLayerBytesWithClonePins = `-- name: RetainedLayerBytesWithClonePins :one
 WITH retained_deployments AS (
-    SELECT d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token, d.environment_workload_held, d.snapshot_recovery_generation, d.runtime_base FROM deployments d JOIN apps a ON a.id = d.app_id
+    SELECT d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token, d.environment_workload_held, d.snapshot_recovery_generation, d.runtime_base, d.mail_failure_revision, d.mail_failed_at, d.mail_failure_account_id, d.mail_failure_account_revision, d.mail_failure_app_revision, d.mail_failure_success_revision FROM deployments d JOIN apps a ON a.id = d.app_id
     WHERE d.app_id = $1::uuid AND a.status <> 'deleted'
       AND (d.deleted_at IS NULL
            OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
@@ -81422,6 +83734,198 @@ func (q *Queries) SaveExclusiveWorkPolicy(ctx context.Context, db DBTX, arg Save
 	return i, err
 }
 
+const saveMCPAttentionSnapshot = `-- name: SaveMCPAttentionSnapshot :exec
+INSERT INTO mcp_readiness_incident_attention(incident_id,snapshot) VALUES($1,$2)
+ON CONFLICT(incident_id) DO UPDATE SET snapshot=excluded.snapshot
+`
+
+type SaveMCPAttentionSnapshotParams struct {
+	IncidentID pgtype.UUID
+	Snapshot   []byte
+}
+
+func (q *Queries) SaveMCPAttentionSnapshot(ctx context.Context, db DBTX, arg SaveMCPAttentionSnapshotParams) error {
+	_, err := db.Exec(ctx, saveMCPAttentionSnapshot, arg.IncidentID, arg.Snapshot)
+	return err
+}
+
+const saveMCPDestinationEvent = `-- name: SaveMCPDestinationEvent :exec
+UPDATE mcp_readiness_incident_events SET delivery_version=$1,attempt_count=$2,
+ delivery_status=$3,available_at=$4,lease_token=$5,lease_until=$6,
+ last_delivery_id=$7,last_attempt_at=$8,last_status_code=$9,
+ delivery_routing=$10,destination_deliveries=$11,last_operator_action=$12
+WHERE id=$13
+`
+
+type SaveMCPDestinationEventParams struct {
+	DeliveryVersion       int64
+	AttemptCount          int32
+	DeliveryStatus        string
+	AvailableAt           pgtype.Timestamptz
+	LeaseToken            pgtype.UUID
+	LeaseUntil            pgtype.Timestamptz
+	LastDeliveryID        pgtype.UUID
+	LastAttemptAt         pgtype.Timestamptz
+	LastStatusCode        pgtype.Int4
+	DeliveryRouting       []byte
+	DestinationDeliveries []byte
+	LastOperatorAction    []byte
+	ID                    pgtype.UUID
+}
+
+func (q *Queries) SaveMCPDestinationEvent(ctx context.Context, db DBTX, arg SaveMCPDestinationEventParams) error {
+	_, err := db.Exec(ctx, saveMCPDestinationEvent,
+		arg.DeliveryVersion,
+		arg.AttemptCount,
+		arg.DeliveryStatus,
+		arg.AvailableAt,
+		arg.LeaseToken,
+		arg.LeaseUntil,
+		arg.LastDeliveryID,
+		arg.LastAttemptAt,
+		arg.LastStatusCode,
+		arg.DeliveryRouting,
+		arg.DestinationDeliveries,
+		arg.LastOperatorAction,
+		arg.ID,
+	)
+	return err
+}
+
+const saveMCPFallbackPolicy = `-- name: SaveMCPFallbackPolicy :exec
+INSERT INTO mcp_readiness_fallback_policies(rule_id,version,enabled,webhook_url,webhook_secret_sealed,after_failures,provider,region,integration_key_sealed,fingerprint)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(rule_id) DO UPDATE SET version=excluded.version,enabled=excluded.enabled,webhook_url=excluded.webhook_url,webhook_secret_sealed=excluded.webhook_secret_sealed,after_failures=excluded.after_failures,provider=excluded.provider,region=excluded.region,integration_key_sealed=excluded.integration_key_sealed,fingerprint=excluded.fingerprint
+`
+
+type SaveMCPFallbackPolicyParams struct {
+	RuleID               pgtype.UUID
+	Version              int64
+	Enabled              bool
+	WebhookUrl           string
+	WebhookSecretSealed  []byte
+	AfterFailures        int32
+	Provider             string
+	Region               string
+	IntegrationKeySealed []byte
+	Fingerprint          string
+}
+
+func (q *Queries) SaveMCPFallbackPolicy(ctx context.Context, db DBTX, arg SaveMCPFallbackPolicyParams) error {
+	_, err := db.Exec(ctx, saveMCPFallbackPolicy,
+		arg.RuleID,
+		arg.Version,
+		arg.Enabled,
+		arg.WebhookUrl,
+		arg.WebhookSecretSealed,
+		arg.AfterFailures,
+		arg.Provider,
+		arg.Region,
+		arg.IntegrationKeySealed,
+		arg.Fingerprint,
+	)
+	return err
+}
+
+const saveMCPIncidentRouting = `-- name: SaveMCPIncidentRouting :exec
+UPDATE mcp_readiness_incidents SET delivery_routing=$2 WHERE id=$1
+`
+
+type SaveMCPIncidentRoutingParams struct {
+	ID              pgtype.UUID
+	DeliveryRouting []byte
+}
+
+func (q *Queries) SaveMCPIncidentRouting(ctx context.Context, db DBTX, arg SaveMCPIncidentRoutingParams) error {
+	_, err := db.Exec(ctx, saveMCPIncidentRouting, arg.ID, arg.DeliveryRouting)
+	return err
+}
+
+const saveMCPPagerDutyAcknowledgements = `-- name: SaveMCPPagerDutyAcknowledgements :exec
+INSERT INTO mcp_readiness_pagerduty_acknowledgements(rule_id,version,enabled,signing_secret_sealed,pagerduty_version,region,fingerprint,service_id,destination,fallback_version,legacy_receiver,sync_unacknowledgements)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(rule_id,destination) DO UPDATE SET version=excluded.version,enabled=excluded.enabled,signing_secret_sealed=excluded.signing_secret_sealed,pagerduty_version=excluded.pagerduty_version,region=excluded.region,fingerprint=excluded.fingerprint,service_id=excluded.service_id,destination=excluded.destination,fallback_version=excluded.fallback_version,sync_unacknowledgements=excluded.sync_unacknowledgements
+`
+
+type SaveMCPPagerDutyAcknowledgementsParams struct {
+	RuleID                 pgtype.UUID
+	Version                int64
+	Enabled                bool
+	SigningSecretSealed    []byte
+	PagerdutyVersion       int64
+	Region                 string
+	Fingerprint            string
+	ServiceID              string
+	Destination            string
+	FallbackVersion        int64
+	LegacyReceiver         bool
+	SyncUnacknowledgements bool
+}
+
+func (q *Queries) SaveMCPPagerDutyAcknowledgements(ctx context.Context, db DBTX, arg SaveMCPPagerDutyAcknowledgementsParams) error {
+	_, err := db.Exec(ctx, saveMCPPagerDutyAcknowledgements,
+		arg.RuleID,
+		arg.Version,
+		arg.Enabled,
+		arg.SigningSecretSealed,
+		arg.PagerdutyVersion,
+		arg.Region,
+		arg.Fingerprint,
+		arg.ServiceID,
+		arg.Destination,
+		arg.FallbackVersion,
+		arg.LegacyReceiver,
+		arg.SyncUnacknowledgements,
+	)
+	return err
+}
+
+const saveMCPPagerDutyPolicy = `-- name: SaveMCPPagerDutyPolicy :exec
+INSERT INTO mcp_readiness_pagerduty_policies(rule_id,version,enabled,integration_key_sealed,fingerprint,region)
+VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(rule_id) DO UPDATE SET version=excluded.version,enabled=excluded.enabled,integration_key_sealed=excluded.integration_key_sealed,fingerprint=excluded.fingerprint,region=excluded.region
+`
+
+type SaveMCPPagerDutyPolicyParams struct {
+	RuleID               pgtype.UUID
+	Version              int64
+	Enabled              bool
+	IntegrationKeySealed []byte
+	Fingerprint          string
+	Region               string
+}
+
+func (q *Queries) SaveMCPPagerDutyPolicy(ctx context.Context, db DBTX, arg SaveMCPPagerDutyPolicyParams) error {
+	_, err := db.Exec(ctx, saveMCPPagerDutyPolicy,
+		arg.RuleID,
+		arg.Version,
+		arg.Enabled,
+		arg.IntegrationKeySealed,
+		arg.Fingerprint,
+		arg.Region,
+	)
+	return err
+}
+
+const saveMCPReminderDefaults = `-- name: SaveMCPReminderDefaults :exec
+INSERT INTO mcp_readiness_reminder_defaults(rule_id,version,interval_seconds,max_reminders)
+VALUES($1,$2,$3,$4) ON CONFLICT(rule_id) DO UPDATE SET version=excluded.version,interval_seconds=excluded.interval_seconds,max_reminders=excluded.max_reminders
+`
+
+type SaveMCPReminderDefaultsParams struct {
+	RuleID          pgtype.UUID
+	Version         int64
+	IntervalSeconds int32
+	MaxReminders    int32
+}
+
+func (q *Queries) SaveMCPReminderDefaults(ctx context.Context, db DBTX, arg SaveMCPReminderDefaultsParams) error {
+	_, err := db.Exec(ctx, saveMCPReminderDefaults,
+		arg.RuleID,
+		arg.Version,
+		arg.IntervalSeconds,
+		arg.MaxReminders,
+	)
+	return err
+}
+
 const saveManagedPostgresCutoverCredential = `-- name: SaveManagedPostgresCutoverCredential :execrows
 UPDATE managed_postgres_cutover_credentials SET state='sealed',provider_identity_id=$1::text,
 credential_ref=$2::text,ciphertext=$3::bytea,kid=$4::text,value_hash=$5::text
@@ -82502,6 +85006,37 @@ func (q *Queries) SetServiceCapacityProtection(ctx context.Context, db DBTX, ena
 	return snapshot, err
 }
 
+const setSyntheticCheckEnabled = `-- name: SetSyntheticCheckEnabled :one
+UPDATE synthetic_checks SET enabled = $1::boolean, updated_at = now()
+WHERE app_id = $2::uuid AND id = $3::uuid RETURNING id, account_id, app_id, name, method, path, expected_status, timeout_ms, interval_seconds, enabled, created_at, updated_at
+`
+
+type SetSyntheticCheckEnabledParams struct {
+	Enabled bool
+	AppID   pgtype.UUID
+	ID      pgtype.UUID
+}
+
+func (q *Queries) SetSyntheticCheckEnabled(ctx context.Context, db DBTX, arg SetSyntheticCheckEnabledParams) (SyntheticCheck, error) {
+	row := db.QueryRow(ctx, setSyntheticCheckEnabled, arg.Enabled, arg.AppID, arg.ID)
+	var i SyntheticCheck
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Method,
+		&i.Path,
+		&i.ExpectedStatus,
+		&i.TimeoutMs,
+		&i.IntervalSeconds,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const setUDPListenerEnabled = `-- name: SetUDPListenerEnabled :one
 UPDATE app_udp_listeners SET enabled = $1, updated_at = now()
 WHERE id = $2::text::uuid RETURNING id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at
@@ -83076,6 +85611,29 @@ func (q *Queries) SumOpenUploadSessionBytesByAccount(ctx context.Context, db DBT
 	var bytes int64
 	err := row.Scan(&bytes)
 	return bytes, err
+}
+
+const sumSLOHours = `-- name: SumSLOHours :one
+SELECT coalesce(sum(good), 0)::bigint AS good, coalesce(sum(total), 0)::bigint AS total, count(*)::bigint AS hours
+FROM app_slo_hourly WHERE slo_id = $1::uuid AND hour >= $2::timestamptz
+`
+
+type SumSLOHoursParams struct {
+	SloID pgtype.UUID
+	Since pgtype.Timestamptz
+}
+
+type SumSLOHoursRow struct {
+	Good  int64
+	Total int64
+	Hours int64
+}
+
+func (q *Queries) SumSLOHours(ctx context.Context, db DBTX, arg SumSLOHoursParams) (SumSLOHoursRow, error) {
+	row := db.QueryRow(ctx, sumSLOHours, arg.SloID, arg.Since)
+	var i SumSLOHoursRow
+	err := row.Scan(&i.Good, &i.Total, &i.Hours)
+	return i, err
 }
 
 const summarizeCustomerOperationWorkflowAttention = `-- name: SummarizeCustomerOperationWorkflowAttention :one
@@ -83724,6 +86282,20 @@ func (q *Queries) SupersedeEnvironmentGitOpsRuns(ctx context.Context, db DBTX, a
 	return err
 }
 
+const suppressMCPReminder = `-- name: SuppressMCPReminder :exec
+UPDATE mcp_readiness_incident_events SET delivery_version=delivery_version+1,delivery_status='suppressed',suppression_reason=$1,lease_token=NULL,lease_until=NULL WHERE id=$2
+`
+
+type SuppressMCPReminderParams struct {
+	Reason  string
+	EventID pgtype.UUID
+}
+
+func (q *Queries) SuppressMCPReminder(ctx context.Context, db DBTX, arg SuppressMCPReminderParams) error {
+	_, err := db.Exec(ctx, suppressMCPReminder, arg.Reason, arg.EventID)
+	return err
+}
+
 const sweepCountedMirrorResults = `-- name: SweepCountedMirrorResults :execrows
 DELETE FROM mirror_invocation_results
 WHERE completed_at < $1::timestamptz AND rollup_counted
@@ -83760,6 +86332,30 @@ WHERE scaling.app_id=a.id AND a.id=$1::uuid AND scaling.scope='production'
 func (q *Queries) SyncProductionScalingStates(ctx context.Context, db DBTX, appID pgtype.UUID) error {
 	_, err := db.Exec(ctx, syncProductionScalingStates, appID)
 	return err
+}
+
+const syntheticCheckRunStats = `-- name: SyntheticCheckRunStats :one
+SELECT count(*)::bigint AS runs, count(*) FILTER (WHERE ok)::bigint AS ok_runs,
+ coalesce(percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE ok), 0)::double precision AS p95_latency_ms
+FROM synthetic_check_runs WHERE check_id = $1::uuid AND started_at >= $2::timestamptz
+`
+
+type SyntheticCheckRunStatsParams struct {
+	CheckID pgtype.UUID
+	Since   pgtype.Timestamptz
+}
+
+type SyntheticCheckRunStatsRow struct {
+	Runs         int64
+	OkRuns       int64
+	P95LatencyMs float64
+}
+
+func (q *Queries) SyntheticCheckRunStats(ctx context.Context, db DBTX, arg SyntheticCheckRunStatsParams) (SyntheticCheckRunStatsRow, error) {
+	row := db.QueryRow(ctx, syntheticCheckRunStats, arg.CheckID, arg.Since)
+	var i SyntheticCheckRunStatsRow
+	err := row.Scan(&i.Runs, &i.OkRuns, &i.P95LatencyMs)
+	return i, err
 }
 
 const touchCustomerOperationWorkflowStep = `-- name: TouchCustomerOperationWorkflowStep :exec
@@ -84683,17 +87279,20 @@ func (q *Queries) UpdateCron(ctx context.Context, db DBTX, arg UpdateCronParams)
 }
 
 const updateCustomerAlertRule = `-- name: UpdateCustomerAlertRule :one
-UPDATE alert_rules SET name=coalesce($1::text,name),enabled=coalesce($2::boolean,enabled),
- metric=coalesce($3::text,metric),comparison=coalesce($4::text,comparison),
- threshold=coalesce($5::double precision,threshold),window_spec=coalesce($6::text,window_spec),
- action=coalesce($7::text,action),webhook_url=coalesce($8::text,webhook_url),
- webhook_secret_sealed=coalesce($9::bytea,webhook_secret_sealed),
- cooldown_minutes=coalesce($10::integer,cooldown_minutes),
- post_deploy_rollback_window_seconds=coalesce($11::integer,post_deploy_rollback_window_seconds),updated_at=now()
-WHERE id=$12 RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id
+UPDATE alert_rules SET mcp_min_calls=coalesce($1::integer,mcp_min_calls),
+ mcp_for_minutes=coalesce($2::integer,mcp_for_minutes), name=coalesce($3::text,name),enabled=coalesce($4::boolean,enabled),
+ metric=coalesce($5::text,metric),comparison=coalesce($6::text,comparison),
+ threshold=coalesce($7::double precision,threshold),window_spec=coalesce($8::text,window_spec),
+ action=coalesce($9::text,action),webhook_url=coalesce($10::text,webhook_url),
+ webhook_secret_sealed=coalesce($11::bytea,webhook_secret_sealed),
+ cooldown_minutes=coalesce($12::integer,cooldown_minutes),
+ post_deploy_rollback_window_seconds=coalesce($13::integer,post_deploy_rollback_window_seconds),updated_at=now()
+WHERE id=$14 RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope
 `
 
 type UpdateCustomerAlertRuleParams struct {
+	McpMinCalls                     pgtype.Int4
+	McpForMinutes                   pgtype.Int4
 	Name                            pgtype.Text
 	Enabled                         pgtype.Bool
 	Metric                          pgtype.Text
@@ -84710,6 +87309,8 @@ type UpdateCustomerAlertRuleParams struct {
 
 func (q *Queries) UpdateCustomerAlertRule(ctx context.Context, db DBTX, arg UpdateCustomerAlertRuleParams) (AlertRule, error) {
 	row := db.QueryRow(ctx, updateCustomerAlertRule,
+		arg.McpMinCalls,
+		arg.McpForMinutes,
 		arg.Name,
 		arg.Enabled,
 		arg.Metric,
@@ -84748,6 +87349,12 @@ func (q *Queries) UpdateCustomerAlertRule(ctx context.Context, db DBTX, arg Upda
 		&i.PostDeployRollbackWindowSeconds,
 		&i.EventSubscriptionID,
 		&i.EdgeRuleID,
+		&i.CustomMetricName,
+		&i.SloID,
+		&i.SyntheticCheckID,
+		&i.McpMinCalls,
+		&i.McpForMinutes,
+		&i.McpReadinessScope,
 	)
 	return i, err
 }
@@ -86020,6 +88627,29 @@ func (q *Queries) UpsertRegressionObservation(ctx context.Context, db DBTX, arg 
 		arg.ErrorRatePct,
 		arg.ErrorRateBasePct,
 		arg.ErrorCount,
+	)
+	return err
+}
+
+const upsertSLOHour = `-- name: UpsertSLOHour :exec
+INSERT INTO app_slo_hourly (slo_id, hour, good, total)
+VALUES ($1::uuid, $2::timestamptz, $3::bigint, $4::bigint)
+ON CONFLICT (slo_id, hour) DO UPDATE SET good = EXCLUDED.good, total = EXCLUDED.total
+`
+
+type UpsertSLOHourParams struct {
+	SloID pgtype.UUID
+	Hour  pgtype.Timestamptz
+	Good  int64
+	Total int64
+}
+
+func (q *Queries) UpsertSLOHour(ctx context.Context, db DBTX, arg UpsertSLOHourParams) error {
+	_, err := db.Exec(ctx, upsertSLOHour,
+		arg.SloID,
+		arg.Hour,
+		arg.Good,
+		arg.Total,
 	)
 	return err
 }

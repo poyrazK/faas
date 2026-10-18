@@ -29,7 +29,14 @@ const (
 // `auth` binding, a valid CSRF token and a parsed form.
 func (s *server) dashboardAuthSettingsApp(w http.ResponseWriter, r *http.Request) (state.Account, state.App, bool) {
 	acct, app, ok := s.dashboardDataAPIApp(w, r)
-	if !ok || !s.verifyDashboardConfigCSRF(w, r, dashboardAuthSettingsAction, dashboardAuthSettingsCookie, acct.ID) {
+	if !ok {
+		return acct, app, false
+	}
+	if !api.ApplicationAuthEnabled(acct.ID) {
+		http.NotFound(w, r)
+		return acct, app, false
+	}
+	if !s.verifyDashboardConfigCSRF(w, r, dashboardAuthSettingsAction, dashboardAuthSettingsCookie, acct.ID) {
 		return acct, app, false
 	}
 	if isAuth, err := s.appHasAuthBinding(r.Context(), acct, app); err != nil || !isAuth {
@@ -124,7 +131,7 @@ func authSettingsChange(form url.Values) (authsettings.Change, error) {
 	if err := hostedPageChange(form, &change); err != nil {
 		return change, err
 	}
-	for name, target := range map[string]**bool{"signup": &change.Signup, "autoconfirm": &change.Autoconfirm, "leaked_password_check": &change.LeakedPasswordCheck, "mfa": &change.MFA, "passkeys": &change.Passkeys, "sso": &change.SSO} {
+	for name, target := range map[string]**bool{"signup": &change.Signup, "autoconfirm": &change.Autoconfirm, "leaked_password_check": &change.LeakedPasswordCheck, "mfa": &change.MFA, "mfa_phone": &change.MFAPhone, "recovery_codes": &change.RecoveryCodes, "passkeys": &change.Passkeys, "sso": &change.SSO, "org_sso": &change.OrgSSO, "oauth_server": &change.OAuthServer, "oauth_registration": &change.OAuthRegistration, "anonymous": &change.Anonymous, "identity_linking": &change.IdentityLinking} {
 		if !form.Has(name) {
 			continue
 		}
@@ -151,22 +158,29 @@ func hostedPageChange(form url.Values, change *authsettings.Change) error {
 	if form.Has("captcha_provider") {
 		change.Captcha = &authsettings.Captcha{Provider: form.Get("captcha_provider"), SiteKey: strings.TrimSpace(form.Get("captcha_site_key")), Secret: strings.TrimSpace(form.Get("captcha_secret"))}
 	}
+	if form.Has("sms_countries") {
+		codes := strings.FieldsFunc(form.Get("sms_countries"), func(r rune) bool { return r == ',' || r == ' ' })
+		change.SMSCountries = &codes
+	}
 	if form.Has("sms_provider") {
 		change.SMS = &authsettings.SMS{Provider: form.Get("sms_provider"), Account: strings.TrimSpace(form.Get("sms_account")), Sender: strings.TrimSpace(form.Get("sms_sender")), Secret: strings.TrimSpace(form.Get("sms_secret"))}
 	}
 	if form.Has("email_provider") {
 		change.Email = &authsettings.Email{Provider: form.Get("email_provider"), From: strings.TrimSpace(form.Get("email_from")), APIKey: strings.TrimSpace(form.Get("email_api_key"))}
 	}
-	if form.Has("activity_retention_days") {
+	for name, target := range map[string]**int{"activity_retention_days": &change.ActivityRetentionDays, "anonymous_retention_days": &change.AnonymousRetentionDays} {
+		if !form.Has(name) {
+			continue
+		}
 		days := 0
-		if value := form.Get("activity_retention_days"); value != "" {
+		if value := form.Get(name); value != "" {
 			n, err := strconv.Atoi(value)
 			if err != nil {
-				return errors.New("activity retention must be a number of days")
+				return errors.New(strings.ReplaceAll(strings.TrimSuffix(name, "_days"), "_", " ") + " must be a number of days")
 			}
 			days = n
 		}
-		change.ActivityRetentionDays = &days
+		*target = &days
 	}
 	return nil
 }

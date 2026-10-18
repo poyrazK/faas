@@ -19,7 +19,7 @@ export function options(raw = {}) {
   check(value.requests >= value.users * 4, 'invalid_options')
   return Object.freeze(value)
 }
-const codes = new Set(['data_api_overloaded', 'data_api_rate_limited', 'request_deadline_exceeded', 'query_timeout', 'response_too_large', 'data_api_unavailable', 'request_cancelled', 'request_timeout', 'token_invalid', 'token_required', 'no_response'])
+const codes = new Set(['data_api_overloaded', 'data_api_rate_limited', 'data_api_concurrency_limited', 'data_api_sql_deadline_exceeded', 'data_api_sql_deadline_invalid', 'request_deadline_exceeded', 'query_timeout', 'response_too_large', 'data_api_unavailable', 'request_cancelled', 'request_timeout', 'token_invalid', 'token_required', 'no_response'])
 export const safeCode = value => codes.has(value) ? value : value ? 'other' : 'none'
 export const rounded = value => Math.round(value * 1000) / 1000
 export class Samples {

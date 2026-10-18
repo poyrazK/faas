@@ -11,6 +11,9 @@ import (
 type EnvironmentConsent struct {
 	DefaultWrite bool                        `json:"default_write"`
 	Named        map[string]EnvironmentGrant `json:"named"`
+	// RequestReadApps grants app-wide retained diagnostics independently of
+	// default/named environment access. Missing entries deny remote access.
+	RequestReadApps map[string]string `json:"request_read_apps,omitempty"`
 }
 
 type EnvironmentGrant struct {
@@ -23,6 +26,14 @@ type EnvironmentGrant struct {
 }
 
 func (c *EnvironmentConsent) validate() error {
+	if len(c.RequestReadApps) > maxOAuthEntries {
+		return errors.New("too many request diagnostic app grants")
+	}
+	for slug, id := range c.RequestReadApps {
+		if validateSegment(slug, "app") != nil || validateSegment(id, "app_id") != nil {
+			return errors.New("invalid request diagnostic app identity")
+		}
+	}
 	if len(c.Named) > maxOAuthEntries {
 		return errors.New("too many consented environments")
 	}

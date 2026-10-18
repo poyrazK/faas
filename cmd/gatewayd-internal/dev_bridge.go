@@ -209,6 +209,15 @@ func developmentBridgeForwarder(store state.DevBridgeStore, target *url.URL) fun
 		if id == "" {
 			return false
 		}
+		policies, ok := store.(state.ScenarioNetworkPolicyStore)
+		if !ok {
+			api.WriteProblem(w, bridgeDenied("rehearsal policy authority is unavailable"))
+			return true
+		}
+		if run, err := policies.ScenarioRehearsalNetworkRun(r.Context(), app.ID); err != nil || run != "" {
+			api.WriteProblem(w, bridgeDenied("rehearsal apps cannot use development tunnels"))
+			return true
+		}
 		session, err := store.DevBridgeByID(r.Context(), app.AccountID, id)
 		if err != nil {
 			api.WriteProblem(w, api.NewProblem(403, "dev_bridge_unauthorized", "Bridge denied", "invalid session"))

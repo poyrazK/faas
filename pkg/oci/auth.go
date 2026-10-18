@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"golang.org/x/net/http/httpguts"
 )
 
 // OCI distribution-spec v2 Bearer-token plumbing, extracted from
@@ -107,22 +109,34 @@ func (a AuthChallenge) Service() string { return a.c.service }
 // Scope returns the optional scope string (e.g. "repository:org/app:pull").
 func (a AuthChallenge) Scope() string { return a.c.scope }
 
-// parseChallenge extracts realm/service/scope from a Bearer challenge
-// header (e.g. `Bearer realm="https://auth/token",service="registry",
-// scope="repository:x:pull"`).
+// parseChallenge extracts realm/service/scope from the first Bearer challenge
+// with a realm. A field may contain several authentication schemes; parameters
+// from a later challenge must never replace the selected Bearer parameters.
 func parseChallenge(header string) authChallenge {
 	var ch authChallenge
-	rest, ok := strings.CutPrefix(header, "Bearer ")
-	if !ok {
-		return ch
-	}
-	for _, part := range splitParams(rest) {
-		k, v, found := strings.Cut(part, "=")
-		if !found {
+	inBearer := false
+	for _, part := range splitParams(header) {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		k, v, parameter := strings.Cut(part, "=")
+		// An auth parameter has a token key. A scheme followed by its
+		// first parameter ("Bearer realm=...") is a new challenge.
+		if !parameter || !httpguts.ValidHeaderFieldName(strings.TrimSpace(k)) {
+			if inBearer && ch.realm != "" {
+				return ch
+			}
+			scheme, rest, _ := strings.Cut(part, " ")
+			inBearer = strings.EqualFold(scheme, "Bearer")
+			ch = authChallenge{}
+			k, v, parameter = strings.Cut(rest, "=")
+		}
+		if !inBearer || !parameter {
 			continue
 		}
 		v = strings.Trim(strings.TrimSpace(v), `"`)
-		switch strings.TrimSpace(k) {
+		switch strings.ToLower(strings.TrimSpace(k)) {
 		case "realm":
 			ch.realm = v
 		case "service":
@@ -143,6 +157,10 @@ func splitParams(s string) []string {
 	inQuote := false
 	for i := 0; i < len(s); i++ {
 		switch c := s[i]; {
+		case c == '\\' && inQuote && i+1 < len(s):
+			cur.WriteByte(c)
+			i++
+			cur.WriteByte(s[i])
 		case c == '"':
 			inQuote = !inQuote
 			cur.WriteByte(c)
@@ -302,6 +320,11 @@ func RefreshToken(ctx context.Context, hc *http.Client, ua, realm, refreshToken 
 	}
 	if access == "" {
 		return Token{}, fmt.Errorf("oci: refresh response carried no access_token")
+	}
+	// OAuth refresh responses may omit refresh_token when the existing
+	// grant remains valid. Keep it so the next refresh can use that grant.
+	if raw.RefreshToken == "" {
+		raw.RefreshToken = refreshToken
 	}
 	tok := Token{
 		AccessToken:  access,

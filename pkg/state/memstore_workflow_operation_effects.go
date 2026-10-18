@@ -85,6 +85,10 @@ func (m *MemStore) CommitManagedWorkflowStep(ctx context.Context, input ManagedW
 		}
 		staged = make([]workflowOperationStoredEffect, 0, len(commit.Effects))
 		deliveries = make([]AppWebhookDelivery, 0, len(commit.Effects))
+		captureRun, err := m.scenarioCaptureRunLocked(app.AccountID, run.AppID)
+		if err != nil {
+			return err
+		}
 		for _, effect := range commit.Effects {
 			var hook AppWebhook
 			for id, candidate := range m.appWebhooks {
@@ -115,12 +119,22 @@ func (m *MemStore) CommitManagedWorkflowStep(ctx context.Context, input ManagedW
 				return ErrInvalidArgument
 			}
 			record := apiOperationEffectRecord(id, effect, int64(commit.Attempt), hook.ID)
-			staged = append(staged, workflowOperationStoredEffect{OperationID: commit.OperationID, Effect: effect, Record: record})
-			deliveries = append(deliveries, AppWebhookDelivery{
-				ID: id, WebhookID: hook.ID, AppID: run.AppID, AccountID: app.AccountID,
-				Event: OperationEffectEvent, Payload: body, Status: AppWebhookDeliveryPending,
-				NextAttemptAt: now, CreatedAt: now, UpdatedAt: now,
-			})
+			receiverSHA256 := ""
+			if captureRun != "" {
+				record.Status, record.DeliveryID, record.RehearsalRunID = "captured", "", captureRun
+				receiverSHA256, err = m.scenarioReceiverFingerprintLocked(hook)
+				if err != nil {
+					return err
+				}
+			}
+			staged = append(staged, workflowOperationStoredEffect{OperationID: commit.OperationID, Effect: effect, Record: record, ReceiverSHA256: receiverSHA256})
+			if captureRun == "" {
+				deliveries = append(deliveries, AppWebhookDelivery{
+					ID: id, WebhookID: hook.ID, AppID: run.AppID, AccountID: app.AccountID,
+					Event: OperationEffectEvent, Payload: body, Status: AppWebhookDeliveryPending,
+					NextAttemptAt: now, CreatedAt: now, UpdatedAt: now,
+				})
+			}
 		}
 	}
 

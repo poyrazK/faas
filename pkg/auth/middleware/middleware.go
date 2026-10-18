@@ -789,6 +789,12 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 	if suffix == path {
 		return false
 	}
+	if suffix == "product" || suffix == "product/billing" {
+		return method == http.MethodGet
+	}
+	if suffix == "product/start" || suffix == "product/submissions/lookup" {
+		return method == http.MethodPost
+	}
 	if suffix == "customer-operations/submissions/lookup" {
 		return method == http.MethodPost
 	}
@@ -1583,6 +1589,8 @@ var mfaAllowlist = []string{
 	"/v1/account/mfa/disable",
 	"/v1/account/mfa/disable-email",
 	"/v1/account/mfa/disable-email/confirm",
+	// The internal durable-mail confirmation page is gated before auth.
+	"/auth/reset/mfa",
 	// IAM-3 (ADR-039) — a customer whose session is mfa_pending
 	// must still be able to list / revoke their active sessions.
 	// The /v1/auth/sessions/{id} route is matched by the prefix

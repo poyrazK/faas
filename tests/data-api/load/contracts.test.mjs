@@ -36,6 +36,26 @@ test('client samples count expected rejections separately and use completed clie
   assert.throws(() => bounded.add({ status: 200 }, 1), /record_limit/)
 })
 
+test('client samples preserve the safe concurrency-limit code without retaining response details', () => {
+  const samples = new Samples()
+  samples.add({ status: 429, code: 'data_api_concurrency_limited', body: 'private-user' }, 1)
+  const report = samples.snapshot(1000)
+  assert.equal(report.codes.data_api_concurrency_limited, 1)
+  assert.equal(report.rejections, 1)
+  assert.doesNotMatch(JSON.stringify(report), /private-/)
+})
+
+test('SQL deadline samples preserve fixed codes without retaining claims or SQL', () => {
+  const samples = new Samples()
+  for (const [status, code] of [[504, 'data_api_sql_deadline_exceeded'], [500, 'data_api_sql_deadline_invalid']]) {
+    samples.add({ status, code, body: { claims: 'private-token', sql: 'private-query' } }, 1)
+  }
+  const report = samples.snapshot(2)
+  assert.equal(report.codes.data_api_sql_deadline_exceeded, 1)
+  assert.equal(report.codes.data_api_sql_deadline_invalid, 1)
+  assert.doesNotMatch(JSON.stringify(report), /private|claims|sql:/)
+})
+
 test('source metadata drops private extras and rejects malformed or unpinned identities', () => {
   assert.doesNotMatch(JSON.stringify(safeMetadata({ ...metadata(), dsn: 'postgres://private-secret', tokens: ['private-token'] })), /private-|postgres:/)
   for (const change of [{ runtime_sha256: 'private-path' }, { engine_sha256: 'a'.repeat(64) }, { engine_version: '15.0' }, { postgres_version_num: 150000 }, { rate_burst: 'private-secret' }, { runtime_sha256: { toString: () => 'a'.repeat(64), toJSON: () => 'private-secret' } }]) assert.throws(() => safeMetadata({ ...metadata(), ...change }))

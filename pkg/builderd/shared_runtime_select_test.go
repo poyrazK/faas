@@ -20,14 +20,16 @@ func TestSharedSourceAppRuntime(t *testing.T) {
 		name       string
 		app        state.App
 		fw         Framework
-		version    string
+		nodeSpec   string
 		dockerfile string
 		env        func(string) string
 		want       string
 	}{
 		{"node app defaults to node24", app, FrameworkNode, "", "", on, "node24"},
-		{"engines 22", app, FrameworkNode, "22.11.0", "", on, "node22"},
+		{"engines 22.11.0", app, FrameworkNode, "22.11.0", "", on, "node22"},
+		{"engines bare 22", app, FrameworkNode, "22", "", on, "node22"},
 		{"engines 24", app, FrameworkNode, "24", "", on, "node24"},
+		{"declared 20 keeps its toolchain", app, FrameworkNode, "20", "", on, ""},
 		{"flag off", app, FrameworkNode, "", "", off, ""},
 		{"function", state.App{Type: state.AppTypeFunction, Runtime: "node22"}, FrameworkNode, "", "", on, ""},
 		{"own runtime", state.App{Type: state.AppTypeApp, Runtime: "go124"}, FrameworkNode, "", "", on, ""},
@@ -36,7 +38,7 @@ func TestSharedSourceAppRuntime(t *testing.T) {
 		{"job mode", job, FrameworkNode, "", "", on, ""},
 	}
 	for _, tt := range tests {
-		if got := sharedSourceAppRuntime(tt.app, tt.fw, tt.version, tt.dockerfile, tt.env); got != tt.want {
+		if got := sharedSourceAppRuntime(tt.app, tt.fw, tt.nodeSpec, tt.dockerfile, tt.env); got != tt.want {
 			t.Errorf("%s: %q, want %q", tt.name, got, tt.want)
 		}
 	}

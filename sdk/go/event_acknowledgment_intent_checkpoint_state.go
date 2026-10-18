@@ -142,6 +142,8 @@ func observeEventIntentCheckpoint(c *EventAcknowledgmentIntentCheckpoint, proofs
 		value := health.Due
 		if condition.Metric == "stalled_recovery" {
 			value = health.Stalled
+		} else if condition.Metric == "parked_intents" {
+			value = health.Parked
 		}
 		condition.Value, condition.ObservedAt = &value, cloneEventIntentTime(&health.ObservedAt)
 		why, blocked, alert := applyEventIntentCheckpoint(c, condition, proof, now)

@@ -98,3 +98,54 @@ func TestAssignedBasePlanSingleBoxIncludesAllApps(t *testing.T) {
 		t.Fatal("minimal = true, want false")
 	}
 }
+
+// ADR-1500 (H10-140): a source app built for a shared runner base boots it as
+// drive0, so a restarted imaged must re-stage it although the app row carries
+// no runtime. A failed deployment's base is not staged.
+func TestAssignedBasePlanStagesSharedRuntimeBases(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	node, err := store.UpsertComputeNode(ctx, state.ComputeNode{Name: "node-a", Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	account, err := store.CreateAccount(ctx, "shared-runtime@example.com", "acct-shared-runtime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "node-source", Type: state.AppTypeApp, NodeID: node.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		base   string
+		status state.DeploymentStatus
+	}{
+		{RuntimeNode22, state.DeployLive},
+		{RuntimeNode24, state.DeployFailed},
+	} {
+		dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindTarball})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SetDeploymentRuntimeBase(ctx, dep.ID, tc.base); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.UpdateDeploymentStatus(ctx, dep.ID, tc.status, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, nodeName := range []string{"node-a", ""} {
+		runtimes, minimal, err := assignedBasePlan(ctx, store, nodeName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := []string{RuntimeNode22}; !reflect.DeepEqual(runtimes, want) {
+			t.Fatalf("node %q: runtimes = %v, want %v", nodeName, runtimes, want)
+		}
+		if !minimal {
+			t.Fatalf("node %q: minimal = false, want true for the source app", nodeName)
+		}
+	}
+}

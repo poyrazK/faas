@@ -4,6 +4,8 @@
 /* eslint-disable */
 import type { CreateDevBridgeRequest } from '../models/CreateDevBridgeRequest.js';
 import type { CreateDevBridgeResponse } from '../models/CreateDevBridgeResponse.js';
+import type { CreateScenarioObjectsRequest } from '../models/CreateScenarioObjectsRequest.js';
+import type { CreateScenarioPostgresRequest } from '../models/CreateScenarioPostgresRequest.js';
 import type { DevBridgeActivity } from '../models/DevBridgeActivity.js';
 import type { DevBridgeSession } from '../models/DevBridgeSession.js';
 import type { DevBridgeWebhookReplay } from '../models/DevBridgeWebhookReplay.js';
@@ -16,8 +18,17 @@ import type { InjectScenarioTestChaosResponse } from '../models/InjectScenarioTe
 import type { ListDevBridgesResponse } from '../models/ListDevBridgesResponse.js';
 import type { RecordDevSyncRequest } from '../models/RecordDevSyncRequest.js';
 import type { RegisterScenarioTestRequest } from '../models/RegisterScenarioTestRequest.js';
+import type { RegisterScenarioTestResponse } from '../models/RegisterScenarioTestResponse.js';
 import type { ReplayDevBridgeWebhookRequest } from '../models/ReplayDevBridgeWebhookRequest.js';
+import type { ScenarioActionSnapshot } from '../models/ScenarioActionSnapshot.js';
+import type { ScenarioObjectsEvidence } from '../models/ScenarioObjectsEvidence.js';
+import type { ScenarioObjectsReceipt } from '../models/ScenarioObjectsReceipt.js';
+import type { ScenarioPostgresEvidence } from '../models/ScenarioPostgresEvidence.js';
+import type { ScenarioPostgresReceipt } from '../models/ScenarioPostgresReceipt.js';
+import type { ScenarioSuspendResumeEvidence } from '../models/ScenarioSuspendResumeEvidence.js';
 import type { ScenarioTestChaosMatchesResponse } from '../models/ScenarioTestChaosMatchesResponse.js';
+import type { SealScenarioObjectsRequest } from '../models/SealScenarioObjectsRequest.js';
+import type { SealScenarioPostgresRequest } from '../models/SealScenarioPostgresRequest.js';
 import type { UpsertDevSessionRequest } from '../models/UpsertDevSessionRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -388,7 +399,7 @@ export class DevService {
   /**
    * Register an isolated service namespace for a scenario test.
    * All members must be live developer sessions from this account and run. A missing sibling never resolves to production.
-   * @returns void
+   * @returns RegisterScenarioTestResponse Durable webhook capture policy registered before source deployment.
    * @throws ApiError
    */
   public static registerScenarioTest({
@@ -400,7 +411,7 @@ export class DevService {
      */
     runId: string,
     requestBody: RegisterScenarioTestRequest,
-  }): CancelablePromise<void> {
+  }): CancelablePromise<RegisterScenarioTestResponse> {
     return __request(OpenAPI, {
       method: 'PUT',
       url: '/v1/dev/test-runs/{run_id}',
@@ -440,6 +451,304 @@ export class DevService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Request the enrolled after-setup suspend/resume checkpoint.
+   * Account-owned isolated run only. Managed-job checkpoints arm automatically through their original relay and return 409 here. After-setup requests are idempotent and do not repeat uncertain pauses. Complete requires original VM and collector receipts plus scheduler publication. Durable handling remains available when new enrollment is disabled.
+   * @returns ScenarioSuspendResumeEvidence Pending, complete or explicitly incomplete lifecycle evidence.
+   * @throws ApiError
+   */
+  public static beginScenarioSuspendResume({
+    runId,
+  }: {
+    /**
+     * Lowercase hexadecimal ID of this account's enrolled rehearsal run.
+     */
+    runId: string,
+  }): CancelablePromise<ScenarioSuspendResumeEvidence> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/dev/test-runs/{run_id}/suspend-resume',
+      path: {
+        'run_id': runId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read retained suspend/resume lifecycle receipts.
+   * Reads retained lifecycle receipts for this account without requesting execution. Pending and incomplete evidence cannot establish a successful resume. Previously enrolled receipts remain readable when new admission is disabled.
+   * @returns ScenarioSuspendResumeEvidence Current run-owned checkpoint evidence, including completed and explicitly incomplete owner receipts.
+   * @throws ApiError
+   */
+  public static getScenarioSuspendResume({
+    runId,
+  }: {
+    /**
+     * Lowercase hexadecimal ID of this account's enrolled rehearsal run.
+     */
+    runId: string,
+  }): CancelablePromise<ScenarioSuspendResumeEvidence> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/dev/test-runs/{run_id}/suspend-resume',
+      path: {
+        'run_id': runId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Close a test run and export its supported action evidence.
+   * Waits for supported managed work to settle, then irreversibly fences new simulation relay admission and waits for owning recorders to acknowledge closing. Previously admitted requests may finish. Repeating a successful seal returns the immutable retained snapshot. Coverage includes managed webhook intent and enrolled simulated relay attempts; arbitrary direct network traffic and external queues remain outside scope.
+   * @returns ScenarioActionSnapshot Immutable complete or explicitly incomplete action snapshot. Payloads are included only in a complete inventory.
+   * @throws ApiError
+   */
+  public static sealScenarioTestActions({
+    runId,
+  }: {
+    /**
+     * Lowercase hexadecimal identity of this account's capture run.
+     */
+    runId: string,
+  }): CancelablePromise<ScenarioActionSnapshot> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/dev/test-runs/{run_id}/actions/seal',
+      path: {
+        'run_id': runId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Create an isolated S3 fixture namespace before deploying a rehearsal workload.
+   * Disabled by default. Pins bounded fixture bytes in dedicated rehearsal tables and injects run-scoped credentials, AWS_REGION, AWS_ENDPOINT_URL_S3 and S3_BUCKET as sealed ephemeral app secrets. The private adapter never accesses managed or production buckets. Only the primary contained app and its commands receive credentials. Requires no existing deployment and complete contained simulation enrollment.
+   * @returns ScenarioObjectsReceipt Starting objects captured and private storage credentials delivered before deployment.
+   * @throws ApiError
+   */
+  public static createScenarioObjects({
+    runId,
+    requestBody,
+  }: {
+    /**
+     * Isolated rehearsal run receiving a fresh object namespace.
+     */
+    runId: string,
+    requestBody: CreateScenarioObjectsRequest,
+  }): CancelablePromise<ScenarioObjectsReceipt> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/dev/test-runs/{run_id}/objects',
+      path: {
+        'run_id': runId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Revoke a rehearsal namespace and remove its object bodies.
+   * Cleanup remains available with admission disabled. Missing or terminal resources succeed idempotently. A transaction fences pending requests and removes all current object bytes before acknowledging cleanup.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteScenarioObjects({
+    runId,
+  }: {
+    /**
+     * Isolated rehearsal run receiving a fresh object namespace.
+     */
+    runId: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/dev/test-runs/{run_id}/objects',
+      path: {
+        'run_id': runId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Fence object requests, collect final content digests, and confirm cleanup.
+   * Requires a deployment belonging to the fixture app and complete sealed action evidence. New requests are fenced before waiting for admitted requests. Unsupported operations, unfinished uploads, bounds violations, collector errors or failed cleanup cannot produce complete evidence. Evidence publication and removal of object bodies share one transaction. Completed sealing is idempotent for the same deployment.
+   * @returns ScenarioObjectsEvidence Independently collected object effects with confirmed namespace cleanup.
+   * @throws ApiError
+   */
+  public static sealScenarioObjects({
+    runId,
+    requestBody,
+  }: {
+    /**
+     * Isolated run whose object mutations are ready for independent collection.
+     */
+    runId: string,
+    requestBody: SealScenarioObjectsRequest,
+  }): CancelablePromise<ScenarioObjectsEvidence> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/dev/test-runs/{run_id}/objects/seal',
+      path: {
+        'run_id': runId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Provision a disposable PostgreSQL fixture before deploying a rehearsal workload.
+   * Opt-in operator preview for contained warm rehearsals. Executes declared SQL as an unprivileged login on a dedicated fixture cluster, independently captures selected starting rows, and injects DATABASE_URL as a sealed ephemeral app secret. Connection URLs and passwords are never returned. One fresh database per account/run; no existing deployment, managed binding, or production snapshot is accepted.
+   * @returns ScenarioPostgresReceipt Isolated starting data captured and secret delivered before deployment.
+   * @throws ApiError
+   */
+  public static createScenarioPostgres({
+    runId,
+    requestBody,
+  }: {
+    /**
+     * Lowercase hexadecimal identity of this account's isolated rehearsal run.
+     */
+    runId: string,
+    requestBody: CreateScenarioPostgresRequest,
+  }): CancelablePromise<ScenarioPostgresReceipt> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/dev/test-runs/{run_id}/postgres',
+      path: {
+        'run_id': runId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Fence and remove this account's disposable PostgreSQL fixture.
+   * Cleanup remains available when enrollment is disabled. A missing journal or an already confirmed deletion succeeds. Active fixture cleanup is confirmed before returning.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteScenarioPostgres({
+    runId,
+  }: {
+    /**
+     * Lowercase hexadecimal identity of this account's isolated rehearsal run.
+     */
+    runId: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/dev/test-runs/{run_id}/postgres',
+      path: {
+        'run_id': runId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Fence PostgreSQL writes, collect final committed rows, and confirm fixture deletion.
+   * Requires complete sealed action evidence and a deployment belonging to the fixture app. Unfinished SQL, collector loss, unsupported relations, oversized evidence or failed cleanup cannot produce complete evidence. Repeating a completed seal returns its retained receipt. Lock waits are sampled; short waits may be missed. Row updates appear as a deletion and insertion in the selected row multiset.
+   * @returns ScenarioPostgresEvidence Bounded independent database evidence with confirmed cleanup.
+   * @throws ApiError
+   */
+  public static sealScenarioPostgres({
+    runId,
+    requestBody,
+  }: {
+    /**
+     * Isolated run whose database observations are ready to be fenced and collected.
+     */
+    runId: string,
+    requestBody: SealScenarioPostgresRequest,
+  }): CancelablePromise<ScenarioPostgresEvidence> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/dev/test-runs/{run_id}/postgres/seal',
+      path: {
+        'run_id': runId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
       },
     });
   }
