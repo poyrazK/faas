@@ -49,6 +49,13 @@ func ListenOrRecreate(path string, uid, gid int, mode os.FileMode) (net.Listener
 	if mode == 0 || mode > 0o777 {
 		return nil, fmt.Errorf("wire: invalid mode %o", mode)
 	}
+	// A socket unit owns the path, ownership and mode; removing and
+	// rebinding it would reopen the restart gap the unit closes.
+	if l, ok, err := InheritedListener("unix", path); err != nil {
+		return nil, err
+	} else if ok {
+		return l, nil
+	}
 
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o775); err != nil {
@@ -129,6 +136,11 @@ func ListenOrRecreateByName(path, daemonUser string) (net.Listener, error) {
 func listenSkipChown(path string, mode os.FileMode) (net.Listener, error) {
 	if !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("wire: socket path must be absolute; got %q", path)
+	}
+	if l, ok, err := InheritedListener("unix", path); err != nil {
+		return nil, err
+	} else if ok {
+		return l, nil
 	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o750); err != nil {

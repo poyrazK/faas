@@ -985,6 +985,12 @@ from .data_api_runtime_connection_report import DataAPIRuntimeConnectionReport
 from .data_api_runtime_connection_report_runtime_model import DataAPIRuntimeConnectionReportRuntimeModel
 from .data_api_runtime_connection_report_state import DataAPIRuntimeConnectionReportState
 from .data_api_runtime_connection_report_version import DataAPIRuntimeConnectionReportVersion
+from .data_repair_health import DataRepairHealth
+from .data_repair_health_item import DataRepairHealthItem
+from .data_repair_health_item_node_status import DataRepairHealthItemNodeStatus
+from .data_repair_health_item_phase import DataRepairHealthItemPhase
+from .data_repair_phase_health import DataRepairPhaseHealth
+from .data_repair_phase_health_phase import DataRepairPhaseHealthPhase
 from .data_upstream_history_bucket import DataUpstreamHistoryBucket
 from .data_upstream_history_response import DataUpstreamHistoryResponse
 from .data_upstream_history_response_kind import DataUpstreamHistoryResponseKind
@@ -2852,6 +2858,13 @@ from .operation_business_invariant_payload import OperationBusinessInvariantPayl
 from .operation_business_invariant_payload_kind import OperationBusinessInvariantPayloadKind
 from .operation_business_invariant_status import OperationBusinessInvariantStatus
 from .operation_cancellation_request import OperationCancellationRequest
+from .operation_data_repair import OperationDataRepair
+from .operation_data_repair_approval import OperationDataRepairApproval
+from .operation_data_repair_approval_actor import OperationDataRepairApprovalActor
+from .operation_data_repair_approval_actor_kind import OperationDataRepairApprovalActorKind
+from .operation_data_repair_approval_decision import OperationDataRepairApprovalDecision
+from .operation_data_repair_phase import OperationDataRepairPhase
+from .operation_data_repair_rehearsal_status import OperationDataRepairRehearsalStatus
 from .operation_definition_response import OperationDefinitionResponse
 from .operation_definition_spec import OperationDefinitionSpec
 from .operation_definition_spec_http_transaction_version import OperationDefinitionSpecHttpTransactionVersion
@@ -6366,6 +6379,12 @@ __all__ = (
     "DataAPIRuntimeConnectionReportRuntimeModel",
     "DataAPIRuntimeConnectionReportState",
     "DataAPIRuntimeConnectionReportVersion",
+    "DataRepairHealth",
+    "DataRepairHealthItem",
+    "DataRepairHealthItemNodeStatus",
+    "DataRepairHealthItemPhase",
+    "DataRepairPhaseHealth",
+    "DataRepairPhaseHealthPhase",
     "DataUpstreamHistoryBucket",
     "DataUpstreamHistoryResponse",
     "DataUpstreamHistoryResponseKind",
@@ -8125,6 +8144,13 @@ __all__ = (
     "OperationBusinessInvariantPayloadKind",
     "OperationBusinessInvariantStatus",
     "OperationCancellationRequest",
+    "OperationDataRepair",
+    "OperationDataRepairApproval",
+    "OperationDataRepairApprovalActor",
+    "OperationDataRepairApprovalActorKind",
+    "OperationDataRepairApprovalDecision",
+    "OperationDataRepairPhase",
+    "OperationDataRepairRehearsalStatus",
     "OperationDefinitionResponse",
     "OperationDefinitionSpec",
     "OperationDefinitionSpecHttpTransactionVersion",

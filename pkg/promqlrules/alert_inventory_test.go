@@ -18,6 +18,7 @@ var shippedRuleFiles = []string{
 	"deploy/ansible/roles/prometheus/files/faas.rules.yml",
 	"deploy/ansible/roles/prometheus/files/bridge.rules.yml",
 	"deploy/ansible/roles/prometheus/files/pg_backup.rules.yml",
+	"deploy/ansible/roles/prometheus/files/data_repair.rules.yml",
 	"pkg/promqlrules/data_placement.yaml",
 }
 

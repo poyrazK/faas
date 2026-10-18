@@ -99,6 +99,23 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
+	// Fixed-executor repair preview routes are documented in docs/data-repair.md;
+	// they are not part of the public SDK contract until native qualification.
+	"GET /v1/apps/{slug}/data-repair/review":                            true,
+	"GET /v1/apps/{slug}/data-repair/sources":                           true,
+	"GET /v1/apps/{slug}/data-repair/doctor":                            true,
+	"GET /v1/apps/{slug}/data-repair/sources/{id}/history":              true,
+	"GET /v1/apps/{slug}/data-repair/sources/{id}/plans/{plan}":         true,
+	"POST /v1/apps/{slug}/data-repair/sources/{id}/plans/{plan}/verify": true,
+	"GET /v1/apps/{slug}/data-repair/source-scopes":                     true,
+	"GET /v1/apps/{slug}/data-repair/{asset}":                           true,
+	"POST /v1/apps/{slug}/data-repair/operations":                       true,
+	"GET /v1/apps/{slug}/data-repair/operations/{id}":                   true,
+	"POST /v1/apps/{slug}/data-repair/operations/{id}/validate":         true,
+	"POST /v1/apps/{slug}/data-repair/operations/{id}/verify":           true,
+	"POST /v1/apps/{slug}/data-repair/operations/{id}/replace":          true,
+	"POST /v1/apps/{slug}/data-repair/operations/{id}/resolve":          true,
+	"POST /v1/apps/{slug}/data-repair/operations/{id}/{action}":         true,
 	// ADR-202610171453: default-off internal hosting is absent from public OpenAPI/SDK discovery.
 	"DELETE /v1/internal/hosting/sites/{site}":                                     true,
 	"DELETE /v1/internal/hosting/sites/{site}/automation-credentials/{credential}": true,
@@ -347,6 +364,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/admin/instances/{id}/force-restart":                   true, // PR #1105 P2d
 	"POST /v1/admin/builds/sweep-stuck":                             true, // PR #1099 P2c
 	"GET /v1/admin/ops/jobs/runs":                                   true, // operator-only active job-run projection
+	"GET /v1/admin/ops/data-repairs":                                true, // operator-only repair health projection
 	"GET /v1/admin/ops/jobs/runs/{id}":                              true, // operator-only job-run inspection
 	"POST /v1/admin/ops/jobs/runs/{id}/cancel":                      true, // operator-only job-run cancellation
 	"GET /v1/admin/ops/deployments":                                 true, // operator-only deployment incident projection
@@ -1628,6 +1646,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "scenario_actions.go"),
 		filepath.Join(root, "pkg", "api", "scenario_simulation.go"),
 		filepath.Join(root, "pkg", "api", "operations.go"),
+		filepath.Join(root, "pkg", "api", "data_repair.go"),
+		filepath.Join(root, "pkg", "api", "data_repair_health.go"),
 		filepath.Join(root, "pkg", "api", "operations_job.go"),
 		filepath.Join(root, "pkg", "api", "operations_recovery.go"),
 		filepath.Join(root, "pkg", "api", "operations_submission.go"),

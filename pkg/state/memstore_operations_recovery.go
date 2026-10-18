@@ -15,6 +15,9 @@ func (m *MemStore) RecoverOperation(_ context.Context, accountID, tenantID, oper
 	if !exists || op.AccountID != accountID || (tenantID != "" && op.PlatformTenantID != tenantID) {
 		return Operation{}, ErrNotFound
 	}
+	if op.DataRepair != nil {
+		return Operation{}, ErrConflict
+	}
 	op = cloneOperation(op)
 	now := time.Now().UTC()
 	if !op.ExpiresAt.After(now) {

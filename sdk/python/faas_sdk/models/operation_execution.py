@@ -15,8 +15,8 @@ T = TypeVar("T", bound="OperationExecution")
 
 @_attrs_define
 class OperationExecution:
-    """Retained execution generation. Exactly one invocation_id or workflow_run_id is present. Workflow attempts counts
-    retained HTTP step attempts at that generation.
+    """Retained execution generation. Exactly one HTTP, workflow, job or data repair backend identity is present. Workflow
+    attempts counts retained HTTP step attempts at that generation.
 
     """
 
@@ -27,6 +27,7 @@ class OperationExecution:
     invocation_id: UUID | Unset = UNSET
     job_run_id: UUID | Unset = UNSET
     workflow_run_id: UUID | Unset = UNSET
+    data_repair_id: UUID | Unset = UNSET
     completed_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -51,6 +52,10 @@ class OperationExecution:
         if not isinstance(self.workflow_run_id, Unset):
             workflow_run_id = str(self.workflow_run_id)
 
+        data_repair_id: str | Unset = UNSET
+        if not isinstance(self.data_repair_id, Unset):
+            data_repair_id = str(self.data_repair_id)
+
         completed_at: str | Unset = UNSET
         if not isinstance(self.completed_at, Unset):
             completed_at = self.completed_at.isoformat()
@@ -71,6 +76,8 @@ class OperationExecution:
             field_dict["job_run_id"] = job_run_id
         if workflow_run_id is not UNSET:
             field_dict["workflow_run_id"] = workflow_run_id
+        if data_repair_id is not UNSET:
+            field_dict["data_repair_id"] = data_repair_id
         if completed_at is not UNSET:
             field_dict["completed_at"] = completed_at
 
@@ -108,6 +115,13 @@ class OperationExecution:
         else:
             workflow_run_id = UUID(_workflow_run_id)
 
+        _data_repair_id = d.pop("data_repair_id", UNSET)
+        data_repair_id: UUID | Unset
+        if isinstance(_data_repair_id, Unset):
+            data_repair_id = UNSET
+        else:
+            data_repair_id = UUID(_data_repair_id)
+
         _completed_at = d.pop("completed_at", UNSET)
         completed_at: datetime.datetime | Unset
         if isinstance(_completed_at, Unset):
@@ -123,6 +137,7 @@ class OperationExecution:
             invocation_id=invocation_id,
             job_run_id=job_run_id,
             workflow_run_id=workflow_run_id,
+            data_repair_id=data_repair_id,
             completed_at=completed_at,
         )
 

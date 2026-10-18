@@ -3409,10 +3409,10 @@ type AuthCapabilitiesView struct {
 	GitHubEnabled bool
 }
 
-// AdminData is the operator-only dashboard payload. It currently carries the
-// durable TLS cutover state so an operator can see that a rollback was tested
-// without losing the context when the edge returns to its normal state.
+// AdminData carries operator-only repair health and durable TLS cutover state.
 type AdminData struct {
+	RepairHealth        *api.DataRepairHealth
+	RepairHealthError   string
 	TLSCutover          TLSCutoverState
 	TLSCutoverStateFile string
 	TLSCutoverPresent   bool
