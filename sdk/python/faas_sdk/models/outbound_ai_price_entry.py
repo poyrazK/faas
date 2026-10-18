@@ -33,6 +33,15 @@ class OutboundAIPriceEntry:
     """Charged per minute of transcribed audio."""
     millicents_per_million_characters: int | Unset = UNSET
     """Charged per million characters of speech input."""
+    millicents_per_video_second: int | Unset = UNSET
+    """Charged per second of generated video (ADR-1432). A model_prefix of <model>@<resolution>, such as
+    veo-3.1-generate-001@4k, prices that resolution apart."""
+    millicents_per_web_search: int | Unset = UNSET
+    """Charged per web search as the provider bills it: per call, query or grounded prompt (ADR-1433)."""
+    millicents_per_file_search: int | Unset = UNSET
+    """Charged per file search call (ADR-1433)."""
+    millicents_per_code_session_gb: int | Unset = UNSET
+    """Charged per GB of code-interpreter container memory per session (ADR-1433)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -55,6 +64,14 @@ class OutboundAIPriceEntry:
         millicents_per_audio_minute = self.millicents_per_audio_minute
 
         millicents_per_million_characters = self.millicents_per_million_characters
+
+        millicents_per_video_second = self.millicents_per_video_second
+
+        millicents_per_web_search = self.millicents_per_web_search
+
+        millicents_per_file_search = self.millicents_per_file_search
+
+        millicents_per_code_session_gb = self.millicents_per_code_session_gb
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -79,6 +96,14 @@ class OutboundAIPriceEntry:
             field_dict["millicents_per_audio_minute"] = millicents_per_audio_minute
         if millicents_per_million_characters is not UNSET:
             field_dict["millicents_per_million_characters"] = millicents_per_million_characters
+        if millicents_per_video_second is not UNSET:
+            field_dict["millicents_per_video_second"] = millicents_per_video_second
+        if millicents_per_web_search is not UNSET:
+            field_dict["millicents_per_web_search"] = millicents_per_web_search
+        if millicents_per_file_search is not UNSET:
+            field_dict["millicents_per_file_search"] = millicents_per_file_search
+        if millicents_per_code_session_gb is not UNSET:
+            field_dict["millicents_per_code_session_gb"] = millicents_per_code_session_gb
 
         return field_dict
 
@@ -105,6 +130,14 @@ class OutboundAIPriceEntry:
 
         millicents_per_million_characters = d.pop("millicents_per_million_characters", UNSET)
 
+        millicents_per_video_second = d.pop("millicents_per_video_second", UNSET)
+
+        millicents_per_web_search = d.pop("millicents_per_web_search", UNSET)
+
+        millicents_per_file_search = d.pop("millicents_per_file_search", UNSET)
+
+        millicents_per_code_session_gb = d.pop("millicents_per_code_session_gb", UNSET)
+
         outbound_ai_price_entry = cls(
             model_prefix=model_prefix,
             input_millicents_per_mtok=input_millicents_per_mtok,
@@ -116,6 +149,10 @@ class OutboundAIPriceEntry:
             millicents_per_image=millicents_per_image,
             millicents_per_audio_minute=millicents_per_audio_minute,
             millicents_per_million_characters=millicents_per_million_characters,
+            millicents_per_video_second=millicents_per_video_second,
+            millicents_per_web_search=millicents_per_web_search,
+            millicents_per_file_search=millicents_per_file_search,
+            millicents_per_code_session_gb=millicents_per_code_session_gb,
         )
 
         outbound_ai_price_entry.additional_properties = d

@@ -24,7 +24,7 @@ T = TypeVar("T", bound="OutboundAIBudgetThresholdWebhookPayload")
 class OutboundAIBudgetThresholdWebhookPayload:
     """Data delivered with outbound.ai_budget.threshold when an AI budget reaches 80% or 100% in its period (ADR-991).
     alert_id is stable across retries; integration budgets notify every bound app, app budgets only that app, and an end
-    user's budget only the app whose call crossed it (ADR-995).
+    user's or a tag's budget only the app whose call crossed it (ADR-995, ADR-1438).
 
     """
 
@@ -40,6 +40,8 @@ class OutboundAIBudgetThresholdWebhookPayload:
     limit: int
     used: int
     crossed_at: datetime.datetime
+    tag: None | str
+    """The tag whose daily cost limit crossed the threshold (ADR-1438)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -70,6 +72,9 @@ class OutboundAIBudgetThresholdWebhookPayload:
 
         crossed_at = self.crossed_at.isoformat()
 
+        tag: None | str
+        tag = self.tag
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -85,6 +90,7 @@ class OutboundAIBudgetThresholdWebhookPayload:
                 "limit": limit,
                 "used": used,
                 "crossed_at": crossed_at,
+                "tag": tag,
             }
         )
 
@@ -135,6 +141,13 @@ class OutboundAIBudgetThresholdWebhookPayload:
 
         crossed_at = datetime.datetime.fromisoformat(d.pop("crossed_at"))
 
+        def _parse_tag(data: object) -> None | str:
+            if data is None:
+                return data
+            return cast(None | str, data)
+
+        tag = _parse_tag(d.pop("tag"))
+
         outbound_ai_budget_threshold_webhook_payload = cls(
             alert_id=alert_id,
             integration_id=integration_id,
@@ -147,6 +160,7 @@ class OutboundAIBudgetThresholdWebhookPayload:
             limit=limit,
             used=used,
             crossed_at=crossed_at,
+            tag=tag,
         )
 
         outbound_ai_budget_threshold_webhook_payload.additional_properties = d

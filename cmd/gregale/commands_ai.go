@@ -17,7 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const aiUsageText = "usage: gregale ai <policy|content-policy|app-limit|guardrails|prices|catalog|usage|users|routes|keys|alerts|logs|replay> ..."
+const aiUsageText = "usage: gregale ai <policy|content-policy|app-limit|guardrails|prices|catalog|usage|users|tags|tag-limits|routes|keys|alerts|logs|replay|evaluate|tokens> ..."
 
 func cmdAI(args []string) int {
 	parent, _ := lookupCliCommand("ai")
@@ -40,6 +40,10 @@ func cmdAI(args []string) int {
 		return cmdAICatalog(args[1:])
 	case "users":
 		return cmdAIUsers(args[1:])
+	case "tags":
+		return cmdAITags(args[1:])
+	case "tag-limits":
+		return cmdAITagLimits(args[1:])
 	case "routes":
 		return cmdAIRoutes(args[1:])
 	case "guardrails":
@@ -52,6 +56,10 @@ func cmdAI(args []string) int {
 		return cmdAILogs(args[1:])
 	case "replay":
 		return cmdAIReplay(args[1:])
+	case "evaluate":
+		return cmdAIEvaluate(args[1:])
+	case "tokens":
+		return cmdAITokens(args[1:])
 	}
 	printCommandValidation(osStderr, "unknown ai subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
@@ -129,7 +137,8 @@ func findOutboundIntegration(client *api.Client, integrationID string) (api.Outb
 
 const aiPolicyUsage = "usage: gregale ai policy <integration-id> [--provider openai|anthropic|gemini|azure_openai|bedrock|vertex|off] " +
 	"[--daily-tokens N|none] [--daily-cost EUR|none] [--monthly-cost EUR|none] [--request-log on|off] " +
-	"[--request-log-content on|off] [--user-daily-tokens N|none] [--user-daily-cost EUR|none]"
+	"[--request-log-content on|off] [--user-daily-tokens N|none] [--user-daily-cost EUR|none] [--log-export on|off] " +
+	"[--allow-unmetered on|off] [--prompt-cache on|off]"
 
 func cmdAIPolicy(args []string) int {
 	fs := newFlagSet("ai policy", flag.ContinueOnError)
@@ -141,6 +150,9 @@ func cmdAIPolicy(args []string) int {
 	monthlyCost := fs.String("monthly-cost", "", "calendar-month cost limit in EUR, or none")
 	userDailyTokens := fs.String("user-daily-tokens", "", "each end user's UTC-day token limit, or none")
 	userDailyCost := fs.String("user-daily-cost", "", "each end user's UTC-day cost limit in EUR, or none")
+	logExport := fs.String("log-export", "", "send each app call's metadata to the app's log drains: on or off")
+	allowUnmetered := fs.String("allow-unmetered", "", "let through calls the gateway cannot meter, outside the caps: on or off")
+	promptCache := fs.String("prompt-cache", "", "add prompt-cache breakpoints to Claude requests that carry none: on or off")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 {
 		return printErr("Invalid ai policy arguments", errors.New(aiPolicyUsage))
 	}
@@ -155,7 +167,8 @@ func cmdAIPolicy(args []string) int {
 	req := api.PutOutboundAIPolicyRequest{AIProvider: current.AIProvider, DailyTokenLimit: current.AIDailyTokenLimit,
 		DailyCostLimitMillicents: current.AIDailyCostLimitMillicents, MonthlyCostLimitMillicents: current.AIMonthlyCostLimitMillicents,
 		RequestLogEnabled: current.AIRequestLogEnabled, UserDailyTokenLimit: current.AIUserDailyTokenLimit,
-		UserDailyCostLimitMillicents: current.AIUserDailyCostLimitMillicents, RequestLogContent: current.AIRequestLogContent}
+		UserDailyCostLimitMillicents: current.AIUserDailyCostLimitMillicents, RequestLogContent: current.AIRequestLogContent,
+		LogExport: current.AILogExport, AllowUnmetered: current.AIAllowUnmetered, AutoPromptCache: current.AIAutoPromptCache}
 	switch *provider {
 	case "":
 	case "off":
@@ -181,6 +194,33 @@ func cmdAIPolicy(args []string) int {
 	default:
 		return printErr("Invalid --request-log-content", errors.New("use on or off"))
 	}
+	switch *logExport {
+	case "":
+	case "on":
+		req.LogExport = true
+	case "off":
+		req.LogExport = false
+	default:
+		return printErr("Invalid --log-export", errors.New("use on or off"))
+	}
+	switch *allowUnmetered {
+	case "":
+	case "on":
+		req.AllowUnmetered = true
+	case "off":
+		req.AllowUnmetered = false
+	default:
+		return printErr("Invalid --allow-unmetered", errors.New("use on or off"))
+	}
+	switch *promptCache {
+	case "":
+	case "on":
+		req.AutoPromptCache = true
+	case "off":
+		req.AutoPromptCache = false
+	default:
+		return printErr("Invalid --prompt-cache", errors.New("use on or off"))
+	}
 	if req.DailyTokenLimit, err = optionalLimit(*dailyTokens, req.DailyTokenLimit, parseTokenCount); err == nil {
 		if req.DailyCostLimitMillicents, err = optionalLimit(*dailyCost, req.DailyCostLimitMillicents, parseEuroMillicents); err == nil {
 			req.MonthlyCostLimitMillicents, err = optionalLimit(*monthlyCost, req.MonthlyCostLimitMillicents, parseEuroMillicents)
@@ -192,7 +232,7 @@ func cmdAIPolicy(args []string) int {
 		}
 	}
 	if err != nil || !req.Valid() {
-		return printErr("Invalid AI policy", errors.Join(err, errors.New("limits need a provider; tokens 1..1e11, costs up to EUR 10,000,000; content capture needs the request log")))
+		return printErr("Invalid AI policy", errors.Join(err, errors.New("limits, log export, allow-unmetered and prompt-cache need a provider; tokens 1..1e11, costs up to EUR 10,000,000; content capture needs the request log")))
 	}
 	if err := client.SetOutboundIntegrationAIPolicy(context.Background(), fs.Arg(0), req); err != nil {
 		return printErr("Could not update AI policy", err)
@@ -204,14 +244,25 @@ func cmdAIPolicy(args []string) int {
 	return 0
 }
 
+// formatSaved renders what caching saved, which prompt-cache writes can
+// make negative (ADR-1440).
+func formatSaved(millicents int64) string {
+	if millicents < 0 {
+		return "-" + financialMoney(-millicents)
+	}
+	return financialMoney(millicents)
+}
+
 // formatMediaUsage lists a rollup's images, audio seconds and characters
-// (ADR-997), or "-".
+// (ADR-997), video seconds (ADR-1432) and built-in tool uses (ADR-1433),
+// or "-".
 func formatMediaUsage(item api.OutboundAIUsageItem) string {
 	var parts []string
 	for _, count := range []struct {
 		value int64
 		unit  string
-	}{{item.Images, "images"}, {item.AudioSeconds, "audio s"}, {item.Characters, "chars"}} {
+	}{{item.Images, "images"}, {item.AudioSeconds, "audio s"}, {item.Characters, "chars"}, {item.VideoSeconds, "video s"},
+		{item.WebSearches, "web searches"}, {item.FileSearches, "file searches"}, {item.CodeSessionGB, "GB code sessions"}} {
 		if count.value > 0 {
 			parts = append(parts, strconv.FormatInt(count.value, 10)+" "+count.unit)
 		}
@@ -294,11 +345,18 @@ func cmdAIUsage(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "Cost today: %s / %s   %s month to date: %s / %s\n", financialMoney(usage.DailyCostMillicents),
 		formatOptionalMoney(usage.DailyCostLimitMillicents), usage.Month, financialMoney(usage.MonthlyCostMillicents), formatOptionalMoney(usage.MonthlyCostLimitMillicents))
 	tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "CALLER\tMODEL\tREQUESTS\tERRORS\tINPUT\tCACHED\tOUTPUT\tMEDIA\tCOST")
+	_, _ = fmt.Fprintln(tw, "CALLER\tMODEL\tREQUESTS\tCACHE HITS\tERRORS\tINPUT\tCACHED\tOUTPUT\tMEDIA\tCOST\tSAVED")
+	var saved int64
 	for _, item := range usage.Items {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%s\t%s\n", item.Caller, item.Model, item.Requests, item.ErrorRequests,
-			item.InputTokens, item.CachedInputTokens, item.OutputTokens, formatMediaUsage(item), financialMoney(item.CostMillicents))
+		itemSaved := item.CacheSavedMillicents + item.PromptCacheSavedMillicents
+		saved += itemSaved
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n", item.Caller, item.Model, item.Requests, item.CachedRequests,
+			item.ErrorRequests, item.InputTokens, item.CachedInputTokens, item.OutputTokens, formatMediaUsage(item),
+			financialMoney(item.CostMillicents), formatSaved(itemSaved))
 	}
 	_ = tw.Flush()
+	if saved != 0 {
+		_, _ = fmt.Fprintf(osStdout, "Saved today by the response cache and prompt caching: %s\n", formatSaved(saved))
+	}
 	return 0
 }
