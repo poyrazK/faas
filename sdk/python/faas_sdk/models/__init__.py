@@ -715,9 +715,13 @@ from .configure_managed_realtime_push_provider_response_200_provider import (
     ConfigureManagedRealtimePushProviderResponse200Provider,
 )
 from .connection_budget_capacity import ConnectionBudgetCapacity
+from .connection_budget_capacity_source import ConnectionBudgetCapacitySource
 from .connection_budget_capacity_state import ConnectionBudgetCapacityState
 from .connection_budget_demand import ConnectionBudgetDemand
 from .connection_budget_inventory import ConnectionBudgetInventory
+from .connection_budget_runtime_observations import ConnectionBudgetRuntimeObservations
+from .connection_budget_runtime_observations_source import ConnectionBudgetRuntimeObservationsSource
+from .connection_budget_runtime_observations_state import ConnectionBudgetRuntimeObservationsState
 from .consume_invoice_response import ConsumeInvoiceResponse
 from .consumed_credit_row import ConsumedCreditRow
 from .consumer_billing_day import ConsumerBillingDay
@@ -956,6 +960,10 @@ from .dashboard_replay_failed_event_body import DashboardReplayFailedEventBody
 from .data_api_connection_budgets import DataAPIConnectionBudgets
 from .data_api_connection_budgets_state import DataAPIConnectionBudgetsState
 from .data_api_connection_budgets_version import DataAPIConnectionBudgetsVersion
+from .data_api_runtime_connection_report import DataAPIRuntimeConnectionReport
+from .data_api_runtime_connection_report_runtime_model import DataAPIRuntimeConnectionReportRuntimeModel
+from .data_api_runtime_connection_report_state import DataAPIRuntimeConnectionReportState
+from .data_api_runtime_connection_report_version import DataAPIRuntimeConnectionReportVersion
 from .data_upstream_history_bucket import DataUpstreamHistoryBucket
 from .data_upstream_history_response import DataUpstreamHistoryResponse
 from .data_upstream_history_response_kind import DataUpstreamHistoryResponseKind
@@ -5942,9 +5950,13 @@ __all__ = (
     "ConfigureManagedRealtimePushProviderResponse200",
     "ConfigureManagedRealtimePushProviderResponse200Provider",
     "ConnectionBudgetCapacity",
+    "ConnectionBudgetCapacitySource",
     "ConnectionBudgetCapacityState",
     "ConnectionBudgetDemand",
     "ConnectionBudgetInventory",
+    "ConnectionBudgetRuntimeObservations",
+    "ConnectionBudgetRuntimeObservationsSource",
+    "ConnectionBudgetRuntimeObservationsState",
     "ConsumedCreditRow",
     "ConsumeInvoiceResponse",
     "ConsumerBillingDay",
@@ -6165,6 +6177,10 @@ __all__ = (
     "DataAPIConnectionBudgets",
     "DataAPIConnectionBudgetsState",
     "DataAPIConnectionBudgetsVersion",
+    "DataAPIRuntimeConnectionReport",
+    "DataAPIRuntimeConnectionReportRuntimeModel",
+    "DataAPIRuntimeConnectionReportState",
+    "DataAPIRuntimeConnectionReportVersion",
     "DataUpstreamHistoryBucket",
     "DataUpstreamHistoryResponse",
     "DataUpstreamHistoryResponseKind",

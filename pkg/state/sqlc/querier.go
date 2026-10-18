@@ -276,6 +276,7 @@ type Querier interface {
 	ClaimLayerArtifactDeletion(ctx context.Context, db DBTX, arg ClaimLayerArtifactDeletionParams) (int64, error)
 	ClaimLegacyPendingWorkflowRun(ctx context.Context, db DBTX) (WorkflowRun, error)
 	ClaimManagedPostgresBindingRetirement(ctx context.Context, db DBTX, arg ClaimManagedPostgresBindingRetirementParams) (ClaimManagedPostgresBindingRetirementRow, error)
+	ClaimManagedPostgresConnectionCapacity(ctx context.Context, db DBTX, arg ClaimManagedPostgresConnectionCapacityParams) (int64, error)
 	ClaimManagedPostgresCutover(ctx context.Context, db DBTX, arg ClaimManagedPostgresCutoverParams) (ManagedPostgresCutover, error)
 	ClaimManagedPostgresCutoverSourceFence(ctx context.Context, db DBTX, arg ClaimManagedPostgresCutoverSourceFenceParams) (int64, error)
 	ClaimManagedPostgresHealthCheck(ctx context.Context, db DBTX, arg ClaimManagedPostgresHealthCheckParams) (ClaimManagedPostgresHealthCheckRow, error)
@@ -1234,6 +1235,7 @@ type Querier interface {
 	FinishEnvironmentQueueDeliveryInvocation(ctx context.Context, db DBTX, arg FinishEnvironmentQueueDeliveryInvocationParams) (int64, error)
 	FinishManagedPostgresBindingProvision(ctx context.Context, db DBTX, arg FinishManagedPostgresBindingProvisionParams) (FinishManagedPostgresBindingProvisionRow, error)
 	FinishManagedPostgresCloneRestoreWithProof(ctx context.Context, db DBTX, arg FinishManagedPostgresCloneRestoreWithProofParams) (pgtype.UUID, error)
+	FinishManagedPostgresConnectionCapacity(ctx context.Context, db DBTX, arg FinishManagedPostgresConnectionCapacityParams) (int64, error)
 	FinishManagedPostgresCutoverPreflight(ctx context.Context, db DBTX, arg FinishManagedPostgresCutoverPreflightParams) (ManagedPostgresCutoverPreflight, error)
 	FinishManagedPostgresCutoverStep(ctx context.Context, db DBTX, arg FinishManagedPostgresCutoverStepParams) error
 	FinishManagedPostgresCutoverVerification(ctx context.Context, db DBTX, arg FinishManagedPostgresCutoverVerificationParams) error
@@ -4247,6 +4249,7 @@ type Querier interface {
 	RecordCloneCheckpointRelease(ctx context.Context, db DBTX, arg RecordCloneCheckpointReleaseParams) (int64, error)
 	RecordCloneCheckpointWakeDispatch(ctx context.Context, db DBTX, arg RecordCloneCheckpointWakeDispatchParams) error
 	RecordClonePostgresMaintenance(ctx context.Context, db DBTX, arg RecordClonePostgresMaintenanceParams) (ManagedPostgresCheckpointMaintenance, error)
+	RecordDataAPIRuntimeConnections(ctx context.Context, db DBTX, arg RecordDataAPIRuntimeConnectionsParams) (int64, error)
 	// The first acknowledgement wins; later instances applying the same
 	// generation do not move the recorded time and return no row.
 	RecordDevSourcePatchApplied(ctx context.Context, db DBTX, arg RecordDevSourcePatchAppliedParams) (RecordDevSourcePatchAppliedRow, error)
