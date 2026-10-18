@@ -1,0 +1,11 @@
+# Managed by Ansible (cp_state_backup). Local edits are overwritten.
+[Unit]
+Description=Daily Gregale control-plane state backup (ADR-1344 §8)
+
+[Timer]
+OnCalendar={{ faas_cp_state_backup_schedule }}
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

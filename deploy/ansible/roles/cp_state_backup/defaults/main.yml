@@ -1,0 +1,21 @@
+---
+# ADR-1344 §8: off-host, encrypted backup of the control plane's host-local
+# state (deploy/ansible/vars/cp_state_files.yml).
+
+# Operator age recipients (age1…). The bundle is encrypted to these only:
+# keep the matching identities OFF the control plane (a password manager or
+# offline), or losing the host loses the means to read its backup. Empty
+# leaves the backup off.
+faas_cp_state_backup_recipients: []
+
+# Remote layout: <rclone remote>:<path>/<host>/cp-state-<timestamp>.tar.age.
+# The remote is the same offhostbox the PostgreSQL backups use.
+faas_cp_state_backup_remote: "{{ off_host_backup_remote | default('offhostbox', true) }}"
+faas_cp_state_backup_path: faas-cp-state
+
+# Local bundles kept after a verified push; remote retention belongs to the
+# storage backend's lifecycle policy, as for the PostgreSQL backups.
+faas_cp_state_backup_keep: 3
+
+# Daily, after the 03:00/03:30 PostgreSQL backup and push.
+faas_cp_state_backup_schedule: "*-*-* 04:15:00"

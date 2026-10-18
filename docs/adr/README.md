@@ -1617,3 +1617,13 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1642: Shared account compute and egress funding](1642-account-strict-egress.md)
 - [ADR-1643: Funded public forwarding](1643-public-forwarding-egress.md)
 - [ADR-1650: Per-unit control-plane releases](1650-per-unit-control-plane-releases.md)
+
+- [ADR-20261017210000: Reviewed regression triage through management MCP](20261017210000-management-mcp-regression-triage.md)
+
+- [ADR-20261017222622: Consented regression resource snapshots and subscriptions](20261017222622-management-mcp-regression-resources.md)
+
+- [ADR-20261017224029: Selected-app regression inbox through management MCP](20261017224029-management-mcp-fleet-regressions.md)
+
+- [ADR-20261017232000: Incident evidence bundles through management MCP](20261017232000-management-mcp-incident-bundles.md)
+
+- [ADR-20261017233500: Explicit selected-app traces through management MCP](20261017233500-management-mcp-selected-traces.md)
