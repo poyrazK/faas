@@ -2,12 +2,14 @@ package mcpmanagement
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -308,39 +310,83 @@ func TestAuthorizationLeaseBoundsAccountVerification(t *testing.T) {
 }
 
 func TestAuthorizationLeaseMutationExpiryKeepsDurableRetryKey(t *testing.T) {
+	// Keep real encrypted journal writes, but drive the lease with virtual time.
+	// A short wall-clock lease can expire during fsync before the native write.
+	synctest.Test(t, testAuthorizationLeaseMutationExpiryKeepsDurableRetryKey)
+}
+
+type leaseRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f leaseRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func testAuthorizationLeaseMutationExpiryKeepsDurableRetryKey(t *testing.T) {
 	store, path, key := testStateStore(t)
 	f := progressFixture()
 	f.keys = map[string]api.DeploymentResponse{}
 	entered := make(chan struct{})
 	canceled := make(chan struct{})
 	var replay atomic.Bool
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	native := api.NewClient("http://native.test", testToken)
+	native.SetCompletionCache(nil)
+	native.HTTPClient().Transport = leaseRoundTripper(func(r *http.Request) (*http.Response, error) {
+		reply := httptest.NewRecorder()
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/apps/alpha/deployments" && !replay.Load() {
-			reply := httptest.NewRecorder()
 			f.serveHTTP(reply, r)
 			close(entered)
 			<-r.Context().Done()
+			if !errors.Is(r.Context().Err(), context.DeadlineExceeded) {
+				t.Error("native mutation was canceled without lease expiry")
+			}
 			close(canceled)
-			return
+			return nil, r.Context().Err()
 		}
-		f.serveHTTP(w, r)
-	}))
-	t.Cleanup(backend.Close)
-	opts := Options{AllowWrites: true, planStore: store, planNamespace: "authorization-lease-fixture"}
-	h := connectLeaseFixture(t, backend, opts, "2026-07-28")
-	plan := callTool(t, h.ctx, h.client, "gregale_plan_deploy", map[string]any{"app": "alpha", "image": testImage, "reason": "lease retry test"}, false)
+		f.serveHTTP(reply, r)
+		return reply.Result(), nil
+	})
+	var leaseUntil atomic.Int64
+	leaseUntil.Store(time.Now().Add(time.Hour).UnixNano())
+	opts := Options{APIBase: native.BaseURL(), AllowWrites: true, planStore: store, planNamespace: "authorization-lease-fixture"}
+	connect := func() (*mcp.ClientSession, *management) {
+		t.Helper()
+		s, manager, err := newManagementServer(native, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Supply the retained authorization deadline just as HTTP authentication
+		// does; the production receiving middleware must enforce it on the RPC.
+		s.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+			return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+				return next(context.WithValue(ctx, authorizationLeaseExpiresKey{}, time.Unix(0, leaseUntil.Load())), method, req)
+			}
+		})
+		ct, st := mcp.NewInMemoryTransports()
+		ss, err := s.Connect(t.Context(), st, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = ss.Close() })
+		client, err := mcp.NewClient(&mcp.Implementation{Name: "lease-retry-test", Version: "1"}, nil).Connect(t.Context(), ct, &mcp.ClientSessionOptions{ProtocolVersion: "2026-07-28"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = client.Close() })
+		return client, manager
+	}
+	client, manager := connect()
+	plan := callTool(t, t.Context(), client, "gregale_plan_deploy", map[string]any{"app": "alpha", "image": testImage, "reason": "lease retry test"}, false)
 	id := planID(t, plan)
-	h.remote.mu.Lock()
-	h.grant.accessExpires = time.Now().Add(150 * time.Millisecond)
-	h.remote.mu.Unlock()
+	leaseUntil.Store(time.Now().Add(150 * time.Millisecond).UnixNano())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, _ = h.client.CallTool(h.ctx, &mcp.CallToolParams{Name: "gregale_apply_deploy", Arguments: map[string]string{"plan_id": id}})
+		result, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: "gregale_apply_deploy", Arguments: map[string]string{"plan_id": id}})
+		if err == nil && !result.IsError {
+			t.Error("expired mutation unexpectedly succeeded")
+		}
 	}()
 	select {
 	case <-entered:
-	case <-h.ctx.Done():
+	case <-time.After(time.Second):
 		t.Fatal("native mutation was not accepted")
 	}
 	select {
@@ -349,10 +395,10 @@ func TestAuthorizationLeaseMutationExpiryKeepsDurableRetryKey(t *testing.T) {
 		t.Fatal("mutation did not stop at expiry")
 	}
 	<-done
-	awaitAdmissionEmpty(t, h.manager.admission)
-	shutdown, cancel := context.WithTimeout(h.ctx, time.Second)
+	awaitAdmissionEmpty(t, manager.admission)
+	shutdown, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	if err := h.manager.lifecycle.Shutdown(shutdown); err != nil {
+	if err := manager.lifecycle.Shutdown(shutdown); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -364,9 +410,10 @@ func TestAuthorizationLeaseMutationExpiryKeepsDurableRetryKey(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = restored.Close() })
 	replay.Store(true)
+	leaseUntil.Store(time.Now().Add(time.Hour).UnixNano())
 	opts.planStore = restored
-	fresh := connectLeaseFixture(t, backend, opts, "2026-07-28")
-	callTool(t, fresh.ctx, fresh.client, "gregale_apply_deploy", map[string]string{"plan_id": id}, false)
+	fresh, _ := connect()
+	callTool(t, t.Context(), fresh, "gregale_apply_deploy", map[string]string{"plan_id": id}, false)
 	f.mu.Lock()
 	writes, keys := f.writes, len(f.keys)
 	f.mu.Unlock()

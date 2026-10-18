@@ -115,8 +115,8 @@ lane's critical path.
   directory holds the canonical binaries `gregalectl doctor` (and so
   `fleet_verify`) verifies, and it stays a full rollback target.
 - The unit lane's gate is the merged pull request's light tier. The mega tier
-  still gates every full tag and runs nightly. This is a deliberate trade the
-  owner may tighten, for example by requiring a green nightly on an ancestor.
+  runs nightly and, since ADR 20261018104452, gates no full tag either. This
+  is a deliberate trade the owner made.
 - Measured on the last 300 merges, each taken on its own: 47% were eligible
   (7% touched only control-plane daemons, 40% also touched shared or compute
   daemons, which wait), 27% were blocked (18% migrations, 12% `deploy/`), and

@@ -26,7 +26,8 @@
 # already started is never cancelled (cd-controlplane's own concurrency).
 #
 # Gate: the merged commit passed the pull request's required light tier.
-# The mega tier (ci.yml) still gates every full release tag and runs nightly.
+# The mega tier (ci.yml) runs nightly and gates no release, full or unit
+# (docs/adr/20261018104452-release-decoupled-from-full-ci.md).
 
 name: release-units
 

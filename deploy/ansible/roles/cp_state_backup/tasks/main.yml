@@ -1,0 +1,88 @@
+---
+# cp_state_backup — off-host, encrypted backup of the control plane's
+# host-local state (ADR-1344 §8, docs/runbooks/ControlPlaneStateBackup.md).
+#
+# Off until faas_cp_state_backup_recipients names an operator age recipient;
+# then a daily timer seals the state list to those recipients only and pushes
+# it with the PostgreSQL backups' rclone remote.
+
+- name: cp_state_backup — load the control-plane state list
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/vars/cp_state_files.yml"
+
+- name: cp_state_backup — require age recipients, never identities
+  ansible.builtin.assert:
+    that:
+      - faas_cp_state_backup_recipients | select('match', '^age1[0-9a-z]+$') | list | length == faas_cp_state_backup_recipients | length
+    fail_msg: >-
+      faas_cp_state_backup_recipients must hold operator age public keys
+      (age1…). Keep the identities off the control plane.
+    quiet: true
+
+- name: cp_state_backup — install the state list
+  ansible.builtin.template:
+    src: cp-state-backup.paths.j2
+    dest: /etc/faas/cp-state-backup.paths
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: cp_state_backup — create the helper directory
+  ansible.builtin.file:
+    path: /usr/local/lib/faas
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: cp_state_backup — install the backup helper
+  ansible.builtin.copy:
+    src: faas-cp-state-backup.sh
+    dest: /usr/local/lib/faas/faas-cp-state-backup.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: cp_state_backup — install the backup unit and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - faas-cp-state-backup.service
+    - faas-cp-state-backup.timer
+  register: cp_state_backup_units
+
+- name: cp_state_backup — reload systemd for changed units  # noqa: no-handler (the timer state below needs the new units)
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: cp_state_backup_units.changed
+
+- name: cp_state_backup — install the operator recipients
+  ansible.builtin.copy:
+    dest: /etc/faas/cp-state-backup.recipients
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (cp_state_backup). Operator age recipients; the
+      # matching identities live off this host.
+      {% for r in faas_cp_state_backup_recipients %}
+      {{ r }}
+      {% endfor %}
+  when: faas_cp_state_backup_recipients | length > 0
+
+- name: cp_state_backup — remove the recipients when the backup is off
+  ansible.builtin.file:
+    path: /etc/faas/cp-state-backup.recipients
+    state: absent
+  when: faas_cp_state_backup_recipients | length == 0
+
+- name: cp_state_backup — enable the daily backup
+  ansible.builtin.systemd_service:
+    name: faas-cp-state-backup.timer
+    enabled: "{{ faas_cp_state_backup_recipients | length > 0 }}"
+    state: "{{ 'started' if faas_cp_state_backup_recipients | length > 0 else 'stopped' }}"
+  failed_when: false  # chroot/CI has no systemd

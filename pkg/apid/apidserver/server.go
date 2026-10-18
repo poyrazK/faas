@@ -1577,6 +1577,7 @@ func (s *server) handler() http.Handler {
 	// Account-scoped trace lookup joins retained request evidence with durable
 	// queue lifecycle rows; the handler enforces the debugger plan gate.
 	mux.HandleFunc("GET /v1/account/traces/{trace_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.accountTraceLookup))))
+	mux.HandleFunc("GET /v1/account/traces/{trace_id}/selected-apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.selectedAppTrace))))
 	mux.HandleFunc("GET /v1/account/usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.accountUsage))))
 	mux.HandleFunc("GET /v1/account/object-storage-usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.object.GetObjectStorageUsage))))
 	mux.HandleFunc("GET /v1/account/managed-postgres-usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getManagedPostgresUsage))))
@@ -3641,6 +3642,8 @@ func (s *server) handler() http.Handler {
 	// ADR-127 debugger lifecycle: operator workflow state is separate from
 	// deployment traffic state and is protected as a debugger write.
 	mux.HandleFunc("PATCH /v1/apps/{slug}/debug/regressions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.debugRegressionActionHandler)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/debug/regressions/actions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.debugRegressionGuardedActionHandler))))
+	mux.HandleFunc("GET /v1/apps/{slug}/debug/regressions/review", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugRegressionReviewHandler))))
 	// ADR-127 PR-B: deployment-vs-deployment compare (POST body
 	// holds the two deployment_ids + optional route filter).
 	mux.HandleFunc("POST /v1/apps/{slug}/debug/compare", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugCompareHandler))))

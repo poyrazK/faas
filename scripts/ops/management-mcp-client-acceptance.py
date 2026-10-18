@@ -536,8 +536,106 @@ def remote_fixture_acceptance(args):
             elif value["routes"][0]["source"].get("p50_ms") != 0 or value["routes"][1]["target"].get("evidence") != "no_retained_samples" or "p95_ms" in value["routes"][1]["target"] or value["routes"][1].get("comparable") is not False:
                 raise RuntimeError("Codex comparison misrepresented observed zero or missing samples")
 
+        def regression_resource_call(rpc, thread_id, approved, app, empty):
+            uri = "gregale://apps/" + app + "/regressions"
+            try:
+                result = rpc.request("mcpServer/resource/read", {"threadId": thread_id, "server": "gregale", "uri": uri})
+            except RuntimeError as error:
+                if approved or "Codex rejected mcpServer/resource/read" not in str(error):
+                    raise
+                return
+            if not approved:
+                raise RuntimeError("Codex read an unconsented regression resource")
+            contents = result.get("contents", [])
+            if len(contents) != 1 or contents[0].get("uri") != uri:
+                raise RuntimeError("Codex regression resource lost its envelope")
+            value = json.loads(contents[0]["text"])
+            if value.get("scope") != "app_wide" or value.get("since") != "1h" or not value.get("snapshot_observed_at") or "does not prove recovery" not in value.get("update_semantics", ""):
+                raise RuntimeError("Codex regression resource lost scope, freshness or absence semantics")
+            if any(marker in json.dumps(value) for marker in ["excluded-", "fp_test_", '"query"']):
+                raise RuntimeError("Codex regression resource leaked excluded data")
+            if empty and (value.get("regressions") != [] or value.get("status") != "no_visible_regressions"):
+                raise RuntimeError("Codex regression resource invented empty evidence")
+            if not empty and (len(value.get("regressions", [])) != 3 or value.get("regressions_truncated") is not False):
+                raise RuntimeError("Codex regression resource changed its projection bound")
+
+        def trace_call(rpc, thread_id, approved, app="alpha", empty=False, partial=False):
+            arguments = {"apps": [app], "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736", "limit": 10}
+            result, value = invoke(rpc, thread_id, "gregale_get_trace", arguments)
+            if bool(result.get("isError")) == approved:
+                raise RuntimeError("Codex selected trace consent failed")
+            if not approved:
+                if value.get("code") != "request_access_denied" or "requests" in value:
+                    raise RuntimeError("Codex trace denial lost its code or exposed evidence")
+                return
+            if value.get("trace_id") != arguments["trace_id"] or value.get("scope") != "selected_apps" or value.get("correlation_basis") != "exact_trace_id_only" or value.get("source_completeness") != "unknown" or value.get("partial") != partial or value.get("status") != ("partial" if partial else "ok"):
+                raise RuntimeError("Codex trace selection or source uncertainty changed")
+            if len(value.get("apps", [])) != 1 or value["apps"][0].get("slug") != app:
+                raise RuntimeError("Codex trace widened the explicit app roster")
+            if value.get("requests_status") != ("unavailable" if partial else "ok") or value.get("invocations_status") != "ok":
+                raise RuntimeError("Codex trace source statuses changed")
+            if empty:
+                if value.get("requests") != [] or value.get("invocations") != []:
+                    raise RuntimeError("Codex trace invented absent evidence")
+            elif len(value.get("requests", [])) != 1 or value["requests"][0].get("lookup_identifier") != "33333333-3333-4333-8333-333333333333" or len(value.get("invocations", [])) != 1 or "started_at" in value["invocations"][0]:
+                raise RuntimeError("Codex trace lost request lookups or missing lifecycle times")
+            if any(marker in json.dumps(value) for marker in ["excluded-", "fp_test_", '"queue_name"', '"traceparent"', '"headers"', '"spans"']):
+                raise RuntimeError("Codex trace leaked excluded data")
+
+        def incident_bundle_call(rpc, thread_id, approved, app, empty):
+            arguments = {"app": app, "request_id": "row-1", "since": "1h", "source_deployment_id": "11111111-1111-4111-8111-111111111111", "target_deployment_id": "22222222-2222-4222-8222-222222222222"}
+            result, value = invoke(rpc, thread_id, "gregale_get_incident_bundle", arguments)
+            if bool(result.get("isError")) == approved:
+                raise RuntimeError("Codex incident diagnostic consent failed")
+            if not approved:
+                if value.get("code") != "request_access_denied" or "evidence" in value:
+                    raise RuntimeError("Codex incident denial lost its code or exposed evidence")
+                return
+            if value.get("schema_version") != "gregale.mcp.incident/v1" or value.get("status") != "ok" or value.get("partial") is not False or value.get("requested_since") != "1h" or value.get("source_completeness") != "unknown":
+                raise RuntimeError("Codex incident envelope lost provenance or uncertainty")
+            for section, source in {"evidence": "gregale_get_request_evidence", "coverage": "gregale_get_debug_coverage", "regressions": "gregale_list_regressions", "comparison": "gregale_compare_deployments"}.items():
+                item = value.get(section, {})
+                if item.get("status") != "ok" or item.get("source_tool") != source or not item.get("read_started_at") or not item.get("read_finished_at") or not isinstance(item.get("result"), dict) or "error" in item:
+                    raise RuntimeError("Codex incident section lost provenance: " + section)
+            evidence = value["evidence"]["result"]
+            if evidence.get("request", {}).get("id") != "row-1" or "relative" not in value.get("limitations", ""):
+                raise RuntimeError("Codex incident evidence or reference semantics changed")
+            comparison = value["comparison"]["result"]
+            if comparison.get("source_deployment_id") != arguments["source_deployment_id"] or comparison.get("target_deployment_id") != arguments["target_deployment_id"]:
+                raise RuntimeError("Codex incident comparison changed explicit deployments")
+            if empty and (value["regressions"]["result"].get("regressions") != [] or comparison.get("routes") != []):
+                raise RuntimeError("Codex incident invented absent evidence")
+            if any(marker in json.dumps(value) for marker in ["excluded-", "fp_test_", '"query"']):
+                raise RuntimeError("Codex incident leaked excluded data")
+
+        def fleet_regression_call(rpc, thread_id, approved, app, empty):
+            result, value = invoke(rpc, thread_id, "gregale_list_fleet_regressions", {"apps": [app, "beta"], "since": "1h", "limit_per_app": 1})
+            if result.get("isError") or value.get("scope") != "selected_apps" or value.get("partial") is not True or value.get("source_completeness") != "unknown":
+                raise RuntimeError("Codex fleet regression result lost partial-read semantics")
+            apps = value.get("apps", [])
+            if len(apps) != 2 or apps[0].get("app") != app or apps[1].get("app") != "beta" or "result" in apps[1] or apps[1].get("error", {}).get("code") != "request_access_denied":
+                raise RuntimeError("Codex fleet regression result lost selection order or diagnostic consent")
+            if not approved:
+                if value.get("status") != "unavailable" or value.get("successful_app_count") != 0 or "result" in apps[0] or apps[0].get("error", {}).get("code") != "request_access_denied":
+                    raise RuntimeError("Codex fleet regression result exposed denied or replaced app evidence")
+                return
+            evidence = apps[0].get("result", {})
+            if value.get("status") != "partial" or value.get("successful_app_count") != 1 or value.get("failed_app_count") != 1 or evidence.get("scope") != "app_wide" or evidence.get("since") != "1h":
+                raise RuntimeError("Codex fleet regression result discarded a valid app or lost its lookback")
+            if any(marker in json.dumps(value) for marker in ["excluded-", "fp_test_", '"query"']):
+                raise RuntimeError("Codex fleet regression result leaked excluded data")
+            if empty:
+                if evidence.get("regressions") != [] or evidence.get("status") != "no_visible_regressions":
+                    raise RuntimeError("Codex fleet regression result invented empty evidence")
+            elif len(evidence.get("regressions", [])) != 1 or evidence.get("regressions_truncated") is not True:
+                raise RuntimeError("Codex fleet regression result exceeded its projection limit")
+
         def regression_call(rpc, thread_id, approved, app, empty):
             result, value = invoke(rpc, thread_id, "gregale_list_regressions", {"app":app, "since":"1h", "limit":2})
+            regression_resource_call(rpc, thread_id, approved, app, empty)
+            fleet_regression_call(rpc, thread_id, approved, app, empty)
+            incident_bundle_call(rpc, thread_id, approved, app, empty)
+            trace_call(rpc, thread_id, approved, app, empty)
             if bool(result.get("isError")) == approved:
                 raise RuntimeError("Codex regression inbox consent failed")
             if not approved:
@@ -928,7 +1026,7 @@ def remote_fixture_acceptance(args):
             raise RuntimeError("Codex did not refresh its remote OAuth token")
         if request_mode:
             evidence = fixture_control("evidence")
-            if evidence["native_writes"] != 0 or evidence["request_reads"] != (21 if request_mode == "approved" else 0):
+            if evidence["native_writes"] != 0 or evidence["request_reads"] != (24 if request_mode == "approved" else 0):
                 raise RuntimeError("Request acceptance performed unauthorized reads or writes")
             if evidence["profile_reads"] != (3 if request_mode == "approved" else 0):
                 raise RuntimeError("Codex profile read count changed or consent bypassed")
@@ -946,16 +1044,18 @@ def remote_fixture_acceptance(args):
                 raise RuntimeError("Timeseries acceptance performed unauthorized reads")
             if evidence["analytics_reads"] != (3 if request_mode == "approved" else 0):
                 raise RuntimeError("Analytics acceptance performed unauthorized reads")
-            if evidence["performance_reads"] != (6 if request_mode == "approved" else 0):
+            if evidence["performance_reads"] != (9 if request_mode == "approved" else 0):
                 raise RuntimeError("Performance acceptance performed unauthorized reads")
             if evidence["residency_reads"] != (3 if request_mode == "approved" else 0):
                 raise RuntimeError("Residency acceptance performed unauthorized reads")
             if evidence["critical_path_reads"] != (3 if request_mode == "approved" else 0):
                 raise RuntimeError("Critical-path acceptance performed unauthorized reads")
-            if evidence["comparison_reads"] != (3 if request_mode == "approved" else 0):
+            if evidence["comparison_reads"] != (6 if request_mode == "approved" else 0):
                 raise RuntimeError("Comparison acceptance performed unauthorized reads")
-            if evidence["regression_reads"] != (3 if request_mode == "approved" else 0):
-                raise RuntimeError("Regression inbox acceptance performed unauthorized reads")
+            if evidence["trace_reads"] != (3 if request_mode == "approved" else 0):
+                raise RuntimeError("Codex trace read count changed or consent bypassed")
+            if evidence["regression_reads"] != (12 if request_mode == "approved" else 0):
+                raise RuntimeError("Regression tool/resource acceptance performed unexpected reads")
             if request_mode == "approved":
                 fixture_control("performance-empty")
                 fixture_control("residency-empty")
@@ -964,6 +1064,8 @@ def remote_fixture_acceptance(args):
                     thread_id, _server = connect(rpc)
                     profiles_call(rpc, thread_id, True, empty=True)
                     performance_calls(rpc, thread_id, True, empty=True)
+                    fixture_control("trace-partial")
+                    trace_call(rpc, thread_id, True, empty=True, partial=True)
                     residency_calls(rpc, thread_id, True, empty=True)
                     result, value = invoke(rpc, thread_id, "gregale_get_request_evidence", {"app":"alpha", "request_id":"row-1"})
                     if result.get("isError"):
@@ -1014,7 +1116,7 @@ def remote_fixture_acceptance(args):
                 raise RuntimeError("Codex retained remote tools after grant revocation")
         finally:
             rpc.close()
-        print(json.dumps({"client": "codex", "fixture": True, "transport": "streamable-http", "tools": tools, "oauth_login": "passed", "discovery": "passed", "read_calls": "passed", "source_planning": "passed", "scoped_telemetry": "passed", "rollout_watch": "passed", "resources": "passed", "restart": "passed", "refresh": "passed", "revocation": "passed", "request_diagnostics": request_mode, "request_discovery": "passed" if request_mode else "not_requested", "performance_diagnosis": "passed" if request_mode else "not_requested", "empty_performance": "passed" if request_mode == "approved" else "not_requested", "residency_diagnosis": "passed" if request_mode else "not_requested", "empty_residency": "passed" if request_mode == "approved" else "not_requested", "critical_paths": "passed" if request_mode else "not_requested", "empty_critical_paths": "passed" if request_mode == "approved" else "not_requested", "deployment_comparison": "passed" if request_mode else "not_requested", "empty_comparison": "passed" if request_mode == "approved" else "not_requested", "regression_inbox": "passed" if request_mode else "not_requested", "empty_regressions": "passed" if request_mode == "approved" else "not_requested", "request_explanations": "passed" if request_mode else "not_requested", "empty_request_explanation": "passed" if request_mode == "approved" else "not_requested", "request_critical_path": "passed" if request_mode else "not_requested", "empty_request_critical_path": "passed" if request_mode == "approved" else "not_requested", "guest_execution": "passed" if request_mode else "not_requested", "missing_guest_execution": "passed" if request_mode == "approved" else "not_requested", "request_regression_context": "passed" if request_mode else "not_requested", "missing_request_regression": "passed" if request_mode == "approved" else "not_requested", "request_dependency_comparison": "passed" if request_mode else "not_requested", "missing_request_dependency_comparison": "passed" if request_mode == "approved" else "not_requested", "truncated_request_dependency_comparison": "passed" if request_mode == "approved" else "not_requested", "dependency_impact": "passed" if request_mode else "not_requested", "empty_dependency_impact": "passed" if request_mode == "approved" else "not_requested", "request_analytics": "passed" if request_mode else "not_requested", "empty_request_analytics": "passed" if request_mode == "approved" else "not_requested", "request_analytics_timeseries": "passed" if request_mode else "not_requested", "empty_request_analytics_timeseries": "passed" if request_mode == "approved" else "not_requested", "request_wake": "passed" if request_mode else "not_requested", "missing_request_wake": "passed" if request_mode == "approved" else "not_requested", "invalid_request_wake": "passed" if request_mode == "approved" else "not_requested", "request_wake_recommendation": "passed" if request_mode == "approved" else "not_requested", "wake_pagination": "passed" if request_mode else "not_requested", "wake_history_pagination": "passed" if request_mode else "not_requested", "wake_timeline": "passed" if request_mode else "not_requested", "empty_wake_timeline": "passed" if request_mode == "approved" else "not_requested", "wake_history": "passed" if request_mode else "not_requested", "empty_wake_history": "passed" if request_mode == "approved" else "not_requested", "error_triage": "passed" if request_mode else "not_requested", "empty_error_triage": "passed" if request_mode == "approved" else "not_requested", "profiles": "passed" if request_mode else "not_requested", "empty_profiles": "passed" if request_mode == "approved" else "not_requested", "model_requests": 0, "deployment_writes": 0}))
+        print(json.dumps({"client": "codex", "fixture": True, "transport": "streamable-http", "tools": tools, "oauth_login": "passed", "discovery": "passed", "read_calls": "passed", "source_planning": "passed", "scoped_telemetry": "passed", "rollout_watch": "passed", "resources": "passed", "restart": "passed", "refresh": "passed", "revocation": "passed", "request_diagnostics": request_mode, "request_discovery": "passed" if request_mode else "not_requested", "performance_diagnosis": "passed" if request_mode else "not_requested", "empty_performance": "passed" if request_mode == "approved" else "not_requested", "residency_diagnosis": "passed" if request_mode else "not_requested", "empty_residency": "passed" if request_mode == "approved" else "not_requested", "critical_paths": "passed" if request_mode else "not_requested", "empty_critical_paths": "passed" if request_mode == "approved" else "not_requested", "deployment_comparison": "passed" if request_mode else "not_requested", "empty_comparison": "passed" if request_mode == "approved" else "not_requested", "regression_inbox": "passed" if request_mode else "not_requested", "regression_resource": "passed" if request_mode else "not_requested", "fleet_regressions": "passed" if request_mode else "not_requested", "incident_bundle": "passed" if request_mode else "not_requested", "selected_trace": "passed" if request_mode else "not_requested", "partial_trace": "passed" if request_mode == "approved" else "not_requested", "empty_regressions": "passed" if request_mode == "approved" else "not_requested", "request_explanations": "passed" if request_mode else "not_requested", "empty_request_explanation": "passed" if request_mode == "approved" else "not_requested", "request_critical_path": "passed" if request_mode else "not_requested", "empty_request_critical_path": "passed" if request_mode == "approved" else "not_requested", "guest_execution": "passed" if request_mode else "not_requested", "missing_guest_execution": "passed" if request_mode == "approved" else "not_requested", "request_regression_context": "passed" if request_mode else "not_requested", "missing_request_regression": "passed" if request_mode == "approved" else "not_requested", "request_dependency_comparison": "passed" if request_mode else "not_requested", "missing_request_dependency_comparison": "passed" if request_mode == "approved" else "not_requested", "truncated_request_dependency_comparison": "passed" if request_mode == "approved" else "not_requested", "dependency_impact": "passed" if request_mode else "not_requested", "empty_dependency_impact": "passed" if request_mode == "approved" else "not_requested", "request_analytics": "passed" if request_mode else "not_requested", "empty_request_analytics": "passed" if request_mode == "approved" else "not_requested", "request_analytics_timeseries": "passed" if request_mode else "not_requested", "empty_request_analytics_timeseries": "passed" if request_mode == "approved" else "not_requested", "request_wake": "passed" if request_mode else "not_requested", "missing_request_wake": "passed" if request_mode == "approved" else "not_requested", "invalid_request_wake": "passed" if request_mode == "approved" else "not_requested", "request_wake_recommendation": "passed" if request_mode == "approved" else "not_requested", "wake_pagination": "passed" if request_mode else "not_requested", "wake_history_pagination": "passed" if request_mode else "not_requested", "wake_timeline": "passed" if request_mode else "not_requested", "empty_wake_timeline": "passed" if request_mode == "approved" else "not_requested", "wake_history": "passed" if request_mode else "not_requested", "empty_wake_history": "passed" if request_mode == "approved" else "not_requested", "error_triage": "passed" if request_mode else "not_requested", "empty_error_triage": "passed" if request_mode == "approved" else "not_requested", "profiles": "passed" if request_mode else "not_requested", "empty_profiles": "passed" if request_mode == "approved" else "not_requested", "model_requests": 0, "deployment_writes": 0}))
 
 
 def main():
