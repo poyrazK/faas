@@ -19,7 +19,7 @@ func (s *PgStore) ReadObjectMultipartMutation(ctx context.Context, u ObjectMulti
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	q := sqlc.New()
 	// Match session admission: account, bucket, then journal.
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(u.AccountID)); err != nil {
+	if _, err = lockObjectUsageScope(ctx, tx, mustPgUUID(u.AccountID), mustPgUUID(u.BucketID)); err != nil {
 		return ObjectBucketMutation{}, multipartMutationAuthorityError(err)
 	}
 	row, err := q.ObjectBucketMutationLock(ctx, tx, sqlc.ObjectBucketMutationLockParams{BucketID: mustPgUUID(u.BucketID), AccountID: mustPgUUID(u.AccountID), AppID: mustPgUUID(u.AppID)})

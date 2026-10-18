@@ -109,7 +109,7 @@ func TestWorkflowRecoveryReviewCompletionLifecycle(t *testing.T) {
 					t.Fatalf("receivers=%+v", n)
 				}
 				if pg, ok := s.(*PgStore); ok {
-					s = NewPgStore(pg.pool)
+					s = NewPgStore(pg.pool.Pool)
 					notices = s.(WorkflowRecoveryReviewCompletionNotificationStore)
 					inspector = s.(WorkflowRecoveryReviewInspector)
 					policies = s.(WorkflowRecoveryPolicyStore)

@@ -33,3 +33,12 @@ faas_public_edge_ask_url: "http://127.0.0.1:9092/v1/internal/tls/ask"
 # platform site aborts any connection that did not come from these ranges.
 # Shared with the nftables role so both layers use one pinned list.
 faas_public_edge_cloudflare_cidrs: "{{ lookup('ansible.builtin.file', role_path ~ '/../nftables/files/cloudflare-ips-v4.txt').splitlines() + lookup('ansible.builtin.file', role_path ~ '/../nftables/files/cloudflare-ips-v6.txt').splitlines() }}"
+
+# ADR-1431: the AI gateway's public host for callers outside Gregale that
+# present an access token. Caddy proxies it to outboundd's public listener,
+# which serves only /i/ and /r/ paths; set public_listen_addr in
+# /etc/faas/outboundd.toml to the same upstream before enabling it. The
+# platform's Origin CA certificate covers the host.
+faas_ai_gateway_public_enabled: false
+faas_ai_gateway_public_host: "ai.{{ faas_public_edge_domain }}"
+faas_ai_gateway_public_upstream: "127.0.0.1:8097"

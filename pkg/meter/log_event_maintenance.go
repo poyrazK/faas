@@ -24,15 +24,16 @@ const LogEventMaintenanceInterval = time.Hour
 const LogEventPartitionReconcileTimeout = 5 * time.Second
 
 // A coarse one-day bound lets log_events_retention_time_idx find the oldest
-// candidates before the account-plan predicate is evaluated. The primary-key
+// candidates before the billing-plan predicate is evaluated. The primary-key
 // tuple identifies a row across partitions; ctid alone is not unique there.
 const retentionLogEventsBatchSQL = `
 WITH expired AS MATERIALIZED (
     SELECT e.id, e.occurred_at
       FROM log_events e
-      LEFT JOIN accounts ac ON ac.id = e.account_id
+      LEFT JOIN app_resource_accounts ac ON ac.app_id = e.app_id AND ac.id = e.account_id
+      LEFT JOIN accounts legacy ON legacy.id = e.account_id
      WHERE e.occurred_at < now() - interval '1 day'
-       AND e.occurred_at < now() - (CASE ac.plan
+       AND e.occurred_at < now() - (CASE coalesce(ac.plan, legacy.plan)
            WHEN 'free'  THEN interval '1 day'
            WHEN 'hobby' THEN interval '7 days'
            WHEN 'pro'   THEN interval '30 days'
@@ -47,7 +48,7 @@ DELETE FROM log_events e
  WHERE e.id = x.id AND e.occurred_at = x.occurred_at`
 
 // RetentionOnceLogEvents removes expired projections in bounded batches. A
-// missing account uses the one-day floor, so orphan records cannot persist
+// missing billing policy uses the one-day floor, so orphan records cannot persist
 // indefinitely. The loop's cap makes a large backlog visible to meterd.
 func RetentionOnceLogEvents(ctx context.Context, db retentionExecer) (int64, error) {
 	var total int64

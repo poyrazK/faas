@@ -36,6 +36,8 @@ var memDispatched = map[string]bool{
 	"BindInstanceSnapshotRecovery":                            true,
 	"CompleteOperatorPark":                                    true,
 	"CompleteOperatorRestart":                                 true,
+	"ListProjectsForOrg":                                      true,
+	"ProjectByOrgSlug":                                        true,
 	"ProcessNextWorkflowInitialManualCompletion":              true,
 	"AcceptEntityOutboxDelivery":                              true,
 	"AccountPasswordByAccountID":                              true,
@@ -1076,6 +1078,8 @@ func (s *Mem) WarmPoolReconciliationAppIDs(p0 context.Context, p1 string) ([]str
 var pgDispatched = map[string]bool{
 	"ScenarioWebhookDeliveryBlocked":                                     true,
 	"SubmitOperatorRecovery":                                             true,
+	"ListProjectsForOrg":                                                 true,
+	"ProjectByOrgSlug":                                                   true,
 	"AbandonProjectEnvironmentCloneConfigurationFence":                   true,
 	"AbandonProjectEnvironmentCloneObjectWriteFences":                    true,
 	"AcquireProjectEnvironmentCloneConfigurationFence":                   true,
@@ -2412,6 +2416,8 @@ func (s *Pg) WithdrawProjectEnvironmentCloneCheckpointPgBindings(p0 context.Cont
 var storeDispatched = map[string]bool{
 	"ScenarioWebhookDeliveryBlocked":                true,
 	"SubmitOperatorRecovery":                        true,
+	"ListProjectsForOrg":                            true,
+	"ProjectByOrgSlug":                              true,
 	"MCPPolicyConvergenceSnapshot":                  true,
 	"LatestAccountEdgeRulePolicyPosition":           true,
 	"LatestEdgeRuleChangeID":                        true,
@@ -3089,6 +3095,60 @@ func (s *Mem) CompleteOperatorPark(ctx context.Context, completion state.Operato
 		return override.CompleteOperatorPark(ctx, completion)
 	}
 	return s.MemStore.CompleteOperatorPark(ctx, completion)
+}
+
+func (s *Mem) ProjectByOrgSlug(ctx context.Context, orgID, slug string) (state.Project, error) {
+	if override, ok := s.over.(interface {
+		ProjectByOrgSlug(context.Context, string, string) (state.Project, error)
+	}); ok {
+		return override.ProjectByOrgSlug(ctx, orgID, slug)
+	}
+	return s.MemStore.ProjectByOrgSlug(ctx, orgID, slug)
+}
+
+func (s *Mem) ListProjectsForOrg(ctx context.Context, orgID string) ([]state.Project, error) {
+	if override, ok := s.over.(interface {
+		ListProjectsForOrg(context.Context, string) ([]state.Project, error)
+	}); ok {
+		return override.ListProjectsForOrg(ctx, orgID)
+	}
+	return s.MemStore.ListProjectsForOrg(ctx, orgID)
+}
+
+func (s *Pg) ProjectByOrgSlug(ctx context.Context, orgID, slug string) (state.Project, error) {
+	if override, ok := s.over.(interface {
+		ProjectByOrgSlug(context.Context, string, string) (state.Project, error)
+	}); ok {
+		return override.ProjectByOrgSlug(ctx, orgID, slug)
+	}
+	return s.PgStore.ProjectByOrgSlug(ctx, orgID, slug)
+}
+
+func (s *Pg) ListProjectsForOrg(ctx context.Context, orgID string) ([]state.Project, error) {
+	if override, ok := s.over.(interface {
+		ListProjectsForOrg(context.Context, string) ([]state.Project, error)
+	}); ok {
+		return override.ListProjectsForOrg(ctx, orgID)
+	}
+	return s.PgStore.ListProjectsForOrg(ctx, orgID)
+}
+
+func (s *Store) ProjectByOrgSlug(ctx context.Context, orgID, slug string) (state.Project, error) {
+	if override, ok := s.over.(interface {
+		ProjectByOrgSlug(context.Context, string, string) (state.Project, error)
+	}); ok {
+		return override.ProjectByOrgSlug(ctx, orgID, slug)
+	}
+	return s.Store.ProjectByOrgSlug(ctx, orgID, slug)
+}
+
+func (s *Store) ListProjectsForOrg(ctx context.Context, orgID string) ([]state.Project, error) {
+	if override, ok := s.over.(interface {
+		ListProjectsForOrg(context.Context, string) ([]state.Project, error)
+	}); ok {
+		return override.ListProjectsForOrg(ctx, orgID)
+	}
+	return s.Store.ListProjectsForOrg(ctx, orgID)
 }
 
 func (s *Mem) AppTaskAttachByTask(p0 context.Context, p1 string) (state.AppTaskAttach, error) {

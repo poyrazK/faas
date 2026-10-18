@@ -84,7 +84,7 @@ func TestMCPReadinessPagerDutyReleaseLifecycle(t *testing.T) {
 				// A different destination is ordered by provider time, even if received after primary.
 				f.apply(f.input("fallback", "ack-fallback", "PFALLBACK", "", 3), 1, 6, "already_acknowledged")
 				if pg, ok := f.store.(*PgStore); ok {
-					f.incoming = NewPgStore(pg.pool)
+					f.incoming = NewPgStore(pg.pool.Pool)
 				}
 				p := f.apply(f.input("primary", "release-primary", "PPRIMARY", "release", 4), 1, 7, "retained")
 				v := f.view(f.incident, f.now.Add(7*time.Second))

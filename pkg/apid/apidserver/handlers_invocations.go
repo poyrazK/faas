@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -962,6 +963,7 @@ func ptrTime(t *time.Time) time.Time {
 // Pagination is by `?before=<id>` (an Invocation.ID); defaults to 20,
 // capped at 200.
 func (s *server) listInvocations(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	requestCtx := r.Context()
 	limit := 20
 	if q := r.URL.Query().Get("limit"); q != "" {
 		if n, err := strconv.Atoi(q); err == nil && n > 0 && n <= 200 {
@@ -969,21 +971,20 @@ func (s *server) listInvocations(w http.ResponseWriter, r *http.Request, acct st
 		}
 	}
 	before := r.URL.Query().Get("before")
-	rows, err := s.store.ListInvocationsForAccount(r.Context(), acct.ID, limit, before)
+	rows, nextBefore, err := appaccess.VisiblePage(requestCtx, before, limit,
+		func(cursor string) ([]state.Invocation, error) {
+			return s.store.ListInvocationsForAccount(requestCtx, acct.ID, limit, cursor)
+		},
+		func(rows []state.Invocation) ([]state.Invocation, error) {
+			return appaccess.VisibleResources(r, s.store, actorAccount(r, acct), rows, func(row state.Invocation) string { return row.AppID })
+		},
+		func(row state.Invocation) string { return row.ID })
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("list invocations"))
 		return
 	}
 	if rows == nil {
 		rows = []state.Invocation{}
-	}
-	var nextBefore string
-	if len(rows) == limit && len(rows) > 0 {
-		// The store orders newest first and applies the same cursor to
-		// the next query, so the last row is the stable continuation
-		// token. An extra request at the end of an exact-size history is
-		// harmless and keeps the store interface backwards-compatible.
-		nextBefore = rows[len(rows)-1].ID
 	}
 	writeJSON(w, http.StatusOK, invocationListResponse{Invocations: rows, NextBefore: nextBefore})
 }

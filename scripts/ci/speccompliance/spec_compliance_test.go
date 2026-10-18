@@ -46,6 +46,7 @@ const (
 	wakeTLFile                       = "wake_timeline.go"    // issue #517 PR-C / ADR-064
 	sidecarTimelineFile              = "sidecar_timeline.go" // issue #463 / ADR-069 — sidecar lifecycle timeline DTOs
 	orgsFile                         = "orgs.go"             // issue #190 / IAM-6 / ADR-061 PR 5
+	orgBillingFile                   = "org_billing.go"      // ADR-202610171904 organization financial subject DTO
 	scanFile                         = "dto_scan.go"         // issue #464 / ADR-055 — per-deploy grype CVE scan DTOs
 	webhooksFile                     = "webhooks.go"         // issue #476 / ADR-076
 	inboundWebhooksFile              = "inbound_webhooks.go" // ADR-212 — durable provider webhook ingress DTOs
@@ -326,6 +327,16 @@ var routeExclude = map[string]bool{
 	"POST /v1/webhooks/mcp-readiness/pagerduty/{id}":                         true, // Provider HMAC authentication, not Bearer HTTP.
 	"POST /v1/webhooks/mcp-readiness/pagerduty/{id}/{destination}":           true, // Destination-scoped provider HMAC ingress (ADR-20261017191529).
 	"POST /dashboard/mcp/apps/{slug}/alerts/{id}/pagerduty-acknowledgements": true, // Named-CSRF browser adapter.
+
+	// ADR-20261016151947 live queries: a preview gated by FAAS_LIVE_QUERIES_ACCOUNTS
+	// and answering like unregistered routes outside it, so it stays out of
+	// the public OpenAPI spec and generated SDKs until launch. pkg/api keeps
+	// its client for the operator CLI. Mirror across this list AND cmd/sdk-coverage/main.go::routeExclude.
+	"GET /v1/postgres/databases/{id}/live":         true,
+	"POST /v1/postgres/databases/{id}/live":        true,
+	"DELETE /v1/postgres/databases/{id}/live":      true,
+	"POST /v1/postgres/databases/{id}/live/rotate": true,
+
 	// Issue #777 / ADR-091: operator observability backend.
 	// Mirror the operator-only exclusion across both this list
 	// AND cmd/sdk-coverage/main.go::routeExclude. The two lists
@@ -1190,6 +1201,10 @@ func testRoutesParity(t *testing.T, root string, spec *specDoc) {
 	// daemons share today.
 	sources := []string{
 		filepath.Join(root, "pkg/apid/apidserver", serverSrcPath),
+		filepath.Join(root, "pkg/apid/apidserver", "org_project_routes.go"),
+		filepath.Join(root, "pkg/apid/apidserver", "org_postgres_routes.go"),
+		filepath.Join(root, "pkg/apid/apidserver", "org_object_routes.go"),
+		filepath.Join(root, "pkg/apid/apidserver", "org_queue_routes.go"),
 		filepath.Join(root, "pkg/apid/apidserver", "handlers_issues.go"),
 		filepath.Join(root, "cmd/gatewayd-internal", "run.go"),
 	}
@@ -1546,6 +1561,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", wakeTLFile),
 		filepath.Join(root, "pkg", "api", sidecarTimelineFile),
 		filepath.Join(root, "pkg", "api", orgsFile),
+		filepath.Join(root, "pkg", "api", orgBillingFile),
+		filepath.Join(root, "pkg", "api", "org_queues.go"),
 		filepath.Join(root, "pkg", "api", scanFile),
 		filepath.Join(root, "pkg", "api", webhooksFile),
 		filepath.Join(root, "pkg", "api", inboundWebhooksFile),
@@ -1615,7 +1632,12 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "alert_rollbacks.go"),
 		filepath.Join(root, "pkg", "api", "binding_application_adoption.go"),
 		filepath.Join(root, "pkg", "api", outboundBindingsFile),
-		filepath.Join(root, "pkg", "api", "outbound_ai.go"), // ADR-990/991 AI gateway prices, routes, guardrails, keys, alerts and request log
+		filepath.Join(root, "pkg", "api", "outbound_ai.go"),            // ADR-990/991 AI gateway prices, routes, guardrails, keys, alerts and request log
+		filepath.Join(root, "pkg", "api", "outbound_ai_canary.go"),     // ADR-1340 model canaries
+		filepath.Join(root, "pkg", "api", "outbound_ai_moderation.go"), // ADR-1340 moderation checks
+		filepath.Join(root, "pkg", "api", "outbound_ai_evaluations.go"),
+		filepath.Join(root, "pkg", "api", "outbound_ai_access_tokens.go"),
+		filepath.Join(root, "pkg", "api", "outbound_ai_tags.go"), // ADR-1436 usage tags and tag limits
 		filepath.Join(root, "pkg", "api", runtimeReleasesFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),

@@ -183,4 +183,40 @@ remote_stage="$(bash "$helper" stage "$plan" "$units" "$units/tools/deployctl")"
 bash "$helper" cleanup "$remote_stage"
 [[ ! -e "$remote_stage" ]] || fail "cleanup left the stage dir"
 
+# 7. Host configuration (docs/adr/20261018133100-host-configuration-lane.md):
+#    the record is written only whole and valid, with the contract.
+record="$test_root/record.json"
+export HOST_CONFIG_DIR="$test_root/bootstrap"
+jq -n '{format_version: 1, kind: "gregale-host-config", group: "control_plane",
+        commit: "1111111111111111111111111111111111111111", globals: "sha256:g",
+        order: ["postgres_capacity"], roles: {postgres_capacity: "sha256:p"},
+        environment: ("sha256:" + ("e" * 64))}' > "$record"
+contract="sha256:$(printf 'c%.0s' {1..64})"
+bash "$helper" host-record "$record" "$contract" || fail "host-record refused a valid record"
+cmp -s <(jq -S . "$record") <(jq -S . "$HOST_CONFIG_DIR/control-plane-roles.json") || fail "host-record changed the record"
+[[ "$(cat "$HOST_CONFIG_DIR/control-plane-bootstrap-contract.sha256")" == "$contract" ]] || fail "host-record did not write the contract"
+[[ "$(stat -c %a "$HOST_CONFIG_DIR" 2>/dev/null || stat -f %Lp "$HOST_CONFIG_DIR")" == 700 ]] || fail "host-record left the record directory readable"
+jq 'del(.environment)' "$record" > "$test_root/no-env.json"
+if bash "$helper" host-record "$test_root/no-env.json" "$contract" 2>/dev/null; then fail "a record without its environment hash was accepted"; fi
+if bash "$helper" host-record "$record" "sha256:'; rm -rf /'" 2>/dev/null; then fail "an unsafe contract was accepted"; fi
+cmp -s <(jq -S . "$record") <(jq -S . "$HOST_CONFIG_DIR/control-plane-roles.json") || fail "a refused record replaced the old one"
+
+# 7a. host-stage ships deployctl alone; the restart script runs
+#     restart-changed as root, keeps its report, and marks the activation.
+cat > "$units/tools/deployctl" <<'STUB'
+#!/usr/bin/env bash
+[[ "$*" == "restart-changed --json" ]] || exit 9
+echo '{"restarted":[{"service":"meterd","reason":"x","config_only":false}],"dry_run":false}'
+STUB
+chmod +x "$units/tools/deployctl"
+remote_stage="$(bash "$helper" host-stage "$units/tools/deployctl")"
+[[ -x "$remote_stage/bin/deployctl" && ! -e "$remote_stage/bin/apid" ]] || fail "host-stage did not stage deployctl alone"
+bash "$helper" host-restart-script "$remote_stage" "$test_root/host-restart.sh"
+ROLLOUT_ACTIVATION_MARKER="$test_root/activated" bash "$helper" run "$test_root/host-restart.sh" || fail "the restart script failed"
+[[ -f "$test_root/activated" ]] || fail "the restart script did not mark the activation"
+[[ "$(bash "$helper" host-restarted "$remote_stage" | jq -r '.restarted[0].service')" == meterd ]] || fail "the restart report was lost"
+if bash "$helper" host-restart-script "/tmp/elsewhere" "$test_root/x.sh" 2>/dev/null; then fail "a bad stage was accepted"; fi
+bash "$helper" cleanup "$remote_stage"
+unset HOST_CONFIG_DIR
+
 echo "unit_deploy tests passed"

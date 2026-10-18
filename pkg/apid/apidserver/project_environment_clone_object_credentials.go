@@ -105,7 +105,7 @@ func (s *server) newCapturedCloneObjectCredential(ctx context.Context, op state.
 	if source.ManagedAppID == "" {
 		return request, nil
 	}
-	account, err := s.store.AccountByID(ctx, op.AccountID)
+	account, err := state.ProjectResourceAccountByID(ctx, s.store, op.ProjectID)
 	if err != nil {
 		return request, err
 	}

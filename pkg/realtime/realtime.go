@@ -198,6 +198,11 @@ type Endpoint struct {
 	MaxConnections   int
 	MaxMessageBytes  int64
 	MaxConnectionAge time.Duration
+
+	// LiveRoutes are the live-query keys this endpoint's connections may use
+	// (ADR-20261016151947): those of databases bound to the endpoint's app. A seal
+	// whose key is not listed is refused before it reaches a hub.
+	LiveRoutes []LiveRoute
 }
 
 // Hooks receives connection lifecycle events. Connect is synchronous with
@@ -228,6 +233,9 @@ func (NopHooks) Disconnect(context.Context, Event) error      { return nil }
 // Config contains bounded resource and lifecycle settings. Zero values use
 // conservative defaults; all limits are enforced at the data-plane boundary.
 type Config struct {
+	// Live, when set, carries live-query frames on v2 connections (ADR-20261016151947).
+	Live LiveQueries
+
 	MaxConnections  int
 	MaxMessageBytes int64
 	OutboundQueue   int // Maximum queued frames per connection.
@@ -410,6 +418,11 @@ type connection struct {
 	callbackAuth atomic.Pointer[callbackAuthSnapshot]
 	ws           *websocket.Conn
 	m            *Manager
+
+	// live is the connection's live-query session, started by its first
+	// live frame.
+	live     LiveSession
+	liveOnce sync.Once
 
 	outbound       chan Message
 	outboundMu     sync.Mutex
@@ -604,6 +617,11 @@ func (m *Manager) RegisterEndpoint(e Endpoint) error {
 		allowedOrigins = append(allowedOrigins, normalized)
 	}
 	e.AllowedOrigins = allowedOrigins
+	routes, err := validLiveRoutes(e.LiveRoutes)
+	if err != nil {
+		return err
+	}
+	e.LiveRoutes = routes
 	if e.MaxConnections <= 0 || e.MaxConnections > m.cfg.MaxConnections {
 		e.MaxConnections = m.cfg.MaxConnections
 	}

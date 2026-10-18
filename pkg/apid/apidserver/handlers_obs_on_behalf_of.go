@@ -78,7 +78,7 @@ func (s *server) resolveOnBehalfOf(w http.ResponseWriter, r *http.Request, calle
 				err = state.ErrNotFound
 			}
 		} else {
-			target, err = s.store.AccountByID(r.Context(), app.AccountID)
+			target, err = state.AppResourceAccount(r.Context(), s.store, app)
 		}
 	}
 	if err != nil || target.ID == "" {

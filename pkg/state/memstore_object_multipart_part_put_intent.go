@@ -19,6 +19,10 @@ func (m *MemStore) ObserveObjectMultipartPartBody(ctx context.Context, r ObjectB
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	if !sameObjectMutationBucket(r.Bucket, m.objectBuckets[r.Bucket.ID]) {
 		return ErrConflict
 	}
@@ -46,6 +50,11 @@ func (m *MemStore) ReadObjectMultipartPartPutIntent(ctx context.Context, r Objec
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectMultipartPartPutIntent
+		return zero0, err
+	}
+
 	if !sameObjectMutationBucket(r.Bucket, m.objectBuckets[r.Bucket.ID]) {
 		return ObjectMultipartPartPutIntent{}, ErrConflict
 	}

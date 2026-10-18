@@ -22,7 +22,13 @@ func AsyncInvocationTimeout(ctx context.Context, accounts AccountReader, app App
 	if time.Duration(requestTimeoutS)*time.Second <= api.AsyncInvocationTimeoutFloor || accounts == nil {
 		return api.AsyncInvocationTimeoutFloor
 	}
-	acct, err := accounts.AccountByID(ctx, app.AccountID)
+	var acct Account
+	var err error
+	if resources, ok := accounts.(AppOwnerReader); ok {
+		acct, err = AppResourceAccount(ctx, resources, app)
+	} else {
+		acct, err = accounts.AccountByID(ctx, app.AccountID)
+	}
 	if err != nil {
 		return api.AsyncInvocationTimeoutFloor
 	}

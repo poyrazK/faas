@@ -231,3 +231,21 @@ func TestCustomerSealedSourceRequiresManagedPolicyWithoutOperatorKey(t *testing.
 		t.Fatal("mixed operator and customer credential sources were accepted")
 	}
 }
+
+// adr: 1431 — the access-token listener sits behind the TLS proxy, so it
+// must bind loopback.
+func TestLoadConfigRequiresLoopbackPublicListener(t *testing.T) {
+	for addr, ok := range map[string]bool{
+		"127.0.0.1:8097": true, "[::1]:8097": true, "0.0.0.0:8097": false, "10.0.0.5:8097": false,
+		"localhost:8097": false, "127.0.0.1": false,
+	} {
+		path := filepath.Join(t.TempDir(), "outboundd.toml")
+		if err := os.WriteFile(path, []byte("public_listen_addr = \""+addr+"\"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		c, err := LoadConfig(path)
+		if (err == nil) != ok || (ok && c.PublicListenAddr != addr) {
+			t.Errorf("public_listen_addr %q = %+v, %v", addr, c, err)
+		}
+	}
+}

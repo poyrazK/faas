@@ -171,33 +171,24 @@ func standardEnrollmentLifecycle(t *testing.T, store standardEnrollmentTestStore
 	if err != nil || len(assignments) != 1 || assignments[0].AdmissionVersion != 2 {
 		t.Fatalf("assignment read: %+v %v", assignments, err)
 	}
-	// A tombstone may predate a project assignment. Restore must validate
-	// current scope ownership rather than resurrecting that foreign member.
+	// A project's workloads share its owner (project_workload_owner): another
+	// account's app joins it neither before nor after a project assignment, so
+	// no foreign tombstone can wait in it for a restore.
 	foreign, err := store.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{Email: "enrollment-foreign@example.com", Plan: api.PlanPro})
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreignInput := input("foreign-tombstone")
+	foreignInput := input("foreign-member")
 	foreignInput.AccountID, foreignInput.OrgID, foreignInput.ProjectID = foreign.Account.ID, foreign.PersonalOrg.ID, project.ID
 	foreignInput.WorkloadName = "foreign"
-	tombstone, err := store.CreateApp(ctx, foreignInput)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.ScheduleAppDeletion(ctx, tombstone.ID, time.Now().Add(time.Hour)); err != nil {
-		t.Fatal(err)
+	if _, err := store.CreateApp(ctx, foreignInput); err == nil {
+		t.Fatal("foreign account joined the project")
 	}
 	projectAssignment := assignment
 	projectAssignment.ID, projectAssignment.Scope, projectAssignment.ScopeID = uuid.NewString(), "project", project.ID
 	seed(projectAssignment, actor.ID)
-	if _, err := store.RestoreApp(ctx, tombstone.ID, limits); !errors.Is(err, ErrInvalidArgument) {
-		t.Fatalf("restored foreign project member: %v", err)
-	}
-	if row, err := store.AppByID(ctx, tombstone.ID); err != nil || row.Status != AppDeleted {
-		t.Fatalf("rejected restore changed tombstone: %+v %v", row, err)
-	}
 	foreignInput.Slug, foreignInput.WorkloadName = "foreign-new-member", "foreign-new"
-	if _, err := store.CreateApp(ctx, foreignInput); !errors.Is(err, ErrInvalidArgument) {
-		t.Fatalf("new foreign project member: %v", err)
+	if _, err := store.CreateApp(ctx, foreignInput); err == nil {
+		t.Fatal("foreign account joined the assigned project")
 	}
 }

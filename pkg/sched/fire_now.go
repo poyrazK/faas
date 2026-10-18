@@ -227,7 +227,7 @@ func (l *Loop) processCommandCronFireNow(ctx context.Context, req state.FireNowR
 		markFailed(state.ErrNotFound)
 		return
 	}
-	account, err := l.engine.Store().AccountByID(ctx, app.AccountID)
+	account, err := state.AppResourceAccount(ctx, l.engine.Store(), app)
 	if err != nil {
 		markFailed(err)
 		return

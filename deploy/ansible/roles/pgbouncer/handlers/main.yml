@@ -5,10 +5,26 @@
     state: reloaded
   when: faas_pgbouncer_enabled | bool
 
+# A restart drops every pooled client connection, so the host-configuration
+# lane (ADR 20261018133100) refuses instead; the configuration task ran in
+# check mode and changed nothing.
+- name: refuse a pgbouncer restart outside a full release
+  ansible.builtin.fail:
+    msg: >-
+      This change needs a pgbouncer restart, which the host-configuration
+      lane never does (docs/adr/20261018133100-host-configuration-lane.md).
+      Deploy it with a full release or in a maintenance window.
+  listen: restart pgbouncer
+  when:
+    - faas_pgbouncer_enabled | bool
+    - not (faas_stateful_restart_allowed | default(true) | bool)
+
 # pool_mode, listen_addr and the pool sizes are start-time settings; a reload
 # leaves the old values in place and the change looks applied when it is not.
 - name: restart pgbouncer
   ansible.builtin.systemd:
     name: pgbouncer
     state: restarted
-  when: faas_pgbouncer_enabled | bool
+  when:
+    - faas_pgbouncer_enabled | bool
+    - faas_stateful_restart_allowed | default(true) | bool

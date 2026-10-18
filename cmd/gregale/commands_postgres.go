@@ -21,7 +21,7 @@ import (
 
 func cmdPostgres(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|diagnostics|usage-import|reconcile|create|get|delete|resize|resize-status|compute-policy|compute-policy-status|restore|bindings|attach|cutover>", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|diagnostics|usage-import|reconcile|create|get|delete|resize|resize-status|compute-policy|compute-policy-status|restore|bindings|attach|cutover|live>", "postgres")
 		return 1
 	}
 	switch args[0] {
@@ -59,6 +59,8 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresBindings(args[1:])
 	case "attach", "bind":
 		return cmdPostgresAttach(args[1:])
+	case "live":
+		return cmdPostgresLive(args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown postgres subcommand %q\n", args[0])
 		return 1

@@ -8,7 +8,7 @@
 export type OutboundAIBudgetAlert = {
   id: string;
   integration_id: string;
-  budget: 'daily_tokens' | 'app_daily_tokens' | 'daily_cost' | 'monthly_cost' | 'user_daily_tokens' | 'user_daily_cost';
+  budget: 'daily_tokens' | 'app_daily_tokens' | 'daily_cost' | 'monthly_cost' | 'user_daily_tokens' | 'user_daily_cost' | 'tag_daily_cost';
   app_id: string | null;
   /**
    * The end user of a user_daily_tokens or user_daily_cost alert (ADR-995).
@@ -19,5 +19,9 @@ export type OutboundAIBudgetAlert = {
   limit: number;
   used: number;
   crossed_at: string;
+  /**
+   * The tag of a tag_daily_cost alert (ADR-1438).
+   */
+  tag: string | null;
 };
 
