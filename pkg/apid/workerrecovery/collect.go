@@ -47,9 +47,15 @@ func Collect(ctx context.Context, store Reader, app state.App, account state.Acc
 		if pool.Revision != row.Revision || scope != "" && pool.Scope != scope {
 			continue
 		}
+		blockers := make([]api.WorkerAdmissionBlocker, 0, len(pool.Blockers))
+		for _, b := range pool.Blockers {
+			b = b.Clone()
+			b.Stale = b.ObservedAt.Before(freshAfter)
+			blockers = append(blockers, b)
+		}
 		out.Pools = append(out.Pools, api.AppWorkerPoolObservation{Scope: pool.Scope, DeploymentID: pool.DeploymentID,
 			ObservedAt: pool.ObservedAt, Stale: pool.ObservedAt.Before(freshAfter), Desired: pool.Desired,
-			Running: pool.Running, Starting: pool.Starting, Draining: pool.Draining})
+			Running: pool.Running, Starting: pool.Starting, Draining: pool.Draining, Blockers: blockers})
 	}
 	return out
 }

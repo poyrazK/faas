@@ -19,20 +19,35 @@ func testWorkerRecoveryObservations(t *testing.T, fx *Fixture) {
 		t.Fatalf("claim: %v %v", claimed, err)
 	}
 	r.Status, r.NextAttemptAt = "waiting_capacity", now.Add(5*time.Second)
+	requested := int64(512)
 	r.Pools = []state.WorkerRecoveryPool{{Scope: "default", Revision: "r", DeploymentID: fx.Deployment.ID,
-		ObservedAt: now, Desired: 2, Starting: 1}}
+		ObservedAt: now, Desired: 2, Starting: 1,
+		Blockers: []api.WorkerAdmissionBlocker{{Code: "node_ram", Resource: "ram_mb", Requested: &requested, ObservedAt: now}}}}
 	if err := fx.Store.CompleteWorkerRecovery(fx.Ctx, r.ClaimToken, r); err != nil {
 		t.Fatal(err)
 	}
 	r.Pools[0].Desired = 100
+	*r.Pools[0].Blockers[0].Requested = 999
 	got, err := fx.Store.WorkerRecoveryByApp(fx.Ctx, fx.App.ID)
 	if err != nil || len(got.Pools) != 1 || got.Pools[0].Desired != 2 || got.Pools[0].Starting != 1 || !got.Pools[0].ObservedAt.Equal(now) {
 		t.Fatalf("observations lost or caller alias persisted: %+v %v", got, err)
 	}
+	if len(got.Pools[0].Blockers) != 1 || got.Pools[0].Blockers[0].Requested == nil || *got.Pools[0].Blockers[0].Requested != 512 {
+		t.Fatalf("nested admission evidence aliased or lost: %+v", got.Pools)
+	}
 	got.Pools[0].Running = 100
+	*got.Pools[0].Blockers[0].Requested = 888
 	held, claimed, err := fx.Store.ClaimWorkerRecovery(fx.Ctx, fx.App.ID, "", "r", uuid.NewString(), now, now.Add(time.Minute))
 	if err != nil || !claimed || len(held.Pools) != 1 || held.Pools[0].Running != 0 {
 		t.Fatalf("claim lost observation or read aliased store: %+v %v %v", held, claimed, err)
+	}
+	if *held.Pools[0].Blockers[0].Requested != 512 {
+		t.Fatalf("read changed stored admission evidence: %+v", held.Pools)
+	}
+	*held.Pools[0].Blockers[0].Requested = 777
+	read, err := fx.Store.WorkerRecoveryByApp(fx.Ctx, fx.App.ID)
+	if err != nil || *read.Pools[0].Blockers[0].Requested != 512 {
+		t.Fatalf("claim aliased stored admission evidence: %+v %v", read, err)
 	}
 	for _, tc := range []struct {
 		name string
@@ -51,8 +66,21 @@ func testWorkerRecoveryObservations(t *testing.T, fx *Fixture) {
 			}
 		})
 	}
+	for _, b := range []api.WorkerAdmissionBlocker{
+		{Code: "PRIVATE_RAW_ERROR", ObservedAt: now},
+		{Code: "node_ram", ObservedAt: now.Add(time.Second)},
+		{Code: "retry_cooldown", ObservedAt: now},
+		{Code: "node_ram", ObservedAt: now, Resource: "private-resource"},
+	} {
+		bad := held
+		bad.Pools = []state.WorkerRecoveryPool{{Scope: "default", Revision: "r", ObservedAt: now, Blockers: []api.WorkerAdmissionBlocker{b}}}
+		if err := fx.Store.CompleteWorkerRecovery(fx.Ctx, held.ClaimToken, bad); !errors.Is(err, state.ErrInvalidArgument) {
+			t.Fatalf("invalid admission evidence accepted: %+v %v", b, err)
+		}
+	}
 	// A fresh neighbor cannot make an environment with stale evidence healthy.
 	held.Pools[0].ObservedAt = now.Add(-time.Duration(api.WorkerRecoveryObservationFreshnessSeconds+1) * time.Second)
+	held.Pools[0].Blockers[0].ObservedAt = held.Pools[0].ObservedAt
 	held.Pools = append(held.Pools, state.WorkerRecoveryPool{Scope: "staging", Revision: "r", ObservedAt: now, Running: 3})
 	if err := fx.Store.CompleteWorkerRecovery(fx.Ctx, held.ClaimToken, held); err != nil {
 		t.Fatal(err)

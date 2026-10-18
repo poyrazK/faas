@@ -33,5 +33,60 @@ func renderInspectWorkerRecovery(w io.Writer, recovery *api.AppWorkerRecovery) {
 			_, _ = fmt.Fprint(w, " · stale")
 		}
 		_, _ = fmt.Fprintln(w)
+		for _, blocker := range pool.Blockers {
+			renderInspectWorkerBlocker(w, blocker)
+		}
+		if len(pool.Blockers) == 0 && pool.Desired > pool.Running+pool.Starting {
+			_, _ = fmt.Fprintln(w, "      admission blockers: not observed")
+		}
+	}
+}
+
+func renderInspectWorkerBlocker(w io.Writer, b api.WorkerAdmissionBlocker) {
+	_, _ = fmt.Fprintf(w, "      admission blocker: %s", b.Code)
+	if b.Resource != "" {
+		_, _ = fmt.Fprintf(w, " · resource=%s", b.Resource)
+	}
+	if b.Requested != nil {
+		_, _ = fmt.Fprintf(w, " requested=%d", *b.Requested)
+	}
+	if b.Used != nil {
+		_, _ = fmt.Fprintf(w, " used=%d", *b.Used)
+	}
+	if b.Limit != nil {
+		_, _ = fmt.Fprintf(w, " limit=%d", *b.Limit)
+	}
+	_, _ = fmt.Fprintf(w, " · observed=%s", b.ObservedAt.UTC().Format(time.RFC3339))
+	if b.Stale {
+		_, _ = fmt.Fprint(w, " · stale")
+	}
+	if b.RetryAt != nil {
+		_, _ = fmt.Fprintf(w, " · retry after %s", b.RetryAt.UTC().Format(time.RFC3339))
+	}
+	_, _ = fmt.Fprintf(w, "\n        %s\n", workerBlockerAction(b.Code))
+}
+
+func workerBlockerAction(code string) string {
+	switch code {
+	case "account_worker_limit":
+		return "Free account worker slots or increase the account plan limit; draining workers hold slots until teardown finishes."
+	case "concurrency_limit":
+		return "Review this environment's concurrency ceiling and the app's shared concurrency budget."
+	case "node_ram", "node_vcpu", "node_cpu":
+		return "Add capacity for this resource or wait for existing reservations to be released."
+	case "no_admitting_nodes":
+		return "Check node availability and maintenance state."
+	case "placement_changed":
+		return "Wait for the next placement attempt after the node lifecycle change."
+	case "node_ports":
+		return "Free listener ports on the compute fleet or add capacity."
+	case "spend_cap":
+		return "Review the account spend cap and billing status."
+	case "retry_cooldown":
+		return "Wait for the app-wide retry deadline; earlier refusals have their own observation times."
+	case "deployment_unavailable":
+		return "Check the target deployment's live status."
+	default:
+		return "Check scheduler admission logs for this observation time."
 	}
 }

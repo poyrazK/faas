@@ -25,13 +25,16 @@ func (r reader) WorkerRecoveryByApp(context.Context, string) (state.WorkerRecove
 
 func TestCollectPreservesAppRetryAndFiltersEnvironmentObservations(t *testing.T) {
 	now := time.Now().UTC()
+	used, limit := int64(1), int64(1)
 	app := state.App{ID: "app", Status: state.AppActive}
 	account := state.Account{Status: state.AccountActive}
 	r := reader{row: state.WorkerRecovery{AppID: app.ID, Revision: "PRIVATE_REVISION", ClaimToken: "PRIVATE_TOKEN",
 		Status: "waiting_capacity", Failures: 3, UpdatedAt: now, NextAttemptAt: now.Add(20 * time.Second), LeaseUntil: now.Add(time.Minute),
 		Pools: []state.WorkerRecoveryPool{
-			{Scope: "default", DeploymentID: "production", Revision: "PRIVATE_REVISION", Desired: 2, ObservedAt: now},
-			{Scope: "staging", DeploymentID: "stage", Revision: "PRIVATE_REVISION", Desired: 1, Running: 1, ObservedAt: now},
+			{Scope: "default", DeploymentID: "production", Revision: "PRIVATE_REVISION", Desired: 2, ObservedAt: now,
+				Blockers: []api.WorkerAdmissionBlocker{{Code: "account_worker_limit", Resource: "replicas", Used: &used, Limit: &limit, ObservedAt: now}}},
+			{Scope: "staging", DeploymentID: "stage", Revision: "PRIVATE_REVISION", Desired: 1, Running: 1, ObservedAt: now,
+				Blockers: []api.WorkerAdmissionBlocker{{Code: "node_cpu", ObservedAt: now.Add(-time.Hour)}}},
 			{Scope: "old", Revision: "obsolete", Desired: 5, ObservedAt: now},
 		}}}
 	got := workerrecovery.Collect(t.Context(), r, app, account, "staging", now)
@@ -51,9 +54,16 @@ func TestCollectPreservesAppRetryAndFiltersEnvironmentObservations(t *testing.T)
 			t.Fatalf("private or neighboring evidence exposed: %s", encoded)
 		}
 	}
+	if len(got.Pools[0].Blockers) != 1 || !got.Pools[0].Blockers[0].Stale {
+		t.Fatalf("fresh counts hid stale refusal: %+v", got.Pools)
+	}
 	all := workerrecovery.Collect(t.Context(), r, app, account, "", now)
 	if len(all.Pools) != 2 {
 		t.Fatalf("unscoped summary lost current environments: %+v", all)
+	}
+	*all.Pools[0].Blockers[0].Used = 999
+	if *r.row.Pools[0].Blockers[0].Used != 1 {
+		t.Fatal("API read aliased durable refusal evidence")
 	}
 }
 

@@ -37,7 +37,10 @@ test('scoped summary preserves app-wide worker retry and pool observations', asy
     available: true, eligible: true, scope: 'app', status: 'waiting_capacity', failures: 3,
     next_attempt_at: '2026-10-17T22:30:00Z',
     pools: [{scope: 'staging', observed_at: '2026-10-17T22:00:00Z', stale: true,
-      desired: 2, running: 1, starting: 0, draining: 0}],
+      desired: 2, running: 1, starting: 0, draining: 0,
+      blockers: [{code: 'account_worker_limit', resource: 'replicas', used: 3, limit: 3,
+        observed_at: '2026-10-17T21:59:00Z', stale: true},
+      {code: 'retry_cooldown', observed_at: '2026-10-17T22:00:00Z', retry_at: '2026-10-17T22:30:00Z'}]}],
   };
   const server = createServer((req, res) => {
     assert.equal(req.url, '/v1/apps/demo/operational-summary?environment=staging');

@@ -36,7 +36,8 @@ func TestWorkerRecoveryOperationalSummaryHTTP(t *testing.T) {
 	}
 	r.Status, r.Failures, r.NextAttemptAt = "waiting_capacity", 2, now.Add(10*time.Second)
 	r.Pools = []state.WorkerRecoveryPool{
-		{Scope: "default", Revision: "r", DeploymentID: uuid.NewString(), ObservedAt: now, Desired: 2, Running: 1},
+		{Scope: "default", Revision: "r", DeploymentID: uuid.NewString(), ObservedAt: now, Desired: 2, Running: 1,
+			Blockers: []api.WorkerAdmissionBlocker{{Code: "node_ram", ObservedAt: now}}},
 		{Scope: "staging", Revision: "r", DeploymentID: uuid.NewString(), ObservedAt: now, Desired: 1, Running: 1},
 	}
 	if err := store.CompleteWorkerRecovery(t.Context(), r.ClaimToken, r); err != nil {
@@ -67,6 +68,14 @@ func TestWorkerRecoveryOperationalSummaryHTTP(t *testing.T) {
 			}
 			if tc.scope != "" && worker.Pools[0].Scope != tc.scope {
 				t.Fatalf("neighboring worker counts disclosed: %+v", worker.Pools)
+			}
+			for _, pool := range worker.Pools {
+				if pool.Scope == "staging" && len(pool.Blockers) != 0 {
+					t.Fatalf("neighboring blocker crossed selection: %+v", pool)
+				}
+				if pool.Scope == "default" && (len(pool.Blockers) != 1 || pool.Blockers[0].Code != "node_ram") {
+					t.Fatalf("refusal lost in HTTP response: %+v", pool)
+				}
 			}
 		})
 	}

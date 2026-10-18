@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"sort"
 	"time"
 
@@ -29,14 +28,15 @@ type WorkerRecovery struct {
 // resident fleet for an environment. Revision fences observations from older
 // desired intent, including during mixed-version rollout.
 type WorkerRecoveryPool struct {
-	Scope        string    `json:"scope"`
-	DeploymentID string    `json:"deployment_id"`
-	Revision     string    `json:"revision"`
-	ObservedAt   time.Time `json:"observed_at"`
-	Desired      int       `json:"desired"`
-	Running      int       `json:"running"`
-	Starting     int       `json:"starting"`
-	Draining     int       `json:"draining"`
+	Scope        string                       `json:"scope"`
+	DeploymentID string                       `json:"deployment_id"`
+	Revision     string                       `json:"revision"`
+	ObservedAt   time.Time                    `json:"observed_at"`
+	Desired      int                          `json:"desired"`
+	Running      int                          `json:"running"`
+	Starting     int                          `json:"starting"`
+	Draining     int                          `json:"draining"`
+	Blockers     []api.WorkerAdmissionBlocker `json:"blockers,omitempty"`
 }
 
 func workerRecoveryFromSQL(r sqlc.WorkerRecovery) (WorkerRecovery, error) {
@@ -200,7 +200,7 @@ func (m *MemStore) ClaimWorkerRecovery(_ context.Context, id, owner, revision, t
 		m.workerRecovery = make(map[string]WorkerRecovery)
 	}
 	m.workerRecovery[id] = r
-	r.Pools = slices.Clone(r.Pools)
+	r.Pools = cloneWorkerRecoveryPools(r.Pools)
 	return r, true, nil
 }
 
@@ -219,6 +219,9 @@ func validWorkerRecoveryCompletion(r WorkerRecovery) bool {
 			pool.ObservedAt.IsZero() || pool.ObservedAt.After(r.UpdatedAt) ||
 			pool.Desired < 0 || pool.Running < 0 || pool.Starting < 0 || pool.Draining < 0 ||
 			(pool.Desired > 0 && pool.DeploymentID == "") {
+			return false
+		}
+		if !validWorkerAdmissionBlockers(pool.Blockers, pool.ObservedAt) {
 			return false
 		}
 		seen[pool.Scope] = true
@@ -242,7 +245,7 @@ func (m *MemStore) CompleteWorkerRecovery(_ context.Context, token string, r Wor
 		return ErrConflict
 	}
 	old.Status, old.Failures, old.NextAttemptAt, old.UpdatedAt = r.Status, r.Failures, r.NextAttemptAt.UTC(), r.UpdatedAt.UTC()
-	old.Pools = slices.Clone(r.Pools)
+	old.Pools = cloneWorkerRecoveryPools(r.Pools)
 	old.ClaimToken, old.LeaseUntil = "", time.Unix(0, 0).UTC()
 	m.workerRecovery[r.AppID] = old
 	return nil
@@ -255,7 +258,7 @@ func (m *MemStore) WorkerRecoveryByApp(_ context.Context, id string) (WorkerReco
 	if !ok {
 		return WorkerRecovery{}, ErrNotFound
 	}
-	r.Pools = slices.Clone(r.Pools)
+	r.Pools = cloneWorkerRecoveryPools(r.Pools)
 	return r, nil
 }
 

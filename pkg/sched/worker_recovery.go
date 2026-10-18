@@ -195,9 +195,16 @@ func (e *Engine) observeWorkerRecoveryFleet(ctx context.Context, appID string, p
 			}
 		}
 		if plan.target != "" || ready+starting+draining > 0 {
+			var blockers []api.WorkerAdmissionBlocker
+			if targetSlots < plan.desired && !plan.queueHold {
+				if !plan.admissionObserved {
+					plan.retainAdmissionEvidence(attempt)
+				}
+				blockers = plan.blockers
+			}
 			observations = append(observations, state.WorkerRecoveryPool{
 				Scope: plan.scope, DeploymentID: plan.target, Revision: attempt.lease.Revision, ObservedAt: now,
-				Desired: plan.desired, Running: ready, Starting: starting, Draining: draining})
+				Desired: plan.desired, Running: ready, Starting: starting, Draining: draining, Blockers: blockers})
 		}
 		if plan.target == "" || plan.queueHold {
 			if draining > 0 {

@@ -94,6 +94,10 @@ func exerciseWorkerRecoveryRestart(t *testing.T, store state.Store, reopen func(
 	if len(retry.Pools) != 1 || retry.Pools[0].Desired != 2 || retry.Pools[0].Running != 0 || !retry.Pools[0].ObservedAt.Equal(now()) {
 		t.Fatalf("capacity refusal lost pool diagnostics: %+v", retry.Pools)
 	}
+	refusal := requireWorkerBlocker(t, retry.Pools[0], "node_ram")
+	if refusal.Requested == nil || *refusal.Requested != 128+api.PerVMOverheadMB || refusal.Used != nil || refusal.Limit != nil || !refusal.ObservedAt.Equal(now()) {
+		t.Fatalf("RAM refusal lost actual request or exposed fleet usage: %+v", refusal)
+	}
 	if summary, err := store.WorkerRecoverySummary(ctx, "", now()); err != nil || summary.Missing != 2 || summary.Unobserved != 0 {
 		t.Fatalf("capacity shortage invisible to alerts: %+v %v", summary, err)
 	}
@@ -101,6 +105,7 @@ func exerciseWorkerRecoveryRestart(t *testing.T, store state.Store, reopen func(
 	e = newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 	e.now = now
 	loop = NewLoop(nil, e, testLog()).WithClock(now)
+	clock.Add(int64(time.Second))
 	node.AdmissionCeilingMB = 4096
 	if _, err := store.UpsertComputeNodeFromOperator(ctx, node); err != nil {
 		t.Fatal(err)
@@ -115,6 +120,11 @@ func exerciseWorkerRecoveryRestart(t *testing.T, store state.Store, reopen func(
 	if err != nil || held.Failures != retry.Failures || !held.NextAttemptAt.Equal(retry.NextAttemptAt) {
 		t.Fatalf("events changed cooldown: %+v %v", held, err)
 	}
+	previous := requireWorkerBlocker(t, held.Pools[0], "node_ram")
+	cooldown := requireWorkerBlocker(t, held.Pools[0], "retry_cooldown")
+	if !previous.ObservedAt.Equal(refusal.ObservedAt) || cooldown.RetryAt == nil || !cooldown.RetryAt.Equal(retry.NextAttemptAt) {
+		t.Fatalf("restart lost original refusal/deadline: %+v", held.Pools)
+	}
 	clock.Store(retry.NextAttemptAt.UnixNano())
 	loop.dispatchWorkerRecovery(ctx)
 	loop.workPool().drain()
@@ -125,6 +135,9 @@ func exerciseWorkerRecoveryRestart(t *testing.T, store state.Store, reopen func(
 	}
 	if len(retry.Pools) != 1 || retry.Pools[0].Running != 2 || !retry.Pools[0].ObservedAt.Equal(now()) {
 		t.Fatalf("recovered pool diagnostics stayed stale: %+v", retry.Pools)
+	}
+	if len(retry.Pools[0].Blockers) != 0 {
+		t.Fatalf("recovered pool retained admission blockers: %+v", retry.Pools)
 	}
 	if summary, err := store.WorkerRecoverySummary(ctx, "", now()); err != nil || summary.Missing != 0 || summary.Running != 2 || summary.Overdue != 0 {
 		t.Fatalf("recovery did not clear alerts: %+v %v", summary, err)
@@ -301,6 +314,11 @@ func TestWorkerRecoveryCooldownAllowsScopedScaleIn(t *testing.T) {
 		held.Pools[1].Scope != "staging" || held.Pools[1].Desired != 1 {
 		t.Fatalf("scoped observation erased neighboring demand: %+v", held.Pools)
 	}
+	if len(held.Pools[0].Blockers) != 0 {
+		t.Fatalf("zero floor retained blocker: %+v", held.Pools[0])
+	}
+	requireWorkerBlocker(t, held.Pools[1], "node_ram")
+	requireWorkerBlocker(t, held.Pools[1], "retry_cooldown")
 	// Canceling the remaining demand keeps the zero floor at zero on recovery.
 	for _, row := range stagingDemand {
 		if err := store.CancelInvocation(ctx, row.ID); err != nil {

@@ -64616,6 +64616,24 @@ components:
         running: { type: integer, minimum: 0 }
         starting: { type: integer, minimum: 0 }
         draining: { type: integer, minimum: 0 }
+        blockers:
+          type: array
+          maxItems: 16
+          description: Last actual admission refusals for this pool. Absent evidence is unknown. A cooldown can retain earlier refusals with their original timestamps; these are not a fresh capacity forecast. Cleared when target slots are satisfied.
+          items: { $ref: '#/components/schemas/WorkerAdmissionBlocker' }
+    WorkerAdmissionBlocker:
+      type: object
+      description: Scheduler-owned admission evidence. Codes currently include account_worker_limit, concurrency_limit, node_ram, node_vcpu, node_cpu, no_admitting_nodes, node_ports, placement_changed, spend_cap, retry_cooldown, admission_refused and deployment_unavailable. Node constraints omit host identities and fleet usage. Values for account and concurrency budgets describe the actual decision, including residents still draining.
+      required: [code, observed_at]
+      properties:
+        code: { type: string }
+        observed_at: { type: string, format: date-time }
+        stale: { type: boolean, description: "Whether this refusal observation is older than fifteen minutes, independently of the pool counts." }
+        resource: { type: string, description: "Units for numeric evidence, such as replicas, ram_mb, vcpu, cpu_millicores or cents." }
+        requested: { type: integer, format: int64, minimum: 0 }
+        used: { type: integer, format: int64, minimum: 0 }
+        limit: { type: integer, format: int64, minimum: 0 }
+        retry_at: { type: string, format: date-time, description: App-wide admission cooldown deadline when code is retry_cooldown. }
     AppOperationalRollback:
       type: object
       description: Pending checked rollback progress with stable codes and target selection; free-form reasons and blocker diagnostics are omitted.

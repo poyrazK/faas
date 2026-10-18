@@ -104,7 +104,9 @@ type workerScopePlan struct {
 	queueHold bool
 	workers   []state.Instance
 	// Includes residents already owned by a stop, for diagnostics only.
-	residents map[string]bool
+	residents         map[string]bool
+	blockers          []api.WorkerAdmissionBlocker
+	admissionObserved bool
 }
 
 func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope string, override *int, trigger string) (resultErr error) {
@@ -283,6 +285,7 @@ func (e *Engine) retiredQueueHasInFlightWork(ctx context.Context, app state.App,
 }
 
 func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *workerScopePlan, trigger string, attempt *workerRecoveryAttempt) (resultErr error) {
+	plan.admissionObserved = true
 	admitted, atCapacity := false, false
 	defer func() {
 		if e.ops == nil || trigger != TriggerWorkerPool {
@@ -340,11 +343,12 @@ func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *
 	}
 	// Other environments still count against the account budget. Only this
 	// plan's retained workers can be credited back to its available slots.
-	desired, err := e.capWorkerReplicasToAccount(ctx, app, plan.workers, plan.desired)
+	desired, blocker, err := e.capWorkerReplicasToAccount(ctx, app, plan.workers, plan.desired)
 	if err != nil {
 		return err
 	}
 	if desired < plan.desired {
+		plan.observeAdmission(e.now(), *blocker)
 		attempt.observe("waiting_capacity")
 		atCapacity = true
 	}
@@ -353,6 +357,7 @@ func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *
 			return err
 		}
 		if !attempt.allowAdmission(ctx, e.now()) {
+			plan.observeAdmissionHold(attempt)
 			attempt.observe("waiting_capacity")
 			atCapacity = true
 			break
@@ -368,6 +373,7 @@ func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *
 		if err != nil {
 			var problem *api.Problem
 			if errors.Is(err, state.ErrNodeCapacity) || (errors.As(err, &problem) && problem.Code == api.CodeCapacity) {
+				plan.observeAdmission(e.now(), admissionBlockers(err)...)
 				attempt.observe("waiting_capacity")
 				atCapacity = true
 				break
@@ -376,6 +382,11 @@ func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *
 			return err
 		}
 		if result.AtCapacity {
+			blockers := result.admissionBlockers
+			if len(blockers) == 0 {
+				blockers = []api.WorkerAdmissionBlocker{{Code: "admission_refused"}}
+			}
+			plan.observeAdmission(e.now(), blockers...)
 			attempt.observe("waiting_capacity")
 			atCapacity = true
 			break
@@ -676,30 +687,36 @@ func (e *Engine) workerQueueDemandForScope(ctx context.Context, app state.App, s
 	return desired, nil
 }
 
-func (e *Engine) capWorkerReplicasToAccount(ctx context.Context, app state.App, current []state.Instance, desired int) (int, error) {
+func (e *Engine) capWorkerReplicasToAccount(ctx context.Context, app state.App, current []state.Instance, desired int) (int, *api.WorkerAdmissionBlocker, error) {
 	if desired <= 0 {
-		return desired, nil
+		return desired, nil, nil
 	}
 	account, err := e.store.AccountByID(ctx, app.AccountID)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	limits, ok := api.LimitsFor(account.Plan)
 	if !ok || limits.WorkerReplicasMax <= 0 {
-		return 0, nil
+		// A plan change can arrive after demand planning. Usage has not
+		// been read here, so omit numeric evidence rather than assume zero.
+		b := api.WorkerAdmissionBlocker{Code: "account_worker_limit"}
+		return 0, &b, nil
 	}
 	all, err := e.store.ListInstancesForAccount(ctx, app.AccountID)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	currentIDs := make(map[string]bool, len(current))
 	for _, ins := range current {
 		currentIDs[ins.ID] = true
 	}
-	otherWorkers := 0
+	otherWorkers, used := 0, 0
 	for _, ins := range all {
-		if ins.Mode == string(state.InstanceModeWorker) && state.State(ins.State).CountsForRAM() && !currentIDs[ins.ID] {
-			otherWorkers++
+		if ins.Mode == string(state.InstanceModeWorker) && state.State(ins.State).CountsForRAM() {
+			used++
+			if !currentIDs[ins.ID] {
+				otherWorkers++
+			}
 		}
 	}
 	available := limits.WorkerReplicasMax - otherWorkers
@@ -707,7 +724,8 @@ func (e *Engine) capWorkerReplicasToAccount(ctx context.Context, app state.App, 
 		available = 0
 	}
 	if desired > available {
-		desired = available
+		b := limitBlocker("account_worker_limit", "replicas", int64(used), int64(limits.WorkerReplicasMax))
+		return available, &b, nil
 	}
-	return desired, nil
+	return desired, nil, nil
 }

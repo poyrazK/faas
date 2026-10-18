@@ -161,6 +161,12 @@ func inspectWatchComparable(summary inspectSummary) inspectSummary {
 			workers.Pools = slices.Clone(workers.Pools)
 			for i := range workers.Pools {
 				workers.Pools[i].ObservedAt = time.Time{}
+				workers.Pools[i].Blockers = slices.Clone(workers.Pools[i].Blockers)
+				for j := range workers.Pools[i].Blockers {
+					workers.Pools[i].Blockers[j] = workers.Pools[i].Blockers[j].Clone()
+					workers.Pools[i].Blockers[j].ObservedAt = time.Time{}
+				}
+				slices.SortFunc(workers.Pools[i].Blockers, func(a, b api.WorkerAdmissionBlocker) int { return strings.Compare(a.Code, b.Code) })
 			}
 			slices.SortFunc(workers.Pools, func(a, b api.AppWorkerPoolObservation) int { return strings.Compare(a.Scope, b.Scope) })
 			operation.Recovery.Workers = &workers

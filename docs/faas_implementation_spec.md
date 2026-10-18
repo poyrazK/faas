@@ -1108,6 +1108,14 @@ remain unknown; fresh owner-scoped metrics distinguish deficits, overdue
 reconciliation and unavailable collection. Intentional zero targets do not
 contribute a capacity deficit. See [worker recovery diagnostics](adr/20261017223000-worker-recovery-diagnostics.md).
 
+Worker pool observations also record bounded admission blockers from actual
+account, concurrency, node resource and retry decisions. Each refusal retains its
+own observation time; cooldowns preserve earlier evidence and the app-wide retry
+deadline. Environment selection filters blockers, and satisfied target slots
+clear them. Optional API/CLI evidence includes relevant account/app usage and
+limits while omitting host identities and fleet usage. See
+[worker admission explanations](adr/20261018090000-worker-admission-explanations.md).
+
 ### 6.3 Wake latency budget (p50 targets)
 
 | Step | ms |

@@ -2545,6 +2545,7 @@ export type { WebhookAutomationReceiptResponse } from './WebhookAutomationReceip
 export type { WorkDecision } from './WorkDecision.js';
 export type { WorkPolicyListResponse } from './WorkPolicyListResponse.js';
 export type { WorkPolicyResponse } from './WorkPolicyResponse.js';
+export type { WorkerAdmissionBlocker } from './WorkerAdmissionBlocker.js';
 export type { WorkerRolloutObservation } from './WorkerRolloutObservation.js';
 export type { WorkerScaling } from './WorkerScaling.js';
 export type { WorkflowCallbackResponse } from './WorkflowCallbackResponse.js';

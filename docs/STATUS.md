@@ -7,6 +7,32 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Worker admission explanations — 2026-10-18
+
+Worker pool recovery now records the actual admission blockers per environment:
+account worker and concurrency limits, node RAM/vCPU/CPU constraints, unavailable
+nodes, placement changes, listener ports, spend caps and retry cooldowns. Account
+and concurrency decisions include usage/limits when observed; node evidence
+includes requested resources without host identities or fleet usage. Cooldowns
+retain earlier refusal times, and independent staleness stays visible even with
+fresh pool counts. Scoped passes preserve neighboring evidence; satisfied slots
+and zero targets clear blockers.
+
+The operational-summary API, `gregale inspect` and watch, generated Node/Python
+SDKs and recovery runbook expose these explanations and actions. Evidence reuses
+the existing pool JSON under the same lease/revision fences. No additional
+migration is needed; the two prior worker recovery migrations still precede the
+control plane. This change is not deployed. Native recovery qualification remains
+separate and pending.
+
+Portable validation passes 163 scheduler checks, including scheduler restart using
+PostgreSQL and node-generation admission safeguards, 32 CLI inspect/watch checks
+and 16 shared memory/PostgreSQL recovery contracts, with no skips. HTTP authorization/MFA,
+environment selection and read-only checks pass. Generated Node/Python SDK round
+trips cover new evidence and older responses; regeneration is deterministic.
+OpenAPI parity, protocol compatibility against the branch base and operator-doc
+gates pass. Scoped production lint passes with zero issues.
+
 ## Worker recovery diagnostics — 2026-10-17
 
 Worker recovery now records per-environment scheduler targets and resident counts

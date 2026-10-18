@@ -56,6 +56,21 @@ def test_worker_recovery_preserves_scope_deadline_and_stale_observations():
                 "running": 1,
                 "starting": 0,
                 "draining": 0,
+                "blockers": [
+                    {
+                        "code": "account_worker_limit",
+                        "resource": "replicas",
+                        "used": 3,
+                        "limit": 3,
+                        "observed_at": "2026-10-17T21:59:00+00:00",
+                        "stale": True,
+                    },
+                    {
+                        "code": "retry_cooldown",
+                        "observed_at": "2026-10-17T22:00:00+00:00",
+                        "retry_at": "2026-10-17T22:30:00+00:00",
+                    },
+                ],
             }
         ],
     }
@@ -64,4 +79,8 @@ def test_worker_recovery_preserves_scope_deadline_and_stale_observations():
     assert summary.recovery.workers.failures == 3
     assert summary.recovery.workers.pools[0].scope == "staging"
     assert summary.recovery.workers.pools[0].stale
+    assert summary.recovery.workers.pools[0].blockers[0].used == 3
+    assert summary.recovery.workers.pools[0].blockers[1].code == "retry_cooldown"
     assert summary.to_dict() == payload
+    del payload["recovery"]["workers"]["pools"][0]["blockers"]
+    assert AppOperationalSummary.from_dict(payload).to_dict() == payload

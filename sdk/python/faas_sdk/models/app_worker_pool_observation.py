@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.worker_admission_blocker import WorkerAdmissionBlocker
+
 
 T = TypeVar("T", bound="AppWorkerPoolObservation")
 
@@ -28,6 +32,10 @@ class AppWorkerPoolObservation:
     starting: int
     draining: int
     deployment_id: str | Unset = UNSET
+    blockers: list[WorkerAdmissionBlocker] | Unset = UNSET
+    """Last actual admission refusals for this pool. Absent evidence is unknown. A cooldown can retain earlier
+    refusals with their original timestamps; these are not a fresh capacity forecast. Cleared when target slots are
+    satisfied."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -47,6 +55,13 @@ class AppWorkerPoolObservation:
 
         deployment_id = self.deployment_id
 
+        blockers: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.blockers, Unset):
+            blockers = []
+            for blockers_item_data in self.blockers:
+                blockers_item = blockers_item_data.to_dict()
+                blockers.append(blockers_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -62,11 +77,15 @@ class AppWorkerPoolObservation:
         )
         if deployment_id is not UNSET:
             field_dict["deployment_id"] = deployment_id
+        if blockers is not UNSET:
+            field_dict["blockers"] = blockers
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.worker_admission_blocker import WorkerAdmissionBlocker
+
         d = dict(src_dict)
         scope = d.pop("scope")
 
@@ -84,6 +103,15 @@ class AppWorkerPoolObservation:
 
         deployment_id = d.pop("deployment_id", UNSET)
 
+        _blockers = d.pop("blockers", UNSET)
+        blockers: list[WorkerAdmissionBlocker] | Unset = UNSET
+        if _blockers is not UNSET:
+            blockers = []
+            for blockers_item_data in _blockers:
+                blockers_item = WorkerAdmissionBlocker.from_dict(blockers_item_data)
+
+                blockers.append(blockers_item)
+
         app_worker_pool_observation = cls(
             scope=scope,
             observed_at=observed_at,
@@ -93,6 +121,7 @@ class AppWorkerPoolObservation:
             starting=starting,
             draining=draining,
             deployment_id=deployment_id,
+            blockers=blockers,
         )
 
         app_worker_pool_observation.additional_properties = d

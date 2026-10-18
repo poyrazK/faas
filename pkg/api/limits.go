@@ -12529,6 +12529,8 @@ const ServiceMapHighErrorRatePct = 5.0
 const (
 	// Diagnostics become unknown after fifteen minutes without a pool observation.
 	WorkerRecoveryObservationFreshnessSeconds = 900
+	// Bound persisted per-pool refusal evidence, including a cooldown marker.
+	WorkerAdmissionBlockersMax = 16
 	// A retry/lease is overdue only after discovery has had a minute to reclaim it.
 	WorkerRecoveryOverdueGraceSeconds     = 60
 	WorkerRecoveryMetricsFreshnessSeconds = 60

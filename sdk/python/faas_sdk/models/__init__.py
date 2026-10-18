@@ -5005,6 +5005,7 @@ from .work_policy_list_response import WorkPolicyListResponse
 from .work_policy_response import WorkPolicyResponse
 from .work_policy_response_max_running_per_key import WorkPolicyResponseMaxRunningPerKey
 from .work_policy_response_pending_updates import WorkPolicyResponsePendingUpdates
+from .worker_admission_blocker import WorkerAdmissionBlocker
 from .worker_rollout_observation import WorkerRolloutObservation
 from .worker_rollout_observation_basis import WorkerRolloutObservationBasis
 from .worker_scaling import WorkerScaling
@@ -9909,6 +9910,7 @@ __all__ = (
     "WebhookAutomationReceiptResponseStatus",
     "WorkDecision",
     "WorkDecisionAction",
+    "WorkerAdmissionBlocker",
     "WorkerRolloutObservation",
     "WorkerRolloutObservationBasis",
     "WorkerScaling",

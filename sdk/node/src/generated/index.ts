@@ -2549,6 +2549,7 @@ export type { WakeTimelineResponse } from './models/WakeTimelineResponse.js';
 export type { WebhookAutomationBindingResponse } from './models/WebhookAutomationBindingResponse.js';
 export type { WebhookAutomationReceiptResponse } from './models/WebhookAutomationReceiptResponse.js';
 export type { WorkDecision } from './models/WorkDecision.js';
+export type { WorkerAdmissionBlocker } from './models/WorkerAdmissionBlocker.js';
 export type { WorkerRolloutObservation } from './models/WorkerRolloutObservation.js';
 export type { WorkerScaling } from './models/WorkerScaling.js';
 export type { WorkflowCallbackResponse } from './models/WorkflowCallbackResponse.js';

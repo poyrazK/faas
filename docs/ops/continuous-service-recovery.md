@@ -34,6 +34,32 @@ unknown. Observations older than fifteen minutes show `stale=true`; their last
 values remain visible with their original timestamp. A new desired revision
 invalidates old observations. Reading status never schedules or wakes workers.
 
+Pool `blockers` explain the scheduler's actual admission decisions. `gregale
+inspect` prints these codes with resource units, available numeric evidence and
+suggested actions:
+
+| Blocker | Meaning and action |
+| --- | --- |
+| `account_worker_limit` | The account worker budget cannot fit the target. Check the recorded `used` and `limit` when present. Free slots or change the plan; draining residents hold their slot until physical teardown commits. A racing durable refusal can omit usage. |
+| `concurrency_limit` | The environment ceiling or app-wide concurrency budget is full. Review both limits and the recorded usage. |
+| `node_ram`, `node_vcpu`, `node_cpu` | The requested resource does not fit a compute node. Add capacity or wait for reservations to be released. CPU evidence includes startup boost when enforced by the deciding guard. Fleet usage and host IDs are omitted. |
+| `no_admitting_nodes` | No eligible node was available for placement. Check availability and maintenance state. |
+| `placement_changed` | Placement exhausted its bounded retries after lifecycle generations changed. Wait for another placement attempt. |
+| `node_ports` | Listener port allocation failed. Free ports or add compute capacity. |
+| `spend_cap` | The account spend cap refused admission. Review recorded cents and billing status. |
+| `retry_cooldown` | Admission was held until `retry_at`, the app-wide retry deadline. Earlier refusals keep their own timestamps; their capacity has not been rechecked. |
+| `deployment_unavailable` | The explicit target stopped being live or available during admission. Check deployment state. |
+| `admission_refused` | Capacity was refused without more specific structured evidence. Check scheduler logs at the observation time. |
+
+Several resources can block different nodes; their headroom cannot be combined.
+Each blocker has its own `observed_at` and read-time `stale` flag. Fresh pool
+counts do not refresh an older refusal. Lists are limited to sixteen unique
+codes (`api.WorkerAdmissionBlockersMax`). A successful allocation or zero target
+clears blockers; startup/readiness can still be in progress. A scoped pass keeps
+neighboring evidence intact. Missing `blockers` on a deficit means the reason was
+not observed, including during an older-scheduler rollback. These fields are
+additive JSON within the observation column and need no additional migration.
+
 For platform investigation with an operator database connection, list active apps
 and their ledgers, including apps that have never been claimed:
 

@@ -1631,9 +1631,10 @@ func (e *Engine) NodeKeyRegistry() *NodeKeyRegistry {
 // identity (the compute_node.id), with the dial target chosen on
 // the gateway side from that.
 type WakeResult struct {
-	InstanceID string
-	NodeID     string // compute_nodes.id (uuid), empty only on error
-	Method     vmmdpb.WakeMethod
+	admissionBlockers []api.WorkerAdmissionBlocker // Internal evidence for worker recovery; never a scheduling input.
+	InstanceID        string
+	NodeID            string // compute_nodes.id (uuid), empty only on error
+	Method            vmmdpb.WakeMethod
 	// WakeID is the per-wake-attempt correlation handle (gaps analysis
 	// 2026-07-23). UUIDv7 minted at Phase 2 before CreateInstance;
 	// gatewayd-internal propagates it back to the client as x-faas-wake-id and
@@ -2855,7 +2856,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			release()
 			if errors.Is(depErr, state.ErrNotFound) {
 				e.refuseExplicitDeployment(appID, deploymentID, deploymentSmoke, "deployment_not_found", "")
-				return WakeResult{AtCapacity: true}, nil
+				return WakeResult{AtCapacity: true, admissionBlockers: []api.WorkerAdmissionBlocker{{Code: "deployment_unavailable"}}}, nil
 			}
 			return WakeResult{}, fmt.Errorf("sched: resolve explicit deployment: %w", depErr)
 		}
@@ -2867,7 +2868,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 				reason = "deployment_app_mismatch"
 			}
 			e.refuseExplicitDeployment(appID, deploymentID, deploymentSmoke, reason, string(explicitDep.Status))
-			return WakeResult{AtCapacity: true}, nil
+			return WakeResult{AtCapacity: true, admissionBlockers: []api.WorkerAdmissionBlocker{{Code: "deployment_unavailable"}}}, nil
 		}
 		dep = explicitDep
 	}
@@ -3067,7 +3068,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			// hits the gate on the same account.
 			if liftCapacityToResult {
 				e.IncAtCapacity(appID, "wake")
-				return WakeResult{AtCapacity: true}, nil
+				return WakeResult{AtCapacity: true, admissionBlockers: []api.WorkerAdmissionBlocker{
+					limitBlocker("spend_cap", "cents", obsCents, capCents)}}, nil
 			}
 			return WakeResult{}, api.ErrAdmissionRefused(obsCents, capCents)
 		}
@@ -3295,7 +3297,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		if errors.Is(err, state.ErrAccountWorkerCapacity) {
 			e.IncAtCapacity(appID, "wake")
 			if liftCapacityToResult {
-				return WakeResult{AtCapacity: true}, nil
+				return WakeResult{AtCapacity: true, admissionBlockers: []api.WorkerAdmissionBlocker{{Code: "account_worker_limit"}}}, nil
 			}
 			return WakeResult{}, api.ErrCapacity("The account worker replica limit is reached")
 		}
@@ -3342,7 +3344,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		_ = e.store.DeleteInstance(ctx, ins.ID)
 		release()
 		if errors.Is(err, hostport.ErrExhausted) {
-			return WakeResult{}, api.ErrCapacity("no host ports are available on the selected compute node")
+			return WakeResult{}, explainAdmission(api.ErrCapacity("no host ports are available on the selected compute node"),
+				api.WorkerAdmissionBlocker{Code: "node_ports"})
 		}
 		return WakeResult{}, err
 	}
@@ -3398,7 +3401,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			e.releaseHostPortLeases(ctx, placement.NodeID, ins.ID)
 			release()
 			e.IncAtCapacity(appID, "wake")
-			return WakeResult{AtCapacity: true}, nil
+			return WakeResult{AtCapacity: true, admissionBlockers: admissionBlockers(err)}, nil
 		}
 		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "admit_denied")
 		release()

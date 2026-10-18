@@ -158,6 +158,10 @@ func TestStoppingWorkerStillCountsAgainstAccountCap(t *testing.T) {
 	if err != nil || len(recovery.Pools) != 1 || recovery.Pools[0].DeploymentID != target.ID || recovery.Pools[0].Draining != 1 || recovery.Pools[0].Running != 0 {
 		t.Fatalf("stopping predecessor disappeared from diagnostics: %+v %v", recovery.Pools, err)
 	}
+	b := requireWorkerBlocker(t, recovery.Pools[0], "account_worker_limit")
+	if b.Used == nil || *b.Used != 3 || b.Limit == nil || *b.Limit != 3 {
+		t.Fatalf("draining worker lost its account charge: %+v", b)
+	}
 }
 
 func TestWorkerStopTeardownYieldsToAnotherOwner(t *testing.T) {
