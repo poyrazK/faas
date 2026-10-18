@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer">
 <title>{{.Title}} — Gregale</title>
-<style nonce="{{.Nonce}}">[hidden]{display:none!important}body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:0 1rem}section{margin:1.5rem 0}table{border-collapse:collapse;width:100%}th,td{padding:.5rem;text-align:left;border-bottom:1px solid #ccc;vertical-align:top}code{overflow-wrap:anywhere}button,select,input{font:inherit;padding:.4rem .6rem}nav{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:.75rem 0}[aria-pressed="true"]{font-weight:700}.danger{color:#b00020}.muted{color:#555}dl{display:grid;grid-template-columns:max-content 1fr;gap:.25rem 1rem}dt{color:#555}form{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}input[type=search]{min-width:16rem}#detail{border:1px solid #ccc;border-radius:6px;padding:1rem}#detail>button:last-child{margin-top:1rem}#settings-form,#provider-form,#email-form{display:grid;gap:.6rem;max-width:40rem}#settings-form label,#provider-form label,#email-form label{display:grid;gap:.2rem}.sso-form{display:grid;gap:.5rem;max-width:40rem;margin:.5rem 0}.sso-form label{display:grid;gap:.2rem}fieldset{display:flex;flex-wrap:wrap;gap:.75rem}</style></head>
+<style nonce="{{.Nonce}}">[hidden]{display:none!important}body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:0 1rem}section{margin:1.5rem 0}table{border-collapse:collapse;width:100%}th,td{padding:.5rem;text-align:left;border-bottom:1px solid #ccc;vertical-align:top}code{overflow-wrap:anywhere}button,select,input{font:inherit;padding:.4rem .6rem}nav{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:.75rem 0}[aria-pressed="true"]{font-weight:700}.danger{color:#b00020}.muted{color:#555}dl{display:grid;grid-template-columns:max-content 1fr;gap:.25rem 1rem}dt{color:#555}form{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}input[type=search]{min-width:16rem}#detail{border:1px solid #ccc;border-radius:6px;padding:1rem}#detail>button:last-child{margin-top:1rem}#settings-form,#provider-form,#email-form{display:grid;gap:.6rem;max-width:40rem}#settings-form label,#provider-form label,#email-form label{display:grid;gap:.2rem}.sso-form{display:grid;gap:.5rem;max-width:40rem;margin:.5rem 0}.sso-form label{display:grid;gap:.2rem}fieldset{display:flex;flex-wrap:wrap;gap:.75rem}#detail>label{display:grid;gap:.2rem;max-width:40rem;margin:.5rem 0}#detail textarea{font:inherit;width:100%}.email-preview{white-space:pre-wrap;background:#f4f4f5;padding:.75rem;border-radius:6px}</style></head>
 <body><header><a href="/dashboard/apps/{{.Data.Slug}}">{{.Data.Slug}}</a> · <a href="/dashboard/apps/{{.Data.Slug}}/env">Environment &amp; secrets</a></header>
 <main id="auth-admin" data-origin="{{.Data.AuthOrigin}}" data-slug="{{.Data.Slug}}">{{template "email-verification-banner" .}}<h1>Application Auth</h1>
 <p>Settings, users and organizations of the Auth app <code>{{.Data.Slug}}</code>; these are your application's users, not your Gregale team.</p>
@@ -92,7 +92,7 @@
 <p id="key-error" class="danger" role="alert"></p>
 <p>Create a key with <code>gregale auth admin-key create {{.Data.Slug}}</code>. This page sends it only to <code>{{.Data.AuthOrigin}}</code> and keeps it in this browser tab until you close the tab or choose Forget key. User records go from your Auth app to this browser and never through Gregale.</p></section>
 <section id="workspace" hidden>
-<nav aria-label="Views"><button type="button" data-tab="users" aria-pressed="true">Users</button><button type="button" data-tab="orgs" aria-pressed="false">Organizations</button><button type="button" data-tab="activity" aria-pressed="false">Activity</button><button type="button" data-tab="sso" aria-pressed="false">SSO</button><button type="button" id="forget">Forget key</button></nav>
+<nav aria-label="Views"><button type="button" data-tab="users" aria-pressed="true">Users</button><button type="button" data-tab="orgs" aria-pressed="false">Organizations</button><button type="button" data-tab="activity" aria-pressed="false">Activity</button><button type="button" data-tab="sso" aria-pressed="false">SSO</button><button type="button" data-tab="emails" aria-pressed="false">Emails</button><button type="button" id="forget">Forget key</button></nav>
 <form id="search" role="search"><label for="query" class="muted">Search</label><input type="search" id="query" maxlength="200"><button type="submit">Search</button><button type="button" id="export" hidden>Export CSV</button></form>
 <p id="status" role="status" aria-live="polite"></p>
 <table id="list"><thead></thead><tbody></tbody></table>
@@ -120,6 +120,13 @@
     invalid_role: 'An identity provider cannot grant the owner role.', unknown_role: 'That role does not exist.',
     sso_domain_already_exists: 'Another identity provider already serves one of those domains.', saml_idp_already_exists: 'That identity provider is already registered.',
     saml_metadata_fetch_failed: 'The Auth app could not fetch that metadata URL.',
+    unknown_placeholder: 'A placeholder is not available in this email; use only those listed.', invalid_placeholder: 'A placeholder is not closed; put each name in double braces.',
+    invalid_subject: 'The subject needs 1 to 150 characters on one line, without the link or code.', invalid_body: 'The body needs 1 to 4,000 bytes of text.',
+    invalid_send_to: 'Give one email address to send the preview to.', email_provider_unconfigured: 'Set up an email provider under Settings to send emails.',
+  }
+  const emailLabels = {
+    signup: 'Confirm sign-up', invite: 'Invitation to sign up', magiclink: 'Sign-in link', recovery: 'Password reset', email_change: 'Email change',
+    code: 'Verification code', security_notice: 'Security notice', organization_invitation: 'Organization invitation',
   }
   const el = (tag, text, attrs = {}) => {
     const node = document.createElement(tag)
@@ -226,6 +233,16 @@
         setTable(['Time', 'Event', 'User'], activityRows(data.entries, true))
         pager(null, data.more)
         say(data.entries.length ? '' : 'No activity matches.')
+      } else if (tab === 'emails') {
+        const data = await fetchView('/admin/v1/emails')
+        setTable(['Email', 'Subject', 'Wording', ''], data.emails.map(email => {
+          const row = el('tr')
+          row.append(el('td', emailLabels[email.type] || email.type), el('td', email.subject), el('td', email.custom ? 'Yours' : 'Default'))
+          const cell = el('td'); cell.append(button('Edit', () => showEmail(email))); row.append(cell)
+          return row
+        }))
+        pager(data.emails.length)
+        say('')
       } else if (tab === 'sso') {
         let data
         try { data = await fetchView('/admin/v1/sso') } catch (error) {
@@ -417,6 +434,50 @@
     panel.scrollIntoView({ block: 'nearest' })
   }
 
+  // showEmail edits one email's wording. Previews render with example
+  // values in the Auth app; nothing is saved until Save.
+  function showEmail(email, notice = '') {
+    const panel = $('detail')
+    const path = '/admin/v1/emails/' + encodeURIComponent(email.type)
+    const result = el('p', notice, { role: 'status' })
+    const subject = el('input', null, { name: 'subject', maxlength: '150', required: '', 'aria-label': 'Subject' })
+    subject.value = email.subject
+    const body = el('textarea', null, { name: 'body', rows: '8', required: '', spellcheck: 'true', 'aria-label': 'Body' })
+    body.value = email.body
+    const sendTo = el('input', null, { type: 'email', maxlength: '320', 'aria-label': 'Send a preview to', placeholder: 'you@example.com' })
+    const preview = el('pre', null, { class: 'email-preview', hidden: '' })
+    const draft = () => ({ subject: subject.value, body: body.value })
+    // work returns the message to show, or null when it redrew the panel.
+    const run = async (label, work) => { result.textContent = label + '…'; try { const text = await work(); if (text !== null) result.textContent = text } catch (error) { result.textContent = error.message } }
+    const confirmReset = button('Confirm: return to the default wording', () => run('Resetting', async () => {
+      const data = await call('DELETE', path); await load(); showEmail(data, 'The default wording is back.'); return null
+    }), { class: 'danger', hidden: '' })
+    panel.replaceChildren(
+      el('h2', emailLabels[email.type] || email.type),
+      // Braces are built here: this page is a Go template.
+      el('p', 'Placeholders: ' + email.placeholders.map(name => '\x7b\x7b' + name + '\x7d\x7d').join(' ') + '. Separate paragraphs with a blank line. A link or code the email carries is added at the end unless you place it.', { class: 'muted' }),
+      (() => { const wrap = el('label', 'Subject'); wrap.append(subject); return wrap })(),
+      (() => { const wrap = el('label', 'Body'); wrap.append(body); return wrap })(),
+      el('nav', null, { 'aria-label': 'Email actions' }),
+      preview, result,
+    )
+    panel.querySelector('nav').append(
+      button('Save', () => run('Saving', async () => { const data = await call('PATCH', path, draft()); await load(); showEmail(data, 'Saved; the next email uses it.'); return null })),
+      button('Preview', () => run('Rendering', async () => {
+        const data = await call('POST', path + '/preview', draft())
+        preview.textContent = 'Subject: ' + data.subject + '\n\n' + data.text
+        preview.hidden = false
+        return ''
+      })),
+      sendTo,
+      button('Send preview', () => run('Sending', async () => { await call('POST', path + '/preview', { ...draft(), send_to: sendTo.value.trim() }); return 'Sent to ' + sendTo.value.trim() + '.' })),
+      ...(email.custom ? [button('Reset to default', () => { confirmReset.hidden = false; confirmReset.focus() }, { class: 'danger' }), confirmReset] : []),
+      button('Close', () => { panel.hidden = true }),
+    )
+    panel.hidden = false
+    panel.scrollIntoView({ block: 'nearest' })
+  }
+
   function open() {
     $('key-section').hidden = true
     $('workspace').hidden = false
@@ -437,8 +498,8 @@
       page = 1
       for (const other of document.querySelectorAll('[data-tab]')) other.setAttribute('aria-pressed', String(other === tabButton))
       $('export').hidden = tab !== 'activity'
-      $('search').hidden = tab === 'sso'
-      $('query').placeholder = { users: 'Email or name', orgs: 'Slug or name', activity: 'Email, or an event such as login', sso: '' }[tab]
+      $('search').hidden = tab === 'sso' || tab === 'emails'
+      $('query').placeholder = { users: 'Email or name', orgs: 'Slug or name', activity: 'Email, or an event such as login', sso: '', emails: '' }[tab]
       load()
     })
   }

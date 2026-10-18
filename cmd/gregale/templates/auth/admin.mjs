@@ -4,6 +4,7 @@ import { gotrue, limits } from './config.mjs'
 import { HTTPError, readJSON } from './authz.mjs'
 import { ssoRoute } from './sso.mjs'
 import { oauthRoute } from './oauth.mjs'
+import { emailRoute } from './emails.mjs'
 
 // /admin/v1: owner administration of an application Auth app (ADR-1190
 // phase 6). The owner holds the key; the app stores only its SHA-256 as
@@ -226,12 +227,13 @@ async function activity(query, params) {
 }
 
 // adminRoute returns [status, body] for one authorized request.
-export async function adminRoute({ pool, admin, external }, method, url, body) {
+export async function adminRoute({ pool, admin, external, emails = {} }, method, url, body) {
   const path = url.pathname.replace(/^\/admin\/v1/, '')
   const parts = path.split('/').filter(Boolean)
   const query = async (sql, args) => (await pool.query(sql, args)).rows
   if (parts[0] === 'sso') return ssoRoute({ query, admin, goTrueError, external }, method, parts, body)
   if (parts[0] === 'oauth') return oauthRoute({ admin, goTrueError }, method, parts, body)
+  if (parts[0] === 'emails') return emailRoute({ pool, external, ...emails }, method, parts, body)
   const user = parts[0] === 'users' && parts[1] && parts[1] !== 'import' ? (uuid.test(parts[1]) ? parts[1] : null) : undefined
   if (user === null) throw new HTTPError(400, 'invalid_id')
 
@@ -291,7 +293,7 @@ export async function adminRoute({ pool, admin, external }, method, url, body) {
 }
 
 // createAdminHandler serves /admin/v1. Without a key it does not exist.
-export function createAdminHandler({ pool, admin, keys, origins = [], external }) {
+export function createAdminHandler({ pool, admin, keys, origins = [], external, emails = {} }) {
   const allowed = new Set(origins)
   return async (req, res) => {
     const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
@@ -308,7 +310,7 @@ export function createAdminHandler({ pool, admin, keys, origins = [], external }
       if (!keyMatches(keys, req.headers.authorization)) { req.resume(); throw new HTTPError(401, 'invalid_admin_key') }
       const url = new URL(req.url, 'http://admin.invalid')
       const body = await readJSON(req, limits.adminBodyBytes)
-      const [status, payload] = await adminRoute({ pool, admin, external }, req.method, url, body)
+      const [status, payload] = await adminRoute({ pool, admin, external, emails }, req.method, url, body)
       reply(status, payload)
     } catch (err) {
       const failure = err instanceof HTTPError ? err : new HTTPError(500, 'internal_error')

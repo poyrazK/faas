@@ -172,7 +172,8 @@ test('allows browser calls only from the application origins', async t => {
 
 test('emails invitations through the provider and withholds the token', async t => {
   const sent = []
-  const pool = fakePool((sql, args) => ({ rows: [{ id: member, email: args[1], role: args[2], expires_at: 'later', org_name: 'Acme' }] }))
+  // The owner's invitation template is read in the same transaction.
+  const pool = fakePool((sql, args) => sql.includes('email_templates') ? { rows: [{ type: 'organization_invitation', subject: 'Welcome to {{org}}', body: 'Hi! {{org}} uses {{app}}.' }] } : { rows: [{ id: member, email: args[1], role: args[2], expires_at: 'later', org_name: 'Acme' }] })
   const call = await serve(t, pool, { invitations: { mailer: { send: async (m, key) => { sent.push({ m, key }) } }, external: 'https://shop-auth.gregale.app', app: 'shop.example.test' } })
   const response = await call('POST', `/orgs/${org}/invitations`, { body: { email: 'bob@example.test', role: 'member' } })
   assert.equal(response.status, 201)
@@ -180,6 +181,8 @@ test('emails invitations through the provider and withholds the token', async t 
   assert.equal(response.body.token, undefined)
   assert.equal(response.body.org_name, undefined)
   assert.equal(sent[0].m.to, 'bob@example.test')
+  assert.equal(sent[0].m.subject, 'Welcome to Acme')
+  assert.match(sent[0].m.text, /^Hi! Acme uses shop\.example\.test\.$/m)
   assert.match(sent[0].m.text, /^https:\/\/shop-auth\.gregale\.app\/ui\/invitation#token=[A-Za-z0-9_-]{43}$/m)
   // The email goes out before the invitation commits.
   const order = pool.log.map(entry => entry.sql)
@@ -187,7 +190,7 @@ test('emails invitations through the provider and withholds the token', async t 
 })
 
 test('a failed invitation email rolls the invitation back', async t => {
-  const pool = fakePool((sql, args) => ({ rows: [{ id: member, email: args[1], role: args[2], expires_at: 'later', org_name: 'Acme' }] }))
+  const pool = fakePool((sql, args) => sql.includes('email_templates') ? { rows: [] } : { rows: [{ id: member, email: args[1], role: args[2], expires_at: 'later', org_name: 'Acme' }] })
   const { EmailError } = await import('../email.mjs')
   const call = await serve(t, pool, { invitations: { mailer: { send: async () => { throw new EmailError(503, 'email_provider_unavailable') } }, external: 'https://x.test', app: 'x' } })
   const response = await call('POST', `/orgs/${org}/invitations`, { body: { email: 'bob@example.test', role: 'member' } })

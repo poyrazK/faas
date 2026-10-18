@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import http from 'node:http'
 import { gotrue, limits } from './config.mjs'
-import { EmailError, invitationMessage } from './email.mjs'
+import { EmailError, invitationMessage, loadEmailTemplates } from './email.mjs'
 import { objectResource, objectURL, presign } from './storage.mjs'
 import { WorkflowError } from './workflows.mjs'
 import { routeTeam, TeamError } from './team.mjs'
@@ -151,7 +151,7 @@ export async function route(pool, claims, method, path, body, services = {}) {
         const created = await run(async c => {
           const { rows: [invitation] } = await c.query('SELECT i.id, i.email, i.role, i.expires_at, o.name AS org_name FROM gregale_auth.invite($1, $2, $3, $4, $5) i JOIN gregale_auth.organizations o ON o.id = i.org_id', args)
           const { org_name: orgName, ...fields } = invitation
-          if (invitations.mailer) await invitations.mailer.send(invitationMessage(fields.email, { external: invitations.external, app: invitations.app, orgName, token }), `invitation-${fields.id}`)
+          if (invitations.mailer) await invitations.mailer.send(invitationMessage(fields.email, { external: invitations.external, app: invitations.app, orgName, token, templates: await loadEmailTemplates(c) }), `invitation-${fields.id}`)
           return fields
         })
         return [201, invitations.mailer ? { ...created, delivered: true } : { ...created, delivered: false, token }]

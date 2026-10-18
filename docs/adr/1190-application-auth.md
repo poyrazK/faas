@@ -272,6 +272,19 @@ Gregale operates no sender for application email. Without a provider, email
 flows fail with `email_provider_unconfigured`. Links and codes are never
 logged.
 
+Owners replace the subject and body of each of eight email types. A template
+is plain text with per-type `{{placeholders}}`; the front escapes every value
+and builds the HTML itself, so a template cannot carry markup or scripts into
+recipients' mail, and an email's link or code is appended when the body does
+not place it. Full HTML templates were left out for that reason. Templates live
+in the app's database (`gregale_auth.email_templates`), not in app secrets:
+they are not secret, the CLI and dashboard must read them back to edit them,
+an edit should not need a restart, and Free apps have eight secrets in all.
+They are edited through `/admin/v1/emails` with an admin key (CLI and the
+dashboard's Emails tab, from the owner's browser), with a preview that renders
+example values and can send through the provider. The hook reads them per
+email and falls back to the defaults if the database cannot be read.
+
 Organization invitations are emailed when a provider is configured. The send
 happens inside the invitation transaction, so a failed send leaves no pending
 invitation, and the token is then withheld from the inviter. The link carries

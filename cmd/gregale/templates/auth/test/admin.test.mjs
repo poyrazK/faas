@@ -224,3 +224,13 @@ test("deletes a user's own account only after a recent sign-in with any second s
   await assert.rejects(deleteOwnAccount({ pool, admin }, claims), { status: 401, code: 'not_authenticated' })
   assert.equal(calls.length, 1, 'refusals never reach GoTrue')
 })
+
+test('serves email templates behind the admin key', async t => {
+  const { key, hash } = newAdminKey()
+  const call = await serve(t, { admin: fakeAdmin([]).admin, pool: fakePool(() => ({ rows: [] })), keys: adminKeyHashes({ AUTH_ADMIN_KEY_0A1B2C3D: hash }) })
+  assert.equal((await call('GET', '/admin/v1/emails')).status, 401)
+  const listed = await call('GET', '/admin/v1/emails', { key })
+  assert.equal(listed.status, 200)
+  assert.equal(listed.body.emails.length, 8)
+  assert.equal((await call('PATCH', '/admin/v1/emails/signup', { key, body: { body: '{{nope}}' } })).body.code, 'unknown_placeholder')
+})
