@@ -1,4 +1,4 @@
-# ADR-20261018004300: Owner-authorized deployment response checks
+# ADR-1658: Owner-authorized deployment response checks
 
 Date: 2026-10-15
 Status: Accepted
