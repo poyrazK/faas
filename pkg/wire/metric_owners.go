@@ -10,7 +10,7 @@ import "github.com/prometheus/client_golang/prometheus"
 var daemonForPrefix = map[string]string{
 	"apid": "apid", "builderd": "builderd", "gatewayd": "gatewayd-internal",
 	"gatewayd_public": "gatewayd-public", "githubd": "githubd", "imaged": "imaged",
-	"meterd": "meterd", "outboundd": "outboundd", "profiled": "profiled",
+	"livequeryd": "livequeryd", "meterd": "meterd", "outboundd": "outboundd", "profiled": "profiled",
 	"realtimed": "realtimed", "s3_gateway": "s3-gatewayd", "schedd": "schedd",
 	"vmmd": "vmmd",
 }
@@ -20,7 +20,7 @@ var daemonForPrefix = map[string]string{
 var daemonLabelNames = []string{
 	"apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged",
 	"meterd", "builderd", "githubd", "outboundd", "profiled", "realtimed",
-	"s3-gatewayd", "gregale",
+	"s3-gatewayd", "livequeryd", "gregale",
 }
 
 // daemonLabel bounds a daemon name to daemonLabelNames.

@@ -73,9 +73,12 @@ type harness struct {
 	clients  map[string]*client
 	rounds   int
 	restarts int
+	releases int
 	trace    []string
 	// history notes restarts and schema changes by round, for failures.
 	history []string
+	// writer is an application pool apart from the engine's (writerPool).
+	writer *pgxpool.Pool
 }
 
 func newHarness(t *testing.T, schema string) *harness {

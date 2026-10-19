@@ -11793,6 +11793,21 @@ const (
 	DataAPIRuntimeConnectionReportMaxBytes = 4096
 	DataAPIRuntimeConnectionReportTimeout  = 5 * time.Second
 	DataAPIRuntimeConnectionReportInterval = 15 * time.Second
+	// Owner usage telemetry (ADR-20261019102108): the runtime reports hourly
+	// deltas under workload identity. Owner-facing counts, never billing records.
+	DataAPIUsageReportMaxBytes  = 16 << 10
+	DataAPIUsageReportTimeout   = 5 * time.Second
+	DataAPIUsageReportInterval  = 15 * time.Second
+	DataAPIUsageReportMaxHours  = 48
+	DataAPIUsageMaxDelta        = 1_000_000_000_000
+	DataAPIUsageDedupWindow     = 48 * time.Hour
+	DataAPIUsageRetentionDays   = 90
+	DataAPIUsageQueryMaxDays    = 90
+	DataAPIUsageMonthlyCapMax   = 1_000_000_000_000
+	DataAPIUsagePruneBatchLimit = 1000
+	// A wall-clock jump this large against the monotonic clock means a
+	// snapshot restore: pending counts are dropped, not reported per instance.
+	DataAPIUsageRestoreJump = 5 * time.Second
 	// Operator capacity observations never run in customer request handling.
 	DataAPIConnectionCapacityTimeout     = 10 * time.Second
 	DataAPIConnectionCapacityLease       = 15 * time.Second
@@ -11804,6 +11819,21 @@ const (
 	DataAPIMaxRequestBytes               = 1 << 20
 	DataAPIMaxResponseBytes              = 16 << 20
 	DataAPIMaxOutputBytes                = 1 << 20
+	// Owner opt-ins (ADR 20261018170742): anonymous relation and function
+	// allowlist sizes and the subject a server-key request may act for.
+	DataAPIPublicReadMaxRelations   = 64
+	DataAPIPublicRPCMaxFunctions    = 64
+	DataAPIServerKeySubjectMaxBytes = 255
+	// Edge freshness for canonical anonymous reads, within the gateway cache cap.
+	DataAPIPublicReadMaxAgeSeconds = ResponseCacheMaxAgeMaxSeconds
+	// Per-slot server-key permissions: serialized size and allowlist entries.
+	DataAPIServerKeyPermissionsMaxBytes   = 4096
+	DataAPIServerKeyPermissionsMaxEntries = 64
+	// Single-app projects upload migrations beside the runtime; structural
+	// bounds only, inside the plan's source-archive limit.
+	DataAPISingleAppMigrationsMaxFiles = 4096
+	DataAPISingleAppMigrationsMaxBytes = 16 << 20
+	DataAPIReleaseCommandMaxBytes      = 1024
 	// Fixed v2 customer SQL contract (ADR-1670). Never extend this window in
 	// place: doing so could revive keys whose receipts have already been purged.
 	DataAPIReplayV2WindowMS     = 86400000

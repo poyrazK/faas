@@ -91,11 +91,21 @@ func TestParseImageRunArgsRejectsBadDockerFlags(t *testing.T) {
 	if err := os.WriteFile(spaced, []byte("BAD KEY=1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	good := filepath.Join(dir, "good.env")
+	if err := os.WriteFile(good, []byte("KEY=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(dir, "linked.env")
+	if err := os.Symlink(good, linked); err != nil {
+		t.Fatal(err)
+	}
 	cases := map[string][]string{
 		"password stdin without username": {"--registry-password-stdin", "alpine"},
 		"password stdin with interactive": {"-i", "--registry-username", "ci", "--registry-password-stdin", "alpine"},
 		"env file key with whitespace":    {"--env-file", spaced, "alpine"},
 		"missing env file":                {"--env-file", filepath.Join(dir, "missing.env"), "alpine"},
+		"symlinked env file":              {"--env-file", linked, "alpine"},
+		"env file is a directory":         {"--env-file", dir, "alpine"},
 		"env flag without a name":         {"-e", "=1", "alpine"},
 	}
 	_, readErr, restore := swapIO(t)

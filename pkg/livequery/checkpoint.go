@@ -120,7 +120,7 @@ func (e *Engine) WriteCheckpoint(w io.Writer) error {
 }
 
 func (e *Engine) confirmCheckpoint() {
-	if e.safe > 0 {
+	if e.safe > 0 && e.capture != nil {
 		e.capture.Confirm(e.safe)
 	}
 }

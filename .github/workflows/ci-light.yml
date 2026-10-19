@@ -377,6 +377,7 @@ jobs:
       - name: deploy Action scripts (vendored CLI, push-head guard, environment preflight)
         run: |
           make deploy-action-cli-check
+          make verify-action-ref-contents-check
           make deploy-action-head-check
           make environment-preflight-action-check
       - name: release-safety tool tests (migration lint, SLO gate)

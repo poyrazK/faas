@@ -1021,6 +1021,15 @@ from .data_api_runtime_connection_report import DataAPIRuntimeConnectionReport
 from .data_api_runtime_connection_report_runtime_model import DataAPIRuntimeConnectionReportRuntimeModel
 from .data_api_runtime_connection_report_state import DataAPIRuntimeConnectionReportState
 from .data_api_runtime_connection_report_version import DataAPIRuntimeConnectionReportVersion
+from .data_api_usage import DataAPIUsage
+from .data_api_usage_bucket import DataAPIUsageBucket
+from .data_api_usage_counts import DataAPIUsageCounts
+from .data_api_usage_granularity import DataAPIUsageGranularity
+from .data_api_usage_hour import DataAPIUsageHour
+from .data_api_usage_month_to_date import DataAPIUsageMonthToDate
+from .data_api_usage_report import DataAPIUsageReport
+from .data_api_usage_report_response import DataAPIUsageReportResponse
+from .data_api_usage_report_version import DataAPIUsageReportVersion
 from .data_connection import DataConnection
 from .data_connection_check import DataConnectionCheck
 from .data_connection_check_state import DataConnectionCheckState
@@ -1948,6 +1957,7 @@ from .gdpr_audit_export_response_action import GdprAuditExportResponseAction
 from .gdpr_audit_export_response_data import GdprAuditExportResponseData
 from .gdpr_audit_export_response_source import GdprAuditExportResponseSource
 from .get_account_slo_window import GetAccountSLOWindow
+from .get_app_data_api_usage_granularity import GetAppDataAPIUsageGranularity
 from .get_app_edge_protection_range import GetAppEdgeProtectionRange
 from .get_app_log_drain_analytics_window import GetAppLogDrainAnalyticsWindow
 from .get_app_metrics_range import GetAppMetricsRange
@@ -6775,6 +6785,15 @@ __all__ = (
     "DataAPIRuntimeConnectionReportRuntimeModel",
     "DataAPIRuntimeConnectionReportState",
     "DataAPIRuntimeConnectionReportVersion",
+    "DataAPIUsage",
+    "DataAPIUsageBucket",
+    "DataAPIUsageCounts",
+    "DataAPIUsageGranularity",
+    "DataAPIUsageHour",
+    "DataAPIUsageMonthToDate",
+    "DataAPIUsageReport",
+    "DataAPIUsageReportResponse",
+    "DataAPIUsageReportVersion",
     "DataConnection",
     "DataConnectionCheck",
     "DataConnectionCheckState",
@@ -7664,6 +7683,7 @@ __all__ = (
     "GdprAuditExportResponseData",
     "GdprAuditExportResponseSource",
     "GetAccountSLOWindow",
+    "GetAppDataAPIUsageGranularity",
     "GetAppEdgeProtectionRange",
     "GetAppLogDrainAnalyticsWindow",
     "GetAppMetricsRange",
