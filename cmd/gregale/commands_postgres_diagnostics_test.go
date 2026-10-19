@@ -1,5 +1,5 @@
 // adr: 582 — operator diagnostics preserve evidence and bounded pagination.
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -26,12 +27,12 @@ func TestCmdPostgresDiagnostics(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	prevOut, prevJSON := osStdout, jsonOutput
-	t.Cleanup(func() { osStdout, jsonOutput = prevOut, prevJSON })
+	prevOut, prevJSON := (*main.OsStdout), (*main.JsonOutput)
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = prevOut, prevJSON })
 	for _, asJSON := range []bool{false, true} {
 		var out bytes.Buffer
-		osStdout, jsonOutput = &out, asJSON
-		if code := cmdPostgres([]string{"diagnostics", account, "--after", cursor, "--limit", "2"}); code != 0 {
+		(*main.OsStdout), (*main.JsonOutput) = &out, asJSON
+		if code := main.CmdPostgres([]string{"diagnostics", account, "--after", cursor, "--limit", "2"}); code != 0 {
 			t.Fatalf("exit=%d", code)
 		}
 		if strings.Contains(out.String(), "private-") {
@@ -51,7 +52,7 @@ func TestCmdPostgresDiagnostics(t *testing.T) {
 		}
 	}
 	for _, args := range [][]string{{"bad"}, {account, "--limit", "0"}, {account, "--limit", "101"}, {account, "--after", "bad"}} {
-		if code := cmdPostgresDiagnostics(args); code == 0 {
+		if code := main.CmdPostgresDiagnostics(args); code == 0 {
 			t.Fatal("invalid pagination accepted")
 		}
 	}

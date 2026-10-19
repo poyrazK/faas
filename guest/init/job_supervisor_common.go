@@ -89,6 +89,11 @@ type JobManifest struct {
 	VsockJobExitMsgType int               `json:"vsock_job_exit_msg_type,omitempty"`
 	// Interactive mirrors pkg/fcvm/job_vmm.go::JobInteractive (ADR-1330).
 	Interactive *JobInteractive `json:"interactive,omitempty"`
+	// ImageProcess runs the command with the image's ENV, USER and WORKDIR;
+	// User and Workdir override them. Mirrors pkg/fcvm/job_vmm.go (ADR-1790).
+	ImageProcess bool   `json:"image_process,omitempty"`
+	User         string `json:"user,omitempty"`
+	Workdir      string `json:"workdir,omitempty"`
 }
 
 // JobInteractive holds the command until one attached session arrives on the

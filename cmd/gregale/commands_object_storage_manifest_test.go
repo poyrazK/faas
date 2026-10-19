@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -39,7 +40,7 @@ func (f *fakeManifestObjectStorageClient) CreateObjectStorageComputeBinding(ctx 
 
 func TestDeployManifestObjectStorageBindingsCreatesBinding(t *testing.T) {
 	dir := t.TempDir()
-	writeManifest(t, dir, `buckets:
+	main.WriteManifest(t, dir, `buckets:
   - bucket: assets
     app: api
     scope: production
@@ -52,11 +53,11 @@ func TestDeployManifestObjectStorageBindingsCreatesBinding(t *testing.T) {
 		bindings: map[string]api.ObjectStorageComputeBindingList{"bucket-id": {}},
 		created:  api.ObjectStorageComputeBinding{ID: "binding-id", BucketID: "bucket-id", Scope: "production", Prefix: "GREGALE_S3_ASSETS"},
 	}
-	previousJSON := jsonOutput
-	jsonOutput = true
-	t.Cleanup(func() { jsonOutput = previousJSON })
+	previousJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.JsonOutput) = previousJSON })
 
-	if err := deployManifestObjectStorageBindings(context.Background(), fake, "api", dir); err != nil {
+	if err := main.DeployManifestObjectStorageBindings(context.Background(), fake, "api", dir); err != nil {
 		t.Fatalf("err = %v", err)
 	}
 	if len(fake.requests) != 1 || len(fake.requestKeys) != 1 {
@@ -73,7 +74,7 @@ func TestDeployManifestObjectStorageBindingsCreatesBinding(t *testing.T) {
 
 func TestDeployManifestObjectStorageBindingsReusesMatchingBinding(t *testing.T) {
 	dir := t.TempDir()
-	writeManifest(t, dir, "buckets:\n  - bucket: assets\n")
+	main.WriteManifest(t, dir, "buckets:\n  - bucket: assets\n")
 	fake := &fakeManifestObjectStorageClient{
 		buckets: api.ObjectBucketList{Items: []api.ObjectBucket{{ID: "bucket-id", Name: "assets", Scope: api.DefaultEnvScope, State: "ready"}}},
 		bindings: map[string]api.ObjectStorageComputeBindingList{"bucket-id": {Items: []api.ObjectStorageComputeBinding{{
@@ -81,11 +82,11 @@ func TestDeployManifestObjectStorageBindingsReusesMatchingBinding(t *testing.T) 
 			Credential: api.ObjectS3Credential{Permission: api.ObjectBucketPermissionReadWrite, Status: "active"},
 		}}}},
 	}
-	previousJSON := jsonOutput
-	jsonOutput = true
-	t.Cleanup(func() { jsonOutput = previousJSON })
+	previousJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.JsonOutput) = previousJSON })
 
-	if err := deployManifestObjectStorageBindings(context.Background(), fake, "api", dir); err != nil {
+	if err := main.DeployManifestObjectStorageBindings(context.Background(), fake, "api", dir); err != nil {
 		t.Fatalf("err = %v", err)
 	}
 	if len(fake.requests) != 0 {
@@ -95,7 +96,7 @@ func TestDeployManifestObjectStorageBindingsReusesMatchingBinding(t *testing.T) 
 
 func TestDeployManifestObjectStorageBindingsRejectsPermissionDrift(t *testing.T) {
 	dir := t.TempDir()
-	writeManifest(t, dir, "buckets:\n  - bucket: assets\n    permission: read\n")
+	main.WriteManifest(t, dir, "buckets:\n  - bucket: assets\n    permission: read\n")
 	fake := &fakeManifestObjectStorageClient{
 		buckets: api.ObjectBucketList{Items: []api.ObjectBucket{{ID: "bucket-id", Name: "assets", Scope: api.DefaultEnvScope, State: "ready"}}},
 		bindings: map[string]api.ObjectStorageComputeBindingList{"bucket-id": {Items: []api.ObjectStorageComputeBinding{{
@@ -103,7 +104,7 @@ func TestDeployManifestObjectStorageBindingsRejectsPermissionDrift(t *testing.T)
 			Credential: api.ObjectS3Credential{Permission: api.ObjectBucketPermissionReadWrite, Status: "active"},
 		}}}},
 	}
-	err := deployManifestObjectStorageBindings(context.Background(), fake, "api", dir)
+	err := main.DeployManifestObjectStorageBindings(context.Background(), fake, "api", dir)
 	if err == nil || !strings.Contains(err.Error(), "delete the binding and redeploy") {
 		t.Fatalf("err = %v, want actionable permission drift", err)
 	}
@@ -114,17 +115,17 @@ func TestDeployManifestObjectStorageBindingsRejectsPermissionDrift(t *testing.T)
 
 func TestDeployManifestObjectStorageBindingsUsesDeploymentEnvironment(t *testing.T) {
 	dir := t.TempDir()
-	writeManifest(t, dir, "buckets:\n  - bucket: assets\n")
+	main.WriteManifest(t, dir, "buckets:\n  - bucket: assets\n")
 	fake := &fakeManifestObjectStorageClient{
 		buckets:  api.ObjectBucketList{Items: []api.ObjectBucket{{ID: "bucket-id", Name: "assets", Scope: "staging", State: "ready"}}},
 		bindings: map[string]api.ObjectStorageComputeBindingList{"bucket-id": {}},
 		created:  api.ObjectStorageComputeBinding{Scope: "staging", Prefix: "GREGALE_S3_ASSETS"},
 	}
-	previousJSON := jsonOutput
-	jsonOutput = true
-	t.Cleanup(func() { jsonOutput = previousJSON })
+	previousJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.JsonOutput) = previousJSON })
 
-	if err := deployManifestObjectStorageBindings(context.Background(), fake, "api", dir, "staging"); err != nil {
+	if err := main.DeployManifestObjectStorageBindings(context.Background(), fake, "api", dir, "staging"); err != nil {
 		t.Fatalf("err = %v", err)
 	}
 	if len(fake.requests) != 1 || fake.requests[0].Prefix != "GREGALE_S3_ASSETS" {
@@ -134,23 +135,23 @@ func TestDeployManifestObjectStorageBindingsUsesDeploymentEnvironment(t *testing
 
 func TestDeployManifestObjectStorageBindingsPropagatesListError(t *testing.T) {
 	dir := t.TempDir()
-	writeManifest(t, dir, "buckets:\n  - bucket: assets\n")
+	main.WriteManifest(t, dir, "buckets:\n  - bucket: assets\n")
 	fake := &fakeManifestObjectStorageClient{bucketsErr: errors.New("temporary")}
-	if err := deployManifestObjectStorageBindings(context.Background(), fake, "api", dir); !errors.Is(err, fake.bucketsErr) {
+	if err := main.DeployManifestObjectStorageBindings(context.Background(), fake, "api", dir); !errors.Is(err, fake.bucketsErr) {
 		t.Fatalf("err = %v, want list error", err)
 	}
 }
 
 func TestManifestDeploymentScopeCombinesDatabasesAndBuckets(t *testing.T) {
 	dir := t.TempDir()
-	writeManifest(t, dir, `databases:
+	main.WriteManifest(t, dir, `databases:
   - database: orders
     scope: default
 buckets:
   - bucket: assets
     scope: staging
 `)
-	if _, err := manifestDeploymentScope("api", dir); err == nil || !strings.Contains(err.Error(), "multiple scopes") {
+	if _, err := main.ManifestDeploymentScope("api", dir); err == nil || !strings.Contains(err.Error(), "multiple scopes") {
 		t.Fatalf("err = %v, want mixed resource scopes", err)
 	}
 }

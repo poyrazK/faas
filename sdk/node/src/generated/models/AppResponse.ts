@@ -29,6 +29,10 @@ export type AppResponse = {
   slug: string;
   type: 'app' | 'function';
   /**
+   * Parent project (ADR-050) as a canonical hyphenated UUID. Omitted when the app is standalone. Read-only: app create and update requests do not accept it.
+   */
+  project_id?: string;
+  /**
    * Public exposes the app through the edge; internal keeps it available only to authenticated service-to-service routing. Available on every plan.
    */
   visibility?: 'public' | 'internal';

@@ -1,6 +1,6 @@
 // adr: 1741 — the owner cache serves a production wake's reads, and a stale
 // entry is refused at admission, never used.
-package sched
+package sched_test
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -20,8 +21,8 @@ import (
 
 type ownerCacheFixture struct {
 	mem     *state.MemStore
-	counter *readCountingStore
-	e       *Engine
+	counter *sched.ReadCountingStore
+	e       *sched.Engine
 	ops     *wire.OpsMetrics
 	app     state.App
 }
@@ -29,16 +30,16 @@ type ownerCacheFixture struct {
 func newOwnerCacheFixture(t *testing.T) ownerCacheFixture {
 	t.Helper()
 	mem := state.NewMemStore()
-	_, app, _ := seedApp(t, mem, api.PlanPro, 512, 5)
-	counter := &readCountingStore{MemStore: mem}
+	_, app, _ := sched.SeedApp(t, mem, api.PlanPro, 512, 5)
+	counter := &sched.ReadCountingStore{MemStore: mem}
 	ops := wire.NewOpsMetrics("schedd")
-	e := newEngine(t, statetest.NewMem(counter), &fakeVMM{}, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops).WithOwnerCache()
+	e := sched.XNewEngine(t, statetest.NewMem(counter), &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0").WithOpsMetrics(ops).WithOwnerCache()
 	return ownerCacheFixture{mem: mem, counter: counter, e: e, ops: ops, app: app}
 }
 
 // wakeAndPark wakes the app and parks the instance, so the next wake admits
 // a new one.
-func (f ownerCacheFixture) wakeAndPark(t *testing.T) WakeResult {
+func (f ownerCacheFixture) wakeAndPark(t *testing.T) sched.WakeResult {
 	t.Helper()
 	result, err := f.e.Wake(t.Context(), f.app.ID, "", "", "")
 	if err != nil {
@@ -61,11 +62,11 @@ func (f ownerCacheFixture) outcomes() map[string]float64 {
 func TestOwnerCacheServesTheNextWake(t *testing.T) {
 	f := newOwnerCacheFixture(t)
 	f.wakeAndPark(t)
-	first := f.counter.reads()["AppByID"]
+	first := f.counter.Reads()["AppByID"]
 	f.wakeAndPark(t)
 	// The first wake loaded the entry (one app read) and resolved through
 	// it; the second reads the app only in the boot's own bookkeeping.
-	if second := f.counter.reads()["AppByID"] - first; second >= first {
+	if second := f.counter.Reads()["AppByID"] - first; second >= first {
 		t.Fatalf("app reads: first wake %d, second %d; want fewer once the entry is cached", first, second)
 	}
 	if got := f.outcomes(); got["miss"] != 1 || got["hit"] < 2 || got["refused"] != 0 {
@@ -113,11 +114,11 @@ func (s *retiringStore) EnvironmentWorkloadAdmissionRetired(ctx context.Context,
 // retireWithoutNotification retires every workload behind e's store and
 // moves the app's generation, without the notification that would drop the
 // cached entry.
-func retireWithoutNotification(t *testing.T, e *Engine, mem *state.MemStore, app state.App) {
+func retireWithoutNotification(t *testing.T, e *sched.Engine, mem *state.MemStore, app state.App) {
 	t.Helper()
 	retiring := &retiringStore{MemStore: mem}
 	retiring.retired.Store(true)
-	e.store = statetest.NewMem(retiring)
+	(*e.XStore()) = statetest.NewMem(retiring)
 	ram := app.RAMMB * 2
 	if _, err := mem.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{RAMMB: &ram}); err != nil {
 		t.Fatal(err)
@@ -148,29 +149,29 @@ func TestOwnerCacheRunsTheDeferredGateBeforeAFreshDecision(t *testing.T) {
 }
 
 func TestOwnerCacheChecksTheGenerationBeforeAnOrdinaryThaw(t *testing.T) {
-	f := newFrozenFixture(t, true)
+	f := sched.NewFrozenFixture(t, true)
 	ops := wire.NewOpsMetrics("schedd")
-	f.e.WithOpsMetrics(ops).WithOwnerCache()
-	f.e.EnableFrozenTier()
+	(*f.E()).WithOpsMetrics(ops).WithOwnerCache()
+	(*f.E()).EnableFrozenTier()
 	// The wake that finds the running instance loads the entry.
-	if _, err := f.e.Wake(t.Context(), f.app.ID, "", "", ""); err != nil {
+	if _, err := (*f.E()).Wake(t.Context(), (*f.App()).ID, "", "", ""); err != nil {
 		t.Fatalf("Wake: %v", err)
 	}
-	if _, ok := f.e.owners.lookup(f.app.ID); !ok {
+	if _, ok := (*(*f.E()).Owners()).Lookup((*f.App()).ID); !ok {
 		t.Fatal("no owner cache entry after a production wake")
 	}
-	if handled, err := f.e.FreezeIdle(t.Context(), f.ins.ID, 150); err != nil || !handled {
+	if handled, err := (*f.E()).FreezeIdle(t.Context(), (*f.Ins()).ID, 150); err != nil || !handled {
 		t.Fatalf("FreezeIdle: %v, %v", handled, err)
 	}
 	// The suspension moves the generation; its notification never arrives,
 	// so the entry still holds an active account.
-	if err := f.store.UpdateAccountStatus(t.Context(), f.app.AccountID, state.AccountSuspended); err != nil {
+	if err := (*f.Store()).UpdateAccountStatus(t.Context(), (*f.App()).AccountID, state.AccountSuspended); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.e.Wake(t.Context(), f.app.ID, "", "", ""); !errors.Is(err, ErrPermanentWake) {
-		t.Fatalf("Wake of a suspended account = %v, want %v", err, ErrPermanentWake)
+	if _, err := (*f.E()).Wake(t.Context(), (*f.App()).ID, "", "", ""); !errors.Is(err, sched.ErrPermanentWake) {
+		t.Fatalf("Wake of a suspended account = %v, want %v", err, sched.ErrPermanentWake)
 	}
-	if row, _ := f.store.InstanceByID(t.Context(), f.ins.ID); row.State != string(state.StateFrozen) {
+	if row, _ := (*f.Store()).InstanceByID(t.Context(), (*f.Ins()).ID); row.State != string(state.StateFrozen) {
 		t.Fatalf("frozen VM state %q after a refused wake; want it still frozen", row.State)
 	}
 	got := map[string]float64{}
@@ -185,7 +186,7 @@ func TestOwnerCacheChecksTheGenerationBeforeAnOrdinaryThaw(t *testing.T) {
 func TestOwnerCacheNotifications(t *testing.T) {
 	f := newOwnerCacheFixture(t)
 	f.wakeAndPark(t)
-	entry, ok := f.e.owners.lookup(f.app.ID)
+	entry, ok := (*f.e.Owners()).Lookup(f.app.ID)
 	if !ok {
 		t.Fatal("no entry after a wake")
 	}
@@ -193,17 +194,17 @@ func TestOwnerCacheNotifications(t *testing.T) {
 		payload, _ := json.Marshal(map[string]any{"app_id": f.app.ID, "generation": generation})
 		f.e.HandleOwnerCacheNotification(db.Notification{Channel: db.NotifyAppRuntimeChanged, Payload: string(payload)})
 	}
-	notify(entry.generation)
-	if _, ok := f.e.owners.lookup(f.app.ID); !ok {
+	notify((*entry.Generation()))
+	if _, ok := (*f.e.Owners()).Lookup(f.app.ID); !ok {
 		t.Fatal("the entry's own generation dropped it")
 	}
-	notify(entry.generation + 1)
-	if _, ok := f.e.owners.lookup(f.app.ID); ok {
+	notify((*entry.Generation()) + 1)
+	if _, ok := (*f.e.Owners()).Lookup(f.app.ID); ok {
 		t.Fatal("a newer generation left the entry in place")
 	}
 	f.wakeAndPark(t)
 	f.e.HandleOwnerCacheNotification(db.Notification{Channel: db.ResyncChannel})
-	if _, ok := f.e.owners.lookup(f.app.ID); ok {
+	if _, ok := (*f.e.Owners()).Lookup(f.app.ID); ok {
 		t.Fatal("a resync left an entry in place")
 	}
 	if got := f.outcomes(); got["invalidated"] != 1 || got["resync"] != 1 {
@@ -225,24 +226,25 @@ func TestOwnerCacheBootPublishesOnItsAdmissionGeneration(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mem := state.NewMemStore()
-			_, app, _ := seedApp(t, mem, api.PlanPro, 512, 5)
-			counter := &readCountingStore{MemStore: mem}
+			_, app, _ := sched.SeedApp(t, mem, api.PlanPro, 512, 5)
+			counter := &sched.ReadCountingStore{MemStore: mem}
 			ops := wire.NewOpsMetrics("schedd")
-			vmm := &fakeVMM{}
-			e := newEngine(t, statetest.NewMem(counter), vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops).WithOwnerCache()
+			vmm := &sched.FakeVMM{}
+			e := sched.XNewEngine(t, statetest.NewMem(counter), vmm, &sched.FakeNotifier{}, "1.10.0").WithOpsMetrics(ops).WithOwnerCache()
 			f := ownerCacheFixture{mem: mem, counter: counter, e: e, ops: ops, app: app}
 			f.wakeAndPark(t)
 			if tc.moveDuringBoot {
+				(*
 				// A new deployment moves the generation without touching the
 				// fence or the plan, so only the generation refuses the first
 				// attempt.
-				vmm.coldBootHook = func() {
+				vmm.ColdBootHook()) = func() {
 					if _, err := mem.CreateDeployment(context.Background(), state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage}); err != nil {
 						t.Error(err)
 					}
 				}
 			}
-			barrierReads := counter.reads()["ManagedPostgresAdmissionFenced"]
+			barrierReads := counter.Reads()["ManagedPostgresAdmissionFenced"]
 			result, err := e.Wake(t.Context(), app.ID, "", "", "")
 			if err != nil {
 				t.Fatalf("Wake: %v", err)
@@ -261,7 +263,7 @@ func TestOwnerCacheBootPublishesOnItsAdmissionGeneration(t *testing.T) {
 				// The first wake loaded the entry and published guarded too.
 				t.Fatalf("owner cache outcomes = %v, want guarded publications only", got)
 			}
-			if n := counter.reads()["ManagedPostgresAdmissionFenced"] - barrierReads; n != wantBarrierReads {
+			if n := counter.Reads()["ManagedPostgresAdmissionFenced"] - barrierReads; n != wantBarrierReads {
 				t.Fatalf("managed Postgres barrier reads during the cached wake = %d, want %d", n, wantBarrierReads)
 			}
 		})

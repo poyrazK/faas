@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"net/http"
 	"os"
@@ -13,9 +14,9 @@ import (
 )
 
 func TestCommitConnectionDoesNotExposeCredentials(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, "", http.StatusNoContent)
-	stdout, restore := swapStdout(t)
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, "", http.StatusNoContent)
+	stdout, restore := main.SwapStdout(t)
 	defer restore()
 	file := filepath.Join(t.TempDir(), "connection")
 	secret := "postgres://relay:secret-password@db.example/customer?sslmode=verify-full"
@@ -23,11 +24,11 @@ func TestCommitConnectionDoesNotExposeCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := uuid.NewString()
-	if code := cmdCommit([]string{"connection", source, "--file", file}); code != 0 {
+	if code := main.CmdCommit([]string{"connection", source, "--file", file}); code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
-	if f.sawMethod != http.MethodPut || f.sawPath != "/v1/commit-sources/"+source+"/connection" {
-		t.Fatalf("route=%s %s", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != http.MethodPut || (*f.SawPath()) != "/v1/commit-sources/"+source+"/connection" {
+		t.Fatalf("route=%s %s", (*f.SawMethod()), (*f.SawPath()))
 	}
 	if strings.Contains(stdout.String(), "secret-password") || strings.Contains(stdout.String(), "postgres://") {
 		t.Fatal("credential leaked to output")
@@ -35,14 +36,14 @@ func TestCommitConnectionDoesNotExposeCredentials(t *testing.T) {
 	if err := os.WriteFile(file, []byte(strings.Repeat("x", 8193)), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if code := cmdCommit([]string{"connection", source, "--file", file}); code == 0 {
+	if code := main.CmdCommit([]string{"connection", source, "--file", file}); code == 0 {
 		t.Fatal("oversized credential file accepted")
 	}
 }
 
 func TestCommitConnectionRejectsSymlinkBeforeUpload(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, "", http.StatusNoContent)
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, "", http.StatusNoContent)
 	dir := t.TempDir()
 	secretFile := filepath.Join(dir, "secret")
 	if err := os.WriteFile(secretFile, []byte("postgres://relay:private-password@db.example/customer?sslmode=verify-full"), 0600); err != nil {
@@ -52,28 +53,28 @@ func TestCommitConnectionRejectsSymlinkBeforeUpload(t *testing.T) {
 	if err := os.Symlink(secretFile, link); err != nil {
 		t.Fatal(err)
 	}
-	if code := cmdCommit([]string{"connection", uuid.NewString(), "--file", link}); code == 0 {
+	if code := main.CmdCommit([]string{"connection", uuid.NewString(), "--file", link}); code == 0 {
 		t.Fatal("symlink credential file accepted")
 	}
-	if f.sawMethod != "" {
-		t.Fatalf("credential upload reached API: %s %s", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "" {
+		t.Fatalf("credential upload reached API: %s %s", (*f.SawMethod()), (*f.SawPath()))
 	}
 }
 
 func TestCommitSourceRoutingFlags(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"id":"source","contract_version":2,"allow_tenant_selection":true}`, http.StatusCreated)
-	_, restore := swapStdout(t)
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"id":"source","contract_version":2,"allow_tenant_selection":true}`, http.StatusCreated)
+	_, restore := main.SwapStdout(t)
 	defer restore()
-	if code := cmdCommit([]string{"add", "orders", "--name", "customer-orders", "--operation-policy", "customer-orders", "--contract-version", "2", "--allow-tenant-selection"}); code != 0 {
+	if code := main.CmdCommit([]string{"add", "orders", "--name", "customer-orders", "--operation-policy", "customer-orders", "--contract-version", "2", "--allow-tenant-selection"}); code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
 	var req api.CreateCommitSourceRequest
-	if err := json.Unmarshal(f.sawBody, &req); err != nil || req.ContractVersion != 2 || !req.AllowTenantSelection || req.Name != "customer-orders" || req.OperationPolicy != "customer-orders" {
+	if err := json.Unmarshal((*f.SawBody()), &req); err != nil || req.ContractVersion != 2 || !req.AllowTenantSelection || req.Name != "customer-orders" || req.OperationPolicy != "customer-orders" {
 		t.Fatalf("routing grant lost: %+v %v", req, err)
 	}
-	if f.sawMethod != http.MethodPost || f.sawPath != "/v1/apps/orders/commit-sources" {
-		t.Fatalf("route=%s %s", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != http.MethodPost || (*f.SawPath()) != "/v1/apps/orders/commit-sources" {
+		t.Fatalf("route=%s %s", (*f.SawMethod()), (*f.SawPath()))
 	}
 }
 
@@ -85,9 +86,9 @@ func TestCommitSourceRoutingFlagsRejectInvalidCombinations(t *testing.T) {
 		{"pause", uuid.NewString(), "--allow-tenant-selection=false"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			f := authedFakeAPI(t, "{}", http.StatusOK)
-			if code := cmdCommit(args); code == 0 || f.sawMethod != "" {
-				t.Fatalf("invalid routing flags reached API: code=%d method=%s", code, f.sawMethod)
+			f := main.AuthedFakeAPI(t, "{}", http.StatusOK)
+			if code := main.CmdCommit(args); code == 0 || (*f.SawMethod()) != "" {
+				t.Fatalf("invalid routing flags reached API: code=%d method=%s", code, (*f.SawMethod()))
 			}
 		})
 	}

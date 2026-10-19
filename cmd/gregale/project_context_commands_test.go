@@ -1,8 +1,9 @@
-package main
+package main_test
 
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,13 +16,13 @@ import (
 )
 
 func TestLinkedContextDefaultsAcrossAppScopedReads(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := saveProjectContext(root, localProjectContext{
-		Version: projectContextVersion,
+	if _, err := main.SaveProjectContext(root, main.LocalProjectContext{
+		Version: main.ProjectContextVersion,
 		Project: "shop",
 		App:     "demo",
 	}); err != nil {
@@ -51,28 +52,28 @@ func TestLinkedContextDefaultsAcrossAppScopedReads(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
 
-	oldOut := osStdout
-	osStdout = &bytes.Buffer{}
-	t.Cleanup(func() { osStdout = oldOut })
-	jsonOutput = true
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &bytes.Buffer{}
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
+	(*main.JsonOutput) = true
 
 	tests := []struct {
 		name string
 		run  func() int
 		path string
 	}{
-		{"inspect", func() int { return cmdInspect([]string{"--upstreams"}) }, "/v1/apps/demo/upstreams"},
-		{"deployments", func() int { return cmdDeployments(nil) }, "/v1/apps/demo/deployments"},
-		{"analytics", func() int { return cmdAnalytics(nil) }, "/v1/apps/demo/analytics"},
-		{"invoke", func() int { return cmdInvoke([]string{"--async"}) }, "/v1/apps/demo/invoke/async"},
-		{"slo", func() int { return cmdSLO(nil) }, "/v1/apps/demo/slo"},
-		{"ps", func() int { return cmdPS(nil) }, "/v1/apps/demo/instances"},
-		{"wake timeline", func() int { return cmdWakeTimeline([]string{"wake-1"}) }, "/v1/apps/demo/wakes/wake-1/timeline"},
-		{"cors ls", func() int { return cmdCorsLs(nil) }, "/v1/apps/demo/edge-rules"},
-		{"cors show", func() int { return cmdCorsShow(nil) }, "/v1/apps/demo/edge-rules"},
-		{"openapi get", func() int { return cmdOpenapiGet(nil) }, "/v1/apps/demo/openapi"},
-		{"openapi preview", func() int { return cmdOpenapiPreview(nil) }, "/v1/apps/demo/openapi/diff"},
-		{"openapi dry-run", func() int { return cmdOpenapiDryRun([]string{documentPath}) }, "/v1/apps/demo/openapi/dry-run"},
+		{"inspect", func() int { return main.CmdInspect([]string{"--upstreams"}) }, "/v1/apps/demo/upstreams"},
+		{"deployments", func() int { return main.CmdDeployments(nil) }, "/v1/apps/demo/deployments"},
+		{"analytics", func() int { return main.CmdAnalytics(nil) }, "/v1/apps/demo/analytics"},
+		{"invoke", func() int { return main.CmdInvoke([]string{"--async"}) }, "/v1/apps/demo/invoke/async"},
+		{"slo", func() int { return main.CmdSLO(nil) }, "/v1/apps/demo/slo"},
+		{"ps", func() int { return main.CmdPS(nil) }, "/v1/apps/demo/instances"},
+		{"wake timeline", func() int { return main.CmdWakeTimeline([]string{"wake-1"}) }, "/v1/apps/demo/wakes/wake-1/timeline"},
+		{"cors ls", func() int { return main.CmdCorsLs(nil) }, "/v1/apps/demo/edge-rules"},
+		{"cors show", func() int { return main.CmdCorsShow(nil) }, "/v1/apps/demo/edge-rules"},
+		{"openapi get", func() int { return main.CmdOpenapiGet(nil) }, "/v1/apps/demo/openapi"},
+		{"openapi preview", func() int { return main.CmdOpenapiPreview(nil) }, "/v1/apps/demo/openapi/diff"},
+		{"openapi dry-run", func() int { return main.CmdOpenapiDryRun([]string{documentPath}) }, "/v1/apps/demo/openapi/dry-run"},
 		// tail reconnects until Ctrl-C: TestLinkedContextScopesTail.
 	}
 	for _, tt := range tests {
@@ -92,13 +93,13 @@ func TestLinkedContextDefaultsAcrossAppScopedReads(t *testing.T) {
 }
 
 func TestLinkedContextRequiredCommandExplainsHowToRecover(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	root := t.TempDir()
 	t.Chdir(root)
-	_, readStderr, restore := swapIO(t)
+	_, readStderr, restore := main.SwapIO(t)
 	defer restore()
 
-	if code := cmdAnalytics(nil); code != 1 {
+	if code := main.CmdAnalytics(nil); code != 1 {
 		t.Fatalf("analytics without slug or context = %d, want 1", code)
 	}
 	if stderr := readStderr(); !strings.Contains(stderr, "gregale link <project-slug>") {
@@ -109,13 +110,13 @@ func TestLinkedContextRequiredCommandExplainsHowToRecover(t *testing.T) {
 // `gregale tail` in a linked checkout resolves the linked app before it
 // attaches, then streams until Ctrl-C.
 func TestLinkedContextScopesTailJSON(t *testing.T) {
-	resetJSONOut(t)
-	jsonOutput = true
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := saveProjectContext(root, localProjectContext{Version: projectContextVersion, Project: "shop", App: "demo"}); err != nil {
+	if _, err := main.SaveProjectContext(root, main.LocalProjectContext{Version: main.ProjectContextVersion, Project: "shop", App: "demo"}); err != nil {
 		t.Fatal(err)
 	}
 	t.Chdir(root)
@@ -141,11 +142,11 @@ func TestLinkedContextScopesTailJSON(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
 
 	done := make(chan int, 1)
-	go func() { done <- cmdTail(nil) }()
+	go func() { done <- main.CmdTail(nil) }()
 	deadline := time.Now().Add(3 * time.Second)
 	for !strings.Contains(stdout.String(), "inv-linked") && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)

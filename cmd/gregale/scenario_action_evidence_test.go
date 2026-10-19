@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/actioncompare"
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -34,7 +35,7 @@ func testSealedActionSnapshot(runID string, count int) api.ScenarioActionSnapsho
 func TestScenarioActionCollectorFailsClosedAndSurvivesCancellation(t *testing.T) {
 	for _, mode := range []string{"complete", "pending-then-complete", "stale", "workload-mismatch", "truncated", "count-mismatch", "transport-error", "legacy-empty"} {
 		t.Run(mode, func(t *testing.T) {
-			receipt := testRunReceipt{RunID: strings.Repeat("a", 32), Status: "passed", Actions: &testActionEvidence{Webhooks: "capture", PolicyVersion: 1, Status: "applied"}}
+			receipt := main.TestRunReceipt{RunID: strings.Repeat("a", 32), Status: "passed", Actions: &main.TestActionEvidence{Webhooks: "capture", PolicyVersion: 1, Status: "applied"}}
 			calls := 0
 			client := scenarioActionClientFunc(func(ctx context.Context, runID string) (api.ScenarioActionSnapshot, error) {
 				calls++
@@ -64,7 +65,7 @@ func TestScenarioActionCollectorFailsClosedAndSurvivesCancellation(t *testing.T)
 			})
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
-			collect := newTestActionCollector(ctx, client, &receipt, []string{"primary"})
+			collect := main.NewTestActionCollector(ctx, client, &receipt, []string{"primary"})
 			collect()
 			collect() // Deferred fallback must not replace already sealed evidence.
 			valid := mode == "complete" || mode == "pending-then-complete"
@@ -83,50 +84,50 @@ func TestScenarioActionCollectorFailsClosedAndSurvivesCancellation(t *testing.T)
 }
 
 func TestScenarioActionComparisonGatesReportsIndependentlyOfDeclaredBehavior(t *testing.T) {
-	stdout, stderr := captureSuiteTestOutput(t)
+	stdout, stderr := main.CaptureSuiteTestOutput(t)
 	dir, scenario := behaviorTestScenario(t)
-	baseline := runSimulatedTest(context.Background(), "import", scenario, dir)
+	baseline := main.RunSimulatedTest(context.Background(), "import", scenario, dir)
 	if baseline.Status != "passed" {
 		t.Fatalf("baseline: %+v", baseline)
 	}
 	baseline.Engine, baseline.Attempt = "real-vm", 1
 	baseline.RunID = strings.Repeat("a", 32)
-	attach := func(run testRunReceipt, count int) testRunReceipt {
+	attach := func(run main.TestRunReceipt, count int) main.TestRunReceipt {
 		snapshot := testSealedActionSnapshot(run.RunID, count)
-		run.Actions = &testActionEvidence{Webhooks: "capture", PolicyVersion: 1, Status: "applied", Evidence: &actioncompare.Evidence{
+		run.Actions = &main.TestActionEvidence{Webhooks: "capture", PolicyVersion: 1, Status: "applied", Evidence: &actioncompare.Evidence{
 			Version: actioncompare.Version, Status: "complete", Provenance: actioncompare.Provenance,
 			ContractSHA256: run.Behavior.ContractSHA256, FixtureSHA256: run.Behavior.FixtureSHA256, Snapshot: &snapshot}}
 		return run
 	}
 	before, after := attach(baseline, 1), attach(baseline, 2)
-	comparison, err := compareTestReports("base", "candidate", []testRunReceipt{before}, []testRunReceipt{after})
+	comparison, err := main.CompareTestReports("base", "candidate", []main.TestRunReceipt{before}, []main.TestRunReceipt{after})
 	if err != nil || comparison.BehaviorStatus != "passed" || comparison.ActionStatus != "failed" || len(comparison.Runs[0].Actions.Changes) != 1 {
 		t.Fatalf("duplicate notification missed: %+v %v", comparison, err)
 	}
 	output := t.TempDir()
 	beforePath, afterPath := filepath.Join(output, "before.json"), filepath.Join(output, "after.json")
-	if err := writeTestReport(beforePath, []testRunReceipt{before}); err != nil {
+	if err := main.WriteTestReport(beforePath, []main.TestRunReceipt{before}); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeTestReport(afterPath, []testRunReceipt{after}); err != nil {
+	if err := main.WriteTestReport(afterPath, []main.TestRunReceipt{after}); err != nil {
 		t.Fatal(err)
 	}
 	html, markdown := filepath.Join(output, "comparison.html"), filepath.Join(output, "comparison.md")
 	stdout.Reset()
-	if code := cmdTestCompare([]string{beforePath, afterPath, "--html", html, "--markdown", markdown}); code != 1 {
+	if code := main.CmdTestCompare([]string{beforePath, afterPath, "--html", html, "--markdown", markdown}); code != 1 {
 		t.Fatalf("action regression exit=%d: %s", code, stderr)
 	}
-	var emitted testReportComparison
+	var emitted main.TestReportComparison
 	if err := json.Unmarshal(stdout.Bytes(), &emitted); err != nil || emitted.ActionStatus != "failed" || emitted.BehaviorStatus != "passed" {
 		t.Fatalf("missing action result in JSON: %+v %v", emitted, err)
 	}
 	stdout.Reset()
-	printTestReportComparison(stdout, emitted)
+	main.PrintTestReportComparison(stdout, emitted)
 	if !strings.Contains(stdout.String(), "managed webhook actions: failed (1 → 2") {
 		t.Fatalf("missing action comparison: %s", stdout)
 	}
 	singleHTML := filepath.Join(output, "run.html")
-	if err := writeTestHTMLReport(singleHTML, "import", []testRunReceipt{before}); err != nil {
+	if err := main.WriteTestHTMLReport(singleHTML, "import", []main.TestRunReceipt{before}); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{html, markdown, singleHTML} {
@@ -148,7 +149,7 @@ func TestScenarioActionComparisonGatesReportsIndependentlyOfDeclaredBehavior(t *
 			case "cleanup-failed":
 				candidate.CleanupError = "cleanup failed"
 			}
-			if result := compareTestActions(before, candidate); result == nil || result.Status != "inconclusive" {
+			if result := main.CompareTestActions(before, candidate); result == nil || result.Status != "inconclusive" {
 				t.Fatalf("incomplete action evidence passed: %+v", result)
 			}
 		})

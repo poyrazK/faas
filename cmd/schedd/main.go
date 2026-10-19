@@ -503,7 +503,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithExecutionOutboundRelay(sched.NewLoopbackExecutionOutboundRelay()).
 		WithCloneWakeDispatchRecorder(store.RecordCloneCheckpointWakeDispatch).
 		WithCloneMigrationAdoptionRecorder(store.RecordCloneCheckpointMigrationAdoption).
-		WithCloneMigrationResumeRecorder(store.RecordCloneCheckpointMigrationResume)
+		WithCloneMigrationResumeRecorder(store.RecordCloneCheckpointMigrationResume).
+		WithFinancialComputeAuthority(store)
 	nodeRegistry := sched.NewNodeRegistry(nodes)
 
 	// Tier A3: subscribe to compute_node_changed and refresh the
@@ -712,6 +713,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			return nil
 		}, log)
+	watcher.Daemon = "schedd" // ADR-1700 apply receipts
 	if err := watcher.Reconcile(runtimeCtx); err != nil {
 		log.Warn("schedd: initial runtime config reconcile failed", "err", err)
 	}
@@ -991,6 +993,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Warn("seed ledger", "err", err)
 	}
 	if err := engine.SeedDataRepairRehearsals(ctx); err != nil {
+		// As with init engine above: a cancel that lands before startup
+		// completes is a clean drain, not a seeding failure.
+		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+			return nil
+		}
 		return fmt.Errorf("schedd: seed repair rehearsal capacity: %w", err)
 	}
 	if err := startDataRepairRehearsals(ctx, engine, store, vmmRouter, ownerNodeID, seedLedgerReady, log); err != nil {

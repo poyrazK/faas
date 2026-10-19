@@ -46,8 +46,11 @@ EOF
 cat >"$BIN/stat" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$1" == -c && "$2" == '%s %Y' ]]
-printf '%s %s\n' "$(wc -c <"$3" | tr -d ' ')" 1704067200
+[[ "$1" == -c && "$2" == '%s %Y %n' ]]
+shift 2
+for path in "$@"; do
+  printf '%s %s %s\n' "$(wc -c <"$path" | tr -d ' ')" 1704067200 "$path"
+done
 EOF
 chmod +x "$BIN/pg_archivecleanup" "$BIN/rclone" "$BIN/stat" "$PRUNER"
 
@@ -57,7 +60,9 @@ make_backup() {
   rm -rf "$payload"
   mkdir -p "$dir" "$payload"
   printf 'START WAL LOCATION: 0/0 (file %s)\n' "$boundary" >"$payload/backup_label"
-  tar -czf "$dir/base.tar.gz" -C "$payload" backup_label
+  # pg_basebackup writes backup_label first and the data directory after it.
+  printf 'data' >"$payload/PG_VERSION"
+  tar -czf "$dir/base.tar.gz" -C "$payload" backup_label PG_VERSION
   if [[ "$with_manifest" == true ]]; then
     printf '{}\n' >"$dir/backup_manifest"
   fi
@@ -99,7 +104,9 @@ run_pruner --apply >/dev/null
 [[ -e "$ARCHIVE/$boundary" ]]
 [[ -e "$ARCHIVE/$new" ]]
 [[ -s "$STATE/wal-prune-success" ]]
-grep -Fq 'bytes=' "$STATE/wal-archive-stats"
+# Stats cover the two remaining WAL files: "boundary" (8 bytes) + "new" (3).
+grep -Fqx 'bytes=11' "$STATE/wal-archive-stats"
+grep -Fqx 'oldest_timestamp_seconds=1704067200' "$STATE/wal-archive-stats"
 
 rm -rf "$BACKUPS" "$STATE"
 mkdir -p "$BACKUPS"

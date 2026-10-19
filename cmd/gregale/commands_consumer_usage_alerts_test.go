@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -8,11 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // adr: 849 — plans carry alert thresholds and consumers list crossed alerts.
 func TestCmdConsumersUsageAlerts(t *testing.T) {
+	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1") // adr: 20261018090210 — exercises released monetization
 	var created api.CreateAPIConsumerPlanRequest
 	var updated map[string]json.RawMessage
 	month := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
@@ -38,32 +40,32 @@ func TestCmdConsumersUsageAlerts(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	})
-	if code := cmdConsumers([]string{"plan-create", "my-api", "--name", "free", "--max-units-per-month", "1000", "--alert-at", "80%,100"}); code != 0 {
+	if code := main.CmdConsumers([]string{"plan-create", "my-api", "--name", "free", "--max-units-per-month", "1000", "--alert-at", "80%,100"}); code != 0 {
 		t.Fatalf("plan-create exit = %d", code)
 	}
 	if !slices.Equal(created.AlertThresholdsPercent, []int32{80, 100}) || !strings.Contains(stdout.String(), "80%, 100%") {
 		t.Fatalf("created = %+v output:\n%s", created, stdout.String())
 	}
-	if code := cmdConsumers([]string{"plan-update", "my-api", "--plan", "free", "--alert-at", "none"}); code != 0 {
+	if code := main.CmdConsumers([]string{"plan-update", "my-api", "--plan", "free", "--alert-at", "none"}); code != 0 {
 		t.Fatalf("plan-update exit = %d", code)
 	}
 	if string(updated["alert_thresholds_percent"]) != "[]" || string(updated["max_units_per_month"]) != "1000" {
 		t.Fatalf("update body = %v, want cleared thresholds and kept limit", updated)
 	}
-	if code := cmdConsumers([]string{"plan-update", "my-api", "--plan", "free", "--max-units-per-month", "2000"}); code != 0 {
+	if code := main.CmdConsumers([]string{"plan-update", "my-api", "--plan", "free", "--max-units-per-month", "2000"}); code != 0 {
 		t.Fatalf("plan-update limit exit = %d", code)
 	}
 	if _, sent := updated["alert_thresholds_percent"]; sent {
 		t.Fatalf("update without --alert-at sent thresholds: %v", updated)
 	}
 	stdout.Reset()
-	if code := cmdConsumers([]string{"usage-alerts", "my-api", "c1"}); code != 0 {
+	if code := main.CmdConsumers([]string{"usage-alerts", "my-api", "c1"}); code != 0 {
 		t.Fatalf("usage-alerts exit = %d", code)
 	}
 	if out := strings.Join(strings.Fields(stdout.String()), " "); !strings.Contains(out, "2026-10 80% 800 / 1000 p1") {
 		t.Fatalf("usage-alerts output:\n%s", stdout.String())
 	}
-	if code := cmdConsumers([]string{"plan-create", "my-api", "--name", "x", "--alert-at", "lots"}); code == 0 {
+	if code := main.CmdConsumers([]string{"plan-create", "my-api", "--name", "x", "--alert-at", "lots"}); code == 0 {
 		t.Fatal("invalid --alert-at accepted")
 	}
 }

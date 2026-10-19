@@ -28,9 +28,12 @@ All are warn (ADR-1235).
 
 ## Staging activation
 
-Generate two distinct random tokens of at least 32 bytes each. Provision the
-same pair in both `/etc/faas/sealed.env` (APID) and
-`/etc/faas/secrets/meterd/billing.env` (meterd):
+The `control_plane_service` role provisions the pair (ADR-1189): when either
+token is missing it generates two distinct random 32-byte values and writes
+the same pair to `/etc/faas/sealed.env` (APID) and
+`/etc/faas/secrets/meterd/billing.env` (meterd), then restarts both daemons.
+Existing values are never replaced. To provision by hand instead, set
+`faas_safe_releases_enabled: false` and add the pair to both files:
 
 ```text
 FAAS_CANARY_PROGRESSION_TOKEN=<random-service-secret-1>
@@ -346,7 +349,9 @@ alert reports the failed sweep.
 
 ## Kill switch and recovery
 
-Remove both Safe Deploy tokens from the meterd secret file and restart meterd.
+Set `faas_safe_releases_enabled: false` for the control plane first, or the
+next playbook run restores the tokens (ADR-1189). Then remove both Safe Deploy
+tokens from the meterd secret file and restart meterd.
 After meterd has stopped, remove the pair from APID's sealed environment and
 restart APID to unmount the operator mutations as well.
 The lease expires within 30 seconds of the last renewal, so APID rejects new
@@ -361,4 +366,5 @@ gregale rollouts recover <slug> --action abort \
 ```
 
 Use `--action promote` only after validating the canary. Re-enable both tokens
-only after the incident is closed and the staging path has been rechecked.
+(set `faas_safe_releases_enabled: true` and rerun the playbook) only after the
+incident is closed and the staging path has been rechecked.

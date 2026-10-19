@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -49,11 +50,11 @@ func TestAppsUDPCommands(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test")
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
-	oldJSON := jsonOutput
-	jsonOutput = false
-	defer func() { jsonOutput = oldJSON }()
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = oldJSON }()
 	cases := []struct {
 		args                         []string
 		method, suffix, body, output string
@@ -69,7 +70,7 @@ func TestAppsUDPCommands(t *testing.T) {
 		path = "/v1/apps/test-app/udp-listeners" + tc.suffix
 		body = tc.body
 		stdout.Reset()
-		if code := run(tc.args); code != 0 {
+		if code := main.Run(tc.args); code != 0 {
 			t.Fatalf("%v exit=%d", tc.args, code)
 		}
 		if !strings.Contains(stdout.String(), tc.output) {
@@ -79,12 +80,12 @@ func TestAppsUDPCommands(t *testing.T) {
 	if requests != len(cases) {
 		t.Fatalf("requests=%d", requests)
 	}
-	jsonOutput = true
+	(*main.JsonOutput) = true
 	method = "GET"
 	path = "/v1/apps/test-app/udp-listeners"
 	body = ""
 	stdout.Reset()
-	if code := cmdAppsUDP("test-app", nil); code != 0 {
+	if code := main.CmdAppsUDP("test-app", nil); code != 0 {
 		t.Fatalf("JSON list exit=%d", code)
 	}
 	var out api.UDPListenerResponse
@@ -96,7 +97,7 @@ func TestAppsUDPCommands(t *testing.T) {
 	}
 	before := requests
 	for _, args := range [][]string{{"apps", "udp"}, {"apps", "udp", "test-app", "add"}, {"apps", "udp", "test-app", "enable"}, {"apps", "udp", "test-app", "list", "extra"}} {
-		if code := run(args); code == 0 {
+		if code := main.Run(args); code == 0 {
 			t.Errorf("%v accepted", args)
 		}
 	}
@@ -107,7 +108,7 @@ func TestAppsUDPCommands(t *testing.T) {
 		{"--name", "dns", "--guest-port", "5353", "--public-port", "50000"},
 	} {
 		args := append([]string{"apps", "udp", "test-app", "add"}, flags...)
-		if code := run(args); code == 0 {
+		if code := main.Run(args); code == 0 {
 			t.Errorf("invalid ports accepted: %v", args)
 		}
 	}

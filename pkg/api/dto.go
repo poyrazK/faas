@@ -1390,6 +1390,37 @@ type APIConsumerOverdueHoldListResponse struct {
 	Holds []APIConsumerOverdueHoldResponse `json:"holds"`
 }
 
+// PlatformTenantTrialResponse is a platform tenant's free trial: its usage
+// in [starts_at, ends_at) is priced at zero (ADR-1322).
+type PlatformTenantTrialResponse struct {
+	TenantID string    `json:"tenant_id"`
+	StartsAt time.Time `json:"starts_at"`
+	EndsAt   time.Time `json:"ends_at"`
+	Active   bool      `json:"active"`
+}
+
+// PlatformTenantBillingPolicyResponse is an account's overdue rule for
+// platform tenants (ADR-1324).
+type PlatformTenantBillingPolicyResponse struct {
+	BlockOverdueAfterDays int       `json:"block_overdue_after_days"`
+	UpdatedAt             time.Time `json:"updated_at"`
+}
+
+// PlatformTenantOverdueHoldResponse is one platform tenant the gateway
+// refuses because of an overdue invoice.
+type PlatformTenantOverdueHoldResponse struct {
+	TenantID string    `json:"tenant_id"`
+	ExportID string    `json:"export_id"`
+	DueAt    time.Time `json:"due_at"`
+	Since    time.Time `json:"since"`
+}
+
+// PlatformTenantOverdueHoldListResponse lists an account's blocked tenants,
+// oldest due date first.
+type PlatformTenantOverdueHoldListResponse struct {
+	Holds []PlatformTenantOverdueHoldResponse `json:"holds"`
+}
+
 // APIConsumerResponse is the public representation of an API consumer.
 type APIConsumerResponse struct {
 	ID                      string     `json:"id"`
@@ -1493,6 +1524,9 @@ type CreateAPIConsumerRateCardRequest struct {
 	// consumer's month starts sets both for that month.
 	BaseFeeMillicentsPerMonth int64 `json:"base_fee_millicents_per_month,omitempty"`
 	MinimumMillicentsPerMonth int64 `json:"minimum_millicents_per_month,omitempty"`
+	// ProrateMonthlyFees scales both in a consumer's first month to the
+	// share of it left after the consumer was created (ADR-1325).
+	ProrateMonthlyFees bool `json:"prorate_monthly_fees,omitempty"`
 }
 
 // APIConsumerRateCardTier is one step of a graduated ladder. Units whose
@@ -1517,9 +1551,11 @@ type APIConsumerRateCardResponse struct {
 	TierMode               string                    `json:"tier_mode"`
 	RouteWeights           map[string]int64          `json:"route_weights,omitempty"`
 	PlanID                 string                    `json:"plan_id,omitempty"`
-	// Monthly base fee and minimum spend per consumer (ADR-1316).
+	// Monthly base fee and minimum spend per consumer (ADR-1316), prorated
+	// in a consumer's first month when prorate_monthly_fees (ADR-1325).
 	BaseFeeMillicentsPerMonth int64     `json:"base_fee_millicents_per_month,omitempty"`
 	MinimumMillicentsPerMonth int64     `json:"minimum_millicents_per_month,omitempty"`
+	ProrateMonthlyFees        bool      `json:"prorate_monthly_fees,omitempty"`
 	EffectiveFrom             time.Time `json:"effective_from"`
 	CreatedAt                 time.Time `json:"created_at"`
 }
@@ -1924,6 +1960,10 @@ type AppResponse struct {
 	ID                        string `json:"id"`
 	Slug                      string `json:"slug"`
 	Type                      string `json:"type"`
+	// ProjectID is the parent project (ADR-050) as the canonical UUID text
+	// Postgres renders for apps.project_id. Omitted for standalone apps.
+	// Read-only: no app create/update request accepts it.
+	ProjectID string `json:"project_id,omitempty"`
 	// Visibility is public unless the app is explicitly configured for
 	// authenticated service-to-service ingress only.
 	Visibility string `json:"visibility"`
@@ -5703,6 +5743,18 @@ type AccountTraceLookupResponse struct {
 type AccountTraceMatch struct {
 	App     string                    `json:"app"`
 	Request DebugTelemetryRequestItem `json:"request"`
+	// Wake is the wake this request started or joined, when its wake history
+	// is still retained.
+	Wake *AccountTraceWake `json:"wake,omitempty"`
+}
+
+// AccountTraceWake is how a matched request's app was woken: the wake method
+// (for example restore or cold_boot) and how long the instance took from boot
+// start to ready. ReadyInMS is omitted until the wake completed.
+type AccountTraceWake struct {
+	WakeID    string `json:"wake_id"`
+	Method    string `json:"method,omitempty"`
+	ReadyInMS int32  `json:"ready_in_ms,omitempty"`
 }
 
 // AccountTraceInvocation is a safe durable invocation lifecycle projection.
@@ -7230,16 +7282,21 @@ type SourceTarballDeployRequest struct {
 // existing app, and which existing app row the update targets. ID is
 // empty when Action == "create".
 type PlanWorkload struct {
-	AppSlug             string              `json:"app_slug,omitempty"`
-	PublicURL           string              `json:"public_url,omitempty"`
-	Name                string              `json:"name"`
-	RootDir             string              `json:"root_dir"`
-	Dockerfile          string              `json:"dockerfile,omitempty"`
-	Image               string              `json:"image,omitempty"`
-	ImageHealthcheck    *ComposeHealthcheck `json:"image_healthcheck,omitempty"`
-	Command             []string            `json:"command"`
-	DependsOn           []string            `json:"depends_on,omitempty"`
-	DependsOnConditions map[string]string   `json:"depends_on_conditions,omitempty"`
+	AppSlug          string              `json:"app_slug,omitempty"`
+	PublicURL        string              `json:"public_url,omitempty"`
+	Name             string              `json:"name"`
+	RootDir          string              `json:"root_dir"`
+	Dockerfile       string              `json:"dockerfile,omitempty"`
+	Image            string              `json:"image,omitempty"`
+	ImageHealthcheck *ComposeHealthcheck `json:"image_healthcheck,omitempty"`
+	ImageProcess     *ComposeProcess     `json:"image_process,omitempty"`
+	// BuildTarget and BuildArgs show a source-built service's Compose build
+	// options (ADR-20261019142544); argument values stay out of plans.
+	BuildTarget         string            `json:"build_target,omitempty"`
+	BuildArgs           []string          `json:"build_args,omitempty"`
+	Command             []string          `json:"command"`
+	DependsOn           []string          `json:"depends_on,omitempty"`
+	DependsOnConditions map[string]string `json:"depends_on_conditions,omitempty"`
 
 	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
 	// ServiceBindingTransport opts a Compose workload into the HTTPS-first

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/api/canary"
 )
@@ -27,11 +28,11 @@ func TestCmdCanarySimulate_HappyPath(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdCanary([]string{"simulate", "my-app", "--canary-preset", "slow"}); code != 0 {
+	if code := main.CmdCanary([]string{"simulate", "my-app", "--canary-preset", "slow"}); code != 0 {
 		t.Fatalf("canary simulate = %d, want 0", code)
 	}
 	if gotPath != "/v1/apps/my-app/metrics" {
@@ -60,15 +61,15 @@ func TestCmdCanarySimulate_JSON(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
-	jsonOutput = true
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
+	(*main.JsonOutput) = true
 
-	if code := cmdCanarySimulate([]string{"my-app"}); code != 0 {
+	if code := main.CmdCanarySimulate([]string{"my-app"}); code != 0 {
 		t.Fatalf("canary simulate --json = %d, want 0", code)
 	}
 	var report canary.SimReport
@@ -92,10 +93,10 @@ func TestCmdCanarySimulate_RejectsDegradedMetrics(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	_, stderr, restore := swapIO(t)
+	_, stderr, restore := main.SwapIO(t)
 	defer restore()
 
-	if code := cmdCanarySimulate([]string{"my-app"}); code == 0 {
+	if code := main.CmdCanarySimulate([]string{"my-app"}); code == 0 {
 		t.Fatal("degraded metrics must fail the simulation")
 	}
 	if !strings.Contains(stderr(), "prometheus unavailable") {
@@ -104,9 +105,9 @@ func TestCmdCanarySimulate_RejectsDegradedMetrics(t *testing.T) {
 }
 
 func TestCmdCanarySimulate_RejectsUnsupportedPreset(t *testing.T) {
-	_, stderr, restore := swapIO(t)
+	_, stderr, restore := main.SwapIO(t)
 	defer restore()
-	if code := cmdCanarySimulate([]string{"my-app", "--canary-preset", "none"}); code == 0 {
+	if code := main.CmdCanarySimulate([]string{"my-app", "--canary-preset", "none"}); code == 0 {
 		t.Fatal("none preset must fail for simulation")
 	}
 	if !strings.Contains(stderr(), "Invalid --canary-preset") {
@@ -125,7 +126,7 @@ func TestRun_DispatchCanary(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if code := run([]string{"canary", "simulate", "my-app"}); code != 0 {
+	if code := main.Run([]string{"canary", "simulate", "my-app"}); code != 0 {
 		t.Errorf("run canary simulate = %d, want 0", code)
 	}
 }

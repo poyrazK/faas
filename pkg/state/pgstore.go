@@ -15765,7 +15765,7 @@ func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoca
 	if err != nil {
 		return Invocation{}, err
 	}
-	if info.environment.ID == "" {
+	if info.environment.ID == "" && inv.AdmissionMaxPending <= 0 {
 		return enqueueInvocationRow(ctx, s.pool, inv)
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -15773,15 +15773,23 @@ func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoca
 		return Invocation{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockInvocationAdmissionAppDB(ctx, tx, inv); err != nil {
+		return Invocation{}, err
+	}
 	if err := lockInvocationEnvironmentDB(ctx, tx, inv.AppID, inv.AccountID, info.environment.ID); err != nil {
+		return Invocation{}, err
+	}
+	if err := checkInvocationAdmissionDepthDB(ctx, tx, inv); err != nil {
 		return Invocation{}, err
 	}
 	out, err := enqueueInvocationRow(ctx, tx, inv)
 	if err != nil {
 		return Invocation{}, err
 	}
-	if err := bindInvocationEnvironmentDB(ctx, tx, info, out); err != nil {
-		return Invocation{}, err
+	if info.environment.ID != "" {
+		if err := bindInvocationEnvironmentDB(ctx, tx, info, out); err != nil {
+			return Invocation{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Invocation{}, err
@@ -32336,7 +32344,9 @@ func (s *PgStore) DecrementAccountAsyncInflight(ctx context.Context, accountID s
 // to terminal states only (migration 00550_invocations_async_fields.sql
 // documents this contract). Without the filter, the reaper would
 // DELET Epending/dispatching rows whose customer-supplied
-// result_retention_until happens to be in the past.
+// result_retention_until happens to be in the past. Superseded and
+// expired keyed work is terminal too; invocations_retention_due_idx
+// carries the same state predicate (ADR 20261019104819).
 func (s *PgStore) ListExpiredInvocationsForReaper(ctx context.Context, now time.Time, limit int) ([]string, error) {
 	if limit <= 0 {
 		limit = 500
@@ -32347,7 +32357,7 @@ func (s *PgStore) ListExpiredInvocationsForReaper(ctx context.Context, now time.
 		 where result_retention_until is not null
 		   AND result_retention_until <= $1
            AND NOT EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=invocations.id)
-		   AND state in ('completed', 'failed', 'dead_letter', 'cancelled')
+		   AND state in ('completed', 'failed', 'dead_letter', 'cancelled', 'superseded', 'expired')
 		 order by result_retention_until
 		 limit $2`, now.UTC(), limit)
 	if err != nil {

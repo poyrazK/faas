@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -31,7 +32,7 @@ func TestMCPAdmissionExplainHistoricalAndCurrent(t *testing.T) {
 						http.Error(w, "PRIVATE_ERROR", 403)
 						return
 					}
-					receipt := api.MCPAdmissionEvidence{Version: 1, ID: id, DeploymentID: overviewWebDeployment, TrafficPercent: 100, CapturedAt: captured, Outcome: "rejected", Reason: api.CodeMCPGatewayReplayPending, ExpectedFingerprint: strings.Repeat("a", 64), ObservedFingerprint: strings.Repeat("b", 64), ExpectedRevision: &expected, ObservedRevision: &observed, Gateways: []api.MCPAdmissionGateway{
+					receipt := api.MCPAdmissionEvidence{Version: 1, ID: id, DeploymentID: main.OverviewWebDeployment, TrafficPercent: 100, CapturedAt: captured, Outcome: "rejected", Reason: api.CodeMCPGatewayReplayPending, ExpectedFingerprint: strings.Repeat("a", 64), ObservedFingerprint: strings.Repeat("b", 64), ExpectedRevision: &expected, ObservedRevision: &observed, Gateways: []api.MCPAdmissionGateway{
 						{NodeName: "old", Revision: &behind, ObservedAt: &old},
 						{NodeName: "future", Revision: &observed, ObservedAt: &future},
 						{NodeName: "missing"},
@@ -48,7 +49,7 @@ func TestMCPAdmissionExplainHistoricalAndCurrent(t *testing.T) {
 						receipt.Reason = "PRIVATE_REASON"
 					}
 					if scenario == "wrong receipt" {
-						receipt.ID = overviewHeldDeployment
+						receipt.ID = main.OverviewHeldDeployment
 					}
 					if scenario == "missing gateways" {
 						receipt.Gateways = nil
@@ -59,15 +60,15 @@ func TestMCPAdmissionExplainHistoricalAndCurrent(t *testing.T) {
 						receipt.Gateways = nil
 						receipt.Reason = api.CodeMCPAccessPolicyChanged
 					}
-					writeJSONTest(w, receipt)
-				case "/v1/deployments/" + overviewWebDeployment:
-					writeJSONTest(w, api.DeploymentResponse{ID: overviewWebDeployment, AppID: "app-id"})
+					main.WriteJSONTest(w, receipt)
+				case "/v1/deployments/" + main.OverviewWebDeployment:
+					main.WriteJSONTest(w, api.DeploymentResponse{ID: main.OverviewWebDeployment, AppID: "app-id"})
 				case "/v1/apps/reports":
 					appID := "app-id"
 					if scenario == "wrong app" {
 						appID = "different-app"
 					}
-					writeJSONTest(w, api.AppResponse{ID: appID, Slug: "reports"})
+					main.WriteJSONTest(w, api.AppResponse{ID: appID, Slug: "reports"})
 				case "/v1/apps/reports/policy/status":
 					if r.URL.Query().Get("edge_rules_scope") != "account" {
 						t.Error("incorrect convergence scope")
@@ -80,9 +81,9 @@ func TestMCPAdmissionExplainHistoricalAndCurrent(t *testing.T) {
 					if scenario == "old current" {
 						at = captured.Add(-time.Second)
 					}
-					writeJSONTest(w, api.RuntimePolicyStatusResponse{AppID: "app-id", EdgeRules: api.RuntimePolicyComponentStatus{Scope: "account"}, MCPConvergence: &api.MCPPolicyConvergenceSnapshot{State: "active", CapturedAt: at, DesiredRevision: observed, ServingGateways: 4}})
+					main.WriteJSONTest(w, api.RuntimePolicyStatusResponse{AppID: "app-id", EdgeRules: api.RuntimePolicyComponentStatus{Scope: "account"}, MCPConvergence: &api.MCPPolicyConvergenceSnapshot{State: "active", CapturedAt: at, DesiredRevision: observed, ServingGateways: 4}})
 				case "/v1/apps/reports/alerts":
-					writeJSONTest(w, []api.AlertRuleResponse{})
+					main.WriteJSONTest(w, []api.AlertRuleResponse{})
 				default:
 					t.Errorf("unexpected request: %s", r.URL)
 					http.NotFound(w, r)
@@ -93,7 +94,7 @@ func TestMCPAdmissionExplainHistoricalAndCurrent(t *testing.T) {
 			if scenario == "current" || scenario == "wrong app" || scenario == "current unavailable" || scenario == "old current" {
 				slug = "reports"
 			}
-			report := collectMCPAdmissionExplanation(t.Context(), NewClient(server.URL, "operator"), id, slug)
+			report := main.CollectMCPAdmissionExplanation(t.Context(), main.NewClient(server.URL, "operator"), id, slug)
 			unavailable := scenario == "denied receipt" || scenario == "invalid reason" || scenario == "wrong receipt"
 			if (report.State == "unavailable") != unavailable {
 				t.Fatalf("unexpected state: %+v", report)
@@ -150,12 +151,12 @@ func TestMCPAdmissionExplainHistoricalAndCurrent(t *testing.T) {
 			if strings.Contains(string(raw), "PRIVATE_") {
 				t.Fatal("private upstream data leaked")
 			}
-			oldOut, oldJSON := osStdout, jsonOutput
+			oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 			var out bytes.Buffer
-			osStdout = &out
-			jsonOutput = false
-			defer func() { osStdout = oldOut; jsonOutput = oldJSON }()
-			code := writeMCPAdmissionExplanation(report)
+			(*main.OsStdout) = &out
+			(*main.JsonOutput) = false
+			defer func() { (*main.OsStdout) = oldOut; (*main.JsonOutput) = oldJSON }()
+			code := main.WriteMCPAdmissionExplanation(report)
 			if (code != 0) != (unavailable || report.CurrentState == "unavailable") {
 				t.Fatalf("unexpected exit: %d", code)
 			}
@@ -166,8 +167,8 @@ func TestMCPAdmissionExplainHistoricalAndCurrent(t *testing.T) {
 	}
 }
 func TestMCPAdmissionExplainCommandValidation(t *testing.T) {
-	for _, args := range [][]string{{"explain"}, {"explain", "--evidence", "bad"}, {"explain", "--evidence", overviewWebDeployment, "--timeout", "0s"}, {"explain", "--evidence", overviewWebDeployment, "--app", "bad slug"}} {
-		if cmdMCPAccess(args) == 0 {
+	for _, args := range [][]string{{"explain"}, {"explain", "--evidence", "bad"}, {"explain", "--evidence", main.OverviewWebDeployment, "--timeout", "0s"}, {"explain", "--evidence", main.OverviewWebDeployment, "--app", "bad slug"}} {
+		if main.CmdMCPAccess(args) == 0 {
 			t.Fatal("invalid explanation accepted")
 		}
 	}

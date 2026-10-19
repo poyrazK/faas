@@ -1044,6 +1044,24 @@
     msg: "{{ faas_mail_transport_assert.stdout }}"
   when: faas_mail_transport_assert.stdout != ""
 
+# ADR-1189: Safe Deploy (canary progression, alert rollbacks, stuck-canary
+# recovery) runs only when APID and meterd share the internal service-token
+# pair. Generate it once when missing; existing values are never replaced and
+# a value set in only one file is copied to the other. To switch Safe Deploy
+# off, set faas_safe_releases_enabled: false before removing the tokens, or the
+# next run puts them back (docs/runbooks/FaasSafeDeployRollout.md).
+- name: control_plane_service — provision the Safe Deploy token pair (ADR-1189)
+  ansible.builtin.script:
+    cmd: provision-safe-release-tokens.sh /etc/faas/sealed.env /etc/faas/secrets/meterd/billing.env
+    executable: /bin/bash
+  register: faas_safe_release_tokens
+  changed_when: "'changed=1' in faas_safe_release_tokens.stdout"
+  when: faas_safe_releases_enabled | bool
+  no_log: true
+  notify:
+    - restart faas-apid
+    - restart faas-meterd
+
 - name: control_plane_service — configure signed VM inventory repair
   ansible.builtin.template:
     src: "{{ role_path }}/../_shared/templates/zz-faas-node-inventory.conf.j2"

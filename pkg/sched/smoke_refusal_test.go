@@ -1,5 +1,5 @@
 // spec: §6.1
-package sched
+package sched_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -20,17 +21,17 @@ func TestRefusedDeploymentSmokeIsNotPressure(t *testing.T) {
 		status       state.DeploymentStatus
 		wantPressure int
 	}{
-		{name: "smoke of a failed candidate", trigger: TriggerDeploymentSmoke, status: state.DeployFailed, wantPressure: 0},
-		{name: "ordinary wake of a non-live candidate", trigger: TriggerFloorDep, status: state.DeploySnapshotting, wantPressure: 1},
+		{name: "smoke of a failed candidate", trigger: sched.TriggerDeploymentSmoke, status: state.DeployFailed, wantPressure: 0},
+		{name: "ordinary wake of a non-live candidate", trigger: sched.TriggerFloorDep, status: state.DeploySnapshotting, wantPressure: 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			store := state.NewMemStore()
-			_, app, _ := seedApp(t, store, api.PlanPro, 256, 1)
+			_, app, _ := sched.SeedApp(t, store, api.PlanPro, 256, 1)
 			now := time.Now()
-			agg := NewPressureAggregatorForTest(time.Minute, 100, func() time.Time { return now })
-			e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").WithPressureAggregator(agg)
+			agg := sched.NewPressureAggregatorForTest(time.Minute, 100, func() time.Time { return now })
+			e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0").WithPressureAggregator(agg)
 			candidate, err := store.CreateDeployment(ctx, state.Deployment{
 				AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:candidate", Status: tc.status,
 			})

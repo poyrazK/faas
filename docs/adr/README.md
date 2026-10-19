@@ -1,5 +1,12 @@
 # Architecture Decision Records
 
+- [Finished invocations without a horizon get the plan default retention](20261019104819-invocation-default-retention.md)
+- [Compose build arguments and target stage for Dockerfile builds](20261019142544-compose-build-args-and-target.md)
+
+- [Data API usage reporting and owner monthly caps](20261019102108-data-api-usage-and-owner-caps.md)
+
+- [Data API public reads, server keys, aggregates, single-app projects and Python/Go clients](20261018170742-data-api-access-modes-and-clients.md)
+
 - [Tenant egress denies the NAT64 prefixes](20261018194214-tenant-egress-deny-nat64.md)
 - [ADR-1745: Shared-window compound Issues alerts](1745-shared-window-issue-compound-alerts.md)
 - [ADR-1744: Offline grouping previews and reviewed regression baselines](1744-issue-grouping-previews-and-baselines.md)
@@ -140,6 +147,9 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 2026101702 | [Linked replacement repair plans](2026101702-repair-replacement.md) | accepted for internal qualification | Narrow original candidates with parent fencing and fresh approval |
 | 2026101701 | [Reviewed retention of repair payloads](2026101701-repair-retention.md) | accepted for internal qualification | Digest-reviewed compaction retains identities, receipts and closure |
 | 2026101710 | [Daemon-bound repair producers](2026101710-repair-producer-retirement.md) | accepted; native execution pending | Physical producer retirement fences cleanup and capacity release |
+| 1580 | [Zero-downtime daemon restarts](1580-zero-downtime-daemon-restarts.md) | accepted | Opt-in durable listeners, bounded draining and restart-aware routing |
+| 2026101501 | [Internal mail service](2026101501-internal-mail-service.md) | accepted for internal experiment; customer delivery disabled | Independent activation and delivery gates |
+| 2026101601 | [Durable mail producer outbox](2026101601-mail-producer-outbox.md) | accepted for internal experiment; activation disabled | Durable account-deletion producer handoff |
 | 20261016 | [Selective data repair](20261016-selective-data-repair.md) | accepted for internal qualification | Explicit PostgreSQL field-update capture, isolated rehearsal and atomic approved repair; limits in `pkg/api/limits.go` |
 | 1576 | [Internal CI control plane with compute admission closed](1576-internal-ci-control-plane.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
 | 1571 | [Durable CI execution engine qualification without compute dispatch](1571-ci-execution-engine-qualification.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
@@ -231,6 +241,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1333 | [Durable managed PostgreSQL activation preflight](1333-managed-postgres-activation-preflight.md) | accepted for catalog inspection; customer activation disabled | Recoverable preflight revisions check restored targets, staged SQL verification and source bindings without publishing credentials |
 | 1334 | [Durable cutover source SQL connection fences](1334-managed-postgres-cutover-source-fences.md) | accepted for internal controller plumbing; customer activation disabled | Owned SQL fences share maintenance authority, survive lost replies and retain pins until confirmed cancellation cleanup |
 | 1335 | [Source writer inventory and provider isolation evidence](1335-managed-postgres-source-writer-isolation.md) | accepted for internal recovery plumbing; customer activation disabled | Immutable catalog baselines, writer diagnostics and expiring provider evidence fail closed on drift or unsupported guarantees |
+| 1337 | [Compose process overrides and unsupported-key reporting](1337-compose-process-overrides-and-key-reporting.md) | accepted | Prebuilt image services honour entrypoint/user/working_dir/stop_signal/stop_grace_period via a frozen `image_command` v2; `env_file` adds variable names; other keys, including unresolved `extends`/`include`, warn |
 | 1170 | [Developer watch mode for apps with a build step](1170-developer-watch-mode.md) | proposed | Opt-in `gregale dev --watch`: a builder-made developer image runs the framework's dev server and ADR-740 patches reach its own hot reload |
 | 1114 | [Reversible issue group links](1114-reversible-issue-group-links.md) | accepted | Merge fingerprint groups without moving evidence; split an original group back out with its lifetime history |
 | 1113 | [Deployment-local issue source maps](1113-deployment-local-issue-source-maps.md) | accepted | Node reporters map bounded local artifacts to original frames while preserving generated stack evidence |
@@ -314,6 +325,15 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1316 | [Monthly base fee and minimum spend](1316-monthly-base-fee-and-minimum-spend.md) | accepted | App cards charge a base fee and a minimum per consumer month; statements carry fee lines and billing runs include idle consumers |
 | 1317 | [Several units priced at once](1317-parallel-unit-price-streams.md) | accepted | App cards of different units are parallel price histories; statement buckets and coverage are keyed by minute and unit |
 | 1318 | [App-reported usage units](1318-app-reported-usage-units.md) | accepted | Apps report units in a Gregale-Usage header or trailer; apid keeps them per consumer, meter and minute, and app:<meter> cards price them |
+| 1319 | [Customer-wide cards price several units, including app-reported ones](1319-platform-tenant-unit-streams-and-app-units.md) | accepted | Platform tenant cards of different units are parallel streams across every subject; tenant surfaces and JWT rules record app-reported units; assigning a plan stops other units |
+| 1322 | [Monthly fees and free trials for platform tenants](1322-platform-tenant-fees-and-trials.md) | accepted | Tenant cards and plans charge a base fee and minimum per tenant month; tenant statements and webhooks carry fees; tenants get one free trial |
+| 1324 | [Block platform tenants with overdue invoices](1324-block-tenants-with-overdue-invoices.md) | accepted | An account rule holds tenants whose exported invoice is unpaid past its due date; tenant admission answers 402 tenant_invoice_overdue |
+| 1325 | [Prorated monthly fees in the first month](1325-prorated-monthly-fees.md) | accepted | App and tenant cards can prorate the base fee and minimum of the month a consumer or tenant is created, by minutes left |
+| 20261018090210 | [API monetization behind a release flag](20261018090210-api-monetization-release-flag.md) | accepted | Runtime setting `api_monetization_enabled` (default off) hides its routes before auth, spec paths, CLI verbs, webhook events and starter billing, and pauses its workers and gateway enforcement |
+| 20261019100330 | [Zero- and three-decimal statement currencies](20261019100330-statement-currencies.md) | accepted | Statements stay in millicents; invoices, exports and payment syncs use each ISO 4217 currency's minor unit (0–3 decimals), converted to Stripe's own units at the edge |
+| 20261019100331 | [Prepaid credit and spend caps for platform tenants](20261019100331-platform-tenant-credit-and-spend-caps.md) | accepted | Tenant credit grants are drawn at finalize; monthly tenant spend caps after credit are checked each minute and enforced through tenant admission with a 402 |
+| 20261019100332 | [Prorated monthly fees across card changes and revocation](20261019100332-prorated-fees-across-card-changes.md) | accepted | Prorating cards charge fees and minimums for the share of the month they are in force, and until a revocation unless the month was already finalized |
+| 20261019100333 | [Paddle invoices sent by Paddle](20261019100333-paddle-send-collection.md) | accepted | Paddle connections can collect with `send`: exports bill the draft transaction with the customer's newest address so Paddle emails it |
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
 | 712 | [Object-storage durable entities](712-object-storage-durable-entities.md) | internal prototype; qualification pending | SQL-free entity state and retry receipts, opt-in alarms and checkpointed cleanup |
 | 1446 | [Safe releases by default](1446-safe-releases-by-default.md) | accepted; n2 drills passed | Default balanced canary and 5xx rollback for production releases, bounded low-traffic hold, crash-loop gate, unfenced plain rollback, verified rollback outcomes |
@@ -395,7 +415,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 567 | [Runtime base convergence](567-runtime-base-convergence.md) | proposed | Keep each node's cached runtime base byte-identical to its shared publication so ADR-510 snapshots restore on any node |
 | 510 | [Snapshot backing image identity](510-snapshot-backing-image-identity.md) | proposed | Restore only onto the kernel and read-only base a capture was taken with; refuse and cold-boot otherwise |
 | 516 | [Replay recent managed PostgreSQL usage corrections](516-managed-postgres-usage-correction-replay.md) | accepted | Recover missing windows first, bound recent revision replay, and reject unsafe collection windows |
-| 566 | [Financial visibility and scoped spending controls](566-financial-visibility-and-scoped-budgets.md) | visibility preview; enforcement pending | Retained compute/egress costs, forecasts and disabled budget drafts; runtime enforcement has separate acceptance gates |
+| 566 | [Financial visibility and scoped spending controls](566-financial-visibility-and-scoped-budgets.md) | monitored notifications preview; stopping pending | Retained costs, forecasts, revisioned budgets and durable spending alerts; stopping and strict limits have separate acceptance gates |
 | 565 | [Managed PostgreSQL fleet usage recovery](565-managed-postgres-fleet-usage-recovery.md) | accepted | Recover one window per database per round across the fleet before correction replay, using durable observation order |
 | 569 | [Managed PostgreSQL terminal usage coverage](569-managed-postgres-terminal-usage-coverage.md) | accepted | Retain known resources through shutdown, recover finite final windows, and require every final correction before completing automatic accounting |
 - [ADR-581: Managed PostgreSQL uncertain accounting intent](581-managed-postgres-uncertain-accounting-intent.md) — durable provider-attempt ownership and identity recovery before deletion
@@ -757,6 +777,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1162 | [Billing delivery finality, a hard spend cap, and plan-history allowances](1162-billing-delivery-finality-spend-cap-and-plan-history.md) | accepted | `MeterUsageFinalAfter` gates provider delivery on final minutes; the spend cap bills up to the cap and parks capped accounts (`SpendCapJobDeferInterval` defers queued job tasks); app purge keeps usage; the month's allowance follows recorded plan activations |
 | 1163 | [Live job task output](1163-live-job-task-output.md) | accepted | Compute-gateway SSE `GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream` follows the task VM ring; `gregale run --image` streams live, `gregale jobs logs --follow` |
 | 1330 | [Interactive image runs (`gregale run -it --image`)](1330-interactive-image-runs.md) | accepted for an operator-gated preview | The job guest holds its command until one client attaches over ADR-1037's token, WebSocket and `AttachAppTask` transport; the job supervisor keeps timeout, cancellation and exit receipt; gate `FAAS_INTERACTIVE_IMAGE_RUNS` |
+| 1790 | [Image runs: Docker process semantics, `-u/-w`, env files and private registries](1790-image-run-docker-process-and-registry-auth.md) | accepted | Image runs take the image's ENV, USER, WORKDIR and PATH lookup; `gregale run` adds `-u`, `-w`, `--env-file`, `-e KEY`, a positional image and `--registry-username` (credential sealed on the runner job, refreshed per run) |
 | 1235 | [Spec §12 operator alerts ship at warn](1235-spec12-operator-alerts-at-warn.md) | accepted | 26 §12 alerts that had no rule are implemented with fixtures, all warn and `public_status: internal` until paging is triaged; write-relay and safe-deploy names corrected to the exported `gatewayd_` / `meterd_` series |
 | 1236 | [Paging set: page only on symptoms that need a human now](1236-paging-set.md) | accepted | 96 page alerts become 27: 24 kept, 72 demoted to warn, near-expiry certificate pages and access-gating edge-rule compile errors added; every page alert has a firing fixture |
 | 1320 | [Object-storage plan allowances, plan ceilings, and the overage cap](1320-object-storage-plan-allowances-ceilings-and-overage-cap.md) | accepted; every plan at zero until pricing | `Limits.ObjectStorage` holds per-plan ceilings and allowances; allowances are removed before month-close pricing and follow plan history; ceilings tighten the operator policy at URL admission and gateway checks; the month-close charge is held under the overage cap after the month's compute and live egress |
@@ -992,6 +1013,9 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1152: Route feature evidence, advisor settings, and token-free rollout completion](1152-route-feature-evidence-and-rollout-completion.md) — show learned wake-ahead edges and queue outcomes, suggest the settings, and complete finished rollouts without the safe-release tokens (#1926)
 - [ADR-1187: Route awake report](1187-route-awake-report.md) — which routes keep a scale-to-zero app awake, what removing each would save, and edge-cache or polling suggestions
 - [ADR-1188: Learned cacheability](1188-learned-cacheability.md) — compare anonymous GET bodies with the previous response per URL to measure whether a route is safe to cache, and for how long
+- [ADR-1189: Safe Deploy and scheduled prewarm on by default](1189-safe-releases-and-prewarm-on-by-default.md) — the control-plane role provisions the Safe Deploy token pair and schedd runs the prewarm drain
+- [ADR-1198: Proactive route insights](1198-proactive-route-insights.md) — apid records routes that keep apps awake or are safe to cache, and notifies app webhooks of each transition
+- [ADR-1199: Route evidence — cache rules and awake sources](1199-route-evidence-cache-rules-and-awake-sources.md) — the gateway observes cache rule refills so stale or too-short rules become insights, and the awake report credits route probes and prewarm
 - [ADR-480: Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md)
 - [ADR-493: Observed customer exposure for route changes](493-route-customer-exposure.md) — bounded, read-only request-time customer usage evidence in preview reports
 - [ADR-494: Advisory customer route health](494-advisory-customer-route-health.md) — compare tenant or consumer route health while preserving sparse and attribution coverage
@@ -1666,7 +1690,13 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [Worker recovery diagnostics and alerts](20261017223000-worker-recovery-diagnostics.md)
 - [Worker admission explanations](20261018090000-worker-admission-explanations.md)
 - [ADR 202610171900: Release compatibility gates (N±1, deploy order, skew and migration checks, SLO gate)](202610171900-release-compatibility-gates.md)
+- [ADR-1700: Platform flags: per-account release gates managed at runtime](1700-platform-flags.md)
 
+- [Strict app compute reservations](1750-strict-app-compute-reservations.md)
+- [ADR-1746: Shared account compute funding](1746-account-strict-compute.md)
+- [ADR-1747: Independent job compute funding](1747-job-strict-compute.md)
+- [ADR-1748: Shared account compute and egress funding](1748-account-strict-egress.md)
+- [ADR-1749: Funded public forwarding](1749-public-forwarding-egress.md)
 - [ADR-1650: Per-unit control-plane releases](1650-per-unit-control-plane-releases.md)
 
 - [ADR-20261017210000: Reviewed regression triage through management MCP](20261017210000-management-mcp-regression-triage.md)
@@ -1678,3 +1708,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261017232000: Incident evidence bundles through management MCP](20261017232000-management-mcp-incident-bundles.md)
 
 - [ADR-20261017233500: Explicit selected-app traces through management MCP](20261017233500-management-mcp-selected-traces.md)
+
+- [ADR-1136: Project environment configuration reaches every service as environment variables](1136-project-environment-config-as-environment-variables.md)
+- [ADR-1137: Declared dependencies seed opt-in wake-ahead](1137-declared-dependencies-seed-wake-ahead.md) — an opted-in app wakes its declared dependencies until 20 wakes of evidence decide (amends ADR-977)
+
+- [ADR-20261018181846: Route priority in the cold-wake queue](20261018181846-route-priority-in-the-wake-queue.md)

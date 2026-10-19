@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -23,7 +24,7 @@ func (testDiagnosticsFake) ListAppDebugRequestsWithOptions(_ context.Context, _ 
 }
 
 func TestScenarioFailureDiagnosticsKeepBoundedMetadata(t *testing.T) {
-	results := collectTestDiagnostics(t.Context(), testDiagnosticsFake{}, map[string]string{"worker": "isolated-worker"})
+	results := main.CollectTestDiagnostics(t.Context(), testDiagnosticsFake{}, map[string]string{"worker": "isolated-worker"})
 	worker := results["worker"]
 	if len(worker.Wakes) != 1 || worker.Wakes[0].Method != "restore" ||
 		len(worker.Requests) != 1 || worker.Requests[0].TraceID != "trace-1" {

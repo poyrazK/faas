@@ -374,6 +374,12 @@ jobs:
           python3 scripts/ci/select_package_tests_test.py
           python3 scripts/ci/select_importers_test.py
           python3 scripts/ci/cancel_conflicted_pr_runs_test.py
+      - name: deploy Action scripts (vendored CLI, push-head guard, environment preflight)
+        run: |
+          make deploy-action-cli-check
+          make verify-action-ref-contents-check
+          make deploy-action-head-check
+          make environment-preflight-action-check
       - name: release-safety tool tests (migration lint, SLO gate)
         run: |
           python3 scripts/ci/check_migration_expand_contract_test.py
@@ -470,6 +476,11 @@ jobs:
       # running: expand/contract, lock_timeout, no blocking index builds.
       - name: migration expand/contract lint
         run: python3 scripts/ci/check_migration_expand_contract.py --base "$LIGHT_DIFF_BASE"
+      # Test types must not embed a state store and test interfaces must not
+      # embed state.Store (CLAUDE.md, ADR-982): each regrows a test compile by
+      # tens of MB. Only this change's additions fail.
+      - name: test store embedding check
+        run: go run ./scripts/ci/teststorecheck -base "$LIGHT_DIFF_BASE"
       - name: migrations check (static)
         run: make migrations-check
       - name: select migration changes

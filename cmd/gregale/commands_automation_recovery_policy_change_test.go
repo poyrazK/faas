@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -33,8 +34,8 @@ func TestAutomationRecoveryPolicyChangePreview(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(api.WorkflowRecoveryPolicyChangePreview{Current: api.WorkflowRecoveryPolicyResponse{Version: 4}, Proposed: got.Policy, NextVersion: 5, PendingSuppressed: 2, OutstandingRetained: 1, HourlyExecutions: 1, RemainingExecutionBudget: 1, InspectedJobs: 5, JobsTruncated: true, InitialFailures: &api.WorkflowRecoveryInitialPolicyChangePreview{Coverage: "partial", InspectedFailures: 1, Eligible: 1, WouldPrepare: 1, WouldSubmit: 0, Truncated: true, Candidates: []api.WorkflowRecoveryInitialPolicyChangeCandidate{{Failure: api.WorkflowInitialFailure{ID: "failure", Workflow: "recover", RunID: "run", FailureStatus: "dead"}, Eligibility: "eligible", Preparation: "would_prepare", Execution: "outstanding_recovery", Blockers: []string{}}}}})
 	})
-	out := captureAutomationStdout(t)
-	if code := cmdAutomationsRecoveryPolicy([]string{"--app", "consumer", "--file", path, "--preview"}); code != 0 || calls != 1 {
+	out := main.CaptureAutomationStdout(t)
+	if code := main.CmdAutomationsRecoveryPolicy([]string{"--app", "consumer", "--file", path, "--preview"}); code != 0 || calls != 1 {
 		t.Fatalf("code %d calls %d", code, calls)
 	}
 	for _, want := range []string{"version 4 -> 5", "Pending recoveries suppressed: 2", "execution slots retained: 1", "spent 1/hour", "Inspected jobs: 5", "jobs truncated true", "Advisory only", "Initial failures: 1 inspected", "would prepare 1", "would submit 0", "execution outstanding_recovery", "Initial sample: partial coverage | truncated true"} {
@@ -45,7 +46,7 @@ func TestAutomationRecoveryPolicyChangePreview(t *testing.T) {
 }
 func TestAutomationRecoveryPolicyChangePreviewArguments(t *testing.T) {
 	for _, args := range [][]string{{"--app", "consumer", "--preview"}, {"--app", "consumer", "--preview", "--queue", "--file", "unused"}, {"--app", "consumer", "--preview", "--file", "unused", "--control", "pause", "--reason", "incident"}} {
-		if code := cmdAutomationsRecoveryPolicy(args); code == 0 {
+		if code := main.CmdAutomationsRecoveryPolicy(args); code == 0 {
 			t.Fatalf("accepted %v", args)
 		}
 	}

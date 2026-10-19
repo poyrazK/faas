@@ -8,7 +8,7 @@
 // same showTestID 32-hex fixture. The fan-out stub
 // (showServerDual) lives in deploys_show_test.go so the two
 // test files share the helper.
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -38,12 +39,12 @@ func TestCmdDeploysStatus_HappyPath(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stdout, restoreStdout := swapStdout(t)
+	stdout, restoreStdout := main.SwapStdout(t)
 	defer restoreStdout()
-	jsonOutput = false
-	defer func() { jsonOutput = false }()
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = false }()
 
-	if code := cmdDeploysStatus([]string{showTestID}); code != 0 {
+	if code := main.CmdDeploysStatus([]string{showTestID}); code != 0 {
 		t.Fatalf("cmdDeploysStatus happy path = %d, want 0", code)
 	}
 	got := stdout.String()
@@ -99,12 +100,12 @@ func TestCmdDeploysStatus_Failed(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stdout, restoreStdout := swapStdout(t)
+	stdout, restoreStdout := main.SwapStdout(t)
 	defer restoreStdout()
-	jsonOutput = false
-	defer func() { jsonOutput = false }()
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = false }()
 
-	if code := cmdDeploysStatus([]string{showTestID}); code != 0 {
+	if code := main.CmdDeploysStatus([]string{showTestID}); code != 0 {
 		t.Fatalf("cmdDeploysStatus failed path = %d, want 0", code)
 	}
 	got := stdout.String()
@@ -179,12 +180,12 @@ func TestCmdDeploysStatus_ParallelFetches(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stdout, restoreStdout := swapStdout(t)
+	stdout, restoreStdout := main.SwapStdout(t)
 	defer restoreStdout()
-	jsonOutput = false
-	defer func() { jsonOutput = false }()
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = false }()
 
-	if code := cmdDeploysStatus([]string{showTestID}); code != 0 {
+	if code := main.CmdDeploysStatus([]string{showTestID}); code != 0 {
 		t.Fatalf("cmdDeploysStatus parallel = %d, want 0", code)
 	}
 	if arrivals.Load() != 2 {
@@ -220,12 +221,12 @@ func TestCmdDeploysStatus_Superseded(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stdout, restoreStdout := swapStdout(t)
+	stdout, restoreStdout := main.SwapStdout(t)
 	defer restoreStdout()
-	jsonOutput = false
-	defer func() { jsonOutput = false }()
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = false }()
 
-	if code := cmdDeploysStatus([]string{showTestID}); code != 0 {
+	if code := main.CmdDeploysStatus([]string{showTestID}); code != 0 {
 		t.Fatalf("cmdDeploysStatus superseded = %d, want 0", code)
 	}
 	got := stdout.String()
@@ -258,7 +259,7 @@ func TestCmdDeploysStatus_CrossAccount404(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdDeploysStatus([]string{showTestID}); code == 0 {
+	if code := main.CmdDeploysStatus([]string{showTestID}); code == 0 {
 		t.Errorf("cmdDeploysStatus on 404 = 0, want non-zero")
 	}
 }
@@ -266,7 +267,7 @@ func TestCmdDeploysStatus_CrossAccount404(t *testing.T) {
 // TestCmdDeploysStatus_NoArgs — A1: usage-error branch when the
 // operator forgets the deployment id.
 func TestCmdDeploysStatus_NoArgs(t *testing.T) {
-	if code := cmdDeploysStatus(nil); code != 1 {
+	if code := main.CmdDeploysStatus(nil); code != 1 {
 		t.Errorf("cmdDeploysStatus nil args = %d, want 1", code)
 	}
 }
@@ -277,7 +278,7 @@ func TestCmdDeploysStatus_InvalidIDFailsFast(t *testing.T) {
 	// No httptest server — the regex gate rejects before
 	// authedClient is called.
 	t.Setenv("FAAS_TOKEN", "")
-	if code := cmdDeploysStatus([]string{"not-hex"}); code != 1 {
+	if code := main.CmdDeploysStatus([]string{"not-hex"}); code != 1 {
 		t.Errorf("cmdDeploysStatus bad id = %d, want 1", code)
 	}
 }
@@ -297,12 +298,12 @@ func TestCmdDeploysStatus_JSON(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stdout, restoreStdout := swapStdout(t)
+	stdout, restoreStdout := main.SwapStdout(t)
 	defer restoreStdout()
-	jsonOutput = true
-	defer func() { jsonOutput = false }()
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = false }()
 
-	if code := cmdDeploysStatus([]string{showTestID}); code != 0 {
+	if code := main.CmdDeploysStatus([]string{showTestID}); code != 0 {
 		t.Fatalf("cmdDeploysStatus --json = %d, want 0", code)
 	}
 	var got struct {
@@ -353,12 +354,12 @@ func TestCmdDeploysStatus_JSONFailed(t *testing.T) {
 	srv := showServerDual(t, failedSS, deploymentResponseFailed(showTestID, now), showServerHooks{})
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	stdout, restoreStdout := swapStdout(t)
+	stdout, restoreStdout := main.SwapStdout(t)
 	defer restoreStdout()
-	jsonOutput = true
-	defer func() { jsonOutput = false }()
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = false }()
 
-	if code := cmdDeploysStatus([]string{showTestID}); code != 0 {
+	if code := main.CmdDeploysStatus([]string{showTestID}); code != 0 {
 		t.Fatalf("cmdDeploysStatus failed --json = %d, want 0", code)
 	}
 	var got struct {

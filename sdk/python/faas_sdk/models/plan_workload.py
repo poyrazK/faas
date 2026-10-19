@@ -16,6 +16,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.compose_healthcheck import ComposeHealthcheck
+    from ..models.compose_process import ComposeProcess
     from ..models.plan_detected_by import PlanDetectedBy
     from ..models.plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
     from ..models.service_caller_scopes import ServiceCallerScopes
@@ -53,6 +54,14 @@ class PlanWorkload:
     """Partial Compose override for a prebuilt image HEALTHCHECK. Empty test and zero timing/retry values inherit
     image settings. NONE disables the check. Durations retain nanosecond precision; positive durations must be at
     least 1ms."""
+    image_process: ComposeProcess | Unset = UNSET
+    """Compose process overrides for a prebuilt image (ADR-1337). Omitted fields inherit the image's ENTRYPOINT,
+    USER, WORKDIR and stop settings."""
+    build_target: str | Unset = UNSET
+    """Dockerfile stage a source-built Compose service builds (build.target, ADR-20261019142544). Omitted builds
+    the final stage."""
+    build_args: list[str] | Unset = UNSET
+    """Names of the Compose build.args passed to the Dockerfile build, sorted. Values are not returned."""
     depends_on: list[str] | Unset = UNSET
     """Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects
     GREGALE_SERVICE_<NAME>_URL plus GREGALE_SERVICE_<NAME>_HTTPS_URL for workload dependencies."""
@@ -125,6 +134,16 @@ class PlanWorkload:
         image_healthcheck: dict[str, Any] | Unset = UNSET
         if not isinstance(self.image_healthcheck, Unset):
             image_healthcheck = self.image_healthcheck.to_dict()
+
+        image_process: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.image_process, Unset):
+            image_process = self.image_process.to_dict()
+
+        build_target = self.build_target
+
+        build_args: list[str] | Unset = UNSET
+        if not isinstance(self.build_args, Unset):
+            build_args = self.build_args
 
         depends_on: list[str] | Unset = UNSET
         if not isinstance(self.depends_on, Unset):
@@ -210,6 +229,12 @@ class PlanWorkload:
             field_dict["image"] = image
         if image_healthcheck is not UNSET:
             field_dict["image_healthcheck"] = image_healthcheck
+        if image_process is not UNSET:
+            field_dict["image_process"] = image_process
+        if build_target is not UNSET:
+            field_dict["build_target"] = build_target
+        if build_args is not UNSET:
+            field_dict["build_args"] = build_args
         if depends_on is not UNSET:
             field_dict["depends_on"] = depends_on
         if depends_on_conditions is not UNSET:
@@ -250,6 +275,7 @@ class PlanWorkload:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.compose_healthcheck import ComposeHealthcheck
+        from ..models.compose_process import ComposeProcess
         from ..models.plan_detected_by import PlanDetectedBy
         from ..models.plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
         from ..models.service_caller_scopes import ServiceCallerScopes
@@ -280,6 +306,17 @@ class PlanWorkload:
             image_healthcheck = UNSET
         else:
             image_healthcheck = ComposeHealthcheck.from_dict(_image_healthcheck)
+
+        _image_process = d.pop("image_process", UNSET)
+        image_process: ComposeProcess | Unset
+        if isinstance(_image_process, Unset):
+            image_process = UNSET
+        else:
+            image_process = ComposeProcess.from_dict(_image_process)
+
+        build_target = d.pop("build_target", UNSET)
+
+        build_args = cast(list[str], d.pop("build_args", UNSET))
 
         depends_on = cast(list[str], d.pop("depends_on", UNSET))
 
@@ -376,6 +413,9 @@ class PlanWorkload:
             dockerfile=dockerfile,
             image=image,
             image_healthcheck=image_healthcheck,
+            image_process=image_process,
+            build_target=build_target,
+            build_args=build_args,
             depends_on=depends_on,
             depends_on_conditions=depends_on_conditions,
             service_binding_policy=service_binding_policy,

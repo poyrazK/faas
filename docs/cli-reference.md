@@ -11,7 +11,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`mcp`](#mcp) | Connect agents to Gregale, or scaffold and deploy MCP servers |
 | [`menu`](#menu) | Choose a common task and open its guided command |
 | [`start`](#start) | Get your first app live with a few guided prompts |
-| [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo\|stripe\|billing-run\|invoices) |
+| [`account`](#account) | Manage the local account: export, deletion, status, DPA and SLO |
 | [`add`](#add) | Provision and bind managed resources to an app |
 | [`bucket`](#bucket) | Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity |
 | [`bindings`](#bindings) | Inspect app bindings, verification, runtime freshness, and rotation progress |
@@ -54,7 +54,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`chaos`](#chaos) | Inject bounded faults into isolated real-VM scenario tests |
 | [`preview`](#preview) | Manage preview environments for pull requests |
 | [`flags`](#flags) | Release application behavior to selected customers |
-| [`consumers`](#consumers) | Meter, price, and bill your API&#39;s consumers |
+| [`consumers`](#consumers) | Identify your API&#39;s consumers, issue their keys and meter their requests |
 | [`platform-tenants`](#platform-tenants) | Manage one customer across app consumers and tenant hostnames |
 | [`edge-rule-lists`](#edge-rule-lists) | Reusable IP/country/host/string lists for edge-rule match conditions (edge-rule-lists list\|get\|create\|update\|rm) |
 | [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|summary\|trace\|create\|get\|update\|history\|rollback\|stats\|events --app &lt;slug&gt;; edge-rules rm &lt;id&gt;) |
@@ -1885,7 +1885,7 @@ gregale start ./my-api
 
 ## account
 
-Manage the local account (account export|delete|restore|status|dpa|slo|stripe|billing-run|invoices)
+Manage the local account: export, deletion, status, DPA and SLO
 
 `gregale account [<subcommand>]`
 
@@ -1933,120 +1933,6 @@ Show DPA metadata
 ### account slo
 
 Account-wide SLO panel
-
-### account billing-connection
-
-Connect, show, or disconnect a Stripe, Paddle or Lago key for statement invoice exports; connect reads the key from stdin
-
-`gregale account billing-connection [--api-url <URL>] [--collection <MODE>] [--days-until-due <N>] [--automatic-tax] {connect|status|disconnect} {stripe|paddle|lago}`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--api-url <URL>` | Lago API URL for the EU region or a self-hosted Lago (connect; default https://api.getlago.com) |  |
-| `--collection <MODE>` | what the provider does with exported invoices: none leaves drafts, send emails them (Stripe), charge charges the saved payment method (Stripe, Lago) (connect; default none) | one of `none` · `send` · `charge` |
-| `--days-until-due <N>` | days until a sent invoice is due (connect --collection send; default 30) |  |
-| `--automatic-tax` | have Stripe Tax calculate tax on exported invoices; needs Stripe Tax and customer addresses (connect; Stripe only) |  |
-
-Examples:
-
-```sh
-gregale account billing-connection connect paddle < paddle-key.txt
-gregale account billing-connection connect lago --api-url https://api.eu.getlago.com < lago-key.txt
-gregale account billing-connection connect stripe --collection charge < stripe-key.txt
-```
-
-### account billing-run
-
-Bill an ended month for every API customer: draft, check, finalize and optionally export each statement
-
-#### account billing-run start
-
-Start a run for one ended UTC month
-
-`gregale account billing-run start [--month <YYYY-MM>] [--sources <LIST>] [--no-finalize] [--export <TARGET>] [--no-hold-on-gaps] [--wait]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--month <YYYY-MM>` | UTC calendar month to bill (default: last month) |  |
-| `--sources <LIST>` | comma-separated app_consumers,platform_tenants (default: both) |  |
-| `--no-finalize` | only draft statements |  |
-| `--export <TARGET>` | none, stripe, paddle or lago (default none) |  |
-| `--no-hold-on-gaps` | finalize consumers even when request telemetry shows unbilled requests |  |
-| `--wait` | wait until the run completes and list its customers |  |
-
-Examples:
-
-```sh
-gregale account billing-run start --month 2026-09 --export stripe --wait
-```
-
-#### account billing-run list
-
-List billing runs, newest first
-
-`gregale account billing-run list [--limit <N>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--limit <N>` | runs to list (1-100) |  |
-
-#### account billing-run show
-
-Show a run and what it did for each customer
-
-`gregale account billing-run show [--outcome <OUTCOME>] RUN_ID`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--outcome <OUTCOME>` | only customers with this outcome, e.g. held or failed |  |
-
-#### account billing-run schedule
-
-Show the monthly billing run schedule
-
-`gregale account billing-run schedule`
-
-#### account billing-run schedule-set
-
-Start a run automatically after each month ends
-
-`gregale account billing-run schedule-set [--sources <LIST>] [--no-finalize] [--export <TARGET>] [--no-hold-on-gaps] [--delay-hours <N>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--sources <LIST>` | comma-separated app_consumers,platform_tenants for scheduled runs (default: both) |  |
-| `--no-finalize` | scheduled runs only draft statements |  |
-| `--export <TARGET>` | none, stripe, paddle or lago for scheduled runs (default none) |  |
-| `--no-hold-on-gaps` | scheduled runs finalize consumers with completeness gaps |  |
-| `--delay-hours <N>` | hours after month end before the run starts (1-240, default 24) |  |
-
-Examples:
-
-```sh
-gregale account billing-run schedule-set --export stripe --delay-hours 6
-```
-
-#### account billing-run schedule-delete
-
-Stop scheduled runs; a started run continues
-
-`gregale account billing-run schedule-delete`
-
-### account invoices
-
-List invoices exported from usage statements and whether they were paid
-
-`gregale account invoices [--status <STATUS>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--status <STATUS>` | unpaid, overdue, or one payment status: draft, open, paid, void, uncollectible, deleted |  |
-
-Examples:
-
-```sh
-gregale account invoices --status overdue
-```
 
 
 ## add
@@ -5705,11 +5591,11 @@ gregale billing budget-preview --file budget.json --json
 
 ### billing budgets
 
-Manage revisioned budget drafts; activation is gated
+Manage monitored alerts, preview stopping and budget drafts
 
 #### billing budgets list
 
-List account budget drafts
+List account budget policies and monitoring status
 
 `gregale billing budgets list [--json]`
 
@@ -5729,7 +5615,7 @@ Read a budget, including a deletion tombstone
 
 #### billing budgets create
 
-Save a budget draft
+Save a draft or activate monitored alerts or preview stopping
 
 `gregale billing budgets create [--file <PATH>] [--key <KEY>] [--json]`
 
@@ -5747,7 +5633,7 @@ gregale billing budgets create --file budget.json --key previews-october --json
 
 #### billing budgets update
 
-Replace a draft at its expected revision
+Replace a budget policy at its expected revision
 
 `gregale billing budgets update [--file <PATH>] [--expected-revision <N>] [--key <KEY>] [--json] ID`
 
@@ -9881,7 +9767,7 @@ Promote a targeting rule rollout
 
 ## consumers
 
-Meter, price, and bill your API&#39;s consumers
+Identify your API&#39;s consumers, issue their keys and meter their requests
 
 `gregale consumers [<subcommand>]`
 
@@ -9890,14 +9776,6 @@ Examples:
 ```sh
 gregale consumers create my-api --external-ref customer-42 --name "Customer 42"
 gregale consumers key-create my-api CONSUMER_ID --name production --scopes read,write
-gregale consumers rate-card-create my-api --currency EUR --price-millicents 25 --included-units 10000
-gregale consumers rate-card-create my-api --currency EUR --tier 10000:0 --tier 1000000:25 --tier inf:10
-gregale consumers rate-card-create my-api --currency EUR --price-millicents 25 --weight "POST /generate=20"
-gregale consumers completeness my-api CONSUMER_ID --month 2026-09
-gregale consumers statement-draft my-api CONSUMER_ID --month 2026-09
-gregale consumers statement-handoff my-api CONSUMER_ID STATEMENT_ID --invoice-id INV-1001
-gregale consumers plan-create my-api --name free --max-requests-per-minute 60 --max-units-per-month 1000 --alert-at 80,100
-gregale consumers set-plan my-api CONSUMER_ID --plan free
 ```
 
 ### consumers list
@@ -9910,13 +9788,12 @@ List an app&#39;s API consumers
 
 Register an API consumer
 
-`gregale consumers create --external-ref <REF> --name <TEXT> [--trial-days <N>] <slug>`
+`gregale consumers create --external-ref <REF> --name <TEXT> <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--external-ref <REF>` | stable consumer reference | required |
 | `--name <TEXT>` | consumer display name | required |
-| `--trial-days <N>` | free trial from the next minute: usage is priced at zero for this many days |  |
 
 ### consumers info
 
@@ -9945,7 +9822,7 @@ Issue a consumer API key (secret shown once)
 | Flag | Meaning | |
 |---|---|---|
 | `--name <TEXT>` | key display name | required |
-| `--scopes <LIST>` | comma-separated scopes: read, write, admin, billing (default write); billing lets the customer read its own usage and invoices |  |
+| `--scopes <LIST>` | comma-separated scopes: read, write, admin (default write) |  |
 | `--expires <RFC3339>` | key expiry |  |
 
 ### consumers key-revoke
@@ -9964,293 +9841,6 @@ Show a consumer&#39;s metered requests
 |---|---|---|
 | `--since <RFC3339>` | window start |  |
 | `--until <RFC3339>` | window end |  |
-
-### consumers quote
-
-Estimate a consumer&#39;s charges with current rate cards
-
-`gregale consumers quote [--since <RFC3339>] [--until <RFC3339>] <slug> <consumer-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--since <RFC3339>` | window start |  |
-| `--until <RFC3339>` | window end |  |
-
-### consumers completeness
-
-Check billed usage against request telemetry before invoicing
-
-`gregale consumers completeness [--month <YYYY-MM>] [--period-start <RFC3339>] [--period-end <RFC3339>] <slug> <consumer-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--month <YYYY-MM>` | calendar month |  |
-| `--period-start <RFC3339>` | period start (UTC minute) |  |
-| `--period-end <RFC3339>` | exclusive period end (UTC minute) |  |
-
-### consumers rate-cards
-
-List an app&#39;s per-request price versions
-
-`gregale consumers rate-cards <slug>`
-
-### consumers rate-card-create
-
-Add an immutable per-request price version
-
-`gregale consumers rate-card-create --currency <CODE> --price-millicents <N> [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <METHOD /template=N>]... [--plan <NAME>] [--effective-from <RFC3339>] [--unit <UNIT>] [--tier-mode <MODE>] [--base-fee-millicents <N>] [--minimum-millicents <N>] <slug>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--currency <CODE>` | ISO-4217 currency | required |
-| `--price-millicents <N>` | price per request; 100000 = 1.00 | required |
-| `--included-units <N>` | free requests per consumer per UTC calendar month |  |
-| `--tier <UP_TO:PRICE>` | graduated step; repeat in order, last UP_TO is inf (replaces price and included units) |  |
-| `--weight <METHOD /template=N>` | count each request on a route as N units; unlisted routes count 1 |  |
-| `--plan <NAME>` | add the price to a consumer plan instead of the app default |  |
-| `--effective-from <RFC3339>` | UTC minute the price starts (default next minute) |  |
-| `--unit <UNIT>` | what the price is per: request, compute_second or response_megabyte (rounded per consumer minute), or app:&lt;meter&gt; for units the app reports in Gregale-Usage; cards of different units price side by side |  |
-| `--tier-mode <MODE>` | how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches) | one of `graduated` · `volume` |
-| `--base-fee-millicents <N>` | fixed charge per consumer per UTC month, billed by the month&#39;s statement |  |
-| `--minimum-millicents <N>` | minimum usage charge per consumer per UTC month; the statement tops up the difference |  |
-
-Examples:
-
-```sh
-gregale consumers rate-card-create my-api --currency EUR --price-millicents 50 --unit compute_second
-gregale consumers rate-card-create my-api --currency EUR --price-millicents 0 --tier 1000:100 --tier inf:60 --tier-mode volume
-gregale consumers rate-card-create my-api --currency EUR --price-millicents 50 --included-units 100000 --base-fee-millicents 4900000
-gregale consumers rate-card-create my-api --currency EUR --price-millicents 1 --unit app:output_tokens
-```
-
-### consumers statements
-
-List a consumer&#39;s usage statements and revisions
-
-`gregale consumers statements <slug> <consumer-id>`
-
-### consumers statement-draft
-
-Snapshot a period, or draft an adjustment for late usage
-
-`gregale consumers statement-draft [--month <YYYY-MM>] [--period-start <RFC3339>] [--period-end <RFC3339>] <slug> <consumer-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--month <YYYY-MM>` | calendar month |  |
-| `--period-start <RFC3339>` | period start (UTC minute) |  |
-| `--period-end <RFC3339>` | exclusive period end (UTC minute) |  |
-
-### consumers statement-show
-
-Show one statement revision
-
-`gregale consumers statement-show <slug> <consumer-id> <statement-id>`
-
-### consumers statement-finalize
-
-Freeze a fully priced draft revision
-
-`gregale consumers statement-finalize <slug> <consumer-id> <statement-id>`
-
-### consumers statement-handoff
-
-Record your invoice reference for a finalized revision
-
-`gregale consumers statement-handoff --invoice-id <ID> <slug> <consumer-id> <statement-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--invoice-id <ID>` | your billing system&#39;s invoice reference | required |
-
-### consumers statement-export
-
-Create an invoice in Stripe, Paddle or Lago for a finalized revision and record its handoff
-
-`gregale consumers statement-export [--customer <ID>] [--provider <PROVIDER>] <slug> <consumer-id> <statement-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--customer <ID>` | provider customer: Stripe cus_…, Paddle ctm_… or Lago external ID (default: the consumer&#39;s external_ref when it is one) |  |
-| `--provider <PROVIDER>` | billing provider (default stripe) | one of `stripe` · `paddle` · `lago` |
-
-### consumers plans
-
-List an app&#39;s consumer plans
-
-`gregale consumers plans <slug>`
-
-### consumers plan-create
-
-Create a consumer plan with request limits
-
-`gregale consumers plan-create --name <NAME> [--max-requests-per-minute <N>] [--max-units-per-month <N>] [--alert-at <80,100>] <slug>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--name <NAME>` | plan name (lowercase letters, digits, hyphens) | required |
-| `--max-requests-per-minute <N>` | requests per consumer per minute; 0 is unlimited |  |
-| `--max-units-per-month <N>` | weighted units per consumer per UTC month; 0 is unlimited |  |
-| `--alert-at <80,100>` | percentages of the monthly limit that fire consumer.usage_threshold webhooks; none clears |  |
-
-### consumers plan-update
-
-Change a plan&#39;s limits (applied within 15 seconds)
-
-`gregale consumers plan-update --plan <NAME> [--max-requests-per-minute <N>] [--max-units-per-month <N>] [--alert-at <80,100>] <slug>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--plan <NAME>` | plan name | required |
-| `--max-requests-per-minute <N>` | requests per consumer per minute; 0 is unlimited |  |
-| `--max-units-per-month <N>` | weighted units per consumer per UTC month; 0 is unlimited |  |
-| `--alert-at <80,100>` | percentages of the monthly limit that fire consumer.usage_threshold webhooks; none clears |  |
-
-### consumers set-plan
-
-Move a consumer onto a plan from a minute
-
-`gregale consumers set-plan --plan <NAME> [--effective-from <RFC3339>] <slug> <consumer-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--plan <NAME>` | plan name; use default for the app default plan | required |
-| `--effective-from <RFC3339>` | UTC minute the plan takes effect (default next minute) |  |
-
-### consumers plan-history
-
-List a consumer&#39;s plan assignments
-
-`gregale consumers plan-history <slug> <consumer-id>`
-
-### consumers usage-alerts
-
-List the plan usage alerts a consumer crossed
-
-`gregale consumers usage-alerts <slug> <consumer-id>`
-
-### consumers credits
-
-List a consumer&#39;s prepaid credit grants and usable balance
-
-`gregale consumers credits <slug> <consumer-id>`
-
-### consumers credit-grant
-
-Grant prepaid credit that finalized statements draw down
-
-`gregale consumers credit-grant --currency <CODE> --amount-millicents <N> [--expires <TIME>] [--note <TEXT>] <slug> <consumer-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--currency <CODE>` | ISO-4217 currency of the credit, e.g. EUR | required |
-| `--amount-millicents <N>` | credit in millicents; 100000 = 1.00 | required |
-| `--expires <TIME>` | when unused credit expires, RFC3339 |  |
-| `--note <TEXT>` | note shown with the credit |  |
-
-Examples:
-
-```sh
-gregale consumers credit-grant my-api CONSUMER_ID --currency EUR --amount-millicents 5000000 --note "Starter pack"
-```
-
-### consumers credit-void
-
-Void what is left of a credit grant
-
-`gregale consumers credit-void <slug> <consumer-id> <credit-id>`
-
-### consumers spend-cap
-
-Show a consumer&#39;s monthly spend cap and whether it is reached
-
-`gregale consumers spend-cap <slug> <consumer-id>`
-
-### consumers spend-cap-set
-
-Refuse a consumer&#39;s requests once the month&#39;s amount due after credit passes a cap
-
-`gregale consumers spend-cap-set --currency <CODE> --monthly-cap-millicents <N> <slug> <consumer-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--currency <CODE>` | ISO-4217 currency of the cap, e.g. EUR | required |
-| `--monthly-cap-millicents <N>` | cap in millicents; 0 allows prepaid usage only | required |
-
-Examples:
-
-```sh
-gregale consumers spend-cap-set my-api CONSUMER_ID --currency EUR --monthly-cap-millicents 0
-```
-
-### consumers spend-cap-delete
-
-Remove a consumer&#39;s spend cap
-
-`gregale consumers spend-cap-delete <slug> <consumer-id>`
-
-### consumers trial
-
-Show a consumer&#39;s free trial
-
-`gregale consumers trial <slug> <consumer-id>`
-
-### consumers trial-set
-
-Start a consumer&#39;s one free trial at the next minute, or move the end of a running one
-
-`gregale consumers trial-set [--days <N>] [--ends-at <RFC3339>] <slug> <consumer-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--days <N>` | trial length from its start |  |
-| `--ends-at <RFC3339>` | trial end (UTC minute, not in the past) |  |
-
-Examples:
-
-```sh
-gregale consumers trial-set my-api CONSUMER_ID --days 14
-```
-
-### consumers trial-end
-
-End a consumer&#39;s running trial at the next minute
-
-`gregale consumers trial-end <slug> <consumer-id>`
-
-### consumers billing-policy
-
-Show the app&#39;s overdue-invoice rule
-
-`gregale consumers billing-policy <slug>`
-
-### consumers billing-policy-set
-
-Refuse consumers whose exported invoice is unpaid some days after its due date
-
-`gregale consumers billing-policy-set --block-overdue-after-days <N> <slug>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--block-overdue-after-days <N>` | days past the due date before the gateway answers 402 (0 blocks at once) | required |
-
-Examples:
-
-```sh
-gregale consumers billing-policy-set my-api --block-overdue-after-days 14
-```
-
-### consumers billing-policy-delete
-
-Stop blocking consumers for overdue invoices; holds lift within minutes
-
-`gregale consumers billing-policy-delete <slug>`
-
-### consumers overdue-holds
-
-List consumers the gateway refuses because of an overdue invoice
-
-`gregale consumers overdue-holds <slug>`
 
 
 ## platform-tenants
@@ -10402,177 +9992,6 @@ Stop linked credentials and hostnames
 Restore linked credentials and hostnames
 
 `gregale platform-tenants resume --id <UUID>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--id <UUID>` | platform tenant UUID | required |
-
-### platform-tenants rate-cards
-
-List a customer&#39;s cross-app price versions
-
-`gregale platform-tenants rate-cards --id <UUID>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--id <UUID>` | platform tenant UUID | required |
-
-### platform-tenants rate-card-create
-
-Add a customer-wide per-request price version
-
-`gregale platform-tenants rate-card-create --id <UUID> --currency <CODE> --price-millicents <N> [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <"METHOD /template=N">]... [--effective-from <RFC3339>] [--unit <UNIT>] [--tier-mode <MODE>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--id <UUID>` | platform tenant UUID | required |
-| `--currency <CODE>` | ISO-4217 currency | required |
-| `--price-millicents <N>` | price per request; 100000 = 1.00 | required |
-| `--included-units <N>` | free requests per tenant per UTC calendar month across all apps |  |
-| `--tier <UP_TO:PRICE>` | graduated step counted per tenant per UTC month; repeat in order, last UP_TO is inf (replaces price and included units) |  |
-| `--weight <"METHOD /template=N">` | units per request on a route, including surface and JWT-rule requests; repeat per route, unlisted routes count 1 (statements then cover calendar months) |  |
-| `--effective-from <RFC3339>` | UTC minute the price starts (default next minute) |  |
-| `--unit <UNIT>` | what the price is per: request, compute second or response megabyte, rounded per subject minute | one of `request` · `compute_second` · `response_megabyte` |
-| `--tier-mode <MODE>` | how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches) | one of `graduated` · `volume` |
-
-### platform-tenants statements
-
-List a period&#39;s cross-app statement revisions
-
-`gregale platform-tenants statements --id <UUID> [--month <YYYY-MM>] [--period-start <RFC3339>] [--period-end <RFC3339>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--id <UUID>` | platform tenant UUID | required |
-| `--month <YYYY-MM>` | calendar month |  |
-| `--period-start <RFC3339>` | period start (UTC minute) |  |
-| `--period-end <RFC3339>` | exclusive period end (UTC minute) |  |
-
-### platform-tenants statement-draft
-
-Snapshot a period, or draft an adjustment for late usage
-
-`gregale platform-tenants statement-draft --id <UUID> [--month <YYYY-MM>] [--period-start <RFC3339>] [--period-end <RFC3339>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--id <UUID>` | platform tenant UUID | required |
-| `--month <YYYY-MM>` | calendar month |  |
-| `--period-start <RFC3339>` | period start (UTC minute) |  |
-| `--period-end <RFC3339>` | exclusive period end (UTC minute) |  |
-
-### platform-tenants statement-show
-
-Show one statement revision
-
-`gregale platform-tenants statement-show --id <UUID> --statement-id <UUID>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--id <UUID>` | platform tenant UUID | required |
-| `--statement-id <UUID>` | statement revision UUID | required |
-
-### platform-tenants statement-finalize
-
-Freeze a fully priced draft revision
-
-`gregale platform-tenants statement-finalize --id <UUID> --statement-id <UUID>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--id <UUID>` | platform tenant UUID | required |
-| `--statement-id <UUID>` | statement revision UUID | required |
-
-### platform-tenants statement-handoff
-
-Record your invoice reference for a finalized revision
-
-`gregale platform-tenants statement-handoff --id <UUID> --statement-id <UUID> --invoice-id <ID>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--id <UUID>` | platform tenant UUID | required |
-| `--statement-id <UUID>` | statement revision UUID | required |
-| `--invoice-id <ID>` | your billing system&#39;s invoice reference | required |
-
-### platform-tenants statement-export
-
-Create an invoice in Stripe, Paddle or Lago for a finalized revision and record its handoff
-
-`gregale platform-tenants statement-export --id <UUID> --statement-id <UUID> [--customer <ID>] [--provider <PROVIDER>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--id <UUID>` | platform tenant UUID | required |
-| `--statement-id <UUID>` | statement revision UUID | required |
-| `--customer <ID>` | provider customer: Stripe cus_…, Paddle ctm_… or Lago external ID (default: the tenant&#39;s external_ref when it is one) |  |
-| `--provider <PROVIDER>` | billing provider (default stripe) | one of `stripe` · `paddle` · `lago` |
-
-### platform-tenants plans
-
-List tenant plans: reusable price and request-budget bundles
-
-### platform-tenants plan-create
-
-Create a tenant plan
-
-`gregale platform-tenants plan-create --name <NAME> [--currency <CODE>] [--price-millicents <N>] [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <"METHOD /template=N">]... [--max-requests-per-minute <N>] [--max-requests-per-day <N>] [--unit <UNIT>] [--tier-mode <MODE>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--name <NAME>` | plan name (lowercase letters, digits, hyphens) | required |
-| `--currency <CODE>` | ISO-4217 currency (default EUR) |  |
-| `--price-millicents <N>` | price per request unit; 100000 = 1.00 |  |
-| `--included-units <N>` | free units per tenant per UTC calendar month |  |
-| `--tier <UP_TO:PRICE>` | graduated step; repeat in order, last UP_TO is inf |  |
-| `--weight <"METHOD /template=N">` | units per request on a route; repeat per route |  |
-| `--max-requests-per-minute <N>` | request budget per minute the plan sets (with --max-requests-per-day) |  |
-| `--max-requests-per-day <N>` | request budget per day the plan sets (with --max-requests-per-minute) |  |
-| `--unit <UNIT>` | what the price is per: request, compute second or response megabyte, rounded per subject minute | one of `request` · `compute_second` · `response_megabyte` |
-| `--tier-mode <MODE>` | how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches) | one of `graduated` · `volume` |
-
-Examples:
-
-```sh
-gregale platform-tenants plan-create --name growth --currency EUR --price-millicents 20 --weight "POST /generate=5" --max-requests-per-minute 600 --max-requests-per-day 100000
-```
-
-### platform-tenants plan-update
-
-Change a tenant plan; flags not given keep their value, and tenants get it when the plan is assigned again
-
-`gregale platform-tenants plan-update --plan <NAME> [--name <NAME>] [--currency <CODE>] [--price-millicents <N>] [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <"METHOD /template=N">]... [--max-requests-per-minute <N>] [--max-requests-per-day <N>] [--unit <UNIT>] [--tier-mode <MODE>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--plan <NAME>` | plan to change | required |
-| `--name <NAME>` | new plan name |  |
-| `--currency <CODE>` | ISO-4217 currency |  |
-| `--price-millicents <N>` | price per request unit; 100000 = 1.00 |  |
-| `--included-units <N>` | free units per tenant per UTC calendar month |  |
-| `--tier <UP_TO:PRICE>` | graduated step; repeat in order, last UP_TO is inf |  |
-| `--weight <"METHOD /template=N">` | units per request on a route; repeat per route |  |
-| `--max-requests-per-minute <N>` | request budget per minute (with --max-requests-per-day) |  |
-| `--max-requests-per-day <N>` | request budget per day (with --max-requests-per-minute) |  |
-| `--unit <UNIT>` | what the price is per: request, compute second or response megabyte, rounded per subject minute | one of `request` · `compute_second` · `response_megabyte` |
-| `--tier-mode <MODE>` | how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches) | one of `graduated` · `volume` |
-
-### platform-tenants set-plan
-
-Move a tenant onto a plan: its rate card from the next minute (the next month when the unit changes) and its request budget at once
-
-`gregale platform-tenants set-plan --id <UUID> --plan <NAME>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--id <UUID>` | platform tenant UUID | required |
-| `--plan <NAME>` | tenant plan name | required |
-
-### platform-tenants plan-history
-
-List a tenant&#39;s plan assignments, newest first
-
-`gregale platform-tenants plan-history --id <UUID>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -10768,7 +10187,7 @@ Add an edge rule
 | `--throttle-missing-key-policy <POLICY>` | kind=throttle: behavior when identity is missing | one of `shared` · `reject` |
 | `--throttle-key-field <FIELD>` | kind=throttle: composite key field (ip\|country\|api_key\|consumer_id\|jwt_subject\|jwt_claim\|method\|path\|header:&lt;name&gt;; repeat) |  |
 | `--throttle-count-status <CODE>` | kind=throttle: charge the bucket only for responses with this status (repeat) |  |
-| `--cache-stale-if-error-seconds <SECONDS>` | kind=cache: serve stale on origin failure (max 300) |  |
+| `--cache-stale-if-error-seconds <SECONDS>` | kind=cache: serve stale on origin failure (default 300; 0 disables; max 300) |  |
 | `--budget-allow-override-header <HEADER>` | kind=budget: header allowed to override the budget |  |
 | `--retry-allow-non-idempotent` | kind=retry: allow POST/PATCH replay when Idempotency-Key is honored |  |
 | `--retry-min-remaining-ms <MS>` | kind=retry: remaining request budget required before replay |  |
@@ -10881,7 +10300,7 @@ Update one edge rule
 | `--throttle-count-status <CODE>` | kind=throttle: charge the bucket only for responses with this status (repeat) |  |
 | `--cache-max-age-seconds <SECONDS>` | kind=cache: fresh window |  |
 | `--cache-stale-while-revalidate-seconds <SECONDS>` | kind=cache: stale-while-revalidate window |  |
-| `--cache-stale-if-error-seconds <SECONDS>` | kind=cache: serve stale on origin failure |  |
+| `--cache-stale-if-error-seconds <SECONDS>` | kind=cache: serve stale on origin failure (default 300; 0 disables) |  |
 | `--cache-vary-on <HEADER>` | kind=cache: header to vary on (repeatable) |  |
 | `--cache-methods <METHOD>` | kind=cache: cacheable method (repeatable) |  |
 | `--budget-ms <MS>` | kind=budget: per-request wall-clock budget |  |
@@ -11164,6 +10583,19 @@ Examples:
 ```sh
 gregale routes awake my-api
 gregale routes awake my-api --since 24h --json
+```
+
+### routes insights
+
+List findings about routes that keep the app awake or are safe to cache, evaluated every six hours
+
+`gregale routes insights <slug>`
+
+Examples:
+
+```sh
+gregale routes insights my-api
+gregale routes insights my-api --json
 ```
 
 ### routes priority
@@ -12131,15 +11563,20 @@ Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J|@file|-]; slug
 
 Run untrusted code in an isolated disposable microVM, or one command from an OCI image (--image)
 
-`gregale run [--image <REF>] [--interactive] [--tty] [--entrypoint <CMD|FILE>] [--env <KEY=VALUE>] [--ram <MB>] [--timeout <D>] [--pull <P>] [--detach] [--workflow-id <ID>] [--step-label <LABEL>] [--profile <P>] [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--output-file <PATH>] [--output-dir <DIR>] [--wait] [--watch] [--poll-interval <D>] [--wait-timeout <D>]`
+`gregale run [--image <REF>] [--interactive] [--tty] [--entrypoint <CMD|FILE>] [--env <KEY[=VALUE]>] [--env-file <FILE>] [--user <USER>] [--workdir <DIR>] [--registry-username <USER>] [--registry-password-stdin] [--ram <MB>] [--timeout <D>] [--pull <P>] [--detach] [--workflow-id <ID>] [--step-label <LABEL>] [--profile <P>] [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--output-file <PATH>] [--output-dir <DIR>] [--wait] [--watch] [--poll-interval <D>] [--wait-timeout <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--image <REF>` | run one command from this OCI image in a fresh microVM; arguments after the flags replace the image CMD (ADR-1161) |  |
+| `--image <REF>` | run one command from this OCI image in a fresh microVM; arguments after the flags replace the image CMD (ADR-1161); the image can also be the first positional argument |  |
 | `--interactive` | with --image, attach stdin and relay the session until the command exits (-i; ADR-1330) |  |
 | `--tty` | with --image --interactive, give the command a terminal (-t; -it for both) |  |
 | `--entrypoint <CMD|FILE>` | with --image, override the image ENTRYPOINT; with --dir, the bundle file to execute |  |
-| `--env <KEY=VALUE>` | with --image, KEY=VALUE environment variable (repeatable; -e) |  |
+| `--env <KEY[=VALUE]>` | with --image, KEY=VALUE environment variable, or KEY to pass the local value (repeatable; -e) |  |
+| `--env-file <FILE>` | with --image, read KEY=VALUE lines from a file, docker env-file format (repeatable) |  |
+| `--user <USER>` | with --image, run as name\|uid[:group\|gid] instead of the image USER (-u; ADR-1790) |  |
+| `--workdir <DIR>` | with --image, absolute working directory instead of the image WORKDIR (-w) |  |
+| `--registry-username <USER>` | with --image, username for a private registry; the password comes from --registry-password-stdin, $GREGALE_REGISTRY_PASSWORD or a prompt |  |
+| `--registry-password-stdin` | with --registry-username, read the registry password or token from stdin |  |
 | `--ram <MB>` | with --image, memory in MB (default: Job default) |  |
 | `--timeout <D>` | with --image, task deadline (default: the plan&#39;s Job ceiling) |  |
 | `--pull <P>` | with --image, re-pull a cached tag (always) or reuse it (missing) | one of `missing` · `always` |
@@ -12169,6 +11606,8 @@ Examples:
 gregale run --image alpine echo hello
 gregale run --image python:3.12-slim -e MODE=batch python -c 'print(42)'
 gregale run -it --image alpine sh
+gregale run -u nobody -w /data --env-file .env alpine env
+printf '%s' "$TOKEN" | gregale run --registry-username ci --registry-password-stdin ghcr.io/acme/tool:1.4 --version
 ```
 
 
@@ -15233,7 +14672,7 @@ gregale data-api dev --port 0 --check --once
 
 Deploy a managed PostgREST Data API
 
-`gregale data-api create --database <DATABASE> [--schema <SCHEMA>] [--read-only] [--scope <SCOPE>] [--issuer <HTTPS_URL>] [--jwks-url <HTTPS_URL>] [--audience <AUDIENCE>] [--origins <ORIGINS>] [--resume] <name>`
+`gregale data-api create --database <DATABASE> [--schema <SCHEMA>] [--read-only] [--scope <SCOPE>] [--issuer <HTTPS_URL>] [--jwks-url <HTTPS_URL>] [--audience <AUDIENCE>] [--origins <ORIGINS>] [--resume] [--public-read <SCHEMA.RELATION[,...]>] [--public-rpc <SCHEMA.FUNCTION[,...]>] [--aggregates] [--migrations <DIR>] [--release-command <COMMAND>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -15246,20 +14685,132 @@ Deploy a managed PostgREST Data API
 | `--audience <AUDIENCE>` | application JWT audience |  |
 | `--origins <ORIGINS>` | comma-separated browser origins |  |
 | `--resume` | resume configuration and deployment of an existing app |  |
+| `--public-read <SCHEMA.RELATION[,...]>` | relations readable without a token (RLS tables or security-invoker views) |  |
+| `--public-rpc <SCHEMA.FUNCTION[,...]>` | approved STABLE or IMMUTABLE functions callable without a token by GET |  |
+| `--aggregates` | enable aggregate queries; requires installed SQL deadline functions |  |
+| `--migrations <DIR>` | single-app project: run this migration directory as the app&#39;s release task |  |
+| `--release-command <COMMAND>` | single-app release command (default node migrations/release.mjs) |  |
 
-### data-api types
+Examples:
 
-Generate types in an owner-authenticated app task
+```sh
+gregale data-api create shop-data --database shop-db --issuer https://id.example.com/ --jwks-url https://id.example.com/jwks.json --audience shop --migrations migrations
+```
 
-`gregale data-api types [--output <FILE>] [--check] [--snapshot] [--validators] [--timeout <DURATION>] <name>`
+### data-api deploy
+
+Deploy a single-app Data API with its migrations as the release task
+
+`gregale data-api deploy --migrations <DIR> [--release-command <COMMAND>] [--scope <SCOPE>] [--timeout <DURATION>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--output <FILE>` | generated TypeScript or snapshot output |  |
+| `--migrations <DIR>` | migration directory run with MIGRATION_DATABASE_URL | required |
+| `--release-command <COMMAND>` | release command (default node migrations/release.mjs) |  |
+| `--scope <SCOPE>` | environment scope |  |
+| `--timeout <DURATION>` | deployment and release wait (default 15m) |  |
+
+### data-api configure
+
+Change public access, aggregates, usage reporting or caps and fresh-restart the runtime
+
+`gregale data-api configure [--public-read <SCHEMA.RELATION[,...]>] [--no-public-read] [--public-rpc <SCHEMA.FUNCTION[,...]>] [--no-public-rpc] [--public-read-cache <DURATION|off>] [--usage-reporting <on|off>] [--monthly-caps <requests=N[,anonymous=N]|off>] [--aggregates <on|off>] [--scope <SCOPE>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--public-read <SCHEMA.RELATION[,...]>` | relations readable without a token |  |
+| `--no-public-read` | disable anonymous reads |  |
+| `--public-rpc <SCHEMA.FUNCTION[,...]>` | approved STABLE or IMMUTABLE functions callable without a token by GET |  |
+| `--no-public-rpc` | disable anonymous RPC calls |  |
+| `--public-read-cache <DURATION|off>` | cache canonical public reads and RPC calls at the edge (max 1h) |  |
+| `--usage-reporting <on|off>` | report usage to the platform (on for new Data APIs) | one of `on` · `off` |
+| `--monthly-caps <requests=N[,anonymous=N]|off>` | monthly owner caps; reached caps answer 429 until the next UTC month |  |
+| `--aggregates <on|off>` | aggregate queries; on also enables the SQL deadline | one of `on` · `off` |
+| `--scope <SCOPE>` | environment scope |  |
+| `--no-restart` | store settings without a fresh restart |  |
+
+### data-api usage
+
+Show reported requests, rows and bytes per hour or day, and month-to-date totals
+
+`gregale data-api usage [--since <DURATION>] [--granularity <hour|day>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <DURATION>` | lookback such as 24h, 7d or 30d (default 7d, max 90d) |  |
+| `--granularity <hour|day>` | bucket size (hour covers at most 48h) | one of `hour` · `day` |
+
+Examples:
+
+```sh
+gregale data-api usage shop-data --since 30d
+```
+
+### data-api server-key
+
+Manage server keys for trusted backends (RLS still applies)
+
+#### data-api server-key create
+
+Generate a key, store its hash in a free slot and show the key once
+
+`gregale data-api server-key create [--read-only] [--relations <SCHEMA.RELATION[,...]>] [--rpcs <SCHEMA.FUNCTION[,...]>] [--no-subjects] [--replace-oldest] [--scope <SCOPE>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--read-only` | allow only GET and HEAD; RPCs need --rpcs |  |
+| `--relations <SCHEMA.RELATION[,...]>` | relations the key may use, including embeddings |  |
+| `--rpcs <SCHEMA.FUNCTION[,...]>` | approved RPCs the key may call |  |
+| `--no-subjects` | refuse X-Gregale-Subject |  |
+| `--replace-oldest` | replace the older slot when both are in use |  |
+| `--scope <SCOPE>` | environment scope |  |
+| `--no-restart` | store the hash without a fresh restart |  |
+
+#### data-api server-key list
+
+Show which key slots are in use
+
+`gregale data-api server-key list [--scope <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+#### data-api server-key revoke
+
+Remove a key slot
+
+`gregale data-api server-key revoke --slot <a|b|all> [--scope <SCOPE>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--slot <a|b|all>` | slot to revoke | required; one of `a` · `b` · `all` |
+| `--scope <SCOPE>` | environment scope |  |
+| `--no-restart` | remove the hash without a fresh restart |  |
+
+### data-api types
+
+Generate TypeScript types or Python/Go clients from the database contract
+
+`gregale data-api types [--output <FILE>] [--check] [--snapshot] [--validators] [--language <LANGUAGE>] [--package <NAME>] [--snapshot-file <FILE>] [--timeout <DURATION>] [<name>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--output <FILE>` | generated TypeScript, Python, Go or snapshot output |  |
 | `--check` | fail if the output file is stale |  |
 | `--snapshot` | export a JSON baseline for data-api diff |  |
 | `--validators` | include typed runtime table and RPC argument validators |  |
+| `--language <LANGUAGE>` | client language (default typescript) | one of `typescript` · `python` · `go` |
+| `--package <NAME>` | Go package name (default gregaledata) |  |
+| `--snapshot-file <FILE>` | render Python or Go from a saved snapshot without contacting the API |  |
 | `--timeout <DURATION>` | task wait deadline (default 2m) |  |
+
+Examples:
+
+```sh
+gregale data-api types shop-data --language python --output shop_data.py
+gregale data-api types --snapshot-file contract.json --language go --package shopdata --output shopdata/client.go
+```
 
 ### data-api check
 

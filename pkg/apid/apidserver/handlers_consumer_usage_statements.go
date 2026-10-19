@@ -223,6 +223,10 @@ func (s *server) planAPIConsumerUsageStatement(ctx context.Context, accountID, a
 	}
 	var fees []state.APIConsumerStatementFee
 	if consumer.RevokedAt == nil || !consumer.RevokedAt.Before(start) {
+		if consumer.RevokedAt != nil {
+			// Prorating cards stop at the revocation (ADR-20261019100332).
+			opts.EndedAt = consumer.RevokedAt.UTC()
+		}
 		fees = billing.APIConsumerStatementFees(cards, start, end, consumer.CreatedAt, opts, revisions, quote.Buckets)
 	}
 	if len(quote.Buckets) == 0 && len(fees) == 0 && len(revisions) > 0 {

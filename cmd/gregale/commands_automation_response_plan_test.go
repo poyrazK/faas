@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"net/http"
 	"path/filepath"
@@ -9,33 +10,33 @@ import (
 	"time"
 )
 
-func responseTestPlan() automationResponsePlan {
+func responseTestPlan() main.AutomationResponsePlan {
 	n := 1
-	p := automationResponsePlan{Version: 1, App: "consumer", AppID: inspectorAppID, JobID: recoveryInvocationID, Key: "incident-1", CreatedAt: time.Now().UTC()}
-	a := automationResponseAction{Kind: "cancel", Position: 1, RunID: inspectorRunID, Cancellation: &api.WorkflowRecoveryCancellationRequest{Position: 1, ExpectedResumeCount: &n, Reason: "incident"}}
-	a.Cancellation.RequestID = responseActionID(p, a)
-	p.Actions = []automationResponseAction{a}
+	p := main.AutomationResponsePlan{Version: 1, App: "consumer", AppID: inspectorAppID, JobID: recoveryInvocationID, Key: "incident-1", CreatedAt: time.Now().UTC()}
+	a := main.AutomationResponseAction{Kind: "cancel", Position: 1, RunID: inspectorRunID, Cancellation: &api.WorkflowRecoveryCancellationRequest{Position: 1, ExpectedResumeCount: &n, Reason: "incident"}}
+	a.Cancellation.RequestID = main.ResponseActionID(p, a)
+	p.Actions = []main.AutomationResponseAction{a}
 	return p
 }
 func TestAutomationRecoveryResponsePlanValidation(t *testing.T) {
 	p := responseTestPlan()
 	path := filepath.Join(t.TempDir(), "plan.json")
-	if err := saveAutomationResponsePlan(path, p); err != nil {
+	if err := main.SaveAutomationResponsePlan(path, p); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readAutomationResponsePlan(path); err != nil {
+	if _, err := main.ReadAutomationResponsePlan(path); err != nil {
 		t.Fatal(err)
 	}
-	if err := saveAutomationResponsePlan(path, p); err == nil {
+	if err := main.SaveAutomationResponsePlan(path, p); err == nil {
 		t.Fatal("overwrote reviewed plan")
 	}
 	p.Actions = append(p.Actions, p.Actions[0])
-	if validateAutomationResponsePlan(p) == nil {
+	if main.ValidateAutomationResponsePlan(p) == nil {
 		t.Fatal("duplicate target accepted")
 	}
 	p = responseTestPlan()
 	p.Actions[0].Cancellation.RequestID = recoverySecondRunID
-	if validateAutomationResponsePlan(p) == nil {
+	if main.ValidateAutomationResponsePlan(p) == nil {
 		t.Fatal("changed identity accepted")
 	}
 }
@@ -44,7 +45,7 @@ func TestAutomationRecoveryResponseResume(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			p := responseTestPlan()
 			path := filepath.Join(t.TempDir(), "plan.json")
-			if err := saveAutomationResponsePlan(path, p); err != nil {
+			if err := main.SaveAutomationResponsePlan(path, p); err != nil {
 				t.Fatal(err)
 			}
 			posts, gets := 0, 0
@@ -93,12 +94,12 @@ func TestAutomationRecoveryResponseResume(t *testing.T) {
 					t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 				}
 			})
-			captureAutomationStdout(t)
+			main.CaptureAutomationStdout(t)
 			if scenario == "receipt_conflict" {
 				receipt = &api.WorkflowRecoveryActionReceipt{Request: *p.Actions[0].Cancellation, Response: api.WorkflowRecoveryCancellationResponse{JobID: p.JobID, Position: 1, ResumeCount: 2, Outcome: "cancelled"}, CapturedAt: time.Now().UTC()}
 			}
 			if scenario == "readonly" {
-				if code := cmdAutomationsResponseExecute([]string{"--plan", path}, "status"); code != 5 {
+				if code := main.CmdAutomationsResponseExecute([]string{"--plan", path}, "status"); code != 5 {
 					t.Fatalf("readonly code=%d", code)
 				}
 				if posts != 0 || gets != 1 {
@@ -110,7 +111,7 @@ func TestAutomationRecoveryResponseResume(t *testing.T) {
 			if scenario != "confirmation" {
 				args = append(args, "--yes")
 			}
-			code := cmdAutomationsResponseExecute(args, "apply")
+			code := main.CmdAutomationsResponseExecute(args, "apply")
 			want := 0
 			if scenario == "confirmation" || scenario == "scope" {
 				want = 1
@@ -126,7 +127,7 @@ func TestAutomationRecoveryResponseResume(t *testing.T) {
 				}
 				return
 			}
-			code = cmdAutomationsResponseExecute([]string{"--plan", path, "--yes"}, "apply")
+			code = main.CmdAutomationsResponseExecute([]string{"--plan", path, "--yes"}, "apply")
 			want = 0
 			if scenario == "changed" {
 				want = 5
@@ -134,7 +135,7 @@ func TestAutomationRecoveryResponseResume(t *testing.T) {
 			if code != want || posts != 1 {
 				t.Fatalf("resume=%d posts=%d", code, posts)
 			}
-			code = cmdAutomationsResponseExecute([]string{"--plan", path}, "status")
+			code = main.CmdAutomationsResponseExecute([]string{"--plan", path}, "status")
 			if code != want || posts != 1 {
 				t.Fatalf("reconcile=%d posts=%d", code, posts)
 			}
@@ -146,13 +147,13 @@ func TestAutomationRecoveryResponseRetryReconciliation(t *testing.T) {
 	for _, scenario := range []string{"pending", "running", "failed", "succeeded", "missing", "conflict", "lineage", "lost_reply"} {
 		t.Run(scenario, func(t *testing.T) {
 			p := responseTestPlan()
-			rp := automationRecoveryPlan{Version: 1, App: p.App, AppID: p.AppID, Name: "recover", ParentJobID: p.JobID, Key: p.Key, CreatedAt: p.CreatedAt, Runs: []automationRecoverySelection{{ID: inspectorRunID, ExpectedResumeCount: 1, ParentPosition: 1}}}
-			req := automationRunJobRequest(rp, 1, "incident")
-			a := automationResponseAction{Kind: "retry", Position: 1, RunID: inspectorRunID, Retry: &req}
-			req.RequestID = responseActionID(p, a)
-			p.Actions = []automationResponseAction{a}
+			rp := main.AutomationRecoveryPlan{Version: 1, App: p.App, AppID: p.AppID, Name: "recover", ParentJobID: p.JobID, Key: p.Key, CreatedAt: p.CreatedAt, Runs: []main.AutomationRecoverySelection{{ID: inspectorRunID, ExpectedResumeCount: 1, ParentPosition: 1}}}
+			req := main.AutomationRunJobRequest(rp, 1, "incident")
+			a := main.AutomationResponseAction{Kind: "retry", Position: 1, RunID: inspectorRunID, Retry: &req}
+			req.RequestID = main.ResponseActionID(p, a)
+			p.Actions = []main.AutomationResponseAction{a}
 			path := filepath.Join(t.TempDir(), "plan.json")
-			if err := saveAutomationResponsePlan(path, p); err != nil {
+			if err := main.SaveAutomationResponsePlan(path, p); err != nil {
 				t.Fatal(err)
 			}
 			childSelection := req
@@ -210,16 +211,16 @@ func TestAutomationRecoveryResponseRetryReconciliation(t *testing.T) {
 					t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 				}
 			})
-			captureAutomationStdout(t)
+			main.CaptureAutomationStdout(t)
 			if scenario == "lost_reply" {
-				if code := cmdAutomationsResponseExecute([]string{"--plan", path, "--yes"}, "apply"); code != 5 || posts != 1 {
+				if code := main.CmdAutomationsResponseExecute([]string{"--plan", path, "--yes"}, "apply"); code != 5 || posts != 1 {
 					t.Fatalf("first apply=%d posts=%d", code, posts)
 				}
-				if code := cmdAutomationsResponseExecute([]string{"--plan", path, "--yes"}, "apply"); code != 5 || posts != 1 {
+				if code := main.CmdAutomationsResponseExecute([]string{"--plan", path, "--yes"}, "apply"); code != 5 || posts != 1 {
 					t.Fatalf("resume=%d posts=%d", code, posts)
 				}
 			}
-			code := cmdAutomationsResponseExecute([]string{"--plan", path}, "status")
+			code := main.CmdAutomationsResponseExecute([]string{"--plan", path}, "status")
 			want := 5
 			if scenario == "failed" || scenario == "succeeded" {
 				want = 0
@@ -239,7 +240,7 @@ func TestAutomationRecoveryResponsePreview(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			p := responseTestPlan()
 			path := filepath.Join(t.TempDir(), "plan.json")
-			if err := saveAutomationResponsePlan(path, p); err != nil {
+			if err := main.SaveAutomationResponsePlan(path, p); err != nil {
 				t.Fatal(err)
 			}
 			previews := 0
@@ -275,8 +276,8 @@ func TestAutomationRecoveryResponsePreview(t *testing.T) {
 					t.Fatalf("preview submitted unexpected request %s %s", r.Method, r.URL.Path)
 				}
 			})
-			captureAutomationStdout(t)
-			code := cmdAutomationsResponseExecute([]string{"--plan", path}, "preview")
+			main.CaptureAutomationStdout(t)
+			code := main.CmdAutomationsResponseExecute([]string{"--plan", path}, "preview")
 			want := 5
 			calls := 0
 			if scenario == "eligible" {
@@ -318,17 +319,17 @@ func TestAutomationRecoveryResponsePlanCreation(t *testing.T) {
 					t.Fatalf("plan creation submitted unexpected request %s %s", r.Method, r.URL.Path)
 				}
 			})
-			captureAutomationStdout(t)
+			main.CaptureAutomationStdout(t)
 			args := []string{"--app", "consumer", "--job", recoveryInvocationID, "--key", "incident-1", "--reason", "incident", "--plan-out", path, "--cancel-position", "1"}
 			if scenario == "duplicate" {
 				args = append(args, "--cancel-position", "1")
 			}
-			code := cmdAutomationsResponsePlan(args)
+			code := main.CmdAutomationsResponsePlan(args)
 			if scenario == "eligible" {
 				if code != 0 {
 					t.Fatalf("save=%d", code)
 				}
-				p, err := readAutomationResponsePlan(path)
+				p, err := main.ReadAutomationResponsePlan(path)
 				if err != nil || len(p.Actions) != 1 || p.Actions[0].RunID != inspectorRunID || *p.Actions[0].Cancellation.ExpectedResumeCount != 1 {
 					t.Fatalf("saved plan=%+v %v", p, err)
 				}
@@ -336,7 +337,7 @@ func TestAutomationRecoveryResponsePlanCreation(t *testing.T) {
 				if code == 0 {
 					t.Fatal("saved ineligible plan")
 				}
-				if _, err := readAutomationResponsePlan(path); err == nil {
+				if _, err := main.ReadAutomationResponsePlan(path); err == nil {
 					t.Fatal("saved invalid selection")
 				}
 			}

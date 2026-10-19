@@ -1,5 +1,5 @@
 // adr: 491
-package sched
+package sched_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -49,7 +50,7 @@ func TestWorkflowJoinSharesContinuationAcrossConditionalBranches(t *testing.T) {
 	for _, branch := range []string{"a", "b", "none"} {
 		for _, reverse := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/reverse=%v", branch, reverse), func(t *testing.T) {
-				guardOrchestrationStores(t, func(t *testing.T, store state.Store) {
+				sched.GuardOrchestrationStores(t, func(t *testing.T, store state.Store) {
 					ctx := context.Background()
 					spec := joinedBranchSpec()
 					if reverse {
@@ -58,9 +59,9 @@ func TestWorkflowJoinSharesContinuationAcrossConditionalBranches(t *testing.T) {
 					if _, err := api.ValidateWorkflowDAG(spec, api.PlanHobby); err != nil {
 						t.Fatal(err)
 					}
-					run := createGuardedRun(t, store, spec, fmt.Sprintf(`{"branch":%q}`, branch))
+					run := sched.CreateGuardedRun(t, store, spec, fmt.Sprintf(`{"branch":%q}`, branch))
 					executor := &joinExecutor{}
-					if err := NewWorkflowOrchestrator(store, executor, nil, nil, nil).DispatchTick(ctx); err != nil {
+					if err := sched.NewWorkflowOrchestrator(store, executor, nil, nil, nil).DispatchTick(ctx); err != nil {
 						t.Fatal(err)
 					}
 					final, err := store.GetWorkflowRun(ctx, run.ID)
@@ -74,7 +75,7 @@ func TestWorkflowJoinSharesContinuationAcrossConditionalBranches(t *testing.T) {
 					} else {
 						wantPaths := []string{"/" + branch, "/" + branch + "_end", "/crm"}
 						wantBody := `{"source":"m-` + branch + `-end","result":{"path":"/` + branch + `_end","n":9007199254740993,"items":[true,null]}}`
-						if !slices.Equal(executor.paths, wantPaths) || len(executor.bodies) != 1 || !workflowJSONEqual(executor.bodies[0], []byte(wantBody)) {
+						if !slices.Equal(executor.paths, wantPaths) || len(executor.bodies) != 1 || !sched.WorkflowJSONEqual(executor.bodies[0], []byte(wantBody)) {
 							t.Fatalf("shared continuation wrong: paths=%v bodies=%s", executor.paths, executor.bodies)
 						}
 					}
@@ -94,11 +95,11 @@ func TestWorkflowJoinSharesContinuationAcrossConditionalBranches(t *testing.T) {
 }
 
 func TestWorkflowJoinContinuationRetryUsesCommittedSelection(t *testing.T) {
-	guardOrchestrationStores(t, func(t *testing.T, store state.Store) {
+	sched.GuardOrchestrationStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()
-		run := createGuardedRun(t, store, joinedBranchSpec(), `{"branch":"a"}`)
+		run := sched.CreateGuardedRun(t, store, joinedBranchSpec(), `{"branch":"a"}`)
 		executor := &joinExecutor{retryCRM: true}
-		orchestrator := NewWorkflowOrchestrator(store, executor, nil, nil, nil)
+		orchestrator := sched.NewWorkflowOrchestrator(store, executor, nil, nil, nil)
 		if err := orchestrator.DispatchTick(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -129,18 +130,18 @@ func TestWorkflowJoinContinuationRetryUsesCommittedSelection(t *testing.T) {
 			t.Fatal(err)
 		}
 		final, err := store.GetWorkflowRun(ctx, run.ID)
-		if err != nil || final.Status != state.WorkflowRunStatusSucceeded || len(executor.bodies) != 2 || !workflowJSONEqual(executor.bodies[0], executor.bodies[1]) {
+		if err != nil || final.Status != state.WorkflowRunStatusSucceeded || len(executor.bodies) != 2 || !sched.WorkflowJSONEqual(executor.bodies[0], executor.bodies[1]) {
 			t.Fatalf("retry changed selection or stranded run: %+v bodies=%s err=%v", final, executor.bodies, err)
 		}
 	})
 }
 
 func TestWorkflowJoinDoesNotContinueFailedBranch(t *testing.T) {
-	guardOrchestrationStores(t, func(t *testing.T, store state.Store) {
+	sched.GuardOrchestrationStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()
-		run := createGuardedRun(t, store, joinedBranchSpec(), `{"branch":"a"}`)
+		run := sched.CreateGuardedRun(t, store, joinedBranchSpec(), `{"branch":"a"}`)
 		executor := &joinExecutor{failBranch: true}
-		if err := NewWorkflowOrchestrator(store, executor, nil, nil, nil).DispatchTick(ctx); err != nil {
+		if err := sched.NewWorkflowOrchestrator(store, executor, nil, nil, nil).DispatchTick(ctx); err != nil {
 			t.Fatal(err)
 		}
 		final, err := store.GetWorkflowRun(ctx, run.ID)

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/productemail"
 )
@@ -72,17 +73,17 @@ func TestProductEmailCLIListAndRetry(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	client := NewClient(srv.URL, "owner")
-	c, err := parseProductCommand([]string{"email", "list", "--app", "exports", "--tenant", d.TenantID, "--status", "failed"})
+	client := main.NewClient(srv.URL, "owner")
+	c, err := main.ParseProductCommand([]string{"email", "list", "--app", "exports", "--tenant", d.TenantID, "--status", "failed"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	value, err := runProductCommand(t.Context(), client, c)
+	value, err := main.RunProductCommand(t.Context(), client, c)
 	if err != nil || calls != 1 {
 		t.Fatal(value, err, calls)
 	}
 	var out bytes.Buffer
-	if err = writeProductOutput(&out, value, false); err != nil {
+	if err = main.WriteProductOutput(&out, value, false); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"failed 1", "no email is sent", d.ID, d.TenantID, "provider issue"} {
@@ -91,25 +92,25 @@ func TestProductEmailCLIListAndRetry(t *testing.T) {
 		}
 	}
 	out.Reset()
-	if err = writeProductOutput(&out, value, true); err != nil {
+	if err = main.WriteProductOutput(&out, value, true); err != nil {
 		t.Fatal(err)
 	}
 	var got api.ProductEmailOwnerPage
 	if json.Unmarshal(out.Bytes(), &got) != nil || got.Deliveries[0].ID != d.ID {
 		t.Fatal(out.String())
 	}
-	c, err = parseProductCommand([]string{"email", "retry", "--app", "exports", "--tenant", d.TenantID, "--delivery", d.ID, "--attempt", "1"})
+	c, err = main.ParseProductCommand([]string{"email", "retry", "--app", "exports", "--tenant", d.TenantID, "--delivery", d.ID, "--attempt", "1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
-		value, err = runProductCommand(t.Context(), client, c)
+		value, err = main.RunProductCommand(t.Context(), client, c)
 		if err != nil || value.(api.ProductEmailRetryReceipt) != receipt {
 			t.Fatal(value, err)
 		}
 	}
 	out.Reset()
-	if err = writeProductOutput(&out, value, false); err != nil || !strings.Contains(out.String(), "acknowledges a requeue") {
+	if err = main.WriteProductOutput(&out, value, false); err != nil || !strings.Contains(out.String(), "acknowledges a requeue") {
 		t.Fatal(out.String(), err)
 	}
 	if calls != 3 {
@@ -118,7 +119,7 @@ func TestProductEmailCLIListAndRetry(t *testing.T) {
 	for _, mutate := range []func(*api.ProductEmailRetryReceipt){func(r *api.ProductEmailRetryReceipt) { r.TenantID = uuid.NewString() }, func(r *api.ProductEmailRetryReceipt) { r.FailedAttempt++ }, func(r *api.ProductEmailRetryReceipt) { r.DeliveryID = uuid.NewString() }} {
 		saved := receipt
 		mutate(&receipt)
-		if _, err = runProductCommand(t.Context(), client, c); err == nil {
+		if _, err = main.RunProductCommand(t.Context(), client, c); err == nil {
 			t.Fatal("foreign retry receipt accepted")
 		}
 		receipt = saved
@@ -129,7 +130,7 @@ func TestProductEmailCLIValidation(t *testing.T) {
 	for _, args := range [][]string{
 		{"email"}, {"email", "retry", "--app", "exports"}, {"email", "list", "--app", "exports", "--tenant", "bad"}, {"email", "list", "--app", "exports", "--status", "opened"}, {"email", "list", "--app", "exports", "--self"}, {"email", "retry", "--app", "exports", "--tenant", page.TenantID, "--delivery", page.Deliveries[0].ID, "--attempt", "6"},
 	} {
-		if _, err := parseProductCommand(args); err == nil {
+		if _, err := main.ParseProductCommand(args); err == nil {
 			t.Fatal("invalid email command", args)
 		}
 	}
@@ -166,12 +167,12 @@ func TestProductEmailCLIProviderReport(t *testing.T) {
 	if err := productemail.ValidateOwnerPage(page, page.TenantID, "delivered", ""); err != nil {
 		t.Fatal(err)
 	}
-	c, err := parseProductCommand([]string{"email", "list", "--app", "exports", "--status", "delivered"})
-	if err != nil || c.emailStatus != "delivered" {
+	c, err := main.ParseProductCommand([]string{"email", "list", "--app", "exports", "--status", "delivered"})
+	if err != nil || (*c.EmailStatus()) != "delivered" {
 		t.Fatal(c, err)
 	}
 	var out bytes.Buffer
-	if err = writeProductOutput(&out, page, false); err != nil {
+	if err = main.WriteProductOutput(&out, page, false); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"Provider reports: delivered 1", "Provider reported delivery", "does not prove inbox placement", "Provider reported at:"} {
@@ -197,16 +198,16 @@ func TestProductEmailCLIRecoveries(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(history)
 	}))
 	defer server.Close()
-	command, e := parseProductCommand([]string{"email", "recoveries", "--app", "exports", "--tenant", r.TenantID})
+	command, e := main.ParseProductCommand([]string{"email", "recoveries", "--app", "exports", "--tenant", r.TenantID})
 	if e != nil {
 		t.Fatal(e)
 	}
-	value, e := runProductCommand(t.Context(), NewClient(server.URL, "owner"), command)
+	value, e := main.RunProductCommand(t.Context(), main.NewClient(server.URL, "owner"), command)
 	if e != nil {
 		t.Fatal(e)
 	}
 	var out bytes.Buffer
-	if e = writeProductOutput(&out, value, false); e != nil {
+	if e = main.WriteProductOutput(&out, value, false); e != nil {
 		t.Fatal(e)
 	}
 	for _, want := range []string{r.ID, r.RecipientID, "only future updates", "generation 1 → 2"} {
@@ -215,7 +216,7 @@ func TestProductEmailCLIRecoveries(t *testing.T) {
 		}
 	}
 	history.Receipts[0].Generation = 9
-	if _, e = runProductCommand(t.Context(), NewClient(server.URL, "owner"), command); e == nil {
+	if _, e = main.RunProductCommand(t.Context(), main.NewClient(server.URL, "owner"), command); e == nil {
 		t.Fatal("accepted mismatched generation receipt")
 	}
 }
@@ -233,16 +234,16 @@ func TestProductEmailCLIOptOuts(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(history)
 	}))
 	defer srv.Close()
-	c, err := parseProductCommand([]string{"email", "opt-outs", "--app", "exports", "--tenant", r.TenantID})
+	c, err := main.ParseProductCommand([]string{"email", "opt-outs", "--app", "exports", "--tenant", r.TenantID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	value, err := runProductCommand(t.Context(), NewClient(srv.URL, "owner"), c)
+	value, err := main.RunProductCommand(t.Context(), main.NewClient(srv.URL, "owner"), c)
 	if err != nil || calls != 1 {
 		t.Fatal(value, err, calls)
 	}
 	var out bytes.Buffer
-	if err = writeProductOutput(&out, value, false); err != nil {
+	if err = main.WriteProductOutput(&out, value, false); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{r.ID, r.RecipientID, r.TenantID, "later authenticated consent", "preference version 1 → 2"} {
@@ -251,7 +252,7 @@ func TestProductEmailCLIOptOuts(t *testing.T) {
 		}
 	}
 	out.Reset()
-	if err = writeProductOutput(&out, value, true); err != nil {
+	if err = main.WriteProductOutput(&out, value, true); err != nil {
 		t.Fatal(err)
 	}
 	var page api.ProductEmailOptOutPage
@@ -268,13 +269,13 @@ func TestProductEmailCLIOptOuts(t *testing.T) {
 		saved := history
 		history.Receipts = append([]api.ProductEmailOptOutReceipt{}, history.Receipts...)
 		mutate(&history)
-		if _, err = runProductCommand(t.Context(), NewClient(srv.URL, "owner"), c); err == nil {
+		if _, err = main.RunProductCommand(t.Context(), main.NewClient(srv.URL, "owner"), c); err == nil {
 			t.Fatal("foreign or malformed history accepted")
 		}
 		history = saved
 	}
 	for _, args := range [][]string{{"email", "opt-outs", "--app", "exports", "--tenant", "invalid"}, {"email", "opt-outs", "--app", "exports", "--status", "all"}, {"email", "opt-outs", "--app", "exports", "--cursor", strings.Repeat("x", api.ProductControlOwnerCursorMaxBytes+1)}} {
-		if _, err = parseProductCommand(args); err == nil {
+		if _, err = main.ParseProductCommand(args); err == nil {
 			t.Fatal("unsafe opt-out command", args)
 		}
 	}

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 // commands2_apply_rescue_test.go — pins the ADR-124 follow-up #1
 // post-apply rescue signal. The wire invariant from
@@ -26,6 +26,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -44,7 +45,7 @@ func TestRenderApplyRescue_RendersHeaderAndReasons(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	renderApplyRescue(&buf, apply)
+	main.RenderApplyRescue(&buf, apply)
 	out := buf.String()
 
 	if !strings.Contains(out, "gate was rescued by --exclude") {
@@ -81,7 +82,7 @@ func TestRenderApplyRescue_HeaderWithoutReasons(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	renderApplyRescue(&buf, apply)
+	main.RenderApplyRescue(&buf, apply)
 	out := buf.String()
 
 	if !strings.Contains(out, "gate was rescued by --exclude") {
@@ -108,7 +109,7 @@ func TestRenderApplyRescue_QuietOnHappyPath(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	renderApplyRescue(&buf, apply)
+	main.RenderApplyRescue(&buf, apply)
 	if buf.Len() != 0 {
 		t.Errorf("happy path wrote output; got: %q", buf.String())
 	}
@@ -130,7 +131,7 @@ func TestRenderApplyRescue_HeaderAndReasonsCoexist(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	renderApplyRescue(&buf, apply)
+	main.RenderApplyRescue(&buf, apply)
 	out := buf.String()
 
 	headerIdx := strings.Index(out, "gate was rescued by --exclude")

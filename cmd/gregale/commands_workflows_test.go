@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,11 +8,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestCmdWorkflows_NoArgs(t *testing.T) {
-	code, captured := runWithStderr(t, func() int { return cmdWorkflows([]string{}) })
+	code, captured := main.RunWithStderr(t, func() int { return main.CmdWorkflows([]string{}) })
 	if code != 1 {
 		t.Errorf("cmdWorkflows(no args) = %d, want 1", code)
 	}
@@ -22,7 +23,7 @@ func TestCmdWorkflows_NoArgs(t *testing.T) {
 }
 
 func TestCmdWorkflows_UnknownSubcommand(t *testing.T) {
-	code, captured := runWithStderr(t, func() int { return cmdWorkflows([]string{"unknown-sub"}) })
+	code, captured := main.RunWithStderr(t, func() int { return main.CmdWorkflows([]string{"unknown-sub"}) })
 	if code != 1 {
 		t.Errorf("cmdWorkflows(unknown) = %d, want 1", code)
 	}
@@ -32,7 +33,7 @@ func TestCmdWorkflows_UnknownSubcommand(t *testing.T) {
 }
 
 func TestCmdWorkflowsList_MissingApp(t *testing.T) {
-	code, captured := runWithStderr(t, func() int { return cmdWorkflowsList([]string{}) })
+	code, captured := main.RunWithStderr(t, func() int { return main.CmdWorkflowsList([]string{}) })
 	if code != 1 {
 		t.Errorf("cmdWorkflowsList(no --app) = %d, want 1", code)
 	}
@@ -42,8 +43,8 @@ func TestCmdWorkflowsList_MissingApp(t *testing.T) {
 }
 
 func TestCmdWorkflowsList_InvalidStatus(t *testing.T) {
-	code, captured := runWithStderr(t, func() int {
-		return cmdWorkflowsList([]string{"--app", "my-app", "--status", "nonsense"})
+	code, captured := main.RunWithStderr(t, func() int {
+		return main.CmdWorkflowsList([]string{"--app", "my-app", "--status", "nonsense"})
 	})
 	if code != 1 {
 		t.Fatalf("cmdWorkflowsList(invalid status) = %d, want 1", code)
@@ -54,24 +55,24 @@ func TestCmdWorkflowsList_InvalidStatus(t *testing.T) {
 }
 
 func TestCmdWorkflowsList_FiltersByWorkflowAndCreationWindow(t *testing.T) {
-	resetJSONOut(t)
-	jsonOutput = true
-	f := authedFakeAPI(t, `{"runs":[],"total":0}`, http.StatusOK)
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
+	f := main.AuthedFakeAPI(t, `{"runs":[],"total":0}`, http.StatusOK)
 	args := []string{
 		"--app", "billing", "--limit", "20", "--offset", "3", "--status", "failed",
 		"--workflow-name", "paid + invoice", "--created-after", "2026-10-01T02:00:00+02:00",
 		"--created-before", "2026-10-05T23:59:59Z",
 	}
 	var output bytes.Buffer
-	if code := captureStdoutSwap(t, &output, func() int { return cmdWorkflowsList(args) }); code != 0 {
+	if code := main.CaptureStdoutSwap(t, &output, func() int { return main.CmdWorkflowsList(args) }); code != 0 {
 		t.Fatalf("exit = %d, output=%s", code, output.String())
 	}
-	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/apps/billing/workflows/runs" {
-		t.Fatalf("request = %s %s", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != http.MethodGet || (*f.SawPath()) != "/v1/apps/billing/workflows/runs" {
+		t.Fatalf("request = %s %s", (*f.SawMethod()), (*f.SawPath()))
 	}
-	query, err := url.ParseQuery(f.sawQuery)
+	query, err := url.ParseQuery((*f.SawQuery()))
 	if err != nil {
-		t.Fatalf("parse query %q: %v", f.sawQuery, err)
+		t.Fatalf("parse query %q: %v", (*f.SawQuery()), err)
 	}
 	for key, want := range map[string]string{
 		"limit": "20", "offset": "3", "status": "failed", "workflow_name": "paid + invoice",
@@ -84,8 +85,8 @@ func TestCmdWorkflowsList_FiltersByWorkflowAndCreationWindow(t *testing.T) {
 }
 
 func TestCmdWorkflowsListRejectsInvalidFiltersBeforeRequest(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"runs":[],"total":0}`, http.StatusOK)
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"runs":[],"total":0}`, http.StatusOK)
 	cases := []struct {
 		name string
 		args []string
@@ -98,16 +99,16 @@ func TestCmdWorkflowsListRejectsInvalidFiltersBeforeRequest(t *testing.T) {
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			args := append([]string{"--app", "billing"}, test.args...)
-			code, output := runWithStderr(t, func() int { return cmdWorkflowsList(args) })
-			if code != 1 || f.sawMethod != "" {
-				t.Fatalf("exit=%d stderr=%q request=%s %s", code, output, f.sawMethod, f.sawPath)
+			code, output := main.RunWithStderr(t, func() int { return main.CmdWorkflowsList(args) })
+			if code != 1 || (*f.SawMethod()) != "" {
+				t.Fatalf("exit=%d stderr=%q request=%s %s", code, output, (*f.SawMethod()), (*f.SawPath()))
 			}
 		})
 	}
 }
 
 func TestCmdWorkflowsRun_MissingArgs(t *testing.T) {
-	code, captured := runWithStderr(t, func() int { return cmdWorkflowsRun([]string{}) })
+	code, captured := main.RunWithStderr(t, func() int { return main.CmdWorkflowsRun([]string{}) })
 	if code != 1 {
 		t.Errorf("cmdWorkflowsRun(no args) = %d, want 1", code)
 	}
@@ -117,8 +118,8 @@ func TestCmdWorkflowsRun_MissingArgs(t *testing.T) {
 }
 
 func TestCmdWorkflowsRun_InvalidJSON(t *testing.T) {
-	code, captured := runWithStderr(t, func() int {
-		return cmdWorkflowsRun([]string{"my-workflow", "--app", "my-app", "--input", "{bad-json"})
+	code, captured := main.RunWithStderr(t, func() int {
+		return main.CmdWorkflowsRun([]string{"my-workflow", "--app", "my-app", "--input", "{bad-json"})
 	})
 	if code != 1 {
 		t.Errorf("cmdWorkflowsRun(bad json) = %d, want 1", code)
@@ -129,8 +130,8 @@ func TestCmdWorkflowsRun_InvalidJSON(t *testing.T) {
 }
 
 func TestCmdWorkflowsStatus_InvalidUUID(t *testing.T) {
-	code, captured := runWithStderr(t, func() int {
-		return cmdWorkflowsStatus([]string{"not-a-uuid"})
+	code, captured := main.RunWithStderr(t, func() int {
+		return main.CmdWorkflowsStatus([]string{"not-a-uuid"})
 	})
 	if code != 1 {
 		t.Errorf("cmdWorkflowsStatus(bad uuid) = %d, want 1", code)
@@ -141,11 +142,11 @@ func TestCmdWorkflowsStatus_InvalidUUID(t *testing.T) {
 }
 
 func TestCmdWorkflowsStatus_PrintsResumeCount(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	runID := "00000000-0000-4000-8000-000000000005"
-	authedFakeAPI(t, `{"id":"`+runID+`","workflow_name":"paid-invoice","status":"failed","resume_count":2}`, http.StatusOK)
+	main.AuthedFakeAPI(t, `{"id":"`+runID+`","workflow_name":"paid-invoice","status":"failed","resume_count":2}`, http.StatusOK)
 	var stdout bytes.Buffer
-	if code := captureStdoutSwap(t, &stdout, func() int { return cmdWorkflowsStatus([]string{runID}) }); code != 0 {
+	if code := main.CaptureStdoutSwap(t, &stdout, func() int { return main.CmdWorkflowsStatus([]string{runID}) }); code != 0 {
 		t.Fatalf("exit = %d, output=%s", code, stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "Resume Count: 2") {
@@ -154,8 +155,8 @@ func TestCmdWorkflowsStatus_PrintsResumeCount(t *testing.T) {
 }
 
 func TestCmdWorkflowsSteps_InvalidUUID(t *testing.T) {
-	code, captured := runWithStderr(t, func() int {
-		return cmdWorkflowsSteps([]string{"not-a-uuid"})
+	code, captured := main.RunWithStderr(t, func() int {
+		return main.CmdWorkflowsSteps([]string{"not-a-uuid"})
 	})
 	if code != 1 {
 		t.Errorf("cmdWorkflowsSteps(bad uuid) = %d, want 1", code)
@@ -166,20 +167,20 @@ func TestCmdWorkflowsSteps_InvalidUUID(t *testing.T) {
 }
 
 func TestCmdWorkflowsResume_UsesExpectedCountAndIdempotencyKey(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	runID := "00000000-0000-4000-8000-000000000005"
-	f := authedFakeAPI(t, `{"id":"`+runID+`","status":"pending","resume_count":1}`, http.StatusOK)
-	if code := cmdWorkflows([]string{"resume", runID, "--expected-resume-count", "0", "--idempotency-key", "resume-after-outage-1"}); code != 0 {
+	f := main.AuthedFakeAPI(t, `{"id":"`+runID+`","status":"pending","resume_count":1}`, http.StatusOK)
+	if code := main.CmdWorkflows([]string{"resume", runID, "--expected-resume-count", "0", "--idempotency-key", "resume-after-outage-1"}); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
-	if f.sawMethod != http.MethodPost || f.sawPath != "/v1/workflows/runs/"+runID+"/resume" {
-		t.Fatalf("request = %s %s", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != http.MethodPost || (*f.SawPath()) != "/v1/workflows/runs/"+runID+"/resume" {
+		t.Fatalf("request = %s %s", (*f.SawMethod()), (*f.SawPath()))
 	}
-	if got := f.sawHeader.Get("Idempotency-Key"); got != "resume-after-outage-1" {
+	if got := (*f.SawHeader()).Get("Idempotency-Key"); got != "resume-after-outage-1" {
 		t.Fatalf("Idempotency-Key = %q", got)
 	}
 	var body api.ResumeWorkflowRunRequest
-	if err := json.Unmarshal(f.sawBody, &body); err != nil {
+	if err := json.Unmarshal((*f.SawBody()), &body); err != nil {
 		t.Fatal(err)
 	}
 	if body.ExpectedResumeCount == nil || *body.ExpectedResumeCount != 0 {
@@ -188,26 +189,26 @@ func TestCmdWorkflowsResume_UsesExpectedCountAndIdempotencyKey(t *testing.T) {
 }
 
 func TestCmdWorkflowsResumeRequiresCurrentCount(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{}`, http.StatusOK)
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{}`, http.StatusOK)
 	runID := "00000000-0000-4000-8000-000000000005"
-	code, stderr := runWithStderr(t, func() int { return cmdWorkflowsResume([]string{runID}) })
-	if code != 1 || f.sawMethod != "" || !strings.Contains(stderr, "expected-resume-count") {
-		t.Fatalf("exit=%d stderr=%q request=%s %s", code, stderr, f.sawMethod, f.sawPath)
+	code, stderr := main.RunWithStderr(t, func() int { return main.CmdWorkflowsResume([]string{runID}) })
+	if code != 1 || (*f.SawMethod()) != "" || !strings.Contains(stderr, "expected-resume-count") {
+		t.Fatalf("exit=%d stderr=%q request=%s %s", code, stderr, (*f.SawMethod()), (*f.SawPath()))
 	}
 }
 
 func TestCmdWorkflowsResumes_ListsContinuationHistory(t *testing.T) {
-	resetJSONOut(t)
-	jsonOutput = true
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
 	runID := "00000000-0000-4000-8000-000000000005"
-	f := authedFakeAPI(t, `{"resumes":[{"run_id":"`+runID+`","resume_number":1,"account_id":"account","previous_status":"dead","resumed_steps":["send"],"created_at":"2026-10-05T12:00:00Z"}]}`, http.StatusOK)
+	f := main.AuthedFakeAPI(t, `{"resumes":[{"run_id":"`+runID+`","resume_number":1,"account_id":"account","previous_status":"dead","resumed_steps":["send"],"created_at":"2026-10-05T12:00:00Z"}]}`, http.StatusOK)
 	var stdout bytes.Buffer
-	if code := captureStdoutSwap(t, &stdout, func() int { return cmdWorkflows([]string{"resumes", runID}) }); code != 0 {
+	if code := main.CaptureStdoutSwap(t, &stdout, func() int { return main.CmdWorkflows([]string{"resumes", runID}) }); code != 0 {
 		t.Fatalf("exit = %d, output=%s", code, stdout.String())
 	}
-	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/workflows/runs/"+runID+"/resumes" {
-		t.Fatalf("request = %s %s", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != http.MethodGet || (*f.SawPath()) != "/v1/workflows/runs/"+runID+"/resumes" {
+		t.Fatalf("request = %s %s", (*f.SawMethod()), (*f.SawPath()))
 	}
 	var got api.WorkflowResumeResponse
 	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &got); err != nil {
@@ -219,8 +220,8 @@ func TestCmdWorkflowsResumes_ListsContinuationHistory(t *testing.T) {
 }
 
 func TestCmdWorkflowsCancel_InvalidUUID(t *testing.T) {
-	code, captured := runWithStderr(t, func() int {
-		return cmdWorkflowsCancel([]string{"not-a-uuid"})
+	code, captured := main.RunWithStderr(t, func() int {
+		return main.CmdWorkflowsCancel([]string{"not-a-uuid"})
 	})
 	if code != 1 {
 		t.Errorf("cmdWorkflowsCancel(bad uuid) = %d, want 1", code)
@@ -231,24 +232,24 @@ func TestCmdWorkflowsCancel_InvalidUUID(t *testing.T) {
 }
 
 func TestCmdWorkflowsRetry_ValidationAndAPIJourney(t *testing.T) {
-	resetJSONOut(t)
-	if code, captured := runWithStderr(t, func() int { return cmdWorkflowsRetry([]string{"bad-id", "charge-order"}) }); code != 1 || !strings.Contains(captured, "gregale workflows retry <run_id> <step_name>") {
+	main.ResetJSONOut(t)
+	if code, captured := main.RunWithStderr(t, func() int { return main.CmdWorkflowsRetry([]string{"bad-id", "charge-order"}) }); code != 1 || !strings.Contains(captured, "gregale workflows retry <run_id> <step_name>") {
 		t.Fatalf("invalid run: exit=%d stderr=%q", code, captured)
 	}
 
 	runID := "00000000-0000-4000-8000-000000000005"
-	f := authedFakeAPI(t, `{"id":"`+runID+`","status":"running"}`, http.StatusOK)
-	oldOut := osStdout
+	f := main.AuthedFakeAPI(t, `{"id":"`+runID+`","status":"running"}`, http.StatusOK)
+	oldOut := (*main.OsStdout)
 	var out strings.Builder
-	osStdout = &out
-	t.Cleanup(func() { osStdout = oldOut })
-	if code := cmdWorkflows([]string{"retry", runID, "charge-order"}); code != 0 {
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
+	if code := main.CmdWorkflows([]string{"retry", runID, "charge-order"}); code != 0 {
 		t.Fatalf("retry command exit = %d", code)
 	}
-	if f.sawMethod != http.MethodPost || f.sawPath != "/v1/workflows/runs/"+runID+"/steps/charge-order/retry" {
-		t.Fatalf("request = %s %s, want retry POST for the named step", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != http.MethodPost || (*f.SawPath()) != "/v1/workflows/runs/"+runID+"/steps/charge-order/retry" {
+		t.Fatalf("request = %s %s, want retry POST for the named step", (*f.SawMethod()), (*f.SawPath()))
 	}
-	if f.sawHeader.Get("Idempotency-Key") == "" {
+	if (*f.SawHeader()).Get("Idempotency-Key") == "" {
 		t.Fatal("retry request did not carry an idempotency key")
 	}
 	if !strings.Contains(out.String(), "requeued at step charge-order") {
@@ -257,8 +258,8 @@ func TestCmdWorkflowsRetry_ValidationAndAPIJourney(t *testing.T) {
 }
 
 func TestCmdWorkflowsEvents_MissingArgs(t *testing.T) {
-	code, captured := runWithStderr(t, func() int {
-		return cmdWorkflowsEvents([]string{"send", "not-enough-args"})
+	code, captured := main.RunWithStderr(t, func() int {
+		return main.CmdWorkflowsEvents([]string{"send", "not-enough-args"})
 	})
 	if code != 1 {
 		t.Errorf("cmdWorkflowsEvents(not enough args) = %d, want 1", code)
@@ -271,27 +272,27 @@ func TestCmdWorkflowsEvents_MissingArgs(t *testing.T) {
 // production-us hunt #5 (H5-46): the documented form had no "send" and was
 // refused with a usage error.
 func TestCmdWorkflowsEvents_DocumentedFormSends(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"status":"received","event_name":"go"}`, http.StatusOK)
-	if code := cmdWorkflowsEvents([]string{"00000000-0000-4000-8000-000000000005", "go", "--payload", `{"n":1}`}); code != 0 {
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"status":"received","event_name":"go"}`, http.StatusOK)
+	if code := main.CmdWorkflowsEvents([]string{"00000000-0000-4000-8000-000000000005", "go", "--payload", `{"n":1}`}); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
-	if !strings.Contains(string(f.sawBody), `"n":1`) {
-		t.Fatalf("body = %s, want the payload", f.sawBody)
+	if !strings.Contains(string((*f.SawBody())), `"n":1`) {
+		t.Fatalf("body = %s, want the payload", (*f.SawBody()))
 	}
 }
 
 func TestCmdWorkflowsEvents_TrailingPayloadIsSent(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"status":"received","event_name":"audit.ready"}`, http.StatusOK)
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"status":"received","event_name":"audit.ready"}`, http.StatusOK)
 	runID := "00000000-0000-4000-8000-000000000005"
-	if code := cmdWorkflowsEvents([]string{"send", runID, "audit.ready", "--payload", `{"marker":"must-survive"}`}); code != 0 {
+	if code := main.CmdWorkflowsEvents([]string{"send", runID, "audit.ready", "--payload", `{"marker":"must-survive"}`}); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
 	var got struct {
 		Payload json.RawMessage `json:"payload"`
 	}
-	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+	if err := json.Unmarshal((*f.SawBody()), &got); err != nil {
 		t.Fatal(err)
 	}
 	if string(got.Payload) != `{"marker":"must-survive"}` {
@@ -300,10 +301,10 @@ func TestCmdWorkflowsEvents_TrailingPayloadIsSent(t *testing.T) {
 }
 
 func TestCmdWorkflowsEvents_TrailingMalformedPayloadFailsBeforeRequest(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	runID := "00000000-0000-4000-8000-000000000005"
-	code, output := runWithStderr(t, func() int {
-		return cmdWorkflowsEvents([]string{"send", runID, "audit.ready", "--payload", "{bad"})
+	code, output := main.RunWithStderr(t, func() int {
+		return main.CmdWorkflowsEvents([]string{"send", runID, "audit.ready", "--payload", "{bad"})
 	})
 	if code != 1 || !strings.Contains(output, "must be valid JSON") {
 		t.Fatalf("exit=%d stderr=%q", code, output)
@@ -314,7 +315,7 @@ func TestCmdWorkflowsEvents_TrailingMalformedPayloadFailsBeforeRequest(t *testin
 // refused with no hint; they are the natural names for status and list.
 func TestCmdWorkflowsAcceptsCommonAliases(t *testing.T) {
 	for alias, want := range map[string]string{"get": "workflows status", "show": "workflows status", "runs": "--app <slug>", "ls": "--app <slug>"} {
-		code, captured := runWithStderr(t, func() int { return cmdWorkflows([]string{alias}) })
+		code, captured := main.RunWithStderr(t, func() int { return main.CmdWorkflows([]string{alias}) })
 		if code != 1 || strings.Contains(captured, "unknown workflows subcommand") || !strings.Contains(captured, want) {
 			t.Errorf("workflows %s: code=%d stderr=%q, want the %q usage", alias, code, captured, want)
 		}
@@ -322,7 +323,7 @@ func TestCmdWorkflowsAcceptsCommonAliases(t *testing.T) {
 }
 
 func TestCmdWorkflowsSuggestsTheClosestSubcommand(t *testing.T) {
-	_, captured := runWithStderr(t, func() int { return cmdWorkflows([]string{"statsu"}) })
+	_, captured := main.RunWithStderr(t, func() int { return main.CmdWorkflows([]string{"statsu"}) })
 	if !strings.Contains(captured, "status") || !strings.Contains(strings.ToLower(captured), "did you mean") {
 		t.Fatalf("typo got no suggestion: %q", captured)
 	}

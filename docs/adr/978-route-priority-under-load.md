@@ -5,6 +5,9 @@
 - Related: ADR-454, ADR-844
 - Amends: none
 
+Amended by ADR-20261018181846: the same classes admit and release requests
+in the cold-wake queue.
+
 ## Context
 
 When every routable instance of an app is busy, the gateway parks requests in

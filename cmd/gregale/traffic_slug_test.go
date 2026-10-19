@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"net/http"
@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -22,20 +23,20 @@ func TestTrafficLeavesAcceptSlugEitherWay(t *testing.T) {
 		seen = append(seen, r.Method+" "+r.URL.Path)
 		mu.Unlock()
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/apps/demo/deployments" {
-			writeJSONTest(w, api.DeploymentListResponse{Items: []api.DeploymentResponse{
-				{ID: "0123456789abcdef0123456789abcdef", Revision: 7, Status: statusLive, TrafficPercent: 50},
+			main.WriteJSONTest(w, api.DeploymentListResponse{Items: []api.DeploymentResponse{
+				{ID: "0123456789abcdef0123456789abcdef", Revision: 7, Status: main.StatusLive, TrafficPercent: 50},
 			}})
 			return
 		}
-		writeJSONTest(w, api.DeploymentResponse{ID: "0123456789abcdef0123456789abcdef", Revision: 7, Status: statusLive, TrafficPercent: 50})
+		main.WriteJSONTest(w, api.DeploymentResponse{ID: "0123456789abcdef0123456789abcdef", Revision: 7, Status: main.StatusLive, TrafficPercent: 50})
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
 
-	_, restore := captureStdout(t)
-	statusCode := cmdTraffic([]string{"status", "--app", "demo"})
-	setCode := cmdTraffic([]string{"set", "demo", "--deployment", "v7", "--percent", "50"})
+	_, restore := main.CaptureStdout(t)
+	statusCode := main.CmdTraffic([]string{"status", "--app", "demo"})
+	setCode := main.CmdTraffic([]string{"set", "demo", "--deployment", "v7", "--percent", "50"})
 	restore()
 	if statusCode != 0 || setCode != 0 {
 		t.Fatalf("status --app exit=%d, set <slug> exit=%d, want 0 and 0", statusCode, setCode)
@@ -47,13 +48,13 @@ func TestTrafficLeavesAcceptSlugEitherWay(t *testing.T) {
 		t.Fatalf("requests = %q, want status and the v7 lookup to read demo's deployments", got)
 	}
 
-	stderr, restoreErr := captureStderr(t)
-	code := cmdTraffic([]string{"promote", "web", "--app", "demo", "--deployment", "v7"})
+	stderr, restoreErr := main.CaptureStderr(t)
+	code := main.CmdTraffic([]string{"promote", "web", "--app", "demo", "--deployment", "v7"})
 	restoreErr()
 	if code == 0 || !strings.Contains(stderr.String(), "name different apps") {
 		t.Fatalf("promote with conflicting slugs exit=%d stderr=%q, want a conflict error", code, stderr.String())
 	}
-	if code := cmdTraffic([]string{"promote", "demo", "--deployment", "v7", "extra"}); code == 0 {
+	if code := main.CmdTraffic([]string{"promote", "demo", "--deployment", "v7", "extra"}); code == 0 {
 		t.Fatal("a trailing positional after the flags must still be rejected")
 	}
 }

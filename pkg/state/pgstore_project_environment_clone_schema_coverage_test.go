@@ -54,9 +54,6 @@ func TestPgCloneSchemaRegistryCoversMigratedApplicationTablesAndFailsBeforeReser
 		{Table: "deployment_public_build_urls", Code: "isolated_strategy_unavailable"},
 		{Table: "app_mcp_readiness_policies", Code: "isolated_strategy_unavailable"},
 		{Table: "mcp_readiness_maintenance_windows", Code: "isolated_strategy_unavailable"},
-		{Table: "mcp_readiness_incident_events", Code: "isolated_data_strategy_unavailable"},
-		{Table: "deployment_mcp_readiness_overrides", Code: "isolated_strategy_unavailable"},
-		{Table: "mcp_readiness_attention_actions", Code: "isolated_data_strategy_unavailable"},
 		{Table: "product_control_heads", Code: "isolated_strategy_unavailable"},
 		{Table: "product_control_revisions", Code: "isolated_strategy_unavailable"},
 		{Table: "product_control_customers", Code: "isolated_strategy_unavailable"},
@@ -107,18 +104,17 @@ func TestPgCloneSchemaRegistryCoversMigratedApplicationTablesAndFailsBeforeReser
 	} {
 		assertCloneCoverageBlocker(t, coverage, want)
 	}
-	assertNoCloneCoverageBlocker(t, coverage, state.ProjectEnvironmentCloneCoverageBlocker{
-		Table: "mcp_readiness_incident_attention", Code: "isolated_data_strategy_unavailable",
-	})
-	assertNoCloneCoverageBlocker(t, coverage, state.ProjectEnvironmentCloneCoverageBlocker{
-		Table: "mcp_readiness_incidents", Code: "isolated_data_strategy_unavailable",
-	})
-	assertNoCloneCoverageBlocker(t, coverage, state.ProjectEnvironmentCloneCoverageBlocker{
-		Table: "mcp_readiness_notification_actions", Code: "isolated_data_strategy_unavailable",
-	})
-	assertNoCloneCoverageBlocker(t, coverage, state.ProjectEnvironmentCloneCoverageBlocker{
-		Table: "mcp_readiness_pagerduty_ack_events", Code: "isolated_data_strategy_unavailable",
-	})
+	// Readiness evidence, overrides and incident history stay with the source
+	// environment, so a clone resets them instead of needing a copy strategy.
+	for _, table := range []string{
+		"deployment_mcp_readiness_overrides", "mcp_readiness_attention_actions", "mcp_readiness_incident_attention",
+		"mcp_readiness_incident_events", "mcp_readiness_incidents", "mcp_readiness_notification_actions",
+		"mcp_readiness_pagerduty_ack_events",
+	} {
+		for _, code := range []string{"isolated_strategy_unavailable", "isolated_data_strategy_unavailable"} {
+			assertNoCloneCoverageBlocker(t, coverage, state.ProjectEnvironmentCloneCoverageBlocker{Table: table, Code: code})
+		}
+	}
 	rawCoverage, err := json.Marshal(coverage)
 	if err != nil || strings.Contains(string(rawCoverage), "must-not-be-in-coverage") {
 		t.Fatal("coverage read tenant values")

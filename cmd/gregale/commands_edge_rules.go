@@ -320,15 +320,17 @@ func cmdEdgeRulesCreate(args []string) int {
 	// cache (ADR-122 §Decision). Per-route TTL primitive.
 	// max-age-seconds is the fresh window (default 60); stale-
 	// if-error-seconds is the post-fresh window where stale
-	// entries may serve on origin failure (default 300). Both
-	// are server-capped (3600 and 300 respectively — see
+	// entries may serve on origin failure (default 300; 0
+	// disables it). apid stores 0 as "disabled" rather than
+	// defaulting it, so the default lives in the flag: absent
+	// sends 300, an explicit 0 disables. Both are server-capped (3600 and 300 respectively — see
 	// pkg/api.ResponseCacheMaxAgeMaxSeconds /
 	// ResponseCacheStaleIfErrorMaxSeconds); the CLI does the
 	// structural checks so the user gets the same error locally.
 	var cacheVaryOn, cacheMethods multiFlag
 	cacheMaxAge := fs.Int("cache-max-age-seconds", 0, "kind=cache: fresh window in seconds (default 60; max 3600)")
 	cacheStaleWhileRevalidate := fs.Int("cache-stale-while-revalidate-seconds", 0, "kind=cache: serve stale while a background refresh runs (default 0; max 300)")
-	cacheStaleIfError := fs.Int("cache-stale-if-error-seconds", 0, "kind=cache: stale-on-error window in seconds (default 300; max 300)")
+	cacheStaleIfError := fs.Int("cache-stale-if-error-seconds", api.ResponseCacheDefaultStaleIfErrorSeconds, "kind=cache: stale-on-error window in seconds (default 300; 0 disables; max 300)")
 	fs.Var(&cacheVaryOn, "cache-vary-on", "kind=cache: header to vary on (Accept-Language|Accept-Encoding; repeat)")
 	fs.Var(&cacheMethods, "cache-methods", "kind=cache: cacheable method (GET|HEAD; repeat; default GET,HEAD)")
 
@@ -743,11 +745,13 @@ func cmdEdgeRulesUpdate(args []string) int {
 
 	// cache (ADR-122 §Decision). Mirror of the create-side
 	// flags. Same closed-set + cap semantics — the CLI does
-	// structural checks, the server enforces the ceiling.
+	// structural checks, the server enforces the ceiling. Any
+	// cache flag rebuilds the whole action, so stale-if-error
+	// defaults to 300 here too; 0 would silently disable it.
 	var cacheVaryOn, cacheMethods multiFlag
 	cacheMaxAge := fs.Int("cache-max-age-seconds", 0, "kind=cache: new fresh window in seconds (max 3600)")
 	cacheStaleWhileRevalidate := fs.Int("cache-stale-while-revalidate-seconds", 0, "kind=cache: new stale-while-revalidate window in seconds (max 300)")
-	cacheStaleIfError := fs.Int("cache-stale-if-error-seconds", 0, "kind=cache: new stale-on-error window in seconds (max 300)")
+	cacheStaleIfError := fs.Int("cache-stale-if-error-seconds", api.ResponseCacheDefaultStaleIfErrorSeconds, "kind=cache: new stale-on-error window in seconds (default 300; 0 disables; max 300)")
 	fs.Var(&cacheVaryOn, "cache-vary-on", "kind=cache: header to vary on (Accept-Language|Accept-Encoding; repeat)")
 	fs.Var(&cacheMethods, "cache-methods", "kind=cache: cacheable method (GET|HEAD; repeat)")
 
@@ -1404,8 +1408,9 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 		//
 		//   - max_age_seconds: server default 60 when 0;
 		//     ceiling 3600
-		//   - stale_if_error_seconds: server default 300 when
-		//     0; ceiling 300
+		//   - stale_if_error_seconds: 0 disables stale-on-error
+		//     (the server does not default it; the flags do);
+		//     ceiling 300
 		//   - vary_on: closed subset of {Accept-Language,
 		//     Accept-Encoding}; empty list = no vary
 		//   - methods: closed subset of {GET, HEAD}; empty
@@ -1417,7 +1422,7 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 			return nil, fmt.Errorf("cache action: max_age_seconds must be in [0, %d] (0 = use default 60); got %d", api.ResponseCacheMaxAgeMaxSeconds, in.CacheMaxAgeSeconds)
 		}
 		if in.CacheStaleIfErrorSeconds < 0 || in.CacheStaleIfErrorSeconds > api.ResponseCacheStaleIfErrorMaxSeconds {
-			return nil, fmt.Errorf("cache action: stale_if_error_seconds must be in [0, %d] (0 = use default 300); got %d", api.ResponseCacheStaleIfErrorMaxSeconds, in.CacheStaleIfErrorSeconds)
+			return nil, fmt.Errorf("cache action: stale_if_error_seconds must be in [0, %d] (0 disables stale-on-error); got %d", api.ResponseCacheStaleIfErrorMaxSeconds, in.CacheStaleIfErrorSeconds)
 		}
 		if in.CacheStaleWhileRevalidateSeconds < 0 || in.CacheStaleWhileRevalidateSeconds > api.ResponseCacheStaleWhileRevalidateMaxSeconds {
 			return nil, fmt.Errorf("cache action: stale_while_revalidate_seconds must be in [0, %d]; got %d", api.ResponseCacheStaleWhileRevalidateMaxSeconds, in.CacheStaleWhileRevalidateSeconds)
@@ -1439,18 +1444,14 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 			VaryOn:                      in.CacheVaryOn,
 			Methods:                     in.CacheMethods,
 		}
-		// CLI-side defaults for fields the user omitted
-		// (flag == 0). The server's EdgeRuleCacheAction.Validate
-		// intentionally does NOT default these — 0 means
-		// "disable stale-on-error" per the spec, so a server-
-		// side default would make that documented semantic
-		// unreachable. We default here so omitting the flag
-		// still gives the user the friendly 300-s default.
+		// CLI-side default for max_age_seconds (flag == 0). The
+		// server's EdgeRuleCacheAction.Validate does NOT default
+		// stale_if_error_seconds — 0 means "disable stale-on-error"
+		// per the spec. Its 300-s default lives in the flag
+		// definitions instead, so omitting the flag still gives 300
+		// while an explicit 0 reaches the server and disables it.
 		if a.MaxAgeSeconds == 0 {
 			a.MaxAgeSeconds = api.ResponseCacheDefaultMaxAgeSeconds
-		}
-		if a.StaleIfErrorSeconds == 0 {
-			a.StaleIfErrorSeconds = api.ResponseCacheDefaultStaleIfErrorSeconds
 		}
 		return marshalAction(a)
 	case "budget":

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"os"
@@ -7,18 +7,19 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // adr: 688
 func TestBucketUploadCheckpointPrivateAtomicAndLocked(t *testing.T) {
-	c, o := newBucketResumeFixture(t)
-	c.failSign = 2
-	result, err := runBucketTransfer(t.Context(), c, o)
+	c, o := main.NewBucketResumeFixture(t)
+	(*c.FailSign()) = 2
+	result, err := main.RunBucketTransfer(t.Context(), c, o)
 	if err == nil {
 		t.Fatal("fixture did not interrupt")
 	}
-	path, err := bucketUploadCheckpointPath(c.BaseURL(), result.UploadID)
+	path, err := main.BucketUploadCheckpointPath(c.BaseURL(), result.UploadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,19 +27,19 @@ func TestBucketUploadCheckpointPrivateAtomicAndLocked(t *testing.T) {
 	if err != nil || runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
 		t.Fatal("checkpoint is not private", info, err)
 	}
-	cp, err := loadBucketUploadCheckpoint(path)
+	cp, err := main.LoadBucketUploadCheckpoint(path)
 	if err != nil || cp.Phase != "uploading" || cp.Parts[0].ETag == "" || !cp.Parts[1].Attempted {
 		t.Fatal(cp, err)
 	}
-	if data, err := os.ReadFile(path); err != nil || strings.Contains(string(data), c.url) || strings.Contains(string(data), "Bearer") {
+	if data, err := os.ReadFile(path); err != nil || strings.Contains(string(data), (*c.Url())) || strings.Contains(string(data), "Bearer") {
 		t.Fatal("capability credentials were persisted", err)
 	}
-	lock, err := lockBucketUploadCheckpoint(path)
+	lock, err := main.LockBucketUploadCheckpoint(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	o.resumeID = result.UploadID
-	if _, err := runBucketTransfer(t.Context(), c, o); err == nil || c.reads != 0 {
+	(*o.ResumeID()) = result.UploadID
+	if _, err := main.RunBucketTransfer(t.Context(), c, o); err == nil || (*c.Reads()) != 0 {
 		t.Fatal("concurrent resume bypassed checkpoint lock", err)
 	}
 	if err = lock.Close(); err != nil {
@@ -49,14 +50,14 @@ func TestBucketUploadCheckpointPrivateAtomicAndLocked(t *testing.T) {
 	if err := os.WriteFile(path+".part", []byte("stale staging bytes"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runBucketTransfer(t.Context(), c, o); err != nil {
+	if _, err := main.RunBucketTransfer(t.Context(), c, o); err != nil {
 		t.Fatal("resume failed after releasing the lock", err)
 	}
 	entries, err := os.ReadDir(filepath.Dir(path))
 	if err != nil || len(entries) != 2 {
 		t.Fatal("temporary checkpoint files leaked", entries, err)
 	}
-	other, err := bucketUploadCheckpointPath("https://other.example.test", result.UploadID)
+	other, err := main.BucketUploadCheckpointPath("https://other.example.test", result.UploadID)
 	if err != nil || other == path {
 		t.Fatal("API endpoint was not bound to checkpoint", other, err)
 	}
@@ -64,24 +65,24 @@ func TestBucketUploadCheckpointPrivateAtomicAndLocked(t *testing.T) {
 
 // adr: 688
 func TestBucketUploadResumeRefusesSymlinkedStage(t *testing.T) {
-	c, o := newBucketResumeFixture(t)
-	c.failSign = 2
-	result, err := runBucketTransfer(t.Context(), c, o)
+	c, o := main.NewBucketResumeFixture(t)
+	(*c.FailSign()) = 2
+	result, err := main.RunBucketTransfer(t.Context(), c, o)
 	if err == nil {
 		t.Fatal("fixture did not interrupt")
 	}
-	path, err := bucketUploadCheckpointPath(c.BaseURL(), result.UploadID)
+	path, err := main.BucketUploadCheckpointPath(c.BaseURL(), result.UploadID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = os.Symlink(o.path, path+".part"); err != nil {
+	if err = os.Symlink((*o.Path()), path+".part"); err != nil {
 		t.Skip("symlinks unavailable", err)
 	}
-	o.resumeID = result.UploadID
-	if _, err := runBucketTransfer(t.Context(), c, o); err == nil || c.reads != 0 {
+	(*o.ResumeID()) = result.UploadID
+	if _, err := main.RunBucketTransfer(t.Context(), c, o); err == nil || (*c.Reads()) != 0 {
 		t.Fatal("symlinked stage was accepted", err)
 	}
-	if data, err := os.ReadFile(o.path); err != nil || string(data) != "abcdefg" {
+	if data, err := os.ReadFile((*o.Path())); err != nil || string(data) != "abcdefg" {
 		t.Fatal("stage cleanup affected another file", err)
 	}
 }
@@ -90,17 +91,17 @@ func TestBucketUploadResumeRefusesSymlinkedStage(t *testing.T) {
 func TestBucketUploadCheckpointRejectsCorruptionAndSymlinks(t *testing.T) {
 	for _, scenario := range []string{"trailing", "unknown field", "version", "fingerprint", "parts", "phase", "oversized", "symlink", "public permissions"} {
 		t.Run(scenario, func(t *testing.T) {
-			c, o := newBucketResumeFixture(t)
-			c.failSign = 2
-			result, err := runBucketTransfer(t.Context(), c, o)
+			c, o := main.NewBucketResumeFixture(t)
+			(*c.FailSign()) = 2
+			result, err := main.RunBucketTransfer(t.Context(), c, o)
 			if err == nil {
 				t.Fatal("fixture did not interrupt")
 			}
-			path, err := bucketUploadCheckpointPath(c.BaseURL(), result.UploadID)
+			path, err := main.BucketUploadCheckpointPath(c.BaseURL(), result.UploadID)
 			if err != nil {
 				t.Fatal(err)
 			}
-			cp, err := loadBucketUploadCheckpoint(path)
+			cp, err := main.LoadBucketUploadCheckpoint(path)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -114,7 +115,7 @@ func TestBucketUploadCheckpointRejectsCorruptionAndSymlinks(t *testing.T) {
 			case "phase":
 				cp.Phase = "completing"
 			}
-			if err := saveBucketUploadCheckpoint(path, cp); err != nil {
+			if err := main.SaveBucketUploadCheckpoint(path, cp); err != nil {
 				t.Fatal(err)
 			}
 			data, err := os.ReadFile(path)
@@ -148,8 +149,8 @@ func TestBucketUploadCheckpointRejectsCorruptionAndSymlinks(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			o.resumeID = result.UploadID
-			if _, err := runBucketTransfer(t.Context(), c, o); err == nil || c.reads != 0 {
+			(*o.ResumeID()) = result.UploadID
+			if _, err := main.RunBucketTransfer(t.Context(), c, o); err == nil || (*c.Reads()) != 0 {
 				t.Fatal("invalid checkpoint contacted API", err)
 			}
 		})
@@ -160,12 +161,12 @@ func TestBucketUploadCheckpointRejectsCorruptionAndSymlinks(t *testing.T) {
 func TestBucketUploadCheckpointRefusesCredentialBearingAPIURLs(t *testing.T) {
 	for _, base := range []string{"https://user:private-secret@example.test", "https://example.test?token=private-secret", "https://example.test#private-secret"} {
 		t.Run(base, func(t *testing.T) {
-			c, o := newBucketResumeFixture(t)
-			c.apiBase = base
-			if result, err := runBucketTransfer(t.Context(), c, o); err == nil || c.creates != 0 || result.UploadID != "" || strings.Contains(err.Error(), "private-secret") {
+			c, o := main.NewBucketResumeFixture(t)
+			(*c.ApiBase()) = base
+			if result, err := main.RunBucketTransfer(t.Context(), c, o); err == nil || (*c.Creates()) != 0 || result.UploadID != "" || strings.Contains(err.Error(), "private-secret") {
 				t.Fatal("credential-bearing endpoint reached admission or leaked", result, err)
 			}
-			if _, err := bucketUploadCheckpointPath(base, c.session.ID); err == nil || strings.Contains(err.Error(), "private-secret") {
+			if _, err := main.BucketUploadCheckpointPath(base, (*c.Session()).ID); err == nil || strings.Contains(err.Error(), "private-secret") {
 				t.Fatal("credential-bearing endpoint reached checkpoint path", err)
 			}
 		})

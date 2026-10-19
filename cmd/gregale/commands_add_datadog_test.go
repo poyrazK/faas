@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -62,7 +63,7 @@ func TestCmdAddDatadog_ConfiguresDrainAndWebhook(t *testing.T) {
 	t.Setenv("DD_API_KEY", "dd-secret-key")
 	stdout := captureAddDatadogStdout(t)
 
-	if code := cmdAdd([]string{"datadog", "--app", "shop", "--site", "eu1"}); code != 0 {
+	if code := main.CmdAdd([]string{"datadog", "--app", "shop", "--site", "eu1"}); code != 0 {
 		t.Fatalf("add datadog = %d, want 0", code)
 	}
 	if got := strings.Join(f.calls, ","); got != "POST /v1/apps/shop/log-drains,POST /v1/apps/shop/webhooks" {
@@ -96,7 +97,7 @@ func TestCmdAddDatadog_UpdatesExistingInPlace(t *testing.T) {
 	t.Setenv("DD_API_KEY", "rotated-key")
 	captureAddDatadogStdout(t)
 
-	if code := cmdAdd([]string{"datadog", "--app", "shop"}); code != 0 {
+	if code := main.CmdAdd([]string{"datadog", "--app", "shop"}); code != 0 {
 		t.Fatalf("add datadog = %d, want 0", code)
 	}
 	if got := strings.Join(f.calls, ","); got != "PATCH /v1/apps/shop/log-drains/drain-dd,PATCH /v1/apps/shop/webhooks/hook-dd" {
@@ -115,16 +116,16 @@ func TestCmdAddDatadog_DryRunAndRemove(t *testing.T) {
 	f.serve(t)
 	captureAddDatadogStdout(t)
 
-	if code := cmdAdd([]string{"datadog", "--app", "shop", "--dry-run"}); code != 0 {
+	if code := main.CmdAdd([]string{"datadog", "--app", "shop", "--dry-run"}); code != 0 {
 		t.Fatalf("dry run = %d, want 0 (no key needed)", code)
 	}
-	if code := cmdAdd([]string{"datadog", "--app", "shop", "--remove", "--dry-run"}); code != 0 {
+	if code := main.CmdAdd([]string{"datadog", "--app", "shop", "--remove", "--dry-run"}); code != 0 {
 		t.Fatalf("remove dry run = %d", code)
 	}
 	if len(f.calls) != 0 {
 		t.Fatalf("dry runs changed state: %v", f.calls)
 	}
-	if code := cmdAdd([]string{"datadog", "--app", "shop", "--remove"}); code != 0 {
+	if code := main.CmdAdd([]string{"datadog", "--app", "shop", "--remove"}); code != 0 {
 		t.Fatalf("remove = %d", code)
 	}
 	if got := strings.Join(f.calls, ","); got != "DELETE /v1/apps/shop/log-drains/drain-dd,DELETE /v1/apps/shop/webhooks/hook-dd" {
@@ -136,23 +137,23 @@ func TestCmdAddDatadog_KeySourcesAndValidation(t *testing.T) {
 	f := &fakeDatadogAPI{}
 	f.serve(t)
 	t.Setenv("DD_API_KEY", "")
-	_, _, restore := swapIO(t)
+	_, _, restore := main.SwapIO(t)
 	defer restore()
 
-	if code := cmdAdd([]string{"datadog", "--app", "shop"}); code == 0 {
+	if code := main.CmdAdd([]string{"datadog", "--app", "shop"}); code == 0 {
 		t.Fatal("a missing key must fail")
 	}
-	if code := cmdAdd([]string{"datadog", "--app", "shop", "--site", "mars1"}); code == 0 {
+	if code := main.CmdAdd([]string{"datadog", "--app", "shop", "--site", "mars1"}); code == 0 {
 		t.Fatal("an unknown site must fail")
 	}
 	if len(f.calls) != 0 {
 		t.Fatalf("validation failures must not call the API: %v", f.calls)
 	}
 
-	old := osStdin
-	osStdin = strings.NewReader("piped-key\n")
-	t.Cleanup(func() { osStdin = old })
-	if code := cmdAdd([]string{"datadog", "--app", "shop", "--api-key-stdin"}); code != 0 {
+	old := (*main.OsStdin)
+	(*main.OsStdin) = strings.NewReader("piped-key\n")
+	t.Cleanup(func() { (*main.OsStdin) = old })
+	if code := main.CmdAdd([]string{"datadog", "--app", "shop", "--api-key-stdin"}); code != 0 {
 		t.Fatalf("stdin key = %d, want 0", code)
 	}
 	if f.bodies[0]["auth_header"] != "DD-API-KEY: piped-key" {
@@ -163,8 +164,8 @@ func TestCmdAddDatadog_KeySourcesAndValidation(t *testing.T) {
 func captureAddDatadogStdout(t *testing.T) *strings.Builder {
 	t.Helper()
 	var b strings.Builder
-	old := osStdout
-	osStdout = &b
-	t.Cleanup(func() { osStdout = old })
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &b
+	t.Cleanup(func() { (*main.OsStdout) = old })
 	return &b
 }

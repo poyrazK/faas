@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"bytes"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -15,9 +16,9 @@ func TestCompactCommandHelp(t *testing.T) {
 		{"app", "gregale app <slug> [command] [flags]", "--warm-snapshot"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			command, _ := lookupCliCommand(tc.name)
+			command, _ := main.LookupCliCommand(tc.name)
 			var out bytes.Buffer
-			printLocalCommandHelp(&out, command)
+			main.PrintLocalCommandHelp(&out, command)
 			help := out.String()
 			for _, want := range []string{tc.common, "Examples:", "gregale " + tc.name + " --help --all", "Connection:", "RAM/CPU:"} {
 				if !strings.Contains(help, want) {
@@ -42,9 +43,9 @@ func TestCompactCommandHelp(t *testing.T) {
 func TestExpandedCommandHelpRetainsEveryOption(t *testing.T) {
 	for _, name := range []string{"deploy", "app"} {
 		t.Run(name, func(t *testing.T) {
-			command, _ := lookupCliCommand(name)
+			command, _ := main.LookupCliCommand(name)
 			var out bytes.Buffer
-			printLocalCommandHelpDetail(&out, command, true)
+			main.PrintLocalCommandHelpDetail(&out, command, true)
 			help := out.String()
 			for _, line := range strings.Split(help, "\n") {
 				if utf8.RuneCountInString(line) > 80 {
@@ -54,7 +55,7 @@ func TestExpandedCommandHelpRetainsEveryOption(t *testing.T) {
 			for _, flag := range command.Flags {
 				// A flag's own entry appears exactly once, even when other
 				// descriptions mention it as a prerequisite or exclusion.
-				entry := "  " + mdFlagLabel(flag)
+				entry := "  " + main.MdFlagLabel(flag)
 				found := 0
 				for _, line := range strings.Split(help, "\n") {
 					if line == entry || strings.HasPrefix(line, entry+" ") {
@@ -83,9 +84,9 @@ func TestExpandedCommandHelpRetainsEveryOption(t *testing.T) {
 }
 
 func TestExpandedHelpFlagOrder(t *testing.T) {
-	setupConnectionProfiles(t)
-	oldOut := osStdout
-	t.Cleanup(func() { osStdout = oldOut })
+	main.SetupConnectionProfiles(t)
+	oldOut := (*main.OsStdout)
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
 	for _, tc := range []struct {
 		args []string
 		all  bool
@@ -104,8 +105,8 @@ func TestExpandedHelpFlagOrder(t *testing.T) {
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			var out bytes.Buffer
-			osStdout = &out
-			if code := run(tc.args); code != 0 {
+			(*main.OsStdout) = &out
+			if code := main.Run(tc.args); code != 0 {
 				t.Fatalf("run(%q) = %d", tc.args, code)
 			}
 			if expanded := strings.Contains(out.String(), "Access and security:") || strings.Contains(out.String(), "Rollout and health:"); expanded != tc.all {
@@ -117,7 +118,7 @@ func TestExpandedHelpFlagOrder(t *testing.T) {
 
 func TestLocalHelpExplainsFlagValues(t *testing.T) {
 	var out bytes.Buffer
-	printLocalHelpFlags(&out, []cliFlag{
+	main.PrintLocalHelpFlags(&out, []main.CliFlag{
 		{Name: "mode", Value: "MODE", ClosedSet: []string{"fast", "slow"}, Short: "select mode"},
 		{Name: "header", Value: "KEY=VALUE", Req: true, Repeatable: true, Short: "add a header"},
 		{Name: "enabled", Bool: true, ClosedSet: []string{"true", "false"}, Short: "toggle feature"},

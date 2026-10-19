@@ -24,18 +24,25 @@ func applicationAuthCLI() bool {
 }
 
 // visibleCliCommands is the manifest every discovery surface reads: without
-// unreleased commands and flags unless they are turned on.
+// unreleased Auth commands and flags, or API monetization's verbs and flags
+// (monetization.go), unless they are turned on.
 func visibleCliCommands() []cliCommand {
-	if applicationAuthCLI() {
+	auth, monetization := applicationAuthCLI(), monetizationCLI()
+	if auth && monetization {
 		return cliCommands
 	}
 	visible := make([]cliCommand, 0, len(cliCommands))
 	for _, command := range cliCommands {
-		if command.Unreleased {
-			continue
+		if !auth {
+			if command.Unreleased {
+				continue
+			}
+			command.Flags = releasedFlags(command.Flags)
+			command.Subcommands = releasedSubcommands(command.Subcommands)
 		}
-		command.Flags = releasedFlags(command.Flags)
-		command.Subcommands = releasedSubcommands(command.Subcommands)
+		if !monetization {
+			command = withoutMonetization(command)
+		}
 		visible = append(visible, command)
 	}
 	return visible
@@ -85,7 +92,7 @@ func templateAvailable(name string) bool {
 // dataAPICreateUsage names --auth only while application Auth is on.
 func dataAPICreateUsage() string {
 	if applicationAuthCLI() {
-		return "usage: gregale data-api create NAME --database DATABASE (--auth AUTH_APP | --issuer HTTPS_URL --jwks-url HTTPS_URL --audience AUDIENCE) [--scope SCOPE] [--origins ORIGINS]"
+		return "usage: gregale data-api create NAME --database DATABASE (--auth AUTH_APP | --issuer HTTPS_URL --jwks-url HTTPS_URL --audience AUDIENCE) [--scope SCOPE] [--origins ORIGINS] [--public-read SCHEMA.RELATION[,...]] [--public-rpc SCHEMA.FUNCTION[,...]] [--aggregates] [--migrations DIR [--release-command COMMAND]]"
 	}
-	return "usage: gregale data-api create NAME --database DATABASE --issuer HTTPS_URL --jwks-url HTTPS_URL --audience AUDIENCE [--scope SCOPE] [--origins ORIGINS]"
+	return "usage: gregale data-api create NAME --database DATABASE --issuer HTTPS_URL --jwks-url HTTPS_URL --audience AUDIENCE [--scope SCOPE] [--origins ORIGINS] [--public-read SCHEMA.RELATION[,...]] [--public-rpc SCHEMA.FUNCTION[,...]] [--aggregates] [--migrations DIR [--release-command COMMAND]]"
 }

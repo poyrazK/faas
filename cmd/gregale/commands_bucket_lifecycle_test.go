@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"fmt"
@@ -7,22 +7,23 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestBucketLifecycleCLI(t *testing.T) {
 	const bucket = "00000000-0000-0000-0000-000000000001"
-	in, err := decodeBucketLifecycleFile(strings.NewReader(`{"rules":[{"status":"Enabled","filter":{"prefix":"tmp/"},"abort_incomplete_multipart_days":1}]}`))
+	in, err := main.DecodeBucketLifecycleFile(strings.NewReader(`{"rules":[{"status":"Enabled","filter":{"prefix":"tmp/"},"abort_incomplete_multipart_days":1}]}`))
 	if err != nil || in.Rules[0].ID == "" {
 		t.Fatal(in, err)
 	}
 	for _, body := range []string{`null`, `{"rules":[]}`, `{"rules":null}`, `{"rules":[{"status":"Enabled","transition":{}}]}`, `{"rules":[{"status":"Enabled","expiration":{"days":0}}]}`, `{} {}`, strings.Repeat(" ", int(api.MaxObjectLifecycleBodyBytes)+1)} {
-		if _, err = decodeBucketLifecycleFile(strings.NewReader(body)); err == nil {
+		if _, err = main.DecodeBucketLifecycleFile(strings.NewReader(body)); err == nil {
 			t.Fatal("accepted invalid lifecycle", body[:min(len(body), 80)])
 		}
 	}
 	for _, args := range [][]string{{}, {"get", "bad/app", bucket}, {"set", "demo", bucket}, {"status", "demo", bucket, "not-uuid"}, {"get", "demo", bucket, "extra"}, {"unknown", "demo", bucket}} {
-		if validBucketLifecycleArgs(args) {
+		if main.ValidBucketLifecycleArgs(args) {
 			t.Fatal("accepted invalid arguments", args)
 		}
 	}
@@ -41,7 +42,7 @@ func TestBucketLifecycleCLI(t *testing.T) {
 				path += "/scans/" + bucket
 				args = append(args, bucket)
 			}
-			if !validBucketLifecycleArgs(args) {
+			if !main.ValidBucketLifecycleArgs(args) {
 				t.Fatal(args)
 			}
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -54,7 +55,7 @@ func TestBucketLifecycleCLI(t *testing.T) {
 				_, _ = fmt.Fprint(w, `{"bucket_id":"`+bucket+`","revision":2,"rules":[],"id":"`+bucket+`","state":"scanning","phase":"multipart"}`)
 			}))
 			defer srv.Close()
-			if _, err := runBucketLifecycle(t.Context(), api.NewClient(srv.URL, "token"), args, in); err != nil {
+			if _, err := main.RunBucketLifecycle(t.Context(), api.NewClient(srv.URL, "token"), args, in); err != nil {
 				t.Fatal(err)
 			}
 		})

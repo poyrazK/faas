@@ -1,10 +1,11 @@
-package main
+package main_test
 
 import (
 	"bytes"
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -31,7 +32,7 @@ func TestRenderDeploymentAccess(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			renderDeploymentAccess(&buf, tc.app, "my-api")
+			main.RenderDeploymentAccess(&buf, tc.app, "my-api")
 			got := buf.String()
 			if len(tc.want) == 0 && got != "" {
 				t.Fatalf("output = %q, want none", got)

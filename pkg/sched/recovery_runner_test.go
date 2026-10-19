@@ -1,5 +1,5 @@
 // adr: 137 — recovery arbiter and two-node failure-safe workload handoff.
-package sched
+package sched_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -31,7 +32,7 @@ func TestRecoveryRunnerCompletesEmptyDrain(t *testing.T) {
 		t.Fatalf("start drain: %v", err)
 	}
 
-	runner := NewRecoveryRunner(store, NewArbiter(nil, nil), nil, testLog())
+	runner := sched.NewRecoveryRunner(store, sched.NewArbiter(nil, nil), nil, sched.TestLog())
 	if err := runner.Tick(ctx); err != nil {
 		t.Fatalf("recovery tick: %v", err)
 	}
@@ -59,7 +60,7 @@ func TestRecoveryRunnerCompletesEmptyForceDrain(t *testing.T) {
 	if err := store.NodeSetLifecycle(ctx, node.ID, state.NodeLifecycleActive, state.NodeLifecycleForceDraining); err != nil {
 		t.Fatalf("start force drain: %v", err)
 	}
-	if err := NewRecoveryRunner(store, NewArbiter(nil, nil), nil, testLog()).Tick(ctx); err != nil {
+	if err := sched.NewRecoveryRunner(store, sched.NewArbiter(nil, nil), nil, sched.TestLog()).Tick(ctx); err != nil {
 		t.Fatalf("recovery tick: %v", err)
 	}
 	got, err := store.ComputeNodeByName(ctx, node.Name)
@@ -86,7 +87,7 @@ func TestRecoveryRunnerCompletesEmptyRecovery(t *testing.T) {
 		t.Fatalf("start recovery: %v", err)
 	}
 
-	runner := NewRecoveryRunner(store, NewArbiter(nil, nil), nil, testLog())
+	runner := sched.NewRecoveryRunner(store, sched.NewArbiter(nil, nil), nil, sched.TestLog())
 	if err := runner.Tick(ctx); err != nil {
 		t.Fatalf("recovery tick: %v", err)
 	}
@@ -119,12 +120,12 @@ func TestRecoveryRunnerRecreatesUnavailableBootWithoutCompletingNode(t *testing.
 		t.Fatal(err)
 	}
 	recreated := 0
-	arbiter := NewArbiter(nil, recoveryRecreateFunc(func(ctx context.Context, id string) error {
+	arbiter := sched.NewArbiter(nil, recoveryRecreateFunc(func(ctx context.Context, id string) error {
 		recreated++
 		return store.UpdateInstanceStateIf(ctx, id, string(state.StateColdBooting), string(state.StateParked))
 	}))
 
-	runner := NewRecoveryRunner(store, arbiter, nil, testLog())
+	runner := sched.NewRecoveryRunner(store, arbiter, nil, sched.TestLog())
 	if err := runner.Tick(ctx); err != nil {
 		t.Fatalf("recovery tick: %v", err)
 	}
@@ -190,7 +191,7 @@ func TestRecoveryRunnerMigratesTwoNodeWorkload(t *testing.T) {
 	}
 	migrated := 0
 	var migratedMu sync.Mutex // the arbiter dispatches a node's migrations concurrently
-	arbiter := NewArbiter(MigrationDispatcherFunc(func(ctx context.Context, instanceID string) error {
+	arbiter := sched.NewArbiter(sched.MigrationDispatcherFunc(func(ctx context.Context, instanceID string) error {
 		_, lookupErr := store.InstanceByID(ctx, instanceID)
 		if lookupErr != nil {
 			return lookupErr
@@ -208,7 +209,7 @@ func TestRecoveryRunnerMigratesTwoNodeWorkload(t *testing.T) {
 		return nil
 	}), nil)
 
-	if err := NewRecoveryRunner(store, arbiter, nil, testLog()).Tick(ctx); err != nil {
+	if err := sched.NewRecoveryRunner(store, arbiter, nil, sched.TestLog()).Tick(ctx); err != nil {
 		t.Fatalf("recovery tick: %v", err)
 	}
 	if migrated != len(running) {
@@ -274,7 +275,7 @@ func TestRecoveryRunnerTwoNodeWorkloadSoakNoStuckRows(t *testing.T) {
 	}
 
 	migrations := 0
-	arbiter := NewArbiter(MigrationDispatcherFunc(func(ctx context.Context, instanceID string) error {
+	arbiter := sched.NewArbiter(sched.MigrationDispatcherFunc(func(ctx context.Context, instanceID string) error {
 		_, lookupErr := store.InstanceByID(ctx, instanceID)
 		if lookupErr != nil {
 			return lookupErr
@@ -289,7 +290,7 @@ func TestRecoveryRunnerTwoNodeWorkloadSoakNoStuckRows(t *testing.T) {
 		migrations++
 		return nil
 	}), nil)
-	runner := NewRecoveryRunner(store, arbiter, nil, testLog())
+	runner := sched.NewRecoveryRunner(store, arbiter, nil, sched.TestLog())
 
 	for cycle := 0; cycle < 100; cycle++ {
 		if cycle > 0 {

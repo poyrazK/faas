@@ -83,6 +83,9 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRestoreRuntime(ctx context.
 	if err != nil || !dep.EnvironmentWorkloadHeld() || app.RAMMB != original.Execution.RAMMB {
 		return fmt.Errorf("qualification restore app, deployment or RAM changed: %w", errors.Join(state.ErrConflict, err))
 	}
+	if err := e.checkFinancialBudgetAdmission(ctx, app, dep.ID); err != nil {
+		return err
+	}
 	if err := securityQuarantineErr(dep); err != nil {
 		return err
 	}
