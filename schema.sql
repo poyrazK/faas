@@ -30943,6 +30943,60 @@ CREATE TABLE public.data_api_runtime_connection_observations (
 
 
 --
+-- Name: data_api_usage_hourly; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_api_usage_hourly (
+    app_id uuid NOT NULL,
+    hour timestamp with time zone NOT NULL,
+    user_requests bigint DEFAULT 0 NOT NULL,
+    anonymous_requests bigint DEFAULT 0 NOT NULL,
+    server_requests bigint DEFAULT 0 NOT NULL,
+    rejected_requests bigint DEFAULT 0 NOT NULL,
+    error_requests bigint DEFAULT 0 NOT NULL,
+    capped_requests bigint DEFAULT 0 NOT NULL,
+    rows_returned bigint DEFAULT 0 NOT NULL,
+    response_bytes bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT data_api_usage_hourly_anonymous_requests_check CHECK ((anonymous_requests >= 0)),
+    CONSTRAINT data_api_usage_hourly_capped_requests_check CHECK ((capped_requests >= 0)),
+    CONSTRAINT data_api_usage_hourly_error_requests_check CHECK ((error_requests >= 0)),
+    CONSTRAINT data_api_usage_hourly_hour_check CHECK ((date_bin('01:00:00'::interval, hour, '2000-01-01 00:00:00+00'::timestamp with time zone) = hour)),
+    CONSTRAINT data_api_usage_hourly_rejected_requests_check CHECK ((rejected_requests >= 0)),
+    CONSTRAINT data_api_usage_hourly_response_bytes_check CHECK ((response_bytes >= 0)),
+    CONSTRAINT data_api_usage_hourly_rows_returned_check CHECK ((rows_returned >= 0)),
+    CONSTRAINT data_api_usage_hourly_server_requests_check CHECK ((server_requests >= 0)),
+    CONSTRAINT data_api_usage_hourly_user_requests_check CHECK ((user_requests >= 0))
+);
+
+
+--
+-- Name: TABLE data_api_usage_hourly; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.data_api_usage_hourly IS 'ADR-20261019102108 Data API usage per app and UTC hour, from runtime deltas; owner telemetry, not billing.';
+
+
+--
+-- Name: data_api_usage_reports; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_api_usage_reports (
+    app_id uuid NOT NULL,
+    report_id text NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT data_api_usage_reports_report_id_check CHECK ((report_id ~ '^[A-Za-z0-9._:-]{1,128}$'::text))
+);
+
+
+--
+-- Name: TABLE data_api_usage_reports; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.data_api_usage_reports IS 'ADR-20261019102108 applied Data API usage report ids, kept for the dedup window.';
+
+
+--
 -- Name: data_connection_checks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -37815,6 +37869,8 @@ CREATE TABLE public.job_runs (
     operation_id uuid,
     exclusive_operation_id uuid,
     exclusive_generation bigint,
+    process_user text,
+    process_workdir text,
     CONSTRAINT job_runs_aggregate_status_check CHECK ((aggregate_status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'dead_letter'::text]))),
     CONSTRAINT job_runs_command_shape_check CHECK (((command IS NULL) OR ((cardinality(command) >= 0) AND (cardinality(command) <= 64)))),
     CONSTRAINT job_runs_counters_check CHECK (((tasks >= 0) AND (tasks_succeeded >= 0) AND (tasks_failed >= 0) AND (tasks_cancelled >= 0) AND (tasks_running >= 0) AND (dead_letter_count >= 0) AND (dead_letter_count <= tasks) AND (dead_letter_count <= tasks_failed) AND ((((tasks_succeeded + tasks_failed) + tasks_cancelled) + tasks_running) <= tasks))),
@@ -37825,6 +37881,8 @@ CREATE TABLE public.job_runs (
     CONSTRAINT job_runs_failure_policy_check CHECK ((failure_policy = ANY (ARRAY['continue'::text, 'fail_fast'::text]))),
     CONSTRAINT job_runs_input_manifest_check CHECK ((((input_manifest_version = 0) AND (input_digest IS NULL)) OR ((input_manifest_version = 1) AND (input_digest ~ '^sha256:[0-9a-f]{64}$'::text)))),
     CONSTRAINT job_runs_parallelism_check CHECK (((parallelism >= 1) AND (parallelism <= 1000))),
+    CONSTRAINT job_runs_process_user_chk CHECK (((process_user IS NULL) OR ((octet_length(process_user) >= 1) AND (octet_length(process_user) <= 256)))),
+    CONSTRAINT job_runs_process_workdir_chk CHECK (((process_workdir IS NULL) OR (((octet_length(process_workdir) >= 1) AND (octet_length(process_workdir) <= 4096)) AND ("left"(process_workdir, 1) = '/'::text)))),
     CONSTRAINT job_runs_ram_snapshot_check CHECK (((ram_mb_snapshot IS NULL) OR (ram_mb_snapshot > 0))),
     CONSTRAINT job_runs_retry_max_check CHECK (((retry_max IS NULL) OR ((retry_max >= 0) AND (retry_max <= 10)))),
     CONSTRAINT job_runs_task_timeout_s_check CHECK (((task_timeout_s IS NULL) OR ((task_timeout_s >= 1) AND (task_timeout_s <= 86400)))),
@@ -48121,6 +48179,31 @@ CREATE TABLE public.runtime_artifact_bindings (
 
 
 --
+-- Name: runtime_config_apply_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_config_apply_receipts (
+    config_key text NOT NULL,
+    scope text DEFAULT 'global'::text NOT NULL,
+    scope_id text DEFAULT ''::text NOT NULL,
+    daemon text NOT NULL,
+    instance text NOT NULL,
+    version bigint NOT NULL,
+    status text NOT NULL,
+    error text,
+    reported_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT runtime_config_apply_receipts_config_key_check CHECK (((char_length(config_key) >= 1) AND (char_length(config_key) <= 128))),
+    CONSTRAINT runtime_config_apply_receipts_daemon_check CHECK ((daemon ~ '^[a-z][a-z0-9-]{0,63}$'::text)),
+    CONSTRAINT runtime_config_apply_receipts_error_check CHECK (((error IS NULL) OR (char_length(error) <= 1024))),
+    CONSTRAINT runtime_config_apply_receipts_instance_check CHECK (((char_length(instance) >= 1) AND (char_length(instance) <= 255))),
+    CONSTRAINT runtime_config_apply_receipts_scope_check CHECK ((scope = ANY (ARRAY['global'::text, 'control_plane'::text, 'daemon'::text, 'node'::text]))),
+    CONSTRAINT runtime_config_apply_receipts_scope_id_check CHECK ((char_length(scope_id) <= 255)),
+    CONSTRAINT runtime_config_apply_receipts_status_check CHECK ((status = ANY (ARRAY['applied'::text, 'failed'::text]))),
+    CONSTRAINT runtime_config_apply_receipts_version_check CHECK ((version >= 0))
+);
+
+
+--
 -- Name: runtime_config_entries; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -53377,6 +53460,22 @@ ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
 
 ALTER TABLE ONLY public.data_api_runtime_connection_observations
     ADD CONSTRAINT data_api_runtime_connection_observations_pkey PRIMARY KEY (binding_id, instance_id);
+
+
+--
+-- Name: data_api_usage_hourly data_api_usage_hourly_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_usage_hourly
+    ADD CONSTRAINT data_api_usage_hourly_pkey PRIMARY KEY (app_id, hour);
+
+
+--
+-- Name: data_api_usage_reports data_api_usage_reports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_usage_reports
+    ADD CONSTRAINT data_api_usage_reports_pkey PRIMARY KEY (app_id, report_id);
 
 
 --
@@ -60812,6 +60911,14 @@ ALTER TABLE ONLY public.runtime_artifact_bindings
 
 
 --
+-- Name: runtime_config_apply_receipts runtime_config_apply_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_config_apply_receipts
+    ADD CONSTRAINT runtime_config_apply_receipts_pkey PRIMARY KEY (config_key, scope, scope_id, daemon, instance);
+
+
+--
 -- Name: runtime_config_entries runtime_config_entries_config_key_scope_scope_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -63161,6 +63268,13 @@ CREATE INDEX application_standard_snapshot_captures_scope ON public.application_
 
 
 --
+-- Name: apps_account_deleted_inventory_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX apps_account_deleted_inventory_idx ON public.apps USING btree (account_id, COALESCE(deleted_at, created_at) DESC, ((id)::text) DESC) WHERE (status = 'deleted'::text);
+
+
+--
 -- Name: apps_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -64268,6 +64382,20 @@ CREATE INDEX customer_workflow_readiness_subscription_due ON public.customer_wor
 --
 
 CREATE INDEX customer_workflow_readiness_subscription_owner ON public.customer_workflow_readiness_subscriptions USING btree (account_id, app_id, operator, scope);
+
+
+--
+-- Name: data_api_usage_hourly_hour_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX data_api_usage_hourly_hour_idx ON public.data_api_usage_hourly USING btree (hour);
+
+
+--
+-- Name: data_api_usage_reports_received_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX data_api_usage_reports_received_idx ON public.data_api_usage_reports USING btree (received_at);
 
 
 --
@@ -81090,6 +81218,22 @@ ALTER TABLE ONLY public.data_api_runtime_connection_observations
 
 ALTER TABLE ONLY public.data_api_runtime_connection_observations
     ADD CONSTRAINT data_api_runtime_connection_observations_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_api_usage_hourly data_api_usage_hourly_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_usage_hourly
+    ADD CONSTRAINT data_api_usage_hourly_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_api_usage_reports data_api_usage_reports_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_usage_reports
+    ADD CONSTRAINT data_api_usage_reports_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

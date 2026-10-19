@@ -180,6 +180,7 @@ type EnqueueParams struct {
 	// ImageRef selects OCI materialization instead of a source build. Only
 	// trusted project callers set it after static workload admission.
 	ImageHealthcheck    *api.ComposeHealthcheck
+	ImageProcess        *api.ComposeProcess
 	ImageRef            string
 	ImagePort           int
 	ImageCommand        []string

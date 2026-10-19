@@ -11,12 +11,13 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestOutboundAIPolicyAndUsage(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
-	(*(*e.S()).AiGatewayEnabled()) = true
+	(*e.S()).EnablePlatformFlagForAll(platformflags.AIGateway)
 	id := uuid.NewString()
 	(*e.Store()).SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
 		ID: id, AccountID: (*e.Acct()).ID, Name: "llm", Origin: "https://api.anthropic.com",
@@ -91,7 +92,7 @@ func TestOutboundAIPolicyAndUsage(t *testing.T) {
 
 func TestCreateOutboundIntegrationRejectsInvalidAIPolicy(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
-	(*(*e.S()).AiGatewayEnabled()) = true
+	(*e.S()).EnablePlatformFlagForAll(platformflags.AIGateway)
 	limit := int64(1000)
 	for _, req := range []api.CreateOutboundIntegrationRequest{
 		{Name: "llm", Origin: "https://api.openai.com", AllowedMethods: []string{"POST"}, AllowedPathPrefixes: []string{"/v1"}, AIProvider: "cohere"},

@@ -2970,6 +2970,28 @@ type DataApiRuntimeConnectionObservation struct {
 	ExpiresAt            pgtype.Timestamptz
 }
 
+// ADR-20261019102108 Data API usage per app and UTC hour, from runtime deltas; owner telemetry, not billing.
+type DataApiUsageHourly struct {
+	AppID             pgtype.UUID
+	Hour              pgtype.Timestamptz
+	UserRequests      int64
+	AnonymousRequests int64
+	ServerRequests    int64
+	RejectedRequests  int64
+	ErrorRequests     int64
+	CappedRequests    int64
+	RowsReturned      int64
+	ResponseBytes     int64
+	UpdatedAt         pgtype.Timestamptz
+}
+
+// ADR-20261019102108 applied Data API usage report ids, kept for the dedup window.
+type DataApiUsageReport struct {
+	AppID      pgtype.UUID
+	ReportID   string
+	ReceivedAt pgtype.Timestamptz
+}
+
 type DataConnectionCheck struct {
 	ConnectionID       pgtype.UUID
 	AccountID          pgtype.UUID
@@ -6702,6 +6724,8 @@ type JobRun struct {
 	OperationID                 pgtype.UUID
 	ExclusiveOperationID        pgtype.UUID
 	ExclusiveGeneration         pgtype.Int8
+	ProcessUser                 pgtype.Text
+	ProcessWorkdir              pgtype.Text
 }
 
 type JobRunAttachSession struct {
@@ -12426,6 +12450,18 @@ type RuntimeArtifactBinding struct {
 	AccountID pgtype.UUID
 	RootfsKey string
 	ReleaseID string
+}
+
+type RuntimeConfigApplyReceipt struct {
+	ConfigKey  string
+	Scope      string
+	ScopeID    string
+	Daemon     string
+	Instance   string
+	Version    int64
+	Status     string
+	Error      pgtype.Text
+	ReportedAt pgtype.Timestamptz
 }
 
 type RuntimeConfigEntry struct {

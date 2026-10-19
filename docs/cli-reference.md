@@ -10332,7 +10332,7 @@ Add an edge rule
 | `--throttle-missing-key-policy <POLICY>` | kind=throttle: behavior when identity is missing | one of `shared` · `reject` |
 | `--throttle-key-field <FIELD>` | kind=throttle: composite key field (ip\|country\|api_key\|consumer_id\|jwt_subject\|jwt_claim\|method\|path\|header:&lt;name&gt;; repeat) |  |
 | `--throttle-count-status <CODE>` | kind=throttle: charge the bucket only for responses with this status (repeat) |  |
-| `--cache-stale-if-error-seconds <SECONDS>` | kind=cache: serve stale on origin failure (max 300) |  |
+| `--cache-stale-if-error-seconds <SECONDS>` | kind=cache: serve stale on origin failure (default 300; 0 disables; max 300) |  |
 | `--budget-allow-override-header <HEADER>` | kind=budget: header allowed to override the budget |  |
 | `--retry-allow-non-idempotent` | kind=retry: allow POST/PATCH replay when Idempotency-Key is honored |  |
 | `--retry-min-remaining-ms <MS>` | kind=retry: remaining request budget required before replay |  |
@@ -10445,7 +10445,7 @@ Update one edge rule
 | `--throttle-count-status <CODE>` | kind=throttle: charge the bucket only for responses with this status (repeat) |  |
 | `--cache-max-age-seconds <SECONDS>` | kind=cache: fresh window |  |
 | `--cache-stale-while-revalidate-seconds <SECONDS>` | kind=cache: stale-while-revalidate window |  |
-| `--cache-stale-if-error-seconds <SECONDS>` | kind=cache: serve stale on origin failure |  |
+| `--cache-stale-if-error-seconds <SECONDS>` | kind=cache: serve stale on origin failure (default 300; 0 disables) |  |
 | `--cache-vary-on <HEADER>` | kind=cache: header to vary on (repeatable) |  |
 | `--cache-methods <METHOD>` | kind=cache: cacheable method (repeatable) |  |
 | `--budget-ms <MS>` | kind=budget: per-request wall-clock budget |  |
@@ -11708,15 +11708,20 @@ Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J|@file|-]; slug
 
 Run untrusted code in an isolated disposable microVM, or one command from an OCI image (--image)
 
-`gregale run [--image <REF>] [--interactive] [--tty] [--entrypoint <CMD|FILE>] [--env <KEY=VALUE>] [--ram <MB>] [--timeout <D>] [--pull <P>] [--detach] [--workflow-id <ID>] [--step-label <LABEL>] [--profile <P>] [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--output-file <PATH>] [--output-dir <DIR>] [--wait] [--watch] [--poll-interval <D>] [--wait-timeout <D>]`
+`gregale run [--image <REF>] [--interactive] [--tty] [--entrypoint <CMD|FILE>] [--env <KEY[=VALUE]>] [--env-file <FILE>] [--user <USER>] [--workdir <DIR>] [--registry-username <USER>] [--registry-password-stdin] [--ram <MB>] [--timeout <D>] [--pull <P>] [--detach] [--workflow-id <ID>] [--step-label <LABEL>] [--profile <P>] [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--output-file <PATH>] [--output-dir <DIR>] [--wait] [--watch] [--poll-interval <D>] [--wait-timeout <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--image <REF>` | run one command from this OCI image in a fresh microVM; arguments after the flags replace the image CMD (ADR-1161) |  |
+| `--image <REF>` | run one command from this OCI image in a fresh microVM; arguments after the flags replace the image CMD (ADR-1161); the image can also be the first positional argument |  |
 | `--interactive` | with --image, attach stdin and relay the session until the command exits (-i; ADR-1330) |  |
 | `--tty` | with --image --interactive, give the command a terminal (-t; -it for both) |  |
 | `--entrypoint <CMD|FILE>` | with --image, override the image ENTRYPOINT; with --dir, the bundle file to execute |  |
-| `--env <KEY=VALUE>` | with --image, KEY=VALUE environment variable (repeatable; -e) |  |
+| `--env <KEY[=VALUE]>` | with --image, KEY=VALUE environment variable, or KEY to pass the local value (repeatable; -e) |  |
+| `--env-file <FILE>` | with --image, read KEY=VALUE lines from a file, docker env-file format (repeatable) |  |
+| `--user <USER>` | with --image, run as name\|uid[:group\|gid] instead of the image USER (-u; ADR-1790) |  |
+| `--workdir <DIR>` | with --image, absolute working directory instead of the image WORKDIR (-w) |  |
+| `--registry-username <USER>` | with --image, username for a private registry; the password comes from --registry-password-stdin, $GREGALE_REGISTRY_PASSWORD or a prompt |  |
+| `--registry-password-stdin` | with --registry-username, read the registry password or token from stdin |  |
 | `--ram <MB>` | with --image, memory in MB (default: Job default) |  |
 | `--timeout <D>` | with --image, task deadline (default: the plan&#39;s Job ceiling) |  |
 | `--pull <P>` | with --image, re-pull a cached tag (always) or reuse it (missing) | one of `missing` · `always` |
@@ -11746,6 +11751,8 @@ Examples:
 gregale run --image alpine echo hello
 gregale run --image python:3.12-slim -e MODE=batch python -c 'print(42)'
 gregale run -it --image alpine sh
+gregale run -u nobody -w /data --env-file .env alpine env
+printf '%s' "$TOKEN" | gregale run --registry-username ci --registry-password-stdin ghcr.io/acme/tool:1.4 --version
 ```
 
 
@@ -14810,7 +14817,7 @@ gregale data-api dev --port 0 --check --once
 
 Deploy a managed PostgREST Data API
 
-`gregale data-api create --database <DATABASE> [--schema <SCHEMA>] [--read-only] [--scope <SCOPE>] [--issuer <HTTPS_URL>] [--jwks-url <HTTPS_URL>] [--audience <AUDIENCE>] [--origins <ORIGINS>] [--resume] <name>`
+`gregale data-api create --database <DATABASE> [--schema <SCHEMA>] [--read-only] [--scope <SCOPE>] [--issuer <HTTPS_URL>] [--jwks-url <HTTPS_URL>] [--audience <AUDIENCE>] [--origins <ORIGINS>] [--resume] [--public-read <SCHEMA.RELATION[,...]>] [--public-rpc <SCHEMA.FUNCTION[,...]>] [--aggregates] [--migrations <DIR>] [--release-command <COMMAND>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -14823,20 +14830,132 @@ Deploy a managed PostgREST Data API
 | `--audience <AUDIENCE>` | application JWT audience |  |
 | `--origins <ORIGINS>` | comma-separated browser origins |  |
 | `--resume` | resume configuration and deployment of an existing app |  |
+| `--public-read <SCHEMA.RELATION[,...]>` | relations readable without a token (RLS tables or security-invoker views) |  |
+| `--public-rpc <SCHEMA.FUNCTION[,...]>` | approved STABLE or IMMUTABLE functions callable without a token by GET |  |
+| `--aggregates` | enable aggregate queries; requires installed SQL deadline functions |  |
+| `--migrations <DIR>` | single-app project: run this migration directory as the app&#39;s release task |  |
+| `--release-command <COMMAND>` | single-app release command (default node migrations/release.mjs) |  |
 
-### data-api types
+Examples:
 
-Generate types in an owner-authenticated app task
+```sh
+gregale data-api create shop-data --database shop-db --issuer https://id.example.com/ --jwks-url https://id.example.com/jwks.json --audience shop --migrations migrations
+```
 
-`gregale data-api types [--output <FILE>] [--check] [--snapshot] [--validators] [--timeout <DURATION>] <name>`
+### data-api deploy
+
+Deploy a single-app Data API with its migrations as the release task
+
+`gregale data-api deploy --migrations <DIR> [--release-command <COMMAND>] [--scope <SCOPE>] [--timeout <DURATION>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--output <FILE>` | generated TypeScript or snapshot output |  |
+| `--migrations <DIR>` | migration directory run with MIGRATION_DATABASE_URL | required |
+| `--release-command <COMMAND>` | release command (default node migrations/release.mjs) |  |
+| `--scope <SCOPE>` | environment scope |  |
+| `--timeout <DURATION>` | deployment and release wait (default 15m) |  |
+
+### data-api configure
+
+Change public access, aggregates, usage reporting or caps and fresh-restart the runtime
+
+`gregale data-api configure [--public-read <SCHEMA.RELATION[,...]>] [--no-public-read] [--public-rpc <SCHEMA.FUNCTION[,...]>] [--no-public-rpc] [--public-read-cache <DURATION|off>] [--usage-reporting <on|off>] [--monthly-caps <requests=N[,anonymous=N]|off>] [--aggregates <on|off>] [--scope <SCOPE>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--public-read <SCHEMA.RELATION[,...]>` | relations readable without a token |  |
+| `--no-public-read` | disable anonymous reads |  |
+| `--public-rpc <SCHEMA.FUNCTION[,...]>` | approved STABLE or IMMUTABLE functions callable without a token by GET |  |
+| `--no-public-rpc` | disable anonymous RPC calls |  |
+| `--public-read-cache <DURATION|off>` | cache canonical public reads and RPC calls at the edge (max 1h) |  |
+| `--usage-reporting <on|off>` | report usage to the platform (on for new Data APIs) | one of `on` · `off` |
+| `--monthly-caps <requests=N[,anonymous=N]|off>` | monthly owner caps; reached caps answer 429 until the next UTC month |  |
+| `--aggregates <on|off>` | aggregate queries; on also enables the SQL deadline | one of `on` · `off` |
+| `--scope <SCOPE>` | environment scope |  |
+| `--no-restart` | store settings without a fresh restart |  |
+
+### data-api usage
+
+Show reported requests, rows and bytes per hour or day, and month-to-date totals
+
+`gregale data-api usage [--since <DURATION>] [--granularity <hour|day>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <DURATION>` | lookback such as 24h, 7d or 30d (default 7d, max 90d) |  |
+| `--granularity <hour|day>` | bucket size (hour covers at most 48h) | one of `hour` · `day` |
+
+Examples:
+
+```sh
+gregale data-api usage shop-data --since 30d
+```
+
+### data-api server-key
+
+Manage server keys for trusted backends (RLS still applies)
+
+#### data-api server-key create
+
+Generate a key, store its hash in a free slot and show the key once
+
+`gregale data-api server-key create [--read-only] [--relations <SCHEMA.RELATION[,...]>] [--rpcs <SCHEMA.FUNCTION[,...]>] [--no-subjects] [--replace-oldest] [--scope <SCOPE>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--read-only` | allow only GET and HEAD; RPCs need --rpcs |  |
+| `--relations <SCHEMA.RELATION[,...]>` | relations the key may use, including embeddings |  |
+| `--rpcs <SCHEMA.FUNCTION[,...]>` | approved RPCs the key may call |  |
+| `--no-subjects` | refuse X-Gregale-Subject |  |
+| `--replace-oldest` | replace the older slot when both are in use |  |
+| `--scope <SCOPE>` | environment scope |  |
+| `--no-restart` | store the hash without a fresh restart |  |
+
+#### data-api server-key list
+
+Show which key slots are in use
+
+`gregale data-api server-key list [--scope <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+#### data-api server-key revoke
+
+Remove a key slot
+
+`gregale data-api server-key revoke --slot <a|b|all> [--scope <SCOPE>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--slot <a|b|all>` | slot to revoke | required; one of `a` · `b` · `all` |
+| `--scope <SCOPE>` | environment scope |  |
+| `--no-restart` | remove the hash without a fresh restart |  |
+
+### data-api types
+
+Generate TypeScript types or Python/Go clients from the database contract
+
+`gregale data-api types [--output <FILE>] [--check] [--snapshot] [--validators] [--language <LANGUAGE>] [--package <NAME>] [--snapshot-file <FILE>] [--timeout <DURATION>] [<name>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--output <FILE>` | generated TypeScript, Python, Go or snapshot output |  |
 | `--check` | fail if the output file is stale |  |
 | `--snapshot` | export a JSON baseline for data-api diff |  |
 | `--validators` | include typed runtime table and RPC argument validators |  |
+| `--language <LANGUAGE>` | client language (default typescript) | one of `typescript` · `python` · `go` |
+| `--package <NAME>` | Go package name (default gregaledata) |  |
+| `--snapshot-file <FILE>` | render Python or Go from a saved snapshot without contacting the API |  |
 | `--timeout <DURATION>` | task wait deadline (default 2m) |  |
+
+Examples:
+
+```sh
+gregale data-api types shop-data --language python --output shop_data.py
+gregale data-api types --snapshot-file contract.json --language go --package shopdata --output shopdata/client.go
+```
 
 ### data-api check
 

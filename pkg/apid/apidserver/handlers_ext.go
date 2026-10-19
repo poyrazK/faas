@@ -1983,56 +1983,6 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// restoreApp reactivates a deleted app while its seven-day grace window is
-// open. The tombstone lookup is deliberately separate from loadApp so normal
-// customer reads continue to hide deleted slugs.
-func (s *server) restoreApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	app, err := s.store.AppBySlugIncludingDeleted(r.Context(), r.PathValue("slug"))
-	if err != nil || app.AccountID != acct.ID {
-		s.notFound(w, "no such app")
-		return
-	}
-	limits := api.MustLimitsFor(acct.Plan)
-	restored, err := s.restoreAppWithActivity(r.Context(), r, acct, app, limits)
-	if err != nil {
-		var qe *state.QuotaError
-		if errors.As(err, &qe) {
-			api.WriteProblem(w, appaccess.QuotaProblem(qe, limits))
-			return
-		}
-		if errors.Is(err, state.ErrOrgAppAdmissionUnavailable) {
-			api.WriteProblem(w, appaccess.AdmissionUnavailableProblem())
-			return
-		}
-		if errors.Is(err, state.ErrConflict) {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict,
-				api.CodeAppNotRestorable, "App not restorable",
-				"the seven-day app deletion grace window has lapsed"))
-			return
-		}
-		api.WriteProblem(w, api.ErrCapacity("could not restore app"))
-		return
-	}
-	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
-		fmt.Sprintf(`{"app_id":"%s","kind":"restored"}`, restored.ID))
-	s.audit.Emit(r.Context(), "app.restored", &acct.ID, map[string]any{
-		"app_id": restored.ID,
-		"slug":   restored.Slug,
-	})
-	resp := s.appResponseWithContext(r.Context(), restored, acct.Plan)
-	// RestoreApp persists the storage state as active, but the customer-facing
-	// read model calls an app with no deployments "undeployed". Keep this
-	// mutation response consistent with GET /v1/apps/{slug} and listApps so
-	// automation does not observe active and undeployed for the same row.
-	if _, latestErr := s.store.LatestDeployment(r.Context(), restored.ID); errors.Is(latestErr, state.ErrNotFound) && resp.Status == string(state.AppActive) {
-		resp.Status = api.AppStatusUndeployed
-	} else if latestErr != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not resolve restored app deployment state"))
-		return
-	}
-	writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, restored))
-}
-
 // --- deployments -----------------------------------------------------------
 
 // getDeployment returns one deployment by id.

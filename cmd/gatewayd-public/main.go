@@ -322,6 +322,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 			return nil
 		}, log)
+	watcher.Daemon = "gatewayd-public" // ADR-1700 apply receipts
 	if err := watcher.Reconcile(runtimeCtx); err != nil {
 		log.Warn("gatewayd-public: initial runtime config reconcile failed", "err", err)
 	}

@@ -722,6 +722,8 @@ from .complete_object_multipart_upload_request import CompleteObjectMultipartUpl
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
 from .compose_healthcheck import ComposeHealthcheck
+from .compose_process import ComposeProcess
+from .compose_process_stop_signal import ComposeProcessStopSignal
 from .config_change_receipt import ConfigChangeReceipt
 from .config_guard import ConfigGuard
 from .config_guard_decision import ConfigGuardDecision
@@ -1022,6 +1024,15 @@ from .data_api_runtime_connection_report import DataAPIRuntimeConnectionReport
 from .data_api_runtime_connection_report_runtime_model import DataAPIRuntimeConnectionReportRuntimeModel
 from .data_api_runtime_connection_report_state import DataAPIRuntimeConnectionReportState
 from .data_api_runtime_connection_report_version import DataAPIRuntimeConnectionReportVersion
+from .data_api_usage import DataAPIUsage
+from .data_api_usage_bucket import DataAPIUsageBucket
+from .data_api_usage_counts import DataAPIUsageCounts
+from .data_api_usage_granularity import DataAPIUsageGranularity
+from .data_api_usage_hour import DataAPIUsageHour
+from .data_api_usage_month_to_date import DataAPIUsageMonthToDate
+from .data_api_usage_report import DataAPIUsageReport
+from .data_api_usage_report_response import DataAPIUsageReportResponse
+from .data_api_usage_report_version import DataAPIUsageReportVersion
 from .data_connection import DataConnection
 from .data_connection_check import DataConnectionCheck
 from .data_connection_check_state import DataConnectionCheckState
@@ -1153,6 +1164,9 @@ from .delete_deployment_scope_exclusion_response_200 import DeleteDeploymentScop
 from .delete_exclusive_operation_trigger_binding_source import DeleteExclusiveOperationTriggerBindingSource
 from .delete_financial_budget_request import DeleteFinancialBudgetRequest
 from .delete_secret_prefer import DeleteSecretPrefer
+from .deleted_app_list_response import DeletedAppListResponse
+from .deleted_app_summary import DeletedAppSummary
+from .deleted_app_summary_restore_blocker import DeletedAppSummaryRestoreBlocker
 from .deliver_app_event_request import DeliverAppEventRequest
 from .deliver_app_event_response import DeliverAppEventResponse
 from .deliver_app_event_response_status import DeliverAppEventResponseStatus
@@ -1165,6 +1179,8 @@ from .deployment_alias_list_response import DeploymentAliasListResponse
 from .deployment_alias_response import DeploymentAliasResponse
 from .deployment_audit_response import DeploymentAuditResponse
 from .deployment_audit_response_kind import DeploymentAuditResponseKind
+from .deployment_build_dependency_gate import DeploymentBuildDependencyGate
+from .deployment_build_dependency_gate_status import DeploymentBuildDependencyGateStatus
 from .deployment_change import DeploymentChange
 from .deployment_change_after_type_3 import DeploymentChangeAfterType3
 from .deployment_change_before_type_3 import DeploymentChangeBeforeType3
@@ -1177,11 +1193,15 @@ from .deployment_cron_config import DeploymentCronConfig
 from .deployment_cron_staging_request import DeploymentCronStagingRequest
 from .deployment_cron_staging_request_operation import DeploymentCronStagingRequestOperation
 from .deployment_cron_staging_snapshot import DeploymentCronStagingSnapshot
+from .deployment_dependency_gate import DeploymentDependencyGate
+from .deployment_dependency_gate_status import DeploymentDependencyGateStatus
+from .deployment_dependency_pin import DeploymentDependencyPin
 from .deployment_failed_webhook_payload import DeploymentFailedWebhookPayload
 from .deployment_failed_webhook_payload_status import DeploymentFailedWebhookPayloadStatus
 from .deployment_grpc_healthcheck import DeploymentGRPCHealthcheck
 from .deployment_grpc_liveness_probe import DeploymentGRPCLivenessProbe
 from .deployment_healthcheck import DeploymentHealthcheck
+from .deployment_hosting_verification import DeploymentHostingVerification
 from .deployment_list_response import DeploymentListResponse
 from .deployment_live_webhook_payload import DeploymentLiveWebhookPayload
 from .deployment_live_webhook_payload_status import DeploymentLiveWebhookPayloadStatus
@@ -1207,11 +1227,16 @@ from .deployment_response_parked_reason_type_1 import DeploymentResponseParkedRe
 from .deployment_response_parked_reason_type_2_type_1 import DeploymentResponseParkedReasonType2Type1
 from .deployment_response_parked_reason_type_3_type_1 import DeploymentResponseParkedReasonType3Type1
 from .deployment_response_rollout_state import DeploymentResponseRolloutState
-from .deployment_response_stage_state import DeploymentResponseStageState
 from .deployment_response_tag import DeploymentResponseTag
 from .deployment_route_policy_snapshot_response import DeploymentRoutePolicySnapshotResponse
 from .deployment_runtime_response import DeploymentRuntimeResponse
 from .deployment_runtime_response_status import DeploymentRuntimeResponseStatus
+from .deployment_stage_history_entry import DeploymentStageHistoryEntry
+from .deployment_stage_history_entry_name import DeploymentStageHistoryEntryName
+from .deployment_stage_history_entry_status import DeploymentStageHistoryEntryStatus
+from .deployment_stage_state import DeploymentStageState
+from .deployment_stage_state_current import DeploymentStageStateCurrent
+from .deployment_stage_state_retry_requested_stage import DeploymentStageStateRetryRequestedStage
 from .deployment_staging_receipt import DeploymentStagingReceipt
 from .deployment_staging_receipt_status import DeploymentStagingReceiptStatus
 from .deployment_staging_request import DeploymentStagingRequest
@@ -1952,6 +1977,7 @@ from .gdpr_audit_export_response_action import GdprAuditExportResponseAction
 from .gdpr_audit_export_response_data import GdprAuditExportResponseData
 from .gdpr_audit_export_response_source import GdprAuditExportResponseSource
 from .get_account_slo_window import GetAccountSLOWindow
+from .get_app_data_api_usage_granularity import GetAppDataAPIUsageGranularity
 from .get_app_edge_protection_range import GetAppEdgeProtectionRange
 from .get_app_log_drain_analytics_window import GetAppLogDrainAnalyticsWindow
 from .get_app_metrics_range import GetAppMetricsRange
@@ -1970,11 +1996,6 @@ from .get_build_sbom_response_200 import GetBuildSbomResponse200
 from .get_builds_status import GetBuildsStatus
 from .get_custom_metric_series_range import GetCustomMetricSeriesRange
 from .get_deployment_open_api_doc_response_200 import GetDeploymentOpenAPIDocResponse200
-from .get_deployment_stages_response_200 import GetDeploymentStagesResponse200
-from .get_deployment_stages_response_200_current import GetDeploymentStagesResponse200Current
-from .get_deployment_stages_response_200_history_item import GetDeploymentStagesResponse200HistoryItem
-from .get_deployment_stages_response_200_history_item_name import GetDeploymentStagesResponse200HistoryItemName
-from .get_deployment_stages_response_200_history_item_status import GetDeploymentStagesResponse200HistoryItemStatus
 from .get_durable_entity_readiness_response_200 import GetDurableEntityReadinessResponse200
 from .get_edge_rule_stats_window import GetEdgeRuleStatsWindow
 from .get_environment_route_budgets_scope import GetEnvironmentRouteBudgetsScope
@@ -2036,6 +2057,12 @@ from .github_webhook_delivery_record_status import GithubWebhookDeliveryRecordSt
 from .grace_window_response import GraceWindowResponse
 from .guarded_debug_regression_action_request import GuardedDebugRegressionActionRequest
 from .guarded_debug_regression_action_request_action import GuardedDebugRegressionActionRequestAction
+from .hosting_route_check_result import HostingRouteCheckResult
+from .hosting_route_check_result_status import HostingRouteCheckResultStatus
+from .hosting_route_check_set import HostingRouteCheckSet
+from .hosting_route_check_set_source import HostingRouteCheckSetSource
+from .hosting_route_check_set_status import HostingRouteCheckSetStatus
+from .image_run_registry_auth import ImageRunRegistryAuth
 from .image_run_response import ImageRunResponse
 from .image_run_response_image_status import ImageRunResponseImageStatus
 from .image_run_response_status import ImageRunResponseStatus
@@ -3731,6 +3758,7 @@ from .operation_workflow_unmet_invariant import OperationWorkflowUnmetInvariant
 from .operation_workflow_unmet_invariant_reason import OperationWorkflowUnmetInvariantReason
 from .operation_workflow_verification_duration import OperationWorkflowVerificationDuration
 from .operation_workflow_verification_performance import OperationWorkflowVerificationPerformance
+from .operator_account_platform_flags import OperatorAccountPlatformFlags
 from .operator_intent_accepted_response import OperatorIntentAcceptedResponse
 from .operator_intent_accepted_response_kind import OperatorIntentAcceptedResponseKind
 from .operator_intent_accepted_response_previous_state import OperatorIntentAcceptedResponsePreviousState
@@ -3742,10 +3770,22 @@ from .operator_park_execution_response import OperatorParkExecutionResponse
 from .operator_park_execution_response_action import OperatorParkExecutionResponseAction
 from .operator_park_execution_response_phase import OperatorParkExecutionResponsePhase
 from .operator_park_execution_response_terminal_state import OperatorParkExecutionResponseTerminalState
+from .operator_platform_flag import OperatorPlatformFlag
+from .operator_platform_flag_convergence import OperatorPlatformFlagConvergence
+from .operator_platform_flag_decision import OperatorPlatformFlagDecision
+from .operator_platform_flag_decision_reason import OperatorPlatformFlagDecisionReason
+from .operator_platform_flag_groups import OperatorPlatformFlagGroups
+from .operator_platform_flag_groups_groups import OperatorPlatformFlagGroupsGroups
+from .operator_platform_flag_groups_references import OperatorPlatformFlagGroupsReferences
+from .operator_platform_flag_list import OperatorPlatformFlagList
+from .operator_platform_flag_source import OperatorPlatformFlagSource
+from .operator_platform_flag_status import OperatorPlatformFlagStatus
 from .operator_restart_execution_response import OperatorRestartExecutionResponse
 from .operator_restart_execution_response_phase import OperatorRestartExecutionResponsePhase
 from .operator_runtime_config import OperatorRuntimeConfig
 from .operator_runtime_config_apply_mode import OperatorRuntimeConfigApplyMode
+from .operator_runtime_config_apply_receipt import OperatorRuntimeConfigApplyReceipt
+from .operator_runtime_config_apply_receipt_status import OperatorRuntimeConfigApplyReceiptStatus
 from .operator_runtime_config_kind import OperatorRuntimeConfigKind
 from .operator_runtime_config_operation import OperatorRuntimeConfigOperation
 from .operator_runtime_config_operation_apply_mode import OperatorRuntimeConfigOperationApplyMode
@@ -3904,6 +3944,9 @@ from .plan_workload_class import PlanWorkloadClass
 from .plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
 from .plan_workload_depends_on_conditions_additional_property import PlanWorkloadDependsOnConditionsAdditionalProperty
 from .plan_workload_tier import PlanWorkloadTier
+from .platform_flag_definition import PlatformFlagDefinition
+from .platform_flag_rule import PlatformFlagRule
+from .platform_flag_rule_plans_item import PlatformFlagRulePlansItem
 from .platform_tenant_access_token_list_response import PlatformTenantAccessTokenListResponse
 from .platform_tenant_access_token_response import PlatformTenantAccessTokenResponse
 from .platform_tenant_access_token_response_scopes_item import PlatformTenantAccessTokenResponseScopesItem
@@ -4709,7 +4752,9 @@ from .resize_managed_postgres_database_request import ResizeManagedPostgresDatab
 from .resize_managed_postgres_database_request_service_class import ResizeManagedPostgresDatabaseRequestServiceClass
 from .resolved_execution_limits import ResolvedExecutionLimits
 from .resource_profile import ResourceProfile
+from .restore_app_body import RestoreAppBody
 from .restore_automation_revision_request import RestoreAutomationRevisionRequest
+from .restore_deleted_app_body import RestoreDeletedAppBody
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
 from .restore_mcp_readiness_policy_request import RestoreMCPReadinessPolicyRequest
 from .resume_automation_failure_pause_request import ResumeAutomationFailurePauseRequest
@@ -6560,6 +6605,8 @@ __all__ = (
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
     "ComposeHealthcheck",
+    "ComposeProcess",
+    "ComposeProcessStopSignal",
     "ConfigChangeReceipt",
     "ConfigGuard",
     "ConfigGuardDecision",
@@ -6840,6 +6887,15 @@ __all__ = (
     "DataAPIRuntimeConnectionReportRuntimeModel",
     "DataAPIRuntimeConnectionReportState",
     "DataAPIRuntimeConnectionReportVersion",
+    "DataAPIUsage",
+    "DataAPIUsageBucket",
+    "DataAPIUsageCounts",
+    "DataAPIUsageGranularity",
+    "DataAPIUsageHour",
+    "DataAPIUsageMonthToDate",
+    "DataAPIUsageReport",
+    "DataAPIUsageReportResponse",
+    "DataAPIUsageReportVersion",
     "DataConnection",
     "DataConnectionCheck",
     "DataConnectionCheckState",
@@ -6967,6 +7023,9 @@ __all__ = (
     "DelayedTaskResponse",
     "DelayedTaskResponseState",
     "DeleteAccountSessionBody",
+    "DeletedAppListResponse",
+    "DeletedAppSummary",
+    "DeletedAppSummaryRestoreBlocker",
     "DeleteDeploymentScopeExclusionResponse200",
     "DeleteExclusiveOperationTriggerBindingSource",
     "DeleteFinancialBudgetRequest",
@@ -6980,6 +7039,8 @@ __all__ = (
     "DeploymentAliasResponse",
     "DeploymentAuditResponse",
     "DeploymentAuditResponseKind",
+    "DeploymentBuildDependencyGate",
+    "DeploymentBuildDependencyGateStatus",
     "DeploymentChange",
     "DeploymentChangeAfterType3",
     "DeploymentChangeBeforeType3",
@@ -6992,11 +7053,15 @@ __all__ = (
     "DeploymentCronStagingRequest",
     "DeploymentCronStagingRequestOperation",
     "DeploymentCronStagingSnapshot",
+    "DeploymentDependencyGate",
+    "DeploymentDependencyGateStatus",
+    "DeploymentDependencyPin",
     "DeploymentFailedWebhookPayload",
     "DeploymentFailedWebhookPayloadStatus",
     "DeploymentGRPCHealthcheck",
     "DeploymentGRPCLivenessProbe",
     "DeploymentHealthcheck",
+    "DeploymentHostingVerification",
     "DeploymentListResponse",
     "DeploymentLivenessProbe",
     "DeploymentLiveWebhookPayload",
@@ -7022,11 +7087,16 @@ __all__ = (
     "DeploymentResponseParkedReasonType2Type1",
     "DeploymentResponseParkedReasonType3Type1",
     "DeploymentResponseRolloutState",
-    "DeploymentResponseStageState",
     "DeploymentResponseTag",
     "DeploymentRoutePolicySnapshotResponse",
     "DeploymentRuntimeResponse",
     "DeploymentRuntimeResponseStatus",
+    "DeploymentStageHistoryEntry",
+    "DeploymentStageHistoryEntryName",
+    "DeploymentStageHistoryEntryStatus",
+    "DeploymentStageState",
+    "DeploymentStageStateCurrent",
+    "DeploymentStageStateRetryRequestedStage",
     "DeploymentStagingReceipt",
     "DeploymentStagingReceiptStatus",
     "DeploymentStagingRequest",
@@ -7732,6 +7802,7 @@ __all__ = (
     "GdprAuditExportResponseData",
     "GdprAuditExportResponseSource",
     "GetAccountSLOWindow",
+    "GetAppDataAPIUsageGranularity",
     "GetAppEdgeProtectionRange",
     "GetAppLogDrainAnalyticsWindow",
     "GetAppMetricsRange",
@@ -7750,11 +7821,6 @@ __all__ = (
     "GetBuildsStatus",
     "GetCustomMetricSeriesRange",
     "GetDeploymentOpenAPIDocResponse200",
-    "GetDeploymentStagesResponse200",
-    "GetDeploymentStagesResponse200Current",
-    "GetDeploymentStagesResponse200HistoryItem",
-    "GetDeploymentStagesResponse200HistoryItemName",
-    "GetDeploymentStagesResponse200HistoryItemStatus",
     "GetDurableEntityReadinessResponse200",
     "GetEdgeRuleStatsWindow",
     "GetEnvironmentRouteBudgetsScope",
@@ -7812,6 +7878,12 @@ __all__ = (
     "GraceWindowResponse",
     "GuardedDebugRegressionActionRequest",
     "GuardedDebugRegressionActionRequestAction",
+    "HostingRouteCheckResult",
+    "HostingRouteCheckResultStatus",
+    "HostingRouteCheckSet",
+    "HostingRouteCheckSetSource",
+    "HostingRouteCheckSetStatus",
+    "ImageRunRegistryAuth",
     "ImageRunResponse",
     "ImageRunResponseImageStatus",
     "ImageRunResponseStatus",
@@ -9335,6 +9407,7 @@ __all__ = (
     "OperationWorkflowUnmetInvariantReason",
     "OperationWorkflowVerificationDuration",
     "OperationWorkflowVerificationPerformance",
+    "OperatorAccountPlatformFlags",
     "OperatorIntentAcceptedResponse",
     "OperatorIntentAcceptedResponseKind",
     "OperatorIntentAcceptedResponsePreviousState",
@@ -9346,10 +9419,22 @@ __all__ = (
     "OperatorParkExecutionResponseAction",
     "OperatorParkExecutionResponsePhase",
     "OperatorParkExecutionResponseTerminalState",
+    "OperatorPlatformFlag",
+    "OperatorPlatformFlagConvergence",
+    "OperatorPlatformFlagDecision",
+    "OperatorPlatformFlagDecisionReason",
+    "OperatorPlatformFlagGroups",
+    "OperatorPlatformFlagGroupsGroups",
+    "OperatorPlatformFlagGroupsReferences",
+    "OperatorPlatformFlagList",
+    "OperatorPlatformFlagSource",
+    "OperatorPlatformFlagStatus",
     "OperatorRestartExecutionResponse",
     "OperatorRestartExecutionResponsePhase",
     "OperatorRuntimeConfig",
     "OperatorRuntimeConfigApplyMode",
+    "OperatorRuntimeConfigApplyReceipt",
+    "OperatorRuntimeConfigApplyReceiptStatus",
     "OperatorRuntimeConfigKind",
     "OperatorRuntimeConfigOperation",
     "OperatorRuntimeConfigOperationApplyMode",
@@ -9504,6 +9589,9 @@ __all__ = (
     "PlanWorkloadDependsOnConditions",
     "PlanWorkloadDependsOnConditionsAdditionalProperty",
     "PlanWorkloadTier",
+    "PlatformFlagDefinition",
+    "PlatformFlagRule",
+    "PlatformFlagRulePlansItem",
     "PlatformTenantAccessTokenListResponse",
     "PlatformTenantAccessTokenResponse",
     "PlatformTenantAccessTokenResponseScopesItem",
@@ -10251,7 +10339,9 @@ __all__ = (
     "ResizeManagedPostgresDatabaseRequestServiceClass",
     "ResolvedExecutionLimits",
     "ResourceProfile",
+    "RestoreAppBody",
     "RestoreAutomationRevisionRequest",
+    "RestoreDeletedAppBody",
     "RestoreManagedPostgresDatabaseRequest",
     "RestoreMCPReadinessPolicyRequest",
     "ResumeAutomationFailurePauseRequest",

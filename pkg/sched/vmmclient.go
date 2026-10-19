@@ -777,6 +777,7 @@ func (c *VMMClient) JobColdBoot(ctx context.Context, spec JobVmmSpec) (JobVmmRes
 		QualificationExecution: execution,
 		SealedEnv:              sealedSecretsToProto(spec.SealedEnvEntries),
 	}
+	request.ImageProcess, request.ProcessUser, request.ProcessWorkdir = spec.ImageProcess, spec.ProcessUser, spec.ProcessWorkdir
 	if in := spec.Interactive; in != nil {
 		request.Interactive = &vmmdpb.JobInteractiveAttach{Tty: in.TTY,
 			AttachTokenSha256: append([]byte(nil), in.TokenSHA256...), AttachTimeoutSeconds: int32(in.AttachTimeoutSec)}
@@ -796,7 +797,7 @@ func (c *VMMClient) JobColdBoot(ctx context.Context, spec JobVmmSpec) (JobVmmRes
 	}
 	return JobVmmResult{InstanceID: resp.GetInstance(), NodeID: resp.GetNodeId(), Netns: resp.GetNetns(),
 		HostIP: resp.GetHostIp(), GuestUID: int(resp.GetGuestUid()), StartHeld: resp.GetStartHeld(),
-		Interactive: resp.GetInteractive()}, nil
+		Interactive: resp.GetInteractive(), ImageProcess: resp.GetImageProcess()}, nil
 }
 
 func sealedSecretsToProto(entries []fcvm.SealedEnvEntry) []*vmmdpb.SealedSecret {

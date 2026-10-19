@@ -1,0 +1,42 @@
+# Managed by the livequeryd_service role (ADR-20261016151947). The generated
+# unit names no database; this drop-in does, and hands the hub its secrets as
+# credentials under %d so none of them appears on its command line.
+[Service]
+LoadCredential=database_url:/etc/faas/secrets/livequeryd/database-url
+LoadCredential=keys_dsn:/etc/faas/secrets/livequeryd/keys-dsn
+LoadCredential=keys_identity:/etc/faas/secrets/livequeryd/keys.age
+{% if faas_livequeryd_tls_cert %}
+LoadCredential=tls_key:{{ faas_livequeryd_tls_key }}
+{% endif %}
+{% if faas_livequeryd_awake == 'neon' %}
+LoadCredential=neon_api_key:/etc/faas/secrets/livequeryd/neon-api-key
+{% endif %}
+ExecStart=
+ExecStart=/opt/faas/current/bin/livequeryd \
+  -database-url-file=%d/database_url \
+  -database-id={{ faas_livequeryd_database_id }} \
+  -slot={{ faas_livequeryd_slot }} \
+  -publication={{ faas_livequeryd_publication }} \
+  -install={{ faas_livequeryd_install | bool | lower }} \
+  -create-publication={{ faas_livequeryd_create_publication | bool | lower }} \
+  -checkpoint=/var/lib/faas/livequeryd/checkpoint \
+  -keys-dsn-file=%d/keys_dsn \
+  -keys-identity=%d/keys_identity \
+  -listen={{ faas_livequeryd_listen }} \
+{% if faas_livequeryd_tls_cert %}
+  -tls-cert={{ faas_livequeryd_tls_cert }} \
+  -tls-key=%d/tls_key \
+  -client-ca={{ faas_livequeryd_client_ca }} \
+{% endif %}
+{% if faas_livequeryd_release_after %}
+  -release-after={{ faas_livequeryd_release_after }} \
+  -awake={{ faas_livequeryd_awake }} \
+  -awake-every={{ faas_livequeryd_awake_every }} \
+{% endif %}
+{% if faas_livequeryd_awake == 'neon' %}
+  -neon-api-key-file=%d/neon_api_key \
+  -neon-project={{ faas_livequeryd_neon_project }} \
+  -neon-endpoint={{ faas_livequeryd_neon_endpoint }} \
+{% endif %}
+  -max-per-connection={{ faas_livequeryd_max_per_connection }} \
+  -metrics-listen={{ faas_livequeryd_metrics_listen }}

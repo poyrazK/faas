@@ -1963,11 +1963,14 @@ type AppManifest struct {
 	// ProjectImage preserves declared image intent (including a mutable tag).
 	// Each deployment resolves and pins its own immutable source. Command
 	// replaces the image CMD, retaining its ENTRYPOINT; nil inherits CMD.
-	ProjectImage                string                  `json:"project_image,omitempty"`
-	ProjectImageCommand         []string                `json:"project_image_command,omitempty"`
-	ProjectImagePort            int                     `json:"project_image_port,omitempty"`
-	ProjectImageHealthcheck     *api.ComposeHealthcheck `json:"project_image_healthcheck,omitempty"`
-	ProjectDependencyConditions map[string]string       `json:"project_dependency_conditions,omitempty"`
+	ProjectImage            string                  `json:"project_image,omitempty"`
+	ProjectImageCommand     []string                `json:"project_image_command,omitempty"`
+	ProjectImagePort        int                     `json:"project_image_port,omitempty"`
+	ProjectImageHealthcheck *api.ComposeHealthcheck `json:"project_image_healthcheck,omitempty"`
+	// ProjectImageProcess is the Compose entrypoint, user, working_dir and
+	// stop contract for the image (ADR-1337); nil inherits the image's.
+	ProjectImageProcess         *api.ComposeProcess `json:"project_image_process,omitempty"`
+	ProjectDependencyConditions map[string]string   `json:"project_dependency_conditions,omitempty"`
 	// ServiceBindings is the authoritative declared projection of Compose
 	// depends_on edges or standalone service_binding_targets. Keeping it beside
 	// generated service URLs makes it inspectable without parsing env text.
@@ -2072,7 +2075,7 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return len(m.PublicBuildURLs) == 0 && m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Pause == "" && m.Profiling == nil && m.Tracing == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 && m.FunctionConcurrency == 0 &&
@@ -2093,6 +2096,7 @@ func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	existing.ProjectImageCommand = desired.ProjectImageCommand
 	existing.ProjectImagePort = desired.ProjectImagePort
 	existing.ProjectImageHealthcheck = desired.ProjectImageHealthcheck.Clone()
+	existing.ProjectImageProcess = desired.ProjectImageProcess.Clone()
 	existing.ProjectDependencyConditions = maps.Clone(desired.ProjectDependencyConditions)
 	existing.ServiceBindings = append([]api.AppServiceBinding(nil), desired.ServiceBindings...)
 	existing.ServiceReliability = desired.ServiceReliability

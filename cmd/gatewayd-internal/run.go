@@ -2162,6 +2162,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 				}
 				return nil
 			}, log)
+		watcher.Daemon = "gatewayd-internal" // ADR-1700 apply receipts
 		if err := watcher.Reconcile(runtimeCtx); err != nil {
 			log.Warn("gatewayd: initial runtime config reconcile failed", "err", err)
 		}
@@ -3969,6 +3970,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Enabled:   pgStore.ServiceWakeAheadEnabled,
 			Residency: pgStore.ServiceWakeAheadFleetResidency,
 			Wake:      newServiceProxyWaker(pgStore, handler.EnsureWakeAheadCapacity),
+			// ADR-1137: declared dependencies stand in until there is evidence.
+			Declared: newWakeAheadDeclared(pgStore, newServiceProxyResolver(pgStore), newServiceProxyAuthorizer(pgStore)),
 		})
 		serviceProxyConfig := gateway.ServiceProxyConfig{
 			APIMonetization:           deps.apiMonetization,

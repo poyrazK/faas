@@ -1059,6 +1059,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			ImagePort:                 app.Manifest.ProjectImagePort,
 			ImageCommand:              app.Manifest.ProjectImageCommand,
 			ImageHealthcheck:          app.Manifest.ProjectImageHealthcheck,
+			ImageProcess:              app.Manifest.ProjectImageProcess,
 			FullRootfsAllowAuto:       api.FullRootfsAllowAutoDefault[acct.Plan],
 			SourcePath:                staged,
 			SourceBytes:               bytes,

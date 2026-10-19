@@ -19,6 +19,7 @@ func PlanWorkload(w Workload) api.PlanWorkload {
 		Dockerfile:          w.Dockerfile,
 		Image:               w.Image,
 		ImageHealthcheck:    w.ImageHealthcheck.Clone(),
+		ImageProcess:        w.ImageProcess.Clone(),
 		Command:             w.Command,
 		DependsOn:           w.DependsOn,
 		DependsOnConditions: maps.Clone(w.DependsOnConditions),

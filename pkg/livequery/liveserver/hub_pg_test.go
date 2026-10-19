@@ -101,6 +101,8 @@ type fixture struct {
 	secret seal.Secret
 	other  seal.Secret
 	clock  *clock
+	dsn    string
+	slot   string
 }
 
 func newFixture(t *testing.T, schema string, cfg Config) *fixture {
@@ -109,6 +111,13 @@ func newFixture(t *testing.T, schema string, cfg Config) *fixture {
 
 // newFixtureWith runs prepare on the engine before the hub starts.
 func newFixtureWith(t *testing.T, schema string, cfg Config, prepare func(*livequery.Engine)) *fixture {
+	t.Helper()
+	return openFixture(t, schema, cfg, prepare, false)
+}
+
+// openFixture starts a hub; with persistent it decodes a persistent slot,
+// dropped when the test ends, which cfg.Reconnect, unless set, reopens.
+func openFixture(t *testing.T, schema string, cfg Config, prepare func(*livequery.Engine), persistent bool) *fixture {
 	t.Helper()
 	dsn, pool := openDB(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -121,13 +130,24 @@ func newFixtureWith(t *testing.T, schema string, cfg Config, prepare func(*liveq
 	if _, err := pool.Exec(ctx, `CREATE PUBLICATION gregale_live FOR ALL TABLES`); err != nil {
 		t.Fatal(err)
 	}
-	capture, err := livequery.OpenCapture(ctx, dsn, fmt.Sprintf("lqs_%d", time.Now().UnixNano()), "gregale_live")
+	slot := fmt.Sprintf("lqs_%d", time.Now().UnixNano())
+	open := livequery.OpenCapture
+	if persistent {
+		open = livequery.OpenSlot
+		t.Cleanup(func() { dropSlotWhenFree(t, pool, slot) })
+		if cfg.Reconnect == nil {
+			cfg.Reconnect = func(ctx context.Context) (*livequery.Capture, error) {
+				return livequery.OpenSlot(ctx, dsn, slot, "gregale_live")
+			}
+		}
+	}
+	capture, err := open(ctx, dsn, slot, "gregale_live")
 	if err != nil {
 		t.Fatal(err)
 	}
 	engine := livequery.NewEngine(pool, capture)
 	engine.VerifyEachRound = true
-	f := &fixture{t: t, pool: pool, engine: engine, clock: &clock{}}
+	f := &fixture{t: t, pool: pool, engine: engine, clock: &clock{}, dsn: dsn, slot: slot}
 	f.secret = mustSecret(t)
 	f.other = mustSecret(t)
 	ring, err := seal.NewKeyring(seal.Key{Database: "db_1", Secret: f.secret}, seal.Key{Database: "db_other", Secret: f.other})
@@ -152,8 +172,22 @@ func newFixtureWith(t *testing.T, schema string, cfg Config, prepare func(*liveq
 			t.Errorf("hub: %v", err)
 		}
 		_ = capture.Close()
+		_ = engine.Release() // the capture a resume opened
 	})
 	return f
+}
+
+// dropSlotWhenFree drops a persistent slot once its walsender lets go.
+func dropSlotWhenFree(t *testing.T, pool *pgxpool.Pool, slot string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for ctx.Err() == nil {
+		if _, err := pool.Exec(ctx, `SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = $1`, slot); err == nil {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Logf("slot %s not dropped", slot)
 }
 
 func mustSecret(t *testing.T) seal.Secret {

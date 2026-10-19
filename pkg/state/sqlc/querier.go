@@ -29,6 +29,7 @@ type Querier interface {
 	// treating them as "accept any subject" routed every foreign
 	// GitHub Actions subject to such an account.
 	AccountByOIDCIssuerSubject(ctx context.Context, db DBTX, arg AccountByOIDCIssuerSubjectParams) (AccountByOIDCIssuerSubjectRow, error)
+	AccountDeletedAppByID(ctx context.Context, db DBTX, arg AccountDeletedAppByIDParams) (AccountDeletedAppByIDRow, error)
 	// First-use GitHub Actions bootstrap through an OAuth-verified install
 	// binding. Immutable subjects must match both persisted numeric IDs as well
 	// as the current repository name; a zero ID preserves legacy name-only
@@ -2534,6 +2535,7 @@ type Querier interface {
 	// The account/app creation index supports descending keyset paging across
 	// tenants. Only explicit public summary fields cross this operator boundary.
 	ListAccountCustomerOperationsBySubject(ctx context.Context, db DBTX, arg ListAccountCustomerOperationsBySubjectParams) ([][]byte, error)
+	ListAccountDeletedApps(ctx context.Context, db DBTX, arg ListAccountDeletedAppsParams) ([]ListAccountDeletedAppsRow, error)
 	// Dashboard + GET /v1/apps/{slug}/debug/regressions read pattern.
 	// `since` is an interval (e.g. '1 hour') clamped handler-side to the
 	// plan's DebugTelemetryRetentionDays cap. Observations that include the

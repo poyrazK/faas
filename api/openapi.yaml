@@ -7813,6 +7813,43 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/data-api/usage:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Data API app whose reported usage to read.
+        schema: { type: string }
+    get:
+      operationId: getAppDataAPIUsage
+      summary: Read Data API usage
+      description: Usage that the app's Data API runtime reported, per hour or UTC day, with month-to-date totals that owner caps compare against. Counts come from the app's own runtime and are owner telemetry, not billing records. Apps created before usage reporting, or with it off, have no rows.
+      tags: [managed_postgres]
+      parameters:
+        - name: since
+          in: query
+          required: false
+          description: Lookback in whole hours or days, such as 24h, 7d or 30d (default 7d, at most 90d).
+          schema: { type: string, pattern: '^[1-9][0-9]*[hd]$' }
+        - name: granularity
+          in: query
+          required: false
+          description: Bucket size; hour covers at most 48h. Defaults to hour up to 48h, else day.
+          schema: { type: string, enum: [hour, day] }
+      responses:
+        '200':
+          description: Zero-filled usage buckets, window totals and month-to-date totals
+          headers:
+            Cache-Control: { schema: { type: string }, description: 'Always no-store: runtime reports keep arriving.' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DataAPIUsage' }
+        default:
+          description: App lookup, window validation or usage storage failure
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/postgres/databases/{id}/bindings:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -9736,6 +9773,102 @@ paths:
                   items:
                     type: array
                     items: { $ref: '#/components/schemas/OperatorRuntimeConfigRevision' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/admin/flags:
+    get:
+      tags: [operator]
+      operationId: listOperatorPlatformFlags
+      summary: List platform flags
+      description: |
+        Returns every catalogued platform flag (ADR-1700) with apid's live
+        definition, the per-daemon apply receipts and convergence, and the
+        shared account groups. Change a flag with
+        PATCH /v1/admin/config/{config_key}. Operator-only.
+      responses:
+        '200':
+          description: Platform flags and groups
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperatorPlatformFlagList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/admin/flags/{key}:
+    get:
+      tags: [operator]
+      operationId: getOperatorPlatformFlag
+      summary: Get a platform flag
+      description: One platform flag with its live definition, apply receipts and convergence. Operator-only.
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema: { type: string }
+          description: Platform flag key, for example ai_gateway.
+      responses:
+        '200':
+          description: Platform flag
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperatorPlatformFlag' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/admin/flags/{key}/decision:
+    get:
+      tags: [operator]
+      operationId: inspectOperatorPlatformFlag
+      summary: Explain a platform flag for an account
+      description: |
+        Evaluates the flag for one account against apid's live definition
+        and reports the matching rule, the reason, and whether the account's
+        plan is entitled to the capability the flag releases. Records
+        nothing. Operator-only.
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema: { type: string }
+          description: Platform flag key.
+        - name: account_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+          description: Account to evaluate.
+      responses:
+        '200':
+          description: Decision
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperatorPlatformFlagDecision' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/admin/accounts/{id}/flags:
+    get:
+      tags: [operator]
+      operationId: listOperatorAccountPlatformFlags
+      summary: List platform flags for an account
+      description: Every platform flag decided for one account, with plan entitlement. Operator-only.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Account ID.
+      responses:
+        '200':
+          description: Decisions for the account
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperatorAccountPlatformFlags' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -15330,6 +15463,30 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/runtime/data-api/usage:
+    post:
+      tags: [managed_postgres]
+      operationId: reportDataAPIUsage
+      summary: Report Data API usage deltas
+      description: Private runtime surface. Requires a short-lived gregale:data-api:usage workload assertion; account, app and instance come from it, never from the body. Each report id is applied once, so retried or snapshot-duplicated reports add nothing. Hours must be aligned and at most 48 hours old. Owner API keys and application JWTs are not accepted.
+      x-internal: true
+      security:
+        - dataAPIUsageWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DataAPIUsageReport' }
+      responses:
+        '200':
+          description: Report applied, or already applied; month-to-date totals for owner caps.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DataAPIUsageReportResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/runtime/operations/{id}/control:
     get:
       tags:
@@ -18527,6 +18684,98 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/deleted-apps:
+    get:
+      tags: [apps]
+      operationId: listDeletedApps
+      summary: List account-owned retained deleted apps.
+      description: |
+        Bounded lifecycle inventory; never includes another account's tombstones.
+        Eligibility does not reserve quota or capacity. Use the returned deadline
+        and evaluation time, not a deadline inferred from the browser clock.
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum records in this account-owned page.
+          schema: { type: integer, minimum: 1, maximum: 50, default: 25 }
+        - name: cursor
+          in: query
+          description: Opaque cursor from this account and inventory order. Restart when rejected.
+          schema: { type: string, maxLength: 1024 }
+      responses:
+        '200':
+          description: One bounded account-owned page.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeletedAppListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/deleted-apps/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Exact deleted-app ID returned by this account's inventory.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: getDeletedApp
+      summary: Read one account-owned deleted app before restore review.
+      description: Returns current lifecycle evidence for the exact owned retained ID; foreign and restored IDs are absent.
+      responses:
+        '200':
+          description: Current lifecycle evidence; active or foreign apps return 404.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeletedAppSummary' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/deleted-apps/{id}/restore:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Exact account-owned deleted-app ID; never resolved to a replacement slug.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [apps]
+      operationId: restoreDeletedApp
+      summary: Restore an identified app within its retained deletion window.
+      description: |
+        Requires deploy-write, MFA completion and trusted browser origin for cookie
+        authentication. Rechecks identity, deadline, purge claim, quota and capacity.
+        This operation has no idempotent replay receipt. After an uncertain response,
+        reconcile exact-ID reads; never automatically retry or fall back to slug restore.
+        Success acknowledges restoration, not execution health.
+      requestBody:
+        description: Optional empty object; no dry-run or other fields are accepted.
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, maxProperties: 0 }
+      responses:
+        '200':
+          description: The restored exact app.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/restore:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -18534,12 +18783,28 @@ paths:
       tags: [apps]
       operationId: restoreApp
       summary: Restore an app during its deletion grace window.
+      description: |
+        Bodyless legacy callers remain supported. An optional expected_app_id
+        fences the selected identity on updated servers. For mixed-version
+        safety, use the dedicated deleted-app ID route instead of relying on
+        legacy body handling. This route has no idempotent replay receipt.
+      requestBody:
+        description: Optional reviewed app identity on updated servers; bodyless callers remain compatible.
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                expected_app_id: { type: string, format: uuid, minLength: 32, maxLength: 36 }
       responses:
         '200':
           description: The restored app.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AppResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
@@ -29716,7 +29981,8 @@ paths:
         `snapshot_prepare` / `readiness`) is enforced at the
         database layer by `deployments_stage_state_current_check`,
         so a malformed row would never reach the wire. The
-        `current` field is the stage the deploy is in right now;
+        `current` field is the stage the deploy is in right now
+        (empty once the deployment is live, failed or cancelled);
         `history` lists the closed rows in transition order
         (oldest → newest), each carrying server-measured
         `duration_ms` so the CLI / dashboard don't have to trust
@@ -29728,41 +29994,11 @@ paths:
             no account-existence leak).
       responses:
         '200':
-          description: "The raw `deployments.stage_state` jsonb. Shape: {current, current_started_at, history: [{name, started_at, ended_at, duration_ms, status, reason}]}."
+          description: The deployment's stored `stage_state` document, served verbatim.
           content:
             application/json:
               schema:
-                type: object
-                description: The raw `deployments.stage_state` jsonb. Closed-vocabulary enforcement lives at the database layer (`deployments_stage_state_current_check`).
-                properties:
-                  current:
-                    type: string
-                    enum: [source_download, dependency_restore, image_build, security_scan, snapshot_prepare, readiness]
-                  current_started_at:
-                    type: [string, "null"]
-                    format: date-time
-                  history:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        name:
-                          type: string
-                          enum: [source_download, dependency_restore, image_build, security_scan, snapshot_prepare, readiness]
-                        started_at:
-                          type: [string, "null"]
-                          format: date-time
-                        ended_at:
-                          type: [string, "null"]
-                          format: date-time
-                        duration_ms:
-                          type: integer
-                          format: int64
-                        status:
-                          type: string
-                          enum: [completed, failed]
-                        reason:
-                          type: string
+                $ref: '#/components/schemas/DeploymentStageState'
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404':
           description: Deployment row missing or cross-account probe (IDOR-safe; never 403).
@@ -62876,6 +63112,11 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Short-lived Gregale workload identity for audience gregale:data-api:connections, bound to a live Data API instance. Customer API keys cannot publish observations.
+    dataAPIUsageWorkloadIdentity:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Short-lived Gregale workload identity for audience gregale:data-api:usage, naming the reporting app and instance. Customer API keys cannot publish usage.
     operationsWorkloadIdentity:
       type: http
       scheme: bearer
@@ -73574,7 +73815,7 @@ components:
       required: [slug, enabled]
       properties:
         slug: {"type": "string"}
-        enabled: {"type": "boolean", "description": "Whether a cold wake of this app also wakes the services it is measured to call."}
+        enabled: {"type": "boolean", "description": "Whether a cold wake of this app also wakes the services it declares or is measured to call."}
         updated_at: {"type": "string", "format": "date-time", "description": "Omitted until the opt-in is first changed."}
         learned: { $ref: '#/components/schemas/ServiceWakeAheadLearned' }
     ServiceWakeAheadLearned:
@@ -77749,6 +77990,71 @@ components:
         engine_connections: { type: integer, minimum: 1, maximum: 2 }
         refresh_connections: { type: integer, minimum: 0, maximum: 1 }
         observed_at: { type: string, format: date-time }
+    DataAPIUsageCounts:
+      description: Data API usage counts. Admitted requests by access kind, gateway and engine rejections (4xx), errors (5xx), requests refused by owner caps, rows the engine reported and response bytes. Owner telemetry from the app's runtime, not billing records.
+      type: object
+      additionalProperties: false
+      required: [user_requests, anonymous_requests, server_requests, rejected_requests, error_requests, capped_requests, rows_returned, response_bytes]
+      properties:
+        user_requests: { type: integer, format: int64, minimum: 0 }
+        anonymous_requests: { type: integer, format: int64, minimum: 0 }
+        server_requests: { type: integer, format: int64, minimum: 0 }
+        rejected_requests: { type: integer, format: int64, minimum: 0 }
+        error_requests: { type: integer, format: int64, minimum: 0 }
+        capped_requests: { type: integer, format: int64, minimum: 0 }
+        rows_returned: { type: integer, format: int64, minimum: 0 }
+        response_bytes: { type: integer, format: int64, minimum: 0 }
+    DataAPIUsageHour:
+      description: One UTC hour's usage delta in a runtime report.
+      allOf:
+        - $ref: '#/components/schemas/DataAPIUsageCounts'
+        - type: object
+          required: [hour]
+          properties:
+            hour: { type: string, format: date-time, description: UTC hour the delta belongs to; aligned to the hour. }
+    DataAPIUsageReport:
+      description: Private versioned runtime usage report. A report id names the reporting instance and process and is applied once; hours are unique.
+      type: object
+      additionalProperties: false
+      required: [version, report_id, hours]
+      properties:
+        version: { type: integer, enum: [1] }
+        report_id: { type: string, pattern: '^[A-Za-z0-9._:-]{1,128}$' }
+        hours: { type: array, maxItems: 48, items: { $ref: '#/components/schemas/DataAPIUsageHour' } }
+    DataAPIUsageMonthToDate:
+      description: Admitted requests in the current UTC calendar month, all and anonymous, which owner caps compare against.
+      type: object
+      required: [month, requests, anonymous_requests]
+      properties:
+        month: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$', description: UTC calendar month as YYYY-MM. }
+        requests: { type: integer, format: int64, minimum: 0 }
+        anonymous_requests: { type: integer, format: int64, minimum: 0 }
+    DataAPIUsageReportResponse:
+      description: Answer to a runtime usage report.
+      type: object
+      required: [month_to_date]
+      properties:
+        month_to_date: { $ref: '#/components/schemas/DataAPIUsageMonthToDate' }
+    DataAPIUsageBucket:
+      description: One hour or UTC day of an owner usage view.
+      allOf:
+        - $ref: '#/components/schemas/DataAPIUsageCounts'
+        - type: object
+          required: [start]
+          properties:
+            start: { type: string, format: date-time, description: Start of the bucket. }
+    DataAPIUsage:
+      description: An app's reported Data API usage over a window, zero-filled per bucket.
+      type: object
+      required: [app, from, to, granularity, totals, month_to_date, buckets]
+      properties:
+        app: { type: string }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        granularity: { type: string, enum: [hour, day] }
+        totals: { $ref: '#/components/schemas/DataAPIUsageCounts' }
+        month_to_date: { $ref: '#/components/schemas/DataAPIUsageMonthToDate' }
+        buckets: { type: array, items: { $ref: '#/components/schemas/DataAPIUsageBucket' } }
     ConnectionBudgetRuntimeObservations:
       description: Authenticated workload reports of configured resident Data API pools, including the refresh reader. Not live SQL sessions or independent guest attestation. Parked runtimes and future wakes remain estimates; this does not verify Auth or external consumers.
       type: object
@@ -78745,7 +79051,7 @@ components:
         label: { type: string }
         description: { type: string }
         category: { type: string }
-        kind: { type: string, enum: [boolean, integer, duration, string, enum, secret_reference] }
+        kind: { type: string, enum: [boolean, integer, duration, string, enum, secret_reference, platform_flag, platform_flag_groups] }
         default_value: {}
         desired_value: {}
         effective_value: {}
@@ -78810,6 +79116,137 @@ components:
         version: { type: integer, format: int64, minimum: 1 }
         reason: { type: string, minLength: 3, maxLength: 500 }
         expected_version: { type: integer, format: int64, minimum: 0 }
+
+    # ─── Platform flags (ADR-1700) ───────────────────────────────────────
+
+    PlatformFlagRule:
+      description: "One targeting rule of a platform flag. Accounts, group, plans and rollout combine with AND; the first matching rule decides."
+      type: object
+      required: [id, value]
+      properties:
+        id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        accounts:
+          type: array
+          maxItems: 1000
+          items: { type: string, format: uuid }
+        group: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        plans:
+          type: array
+          items: { type: string, enum: [free, hobby, pro, scale] }
+        rollout: { type: integer, minimum: 0, maximum: 10000, description: "Basis points of the accounts the other constraints admit." }
+        value: { type: boolean }
+
+    PlatformFlagDefinition:
+      description: "Stored value of a platform flag. Enabled is the kill switch; default applies to accounts no rule matches."
+      type: object
+      required: [enabled, default]
+      properties:
+        enabled: { type: boolean }
+        default: { type: boolean }
+        rules:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/PlatformFlagRule' }
+
+    OperatorRuntimeConfigApplyReceipt:
+      description: "What one daemon instance reported applying for a runtime-configuration key."
+      type: object
+      required: [config_key, daemon, instance, version, status, reported_at]
+      properties:
+        config_key: { type: string }
+        daemon: { type: string }
+        instance: { type: string }
+        version: { type: integer, format: int64 }
+        status: { type: string, enum: [applied, failed] }
+        error: { type: string }
+        reported_at: { type: string, format: date-time }
+
+    OperatorPlatformFlagConvergence:
+      description: "Consumers of a platform flag grouped by whether every instance applied its current version."
+      type: object
+      required: [converged, pending, failed]
+      properties:
+        converged: { type: array, items: { type: string } }
+        pending: { type: array, items: { type: string } }
+        failed: { type: array, items: { type: string } }
+
+    OperatorPlatformFlag:
+      description: "One catalogued platform flag with its live definition, apply receipts and convergence."
+      type: object
+      required: [key, config_key, label, description, adr, consumers, legacy_env, definition,
+                 source, version, status, receipts, convergence]
+      properties:
+        key: { type: string }
+        config_key: { type: string, description: "Runtime-configuration key that stores the flag; write it with PATCH /v1/admin/config/{key}." }
+        label: { type: string }
+        description: { type: string }
+        capability: { type: string }
+        adr: { type: string }
+        consumers: { type: array, items: { type: string } }
+        legacy_env: { type: array, items: { type: string } }
+        retire_by: { type: string, format: date }
+        definition: { $ref: '#/components/schemas/PlatformFlagDefinition' }
+        source: { type: string, enum: [default_or_environment, operator] }
+        version: { type: integer, format: int64 }
+        status: { type: string, enum: [pending, applied, failed, blocked] }
+        last_error: { type: string }
+        updated_at: { type: string, format: date-time }
+        receipts:
+          type: array
+          items: { $ref: '#/components/schemas/OperatorRuntimeConfigApplyReceipt' }
+        convergence: { $ref: '#/components/schemas/OperatorPlatformFlagConvergence' }
+
+    OperatorPlatformFlagGroups:
+      description: "Shared named account sets referenced by platform-flag rules."
+      type: object
+      required: [config_key, groups, references, version]
+      properties:
+        config_key: { type: string }
+        groups:
+          type: object
+          additionalProperties: { type: array, items: { type: string, format: uuid } }
+        references:
+          type: object
+          additionalProperties: { type: array, items: { type: string } }
+        version: { type: integer, format: int64 }
+
+    OperatorPlatformFlagList:
+      description: "Every platform flag and the shared account groups."
+      type: object
+      required: [items, groups, generated_at]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OperatorPlatformFlag' }
+        groups: { $ref: '#/components/schemas/OperatorPlatformFlagGroups' }
+        generated_at: { type: string, format: date-time }
+
+    OperatorPlatformFlagDecision:
+      description: "One platform flag decided for one account. Available is the decision and the plan entitlement of the released capability."
+      type: object
+      required: [flag, account_id, plan, enabled, reason, version, available]
+      properties:
+        flag: { type: string }
+        account_id: { type: string, format: uuid }
+        plan: { type: string }
+        enabled: { type: boolean }
+        reason: { type: string, enum: [unknown_flag, flag_disabled, account_missing, rule_match, default] }
+        rule_id: { type: string }
+        bucket: { type: integer, minimum: 0, maximum: 9999 }
+        version: { type: integer, format: int64 }
+        entitled: { type: boolean }
+        available: { type: boolean }
+
+    OperatorAccountPlatformFlags:
+      description: "Every platform flag decided for one account."
+      type: object
+      required: [account_id, plan, items]
+      properties:
+        account_id: { type: string, format: uuid }
+        plan: { type: string }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OperatorPlatformFlagDecision' }
 
     # ─── Dashboard auth (issue #165 PR #2, ADR-032) ──────────────────────
 
@@ -81462,6 +81899,29 @@ components:
         observed_at: { type: [string, "null"], format: date-time }
         stale: { type: boolean }
 
+    DeletedAppSummary:
+      type: object
+      description: Account-owned retained lifecycle metadata. Eligibility never reserves quota or proves execution health.
+      required: [account_id, id, slug, deleted_at, delete_grace_until, restore_eligible, restore_blocker, evaluated_at]
+      properties:
+        account_id: { type: string, format: uuid }
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        deleted_at: { type: [string, "null"], format: date-time }
+        delete_grace_until: { type: [string, "null"], format: date-time }
+        restore_eligible: { type: boolean }
+        restore_blocker: { type: string, enum: ['', grace_expired, purge_started, metadata_unavailable] }
+        evaluated_at: { type: string, format: date-time }
+    DeletedAppListResponse:
+      type: object
+      description: Bounded account-owned tombstone inventory and its opaque cursor.
+      required: [account_id, apps, evaluated_at]
+      properties:
+        account_id: { type: string, format: uuid }
+        apps: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/DeletedAppSummary' } }
+        next_cursor: { type: string, maxLength: 1024 }
+        evaluated_at: { type: string, format: date-time }
+
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172)."
       type: object
@@ -81476,6 +81936,11 @@ components:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', example: "hello-world" }
         type: { type: string, enum: [app, function] , example: "app"}
+        project_id:
+          type: string
+          format: uuid
+          description: "Parent project (ADR-050) as a canonical hyphenated UUID. Omitted when the app is standalone. Read-only: app create and update requests do not accept it."
+          example: "3f2b8c1e-6a4d-4e5f-9b7a-1c2d3e4f5a6b"
         visibility: { type: string, enum: [public, internal], default: public, description: "Public exposes the app through the edge; internal keeps it available only to authenticated service-to-service routing. Available on every plan." }
         workload_class:
           type: string
@@ -87148,6 +87613,135 @@ components:
         hint:
           type: string
           description: Recovery guidance; pending changes finish automatically and terminal conflicts require inspection before a new attempt.
+    # Wire shape of `deployments.stage_state` (state.StageState, ADR-117).
+    # Served verbatim by GET /v1/deployments/{id}/stages and embedded as
+    # DeploymentResponse.stage_state. TestSpecComplianceDeploymentStageState
+    # pins property names, required fields and enums to the Go structs.
+    DeploymentStageState:
+      type: object
+      description: >-
+        Customer-visible deployment stage progress (ADR-117). `current` is the
+        open stage, or an empty string once the deployment is live, failed or
+        cancelled and that stage has moved into `history`.
+      required: [current, history]
+      properties:
+        current:
+          type: string
+          enum: ['', source_download, dependency_restore, image_build, security_scan, snapshot_prepare, readiness]
+        current_started_at:
+          type: [string, "null"]
+          format: date-time
+          description: Start of the open stage. Null or absent when no stage is open, and on legacy rows created before stage timing.
+        history:
+          type: array
+          description: Closed stages, oldest first. Writers keep the most recent 64 (MaxStageHistory).
+          items: { $ref: '#/components/schemas/DeploymentStageHistoryEntry' }
+        retry_requested_stage:
+          type: string
+          enum: [source_download, dependency_restore, image_build, security_scan, snapshot_prepare, readiness]
+          description: Stage a retry asked to resume from (ADR-162). Present only on retry deployments, which always restart at source_download.
+        retry_restart_reason:
+          type: string
+          description: Why a retry restarted from source_download rather than retry_requested_stage.
+        dependency_gate: { $ref: '#/components/schemas/DeploymentDependencyGate' }
+        build_dependency_gate: { $ref: '#/components/schemas/DeploymentBuildDependencyGate' }
+        hosting_verification: { $ref: '#/components/schemas/DeploymentHostingVerification' }
+    DeploymentStageHistoryEntry:
+      type: object
+      description: One closed stage with server-measured duration.
+      required: [name, started_at, ended_at, duration_ms, status]
+      properties:
+        name:
+          type: string
+          enum: [source_download, dependency_restore, image_build, security_scan, snapshot_prepare, readiness]
+        started_at: { type: [string, "null"], format: date-time }
+        ended_at: { type: [string, "null"], format: date-time }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        status: { type: string, enum: [completed, failed, cancelled] }
+        reason: { type: string, description: Failure or cancellation detail; absent or empty for completed stages. }
+    DeploymentDependencyGate:
+      type: object
+      description: >-
+        Compose dependency readiness gate pinned at admission (ADR-685). The
+        deadline starts when the candidate first presents its own readiness proof.
+      required: [dependencies, status]
+      properties:
+        dependencies:
+          type: array
+          items: { $ref: '#/components/schemas/DeploymentDependencyPin' }
+        started_at: { type: string, format: date-time }
+        deadline_at: { type: string, format: date-time }
+        status: { type: string, enum: [waiting, ready, failed] }
+        blocker: { type: string, description: The dependency or deadline currently blocking release. }
+    DeploymentBuildDependencyGate:
+      type: object
+      description: >-
+        Build-time wait on the API deployments a guided service migration
+        selected (ADR-1666). It is checked before cache lookup and slot
+        allocation and never holds a build slot while waiting.
+      required: [dependencies, status, deadline_at, check_after]
+      properties:
+        dependencies:
+          type: array
+          items: { $ref: '#/components/schemas/DeploymentDependencyPin' }
+        status: { type: string, enum: [waiting, ready, failed] }
+        code: { type: string, description: "Machine-readable reason while waiting or failed, for example build_dependency_not_ready or build_dependency_timeout. Absent once ready." }
+        blocker: { type: string, description: The dependency or deadline currently blocking the build. }
+        deadline_at: { type: string, format: date-time }
+        check_after: { type: string, format: date-time, description: "Earliest time the gate is re-checked. Zero time (0001-01-01T00:00:00Z) when no re-check is scheduled." }
+    DeploymentDependencyPin:
+      type: object
+      description: A dependency deployment captured at admission; it never follows a later deployment.
+      required: [service, app_id, deployment_id]
+      properties:
+        service: { type: string }
+        app_id: { type: string }
+        deployment_id: { type: string }
+    DeploymentHostingVerification:
+      type: object
+      description: >-
+        Candidate hosting verification recovery progress (ADR-481, ADR-482).
+        last_error_code distinguishes publication, gateway, transport and
+        candidate-evidence failures; a transport failure does not attribute blame
+        to the app or platform. retry_not_before is an eligibility floor, not a
+        promised delivery time; completed_at means the attempt finished, while
+        the hosting receipt records its verdict.
+      required: [started_at, deadline_at, attempts]
+      properties:
+        started_at: { type: string, format: date-time }
+        deadline_at: { type: string, format: date-time }
+        attempts: { type: integer, minimum: 0 }
+        last_error_code: { type: string }
+        last_route_checks: { $ref: '#/components/schemas/HostingRouteCheckSet' }
+        retry_not_before: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+    HostingRouteCheckSet:
+      type: object
+      description: API route checks from the app's imported OpenAPI document. document_sha256 binds them to that exact document.
+      required: [source, status, checks]
+      properties:
+        source: { type: string, enum: [app_openapi] }
+        document_sha256: { type: string }
+        status: { type: string, enum: [verified, failed, unavailable] }
+        checks:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/HostingRouteCheckResult' }
+    HostingRouteCheckResult:
+      type: object
+      description: Bounded, non-secret evidence from one authenticated candidate GET. Request and response bodies are omitted.
+      required: [method, path, status, verified_at]
+      properties:
+        method: { type: string }
+        path: { type: string }
+        status: { type: string, enum: [verified, failed, skipped] }
+        status_code: { type: integer }
+        latency_ms: { type: integer, format: int64 }
+        verified_at: { type: string, format: date-time, description: Zero time (0001-01-01T00:00:00Z) when the check did not run. }
+        request_id: { type: string }
+        error_code: { type: string }
+        error: { type: string }
+
     DeploymentResponse:
       description: "One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 / ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape is non-secret by design."
       type: object
@@ -87167,18 +87761,13 @@ components:
         durable_entity_validator:
           $ref: '#/components/schemas/DurableEntityValidatorDeploymentInfo'
         stage_state:
-          type: object
+          $ref: '#/components/schemas/DeploymentStageState'
           description: >-
-            Actual stage progress, including retry_requested_stage and
-            retry_restart_reason when prerequisites must be rebuilt. Optional
-            hosting_verification records started_at, deadline_at, attempts,
-            last_error_code, retry_not_before and completed_at during unavailable
-            candidate verification recovery (ADR-481, ADR-482). last_error_code
-            distinguishes publication, gateway, transport and candidate-evidence
-            failures; a transport failure does not attribute blame to the app or
-            platform. retry_not_before is an
-            eligibility floor, not a promised delivery time; completed_at means
-            the attempt finished, while the hosting receipt records its verdict.
+            Actual stage progress; the same document GET
+            /v1/deployments/{id}/stages serves. retry_requested_stage and
+            retry_restart_reason appear when prerequisites must be rebuilt;
+            hosting_verification appears during unavailable candidate
+            verification recovery (ADR-481, ADR-482).
         dev_patch:
           $ref: '#/components/schemas/DevPatchPreview'
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
@@ -97403,6 +97992,29 @@ components:
         tty:
           type: boolean
           description: "Give the interactive command a pseudo-terminal. Requires interactive."
+        user:
+          type: string
+          maxLength: 256
+          description: "ADR-1790: run as name|uid[:group|gid], resolved in the image's passwd and group files, instead of the image USER (docker run -u)."
+        workdir:
+          type: string
+          maxLength: 4096
+          description: "ADR-1790: absolute working directory instead of the image WORKDIR (docker run -w); created when missing."
+        registry_auth:
+          $ref: '#/components/schemas/ImageRunRegistryAuth'
+    ImageRunRegistryAuth:
+      description: "ADR-1790: credential for a private image's registry. apid stores it sealed on the image's runner job for that registry host, exactly as PUT /v1/jobs/{name}/registry-credentials does, and never returns it. Every run that supplies it refreshes it."
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          description: "Registry account or robot name for the image's registry."
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          description: "Registry password or access token; prefer a short-lived read-only token."
     ImageRunResponse:
       description: "Answer to POST /v1/image-runs. job names the runner job; run_id addresses /v1/jobs/{job}/runs/{run_id} once status is queued."
       type: object
@@ -100329,6 +100941,27 @@ components:
         start_period_ns: { type: integer, format: int64, minimum: 0 }
         start_interval_ns: { type: integer, format: int64, minimum: 0 }
         retries: { type: integer, minimum: 0 }
+    ComposeProcess:
+      type: object
+      description: "Compose process overrides for a prebuilt image (ADR-1337). Omitted fields inherit the image's ENTRYPOINT, USER, WORKDIR and stop settings."
+      properties:
+        entrypoint:
+          type: array
+          items: { type: string }
+          description: "Replaces the image ENTRYPOINT and drops its CMD; the Compose command supplies the arguments. An empty array clears the ENTRYPOINT."
+        user:
+          type: string
+          description: "User name or id, optionally with :group, resolved against the image's /etc/passwd and /etc/group."
+        working_dir:
+          type: string
+          description: "Clean absolute working directory."
+        stop_signal:
+          type: string
+          enum: [SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2]
+        stop_grace_period_s:
+          type: integer
+          minimum: 1
+          description: "Seconds between the stop signal and SIGKILL, capped by the plan."
     PlanWorkload:
       description: "One discovered unit of work. Mirrors reposcan.Workload."
       type: object
@@ -100356,6 +100989,9 @@ components:
         image_healthcheck:
           $ref: '#/components/schemas/ComposeHealthcheck'
           description: "Compose healthcheck override for prebuilt image workloads, captured per deployment."
+        image_process:
+          $ref: '#/components/schemas/ComposeProcess'
+          description: "Compose entrypoint, user, working_dir and stop overrides for prebuilt image workloads, captured per deployment."
         command:
           type: array
           items: { type: string }
@@ -101699,6 +102335,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleGeoAction' }
             - { $ref: '#/components/schemas/EdgeRuleThrottleAction' }
             - { $ref: '#/components/schemas/EdgeRuleBudgetAction' }
+            - { $ref: '#/components/schemas/EdgeRuleCacheAction' }
             - { $ref: '#/components/schemas/EdgeRuleRespondAction' }
             - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
@@ -101771,6 +102408,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleGeoAction' }
             - { $ref: '#/components/schemas/EdgeRuleThrottleAction' }
             - { $ref: '#/components/schemas/EdgeRuleBudgetAction' }
+            - { $ref: '#/components/schemas/EdgeRuleCacheAction' }
             - { $ref: '#/components/schemas/EdgeRuleRespondAction' }
             - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
@@ -101820,6 +102458,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleGeoAction' }
             - { $ref: '#/components/schemas/EdgeRuleThrottleAction' }
             - { $ref: '#/components/schemas/EdgeRuleBudgetAction' }
+            - { $ref: '#/components/schemas/EdgeRuleCacheAction' }
             - { $ref: '#/components/schemas/EdgeRuleRespondAction' }
             - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
@@ -102716,7 +103355,9 @@ components:
             gateway request refreshes the key in the background. Default
             0 (disabled); absolute cap 300.
           * `stale_if_error_seconds` — required. Stale-on-error window
-            in seconds. Default 300; absolute cap 300
+            in seconds; 0 disables it (apid does not replace 0 with a
+            default, so send 300 explicitly for the recommended
+            window). Absolute cap 300
             (`api.ResponseCacheStaleIfErrorMaxSeconds`). During an
             upstream error the gateway returns the cached body within
             this window instead of 502/504.
@@ -102741,8 +103382,8 @@ components:
           default: 60
           description: |
             Fresh window in seconds. 0 = inherit the apid-side default
-            (60s). Positive values are clamped to the platform cap
-            (3600s = 1 hour).
+            (60s). Values above the platform cap
+            (3600s = 1 hour) are rejected with 422.
         stale_while_revalidate_seconds:
           type: integer
           minimum: 0
@@ -102759,8 +103400,8 @@ components:
           default: 300
           description: |
             Stale-on-error window in seconds. 0 = no stale-on-error
-            (errors return 502/504 directly). Positive values are
-            clamped to the platform cap (300s = 5 minutes).
+            (errors return 502/504 directly). Values above the
+            platform cap (300s = 5 minutes) are rejected with 422.
         vary_on:
           type: array
           description: |
@@ -109971,6 +110612,7 @@ components:
         slug: { type: string }
         type: { type: string, enum: [app, function] }
         runtime: { type: string, description: Runtime identifier for functions when configured. }
+        project_id: { type: string, format: uuid, description: Parent project as a canonical hyphenated UUID. Omitted when the app is standalone. }
         status: { type: string }
         created_at: { type: string, format: date-time }
 

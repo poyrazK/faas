@@ -1972,6 +1972,10 @@ type AppResponse struct {
 	ID                        string `json:"id"`
 	Slug                      string `json:"slug"`
 	Type                      string `json:"type"`
+	// ProjectID is the parent project (ADR-050) as the canonical UUID text
+	// Postgres renders for apps.project_id. Omitted for standalone apps.
+	// Read-only: no app create/update request accepts it.
+	ProjectID string `json:"project_id,omitempty"`
 	// Visibility is public unless the app is explicitly configured for
 	// authenticated service-to-service ingress only.
 	Visibility string `json:"visibility"`
@@ -7286,6 +7290,7 @@ type PlanWorkload struct {
 	Dockerfile          string              `json:"dockerfile,omitempty"`
 	Image               string              `json:"image,omitempty"`
 	ImageHealthcheck    *ComposeHealthcheck `json:"image_healthcheck,omitempty"`
+	ImageProcess        *ComposeProcess     `json:"image_process,omitempty"`
 	Command             []string            `json:"command"`
 	DependsOn           []string            `json:"depends_on,omitempty"`
 	DependsOnConditions map[string]string   `json:"depends_on_conditions,omitempty"`

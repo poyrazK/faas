@@ -32,7 +32,7 @@ func (s *server) dashboardAuthSettingsApp(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return acct, app, false
 	}
-	if !api.ApplicationAuthEnabled(acct.ID) {
+	if !s.applicationAuthEnabled(acct) {
 		http.NotFound(w, r)
 		return acct, app, false
 	}

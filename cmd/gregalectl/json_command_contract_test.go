@@ -29,6 +29,7 @@ func TestJSONOperatorCommandReceipts(t *testing.T) {
 		{[]string{"github", "status"}, "GET", "/v1/admin/ops/github/recovery", `{"deliveries":[],"check_updates":[]}`, "deliveries"},
 		{[]string{"status", "incident", "create", "--title", "API errors", "--impact", "degraded", "--components", "api_console", "--message", "Investigating."}, "POST", "/v1/admin/status/incidents", `{"id":"status-json","title":"API errors","state":"investigating"}`, "title"},
 		{[]string{"config", "show", "--key", "hsts_enabled"}, "GET", "/v1/admin/config", `{"items":[{"key":"hsts_enabled","value":true,"version":1}]}`, "key"},
+		{[]string{"flags", "account", "--account-id", testAccountID}, "GET", "/v1/admin/accounts/" + testAccountID + "/flags", `{"account_id":"` + testAccountID + `","plan":"pro","items":[]}`, "account_id"},
 	} {
 		t.Run(tc.args[0], func(t *testing.T) {
 			requests := 0

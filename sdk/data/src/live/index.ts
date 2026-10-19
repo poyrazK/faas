@@ -27,9 +27,9 @@
 export { sql, toPostgresText } from './sql.js'
 export { createLiveSealer, LiveSealError, LIVE_SEAL_DEFAULT_TTL_SECONDS, LIVE_SEAL_MAX_TTL_SECONDS } from './seal.js'
 export type { LiveQueryText, LiveSealer, LiveSealOptions } from './seal.js'
-export { LiveConnection, LiveQueryClosedError, liveRead, parseLiveRow, parseLiveValue } from './client.js'
+export { LiveConnection, LiveQueryClosedError, liveRead, parseDataAPIRow, parseDataAPIValue, parseLiveRow, parseLiveValue } from './client.js'
 export type {
-  LiveConnectionOptions, LiveQuery, LiveQueryOptions, LiveQueryState, LiveReadOptions, LiveSealedOptions, LiveSocket, LiveStatus,
+  LiveConnectionOptions, LiveQuery, LiveQueryOptions, LiveQueryState, LiveReadOptions, LiveReadRow, LiveSealedOptions, LiveSocket, LiveStatus,
 } from './client.js'
 export { LiveProtocolError, LiveResult, LiveSnapshot, parseLiveServerFrame, LIVE_TYPES } from './protocol.js'
 export type {

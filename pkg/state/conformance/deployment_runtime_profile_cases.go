@@ -13,7 +13,7 @@ import (
 
 func testImageRuntimeProfile(t *testing.T, fx *Fixture) {
 	t.Helper()
-	accepted, err := frameworkprofile.CaptureImageRuntime(nil, &api.ComposeHealthcheck{Test: []string{"NONE"}})
+	accepted, err := frameworkprofile.CaptureImageRuntime(nil, &api.ComposeHealthcheck{Test: []string{"NONE"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

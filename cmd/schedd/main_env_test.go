@@ -66,10 +66,19 @@ func runScheddWithEnv(t *testing.T, env map[string]string) error {
 		listen:      envListenSeam,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- runWithDeps(ctx, discardLog(), deps) }()
-	// Wait for the listener to come up + env blocks to parse.
-	time.Sleep(200 * time.Millisecond)
+	// Every caller passes a bad value, so run returns its parse error on its
+	// own. Wait for that rather than cancelling after a fixed delay: startup
+	// work before the env blocks (repair-rehearsal seeding, #4890) can outlast
+	// any short window on a busy runner, and a cancel that lands first is a
+	// clean drain with no error to assert on.
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(30 * time.Second):
+	}
 	cancel()
 	select {
 	case err := <-done:

@@ -24,6 +24,9 @@ const QueuesAudience = "gregale:queues"
 // DataAPIConnectionsAudience isolates runtime pool reports from other services.
 const DataAPIConnectionsAudience = "gregale:data-api:connections"
 
+// DataAPIUsageAudience isolates runtime usage reports (ADR-20261019102108).
+const DataAPIUsageAudience = "gregale:data-api:usage"
+
 type Verifier struct {
 	keys   jose.JSONWebKeySet
 	issuer string
