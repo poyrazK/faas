@@ -214,6 +214,25 @@ lists approved functions callable without a token. Configure it with
 - **Catalog and logs.** `/openapi.json` keeps the `get` operation only for
   public functions. Diagnostics count `public_rpc_requires_get` separately.
 
+### Generated client parity (2026-10-19)
+
+The Python and Go clients follow the TypeScript SDK's rules:
+
+- **Anonymous access is explicit.** Without `anonymous=True` (Python) or
+  `Anonymous: true` (Go), a client with no token refuses to send a request.
+  Before this change, a client constructed without credentials sent anonymous
+  requests silently. The clients are unpublished, so the behavior changed in
+  place.
+- **GET calls.** GET RPC arguments use PostgREST's query form: scalars as
+  text, arrays as PostgreSQL array literals, objects as JSON. Null arguments
+  are refused, because GET cannot distinguish NULL from the text "null".
+- **Keyset pages.** The keyset algorithm, including NULL placement and
+  reverse traversal for `before`, is the TypeScript `cursorPage` algorithm.
+  A shared smoke test requires both clients to send identical requests.
+- **NULL updates in Go.** Go update structs gain `SetNull` only when the
+  relation has nullable updatable columns. The runtime checks names against
+  that generated set.
+
 ### Anonymous SDK clients
 
 `@gregale/data` gains an explicit `anonymous: true` option. With it,

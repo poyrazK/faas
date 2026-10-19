@@ -26,6 +26,12 @@ closes five product gaps, all opt-in:
   with `429 data_api_monthly_cap_reached` until the next UTC month. The runtime
   reports under workload identity, and report ids keep snapshot restores from
   double counting.
+- **Python and Go client parity.** Generated clients opt in to anonymous
+  access explicitly (`anonymous=True`, `Anonymous: true`), call public RPCs
+  with GET (`get=True`, `WithGET()`) and page with keysets (`page`/`Page`,
+  `cursor_from`/`CursorFrom`). Go updates set columns to NULL with `SetNull`
+  and decode embedded relations with `GetInto`. Aggregate selects keep their
+  types in the TypeScript SDK.
 - **Edge-cached public reads.** `configure --public-read-cache 30s` lets the
   gateway cache serve canonical anonymous reads. Responses are tagged per
   relation so `gregale cache purge --tag data-api:api.products` invalidates

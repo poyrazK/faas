@@ -1360,8 +1360,51 @@ Use `access_token` (Python) or `AccessToken` (Go) to call as an application
 user, or `subject` / `Subject` with a server key to act for one. Updates and
 deletes refuse to run without a filter. The clients never retry writes:
 reconcile an uncertain write before you replay it, as with the TypeScript SDK.
-Go update structs leave `nil` fields unchanged; to set a column to `NULL`, use
-`client.Relation(schema, name)` with a map.
+
+A client without credentials refuses to send requests unless you opt in to
+anonymous access, so a lost session never silently becomes public data. With
+`anonymous=True` (Python) or `Anonymous: true` (Go), requests go out without
+a token whenever the token source returns none (`None` or `""`). Call public
+RPCs with GET:
+
+```python
+visitor = DataClient("https://shop-data.example.com", anonymous=True)
+results = visitor.rpc_search_products({"q": "lamp"}, get=True)
+```
+
+```go
+visitor := &shopdata.Client{BaseURL: "https://shop-data.example.com", Anonymous: true}
+results, err := visitor.RPCSearchProducts(ctx, shopdata.SearchProductsArgs{Q: "lamp"}, shopdata.WithGET())
+```
+
+GET sends arguments in the query string: scalars as text, arrays as
+PostgreSQL array literals and objects as JSON. `None`/`nil` arguments are
+refused; omit them to use the function's defaults.
+
+Both clients page with keysets, like the TypeScript SDK's `cursorPage`. The
+last ordering column must be unique; `page`/`Page` replaces any ordering and
+keeps your filters. With `before`, rows come back nearest-first in reverse
+order:
+
+```python
+order = [{"column": "created_at", "ascending": False}, {"column": "id", "unique": True}]
+first = backend.orders().select("id,created_at,total").page(order, 50).get()
+following = backend.orders().select("id,created_at,total").page(order, 50, after=cursor_from(first[-1], order)).get()
+```
+
+```go
+order := []shopdata.CursorOrder{{Column: "created_at", Descending: true}, {Column: "id", Unique: true}}
+cursor, err := shopdata.CursorFrom(first[len(first)-1], order)
+next, err := client.Orders().Select("id,created_at,total").Page(order, 50, cursor, nil)
+rows, err := next.Get(ctx)
+```
+
+Go update structs leave `nil` fields unchanged. To set nullable columns to
+`NULL`, list them in `SetNull`: `OrdersUpdate{SetNull: []string{"shipped_at"}}`.
+The client refuses columns that are not nullable and updatable. Python
+updates send `None` as `NULL`. To read relations embedded through `Select`,
+decode into your own structs with `GetInto(ctx, &rows)`; Python rows are
+plain dictionaries.
 
 ## Refresh after a migration
 

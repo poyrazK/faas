@@ -98,7 +98,7 @@ func pyIdentifier(value string) string {
 func RenderPython(contract dataapi.Contract) ([]byte, error) {
 	p := &pyRenderer{m: buildModel(contract)}
 	p.b.WriteString(header("#", p.m.Fingerprint))
-	p.printf("from __future__ import annotations\n\nimport json\nimport urllib.error\nimport urllib.parse\nimport urllib.request\nfrom typing import Any, Callable, Dict, Generic, List, Literal, Optional, Sequence, TypedDict, TypeVar, Union\n\n")
+	p.printf("from __future__ import annotations\n\nimport json\nimport math\nimport re\nimport urllib.error\nimport urllib.parse\nimport urllib.request\nfrom typing import Any, Callable, Dict, Generic, List, Literal, Optional, Sequence, Tuple, TypedDict, TypeVar, Union\n\n")
 	p.printf("SCHEMA_FINGERPRINT = %s\n\nJson = Any\n\n", pyString(p.m.Fingerprint))
 	for _, e := range p.m.Enums {
 		quoted := make([]string, len(e.Labels))
@@ -158,7 +158,7 @@ func RenderPython(contract dataapi.Contract) ([]byte, error) {
 			methods.take(pyIdentifier(qualified(p.m.Schemas, t.Schema, t.Name))), t.Base, t.Base, t.Base, t.Schema, t.Name, pyString(t.Schema), pyString(t.Name))
 	}
 	for _, f := range p.m.Functions {
-		p.printf("\n    def %s(self, args: %s) -> %s:\n        \"\"\"Call %s.%s.\"\"\"\n        return self.rpc(%s, args, schema=%s)\n",
+		p.printf("\n    def %s(self, args: %s, *, get: bool = False) -> %s:\n        \"\"\"Call %s.%s; get=True sends GET, as public RPCs require.\"\"\"\n        return self.rpc(%s, args, schema=%s, get=get)\n",
 			methods.take("rpc_"+pyIdentifier(qualified(p.m.Schemas, f.Schema, f.Name))), f.Base, p.pyType(f.Returns), f.Schema, f.Name, pyString(f.Name), pyString(f.Schema))
 	}
 	return []byte(p.b.String()), nil
@@ -190,6 +190,84 @@ def _format(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     return str(value)
+
+
+def _quote(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _array_literal(values: Sequence[Any]) -> str:
+    parts = []
+    for value in values:
+        if value is None:
+            parts.append("NULL")
+        elif isinstance(value, (list, tuple)):
+            parts.append(_array_literal(value))
+        elif isinstance(value, str):
+            parts.append(_quote(value))
+        elif isinstance(value, (bool, int, float)):
+            parts.append(_format(value))
+        else:
+            parts.append(_quote(json.dumps(value)))
+    return "{" + ",".join(parts) + "}"
+
+
+def _query_arg(name: str, value: Any) -> str:
+    """An RPC argument as GET sends it: scalars as text, arrays as PostgreSQL
+    array literals and objects as JSON."""
+    if value is None:
+        raise ValueError(f"GET argument {name!r} cannot be None; omit it to use the default")
+    if isinstance(value, (list, tuple)):
+        return _array_literal(value)
+    if isinstance(value, dict):
+        return json.dumps(value)
+    return _format(value)
+
+
+# One keyset pagination column; the last must be unique (and non-null for the
+# filtered rows). ascending defaults to True and nulls_first to False.
+CursorOrder = TypedDict("CursorOrder", {"column": str, "ascending": bool, "nulls_first": bool, "unique": bool}, total=False)
+
+_column = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _check_order(order: Sequence[CursorOrder]) -> None:
+    if not order or order[-1].get("unique") is not True:
+        raise ValueError("cursor ordering requires a final unique tie-breaker")
+    seen = set()
+    for field in order:
+        column = field.get("column")
+        if not isinstance(column, str) or not _column.fullmatch(column) or column in seen:
+            raise ValueError("cursor columns must be distinct simple column names")
+        seen.add(column)
+
+
+def _cursor_literal(value: Any) -> str:
+    if isinstance(value, str):
+        if any(ord(c) < 32 or ord(c) == 127 for c in value):
+            raise ValueError("cursor strings cannot contain control characters")
+        return _quote(value)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int) or (isinstance(value, float) and math.isfinite(value)):
+        return repr(value)
+    raise ValueError("cursor values must be finite numbers, strings, booleans or None")
+
+
+def cursor_from(row: Any, order: Sequence[CursorOrder]) -> Tuple[Any, ...]:
+    """Read a cursor from a row that selected every ordering column."""
+    _check_order(order)
+    values = []
+    for field in order:
+        if field["column"] not in row:
+            raise ValueError(f"cursor column {field['column']!r} was not selected")
+        value = row[field["column"]]
+        if value is not None:
+            _cursor_literal(value)
+        values.append(value)
+    if values[-1] is None:
+        raise ValueError("cursor tie-breaker must be non-null")
+    return tuple(values)
 
 
 class Table(Generic[R, I, U]):
@@ -242,10 +320,54 @@ class Table(Generic[R, I, U]):
     def in_(self, column: str, values: Sequence[Any]) -> "Table[R, I, U]":
         return self._with(column, "in.(" + ",".join(json.dumps(_format(v)) for v in values) + ")")
 
-    def order(self, column: str, descending: bool = False) -> "Table[R, I, U]":
+    def order(self, column: str, descending: bool = False, nulls_first: Optional[bool] = None) -> "Table[R, I, U]":
         item = f"{column}.{'desc' if descending else 'asc'}"
+        if nulls_first is not None:
+            item += ".nullsfirst" if nulls_first else ".nullslast"
         current = [v for k, v in self._params if k == "order"]
         return self._with("order", ",".join(current + [item]), replace=True)
+
+    def or_(self, filters: str) -> "Table[R, I, U]":
+        """Match any of PostgREST filters, e.g. "status.eq.draft,id.gt.10"."""
+        return self._with("or", "(" + filters + ")")
+
+    def page(self, order: Sequence[CursorOrder], size: int, after: Optional[Sequence[Any]] = None,
+             before: Optional[Sequence[Any]] = None) -> "Table[R, I, U]":
+        """Apply keyset pagination, replacing any ordering. Keep the same filters
+        and order across pages and build cursors with cursor_from. With before,
+        rows come back nearest-first in reverse order; reverse them for display."""
+        if after is not None and before is not None:
+            raise ValueError("use either after or before, not both")
+        _check_order(order)
+        if isinstance(size, bool) or not isinstance(size, int) or size < 1:
+            raise ValueError("cursor page size must be a positive integer")
+        cursor = before if before is not None else after
+        traversal = list(order) if before is None else [
+            {**field, "ascending": not field.get("ascending", True), "nulls_first": not field.get("nulls_first", False)} for field in order]
+        branches: List[str] = []
+        prefix: List[str] = []
+        if cursor is not None:
+            cursor = list(cursor)
+            if len(cursor) != len(order) or cursor[-1] is None:
+                raise ValueError("cursor must hold one value per ordering column and a non-null tie-breaker")
+            for field, value in zip(traversal, cursor):
+                column, nulls_first = field["column"], field.get("nulls_first", False)
+                op = "gt" if field.get("ascending", True) else "lt"
+                if value is None:
+                    following = f"{column}.not.is.null" if nulls_first else None
+                elif nulls_first:
+                    following = f"{column}.{op}.{_cursor_literal(value)}"
+                else:
+                    following = f"or({column}.{op}.{_cursor_literal(value)},{column}.is.null)"
+                if following:
+                    branches.append(f"and({','.join(prefix + [following])})" if prefix else following)
+                prefix.append(f"{column}.is.null" if value is None else f"{column}.eq.{_cursor_literal(value)}")
+        table = Table(self._client, self._schema, self._name, [p for p in self._params if p[0] not in ("order", "or")])
+        for field in traversal:
+            table = table.order(field["column"], descending=not field.get("ascending", True), nulls_first=field.get("nulls_first", False))
+        if cursor is not None:
+            table = table._with("or", "(" + ",".join(branches) + ")")
+        return table.limit(size)
 
     def limit(self, count: int) -> "Table[R, I, U]":
         return self._with("limit", str(int(count)), replace=True)
@@ -284,22 +406,33 @@ class DataClient:
     Pass access_token (a string or a callable returning one) for application
     users, or server_key for trusted backends. Never ship a server key to a
     browser. subject lets a server key act for one user; RLS still applies.
+    anonymous=True sends requests without a token when there is none (the
+    callable may return None), for public reads and GET public RPCs. Without
+    it, a missing token raises before any request, so a lost session never
+    silently becomes anonymous access.
     """
 
-    def __init__(self, base_url: str, *, access_token: Union[str, Callable[[], str], None] = None,
-                 server_key: Optional[str] = None, subject: Optional[str] = None, timeout: float = 20.0) -> None:
+    def __init__(self, base_url: str, *, access_token: Union[str, Callable[[], Optional[str]], None] = None,
+                 server_key: Optional[str] = None, subject: Optional[str] = None, anonymous: bool = False, timeout: float = 20.0) -> None:
+        if server_key and anonymous:
+            raise ValueError("use server_key or anonymous, not both")
         self.base_url = base_url.rstrip("/")
         self.access_token = access_token
         self.server_key = server_key
         self.subject = subject
+        self.anonymous = anonymous
         self.timeout = timeout
 
     def table(self, name: str, schema: str = "api") -> Table[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
         """Query a relation without generated types."""
         return Table(self, schema, name)
 
-    def rpc(self, name: str, args: Optional[Dict[str, Any]] = None, *, schema: str = "api") -> Any:
-        """Call an approved RPC function."""
+    def rpc(self, name: str, args: Optional[Dict[str, Any]] = None, *, schema: str = "api", get: bool = False) -> Any:
+        """Call an approved RPC function. get=True sends GET with arguments in
+        the query string, as public RPCs require; PostgREST runs it read-only."""
+        if get:
+            params = [(key, _query_arg(key, value)) for key, value in (args or {}).items()]
+            return self._request("GET", schema, "/rest/v1/rpc/" + name, params)
         return self._request("POST", schema, "/rest/v1/rpc/" + name, [], args or {})
 
     def _request(self, method: str, schema: str, path: str, params: List[tuple], body: Any = None) -> Any:
@@ -317,9 +450,14 @@ class DataClient:
             headers["Authorization"] = "Bearer " + self.server_key
             if self.subject:
                 headers["X-Gregale-Subject"] = self.subject
-        elif self.access_token is not None:
+        else:
             token = self.access_token() if callable(self.access_token) else self.access_token
-            headers["Authorization"] = "Bearer " + token
+            if token is not None:
+                if not isinstance(token, str) or not token or any(c.isspace() for c in token):
+                    raise ValueError("a valid application access token is required")
+                headers["Authorization"] = "Bearer " + token
+            elif not self.anonymous:
+                raise ValueError("an application access token is required; pass anonymous=True for public reads and RPCs")
         data = None if body is None or method == "GET" else json.dumps(body).encode()
         request = urllib.request.Request(url, data=data, method=method, headers=headers)
         try:
