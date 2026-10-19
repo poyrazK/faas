@@ -15,6 +15,7 @@ import (
 	"net/http/httputil"
 	"net/netip"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1035,6 +1036,10 @@ type Handler struct {
 	// constraint implicitly by being keys in the routing cache — see
 	// WithAppsSuffix docs.
 	appsSuffix string
+	// selectorSuffixes are the platform hostname suffixes under which the
+	// "--" companion and public-port selector applies (WithSelectorSuffixes).
+	// Empty keeps the legacy split on every host.
+	selectorSuffixes []string
 	// egressSink records per-instance HTTP response body bytes for
 	// ADR-046 (per-instance egress metering, telemetry only).
 	// Set via WithEgressSink from cmd/gatewayd-internal/main.go; nil in
@@ -1476,6 +1481,25 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 	// race with parallel ServeHTTP readers — the load test under -race
 	// caught that pattern; see the field doc).
 	h.proxyFor = defaultProxy
+	return h
+}
+
+// WithSelectorSuffixes limits the "--" selector split to hosts under the
+// given platform suffixes (for example ".gregale.dev"). Custom domains then
+// route whole even when they contain "--", as every internationalized domain
+// does. Call before serving.
+func (h *Handler) WithSelectorSuffixes(suffixes ...string) *Handler {
+	h.selectorSuffixes = h.selectorSuffixes[:0]
+	for _, suffix := range suffixes {
+		suffix = strings.ToLower(strings.TrimSpace(suffix))
+		if suffix == "" || slices.Contains(h.selectorSuffixes, suffix) {
+			continue
+		}
+		if suffix[0] != '.' {
+			suffix = "." + suffix
+		}
+		h.selectorSuffixes = append(h.selectorSuffixes, suffix)
+	}
 	return h
 }
 
@@ -5791,7 +5815,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// runs BEFORE the appsSuffix check so the suffix gate
 	// sees the appHost (the inner host), not the full
 	// selector hostname.
-	appHost, sidecarName := SplitHostSelectorWithSuffix(host, h.appsSuffix)
+	appHost, sidecarName := SplitHostSelectorUnder(host, h.appsSuffix, h.selectorSuffixes)
 	// Host allowlist suffix check (spec §4.1 wildcard contract). Closes the
 	// door on stale DNS records that land on the edge post-TLS by rejecting
 	// anything not matching the configured suffix before the cache is touched.

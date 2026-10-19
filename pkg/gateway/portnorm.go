@@ -127,6 +127,24 @@ func SplitHostSelectorWithSuffix(host, appsSuffix string) (appHost, sidecarName 
 // handler always goes through the suffix-aware variant;
 // tests use this for table-driven coverage without
 // carrying the suffix through every case.
+// SplitHostSelectorUnder applies the selector split only to a host under one
+// of platformSuffixes. Selectors are a platform-hostname feature (ADR-069,
+// ADR-176); every other host is a custom domain and routes whole, so an
+// internationalized or hyphenated domain ("xn--bcher-kva.ch") is not split
+// into an app and a selector. An empty platformSuffixes keeps
+// SplitHostSelectorWithSuffix(host, appsSuffix).
+func SplitHostSelectorUnder(host, appsSuffix string, platformSuffixes []string) (appHost, selector string) {
+	if len(platformSuffixes) == 0 {
+		return SplitHostSelectorWithSuffix(host, appsSuffix)
+	}
+	for _, suffix := range platformSuffixes {
+		if suffix != "" && strings.HasSuffix(host, suffix) {
+			return SplitHostSelectorWithSuffix(host, suffix)
+		}
+	}
+	return host, ""
+}
+
 func SplitHostSelector(host string) (string, string) {
 	return SplitHostSelectorWithSuffix(host, "")
 }
