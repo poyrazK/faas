@@ -466,10 +466,14 @@ type MemStore struct {
 	// apiConsumers is keyed by APIConsumer.ID. A separate map keeps the
 	// stable customer identity independent from rotatable credentials.
 	apiConsumers                         map[string]APIConsumer
-	apiConsumerTrials                    map[string]APIConsumerTrial            // ADR-1314
-	apiConsumerMeterUsage                map[string]APIConsumerMeterUsageBucket // ADR-1318
-	apiConsumerBillingPolicies           map[string]APIConsumerBillingPolicy    // ADR-1315, by app
-	apiConsumerOverdueHolds              map[string]APIConsumerOverdueHold      // ADR-1315, by consumer
+	apiConsumerTrials                    map[string]APIConsumerTrial               // ADR-1314
+	apiConsumerMeterUsage                map[string]APIConsumerMeterUsageBucket    // ADR-1318
+	platformTenantMeterUsage             map[string]PlatformTenantMeterUsageBucket // ADR-1319
+	platformTenantTrials                 map[string]PlatformTenantTrial            // ADR-1322, by tenant
+	platformTenantBillingPolicies        map[string]PlatformTenantBillingPolicy    // ADR-1324, by account
+	platformTenantOverdueHolds           map[string]PlatformTenantOverdueHold      // ADR-1324, by tenant
+	apiConsumerBillingPolicies           map[string]APIConsumerBillingPolicy       // ADR-1315, by app
+	apiConsumerOverdueHolds              map[string]APIConsumerOverdueHold         // ADR-1315, by consumer
 	platformTenants                      map[string]PlatformTenant
 	platformTenantReconciliationReceipts map[string]api.PlatformTenantReconciliationReceiptResponse
 	platformTenantOffboardingReceipts    map[string]api.PlatformTenantOffboardingReceiptResponse
@@ -13423,6 +13427,7 @@ func (m *MemStore) CreateTriggerIfUnderQuota(_ context.Context, appID, kind, slu
 		Source:               nullableTriggerSource(source),
 		PayloadMaxBytes:      payloadMaxBytes,
 		BrokerPoisonStrategy: brokerPoisonStrategy,
+		Delivery:             api.TriggerDeliveryRecord,
 		CreatedAt:            pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		UpdatedAt:            pgtype.Timestamptz{Time: time.Now(), Valid: true},
 	}
@@ -15405,6 +15410,52 @@ func (m *MemStore) ListInstancesForApp(_ context.Context, appID string) ([]Insta
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
 	return out, nil
+}
+
+// ListBillingWindowInstances mirrors PgStore.ListBillingWindowInstances.
+// MemStore keeps no lifecycle ledger and does not stamp parked_at on every
+// transition, so it drops only instances it can show were inactive before
+// since: not live, with every recorded timestamp earlier than since.
+func (m *MemStore) ListBillingWindowInstances(_ context.Context, since, _ time.Time) ([]Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Instance
+	for _, ins := range m.instances {
+		if ins.AppID == "" {
+			continue
+		}
+		if IsLive(ins.State) || !memInstanceInactiveBefore(ins, since) {
+			out = append(out, ins)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].AppID != out[j].AppID {
+			return out[i].AppID < out[j].AppID
+		}
+		return out[i].StartedAt.After(out[j].StartedAt)
+	})
+	return out, nil
+}
+
+// memInstanceInactiveBefore reports whether every timestamp recorded on ins
+// is earlier than since. An instance with no timestamp is not provably
+// inactive.
+func memInstanceInactiveBefore(ins Instance, since time.Time) bool {
+	stamps := []time.Time{ins.StartedAt, ins.LastRequestAt, ins.ParkedAt}
+	if ins.TerminalAt != nil {
+		stamps = append(stamps, *ins.TerminalAt)
+	}
+	recorded := false
+	for _, at := range stamps {
+		if at.IsZero() {
+			continue
+		}
+		if !at.Before(since) {
+			return false
+		}
+		recorded = true
+	}
+	return recorded
 }
 
 func (m *MemStore) ListActiveInstancesForApp(_ context.Context, appID string, limit int) ([]Instance, error) {

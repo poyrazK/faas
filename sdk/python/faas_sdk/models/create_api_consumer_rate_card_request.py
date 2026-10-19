@@ -54,6 +54,9 @@ class CreateAPIConsumerRateCardRequest:
     (ADR-1316)."""
     minimum_millicents_per_month: int | Unset = UNSET
     """Minimum usage charge per consumer per UTC month; statements top up the difference (ADR-1316)."""
+    prorate_monthly_fees: bool | Unset = False
+    """Scale the base fee and minimum in a consumer's first month to the share of it left after the consumer was
+    created (ADR-1325)."""
     tier_mode: CreateAPIConsumerRateCardRequestTierMode | Unset = "graduated"
     """How tiers price a consumer's month (ADR-1309): graduated prices each unit at the step its position falls in;
     volume prices every unit of the month at the step the month's total reaches. volume needs tiers."""
@@ -88,6 +91,8 @@ class CreateAPIConsumerRateCardRequest:
         base_fee_millicents_per_month = self.base_fee_millicents_per_month
 
         minimum_millicents_per_month = self.minimum_millicents_per_month
+
+        prorate_monthly_fees = self.prorate_monthly_fees
 
         tier_mode: str | Unset = UNSET
         if not isinstance(self.tier_mode, Unset):
@@ -124,6 +129,8 @@ class CreateAPIConsumerRateCardRequest:
             field_dict["base_fee_millicents_per_month"] = base_fee_millicents_per_month
         if minimum_millicents_per_month is not UNSET:
             field_dict["minimum_millicents_per_month"] = minimum_millicents_per_month
+        if prorate_monthly_fees is not UNSET:
+            field_dict["prorate_monthly_fees"] = prorate_monthly_fees
         if tier_mode is not UNSET:
             field_dict["tier_mode"] = tier_mode
         if effective_from is not UNSET:
@@ -174,6 +181,8 @@ class CreateAPIConsumerRateCardRequest:
 
         minimum_millicents_per_month = d.pop("minimum_millicents_per_month", UNSET)
 
+        prorate_monthly_fees = d.pop("prorate_monthly_fees", UNSET)
+
         _tier_mode = d.pop("tier_mode", UNSET)
         tier_mode: CreateAPIConsumerRateCardRequestTierMode | Unset
         if isinstance(_tier_mode, Unset):
@@ -208,6 +217,7 @@ class CreateAPIConsumerRateCardRequest:
             unit=unit,
             base_fee_millicents_per_month=base_fee_millicents_per_month,
             minimum_millicents_per_month=minimum_millicents_per_month,
+            prorate_monthly_fees=prorate_monthly_fees,
             tier_mode=tier_mode,
             effective_from=effective_from,
         )

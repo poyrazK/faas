@@ -268,3 +268,94 @@ UPDATE managed_realtime_replay_jobs SET started_job_id=sqlc.arg(started_job_id):
 
 -- name: PruneReplayJobsExcept :exec
 DELETE FROM managed_realtime_replay_jobs WHERE group_id=sqlc.arg(group_id)::uuid AND state IN ('completed','cancelled') AND id<>sqlc.arg(keep_id)::uuid AND id NOT IN (SELECT id FROM managed_realtime_replay_jobs WHERE group_id=sqlc.arg(group_id)::uuid AND state IN ('completed','cancelled') AND id<>sqlc.arg(keep_id)::uuid ORDER BY created_at DESC,id LIMIT sqlc.arg(retain_count));
+
+-- name: RecordRealtimeUsage :execrows
+-- Cumulative per-process values only grow, so taking the larger value makes
+-- repeated and out-of-order reports harmless. Unknown endpoints record nothing.
+INSERT INTO realtime_usage_hours AS t (endpoint_id,hour,node_name,incarnation,account_id,app_id,minute_peak_connections,
+ connection_seconds,delivered_messages,delivered_bytes,received_messages,received_bytes,reported_at)
+SELECT e.id,sqlc.arg(hour)::timestamptz,sqlc.arg(node_name)::text,sqlc.arg(incarnation)::uuid,e.account_id,e.app_id,
+ sqlc.arg(minute_peak_connections)::integer[],sqlc.arg(connection_seconds)::bigint,sqlc.arg(delivered_messages)::bigint,
+ sqlc.arg(delivered_bytes)::bigint,sqlc.arg(received_messages)::bigint,sqlc.arg(received_bytes)::bigint,clock_timestamp()
+FROM managed_realtime_endpoints e WHERE e.id=sqlc.arg(endpoint_id)::uuid
+ON CONFLICT (endpoint_id,hour,node_name,incarnation) DO UPDATE SET
+ minute_peak_connections=ARRAY(SELECT greatest(t.minute_peak_connections[g.i],excluded.minute_peak_connections[g.i]) FROM generate_series(1,60) AS g(i) ORDER BY g.i),
+ connection_seconds=greatest(t.connection_seconds,excluded.connection_seconds),
+ delivered_messages=greatest(t.delivered_messages,excluded.delivered_messages),
+ delivered_bytes=greatest(t.delivered_bytes,excluded.delivered_bytes),
+ received_messages=greatest(t.received_messages,excluded.received_messages),
+ received_bytes=greatest(t.received_bytes,excluded.received_bytes),
+ reported_at=excluded.reported_at;
+
+-- name: ReadRealtimeUsageHours :many
+-- Fleet usage per endpoint and hour. The peak is the largest per-minute sum of
+-- node peaks, so connections on different nodes at the same minute add up.
+WITH selected AS (
+ SELECT * FROM realtime_usage_hours WHERE account_id=sqlc.arg(account_id)::uuid
+ AND hour>=sqlc.arg(from_hour)::timestamptz AND hour<sqlc.arg(to_hour)::timestamptz),
+minutes AS (
+ SELECT s.endpoint_id,s.hour,m.i,sum(m.v)::bigint AS connections
+ FROM selected s CROSS JOIN LATERAL unnest(s.minute_peak_connections) WITH ORDINALITY AS m(v,i)
+ GROUP BY s.endpoint_id,s.hour,m.i),
+peaks AS (SELECT endpoint_id,hour,max(connections)::bigint AS peak_connections FROM minutes GROUP BY endpoint_id,hour)
+SELECT s.endpoint_id::text AS endpoint_id,max(s.app_id::text)::text AS app_id,s.hour,p.peak_connections,
+ sum(s.connection_seconds)::bigint AS connection_seconds,sum(s.delivered_messages)::bigint AS delivered_messages,
+ sum(s.delivered_bytes)::bigint AS delivered_bytes,sum(s.received_messages)::bigint AS received_messages,
+ sum(s.received_bytes)::bigint AS received_bytes
+FROM selected s JOIN peaks p ON p.endpoint_id=s.endpoint_id AND p.hour=s.hour
+GROUP BY s.endpoint_id,s.hour,p.peak_connections
+ORDER BY s.hour,s.endpoint_id
+LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: MarkNodeConnectionSync :exec
+INSERT INTO realtime_node_connection_syncs (node_name,synced_at) VALUES (sqlc.arg(node_name)::text,clock_timestamp())
+ON CONFLICT (node_name) DO UPDATE SET synced_at=excluded.synced_at;
+
+-- name: ForgetSilentConnectionNodes :exec
+DELETE FROM realtime_node_connection_syncs WHERE synced_at<clock_timestamp()-make_interval(secs=>sqlc.arg(silent_seconds)::double precision);
+
+-- name: ClearNodeConnectionsExcept :exec
+DELETE FROM realtime_node_connections WHERE node_name=sqlc.arg(node_name)::text AND NOT (account_id=ANY(sqlc.arg(account_ids)::uuid[]));
+
+-- name: UpsertNodeConnections :exec
+-- Writes only the counts that changed since the node's previous sync.
+INSERT INTO realtime_node_connections AS t (node_name,account_id,connections)
+SELECT sqlc.arg(node_name)::text,(sqlc.arg(account_ids)::uuid[])[g.i],(sqlc.arg(counts)::integer[])[g.i]
+FROM generate_subscripts(sqlc.arg(account_ids)::uuid[],1) AS g(i)
+ON CONFLICT (node_name,account_id) DO UPDATE SET connections=excluded.connections
+WHERE t.connections<>excluded.connections;
+
+-- name: ReadRemoteNodeConnections :many
+-- Other nodes' fresh counts, largest accounts first.
+SELECT c.account_id::text AS account_id,sum(c.connections)::bigint AS connections
+FROM realtime_node_connections c JOIN realtime_node_connection_syncs s ON s.node_name=c.node_name
+WHERE c.node_name<>sqlc.arg(node_name)::text
+ AND s.synced_at>clock_timestamp()-make_interval(secs=>sqlc.arg(stale_seconds)::double precision)
+GROUP BY c.account_id ORDER BY sum(c.connections) DESC,c.account_id
+LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: ReadAccountOpenConnections :one
+-- An account's open connections across nodes with a fresh sync (ADR-1323).
+SELECT coalesce(sum(c.connections),0)::bigint AS connections
+FROM realtime_node_connections c JOIN realtime_node_connection_syncs s ON s.node_name=c.node_name
+WHERE c.account_id=sqlc.arg(account_id)::uuid
+ AND s.synced_at>clock_timestamp()-make_interval(secs=>sqlc.arg(stale_seconds)::double precision);
+
+-- name: ReadRealtimeAccountUsageHours :many
+-- Account usage per hour across all endpoints and nodes. The peak is the
+-- largest per-minute sum, so it never double-counts across endpoints.
+WITH selected AS (
+ SELECT * FROM realtime_usage_hours WHERE account_id=sqlc.arg(account_id)::uuid
+ AND hour>=sqlc.arg(from_hour)::timestamptz AND hour<sqlc.arg(to_hour)::timestamptz),
+minutes AS (
+ SELECT s.hour,m.i,sum(m.v)::bigint AS connections
+ FROM selected s CROSS JOIN LATERAL unnest(s.minute_peak_connections) WITH ORDINALITY AS m(v,i)
+ GROUP BY s.hour,m.i),
+peaks AS (SELECT hour,max(connections)::bigint AS peak_connections FROM minutes GROUP BY hour)
+SELECT s.hour,p.peak_connections,
+ sum(s.connection_seconds)::bigint AS connection_seconds,sum(s.delivered_messages)::bigint AS delivered_messages,
+ sum(s.delivered_bytes)::bigint AS delivered_bytes,sum(s.received_messages)::bigint AS received_messages,
+ sum(s.received_bytes)::bigint AS received_bytes
+FROM selected s JOIN peaks p ON p.hour=s.hour
+GROUP BY s.hour,p.peak_connections
+ORDER BY s.hour;

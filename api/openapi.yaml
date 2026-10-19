@@ -13634,6 +13634,128 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
 
+  /v1/account/platform-tenants/{id}/trial:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Tenant whose free trial is read or changed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantTrial
+      summary: Read a tenant's free trial (ADR-1322).
+      responses:
+        '200':
+          description: The tenant's trial.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantTrialResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [platform-tenants]
+      operationId: putPlatformTenantTrial
+      summary: Start a tenant's one free trial, or move the end of a running one.
+      description: |
+        The tenant's usage in the trial is priced at zero and consumes no
+        included units, and a month that starts during it has no base fee or
+        minimum. A new trial starts at the next UTC minute; a running trial's
+        end can move, never before the next minute. A tenant whose trial has
+        ended cannot get another (409).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutAPIConsumerTrialRequest' }
+      responses:
+        '200':
+          description: The tenant's stored trial.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantTrialResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: Invalid tenant trial length or end.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [platform-tenants]
+      operationId: endPlatformTenantTrial
+      summary: End a tenant's running trial at the next minute.
+      responses:
+        '204': { description: "The tenant's trial ends at the next minute, or was removed before it started." }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/account/platform-tenant-billing-policy:
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantBillingPolicy
+      summary: Read the account's overdue-invoice rule for tenants (ADR-1324).
+      responses:
+        '200':
+          description: The account's tenant overdue rule.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantBillingPolicyResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [platform-tenants]
+      operationId: putPlatformTenantBillingPolicy
+      summary: Refuse tenants whose exported invoice is unpaid some days after its due date.
+      description: |
+        Every 5 minutes apid places a hold on each tenant whose exported
+        invoice is open or uncollectible with an amount left at least
+        block_overdue_after_days past its due date, and lifts holds that no
+        longer apply. The gateway answers every request of a held tenant
+        (its consumers, surfaces and JWT rules) with 402
+        `tenant_invoice_overdue`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutAPIConsumerBillingPolicyRequest' }
+      responses:
+        '200':
+          description: The account's stored tenant rule.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantBillingPolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422':
+          description: block_overdue_after_days is outside 0 to 365.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [platform-tenants]
+      operationId: deletePlatformTenantBillingPolicy
+      summary: Remove the account's tenant overdue rule; holds lift at the next check.
+      responses:
+        '204': { description: The account's tenant overdue rule was removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/account/platform-tenant-overdue-holds:
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantOverdueHolds
+      summary: List the tenants the gateway refuses because of an overdue invoice.
+      responses:
+        '200':
+          description: The account's held tenants, oldest due date first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantOverdueHoldListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /v1/account/platform-tenant-plans:
     get:
       tags: [platform-tenants]
@@ -38216,6 +38338,46 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/realtime/endpoints/{id}/occupancy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - name: channel
+        in: query
+        required: true
+        style: form
+        explode: true
+        schema:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items: { type: string, minLength: 1, maxLength: 256, pattern: '^[^/?#\\r\\n ]+$' }
+        description: Channel to count; repeat the parameter for up to 20 channels.
+    get:
+      tags: [realtime]
+      operationId: getManagedRealtimeOccupancy
+      summary: Count a managed realtime channel's subscribers and presence members.
+      description: |
+        Returns fleet-wide counts for each requested channel (ADR-1324).
+        `subscribers` counts every open subscription: WebSocket, read-only
+        ticket and SSE. `presence_members` counts distinct presence members;
+        a principal-scoped member with several connections counts once.
+        Counts are a point-in-time snapshot. `partial` is true when one or
+        more active realtime nodes could not be asked; the counts then cover
+        the nodes that answered.
+      responses:
+        '200':
+          description: Channel occupancy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeOccupancyResponse' }
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -38348,6 +38510,82 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RealtimeTicketResponse'
+    delete:
+      operationId: revokeRealtimeSubscriptionTickets
+      tags:
+        - realtime
+      summary: Revoke every live subscription ticket of one principal
+      description: Operator preview. Backend-only app-scoped write with MFA, for example at logout. Connections using a revoked ticket close within about a second, when they next re-read their ticket. Expired tickets are not counted.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Application slug owning the endpoint whose principal tickets are revoked.
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Realtime endpoint whose principal tickets are revoked.
+        - name: principal
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+          description: Principal whose tickets are revoked.
+      responses:
+        '200':
+          description: Number of live tickets revoked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeTicketsRevokeResponse'
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/realtime/endpoints/{id}/tickets/{ticket}:
+    delete:
+      operationId: revokeRealtimeSubscriptionTicket
+      tags:
+        - realtime
+      summary: Revoke one subscription ticket
+      description: Operator preview. Backend-only app-scoped write with MFA. Uses the ticket_id returned when the ticket was issued, so the backend never needs to keep the bearer token. Connections using the ticket close within about a second.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Application slug owning the endpoint of the revoked ticket.
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Realtime endpoint that issued the revoked ticket.
+        - name: ticket
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ticket_id returned when the ticket was issued.
+      responses:
+        '204':
+          description: Ticket revoked.
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -48964,6 +49202,33 @@ paths:
               example: {"items":[{"app_id":"0123456789abcdef0123456789abcdef","day":"2026-07-29","snapshot_bytes":130000000,"layer_bytes":256000000}]}
         '400':
           description: Missing or malformed `day` query parameter on the storage rollup surface.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/usage/realtime:
+    get:
+      tags: [usage]
+      operationId: getRealtimeUsage
+      summary: Realtime connections against the plan's fair-use limit, and recorded usage per hour.
+      description: Realtime is free (ADR-1323). open_connections counts connections on realtime nodes that reported in the last 30 seconds. Hourly usage appears only when the operator records realtime usage; the peak is the most connections open at once in any minute of the hour.
+      parameters:
+        - name: hours
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 744, default: 24 }
+          description: How many most recent UTC hours of usage to return, including the current one.
+      responses:
+        '200':
+          description: Open connections, the plan limit, and hourly usage for the account and each endpoint.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeUsageResponse'
+        '400':
+          description: The hours query parameter is not a whole number from 1 to 744.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -66089,6 +66354,10 @@ components:
           type: boolean
         capacity_blocked:
           type: boolean
+        trigger_id:
+          type: string
+          format: uuid
+          description: "Realtime trigger consuming this group (ADR-1322). Absent when workers consume it directly."
         lease_seconds:
           type: integer
         max_attempts:
@@ -66500,15 +66769,69 @@ components:
       type: object
       required:
         - ticket
+        - ticket_id
         - expires_at
       properties:
         ticket:
           type: string
           description: Opaque bearer credential returned once; store only in client memory.
+        ticket_id:
+          type: string
+          format: uuid
+          description: Identifies the ticket for revocation; safe to log and store.
         expires_at:
           type: string
           format: date-time
       description: Realtime Ticket Response.
+    RealtimeUsageHour:
+      type: object
+      required: [hour, peak_connections, connection_seconds, delivered_messages, delivered_bytes, received_messages, received_bytes]
+      properties:
+        hour: { type: string, format: date-time, description: Start of the UTC hour. }
+        peak_connections: { type: integer, format: int64, minimum: 0, description: Most connections open at once in any minute of the hour. }
+        connection_seconds: { type: integer, format: int64, minimum: 0, description: Connections held multiplied by seconds. }
+        delivered_messages: { type: integer, format: int64, minimum: 0, description: Messages sent to clients, one per recipient. }
+        delivered_bytes: { type: integer, format: int64, minimum: 0, description: Bytes of delivered messages. }
+        received_messages: { type: integer, format: int64, minimum: 0, description: Client messages forwarded to the app. }
+        received_bytes: { type: integer, format: int64, minimum: 0, description: Bytes of received client messages. }
+      description: Realtime usage in one UTC hour.
+    RealtimeEndpointUsageHour:
+      allOf:
+        - $ref: '#/components/schemas/RealtimeUsageHour'
+        - type: object
+          required: [endpoint_id, app_id]
+          properties:
+            endpoint_id: { type: string, description: Realtime endpoint. }
+            app_id: { type: string, description: App that owns the endpoint. }
+      description: One endpoint's realtime usage in one UTC hour.
+    RealtimeUsageResponse:
+      type: object
+      required: [plan, connection_limit, open_connections, from, to, hours, endpoints]
+      properties:
+        plan: { type: string, description: The account's plan. }
+        connection_limit: { type: integer, minimum: 0, description: Concurrent connections the plan allows per account; zero when the plan has no realtime. }
+        open_connections: { type: integer, format: int64, minimum: 0, description: Connections open now on nodes that reported in the last 30 seconds. }
+        from: { type: string, format: date-time, description: Start of the first hour returned. }
+        to: { type: string, format: date-time, description: End of the last hour returned (exclusive). }
+        hours:
+          type: array
+          items: { $ref: '#/components/schemas/RealtimeUsageHour' }
+          description: Account usage per hour, oldest first.
+        endpoints:
+          type: array
+          items: { $ref: '#/components/schemas/RealtimeEndpointUsageHour' }
+          description: Usage per endpoint and hour, oldest first.
+      description: An account's realtime usage against its fair-use limits.
+    RealtimeTicketsRevokeResponse:
+      type: object
+      required:
+        - revoked
+      properties:
+        revoked:
+          type: integer
+          minimum: 0
+          description: Live tickets revoked.
+      description: Result of revoking a principal's subscription tickets.
     RealtimeChannelWebhookFilter:
       type: object
       additionalProperties: false
@@ -81804,9 +82127,12 @@ components:
           maxProperties: 50
           description: "Counts each request on a listed \"METHOD /template\" route as that many units (1..1000, at most 50 routes; ADR-1307), including surface and JWT-rule requests (ADR-1310). Unlisted routes count 1. Statements for periods it prices must cover one calendar month."
           additionalProperties: { type: integer, format: int64, minimum: 1, maximum: 1000 }
-        effective_from: { type: [string, "null"], format: date-time, description: "UTC minute at which the version starts; omitted means the next UTC minute. Cannot be in the past once any tenant card has included units, tiers, route weights, or a compute or response-size unit." }
-        unit: { type: string, enum: [request, compute_second, response_megabyte], default: request, description: "What the card prices (ADR-1310): requests, or the compute seconds or response megabytes of billable requests, rounded per subject minute. Compute and response-size cards take no route weights, are month-priced, cannot be backdated, and a change of unit starts on the 1st of a month at 00:00 UTC." }
+        effective_from: { type: [string, "null"], format: date-time, description: "UTC minute at which the version starts; omitted means the next UTC minute. Cannot be in the past once any tenant card has included units, tiers, route weights, monthly fees, or a unit other than requests." }
+        unit: { type: string, pattern: '^(request|compute_second|response_megabyte|app:[a-z][a-z0-9_]{0,31})$', default: request, description: "What the card prices (ADR-1310, ADR-1319): requests; the compute seconds or response megabytes of billable requests, rounded per subject minute; or app:<meter>, the units the app reports in its Gregale-Usage header. Cards of different units price side by side; non-request cards take no route weights, are month-priced and cannot be backdated." }
         tier_mode: { type: string, enum: [graduated, volume], default: graduated, description: "How the tenant ladder prices a month (ADR-1309): graduated by each unit's position, or volume, every unit of the month at the step the tenant's total reaches. volume needs tiers." }
+        base_fee_millicents_per_month: { type: integer, format: int64, minimum: 0, description: "Fixed charge per tenant per UTC month while this card is in force when the tenant's month starts (ADR-1322). Statements for periods it prices must cover one calendar month." }
+        minimum_millicents_per_month: { type: integer, format: int64, minimum: 0, description: "Minimum usage charge per tenant per UTC month for this card's unit; statements top up the difference (ADR-1322)." }
+        prorate_monthly_fees: { type: boolean, default: false, description: "Scale the base fee and minimum in the tenant's first month to the share of it left after the tenant was created (ADR-1325)." }
 
     PlatformTenantRateCardResponse:
       description: Immutable, versioned customer price shared across every app attributed to one platform tenant.
@@ -81816,7 +82142,10 @@ components:
         id: { type: string, format: uuid }
         tenant_id: { type: string, format: uuid }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
-        unit: { type: string, enum: [request, compute_second, response_megabyte], description: "What the tenant card prices (ADR-1310)." }
+        unit: { type: string, pattern: '^(request|compute_second|response_megabyte|app:[a-z][a-z0-9_]{0,31})$', description: "What the tenant card prices (ADR-1310, ADR-1319)." }
+        base_fee_millicents_per_month: { type: integer, format: int64, minimum: 0, description: "The card's fixed monthly charge per tenant (ADR-1322)." }
+        minimum_millicents_per_month: { type: integer, format: int64, minimum: 0, description: "The card's minimum monthly usage charge per tenant (ADR-1322)." }
+        prorate_monthly_fees: { type: boolean, description: "Whether the first month's fees are prorated (ADR-1325)." }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
         included_units_per_month: { type: integer, format: int64, minimum: 0, description: "Free units per tenant per UTC calendar month (ADR-975)." }
         tiers:
@@ -81857,7 +82186,10 @@ components:
           maxProperties: 50
           additionalProperties: { type: integer, format: int64, minimum: 1, maximum: 1000 }
         request_budget: { $ref: '#/components/schemas/PlatformTenantPlanBudget' }
-        unit: { type: string, enum: [request, compute_second, response_megabyte], default: request, description: "What the card a plan assignment creates prices (ADR-1310). Assigning a plan whose unit differs from the tenant's current card starts its card at the next UTC month boundary." }
+        unit: { type: string, pattern: '^(request|compute_second|response_megabyte|app:[a-z][a-z0-9_]{0,31})$', default: request, description: "What the card a plan assignment creates prices (ADR-1310, ADR-1319). Assigning a plan also starts a free card for each other unit the tenant is charged for, so the plan is the tenant's whole price." }
+        base_fee_millicents_per_month: { type: integer, format: int64, minimum: 0, description: "Fixed monthly charge per tenant the plan's card sets (ADR-1322)." }
+        minimum_millicents_per_month: { type: integer, format: int64, minimum: 0, description: "Minimum monthly usage charge per tenant the plan's card sets (ADR-1322)." }
+        prorate_monthly_fees: { type: boolean, default: false, description: "Prorate the first month's fees (ADR-1325)." }
         tier_mode: { type: string, enum: [graduated, volume], default: graduated, description: "How the plan's ladder prices a tenant's month (ADR-1309); volume needs tiers." }
 
     PlatformTenantPlanResponse:
@@ -81877,7 +82209,10 @@ components:
           type: object
           additionalProperties: { type: integer, format: int64, minimum: 1 }
         request_budget: { $ref: '#/components/schemas/PlatformTenantPlanBudget' }
-        unit: { type: string, enum: [request, compute_second, response_megabyte], description: "What the plan's card prices (ADR-1310)." }
+        unit: { type: string, pattern: '^(request|compute_second|response_megabyte|app:[a-z][a-z0-9_]{0,31})$', description: "What the plan's card prices (ADR-1310, ADR-1319)." }
+        base_fee_millicents_per_month: { type: integer, format: int64, minimum: 0 }
+        minimum_millicents_per_month: { type: integer, format: int64, minimum: 0 }
+        prorate_monthly_fees: { type: boolean }
         tier_mode: { type: string, enum: [graduated, volume], description: "How the plan's ladder prices a month (ADR-1309)." }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -82170,6 +82505,11 @@ components:
         lines:
           type: array
           items: { $ref: '#/components/schemas/PlatformTenantStatementLineResponse' }
+        fees:
+          type: array
+          maxItems: 64
+          description: "Monthly base fees and minimum top-ups this revision bills (ADR-1322); amount_millicents includes them. A revision can bill fees without lines for a tenant without usage."
+          items: { $ref: '#/components/schemas/APIConsumerStatementFeeResponse' }
         as_of: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
         finalized_at: { type: string, format: date-time }
@@ -82411,6 +82751,7 @@ components:
         unit: { type: string, pattern: '^(request|compute_second|response_megabyte|app:[a-z][a-z0-9_]{0,31})$', default: request, description: "What the card prices (ADR-1308, ADR-1318): requests; compute_second or response_megabyte, rounded per consumer minute; or app:<meter>, the units the app reports in its Gregale-Usage header. Cards of different units price side by side (ADR-1317); non-request cards take no route weights and cannot be backdated." }
         base_fee_millicents_per_month: { type: integer, format: int64, minimum: 0, description: "Fixed charge per consumer per UTC month while this card is in force when the consumer's month starts (ADR-1316)." }
         minimum_millicents_per_month: { type: integer, format: int64, minimum: 0, description: "Minimum usage charge per consumer per UTC month; statements top up the difference (ADR-1316)." }
+        prorate_monthly_fees: { type: boolean, default: false, description: "Scale the base fee and minimum in a consumer's first month to the share of it left after the consumer was created (ADR-1325)." }
         tier_mode: { type: string, enum: [graduated, volume], default: graduated, description: "How tiers price a consumer's month (ADR-1309): graduated prices each unit at the step its position falls in; volume prices every unit of the month at the step the month's total reaches. volume needs tiers." }
         effective_from: { type: [string, "null"], format: date-time, description: "UTC minute at which this version starts; omitted means the next UTC minute." }
 
@@ -82513,6 +82854,7 @@ components:
         unit: { type: string, pattern: '^(request|compute_second|response_megabyte|app:[a-z][a-z0-9_]{0,31})$', description: "What the card prices (ADR-1308, ADR-1318): billable requests, their compute seconds or response megabytes, or the units of an app meter." }
         base_fee_millicents_per_month: { type: integer, format: int64, minimum: 0, description: "The card's fixed monthly charge per consumer (ADR-1316)." }
         minimum_millicents_per_month: { type: integer, format: int64, minimum: 0, description: "The card's minimum monthly usage charge per consumer (ADR-1316)." }
+        prorate_monthly_fees: { type: boolean, description: "Whether a consumer's first-month fees are prorated (ADR-1325)." }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
         included_units_per_month: { type: integer, format: int64, minimum: 0 }
         tiers:
@@ -82735,6 +83077,39 @@ components:
         app_id: { type: string, format: uuid }
         block_overdue_after_days: { type: integer, minimum: 0, maximum: 365 }
         updated_at: { type: string, format: date-time }
+    PlatformTenantTrialResponse:
+      description: "A platform tenant's free trial: its usage in [starts_at, ends_at) is priced at zero (ADR-1322)."
+      type: object
+      required: [tenant_id, starts_at, ends_at, active]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        active: { type: boolean, description: "False once the tenant's trial has ended." }
+    PlatformTenantBillingPolicyResponse:
+      description: "The account's stored overdue-invoice rule for platform tenants (ADR-1324)."
+      type: object
+      required: [block_overdue_after_days, updated_at]
+      properties:
+        block_overdue_after_days: { type: integer, minimum: 0, maximum: 365 }
+        updated_at: { type: string, format: date-time }
+    PlatformTenantOverdueHoldResponse:
+      description: "A platform tenant the gateway refuses because of an overdue invoice."
+      type: object
+      required: [tenant_id, export_id, due_at, since]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        export_id: { type: string, format: uuid, description: "The oldest overdue invoice export holding the tenant." }
+        due_at: { type: string, format: date-time }
+        since: { type: string, format: date-time, description: "When the hold was placed." }
+    PlatformTenantOverdueHoldListResponse:
+      description: "Platform tenants on hold for overdue invoices, oldest due date first."
+      type: object
+      required: [holds]
+      properties:
+        holds:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantOverdueHoldResponse' }
 
     APIConsumerOverdueHoldResponse:
       description: "A consumer the gateway refuses because of its oldest overdue invoice."
@@ -96696,10 +97071,30 @@ components:
     # same batch / filter / retry / ReportBatchItemFailures machinery;
     # cron retains its pre-existing (schedule, path) shape.
 
+    RealtimeTriggerConfig:
+      description: |
+        Config of a `kind: realtime` trigger (ADR-1322). Each message of the bound consumer group is delivered as one
+        invocation. The group must already exist in the caller's account with `lease_seconds` of at least 120, and binds
+        to at most one trigger; while bound, direct claims and settlements return 409 `realtime_group_bound_to_trigger`.
+        The group's ordering, filters, retry policy and dead-letter queue govern delivery. The binding is immutable;
+        only `max_concurrency` can change.
+      type: object
+      additionalProperties: false
+      required: [endpoint_id, channel, group]
+      properties:
+        endpoint_id: { type: string, format: uuid }
+        channel: { type: string, minLength: 1, maxLength: 256 }
+        group: { type: string, minLength: 1, maxLength: 128 }
+        max_concurrency:
+          type: integer
+          minimum: 0
+          maximum: 32
+          description: "Parallel invocations; 0 means 1. Also capped by the plan's concurrency."
+
     TriggerKind:
       description: "Discriminator for the underlying event source."
       type: string
-      enum: [cron, kafka, nats, redis_streams, sqs_compat, queue]
+      enum: [cron, kafka, nats, redis_streams, sqs_compat, queue, realtime]
 
     Trigger:
       description: |
@@ -96750,6 +97145,10 @@ components:
           minimum: 1
           maximum: 25
           description: "Omitted create values use min(5, the account plan cap)."
+        delivery:
+          type: string
+          enum: [record, batch]
+          description: "record invokes the function once per record; batch invokes it once per dispatch batch with every record (ADR-1321)."
         retry_policy:
           allOf:
             - $ref: '#/components/schemas/RetryPolicyDTO'
@@ -96832,10 +97231,18 @@ components:
         config:
           type: object
           additionalProperties: true
-          description: "Per-kind opaque config blob. Kafka password and client_key leaves are plaintext-on-write and sealed before persistence."
+          description: |
+            Per-kind opaque config blob. Kafka password and client_key leaves are plaintext-on-write and sealed before persistence.
+            For `kind: realtime` (ADR-1322) the shape is `RealtimeTriggerConfig`; `batch_window_ms`, `max_attempts`,
+            `retry_policy`, `broker_poison_strategy` and `filter_criteria` are rejected because the bound consumer group owns them,
+            and `batch_size_max` may only be 1.
         batch_size_max: { type: [integer, "null"], minimum: 1, maximum: 5000 }
         batch_window_ms: { type: [integer, "null"], minimum: 10, maximum: 600000 }
         max_attempts: { type: [integer, "null"], minimum: 1, maximum: 25 }
+        delivery:
+          type: string
+          enum: [record, batch]
+          description: "Defaults to record. batch delivers every claimed record in one invocation; not available for cron or queue triggers (ADR-1321)."
         retry_policy:
           allOf:
             - $ref: '#/components/schemas/RetryPolicyDTO'
@@ -96874,6 +97281,10 @@ components:
         batch_size_max: { type: [integer, "null"], minimum: 1, maximum: 5000 }
         batch_window_ms: { type: [integer, "null"], minimum: 10, maximum: 600000 }
         max_attempts: { type: [integer, "null"], minimum: 1, maximum: 25 }
+        delivery:
+          type: string
+          enum: [record, batch]
+          description: "Switch between record and batch delivery; not available for cron or queue triggers (ADR-1321)."
         retry_policy:
           allOf:
             - $ref: '#/components/schemas/RetryPolicyDTO'
@@ -110030,6 +110441,11 @@ components:
         lines:
           type: array
           items: { $ref: '#/components/schemas/PlatformTenantStatementLineResponse' }
+        fees:
+          type: array
+          maxItems: 64
+          description: "The revision's monthly base fees and minimum top-ups (ADR-1322), included in amount_millicents."
+          items: { $ref: '#/components/schemas/APIConsumerStatementFeeResponse' }
         as_of: { type: string, format: date-time }
         finalized_at: { type: string, format: date-time }
       additionalProperties: false
@@ -110821,6 +111237,27 @@ components:
         truncated: { type: boolean }
         next_cursor: { type: string, maxLength: 2048, description: Opaque cursor for the next page when truncated is true. }
         partial: { type: boolean, description: True when one or more active realtime nodes did not answer. }
+        nodes_queried: { type: integer, minimum: 0 }
+        nodes_unavailable: { type: integer, minimum: 0 }
+
+    ManagedRealtimeChannelOccupancy:
+      type: object
+      description: Fleet-wide subscription and presence counts for one channel.
+      required: [channel, subscribers, presence_members]
+      properties:
+        channel: { type: string, minLength: 1, maxLength: 256 }
+        subscribers: { type: integer, minimum: 0, description: Open subscriptions on every transport (WebSocket, read-only ticket, SSE). }
+        presence_members: { type: integer, minimum: 0, description: Distinct presence members; a principal-scoped member counts once. }
+
+    ManagedRealtimeOccupancyResponse:
+      type: object
+      description: Point-in-time channel occupancy across the realtime fleet.
+      required: [channels, partial, nodes_queried, nodes_unavailable]
+      properties:
+        channels:
+          type: array
+          items: { $ref: '#/components/schemas/ManagedRealtimeChannelOccupancy' }
+        partial: { type: boolean, description: True when some active realtime nodes did not answer and counts may be low. }
         nodes_queried: { type: integer, minimum: 0 }
         nodes_unavailable: { type: integer, minimum: 0 }
 

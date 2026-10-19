@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Tenant egress denies the NAT64 prefixes](20261018194214-tenant-egress-deny-nat64.md)
 - [ADR-1745: Shared-window compound Issues alerts](1745-shared-window-issue-compound-alerts.md)
 - [ADR-1744: Offline grouping previews and reviewed regression baselines](1744-issue-grouping-previews-and-baselines.md)
 - [ADR-1743: Publish final Node build source maps with build completion](1743-builder-issue-source-map-publication.md)
@@ -313,6 +314,11 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1316 | [Monthly base fee and minimum spend](1316-monthly-base-fee-and-minimum-spend.md) | accepted | App cards charge a base fee and a minimum per consumer month; statements carry fee lines and billing runs include idle consumers |
 | 1317 | [Several units priced at once](1317-parallel-unit-price-streams.md) | accepted | App cards of different units are parallel price histories; statement buckets and coverage are keyed by minute and unit |
 | 1318 | [App-reported usage units](1318-app-reported-usage-units.md) | accepted | Apps report units in a Gregale-Usage header or trailer; apid keeps them per consumer, meter and minute, and app:<meter> cards price them |
+| 1319 | [Customer-wide cards price several units, including app-reported ones](1319-platform-tenant-unit-streams-and-app-units.md) | accepted | Platform tenant cards of different units are parallel streams across every subject; tenant surfaces and JWT rules record app-reported units; assigning a plan stops other units |
+| 1322 | [Monthly fees and free trials for platform tenants](1322-platform-tenant-fees-and-trials.md) | accepted | Tenant cards and plans charge a base fee and minimum per tenant month; tenant statements and webhooks carry fees; tenants get one free trial |
+| 1324 | [Block platform tenants with overdue invoices](1324-block-tenants-with-overdue-invoices.md) | accepted | An account rule holds tenants whose exported invoice is unpaid past its due date; tenant admission answers 402 tenant_invoice_overdue |
+| 1325 | [Prorated monthly fees in the first month](1325-prorated-monthly-fees.md) | accepted | App and tenant cards can prorate the base fee and minimum of the month a consumer or tenant is created, by minutes left |
+| 20261018090210 | [API monetization behind a release flag](20261018090210-api-monetization-release-flag.md) | accepted | Runtime setting `api_monetization_enabled` (default off) hides its routes before auth, spec paths, CLI verbs, webhook events and starter billing, and pauses its workers and gateway enforcement |
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
 | 712 | [Object-storage durable entities](712-object-storage-durable-entities.md) | internal prototype; qualification pending | SQL-free entity state and retry receipts, opt-in alarms and checkpointed cleanup |
 | 1446 | [Safe releases by default](1446-safe-releases-by-default.md) | accepted; n2 drills passed | Default balanced canary and 5xx rollback for production releases, bounded low-traffic hold, crash-loop gate, unfenced plain rollback, verified rollback outcomes |
@@ -1193,6 +1199,10 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1115: HTTP SSE subscriptions for retained realtime channels](1115-realtime-sse-subscriptions.md)
 - [ADR-1116: Transactional retained-channel webhooks](1116-realtime-channel-webhooks.md)
 - [ADR-1117: Short-lived channel subscription tickets](1117-realtime-subscription-tickets.md)
+- [ADR-1322: Realtime channels as function triggers](1322-realtime-channel-function-triggers.md)
+- [ADR-1323: Realtime is free, with fair-use limits](1323-realtime-usage-metering-and-plan-limits.md)
+- [ADR-1324: Realtime channel occupancy](1324-realtime-channel-occupancy.md)
+- [ADR-1321: Batched trigger delivery](1321-batched-trigger-delivery.md)
 - [ADR-1027: Receive-only SDK transport fallback](1027-realtime-transport-fallback.md)
 - [ADR-1028: Realtime event inspector](1028-realtime-event-inspector.md)
 - [ADR 1029: Backend-visible channel processing acknowledgements](1029-realtime-processing-acknowledgement-status.md)

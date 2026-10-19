@@ -77,6 +77,7 @@ type consumerFlags struct {
 	endsAt                               string
 	blockOverdueAfterDays                int
 	baseFeeMillicents, minimumMillicents int64
+	prorateMonthlyFees                   bool
 	tiers                                multiFlag
 	weights                              multiFlag
 	plan                                 string
@@ -92,7 +93,7 @@ var consumerVerbFlags = map[string][]string{
 	"usage":              {"since", "until"},
 	"quote":              {"since", "until"},
 	"completeness":       {"period-start", "period-end", "month"},
-	"rate-card-create":   {"currency", "price-millicents", "included-units", "tier", "weight", "plan", "effective-from", "unit", "tier-mode", "base-fee-millicents", "minimum-millicents"},
+	"rate-card-create":   {"currency", "price-millicents", "included-units", "tier", "weight", "plan", "effective-from", "unit", "tier-mode", "base-fee-millicents", "minimum-millicents", "prorate-monthly-fees"},
 	"plan-create":        {"name", "max-requests-per-minute", "max-units-per-month", "alert-at"},
 	"plan-update":        {"plan", "max-requests-per-minute", "max-units-per-month", "alert-at"},
 	"set-plan":           {"plan", "effective-from"},
@@ -107,13 +108,13 @@ var consumerVerbFlags = map[string][]string{
 // identities, keys, usage, rate cards, and usage statements.
 func cmdConsumers(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(osStderr, consumersUsage, "consumers")
+		PrintUsage(osStderr, releasedUsage("consumers", consumersUsage), "consumers")
 		return 1
 	}
 	verb := args[0]
 	positionals, ok := consumerVerbPositionals[verb]
-	if !ok {
-		PrintUsage(osStderr, consumersUsage, "consumers")
+	if !ok || hiddenMonetizationVerb("consumers", verb) {
+		PrintUsage(osStderr, releasedUsage("consumers", consumersUsage), "consumers")
 		return 1
 	}
 	fs := newFlagSet("consumers "+verb, flag.ContinueOnError)
@@ -122,6 +123,27 @@ func cmdConsumers(args []string) int {
 	fs.StringVar(&f.name, "name", "", "consumer or key display name")
 	fs.StringVar(&f.scopes, "scopes", "write", "comma-separated key scopes: read, write, admin (key-create)")
 	fs.StringVar(&f.expires, "expires", "", "key or credit expiry, RFC3339 (key-create, credit-grant)")
+	fs.StringVar(&f.since, "since", "", "usage window start (RFC3339)")
+	fs.StringVar(&f.until, "until", "", "usage window end (RFC3339)")
+	if monetizationCLI() {
+		registerConsumerMonetizationFlags(fs, &f)
+	}
+	if err := parseInterspersed(fs, args[1:]); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 1
+	}
+	if fs.NArg() != len(positionals) || !flagsWithin(fs, releasedVerbFlags("consumers", verb, consumerVerbFlags[verb])) {
+		PrintUsage(osStderr, consumerVerbUsage(verb, positionals), "consumers")
+		return 1
+	}
+	return runConsumers(verb, fs.Args(), f)
+}
+
+// registerConsumerMonetizationFlags defines the API monetization flags,
+// which do not exist until monetization is released (ADR-20261018090210).
+func registerConsumerMonetizationFlags(fs *flag.FlagSet, f *consumerFlags) {
 	fs.Int64Var(&f.amountMillicents, "amount-millicents", 0, "prepaid credit in millicents; 100000 = 1.00 (credit-grant)")
 	fs.Int64Var(&f.monthlyCapMillicents, "monthly-cap-millicents", -1, "monthly spend cap in millicents after prepaid credit; 0 allows prepaid usage only (spend-cap-set)")
 	fs.StringVar(&f.note, "note", "", "note shown with the credit (credit-grant)")
@@ -133,8 +155,7 @@ func cmdConsumers(args []string) int {
 	fs.StringVar(&f.tierMode, "tier-mode", "", "how --tier steps price a month: graduated (default) or volume (rate-card-create)")
 	fs.Int64Var(&f.baseFeeMillicents, "base-fee-millicents", 0, "fixed charge per consumer per UTC month; 100000 = 1.00 (rate-card-create)")
 	fs.Int64Var(&f.minimumMillicents, "minimum-millicents", 0, "minimum usage charge per consumer per UTC month, topped up when usage costs less (rate-card-create)")
-	fs.StringVar(&f.since, "since", "", "usage window start (RFC3339)")
-	fs.StringVar(&f.until, "until", "", "usage window end (RFC3339)")
+	fs.BoolVar(&f.prorateMonthlyFees, "prorate-monthly-fees", false, "scale the fee and minimum in a consumer's first month to the share left after it was created (rate-card-create)")
 	fs.StringVar(&f.currency, "currency", "", "ISO-4217 currency, e.g. EUR (rate-card-create)")
 	fs.Int64Var(&f.priceMillicents, "price-millicents", -1, "price per request in millicents; 100000 = 1.00 (rate-card-create)")
 	fs.Int64Var(&f.includedUnits, "included-units", 0, "free requests per consumer per UTC calendar month (rate-card-create)")
@@ -151,17 +172,6 @@ func cmdConsumers(args []string) int {
 	fs.Int64Var(&f.maxPerMinute, "max-requests-per-minute", -1, "plan limit: requests per consumer per minute; 0 is unlimited")
 	fs.Int64Var(&f.maxPerMonth, "max-units-per-month", -1, "plan limit: weighted units per consumer per UTC month; 0 is unlimited")
 	fs.StringVar(&f.alertAt, "alert-at", "", "comma-separated percentages of the monthly limit that fire consumer.usage_threshold webhooks; none clears")
-	if err := parseInterspersed(fs, args[1:]); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		return 1
-	}
-	if fs.NArg() != len(positionals) || !flagsWithin(fs, consumerVerbFlags[verb]) {
-		PrintUsage(osStderr, consumerVerbUsage(verb, positionals), "consumers")
-		return 1
-	}
-	return runConsumers(verb, fs.Args(), f)
 }
 
 func consumerVerbUsage(verb string, positionals []string) string {
@@ -169,7 +179,7 @@ func consumerVerbUsage(verb string, positionals []string) string {
 	for _, p := range positionals {
 		usage += " <" + p + ">"
 	}
-	for _, name := range consumerVerbFlags[verb] {
+	for _, name := range releasedVerbFlags("consumers", verb, consumerVerbFlags[verb]) {
 		usage += " [--" + name + "]"
 	}
 	return usage
@@ -280,6 +290,7 @@ func buildAppRateCardRequest(f consumerFlags) (api.CreateAPIConsumerRateCardRequ
 	}
 	req.Unit, req.TierMode = strings.TrimSpace(f.unit), strings.TrimSpace(f.tierMode)
 	req.BaseFeeMillicentsPerMonth, req.MinimumMillicentsPerMonth = f.baseFeeMillicents, f.minimumMillicents
+	req.ProrateMonthlyFees = f.prorateMonthlyFees
 	req.RouteWeights, err = parseRouteWeights(f.weights)
 	return req, err
 }

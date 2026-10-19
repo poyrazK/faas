@@ -1602,6 +1602,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", realtimeFile),
 		filepath.Join(root, "pkg", "api", "realtime_access.go"),
 		filepath.Join(root, "pkg", "api", "realtime_tickets.go"),
+		filepath.Join(root, "pkg", "api", "realtime_usage.go"),
 		filepath.Join(root, "pkg", "api", "realtime_release_sdk_models.go"),
 		filepath.Join(root, "pkg", "api", "realtime_push.go"),
 		filepath.Join(root, "pkg", "api", "realtime_push_preferences.go"),

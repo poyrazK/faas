@@ -108,7 +108,7 @@ docs/adr/
 Plans (deployed/concurrent/RAM MB/GB-h): Free 1/1/256/20 · Hobby 5/2/512/200 ·
 Pro 25/5/1024/1000 · Scale 100/20/2048/3000. Overage $0.01/GB-h (USD, ADR-1430). Source tarball ≤100 MB
 (≤250 MB Pro+). App layer ≤256 MB/512 MB/1 GB/2 GB by plan. Build VM: 2 vCPU, 2048 MB,
-15 min (ADR-791). Idle timeouts: 30/60/300/600 s (functions default to 30 s, ADR-974). RAM admission ceiling: 47,600 MB.
+15 min (ADR-791). Idle timeouts: 60/60/300/600 s by plan (functions default to 30 s on every plan, ADR-974; spec §4.3). RAM admission ceiling: 47,600 MB.
 Fleet snapshot average target: 130 MB — `snapshot_fleet_avg_mb` alerts at 160.
 Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/app 500/acct (`cron_limit_per_app`, `cron_limit_per_account` in pkg/api/limits.go).
 

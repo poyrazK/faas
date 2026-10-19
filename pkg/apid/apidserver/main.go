@@ -873,6 +873,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// that the apid gRPC receiver (Stage 4) already honors.
 		startDebugRegressionCron(ctx, srv, log, deps.getenv)
 		startProfileDeploymentChecks(ctx, srv, log)
+		// API monetization workers pause while its runtime setting is off
+		// (ADR-20261018090210).
+		srv.billingRuns.Enabled = srv.apiMonetizationEnabled
+		srv.statementInvoices.Enabled = srv.apiMonetizationEnabled
+		srv.consumerCredits.Enabled = srv.apiMonetizationEnabled
+		srv.consumerControls.Enabled = srv.apiMonetizationEnabled
 		srv.billingRuns.Start(ctx, log)       // ADR-1503
 		srv.statementInvoices.Start(ctx, log) // ADR-1504
 		srv.consumerCredits.Start(ctx, log)   // ADR-1306
@@ -1512,6 +1518,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithRealtimeHistoryPreviewEnabled(deps.getenv("FAAS_REALTIME_RETAINED_PREVIEW_ENABLED") == "1").
 		WithRealtimeTicketsPreviewEnabled(deps.getenv("FAAS_REALTIME_TICKETS_PREVIEW_ENABLED") == "1").
 		WithRealtimeAccessPreviewEnabled(deps.getenv("FAAS_REALTIME_ACCESS_PREVIEW_ENABLED") == "1").
+		WithRealtimeOccupancyPreviewEnabled(deps.getenv("FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED") == "1").
+		WithRealtimeUsageEnabled(deps.getenv("FAAS_REALTIME_USAGE_ENABLED") == "1").
+		WithRealtimeFairUseEnabled(deps.getenv("FAAS_REALTIME_FAIR_USE_ENABLED") == "1").
+		WithTriggerBatchDeliveryEnabled(deps.getenv("FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv, resolveGithubdBridgeSock(deps.getenv, cfg)))
 	if err := srv.configureMailOutbox(ctx, deps.pool, deps.getenv); err != nil {
 		return fmt.Errorf("apid: producer mail outbox: %w", err)

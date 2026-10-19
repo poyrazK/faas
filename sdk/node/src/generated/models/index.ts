@@ -1252,6 +1252,7 @@ export type { ManagedRealtimeAfterVersionQuery } from './ManagedRealtimeAfterVer
 export type { ManagedRealtimeBatchMessageRequest } from './ManagedRealtimeBatchMessageRequest.js';
 export type { ManagedRealtimeChannelBatchRequest } from './ManagedRealtimeChannelBatchRequest.js';
 export type { ManagedRealtimeChannelBatchResponse } from './ManagedRealtimeChannelBatchResponse.js';
+export type { ManagedRealtimeChannelOccupancy } from './ManagedRealtimeChannelOccupancy.js';
 export type { ManagedRealtimeChannelPath } from './ManagedRealtimeChannelPath.js';
 export type { ManagedRealtimeChannelSnapshotRequest } from './ManagedRealtimeChannelSnapshotRequest.js';
 export type { ManagedRealtimeChannelSnapshotResponse } from './ManagedRealtimeChannelSnapshotResponse.js';
@@ -1282,6 +1283,7 @@ export type { ManagedRealtimeMessageRequest } from './ManagedRealtimeMessageRequ
 export type { ManagedRealtimeNotificationControlResponse } from './ManagedRealtimeNotificationControlResponse.js';
 export type { ManagedRealtimeNotificationRescheduleRequest } from './ManagedRealtimeNotificationRescheduleRequest.js';
 export type { ManagedRealtimeNotificationTimelineEvent } from './ManagedRealtimeNotificationTimelineEvent.js';
+export type { ManagedRealtimeOccupancyResponse } from './ManagedRealtimeOccupancyResponse.js';
 export type { ManagedRealtimePrincipalMessageRequest } from './ManagedRealtimePrincipalMessageRequest.js';
 export type { ManagedRealtimePrincipalQuery } from './ManagedRealtimePrincipalQuery.js';
 export type { ManagedRealtimePrincipalQueryBounded } from './ManagedRealtimePrincipalQueryBounded.js';
@@ -1984,6 +1986,7 @@ export type { PlatformTenantActivationSurfaceResponse } from './PlatformTenantAc
 export type { PlatformTenantActivityFilters } from './PlatformTenantActivityFilters.js';
 export type { PlatformTenantActivityItem } from './PlatformTenantActivityItem.js';
 export type { PlatformTenantActivityResponse } from './PlatformTenantActivityResponse.js';
+export type { PlatformTenantBillingPolicyResponse } from './PlatformTenantBillingPolicyResponse.js';
 export type { PlatformTenantConsumerProvisioningPolicyResponse } from './PlatformTenantConsumerProvisioningPolicyResponse.js';
 export type { PlatformTenantCredentialIntent } from './PlatformTenantCredentialIntent.js';
 export type { PlatformTenantCredentialMetadata } from './PlatformTenantCredentialMetadata.js';
@@ -2002,6 +2005,8 @@ export type { PlatformTenantOffboardingPlanResponse } from './PlatformTenantOffb
 export type { PlatformTenantOffboardingReceiptListResponse } from './PlatformTenantOffboardingReceiptListResponse.js';
 export type { PlatformTenantOffboardingReceiptResponse } from './PlatformTenantOffboardingReceiptResponse.js';
 export type { PlatformTenantOffboardingReceiptSummary } from './PlatformTenantOffboardingReceiptSummary.js';
+export type { PlatformTenantOverdueHoldListResponse } from './PlatformTenantOverdueHoldListResponse.js';
+export type { PlatformTenantOverdueHoldResponse } from './PlatformTenantOverdueHoldResponse.js';
 export type { PlatformTenantPlanAssignmentListResponse } from './PlatformTenantPlanAssignmentListResponse.js';
 export type { PlatformTenantPlanAssignmentResponse } from './PlatformTenantPlanAssignmentResponse.js';
 export type { PlatformTenantPlanBudget } from './PlatformTenantPlanBudget.js';
@@ -2039,6 +2044,7 @@ export type { PlatformTenantStatementSummaryResponse } from './PlatformTenantSta
 export type { PlatformTenantSurfaceCertificateChangedWebhookPayload } from './PlatformTenantSurfaceCertificateChangedWebhookPayload.js';
 export type { PlatformTenantSurfaceDeploymentChangedWebhookPayload } from './PlatformTenantSurfaceDeploymentChangedWebhookPayload.js';
 export type { PlatformTenantSurfaceResponse } from './PlatformTenantSurfaceResponse.js';
+export type { PlatformTenantTrialResponse } from './PlatformTenantTrialResponse.js';
 export type { PlatformTenantUsageBucketResponse } from './PlatformTenantUsageBucketResponse.js';
 export type { PlatformTenantUsageResponse } from './PlatformTenantUsageResponse.js';
 export type { PlatformTenantWebhookListResponse } from './PlatformTenantWebhookListResponse.js';
@@ -2318,6 +2324,7 @@ export type { RealtimeDeadLetterPreviewItem } from './RealtimeDeadLetterPreviewI
 export type { RealtimeDeadLetterPreviewRequest } from './RealtimeDeadLetterPreviewRequest.js';
 export type { RealtimeDeadLetterReplayOutcome } from './RealtimeDeadLetterReplayOutcome.js';
 export type { RealtimeDeadLetterReplaySelection } from './RealtimeDeadLetterReplaySelection.js';
+export type { RealtimeEndpointUsageHour } from './RealtimeEndpointUsageHour.js';
 export type { RealtimeNotificationPreferences } from './RealtimeNotificationPreferences.js';
 export type { RealtimeNotificationRateLimit } from './RealtimeNotificationRateLimit.js';
 export type { RealtimePublisherCredential } from './RealtimePublisherCredential.js';
@@ -2333,6 +2340,10 @@ export type { RealtimeReplayJobWebhookPayload } from './RealtimeReplayJobWebhook
 export type { RealtimeScheduleCompletionWebhookPayload } from './RealtimeScheduleCompletionWebhookPayload.js';
 export type { RealtimeTicketRequest } from './RealtimeTicketRequest.js';
 export type { RealtimeTicketResponse } from './RealtimeTicketResponse.js';
+export type { RealtimeTicketsRevokeResponse } from './RealtimeTicketsRevokeResponse.js';
+export type { RealtimeTriggerConfig } from './RealtimeTriggerConfig.js';
+export type { RealtimeUsageHour } from './RealtimeUsageHour.js';
+export type { RealtimeUsageResponse } from './RealtimeUsageResponse.js';
 export type { RealtimeWorkerBatchClaimRequest } from './RealtimeWorkerBatchClaimRequest.js';
 export type { RealtimeWorkerClaimRequest } from './RealtimeWorkerClaimRequest.js';
 export type { RealtimeWorkerCredential } from './RealtimeWorkerCredential.js';

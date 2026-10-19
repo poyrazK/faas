@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"log/slog"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -222,7 +223,9 @@ func parseBudgetHeaderMs(s string) (int, bool) {
 	if err != nil {
 		return 0, false
 	}
-	if n < 1 {
+	// The documented ceiling also keeps the caller's
+	// time.Duration(n) * time.Millisecond from overflowing.
+	if n < 1 || n > math.MaxInt32 {
 		return 0, false
 	}
 	return n, true

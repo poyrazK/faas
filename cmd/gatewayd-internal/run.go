@@ -1037,6 +1037,10 @@ func isHandlerErrorResult(body []byte) bool {
 // runDeps is the dependency seam for run. Tests inject net.Listen / http.Server
 // wrappers so the seam is fully exercised without spawning a real daemon.
 type runDeps struct {
+	// apiMonetization is the API monetization release gate
+	// (ADR-20261018090210), following the api_monetization_enabled runtime
+	// setting. Nil keeps monetization off.
+	apiMonetization func() bool
 	// Private identity is built only with the process-wide drain tracker.
 	runtimeIngressIdentity http.Handler
 	listen                 func(network, addr string) (net.Listener, error)
@@ -1404,8 +1408,31 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("gatewayd: open db: %w", err)
 	}
-	defer pool.Close()
+	return runThenClosePool(ctx, log, pool.Close, func(ctx context.Context) error {
+		return runOnPool(ctx, log, pool)
+	})
+}
 
+// runThenClosePool runs body under a context that ends when body returns,
+// and closes the pool only after that. Goroutines body starts hold pooled
+// connections until their context ends (the notify hub's LISTEN connection,
+// the repair pollers), and pgxpool.Close waits for every one of them. Closing
+// first left a gateway that failed to start hanging instead of exiting, with
+// its error never logged. The error is logged before this cleanup so it
+// reaches the journal even if a close stalls.
+func runThenClosePool(ctx context.Context, log *slog.Logger, closePool func(), body func(context.Context) error) error {
+	bodyCtx, stop := context.WithCancel(ctx)
+	err := body(bodyCtx)
+	if err != nil {
+		log.Error("gatewayd-internal: stopping after error", "err", err)
+	}
+	stop()
+	closePool()
+	return err
+}
+
+// runOnPool is run's body; runThenClosePool owns the pool's lifetime.
+func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error {
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
 		return err
@@ -1500,6 +1527,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	deps.appsDomain = appsDomain
 	tenantSurfacesFlag := runtimeconfig.NewBoolFlag(api.TenantSurfacesEnabled())
+	apiMonetizationFlag := runtimeconfig.NewBoolFlag(api.APIMonetizationEnabled())
+	deps.apiMonetization = apiMonetizationFlag.Load
 	hstsFlag := runtimeconfig.NewBoolFlag(httpsec.HSTSEnabledFromEnv(osGetenv))
 	httpsec.SetHSTSEnabled(hstsFlag.Load())
 	router := pgRouter{
@@ -2102,7 +2131,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 		defer runtimeCancel()
 		watcher := runtimeconfig.New(pgStore, pool,
-			[]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS},
+			[]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS, runtimeconfig.KeyAPIMonetization},
 			func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 				enabled, err := runtimeconfig.Bool(value)
 				if err != nil {
@@ -2111,6 +2140,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 				switch key {
 				case runtimeconfig.KeyTenantSurfaces:
 					tenantSurfacesFlag.Store(enabled)
+				case runtimeconfig.KeyAPIMonetization:
+					apiMonetizationFlag.Store(enabled)
 				case runtimeconfig.KeyHSTS:
 					hstsFlag.Store(enabled)
 					httpsec.SetHSTSEnabled(enabled)
@@ -2798,6 +2829,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// adapter translates only the narrow lookup/touch contract.
 	handler.WithConsumerAuth(newConsumerAuthStore(deps.pgStore))
 	handler.WithTenantRequestBudgetStore(newTenantRequestBudgetStore(deps.pgStore))
+	handler.WithAPIMonetization(deps.apiMonetization)
 	// ADR-978: order the warm-capacity queue by route priority. Rules are
 	// read only for requests that have to queue, through a 30 s cache.
 	if pgStore := deps.pgStore; pgStore != nil {
@@ -3926,6 +3958,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Wake:      newServiceProxyWaker(pgStore, handler.EnsureWakeAheadCapacity),
 		})
 		serviceProxyConfig := gateway.ServiceProxyConfig{
+			APIMonetization:           deps.apiMonetization,
 			AdmitManagedAsync:         gateway.NewRehearsalAsyncAdmitter(pgStore),
 			Provider:                  serviceEndpointProvider,
 			Resolve:                   newServiceProxyResolver(pgStore),

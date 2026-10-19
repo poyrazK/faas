@@ -926,7 +926,6 @@ from .create_platform_tenant_access_token_response_scopes_item import CreatePlat
 from .create_platform_tenant_rate_card_request import CreatePlatformTenantRateCardRequest
 from .create_platform_tenant_rate_card_request_route_weights import CreatePlatformTenantRateCardRequestRouteWeights
 from .create_platform_tenant_rate_card_request_tier_mode import CreatePlatformTenantRateCardRequestTierMode
-from .create_platform_tenant_rate_card_request_unit import CreatePlatformTenantRateCardRequestUnit
 from .create_platform_tenant_request import CreatePlatformTenantRequest
 from .create_platform_tenant_self_consumer_request import CreatePlatformTenantSelfConsumerRequest
 from .create_platform_tenant_self_hostname_request import CreatePlatformTenantSelfHostnameRequest
@@ -984,6 +983,7 @@ from .create_trigger_request_broker_poison_strategy_type_3_type_1 import (
     CreateTriggerRequestBrokerPoisonStrategyType3Type1,
 )
 from .create_trigger_request_config import CreateTriggerRequestConfig
+from .create_trigger_request_delivery import CreateTriggerRequestDelivery
 from .create_udp_listener_request import CreateUDPListenerRequest
 from .create_udp_listener_request_public_port_type_0 import CreateUDPListenerRequestPublicPortType0
 from .create_workflow_callback_webhook_binding_request import CreateWorkflowCallbackWebhookBindingRequest
@@ -2439,6 +2439,7 @@ from .managed_realtime_batch_message_request import ManagedRealtimeBatchMessageR
 from .managed_realtime_batch_message_request_metadata import ManagedRealtimeBatchMessageRequestMetadata
 from .managed_realtime_channel_batch_request import ManagedRealtimeChannelBatchRequest
 from .managed_realtime_channel_batch_response import ManagedRealtimeChannelBatchResponse
+from .managed_realtime_channel_occupancy import ManagedRealtimeChannelOccupancy
 from .managed_realtime_channel_snapshot_request import ManagedRealtimeChannelSnapshotRequest
 from .managed_realtime_channel_snapshot_response import ManagedRealtimeChannelSnapshotResponse
 from .managed_realtime_channel_snapshot_response_entity_expirations import (
@@ -2477,6 +2478,7 @@ from .managed_realtime_message_request_metadata import ManagedRealtimeMessageReq
 from .managed_realtime_notification_control_response import ManagedRealtimeNotificationControlResponse
 from .managed_realtime_notification_reschedule_request import ManagedRealtimeNotificationRescheduleRequest
 from .managed_realtime_notification_timeline_event import ManagedRealtimeNotificationTimelineEvent
+from .managed_realtime_occupancy_response import ManagedRealtimeOccupancyResponse
 from .managed_realtime_principal_message_request import ManagedRealtimePrincipalMessageRequest
 from .managed_realtime_principal_message_request_delivery import ManagedRealtimePrincipalMessageRequestDelivery
 from .managed_realtime_principal_message_request_notification_priority import (
@@ -3907,6 +3909,7 @@ from .platform_tenant_activation_surface_response import PlatformTenantActivatio
 from .platform_tenant_activity_filters import PlatformTenantActivityFilters
 from .platform_tenant_activity_item import PlatformTenantActivityItem
 from .platform_tenant_activity_response import PlatformTenantActivityResponse
+from .platform_tenant_billing_policy_response import PlatformTenantBillingPolicyResponse
 from .platform_tenant_consumer_provisioning_policy_response import PlatformTenantConsumerProvisioningPolicyResponse
 from .platform_tenant_credential_intent import PlatformTenantCredentialIntent
 from .platform_tenant_credential_intent_scopes_item import PlatformTenantCredentialIntentScopesItem
@@ -3937,6 +3940,8 @@ from .platform_tenant_offboarding_plan_response_status import PlatformTenantOffb
 from .platform_tenant_offboarding_receipt_list_response import PlatformTenantOffboardingReceiptListResponse
 from .platform_tenant_offboarding_receipt_response import PlatformTenantOffboardingReceiptResponse
 from .platform_tenant_offboarding_receipt_summary import PlatformTenantOffboardingReceiptSummary
+from .platform_tenant_overdue_hold_list_response import PlatformTenantOverdueHoldListResponse
+from .platform_tenant_overdue_hold_response import PlatformTenantOverdueHoldResponse
 from .platform_tenant_plan_assignment_list_response import PlatformTenantPlanAssignmentListResponse
 from .platform_tenant_plan_assignment_response import PlatformTenantPlanAssignmentResponse
 from .platform_tenant_plan_budget import PlatformTenantPlanBudget
@@ -3944,17 +3949,14 @@ from .platform_tenant_plan_list_response import PlatformTenantPlanListResponse
 from .platform_tenant_plan_request import PlatformTenantPlanRequest
 from .platform_tenant_plan_request_route_weights import PlatformTenantPlanRequestRouteWeights
 from .platform_tenant_plan_request_tier_mode import PlatformTenantPlanRequestTierMode
-from .platform_tenant_plan_request_unit import PlatformTenantPlanRequestUnit
 from .platform_tenant_plan_response import PlatformTenantPlanResponse
 from .platform_tenant_plan_response_route_weights import PlatformTenantPlanResponseRouteWeights
 from .platform_tenant_plan_response_tier_mode import PlatformTenantPlanResponseTierMode
-from .platform_tenant_plan_response_unit import PlatformTenantPlanResponseUnit
 from .platform_tenant_publish_event_response import PlatformTenantPublishEventResponse
 from .platform_tenant_rate_card_list_response import PlatformTenantRateCardListResponse
 from .platform_tenant_rate_card_response import PlatformTenantRateCardResponse
 from .platform_tenant_rate_card_response_route_weights import PlatformTenantRateCardResponseRouteWeights
 from .platform_tenant_rate_card_response_tier_mode import PlatformTenantRateCardResponseTierMode
-from .platform_tenant_rate_card_response_unit import PlatformTenantRateCardResponseUnit
 from .platform_tenant_reconciliation_applied_webhook_payload import PlatformTenantReconciliationAppliedWebhookPayload
 from .platform_tenant_reconciliation_apply_response import PlatformTenantReconciliationApplyResponse
 from .platform_tenant_reconciliation_plan_change import PlatformTenantReconciliationPlanChange
@@ -4011,6 +4013,7 @@ from .platform_tenant_surface_deployment_changed_webhook_payload_deployment_stat
     PlatformTenantSurfaceDeploymentChangedWebhookPayloadDeploymentStatus,
 )
 from .platform_tenant_surface_response import PlatformTenantSurfaceResponse
+from .platform_tenant_trial_response import PlatformTenantTrialResponse
 from .platform_tenant_usage_bucket_response import PlatformTenantUsageBucketResponse
 from .platform_tenant_usage_response import PlatformTenantUsageResponse
 from .platform_tenant_webhook_list_response import PlatformTenantWebhookListResponse
@@ -4516,6 +4519,7 @@ from .realtime_dead_letter_preview_request import RealtimeDeadLetterPreviewReque
 from .realtime_dead_letter_replay_outcome import RealtimeDeadLetterReplayOutcome
 from .realtime_dead_letter_replay_outcome_status import RealtimeDeadLetterReplayOutcomeStatus
 from .realtime_dead_letter_replay_selection import RealtimeDeadLetterReplaySelection
+from .realtime_endpoint_usage_hour import RealtimeEndpointUsageHour
 from .realtime_notification_preferences import RealtimeNotificationPreferences
 from .realtime_notification_preferences_categories_type_0 import RealtimeNotificationPreferencesCategoriesType0
 from .realtime_notification_preferences_digest_interval_seconds import (
@@ -4541,6 +4545,10 @@ from .realtime_schedule_completion_webhook_payload import RealtimeScheduleComple
 from .realtime_schedule_completion_webhook_payload_outcome import RealtimeScheduleCompletionWebhookPayloadOutcome
 from .realtime_ticket_request import RealtimeTicketRequest
 from .realtime_ticket_response import RealtimeTicketResponse
+from .realtime_tickets_revoke_response import RealtimeTicketsRevokeResponse
+from .realtime_trigger_config import RealtimeTriggerConfig
+from .realtime_usage_hour import RealtimeUsageHour
+from .realtime_usage_response import RealtimeUsageResponse
 from .realtime_worker_batch_claim_request import RealtimeWorkerBatchClaimRequest
 from .realtime_worker_claim_request import RealtimeWorkerClaimRequest
 from .realtime_worker_credential import RealtimeWorkerCredential
@@ -5320,6 +5328,7 @@ from .trigger_config import TriggerConfig
 from .trigger_dead_letter import TriggerDeadLetter
 from .trigger_dead_letter_detail import TriggerDeadLetterDetail
 from .trigger_dead_letter_reason import TriggerDeadLetterReason
+from .trigger_delivery import TriggerDelivery
 from .trigger_kind import TriggerKind
 from .trigger_metrics_response import TriggerMetricsResponse
 from .trigger_record import TriggerRecord
@@ -5463,6 +5472,7 @@ from .update_trigger_request_broker_poison_strategy_type_3_type_1 import (
     UpdateTriggerRequestBrokerPoisonStrategyType3Type1,
 )
 from .update_trigger_request_config_type_0 import UpdateTriggerRequestConfigType0
+from .update_trigger_request_delivery import UpdateTriggerRequestDelivery
 from .update_udp_listener_request import UpdateUDPListenerRequest
 from .update_upstream_circuit_breaker_request import UpdateUpstreamCircuitBreakerRequest
 from .upload_deploy_options import UploadDeployOptions
@@ -6653,7 +6663,6 @@ __all__ = (
     "CreatePlatformTenantRateCardRequest",
     "CreatePlatformTenantRateCardRequestRouteWeights",
     "CreatePlatformTenantRateCardRequestTierMode",
-    "CreatePlatformTenantRateCardRequestUnit",
     "CreatePlatformTenantRequest",
     "CreatePlatformTenantSelfConsumerRequest",
     "CreatePlatformTenantSelfHostnameRequest",
@@ -6699,6 +6708,7 @@ __all__ = (
     "CreateTriggerRequestBrokerPoisonStrategyType2Type1",
     "CreateTriggerRequestBrokerPoisonStrategyType3Type1",
     "CreateTriggerRequestConfig",
+    "CreateTriggerRequestDelivery",
     "CreateUDPListenerRequest",
     "CreateUDPListenerRequestPublicPortType0",
     "CreateWorkflowCallbackWebhookBindingRequest",
@@ -8071,6 +8081,7 @@ __all__ = (
     "ManagedRealtimeBatchMessageRequestMetadata",
     "ManagedRealtimeChannelBatchRequest",
     "ManagedRealtimeChannelBatchResponse",
+    "ManagedRealtimeChannelOccupancy",
     "ManagedRealtimeChannelSnapshotRequest",
     "ManagedRealtimeChannelSnapshotResponse",
     "ManagedRealtimeChannelSnapshotResponseEntityExpirations",
@@ -8103,6 +8114,7 @@ __all__ = (
     "ManagedRealtimeNotificationControlResponse",
     "ManagedRealtimeNotificationRescheduleRequest",
     "ManagedRealtimeNotificationTimelineEvent",
+    "ManagedRealtimeOccupancyResponse",
     "ManagedRealtimePrincipalMessageRequest",
     "ManagedRealtimePrincipalMessageRequestDelivery",
     "ManagedRealtimePrincipalMessageRequestNotificationPriority",
@@ -9403,6 +9415,7 @@ __all__ = (
     "PlatformTenantActivityFilters",
     "PlatformTenantActivityItem",
     "PlatformTenantActivityResponse",
+    "PlatformTenantBillingPolicyResponse",
     "PlatformTenantConsumerProvisioningPolicyResponse",
     "PlatformTenantCredentialIntent",
     "PlatformTenantCredentialIntentScopesItem",
@@ -9429,6 +9442,8 @@ __all__ = (
     "PlatformTenantOffboardingReceiptListResponse",
     "PlatformTenantOffboardingReceiptResponse",
     "PlatformTenantOffboardingReceiptSummary",
+    "PlatformTenantOverdueHoldListResponse",
+    "PlatformTenantOverdueHoldResponse",
     "PlatformTenantPlanAssignmentListResponse",
     "PlatformTenantPlanAssignmentResponse",
     "PlatformTenantPlanBudget",
@@ -9436,17 +9451,14 @@ __all__ = (
     "PlatformTenantPlanRequest",
     "PlatformTenantPlanRequestRouteWeights",
     "PlatformTenantPlanRequestTierMode",
-    "PlatformTenantPlanRequestUnit",
     "PlatformTenantPlanResponse",
     "PlatformTenantPlanResponseRouteWeights",
     "PlatformTenantPlanResponseTierMode",
-    "PlatformTenantPlanResponseUnit",
     "PlatformTenantPublishEventResponse",
     "PlatformTenantRateCardListResponse",
     "PlatformTenantRateCardResponse",
     "PlatformTenantRateCardResponseRouteWeights",
     "PlatformTenantRateCardResponseTierMode",
-    "PlatformTenantRateCardResponseUnit",
     "PlatformTenantReconciliationAppliedWebhookPayload",
     "PlatformTenantReconciliationApplyResponse",
     "PlatformTenantReconciliationPlanChange",
@@ -9491,6 +9503,7 @@ __all__ = (
     "PlatformTenantSurfaceDeploymentChangedWebhookPayload",
     "PlatformTenantSurfaceDeploymentChangedWebhookPayloadDeploymentStatus",
     "PlatformTenantSurfaceResponse",
+    "PlatformTenantTrialResponse",
     "PlatformTenantUsageBucketResponse",
     "PlatformTenantUsageResponse",
     "PlatformTenantWebhookListResponse",
@@ -9962,6 +9975,7 @@ __all__ = (
     "RealtimeDeadLetterReplayOutcome",
     "RealtimeDeadLetterReplayOutcomeStatus",
     "RealtimeDeadLetterReplaySelection",
+    "RealtimeEndpointUsageHour",
     "RealtimeNotificationPreferences",
     "RealtimeNotificationPreferencesCategoriesType0",
     "RealtimeNotificationPreferencesDigestIntervalSeconds",
@@ -9985,6 +9999,10 @@ __all__ = (
     "RealtimeScheduleCompletionWebhookPayloadOutcome",
     "RealtimeTicketRequest",
     "RealtimeTicketResponse",
+    "RealtimeTicketsRevokeResponse",
+    "RealtimeTriggerConfig",
+    "RealtimeUsageHour",
+    "RealtimeUsageResponse",
     "RealtimeWorkerBatchClaimRequest",
     "RealtimeWorkerClaimRequest",
     "RealtimeWorkerCredential",
@@ -10740,6 +10758,7 @@ __all__ = (
     "TriggerDeadLetter",
     "TriggerDeadLetterDetail",
     "TriggerDeadLetterReason",
+    "TriggerDelivery",
     "TriggerKind",
     "TriggerMetricsResponse",
     "TriggerRecord",
@@ -10865,6 +10884,7 @@ __all__ = (
     "UpdateTriggerRequestBrokerPoisonStrategyType2Type1",
     "UpdateTriggerRequestBrokerPoisonStrategyType3Type1",
     "UpdateTriggerRequestConfigType0",
+    "UpdateTriggerRequestDelivery",
     "UpdateUDPListenerRequest",
     "UpdateUpstreamCircuitBreakerRequest",
     "UploadDeployOptions",

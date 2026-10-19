@@ -572,7 +572,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "account",
 		DocSlug: "account",
-		Short:   "Manage the local account (account export|delete|restore|status|dpa|slo|stripe|billing-run|invoices)",
+		Short:   "Manage the local account: export, deletion, status, DPA and SLO",
 		Subcommands: []cliSub{
 			{Name: "export", Short: "Export account data (GDPR)", Flags: []cliFlag{
 				{Name: "o", ShortName: "o", Short: "output file", Value: "PATH"},
@@ -1972,6 +1972,7 @@ var cliCommands = []cliCommand{
 				{Name: "max-attempts", Short: "maximum delivery attempts", Value: "N"},
 				{Name: "payload-max-bytes", Short: "maximum broker payload size", Value: "N"},
 				{Name: "broker-poison-strategy", Short: "kafka poison strategy", Value: "commit|seek-to-offset", ClosedSet: []string{api.BrokerPoisonStrategyCommit, api.BrokerPoisonStrategySeekToOffset}},
+				{Name: "delivery", Short: "one invocation per record or per dispatch batch", Value: "record|batch", ClosedSet: []string{api.TriggerDeliveryRecord, api.TriggerDeliveryBatch}},
 			}},
 			{Name: "update", Short: "Update one trigger", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "enabled", Short: "enable the trigger"},
@@ -1984,6 +1985,7 @@ var cliCommands = []cliCommand{
 				{Name: "max-attempts", Short: "maximum delivery attempts", Value: "N"},
 				{Name: "payload-max-bytes", Short: "maximum broker payload size", Value: "N"},
 				{Name: "broker-poison-strategy", Short: "kafka poison strategy", Value: "commit|seek-to-offset", ClosedSet: []string{api.BrokerPoisonStrategyCommit, api.BrokerPoisonStrategySeekToOffset}},
+				{Name: "delivery", Short: "one invocation per record or per dispatch batch", Value: "record|batch", ClosedSet: []string{api.TriggerDeliveryRecord, api.TriggerDeliveryBatch}},
 			}},
 			{Name: "delete", Short: "Delete one trigger", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "quiet", Short: "skip the typed confirmation (for scripts)"},
@@ -3077,7 +3079,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "consumers",
 		DocSlug: "consumers",
-		Short:   "Meter, price, and bill your API's consumers",
+		Short:   "Identify your API's consumers, issue their keys and meter their requests",
 		Examples: []string{
 			"gregale consumers create my-api --external-ref customer-42 --name \"Customer 42\"",
 			"gregale consumers key-create my-api CONSUMER_ID --name production --scopes read,write",
@@ -3132,6 +3134,7 @@ var cliCommands = []cliCommand{
 				{Name: "tier-mode", Short: "how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches)", Value: "MODE", ClosedSet: []string{"graduated", "volume"}},
 				{Name: "base-fee-millicents", Short: "fixed charge per consumer per UTC month, billed by the month's statement", Value: "N"},
 				{Name: "minimum-millicents", Short: "minimum usage charge per consumer per UTC month; the statement tops up the difference", Value: "N"},
+				{Name: "prorate-monthly-fees", Short: "scale the fee and minimum in a consumer's first month to the share of it left after the consumer was created"},
 			}, Examples: []string{"gregale consumers rate-card-create my-api --currency EUR --price-millicents 50 --unit compute_second", "gregale consumers rate-card-create my-api --currency EUR --price-millicents 0 --tier 1000:100 --tier inf:60 --tier-mode volume", "gregale consumers rate-card-create my-api --currency EUR --price-millicents 50 --included-units 100000 --base-fee-millicents 4900000", "gregale consumers rate-card-create my-api --currency EUR --price-millicents 1 --unit app:output_tokens"}},
 			{Name: "statements", Short: "List a consumer's usage statements and revisions", Positionals: []string{"<slug>", "<consumer-id>"}},
 			{Name: "statement-draft", Short: "Snapshot a period, or draft an adjustment for late usage", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
@@ -3260,7 +3263,10 @@ var cliCommands = []cliCommand{
 				{Name: "tier", Short: "graduated step counted per tenant per UTC month; repeat in order, last UP_TO is inf (replaces price and included units)", Value: "UP_TO:PRICE", Repeatable: true},
 				{Name: "weight", Short: "units per request on a route, including surface and JWT-rule requests; repeat per route, unlisted routes count 1 (statements then cover calendar months)", Value: "\"METHOD /template=N\"", Repeatable: true},
 				{Name: "effective-from", Short: "UTC minute the price starts (default next minute)", Value: "RFC3339"},
-				{Name: "unit", Short: "what the price is per: request, compute second or response megabyte, rounded per subject minute", Value: "UNIT", ClosedSet: []string{"request", "compute_second", "response_megabyte"}},
+				{Name: "unit", Short: "what the price is per: request, compute_second or response_megabyte (rounded per subject minute), or app:<meter> for units the app reports in Gregale-Usage; cards of different units price side by side", Value: "UNIT"},
+				{Name: "base-fee-millicents", Short: "fixed charge per tenant per UTC month, billed by the month's statement", Value: "N"},
+				{Name: "minimum-millicents", Short: "minimum usage charge per tenant per UTC month; the statement tops up the difference", Value: "N"},
+				{Name: "prorate-monthly-fees", Short: "scale the fee and minimum in a tenant's first month to the share of it left after the tenant was created"},
 				{Name: "tier-mode", Short: "how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches)", Value: "MODE", ClosedSet: []string{"graduated", "volume"}},
 			}},
 			{Name: "statements", Short: "List a period's cross-app statement revisions", Flags: []cliFlag{
@@ -3296,7 +3302,10 @@ var cliCommands = []cliCommand{
 				{Name: "weight", Short: "units per request on a route; repeat per route", Value: "\"METHOD /template=N\"", Repeatable: true},
 				{Name: "max-requests-per-minute", Short: "request budget per minute the plan sets (with --max-requests-per-day)", Value: "N"},
 				{Name: "max-requests-per-day", Short: "request budget per day the plan sets (with --max-requests-per-minute)", Value: "N"},
-				{Name: "unit", Short: "what the price is per: request, compute second or response megabyte, rounded per subject minute", Value: "UNIT", ClosedSet: []string{"request", "compute_second", "response_megabyte"}},
+				{Name: "unit", Short: "what the price is per: request, compute_second or response_megabyte (rounded per subject minute), or app:<meter> for units the app reports in Gregale-Usage; cards of different units price side by side", Value: "UNIT"},
+				{Name: "base-fee-millicents", Short: "fixed charge per tenant per UTC month, billed by the month's statement", Value: "N"},
+				{Name: "minimum-millicents", Short: "minimum usage charge per tenant per UTC month; the statement tops up the difference", Value: "N"},
+				{Name: "prorate-monthly-fees", Short: "scale the fee and minimum in a tenant's first month to the share of it left after the tenant was created"},
 				{Name: "tier-mode", Short: "how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches)", Value: "MODE", ClosedSet: []string{"graduated", "volume"}},
 			}, Examples: []string{"gregale platform-tenants plan-create --name growth --currency EUR --price-millicents 20 --weight \"POST /generate=5\" --max-requests-per-minute 600 --max-requests-per-day 100000"}},
 			{Name: "plan-update", Short: "Change a tenant plan; flags not given keep their value, and tenants get it when the plan is assigned again", Flags: []cliFlag{
@@ -3309,14 +3318,30 @@ var cliCommands = []cliCommand{
 				{Name: "weight", Short: "units per request on a route; repeat per route", Value: "\"METHOD /template=N\"", Repeatable: true},
 				{Name: "max-requests-per-minute", Short: "request budget per minute (with --max-requests-per-day)", Value: "N"},
 				{Name: "max-requests-per-day", Short: "request budget per day (with --max-requests-per-minute)", Value: "N"},
-				{Name: "unit", Short: "what the price is per: request, compute second or response megabyte, rounded per subject minute", Value: "UNIT", ClosedSet: []string{"request", "compute_second", "response_megabyte"}},
+				{Name: "unit", Short: "what the price is per: request, compute_second or response_megabyte (rounded per subject minute), or app:<meter> for units the app reports in Gregale-Usage; cards of different units price side by side", Value: "UNIT"},
+				{Name: "base-fee-millicents", Short: "fixed charge per tenant per UTC month, billed by the month's statement", Value: "N"},
+				{Name: "minimum-millicents", Short: "minimum usage charge per tenant per UTC month; the statement tops up the difference", Value: "N"},
+				{Name: "prorate-monthly-fees", Short: "scale the fee and minimum in a tenant's first month to the share of it left after the tenant was created"},
 				{Name: "tier-mode", Short: "how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches)", Value: "MODE", ClosedSet: []string{"graduated", "volume"}},
 			}},
-			{Name: "set-plan", Short: "Move a tenant onto a plan: its rate card from the next minute (the next month when the unit changes) and its request budget at once", Flags: []cliFlag{
+			{Name: "set-plan", Short: "Move a tenant onto a plan: its rate card from the next minute, free cards for its other priced units, and its request budget at once", Flags: []cliFlag{
 				platformTenantIDFlag,
 				{Name: "plan", Short: "tenant plan name", Value: "NAME", Req: true},
 			}},
 			{Name: "plan-history", Short: "List a tenant's plan assignments, newest first", Flags: []cliFlag{platformTenantIDFlag}},
+			{Name: "trial", Short: "Show a tenant's free trial", Flags: []cliFlag{platformTenantIDFlag}},
+			{Name: "trial-set", Short: "Start a tenant's one free trial at the next minute, or move the end of a running one", Flags: []cliFlag{
+				platformTenantIDFlag,
+				{Name: "days", Short: "trial length from its start", Value: "N"},
+				{Name: "ends-at", Short: "trial end (UTC minute, not in the past)", Value: "RFC3339"},
+			}, Examples: []string{"gregale platform-tenants trial-set --id TENANT_ID --days 30"}},
+			{Name: "trial-end", Short: "End a tenant's running trial at the next minute", Flags: []cliFlag{platformTenantIDFlag}},
+			{Name: "billing-policy", Short: "Show the account's overdue-invoice rule for tenants"},
+			{Name: "billing-policy-set", Short: "Refuse tenants whose exported invoice is unpaid some days after its due date", Flags: []cliFlag{
+				{Name: "block-overdue-after-days", Short: "days past the due date before the gateway answers 402 (0 blocks at once)", Value: "N", Req: true},
+			}, Examples: []string{"gregale platform-tenants billing-policy-set --block-overdue-after-days 14"}},
+			{Name: "billing-policy-delete", Short: "Stop blocking tenants for overdue invoices; holds lift within minutes"},
+			{Name: "overdue-holds", Short: "List tenants the gateway refuses because of an overdue invoice"},
 		},
 	},
 	{
@@ -5190,6 +5215,9 @@ var cliCommands = []cliCommand{
 		Short:   "Manage realtime endpoints, policies, connections, channels, and auth",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List managed realtime endpoints", Positionals: []string{"<app>"}},
+			{Name: "usage", Short: "Show open connections against the plan's fair-use limit and recent hourly usage", Flags: []cliFlag{
+				{Name: "hours", Short: "UTC hours of usage to show (1-744, default 24)", Value: "N"},
+			}},
 			{Name: "get", Short: "Show one endpoint and safe auth-rotation status", Positionals: []string{"<app>", "<endpoint-id>"}},
 			{Name: "create", Short: "Create a managed realtime endpoint", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "callback-url", Short: "application callback URL", Req: true, Value: "URL"},
@@ -5244,6 +5272,7 @@ var cliCommands = []cliCommand{
 				{Name: "limit", Short: "maximum connections to return (1-1000)", Value: "N"},
 				{Name: "cursor", Short: "continue from a previous response's next_cursor", Value: "TOKEN"},
 			}},
+			{Name: "occupancy", Short: "Count subscribers and presence members on channels", Positionals: []string{"<app>", "<endpoint-id>", "<channel>..."}},
 			{Name: "drain", Short: "Close a bounded, filtered set of live connections", Positionals: []string{"<app>", "<endpoint-id>"}, Flags: []cliFlag{
 				{Name: "reason", Short: "required audit reason", Req: true, Value: "TEXT"},
 				{Name: "channel", Short: "only connections subscribed to this channel", Value: "CHANNEL"},

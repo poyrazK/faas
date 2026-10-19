@@ -955,7 +955,10 @@ type Handler struct {
 	consumerPlanStore          ConsumerPlanStore
 	consumerPlanPolicies       *consumerPlanPolicyCache
 	tenantRequestBudgetEnabled bool
-	gate                       *WakeGate
+	// apiMonetization is the API monetization release gate
+	// (ADR-20261018090210); nil keeps monetization off.
+	apiMonetization func() bool
+	gate            *WakeGate
 	// admissionQueue protects the control plane from a simultaneous cold
 	// burst across many apps. It is intentionally separate from gate:
 	// gate coalesces waiters for one app, while admissionQueue orders the
@@ -5567,6 +5570,19 @@ func (h *Handler) WithRequestIDJournalWriter(writer RequestIDJournalWriter) {
 // telemetry. It must be opened before the gateway accepts requests.
 func (h *Handler) WithUsageOutbox(q *usageoutbox.Outbox) { h.usageOutbox = q }
 
+// WithAPIMonetization installs the API monetization release gate
+// (ADR-20261018090210), read per request. Off, the gateway enforces no
+// consumer plan, spend cap or overdue hold, does not hold responses for
+// their usage (ADR-1505) and passes Gregale-Usage through untouched.
+func (h *Handler) WithAPIMonetization(enabled func() bool) *Handler {
+	h.apiMonetization = enabled
+	return h
+}
+
+func (h *Handler) apiMonetizationEnabled() bool {
+	return h.apiMonetization != nil && h.apiMonetization()
+}
+
 // WithRequestAudit enables exact completed-request evidence in the fsynced
 // usage envelope. Enable only after apid supports the audit receipt field.
 func (h *Handler) WithRequestAudit(enabled bool) { h.requestAuditEnabled = enabled }
@@ -5745,7 +5761,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Keep a request-local sink for platform-owned runner execution markers.
 	// The forwarder consumes and redacts the headers; observe persists the
 	// bounded values with the request telemetry row.
-	r = withGuestExecutionEvidence(r)
+	r = withGuestExecutionEvidence(r, h.apiMonetizationEnabled())
 
 	// Request ID is generated once per request and set on the response BEFORE
 	// any error path so even 4xx responses are correlatable. Inbound

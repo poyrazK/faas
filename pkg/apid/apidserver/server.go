@@ -505,6 +505,9 @@ type server struct {
 	// interactiveImageRunsEnabled admits `interactive: true` image runs
 	// (ADR-1330, FAAS_INTERACTIVE_IMAGE_RUNS).
 	interactiveImageRunsEnabled bool
+	// triggerBatchDeliveryEnabled admits `delivery: batch` on triggers
+	// (ADR-1321, FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED).
+	triggerBatchDeliveryEnabled bool
 	outboundProbeGatewayURL     string
 	// runtimeConfig is the durable operator configuration snapshot. It is
 	// deliberately in-memory for request hot paths; the admin handler writes
@@ -935,6 +938,31 @@ func (s *server) WithInteractiveImageRunsEnabled(enabled bool) *server {
 
 func (s *server) WithRealtimeHistoryPreviewEnabled(enabled bool) *server {
 	s.realtime.HistoryPreviewEnabled = enabled
+	return s
+}
+
+// WithRealtimeOccupancyPreviewEnabled serves channel occupancy (ADR-1324).
+func (s *server) WithRealtimeOccupancyPreviewEnabled(enabled bool) *server {
+	s.realtime.OccupancyPreviewEnabled = enabled
+	return s
+}
+
+// WithRealtimeUsageEnabled serves GET /v1/usage/realtime (ADR-1323).
+func (s *server) WithRealtimeUsageEnabled(enabled bool) *server {
+	s.realtime.UsageEnabled = enabled
+	return s
+}
+
+// WithRealtimeFairUseEnabled sends each endpoint's account connection limit
+// to realtimed (ADR-1323).
+func (s *server) WithRealtimeFairUseEnabled(enabled bool) *server {
+	s.realtime.FairUseEnabled = enabled
+	return s
+}
+
+// WithTriggerBatchDeliveryEnabled admits `delivery: batch` (ADR-1321).
+func (s *server) WithTriggerBatchDeliveryEnabled(enabled bool) *server {
+	s.triggerBatchDeliveryEnabled = enabled
 	return s
 }
 
@@ -1791,13 +1819,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PATCH /v1/account/keys/grace_window_days", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.setGraceWindow))))
 	// Per-account additive budget on top of the plan's
 	// apps.egress_allowlist cap (issue #679 / PR-B / ADR-082).
-	// The override is admin-settable only; the customer-facing
-	// validator reads the value but has no API surface to write it.
-	// Mirrors the grace-window chain shape (admin + MFA + no
-	// additional step-up since the cost surface is small — a typo
-	// reverts by setting extra=0).
+	// Customers may read it; only a platform operator may write it.
+	// The admin scope alone is not that gate: every customer's
+	// dashboard session and default key hold it, so a customer could
+	// raise their own allowlist cap past the plan limit.
+	// requireOperator checks the operator allowlist.
 	mux.HandleFunc("GET /v1/account/egress_allowlist_extra", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getAccountEgressAllowlistExtra))))
-	mux.HandleFunc("PATCH /v1/account/egress_allowlist_extra", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.setAccountEgressAllowlistExtra))))
+	mux.HandleFunc("PATCH /v1/account/egress_allowlist_extra", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.setAccountEgressAllowlistExtra)))))
 	// G6 account self-service (spec §17 G6, ADR-021). /v1/account/dpa
 	// is intentionally mounted without s.auth — the DPA is a public
 	// artefact a prospect reads before signing up. The export + delete
@@ -1950,6 +1978,14 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/plan-assignments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.tenantPlans.ListAssignments))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/plan-assignments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.tenantPlans.AssignPlan)))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/rate-cards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPlatformTenantRateCard)))))
+	// ADR-1322, ADR-1324: tenant trials and the account's tenant overdue rule.
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/trial", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.GetTenantTrial))))
+	mux.HandleFunc("PUT /v1/account/platform-tenants/{id}/trial", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.PutTenantTrial))))
+	mux.HandleFunc("DELETE /v1/account/platform-tenants/{id}/trial", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.EndTenantTrial))))
+	mux.HandleFunc("GET /v1/account/platform-tenant-billing-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.GetTenantBillingPolicy))))
+	mux.HandleFunc("PUT /v1/account/platform-tenant-billing-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.PutTenantBillingPolicy))))
+	mux.HandleFunc("DELETE /v1/account/platform-tenant-billing-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.DeleteTenantBillingPolicy))))
+	mux.HandleFunc("GET /v1/account/platform-tenant-overdue-holds", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.ListTenantOverdueHolds))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/usage-statements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenantStatements))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/usage-statements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPlatformTenantStatement)))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/usage-statements/{statement_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantStatement))))
@@ -3441,6 +3477,7 @@ func (s *server) handler() http.Handler {
 	// never address a connection or channel outside an app it owns. The same
 	// owner seam serves the local Unix fast path and leased cross-node resolver.
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/connections", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ListManagedRealtimeConnections))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/occupancy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.GetManagedRealtimeOccupancy))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.realtime.DrainManagedRealtimeConnections)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain/{drain_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.GetManagedRealtimeDrainOperation))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.SendManagedRealtimeConnection))))
@@ -3569,6 +3606,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/resume", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.realtime.ResumeRealtimeConsumerGroup))))
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/acknowledgement", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ManagedRealtimeAcknowledgement))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/tickets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.IssueRealtimeTicket))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/tickets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.RevokeRealtimeTickets))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/tickets/{ticket}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.RevokeRealtimeTicket))))
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ManageRealtimeAccess))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ManageRealtimeAccess))))
 	// Customer runtime log drains (issue #1398 O4). Each destination is
@@ -4177,6 +4216,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/usage/summary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.usageSummary))))
 	mux.HandleFunc("GET /v1/usage/daily", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.usageDaily))))
 	mux.HandleFunc("GET /v1/usage/storage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.usageStorage))))
+	mux.HandleFunc("GET /v1/usage/realtime", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.realtime.RealtimeUsage))))
 	// Billing history (issue #259). Listing one's own invoices is the
 	// same access tier as usage/summary — usage:read is enough.
 	// Wrapped in requireMFA for consistency with the other
@@ -4912,10 +4952,13 @@ func (s *server) handler() http.Handler {
 	// /v1/openapi.yaml and /v1/openapi.json let SDK codegen and
 	// `curl` reach the same spec the repo CI gate (make spec-check)
 	// keeps the code aligned to.
-	mux.HandleFunc("GET /v1/openapi.yaml", apid.ServeOpenAPISpec)
-	mux.HandleFunc("GET /v1/openapi.json", apid.ServeOpenAPISpecJSON)
-	mux.HandleFunc("GET /docs", apid.ServeDocs)
-	mux.HandleFunc("GET /docs/", apid.ServeDocs)
+	// The served spec publishes API monetization only while it is released
+	// (ADR-20261018090210).
+	openAPI := apid.OpenAPI{Monetization: s.apiMonetizationEnabled}
+	mux.HandleFunc("GET /v1/openapi.yaml", openAPI.ServeYAML)
+	mux.HandleFunc("GET /v1/openapi.json", openAPI.ServeJSON)
+	mux.HandleFunc("GET /docs", openAPI.ServeDocs)
+	mux.HandleFunc("GET /docs/", openAPI.ServeDocs)
 
 	// observeWrap (the outermost layer) feeds apid_ops_total +
 	// apid_op_duration_seconds. It's last so it sees the final
@@ -4933,11 +4976,11 @@ func (s *server) handler() http.Handler {
 	// + JSON so the gate is unconditionally true.
 	return middleware.RequestID(httpsec.Static(httpsec.Nonce(
 		func(*http.Request) bool { return true },
-		s.observeWrap(s.hosting.HideDisabled(operation.OperationCustomerCORS(s.productControl.SurfaceGate(ciapi.HideDisabledRoutes(
+		s.observeWrap(s.hosting.HideDisabled(s.hideDisabledMonetization(operation.OperationCustomerCORS(s.productControl.SurfaceGate(ciapi.HideDisabledRoutes(
 			func() ci.Config { return s.ciConfig }, apiContractHandler(mux, func(r *http.Request) bool {
 				return s.durable.Hidden(r) || s.liveGate().Hidden(r)
 			}),
-		))))),
+		)))))),
 	)))
 }
 

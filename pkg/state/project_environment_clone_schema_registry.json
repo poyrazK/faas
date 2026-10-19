@@ -354,6 +354,7 @@
       "minimum_millicents_per_month",
       "plan_id",
       "price_millicents_per_unit",
+      "prorate_monthly_fees",
       "route_weights",
       "tier_mode",
       "tiers",
@@ -8718,7 +8719,8 @@
       "priority_metadata_key",
       "priority_turn",
       "retry_policy",
-      "throttled_claim_requests"
+      "throttled_claim_requests",
+      "trigger_id"
     ],
     "kind": "configuration"
   },
@@ -9257,6 +9259,7 @@
       "channels",
       "endpoint_id",
       "expires_at",
+      "id",
       "issued_at",
       "principal",
       "token_hash"
@@ -11529,6 +11532,16 @@
     "kind": "configuration"
   },
   {
+    "table": "platform_tenant_billing_policies",
+    "columns": [
+      "account_id",
+      "block_overdue_after_days",
+      "created_at",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "platform_tenant_consumer_provisioning_policies",
     "columns": [
       "account_id",
@@ -11562,6 +11575,21 @@
     "kind": "configuration"
   },
   {
+    "table": "platform_tenant_meter_usage_minutes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "meter",
+      "platform_tenant_id",
+      "source_kind",
+      "subject_key",
+      "units",
+      "updated_at",
+      "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "platform_tenant_offboarding_receipts",
     "columns": [
       "account_id",
@@ -11570,6 +11598,17 @@
       "plan_hash",
       "receipt_id",
       "tenant_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "platform_tenant_overdue_holds",
+    "columns": [
+      "account_id",
+      "due_at",
+      "export_id",
+      "platform_tenant_id",
+      "since"
     ],
     "kind": "operational"
   },
@@ -11590,14 +11629,17 @@
     "table": "platform_tenant_plans",
     "columns": [
       "account_id",
+      "base_fee_millicents_per_month",
       "created_at",
       "currency",
       "id",
       "included_units_per_month",
       "max_requests_per_day",
       "max_requests_per_minute",
+      "minimum_millicents_per_month",
       "name",
       "price_millicents_per_unit",
+      "prorate_monthly_fees",
       "route_weights",
       "tier_mode",
       "tiers",
@@ -11610,13 +11652,16 @@
     "table": "platform_tenant_rate_cards",
     "columns": [
       "account_id",
+      "base_fee_millicents_per_month",
       "created_at",
       "currency",
       "effective_from",
       "id",
       "included_units_per_month",
+      "minimum_millicents_per_month",
       "platform_tenant_id",
       "price_millicents_per_unit",
+      "prorate_monthly_fees",
       "route_weights",
       "tier_mode",
       "tiers",
@@ -11717,6 +11762,7 @@
       "coverage",
       "created_at",
       "currency",
+      "fees",
       "finalized_at",
       "id",
       "lines",
@@ -11726,6 +11772,18 @@
       "revision",
       "status",
       "unpriced_units"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "platform_tenant_trials",
+    "columns": [
+      "account_id",
+      "created_at",
+      "ends_at",
+      "platform_tenant_id",
+      "starts_at",
+      "updated_at"
     ],
     "kind": "operational"
   },
@@ -13739,6 +13797,42 @@
     "kind": "configuration"
   },
   {
+    "table": "realtime_node_connection_syncs",
+    "columns": [
+      "node_name",
+      "synced_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "realtime_node_connections",
+    "columns": [
+      "account_id",
+      "connections",
+      "node_name"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "realtime_usage_hours",
+    "columns": [
+      "account_id",
+      "app_id",
+      "connection_seconds",
+      "delivered_bytes",
+      "delivered_messages",
+      "endpoint_id",
+      "hour",
+      "incarnation",
+      "minute_peak_connections",
+      "node_name",
+      "received_bytes",
+      "received_messages",
+      "reported_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "recent_build_claims",
     "columns": [
       "account_id",
@@ -15143,6 +15237,7 @@
       "config",
       "created_at",
       "cron_id",
+      "delivery",
       "enabled",
       "filter_criteria",
       "id",

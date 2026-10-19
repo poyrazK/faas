@@ -24,18 +24,25 @@ func applicationAuthCLI() bool {
 }
 
 // visibleCliCommands is the manifest every discovery surface reads: without
-// unreleased commands and flags unless they are turned on.
+// unreleased Auth commands and flags, or API monetization's verbs and flags
+// (monetization.go), unless they are turned on.
 func visibleCliCommands() []cliCommand {
-	if applicationAuthCLI() {
+	auth, monetization := applicationAuthCLI(), monetizationCLI()
+	if auth && monetization {
 		return cliCommands
 	}
 	visible := make([]cliCommand, 0, len(cliCommands))
 	for _, command := range cliCommands {
-		if command.Unreleased {
-			continue
+		if !auth {
+			if command.Unreleased {
+				continue
+			}
+			command.Flags = releasedFlags(command.Flags)
+			command.Subcommands = releasedSubcommands(command.Subcommands)
 		}
-		command.Flags = releasedFlags(command.Flags)
-		command.Subcommands = releasedSubcommands(command.Subcommands)
+		if !monetization {
+			command = withoutMonetization(command)
+		}
 		visible = append(visible, command)
 	}
 	return visible

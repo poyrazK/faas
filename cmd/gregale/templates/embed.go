@@ -22,7 +22,6 @@ import (
 	"compress/gzip"
 	"embed"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -263,6 +262,9 @@ func Materialize(name, dest string) error {
 	if err := os.CopyFS(dest, subFS); err != nil {
 		return err
 	}
+	if err := withholdMonetization(name, dest); err != nil {
+		return err
+	}
 	for source, output := range generatedTemplateFiles[name] {
 		if err := os.Rename(filepath.Join(dest, source), filepath.Join(dest, output)); err != nil {
 			return err
@@ -368,13 +370,25 @@ func TarGz(name, dest string) error {
 			archivePath = output
 		}
 		hdr.Name = name + "/" + filepath.ToSlash(archivePath)
+		if !info.Mode().IsRegular() {
+			if err := tw.WriteHeader(hdr); err != nil {
+				return err
+			}
+			continue
+		}
+		raw, err := fs.ReadFile(rootFS, p)
+		if err != nil {
+			return err
+		}
+		content, ok := shipped(name, p, raw)
+		if !ok {
+			continue
+		}
+		hdr.Size = int64(len(content))
 		if err := tw.WriteHeader(hdr); err != nil {
 			return err
 		}
-		if !info.Mode().IsRegular() {
-			continue
-		}
-		if err := copyFromFS(tw, rootFS, p); err != nil {
+		if _, err := tw.Write(content); err != nil {
 			return err
 		}
 	}
@@ -412,16 +426,6 @@ func TarGz(name, dest string) error {
 		}
 	}
 	return nil
-}
-
-func copyFromFS(w io.Writer, root fs.FS, name string) error {
-	f, err := root.Open(name)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	_, err = io.Copy(w, f)
-	return err
 }
 
 // MaterializeForTest copies a single template into a fresh tempdir and

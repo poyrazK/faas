@@ -31,6 +31,8 @@ const (
 	KeyHSTS           = "hsts_enabled"
 	KeyDataPlacement  = "data_placement_enabled"
 	KeyS3             = "s3_enabled"
+	// KeyAPIMonetization releases API monetization (ADR-20261018090210).
+	KeyAPIMonetization = "api_monetization_enabled"
 )
 
 // ApplyFunc installs one durable value into a daemon's local runtime state.

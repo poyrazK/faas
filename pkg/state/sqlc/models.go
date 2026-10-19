@@ -406,6 +406,7 @@ type ApiConsumerRateCard struct {
 	TierMode                  string
 	BaseFeeMillicentsPerMonth int64
 	MinimumMillicentsPerMonth int64
+	ProrateMonthlyFees        bool
 }
 
 // Billable units per consumer, bounded route label, and UTC minute; per-minute totals stay in api_consumer_usage_minutes.
@@ -7387,6 +7388,7 @@ type ManagedRealtimeConsumerGroup struct {
 	DeduplicationMetadataKey   string
 	DeduplicationWindowSeconds int32
 	DuplicateMessages          int64
+	TriggerID                  pgtype.UUID
 }
 
 type ManagedRealtimeConsumerGroupAlert struct {
@@ -7873,6 +7875,7 @@ type ManagedRealtimeSubscriptionTicket struct {
 	Channels   []byte
 	IssuedAt   pgtype.Timestamptz
 	ExpiresAt  pgtype.Timestamptz
+	ID         pgtype.UUID
 }
 
 type ManagedRealtimeWorkerCredential struct {
@@ -9757,6 +9760,14 @@ type PlatformTenantAccessToken struct {
 	RevokedAt        pgtype.Timestamptz
 }
 
+// Per-account rule blocking platform tenants whose exported invoice is unpaid that many days after its due date (ADR-1324).
+type PlatformTenantBillingPolicy struct {
+	AccountID             pgtype.UUID
+	BlockOverdueAfterDays int32
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+}
+
 type PlatformTenantConsumerProvisioningPolicy struct {
 	TenantID     pgtype.UUID
 	AccountID    pgtype.UUID
@@ -9781,6 +9792,19 @@ type PlatformTenantHostnamePolicy struct {
 	UpdatedAt       pgtype.Timestamptz
 }
 
+// Units an app reported per platform tenant subject, meter and UTC minute for billable requests (ADR-1319).
+type PlatformTenantMeterUsageMinute struct {
+	AccountID        pgtype.UUID
+	PlatformTenantID pgtype.UUID
+	AppID            pgtype.UUID
+	SourceKind       string
+	SubjectKey       string
+	Meter            string
+	WindowStart      pgtype.Timestamptz
+	Units            int64
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type PlatformTenantOffboardingReceipt struct {
 	ReceiptID pgtype.UUID
 	AccountID pgtype.UUID
@@ -9790,22 +9814,34 @@ type PlatformTenantOffboardingReceipt struct {
 	Actions   []byte
 }
 
+// Platform tenants the gateway refuses because of an overdue invoice; recomputed by apid (ADR-1324).
+type PlatformTenantOverdueHold struct {
+	PlatformTenantID pgtype.UUID
+	AccountID        pgtype.UUID
+	ExportID         pgtype.UUID
+	DueAt            pgtype.Timestamptz
+	Since            pgtype.Timestamptz
+}
+
 // Reusable platform tenant price and request-budget bundle; assigning one creates the tenant's rate card and sets its budget (ADR-1307).
 type PlatformTenantPlan struct {
-	ID                     pgtype.UUID
-	AccountID              pgtype.UUID
-	Name                   string
-	Currency               string
-	PriceMillicentsPerUnit int64
-	IncludedUnitsPerMonth  int64
-	Tiers                  []byte
-	RouteWeights           []byte
-	MaxRequestsPerMinute   pgtype.Int8
-	MaxRequestsPerDay      pgtype.Int8
-	CreatedAt              pgtype.Timestamptz
-	UpdatedAt              pgtype.Timestamptz
-	TierMode               string
-	Unit                   string
+	ID                        pgtype.UUID
+	AccountID                 pgtype.UUID
+	Name                      string
+	Currency                  string
+	PriceMillicentsPerUnit    int64
+	IncludedUnitsPerMonth     int64
+	Tiers                     []byte
+	RouteWeights              []byte
+	MaxRequestsPerMinute      pgtype.Int8
+	MaxRequestsPerDay         pgtype.Int8
+	CreatedAt                 pgtype.Timestamptz
+	UpdatedAt                 pgtype.Timestamptz
+	TierMode                  string
+	Unit                      string
+	BaseFeeMillicentsPerMonth int64
+	MinimumMillicentsPerMonth int64
+	ProrateMonthlyFees        bool
 }
 
 type PlatformTenantPlanAssignment struct {
@@ -9832,8 +9868,11 @@ type PlatformTenantRateCard struct {
 	// Graduated price ladder [{up_to, price_millicents_per_unit}], counted per tenant per UTC calendar month across all attributed apps; empty means the single price and allowance apply.
 	Tiers []byte
 	// Units charged per consumer request on a route label ("METHOD /template" -> weight); unlisted routes and non-consumer subjects count 1.
-	RouteWeights []byte
-	TierMode     string
+	RouteWeights              []byte
+	TierMode                  string
+	BaseFeeMillicentsPerMonth int64
+	MinimumMillicentsPerMonth int64
+	ProrateMonthlyFees        bool
 }
 
 type PlatformTenantReconciliationReceipt struct {
@@ -9889,6 +9928,7 @@ type PlatformTenantStatement struct {
 	FinalizedAt pgtype.Timestamptz
 	// Private immutable minute-level billable-unit evidence used to calculate additive statement revisions.
 	Coverage []byte
+	Fees     []byte
 }
 
 type PlatformTenantStatementConsumer struct {
@@ -9918,6 +9958,16 @@ type PlatformTenantStatementSurface struct {
 	StatementID pgtype.UUID
 	AppID       pgtype.UUID
 	SurfaceID   pgtype.UUID
+}
+
+// A platform tenant's free trial: its usage in [starts_at, ends_at) is priced at zero (ADR-1322).
+type PlatformTenantTrial struct {
+	PlatformTenantID pgtype.UUID
+	AccountID        pgtype.UUID
+	StartsAt         pgtype.Timestamptz
+	EndsAt           pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
 }
 
 type PlatformTenantUsageMinute struct {
@@ -11612,6 +11662,33 @@ type QueueBindingCanary struct {
 	CompletedGeneration   pgtype.Int8
 }
 
+type RealtimeNodeConnection struct {
+	NodeName    string
+	AccountID   pgtype.UUID
+	Connections int32
+}
+
+type RealtimeNodeConnectionSync struct {
+	NodeName string
+	SyncedAt pgtype.Timestamptz
+}
+
+type RealtimeUsageHour struct {
+	EndpointID            pgtype.UUID
+	Hour                  pgtype.Timestamptz
+	NodeName              string
+	Incarnation           pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	MinutePeakConnections []int32
+	ConnectionSeconds     int64
+	DeliveredMessages     int64
+	DeliveredBytes        int64
+	ReceivedMessages      int64
+	ReceivedBytes         int64
+	ReportedAt            pgtype.Timestamptz
+}
+
 type RecentBuildClaim struct {
 	AccountID pgtype.UUID
 	ClaimedAt pgtype.Timestamptz
@@ -12863,6 +12940,7 @@ type Trigger struct {
 	QueueBindingID            pgtype.UUID
 	QueueBindingScope         string
 	QueueBindingEnvironmentID pgtype.UUID
+	Delivery                  string
 }
 
 type TriggerConsumerHealth struct {

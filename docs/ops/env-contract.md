@@ -54,6 +54,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_API_DISCOVERY_ENABLED` | gatewayd-internal | `default` |  |  | `` | opt-in durable API route inventory; off by default pending operator path-privacy review (ADR-270) |
 | `FAAS_API_HOSTING_SMOKE_REQUIRED` | imaged | `dropin` |  |  | `` | public-beta compute-only drop-in enables fail-closed post-readiness API hosting smoke verification |
 | `FAAS_API_HOSTING_SMOKE_URL` | imaged | `dropin` |  |  | `url` | public origin for post-readiness API hosting smoke verification; compute-only production drop-in derives it from the apps domain |
+| `FAAS_API_MONETIZATION_ENABLED` | apid, gatewayd-internal, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for api_monetization_enabled (ADR-20261018090210); persisted runtime configuration is authoritative; in a shell it shows the CLI's monetization commands; keep off for customer releases |
 | `FAAS_APPLICATION_AUTH_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs application Auth (ADR-1190) is available to while FAAS_APPLICATION_AUTH_ENABLED is off; unset admits none; boot fallback for the application_auth platform flag (ADR-1700), ignored once an operator writes platform_flag.application_auth |
 | `FAAS_APPLICATION_AUTH_ENABLED` | apid, shared | `default` |  |  | `` | dark-launch switch for application Auth (ADR-1190) for every account; off by default; boot fallback for the application_auth platform flag (ADR-1700), ignored once an operator writes platform_flag.application_auth |
 | `FAAS_APPLICATION_STANDARD_MUTATIONS_ENABLED` | apid | `default` |  | 0 | `` | ADR-435 release gate; keep disabled until consumer convergence, controlled rollout/recovery and dedicated Linux amd64 root/KVM acceptance pass |
@@ -597,6 +598,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REALTIME_CALLBACK_RETRY_MAX_INTERVAL` | realtimed | `default` |  |  | `` | maximum persistent callback retry delay; defaults to one minute and is capped at one hour |
 | `FAAS_REALTIME_CALLBACK_TIMEOUT` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_CHANNEL_ROUTING_ENABLED` | apid | `default` |  | 0 | `` | enable recipient-aware realtime publish only after every apid replica runs a route-writing version |
+| `FAAS_REALTIME_FAIR_USE_ENABLED` | apid, realtimed | `default` |  | 0 | `` | enforce plan connection limits per account and the 50% per-node account share, synced through apid (ADR-1323); also lowers the node connection default to 6000; enable on apid and every realtime node |
 | `FAAS_REALTIME_HEALTH_LISTEN` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_HEARTBEAT` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_HISTORY_TARGET` | realtimed | `default` |  | /run/faas/request_telemetry.sock | `` | private apid gRPC target for the optional resume preview; split-box TCP targets require mTLS |
@@ -607,8 +609,11 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REALTIME_LIVE_TLS_CERT_FILE` | realtimed | `default` |  |  | `` | live-query preview (ADR-20261016151947): realtimed's client certificate for livequeryd hubs that require one (-client-ca); set with FAAS_REALTIME_LIVE_TLS_KEY_FILE |
 | `FAAS_REALTIME_LIVE_TLS_KEY_FILE` | realtimed | `default` |  |  | `` | live-query preview (ADR-20261016151947): private key for FAAS_REALTIME_LIVE_TLS_CERT_FILE |
 | `FAAS_REALTIME_MAX_AGE` | realtimed | `default` |  |  | `` |  |
-| `FAAS_REALTIME_MAX_CONNECTIONS` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_MAX_CONNECTIONS` | realtimed | `default` |  | 10000 | `` | node connection cap; 6000 with FAAS_REALTIME_FAIR_USE_ENABLED=1, sized to realtimed's 512 MB MemoryMax at ~52 KB per idle connection (ADR-1323); raise only with MemoryMax |
 | `FAAS_REALTIME_MAX_MESSAGE_BYTES` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED` | apid, realtimed | `default` |  | 0 | `` | channel occupancy preview: the occupancy API on apid, live occupancy frames and SSE events on realtimed (ADR-1324); enable on apid and every realtime node |
+| `FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED` | realtimed | `default` |  | 0 | `` | node outbound payload budget and slow-consumer shedding (ADR-1323); also sets a 384 MiB soft memory limit unless GOMEMLIMIT is set |
+| `FAAS_REALTIME_OUTBOUND_NODE_BYTES` | realtimed | `default` |  | 67108864 | `` | outbound payload budget across every connection on the node, with FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED=1; the largest backlogs are disconnected first (ADR-1323); raise only with MemoryMax |
 | `FAAS_REALTIME_OUTBOUND_QUEUE` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_OUTBOUND_QUEUE_BYTES` | realtimed | `default` |  | 4194304 | `` | per-connection outbound payload budget, including a frame being written |
 | `FAAS_REALTIME_PONG_WAIT` | realtimed | `default` |  |  | `` |  |
@@ -618,6 +623,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REALTIME_SOCKET` | apid, gatewayd-internal, realtimed, shared | `unit` |  |  | `` |  |
 | `FAAS_REALTIME_TICKETS_PREVIEW_ENABLED` | apid, realtimed | `default` |  | 0 | `` | operator-only short-lived channel subscription tickets; requires resume preview and private ticket reader |
 | `FAAS_REALTIME_TRANSACTIONAL_PREVIEW_ENABLED` | schedd | `default` |  | 0 | `` | opt-in transactional realtime outbox dispatcher; requires managed Commit relay and explicit customer schema installation |
+| `FAAS_REALTIME_USAGE_ENABLED` | apid, realtimed | `default` |  | 0 | `` | realtimed records per-endpoint realtime usage with apid and apid serves GET /v1/usage/realtime (ADR-1323); recorded only, not billed; uses the private history target |
 | `FAAS_REALTIME_WRITE_WAIT` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REBALANCE_COOLDOWN_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_REBALANCE_MAX_PER_TICK` | schedd | `default` |  |  | `` |  |
@@ -758,6 +764,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_TRACE_OBSERVER_TOKEN` | shared | `default` |  |  | `` |  |
 | `FAAS_TRACE_RING_CAP` | shared | `default` |  |  | `` |  |
 | `FAAS_TRACING_ENABLED` | guest, shared | `guest` |  |  | `` | stamped by guest-init when the local OTLP bridge is the trace exporter; gates the runtime bootstraps (ADR-958) |
+| `FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED` | apid | `default` |  | 0 | `` | admit `delivery: batch` on triggers (ADR-1321); off, apid refuses it with 422 |
+| `FAAS_TRIGGER_LEDGER_RETENTION_ENABLED` | schedd | `default` |  | 0 | `` | exact opt-in (`1`) for the trigger_records reaper: terminal rows past their explicit retention or the default ages (7 days, 30 for dead letters) |
 | `FAAS_TRUSTED_INGRESS_CIDRS` | gatewayd-public | `unit` |  |  | `` | upstream TLS edge CIDRs allowed to provide canonical forwarding context |
 | `FAAS_TWO_NODE_ADDR_` | shared | `dev-only` |  |  | `` | native two-node acceptance fixture; must never be set on a production daemon |
 | `FAAS_TWO_NODE_NODE_` | shared | `dev-only` |  |  | `` | native two-node acceptance fixture; must never be set on a production daemon |

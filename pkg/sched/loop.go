@@ -1684,7 +1684,7 @@ func (l *Loop) runTriggersRetention(ctx context.Context) {
 	if l.triggersRetention == nil {
 		return
 	}
-	deleted, err := l.triggersRetention.SweepOnce(ctx, 1000)
+	deleted, err := l.triggersRetention.SweepOnce(ctx, api.TriggerRetentionBatchMax)
 	if err != nil {
 		l.log.Warn("trigger_records retention: sweep failed", "err", err)
 		return
