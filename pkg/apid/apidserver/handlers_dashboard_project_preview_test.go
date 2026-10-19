@@ -293,6 +293,8 @@ func TestPreviewDispatch_BadSlugRejected(t *testing.T) {
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r.AddCookie(cookie)
 	srv.ServeHTTP(rec, r)
+	// Project access resolves the addressed project before the handler
+	// (#4882); an uppercase slug names no project, so it is refused as absent.
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("uppercase slug on POST /preview: code = %d, want 404\nbody = %s", rec.Code, rec.Body.String())
 	}

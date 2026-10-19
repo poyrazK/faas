@@ -153,3 +153,35 @@ func findOtherMember(t *testing.T, s *state.MemStore, orgID, accountID string) s
 	t.Fatal("missing member")
 	return ""
 }
+
+// Persisted account keys carry their owner's personal-org binding (Postgres
+// stamps it; MemStore leaves it empty). They remain account keys: the creator
+// keeps access to an app a team adopted, and another member needs an org key.
+func TestSharedAppPersonalAccountKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		creator bool
+		want    int
+	}{
+		{"creator", true, http.StatusNoContent},
+		{"member", false, http.StatusConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, owner, actor, _, app := fixture(t, state.OrgRoleDeveloper)
+			if tc.creator {
+				actor = owner
+			}
+			ownerID := actor.ID
+			personal, err := store.CreateOrg(t.Context(), state.Org{Slug: "personal-" + tc.name, Name: "Personal", Plan: api.PlanPro, Personal: true, PersonalOwnerAccountID: &ownerID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := request(actor, &state.APIKey{OrgID: personal.ID}, "GET /v1/apps/{slug}", "/v1/apps/team-api", app.Slug, "")
+			w := httptest.NewRecorder()
+			Wrap(store, nil, func(w http.ResponseWriter, _ *http.Request, _ state.Account) { w.WriteHeader(http.StatusNoContent) })(w, r, actor)
+			if w.Code != tc.want {
+				t.Fatalf("status=%d body=%s; want %d", w.Code, w.Body, tc.want)
+			}
+		})
+	}
+}
