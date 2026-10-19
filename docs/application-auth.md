@@ -858,6 +858,40 @@ hosted sign-in page and sign out. Components render plain HTML with
 sentences for your own forms. `Authorized` and `useAuthorized` decide what to
 show; enforce access in your backend or row-level security.
 
+## In mobile apps
+
+Native clients live in `sdk/swift` (iOS 15+, macOS 12+) and `sdk/kotlin`
+(Android 8+ and the JVM). They sign in with a password, an emailed or texted
+code, an ID token from Sign in with Apple or Google, or in the system browser
+(OAuth with PKCE, or the hosted sign-in page with passkeys and SSO). They keep
+the session in the Keychain or the Android Keystore, refresh it one request
+at a time, and cover second factors, organizations, `authorize` and account
+deletion like `@gregale/auth`.
+
+Browser sign-ins and emailed links return to an HTTPS universal link or
+Android App Link of your app; the Auth app accepts only HTTPS redirect URLs:
+
+```sh
+gregale auth config shop-auth --redirect-urls https://shop.example.com/auth/callback
+```
+
+```swift
+let auth = try AuthClient(url: URL(string: "https://shop-auth.gregale.app")!)
+try await auth.signInWithBrowser(provider: "github", callback: URL(string: "https://shop.example.com/auth/callback")!)
+```
+
+```kotlin
+val auth = AuthClient("https://shop-auth.gregale.app", KeystoreSessionStore(context, "https://shop-auth.gregale.app"))
+auth.startBrowserSignIn(activity, redirectTo = "https://shop.example.com/auth/callback", provider = "github")
+// In the activity the App Link opens:
+auth.completeBrowserSignIn(intent)
+```
+
+For Sign in with Apple or Google on the device, enable the provider with your
+app's bundle ID or client ID and pass the identity token to
+`signInWithIdToken`. Passkeys on the device are not wrapped natively yet; the
+hosted sign-in page in the browser sheet offers them.
+
 ## Files, realtime channels and workflows
 
 Each check names a resource in an organization and goes through the same
