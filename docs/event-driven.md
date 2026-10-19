@@ -454,6 +454,11 @@ pick up the job's current configuration at fire time.
 
 Handlers receive an event id and delivery attempt. Persist that id before applying side effects so retries are idempotent. Set explicit payload limits, timeouts, retry counts, and retention; route poison messages to a dead-letter destination for inspection and replay.
 
+Trigger delivery records (`gregale triggers records`) are kept at least 7 days
+after their last dispatch, and trigger dead letters (`gregale triggers dlq`) at
+least 30 days, unless a record carries its own retention; after that they may
+be deleted. Retry or export dead letters you still need before then.
+
 Keep synchronous endpoints small and return an acknowledgement only after the event is durably accepted. Verify webhook signatures and record the source, schema version, and correlation id in application logs.
 
 Async invocations may name existing app webhook subscriptions as terminal
@@ -623,7 +628,11 @@ and final traffic percentage. A build that fails before going live emits
 `deployment.failed` instead of `rollout.aborted`.
 
 Both payloads include `app_id`, `deployment_id`, and `rollout_state`, plus
-`completed_at` or `aborted_at` respectively. An outcome is enqueued once per
+`completed_at` or `aborted_at` respectively. When the safe-release circuit
+breaker, a person, or the worker lease expiry decided the outcome, the payload
+also carries `decision`: the rule and the request, 5xx, probe, latency, OOM and
+restart counts for both revisions behind it
+([ADR-1447](adr/1447-explained-rollout-decisions.md)). An outcome is enqueued once per
 state transition, in the same transaction as the state change; updating an
 already-terminal rollout does not enqueue another event. Webhook delivery is
 at least once, so receivers must deduplicate by the stable delivery id.
@@ -3372,3 +3381,70 @@ Execution attempts differ from routing attempts before admission. An ordinary re
 The gateway overrides producer-supplied counter/lineage headers using private dispatch fields and forwards them only for scheduler-marked synthetic work. Public HTTP requests cannot forward these reserved headers to guests. Upgrade gateways before the scheduler for rollout; older components do not guarantee the new context. Headers are still not signatures: authenticate delivery and supply trusted owner scope before using any SDK helper.
 
 Continue deduplicating by the existing owned event acceptance and subscription consumer identity. Keep attempt, invocation ID, generation and lineage out of the business receipt key and input digest; the existing transactional helpers remain unchanged. The new metadata adds no ordering or exactly-once guarantee and does not change retry, replay, capacity or retention policies.
+
+### Deferred application processing
+
+Subscriptions can opt into [deferred acknowledgments](event-deferred-acknowledgments.md).
+HTTP 202 then transfers the delivery lease to a durable consumer worker, which
+renews and explicitly completes using an app-authorized, attempt-scoped token.
+Expiry retries only that consumer and respects a finite attempt budget. Ordinary
+subscriptions keep HTTP-success completion. This remains at least once; consumer
+receipts and external-effect idempotency remain necessary.
+
+### Transactional application event outbox
+
+The standalone Go SDK can atomically stage publication intent alongside business
+writes and recover it after commit. Publication requests may include
+`expected_app_id`, a canonical application UUID guard; publication and read-only
+content verification return 409 on a mismatch before acceptance/comparison. The
+outbox always supplies this guard, preserves the producer key, and bounds retries
+to an immutable window shorter than normal acceptance retention. See
+[the application outbox guide](event-outbox.md) for setup, recovery and limitations.
+
+
+### Deadline count alerts from the CLI
+
+`events subscription-delivery-health --watch` supports total upcoming/expired
+counts, waiting-reason counts and separate recovery boundaries:
+
+```sh
+gregale events subscription-delivery-health APP SUB --watch --deadline-window 5m --deadline-upcoming-threshold 50 --deadline-upcoming-recovery 20 --deadline-expired-threshold 1 --deadline-sustain 1m --deadline-recovery-sustain 2m --confirmation-progress
+```
+
+Use repeatable `--deadline-upcoming-reason REASON=N` and
+`--deadline-expired-reason REASON=N`, with matching `-reason-recovery` flags for
+inclusive recovery counts. Existing checkpoint/resume and JSON alert delivery
+apply. See [CLI configuration, validation and recovery semantics](event-subscription-deadline-window.md#cli-watch).
+
+
+### Expired backlog percentage alerts
+
+```sh
+gregale events subscription-delivery-health APP SUB --watch --deadline-window 5m --deadline-expired-ratio-threshold 10 --deadline-expired-ratio-recovery 5 --deadline-expired-ratio-min-recipients 100 --deadline-sustain 1m --deadline-recovery-sustain 2m --confirmation-progress
+```
+
+This opens at >=10% expired among at least 100 pending deadline-bearing recipients
+and confirms recovery at <=5%. Insufficient cohorts stay unknown. Text progress
+shows the observed percentage and raw cohort; JSON retains basis-point units and
+raw counts. Existing checkpoint/resume and alert acknowledgments apply. See
+[ratio validation and lifecycle semantics](event-deadline-ratio-alerts.md#cli-ratio-watch).
+
+### Investigate a saved deadline alert
+
+```sh
+gregale events deadline-alert-investigate APP --alert-file ./deadline-alert.json --limit 25
+gregale events deadline-alert-investigate APP --alert-file ./deadline-alert.json --limit 25 --explain
+gregale --json events deadline-alert-investigate APP --alert-file ./deadline-alert.json --limit 25 --cursor 'NEXT_CURSOR'
+```
+
+Supply one saved Go/CLI lifecycle alert object. The command selects the current
+matching cohort, lists delivery identities/deadlines/waiting reasons and keeps alert
+notification time separate from current triage observation. It is read-only, bounded
+to one page and does not acknowledge or replay anything. See
+[file format, pagination and observation semantics](event-deadline-alert-investigation.md#cli-investigation).
+
+`--explain` adds one acceptance-guarded blocker batch for pages of at most 50 rows,
+within the same read budget. It reports ordering blockers, current waiting reasons,
+capacity scope, target availability and scheduling metadata with separate diagnostic
+timestamps and explicit unavailable/error states. See
+[blocker explanations](event-deadline-alert-investigation.md#blocker-explanations).

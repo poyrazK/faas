@@ -26,7 +26,7 @@ func (s *server) enqueueRetry(ctx context.Context, app state.App, dep state.Depl
 	if app.Status != state.AppActive {
 		return state.Deployment{}, api.ErrSourceInvalid("Retry requires an active app.")
 	}
-	acct, err := s.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, s.store, app)
 	if err != nil {
 		return state.Deployment{}, err
 	}

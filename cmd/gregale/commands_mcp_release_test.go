@@ -30,6 +30,11 @@ func TestMCPCandidatePromotion(t *testing.T) {
 		{"smoke fixture passes", true, true, false, false, false, 0, false, "", ""},
 		{"smoke fixture failure", true, true, false, false, false, 1, false, "", ""},
 		{"valid candidate", true, true, false, false, false, 0, false, "", ""},
+		{"platform readiness passes", true, true, false, false, false, 0, false, "", ""},
+		{"platform readiness staging", true, true, false, false, false, 0, false, "", ""},
+		{"platform readiness OAuth", true, true, false, false, false, 0, true, "", ""},
+		{"platform readiness failure", true, true, false, false, false, 1, false, "", ""},
+		{"public readiness failure preserves serving", true, true, false, false, false, 1, false, "", ""},
 		{"first deployment", true, true, true, false, false, 0, false, "", ""},
 		{"failed doctor preserves serving", false, true, false, false, false, 1, false, "", ""},
 		{"missing preview fails closed", true, false, false, false, false, 1, false, "", ""},
@@ -100,7 +105,14 @@ func TestMCPCandidatePromotion(t *testing.T) {
 				}
 				_ = json.NewDecoder(r.Body).Decode(&req)
 				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("MCP-Protocol-Version", mcphosting.ProtocolVersion)
 				switch req.Method {
+				case "ping":
+					if tc.name == "public readiness failure preserves serving" {
+						w.WriteHeader(503)
+						return
+					}
+					_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{}}`, req.ID)
 				case "initialize":
 					_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"protocolVersion":%q,"capabilities":{"tools":{}}}}`, req.ID, mcphosting.ProtocolVersion)
 				case "notifications/initialized":
@@ -234,13 +246,47 @@ func TestMCPCandidatePromotion(t *testing.T) {
 						response.Body = string(encoded)
 					}
 					_ = json.NewEncoder(w).Encode(response)
+				case "/v1/apps/my-mcp/mcp-readiness-policy":
+					if tc.name == "platform readiness staging" && r.URL.Query().Get("scope") != "staging" {
+						t.Error("candidate environment policy not selected")
+					}
+					if strings.HasPrefix(tc.name, "platform readiness") {
+						role := api.MCPReadinessRole{Name: "default"}
+						if tc.name == "platform readiness OAuth" {
+							role.Name = "reader"
+							role.Monitor = &api.MCPReadinessMonitorConfig{OAuthConnection: &api.MCPReadinessOAuthConnection{Role: "reader", Revision: "7e53717e-9b82-4ea4-a594-4a1d8aa2a8bb"}}
+						}
+						_ = json.NewEncoder(w).Encode(api.MCPReadinessPolicy{Revision: "policy-revision", Enabled: true, Roles: []api.MCPReadinessRole{role}})
+					} else {
+						_ = json.NewEncoder(w).Encode(api.MCPReadinessPolicy{Enabled: false})
+					}
+				case "/v1/deployments/candidate/mcp-readiness":
+					if r.Method != "POST" {
+						t.Error("platform probe must execute on server")
+					}
+					expectedRole := "default"
+					if tc.name == "platform readiness OAuth" {
+						expectedRole = "reader"
+						if r.Header.Get(api.MCPReadinessTokenHeader) != "" {
+							t.Error("local credential forwarded for managed OAuth role")
+						}
+					}
+					var probe api.MCPReadinessProbeRequest
+					if e := json.NewDecoder(r.Body).Decode(&probe); e != nil || probe.Role != expectedRole {
+						t.Error("wrong platform probe role")
+					}
+					_ = json.NewEncoder(w).Encode(api.MCPReadinessEvidence{DeploymentID: "candidate", Role: expectedRole, PolicyRevision: "policy-revision", Passed: tc.name == "platform readiness passes" || tc.name == "platform readiness OAuth" || tc.name == "platform readiness staging"})
 				case "/v1/apps/my-mcp":
 					if r.Method == "PATCH" {
 						updates++
 					}
 					_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app", Slug: "my-mcp", URL: "https://my-mcp.example", StreamingEnabled: true, PublicAuth: api.PublicAuthStatus{Mode: api.AppPublicAuthModeOpen}})
 				case "/v1/deployments/candidate":
-					_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "candidate", AppID: "app", Status: statusLive})
+					scope := "default"
+					if tc.name == "platform readiness staging" {
+						scope = "staging"
+					}
+					_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "candidate", AppID: "app", Status: statusLive, Scope: scope})
 				case "/v1/apps/my-mcp/deployments":
 					deps := []api.DeploymentResponse{{ID: "candidate", AppID: "app", Status: statusLive}}
 					if !tc.first {

@@ -62,7 +62,7 @@ type ObsBetaFunnel struct {
 }
 
 // ObsOverviewTotals is the headline KPI block. The numbers are
-// point-in-time counts derived from existing store methods; nothing
+// point-in-time counts read from one store snapshot; nothing
 // here is sampled, weighted, or extrapolated. The cardinality is
 // intentionally small (10 fields) so a frontend dashboard tile
 // renders without scrolling.
@@ -82,7 +82,7 @@ type ObsOverviewTotals struct {
 // ObsOverviewRateLimited is one row of the top-N rate-limited
 // accounts tile on the overview. AccountID is a UUID string;
 // Hits is the count over the 24h window. Cap of 5 entries is
-// pinned in the handler (ADR-091 §"Label cardinality" — the top-N
+// pinned in the store (ADR-091 §"Label cardinality" — the top-N
 // is bounded so a future Prometheus gauge can't blow up label
 // cardinality if this view is scraped).
 type ObsOverviewRateLimited struct {
@@ -102,8 +102,8 @@ type ObsOverviewNodeHealth struct {
 	Stale           bool      `json:"stale"`
 }
 
-// ObsOverviewFailureKind is the failure-bucket rollup. The handler
-// scans the audit_log table over a 1h window and groups by kind;
+// ObsOverviewFailureKind is the failure-bucket rollup. The store
+// aggregates events over a 1h window and groups by kind;
 // anything past the top-5 (per ADR-091 §"Label cardinality")
 // aggregates to a single "other" row.
 type ObsOverviewFailureKind struct {
@@ -879,19 +879,41 @@ type ObsBuilderHeartbeatRow struct {
 //     Alertmanager integration).
 //
 // Prometheus-derived fields retain stable numeric fallbacks for compatibility,
-// but PrometheusAvailable explicitly tells consumers whether those values came
-// from a live query. SQL-derived fields still fail the endpoint when the local
-// source of truth is unavailable.
+// but Signals identifies usable values independently using underlying sample
+// freshness. PrometheusAvailable is true only when every signal is healthy.
+// SQL-derived fields still fail the endpoint when the local source of truth is
+// unavailable. Signals is optional for compatibility with legacy responses.
 type ObsHealthResponse struct {
-	GeneratedAt                        time.Time          `json:"generated_at"`
-	PrometheusAvailable                bool               `json:"prometheus_available"`
-	AuditLogWriteTotal5m               int64              `json:"audit_log_write_total_5m"`
-	AuditLogWriteFailures5m            int64              `json:"audit_log_write_failures_5m"`
-	AuditLogCoverageRatio5m            float64            `json:"audit_log_coverage_ratio_5m"`
-	OperatorIntentOutcomeMissingCounts map[string]int     `json:"operator_intent_outcome_missing_total"`
-	TraceIDCompletenessRatio           map[string]float64 `json:"trace_id_completeness_ratio"`
-	AlertsFiring                       int64              `json:"alerts_firing"`
+	GeneratedAt                        time.Time                  `json:"generated_at"`
+	PrometheusAvailable                bool                       `json:"prometheus_available"`
+	AuditLogWriteTotal5m               int64                      `json:"audit_log_write_total_5m"`
+	AuditLogWriteFailures5m            int64                      `json:"audit_log_write_failures_5m"`
+	AuditLogCoverageRatio5m            float64                    `json:"audit_log_coverage_ratio_5m"`
+	OperatorIntentOutcomeMissingCounts map[string]int             `json:"operator_intent_outcome_missing_total"`
+	TraceIDCompletenessRatio           map[string]float64         `json:"trace_id_completeness_ratio"`
+	AlertsFiring                       int64                      `json:"alerts_firing"`
+	Signals                            map[string]ObsHealthSignal `json:"signals,omitempty"`
+	AlertHistory                       *ObsAlertCollectionHealth  `json:"alert_history,omitempty"`
+	AlertRetention                     *ObsAlertRetentionHealth   `json:"alert_retention,omitempty"`
 }
+
+// ObsHealthSignal describes the evidence behind one Prometheus-derived field.
+// ObservedAt is an underlying sample/evaluation time, never the query's output
+// timestamp. Numeric fields are usable only when their signal is healthy.
+type ObsHealthSignal struct {
+	State         string     `json:"state"`
+	ObservedAt    *time.Time `json:"observed_at,omitempty"`
+	WindowSeconds int        `json:"window_seconds"`
+	MaxAgeSeconds int        `json:"max_age_seconds"`
+	Reason        string     `json:"reason,omitempty"`
+}
+
+const (
+	ObsHealthSignalHealthy     = "healthy"
+	ObsHealthSignalNoSamples   = "no_samples"
+	ObsHealthSignalStale       = "stale"
+	ObsHealthSignalUnavailable = "unavailable"
+)
 
 // ObsHealthKindVocabulary is the closed set of operator-action
 // kinds the /v1/admin/obs/health handler emits to
@@ -918,20 +940,90 @@ var ObsHealthKindVocabulary = []string{
 // identifiers are safe operational handles, while customer inputs, image
 // references, environment values, and raw log paths stay out of the shape.
 type ObsIncident struct {
-	ID           string    `json:"id"`
-	Type         string    `json:"type"`
-	Severity     string    `json:"severity"`
-	Status       string    `json:"status"`
-	Summary      string    `json:"summary"`
-	AccountID    string    `json:"account_id,omitempty"`
-	AppID        string    `json:"app_id,omitempty"`
-	ResourceID   string    `json:"resource_id"`
-	ResourceName string    `json:"resource_name,omitempty"`
-	ObservedAt   time.Time `json:"observed_at"`
-	DedupeKey    string    `json:"dedupe_key"`
-	ActionPath   string    `json:"action_path,omitempty"`
-	AuditPath    string    `json:"audit_path,omitempty"`
-	RunbookURL   string    `json:"runbook_url,omitempty"`
+	ID           string           `json:"id"`
+	Type         string           `json:"type"`
+	Severity     string           `json:"severity"`
+	Status       string           `json:"status"`
+	Summary      string           `json:"summary"`
+	AccountID    string           `json:"account_id,omitempty"`
+	AppID        string           `json:"app_id,omitempty"`
+	NodeID       string           `json:"node_id,omitempty"`
+	ResourceID   string           `json:"resource_id"`
+	ResourceName string           `json:"resource_name,omitempty"`
+	ObservedAt   time.Time        `json:"observed_at"`
+	DedupeKey    string           `json:"dedupe_key"`
+	ActionPath   string           `json:"action_path,omitempty"`
+	AuditPath    string           `json:"audit_path,omitempty"`
+	RunbookURL   string           `json:"runbook_url,omitempty"`
+	EvidencePath string           `json:"evidence_path,omitempty"`
+	AlertEpisode *ObsAlertEpisode `json:"alert_episode,omitempty"`
+	Triage       *ObsAlertTriage  `json:"triage,omitempty"`
+}
+
+// ObsAlertEpisode distinguishes recurrences and last-known state from current
+// evidence. Resolution time is when a healthy rule evaluation confirmed recovery.
+type ObsAlertEpisode struct {
+	SeriesID         string     `json:"series_id"`
+	StartedAt        time.Time  `json:"started_at"`
+	FirstSeenAt      time.Time  `json:"first_seen_at"`
+	LastSeenAt       time.Time  `json:"last_seen_at"`
+	LastEvaluatedAt  time.Time  `json:"last_evaluated_at"`
+	ResolvedAt       *time.Time `json:"resolved_at,omitempty"`
+	ObservationState string     `json:"observation_state"`
+}
+
+type ObsAlertCollectionHealth struct {
+	DiagnosticsPath string `json:"diagnostics_path,omitempty"`
+	State           string `json:"state"`
+	// CollectionState distinguishes configuration and producer failure while
+	// State preserves the original current/unknown evidence contract.
+	CollectionState string     `json:"collection_state,omitempty"`
+	Reason          string     `json:"reason,omitempty"`
+	LastAttemptAt   *time.Time `json:"last_attempt_at,omitempty"`
+	LastSuccessAt   *time.Time `json:"last_success_at,omitempty"`
+}
+
+// ObsAlertRetentionHealth observes cleanup independently of Prometheus.
+// ExpiredEpisodes is an exact current snapshot count, not a deletion promise.
+type ObsAlertRetentionHealth struct {
+	State              string     `json:"state"`
+	Reason             string     `json:"reason,omitempty"`
+	AsOf               time.Time  `json:"as_of"`
+	Cutoff             time.Time  `json:"cutoff"`
+	LastAttemptAt      *time.Time `json:"last_attempt_at,omitempty"`
+	LastSuccessAt      *time.Time `json:"last_success_at,omitempty"`
+	LastPrunedEpisodes *int64     `json:"last_pruned_episodes"`
+	ExpiredEpisodes    int64      `json:"expired_episodes"`
+	OldestExpiredAt    *time.Time `json:"oldest_expired_at,omitempty"`
+}
+
+// ObsIncidentEvidenceResponse is a read-only snapshot, not a persisted incident
+// record. Resource lookups also work after recovery. History contains only exact
+// resource matches within Since; Truncated signals that older matches remain.
+type ObsIncidentEvidenceResponse struct {
+	Suppression        *ObsAlertSuppression       `json:"suppression,omitempty"`
+	TriageHistory      *ObsAlertTriageHistory     `json:"triage_history,omitempty"`
+	GeneratedAt        time.Time                  `json:"generated_at"`
+	Incident           ObsIncident                `json:"incident"`
+	ErrorCode          string                     `json:"error_code,omitempty"`
+	Since              time.Time                  `json:"since"`
+	Limit              int                        `json:"limit"`
+	Truncated          bool                       `json:"truncated"`
+	History            []ObsIncidentEvidenceEntry `json:"history"`
+	UnavailableSources []string                   `json:"unavailable_sources"`
+}
+
+// ObsIncidentEvidenceEntry deliberately omits actor identities, raw event data,
+// intent metadata, and free-form errors. Follow existing gated diagnostic links
+// when the full payload is needed. IDs are strings to preserve bigint precision.
+type ObsIncidentEvidenceEntry struct {
+	ID        string    `json:"id"`
+	Source    string    `json:"source"`
+	Kind      string    `json:"kind"`
+	Status    string    `json:"status,omitempty"`
+	At        time.Time `json:"at"`
+	TraceID   string    `json:"trace_id,omitempty"`
+	TracePath string    `json:"trace_path,omitempty"`
 }
 
 // ObsIncidentListResponse is the body of GET /v1/admin/obs/incidents. The

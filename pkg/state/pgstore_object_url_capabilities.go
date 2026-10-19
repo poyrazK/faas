@@ -57,7 +57,7 @@ func (s *PgStore) IssueObjectURLCredential(ctx context.Context, c ObjectS3Creden
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(c.AccountID)); err != nil {
+	if _, err = lockObjectUsageScope(ctx, tx, mustPgUUID(c.AccountID), mustPgUUID(c.BucketID)); err != nil {
 		return ObjectS3Credential{}, ObjectUploadCompletion{}, mapErr(err)
 	}
 	if _, err = q.ObjectURLCredentialLockBucket(ctx, tx, sqlc.ObjectURLCredentialLockBucketParams{ID: mustPgUUID(c.BucketID), AccountID: mustPgUUID(c.AccountID)}); err != nil {
@@ -105,6 +105,7 @@ func (s *PgStore) IssueObjectURLCredential(ctx context.Context, c ObjectS3Creden
 }
 
 func insertObjectURLCredentialSQL(ctx context.Context, tx pgx.Tx, c ObjectS3Credential) (ObjectS3Credential, error) {
+	c = stampObjectCredentialIssuer(ctx, c)
 	request, err := objectURLRequestJSON(c.URL)
 	if err != nil {
 		return ObjectS3Credential{}, err
@@ -120,7 +121,7 @@ func insertObjectURLCredentialSQL(ctx context.Context, tx pgx.Tx, c ObjectS3Cred
 	if n >= api.MaxObjectURLCapabilitiesPerBucket {
 		return ObjectS3Credential{}, objectURLCapabilityLimitError(n)
 	}
-	row, err := q.ObjectURLCredentialInsert(ctx, tx, sqlc.ObjectURLCredentialInsertParams{ID: mustPgUUID(c.ID), AccountID: mustPgUUID(c.AccountID), BucketID: mustPgUUID(c.BucketID), AccessKeyID: c.AccessKeyID, SecretSealed: c.SecretSealed, Kid: c.KID, Label: c.Label, Permission: c.Permission, UrlRequest: request, UrlApiKeyID: optionalURLUUID(c.URL.APIKeyID), UrlReceiptID: optionalURLUUID(c.URL.ReceiptID), UrlExpiresAt: pgtype.Timestamptz{Time: c.URL.ExpiresAt, Valid: true}})
+	row, err := q.ObjectURLCredentialInsert(ctx, tx, sqlc.ObjectURLCredentialInsertParams{IssuerAccountID: mustPgUUID(c.IssuerAccountID), IssuerAccessRevision: pgtype.Int8{Int64: c.IssuerAccessRevision, Valid: c.IssuerAccountID != ""}, ID: mustPgUUID(c.ID), AccountID: mustPgUUID(c.AccountID), BucketID: mustPgUUID(c.BucketID), AccessKeyID: c.AccessKeyID, SecretSealed: c.SecretSealed, Kid: c.KID, Label: c.Label, Permission: c.Permission, UrlRequest: request, UrlApiKeyID: optionalURLUUID(c.URL.APIKeyID), UrlReceiptID: optionalURLUUID(c.URL.ReceiptID), UrlExpiresAt: pgtype.Timestamptz{Time: c.URL.ExpiresAt, Valid: true}})
 	if err != nil {
 		return ObjectS3Credential{}, mapErr(err)
 	}
@@ -152,6 +153,9 @@ func issueObjectURLWriteSQL(ctx context.Context, tx pgx.Tx, credential ObjectS3C
 	row, err := q.ObjectGatewayUploadInsert(ctx, tx, sqlc.ObjectGatewayUploadInsertParams{ID: mustPgUUID(c.ID), AccountID: mustPgUUID(c.AccountID), AppID: mustPgUUID(c.AppID), BucketID: mustPgUUID(c.BucketID), SubjectID: c.SubjectID, ObjectKey: c.Key, Bytes: c.Bytes, ContentType: c.ContentType, RequestID: c.RequestID, Origin: "gateway", ProtectionSnapshot: protection, EncryptionSnapshot: encryption, EncryptionDefaultRevision: c.EncryptionDefaultRevision, RetrySeconds: int32(credential.URL.Request.ExpiresIn)})
 	if err != nil {
 		return c, mapErr(err)
+	}
+	if err = enrollObjectNodeSettlementTx(ctx, tx, c.ID, c.AccountID, c.AppID, c.BucketID, "put", c.QueueNodeSettlement); err != nil {
+		return c, err
 	}
 	return objectTrackedUploadFromSQL(row)
 }

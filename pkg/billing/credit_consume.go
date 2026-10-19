@@ -14,7 +14,7 @@
 //
 // Money is integer cents end-to-end (CLAUDE.md). The overage math is shared
 // with state.CurrentMonthOverageCents: the plan's included calendar-month
-// allowance is removed first, then the remainder is priced at €0.01/GB-h.
+// allowance is removed first, then the remainder is priced at $0.01/GB-h.
 // Floor division is performed at the final sub-cent boundary; the function
 // never round-trips through float.
 package billing
@@ -49,7 +49,7 @@ func ComputeInvoiceOverageCents(ctx context.Context, store state.Store, inv stat
 	}
 	if !plan.Valid() {
 		// Compatibility for invoice rows created before plan snapshots shipped.
-		acct, err := store.AccountByID(ctx, inv.AccountID)
+		acct, err := state.BillingResourceAccount(ctx, store, inv.AccountID)
 		if err != nil {
 			return 0, fmt.Errorf("billing: invoice account fetch: %w", err)
 		}

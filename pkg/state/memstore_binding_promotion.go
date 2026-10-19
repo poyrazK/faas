@@ -28,6 +28,12 @@ func (m *MemStore) ReadBindingPromotionRevision(_ context.Context, accountID, ap
 // precede their runtime stamp. Only the digest is retained, never these values.
 func (m *MemStore) bindingPromotionRevisionLocked(appID string) (string, error) {
 	facts := map[string]any{"app": m.apps[appID], "stamp": m.runtimeConfigChangedAt[appID], "plan": m.accounts[m.apps[appID].AccountID].Plan}
+	for id, row := range m.queueBindingCanaries {
+		if m.invocations[id].AppID == appID {
+			inv := m.invocations[id]
+			facts["queue-canary/"+id] = []any{row, inv.State, inv.Attempts, inv.ReplayGeneration, inv.ReceivedAt, inv.CompletedAt, inv.Headers, inv.QueueBindingID, inv.DeploymentScope, inv.DeadlineAt, inv.AccountID, inv.AppID}
+		}
+	}
 	for key, policy := range m.bindingReleasePolicies {
 		if key.appID == appID {
 			facts["release-policy/"+key.scope] = policy

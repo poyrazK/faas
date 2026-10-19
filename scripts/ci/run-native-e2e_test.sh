@@ -376,6 +376,13 @@ printf '//go:build metal\n\npackage e2e_test\n\nfunc TestProbeAlpha(t *testing.T
   > "${probe_root}/cmd/e2e/a_probe_test.go"
 printf '//go:build metal\n\npackage e2e_test\n\nfunc helperOnly() {}\n' \
   > "${probe_root}/cmd/e2e/zz_no_tests_test.go"
+# A file that also needs a dedicated tag is compiled only by its own target,
+# never by `-tags metal`, so its tests are not the gate's to require. A plain
+# platform conjunction is still compiled and must stay in the set.
+printf '//go:build metal && dedicated_probe\n\npackage e2e_test\n\nfunc TestProbeDedicated(t *testing.T) {}\n' \
+  > "${probe_root}/cmd/e2e/b_dedicated_probe_test.go"
+printf '//go:build metal && linux\n\npackage e2e_test\n\nfunc TestProbeLinux(t *testing.T) {}\n' \
+  > "${probe_root}/cmd/e2e/c_linux_probe_test.go"
 probe_out="$(bash -c '
   set -Eeuo pipefail
   source "$1"
@@ -384,9 +391,9 @@ probe_out="$(bash -c '
   rm -rf "${probe_root}"
   fail "the derivation dies under set -Eeuo pipefail when a metal-tagged file declares no tests"
 }
-[[ "${probe_out}" == "TestProbeAlpha" ]] || {
+[[ "${probe_out}" == $'TestProbeAlpha\nTestProbeLinux' ]] || {
   rm -rf "${probe_root}"
-  fail "the derivation returned '${probe_out}', want just TestProbeAlpha"
+  fail "the derivation returned '${probe_out}', want TestProbeAlpha and TestProbeLinux"
 }
 rm -rf "${probe_root}"
 
@@ -402,10 +409,36 @@ for required in "${NATIVE_E2E_REQUIRED_TESTS[@]}"; do
     fail "required test ${required} is not in the metal-tagged set (lost its //go:build metal tag?)"
 done
 
-# The derivation must actually key on the build tag, not on a filename pattern:
-# metal tests live in files both with and without a _metal_ infix.
-grep -Fq "grep -l '^//go:build metal'" "${repo_root}/scripts/ci/native-e2e-verdict.sh" ||
-  fail "the run set is no longer derived from the //go:build metal tag"
+# Execute discovery against owned sources: Go constraints, not filenames,
+# header text ordering or commented-out functions, determine the run set.
+discovery_probe="${work}/discovery"
+mkdir -p "$discovery_probe/cmd/e2e"
+cat > "$discovery_probe/cmd/e2e/plain_test.go" <<'GO'
+//go:build linux && metal
+
+package e2e_test
+// func TestCommented(t *testing.T) {}
+func TestSemantic(t *testing.T) {}
+func TestMultiline(
+  t *testing.T,
+) {}
+GO
+cat > "$discovery_probe/cmd/e2e/specialized_test.go" <<'GO'
+//go:build object_storage_native && metal
+
+package e2e_test
+func TestSpecialized(t *testing.T) {}
+GO
+cat > "$discovery_probe/cmd/e2e/ordinary_test.go" <<'GO'
+//go:build !metal
+
+package e2e_test
+func TestOrdinary(t *testing.T) {}
+GO
+[[ "$(native_e2e_metal_tests "$discovery_probe")" == $'TestMultiline\nTestSemantic' ]] ||
+  fail "native discovery does not follow the plain-metal Go build constraints and AST"
+native_e2e_inventory "$discovery_probe" --tags metal,object_storage_native | grep -qx TestSpecialized ||
+  fail "native discovery lost the reordered specialized build constraint"
 
 # The runner must build its filter from that derivation and refuse an empty set.
 grep -Fq 'native_e2e_metal_tests "${repo_root}"' "${runner}" ||

@@ -155,10 +155,14 @@ func (s *server) rotateAppSecret(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 
+	change := s.beginConfigChange(r, acct, app, scope, "")
 	if prob := s.sealAndPersistWithKid(r.Context(), acct, app, scope, key, req.Value, limits, kid); prob != nil {
+		s.abandonConfigChange(r.Context(), change)
 		api.WriteProblem(w, prob)
 		return
 	}
+	// ADR-1451: rotation is a security action; a guard never undoes it.
+	s.finishConfigChange(r.Context(), change, state.ConfigSourceSecretRotate, key, true)
 	invalidated, err := s.invalidateAppSnapshots(r.Context(), app.ID)
 	if err != nil {
 		s.log.Error("secret rotate: invalidate snapshots", "app", safeAppSlug, "err", err)
@@ -233,13 +237,13 @@ func (s *server) rotateAppSecret(w http.ResponseWriter, r *http.Request, acct st
 // caller-supplied and identity-shaped; the value_hash is computed
 // locally off the plaintext.
 func (s *server) sealAndPersistWithKid(c stdctx, acct state.Account, app state.App, scope, key, value string, limits api.Limits, kid string) *api.Problem {
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if recipient == nil {
 		return customerCapacityProblem(s.log, "store rotated app secret", "Secret storage temporarily unavailable",
 			"Gregale could not securely store this value.",
 			"Retry in a few seconds; if it still fails, contact support.", nil)
 	}
-	hmacKey := hostHMACKey()
+	hmacKey := hostHMACKeyBytes()
 	if len(hmacKey) == 0 {
 		return customerCapacityProblem(s.log, "store rotated app secret", "Secret storage temporarily unavailable",
 			"Gregale could not securely store this value.",

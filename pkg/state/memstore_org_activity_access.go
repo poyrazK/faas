@@ -11,7 +11,7 @@ import (
 
 var _ OrgActivityAccessMutationStore = (*MemStore)(nil)
 
-func (m *MemStore) CreateOrgInvitationWithActivity(_ context.Context, invitation OrgInvitation, activity OrgActivity) (OrgInvitation, int64, error) {
+func (m *MemStore) CreateOrgInvitationWithActivity(ctx context.Context, invitation OrgInvitation, activity OrgActivity) (OrgInvitation, int64, error) {
 	if invitation.ID == "" {
 		invitation.ID = newID()
 	}
@@ -31,6 +31,9 @@ func (m *MemStore) CreateOrgInvitationWithActivity(_ context.Context, invitation
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return OrgInvitation{}, 0, err
+	}
 	hashKey := hex.EncodeToString(invitation.TokenHash)
 	if _, exists := m.invitations[hashKey]; exists {
 		return OrgInvitation{}, 0, ErrConflict
@@ -105,16 +108,19 @@ func (m *MemStore) ConsumeOrgInvitationWithActivity(_ context.Context, hash []by
 		return OrgMembership{}, OrgInvitation{}, 0, 0, err
 	}
 
-	m.memberships[key] = membership
+	m.setOrgMembershipLocked(key, membership)
 	m.invitations[hashKey] = invitation
 	acceptedOutboxID := m.enqueueOrgActivityOutboxLocked(acceptedActivity)
 	memberOutboxID := m.enqueueOrgActivityOutboxLocked(memberActivity)
 	return membership, invitation, acceptedOutboxID, memberOutboxID, nil
 }
 
-func (m *MemStore) RevokeOrgInvitationWithActivity(_ context.Context, orgID, invitationID, _ string, activity OrgActivity) (OrgInvitation, int64, error) {
+func (m *MemStore) RevokeOrgInvitationWithActivity(ctx context.Context, orgID, invitationID, _ string, activity OrgActivity) (OrgInvitation, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return OrgInvitation{}, 0, err
+	}
 
 	var hashKey string
 	var invitation OrgInvitation
@@ -141,9 +147,12 @@ func (m *MemStore) RevokeOrgInvitationWithActivity(_ context.Context, orgID, inv
 	return invitation, m.enqueueOrgActivityOutboxLocked(activity), nil
 }
 
-func (m *MemStore) UpdateOrgMemberRoleWithActivity(_ context.Context, orgID, accountID string, role OrgRole, activity OrgActivity) (OrgMembership, int64, error) {
+func (m *MemStore) UpdateOrgMemberRoleWithActivity(ctx context.Context, orgID, accountID string, role OrgRole, activity OrgActivity) (OrgMembership, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return OrgMembership{}, 0, err
+	}
 
 	key := orgAccountKey{OrgID: orgID, AccountID: accountID}
 	current, ok := m.memberships[key]
@@ -172,13 +181,16 @@ func (m *MemStore) UpdateOrgMemberRoleWithActivity(_ context.Context, orgID, acc
 	if err != nil {
 		return OrgMembership{}, 0, err
 	}
-	m.memberships[key] = updated
+	m.setOrgMembershipLocked(key, updated)
 	return updated, m.enqueueOrgActivityOutboxLocked(activity), nil
 }
 
-func (m *MemStore) RemoveOrgMemberWithActivity(_ context.Context, orgID, accountID string, activity OrgActivity) (OrgMembership, int64, error) {
+func (m *MemStore) RemoveOrgMemberWithActivity(ctx context.Context, orgID, accountID string, activity OrgActivity) (OrgMembership, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return OrgMembership{}, 0, err
+	}
 
 	key := orgAccountKey{OrgID: orgID, AccountID: accountID}
 	current, ok := m.memberships[key]
@@ -206,6 +218,6 @@ func (m *MemStore) RemoveOrgMemberWithActivity(_ context.Context, orgID, account
 	if err != nil {
 		return OrgMembership{}, 0, err
 	}
-	m.memberships[key] = removed
+	m.setOrgMembershipLocked(key, removed)
 	return removed, m.enqueueOrgActivityOutboxLocked(activity), nil
 }

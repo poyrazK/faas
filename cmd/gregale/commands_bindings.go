@@ -52,6 +52,8 @@ type objectStorageBindingCLIRevokeResult struct {
 func cmdBindings(args []string) int {
 	if len(args) > 0 {
 		switch args[0] {
+		case "service":
+			return cmdBindingsService(args[1:])
 		case "release-policy":
 			return cmdBindingsReleasePolicy(args[1:])
 		case "check":
@@ -60,6 +62,8 @@ func cmdBindings(args []string) int {
 			return cmdBindingsObjectStorage(args[1:])
 		case "probe-policy":
 			return cmdBindingsProbePolicy(args[1:])
+		case "verification-runs":
+			return cmdBindingsVerificationRuns(args[1:])
 		case "verify":
 			return cmdBindingsVerify(args[1:])
 		case "smoke":
@@ -69,12 +73,13 @@ func cmdBindings(args []string) int {
 	fs := newFlagSet("bindings", flag.ContinueOnError)
 	requireComplete := fs.Bool("require-complete", false, "fail if binding metadata, verification, runtime freshness or refresh progress is incomplete")
 	scope := fs.String("scope", "", "filter resource bindings by environment scope; app-wide bindings remain included")
+	deployment := fs.String("deployment", "", "exact deployment ID or version whose service bindings to inspect")
 	app := fs.String("app", "", appSlugFlagUsage)
 	flags, positionals := splitArgsForFlags(args, "require-complete")
 	parseErr := fs.Parse(flags)
 	positionals, mergeErr := mergeAppFlag(positionals, *app, 1)
 	if parseErr != nil || mergeErr != nil || fs.NArg() != 0 || len(positionals) != 1 || !api.ValidAppSlug(strings.TrimSpace(positionals[0])) {
-		PrintUsage(osStderr, "usage: gregale bindings <app> [--scope SCOPE] [--require-complete] | gregale bindings check <app> [--scope SCOPE] [--max-verification-age DURATION] [--allow-unsupported] | gregale bindings object-storage <list|rotate|revoke> ... | gregale bindings verify <app> <service>|--all | gregale bindings smoke <app> <service> --deployment <id> --path </path>", "bindings")
+		PrintUsage(osStderr, "usage: gregale bindings <app> [--scope SCOPE] [--deployment ID|vN] [--require-complete] | gregale bindings check <app> [--scope SCOPE] [--max-verification-age DURATION] [--allow-unsupported] | gregale bindings object-storage <list|rotate|revoke> ... | gregale bindings verify <app> <service>|--all | gregale bindings smoke <app> <service> --deployment <id> --path </path>", "bindings")
 		return 1
 	}
 	if *scope != "" {
@@ -82,13 +87,27 @@ func cmdBindings(args []string) int {
 			return printErr("Invalid binding scope", problem)
 		}
 	}
+	selected := false
+	fs.Visit(func(f *flag.Flag) { selected = selected || f.Name == "deployment" })
+	if selected && (*deployment == "" || !validBindingDeploymentFlag(*deployment)) {
+		return printErr("Invalid binding deployment", fmt.Errorf("--deployment requires a deployment UUID or version"))
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	inventory, err := client.GetAppBindingInventory(context.Background(), strings.TrimSpace(positionals[0]), *scope)
+	slug := strings.TrimSpace(positionals[0])
+	id, err := resolveBindingDeployment(context.Background(), client, slug, *deployment)
+	if err != nil {
+		return printErr("Could not select binding deployment", err)
+	}
+	inventory, err := client.GetAppBindingInventoryForDeployment(context.Background(), slug, *scope, id)
 	if err != nil {
 		return printErr("Could not list app bindings", err)
+	}
+	sourceKnown := inventory.ServiceBindingSource == "app" || inventory.ServiceBindingSource == "environment_release" || inventory.ServiceBindingSource == "unavailable"
+	if selected && (!sourceKnown || !sameBindingDeployment(inventory.RequestedDeploymentID, id) || !sameBindingDeployment(inventory.VerificationDeploymentID, id) || inventory.App != slug || inventory.VerificationScope == "") {
+		return printErr("Could not list app bindings", fmt.Errorf("server did not confirm the requested inventory deployment"))
 	}
 	if jsonOutput {
 		if code := jsonOut(writeJSON(inventory)); code != 0 {
@@ -375,6 +394,9 @@ func renderAppBindingInventory(inventory appBindingInventory) {
 		if binding.Type == bindingTypeService {
 			_, _ = fmt.Fprintf(osStdout, "service %s: transport=%s\n  HTTP: %s\n  HTTPS: %s (%s)\n",
 				binding.Name, binding.Transport, binding.HTTPURL, binding.HTTPSURL, binding.HTTPSEnv)
+			if c := binding.ServiceContext; c != nil {
+				_, _ = fmt.Fprintf(osStdout, "  Deployment: %s; target: %s (%s); target deployment: %s; release: %s\n  Route: %s (%s); verification: %s\n", c.CallerDeploymentID, c.TargetApp, c.TargetAppID, binding.ServiceTargetDeploymentID, c.ReleaseID, c.RoutingStatus, c.RoutingReason, c.VerificationReason)
+			}
 		}
 		if binding.Type == bindingTypeOutbound {
 			_, _ = fmt.Fprintf(osStdout, "outbound %s: methods=%s paths=%s\n", binding.Name,

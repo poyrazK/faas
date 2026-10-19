@@ -71,7 +71,7 @@ func TestRenderDeployPreflightShowsActionableRuntimePlan(t *testing.T) {
 		SimpleAppPlan: &simpleapp.Plan{
 			ResourceProfile: "small", ExecutionMode: api.ExecutionModeRequest, ScaleToZero: true,
 		},
-		Release: "safe · balanced 1% -> 10% -> 50% -> 100% · automatic rollback",
+		Release: "safe · adaptive 1% -> 10% -> 50% -> 100% · automatic rollback",
 	})
 
 	for _, want := range []string{
@@ -84,7 +84,7 @@ func TestRenderDeployPreflightShowsActionableRuntimePlan(t *testing.T) {
 		"listener:      :8000 · health GET /healthz",
 		"resources:     small · request · scale-to-zero",
 		"environment:   production",
-		"release:       safe · balanced 1% -> 10% -> 50% -> 100% · automatic rollback",
+		"release:       safe · adaptive 1% -> 10% -> 50% -> 100% · automatic rollback",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("preflight missing %q in:\n%s", want, out.String())
@@ -123,6 +123,27 @@ func TestRenderDeployPreflightFunctionOmitsAppListener(t *testing.T) {
 	}
 	if !strings.Contains(got, "environment:   default") {
 		t.Fatalf("function preflight omitted default environment:\n%s", got)
+	}
+}
+
+// H10-137: a worker has no listener, so the plan must not show :3000 /healthz.
+func TestRenderDeployPreflightWorkerOmitsListener(t *testing.T) {
+	for _, mode := range []string{api.ExecutionModeWorker, api.ExecutionModeJob} {
+		var out bytes.Buffer
+		renderDeployPreflight(&out, deployPreflightSummary{
+			Slug:          "wk",
+			Source:        "working tree",
+			ExecutionMode: mode,
+			BuildPlan:     &api.BuildPlan{Class: "app", Framework: "node", Entrypoint: "npm run start", Port: 3000, HealthPath: "/healthz"},
+			Release:       "standard · 100% after readiness",
+		})
+		got := out.String()
+		if strings.Contains(got, "listener:") {
+			t.Fatalf("%s preflight shows a listener:\n%s", mode, got)
+		}
+		if !strings.Contains(got, "· "+mode) {
+			t.Fatalf("%s preflight lost its mode in resources:\n%s", mode, got)
+		}
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -20,7 +21,14 @@ type TenantRequestBudgetDecision struct {
 	Limit             int64
 	Observed          int64
 	RetryAfterSeconds int64
+	// OverdueDueAt is the due date of the invoice holding the tenant when
+	// Scope is TenantBudgetScopeOverdue (ADR-1324).
+	OverdueDueAt time.Time
 }
+
+// TenantBudgetScopeOverdue refuses a tenant held for an overdue invoice
+// (ADR-1324).
+const TenantBudgetScopeOverdue = "overdue"
 
 type suppressFinancialUsageKey struct{}
 
@@ -51,10 +59,17 @@ func (h *Handler) enforceTenantRequestBudget(w http.ResponseWriter, r *http.Requ
 		h.denyTenantBudgetUnavailable(w, r, rec, app)
 		return false
 	}
-	if decision.Allowed {
+	// An overdue hold is API monetization: while it is off a held tenant is
+	// served (ADR-20261018090210). The hold refused before its budget was
+	// counted, so this request does not use budget.
+	if decision.Allowed || decision.Scope == TenantBudgetScopeOverdue && !h.apiMonetizationEnabled() {
 		return true
 	}
 	suppressFinancialUsage(r)
+	if decision.Scope == TenantBudgetScopeOverdue {
+		h.denyTenantOverdue(w, r, rec, app, decision.OverdueDueAt)
+		return false
+	}
 	if decision.RetryAfterSeconds < 1 {
 		decision.RetryAfterSeconds = 1
 	}
@@ -64,6 +79,18 @@ func (h *Handler) enforceTenantRequestBudget(w http.ResponseWriter, r *http.Requ
 		"Customer request budget exceeded", "the platform customer has exhausted its request budget"))
 	h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 	return false
+}
+
+// denyTenantOverdue refuses a tenant whose exported invoice is unpaid past
+// its account's rule (ADR-1324) until it is paid or voided.
+func (h *Handler) denyTenantOverdue(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App, dueAt time.Time) {
+	detail := "the platform customer has an overdue invoice"
+	if !dueAt.IsZero() {
+		detail += " due " + dueAt.UTC().Format(time.RFC3339)
+	}
+	api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeTenantInvoiceOverdue,
+		"Customer invoice overdue", detail))
+	h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 }
 
 func (h *Handler) denyTenantBudgetUnavailable(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App) {

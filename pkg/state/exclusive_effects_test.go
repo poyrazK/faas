@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 )
@@ -31,12 +32,17 @@ type effectFixture struct {
 	surface                  TenantSurface
 }
 
-func newEffectFixture(t *testing.T, backend string) effectFixture {
+func newEffectFixture(t *testing.T, backend string, captureRun ...string) effectFixture {
 	t.Helper()
 	ctx := t.Context()
 	f := effectFixture{}
 	if backend == "postgres" {
 		f.pool = pgtest.OpenMigrated(t)
+		// Without CI's template mode OpenMigrated returns an isolated empty
+		// schema. Migrate it before creating the fixture's account and app.
+		if err := db.MigrateUp(ctx, f.pool); err != nil {
+			t.Fatal(err)
+		}
 		f.base = NewPgStore(f.pool)
 	} else {
 		f.base = NewMemStore()
@@ -47,9 +53,19 @@ func newEffectFixture(t *testing.T, backend string) effectFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.app, err = f.base.CreateApp(ctx, App{AccountID: f.account.ID, Slug: "effects-" + uuid.NewString()[:8], Type: AppTypeApp, Runtime: "node22", RAMMB: 256})
+	app := App{AccountID: f.account.ID, Slug: "effects-" + uuid.NewString()[:8], Type: AppTypeApp, Runtime: "node22", RAMMB: 256}
+	if len(captureRun) > 0 {
+		expires := time.Now().Add(time.Hour)
+		app.PreviewOfSlug, app.PreviewPrState, app.PreviewExpiresAt = "effects-source", PreviewPrStateOpen, &expires
+	}
+	f.app, err = f.base.CreateApp(ctx, app)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(captureRun) > 0 {
+		if err := f.base.RegisterScenarioTestMembers(ctx, f.account.ID, captureRun[0], []ScenarioTestMember{{Workload: "primary", AppID: f.app.ID, WebhookMode: ScenarioWebhookCaptureMode}}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	dep, err := f.base.CreateDeployment(ctx, Deployment{AppID: f.app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:effects", Status: DeployLive})
 	if err != nil {

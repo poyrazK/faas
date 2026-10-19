@@ -6,16 +6,17 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"log/slog"
 	"strings"
 	"testing"
 )
 
 type standardEgressRepairStore struct {
-	*state.MemStore
-	target  state.ApplicationStandardEgressTarget
-	records int
-	stale   bool
+	MemStore *state.MemStore
+	target   state.ApplicationStandardEgressTarget
+	records  int
+	stale    bool
 }
 
 func (s *standardEgressRepairStore) ListPendingApplicationStandardEgress(context.Context, string) ([]state.ApplicationStandardEgressTarget, error) {
@@ -52,7 +53,7 @@ func TestApplicationStandardEgressRestartRepairAndDelayedReply(t *testing.T) {
 	router.apply = func(i runtimeadmission.Identity, p runtimeadmission.EgressPolicy) (runtimeadmission.EgressReceipt, error) {
 		return runtimeadmission.EgressReceipt{Identity: i, AppID: p.AppID, Revision: p.Revision, PolicyHash: hash}, nil
 	}
-	subscriber := &EgressDriftSubscriber{engine: &Engine{store: store}, router: router, log: slog.Default()}
+	subscriber := &EgressDriftSubscriber{engine: &Engine{store: statetest.NewMem(store)}, router: router, log: slog.Default()}
 	subscriber.reconcilePending(t.Context())
 	if router.calls != 1 || store.records != 1 {
 		t.Fatal("startup repair required a notification")

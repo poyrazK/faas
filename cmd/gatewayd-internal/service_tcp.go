@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -20,10 +21,9 @@ import (
 )
 
 // newServiceTCPTargetResolver maps a service address to an app in the
-// caller's account (ADR-576). The account comes from the caller row, never
-// from the connection, so an address from another account resolves to
-// nothing. Availability and ports come from the same projection the HTTP
-// gateway routes with.
+// caller's storage namespace (ADR-576). The namespace comes from the caller
+// row, never the connection. Organization ownership must also match because
+// apps from separate organizations can share a creator's namespace.
 func newServiceTCPTargetResolver(store state.Store) gateway.ServiceTCPTargetResolver {
 	return func(ctx context.Context, callerAppID string, address netip.Addr) (gateway.ServiceTCPTarget, bool, error) {
 		index, ok := api.ServiceAddressIndexOf(address)
@@ -46,6 +46,9 @@ func newServiceTCPTargetResolver(store state.Store) gateway.ServiceTCPTargetReso
 		}
 		if err != nil {
 			return gateway.ServiceTCPTarget{}, false, fmt.Errorf("service TCP: resolve address: %w", err)
+		}
+		if app.Status == state.AppDeleted || !state.SameAppResourceOwner(caller, app) {
+			return gateway.ServiceTCPTarget{}, false, nil
 		}
 		resolved, routable, err := (pgRouter{store: store}).toApp(ctx, app)
 		if err != nil {
@@ -163,9 +166,12 @@ func validateServiceTCPListen(addr, serviceProxyAddr string) error {
 }
 
 // startServiceTCPProxy serves private TCP service addresses until ctx ends.
-func startServiceTCPProxy(ctx context.Context, deps runDeps, addr string, services *gateway.ServiceProxy, store state.Store, errc chan<- error, log *slog.Logger) error {
+// startServiceTCPProxy returns drain, which a hand-off's old generation
+// calls to stop accepting and wait, within its ctx, for open sessions
+// (ADR-1736). Cancelling the run ctx still closes them at once.
+func startServiceTCPProxy(ctx context.Context, deps runDeps, addr string, services *gateway.ServiceProxy, store state.Store, errc chan<- error, log *slog.Logger) (drain func(context.Context) error, err error) {
 	if deps.nodeCache == nil || deps.metrics == nil {
-		return errors.New("gatewayd: service_tcp_listen needs the vmmd node cache and metrics")
+		return nil, errors.New("gatewayd: service_tcp_listen needs the vmmd node cache and metrics")
 	}
 	metrics := tcpmetrics.New(deps.metrics.Registry(), "gatewayd_internal_service")
 	forwarder := gateway.TCPForwarder{Nodes: deps.nodeCache.cache, Metrics: metrics}
@@ -188,17 +194,29 @@ func startServiceTCPProxy(ctx context.Context, deps runDeps, addr string, servic
 		Log:                 log,
 	})
 	if err != nil {
-		return fmt.Errorf("gatewayd: service TCP proxy: %w", err)
+		return nil, fmt.Errorf("gatewayd: service TCP proxy: %w", err)
 	}
 	listener, err := deps.listen("tcp", addr)
 	if err != nil {
-		return fmt.Errorf("gatewayd: service TCP listen %s: %w", addr, err)
+		return nil, fmt.Errorf("gatewayd: service TCP listen %s: %w", addr, err)
 	}
+	var draining atomic.Bool
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		log.Info("gatewayd private service TCP listening", "addr", addr, "service_address_cidr", api.ServiceAddressCIDR().String())
-		if err := proxy.Serve(ctx, listener); err != nil && ctx.Err() == nil {
+		if err := proxy.Serve(ctx, listener); err != nil && ctx.Err() == nil && !draining.Load() {
 			errc <- err
 		}
 	}()
-	return nil
+	return func(drainCtx context.Context) error {
+		draining.Store(true)
+		_ = listener.Close() // Serve then waits for its sessions
+		select {
+		case <-done:
+			return nil
+		case <-drainCtx.Done():
+			return drainCtx.Err()
+		}
+	}, nil
 }

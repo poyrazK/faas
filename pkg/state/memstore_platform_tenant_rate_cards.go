@@ -32,15 +32,18 @@ func (m *MemStore) CreatePlatformTenantRateCardVersion(_ context.Context, in Pla
 		if card.Currency != currency {
 			return PlatformTenantRateCard{}, ErrInvalidArgument
 		}
-		if card.EffectiveFrom.Equal(effectiveFrom) {
+		// Each unit is its own price history (ADR-1319).
+		if card.Unit == in.Unit && card.EffectiveFrom.Equal(effectiveFrom) {
 			return PlatformTenantRateCard{}, ErrConflict
 		}
 	}
 	card := PlatformTenantRateCard{
 		ID: uuid.NewString(), AccountID: accountID, TenantID: tenantID,
-		Currency: currency, Unit: PlatformTenantRateCardUnitRequest,
+		Currency: currency, Unit: in.Unit, TierMode: in.TierMode,
 		PriceMillicentsPerUnit: in.PriceMillicentsPerUnit, IncludedUnitsPerMonth: in.IncludedUnitsPerMonth,
-		Tiers: in.Tiers, EffectiveFrom: effectiveFrom, CreatedAt: time.Now().UTC(),
+		Tiers: in.Tiers, RouteWeights: in.RouteWeights, EffectiveFrom: effectiveFrom, CreatedAt: time.Now().UTC(),
+		BaseFeeMillicentsPerMonth: in.BaseFeeMillicentsPerMonth, MinimumMillicentsPerMonth: in.MinimumMillicentsPerMonth,
+		ProrateMonthlyFees: in.ProrateMonthlyFees,
 	}
 	m.platformTenantRateCards[card.ID] = card
 	return card, nil

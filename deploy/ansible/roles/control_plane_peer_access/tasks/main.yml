@@ -66,6 +66,11 @@
       {% for cidr in faas_postgres_allowed_cidrs %}
       host    faas            faas                                    {{ cidr }}                scram-sha-256
       {% endfor %}
+      {% if faas_postgres_standby_address | default('') %}
+      # ADR-1344 §8: the warm standby streams WAL from this address only, over
+      # TLS (it verifies the primary's certificate; see the postgres role).
+      hostssl replication     replicator      {{ faas_postgres_standby_address }}/{{ '128' if ':' in faas_postgres_standby_address else '32' }}            scram-sha-256
+      {% endif %}
       host    all             all             127.0.0.1/32            reject
       host    all             all             ::1/128                 reject
   notify: reload control-plane postgresql

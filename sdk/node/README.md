@@ -452,6 +452,57 @@ generated services. The canonical mapping:
 Regenerate via `npm run gen` (committed per ADR-013; CI's
 `sdk-gen-node` job is the dirty-diff gate).
 
+## Batched trigger delivery
+
+A trigger with `delivery: batch` sends one request with several records
+(ADR-1321). `handleTriggerBatch` parses the body, runs your handler for each
+record in delivery order and returns the response body; a record whose handler
+throws is retried, the rest are complete:
+
+```ts
+import { handleTriggerBatch, isTriggerBatch } from '@gregale/sdk-node/triggers/runtime';
+
+export async function POST(request: Request) {
+  const result = await handleTriggerBatch(await request.json(), async (record) => {
+    await saveOrder(record.data); // record.isJSON, record.bytes, record.text(), record.metadata
+  });
+  return Response.json(result); // {"batchItemFailures": [...]}
+}
+```
+
+`isTriggerBatch(request.headers)` tells batch and single-record deliveries apart.
+Options: `concurrency` (1-100) for records that do not depend on each other's
+order, `stopOnFailure` to retry every record after a failure in order, and
+`onError` to log each failure. A malformed body throws `TriggerBatchError`;
+let the request fail so the whole batch is retried.
+
+## Realtime in the browser and React
+
+`createRealtimeClient` keeps one WebSocket per endpoint and subscribes channels
+while something watches them. Each channel handle has an immutable view
+(`status`, recent `messages`, `presence`, `occupancy`, `error`) that changes
+only when something does, so it works with `useSyncExternalStore` and other
+stores:
+
+```ts
+import { createBrowserRealtimeTicketSocketFactory, createRealtimeClient } from '@gregale/sdk-node/browser';
+
+const client = createRealtimeClient({ url, webSocketFactory: createBrowserRealtimeTicketSocketFactory(fetchTicket) });
+const lobby = client.channel('lobby', { occupancy: true });
+const stop = lobby.subscribe(() => render(lobby.getView()));
+```
+
+React bindings live in `@gregale/sdk-node/react` (React 18+, an optional peer
+dependency): `RealtimeProvider`, `useRealtimeChannel(channel, options)`,
+`usePresence(channel)`, `useOccupancy(channel)` and `useRealtimeClient()`.
+A channel is released `lingerMs` (default 1 s) after its last watcher leaves.
+A client watches at most 8 channels at once; a refused channel reports
+`status: 'error'` with the server's code while the others continue.
+
+`consumeRealtimeChannels` also takes a `controller` callback whose `add()` and
+`remove()` change the channel set on a live connection, plus per-channel
+`onSubscriptionError` and connection-level `onConnectionChange` hooks.
+
 ## Transactional operation handlers
 
 Customer Operations HTTP definitions explicitly enable
@@ -3426,15 +3477,318 @@ status snapshots, service-driven logical-time expiry, generation-fenced cohort
 reclamation and pure application migrations. See
 [the lifecycle guide](../../docs/durable-entity-session-lifecycle.md).
 
+Checked project release graphs use the preparation and activation endpoints.
+Preparation returns a manifest with exact members, expected routing and policy
+revisions; activation independently rechecks binding evidence and service
+readiness. Internal service evidence is selected by `service_targets` together
+with an exact caller deployment. See the [qualification and activation workflow](../../docs/networking.md#qualify-and-activate-a-project-release-graph)
+for the CLI steps, consent requirements and graph limitations.
+
+
+Checked graph recovery uses `ProjectsService.prepareCheckedProjectRollback` and
+`ProjectsService.rollbackCheckedProjectRelease` to select retained history
+and commit the verified manifest. Historical membership and expiry are checked
+atomically under current binding policies. The new release records
+`rollback_source_release_id` and `rollback_previous_release_id`. See the
+[recovery workflow](../../docs/networking.md#recover-a-retained-project-release-graph).
+
+
+Checked graph deactivation uses `ProjectsService.prepareCheckedProjectDeactivation` and `ProjectsService.deactivateCheckedProjectRelease`.
+Preparation freezes one 100% weighted fallback per workload with current policy
+and service targets. Qualify this `deactivate: true`, `ttl_seconds: 0` manifest,
+then deactivate explicitly. Missing fallbacks, splits, stale intent and missing
+readiness block the switch. The retired release's `deactivation` field contains
+the durable receipt and exact fallback members. See the
+[deactivation workflow](../../docs/networking.md#deactivate-a-project-graph-with-checked-fallback-routing).
+
+Candidate service staging uses `POST .../release-sets/staging` with a complete
+prepared forward or rollback manifest and a 1–1800 second `ttl_seconds` lease.
+Read or cancel the stage with `GET` / `DELETE .../release-sets/staging/{stage}`.
+Staging capacity is billable, preserves current routes, uses ordinary admission
+limits, and excludes GitOps-managed workloads. Repeating the same manifest reuses
+its original expiry. `ready` is observed replica readiness, not binding proof;
+run verification and explicit activation/rollback afterwards. Cancellation or
+expiry removes temporary capacity while active graph allocations remain.
+
+
+Push queue canaries require an exact deployment, a declared safe `GREGALE_QUEUE_CANARY_BINDINGS` override and explicit publication consent. Create, get and cancel operations expose bounded publication/dispatch/completion status. The `handler_completion` queue release requirement checks fresh completion on the selected deployment plus normal consumer readiness. See [queue completion canaries](../../docs/networking.md#push-queue-binding-completion-canaries).
+
+Durable single-app binding verification exposes create, status, resume, atomic
+step admission, complete and cancel operations. Supply a stable run UUID and
+review digest; original consent and deadlines are immutable, and observing an
+existing task/message does not acquire ownership. See
+[durable verification runs](../../docs/networking.md#durable-single-app-binding-verification).
+
+Durable graph qualification preserves the reviewed manifest, member receipts and exact service targets. See [durable project graph verification](../../docs/networking.md#durable-project-graph-verification) for status, resume and cancel.
+
+Binding verification review endpoints return an executable plan and opaque digests without admitting work. Call `ReviewBindingVerification` / `reviewBindingVerification` / `review_binding_verification`, or the corresponding project review method. Check `ready`, show blockers and required consent, then forward the returned selection and digest to receipt creation. Graph creation also forwards the aggregate `review_digest`, member `review_digests` and unchanged consent. No client-side digest calculation is required. A ready review is not a passing verification result.
+
+### Run a durable binding verification receipt
+
+After reviewing and creating a consented receipt, save its UUID and resume it directly:
+
+```ts
+import { runBindingVerification, runProjectBindingVerification } from '@gregale/sdk-node';
+const run = await runBindingVerification('api', savedRunId, {
+  concurrency: 2,
+  signal: controller.signal,
+  onProgress: progress => console.log(progress),
+});
+const graph = await runProjectBindingVerification('project', 'production', savedGraphRunId, {
+  concurrency: 2,
+});
+```
+
+Configure `OpenAPI.BASE` and `OpenAPI.TOKEN` as for the generated services. One graph budget covers all unfinished task and queue resources. Callbacks run serially and expose sanitized IDs/status; a persisted passed receipt reports `qualifying` until final completion is reconfirmed. A callback exception, abort or transport error throws `BindingVerificationRecoveryError` with `runId`, `cause` and the latest observation. These failures leave server work intact: resume the same UUID. Use the generated cancel API for explicit cancellation. Neither expiry nor consent changes on resume; no route activation occurs. Callbacks should finish promptly.
+
+### Diagnose a stopped verification run
+
+```ts
+const diag = await AppsService.getBindingVerificationRunDiagnostics({slug: 'api', run: savedRunId});
+const graphDiag = await ProjectsService.getProjectBindingVerificationRunDiagnostics({slug: 'project', environment: 'production', run: savedGraphRunId});
+```
+
+Inspect `blockers`, whitelisted public `changes` and suggested `recovery` actions after a runner error. `complete` describes diagnostic read completeness; optional `check_passed` describes public evidence and conveys no admission or completion authority. Diagnostics preserve the original deadline and perform no execution, cancellation or receipt mutation. Missing domain permission fails the read. Continue with the same run ID only when current server checks allow it, or explicitly cancel and obtain a new reviewed receipt as directed.
+
+Verification receipt creation accepts `max_concurrency` (`MaxConcurrency` in Go), default two with a range of one through eight. This budget is frozen and enforced by the server across all drivers and graph members. Local runner concurrency can be lower; resume never changes the server budget. Runners wait and reread on `binding_verification_budget_full`, preserving the original receipt and deadline. Other capacity errors retain their recovery behavior. Diagnostics expose `budget` with the shared run ID, limit, unfinished resource count, waiting steps and fullness.
+
+Runner recovery errors now attach typed optional `diagnostics` containing server blockers, public changes and recovery suggestions. The read-only lookup has a two-second cap and respects the original receipt/caller deadlines. Unavailable, forbidden or mismatched diagnostics preserve the original cause and run ID. Cancellation and callback failures skip enrichment; no recovery action is executed automatically. Use `skipDiagnostics: true` to disable it.
+
+### Create from a reviewed binding selection
+
+Persist a canonical nonzero run UUID before creation. Pass a ready server review, lifetime and explicit effect consent; digests and selections are forwarded unchanged. Typed creation errors retain the UUID, original cause and whether creation was invoked. This flag does not prove acceptance. Reconcile uncertain creation by reading the same ID with the same review/options. Reconciliation never writes, resumes or replaces work; a failed read does not establish noncreation. Run a confirmed receipt explicitly using the existing runner.
+
+```ts
+const options = { runId: savedId, ttlSeconds: 60, maxConcurrency: 2, queuePublish: true, signal: controller.signal };
+const run = await createBindingVerificationFromReview('api', review, options);
+// After an uncertain creation error, inspect the same identity:
+const recovered = await reconcileBindingVerificationCreation('api', review, options);
+```
+
+Graph helpers are `createProjectBindingVerificationFromReview` and `reconcileProjectBindingVerificationCreation`. `BindingVerificationCreationError` exposes `runId`, `attempted` and `cause`.
+
+Durable runner status GETs now retry temporary connection failures and HTTP 502/503/504 with bounded exponential jitter. Configure `statusReadRetries` (default three; zero disables), maximum eight retries per read. Retry waits obey the original expiry and caller stop controls. Progress exposes `retrying`, `retry_attempt` and `retry_delay_ms`; callback failures stop observation. Lifecycle writes and invalid responses retain explicit recovery behavior.
+
+### Discover retained verification receipts
+
+Use `AppsService.listBindingVerificationRuns({slug, limit: 20})` and `ProjectsService.listProjectBindingVerificationRuns({slug, environment, limit: 20})`. Both accept `cursor`, `deploymentId` and `status`; app calls additionally support `scope` and `includeMembers`. Follow `next_cursor` with the same filters. `BindingVerificationRunList` contains compact `BindingVerificationRunSummary` entries and `observed_at`. Lists describe retained stored/expired states, never current qualification; app members are opt-in and identify `graph_run_id`, while project lists contain roots only. Retention is unchanged.
+
+Durable runners wait for recognized final `qualification` conditions after successful probes. Progress reports `waiting_for_qualification` with typed public conditions; polling stays within the original receipt expiry and caller deadline/stop controls. Unknown conditions or review drift stop observation. Waiting does not admit new work or renew receipts. See [ADR-1365](../../docs/adr/1365-verification-qualification-waiting.md).
+
+After an eligible admission/completion transport failure or HTTP 502/503/504, durable runners reconcile through a bounded GET of the original receipt. They continue only after validating proof of the exact owned admission or fresh passed completion, and never automatically replay the uncertain write. Progress exposes `reconciling` with `operation` and admission selectors. Reads obey existing status retry settings, original expiry and caller stop controls. Unproved results preserve explicit recovery with the original ID and write cause. See [ADR-1366](../../docs/adr/1366-verification-write-reconciliation.md).
+
+Reviewed creation now reconciles eligible transport failures and HTTP 502/503/504 through bounded reads of the original UUID. It returns only a matching usable receipt, without repeating creation or generating another UUID. Configure `statusReadRetries`, `onProgress` and the existing `signal`; read retries default to three, with zero disabling extra attempts. Progress emits `reconciling` with `operation: creation` and bounded `retrying` events. Recovery is capped at five seconds and the requested TTL measured from the attempt, plus caller context/stop controls. Unproved results preserve the typed creation error, attempted flag, original UUID and write cause. Explicit reconciliation remains a single read that can inspect terminal or expired receipts. See [ADR-1368](../../docs/adr/1368-verification-creation-reconciliation.md).
+
+### PostgreSQL pool runtime
+
+Use `PostgresPoolBinding` to validate a fresh pool before atomic secret adoption and
+retire old pools after their transaction leases release. Validation and retirement
+callbacks are required; the application supplies its driver. Register the secret
+consumer with the reload coordinator, hold each lease through driver connection
+release, and invalidate before waiting for retirement at shutdown. See the
+[pool lifecycle and SDK examples](../../docs/postgres-pool-runtime.md) and the
+[runnable Node pg.Pool service](../../examples/postgres-pool-rotation/README.md).
+
+### Deadline count alerts
+
+`watchEventSubscriptionDeadlines(target, options)` provides sustained upcoming,
+expired and waiting-reason count alerts, separate recovery boundaries, fresh-evidence
+confirmation progress, cancellation and a bounded checkpoint outbox. Load checkpoints
+with `validateEventDeadlineCheckpoint`; acknowledge exact incident/sequence pairs
+with `acknowledgeEventDeadlineAlerts` or the watch's acknowledgment callback.
+
+The Node deadline-only checkpoint format is distinct from Go/CLI delivery-health
+checkpoints. Applications own persistence and notifications: persist before sending,
+replay unacknowledged alerts after a crash, and deduplicate downstream. See
+[configuration, callbacks and recovery semantics](../../docs/event-deadline-node-watch.md).
+
+`expiredRatio: { warningBasisPoints: 1000, recoveryBasisPoints: 500,
+minimumRecipients: 100 }` enables >=10% expired backlog warnings and <=5% recovery
+with a qualifying cohort. Decisions use exact BigInt arithmetic; display values
+are approximate and alerts retain the source count sample. Ratio selections use
+version 2 Node checkpoints; existing count-only selections stay at version 1. See
+[ratio validation and compatibility](../../docs/event-deadline-node-watch.md#expired-backlog-ratios).
+
+`investigateEventDeadlineAlert(checkpoint, { incidentId, sequence }, { limit: 25 })`
+maps an exact retained Node alert to one current read-only triage page. It validates
+the checkpoint and returned scope/cohort, preserves opaque cursor continuation and
+keeps the saved notification time separate from current observation clocks. Ratio
+alerts list the expired numerator only. See
+[investigation, cancellation and pagination](../../docs/event-deadline-node-investigation.md).
+
+### Deferred event acknowledgment worker
+
+`eventAcknowledgmentWorkerFromHeaders(app, headers, originalBody, accountId, appId)`
+reconstructs a worker from an authenticated delivery or its protected durable job.
+`run(pool, handler, { signal })` renews the platform lease while the transactional
+consumer receipt and business writes commit, then completes with the exact saved
+JSON. `completeReceipt` recovers an uncertain commit/completion without invoking
+business code. Explicit `retry` / `deadLetter` decisions check for an existing
+receipt first. The application owns durable job storage and exclusive ownership.
+See [usage, cancellation and recovery](../../docs/event-acknowledgment-node-worker.md)
+and the [durable-job integration](../../examples/event-acknowledgment-node/README.md).
+
+`runDurable` commits a completion intent with the receipt and business writes.
+`saveCompletionIntent` stages a saved receipt without business code;
+`saveRetryIntent` / `saveDeadLetterIntent` persist explicit negative decisions.
+Install `eventAcknowledgmentIntentSchema` explicitly in the application database,
+and run `recoverNextEventAcknowledgmentIntent` from a durable recovery host.
+Recovery sends only the saved callback; inspect its returned `state` / `lastCode`.
+`listEventAcknowledgmentIntents` provides bounded metadata without tokens or results.
+See [transaction, recovery and retention details](../../docs/event-acknowledgment-node-intents.md).
+
+`getEventAcknowledgmentIntentHealth(pool, accountId, appId, { scanLimit, stallAfterMs, signal })`
+reads one owner-scoped database snapshot for pending/unconfirmed/parked backlog, due work,
+live/expired claims, stalled recovery and oldest overdue age. Export `complete`,
+`truncated` and `coverage` with the counts; incomplete scans cannot establish
+healthy recovery. The helper reads metadata only and claims no work. See
+[options, coverage and cancellation](../../docs/event-acknowledgment-intent-health.md#node-summary).
+
+`watchEventAcknowledgmentIntentHealth(pool, accountId, appId, options, notify)`
+adds sustained `due_backlog` / `stalled_recovery` / `parked_intents` alerts with opt-in thresholds.
+Firing and resolution require multiple fresh, complete observations; failed,
+incomplete or stale evidence becomes `unknown` / `confirmation_lost`. Polls and
+local callbacks run sequentially, and cancellation never resolves an incident.
+State is in memory; notification transport and durable identity stay application-owned.
+See [watch options, callback errors and cooperative deadlines](../../docs/event-acknowledgment-intent-health.md#node-watch).
+
+`watchEventAcknowledgmentIntentHealthWithCheckpoint(pool, accountId, appId, options)`
+adds opt-in restart recovery with stable incident IDs and a bounded notification
+outbox. Persist `progress.checkpoint` in `onProgress` before delivering
+`checkpoint.pending`; acknowledge exact incident/sequence pairs with
+`acknowledgeEventAcknowledgmentIntentAlerts`. Resume validates owner/policy and
+requires fresh confirmation while retaining unresolved incident identity.
+See [checkpoint validation, replay and shutdown](../../docs/event-acknowledgment-node-checkpoints.md).
+
+Set `parkedThreshold` to enable parked-count alerts in either Node watch,
+including a parked-only selection. Checkpointed parked alerts use version 2;
+zero/omission preserves version 1 with the existing policy JSON. Upgrade hosts
+that can resume or acknowledge version 2 first. Incomplete evidence stays unknown;
+operator resume or newer staging can reduce parked count without confirming a
+callback. See [parked evidence and rollout](../../docs/event-acknowledgment-node-checkpoints.md#parked-intent-alerts).
+
+`EventAcknowledgmentIntentHealthMetrics(accountId, appId, { maxAgeMs: 30000 })`
+caches one bounded recovery-health sample. Feed sequential reads with `record`
+and failures with `recordReadFailure`, then format a fresh `snapshot()` per scrape
+with `formatEventAcknowledgmentIntentHealthMetrics`. It exports due/stalled/parked
+counts and coverage/age gauges without identity labels; missing reads omit counts.
+The [read-only metrics contract](../../docs/event-acknowledgment-node-recovery-prometheus.md)
+and [Prometheus/Grafana pack](../../examples/event-acknowledgment-monitoring/README.md#recovery-health-node)
+include freshness guards, unavailable-evidence alerts and guarded operator resume.
+
+`EventAcknowledgmentIntentRecoveryWorkerMetrics` and
+`recoverEventAcknowledgmentIntentsWithMetrics` add actual pass liveness, separate
+from healthy reads/scrapes. The wrapper preserves original joined results/errors;
+its formatter shares Go's 23 gauges and adds Node's overlapping cleanup-failure
+gauge. Reuse the shared opt-in worker alerts/dashboard with the explicit same-loop
+host. See [Node worker liveness](../../docs/event-acknowledgment-node-worker-liveness.md).
+
+`claimEventConsumerProcessing(pool, input, durationMs, { signal })` provides an
+opaque local preparation lease with `completed`, `renew` and `complete`. Install
+`eventConsumerProcessingSchema` explicitly beside the inbox. Worker
+`runWithProcessingLease` / `runDurableWithProcessingLease` compose the same local
+fence with platform acknowledgment and optional atomic intent staging. Stop local
+renewal before the short final transaction. See [takeover, failure and lease boundaries](../../docs/event-consumer-processing-node.md).
+
+`worker.runPreparedDurable(pool, prepare, handler, { preparationTimeoutMs,
+processingLeaseMs, signal })` coordinates both local and platform lease renewal
+during side-effect-free preparation. Existing receipts skip both callbacks. Local
+renewal stops and joins before the fenced business-write/receipt/intent commit;
+platform renewal continues through it. The preparation timeout is required and
+does not bound the final transaction; supply a parent deadline and driver timeouts.
+See [coordinated preparation and recovery](../../docs/event-acknowledgment-node-preparation.md).
+
+`inspectEventConsumerProcessing(pool, input, { signal })` reads one original
+consumer acceptance's local receipt/claim metadata. It reports completed, active,
+expired, absent or conflict evidence plus database observation/expiry times and
+rounded-down remaining lease milliseconds. It selects no token or response body,
+makes no mutation and grants no processing ownership or acknowledgment proof.
+See [snapshot boundaries and explicit recovery](../../docs/event-consumer-processing-inspection.md).
+
+Prepared operations accept optional `onEvent(event)` for bounded phase, duration,
+renewal-failure and commit-outcome telemetry. Events exclude identities, tokens,
+payloads, prepared data, results and raw errors. Use a passive synchronous adapter;
+throws and accidental async rejections are ignored without changing processing
+outcomes. See [event ordering and observer limits](../../docs/event-acknowledgment-node-telemetry.md).
+
+`EventAcknowledgmentPreparationMetrics` supplies a bound `record` observer for
+`onEvent` and immutable `snapshot()` counters/histograms. Labels and duration
+buckets are fixed, memory stays bounded, and saturation is explicit. Counts are
+process-local observations; duplicate records count again and callback delivery
+remains separate. No exporter dependency is installed. See [counting and exporter semantics](../../docs/event-acknowledgment-node-metrics.md).
+
+`formatEventAcknowledgmentPreparationMetrics(metrics.snapshot(), { prefix? })`
+renders cumulative Prometheus text 0.0.4 with fixed labels, durations in seconds
+and saturation gauges. Serve with
+`EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE` on an application-owned
+scrape path. No registry, listener or network publication is added. See the
+[metric names and private scrape example](../../docs/event-acknowledgment-node-prometheus.md).
+
+The application-owned [shared Node/Python monitoring pack](../../examples/event-acknowledgment-monitoring/README.md)
+includes opt-in Prometheus recording/alert rules, a Grafana dashboard and recovery
+runbook. Tune sample guards and thresholds for your worker workload and install
+it through your own monitoring deployment process.
+
+`recoverEventAcknowledgmentIntents(pool, accountId, appId, { maxAttempts?,
+concurrency?, signal?, claimDurationMs?, backoffMs?, retryPolicy?, callbackOptions? })` runs one
+finite saved-callback recovery pass. Admissions/concurrency are bounded, existing
+transaction fences remain authoritative and all worker promises join. Frozen
+`.result` progress accompanies ordinary failure, AbortError and uncertain-COMMIT
+exceptions. The host schedules later passes and owns pool/client lifetime. See
+[budgets, pool release and recovery progress](../../docs/event-acknowledgment-node-recovery-pass.md).
+
+Set `retryPolicy: { initialBackoffMs: 1000, maxBackoffMs: 300000 }` for capped
+exponential full jitter based on persisted recovery claims. Single-intent
+recovery and `claim.deliver` accept the same option. Omit `backoffMs` with a policy;
+omitted policies keep fixed delays. See the
+[adaptive retry contract](../../docs/event-acknowledgment-node-retry-policy.md).
+
+Durable staging accepts `retryPolicy` to atomically bind an immutable versioned
+schedule to a new intent. Updated recovery uses the captured binding instead of
+worker fallback; status exposes optional frozen `retryPolicy` metadata. Apply
+`eventAcknowledgmentIntentStoredRetryPolicySchema` to existing installations
+before upgrading current intent workers. See the
+[shared binding and rollout contract](../../docs/event-acknowledgment-stored-retry-policy.md).
+
+Use `getEventAcknowledgmentIntentPolicyAdoptionCandidate` for a precise timestamp
+snapshot of selected backlog, then `adoptEventAcknowledgmentIntentRetryPolicy`
+with a durably saved command UUID, expected timestamp/count and optional policy.
+Install `eventAcknowledgmentIntentPolicyAdoptionSchema` first. Frozen receipts
+resolve exact retries across Go and Node within Node's safe generation range;
+typed rejection errors expose their retained `.receipt`. Callback data, attempts
+and due time are preserved. See the
+[adoption, timestamp and replay contract](../../docs/event-acknowledgment-policy-adoption.md#node-selection-adoption-and-replay).
+
+Set `retryBudget: { maxDeliveryAttempts: 8, retryPolicy: { initialBackoffMs: 1000,
+maxBackoffMs: 300000 } }` during durable staging to opt into v2 exhaustion. Apply
+`eventAcknowledgmentIntentRetryBudgetSchema` after the v1 upgrade before upgrading
+current helpers, including v1-only hosts. Parked callbacks retain protected inputs;
+passes and health expose `parked`. Install `eventAcknowledgmentIntentRetryResumeSchema`
+before guarded resume, select exact timestamp/count/grant metadata with
+`getEventAcknowledgmentIntentRetryResumeCandidate`, durably retain the command, then
+call `resumeEventAcknowledgmentIntentRetryBudget`. Exact retries resolve uncertain
+commits across Go/Node within Node's safe generation range. See
+[budgets, migration and operator resume](../../docs/event-acknowledgment-retry-budgets.md#node-budgets-and-guarded-resume).
+
 ## Issue source maps
 
-Node issue reporters using `groupingStrategy: 'failure-site-v1'` accept
+Node issue reporters using `groupingStrategy: 'failure-site-v1'` or `'cause-chain-v1'` accept
 `sourceMaps: [{ generatedFile, payload }]`. `generatedFile` is the exact absolute
 bundle path or file URL, and `payload` is its flat Source Map v3 JSON text.
 Ship matching maps with the deployment and load them before creating the reporter.
 Original frames determine grouping, and raw bundle stacks remain available.
 Check `stats().mappedFrames` and `unmappedFrames` for mapping coverage. See
 [registration, bounds, and rollout](../../docs/issues.md#deployment-local-node-source-maps).
+
+To discover maps automatically after a build, run
+`gregale-issue-source-maps dist dist/.gregale-issue-maps.json --replace` and ship
+the manifest with the bundles. Set
+`sourceMapManifest: { file: '/app/dist/.gregale-issue-maps.json', directory: '/app/dist' }`
+instead of `sourceMaps`. Initialization checks bundle hashes and resolves paths
+against the running deployment; capture never reads files. Build-time discovery
+removes embedded source content, supports local annotations and adjacent hidden
+maps, and rejects remote/inline references and mismatched artifacts. See
+[automatic discovery](../../docs/issues.md#discover-source-maps-during-node-builds).
 
 ## Reversible issue grouping
 
@@ -3446,3 +3800,27 @@ Use `cause-chain-v1` to group wrapped exceptions by the deepest complete reporte
 cause. The dashboard preserves the outer exception and cause chain. See
 [Issues cause-aware grouping](../../docs/issues.md#cause-aware-grouping) for
 language semantics, incomplete chains, and compatibility.
+
+Issue reporters accept explicitly reported operational context. Create a separate collector for each request or job:
+
+```ts
+const context = createIssueContext();
+context.setTag('component', 'payments');
+context.addBreadcrumb({ category: 'workflow', message: 'starting charge' });
+reporter.captureException(error, context.snapshot());
+```
+
+Import `createIssueContext` from `@gregale/sdk-node`. The collector retains at most 16 entries and immutable snapshots; it does not collect data automatically. Only the operational tag allowlist is accepted. See [the Issues guide](../../docs/issues.md) for server sanitation, retention, tag search, and deployment source-map publication.
+
+### Adopt recovery budgets for existing callback backlog
+
+`adoptEventAcknowledgmentIntentRetryBudget` attaches v2 to a selected active unbound/
+v1 intent with exact timestamp/count/policy guards, no live claim and no newer
+attempt. Install `eventAcknowledgmentIntentBudgetAdoptionSchema`, select exact
+metadata with `getEventAcknowledgmentIntentBudgetAdoptionCandidate`, then durably
+save `EventAcknowledgmentIntentAdoptRetryBudgetOptions` before execution. Omitted/
+null `expectedPolicy` means unbound; complete v1 timing must be preserved. The total
+exceeds consumed claims without resetting them. Frozen receipts resolve exact
+retries across Go/Node within Node's safe generation range, with known rejection
+receipts on `EventAcknowledgmentIntentBudgetAdoptionError.receipt`. See
+[budget adoption, exact fences and uncertainty](../../docs/event-acknowledgment-budget-adoption.md#node-selection-adoption-and-replay).

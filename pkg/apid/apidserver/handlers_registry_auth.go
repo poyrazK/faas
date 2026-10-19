@@ -211,7 +211,7 @@ func (s *server) setRegistryCredential(w http.ResponseWriter, r *http.Request, a
 // unseals under the same namespace string and refuses blobs
 // sealed under any other namespace (defence in depth).
 func (s *server) sealAndPersistRegistryCredential(c stdctx, acct state.Account, app state.App, host, username, password string) *api.Problem {
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if recipient == nil {
 		// Apid started without a host.age.pub; refuse to
 		// accept plaintext.

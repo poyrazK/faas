@@ -18,6 +18,7 @@ from ..models.update_trigger_request_broker_poison_strategy_type_3_type_1 import
     UpdateTriggerRequestBrokerPoisonStrategyType3Type1,
     check_update_trigger_request_broker_poison_strategy_type_3_type_1,
 )
+from ..models.update_trigger_request_delivery import UpdateTriggerRequestDelivery, check_update_trigger_request_delivery
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -45,6 +46,8 @@ class UpdateTriggerRequest:
     batch_size_max: int | None | Unset = UNSET
     batch_window_ms: int | None | Unset = UNSET
     max_attempts: int | None | Unset = UNSET
+    delivery: UpdateTriggerRequestDelivery | Unset = UNSET
+    """Switch between record and batch delivery; not available for cron or queue triggers (ADR-1321)."""
     retry_policy: RetryPolicyDTO | Unset = UNSET
     """ADR-134 PR-B. Wire shape for dispatch.RetryPolicy. max_attempts
     is a requested total-attempt count; zero inherits the applicable
@@ -114,6 +117,10 @@ class UpdateTriggerRequest:
         else:
             max_attempts = self.max_attempts
 
+        delivery: str | Unset = UNSET
+        if not isinstance(self.delivery, Unset):
+            delivery = self.delivery
+
         retry_policy: dict[str, Any] | Unset = UNSET
         if not isinstance(self.retry_policy, Unset):
             retry_policy = self.retry_policy.to_dict()
@@ -165,6 +172,8 @@ class UpdateTriggerRequest:
             field_dict["batch_window_ms"] = batch_window_ms
         if max_attempts is not UNSET:
             field_dict["max_attempts"] = max_attempts
+        if delivery is not UNSET:
+            field_dict["delivery"] = delivery
         if retry_policy is not UNSET:
             field_dict["retry_policy"] = retry_policy
         if payload_max_bytes is not UNSET:
@@ -240,6 +249,13 @@ class UpdateTriggerRequest:
             return cast(int | None | Unset, data)
 
         max_attempts = _parse_max_attempts(d.pop("max_attempts", UNSET))
+
+        _delivery = d.pop("delivery", UNSET)
+        delivery: UpdateTriggerRequestDelivery | Unset
+        if isinstance(_delivery, Unset):
+            delivery = UNSET
+        else:
+            delivery = check_update_trigger_request_delivery(_delivery)
 
         _retry_policy = d.pop("retry_policy", UNSET)
         retry_policy: RetryPolicyDTO | Unset
@@ -340,6 +356,7 @@ class UpdateTriggerRequest:
             batch_size_max=batch_size_max,
             batch_window_ms=batch_window_ms,
             max_attempts=max_attempts,
+            delivery=delivery,
             retry_policy=retry_policy,
             payload_max_bytes=payload_max_bytes,
             broker_poison_strategy=broker_poison_strategy,

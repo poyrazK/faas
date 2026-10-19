@@ -1,4 +1,8 @@
 ---
+# ADR-1189: provision the Safe Deploy service-token pair when missing, so
+# canary progression, alert rollbacks and stuck-canary recovery run. Set false
+# before removing the tokens to switch Safe Deploy off.
+faas_safe_releases_enabled: true
 faas_dev_bridge_enabled: false
 # ADR-740 developer live source patches. Must match vmmd_service's value:
 # apid publishes patches and vmmd serves them to developer environments.
@@ -47,3 +51,8 @@ faas_custom_domain_addresses: []
 faas_workload_identity_source_dir: ""
 faas_workload_jwks_path: /etc/faas/workload-identity.jwks.json
 faas_workload_identity_issuer: ""
+# ADR-1736: schedd's listen address, rendered into both schedd's
+# FAAS_SCHEDD_LISTEN_ADDR and faas-schedd.socket. The split-box manifest sets
+# it from daemons.schedd.bind. Empty keeps schedd.toml in charge and leaves the
+# durable socket off.
+faas_schedd_listen_addr: ""

@@ -15,6 +15,7 @@ import type { AppWebhookDeliveryAttemptListResponse } from '../models/AppWebhook
 import type { AppWebhookDeliveryHealthResponse } from '../models/AppWebhookDeliveryHealthResponse.js';
 import type { AppWebhookDeliveryListResponse } from '../models/AppWebhookDeliveryListResponse.js';
 import type { AppWebhookRetryDeliveryResponse } from '../models/AppWebhookRetryDeliveryResponse.js';
+import type { AssignPlatformTenantPlanRequest } from '../models/AssignPlatformTenantPlanRequest.js';
 import type { AsyncInvokeResponse } from '../models/AsyncInvokeResponse.js';
 import type { ClaimAPIConsumerUsageStatementRequest } from '../models/ClaimAPIConsumerUsageStatementRequest.js';
 import type { CreateAPIConsumerUsageStatementRequest } from '../models/CreateAPIConsumerUsageStatementRequest.js';
@@ -25,6 +26,7 @@ import type { CreatePlatformTenantRequest } from '../models/CreatePlatformTenant
 import type { CreatePlatformTenantSelfConsumerRequest } from '../models/CreatePlatformTenantSelfConsumerRequest.js';
 import type { CreatePlatformTenantSelfHostnameRequest } from '../models/CreatePlatformTenantSelfHostnameRequest.js';
 import type { CreatePlatformTenantWebhookRequest } from '../models/CreatePlatformTenantWebhookRequest.js';
+import type { CreateStatementInvoiceRequest } from '../models/CreateStatementInvoiceRequest.js';
 import type { LinkPlatformTenantConsumerRequest } from '../models/LinkPlatformTenantConsumerRequest.js';
 import type { LinkPlatformTenantSurfaceRequest } from '../models/LinkPlatformTenantSurfaceRequest.js';
 import type { PlanPlatformTenantReconciliationRequest } from '../models/PlanPlatformTenantReconciliationRequest.js';
@@ -32,6 +34,7 @@ import type { PlatformTenantAccessTokenListResponse } from '../models/PlatformTe
 import type { PlatformTenantAccessTokenResponse } from '../models/PlatformTenantAccessTokenResponse.js';
 import type { PlatformTenantActivationResponse } from '../models/PlatformTenantActivationResponse.js';
 import type { PlatformTenantActivityResponse } from '../models/PlatformTenantActivityResponse.js';
+import type { PlatformTenantBillingPolicyResponse } from '../models/PlatformTenantBillingPolicyResponse.js';
 import type { PlatformTenantConsumerProvisioningPolicyResponse } from '../models/PlatformTenantConsumerProvisioningPolicyResponse.js';
 import type { PlatformTenantCredentialPolicyResponse } from '../models/PlatformTenantCredentialPolicyResponse.js';
 import type { PlatformTenantCredentialsResponse } from '../models/PlatformTenantCredentialsResponse.js';
@@ -43,6 +46,12 @@ import type { PlatformTenantOffboardingApplyResponse } from '../models/PlatformT
 import type { PlatformTenantOffboardingPlanResponse } from '../models/PlatformTenantOffboardingPlanResponse.js';
 import type { PlatformTenantOffboardingReceiptListResponse } from '../models/PlatformTenantOffboardingReceiptListResponse.js';
 import type { PlatformTenantOffboardingReceiptResponse } from '../models/PlatformTenantOffboardingReceiptResponse.js';
+import type { PlatformTenantOverdueHoldListResponse } from '../models/PlatformTenantOverdueHoldListResponse.js';
+import type { PlatformTenantPlanAssignmentListResponse } from '../models/PlatformTenantPlanAssignmentListResponse.js';
+import type { PlatformTenantPlanAssignmentResponse } from '../models/PlatformTenantPlanAssignmentResponse.js';
+import type { PlatformTenantPlanListResponse } from '../models/PlatformTenantPlanListResponse.js';
+import type { PlatformTenantPlanRequest } from '../models/PlatformTenantPlanRequest.js';
+import type { PlatformTenantPlanResponse } from '../models/PlatformTenantPlanResponse.js';
 import type { PlatformTenantRateCardListResponse } from '../models/PlatformTenantRateCardListResponse.js';
 import type { PlatformTenantRateCardResponse } from '../models/PlatformTenantRateCardResponse.js';
 import type { PlatformTenantReconciliationApplyResponse } from '../models/PlatformTenantReconciliationApplyResponse.js';
@@ -61,9 +70,12 @@ import type { PlatformTenantStatementHandoffResponse } from '../models/PlatformT
 import type { PlatformTenantStatementListResponse } from '../models/PlatformTenantStatementListResponse.js';
 import type { PlatformTenantStatementResponse } from '../models/PlatformTenantStatementResponse.js';
 import type { PlatformTenantSurfaceResponse } from '../models/PlatformTenantSurfaceResponse.js';
+import type { PlatformTenantTrialResponse } from '../models/PlatformTenantTrialResponse.js';
 import type { PlatformTenantUsageResponse } from '../models/PlatformTenantUsageResponse.js';
 import type { PlatformTenantWebhookListResponse } from '../models/PlatformTenantWebhookListResponse.js';
 import type { PlatformTenantWebhookResponse } from '../models/PlatformTenantWebhookResponse.js';
+import type { PutAPIConsumerBillingPolicyRequest } from '../models/PutAPIConsumerBillingPolicyRequest.js';
+import type { PutAPIConsumerTrialRequest } from '../models/PutAPIConsumerTrialRequest.js';
 import type { RevokePlatformTenantSelfConsumersRequest } from '../models/RevokePlatformTenantSelfConsumersRequest.js';
 import type { RotateAppWebhookSecretRequest } from '../models/RotateAppWebhookSecretRequest.js';
 import type { RotateAppWebhookSecretResponse } from '../models/RotateAppWebhookSecretResponse.js';
@@ -72,6 +84,7 @@ import type { SetPlatformTenantCredentialPolicyRequest } from '../models/SetPlat
 import type { SetPlatformTenantHostnamePolicyRequest } from '../models/SetPlatformTenantHostnamePolicyRequest.js';
 import type { SetPlatformTenantRequestBudgetRequest } from '../models/SetPlatformTenantRequestBudgetRequest.js';
 import type { SetPlatformTenantStatusRequest } from '../models/SetPlatformTenantStatusRequest.js';
+import type { StatementInvoiceExportResponse } from '../models/StatementInvoiceExportResponse.js';
 import type { UpdatePlatformTenantWebhookRequest } from '../models/UpdatePlatformTenantWebhookRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -884,6 +897,342 @@ export class PlatformTenantsService {
     });
   }
   /**
+   * Read a tenant's free trial (ADR-1322).
+   * @returns PlatformTenantTrialResponse The tenant's trial.
+   * @throws ApiError
+   */
+  public static getPlatformTenantTrial({
+    id,
+  }: {
+    /**
+     * Tenant whose free trial is read or changed.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantTrialResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/trial',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Start a tenant's one free trial, or move the end of a running one.
+   * The tenant's usage in the trial is priced at zero and consumes no
+   * included units, and a month that starts during it has no base fee or
+   * minimum. A new trial starts at the next UTC minute; a running trial's
+   * end can move, never before the next minute. A tenant whose trial has
+   * ended cannot get another (409).
+   *
+   * @returns PlatformTenantTrialResponse The tenant's stored trial.
+   * @throws ApiError
+   */
+  public static putPlatformTenantTrial({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Tenant whose free trial is read or changed.
+     */
+    id: string,
+    requestBody: PutAPIConsumerTrialRequest,
+  }): CancelablePromise<PlatformTenantTrialResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/platform-tenants/{id}/trial',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `Invalid tenant trial length or end.`,
+      },
+    });
+  }
+  /**
+   * End a tenant's running trial at the next minute.
+   * @returns void
+   * @throws ApiError
+   */
+  public static endPlatformTenantTrial({
+    id,
+  }: {
+    /**
+     * Tenant whose free trial is read or changed.
+     */
+    id: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/account/platform-tenants/{id}/trial',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read the account's overdue-invoice rule for tenants (ADR-1324).
+   * @returns PlatformTenantBillingPolicyResponse The account's tenant overdue rule.
+   * @throws ApiError
+   */
+  public static getPlatformTenantBillingPolicy(): CancelablePromise<PlatformTenantBillingPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenant-billing-policy',
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Refuse tenants whose exported invoice is unpaid some days after its due date.
+   * Every 5 minutes apid places a hold on each tenant whose exported
+   * invoice is open or uncollectible with an amount left at least
+   * block_overdue_after_days past its due date, and lifts holds that no
+   * longer apply. The gateway answers every request of a held tenant
+   * (its consumers, surfaces and JWT rules) with 402
+   * `tenant_invoice_overdue`.
+   *
+   * @returns PlatformTenantBillingPolicyResponse The account's stored tenant rule.
+   * @throws ApiError
+   */
+  public static putPlatformTenantBillingPolicy({
+    requestBody,
+  }: {
+    requestBody: PutAPIConsumerBillingPolicyRequest,
+  }): CancelablePromise<PlatformTenantBillingPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/platform-tenant-billing-policy',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        422: `block_overdue_after_days is outside 0 to 365.`,
+      },
+    });
+  }
+  /**
+   * Remove the account's tenant overdue rule; holds lift at the next check.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deletePlatformTenantBillingPolicy(): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/account/platform-tenant-billing-policy',
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List the tenants the gateway refuses because of an overdue invoice.
+   * @returns PlatformTenantOverdueHoldListResponse The account's held tenants, oldest due date first.
+   * @throws ApiError
+   */
+  public static listPlatformTenantOverdueHolds(): CancelablePromise<PlatformTenantOverdueHoldListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenant-overdue-holds',
+      errors: {
+        401: `code: unauthorized`,
+      },
+    });
+  }
+  /**
+   * List the account's tenant plans by name (ADR-1307).
+   * @returns PlatformTenantPlanListResponse The account's tenant plans.
+   * @throws ApiError
+   */
+  public static listPlatformTenantPlans(): CancelablePromise<PlatformTenantPlanListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenant-plans',
+      errors: {
+        401: `code: unauthorized`,
+      },
+    });
+  }
+  /**
+   * Create a reusable tenant plan of rate card terms and a request budget.
+   * An account keeps at most 100 tenant plans. A plan changes no tenant until it is assigned.
+   * @returns PlatformTenantPlanResponse The new tenant plan.
+   * @throws ApiError
+   */
+  public static createPlatformTenantPlan({
+    requestBody,
+    idempotencyKey,
+  }: {
+    requestBody: PlatformTenantPlanRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<PlatformTenantPlanResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenant-plans',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * Read one tenant plan.
+   * @returns PlatformTenantPlanResponse The plan.
+   * @throws ApiError
+   */
+  public static getPlatformTenantPlan({
+    planId,
+  }: {
+    /**
+     * Tenant plan to read or replace.
+     */
+    planId: string,
+  }): CancelablePromise<PlatformTenantPlanResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenant-plans/{plan_id}',
+      path: {
+        'plan_id': planId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Replace a tenant plan's name and terms.
+   * Tenants already on the plan keep their rate card and budget until the plan is assigned to them again.
+   * @returns PlatformTenantPlanResponse The updated tenant plan.
+   * @throws ApiError
+   */
+  public static updatePlatformTenantPlan({
+    planId,
+    requestBody,
+  }: {
+    /**
+     * Tenant plan to read or replace.
+     */
+    planId: string,
+    requestBody: PlatformTenantPlanRequest,
+  }): CancelablePromise<PlatformTenantPlanResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/platform-tenant-plans/{plan_id}',
+      path: {
+        'plan_id': planId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * List a tenant's plan assignments, newest first.
+   * @returns PlatformTenantPlanAssignmentListResponse The tenant's assignments.
+   * @throws ApiError
+   */
+  public static listPlatformTenantPlanAssignments({
+    id,
+  }: {
+    /**
+     * Tenant whose plan is assigned or listed.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantPlanAssignmentListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/plan-assignments',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Move a tenant onto a plan from the next minute (ADR-1307).
+   * Creates the tenant's rate card version from the plan's terms,
+   * effective the next UTC minute, and sets the plan's request budget at
+   * once when the plan has one. The tenant's existing currency must match
+   * the plan's.
+   *
+   * @returns PlatformTenantPlanAssignmentResponse The assignment and the rate card it created.
+   * @throws ApiError
+   */
+  public static assignPlatformTenantPlan({
+    id,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Tenant whose plan is assigned or listed.
+     */
+    id: string,
+    requestBody: AssignPlatformTenantPlanRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<PlatformTenantPlanAssignmentResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/plan-assignments',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
    * Read durable cross-app usage for linked consumers.
    * Raw usage only; app-specific rate cards and invoices are not aggregated.
    * @returns PlatformTenantUsageResponse Usage for the requested bounded UTC window.
@@ -1203,6 +1552,99 @@ export class PlatformTenantsService {
       errors: {
         404: `code: not_found`,
         409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Read the platform tenant statement's invoice export.
+   * @returns StatementInvoiceExportResponse The platform tenant statement's export.
+   * @throws ApiError
+   */
+  public static getPlatformTenantStatementInvoice({
+    id,
+    statementId,
+  }: {
+    /**
+     * Platform tenant whose statement is exported.
+     */
+    id: string,
+    /**
+     * Finalized cross-app statement revision to export.
+     */
+    statementId: string,
+  }): CancelablePromise<StatementInvoiceExportResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/usage-statements/{statement_id}/invoice',
+      path: {
+        'id': id,
+        'statement_id': statementId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Export a finalized platform tenant statement as an invoice in Stripe, Paddle or Lago.
+   * Exports one finalized platform tenant statement revision to the
+   * provider in the body (default stripe; connect it with
+   * PUT /v1/account/billing-connections/{provider}), ADR-1502 and ADR-1507.
+   * Stripe gets a draft invoice and Paddle a draft manually collected
+   * transaction; neither is finalized or sent. Lago issues a one-off
+   * invoice at once, without charging it. Items are one per rate card and
+   * unit price plus a rounding item, so the invoice equals the statement
+   * total rounded to the cent; Paddle and Lago receive one summary item
+   * when a line is negative. On success the statement's handoff records
+   * the provider invoice ID. Retrying after a failure resumes the same
+   * invoice; repeating a completed export returns it. A statement exports
+   * to one provider only. Two-decimal currencies only; Paddle allows USD,
+   * EUR and GBP.
+   *
+   * @returns StatementInvoiceExportResponse The completed platform tenant statement export.
+   * @throws ApiError
+   */
+  public static exportPlatformTenantStatementInvoice({
+    id,
+    statementId,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Platform tenant whose statement is exported.
+     */
+    id: string,
+    /**
+     * Finalized cross-app statement revision to export.
+     */
+    statementId: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+    requestBody?: CreateStatementInvoiceRequest,
+  }): CancelablePromise<StatementInvoiceExportResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/usage-statements/{statement_id}/invoice',
+      path: {
+        'id': id,
+        'statement_id': statementId,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `The platform tenant statement or customer cannot be invoiced, or the provider rejected the request.`,
+        502: `The provider could not be reached (\`billing_provider_unavailable\`); retry to resume the platform tenant statement export.`,
       },
     });
   }

@@ -1,0 +1,68 @@
+rule_files:
+  - ../object_node_scrub.yaml
+evaluation_interval: 1m
+tests:
+  - name: absent node metrics do not alert
+    interval: 1m
+    input_series: []
+    alert_rule_test:
+      - {eval_time: 10m, alertname: ObjectNodeScrubFailures, exp_alerts: []}
+      - {eval_time: 10m, alertname: ObjectNodeScrubWorkerError, exp_alerts: []}
+      - {eval_time: 10m, alertname: ObjectNodeScrubStalled, exp_alerts: []}
+  - name: healthy completed scan and idle worker do not alert
+    interval: 1m
+    input_series:
+      - {series: 'faas_object_node_scrub_targets{job="object-storaged",outcome="failed"}', values: '0+0x12'}
+      - {series: 'faas_object_node_scrub_worker_ok{job="object-storaged"}', values: '1+0x12'}
+      - {series: 'faas_object_node_scrub_steps_total{job="object-storaged",outcome="complete"}', values: '1+1x12'}
+      - {series: 'faas_object_node_scrub_running{job="object-storaged"}', values: '0+0x12'}
+      - {series: 'faas_object_node_scrub_timestamp_seconds{job="object-storaged",event="progress"}', values: '1+0x12'}
+    alert_rule_test:
+      - {eval_time: 10m, alertname: ObjectNodeScrubFailures, exp_alerts: []}
+      - {eval_time: 10m, alertname: ObjectNodeScrubWorkerError, exp_alerts: []}
+      - {eval_time: 10m, alertname: ObjectNodeScrubStalled, exp_alerts: []}
+  - name: failed manifest targets produce an identity-safe warning
+    interval: 1m
+    input_series:
+      - {series: 'faas_object_node_scrub_targets{job="object-storaged",instance="127.0.0.1:19001",outcome="failed"}', values: '1+0x12'}
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: ObjectNodeScrubFailures
+        exp_alerts:
+          - exp_labels: {job: object-storaged, severity: warn, component: object-storaged, family: object_storage}
+            exp_annotations:
+              summary: "An owned-node checksum scan reported failed targets"
+              description: "Inspect signed scrub findings and their current/current_known fields. Counts describe the current or last worklist; they do not establish that a replacement blob is corrupt."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/owned-object-storage.md#checksum-scrubbing"
+  - name: persistent operational error alerts while advancing running progress avoids a stall
+    interval: 1m
+    input_series:
+      - {series: 'faas_object_node_scrub_worker_ok{job="object-storaged"}', values: '0+0x12'}
+      - {series: 'faas_object_node_scrub_steps_total{job="object-storaged",outcome="failed"}', values: '1+1x12'}
+      - {series: 'faas_object_node_scrub_running{job="object-storaged"}', values: '1+0x12'}
+      - {series: 'faas_object_node_scrub_timestamp_seconds{job="object-storaged",event="progress"}', values: '1+60x12'}
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: ObjectNodeScrubWorkerError
+        exp_alerts:
+          - exp_labels: {job: object-storaged, severity: warn, component: object-storaged, family: object_storage}
+            exp_annotations:
+              summary: "An owned-node checksum worker cannot make a successful step"
+              description: "Check node logs, disk space, permissions and durable scrub state. Operational errors retain the last acknowledged checkpoint and do not declare bytes verified."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/owned-object-storage.md#checksum-scrubbing"
+      - {eval_time: 8m, alertname: ObjectNodeScrubStalled, exp_alerts: []}
+  - name: stalled running scan alerts after its progress and hold windows
+    interval: 1m
+    input_series:
+      - {series: 'faas_object_node_scrub_running{job="object-storaged"}', values: '1+0x12'}
+      - {series: 'faas_object_node_scrub_timestamp_seconds{job="object-storaged",event="progress"}', values: '1+0x12'}
+    alert_rule_test:
+      - {eval_time: 4m, alertname: ObjectNodeScrubStalled, exp_alerts: []}
+      - eval_time: 8m
+        alertname: ObjectNodeScrubStalled
+        exp_alerts:
+          - exp_labels: {job: object-storaged, severity: warn, component: object-storaged, family: object_storage}
+            exp_annotations:
+              summary: "An owned-node checksum scan has stopped checkpointing"
+              description: "A running worklist has made no durable progress for more than five minutes. Check whether the worker was disabled or is retrying an unreadable target."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/owned-object-storage.md#checksum-scrubbing"

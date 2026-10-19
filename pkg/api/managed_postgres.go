@@ -6,25 +6,42 @@ import "time"
 // PostgreSQL. Provider adapters may impose a lower ceiling, but never raise
 // these plan limits.
 type ManagedPostgresPlanLimits struct {
-	DatabasesMax         int
-	StorageLimitBytes    int64
-	RestoreWindowSeconds int64
-	DevelopmentAllowed   bool
-	BurstableAllowed     bool
-	ProductionAllowed    bool
+	DatabasesMax int
+	// StorageLimitBytes is the account's pooled storage (ADR-1430): every
+	// database together, and so also the most one database may use. The pool
+	// is held as the account's monthly storage byte-seconds ceiling.
+	StorageLimitBytes int64
+	// MonthlyComputeUnitSeconds is the account's included compute across all
+	// databases per UTC month (ADR-1430). Until compute overage is billed it is
+	// a ceiling; zero keeps the operator's.
+	MonthlyComputeUnitSeconds int64
+	RestoreWindowSeconds      int64
+	DevelopmentAllowed        bool
+	BurstableAllowed          bool
+	ProductionAllowed         bool
 	// AlwaysOnAllowed is deliberately disabled for the current bundled plans.
 	// Keeping this as an entitlement makes the future always-on tier explicit
 	// instead of allowing a customer request to bypass the COGS guardrail.
 	AlwaysOnAllowed bool
 }
 
-const managedPostgresGiB int64 = 1 << 30
+const (
+	managedPostgresGiB                 int64 = 1 << 30
+	managedPostgresComputeUnitHour     int64 = 60 * 60
+	managedPostgresRestoreWindowSecond int64 = 7 * 24 * 60 * 60
+)
 
+// managedPostgresPlanLimits follows the October 2026 COGS report (ADR-1430):
+// databases, highest service class, pooled storage and monthly compute units.
 var managedPostgresPlanLimits = map[Plan]ManagedPostgresPlanLimits{
-	PlanFree:  {},
-	PlanHobby: {DatabasesMax: 1, StorageLimitBytes: 10 * managedPostgresGiB, RestoreWindowSeconds: 7 * 24 * 60 * 60, DevelopmentAllowed: true},
-	PlanPro:   {DatabasesMax: 3, StorageLimitBytes: 50 * managedPostgresGiB, RestoreWindowSeconds: 7 * 24 * 60 * 60, DevelopmentAllowed: true, BurstableAllowed: true},
-	PlanScale: {DatabasesMax: 10, StorageLimitBytes: 100 * managedPostgresGiB, RestoreWindowSeconds: 7 * 24 * 60 * 60, DevelopmentAllowed: true, BurstableAllowed: true, ProductionAllowed: true},
+	PlanFree: {DatabasesMax: 1, StorageLimitBytes: managedPostgresGiB / 2, MonthlyComputeUnitSeconds: 5 * managedPostgresComputeUnitHour,
+		RestoreWindowSeconds: managedPostgresRestoreWindowSecond, DevelopmentAllowed: true},
+	PlanHobby: {DatabasesMax: 1, StorageLimitBytes: managedPostgresGiB, MonthlyComputeUnitSeconds: 25 * managedPostgresComputeUnitHour,
+		RestoreWindowSeconds: managedPostgresRestoreWindowSecond, DevelopmentAllowed: true},
+	PlanPro: {DatabasesMax: 3, StorageLimitBytes: 5 * managedPostgresGiB, MonthlyComputeUnitSeconds: 75 * managedPostgresComputeUnitHour,
+		RestoreWindowSeconds: managedPostgresRestoreWindowSecond, DevelopmentAllowed: true, BurstableAllowed: true},
+	PlanScale: {DatabasesMax: 10, StorageLimitBytes: 20 * managedPostgresGiB, MonthlyComputeUnitSeconds: 200 * managedPostgresComputeUnitHour,
+		RestoreWindowSeconds: managedPostgresRestoreWindowSecond, DevelopmentAllowed: true, BurstableAllowed: true, ProductionAllowed: true},
 }
 
 // ManagedPostgresLimitsFor returns a copy of the closed-set entitlement for p.
@@ -202,4 +219,79 @@ type PrepareManagedPostgresCutoverRequest struct {
 	TargetDatabaseID string `json:"target_database_id"`
 	AppID            string `json:"app_id"`
 	Scope            string `json:"scope"`
+}
+
+// ManagedPostgresCutoverPreflight is a historical catalog observation. Stale
+// is recomputed when read; ActivationAllowed remains false in this release.
+type ManagedPostgresCutoverPreflight struct {
+	CutoverID                string                                `json:"cutover_id"`
+	State                    string                                `json:"state"`
+	Revision                 int64                                 `json:"revision"`
+	ActivationAllowed        bool                                  `json:"activation_allowed"`
+	Stale                    bool                                  `json:"stale"`
+	BindingIDs               []string                              `json:"binding_ids"`
+	Blockers                 []string                              `json:"blockers"`
+	VerificationFresh        bool                                  `json:"verification_fresh"`
+	SourceMatches            bool                                  `json:"source_matches"`
+	TargetMatches            bool                                  `json:"target_matches"`
+	BindingsMatch            bool                                  `json:"bindings_match"`
+	ObservedCutoverUpdatedAt string                                `json:"observed_cutover_updated_at,omitempty"`
+	CheckedAt                string                                `json:"checked_at,omitempty"`
+	ExpiresAt                string                                `json:"expires_at,omitempty"`
+	CreatedAt                string                                `json:"created_at"`
+	UpdatedAt                string                                `json:"updated_at"`
+	RuntimeDrain             *ManagedPostgresCutoverRuntimeDrain   `json:"runtime_drain,omitempty"`
+	SourceSessions           *ManagedPostgresCutoverSourceSessions `json:"source_sessions,omitempty"`
+}
+
+// ManagedPostgresCutoverSourceSessions describes a selected SQL database set,
+// never complete writer isolation or permission to activate.
+type ManagedPostgresCutoverSourceSessions struct {
+	State                    string                                 `json:"state"`
+	AdmissionClosed          bool                                   `json:"admission_closed"`
+	SelectedDatabasesDrained bool                                   `json:"selected_databases_drained"`
+	SelectedDatabaseCount    int                                    `json:"selected_database_count"`
+	Sessions                 int64                                  `json:"sessions"`
+	PreparedTransactions     int64                                  `json:"prepared_transactions"`
+	UnselectedDatabases      int64                                  `json:"unselected_databases"`
+	Blockers                 []string                               `json:"blockers"`
+	ObservedAt               string                                 `json:"observed_at,omitempty"`
+	WriterIsolation          *ManagedPostgresCutoverWriterIsolation `json:"writer_isolation,omitempty"`
+}
+
+// ManagedPostgresCutoverWriterIsolation reports safe historical diagnostics and
+// provider evidence; it is never permission to activate a customer cutover.
+type ManagedPostgresCutoverWriterIsolation struct {
+	State                   string `json:"state"`
+	Confirmed               bool   `json:"confirmed"`
+	InventoryAvailable      bool   `json:"inventory_available"`
+	CatalogMatches          bool   `json:"catalog_matches"`
+	CatalogStable           bool   `json:"catalog_stable"`
+	BackgroundWritersFenced bool   `json:"background_writers_fenced"`
+	ClientSessions          int64  `json:"client_sessions"`
+	BackgroundWorkers       int64  `json:"background_workers"`
+	ReplicationWorkers      int64  `json:"replication_workers"`
+	UnknownBackends         int64  `json:"unknown_backends"`
+	ExpiresAt               string `json:"expires_at,omitempty"`
+}
+
+// ManagedPostgresCutoverRuntimeDrain covers the captured instance catalog only.
+// Catalog retirement does not establish complete writer isolation.
+type ManagedPostgresCutoverRuntimeDrain struct {
+	State          string                                     `json:"state"`
+	InventoryCount int                                        `json:"inventory_count"`
+	Pending        int                                        `json:"pending"`
+	Retired        int                                        `json:"retired"`
+	Blocked        int                                        `json:"blocked"`
+	Blockers       []string                                   `json:"blockers"`
+	Members        []ManagedPostgresCutoverRuntimeDrainMember `json:"members"`
+}
+
+type ManagedPostgresCutoverRuntimeDrainMember struct {
+	InstanceID   string `json:"instance_id"`
+	DeploymentID string `json:"deployment_id,omitempty"`
+	Scope        string `json:"scope"`
+	Mode         string `json:"mode"`
+	State        string `json:"state"`
+	BlockerCode  string `json:"blocker_code,omitempty"`
 }

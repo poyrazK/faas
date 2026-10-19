@@ -51,12 +51,16 @@ func (m *MemStore) trackObjectGrantLocked(bucket, hash, token string, newGrant b
 	}
 	m.objectTrackedGrants[bucket][hash] = token != "" && (newGrant || m.objectTrackedGrants[bucket][hash])
 }
-func (m *MemStore) BeginObjectWrite(_ context.Context, account, bucket, token, key string, size int64, p api.ObjectStoragePolicy) error {
+func (m *MemStore) BeginObjectWrite(ctx context.Context, account, bucket, token, key string, size int64, p api.ObjectStoragePolicy) error {
 	if _, err := uuid.Parse(token); err != nil {
 		return ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	if m.objectUsage[bucket].InventoryScope == ObjectInventoryAllVersions || m.objectBucketDefaultRequiresTrackingLocked(bucket) {
 		return ErrConflict
 	}
@@ -72,9 +76,13 @@ func (m *MemStore) BeginObjectWrite(_ context.Context, account, bucket, token, k
 	m.objectWriteAdmissions[token] = objectWriteAdmission{BucketID: bucket, KeyHash: objectKeyHash(key)}
 	return nil
 }
-func (m *MemStore) SettleObjectWrite(_ context.Context, account, bucket, token string) error {
+func (m *MemStore) SettleObjectWrite(ctx context.Context, account, bucket, token string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	w, ok := m.objectWriteAdmissions[token]
 	if !ok || w.BucketID != bucket || m.objectBuckets[bucket].AccountID != account || (w.MultipartID != "" || w.Route) {
 		return ErrNotFound
@@ -110,9 +118,14 @@ func (m *MemStore) capacityReadinessLocked(bucket string) (pending int64, unsafe
 	}
 	return
 }
-func (m *MemStore) RequestObjectCapacityReconciliation(_ context.Context, account, app, bucket string) (ObjectCapacityReconciliation, error) {
+func (m *MemStore) RequestObjectCapacityReconciliation(ctx context.Context, account, app, bucket string) (ObjectCapacityReconciliation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectCapacityReconciliation
+		return zero0, err
+	}
+
 	b, ok := m.objectBuckets[bucket]
 	if !ok || b.AccountID != account || b.AppID != app {
 		return ObjectCapacityReconciliation{}, ErrNotFound
@@ -137,7 +150,7 @@ func (m *MemStore) RequestObjectCapacityReconciliation(_ context.Context, accoun
 		}
 	}
 	now := m.clock().UTC()
-	bytes, keys := objectCapacityTotals(m.objectUsageLocked(account, now), bucket)
+	bytes, keys := objectCapacityTotals(m.objectUsageLocked(m.objectBillingSubjectLocked(m.objectBuckets[bucket]), now), bucket)
 	j := ObjectCapacityReconciliation{ObjectCapacityReconciliation: api.ObjectCapacityReconciliation{ID: uuid.NewString(), BucketID: bucket, State: "waiting", InventoryScope: ObjectInventoryCurrent, BeforeBytes: bytes, BeforeKeys: keys, AfterBytes: bytes, AfterKeys: keys, CreatedAt: now, UpdatedAt: now}, AccountID: account, AppID: app, RetryAt: now, DeadlineAt: now.Add(api.ObjectCapacityReconciliationTimeout)}
 	if m.objectCapacityJobs == nil {
 		m.objectCapacityJobs = map[string]ObjectCapacityReconciliation{}
@@ -155,18 +168,28 @@ func cloneObjectCapacityJob(j ObjectCapacityReconciliation) ObjectCapacityReconc
 	}
 	return j
 }
-func (m *MemStore) GetObjectCapacityReconciliation(_ context.Context, account, bucket, id string) (ObjectCapacityReconciliation, error) {
+func (m *MemStore) GetObjectCapacityReconciliation(ctx context.Context, account, bucket, id string) (ObjectCapacityReconciliation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectCapacityReconciliation
+		return zero0, err
+	}
+
 	j, ok := m.objectCapacityJobs[id]
 	if !ok || j.AccountID != account || j.BucketID != bucket {
 		return j, ErrNotFound
 	}
 	return cloneObjectCapacityJob(j), nil
 }
-func (m *MemStore) CancelObjectCapacityReconciliation(_ context.Context, account, bucket, id string) (ObjectCapacityReconciliation, error) {
+func (m *MemStore) CancelObjectCapacityReconciliation(ctx context.Context, account, bucket, id string) (ObjectCapacityReconciliation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectCapacityReconciliation
+		return zero0, err
+	}
+
 	j, ok := m.objectCapacityJobs[id]
 	if !ok || j.AccountID != account || j.BucketID != bucket {
 		return j, ErrNotFound
@@ -185,12 +208,17 @@ func (m *MemStore) CancelObjectCapacityReconciliation(_ context.Context, account
 	}
 	return cloneObjectCapacityJob(j), nil
 }
-func (m *MemStore) DueObjectCapacityReconciliations(_ context.Context, limit int32) ([]ObjectCapacityReconciliation, error) {
+func (m *MemStore) DueObjectCapacityReconciliations(ctx context.Context, limit int32) ([]ObjectCapacityReconciliation, error) {
 	if limit < 1 || limit > api.ObjectCapacityReconciliationBatch {
 		return nil, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []ObjectCapacityReconciliation
+		return zero0, err
+	}
+
 	now := m.clock()
 	out := []ObjectCapacityReconciliation{}
 	for _, j := range m.objectCapacityJobs {
@@ -201,9 +229,14 @@ func (m *MemStore) DueObjectCapacityReconciliations(_ context.Context, limit int
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
 	return out[:min(int(limit), len(out))], nil
 }
-func (m *MemStore) ClaimObjectCapacityReconciliation(_ context.Context, id, token string) (ObjectCapacityReconciliation, error) {
+func (m *MemStore) ClaimObjectCapacityReconciliation(ctx context.Context, id, token string) (ObjectCapacityReconciliation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectCapacityReconciliation
+		return zero0, err
+	}
+
 	j, ok := m.objectCapacityJobs[id]
 	now := m.clock().UTC()
 	if !ok {
@@ -216,7 +249,7 @@ func (m *MemStore) ClaimObjectCapacityReconciliation(_ context.Context, id, toke
 	if v, exists := m.objectBucketVersioning[j.BucketID]; exists && versioningActive(v) && (v.State != "inventory" || v.CapacityJobID != id) {
 		pending = max(pending, 1)
 	}
-	j.BeforeBytes, j.BeforeKeys = objectCapacityTotals(m.objectUsageLocked(j.AccountID, now), j.BucketID)
+	j.BeforeBytes, j.BeforeKeys = objectCapacityTotals(m.objectUsageLocked(m.objectBillingSubjectLocked(m.objectBuckets[j.BucketID]), now), j.BucketID)
 	j.AfterBytes, j.AfterKeys = j.BeforeBytes, j.BeforeKeys
 	j = prepareObjectCapacityClaim(j, token, pending, unsafe, multipart, versions, now)
 	if !objectCapacityActive(j.State) {
@@ -227,9 +260,14 @@ func (m *MemStore) ClaimObjectCapacityReconciliation(_ context.Context, id, toke
 	m.objectCapacityJobs[id] = j
 	return cloneObjectCapacityJob(j), nil
 }
-func (m *MemStore) FinishObjectCapacityReconciliation(_ context.Context, id, token string, bytes, keys int64) (ObjectCapacityReconciliation, error) {
+func (m *MemStore) FinishObjectCapacityReconciliation(ctx context.Context, id, token string, bytes, keys int64) (ObjectCapacityReconciliation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectCapacityReconciliation
+		return zero0, err
+	}
+
 	j, ok := m.objectCapacityJobs[id]
 	now := m.clock().UTC()
 	if !ok {
@@ -270,9 +308,13 @@ func (m *MemStore) FinishObjectCapacityReconciliation(_ context.Context, id, tok
 func validObjectCapacityFinish(j ObjectCapacityReconciliation, token string, bytes, keys int64, now time.Time) bool {
 	return j.State == "scanning" && token != "" && j.Token == token && j.LeaseUntil.After(now) && bytes >= 0 && keys >= 0 && bytes <= api.MaxObjectStoragePolicyValue && keys <= api.MaxObjectStoragePolicyValue
 }
-func (m *MemStore) RetryObjectCapacityReconciliation(_ context.Context, id, token string) error {
+func (m *MemStore) RetryObjectCapacityReconciliation(ctx context.Context, id, token string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	j, ok := m.objectCapacityJobs[id]
 	now := m.clock().UTC()
 	if !ok {

@@ -19,6 +19,10 @@ func discoverRequiredSecretFile() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("locate requirement declaration root: %w", err)
 	}
+	return requiredSecretFileAt(root)
+}
+
+func requiredSecretFileAt(root string) (string, error) {
 	directory := filepath.Join(root, projectContextDirName)
 	info, err := os.Lstat(directory)
 	if errors.Is(err, os.ErrNotExist) {

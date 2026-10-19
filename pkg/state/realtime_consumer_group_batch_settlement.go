@@ -93,6 +93,9 @@ func (s *PgStore) SettleRealtimeConsumerGroupBatch(ctx context.Context, ep, ch, 
 		return result, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err = requireRealtimeGroupConsumer(ctx, g); err != nil {
+		return result, err
+	}
 	if err = authorizeRealtimeBatchSettlements(ctx, tx, g, inputs); err != nil {
 		return result, err
 	}

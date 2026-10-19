@@ -19,7 +19,7 @@ import (
 const (
 	// WorkloadIdentityHeader carries a vmmd-signed assertion to outboundd.
 	// It is never forwarded to a provider.
-	WorkloadIdentityHeader = "X-Gregale-Workload-Identity"
+	WorkloadIdentityHeader = workloadidentity.OutboundHeader
 	// ExecutionIdentityHeader carries a host-broker-signed assertion for one
 	// active Runs lease. It is never forwarded to the guest or provider.
 	ExecutionIdentityHeader = "X-Gregale-Execution-Identity"

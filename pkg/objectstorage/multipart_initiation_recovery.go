@@ -53,5 +53,8 @@ func (p *S3) RecoverMultipartUpload(ctx context.Context, bucket string, r Multip
 	if id == "" {
 		return "", ErrNotFound
 	}
+	if p.ownedNodeReceipts && id != ownedMultipartID(r.SessionID) {
+		return "", ErrConflict
+	}
 	return id, nil
 }

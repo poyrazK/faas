@@ -7,6 +7,101 @@
 # Verify:    make sqlc-check
 version: "2"
 sql:
+  # Read-only connection-capacity observations on the exact customer endpoint.
+  - engine: "postgresql"
+    queries: "pkg/managedpostgres/connectioncapacity/queries.sql"
+    schema: "pkg/managedpostgres/connectioncapacity/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/managedpostgres/connectioncapacity/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_interface: true
+  - engine: "postgresql"
+    queries: "pkg/productemail/queries.sql"
+    schema: "pkg/productemail/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/productemail/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
+  - engine: "postgresql"
+    queries: "pkg/state/scenariopgfault/queries.sql"
+    schema: "pkg/state/scenariopgfault/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/state/scenariopgfault/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
+  # Internal CI metadata, execution ledger and dormant Jobs intent adapter;
+  # no task claiming or VM ownership in this package.
+  - engine: "postgresql"
+    queries: ["pkg/ci/db/queries.sql", "pkg/ci/db/storage.sql", "pkg/ci/db/dispatch.sql", "pkg/ci/db/profiles.sql", "pkg/ci/db/automation.sql", "pkg/ci/db/automation_paths.sql", "pkg/ci/db/automation_branches.sql", "pkg/ci/db/automation_pull_requests.sql", "pkg/ci/db/automation_recovery.sql", "pkg/ci/db/execution_checks.sql", "pkg/ci/db/check_recovery.sql", "pkg/ci/db/source_check_recovery.sql", "pkg/ci/db/progress.sql", "pkg/ci/db/archive.sql", "pkg/ci/db/health.sql"]
+    schema: "pkg/ci/db/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/ci/db/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
+  # apid owns notification intents; maild reads only bounded metadata.
+  - engine: "postgresql"
+    queries: "pkg/apid/mailoutbox/queries.sql"
+    schema: "pkg/apid/mailoutbox/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/apid/mailoutbox/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
+  # Private feature-gated mail service. Projection mirrors its additive migration.
+  - engine: "postgresql"
+    queries: ["pkg/internalmail/queries.sql", "pkg/internalmail/retention_queries.sql", "pkg/internalmail/operations_queries.sql", "pkg/internalmail/domain_queries.sql", "pkg/internalmail/control_queries.sql", "pkg/internalmail/producer_queries.sql", "pkg/internalmail/timing_queries.sql", "pkg/internalmail/pacing_queries.sql", "pkg/internalmail/relay_health_queries.sql", "pkg/internalmail/reputation_queries.sql", "pkg/internalmail/event_feed_queries.sql", "pkg/internalmail/producer_scheduler_queries.sql", "pkg/internalmail/producer_lifecycle_queries.sql", "pkg/internalmail/encryption_queries.sql", "pkg/internalmail/suppression_queries.sql", "pkg/internalmail/recovery_queries.sql"]
+    schema: "pkg/internalmail/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/internalmail/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
+  - engine: "postgresql"
+    queries: "pkg/state/scenarioobj/queries.sql"
+    schema: "pkg/state/scenarioobj/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/state/scenarioobj/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
+  - engine: "postgresql"
+    queries: "pkg/state/scenariopg/queries.sql"
+    schema: "pkg/state/scenariopg/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/state/scenariopg/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
+  - engine: "postgresql"
+    queries: "pkg/rehearsalpg/runtime/queries.sql"
+    schema: "pkg/rehearsalpg/runtime/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/rehearsalpg/runtime/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
   - engine: "postgresql"
     queries: "pkg/state/realtimettl/queries.sql"
     schema: "pkg/state/realtimettl/schema.sql"
@@ -29,6 +124,29 @@ sql:
         emit_methods_with_db_argument: true
         emit_empty_slices: true
 
+  # Credential verification is also linked into the disposable guest binary.
+  - engine: "postgresql"
+    queries: "pkg/managedpostgres/credentialprobe/queries.sql"
+    schema: "pkg/managedpostgres/credentialprobe/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/managedpostgres/credentialprobe/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+
+  # ADR-20261016151947 live-query keys; projection mirrors its migration-owned table.
+  - engine: "postgresql"
+    queries: "pkg/state/livekeys/queries.sql"
+    schema: "pkg/state/livekeys/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/state/livekeys/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
+
   # Disposable SQL workload acceptance through delivered app credentials.
   - engine: "postgresql"
     queries: "pkg/managedpostgres/credentialdelivery/probe_queries.sql"
@@ -42,10 +160,138 @@ sql:
         emit_interface: true
 
   - engine: "postgresql"
-    queries: ["pkg/state/operator_observability_queries.sql", "pkg/state/scoped_telemetry_queries.sql", "pkg/state/release_review_queries.sql", "pkg/state/edge_rule_replay_retention_queries.sql", "pkg/state/mcp_access_policy_queries.sql", "pkg/state/entity_outbox_delivery_queries.sql", "pkg/state/event_retention_queries.sql", "pkg/state/event_execution_recovery_queries.sql", "pkg/state/event_consumer_execution_queries.sql", "pkg/state/event_schema_rollout_queries.sql", "pkg/state/event_schema_versions_queries.sql", "pkg/state/event_circuit_queries.sql", "pkg/state/event_routing_retry_queries.sql", "pkg/state/event_consumer_health_queries.sql", "pkg/state/event_subscription_control_queries.sql", "pkg/state/event_recovery_queries.sql", "pkg/state/queries.sql", "pkg/state/managed_postgres_drain_queries.sql", "pkg/state/managed_postgres_drain_plan_queries.sql", "pkg/state/telemetry_coverage_queries.sql", "pkg/state/financial_queries.sql", "pkg/state/financial_budget_queries.sql", "pkg/state/event_recipient_queries.sql", "pkg/state/event_receipt_queries.sql", "pkg/state/event_replay_preview_queries.sql", "pkg/state/event_replay_jobs_queries.sql", "pkg/state/keyed_replay_queries.sql", "pkg/state/invocation_attempt_queries.sql", "pkg/state/queue_lease_queries.sql", "pkg/state/environment_workload_retirement_queries.sql", "pkg/state/plain_replay_queries.sql", "pkg/state/work_admission_queries.sql", "pkg/state/deployment_dependency_queries.sql", "pkg/state/dev_source_patch_queries.sql", "pkg/state/profile_investigation_queries.sql", "pkg/state/profile_periodic_queries.sql", "pkg/state/profile_gate_queries.sql", "pkg/state/route_advice_queries.sql", "pkg/state/service_wake_ahead_queries.sql", "pkg/state/route_priority_queries.sql", "pkg/state/route_awake_queries.sql", "pkg/state/operation_webhook_queries.sql", "pkg/state/operation_timeline_queries.sql", "pkg/state/operation_schedule_queries.sql", "pkg/state/operation_children_queries.sql", "pkg/state/operation_concurrency_queries.sql"]
-    # Generated by `make schema-dump` after migrations. sqlc v1.27.0 cannot
-    # merge table changes across migration files, so this snapshot
-    # represents the live schema.
+    queries:
+      - "pkg/state/audit_outbox_delivery_queries.sql"
+      - "pkg/state/automation_live_queries.sql"
+      - "pkg/state/binding_verification_run_queries.sql"
+      - "pkg/state/build_dependency_queries.sql"
+      - "pkg/state/config_revision_queries.sql"
+      - "pkg/state/data_api_connection_budget_queries.sql"
+      - "pkg/state/data_api_runtime_connections_queries.sql"
+      - "pkg/state/data_repair_queries.sql"
+      - "pkg/state/data_repair_rehearsal_queries.sql"
+      - "pkg/state/deployment_dependency_queries.sql"
+      - "pkg/state/dev_source_patch_queries.sql"
+      - "pkg/state/edge_rule_replay_retention_queries.sql"
+      - "pkg/state/email_verification_queries.sql"
+      - "pkg/state/entity_outbox_delivery_queries.sql"
+      - "pkg/state/environment_workload_retirement_queries.sql"
+      - "pkg/state/event_circuit_queries.sql"
+      - "pkg/state/event_consumer_execution_queries.sql"
+      - "pkg/state/event_consumer_health_queries.sql"
+      - "pkg/state/event_execution_recovery_queries.sql"
+      - "pkg/state/event_receipt_queries.sql"
+      - "pkg/state/event_recipient_queries.sql"
+      - "pkg/state/event_recovery_queries.sql"
+      - "pkg/state/event_replay_jobs_queries.sql"
+      - "pkg/state/event_replay_preview_queries.sql"
+      - "pkg/state/event_retention_queries.sql"
+      - "pkg/state/event_routing_retry_queries.sql"
+      - "pkg/state/event_schema_rollout_queries.sql"
+      - "pkg/state/event_schema_versions_queries.sql"
+      - "pkg/state/event_subscription_control_queries.sql"
+      - "pkg/state/financial_budget_queries.sql"
+      - "pkg/state/financial_queries.sql"
+      - "pkg/state/hosting_automation_queries.sql"
+      - "pkg/state/hosting_domain_queries.sql"
+      - "pkg/state/hosting_history_queries.sql"
+      - "pkg/state/hosting_oidc_queries.sql"
+      - "pkg/state/hosting_preview_queries.sql"
+      - "pkg/state/hosting_queries.sql"
+      - "pkg/state/hosting_retention_queries.sql"
+      - "pkg/state/invocation_attempt_queries.sql"
+      - "pkg/state/issue_application_escalation_queries.sql"
+      - "pkg/state/issue_application_reminder_queries.sql"
+      - "pkg/state/issue_application_triage_queries.sql"
+      - "pkg/state/issue_compound_alert_queries.sql"
+      - "pkg/state/issue_frequency_alert_queries.sql"
+      - "pkg/state/issue_lifecycle_alert_queries.sql"
+      - "pkg/state/issue_release_health_queries.sql"
+      - "pkg/state/issue_saved_views_queries.sql"
+      - "pkg/state/issue_slack_oauth_queries.sql"
+      - "pkg/state/issue_slack_queries.sql"
+      - "pkg/state/issue_slack_routing_queries.sql"
+      - "pkg/state/issue_source_maps_queries.sql"
+      - "pkg/state/issue_teams_queries.sql"
+      - "pkg/state/issue_tracker_auto_sync_queries.sql"
+      - "pkg/state/issue_tracker_callbacks_queries.sql"
+      - "pkg/state/issue_tracker_linear_queries.sql"
+      - "pkg/state/issue_tracker_links_queries.sql"
+      - "pkg/state/keyed_replay_queries.sql"
+      - "pkg/state/managed_postgres_drain_plan_queries.sql"
+      - "pkg/state/managed_postgres_drain_queries.sql"
+      - "pkg/state/managed_postgres_preflight_queries.sql"
+      - "pkg/state/managed_postgres_source_fence_queries.sql"
+      - "pkg/state/mcp_access_policy_queries.sql"
+      - "pkg/state/mfa_credential_queries.sql"
+      - "pkg/state/migration_admission_queries.sql"
+      - "pkg/state/migration_cutover_queries.sql"
+      - "pkg/state/migration_source_queries.sql"
+      - "pkg/state/migration_verification_queries.sql"
+      - "pkg/state/native_issue_ticket_queries.sql"
+      - "pkg/state/node_admission_queries.sql"
+      - "pkg/state/node_lease_queries.sql"
+      - "pkg/state/node_lifecycle_completion_queries.sql"
+      - "pkg/state/operation_children_queries.sql"
+      - "pkg/state/operation_concurrency_queries.sql"
+      - "pkg/state/operation_schedule_queries.sql"
+      - "pkg/state/operation_timeline_queries.sql"
+      - "pkg/state/operation_webhook_queries.sql"
+      - "pkg/state/operator_context_queries.sql"
+      - "pkg/state/operator_node_queries.sql"
+      - "pkg/state/operator_observability_queries.sql"
+      - "pkg/state/operator_park_queries.sql"
+      - "pkg/state/operator_recovery_submission_queries.sql"
+      - "pkg/state/operator_restart_queries.sql"
+      - "pkg/state/org_object_ownership_queries.sql"
+      - "pkg/state/org_queue_ownership_queries.sql"
+      - "pkg/state/password_credential_queries.sql"
+      - "pkg/state/plain_replay_queries.sql"
+      - "pkg/state/post_release_watch_queries.sql"
+      - "pkg/state/product_activity_queries.sql"
+      - "pkg/state/product_billing_queries.sql"
+      - "pkg/state/product_control_queries.sql"
+      - "pkg/state/product_help_queries.sql"
+      - "pkg/state/product_notification_queries.sql"
+      - "pkg/state/product_onboarding_queries.sql"
+      - "pkg/state/product_owner_queries.sql"
+      - "pkg/state/product_plans_queries.sql"
+      - "pkg/state/product_run_details_queries.sql"
+      - "pkg/state/product_work_history_queries.sql"
+      - "pkg/state/product_workspace_activity_queries.sql"
+      - "pkg/state/profile_gate_queries.sql"
+      - "pkg/state/profile_investigation_queries.sql"
+      - "pkg/state/profile_periodic_queries.sql"
+      - "pkg/state/project_binding_verification_run_queries.sql"
+      - "pkg/state/project_migration_queries.sql"
+      - "pkg/state/project_release_staging_queries.sql"
+      - "pkg/state/project_service_queries.sql"
+      - "pkg/state/public_build_url_queries.sql"
+      - "pkg/state/queries.sql"
+      - "pkg/state/queue_binding_canary_queries.sql"
+      - "pkg/state/queue_lease_queries.sql"
+      - "pkg/state/regression_action_receipt_queries.sql"
+      - "pkg/state/release_review_queries.sql"
+      - "pkg/state/route_advice_queries.sql"
+      - "pkg/state/route_awake_queries.sql"
+      - "pkg/state/route_insights_queries.sql"
+      - "pkg/state/route_priority_queries.sql"
+      - "pkg/state/scenario_action_queries.sql"
+      - "pkg/state/scenario_cold_queries.sql"
+      - "pkg/state/scenario_recorder_queries.sql"
+      - "pkg/state/scenario_simulation_queries.sql"
+      - "pkg/state/scenario_suspend_queries.sql"
+      - "pkg/state/scenario_work_queries.sql"
+      - "pkg/state/scenario_worker_fault_queries.sql"
+      - "pkg/state/scoped_telemetry_queries.sql"
+      - "pkg/state/selected_trace_queries.sql"
+      - "pkg/state/service_wake_ahead_queries.sql"
+      - "pkg/state/snapshot_recovery_queries.sql"
+      - "pkg/state/telemetry_coverage_queries.sql"
+      - "pkg/state/work_admission_queries.sql"
+      - "pkg/state/worker_recovery_queries.sql"
+    # Generated by `make schema-dump` after migrations.
+    # This canonical snapshot keeps sqlc aligned with the complete state schema.
     schema: "schema.sql"
     gen:
       go:
@@ -66,6 +312,34 @@ sql:
         # Aggregate timestamps in the issue rollup view are timestamptz in
         # PostgreSQL; sqlc cannot infer min/max return types in view definitions.
         overrides:
+          # PostgreSQL resolves CASE view columns; sqlc 1.31 needs their
+          # explicit projection types after pg_dump removes redundant casts.
+          - column: "app_resource_accounts.plan"
+            go_type: "string"
+          - column: "app_resource_accounts.status"
+            go_type: "string"
+          - column: "app_resource_accounts.email"
+            go_type: "string"
+          - column: "app_resource_accounts.egress_allowlist_extra"
+            go_type: "int32"
+          - column: "app_resource_accounts.past_due_at"
+            go_type: { import: "github.com/jackc/pgx/v5/pgtype", type: "Timestamptz" }
+          - column: "app_resource_accounts.deletion_requested_at"
+            go_type: { import: "github.com/jackc/pgx/v5/pgtype", type: "Timestamptz" }
+          - column: "app_resource_accounts.last_quota_warning_at"
+            go_type: { import: "github.com/jackc/pgx/v5/pgtype", type: "Timestamptz" }
+          - column: "app_resource_accounts.abuse_hold_at"
+            go_type: { import: "github.com/jackc/pgx/v5/pgtype", type: "Timestamptz" }
+          - column: "app_resource_accounts.created_at"
+            go_type: { import: "github.com/jackc/pgx/v5/pgtype", type: "Timestamptz" }
+          - column: "app_resource_accounts.suspended_reason"
+            go_type: { import: "github.com/jackc/pgx/v5/pgtype", type: "Text" }
+          - column: "app_resource_accounts.abuse_hold_reason"
+            go_type: { import: "github.com/jackc/pgx/v5/pgtype", type: "Text" }
+          - column: "app_resource_accounts.provider_customer_id"
+            go_type: { import: "github.com/jackc/pgx/v5/pgtype", type: "Text" }
+          - column: "app_resource_accounts.stripe_subscription_item"
+            go_type: { import: "github.com/jackc/pgx/v5/pgtype", type: "Text" }
           - column: "issue_group_rollups.first_seen_at"
             go_type: { import: "github.com/jackc/pgx/v5/pgtype", type: "Timestamptz" }
           - column: "issue_group_rollups.last_seen_at"
@@ -159,3 +433,55 @@ sql:
         omit_unused_structs: true
         rename:
           id: "ID"
+
+
+  - engine: postgresql
+    queries: pkg/state/resourceownership/queries.sql
+    schema: pkg/state/resourceownership/schema.sql
+    gen:
+      go:
+        package: sqlc
+        out: pkg/state/resourceownership/sqlc
+        sql_package: pgx/v5
+        emit_methods_with_db_argument: true
+        omit_unused_structs: true
+  - engine: postgresql
+    queries: pkg/state/appquota/queries.sql
+    schema: pkg/state/appquota/schema.sql
+    gen:
+      go:
+        package: sqlc
+        out: pkg/state/appquota/sqlc
+        sql_package: pgx/v5
+        emit_methods_with_db_argument: true
+        omit_unused_structs: true
+  - engine: postgresql
+    queries: pkg/state/orgaccess/queries.sql
+    schema: pkg/state/orgaccess/schema.sql
+    gen:
+      go:
+        package: sqlc
+        out: pkg/state/orgaccess/sqlc
+        sql_package: pgx/v5
+        emit_methods_with_db_argument: true
+        omit_unused_structs: true
+  - engine: "postgresql"
+    queries: "pkg/connectioncapacity/queries.sql"
+    schema: "pkg/connectioncapacity/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/connectioncapacity/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
+  - engine: "postgresql"
+    queries: "pkg/datapipeline/queries.sql"
+    schema: ["pkg/datapipeline/schema.sql", "pkg/datapipeline/catalog_schema.sql"]
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/datapipeline/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true

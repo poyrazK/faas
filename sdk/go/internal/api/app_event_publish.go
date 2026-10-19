@@ -11,6 +11,8 @@ import (
 
 // AppPublishEventRequest mirrors the application-scoped producer-key contract.
 type AppPublishEventRequest struct {
+	// ExpectedAppID fences slug reuse when set.
+	ExpectedAppID string          `json:"expected_app_id,omitempty"`
 	Key           string          `json:"key"`
 	Type          string          `json:"type"`
 	Data          json.RawMessage `json:"data"`

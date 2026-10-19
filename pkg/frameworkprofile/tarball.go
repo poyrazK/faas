@@ -74,7 +74,7 @@ func readProfileFiles(archivePath, logicalRoot string) (fstest.MapFS, bool, erro
 	tr := tar.NewReader(zr)
 	var used int64
 	truncated := false
-	rootPrefix := strings.TrimSuffix(strings.TrimPrefix(logicalRoot, "./"), "/")
+	rootPrefix := strings.TrimSuffix(tarball.TrimLeadingDotSlash(logicalRoot), "/")
 	if rootPrefix != "" {
 		rootPrefix += "/"
 	}
@@ -89,7 +89,7 @@ func readProfileFiles(archivePath, logicalRoot string) (fstest.MapFS, bool, erro
 		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
-		name := strings.TrimPrefix(hdr.Name, "./")
+		name := tarball.TrimLeadingDotSlash(hdr.Name)
 		if rootPrefix != "" {
 			if !strings.HasPrefix(name, rootPrefix) {
 				continue

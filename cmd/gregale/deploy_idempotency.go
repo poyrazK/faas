@@ -18,6 +18,7 @@ const maxDeployIdempotencyKeyLength = 255
 // content identity for local/tarball deploys; image and source-ref fields
 // cover the two paths where the CLI does not have source bytes.
 type deployIdempotencyIntent struct {
+	OverrideEnv              map[string]string          `json:"override_env,omitempty"`
 	Slug                     string                     `json:"slug"`
 	Shape                    shape                      `json:"shape"`
 	Runtime                  string                     `json:"runtime,omitempty"`
@@ -27,6 +28,7 @@ type deployIdempotencyIntent struct {
 	Ref                      string                     `json:"ref,omitempty"`
 	SourceBranch             string                     `json:"source_branch,omitempty"`
 	SourceSHA256             string                     `json:"source_sha256,omitempty"`
+	IssueSourceMapsSHA256    string                     `json:"issue_source_maps_sha256,omitempty"`
 	SourceRoot               string                     `json:"source_root,omitempty"`
 	Profile                  string                     `json:"profile,omitempty"`
 	Dockerfile               bool                       `json:"dockerfile,omitempty"`

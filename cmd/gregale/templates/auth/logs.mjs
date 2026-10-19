@@ -8,6 +8,9 @@ const quiet = new Set(['trace', 'debug', 'info'])
 // Warnings and errors still name the user (auth_event.actor_username); keep
 // the event, not the person.
 const personal = new Set(['actor_username', 'email', 'new_email', 'phone', 'new_phone'])
+// GoTrue warns at every start about the admin group, which it defaults
+// itself, and the default group, which config.mjs sets on purpose.
+const expected = new Set(['ADMIN', 'DEFAULT'].map(name => `DEPRECATION NOTICE: GOTRUE_JWT_${name}_GROUP_NAME not supported by Supabase's GoTrue, will be removed soon`))
 
 function redact(value) {
   if (Array.isArray(value)) return value.map(redact)
@@ -21,6 +24,7 @@ export function logLine(line) {
   let entry
   try { entry = JSON.parse(line) } catch { return line }
   if (typeof entry.level === 'string' && quiet.has(entry.level)) return null
+  if (entry.level === 'warning' && expected.has(entry.msg)) return null
   return JSON.stringify(redact(entry))
 }
 

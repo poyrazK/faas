@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.route_awake_route import RouteAwakeRoute
+    from ..models.route_awake_source import RouteAwakeSource
 
 
 T = TypeVar("T", bound="RouteAwakeResponse")
@@ -38,8 +39,12 @@ class RouteAwakeResponse:
     wakes: int
     """Cold boots in the window."""
     unattributed_seconds: int
-    """Awake time no recorded request explains: synthetic probes, scheduled prewarm, minimum instances, queue, cron
-    and waitUntil work, or telemetry the plan's rate cap dropped."""
+    """Awake time no recorded request, probe or prewarm explains: minimum instances, queue, cron and waitUntil
+    work, probes older than a day, or telemetry the plan's rate cap dropped."""
+    sources: list[RouteAwakeSource]
+    """Awake time credited to causes other than customer requests, for minutes no request explains (ADR-1199)."""
+    min_instances: int
+    """The app's current minimum instance count; above zero the app never parks, so unattributed time is expected."""
     other_routes_seconds: int
     """Awake time attributed to routes outside the busiest routes_limit."""
     routes_limit: int
@@ -70,6 +75,13 @@ class RouteAwakeResponse:
 
         unattributed_seconds = self.unattributed_seconds
 
+        sources = []
+        for sources_item_data in self.sources:
+            sources_item = sources_item_data.to_dict()
+            sources.append(sources_item)
+
+        min_instances = self.min_instances
+
         other_routes_seconds = self.other_routes_seconds
 
         routes_limit = self.routes_limit
@@ -96,6 +108,8 @@ class RouteAwakeResponse:
                 "gb_hours": gb_hours,
                 "wakes": wakes,
                 "unattributed_seconds": unattributed_seconds,
+                "sources": sources,
+                "min_instances": min_instances,
                 "other_routes_seconds": other_routes_seconds,
                 "routes_limit": routes_limit,
                 "routes": routes,
@@ -109,6 +123,7 @@ class RouteAwakeResponse:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.route_awake_route import RouteAwakeRoute
+        from ..models.route_awake_source import RouteAwakeSource
 
         d = dict(src_dict)
         slug = d.pop("slug")
@@ -132,6 +147,15 @@ class RouteAwakeResponse:
         wakes = d.pop("wakes")
 
         unattributed_seconds = d.pop("unattributed_seconds")
+
+        sources = []
+        _sources = d.pop("sources")
+        for sources_item_data in _sources:
+            sources_item = RouteAwakeSource.from_dict(sources_item_data)
+
+            sources.append(sources_item)
+
+        min_instances = d.pop("min_instances")
 
         other_routes_seconds = d.pop("other_routes_seconds")
 
@@ -158,6 +182,8 @@ class RouteAwakeResponse:
             gb_hours=gb_hours,
             wakes=wakes,
             unattributed_seconds=unattributed_seconds,
+            sources=sources,
+            min_instances=min_instances,
             other_routes_seconds=other_routes_seconds,
             routes_limit=routes_limit,
             routes=routes,

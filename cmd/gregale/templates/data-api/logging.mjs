@@ -1,13 +1,14 @@
 import { randomUUID, createHash } from 'node:crypto'
+import { createTimings, timingPhases } from './timing.mjs'
 
 const trace = Symbol('requestTrace')
 const codes = new Set(['origin_not_allowed', 'not_found', 'invalid_path', 'method_not_allowed',
   'token_required', 'token_invalid', 'read_only_identity', 'serving_contract_unavailable', 'data_api_unavailable',
-  'data_api_refresh_paused', 'data_api_refresh_unavailable',
-  'request_too_large', 'query_timeout', 'schema_document_too_large', 'schema_contract_mismatch', 'upstream_error'])
+  'data_api_refresh_paused', 'data_api_refresh_unavailable', 'data_api_overloaded', 'data_api_rate_limited', 'data_api_concurrency_limited',
+  'request_too_large', 'response_too_large', 'query_timeout', 'request_deadline_exceeded', 'schema_document_too_large', 'schema_contract_mismatch', 'upstream_error'])
 
 function route(url) {
-  if (url === '/healthz') return 'health'
+  if (url === '/healthz' || url === '/livez') return 'health'
   if (url === '/__gregale/schema') return 'schema'
   if (url === '/openapi.json') return 'openapi'
   if (url.startsWith('/rest/v1/rpc/')) return 'rpc'
@@ -17,7 +18,8 @@ function route(url) {
 
 function outcome(code, status) {
   if (code === 'token_required' || code === 'token_invalid') return 'authentication_failed'
-  if (code === 'query_timeout') return 'query_timeout'
+  if (code === 'query_timeout' || code === 'request_deadline_exceeded') return 'query_timeout'
+  if (code === 'data_api_overloaded') return 'overloaded'
   if (code === 'data_api_unavailable' || code === 'data_api_refresh_unavailable' || code === 'serving_contract_unavailable') return 'unavailable'
   if (code === 'upstream_error') return 'upstream_error'
   return status >= 400 ? 'rejected' : 'completed'
@@ -36,11 +38,15 @@ export function traceRequest(req, res, emit = writeLog) {
   const finish = completed => {
     if (emitted) return
     emitted = true
+    state.closed = true
+    const finishedAt = performance.now()
+    const interrupted = !completed || state.code === 'query_timeout' || state.code === 'request_deadline_exceeded' || state.code === 'response_too_large'
+    const timings = state.timing?.snapshot(finishedAt, !interrupted)
     const status = completed || res.headersSent ? res.statusCode : null
     const result = completed ? outcome(state.code, status) : 'aborted'
     const record = { time: new Date().toISOString(), level: completed && status < 400 ? 'info' : 'warn',
       event: 'data_api_request', request_id: state.id, method, route: category, status,
-      duration_ms: Math.round((performance.now() - started) * 1000) / 1000, outcome: result, code: state.code, ...(state.query ?? {}) }
+      duration_ms: Math.round((finishedAt - started) * 1000) / 1000, outcome: result, code: state.code, ...(state.admission ? { admission: state.admission } : {}), ...(state.deadline ? { deadline: state.deadline } : {}), ...(state.responseLimit ? { response_limit: state.responseLimit } : {}), ...(state.rateLimit ? { rate_limit: state.rateLimit } : {}), ...(state.concurrencyLimit ? { concurrency_limit: state.concurrencyLimit } : {}), ...(timings ? { timings } : {}), ...(state.databaseTimings ? { database_timings: state.databaseTimings } : {}), ...(state.query ?? {}) }
     try { emit(record) } catch { /* Logging failure must not change the response. */ }
   }
   res.once('finish', () => finish(true))
@@ -49,6 +55,37 @@ export function traceRequest(req, res, emit = writeLog) {
 
 export function markRequest(res, code) {
   if (res[trace] && codes.has(code)) res[trace].code = code
+}
+
+export function markAdmission(res, admission) {
+  if (res[trace]) res[trace].admission = admission
+}
+
+export function markDeadline(res, deadline) {
+  if (res[trace]) res[trace].deadline = deadline
+}
+
+export function markResponseLimit(res, limit) {
+  if (res[trace] && !res[trace].closed) res[trace].responseLimit = limit
+}
+
+export function markRateLimit(res, limit) {
+  if (res[trace] && !res[trace].closed) res[trace].rateLimit = limit
+}
+
+export function markConcurrencyLimit(res, limit) {
+  if (res[trace] && !res[trace].closed) res[trace].concurrencyLimit = limit
+}
+
+export function markPhase(res, phase) {
+  const state = res[trace]
+  if (!state || state.closed || !timingPhases.includes(phase)) return
+  state.timing ??= createTimings()
+  state.timing.enter(phase, performance.now())
+}
+
+export function markDatabaseTimings(res, timings) {
+  if (res[trace] && !res[trace].closed) res[trace].databaseTimings = timings
 }
 
 export function requestID(res) { return res[trace]?.id }

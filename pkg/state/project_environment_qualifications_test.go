@@ -18,12 +18,7 @@ func TestMemProjectEnvironmentQualificationContract(t *testing.T) {
 	testProjectEnvironmentQualificationContract(t, state.NewMemStore())
 }
 
-func testProjectEnvironmentQualificationContract(t *testing.T, store interface {
-	projectEnvironmentQualificationStore
-	state.ProjectReleaseSetStore
-	state.ProjectReleaseSetReader
-	state.Store
-}) {
+func testProjectEnvironmentQualificationContract(t *testing.T, store contractTestStore) {
 	t.Helper()
 	ctx := context.Background()
 	account, project, releases := testProjectReleaseReadContract(t, store)

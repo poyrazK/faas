@@ -136,6 +136,20 @@ func HistogramQuantileMSQuery(quantile float64, buckets, count string) string {
 // failures remain degraded so the rule can expose that its own source is
 // unavailable.
 func FetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng, metric string) (float64, string) {
+	return fetchAlertMetric(ctx, fetcher, log, appID, rng, metric, 0)
+}
+
+// FetchAlertMetricDaysAgo evaluates the same alert metric over the same
+// window, shifted back daysAgo whole days with PromQL offset. It feeds the
+// same-time-of-day baselines of ADR-744; daysAgo must be 1..AnomalyBaselineDays.
+func FetchAlertMetricDaysAgo(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng, metric string, daysAgo int) (float64, string) {
+	if daysAgo < 1 || daysAgo > api.AnomalyBaselineDays {
+		return 0, SourceDegradedPrefix + "invalid baseline offset"
+	}
+	return fetchAlertMetric(ctx, fetcher, log, appID, rng, metric, daysAgo)
+}
+
+func fetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng, metric string, daysAgo int) (float64, string) {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -172,6 +186,12 @@ func FetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, app
 			fmt.Sprintf(`sum(rate(gateway_cold_boot_total{app=%q}[%s]))`, appID, rng),
 			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q}[%s]))`, appID, rng)))
 		normalize = SafePercent
+	case "log_error_lines", "log_warn_lines":
+		// ADR-746: vmmd counts classified guest log lines per app on every
+		// node; sum folds the nodes and instances the app ran on.
+		level := strings.TrimSuffix(strings.TrimPrefix(metric, "log_"), "_lines")
+		query = fmt.Sprintf(`sum(increase(vmmd_app_log_lines_total{app_id=%q,level=%q}[%s])) or vector(0)`, appID, level, rng)
+		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
 	case "queue_depth":
 		query = fmt.Sprintf(`sum(gateway_queue_depth{app=%q,account_id=~".+"}) or vector(0)`, appID)
 		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
@@ -207,6 +227,11 @@ func FetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, app
 		normalize = SafePercent
 	default:
 		return 0, SourceDegradedPrefix + "unsupported alert metric"
+	}
+	if daysAgo > 0 {
+		// Every range selector above is "[<rng>]"; shifting each one keeps
+		// numerator and denominator on the same past window.
+		query = strings.ReplaceAll(query, "["+rng+"]", fmt.Sprintf("[%s] offset %dd", rng, daysAgo))
 	}
 
 	value, err := fetcher.QueryScalar(ctx, query)

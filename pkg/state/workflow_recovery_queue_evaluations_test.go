@@ -50,7 +50,7 @@ func TestWorkflowRecoveryAutomaticEvaluationLifecycle(t *testing.T) {
 					t.Fatalf("waiting %+v", waiting)
 				}
 				if pg, ok := s.(*PgStore); ok {
-					s = NewPgStore(pg.pool)
+					s = NewPgStore(pg.pool.Pool)
 				}
 				runAutomaticPolicy(t, s, now.Add(2*time.Minute))
 				out := queue()

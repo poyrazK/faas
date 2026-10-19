@@ -410,6 +410,10 @@ func TestConsumerScopeAllows(t *testing.T) {
 		{name: "write post", method: http.MethodPost, scopes: []string{"write"}, want: true},
 		{name: "write get", method: http.MethodGet, scopes: []string{"write"}, want: true},
 		{name: "admin all", method: http.MethodDelete, scopes: []string{"admin"}, want: true},
+		// ADR-1506: billing reads the owner's billing API, never the app.
+		{name: "billing only get", method: http.MethodGet, scopes: []string{"billing"}, want: false},
+		{name: "billing only post", method: http.MethodPost, scopes: []string{"billing"}, want: false},
+		{name: "read and billing get", method: http.MethodGet, scopes: []string{"billing", "read"}, want: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

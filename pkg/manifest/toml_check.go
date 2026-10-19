@@ -275,6 +275,7 @@ var HostKeys = map[string]HostBlock{
 		ComputeNodeBlock: nil,
 		Tables: []TableKey{
 			{Table: "ratelimit", Key: "mode", Owner: "gatewayd_internal", Scope: "private"},
+			{Table: "ratelimit", Key: "lease", Owner: "gatewayd_internal", Scope: "private"},
 		},
 	},
 	"imaged": {

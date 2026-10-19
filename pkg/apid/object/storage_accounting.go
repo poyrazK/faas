@@ -22,7 +22,7 @@ func ValidateObjectStorageBillingSetup(provider billing.Provider, registry *obje
 	if !ok {
 		return nil
 	}
-	policy, enabled := sink.ObjectStorageLineItemPolicy()
+	_, enabled := sink.ObjectStorageLineItemPolicy()
 	if !enabled {
 		return nil
 	}
@@ -35,8 +35,9 @@ func ValidateObjectStorageBillingSetup(provider billing.Provider, registry *obje
 	if !registry.Pricing.Valid() {
 		return errors.New("apid: object storage billing requires a valid object-storage rate card")
 	}
-	if policy.Provider == "polar" && registry.Pricing.Currency != "EUR" {
-		return fmt.Errorf("apid: Polar object storage billing requires EUR pricing, got %q", registry.Pricing.Currency)
+	// Every Gregale charge is in the billing currency (ADR-1430).
+	if registry.Pricing.Currency != api.BillingCurrency {
+		return fmt.Errorf("apid: object storage billing requires %s pricing, got %q", api.BillingCurrency, registry.Pricing.Currency)
 	}
 	return nil
 }
@@ -72,7 +73,7 @@ func (s *Service) GetObjectStorageUsage(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	now := time.Now().UTC()
-	snapshot, err := st.ObjectUsage(r.Context(), acct.ID, now)
+	snapshot, err := st.ObjectUsage(r.Context(), acct.ResourceOwnerID(), now)
 	if err != nil {
 		BucketProblem(w, err)
 		return
@@ -182,7 +183,10 @@ func (s *Service) ScanObjectInventory(ctx context.Context, st state.ObjectStorag
 	if err != nil {
 		return err
 	}
-	bytes, objects, err := CompleteObjectInventory(ctx, backend.Provider, b.PhysicalName, s.inventoryRequestRecorder(b))
+	bytes, objects, counters, err := objectstorage.CompleteOwnedUsageCounters(ctx, backend.Provider, b.PhysicalName, s.inventoryRequestRecorder(b))
+	if !counters {
+		bytes, objects, err = CompleteObjectInventory(ctx, backend.Provider, b.PhysicalName, s.inventoryRequestRecorder(b))
+	}
 	if err != nil {
 		return err
 	}
@@ -260,6 +264,7 @@ func (s *Service) RunObjectStorageAccounting(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		case <-s.InventoryWake:
 		}
 	}
 }
@@ -281,5 +286,5 @@ func (s *Service) finalizeObjectStorageBilling(ctx context.Context, pricing api.
 	if candidate, ok := s.Host.BillingProvider().(billing.ObjectStorageLineItemSink); ok {
 		sink = candidate
 	}
-	return billing.FinalizeObjectStoragePeriods(ctx, runner, runner, pricing, periodStart, now, sink)
+	return billing.FinalizeObjectStoragePeriods(ctx, storageBillingAccounts{store: runner}, runner, pricing, periodStart, now, sink)
 }

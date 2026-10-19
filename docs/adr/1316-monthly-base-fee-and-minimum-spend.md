@@ -1,0 +1,22 @@
+# ADR-1316: Monthly base fee and minimum spend
+
+- **Status:** accepted
+- **Date:** 2026-10-15
+- **Decision:** An app consumer rate card can set `base_fee_millicents_per_month` and `minimum_millicents_per_month`, charged per consumer per UTC month on top of usage pricing.
+  - **Which card.** The card in force when the month starts for the consumer: at 00:00 UTC on the 1st, or when the consumer was created if that is later. A card added mid-month first charges fees the following month. A trial running at that moment, or starting the minute after as one given at creation does (ADR-1314), waives both for the month.
+  - **Statement fees.** A statement carries `fees`, each a `base_fee` or a `minimum` with its card and amount, and `amount_millicents` includes them.
+    - The base fee is billed once per month.
+    - The minimum top-up is the minimum less the month's usage charge, never below zero.
+  - **Adjustments.** A revision bills the base fee only if no finalized revision has. Its minimum fee is the change in top-up, which is negative when late usage covers part of the minimum already billed. Usage added and top-up removed balance, so a revision's total never falls below zero.
+  - **Whole months.** Statements of a period that a card with fees prices must cover one UTC calendar month, as for tiers (ADR-951).
+  - **Idle consumers.** Billing runs (ADR-1503) also bill consumers without usage in apps whose cards charge fees. They include every consumer created before the month ends and not revoked before it starts. A statement whose total is zero is recorded and not exported.
+  - **Exports.** Each fee becomes its own invoice item: "Monthly base fee", or "Minimum monthly spend top-up". Paddle and Lago receive one summary item when a negative top-up appears, as for other negative lines (ADR-1507).
+- **Why:** Most API plans combine a subscription with usage ("€49 a month including 100,000 requests, then €0.0005 each") or commit customers to a minimum. Cards could only price usage, so operators had to bill subscriptions outside Gregale.
+- **Consequences:**
+  - **No proration.** A consumer created mid-month pays the full base fee and minimum for that month; a revoked consumer pays for each month it existed in. Operators wanting proration use a trial or a free card for the first month.
+  - **Spend caps and quotes.** Spend caps (ADR-1306) and quotes count usage charges only. Fees are fixed and billed by statements.
+  - **App consumers only.** Customer-wide (platform tenant) cards do not charge fees; their statement lines are per subject and unit price. *Superseded by ADR-1322: tenant cards charge fees; ADR-1325 adds opt-in first-month proration.*
+  - **Included units stay on the card.** "Including 100,000 requests" is the card's allowance (ADR-950), independent of the fee.
+- **Rejected alternatives:**
+  - Treating the base fee as prepaid usage would duplicate prepaid credit (ADR-1306), which already does that.
+  - Charging the minimum as a separate statement after the month would need a second handoff per month and break the one-invoice-per-revision rule.

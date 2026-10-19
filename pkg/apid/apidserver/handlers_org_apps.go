@@ -9,7 +9,7 @@ import (
 )
 
 // listOrgApps exposes only safe inventory fields for apps persisted to the
-// verified organization. It does not widen access to creator-scoped app APIs.
+// verified organization. Detailed app access uses the reviewed appaccess policy.
 func (s *server) listOrgApps(w http.ResponseWriter, r *http.Request, _ state.Account) {
 	if !s.requireOrgAction(w, r, authz.OrgActionView) {
 		return
@@ -36,15 +36,16 @@ func writeOrgAppList(w http.ResponseWriter, apps []state.App) {
 	for _, app := range apps {
 		response.Apps = append(response.Apps, api.OrgAppSummary{
 			ID: app.ID, Slug: app.Slug, Type: string(app.Type), Runtime: app.Runtime,
-			Status: string(app.Status), CreatedAt: api.FormatAlertTime(app.CreatedAt),
+			ProjectID: app.ProjectID, Status: string(app.Status), CreatedAt: api.FormatAlertTime(app.CreatedAt),
 		})
 	}
 	writeJSON(w, http.StatusOK, response)
 }
 
 // createOrgApp creates an app whose persisted organization is the
-// LoadOrg-verified workspace. The creator remains the app's account owner
-// until the broader app API authorization and billing migration is complete.
+// LoadOrg-verified workspace and reserves a slot in its shared app budget.
+// Storage keeps its stable namespace; adopted organizations supply runtime and
+// billing policy. Reviewed operations authorize the organization's current roles.
 func (s *server) createOrgApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.requireOrgAction(w, r, authz.OrgActionCreateApp) {
 		return

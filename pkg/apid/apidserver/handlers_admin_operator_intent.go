@@ -2,7 +2,7 @@
 // for the P2 redesign (PR #1099). GET /v1/admin/operator-intents/{id}
 // returns the current state of an intent row from operator_intents
 // (migrations/00431). Status is one of "pending" | "running" |
-// "succeeded" | "failed" | "cancelled".
+// "succeeded" | "failed" | "cancelled" | "outcome_unknown".
 //
 // Auth: admin scope (NO MFA — mirrors the getFireCronRequest
 // pattern at cmd/apid/handlers_fire_cron_request.go:38-83
@@ -30,6 +30,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/operatorpark"
+	"github.com/onebox-faas/faas/pkg/apid/operatorrestart"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -59,6 +61,9 @@ func (s *server) getOperatorIntent(w http.ResponseWriter, r *http.Request, acct 
 
 func toOperatorIntentResponse(intent state.OperatorIntent) api.OperatorIntentResponse {
 	return api.OperatorIntentResponse{
+		ColdBootGeneration: intent.ColdBootGeneration,
+		ParkExecution:      operatorpark.Response(intent.ParkExecution),
+		RestartExecution:   operatorrestart.Response(intent.RestartExecution),
 		IntentID:           intent.ID,
 		Kind:               string(intent.Kind),
 		Status:             string(intent.Status),

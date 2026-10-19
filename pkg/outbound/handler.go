@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/trace"
 )
 
@@ -41,6 +42,7 @@ var hopByHopHeaders = map[string]struct{}{
 // Handler is an explicit request-aware outbound gateway. A request to
 // /i/{integrationID}/path is sent only to that integration's configured origin.
 type Handler struct {
+	SimulationHandler         http.Handler
 	Resolver                  Resolver
 	Backend                   Backend
 	Client                    *http.Client
@@ -72,6 +74,26 @@ type Handler struct {
 	// during the staged preview rollout; nil admits every account
 	// (ADR-998).
 	AIGatewayRollout AIGatewayRollout
+	// AIGatewayFlags, when set, is the live ai_gateway platform flag
+	// (ADR-1700). It replaces AIGatewayEnabled and AIGatewayRollout, so an
+	// operator change applies to the next call without a restart.
+	AIGatewayFlags *platformflags.Set
+	// aiContainers charges each code-interpreter container once per
+	// session window (ADR-1433).
+	aiContainers aiContainerSessions
+	// promptPrefixes remembers repeated prompt prefixes for automatic
+	// prompt caching (ADR-1437).
+	promptPrefixes promptPrefixes
+	// routeRandom replaces the routing draw in tests (ADR-1434).
+	routeRandom func(int) int
+}
+
+// aiGatewayOn reports the AI gateway kill switch.
+func (h *Handler) aiGatewayOn() bool {
+	if h.AIGatewayFlags != nil {
+		return h.AIGatewayFlags.Snapshot().GloballyEnabled(platformflags.AIGateway)
+	}
+	return h.AIGatewayEnabled
 }
 
 // ManagedCredentialResolver supplies a customer-sealed Authorization value
@@ -164,6 +186,14 @@ func NewHandler(resolver Resolver, backend Backend, client *http.Client) (*Handl
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if principal, ok := relayPrincipalFromContext(r.Context()); ok && principal.rehearsalRunID != "" {
+		if h.SimulationHandler == nil {
+			writeProblem(w, http.StatusServiceUnavailable, "rehearsal_simulation_unavailable", "Rehearsal simulation unavailable", "")
+			return
+		}
+		h.SimulationHandler.ServeHTTP(w, r)
+		return
+	}
 	if r.URL.Path == "/readyz" {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			writeProblem(w, http.StatusMethodNotAllowed, "outbound_method_not_allowed", "Only GET and HEAD are supported for readiness", "")
@@ -206,7 +236,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	metricIntegrationID := integration.MetricLabel()
-	if integration.AIProvider != "" && !h.AIGatewayEnabled {
+	if integration.AIProvider != "" && !h.aiGatewayOn() {
 		h.Metrics.ObserveRejection(metricIntegrationID, "ai_gateway_disabled")
 		writeProblem(w, http.StatusServiceUnavailable, "outbound_ai_gateway_disabled", "The AI gateway is not enabled on this platform", "")
 		return
@@ -224,10 +254,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusForbidden, "outbound_replay_not_authorized", "The replay cannot use this outbound integration", "")
 		return
 	}
+	// ADR-1340, ADR-1431: the gateway's own checks, evaluations and batch
+	// reads call in process for the account's own customer AI
+	// integrations, like a replay.
+	internal, isInternal := internalPrincipalFromContext(r.Context())
+	if isInternal && !internalAllowed(integration, internal) {
+		writeProblem(w, http.StatusForbidden, "outbound_internal_not_authorized", "The gateway's own call cannot use this outbound integration", "")
+		return
+	}
 	var workflowIdentity *WorkflowIdentity
 	var executionIdentity ExecutionIdentity
 	var isExecution bool
-	if !isReplay {
+	if !isReplay && !isInternal {
 		if workflowIdentity, ok = h.callerWorkflowIdentity(w, r, integration, path); !ok {
 			return
 		}
@@ -239,6 +277,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	principalID := ""
 	if isReplay {
 		principalID = "replay:" + replay.replayID
+	} else if isInternal {
+		principalID = internal.caller + ":" + internal.accountID
 	} else if isExecution {
 		if h.ExecutionAuthorizer == nil {
 			writeProblem(w, http.StatusServiceUnavailable, "outbound_execution_authorization_unavailable", "Runs outbound authorization is unavailable", "1")
@@ -269,7 +309,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		principalID = appID
 	}
 	var allowedRoute bool
-	if isExecution || isReplay {
+	if isExecution || isReplay || isInternal {
 		allowedRoute = integration.AllowsRequest(r.Method, path)
 	} else {
 		allowedRoute = integration.AllowsAppRequest(appID, r.Method, path)
@@ -283,6 +323,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.Metrics.ObserveRejection(metricIntegrationID, "outbound_ai_user_invalid")
 		writeProblem(w, http.StatusBadRequest, "outbound_ai_user_invalid",
 			"X-Gregale-AI-User and X-Gregale-AI-Session must each be one ID of 1 to 64 letters, digits or . _ : @ + = / | -", "")
+		return
+	}
+	aiTags, ok := aiCallTags(r, integration)
+	if !ok {
+		h.Metrics.ObserveRejection(metricIntegrationID, "outbound_ai_tags_invalid")
+		writeProblem(w, http.StatusBadRequest, "outbound_ai_tags_invalid",
+			"X-Gregale-AI-Tags must be one header of at most 5 key=value tags with distinct keys: keys of 1 to 32 lowercase "+
+				"letters, digits, _ . or - starting with a letter, values of 1 to 64 letters, digits or . _ : @ + / -", "")
 		return
 	}
 	var managedAuthorization string
@@ -326,11 +374,30 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	aiPlan, rejection := planAICall(r, integration, bindingAppID, path, aiReq, aiForm)
 	if aiPlan != nil {
 		h.observeContentPolicy(w, metricIntegrationID, aiPlan.content)
+		if aiPlan.unmetered {
+			// ADR-1432: the AI policy lets this write through outside the caps.
+			w.Header().Set(AIUnmeteredHeader, "allowed")
+			h.Metrics.ObserveAIUnmetered(metricIntegrationID)
+		}
 	}
 	if rejection != nil {
 		h.Metrics.ObserveRejection(metricIntegrationID, rejection.code)
 		writeProblem(w, rejection.status, rejection.code, rejection.title, "")
 		return
+	}
+	if marks := h.applyPromptCache(r, integration, aiPlan, aiReq); len(marks) > 0 {
+		// ADR-1437: the breakpoints the gateway added for the provider's cache.
+		w.Header().Set(AIPromptCacheHeader, strings.Join(marks, ","))
+		for _, mark := range marks {
+			h.Metrics.ObserveAIPromptCacheMark(metricIntegrationID, mark)
+		}
+	}
+	// ADR-1431: a batch creation is admitted at the batch's estimate.
+	var batch *AIBatch
+	if aiPlan != nil && aiPlan.endpoint.batch {
+		if batch, ok = h.planBatch(w, r, integration, aiPlan, aiReq, path, appID, bindingAppID, metricIntegrationID); !ok {
+			return
+		}
 	}
 	var reserve aiReservation
 	var guard AIGuardrails
@@ -352,6 +419,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		AIEndUser:                      aiEndUser,
 		UserDailyAITokenLimit:          copyInt64Pointer(integration.AIUserDailyTokenLimit),
 		UserDailyAICostLimit:           copyInt64Pointer(integration.AIUserDailyCostLimit),
+		AITags:                         aiTags,
+		AITagDailyCostLimits:           tagDailyCostLimits(integration, aiTags),
 		BindingAppID:                   bindingAppID,
 		BindingDailyRequestLimit:       copyInt64Pointer(bindingDailyRequestLimit),
 		CircuitBreakerFailureThreshold: integration.CircuitBreakerFailureThreshold,
@@ -395,12 +464,29 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.Metrics.DecInFlight(metricIntegrationID)
 		_ = h.Backend.Release(context.WithoutCancel(ctx), integration.ID, decision.LeaseID)
 	}()
+	if batch != nil {
+		// The batch's reservation is stored before the provider sees the
+		// batch, so no batch the provider runs is ever uncounted.
+		if !h.reserveBatch(ctx, w, *batch, metricIntegrationID) {
+			return
+		}
+		defer h.dropUnconfirmedBatch(ctx, batch)
+	}
+	// ADR-1340: the moderation check runs after admission, so a call its
+	// caps refuse never pays for one. Replays and checks are not checked.
+	var moderation aiModerationOutcome
+	if aiPlan != nil && aiPlan.endpoint.billable() && !isReplay && !isInternal && integration.AIContentPolicy.Moderation.Active() {
+		var proceed bool
+		if moderation, proceed = h.moderateAICall(ctx, w, integration, aiReq, metricIntegrationID); !proceed {
+			return
+		}
+	}
 	if integration.ProviderAuthMode == ProviderAuthManaged && integration.CredentialSource == CredentialSourceCustomerSealed {
 		if h.CredentialResolver == nil {
 			writeProblem(w, http.StatusServiceUnavailable, "outbound_provider_credential_unavailable", "Outbound provider credential is unavailable", "1")
 			return
 		}
-		if pool, ok := h.CredentialResolver.(ManagedKeyPoolResolver); ok && h.AIGatewayEnabled {
+		if pool, ok := h.CredentialResolver.(ManagedKeyPoolResolver); ok && h.aiGatewayOn() {
 			// ADR-991: a pool of keys rotates per call and on 429s.
 			keys, poolErr := pool.Authorizations(ctx, integration.ID)
 			if keys = validManagedKeys(keys); poolErr == nil && len(keys) > 0 {
@@ -440,6 +526,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	upstreamReq.Header = forwardedHeaders(r.Header)
+	if integration.AIProvider != "" {
+		// ADR-1435: the transport negotiates compression and decompresses, so
+		// usage and response checks read plain bytes.
+		upstreamReq.Header.Del("Accept-Encoding")
+	}
 	// NewRequest cannot infer the length of a server-side ReadCloser (or
 	// MaxBytesReader). Preserve known lengths and the explicit empty-body
 	// sentinel so providers do not unexpectedly receive chunked uploads.
@@ -453,7 +544,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		setReplayableBody(upstreamReq, aiReq.body)
 		cacheBody = aiReq.body
 	}
-	cacheEligible := workflowIdentity == nil && (outboundCacheRequestEligible(upstreamReq, integration.ResponseCacheTTLSeconds) ||
+	cacheEligible := workflowIdentity == nil && batch == nil && (outboundCacheRequestEligible(upstreamReq, integration.ResponseCacheTTLSeconds) ||
 		aiCacheEligible(upstreamReq, aiReq, integration.ResponseCacheTTLSeconds))
 	cacheKey := ""
 	if cacheEligible {
@@ -600,7 +691,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		dependencySpan.SetStatus(codes.Error, http.StatusText(resp.StatusCode))
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if !responseHeadersWithinBounds(resp.Header, h.MaxResponseHeaderBytes, h.MaxResponseHeaders) {
+	if !responseHeadersWithinBounds(resp.Header, h.MaxResponseHeaderBytes, h.MaxResponseHeaders, resp.Trailer) {
 		h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(upstreamStarted))
 		writeProblem(w, http.StatusBadGateway, "outbound_response_headers_too_large", "Outbound provider response headers exceed the gateway limit", "")
 		return
@@ -610,17 +701,31 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadGateway, "outbound_response_too_large", "Outbound provider response exceeds the gateway limit", "")
 		return
 	}
+	if batch != nil {
+		h.finishBatchCreation(ctx, w, resp, batch, metricIntegrationID)
+		return
+	}
+	var responseCheck *aiResponseCheck
+	if responseCheckApplies(integration, r, aiPlan, resp, isReplay, isInternal) {
+		responseCheck = &aiResponseCheck{}
+	}
 	if aiObserver := observeAIResponse(integration, r, resp, cacheHit, aiReq, aiPlan); aiObserver != nil {
 		// Deferred so an aborted stream still settles the tokens it used.
 		settlement := aiSettlement{
 			status: resp.StatusCode, attempts: attempts, started: upstreamStarted, routeID: routeIDFromContext(r.Context()),
-			endUser: aiEndUser, leaseID: decision.LeaseID,
+			endUser: aiEndUser, tags: aiTags, leaseID: decision.LeaseID, route: routeAttemptFromContext(r.Context()), moderation: moderation,
+			response: responseCheck, cacheHit: cacheHit,
 		}
 		if aiPlan != nil {
 			settlement.reserve, settlement.billable = aiPlan.reserve, aiPlan.endpoint.billable()
 			settlement.media, settlement.characters = aiPlan.endpoint.media, aiPlan.facts.characters
+			settlement.videoSeconds, settlement.videoResolution = aiPlan.facts.videoSeconds, aiPlan.facts.videoResolution
+			settlement.codeGB = aiPlan.facts.tools.codeGB
 		}
 		defer h.settleAIUsage(ctx, integration, appID, settlement, aiObserver, dependencySpan, metricIntegrationID)
+	}
+	if responseCheck != nil && !h.applyResponseCheck(ctx, w, integration, aiPlan, resp, responseCheck, metricIntegrationID) {
+		return
 	}
 	if workflowIdentity != nil {
 		writeWorkflowOutboundResponse(w, r, resp, managedAuthorization)
@@ -634,6 +739,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Add(k, value)
 		}
 	}
+	allowTrailers := r.Method != http.MethodHead && resp.StatusCode >= 200 && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotModified
+	if allowTrailers {
+		declareProviderTrailers(w, resp)
+	}
 	streamController := prepareStreamingResponse(ctx, w, resp.Header.Get("Content-Type"))
 	w.WriteHeader(resp.StatusCode)
 	var downstream io.Writer = w
@@ -644,19 +753,31 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = streamController.Flush()
 		downstream = &flushingWriter{dst: downstream, flush: streamController.Flush}
 	}
-	if _, err := io.Copy(downstream, resp.Body); err != nil {
+	_, copyErr := io.Copy(downstream, resp.Body)
+	if copyErr == nil && allowTrailers {
+		copyErr = finishProviderTrailers(w, resp, h.MaxResponseHeaderBytes, h.MaxResponseHeaders)
+	}
+	if copyErr != nil {
 		// The provider status is already committed. Returning normally would
 		// mark a truncated chunked response as a complete success. Abort the
 		// downstream stream, as ReverseProxy does on copy failures, so callers
 		// can detect the incomplete response without a second error envelope.
 		h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(upstreamStarted))
-		dependencySpan.RecordError(err)
+		dependencySpan.RecordError(copyErr)
 		dependencySpan.SetStatus(codes.Error, "incomplete provider response")
 		panic(http.ErrAbortHandler)
 	}
 }
 
 func (h *Handler) callerAppID(w http.ResponseWriter, r *http.Request, integration Integration) (string, bool) {
+	if token, ok := accessTokenFromContext(r.Context()); ok {
+		// ADR-1431: an access token acts as its app, on AI integrations only.
+		if !token.allows(integration) {
+			writeProblem(w, http.StatusForbidden, "outbound_access_token_not_allowed", "This access token cannot use this outbound integration", "")
+			return "", false
+		}
+		return token.AppID, true
+	}
 	if identity, ok := relayIdentityFromContext(r.Context()); ok {
 		// ADR-989: the relay connection's platform identity is the caller.
 		// Token-authenticated integrations stay unreachable through it.
@@ -721,9 +842,24 @@ func (h *Handler) callerExecutionIdentity(w http.ResponseWriter, r *http.Request
 	return identity, true, true
 }
 
-func responseHeadersWithinBounds(headers http.Header, maxBytes int64, maxCount int) bool {
+func responseHeadersWithinBounds(headers http.Header, maxBytes int64, maxCount int, trailers ...http.Header) bool {
 	var totalBytes int64
 	var count int
+	for _, trailer := range trailers {
+		for name, values := range trailer {
+			// Announced trailer names have nil values until the body reaches
+			// EOF. Count those declarations as well as populated fields.
+			fields := max(1, len(values))
+			count += fields
+			totalBytes += int64(len(name)) * int64(fields)
+			for _, value := range values {
+				totalBytes += int64(len(value))
+			}
+			if (maxCount > 0 && count > maxCount) || (maxBytes > 0 && totalBytes > maxBytes) {
+				return false
+			}
+		}
+	}
 	for name, values := range headers {
 		for _, value := range values {
 			count++
@@ -855,5 +991,13 @@ func (h *Handler) aiGatewayAdmitsAccount(integration Integration) bool {
 	if integration.OwnerKind != IntegrationOwnerCustomer {
 		return true
 	}
-	return h.AIGatewayRollout.Allows(integration.AccountID) && AIGatewayEntitled(integration.AccountPlan)
+	if !AIGatewayEntitled(integration.AccountPlan) {
+		return false
+	}
+	if h.AIGatewayFlags != nil {
+		return h.AIGatewayFlags.Enabled(platformflags.AIGateway, platformflags.Subject{
+			AccountID: integration.AccountID, Plan: string(integration.AccountPlan),
+		})
+	}
+	return h.AIGatewayRollout.Allows(integration.AccountID)
 }

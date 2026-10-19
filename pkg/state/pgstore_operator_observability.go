@@ -11,6 +11,25 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
+func (s *PgStore) OperatorIncidentEvidence(ctx context.Context, targetID string, since time.Time, limit int) ([]api.ObsIncidentEvidenceEntry, error) {
+	limit = operatorIncidentEvidenceLimit(limit)
+	id, err := uuid.Parse(targetID)
+	if err != nil {
+		return nil, fmt.Errorf("operator evidence target: %w", err)
+	}
+	rows, err := sqlc.New().OperatorIncidentEvidence(ctx, s.pool, sqlc.OperatorIncidentEvidenceParams{
+		TargetID: pgtype.UUID{Bytes: id, Valid: true}, Since: pgtype.Timestamptz{Time: since, Valid: true}, PageLimit: int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("operator incident evidence: %w", err)
+	}
+	out := make([]api.ObsIncidentEvidenceEntry, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, api.ObsIncidentEvidenceEntry{ID: row.ID, Source: row.Source, Kind: row.Kind, Status: row.Status, At: row.At.Time.UTC(), TraceID: row.TraceID})
+	}
+	return out, nil
+}
+
 func (s *PgStore) OperatorAuditTraceCoverage(ctx context.Context, since time.Time) (float64, error) {
 	return sqlc.New().OperatorAuditTraceCoverage(ctx, s.pool, pgtype.Timestamptz{Time: since, Valid: true})
 }

@@ -1,3 +1,4 @@
+// adr: 294
 package outbound
 
 import (
@@ -69,6 +70,8 @@ func TestHandlerDoesNotStoreForbiddenProviderResponses(t *testing.T) {
 		{name: "private", status: http.StatusOK, cacheValue: "private, max-age=120"},
 		{name: "no-store", status: http.StatusOK, cacheValue: "no-store, max-age=120"},
 		{name: "no-cache", status: http.StatusOK, cacheValue: "no-cache, max-age=120"},
+		{name: "conflicting max age", status: http.StatusOK, cacheValue: "max-age=0, max-age=60"},
+		{name: "conflicting shared max age", status: http.StatusOK, cacheValue: "s-maxage=0, s-maxage=60"},
 		{name: "vary star", status: http.StatusOK, cacheValue: "max-age=120", vary: "*"},
 		{name: "set-cookie", status: http.StatusOK, cacheValue: "max-age=120", setCookie: true},
 		{name: "provider error", status: http.StatusServiceUnavailable, cacheValue: "max-age=120"},
@@ -158,6 +161,8 @@ func TestOutboundResponseFreshnessBoundsAndProviderDirectives(t *testing.T) {
 	}{
 		{name: "policy ttl", header: http.Header{}, status: http.StatusOK, wantTTL: 60 * time.Second, wantCache: true},
 		{name: "provider max age", header: http.Header{"Cache-Control": {"public, max-age=10"}}, status: http.StatusOK, wantTTL: 10 * time.Second, wantCache: true},
+		{name: "repeated max age fields", header: http.Header{"Cache-Control": {"max-age=0", "max-age=60"}}, status: http.StatusOK},
+		{name: "repeated shared max age fields", header: http.Header{"Cache-Control": {"s-maxage=0", "s-maxage=60"}}, status: http.StatusOK},
 		{name: "policy caps provider", header: http.Header{"Cache-Control": {"public, max-age=600"}}, status: http.StatusOK, wantTTL: 60 * time.Second, wantCache: true},
 		{name: "age reduces freshness", header: http.Header{"Cache-Control": {"max-age=20"}, "Age": {"5"}}, status: http.StatusOK, wantTTL: 15 * time.Second, wantCache: true},
 		{name: "expires controls freshness", header: http.Header{"Expires": {now.Add(12 * time.Second).Format(http.TimeFormat)}}, status: http.StatusOK, wantTTL: 12 * time.Second, wantCache: true},

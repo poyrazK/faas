@@ -28,6 +28,40 @@ type ConsumerRouteUsageStore interface {
 	ListAPIConsumerRouteUsage(ctx context.Context, accountID, appID, consumerKey string, since, until time.Time) ([]APIConsumerRouteUsageBucket, error)
 }
 
+// PlatformTenantSourceRouteUsageStore reads the per-route counts of a
+// tenant's surface and JWT-rule requests (ADR-1310).
+type PlatformTenantSourceRouteUsageStore interface {
+	ListPlatformTenantSourceRouteUsage(ctx context.Context, accountID, tenantID string, since, until time.Time) ([]PlatformTenantSourceRouteUsageBucket, error)
+}
+
+var (
+	_ PlatformTenantSourceRouteUsageStore = (*MemStore)(nil)
+	_ PlatformTenantSourceRouteUsageStore = (*PgStore)(nil)
+)
+
+func (m *MemStore) ListPlatformTenantSourceRouteUsage(_ context.Context, accountID, tenantID string, since, until time.Time) ([]PlatformTenantSourceRouteUsageBucket, error) {
+	if !until.After(since) {
+		return nil, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prefix := accountID + "\x00" + tenantID + "\x00"
+	var out []PlatformTenantSourceRouteUsageBucket
+	for key, bucket := range m.platformTenantSourceRouteUsage {
+		if strings.HasPrefix(key, prefix) && !bucket.WindowStart.Before(since) && bucket.WindowStart.Before(until) {
+			out = append(out, bucket)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if !a.WindowStart.Equal(b.WindowStart) {
+			return a.WindowStart.Before(b.WindowStart)
+		}
+		return a.AppID+a.SourceKind+a.SourceID+a.Route < b.AppID+b.SourceKind+b.SourceID+b.Route
+	})
+	return out, nil
+}
+
 // billingRouteFor returns the route label to keep for an event: consumer
 // traffic with a well-formed label and billable units. A malformed label is
 // dropped rather than rejected so a replayed financial fact never wedges the
@@ -37,6 +71,22 @@ func billingRouteFor(event APIConsumerUsageEvent) string {
 		return ""
 	}
 	return event.BillingRoute
+}
+
+// tenantSourceRouteFor is the billing route of a billable request through a
+// tenant surface or JWT authorization rule, which tenant route weights
+// price (ADR-1310), or "".
+func tenantSourceRouteFor(event APIConsumerUsageEvent) (kind, sourceID, route string) {
+	if event.PlatformTenantID == "" || event.BillableUnits <= 0 || !ValidBillingRoute(event.BillingRoute) {
+		return "", "", ""
+	}
+	switch {
+	case event.PlatformTenantSurfaceID != "":
+		return "surface", event.PlatformTenantSurfaceID, event.BillingRoute
+	case event.PlatformTenantJWTAuthorizationRuleID != "":
+		return "jwt", event.PlatformTenantJWTAuthorizationRuleID, event.BillingRoute
+	}
+	return "", "", ""
 }
 
 func consumerRouteUsageKey(accountID, appID, consumerKey, route string, minute time.Time) string {
@@ -101,6 +151,17 @@ func ValidateAPIConsumerUsageEvent(event APIConsumerUsageEvent) error {
 	}
 	if event.BillableUnits < 0 || event.BillableUnits > event.RequestCount {
 		return fmt.Errorf("consumer usage: billable_units must be between zero and request_count")
+	}
+	if event.ComputeMS < 0 || event.ComputeMS > event.RequestCount*MaxUsageComputeMSPerRequest ||
+		event.ResponseBytes < 0 || event.ResponseBytes > event.RequestCount*MaxUsageResponseBytesPerRequest {
+		return fmt.Errorf("consumer usage: compute_ms and response_bytes must be non-negative and bounded per request")
+	}
+	if err := validateMeterUnits(event); err != nil {
+		return err
+	}
+	tenantSource := event.PlatformTenantSurfaceID != "" || event.PlatformTenantJWTAuthorizationRuleID != ""
+	if (event.ComputeMS > 0 || event.ResponseBytes > 0) && ((event.ConsumerKey == AnonymousConsumerKey && !tenantSource) || event.BillableUnits == 0) {
+		return fmt.Errorf("consumer usage: compute and response size belong to billable consumer or tenant-source requests")
 	}
 	if audit := event.Audit; audit != nil {
 		if event.RequestCount != 1 {
@@ -196,7 +257,10 @@ func (m *MemStore) RecordAPIConsumerUsage(_ context.Context, event APIConsumerUs
 	bucket.RequestCount += event.RequestCount
 	bucket.ErrorCount += event.ErrorCount
 	bucket.BillableUnits += event.BillableUnits
+	bucket.ComputeMS += event.ComputeMS
+	bucket.ResponseBytes += event.ResponseBytes
 	m.apiConsumerUsage[key] = bucket
+	m.recordMeterUnitsLocked(event)
 	if route := billingRouteFor(event); route != "" {
 		routeKey := consumerRouteUsageKey(event.AccountID, event.AppID, event.ConsumerKey, route, event.WindowStart)
 		routeBucket := m.apiConsumerRouteUsage[routeKey]
@@ -227,7 +291,20 @@ func (m *MemStore) RecordAPIConsumerUsage(_ context.Context, event APIConsumerUs
 		tenantBucket.RequestCount += event.RequestCount
 		tenantBucket.ErrorCount += event.ErrorCount
 		tenantBucket.BillableUnits += event.BillableUnits
+		tenantBucket.ComputeMS += event.ComputeMS
+		tenantBucket.ResponseBytes += event.ResponseBytes
 		m.platformTenantUsage[tenantKey] = tenantBucket
+		if kind, sourceID, route := tenantSourceRouteFor(event); route != "" {
+			routeKey := platformTenantUsageBucketKey(event.AccountID, event.PlatformTenantID, event.AppID, kind+":"+sourceID, event.WindowStart) + "\x00" + route
+			routeBucket := m.platformTenantSourceRouteUsage[routeKey]
+			routeBucket.AppID, routeBucket.SourceKind, routeBucket.SourceID = event.AppID, kind, sourceID
+			routeBucket.WindowStart, routeBucket.Route = event.WindowStart.UTC(), route
+			routeBucket.BillableUnits += event.BillableUnits
+			if m.platformTenantSourceRouteUsage == nil {
+				m.platformTenantSourceRouteUsage = map[string]PlatformTenantSourceRouteUsageBucket{}
+			}
+			m.platformTenantSourceRouteUsage[routeKey] = routeBucket
+		}
 	}
 	m.apiConsumerUsageEvents[event.EventID] = usageEventIdentity{accountID: event.AccountID, appID: event.AppID}
 	if event.Audit != nil {

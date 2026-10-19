@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -31,6 +32,14 @@ func (s *server) listProjects(w http.ResponseWriter, r *http.Request, acct state
 	}
 	out := make([]api.ProjectSummaryResponse, 0, len(projects))
 	for _, project := range projects {
+		visible, err := projectaccess.Visible(r.Context(), s.store, actorAccount(r, acct), projectaccess.Credential(r), project)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not filter project access"))
+			return
+		}
+		if !visible {
+			continue
+		}
 		apps, listErr := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
 		if listErr != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not list project workloads"))
@@ -70,6 +79,10 @@ func (s *server) updateProject(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 
+	if _, shared := projectaccess.From(r.Context()); shared && req.RepoFullName != nil && strings.TrimSpace(*req.RepoFullName) != "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Repository ownership migration required", "organization GitHub installation binding is not available on shared project updates"))
+		return
+	}
 	repo, branch, installID := project.RepoFullName, project.ProductionBranch, project.InstallID
 	if req.ProductionBranch != nil {
 		branch = strings.TrimSpace(*req.ProductionBranch)
@@ -240,12 +253,7 @@ func (s *server) projectResponse(r *http.Request, acct state.Account, project st
 }
 
 func projectSummaryResponse(project state.Project, workloadCount int) api.ProjectSummaryResponse {
-	return api.ProjectSummaryResponse{
-		ID: project.ID, Slug: project.Slug, RepoFullName: project.RepoFullName,
-		ProductionBranch: project.ProductionBranch, ScanSource: string(project.ScanSource),
-		WorkloadCount: workloadCount, CreatedAt: project.CreatedAt.UTC().Format(time.RFC3339Nano),
-		UpdatedAt: project.UpdatedAt.UTC().Format(time.RFC3339Nano),
-	}
+	return projectaccess.Summary(project, workloadCount)
 }
 
 func validProjectBranch(branch string) bool {
@@ -312,6 +320,10 @@ func (s *server) createProjectEnvironment(w http.ResponseWriter, r *http.Request
 	}
 	req, problem := decodeCreateProjectEnvironmentRequest(r)
 	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if problem := projectaccess.ValidateEnvironmentCreation(r, req); problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}

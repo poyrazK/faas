@@ -163,6 +163,14 @@ service Githubd {
   // imaged uses this immediately before promoting branch-backed deployments.
   rpc GetBranchHead(GetBranchHeadRequest) returns (GetBranchHeadResponse);
 
+  // Fresh PR identity for internal CI admission. Account installation authority
+  // is verified by githubd. This read is served only on the local socket.
+  rpc GetCIPullRequest(GetCIPullRequestRequest) returns (GetCIPullRequestResponse);
+
+  // Bounded exact-commit comparison for internal CI path filters. Local socket
+  // only; incomplete evidence always falls back to running CI.
+  rpc GetCIChangedFiles(GetCIChangedFilesRequest) returns (GetCIChangedFilesResponse);
+
   // Read-only qualification of a classic review protection policy for an
   // exact repository ID and current branch head. This is not approval of a
   // merge or environment revision. Served on the local control-plane socket.
@@ -589,6 +597,48 @@ message GetBranchHeadRequest {
 
 message GetBranchHeadResponse {
   string commit_sha = 1;
+}
+
+message GetCIPullRequestRequest {
+  string account_id = 1;
+  int64 installation_id = 2;
+  string repo_full_name = 3;
+  int64 number = 4;
+}
+
+message GetCIPullRequestResponse {
+  int64 number = 1;
+  string state = 2;
+  optional bool draft = 3;
+  string head_sha = 4;
+  string base_branch = 5;
+  int64 head_repository_id = 6;
+  int64 base_repository_id = 7;
+  string head_repository = 8;
+  string base_repository = 9;
+  string base_sha = 10;
+}
+
+message GetCIChangedFilesRequest {
+  string account_id = 1;
+  int64 installation_id = 2;
+  string repo_full_name = 3;
+  string base_sha = 4;
+  string head_sha = 5;
+}
+
+message CIChangedFile {
+  string path = 1;
+  string previous_path = 2;
+  string status = 3;
+}
+
+message GetCIChangedFilesResponse {
+  string base_sha = 1;
+  string head_sha = 2;
+  string merge_base_sha = 3;
+  bool complete = 4;
+  repeated CIChangedFile files = 5;
 }
 
 message GetProtectedBranchEvidenceRequest {

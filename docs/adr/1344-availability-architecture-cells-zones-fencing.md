@@ -419,6 +419,30 @@ The primitive is used for:
 - gRPC keepalives go on every overlay dial.
 - The lease timings go in `pkg/api/limits.go`.
 
+**Implementation phases** (2026-10-18). Each phase ships off by default.
+- **Phase 1: lease only.**
+  - A `node_leases` table holds one row per node: holder, epoch,
+    `renewed_at`, `expires_at`, all on database time. The holder is the
+    hostname plus the kernel boot id, so a schedd restart keeps the epoch and
+    a reboot takes the lease over with the next one.
+  - The node-local schedd renews its node's lease every 10 s with a 30 s TTL
+    (`pkg/nodelease`, `FAAS_SCHEDD_NODE_LEASE`).
+  - `schedd_node_lease_would_fence` reports when the node is past its fence
+    point (TTL minus a 5 s margin since the last renewal reply, on the
+    monotonic clock). Nothing acts on it yet.
+  - A node without a row is "unknown", never "expired", so an N-1 schedd or a
+    rollback cannot make a live node look dead.
+- **Phase 2: takeover guard.**
+  - When the lease is on, the stale-peer observer, `RecoveryRunner` and the
+    dead-node sweep act only after the node's lease has expired by database
+    time plus a margin. That is in addition to the existing heartbeat gap and
+    the P1 settle hold.
+- **Phase 3: self-fence.**
+  - Past its fence point, the node-local schedd refuses wakes, stops claiming
+    jobs and app tasks, and stops its at-most-once job VMs before their task
+    leases can be re-dispatched.
+  - Epoch checks on job and app-task completion follow.
+
 ### 5. Static-stability rules for the data plane
 
 1. **Keep last-known-good.** A refresh error never discards
@@ -562,7 +586,9 @@ second provider. Tracking: epic #4700.
 - **GCP, warm standby outside the cell:**
   - a Postgres async streaming replica of the OVH primary over an
     encrypted link, plus the second pgBackRest repository;
-  - the control-plane daemons installed but stopped;
+  - the control plane's slowest software pre-installed and the primary's
+    release recorded, so a takeover only installs packages, configuration
+    and that release (see "Takeover speed" below);
   - it is not in the manifest's `control_plane` group, so the singleton
     leases stay off (§4) and it never serves traffic while the OVH node is
     up.
@@ -572,6 +598,56 @@ second provider. Tracking: epic #4700.
   nodes keeps serving warm traffic throughout (§5).
   Targets: RPO of seconds (replication lag) and RTO of about 15–30 minutes.
   The runbook is drilled before launch.
+- **Replica implementation** (2026-10-16):
+  - The manifest's `postgresql.standby` (`name`, `address`, `ssh_host`)
+    declares the standby. It is rendered as its own `postgres_standby`
+    inventory group and converged by `deploy/ansible/postgres_standby.yml`.
+  - Replication is plain physical streaming. The primary holds a
+    `faas_standby` slot capped by `max_slot_wal_keep_size`, and admits the
+    `replicator` role from the standby's overlay address only.
+  - Replication is TLS-only (2026-10-18). The primary serves a
+    self-signed certificate that the standby pins over the Ansible
+    connection and verifies (`sslmode=verify-full`); `pg_hba` admits the
+    replicator with `hostssl` only. The overlay alone did not guarantee
+    encryption: a `static` overlay (a provider network, as on the GCP beta)
+    has none, and a link between providers would be built outside Gregale.
+  - The standby's `pg_basebackup` seed refuses to wipe a cluster that may
+    be a promoted primary.
+  - The second backup repository is a separate decision; the replica does
+    not depend on it.
+  - Alerts: `FaasPostgresStandby*`; runbook:
+    `docs/runbooks/FaasPostgresStandby.md`.
+- **Control-plane host state** (2026-10-18). The CA key, the apid HMAC keys,
+  `sealed.env` and the per-daemon secrets are in neither PostgreSQL nor the
+  release. Two copies protect them, both read from one list
+  (`deploy/ansible/vars/cp_state_files.yml`):
+  - the standby stages them on every converge, and a takeover installs them
+    before the first bootstrap;
+  - `faas-cp-state-backup` seals them daily into an age bundle and pushes it
+    off-host with the PostgreSQL backups' remote. The bundle is encrypted
+    only to operator recipients, so the control plane cannot read its own
+    backup.
+
+  A rebuild after losing both hosts restores the bundle
+  (`gregalectl backup restore-cp-state`, `cp_state_restore.yml`) before
+  bootstrap. Runbook: `docs/runbooks/ControlPlaneStateBackup.md`.
+- **Takeover speed** (2026-10-18). The standby does not hold the release
+  installed and stopped:
+  - the CD bundle is built per host (its Prometheus configuration names
+    the host), so the primary's bundle cannot be copied;
+  - deployctl has no stage-only step: activation runs migrations, which
+    need a writable primary;
+  - the control-plane roles installed through apt start their services on
+    install.
+
+  Instead, `postgres_standby.yml` runs ahead of time the slow steps of a
+  fresh control-plane bootstrap that have no side effects (the Firecracker
+  guest kernel build and the pinned Firecracker and scanner downloads), and
+  every standby sync records the primary's release (commit, manifest hash,
+  per-unit versions). At takeover, bootstrap skips that work and CD deploys
+  the recorded release. Staging the release itself on the standby (a CD
+  target and a deployctl stage step) is left until the drill shows the
+  recovery target needs it.
 - **Why not two control nodes (OVH + GCP)?**
   - etcd and Patroni need three members to survive losing one. With two,
     losing either stops automatic failover, and a cut between the
@@ -597,13 +673,13 @@ The scaling roadmap ("Gregale scaling roadmap", 2026-10-15) removes the
 throughput limits: control-plane work off the request path, then a split
 control plane, then cells. Its branches so far are
 `perf/thaw-timing-data`, `perf/wake-dedupe-reads`,
-`perf/wake-pipeline-reads`, `perf/batch-request-id-journal` (ADR-1340) and
-`design/rate-limit-token-leasing` (ADR-1341). The two plans overlap, so
+`perf/wake-pipeline-reads`, `perf/batch-request-id-journal` (ADR-1521) and
+`perf/rate-limit-token-leasing` (ADR-1520). The two plans overlap, so
 each topic has one owner:
 
 | Topic | Owner |
 |---|---|
-| Request path: batched request-ID journal (ADR-1340), local rate-limit allowance (ADR-1341) | Scaling roadmap |
+| Request path: batched request-ID journal (ADR-1521), local rate-limit allowance (ADR-1520) | Scaling roadmap |
 | Public edge on every compute node, DNS split, node-local gateway routing | This ADR's work, designed in ADR-1343. The owner moved it from the scaling roadmap's Stage 1 on 2026-10-15. |
 | PgBouncer | Scaling roadmap (Stage 1) |
 | Wake-path reads, the schedd owner cache, the frozen fast path | Scaling roadmap |

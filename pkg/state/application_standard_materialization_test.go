@@ -18,10 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appstandards"
 )
 
-type standardMaterializationTestStore interface {
-	standardOperationTestStore
-	ApplicationStandardMaterializationStore
-}
+type standardMaterializationTestStore = contractTestStore
 
 func TestMemApplicationStandardMaterialization(t *testing.T) {
 	m := NewMemStore()

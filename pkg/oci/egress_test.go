@@ -60,6 +60,25 @@ func TestIPAllowed_DeniedRanges(t *testing.T) {
 // an HTTP client, not a guest kernel, so the firewall path
 // is the primary; the user-space check exists to catch a
 // misconfigured firewall. Pin both.
+// NAT64 forms of denied IPv4 destinations stay denied, and so does the
+// local-use NAT64 prefix (ADR 20261018194214).
+func TestIPAllowed_NAT64Denied(t *testing.T) {
+	for _, s := range []string{
+		"64:ff9b::a9fe:a9fe", // 169.254.169.254, cloud metadata
+		"64:ff9b::a00:1",     // 10.0.0.1
+		"64:ff9b::808:808",   // 8.8.8.8: the whole well-known prefix is denied
+		"64:ff9b:1::a00:1",   // local-use NAT64
+	} {
+		ip := netip.MustParseAddr(s)
+		if ipAllowed(ip) || EgressIPAllowed(ip) {
+			t.Errorf("NAT64 address %s allowed, want denied", s)
+		}
+	}
+	if !EgressIPAllowed(netip.MustParseAddr("2606:4700:4700::1111")) {
+		t.Error("public IPv6 2606:4700:4700::1111 denied, want allowed")
+	}
+}
+
 func TestIPAllowed_6to4AndTeredoDenied(t *testing.T) {
 	cases := []string{
 		"2002::1",           // 6to4, ADR-034

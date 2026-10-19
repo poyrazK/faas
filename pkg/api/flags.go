@@ -51,6 +51,38 @@ func StaticEgressIPEnabled() bool {
 	return false
 }
 
+// ApplicationAuthEnabled reports whether application Auth (ADR-1190) is
+// available to accountID. It is a dark launch: off unless
+// FAAS_APPLICATION_AUTH_ENABLED is truthy (every account) or
+// FAAS_APPLICATION_AUTH_ACCOUNTS, a comma-separated list, names the account
+// (internal accounts). Read at every call, like the flags above. While it
+// is off for an account, apid treats the `auth` credential mode as unknown
+// and hides the Auth screens; existing Auth apps keep running.
+func ApplicationAuthEnabled(accountID string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("FAAS_APPLICATION_AUTH_ENABLED"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	for _, id := range strings.Split(os.Getenv("FAAS_APPLICATION_AUTH_ACCOUNTS"), ",") {
+		if id = strings.TrimSpace(id); id != "" && id == accountID {
+			return true
+		}
+	}
+	return false
+}
+
+// APIMonetizationEnabled reports whether FAAS_API_MONETIZATION_ENABLED turns
+// API monetization on (ADR-20261018090210). It is only the bootstrap value:
+// daemons follow the persisted api_monetization_enabled runtime setting once
+// it exists, and the CLI shows monetization commands only while it is set.
+func APIMonetizationEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("FAAS_API_MONETIZATION_ENABLED"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
 // PrivateNetworkEnabled reports whether the provider-neutral private-network
 // attachment API and schedd's provider-neutral runtime reconciler are live. It
 // is intentionally default-off so operators can stage the configured network
