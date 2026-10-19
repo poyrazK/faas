@@ -1,5 +1,5 @@
 -- migration-compat: expand
--- filename: 20261019104819000_invocation_default_retention_indexes.sql
+-- filename: 20261019104819437_invocation_default_retention_indexes.sql
 
 -- +goose NO TRANSACTION
 
