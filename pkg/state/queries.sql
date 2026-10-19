@@ -22207,6 +22207,32 @@ FROM environment_workload_qualification_requests q WHERE q.id=sqlc.arg(request_i
 -- NULL blocks activation; 'infinity' means the candidate has no PostgreSQL binding.
 SELECT environment_binding_postgres_deadline(q,sqlc.arg(scope)::text,sqlc.arg(max_age_seconds)::bigint,sqlc.arg(restored_instance_id)::uuid)::timestamptz AS deadline
 FROM environment_workload_qualification_requests q WHERE q.id=sqlc.arg(request_id)::uuid;
+
+-- name: PendingEnvironmentQualificationOutboundProbes :many
+-- ADR-20261019152416: probe-ready outbound bindings of enforced candidates
+-- with a live lease and no receipt for their current revision, soonest lease first.
+SELECT q.id::text AS request_id, q.attempt, b.account_id::text AS account_id, q.app_id::text AS app_id,
+ b.integration_id::text AS integration_id, rev.revision::text AS revision, p.method, p.path, p.expected_status
+FROM environment_workload_qualification_requests q
+JOIN outbound_app_bindings b ON b.app_id=q.app_id
+JOIN outbound_integration_probe_policies p ON p.integration_id=b.integration_id AND p.account_id=b.account_id
+CROSS JOIN LATERAL (SELECT environment_binding_outbound_revision(b.integration_id,q.app_id) AS revision) rev
+WHERE q.binding_context IS NOT NULL AND q.lease_until>clock_timestamp() AND rev.revision IS NOT NULL
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_outbound_receipts r WHERE r.request_id=q.id AND r.attempt=q.attempt
+  AND r.integration_id=b.integration_id AND r.revision=rev.revision)
+ORDER BY q.lease_until, q.id, b.integration_id
+LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: RecordEnvironmentQualificationOutboundReceipt :exec
+INSERT INTO environment_qualification_outbound_receipts(request_id,attempt,integration_id,revision,method,path,status)
+VALUES(sqlc.arg(request_id)::uuid,sqlc.arg(attempt)::bigint,sqlc.arg(integration_id)::uuid,sqlc.arg(revision)::text,
+ sqlc.arg(method)::text,sqlc.arg(path)::text,sqlc.arg(status)::integer)
+ON CONFLICT DO NOTHING;
+
+-- name: EnvironmentQualificationOutboundDeadline :one
+-- NULL blocks activation; 'infinity' means the candidate has no active outbound binding.
+SELECT environment_binding_outbound_deadline(q,sqlc.arg(max_age_seconds)::bigint)::timestamptz AS deadline
+FROM environment_workload_qualification_requests q WHERE q.id=sqlc.arg(request_id)::uuid;
 -- name: ReleaseRunsCrossedBy :many
 -- ADR-1448: release tasks of other deployments in a rollback target's scope
 -- that started after the target last served (serving_ended_at), or after it

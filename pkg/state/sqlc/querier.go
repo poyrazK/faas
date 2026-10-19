@@ -829,6 +829,8 @@ type Querier interface {
 	EnvironmentQualificationNodeUsedMB(ctx context.Context, db DBTX, arg EnvironmentQualificationNodeUsedMBParams) (int64, error)
 	// NULL blocks activation; 'infinity' means the candidate has no object storage binding.
 	EnvironmentQualificationObjectStorageDeadline(ctx context.Context, db DBTX, arg EnvironmentQualificationObjectStorageDeadlineParams) (pgtype.Timestamptz, error)
+	// NULL blocks activation; 'infinity' means the candidate has no active outbound binding.
+	EnvironmentQualificationOutboundDeadline(ctx context.Context, db DBTX, arg EnvironmentQualificationOutboundDeadlineParams) (pgtype.Timestamptz, error)
 	// NULL blocks activation; 'infinity' means the candidate has no PostgreSQL binding.
 	EnvironmentQualificationPostgresDeadline(ctx context.Context, db DBTX, arg EnvironmentQualificationPostgresDeadlineParams) (pgtype.Timestamptz, error)
 	EnvironmentQualificationRestoreCurrent(ctx context.Context, db DBTX, arg EnvironmentQualificationRestoreCurrentParams) (bool, error)
@@ -3886,6 +3888,9 @@ type Querier interface {
 	// ADR-20261019121546: settled managed S3 credentials of a graph's enforced
 	// candidates without a receipt for this attempt, with their sealed deliveries.
 	PendingEnvironmentQualificationObjectStorageChecks(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]PendingEnvironmentQualificationObjectStorageChecksRow, error)
+	// ADR-20261019152416: probe-ready outbound bindings of enforced candidates
+	// with a live lease and no receipt for their current revision, soonest lease first.
+	PendingEnvironmentQualificationOutboundProbes(ctx context.Context, db DBTX, rowLimit int32) ([]PendingEnvironmentQualificationOutboundProbesRow, error)
 	// ADR-20261019072523: settled managed PostgreSQL deliveries of a graph's
 	// enforced candidates that have no receipt for their current credential.
 	PendingEnvironmentQualificationPostgresChecks(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]PendingEnvironmentQualificationPostgresChecksRow, error)
@@ -4597,6 +4602,7 @@ type Querier interface {
 	RecordEnvironmentGitSourcePoll(ctx context.Context, db DBTX, arg RecordEnvironmentGitSourcePollParams) error
 	RecordEnvironmentQualificationJobSmokeReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationJobSmokeReceiptParams) (EnvironmentQualificationJobSmokeReceipt, error)
 	RecordEnvironmentQualificationObjectStorageReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationObjectStorageReceiptParams) error
+	RecordEnvironmentQualificationOutboundReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationOutboundReceiptParams) error
 	RecordEnvironmentQualificationPostgresReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationPostgresReceiptParams) error
 	RecordEnvironmentQualificationRestoreReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationRestoreReceiptParams) (EnvironmentQualificationRestoreReceipt, error)
 	RecordEnvironmentQualificationServiceExchange(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationServiceExchangeParams) error

@@ -7,6 +7,29 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Outbound bindings in candidate qualification — 2026-10-19
+
+Enforced managed GitOps graphs also admit customer outbound integration
+bindings that have a probe policy. Candidates still cannot reach the outbound
+gateway, and no identity is minted for them. Instead, outboundd lists each
+candidate's probe-ready bindings and sends the configured probe through its
+own handler in process, as the candidate's app, under the binding's route
+rules and limits. It records an immutable receipt pinned to a revision of the
+integration, binding, plan, credential, key pool and probe policy. Any change
+to those facts needs a new probe.
+
+Some outbound bindings still keep candidates held:
+- an active binding without a probe policy or customer-sealed credential
+- an operator app attachment
+
+Disabled integrations are skipped, as binding verification skips them.
+
+This is evidence about the gateway and the provider, not proof that candidate
+code calls the integration. Portable memory and PostgreSQL tests plus
+outbound handler tests cover the lifecycle. Native KVM acceptance and
+qualification dispatch remain pending.
+See [ADR-20261019152416](adr/20261019152416-candidate-outbound-binding-qualification.md).
+
 ## Object storage bindings in candidate qualification — 2026-10-19
 
 Enforced managed GitOps graphs also admit managed object storage bindings and

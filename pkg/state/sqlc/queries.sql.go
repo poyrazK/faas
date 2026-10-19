@@ -14438,6 +14438,24 @@ func (q *Queries) EnvironmentQualificationObjectStorageDeadline(ctx context.Cont
 	return deadline, err
 }
 
+const environmentQualificationOutboundDeadline = `-- name: EnvironmentQualificationOutboundDeadline :one
+SELECT environment_binding_outbound_deadline(q,$1::bigint)::timestamptz AS deadline
+FROM environment_workload_qualification_requests q WHERE q.id=$2::uuid
+`
+
+type EnvironmentQualificationOutboundDeadlineParams struct {
+	MaxAgeSeconds int64
+	RequestID     pgtype.UUID
+}
+
+// NULL blocks activation; 'infinity' means the candidate has no active outbound binding.
+func (q *Queries) EnvironmentQualificationOutboundDeadline(ctx context.Context, db DBTX, arg EnvironmentQualificationOutboundDeadlineParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, environmentQualificationOutboundDeadline, arg.MaxAgeSeconds, arg.RequestID)
+	var deadline pgtype.Timestamptz
+	err := row.Scan(&deadline)
+	return deadline, err
+}
+
 const environmentQualificationPostgresDeadline = `-- name: EnvironmentQualificationPostgresDeadline :one
 SELECT environment_binding_postgres_deadline(q,$1::text,$2::bigint,$3::uuid)::timestamptz AS deadline
 FROM environment_workload_qualification_requests q WHERE q.id=$4::uuid
@@ -64114,6 +64132,64 @@ func (q *Queries) PendingEnvironmentQualificationObjectStorageChecks(ctx context
 	return items, nil
 }
 
+const pendingEnvironmentQualificationOutboundProbes = `-- name: PendingEnvironmentQualificationOutboundProbes :many
+SELECT q.id::text AS request_id, q.attempt, b.account_id::text AS account_id, q.app_id::text AS app_id,
+ b.integration_id::text AS integration_id, rev.revision::text AS revision, p.method, p.path, p.expected_status
+FROM environment_workload_qualification_requests q
+JOIN outbound_app_bindings b ON b.app_id=q.app_id
+JOIN outbound_integration_probe_policies p ON p.integration_id=b.integration_id AND p.account_id=b.account_id
+CROSS JOIN LATERAL (SELECT environment_binding_outbound_revision(b.integration_id,q.app_id) AS revision) rev
+WHERE q.binding_context IS NOT NULL AND q.lease_until>clock_timestamp() AND rev.revision IS NOT NULL
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_outbound_receipts r WHERE r.request_id=q.id AND r.attempt=q.attempt
+  AND r.integration_id=b.integration_id AND r.revision=rev.revision)
+ORDER BY q.lease_until, q.id, b.integration_id
+LIMIT $1::integer
+`
+
+type PendingEnvironmentQualificationOutboundProbesRow struct {
+	RequestID      string
+	Attempt        int64
+	AccountID      string
+	AppID          string
+	IntegrationID  string
+	Revision       string
+	Method         string
+	Path           string
+	ExpectedStatus int32
+}
+
+// ADR-20261019152416: probe-ready outbound bindings of enforced candidates
+// with a live lease and no receipt for their current revision, soonest lease first.
+func (q *Queries) PendingEnvironmentQualificationOutboundProbes(ctx context.Context, db DBTX, rowLimit int32) ([]PendingEnvironmentQualificationOutboundProbesRow, error) {
+	rows, err := db.Query(ctx, pendingEnvironmentQualificationOutboundProbes, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PendingEnvironmentQualificationOutboundProbesRow{}
+	for rows.Next() {
+		var i PendingEnvironmentQualificationOutboundProbesRow
+		if err := rows.Scan(
+			&i.RequestID,
+			&i.Attempt,
+			&i.AccountID,
+			&i.AppID,
+			&i.IntegrationID,
+			&i.Revision,
+			&i.Method,
+			&i.Path,
+			&i.ExpectedStatus,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pendingEnvironmentQualificationPostgresChecks = `-- name: PendingEnvironmentQualificationPostgresChecks :many
 SELECT q.id::text AS request_id, q.attempt, b.account_id::text AS account_id, q.app_id::text AS app_id, e.slug AS scope,
  b.id::text AS binding_id, b.database_id::text AS database_id, b.environment_key, b.access, b.credential_generation,
@@ -76800,6 +76876,36 @@ func (q *Queries) RecordEnvironmentQualificationObjectStorageReceipt(ctx context
 		arg.Permission,
 		arg.Mode,
 		arg.Deliveries,
+	)
+	return err
+}
+
+const recordEnvironmentQualificationOutboundReceipt = `-- name: RecordEnvironmentQualificationOutboundReceipt :exec
+INSERT INTO environment_qualification_outbound_receipts(request_id,attempt,integration_id,revision,method,path,status)
+VALUES($1::uuid,$2::bigint,$3::uuid,$4::text,
+ $5::text,$6::text,$7::integer)
+ON CONFLICT DO NOTHING
+`
+
+type RecordEnvironmentQualificationOutboundReceiptParams struct {
+	RequestID     pgtype.UUID
+	Attempt       int64
+	IntegrationID pgtype.UUID
+	Revision      string
+	Method        string
+	Path          string
+	Status        int32
+}
+
+func (q *Queries) RecordEnvironmentQualificationOutboundReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationOutboundReceiptParams) error {
+	_, err := db.Exec(ctx, recordEnvironmentQualificationOutboundReceipt,
+		arg.RequestID,
+		arg.Attempt,
+		arg.IntegrationID,
+		arg.Revision,
+		arg.Method,
+		arg.Path,
+		arg.Status,
 	)
 	return err
 }

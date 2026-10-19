@@ -4117,6 +4117,17 @@ type EnvironmentQualificationObjectStorageReceipt struct {
 	RecordedAt   pgtype.Timestamptz
 }
 
+type EnvironmentQualificationOutboundReceipt struct {
+	RequestID     pgtype.UUID
+	Attempt       int64
+	IntegrationID pgtype.UUID
+	Revision      string
+	Method        string
+	Path          string
+	Status        int32
+	RecordedAt    pgtype.Timestamptz
+}
+
 type EnvironmentQualificationPostgresReceipt struct {
 	RequestID            pgtype.UUID
 	Attempt              int64

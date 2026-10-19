@@ -10,13 +10,9 @@ var _ EnvironmentQualificationServiceReceiptStore = (*MemStore)(nil)
 
 func (m *MemStore) candidateBindingCatalogSupportedLocked(request EnvironmentWorkloadQualificationRequest) bool {
 	appID, scope := request.AppID, request.FrozenInputs.Scope
-	// Managed PostgreSQL and object storage are qualified by credential
-	// receipts (ADR-20261019072523, ADR-20261019121546).
-	for _, b := range m.outboundAppBindings {
-		if b.AppID == appID {
-			return false
-		}
-	}
+	// Managed PostgreSQL, object storage and outbound bindings are qualified
+	// by receipts (ADR-20261019072523, ADR-20261019121546, ADR-20261019152416).
+	// MemStore has no operator app attachments.
 	for _, binding := range m.queueBindings {
 		if binding.AppID == appID && (normalizedDeploymentScope(binding.DeploymentScope) == scope || binding.DeploymentScope == "") && binding.RetiredAt == nil {
 			found := false
@@ -134,6 +130,13 @@ func (m *MemStore) environmentBindingGraphDeadlineLocked(memory *environmentGitO
 		}
 		if !storageEnd.IsZero() && storageEnd.Before(end) {
 			end = storageEnd
+		}
+		outboundEnd, err := candidateOutboundEvidenceDeadline(r, m.candidateOutboundBindingsLocked(r.AppID), memory.bindingOutbound, age, time.Now())
+		if err != nil {
+			return time.Time{}, fmt.Errorf("candidate outbound probe evidence is missing or changed: %w", err)
+		}
+		if !outboundEnd.IsZero() && outboundEnd.Before(end) {
+			end = outboundEnd
 		}
 		if !time.Now().Before(end) {
 			return time.Time{}, ErrBindingPromotionExpired

@@ -31,6 +31,7 @@ type environmentGitOpsMemory struct {
 	bindingServices      map[string]EnvironmentQualificationServiceReceipt
 	bindingPostgres      map[string]time.Time
 	bindingObjectStorage map[string]candidateObjectStorageReceipt
+	bindingOutbound      map[string]time.Time
 	bindingReleases      map[string]string
 	retirementPolicies   map[string]environmentBindingRetirementPolicy
 	bindingRetirements   map[string]environmentBindingRetirementPublication

@@ -8283,8 +8283,7 @@ $$;
 CREATE FUNCTION public.environment_binding_catalog_supported(target_app uuid, target_scope text) RETURNS boolean
     LANGUAGE sql STABLE
     AS $$
- SELECT NOT EXISTS(SELECT 1 FROM outbound_app_bindings WHERE app_id=target_app)
- AND NOT EXISTS(SELECT 1 FROM outbound_integration_apps WHERE app_id=target_app);
+ SELECT NOT EXISTS(SELECT 1 FROM outbound_integration_apps WHERE app_id=target_app);
 $$;
 
 
@@ -8366,6 +8365,54 @@ $$;
 
 
 --
+-- Name: environment_binding_outbound_deadline(public.environment_workload_qualification_requests, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_binding_outbound_deadline(q public.environment_workload_qualification_requests, max_age_seconds bigint) RETURNS timestamp with time zone
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE bound record; current_revision text; recorded timestamptz; until_at timestamptz:='infinity';
+BEGIN
+ FOR bound IN SELECT b.integration_id,i.id IS NOT NULL AS known,
+   coalesce(i.enabled AND i.provider_auth_mode='managed' AND cardinality(i.allowed_methods)>0 AND cardinality(i.allowed_path_prefixes)>0,false) AS active
+  FROM outbound_app_bindings b LEFT JOIN outbound_integrations i ON i.id=b.integration_id AND i.account_id=b.account_id
+  WHERE b.app_id=q.app_id ORDER BY b.integration_id LOOP
+  IF NOT bound.known THEN RETURN NULL; END IF;
+  IF NOT bound.active THEN CONTINUE; END IF;
+  current_revision:=environment_binding_outbound_revision(bound.integration_id,q.app_id);
+  SELECT r.recorded_at INTO recorded FROM environment_qualification_outbound_receipts r
+   WHERE r.request_id=q.id AND r.attempt=q.attempt AND r.integration_id=bound.integration_id AND r.revision=current_revision;
+  IF current_revision IS NULL OR recorded IS NULL OR recorded>clock_timestamp() THEN RETURN NULL; END IF;
+  until_at:=least(until_at,recorded+max_age_seconds*interval '1 second');
+ END LOOP;
+ RETURN until_at;
+END $$;
+
+
+--
+-- Name: environment_binding_outbound_revision(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_binding_outbound_revision(target_integration uuid, target_app uuid) RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT encode(sha256(convert_to(jsonb_build_array(to_jsonb(i)-'updated_at'-'created_at',to_jsonb(b)-'created_at',a.plan,
+  encode(sha256(c.authorization_sealed),'hex'),(extract(epoch FROM c.updated_at)*1000000)::bigint,
+  (SELECT coalesce(jsonb_agg(jsonb_build_array(k.id,k.label,encode(sha256(k.authorization_sealed),'hex'),(extract(epoch FROM k.created_at)*1000000)::bigint) ORDER BY k.id),'[]'::jsonb)
+   FROM outbound_integration_credential_keys k WHERE k.integration_id=i.id AND k.account_id=i.account_id),
+  jsonb_build_array(p.method,p.path,p.expected_status))::text,'UTF8')),'hex')
+ FROM outbound_app_bindings b
+ JOIN outbound_integrations i ON i.id=b.integration_id AND i.account_id=b.account_id
+ JOIN accounts a ON a.id=b.account_id
+ JOIN apps app ON app.id=b.app_id AND app.account_id=b.account_id
+ JOIN outbound_integration_credentials c ON c.integration_id=i.id AND c.account_id=i.account_id
+ JOIN outbound_integration_probe_policies p ON p.integration_id=i.id AND p.account_id=i.account_id
+ WHERE b.integration_id=target_integration AND b.app_id=target_app AND i.credential_source='customer_sealed'
+  AND i.enabled AND i.provider_auth_mode='managed' AND cardinality(i.allowed_methods)>0 AND cardinality(i.allowed_path_prefixes)>0;
+$$;
+
+
+--
 -- Name: environment_binding_postgres_deadline(public.environment_workload_qualification_requests, text, bigint, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8404,7 +8451,7 @@ CREATE FUNCTION public.environment_binding_qualification_deadline(target_graph u
 DECLARE g environment_workload_graphs%ROWTYPE; s environment_git_sources%ROWTYPE; e project_environments%ROWTYPE;
  q environment_workload_qualification_requests%ROWTYPE; p app_binding_release_policies%ROWTYPE;
  smoke environment_qualification_smoke_receipts%ROWTYPE; edge record; target environment_workload_qualification_requests%ROWTYPE;
- receipt environment_qualification_service_receipts%ROWTYPE; until_at timestamptz; deadline timestamptz; postgres_deadline timestamptz; storage_deadline timestamptz; count_members integer:=0;
+ receipt environment_qualification_service_receipts%ROWTYPE; until_at timestamptz; deadline timestamptz; postgres_deadline timestamptz; storage_deadline timestamptz; outbound_deadline timestamptz; count_members integer:=0;
 BEGIN
  SELECT * INTO g FROM environment_workload_graphs WHERE id=target_graph;
  SELECT * INTO s FROM active_environment_git_sources WHERE id=g.source_id;
@@ -8454,6 +8501,9 @@ BEGIN
   storage_deadline:=environment_binding_object_storage_deadline(q,e.slug,p.object_storage_requirements,p.max_age_seconds,smoke.instance_id);
   IF storage_deadline IS NULL THEN RETURN NULL; END IF;
   deadline:=least(deadline,storage_deadline);
+  outbound_deadline:=environment_binding_outbound_deadline(q,p.max_age_seconds);
+  IF outbound_deadline IS NULL THEN RETURN NULL; END IF;
+  deadline:=least(deadline,outbound_deadline);
   FOR edge IN SELECT key,value FROM jsonb_each(coalesce(q.frozen_inputs->'service_bindings','{}'::jsonb)) LOOP
    SELECT * INTO target FROM environment_workload_qualification_requests WHERE graph_id=g.id AND app_id=(edge.value->>'target_app_id')::uuid;
    SELECT * INTO receipt FROM environment_qualification_service_receipts WHERE request_id=q.id AND attempt=q.attempt AND binding=edge.key;
@@ -13200,6 +13250,29 @@ BEGIN
    AND NOT EXISTS(SELECT 1 FROM object_storage_s3_credentials stage WHERE stage.rotation_parent_id=c.id AND stage.status='active')
    AND environment_binding_object_storage_deliveries(c.id,q.app_id,e.slug)=NEW.deliveries) THEN
   RAISE EXCEPTION 'candidate object storage receipt requires the current qualification lease and credential delivery' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_environment_qualification_outbound_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_qualification_outbound_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP<>'INSERT' THEN
+  IF TG_OP='DELETE' AND pg_trigger_depth()>1 THEN RETURN OLD; END IF;
+  RAISE EXCEPTION 'candidate outbound receipts are immutable' USING ERRCODE='23514';
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q
+  JOIN outbound_integration_probe_policies p ON p.integration_id=NEW.integration_id
+  WHERE q.id=NEW.request_id AND q.attempt=NEW.attempt AND q.binding_context IS NOT NULL AND q.lease_until>clock_timestamp()
+   AND p.method=NEW.method AND p.path=NEW.path AND p.expected_status=NEW.status
+   AND environment_binding_outbound_revision(NEW.integration_id,q.app_id)=NEW.revision) THEN
+  RAISE EXCEPTION 'candidate outbound receipt requires the current qualification lease and binding revision' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
  END IF;
  RETURN NEW;
 END $$;
@@ -32468,6 +32541,27 @@ CREATE TABLE public.environment_qualification_object_storage_receipts (
     CONSTRAINT environment_qualification_object_storage_receipts_attempt_check CHECK ((attempt > 0)),
     CONSTRAINT environment_qualification_object_storage_receipts_mode_check CHECK ((mode = ANY (ARRAY['read'::text, 'write'::text, 'read_write'::text]))),
     CONSTRAINT environment_qualification_object_storage_receipts_prefix_check CHECK ((prefix ~ '^[A-Z][A-Z0-9_]{0,47}$'::text))
+);
+
+
+--
+-- Name: environment_qualification_outbound_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_qualification_outbound_receipts (
+    request_id uuid NOT NULL,
+    attempt bigint NOT NULL,
+    integration_id uuid NOT NULL,
+    revision text NOT NULL,
+    method text NOT NULL,
+    path text NOT NULL,
+    status integer NOT NULL,
+    recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT environment_qualification_outbound_receipts_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT environment_qualification_outbound_receipts_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'HEAD'::text]))),
+    CONSTRAINT environment_qualification_outbound_receipts_path_check CHECK ((((length(path) >= 1) AND (length(path) <= 512)) AND (path ~ '^/[^?#]*$'::text))),
+    CONSTRAINT environment_qualification_outbound_receipts_revision_check CHECK ((revision ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT environment_qualification_outbound_receipts_status_check CHECK (((status >= 200) AND (status <= 299)))
 );
 
 
@@ -53009,6 +53103,14 @@ ALTER TABLE ONLY public.environment_qualification_object_storage_receipts
 
 
 --
+-- Name: environment_qualification_outbound_receipts environment_qualification_outbound_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_qualification_outbound_receipts
+    ADD CONSTRAINT environment_qualification_outbound_receipts_pkey PRIMARY KEY (request_id, attempt, integration_id, revision);
+
+
+--
 -- Name: environment_qualification_postgres_receipts environment_qualification_postgres_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -72603,6 +72705,13 @@ CREATE TRIGGER guard_environment_qualification_object_storage_receipt BEFORE INS
 
 
 --
+-- Name: environment_qualification_outbound_receipts guard_environment_qualification_outbound_receipt; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_environment_qualification_outbound_receipt BEFORE INSERT OR DELETE OR UPDATE ON public.environment_qualification_outbound_receipts FOR EACH ROW EXECUTE FUNCTION public.guard_environment_qualification_outbound_receipt();
+
+
+--
 -- Name: instances guard_environment_qualification_physical_retirement; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -80196,6 +80305,14 @@ ALTER TABLE ONLY public.environment_qualification_job_smoke_receipts
 
 ALTER TABLE ONLY public.environment_qualification_object_storage_receipts
     ADD CONSTRAINT environment_qualification_object_storage_receip_request_id_fkey FOREIGN KEY (request_id) REFERENCES public.environment_workload_qualification_requests(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_qualification_outbound_receipts environment_qualification_outbound_receipts_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_qualification_outbound_receipts
+    ADD CONSTRAINT environment_qualification_outbound_receipts_request_id_fkey FOREIGN KEY (request_id) REFERENCES public.environment_workload_qualification_requests(id) ON DELETE CASCADE;
 
 
 --

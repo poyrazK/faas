@@ -163,7 +163,7 @@ func checkEnvironmentBindingGraphTx(ctx context.Context, tx sqlc.DBTX, projectID
 			return true, ErrBindingReleaseRequired
 		}
 		for _, deadline := range []func(context.Context, sqlc.DBTX, EnvironmentWorkloadQualificationRequest, string, time.Duration) (time.Time, error){
-			candidatePostgresDeadlineTx, candidateObjectStorageDeadlineTx} {
+			candidatePostgresDeadlineTx, candidateObjectStorageDeadlineTx, candidateOutboundDeadlineTx} {
 			if until, err := deadline(ctx, tx, r, receipt.InstanceID, age); err != nil {
 				return true, err
 			} else if !until.IsZero() && !time.Now().Before(until) {
