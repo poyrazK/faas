@@ -44,6 +44,7 @@ type dataAPIRequestRecord struct {
 	ResponseLimit    *dataAPIResponseLimitRecord    `json:"response_limit,omitempty"`
 	RateLimit        *dataAPIRateLimitRecord        `json:"rate_limit,omitempty"`
 	ConcurrencyLimit *dataAPIConcurrencyLimitRecord `json:"concurrency_limit,omitempty"`
+	Access           *dataAPIAccessRecord           `json:"access,omitempty"`
 }
 type dataAPILatency struct {
 	P50 *float64 `json:"p50"`
@@ -74,6 +75,11 @@ type dataAPIFailureCounts struct {
 	ResponseTooLarge   int `json:"response_too_large"`
 	RateLimited        int `json:"rate_limited"`
 	ConcurrencyLimited int `json:"concurrency_limited"`
+	PublicReadDenied   int `json:"public_read_denied"`
+	PublicRPCNotGET    int `json:"public_rpc_requires_get"`
+	MonthlyCapReached  int `json:"monthly_cap_reached"`
+	ServerKeyBrowser   int `json:"server_key_browser"`
+	ServerKeyDenied    int `json:"server_key_permission_denied"`
 }
 type dataAPIDiagnosticsReport struct {
 	Version              int                             `json:"version"`
@@ -100,6 +106,7 @@ type dataAPIDiagnosticsReport struct {
 	Failures             dataAPIFailureCounts            `json:"failures"`
 	Admission            dataAPIAdmissionStats           `json:"admission"`
 	Deadlines            dataAPIDeadlineStats            `json:"deadlines"`
+	Access               dataAPIAccessStats              `json:"access"`
 	RequestID            string                          `json:"request_id,omitempty"`
 	Operations           []dataAPIOperationStats         `json:"operations"`
 	QueryShapes          []dataAPIShapeStats             `json:"query_shapes"`
@@ -285,7 +292,7 @@ func parseDataAPIRequestRecord(content string) (dataAPIRequestRecord, bool, erro
 	if (record.Status == nil && record.Outcome != "aborted") || (record.Status != nil && (*record.Status < 100 || *record.Status > 599)) {
 		return record, true, errors.New("invalid request status")
 	}
-	if record.Code != nil && !dataAPIDiagnosticAllowed(*record.Code, "origin_not_allowed", "not_found", "invalid_path", "method_not_allowed", "token_required", "token_invalid", "read_only_identity", "serving_contract_unavailable", "data_api_unavailable", "data_api_refresh_paused", "data_api_refresh_unavailable", "request_too_large", "response_too_large", "query_timeout", "request_deadline_exceeded", "schema_document_too_large", "schema_contract_mismatch", "upstream_error", "data_api_overloaded", "data_api_rate_limited", "data_api_concurrency_limited") {
+	if record.Code != nil && !dataAPIDiagnosticAllowed(*record.Code, "origin_not_allowed", "not_found", "invalid_path", "method_not_allowed", "token_required", "token_invalid", "read_only_identity", "serving_contract_unavailable", "data_api_unavailable", "data_api_refresh_paused", "data_api_refresh_unavailable", "request_too_large", "response_too_large", "query_timeout", "request_deadline_exceeded", "schema_document_too_large", "schema_contract_mismatch", "upstream_error", "data_api_overloaded", "data_api_rate_limited", "data_api_concurrency_limited", "public_read_not_allowed", "public_rpc_requires_get", "server_key_browser_forbidden", "server_key_permission_denied", "data_api_monthly_cap_reached") {
 		return record, true, errors.New("invalid request code")
 	}
 	if err := validateDataAPIQueryShape(record); err != nil {
@@ -307,6 +314,9 @@ func parseDataAPIRequestRecord(content string) (dataAPIRequestRecord, bool, erro
 		return record, true, err
 	}
 	if err := validateDataAPIConcurrencyLimit(record); err != nil {
+		return record, true, err
+	}
+	if err := validateDataAPIAccess(record); err != nil {
 		return record, true, err
 	}
 	record.Time = timestamp.UTC().Format(time.RFC3339Nano)
@@ -429,8 +439,19 @@ func (c *dataAPIDiagnosticsCollector) observe(content string) bool {
 			c.report.Failures.RateLimited++
 		case "data_api_concurrency_limited":
 			c.report.Failures.ConcurrencyLimited++
+		case "public_read_not_allowed":
+			c.report.Failures.PublicReadDenied++
+		case "public_rpc_requires_get":
+			c.report.Failures.PublicRPCNotGET++
+		case "data_api_monthly_cap_reached":
+			c.report.Failures.MonthlyCapReached++
+		case "server_key_browser_forbidden":
+			c.report.Failures.ServerKeyBrowser++
+		case "server_key_permission_denied":
+			c.report.Failures.ServerKeyDenied++
 		}
 	}
+	c.report.Access.add(record.Access)
 	if c.report.RequestID != "" {
 		c.report.Matches = append(c.report.Matches, record)
 	}
@@ -648,6 +669,26 @@ func writeDataAPIDiagnostics(report dataAPIDiagnosticsReport) error {
 	}
 	if report.Failures.RateLimited > 0 {
 		if _, err := fmt.Fprintf(osStdout, "User rate limits: %d observed (rejected before SQL dispatch)\n", report.Failures.RateLimited); err != nil {
+			return err
+		}
+	}
+	if access := report.Access; access.Anonymous > 0 || access.Server > 0 {
+		if _, err := fmt.Fprintf(osStdout, "Access: %d user, %d anonymous, %d server-key requests\n", access.User, access.Anonymous, access.Server); err != nil {
+			return err
+		}
+	}
+	if report.Failures.PublicReadDenied > 0 || report.Failures.ServerKeyBrowser > 0 || report.Failures.ServerKeyDenied > 0 {
+		if _, err := fmt.Fprintf(osStdout, "Access denials: %d public reads outside the allowlist, %d server keys sent from browsers, %d outside server-key permissions\n", report.Failures.PublicReadDenied, report.Failures.ServerKeyBrowser, report.Failures.ServerKeyDenied); err != nil {
+			return err
+		}
+	}
+	if report.Failures.MonthlyCapReached > 0 {
+		if _, err := fmt.Fprintf(osStdout, "Monthly caps: %d requests refused (see gregale data-api usage)\n", report.Failures.MonthlyCapReached); err != nil {
+			return err
+		}
+	}
+	if report.Failures.PublicRPCNotGET > 0 {
+		if _, err := fmt.Fprintf(osStdout, "Public RPC calls without a token sent by POST: %d (anonymous calls must use GET or HEAD)\n", report.Failures.PublicRPCNotGET); err != nil {
 			return err
 		}
 	}

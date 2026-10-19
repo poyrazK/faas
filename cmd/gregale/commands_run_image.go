@@ -134,7 +134,9 @@ type imageRunEnvLine struct {
 // per line, leading whitespace ignored, `#` comments and blank lines
 // skipped, values taken literally (no quotes or interpolation).
 func readImageRunEnvFile(path string) ([]imageRunEnvLine, error) {
-	f, err := os.Open(path) //nolint:gosec,forbidigo // a CLI user's own --env-file
+	// The values ship to the server, so the file opens like every other
+	// customer file the CLI sends: no symlink, regular files only.
+	f, err := openCustomerFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("--env-file: %w", err)
 	}

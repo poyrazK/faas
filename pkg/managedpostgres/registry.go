@@ -92,8 +92,9 @@ type BackendConfig struct {
 	// LiveHubURL enables ADR-20261016151947 live queries on this backend's databases:
 	// the ws:// or wss:// URL of the livequeryd hub serving a database, where
 	// {database_id} stands for the database's ID. Empty leaves live queries
-	// off. Neon backends cannot set it: a replication consumer would keep
-	// their computes awake.
+	// off. On a Neon backend the hub must release idle databases
+	// (livequeryd -release-after with -awake neon) or its replication
+	// connection keeps their computes awake.
 	LiveHubURL string `json:"live_hub_url,omitempty"`
 }
 
@@ -275,9 +276,6 @@ func (r *Registry) Regions() []string {
 func validateLiveHubURL(config BackendConfig) error {
 	if config.LiveHubURL == "" {
 		return nil
-	}
-	if config.Driver == "neon" {
-		return fmt.Errorf("managed postgres: backend %s: live queries need a native database; neon backends cannot set live_hub_url", config.ID)
 	}
 	u, err := url.Parse(strings.ReplaceAll(config.LiveHubURL, "{database_id}", "x"))
 	if err != nil || (u.Scheme != "ws" && u.Scheme != "wss") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
