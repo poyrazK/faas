@@ -792,9 +792,15 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 func stripHopByHopInPlace(h http.Header) {
 	// Connection's options name additional hop-specific fields. Read all
 	// values before removing Connection itself (RFC 9110 §7.6.1).
+	// Platform identity headers are exempt: the gateway stamps them after
+	// reading the sender's headers, so a caller naming them here would strip
+	// the authoritative values (an internal service call carries the calling
+	// guest's own HTTP/1.1 Connection header to this point).
 	for _, value := range h.Values("Connection") {
 		for _, name := range strings.Split(value, ",") {
-			h.Del(strings.TrimSpace(name))
+			if name = strings.TrimSpace(name); !api.IsPlatformStampedHeader(name) {
+				h.Del(name)
+			}
 		}
 	}
 	for k := range h {
