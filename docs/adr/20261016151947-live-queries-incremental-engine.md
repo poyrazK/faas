@@ -988,8 +988,7 @@ Phase 0 did not cover:
   - **Release.** A hub with no transaction to apply for
     `Config.ReleaseAfter` (livequeryd `-release-after`) does three things:
     - writes its checkpoint;
-    - closes the capture, after a final standby status so the slot keeps
-      only what the checkpoint does not cover;
+    - closes the capture;
     - resets the pool (`Engine.Release`).
 
     No connection to the database stays open. The slot-lag poll pauses

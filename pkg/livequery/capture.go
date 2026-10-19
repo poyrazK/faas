@@ -173,17 +173,12 @@ func (c *Capture) Err() error {
 }
 
 // Close stops streaming. A temporary slot goes with the connection; a
-// persistent one keeps its confirmed position for the next OpenSlot, which
-// Close sends once more first so nothing confirmed since the last status
-// update streams again.
+// persistent one keeps its confirmed position for the next OpenSlot.
 func (c *Capture) Close() error {
 	c.cancel()
 	<-c.done
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if c.Err() == nil {
-		_ = c.sendStatus(ctx) // best effort: the slot resends from the older position
-	}
 	return c.conn.Close(ctx)
 }
 

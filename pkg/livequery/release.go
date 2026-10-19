@@ -10,12 +10,13 @@ import (
 var ErrReleased = errors.New("livequery: the engine has released the database")
 
 // Release lets go of the database so it can scale to zero (ADR-20261016151947,
-// "Parked databases"): it closes the replication connection, after a final
-// confirmation, and every pooled connection. A database that commits nothing
-// cannot change any result, so the results stay in memory and Current and
-// Join serve them. Resume attaches a new capture on the same slot. Release
-// must not run concurrently with Round; a checkpointed engine should write
-// its checkpoint first, so the slot keeps as little WAL as it can.
+// "Parked databases"): it closes the replication connection and every pooled
+// connection. A database that commits nothing cannot change any result, so
+// the results stay in memory and Current and Join serve them. Resume
+// attaches a new capture on the same slot, which streams again what was
+// applied since the slot's last confirmed position; the engine skips it.
+// Release must not run concurrently with Round; a checkpointed engine should
+// write its checkpoint first.
 func (e *Engine) Release() error {
 	if e.capture == nil {
 		return nil
