@@ -3861,7 +3861,7 @@
       "reason",
       "used_at"
     ],
-    "kind": "configuration"
+    "kind": "operational"
   },
   {
     "table": "deployment_mcp_task_holds",
@@ -9334,7 +9334,7 @@
       "request",
       "request_id"
     ],
-    "kind": "customer_data"
+    "kind": "operational"
   },
   {
     "table": "mcp_readiness_fallback_policies",
@@ -9397,7 +9397,7 @@
       "sequence",
       "suppression_reason"
     ],
-    "kind": "customer_data"
+    "kind": "operational"
   },
   {
     "table": "mcp_readiness_incidents",
