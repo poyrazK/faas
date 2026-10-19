@@ -420,7 +420,11 @@ type authPublicSettings struct {
 	SelfDeletion       bool `json:"self_deletion"`
 	OrganizationClaims bool `json:"organization_claims"`
 	Impersonation      bool `json:"impersonation"`
-	Keys               struct {
+	Web3               struct {
+		Ethereum bool `json:"ethereum"`
+		Solana   bool `json:"solana"`
+	} `json:"web3"`
+	Keys struct {
 		Signing   string   `json:"signing"`
 		Verifying []string `json:"verifying"`
 	} `json:"keys"`

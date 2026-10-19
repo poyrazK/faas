@@ -59,6 +59,39 @@ test('reads an organization audit log a page at a time', async () => {
   assert.equal(api.calls.at(-1).url.search, '?cursor=WyIyMDI2Il0')
 })
 
+test('signs in with an Ethereum or Solana wallet, in the message grammar GoTrue parses', async () => {
+  const api = server({ 'POST /auth/v1/token': () => [200, tokens(1)] })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  const asked = []
+  const ethereum = { request: async ({ method, params }) => {
+    asked.push(method)
+    if (method === 'eth_requestAccounts') return ['0x52908400098527886E0F7030069857D2E4169EE7']
+    if (method === 'eth_chainId') return '0x1'
+    if (method === 'personal_sign') { asked.push(Buffer.from(params[0].slice(2), 'hex').toString('utf8')); return '0x' + 'ab'.repeat(65) }
+  } }
+  await auth.signInWithWeb3({ chain: 'ethereum', wallet: ethereum, uri: 'https://shop.example.com' })
+  const call = api.calls.at(-1)
+  assert.equal(call.url.search, '?grant_type=web3')
+  assert.equal(call.body.chain, 'ethereum')
+  assert.equal(call.body.signature, '0x' + 'ab'.repeat(65))
+  assert.equal(call.body.message, asked.at(-1), 'the signed text is what is sent')
+  const lines = call.body.message.split('\n')
+  assert.deepEqual(lines.slice(0, 6), ['shop.example.com wants you to sign in with your Ethereum account:', '0x52908400098527886E0F7030069857D2E4169EE7', '', 'Sign in to shop.example.com', '', 'URI: https://shop.example.com'])
+  assert.deepEqual(lines.slice(6, 8), ['Version: 1', 'Chain ID: 1'])
+  assert.match(lines[8], /^Nonce: [0-9a-f]{32}$/)
+  assert.match(lines[9], /^Issued At: \d{4}-\d{2}-\d{2}T/)
+  const solana = { publicKey: null, connect: async () => { solana.publicKey = { toBase58: () => '7S3P4HxJpyyigGzodYwHtCxZyUQe9JiBMHyRWXArAaKv' } },
+    signMessage: async bytes => ({ signature: new Uint8Array(64).fill(7), signed: bytes }) }
+  await auth.signInWithWeb3({ chain: 'solana', wallet: solana, uri: 'https://shop.example.com/app', statement: 'Welcome\nback' })
+  const sol = api.calls.at(-1).body
+  assert.equal(sol.chain, 'solana')
+  assert.equal(Buffer.from(sol.signature, 'base64').length, 64)
+  assert.deepEqual(sol.message.split('\n').slice(0, 7), ['shop.example.com wants you to sign in with your Solana account:', '7S3P4HxJpyyigGzodYwHtCxZyUQe9JiBMHyRWXArAaKv', '', 'Welcome back', '', 'URI: https://shop.example.com/app', 'Version: 1'])
+  assert.ok(!sol.message.includes('Chain ID'))
+  await assert.rejects(auth.signInWithWeb3({ chain: 'ethereum', uri: 'https://shop.example.com' }), err => err.code === 'web3_wallet_not_found')
+  await assert.rejects(auth.signInWithWeb3({ chain: 'bitcoin', wallet: ethereum, uri: 'https://shop.example.com' }), err => err.code === 'web3_unsupported_chain')
+})
+
 test('signs in, stores the session and authenticates authz calls', async () => {
   const api = server({
     'POST /auth/v1/token': () => [200, tokens(1)],

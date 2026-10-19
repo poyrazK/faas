@@ -565,4 +565,15 @@ func TestAuthConfigAnonymousUsersAndLinking(t *testing.T) {
 	if code := main.CmdAuth([]string{"config", "shop-auth", "--anonymous-retention", "0"}); code == 0 {
 		t.Fatal("accepted zero days")
 	}
+	if code := cmdAuth([]string{"config", "shop-auth", "--web3", "ethereum,solana"}); code != 0 ||
+		sealed["GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED"] != "true" || sealed["GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED"] != "true" {
+		t.Fatalf("web3 = %d, sealed %v", code, sealed)
+	}
+	if code := cmdAuth([]string{"config", "shop-auth", "--web3", "off"}); code != 0 ||
+		sealed["GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED"] != "false" || sealed["GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED"] != "false" {
+		t.Fatalf("web3 off = %d, sealed %v", code, sealed)
+	}
+	if code := cmdAuth([]string{"config", "shop-auth", "--web3", "bitcoin"}); code == 0 {
+		t.Fatal("accepted an unknown chain")
+	}
 }

@@ -95,6 +95,35 @@ export type OrgDomain = Readonly<{ domain: string; verified: boolean; verified_a
 export type OrgSSOProvider = Readonly<{ id: string; entity_id: string | null; metadata_url: string | null; domains: readonly string[]; role: string }>
 export type CreatedInvitation = Invitation & Readonly<{ delivered: boolean; token?: string }>
 
+/** The wallets GoTrue verifies sign-ins from (EIP-4361 and Sign-In With Solana). */
+export type Web3Chain = 'ethereum' | 'solana'
+/** An injected Ethereum wallet (EIP-1193), such as window.ethereum. */
+export type EthereumWallet = { request(args: { method: string; params?: unknown[] }): Promise<unknown> }
+/** An injected Solana wallet, such as window.solana or window.phantom.solana. */
+export type SolanaWallet = {
+  publicKey?: { toBase58(): string } | null
+  connect(): Promise<unknown>
+  signMessage(message: Uint8Array, encoding?: string): Promise<Uint8Array | { signature: Uint8Array }>
+}
+
+/**
+ * web3Message writes the message a wallet signs, in the grammar GoTrue's
+ * parsers accept (EIP-4361 for Ethereum; its Solana equivalent). GoTrue
+ * checks that uri is the app's site URL or an allowed redirect URL, that
+ * domain is uri's host, and that the message is at most ten minutes old.
+ */
+export function web3Message(chain: Web3Chain, input: { domain: string; address: string; uri: string; statement?: string; chainId?: number; nonce: string; issuedAt: string }): string {
+  const name = chain === 'ethereum' ? 'Ethereum' : 'Solana'
+  return [
+    `${input.domain} wants you to sign in with your ${name} account:`, input.address, '',
+    ...(input.statement ? [input.statement.replace(/[\r\n]+/g, ' '), ''] : []),
+    `URI: ${input.uri}`, 'Version: 1', ...(input.chainId !== undefined ? [`Chain ID: ${input.chainId}`] : []), `Nonce: ${input.nonce}`, `Issued At: ${input.issuedAt}`,
+  ].join('\n')
+}
+
+const hexOf = (bytes: Uint8Array) => Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
+const base64Of = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes))
+
 /** A failed request. `code` is the stable server code, or `http_<status>`. */
 export class AuthError extends Error {
   readonly status: number
@@ -275,6 +304,43 @@ export function createAuthClient(options: AuthClientOptions) {
      */
     async signInAnonymously(input: Captcha = {}): Promise<Session> {
       return save(toSession(await call<TokenResponse>('POST', '/auth/v1/signup', { body: captcha(input) })), 'SIGNED_IN')
+    },
+    /**
+     * Signs in with a crypto wallet when the Auth app has Web3 sign-in on
+     * for that chain. The wallet (window.ethereum or window.solana unless
+     * given) asks its owner to sign a message naming this page; the first
+     * sign-in creates the user. uri defaults to this page's origin, which must
+     * be the app's site URL or an allowed redirect URL.
+     */
+    async signInWithWeb3(input: { chain: Web3Chain; wallet?: EthereumWallet | SolanaWallet; statement?: string; uri?: string }): Promise<Session> {
+      const page = (globalThis as { location?: Location }).location
+      const uri = input.uri ?? page?.origin
+      if (!uri) throw new AuthError(400, 'web3_uri_required')
+      const domain = new URL(uri).host
+      const nonce = hexOf(crypto.getRandomValues(new Uint8Array(16)))
+      const issuedAt = new Date().toISOString()
+      const statement = input.statement ?? `Sign in to ${domain}`
+      let message: string, signature: string
+      if (input.chain === 'ethereum') {
+        const wallet = (input.wallet ?? (globalThis as { ethereum?: EthereumWallet }).ethereum) as EthereumWallet | undefined
+        if (!wallet?.request) throw new AuthError(400, 'web3_wallet_not_found')
+        const [address] = await wallet.request({ method: 'eth_requestAccounts' }) as string[]
+        const chainId = Number.parseInt(String(await wallet.request({ method: 'eth_chainId' })), 16)
+        message = web3Message('ethereum', { domain, address, uri, statement, chainId, nonce, issuedAt })
+        signature = String(await wallet.request({ method: 'personal_sign', params: [`0x${hexOf(new TextEncoder().encode(message))}`, address] }))
+      } else if (input.chain === 'solana') {
+        const wallet = (input.wallet ?? (globalThis as { solana?: SolanaWallet }).solana) as SolanaWallet | undefined
+        if (!wallet?.signMessage) throw new AuthError(400, 'web3_wallet_not_found')
+        if (!wallet.publicKey) await wallet.connect()
+        const address = wallet.publicKey?.toBase58()
+        if (!address) throw new AuthError(400, 'web3_wallet_not_connected')
+        message = web3Message('solana', { domain, address, uri, statement, nonce, issuedAt })
+        const signed = await wallet.signMessage(new TextEncoder().encode(message), 'utf8')
+        signature = base64Of(signed instanceof Uint8Array ? signed : signed.signature)
+      } else {
+        throw new AuthError(400, 'web3_unsupported_chain')
+      }
+      return save(toSession(await call<TokenResponse>('POST', '/auth/v1/token?grant_type=web3', { body: { chain: input.chain, message, signature } })), 'SIGNED_IN')
     },
     async signInWithPassword(input: { email: string; password: string } & Captcha): Promise<Session> {
       return save(toSession(await call<TokenResponse>('POST', '/auth/v1/token?grant_type=password', { body: { email: input.email, password: input.password, ...captcha(input) } })), 'SIGNED_IN')

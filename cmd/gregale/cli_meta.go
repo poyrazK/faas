@@ -4720,6 +4720,7 @@ var cliCommands = []cliCommand{
 				{Name: "block-disposable", Value: "on|off", Short: "refuse sign-ups with throwaway email addresses", ClosedSet: []string{"on", "off"}},
 				{Name: "signup-access", Value: "open|invite|waitlist", Short: "who may sign up: anyone, invited or approved addresses, or those plus a waitlist", ClosedSet: []string{"open", "invite", "waitlist"}},
 				{Name: "impersonation", Value: "on|off", Short: "let the admin key open time-limited sessions as users, for support", ClosedSet: []string{"on", "off"}},
+				{Name: "web3", Value: "ethereum,solana|off", Short: "wallets people may sign in with (Sign-In With Ethereum / Solana)"},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 			}, Examples: []string{"gregale auth config shop-auth", "gregale auth config shop-auth --events on", "gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit --mfa on"}},
 			{Name: "providers", Short: "Manage OAuth sign-in providers such as Google or GitHub", Subcommands: []cliSub{

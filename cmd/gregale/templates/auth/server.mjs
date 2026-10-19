@@ -47,6 +47,7 @@ function serveUI(req, res, ui) {
     res.end(JSON.stringify({
       site_url: ui.siteURL, redirect_urls: ui.redirectURLs, app: ui.app, logo_url: branding.logoURL,
       captcha: ui.captcha ? { provider: ui.captcha.provider, site_key: ui.captcha.siteKey, script: ui.captcha.script } : null,
+      web3: ui.web3 ?? { ethereum: false, solana: false },
     }))
   } else if (path === '/ui/brand.css') {
     // The accent colour is validated as #rrggbb, so it cannot break out.
@@ -229,7 +230,7 @@ export function start(env = process.env) {
   filterLogs(child.stdout, process.stdout)
   filterLogs(child.stderr, process.stderr)
   const invitations = { mailer, external: config.external, app: config.app }
-  const ui = { siteURL: config.gotrueEnv.GOTRUE_SITE_URL, redirectURLs: config.redirects, app: config.app, branding: config.branding, captcha: config.captcha }
+  const ui = { siteURL: config.gotrueEnv.GOTRUE_SITE_URL, redirectURLs: config.redirects, app: config.app, branding: config.branding, captcha: config.captcha, web3: config.web3 }
   const workflows = workflowsConfig(env)
   const goTrue = goTrueAdmin(signingKey(config.gotrueEnv.GOTRUE_JWT_KEYS))
   const orgSSO = config.orgSSO ? { admin: goTrue, goTrueError, external: config.external } : null

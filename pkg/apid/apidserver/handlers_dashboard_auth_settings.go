@@ -124,6 +124,13 @@ func authSettingsChange(form url.Values) (authsettings.Change, error) {
 		value := form.Get("signup_access")
 		change.SignupAccess = &value
 	}
+	if form.Has("web3") {
+		chains := []string{}
+		if value := form.Get("web3"); value != "off" {
+			chains = strings.Split(value, ",")
+		}
+		change.Web3 = &chains
+	}
 	if form.Has("password_min_length") {
 		n, err := strconv.Atoi(form.Get("password_min_length"))
 		if err != nil {

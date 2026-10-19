@@ -485,6 +485,17 @@ GoTrue's audit log records the deletion as an administrator's, since it goes
 through the admin API; the lifecycle event `auth.user.deleted` is the same
 either way.
 
+Wallet sign-in uses GoTrue v2.197.0's `web3` grant
+(`GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED`, `_SOLANA_ENABLED`, set by
+`gregale auth config --web3`): GoTrue parses the EIP-4361 or Solana message,
+verifies the signature and requires the message's URI to be an allowed
+redirect URL and its domain to be that URI's host. The hosted pages sign on
+the Auth app's own host, so while Web3 is on its root is added to
+`GOTRUE_URI_ALLOW_LIST`. `@gregale/auth` builds the message in the grammar
+GoTrue's parsers accept and asks an injected wallet (EIP-1193 or Solana) to
+sign it. GoTrue keeps no record of nonces, so a signed message is valid for
+its ten-minute window.
+
 ### Phone sign-in
 
 Phone sign-in uses GoTrue's own SMS providers (Twilio, Twilio Verify,

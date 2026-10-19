@@ -80,6 +80,10 @@ const (
 // addresses only, or those plus a waitlist that refused sign-ups join.
 var SignupAccessModes = []string{"open", "invite", "waitlist"}
 
+// Web3Chains are the wallets GoTrue verifies sign-ins from, with the secret
+// that turns each on.
+var Web3Chains = map[string]string{"ethereum": "GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED", "solana": "GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED"}
+
 // CaptchaProviders are the CAPTCHA services GoTrue verifies and the hosted
 // pages render.
 var CaptchaProviders = []string{"turnstile", "hcaptcha"}
@@ -172,6 +176,9 @@ type Change struct {
 	SignupAccess *string
 	// Impersonation lets the admin key open time-limited sessions as users.
 	Impersonation *bool
+	// Web3 lists the Web3Chains people may sign in with a wallet from;
+	// empty turns wallet sign-in off.
+	Web3 *[]string
 }
 
 // Captcha is a CAPTCHA provider and its keys; the secret stays in the app.
@@ -330,6 +337,19 @@ func (c Change) Secrets() (map[string]string, []string, error) {
 	}
 	if c.Impersonation != nil {
 		set[secretImpersonation] = flag(*c.Impersonation)
+	}
+	if c.Web3 != nil {
+		on := map[string]bool{}
+		for _, chain := range *c.Web3 {
+			chain = strings.ToLower(strings.TrimSpace(chain))
+			if _, known := Web3Chains[chain]; !known {
+				return nil, nil, fmt.Errorf("unknown wallet chain %q; use ethereum, solana or both", chain)
+			}
+			on[chain] = true
+		}
+		for chain, secret := range Web3Chains {
+			set[secret] = strconv.FormatBool(on[chain])
+		}
 	}
 	if c.AnonymousRetentionDays != nil {
 		days := *c.AnonymousRetentionDays
