@@ -12,12 +12,13 @@
 //     of N nodes with smaller per-node budgets cannot collectively
 //     admit more than Σ(vcpu_budget).
 
-package sched
+package sched_test
 
 import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -26,16 +27,16 @@ import (
 // (a tiny test-only value), node b has budget=160. Only b fits.
 func TestChoosePlacement_RejectsOverVCPUBudget(t *testing.T) {
 	t.Parallel()
-	a := node("a-id", "a", 0, 1000)
+	a := sched.Node("a-id", "a", 0, 1000)
 	a.VCPUBudget = 2 // request is 4 vCPU → a is rejected
-	b := node("b-id", "b", 0, 1000)
+	b := sched.Node("b-id", "b", 0, 1000)
 	b.VCPUBudget = 160
 	nodes := []state.ComputeNode{a, b}
 	usedMB := map[string]int64{"a-id": 0, "b-id": 0}
 	usedVCPU := map[string]int64{"a-id": 0, "b-id": 0}
-	r := Request{RAMMB: 64, VCPU: 4}
+	r := sched.Request{RAMMB: 64, VCPU: 4}
 
-	got, err := ChoosePlacement(nodes, usedMB, usedVCPU, r)
+	got, err := sched.ChoosePlacement(nodes, usedMB, usedVCPU, r)
 	if err != nil {
 		t.Fatalf("ChoosePlacement: %v", err)
 	}
@@ -53,14 +54,14 @@ func TestChoosePlacement_RejectsOverVCPUBudget(t *testing.T) {
 // risk).
 func TestChoosePlacement_VCPUBudgetZeroExcluded(t *testing.T) {
 	t.Parallel()
-	a := node("a-id", "a", 0, 1000)
+	a := sched.Node("a-id", "a", 0, 1000)
 	a.VCPUBudget = 0 // defensive exclusion
 	nodes := []state.ComputeNode{a}
 	usedMB := map[string]int64{"a-id": 0}
 	usedVCPU := map[string]int64{"a-id": 0}
-	r := Request{RAMMB: 64, VCPU: 1}
+	r := sched.Request{RAMMB: 64, VCPU: 1}
 
-	if _, err := ChoosePlacement(nodes, usedMB, usedVCPU, r); err == nil {
+	if _, err := sched.ChoosePlacement(nodes, usedMB, usedVCPU, r); err == nil {
 		t.Error("node with vcpu_budget=0 must be excluded from the candidate set")
 	}
 }
@@ -72,16 +73,16 @@ func TestChoosePlacement_VCPUBudgetZeroExcluded(t *testing.T) {
 // on vCPU.
 func TestBetterCandidate_VCPUHeadroomTieBreaks(t *testing.T) {
 	t.Parallel()
-	a := node("a-id", "a", 0, 100)
+	a := sched.Node("a-id", "a", 0, 100)
 	a.VCPUBudget = 4
-	b := node("b-id", "b", 0, 100)
+	b := sched.Node("b-id", "b", 0, 100)
 	b.VCPUBudget = 16
 	usedMB := map[string]int64{"a-id": 0, "b-id": 0}
 	usedVCPU := map[string]int64{"a-id": 4, "b-id": 0} // a is at vCPU cap
 	nodes := []state.ComputeNode{a, b}
-	r := Request{RAMMB: 32, VCPU: 2}
+	r := sched.Request{RAMMB: 32, VCPU: 2}
 
-	got, err := ChoosePlacement(nodes, usedMB, usedVCPU, r)
+	got, err := sched.ChoosePlacement(nodes, usedMB, usedVCPU, r)
 	if err != nil {
 		t.Fatalf("ChoosePlacement: %v", err)
 	}
@@ -97,14 +98,14 @@ func TestBetterCandidate_VCPUHeadroomTieBreaks(t *testing.T) {
 // single-box path preserved bit-for-bit.
 func TestChoosePlacement_LegacySingleBoxUnchanged(t *testing.T) {
 	t.Parallel()
-	a := node("local-id", state.DefaultLocalNodeName, 0, api.RAMAdmissionCeilingMB)
+	a := sched.Node("local-id", state.DefaultLocalNodeName, 0, api.RAMAdmissionCeilingMB)
 	a.VCPUBudget = api.VCPUSlots // 160, the migration default
 	nodes := []state.ComputeNode{a}
 	usedMB := map[string]int64{"local-id": 0}
 	usedVCPU := map[string]int64{"local-id": 0}
-	r := Request{RAMMB: 512, VCPU: 2}
+	r := sched.Request{RAMMB: 512, VCPU: 2}
 
-	got, err := ChoosePlacement(nodes, usedMB, usedVCPU, r)
+	got, err := sched.ChoosePlacement(nodes, usedMB, usedVCPU, r)
 	if err != nil {
 		t.Fatalf("ChoosePlacement: %v", err)
 	}

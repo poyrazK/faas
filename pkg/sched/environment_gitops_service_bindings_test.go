@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -17,7 +18,7 @@ func TestAppendEnvironmentGitOpsJobServiceBindingsUsesFrozenTransport(t *testing
 			"database": {Workload: "postgres", EnvKey: "DATABASE_URL", TargetAppID: "target-id"},
 		},
 	}
-	got, err := appendEnvironmentGitOpsJobServiceBindings(map[string]string{"GREGALE_RUN_ID": "run"}, intent)
+	got, err := sched.AppendEnvironmentGitOpsJobServiceBindings(map[string]string{"GREGALE_RUN_ID": "run"}, intent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,11 +49,11 @@ func TestEnvironmentGitOpsJobBindingIntentRequiresExactRunSnapshot(t *testing.T)
 		ServiceBindings: map[string]state.EnvironmentScopedServiceBinding{
 			"database": {Workload: "postgres", EnvKey: "DATABASE_URL", TargetAppID: targetID},
 		}}
-	if !environmentGitOpsJobBindingIntentMatches(job, run, accountID, intent) {
+	if !sched.EnvironmentGitOpsJobBindingIntentMatches(job, run, accountID, intent) {
 		t.Fatal("exact reviewed scheduled-job snapshot did not match")
 	}
 	run.EffectiveEnvSnapshot = json.RawMessage(`{"MODE":"unreviewed"}`)
-	if environmentGitOpsJobBindingIntentMatches(job, run, accountID, intent) {
+	if sched.EnvironmentGitOpsJobBindingIntentMatches(job, run, accountID, intent) {
 		t.Fatal("unreviewed run environment was accepted for scoped bindings")
 	}
 }
@@ -61,7 +62,7 @@ func TestAppendEnvironmentGitOpsJobServiceBindingsRejectsEnvironmentCollision(t 
 	intent := state.EnvironmentWorkloadIntent{ServiceBindings: map[string]state.EnvironmentScopedServiceBinding{
 		"database": {Workload: "postgres", EnvKey: "DATABASE_URL", TargetAppID: "target-id"},
 	}}
-	if _, err := appendEnvironmentGitOpsJobServiceBindings(map[string]string{"DATABASE_URL": "user-value"}, intent); err == nil {
+	if _, err := sched.AppendEnvironmentGitOpsJobServiceBindings(map[string]string{"DATABASE_URL": "user-value"}, intent); err == nil {
 		t.Fatal("service binding replaced a preexisting job environment value")
 	}
 }
@@ -73,7 +74,7 @@ func TestValidEnvironmentGitOpsJobVariablesRejectsInvalidAndSensitiveValues(t *t
 		"sensitive key":   {"API_TOKEN": "must-not-leak"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if validEnvironmentGitOpsJobVariables(values) {
+			if sched.ValidEnvironmentGitOpsJobVariables(values) {
 				t.Fatal("accepted invalid or sensitive environment variables")
 			}
 		})
@@ -82,7 +83,7 @@ func TestValidEnvironmentGitOpsJobVariablesRejectsInvalidAndSensitiveValues(t *t
 	for i := 0; i <= api.MustLimitsFor(api.PlanScale).EnvVarsMax; i++ {
 		tooMany[fmt.Sprintf("MODE_%d", i)] = "safe"
 	}
-	if validEnvironmentGitOpsJobVariables(tooMany) {
+	if sched.ValidEnvironmentGitOpsJobVariables(tooMany) {
 		t.Fatal("accepted more environment variables than the platform allows")
 	}
 }

@@ -175,7 +175,8 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
   bare `go test`: it adds CI's `-c=1 -dwarf=false` for apidserver and `GOMEMLIMIT=6GiB`,
   which holds a `-race` build near 3 GB RSS (a bare `go test -race` peaks near 4 GB).
   Write new apid tests in `package apidserver_test` and reach internals through
-  `export_test.go`, because internal tests grow the larger of the two compiles. Run these builds
+  `export_test.go`, because internal tests grow the larger of the two compiles (`pkg/sched` is
+  split the same way: new sched tests go in `package sched_test`). Run these builds
   one at a time, type-check with `go vet ./pkg/apid/apidserver` while iterating, and keep
   the default shared GOCACHE: per-job private caches grow to ~11 GB each and have filled
   developer disks. Never run `go clean -cache` on it: other sessions' builds fail mid-run and

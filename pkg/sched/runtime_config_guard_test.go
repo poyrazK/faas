@@ -1,5 +1,5 @@
 // adr: 210
-package sched
+package sched_test
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
@@ -36,10 +37,10 @@ func TestPark_RuntimeConfigChange(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			store := state.NewMemStore()
-			_, app, dep := seedApp(t, store, api.PlanPro, 256, 5)
-			vmm := &fakeVMM{}
-			notif := &fakeNotifier{}
-			e := newEngine(t, store, vmm, notif, "1.10.0")
+			_, app, dep := sched.SeedApp(t, store, api.PlanPro, 256, 5)
+			vmm := &sched.FakeVMM{}
+			notif := &sched.FakeNotifier{}
+			e := sched.XNewEngine(t, store, vmm, notif, "1.10.0")
 			if tc.changeBefore {
 				if err := store.MarkAppRuntimeConfigChanged(ctx, app.ID); err != nil {
 					t.Fatal(err)
@@ -49,23 +50,23 @@ func TestPark_RuntimeConfigChange(t *testing.T) {
 				// millisecond is conservatively treated as concurrent.
 				time.Sleep(2 * time.Millisecond)
 			}
-			insID := primeRunPlusFrameworkReady(t, store, vmm, notif, e, app.ID, dep.ID)
+			insID := sched.PrimeRunPlusFrameworkReady(t, store, vmm, notif, e, app.ID, dep.ID)
 			if tc.changeAfter {
 				if err := store.MarkAppRuntimeConfigChanged(ctx, app.ID); err != nil {
 					t.Fatal(err)
 				}
 			}
-			capturesBefore := vmm.snapshots
-			publishedBefore := notif.count(db.NotifySnapshotWritten)
+			capturesBefore := (*vmm.Snapshots())
+			publishedBefore := notif.Count(db.NotifySnapshotWritten)
 
 			if err := e.Park(ctx, insID); err != nil {
 				t.Fatalf("Park: %v", err)
 			}
 
-			if got := vmm.snapshots - capturesBefore; got != tc.wantCaptures {
+			if got := (*vmm.Snapshots()) - capturesBefore; got != tc.wantCaptures {
 				t.Errorf("init captures = %d, want %d", got, tc.wantCaptures)
 			}
-			if got := notif.count(db.NotifySnapshotWritten) - publishedBefore; got != tc.wantPublished {
+			if got := notif.Count(db.NotifySnapshotWritten) - publishedBefore; got != tc.wantPublished {
 				t.Errorf("snapshot_written = %d, want %d", got, tc.wantPublished)
 			}
 			ins, err := store.InstanceByID(ctx, insID)
@@ -84,24 +85,24 @@ func TestPark_RuntimeConfigChange(t *testing.T) {
 func TestPark_RuntimeConfigChangeDuringCaptureIsNotPublished(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	_, app, dep := seedApp(t, store, api.PlanPro, 256, 5)
-	enableWarmSnapshot(t, store, app.ID)
-	vmm := &fakeVMM{}
-	notif := &fakeNotifier{}
-	e := wakeEngineWithEvents(t, store, vmm, notif)
-	insID := primeRunPlusFrameworkReady(t, store, vmm, notif, e, app.ID, dep.ID)
-	vmm.warmSnapshotHook = func() {
+	_, app, dep := sched.SeedApp(t, store, api.PlanPro, 256, 5)
+	sched.EnableWarmSnapshot(t, store, app.ID)
+	vmm := &sched.FakeVMM{}
+	notif := &sched.FakeNotifier{}
+	e := sched.WakeEngineWithEvents(t, store, vmm, notif)
+	insID := sched.PrimeRunPlusFrameworkReady(t, store, vmm, notif, e, app.ID, dep.ID)
+	(*vmm.WarmSnapshotHook()) = func() {
 		if err := store.MarkAppRuntimeConfigChanged(ctx, app.ID); err != nil {
 			t.Errorf("MarkAppRuntimeConfigChanged: %v", err)
 		}
 	}
-	publishedBefore := notif.count(db.NotifySnapshotWritten)
+	publishedBefore := notif.Count(db.NotifySnapshotWritten)
 	ins, err := store.InstanceByID(ctx, insID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	completedBefore := 0
-	for _, kind := range kindsOf(eventsForInstance(t, store, ins.WakeID)) {
+	for _, kind := range sched.KindsOf(sched.EventsForInstance(t, store, ins.WakeID)) {
 		if kind == events.WakeParkCompleted {
 			completedBefore++
 		}
@@ -110,14 +111,14 @@ func TestPark_RuntimeConfigChangeDuringCaptureIsNotPublished(t *testing.T) {
 	if err := e.Park(ctx, insID); err != nil {
 		t.Fatalf("Park: %v", err)
 	}
-	if vmm.warmSnapshots != 1 {
-		t.Fatalf("warm captures = %d, want 1 (the change must land mid-capture)", vmm.warmSnapshots)
+	if (*vmm.WarmSnapshots()) != 1 {
+		t.Fatalf("warm captures = %d, want 1 (the change must land mid-capture)", (*vmm.WarmSnapshots()))
 	}
-	if got := notif.count(db.NotifySnapshotWritten) - publishedBefore; got != 0 {
+	if got := notif.Count(db.NotifySnapshotWritten) - publishedBefore; got != 0 {
 		t.Fatalf("snapshot_written = %d, want 0 after a mid-capture config change", got)
 	}
 	completedAfter, staleFailures := 0, 0
-	for _, row := range eventsForInstance(t, store, ins.WakeID) {
+	for _, row := range sched.EventsForInstance(t, store, ins.WakeID) {
 		if row.Kind == events.WakeParkCompleted {
 			completedAfter++
 		}
@@ -142,7 +143,7 @@ func TestPark_RuntimeConfigChangeDuringCaptureIsNotPublished(t *testing.T) {
 func TestInvalidateAppSnapshotsStampsRuntimeConfigChange(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	_, app, _ := seedApp(t, store, api.PlanPro, 256, 5)
+	_, app, _ := sched.SeedApp(t, store, api.PlanPro, 256, 5)
 	if _, ok, _ := store.AppRuntimeConfigChangedAt(ctx, app.ID); ok {
 		t.Fatal("fresh app already has a runtime config change stamp")
 	}
@@ -181,22 +182,22 @@ func TestPark_RuntimeConfigLookupFailureSkipsCapture(t *testing.T) {
 	ctx := context.Background()
 	mem := state.NewMemStore()
 	store := &changeLookupFailingStore{MemStore: mem}
-	_, app, dep := seedApp(t, statetest.NewMem(store), api.PlanPro, 256, 5)
-	vmm := &fakeVMM{}
-	notif := &fakeNotifier{}
-	e := newEngine(t, statetest.NewMem(store), vmm, notif, "1.10.0")
-	insID := primeRunPlusFrameworkReady(t, statetest.NewMem(store), vmm, notif, e, app.ID, dep.ID)
+	_, app, dep := sched.SeedApp(t, statetest.NewMem(store), api.PlanPro, 256, 5)
+	vmm := &sched.FakeVMM{}
+	notif := &sched.FakeNotifier{}
+	e := sched.XNewEngine(t, statetest.NewMem(store), vmm, notif, "1.10.0")
+	insID := sched.PrimeRunPlusFrameworkReady(t, statetest.NewMem(store), vmm, notif, e, app.ID, dep.ID)
 	store.fail = true
-	capturesBefore := vmm.snapshots
-	publishedBefore := notif.count(db.NotifySnapshotWritten)
+	capturesBefore := (*vmm.Snapshots())
+	publishedBefore := notif.Count(db.NotifySnapshotWritten)
 
 	if err := e.Park(ctx, insID); err != nil {
 		t.Fatalf("Park: %v", err)
 	}
-	if got := vmm.snapshots - capturesBefore; got != 0 {
+	if got := (*vmm.Snapshots()) - capturesBefore; got != 0 {
 		t.Errorf("init captures = %d, want 0 when the change stamp cannot be read", got)
 	}
-	if got := notif.count(db.NotifySnapshotWritten) - publishedBefore; got != 0 {
+	if got := notif.Count(db.NotifySnapshotWritten) - publishedBefore; got != 0 {
 		t.Errorf("snapshot_written = %d, want 0", got)
 	}
 	ins, err := store.MemStore.InstanceByID(ctx, insID)

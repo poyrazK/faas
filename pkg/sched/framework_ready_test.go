@@ -1,18 +1,19 @@
-package sched
+package sched_test
 
 import (
 	"context"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestFrameworkReadyOwnedPersistenceAndReplay(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.7.0")
+	_, app, _ := sched.SeedApp(t, store, api.PlanPro, 512, 5)
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.7.0")
 	result, err := e.Wake(ctx, app.ID, "", "", "")
 	if err != nil {
 		t.Fatal(err)

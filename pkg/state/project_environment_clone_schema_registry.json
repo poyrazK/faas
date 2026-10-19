@@ -27,6 +27,186 @@
     "kind": "account_identity"
   },
   {
+    "table": "financial_budget_alerts",
+    "columns": [
+      "account_id",
+      "attempts",
+      "delivered_at",
+      "id",
+      "last_error",
+      "lease_token",
+      "next_attempt_at",
+      "payload",
+      "period_start",
+      "policy_id",
+      "revision",
+      "state",
+      "threshold_millicents"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_budget_evaluations",
+    "columns": [
+      "account_id",
+      "evaluated_at",
+      "evidence_through_id",
+      "observation",
+      "period_start",
+      "policy_id",
+      "revision"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_budget_stop_targets",
+    "columns": [
+      "app_id",
+      "environment_id",
+      "last_error",
+      "observed_at",
+      "resident_count",
+      "state",
+      "stop_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_budget_stops",
+    "columns": [
+      "account_id",
+      "drain_deadline",
+      "id",
+      "payload",
+      "period_end",
+      "period_start",
+      "policy_id",
+      "requested_at",
+      "resume_rule",
+      "revision"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_compute_account_books",
+    "columns": [
+      "account_id",
+      "payload",
+      "period_end",
+      "period_start"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "financial_compute_books",
+    "columns": [
+      "account_id",
+      "app_id",
+      "payload",
+      "period_end",
+      "period_start"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "financial_compute_holds",
+    "columns": [
+      "account_id",
+      "period_start",
+      "policy_id",
+      "revision"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_compute_job_attempts",
+    "columns": [
+      "account_id",
+      "claimed_at",
+      "incarnation",
+      "instance_id",
+      "job_id",
+      "lease_token",
+      "node_id",
+      "ram_mb",
+      "run_id",
+      "task_index"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_compute_job_books",
+    "columns": [
+      "account_id",
+      "job_id",
+      "payload",
+      "period_end",
+      "period_start"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "financial_compute_leases",
+    "columns": [
+      "account_id",
+      "app_id",
+      "funded_until",
+      "id",
+      "incarnation",
+      "instance_id",
+      "job_id",
+      "job_run_id",
+      "job_task_index",
+      "node_id",
+      "payload",
+      "period_start",
+      "settled_at",
+      "started_at",
+      "strict"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_compute_owners",
+    "columns": [
+      "account_compute_incarnation",
+      "egress_budget_incarnation",
+      "incarnation",
+      "job_compute_incarnation",
+      "node_id",
+      "observed_at",
+      "protocol"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_funding_currency",
+    "columns": [
+      "currency",
+      "singleton"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "financial_preview_command_runtimes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "cpu_millicores",
+      "deployment_id",
+      "environment_id",
+      "lease_token",
+      "node_id",
+      "phase",
+      "prepare_until",
+      "ram_mb",
+      "recorded_at",
+      "retired_at",
+      "task_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "account_credits",
     "columns": [
       "account_id",
