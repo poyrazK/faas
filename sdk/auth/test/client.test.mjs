@@ -27,6 +27,19 @@ test('rejects unsafe Auth URLs', () => {
   assert.doesNotThrow(() => createAuthClient({ url: 'http://localhost:8080', fetch: async () => {} }))
 })
 
+test('reads an organization audit log a page at a time', async () => {
+  const api = server({
+    'POST /auth/v1/token': () => [200, tokens(1)],
+    'GET /authz/v1/orgs/o1/audit-log': call => [200, { entries: [{ id: 'e1', action: 'member.added' }], next: call.url.search.includes('cursor') ? null : 'WyIyMDI2Il0' }],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  const first = await auth.organizations.auditLog('o1', { limit: 20 })
+  assert.equal(api.calls.at(-1).url.search, '?limit=20')
+  assert.equal((await auth.organizations.auditLog('o1', { cursor: first.next })).next, null)
+  assert.equal(api.calls.at(-1).url.search, '?cursor=WyIyMDI2Il0')
+})
+
 test('signs in, stores the session and authenticates authz calls', async () => {
   const api = server({
     'POST /auth/v1/token': () => [200, tokens(1)],

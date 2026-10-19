@@ -25,7 +25,7 @@ import (
 
 const (
 	authUsersUsage = "usage: gregale auth users <list|get|sign-out|ban|unban|delete> NAME [USER] [--search TEXT] [--page N] [--limit N] [--for DURATION] [--yes] [--admin-key-stdin]"
-	authOrgsUsage  = "usage: gregale auth orgs <list|get> NAME [ORG] [--search TEXT] [--page N] [--limit N] [--admin-key-stdin]"
+	authOrgsUsage  = "usage: gregale auth orgs <list|get|audit> NAME [ORG] [--search TEXT] [--page N] [--limit N] [--cursor NEXT] [--admin-key-stdin]"
 	// authBanForever is the ban `--for forever` asks for: a hundred years,
 	// GoTrue's usual stand-in for a permanent ban.
 	authBanForever = "876000h"
@@ -472,19 +472,23 @@ func cmdAuthOrgs(args []string) int {
 	}
 	fs := newFlagSet("auth orgs "+args[0], flag.ContinueOnError)
 	list := addAuthListFlags(fs, "organization's slug or name")
+	cursor := fs.String("cursor", "", "audit: where the next page starts, from the previous page's More line")
 	keyStdin := fs.Bool("admin-key-stdin", false, "read the admin key from stdin (prompted on a terminal)")
 	if err := parseInterspersed(fs, args[1:]); err != nil {
 		return 1
 	}
-	want := map[string]int{"list": 1, "get": 2}[args[0]]
+	want := map[string]int{"list": 1, "get": 2, "audit": 2}[args[0]]
 	if want == 0 || fs.NArg() != want || !api.ValidAppSlug(fs.Arg(0)) || (want == 2 && !authImportUUID.MatchString(fs.Arg(1)) && !authOrgSlug.MatchString(fs.Arg(1))) {
 		PrintUsage(os.Stderr, authOrgsUsage, "auth")
 		return 1
 	}
-	if args[0] == "get" {
-		if err := authOnlyFlags(fs, nil); err != nil {
+	if args[0] != "list" {
+		if err := authOnlyFlags(fs, map[string][]string{"audit": {"cursor", "limit"}}[args[0]]); err != nil {
 			return printErr("Invalid flags", err)
 		}
+	}
+	if len(*cursor) > 200 || strings.ContainsAny(*cursor, " \t\n") {
+		return printErr("Invalid flags", errors.New("--cursor takes the value printed after More:"))
 	}
 	query, err := list.query()
 	if err != nil {
@@ -500,6 +504,9 @@ func cmdAuthOrgs(args []string) int {
 	id, err := authResolveOrg(origin, key, fs.Arg(1))
 	if err != nil {
 		return printErr("Could not find the organization", err)
+	}
+	if args[0] == "audit" {
+		return authOrgsAudit(origin, key, id, *cursor, *list.limit)
 	}
 	return authOrgsGet(origin, key, id)
 }
@@ -548,6 +555,46 @@ func authOrgsList(origin, key, query string) int {
 	}
 	if page.Page*page.PerPage < page.Total {
 		_, _ = fmt.Fprintf(osStdout, "Page %d of %d organizations; next: --page %d\n", page.Page, page.Total, page.Page+1)
+	}
+	return 0
+}
+
+// authOrgsAudit prints a page of the organization's audit log, newest
+// first, with the cursor for the next page.
+func authOrgsAudit(origin, key, id, cursor string, limit int) int {
+	query := url.Values{"limit": {strconv.Itoa(limit)}}
+	if cursor != "" {
+		query.Set("cursor", cursor)
+	}
+	var page struct {
+		Entries []struct {
+			OccurredAt  string          `json:"occurred_at"`
+			Action      string          `json:"action"`
+			ActorEmail  *string         `json:"actor_email"`
+			TargetEmail *string         `json:"target_email"`
+			Data        json.RawMessage `json:"data"`
+		} `json:"entries"`
+		Next *string `json:"next"`
+	}
+	if err := authAdminCall(http.MethodGet, origin, key, "/admin/v1/orgs/"+id+"/audit-log?"+query.Encode(), nil, &page); err != nil {
+		return printErr("Could not read the audit log", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(page))
+	}
+	if len(page.Entries) == 0 {
+		_, _ = fmt.Fprintln(osStdout, "No entries.")
+		return 0
+	}
+	for _, entry := range page.Entries {
+		details := ""
+		if string(entry.Data) != "{}" && len(entry.Data) > 0 {
+			details = "  " + string(entry.Data)
+		}
+		_, _ = fmt.Fprintf(osStdout, "%s  %-20s  by %-24s  %s%s\n", entry.OccurredAt, entry.Action, authOr(entry.ActorEmail, "(the application)"), authOr(entry.TargetEmail, "-"), details)
+	}
+	if page.Next != nil {
+		_, _ = fmt.Fprintf(osStdout, "More: --cursor %s\n", *page.Next)
 	}
 	return 0
 }

@@ -375,6 +375,7 @@ redirect URL origins.
 | `GET`/`DELETE /authz/v1/orgs/{org}/invitations[/{id}]` | List or revoke pending invitations |
 | `POST /authz/v1/invitations/accept` `{token}` | Join, if the caller's confirmed email was invited |
 | `POST /authz/v1/authorize` `{action, resource}` | `{"allowed": true or false}` |
+| `GET /authz/v1/orgs/{org}/audit-log` | The organization's audit log (needs `audit:read`) |
 
 No organization can lose its last owner. Invitations last seven days by default
 (300 seconds to 14 days); a user can create up to 100 organizations, and an
@@ -413,6 +414,30 @@ billing, use `authorize()`, which reads the membership each time.
 behind `setActive`; it answers `not_found` for an organization the caller
 does not belong to. Tokens issued to third-party OAuth clients never carry
 these claims.
+
+### Audit log
+
+Each organization has an audit log its owners can read, and so can roles
+you grant `audit:read`:
+
+```ts
+const { entries, next } = await auth.organizations.auditLog(org.id, { limit: 50 })
+const older = await auth.organizations.auditLog(org.id, { cursor: next })
+```
+
+Entries are newest first: `organization.created`, `member.added`,
+`member.role_changed` (`data.from`, `data.to`), `member.removed`
+(`data.account_deleted` when the user was deleted), `invitation.created`,
+`invitation.revoked`, `invitation.accepted`, `domain.added`,
+`domain.verified`, `domain.removed`, `sso.connected`, `sso.updated`,
+`sso.disconnected`, and `member.signed_in` for current members' sign-ins,
+read from the app's sign-in activity. `actor_email` names who made a change
+through the organization API; it is null for changes the application made
+with the admin key, an identity provider or SCIM. The route is `GET
+/authz/v1/orgs/{org}/audit-log?cursor=&limit=` (1 to 100, default 50; pass
+the returned `next` as `cursor`). Entries follow `--activity-retention` and
+go when the organization is deleted. `gregale auth orgs audit shop-auth acme`
+and the dashboard's organization panel show it too.
 
 ## Organization single sign-on
 

@@ -353,6 +353,16 @@
         const cell = el('td'); cell.append(button(member.email || member.user_id, () => showUser(member.user_id)))
         row.append(cell, el('td', member.role), el('td', when(member.created_at)))
       }
+      // The organization's audit log, newest first (sql/0020).
+      const audit = await call('GET', '/admin/v1/orgs/' + encodeURIComponent(id) + '/audit-log?limit=20')
+      const auditTable = el('table')
+      auditTable.append(el('tr'))
+      for (const heading of ['Time', 'Event', 'By', 'Member']) auditTable.rows[0].append(el('th', heading, { scope: 'col' }))
+      for (const entry of audit.entries) {
+        const details = Object.entries(entry.data || {}).filter(([, v]) => v !== false).map(([k, v]) => k + ': ' + v).join(', ')
+        auditTable.insertRow().append(el('td', when(entry.occurred_at)), el('td', entry.action + (details ? ' (' + details + ')' : '')),
+          el('td', entry.actor_email || (entry.action === 'member.signed_in' ? '—' : 'The application')), el('td', entry.target_email || '—'))
+      }
       const inviteTable = el('table')
       inviteTable.append(el('tr'))
       for (const heading of ['Invited email', 'Role', 'Expires']) inviteTable.rows[0].append(el('th', heading, { scope: 'col' }))
@@ -361,6 +371,7 @@
         el('h2', org.name), facts([['Slug', org.slug], ['Organization ID', org.id], ['Created', when(org.created_at)]]),
         el('h3', 'Members (' + members.length + ')'), memberTable,
         el('h3', 'Pending invitations'), invitations.length ? inviteTable : el('p', 'None.', { class: 'muted' }),
+        el('h3', 'Audit log'), audit.entries.length ? auditTable : el('p', 'Nothing recorded yet.', { class: 'muted' }),
         button('Close', () => { panel.hidden = true }),
       )
       panel.hidden = false
