@@ -19,6 +19,9 @@ var (
 	ErrProfileCaptureBusy        = errors.New("a profile capture is already running on this instance")
 	ErrProfileCaptureSuspended   = errors.New("instance is checkpointing")
 	ErrProfileCaptureNotRunning  = errors.New("instance is not running on this host")
+	// ErrProfileCaptureRejected is a guest that refused the request itself:
+	// one built before a requested kind (or kind count) existed.
+	ErrProfileCaptureRejected = errors.New("this deployment's guest does not support a requested profile kind; redeploy the app to collect it")
 )
 
 // GuestProfileCapturer is implemented by VMMs that can deliver an on-demand
@@ -90,6 +93,8 @@ func exchangeProfileCapture(conn io.ReadWriter, body []byte) (profileproto.Captu
 		return result, ErrProfileCaptureSuspended
 	case profileproto.CaptureAckUnsupported:
 		return result, ErrProfileCaptureUnsupported
+	case profileproto.CaptureAckInvalid:
+		return result, ErrProfileCaptureRejected
 	default:
 		// Guests that predate ADR-1155 answer an unknown message type with a
 		// single non-zero resume ack.

@@ -66,9 +66,10 @@ func (s *Service) Compare(ctx context.Context, acct state.Account, app state.App
 }
 
 // CommonKind returns a kind both captures collected, preferring heap
-// because comparing captures is mostly about memory growth.
+// because comparing captures is mostly about memory growth, then CPU, then
+// lock contention.
 func CommonKind(a, b api.ProfileCapture) string {
-	for _, kind := range []string{api.ProfileKindHeap, api.ProfileKindCPU} {
+	for _, kind := range []string{api.ProfileKindHeap, api.ProfileKindCPU, api.ProfileKindMutex, api.ProfileKindBlock} {
 		if slices.Contains(a.Kinds, kind) && slices.Contains(b.Kinds, kind) {
 			return kind
 		}

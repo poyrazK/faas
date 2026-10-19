@@ -11,7 +11,7 @@ import type { ProfileCaptureStackDelta } from './ProfileCaptureStackDelta.js';
 export type ProfileCaptureDiff = {
   baseline: ProfileCapture;
   candidate: ProfileCapture;
-  kind: 'cpu' | 'heap' | 'stacks';
+  kind: 'cpu' | 'heap' | 'stacks' | 'block' | 'mutex';
   unit: 'nanoseconds' | 'bytes' | 'count';
   baseline_total: number;
   candidate_total: number;

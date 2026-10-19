@@ -187,6 +187,7 @@ func main() {
 	mux.HandleFunc("/release", serveRelease)
 	mux.HandleFunc("/hang", serveHang)
 	mux.HandleFunc("/spin", serveSpin)
+	mux.HandleFunc("/contend", serveContend)
 	if *queueAck {
 		mux.HandleFunc("/_triggers/esm/", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodPost {

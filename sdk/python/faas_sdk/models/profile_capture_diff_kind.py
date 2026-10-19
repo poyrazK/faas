@@ -1,10 +1,12 @@
 from typing import Literal
 
-ProfileCaptureDiffKind = Literal["cpu", "heap", "stacks"]
+ProfileCaptureDiffKind = Literal["block", "cpu", "heap", "mutex", "stacks"]
 
 PROFILE_CAPTURE_DIFF_KIND_VALUES: set[ProfileCaptureDiffKind] = {
+    "block",
     "cpu",
     "heap",
+    "mutex",
     "stacks",
 }
 

@@ -108,7 +108,7 @@ func (r CaptureRequest) Validate() error {
 	seen := map[string]bool{}
 	for _, kind := range r.Kinds {
 		if !ValidKind(kind) || seen[kind] {
-			return fmt.Errorf("profile kinds must be distinct values of cpu, heap or stacks")
+			return fmt.Errorf("profile kinds must be distinct values of cpu, heap, stacks, block or mutex")
 		}
 		seen[kind] = true
 	}

@@ -117,7 +117,9 @@ def sync_detailed(
         slug (str):
         body (CreateProfileCaptureRequest | Unset): On-demand capture request (ADR-1155). Kinds
             defaults to [cpu]; duration_seconds to 10. Stacks is an instant snapshot of where every
-            goroutine or thread is waiting, taken when the capture starts.
+            goroutine or thread is waiting, taken when the capture starts. Block and mutex are Go
+            contention profiles (time goroutines spent blocked on channels or locks, or waiting for a
+            mutex, during the window).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -156,7 +158,9 @@ def sync(
         slug (str):
         body (CreateProfileCaptureRequest | Unset): On-demand capture request (ADR-1155). Kinds
             defaults to [cpu]; duration_seconds to 10. Stacks is an instant snapshot of where every
-            goroutine or thread is waiting, taken when the capture starts.
+            goroutine or thread is waiting, taken when the capture starts. Block and mutex are Go
+            contention profiles (time goroutines spent blocked on channels or locks, or waiting for a
+            mutex, during the window).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -190,7 +194,9 @@ async def asyncio_detailed(
         slug (str):
         body (CreateProfileCaptureRequest | Unset): On-demand capture request (ADR-1155). Kinds
             defaults to [cpu]; duration_seconds to 10. Stacks is an instant snapshot of where every
-            goroutine or thread is waiting, taken when the capture starts.
+            goroutine or thread is waiting, taken when the capture starts. Block and mutex are Go
+            contention profiles (time goroutines spent blocked on channels or locks, or waiting for a
+            mutex, during the window).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -227,7 +233,9 @@ async def asyncio(
         slug (str):
         body (CreateProfileCaptureRequest | Unset): On-demand capture request (ADR-1155). Kinds
             defaults to [cpu]; duration_seconds to 10. Stacks is an instant snapshot of where every
-            goroutine or thread is waiting, taken when the capture starts.
+            goroutine or thread is waiting, taken when the capture starts. Block and mutex are Go
+            contention profiles (time goroutines spent blocked on channels or locks, or waiting for a
+            mutex, during the window).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -285,6 +285,34 @@ then collects for the workload:
 `pprof_port` is an `omitempty` field of the existing profiling configuration,
 stored in the app manifest JSON: no migration, and older guests ignore it.
 
+## Amendment: Go lock contention (block and mutex)
+
+A Go service that is slow while mostly idle waits on locks or channels, which
+neither CPU nor stack captures attribute. Captures gain Go's `block` and
+`mutex` kinds (captures only; a capture may now request all five kinds):
+
+- Both are read as the difference over the window, never the process's
+  cumulative history. The Go SDK takes a baseline profile when the window
+  opens and uploads the difference when it closes. The pprof-endpoint
+  collector requests `/debug/pprof/{block,mutex}?seconds=<window>`, which
+  `net/http/pprof` answers with the same difference.
+- The SDK samples only for the window (`ProfileBlockRateNanos`,
+  `ProfileMutexFraction`) and restores what it changed. A mutex fraction the
+  application set is read and kept. Go has no getter for the block rate, so
+  the first capture decides ownership: existing block samples mean the
+  application enabled it, and captures then never change the rate. The
+  pprof-endpoint collector never changes sampling; without the application's
+  own rates those profiles are empty.
+- apid normalizes both to `delay` nanoseconds, dropping samples that cancelled
+  to zero in the difference; views, downloads and comparison work as for
+  other kinds, and comparison's default kind falls back to mutex, then block.
+- `profile_capture_data.kind` admits the two kinds. The table is new on this
+  branch, so its CHECK is extended in place rather than by a second migration.
+- A guest built before these kinds rejects such a request as invalid. vmmd
+  now reports that refusal as its own error, and the capture fails with a
+  reason that says to redeploy instead of claiming the guest has no
+  collectors.
+
 ## Rejected alternatives
 
 - **apid → schedd gRPC.** Violates the ownership rule (apid records intent in

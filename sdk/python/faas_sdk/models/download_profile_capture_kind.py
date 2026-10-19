@@ -1,10 +1,12 @@
 from typing import Literal
 
-DownloadProfileCaptureKind = Literal["cpu", "heap", "stacks"]
+DownloadProfileCaptureKind = Literal["block", "cpu", "heap", "mutex", "stacks"]
 
 DOWNLOAD_PROFILE_CAPTURE_KIND_VALUES: set[DownloadProfileCaptureKind] = {
+    "block",
     "cpu",
     "heap",
+    "mutex",
     "stacks",
 }
 

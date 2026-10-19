@@ -10,7 +10,7 @@ export type ProfileCapture = {
   id: string;
   app_id: string;
   status: 'queued' | 'capturing' | 'ready' | 'failed';
-  kinds: Array<'cpu' | 'heap' | 'stacks'>;
+  kinds: Array<'cpu' | 'heap' | 'stacks' | 'block' | 'mutex'>;
   duration_seconds: number;
   requested_instance_id?: string;
   /**

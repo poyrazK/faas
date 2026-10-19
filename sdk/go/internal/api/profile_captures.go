@@ -7,6 +7,8 @@ const (
 	ProfileKindCPU    = "cpu"
 	ProfileKindHeap   = "heap"
 	ProfileKindStacks = "stacks"
+	ProfileKindBlock  = "block"
+	ProfileKindMutex  = "mutex"
 )
 
 // Capture triggers (ADR-1155): a person or API client, guest-init reporting

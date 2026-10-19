@@ -6,7 +6,7 @@
  * One collector's stored profile.
  */
 export type ProfileCaptureProfile = {
-  kind: 'cpu' | 'heap' | 'stacks';
+  kind: 'cpu' | 'heap' | 'stacks' | 'block' | 'mutex';
   process_id?: string;
   bytes: number;
 };

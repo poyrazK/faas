@@ -54,7 +54,7 @@ func (r *CreateProfileCaptureRequest) Normalize() error {
 	seen := map[string]bool{}
 	for _, kind := range r.Kinds {
 		if !ValidCaptureProfileKind(kind) || seen[kind] {
-			return fmt.Errorf("kinds must list distinct values of cpu, heap or stacks")
+			return fmt.Errorf("kinds must list distinct values of cpu, heap, stacks, block or mutex")
 		}
 		seen[kind] = true
 	}

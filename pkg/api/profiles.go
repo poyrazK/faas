@@ -11,12 +11,16 @@ import (
 
 // Profile kinds. CPU samples on-CPU time; heap samples live allocations
 // (ADR-1155). Continuous collection defaults to CPU only. Stacks is an
-// instant snapshot of where every goroutine or thread is waiting; it exists
-// only for captures.
+// instant snapshot of where every goroutine or thread is waiting; block and
+// mutex are Go's contention profiles, the time goroutines spent blocked on
+// channels and locks and waiting for mutexes during the window. Stacks, block
+// and mutex exist only for captures.
 const (
 	ProfileKindCPU    = "cpu"
 	ProfileKindHeap   = "heap"
 	ProfileKindStacks = "stacks"
+	ProfileKindBlock  = "block"
+	ProfileKindMutex  = "mutex"
 )
 
 // ValidProfileKind reports a kind continuous collection supports.
@@ -24,7 +28,13 @@ func ValidProfileKind(kind string) bool { return kind == ProfileKindCPU || kind 
 
 // ValidCaptureProfileKind reports a kind an on-demand capture supports.
 func ValidCaptureProfileKind(kind string) bool {
-	return ValidProfileKind(kind) || kind == ProfileKindStacks
+	return ValidProfileKind(kind) || kind == ProfileKindStacks || ProfileContentionKind(kind)
+}
+
+// ProfileContentionKind reports Go's block and mutex kinds, which collectors
+// read as the difference over the window rather than a snapshot.
+func ProfileContentionKind(kind string) bool {
+	return kind == ProfileKindBlock || kind == ProfileKindMutex
 }
 
 // ProfilingConfig enables sampled CPU profiles (ADR-819). Settings are baked

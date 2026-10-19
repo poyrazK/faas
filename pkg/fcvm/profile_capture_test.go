@@ -64,6 +64,7 @@ func TestExchangeProfileCapture(t *testing.T) {
 		{name: "busy", reply: []byte{profileproto.CaptureAckBusy}, wantErr: ErrProfileCaptureBusy},
 		{name: "suspended", reply: []byte{profileproto.CaptureAckSuspended}, wantErr: ErrProfileCaptureSuspended},
 		{name: "old guest", reply: []byte{7}, wantErr: ErrProfileCaptureUnsupported},
+		{name: "guest predating a kind", reply: []byte{profileproto.CaptureAckInvalid}, wantErr: ErrProfileCaptureRejected},
 		{name: "oversized length", reply: []byte{0, 0xff, 0xff, 0xff, 0xff}, wantAny: true},
 		{name: "unbounded result", reply: framedCaptureReply(t, tooMany), wantAny: true},
 	}

@@ -357,6 +357,40 @@ taken while this request was in flight"
 Streaming responses and WebSocket upgrades are long-lived by design and are
 never reported.
 
+### Lock contention in Go applications
+
+A Go service can be slow while using little CPU because its goroutines wait
+on each other. Two capture kinds show where, over the capture window:
+
+```sh
+gregale debug capture my-app --type block,mutex
+```
+
+- **`mutex`** — time goroutines waited for a contended `sync.Mutex` or
+  `sync.RWMutex`, attributed to the code that held the lock (where it called
+  `Unlock`).
+- **`block`** — time goroutines spent blocked on channel operations,
+  `select`, `sync.WaitGroup`, `sync.Cond` and lock acquisition, attributed to
+  the waiting code.
+
+Values are nanoseconds of delay; only the capture window counts, not the
+process's history. They are Go-only: Node and Python processes contribute
+nothing to these kinds.
+
+With `guestprofiling.Start`, sampling is on only for the window: one blocking
+event per 10 µs spent blocked, one in 10 mutex contentions. A mutex fraction
+the application set itself is left as it is. Go cannot report the block
+profile rate, so the first capture decides: if the process already has block
+samples, the application owns the rate and captures leave it alone;
+otherwise each capture turns block sampling on for the window and off after.
+An application that enables block profiling should do so at startup.
+
+With `profiling.pprof_port`, guest-init reads `/debug/pprof/block` and
+`/debug/pprof/mutex` over the window and never changes sampling. These
+endpoints have data only if the application calls
+`runtime.SetBlockProfileRate` and `runtime.SetMutexProfileFraction`; without
+them the capture is ready but empty.
+
 ### Automatic CPU capture when an instance uses its whole CPU limit
 
 When an instance's CPU use stays at 90% or more of its CPU limit for 30
@@ -437,9 +471,9 @@ from different deployments. Both cases add a note to the comparison.
 The REST API is `POST /v1/apps/{slug}/profiles/captures` with optional
 `kinds`, `duration_seconds` and `instance_id`; poll
 `GET /v1/apps/{slug}/profiles/captures/{id}` until `status` is `ready` or
-`failed`, then read `GET …/captures/{id}/view?kind=cpu|heap` or download
-`GET …/captures/{id}/pprof?kind=cpu|heap`. Compare two ready captures with
-`GET …/captures/{id}/diff?base={earlier-id}&kind=cpu|heap`. A ready capture with zero
+`failed`, then read `GET …/captures/{id}/view?kind={kind}` or download
+`GET …/captures/{id}/pprof?kind={kind}`. Compare two ready captures with
+`GET …/captures/{id}/diff?base={earlier-id}&kind={kind}`. A ready capture with zero
 `processes` means the instance has no collector: a custom image without an
 instrumented runtime, or a Go app that neither calls `guestprofiling.Start` nor
 sets `profiling.pprof_port`. With `pprof_port` set, the `reason` says when

@@ -1,10 +1,12 @@
 from typing import Literal
 
-GetProfileCaptureViewKind = Literal["cpu", "heap", "stacks"]
+GetProfileCaptureViewKind = Literal["block", "cpu", "heap", "mutex", "stacks"]
 
 GET_PROFILE_CAPTURE_VIEW_KIND_VALUES: set[GetProfileCaptureViewKind] = {
+    "block",
     "cpu",
     "heap",
+    "mutex",
     "stacks",
 }
 

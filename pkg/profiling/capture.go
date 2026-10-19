@@ -68,6 +68,42 @@ func NormalizeStacks(p *profile.Profile) error {
 	return nil
 }
 
+// NormalizeContention keeps the delay of a Go block or mutex profile: time
+// goroutines spent blocked, or waiting for a mutex, in nanoseconds. Go reports
+// contentions/count and delay/nanoseconds. A delta profile can carry samples
+// that cancelled to zero; those are dropped. Labels are dropped like CPU
+// sample labels.
+func NormalizeContention(p *profile.Profile) error {
+	index := -1
+	for i, typ := range p.SampleType {
+		if typ.Type == "delay" && typ.Unit == "nanoseconds" {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		return fmt.Errorf("profile contains no contention delay")
+	}
+	kept := p.Sample[:0]
+	for _, sample := range p.Sample {
+		if sample.Value[index] < 0 {
+			return fmt.Errorf("negative contention sample")
+		}
+		if sample.Value[index] == 0 {
+			continue
+		}
+		sample.Value = []int64{sample.Value[index]}
+		sample.Label, sample.NumLabel, sample.NumUnit = nil, nil, nil
+		kept = append(kept, sample)
+	}
+	p.Sample = kept
+	p.SampleType = []*profile.ValueType{{Type: "delay", Unit: "nanoseconds"}}
+	p.DefaultSampleType = "delay"
+	p.PeriodType = &profile.ValueType{Type: "contentions", Unit: "count"}
+	p.Comments = nil
+	return nil
+}
+
 // NormalizeKind normalizes a parsed profile for kind and resets the period
 // so profiles from different runtimes merge.
 func NormalizeKind(p *profile.Profile, kind string) error {
@@ -79,6 +115,8 @@ func NormalizeKind(p *profile.Profile, kind string) error {
 		err = NormalizeHeap(p)
 	case api.ProfileKindStacks:
 		err = NormalizeStacks(p)
+	case api.ProfileKindBlock, api.ProfileKindMutex:
+		err = NormalizeContention(p)
 	default:
 		err = fmt.Errorf("unknown profile kind %q", kind)
 	}

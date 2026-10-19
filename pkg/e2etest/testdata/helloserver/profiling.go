@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/pprof"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -19,8 +20,11 @@ func startProfiling() { guestprofiling.Start(context.Background()) }
 
 // servePprof is the uninstrumented variant: it serves net/http/pprof on addr
 // and never starts the Gregale collector, like a Go application that only
-// sets profiling.pprof_port.
+// sets profiling.pprof_port. It samples contention itself, as such an
+// application must for its block and mutex endpoints to have data.
 func servePprof(addr string) {
+	runtime.SetBlockProfileRate(10_000)
+	runtime.SetMutexProfileFraction(10)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
 	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
@@ -146,6 +150,39 @@ func serveSpin(w http.ResponseWriter, r *http.Request) {
 		go profileFixtureSpin(time.Duration(s) * time.Second)
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+var contendedMu sync.Mutex
+
+//go:noinline
+func profileFixtureLockHold(d time.Duration) {
+	contendedMu.Lock()
+	time.Sleep(d)
+	contendedMu.Unlock()
+}
+
+//go:noinline
+func profileFixtureChannelWait(ch <-chan struct{}) { <-ch }
+
+// serveContend makes four goroutines take one lock in turn, holding it ms
+// each (mutex contention), while another waits on a channel until they are
+// done (blocking): GET /contend?ms=20.
+func serveContend(w http.ResponseWriter, r *http.Request) {
+	ms, err := strconv.Atoi(r.URL.Query().Get("ms"))
+	if err != nil || ms < 1 || ms > 200 {
+		ms = 20
+	}
+	release, waited := make(chan struct{}), make(chan struct{})
+	go func() { profileFixtureChannelWait(release); close(waited) }()
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() { defer wg.Done(); profileFixtureLockHold(time.Duration(ms) * time.Millisecond) }()
+	}
+	wg.Wait()
+	close(release)
+	<-waited
+	_, _ = w.Write([]byte("contended\n"))
 }
 
 // serveWork burns CPU and retains heap so captures have known hot frames:

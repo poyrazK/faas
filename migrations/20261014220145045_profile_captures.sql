@@ -26,7 +26,7 @@ CREATE INDEX IF NOT EXISTS profile_captures_expires_idx ON profile_captures (exp
 CREATE TABLE IF NOT EXISTS profile_capture_data (
     capture_id uuid NOT NULL REFERENCES profile_captures(id) ON DELETE CASCADE,
     seq smallint NOT NULL CHECK (seq BETWEEN 0 AND 7),
-    kind text NOT NULL CHECK (kind IN ('cpu', 'heap', 'stacks')),
+    kind text NOT NULL CHECK (kind IN ('cpu', 'heap', 'stacks', 'block', 'mutex')),
     process_id text NOT NULL CHECK (octet_length(process_id) <= 16),
     profile bytea NOT NULL CHECK (octet_length(profile) BETWEEN 1 AND 1048576),
     PRIMARY KEY (capture_id, seq)

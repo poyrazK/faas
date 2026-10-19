@@ -47,7 +47,8 @@ func profileCaptureStatus(err error) error {
 	switch {
 	case errors.Is(err, fcvm.ErrProfileCaptureNotRunning):
 		return status.Error(codes.NotFound, err.Error())
-	case errors.Is(err, fcvm.ErrProfileCaptureUnsupported), errors.Is(err, fcvm.ErrProfileCaptureBusy), errors.Is(err, fcvm.ErrProfileCaptureSuspended):
+	case errors.Is(err, fcvm.ErrProfileCaptureUnsupported), errors.Is(err, fcvm.ErrProfileCaptureBusy), errors.Is(err, fcvm.ErrProfileCaptureSuspended),
+		errors.Is(err, fcvm.ErrProfileCaptureRejected):
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		return status.Error(codes.DeadlineExceeded, "profile capture timed out")

@@ -1,10 +1,12 @@
 from typing import Literal
 
-CreateProfileCaptureRequestKindsItem = Literal["cpu", "heap", "stacks"]
+CreateProfileCaptureRequestKindsItem = Literal["block", "cpu", "heap", "mutex", "stacks"]
 
 CREATE_PROFILE_CAPTURE_REQUEST_KINDS_ITEM_VALUES: set[CreateProfileCaptureRequestKindsItem] = {
+    "block",
     "cpu",
     "heap",
+    "mutex",
     "stacks",
 }
 

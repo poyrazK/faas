@@ -103,6 +103,7 @@ func TestProfileCaptureMetal(t *testing.T) {
 	if raw, s := doReq(t, h, key, http.MethodGet, "/v1/apps/"+slug+"/profiles/captures/"+capture.ID+"/pprof?kind=heap", nil); s != http.StatusOK || len(raw) < 2 || raw[0] != 0x1f || raw[1] != 0x8b {
 		t.Fatalf("pprof download: status=%d bytes=%d", s, len(raw))
 	}
+	assertContentionCapture(t, h, key, slug, client, url, host)
 
 	// Dormant collectors must not block parking, and must work after restore.
 	if _, s := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); s != http.StatusNoContent {
@@ -132,6 +133,21 @@ func TestProfileCaptureMetal(t *testing.T) {
 	if _, s := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); s != http.StatusNoContent {
 		t.Fatalf("cleanup park: status=%d", s)
 	}
+}
+
+// assertContentionCapture captures Go block and mutex profiles while the
+// fixture contends on a lock and waits on a channel, and expects each
+// profile to name the frame that waited.
+func assertContentionCapture(t *testing.T, h *e2etest.Harness, key, slug string, client *http.Client, url, host string) {
+	t.Helper()
+	stopLoad := profileCaptureLoad(t, client, url+"contend?ms=20", host)
+	capture := runProfileCapture(t, h, key, slug, api.CreateProfileCaptureRequest{Kinds: []string{"block", "mutex"}, DurationSeconds: 4}, false)
+	stopLoad()
+	if capture.Status != api.ProfileCaptureReady || capture.Processes != 1 || len(capture.Profiles) != 2 {
+		t.Fatalf("contention capture = %+v; want ready with block and mutex profiles", capture)
+	}
+	assertCaptureFunction(t, h, key, slug, capture.ID, "mutex", "profileFixtureLockHold")
+	assertCaptureFunction(t, h, key, slug, capture.ID, "block", "profileFixtureChannelWait")
 }
 
 // runProfileCapture queues a capture and polls it to a terminal status.

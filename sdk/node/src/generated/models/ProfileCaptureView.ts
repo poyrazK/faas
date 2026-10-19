@@ -11,7 +11,7 @@ import type { ProfileSource } from './ProfileSource.js';
  */
 export type ProfileCaptureView = {
   capture: ProfileCapture;
-  kind: 'cpu' | 'heap' | 'stacks';
+  kind: 'cpu' | 'heap' | 'stacks' | 'block' | 'mutex';
   unit: 'nanoseconds' | 'bytes' | 'count';
   total: number;
   functions: Array<ProfileCaptureFunction>;

@@ -114,6 +114,7 @@ func TestProfileCapturePprofEndpointMetal(t *testing.T) {
 	// A request still in flight at park time wakes a second instance, which
 	// the plan's concurrency of one then refuses for the wake below.
 	<-hung
+	assertContentionCapture(t, h, key, slug, client, url, host)
 
 	// The scraper must not hold parking, and must work after restore.
 	if _, s := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); s != http.StatusNoContent {

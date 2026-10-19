@@ -5,7 +5,9 @@ import (
 	"runtime"
 	"runtime/pprof"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/pprof/profile"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -133,4 +135,90 @@ func TestGoGoroutineProfileNormalizesAsStacks(t *testing.T) {
 		}
 	}
 	t.Fatalf("parked goroutines missing from the stacks view: %+v", view.Functions)
+}
+
+var contendedMu sync.Mutex
+
+//go:noinline
+func contendedLockFixture(hold time.Duration) {
+	contendedMu.Lock()
+	time.Sleep(hold)
+	contendedMu.Unlock()
+}
+
+//go:noinline
+func blockedReceiveFixture(ch <-chan struct{}) { <-ch }
+
+func goContentionProfile(t *testing.T, name string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := pprof.Lookup(name).WriteTo(&buf, 0); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func assertContentionView(t *testing.T, raw []byte, kind, want string) {
+	t.Helper()
+	merged, skipped, err := MergeCapture([][]byte{raw, heapProfile(t, "inuse_space", "grow", 1)}, kind)
+	if err != nil || skipped != 1 || merged == nil {
+		t.Fatalf("%s profile rejected or heap accepted: %v skipped=%d", kind, err, skipped)
+	}
+	view, err := CaptureView(merged, kind)
+	if err != nil || view.Unit != "nanoseconds" || view.Total <= 0 || view.Empty {
+		t.Fatalf("%s view unit=%q total=%d empty=%t: %v", kind, view.Unit, view.Total, view.Empty, err)
+	}
+	for _, f := range view.Functions {
+		if strings.HasSuffix(f.Name, want) && f.Total > 0 {
+			return
+		}
+	}
+	t.Fatalf("%s view lacks %s: %+v", kind, want, view.Functions)
+}
+
+func TestGoMutexProfileNormalizesAsContentionDelay(t *testing.T) {
+	previous := runtime.SetMutexProfileFraction(1)
+	defer runtime.SetMutexProfileFraction(previous)
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); contendedLockFixture(5 * time.Millisecond) }()
+	}
+	wg.Wait()
+	// The mutex profile attributes the delay to the unlocking call site.
+	assertContentionView(t, goContentionProfile(t, "mutex"), api.ProfileKindMutex, "contendedLockFixture")
+}
+
+func TestGoBlockProfileNormalizesAsContentionDelay(t *testing.T) {
+	runtime.SetBlockProfileRate(1)
+	defer runtime.SetBlockProfileRate(0)
+	ch := make(chan struct{})
+	done := make(chan struct{})
+	go func() { blockedReceiveFixture(ch); close(done) }()
+	time.Sleep(20 * time.Millisecond)
+	close(ch)
+	<-done
+	assertContentionView(t, goContentionProfile(t, "block"), api.ProfileKindBlock, "blockedReceiveFixture")
+}
+
+func TestNormalizeContentionDropsCancelledSamples(t *testing.T) {
+	f := &profile.Function{ID: 1, Name: "lock", Filename: "main.go"}
+	loc := &profile.Location{ID: 1, Line: []profile.Line{{Function: f, Line: 3}}}
+	p := &profile.Profile{
+		SampleType: []*profile.ValueType{{Type: "contentions", Unit: "count"}, {Type: "delay", Unit: "nanoseconds"}},
+		Sample: []*profile.Sample{{Location: []*profile.Location{loc}, Value: []int64{0, 0}},
+			{Location: []*profile.Location{loc}, Value: []int64{2, 900}, Label: map[string][]string{"secret": {"x"}}}},
+		Location: []*profile.Location{loc}, Function: []*profile.Function{f},
+	}
+	if err := NormalizeKind(p, api.ProfileKindBlock); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Sample) != 1 || p.Sample[0].Value[0] != 900 || len(p.Sample[0].Label) != 0 || p.SampleType[0].Type != "delay" {
+		t.Fatalf("normalized samples = %+v, want the one non-zero delay without labels", p.Sample)
+	}
+	p.Sample = append(p.Sample, &profile.Sample{Location: []*profile.Location{loc}, Value: []int64{-1}})
+	p.SampleType = []*profile.ValueType{{Type: "delay", Unit: "nanoseconds"}}
+	if err := NormalizeKind(p, api.ProfileKindMutex); err == nil {
+		t.Fatal("negative contention sample accepted")
+	}
 }

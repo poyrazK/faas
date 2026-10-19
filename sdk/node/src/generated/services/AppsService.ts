@@ -6011,9 +6011,9 @@ export class AppsService {
      */
     id: string,
     /**
-     * cpu, heap or stacks; defaults to the capture's first kind.
+     * cpu, heap, stacks, block or mutex; defaults to the capture's first kind.
      */
-    kind?: 'cpu' | 'heap' | 'stacks',
+    kind?: 'cpu' | 'heap' | 'stacks' | 'block' | 'mutex',
   }): CancelablePromise<ProfileCaptureView> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -6063,9 +6063,9 @@ export class AppsService {
      */
     id: string,
     /**
-     * cpu, heap or stacks; defaults to the capture's first kind.
+     * cpu, heap, stacks, block or mutex; defaults to the capture's first kind.
      */
-    kind?: 'cpu' | 'heap' | 'stacks',
+    kind?: 'cpu' | 'heap' | 'stacks' | 'block' | 'mutex',
   }): CancelablePromise<Blob> {
     return __request(OpenAPI, {
       responseType: 'blob',
@@ -6122,9 +6122,9 @@ export class AppsService {
      */
     base: string,
     /**
-     * cpu, heap or stacks; defaults to a kind both captures collected, preferring heap.
+     * cpu, heap, stacks, block or mutex; defaults to a kind both captures collected, preferring heap.
      */
-    kind?: 'cpu' | 'heap' | 'stacks',
+    kind?: 'cpu' | 'heap' | 'stacks' | 'block' | 'mutex',
   }): CancelablePromise<ProfileCaptureDiff> {
     return __request(OpenAPI, {
       method: 'GET',

@@ -55,6 +55,14 @@ func (f *fakePprof) start(t *testing.T) int {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /debug/pprof/{$}", reply("index", "<html>pprof</html>"))
 	mux.HandleFunc("GET /debug/pprof/goroutine", reply("goroutine", "stacks-profile"))
+	for _, kind := range []string{"block", "mutex"} {
+		mux.HandleFunc("GET /debug/pprof/"+kind, func(w http.ResponseWriter, r *http.Request) {
+			f.mu.Lock()
+			f.seconds = append(f.seconds, kind+"="+r.URL.Query().Get("seconds"))
+			f.mu.Unlock()
+			reply(kind, kind+"-delta")(w, r)
+		})
+	}
 	mux.HandleFunc("GET /debug/pprof/heap", func(w http.ResponseWriter, r *http.Request) { reply("heap", f.heap)(w, r) })
 	var started, gone sync.Once
 	mux.HandleFunc("GET /debug/pprof/profile", func(w http.ResponseWriter, r *http.Request) {
@@ -148,6 +156,32 @@ func TestPprofScraperCapturesEveryKindForTheProcess(t *testing.T) {
 	}
 	if err := result.Validate(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPprofScraperReadsBlockAndMutexOverTheWindow(t *testing.T) {
+	b := newProfileBridge(nil, func(context.Context, profileproto.Upload) error { return nil })
+	f := &fakePprof{}
+	startPprofScraper(t, b, f.start(t))
+	waitFor(t, "the scraper to register", b.locked(func() bool { return !b.pprofSeen.IsZero() }))
+	req := captureRequest("block", "mutex")
+	result, _ := b.runCapture(req, func(d time.Duration) {
+		if d == req.Duration() {
+			waitFor(t, "two contention profiles", b.locked(func() bool { return b.capture != nil && len(b.capture.profiles) == 2 }))
+		}
+	})
+	got := map[string]string{}
+	for _, p := range result.Profiles {
+		got[p.Kind] = string(p.Profile)
+	}
+	if len(result.Profiles) != 2 || got["block"] != "block-delta" || got["mutex"] != "mutex-delta" || result.Reason != "" {
+		t.Fatalf("capture = %+v, want one block and one mutex delta", result)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	asked := strings.Join(f.seconds, ",")
+	if !strings.Contains(asked, "block=2") || !strings.Contains(asked, "mutex=2") || f.hits["profile"] != 0 {
+		t.Fatalf("requests = %q (cpu=%d); want block and mutex deltas over the 2 s window and no CPU profile", asked, f.hits["profile"])
 	}
 }
 

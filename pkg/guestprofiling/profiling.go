@@ -71,6 +71,8 @@ type window struct {
 	cpu        bool
 	heap       bool
 	checkpoint time.Time
+	// contention holds a capture's block and mutex baselines.
+	contention []*contention
 }
 
 func run(ctx context.Context, endpoint string) {
@@ -93,11 +95,16 @@ func run(ctx context.Context, endpoint string) {
 			report = stopRouteRequestWindow()
 			pprof.StopCPUProfile()
 		}
+		until := time.Now()
+		for _, c := range w.contention {
+			if body, err := c.finish(upload); err == nil && len(body) > 0 {
+				_ = uploadKind(ctx, client, endpoint, c.kind, w.epoch, w.from, until, body, false)
+			}
+		}
 		if !upload {
 			buffer.Reset()
 			return
 		}
-		until := time.Now()
 		if w.cpu {
 			_ = uploadKind(ctx, client, endpoint, api.ProfileKindCPU, w.epoch, w.from, until, buffer.Bytes(), false, report)
 		}
@@ -161,7 +168,16 @@ func run(ctx context.Context, endpoint string) {
 					startRouteRequestWindow()
 				}
 			}
-			if w.cpu || w.heap {
+			if cfg.Capture {
+				for _, kind := range []string{api.ProfileKindBlock, api.ProfileKindMutex} {
+					if cfg.wants(kind) {
+						if c := startContention(kind); c != nil {
+							w.contention = append(w.contention, c)
+						}
+					}
+				}
+			}
+			if w.cpu || w.heap || len(w.contention) > 0 {
 				active = w
 			}
 		}

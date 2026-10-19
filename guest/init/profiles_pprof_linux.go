@@ -37,11 +37,13 @@ type pprofWindow struct {
 	epoch             string
 	capture           bool
 	cpu, heap, stacks bool
-	seconds           int
-	checkpoint        time.Duration
-	cancel            context.CancelFunc
-	done              chan struct{}
-	from              time.Time
+	// contention lists the capture's block and mutex kinds, read as deltas.
+	contention []string
+	seconds    int
+	checkpoint time.Duration
+	cancel     context.CancelFunc
+	done       chan struct{}
+	from       time.Time
 }
 
 func (w *pprofWindow) finished() bool {
@@ -151,6 +153,13 @@ func (s *pprofScraper) start(ctx context.Context, cfg profileControl) *pprofWind
 		stacks: cfg.Capture && wants(api.ProfileKindStacks), seconds: max(cfg.WindowSeconds, api.ProfileMinWindowSeconds),
 		done: make(chan struct{}), from: time.Now()}
 	if cfg.Capture {
+		for _, kind := range []string{api.ProfileKindBlock, api.ProfileKindMutex} {
+			if wants(kind) {
+				w.contention = append(w.contention, kind)
+			}
+		}
+	}
+	if cfg.Capture {
 		w.checkpoint = time.Duration(cfg.CheckpointSeconds) * time.Second
 	}
 	var wctx context.Context
@@ -159,18 +168,37 @@ func (s *pprofScraper) start(ctx context.Context, cfg profileControl) *pprofWind
 	return w
 }
 
+// pprofDelta is one block or mutex profile read over the window.
+type pprofDelta struct {
+	kind string
+	body []byte
+	err  error
+}
+
 // collect runs one window: an instant goroutine snapshot first (captures
-// only), then the CPU profile, whose request lasts the window, with interim
-// heap checkpoints alongside, then the heap profile at the window end.
+// only), then the CPU profile and any block and mutex deltas, whose requests
+// last the window, with interim heap checkpoints alongside, then the heap
+// profile at the window end.
 func (s *pprofScraper) collect(ctx context.Context, w *pprofWindow) {
 	defer close(w.done)
 	if w.stacks {
 		s.collectKind(ctx, w, api.ProfileKindStacks, "/debug/pprof/goroutine", api.ProfilePprofFetchTimeout, false)
 	}
-	if !w.cpu && !w.heap {
+	if !w.cpu && !w.heap && len(w.contention) == 0 {
 		return
 	}
 	span := time.Duration(w.seconds) * time.Second
+	// net/http/pprof answers ?seconds= for block and mutex with the
+	// difference over that window, like the Go SDK's baseline and delta.
+	deltas := make([]chan pprofDelta, 0, len(w.contention))
+	for _, kind := range w.contention {
+		ch := make(chan pprofDelta, 1)
+		deltas = append(deltas, ch)
+		go func() {
+			body, err := s.fetch(ctx, "/debug/pprof/"+kind+"?seconds="+strconv.Itoa(w.seconds), span+api.ProfilePprofFetchTimeout, api.ProfileMaxCompressedBytes)
+			ch <- pprofDelta{kind: kind, body: body, err: err}
+		}()
+	}
 	var cpuBody []byte
 	var cpuErr error
 	windowDone := make(chan struct{})
@@ -214,6 +242,20 @@ func (s *pprofScraper) collect(ctx context.Context, w *pprofWindow) {
 	}
 	if w.heap {
 		s.collectKind(ctx, w, api.ProfileKindHeap, "/debug/pprof/heap", api.ProfilePprofFetchTimeout, false)
+	}
+	for _, ch := range deltas {
+		select {
+		case <-ctx.Done():
+			return
+		case d := <-ch:
+			if d.err != nil {
+				if ctx.Err() == nil {
+					s.noteFailure(w, d.kind, d.err)
+				}
+				continue
+			}
+			s.upload(ctx, w, d.kind, d.body, time.Now(), false)
+		}
 	}
 }
 
