@@ -1,5 +1,9 @@
 # Architecture Decision Records
 
+- [Data API usage reporting and owner monthly caps](20261019102108-data-api-usage-and-owner-caps.md)
+
+- [Data API public reads, server keys, aggregates, single-app projects and Python/Go clients](20261018170742-data-api-access-modes-and-clients.md)
+
 - [Tenant egress denies the NAT64 prefixes](20261018194214-tenant-egress-deny-nat64.md)
 - [ADR-1745: Shared-window compound Issues alerts](1745-shared-window-issue-compound-alerts.md)
 - [ADR-1744: Offline grouping previews and reviewed regression baselines](1744-issue-grouping-previews-and-baselines.md)

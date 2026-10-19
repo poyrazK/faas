@@ -7813,6 +7813,43 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/data-api/usage:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Data API app whose reported usage to read.
+        schema: { type: string }
+    get:
+      operationId: getAppDataAPIUsage
+      summary: Read Data API usage
+      description: Usage that the app's Data API runtime reported, per hour or UTC day, with month-to-date totals that owner caps compare against. Counts come from the app's own runtime and are owner telemetry, not billing records. Apps created before usage reporting, or with it off, have no rows.
+      tags: [managed_postgres]
+      parameters:
+        - name: since
+          in: query
+          required: false
+          description: Lookback in whole hours or days, such as 24h, 7d or 30d (default 7d, at most 90d).
+          schema: { type: string, pattern: '^[1-9][0-9]*[hd]$' }
+        - name: granularity
+          in: query
+          required: false
+          description: Bucket size; hour covers at most 48h. Defaults to hour up to 48h, else day.
+          schema: { type: string, enum: [hour, day] }
+      responses:
+        '200':
+          description: Zero-filled usage buckets, window totals and month-to-date totals
+          headers:
+            Cache-Control: { schema: { type: string }, description: 'Always no-store: runtime reports keep arriving.' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DataAPIUsage' }
+        default:
+          description: App lookup, window validation or usage storage failure
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/postgres/databases/{id}/bindings:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -15421,6 +15458,30 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/runtime/data-api/usage:
+    post:
+      tags: [managed_postgres]
+      operationId: reportDataAPIUsage
+      summary: Report Data API usage deltas
+      description: Private runtime surface. Requires a short-lived gregale:data-api:usage workload assertion; account, app and instance come from it, never from the body. Each report id is applied once, so retried or snapshot-duplicated reports add nothing. Hours must be aligned and at most 48 hours old. Owner API keys and application JWTs are not accepted.
+      x-internal: true
+      security:
+        - dataAPIUsageWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DataAPIUsageReport' }
+      responses:
+        '200':
+          description: Report applied, or already applied; month-to-date totals for owner caps.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DataAPIUsageReportResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/runtime/operations/{id}/control:
     get:
@@ -62477,6 +62538,11 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Short-lived Gregale workload identity for audience gregale:data-api:connections, bound to a live Data API instance. Customer API keys cannot publish observations.
+    dataAPIUsageWorkloadIdentity:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Short-lived Gregale workload identity for audience gregale:data-api:usage, naming the reporting app and instance. Customer API keys cannot publish usage.
     operationsWorkloadIdentity:
       type: http
       scheme: bearer
@@ -77337,6 +77403,71 @@ components:
         engine_connections: { type: integer, minimum: 1, maximum: 2 }
         refresh_connections: { type: integer, minimum: 0, maximum: 1 }
         observed_at: { type: string, format: date-time }
+    DataAPIUsageCounts:
+      description: Data API usage counts. Admitted requests by access kind, gateway and engine rejections (4xx), errors (5xx), requests refused by owner caps, rows the engine reported and response bytes. Owner telemetry from the app's runtime, not billing records.
+      type: object
+      additionalProperties: false
+      required: [user_requests, anonymous_requests, server_requests, rejected_requests, error_requests, capped_requests, rows_returned, response_bytes]
+      properties:
+        user_requests: { type: integer, format: int64, minimum: 0 }
+        anonymous_requests: { type: integer, format: int64, minimum: 0 }
+        server_requests: { type: integer, format: int64, minimum: 0 }
+        rejected_requests: { type: integer, format: int64, minimum: 0 }
+        error_requests: { type: integer, format: int64, minimum: 0 }
+        capped_requests: { type: integer, format: int64, minimum: 0 }
+        rows_returned: { type: integer, format: int64, minimum: 0 }
+        response_bytes: { type: integer, format: int64, minimum: 0 }
+    DataAPIUsageHour:
+      description: One UTC hour's usage delta in a runtime report.
+      allOf:
+        - $ref: '#/components/schemas/DataAPIUsageCounts'
+        - type: object
+          required: [hour]
+          properties:
+            hour: { type: string, format: date-time, description: UTC hour the delta belongs to; aligned to the hour. }
+    DataAPIUsageReport:
+      description: Private versioned runtime usage report. A report id names the reporting instance and process and is applied once; hours are unique.
+      type: object
+      additionalProperties: false
+      required: [version, report_id, hours]
+      properties:
+        version: { type: integer, enum: [1] }
+        report_id: { type: string, pattern: '^[A-Za-z0-9._:-]{1,128}$' }
+        hours: { type: array, maxItems: 48, items: { $ref: '#/components/schemas/DataAPIUsageHour' } }
+    DataAPIUsageMonthToDate:
+      description: Admitted requests in the current UTC calendar month, all and anonymous, which owner caps compare against.
+      type: object
+      required: [month, requests, anonymous_requests]
+      properties:
+        month: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$', description: UTC calendar month as YYYY-MM. }
+        requests: { type: integer, format: int64, minimum: 0 }
+        anonymous_requests: { type: integer, format: int64, minimum: 0 }
+    DataAPIUsageReportResponse:
+      description: Answer to a runtime usage report.
+      type: object
+      required: [month_to_date]
+      properties:
+        month_to_date: { $ref: '#/components/schemas/DataAPIUsageMonthToDate' }
+    DataAPIUsageBucket:
+      description: One hour or UTC day of an owner usage view.
+      allOf:
+        - $ref: '#/components/schemas/DataAPIUsageCounts'
+        - type: object
+          required: [start]
+          properties:
+            start: { type: string, format: date-time, description: Start of the bucket. }
+    DataAPIUsage:
+      description: An app's reported Data API usage over a window, zero-filled per bucket.
+      type: object
+      required: [app, from, to, granularity, totals, month_to_date, buckets]
+      properties:
+        app: { type: string }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        granularity: { type: string, enum: [hour, day] }
+        totals: { $ref: '#/components/schemas/DataAPIUsageCounts' }
+        month_to_date: { $ref: '#/components/schemas/DataAPIUsageMonthToDate' }
+        buckets: { type: array, items: { $ref: '#/components/schemas/DataAPIUsageBucket' } }
     ConnectionBudgetRuntimeObservations:
       description: Authenticated workload reports of configured resident Data API pools, including the refresh reader. Not live SQL sessions or independent guest attestation. Parked runtimes and future wakes remain estimates; this does not verify Auth or external consumers.
       type: object

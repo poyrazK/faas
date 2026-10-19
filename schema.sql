@@ -30360,6 +30360,60 @@ CREATE TABLE public.data_api_runtime_connection_observations (
 
 
 --
+-- Name: data_api_usage_hourly; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_api_usage_hourly (
+    app_id uuid NOT NULL,
+    hour timestamp with time zone NOT NULL,
+    user_requests bigint DEFAULT 0 NOT NULL,
+    anonymous_requests bigint DEFAULT 0 NOT NULL,
+    server_requests bigint DEFAULT 0 NOT NULL,
+    rejected_requests bigint DEFAULT 0 NOT NULL,
+    error_requests bigint DEFAULT 0 NOT NULL,
+    capped_requests bigint DEFAULT 0 NOT NULL,
+    rows_returned bigint DEFAULT 0 NOT NULL,
+    response_bytes bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT data_api_usage_hourly_anonymous_requests_check CHECK ((anonymous_requests >= 0)),
+    CONSTRAINT data_api_usage_hourly_capped_requests_check CHECK ((capped_requests >= 0)),
+    CONSTRAINT data_api_usage_hourly_error_requests_check CHECK ((error_requests >= 0)),
+    CONSTRAINT data_api_usage_hourly_hour_check CHECK ((date_bin('01:00:00'::interval, hour, '2000-01-01 00:00:00+00'::timestamp with time zone) = hour)),
+    CONSTRAINT data_api_usage_hourly_rejected_requests_check CHECK ((rejected_requests >= 0)),
+    CONSTRAINT data_api_usage_hourly_response_bytes_check CHECK ((response_bytes >= 0)),
+    CONSTRAINT data_api_usage_hourly_rows_returned_check CHECK ((rows_returned >= 0)),
+    CONSTRAINT data_api_usage_hourly_server_requests_check CHECK ((server_requests >= 0)),
+    CONSTRAINT data_api_usage_hourly_user_requests_check CHECK ((user_requests >= 0))
+);
+
+
+--
+-- Name: TABLE data_api_usage_hourly; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.data_api_usage_hourly IS 'ADR-20261019102108 Data API usage per app and UTC hour, from runtime deltas; owner telemetry, not billing.';
+
+
+--
+-- Name: data_api_usage_reports; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_api_usage_reports (
+    app_id uuid NOT NULL,
+    report_id text NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT data_api_usage_reports_report_id_check CHECK ((report_id ~ '^[A-Za-z0-9._:-]{1,128}$'::text))
+);
+
+
+--
+-- Name: TABLE data_api_usage_reports; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.data_api_usage_reports IS 'ADR-20261019102108 applied Data API usage report ids, kept for the dedup window.';
+
+
+--
 -- Name: data_connection_checks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -52207,6 +52261,22 @@ ALTER TABLE ONLY public.data_api_runtime_connection_observations
 
 
 --
+-- Name: data_api_usage_hourly data_api_usage_hourly_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_usage_hourly
+    ADD CONSTRAINT data_api_usage_hourly_pkey PRIMARY KEY (app_id, hour);
+
+
+--
+-- Name: data_api_usage_reports data_api_usage_reports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_usage_reports
+    ADD CONSTRAINT data_api_usage_reports_pkey PRIMARY KEY (app_id, report_id);
+
+
+--
 -- Name: data_connection_checks data_connection_checks_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -62910,6 +62980,20 @@ CREATE INDEX customer_workflow_readiness_subscription_due ON public.customer_wor
 --
 
 CREATE INDEX customer_workflow_readiness_subscription_owner ON public.customer_workflow_readiness_subscriptions USING btree (account_id, app_id, operator, scope);
+
+
+--
+-- Name: data_api_usage_hourly_hour_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX data_api_usage_hourly_hour_idx ON public.data_api_usage_hourly USING btree (hour);
+
+
+--
+-- Name: data_api_usage_reports_received_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX data_api_usage_reports_received_idx ON public.data_api_usage_reports USING btree (received_at);
 
 
 --
@@ -79347,6 +79431,22 @@ ALTER TABLE ONLY public.data_api_runtime_connection_observations
 
 ALTER TABLE ONLY public.data_api_runtime_connection_observations
     ADD CONSTRAINT data_api_runtime_connection_observations_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_api_usage_hourly data_api_usage_hourly_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_usage_hourly
+    ADD CONSTRAINT data_api_usage_hourly_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_api_usage_reports data_api_usage_reports_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_usage_reports
+    ADD CONSTRAINT data_api_usage_reports_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

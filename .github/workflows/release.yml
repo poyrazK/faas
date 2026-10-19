@@ -321,14 +321,10 @@ jobs:
             exit 1
           fi
           printf '%s\n' "$SNIPPET" | grep -Fq "https://gregale.dev/docs/deploy-from-github"
-          for path in .github/actions/deploy/action.yml .github/actions/deploy/bin/gregale.gz; do
-            gh api "repos/${GITHUB_REPOSITORY}/contents/${path}?ref=${ACTION_SHA}" \
-              | jq -e '.type == "file" and .size > 0' >/dev/null
-            # The moving major tag still needs to expose this release's bundle
-            # for direct Action users who choose the latest-version channel.
-            gh api "repos/${GITHUB_REPOSITORY}/contents/${path}?ref=${MAJOR}" \
-              | jq -e '.type == "file" and .size > 0' >/dev/null
-          done
+          # The pinned ref is the previous release's commit (it may still
+          # vendor the bare bin/gregale); the moving major tag must expose
+          # this release's compressed CLI for direct Action users.
+          bash scripts/ci/verify-action-ref-contents.sh "$ACTION_SHA" "$MAJOR"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
