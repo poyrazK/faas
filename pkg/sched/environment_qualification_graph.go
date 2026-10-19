@@ -210,7 +210,11 @@ func (e *Engine) preflightQualificationGraphServiceListener(ctx context.Context,
 		if len(request.FrozenInputs.ServiceBindings) == 0 {
 			continue
 		}
-		transport := request.FrozenInputs.Baseline.EffectiveServiceBindingTransport()
+		manifest, err := state.EffectiveEnvironmentWorkloadManifest(request.FrozenInputs)
+		if err != nil {
+			return ctx, err
+		}
+		transport := manifest.EffectiveServiceBindingTransport()
 		if _, ok := bases[transport]; ok {
 			continue
 		}
@@ -305,7 +309,11 @@ func (e *Engine) validateQualificationGraphServiceRoutesForCaller(ctx context.Co
 			targetMatches := route.Target.InstanceID == target.ID && route.Target.RequestID == targetRequest.ID && route.Target.GraphID == graphID &&
 				route.Target.Attempt == targetRequest.Attempt && route.Target.AppID == targetRequest.AppID && route.Target.DeploymentID == targetRequest.DeploymentID &&
 				route.Target.Resource == targetRequest.Resource && route.Target.NodeID == nodeID && route.Target.WakeID == target.WakeID && route.Target.CleanupToken == ""
-			policyMatches := route.Port == wantPort && route.RequireHTTPS == (request.FrozenInputs.Baseline.EffectiveServiceBindingTransport() == api.ServiceBindingTransportHTTPS)
+			manifest, err := state.EffectiveEnvironmentWorkloadManifest(request.FrozenInputs)
+			if err != nil {
+				return err
+			}
+			policyMatches := route.Port == wantPort && route.RequireHTTPS == (manifest.EffectiveServiceBindingTransport() == api.ServiceBindingTransportHTTPS)
 			deadlineSet := !route.Deadline.IsZero()
 			deadlineCurrent := deadlineSet && time.Now().Before(route.Deadline)
 			// ResolveEnvironmentQualificationService checks both persisted leases
@@ -455,7 +463,11 @@ func (e *Engine) prepareQualificationServiceBindings(ctx context.Context, claime
 	if !ok || listener.nodeID != nodeID {
 		return state.ErrEnvironmentWorkloadPreparationUnavailable
 	}
-	transport := claimed.FrozenInputs.Baseline.EffectiveServiceBindingTransport()
+	manifest, err := state.EffectiveEnvironmentWorkloadManifest(claimed.FrozenInputs)
+	if err != nil {
+		return err
+	}
+	transport := manifest.EffectiveServiceBindingTransport()
 	raw, ok := listener.bases[transport]
 	if !ok {
 		return state.ErrEnvironmentWorkloadPreparationUnavailable

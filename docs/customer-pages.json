@@ -23,6 +23,7 @@
     {"path": "crons", "source": "docs/event-driven.md"},
     {"path": "data-api", "source": "docs/data-api.md"},
     {"path": "data-api-onboarding", "source": "docs/data-api-onboarding.md"},
+    {"path": "data-pipelines", "source": "docs/data-pipelines.md"},
     {"path": "datadog", "source": "docs/datadog.md"},
     {"path": "deploy-from-github", "source": "docs/deploys.md"},
     {"path": "deploy-from-source", "source": "docs/deploys.md"},

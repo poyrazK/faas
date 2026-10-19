@@ -179,6 +179,7 @@ var sessionScopedAcquire = map[string]string{
 	"pkg/db/migrate_advisory.go":                "session pg_advisory_lock held across statements",
 	"pkg/state/pgstore.go":                      "session pg_advisory_lock for the edge-rule mutation fence",
 	"pkg/state/pgstore_edge_rule_batch_lock.go": "session pg_advisory_lock for all apps in an environment policy batch",
+	"pkg/state/snapshot_restore_pressure_pg.go": "session pg_advisory_lock for the fleet-wide restore-pressure lock, taken with its counts in one call (ADR-1741)",
 }
 
 // pooledAcquireOK records Acquires that are deliberately on the ordinary
@@ -190,6 +191,10 @@ var pooledAcquireOK = map[string]string{
 	"pkg/db/pgtest/template.go":                          "test harness; never runs against a pooler",
 	"pkg/e2etest/postgresprobe/pool.go":                  "private customer pools: reads and explicit transactions are pooler-safe; Acquire only borrows semaphore permits",
 	"pkg/managedpostgres/neon/checkpoint_connections.go": "private customer maintenance pool: opened from the authenticated direct provider endpoint, never the control-plane transaction pooler",
+	"pkg/livequery/checkpoint.go":                        "livequeryd's own pool to the customer database it serves (beside it in the database VM, or the compiler's direct URL), never the control-plane transaction pooler; the pinned connection only describes statements (unnamed Prepare) and reads catalogs",
+	"pkg/livequery/compiler.go":                          "livequeryd's own pool to the customer database it serves (beside it in the database VM, or the compiler's direct URL), never the control-plane transaction pooler; the pinned connection only describes statements (unnamed Prepare) and reads catalogs",
+	"pkg/livequery/engine.go":                            "livequeryd's own pool to the customer database it serves (beside it in the database VM, or the compiler's direct URL), never the control-plane transaction pooler; the pinned connection only describes statements (unnamed Prepare) and reads catalogs",
+	"pkg/datapipeline/engine.go":                         "the pipeline engine's pool to the customer's source database, never the control-plane pooler; the acquired connection runs one transaction (CREATE PUBLICATION + COMMENT) and holds no session state",
 }
 
 // TestSessionScopedAcquiresRouteThroughDirectPool is the gate.

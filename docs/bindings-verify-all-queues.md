@@ -1,5 +1,39 @@
 # All-binding verification and strict coverage
 
+Deployment selection also selects the service namespace. Managed environment
+deployments expose frozen logical service bindings and their reviewed targets,
+without falling back to app-level discovery. Active request/service and worker
+callers with HTTPS edges to request/service targets
+with `verification_contract: managed-https-v1` use the managed guest probe and
+require a current frozen-context receipt. Strict coverage can pass for these
+edges after exact target/release confirmation and inventory refresh. Ordinary
+app receipts cannot qualify them. Held candidates, Job callers, worker/Job targets, HTTP
+edges and unknown contracts remain unsupported; previews report
+`managed_service_verification_unsupported` and strict coverage blocks those
+gaps even with an ordinary unsupported waiver. Reviewed environment
+qualification remains a separate requirement. For held candidates, the managed
+GitOps pipeline now supports [pre-activation binding qualification](adr/1646-candidate-binding-qualification.md)
+for complete HTTPS/push-worker cohorts with enforced policies. Its reviewed health
+or queue smoke handler must exercise every dependency; CLI active-release
+receipts do not substitute for candidate evidence.
+
+Worker service probes use isolated task guests without starting the worker
+process or consuming queued work. A single-service probe needs no queue consent;
+strict all-binding coverage requires `--queue-publish` separately for eligible queues.
+Active reviewed push workers admit queue canaries against the exact active
+release and frozen consumer contract, without HTTP traffic or revision pins.
+Prepared rootfs identity and immutable provenance are required. OCI images use
+their real digest; reviewed source, Dockerfile and function deployments use the
+frozen archive checksum, build identity and built rootfs. HTTPS context covers
+both caller and target artifacts. Rebuilds invalidate probe, queue and durable-run
+evidence. Unreviewed legacy source archives remain unsupported. See
+[ADR-1645](adr/1645-reviewed-source-binding-verification.md).
+Declare `GREGALE_QUEUE_CANARY_BINDINGS: '["orders"]'` in reviewed workload
+variables (or inherited deployment overrides). Mutable app variables cannot grant
+this capability. Inventory publishes `queue_canary_reason` when handler capability
+or current deployment/consumer context prevents publication. Release, source,
+policy or consumer changes invalidate completion evidence. See [ADR-1644](adr/1644-managed-worker-queue-canaries.md).
+
 Verify an app's bindings, including eligible push queues on an exact deployment:
 
 ```sh

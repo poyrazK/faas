@@ -75,7 +75,7 @@ func dialTargets(t *testing.T, pool *computeGatewayPool, n int) map[string]int {
 }
 
 // A node that stops answering for longer than the cap stops receiving new
-// requests; they fail over to a node that answers (ADR-1580).
+// requests; they fail over to a node that answers (ADR-1736).
 func TestComputeGatewayPoolFailsOverAfterRestartWait(t *testing.T) {
 	restarting := startComputeNode(t, true)
 	healthy := startComputeNode(t, false)

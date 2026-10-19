@@ -8,7 +8,7 @@ import (
 )
 
 // HandoffReadyFDEnv names the pipe a hand-off successor reports readiness on
-// (docs/adr/1580-zero-downtime-daemon-restarts.md). pkg/wire starts the
+// (docs/adr/1736-zero-downtime-daemon-restarts.md). pkg/wire starts the
 // successor; this package signals because readiness is reported here.
 const HandoffReadyFDEnv = "FAAS_HANDOFF_READY_FD"
 

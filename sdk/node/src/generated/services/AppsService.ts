@@ -39,6 +39,8 @@ import type { CreateAppRequest } from '../models/CreateAppRequest.js';
 import type { CreateBindingVerificationRunRequest } from '../models/CreateBindingVerificationRunRequest.js';
 import type { CreateDeployTokenRequest } from '../models/CreateDeployTokenRequest.js';
 import type { CreateIssueIngestTokenRequest } from '../models/CreateIssueIngestTokenRequest.js';
+import type { CreateMigrationCutoverRequest } from '../models/CreateMigrationCutoverRequest.js';
+import type { CreateMigrationVerificationRequest } from '../models/CreateMigrationVerificationRequest.js';
 import type { CreateNativeIssueTicketRequest } from '../models/CreateNativeIssueTicketRequest.js';
 import type { CreateNativeLinearIssueTicketRequest } from '../models/CreateNativeLinearIssueTicketRequest.js';
 import type { CreateQueueBindingCanaryRequest } from '../models/CreateQueueBindingCanaryRequest.js';
@@ -71,6 +73,8 @@ import type { EnvironmentRouteBudgets } from '../models/EnvironmentRouteBudgets.
 import type { GuardedDebugRegressionActionRequest } from '../models/GuardedDebugRegressionActionRequest.js';
 import type { Issue } from '../models/Issue.js';
 import type { IssueActionRequest } from '../models/IssueActionRequest.js';
+import type { IssueCompoundAlertPolicy } from '../models/IssueCompoundAlertPolicy.js';
+import type { IssueCompoundAlertPreview } from '../models/IssueCompoundAlertPreview.js';
 import type { IssueDetail } from '../models/IssueDetail.js';
 import type { IssueEvent } from '../models/IssueEvent.js';
 import type { IssueEventResponse } from '../models/IssueEventResponse.js';
@@ -101,10 +105,16 @@ import type { ListIssueTrackerLinksResponse } from '../models/ListIssueTrackerLi
 import type { ListProfileDeploymentChecksResponse } from '../models/ListProfileDeploymentChecksResponse.js';
 import type { ListProfileInvestigationsResponse } from '../models/ListProfileInvestigationsResponse.js';
 import type { ListProfilePeriodicMonitorsResponse } from '../models/ListProfilePeriodicMonitorsResponse.js';
+import type { MigrationCutover } from '../models/MigrationCutover.js';
+import type { MigrationCutoverActionRequest } from '../models/MigrationCutoverActionRequest.js';
+import type { MigrationCutoverList } from '../models/MigrationCutoverList.js';
+import type { MigrationVerification } from '../models/MigrationVerification.js';
+import type { MigrationVerificationList } from '../models/MigrationVerificationList.js';
 import type { NativeIssueTicketResult } from '../models/NativeIssueTicketResult.js';
 import type { NativeIssueTrackerStatus } from '../models/NativeIssueTrackerStatus.js';
 import type { NativeLinearIssueTrackerStatus } from '../models/NativeLinearIssueTrackerStatus.js';
 import type { PreAuthObservationsResponse } from '../models/PreAuthObservationsResponse.js';
+import type { PreviewIssueCompoundAlertRequest } from '../models/PreviewIssueCompoundAlertRequest.js';
 import type { PreviewIssueLifecycleAlertRequest } from '../models/PreviewIssueLifecycleAlertRequest.js';
 import type { PreviewRouteMonitorRequest } from '../models/PreviewRouteMonitorRequest.js';
 import type { PrewarmIntentResponse } from '../models/PrewarmIntentResponse.js';
@@ -162,6 +172,7 @@ import type { SavedRouteRequirements } from '../models/SavedRouteRequirements.js
 import type { SaveProfileDeploymentPolicyRequest } from '../models/SaveProfileDeploymentPolicyRequest.js';
 import type { SaveProfileInvestigationRequest } from '../models/SaveProfileInvestigationRequest.js';
 import type { SaveRouteRequirementsRequest } from '../models/SaveRouteRequirementsRequest.js';
+import type { ServiceBindingExplanation } from '../models/ServiceBindingExplanation.js';
 import type { ServiceWakeAheadResponse } from '../models/ServiceWakeAheadResponse.js';
 import type { SetBindingReleasePolicyRequest } from '../models/SetBindingReleasePolicyRequest.js';
 import type { SetCanaryRouteGateRequest } from '../models/SetCanaryRouteGateRequest.js';
@@ -182,6 +193,7 @@ import type { TCPListenerResponse } from '../models/TCPListenerResponse.js';
 import type { TCPListenerTLSStatusResponse } from '../models/TCPListenerTLSStatusResponse.js';
 import type { UDPListenerResponse } from '../models/UDPListenerResponse.js';
 import type { UpdateAppRequest } from '../models/UpdateAppRequest.js';
+import type { UpdateIssueCompoundAlertPolicyRequest } from '../models/UpdateIssueCompoundAlertPolicyRequest.js';
 import type { UpdateIssueFrequencyAlertPolicyRequest } from '../models/UpdateIssueFrequencyAlertPolicyRequest.js';
 import type { UpdateIssueImpactAlertPolicyRequest } from '../models/UpdateIssueImpactAlertPolicyRequest.js';
 import type { UpdateIssueLifecycleAlertPolicyRequest } from '../models/UpdateIssueLifecycleAlertPolicyRequest.js';
@@ -197,6 +209,442 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class AppsService {
+  /**
+   * List saved production cutover plans.
+   * Return the latest app-owned production switch plans, newest first. Revalidate
+   * deployment, configuration and domain binding evidence without starting network
+   * probes. Up to twenty plans are retained; terminal plans may be pruned after
+   * ninety days. Requires app read scope and MFA.
+   *
+   * @returns MigrationCutoverList Latest retained plans with current deployment and binding validity.
+   * @throws ApiError
+   */
+  public static listMigrationCutovers({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<MigrationCutoverList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/migration-cutovers',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Prepare a production switch without changing traffic.
+   * Save a plan for a currently passed default-scope verification. Supply a stable
+   * caller UUID, production hostname, previous routing records and TTLs, previous
+   * proxy setting and traffic budgets. Reusing an ID returns its original intent;
+   * changed intent conflicts. Preparation edits no DNS, domain binding, rollout,
+   * default hostname or monitor policy. Connect the domain through the existing
+   * domain API before starting checks. Requires deployment write scope, verified
+   * email and MFA.
+   *
+   * @returns MigrationCutover New or replayed immutable production switch plan; traffic remains unchanged.
+   * @throws ApiError
+   */
+  public static createMigrationCutover({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateMigrationCutoverRequest,
+  }): CancelablePromise<MigrationCutover> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/migration-cutovers',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Read a saved production cutover plan.
+   * Read one saved production switch and its original DNS recovery settings.
+   * Changed source verification, deployment configuration or domain binding blocks
+   * its evidence. Reads perform no HTTP or DNS probes. Requires app read scope
+   * and MFA; a blocked plan retains its previous-provider routing instructions.
+   *
+   * @returns MigrationCutover Requested plan, saved recovery settings and validity of its evidence.
+   * @throws ApiError
+   */
+  public static getMigrationCutover({
+    slug,
+    plan,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Identity of the retained production switch to inspect.
+     */
+    plan: string,
+  }): CancelablePromise<MigrationCutover> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/migration-cutovers/{plan}',
+      path: {
+        'slug': slug,
+        'plan': plan,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Start checks, complete a switch or record recovery.
+   * start_checks explicitly arms thirty minutes of durable server checks after
+   * domain connection and a customer DNS change. Complete performs fresh DNS,
+   * trusted TLS and exact deployment response checks through the published Gregale
+   * edge, refuses sustained traffic budget violations and requires acknowledgement
+   * for limited coverage. Cancel stops checking only. confirm_restored records
+   * a customer attestation after manually restoring the saved provider routing,
+   * TTL and proxy settings. No action edits external DNS or monitor policies.
+   * Requires deployment write scope, verified email and MFA.
+   *
+   * @returns MigrationCutover Updated cutover progress or customer acknowledgement of manual recovery.
+   * @throws ApiError
+   */
+  public static actOnMigrationCutover({
+    slug,
+    plan,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Identity of the production switch receiving this explicit action.
+     */
+    plan: string,
+    requestBody: MigrationCutoverActionRequest,
+  }): CancelablePromise<MigrationCutover> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/migration-cutovers/{plan}/actions',
+      path: {
+        'slug': slug,
+        'plan': plan,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * List saved migration verification reports.
+   * Return the latest twenty app-owned migration reports, newest first.
+   * Each report is checked against the current deployment and scoped runtime
+   * configuration; changed evidence is blocked. Reading never starts work.
+   * Requires app read scope and MFA. Old reports are pruned after thirty
+   * days on subsequent creation; no connection values or response bodies
+   * are returned.
+   *
+   * @returns MigrationVerificationList Latest retained migration reports with current validity.
+   * @throws ApiError
+   */
+  public static listMigrationVerifications({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<MigrationVerificationList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/migration-verifications',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Start a resumable migration verification.
+   * Save immutable checks for the current public HTTP deployment with all
+   * Gregale traffic. Supply a stable caller-generated UUID to reconcile
+   * response loss. Creation queues durable background execution; clients
+   * may close while the API worker drives checks. Cold-wake consent permits briefly parking this Gregale
+   * app while production remains on the previous provider. One unfinished,
+   * run per app, including cancellation/recovery, and a ten-minute checking deadline. Requires deployment
+   * write scope, verified email and MFA. Checks select saved environment
+   * names; credentials are resolved only inside task guests.
+   *
+   * @returns MigrationVerification Original or newly saved verification intent and receipt.
+   * @throws ApiError
+   */
+  public static createMigrationVerification({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateMigrationVerificationRequest,
+  }): CancelablePromise<MigrationVerification> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/migration-verifications',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Read a migration verification and current configuration validity.
+   * Read one owned receipt and re-evaluate deployment/configuration validity.
+   * Passed evidence becomes blocked when recorded inputs change. Reads never
+   * advance checks, park an app or request a wake. Requires app read scope
+   * and MFA. This is the recovery operation after an uncertain advance.
+   *
+   * @returns MigrationVerification Owned verification status and current evidence validity.
+   * @throws ApiError
+   */
+  public static getMigrationVerification({
+    slug,
+    run,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Receipt UUID to inspect.
+     */
+    run: string,
+  }): CancelablePromise<MigrationVerification> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/migration-verifications/{run}',
+      path: {
+        'slug': slug,
+        'run': run,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Advance one saved migration verification step.
+   * Advance one leased step of an existing migration receipt. Dependency
+   * tasks and their IDs commit atomically. Startup and post-wake HTTP checks
+   * require a successful exact-deployment gateway response proof. Cold wake
+   * waits for zero active instances and a running instance with the saved
+   * wake identity. Replays preserve task IDs and wake correlation. The
+   * server worker continues pending runs independently of clients and
+   * resumes after restart. This operation is an optional compatibility
+   * action; clients normally poll GET. Cancelled, expired or invalidated
+   * runs stop tasks and restore a service they may have parked before
+   * becoming terminal. Recovery retries continue beyond the checking deadline.
+   * Requires deployment write scope, verified email and MFA. Changed inputs
+   * block qualification; infrastructure errors preserve resumable progress.
+   *
+   * @returns MigrationVerification Journaled progress after one bounded verification step.
+   * @throws ApiError
+   */
+  public static advanceMigrationVerification({
+    slug,
+    run,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Receipt UUID to advance.
+     */
+    run: string,
+  }): CancelablePromise<MigrationVerification> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/migration-verifications/{run}/advance',
+      path: {
+        'slug': slug,
+        'run': run,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Cancel saved migration checks and recover a parked service.
+   * Persist idempotent cancellation intent. An active worker lease remains
+   * fenced until its bounded step ends or the lease expires. No further
+   * checks can commit after cancellation. Background cleanup cancels saved
+   * tasks and restores the same deployment if this run may have parked it.
+   * Status remains pending while cleanup runs; recovery_status describes
+   * restoration, supersession by another deployment or an account/security
+   * block. A wake notification alone never means service was restored.
+   * Completed runs are unchanged. Requires deployment write scope, verified
+   * email and MFA; remains available when task admission is disabled.
+   *
+   * @returns MigrationVerification Saved cancellation intent or the unchanged terminal report.
+   * @throws ApiError
+   */
+  public static cancelMigrationVerification({
+    slug,
+    run,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Receipt UUID to cancel.
+     */
+    run: string,
+  }): CancelablePromise<MigrationVerification> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/migration-verifications/{run}/cancel',
+      path: {
+        'slug': slug,
+        'run': run,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
   /**
    * Read a scope's stored binding release policy.
    * Requires apps:read or admin and completed MFA. Defaults to off with revision 0. No probes or provider calls occur.
@@ -353,7 +801,98 @@ export class AppsService {
     });
   }
   /**
+   * Explain service authorization for an exact caller deployment.
+   * Read-only policy and routing observation using the gateway app authorizer,
+   * managed environment binding resolver and project release resolver. Requires
+   * apps:read or admin and completed MFA. The deployment must belong to the
+   * selected app. Its environment is inferred; scope, when supplied, asserts
+   * that environment. Managed deployments never fall back to global app names.
+   * Target identities are returned only within the selected account. Policy
+   * denials and incomplete contexts return 200 with result denied or
+   * indeterminate. Missing or foreign caller deployments return 404. Previews,
+   * qualification guests and development bridges are not evaluated. No tasks,
+   * guest requests, writes or provider calls occur. Separate metadata reads
+   * are not an atomic snapshot, caller authentication, runtime adoption or
+   * connectivity evidence. Unpinned routes do not select a target deployment.
+   * Responses use Cache-Control: no-store.
+   *
+   * @returns ServiceBindingExplanation Sanitized policy and routing explanation, without connectivity claims.
+   * @throws ApiError
+   */
+  public static explainAppServiceBinding({
+    slug,
+    service,
+    deploymentId,
+    scope,
+    method = 'GET',
+    path = '/',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Logical service workload for managed deployments, otherwise target app slug.
+     */
+    service: string,
+    /**
+     * Exact app-owned caller deployment UUID. This selector does not establish live caller identity.
+     */
+    deploymentId: string,
+    /**
+     * Optional assertion of the selected deployment environment. A mismatch produces a denied explanation.
+     */
+    scope?: string,
+    /**
+     * HTTP method to evaluate against the target scope.
+     */
+    method?: string,
+    /**
+     * Origin-form request path. Ambiguous paths are rejected; query values are omitted from the report.
+     */
+    path?: string,
+  }): CancelablePromise<ServiceBindingExplanation> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/bindings/services/{service}/explanation',
+      path: {
+        'slug': slug,
+        'service': service,
+      },
+      query: {
+        'deployment_id': deploymentId,
+        'scope': scope,
+        'method': method,
+        'path': path,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Inspect all runtime resource bindings attached to an app.
+   * Service entries use the selected deployment's frozen environment graph
+   * when managed; without deployment_id the current live deployment is selected.
+   * Logical service names remain distinct from physical target app identities.
+   * service_context reports the reviewed route and a context revision, never
+   * connectivity evidence. Ordinary task-probe verification of managed services
+   * is unsupported and app-scoped receipts are excluded. Managed target routes
+   * cannot be overridden through service_targets. Invalid frozen context or
+   * unreadable routes make complete=false without falling back to app settings.
    * Read-only, best-effort metadata for service, PostgreSQL, object-storage,
    * queue and outbound bindings. Requires apps:read or admin. PostgreSQL
    * sections additionally require managed-postgres:read or admin; object
@@ -383,7 +922,7 @@ export class AppsService {
      */
     slug: string,
     /**
-     * Select evidence for this exact app-owned, materialized live deployment, including zero-traffic candidates. No fallback to evidence from another deployment. Omit to use the manual-task selection.
+     * Select the service namespace and evidence for this exact app-owned, materialized live deployment, including zero-traffic candidates. No fallback to evidence from another deployment. Omit to use the manual-task selection.
      */
     deploymentId?: string,
     /**
@@ -2905,6 +3444,112 @@ export class AppsService {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/issue-lifecycle-alert-policy/preview',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read application issue event-compound rules.
+   * @returns IssueCompoundAlertPolicy Current compound policy; an unconfigured app has revision zero and no AND rules.
+   * @throws ApiError
+   */
+  public static getIssueCompoundAlertPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<IssueCompoundAlertPolicy> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issue-compound-alert-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Replace application issue event-compound rules.
+   * Replaces up to ten named AND rules using expected_revision. Both event count and verified distinct customer count must meet their thresholds in the same (now-window, now] retained-event window, optionally scoped to one environment. Active ignores and snoozes suppress admission. Only a new accepted capture inside the window triggers evaluation; retries, configuration changes and expiry alone do not notify. Cooldowns are per rule and canonical issue, survive enable toggles, and reset for changed conditions or timing. Activity, webhook issue.compound_threshold_reached and native Slack admission commit with the capture. Delivery requires an enabled subscription or eligible team destination. Frequency and fixed-window customer-impact policies remain independent.
+   * @returns IssueCompoundAlertPolicy Saved compound AND rules and their resulting revision.
+   * @throws ApiError
+   */
+  public static setIssueCompoundAlertPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: UpdateIssueCompoundAlertPolicyRequest,
+  }): CancelablePromise<IssueCompoundAlertPolicy> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/issue-compound-alert-policy',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Compound rules changed since the supplied revision; reload and review before retrying.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Preview an unsaved compound alert rule against retained issue evidence.
+   * Evaluates every draft predicate in one read-only snapshot and resolves merged aliases. Reports current retained counts and cooldown eligibility without a hypothetical new capture, saving, queue admission, receipt mutation or Slack requests. Allowed means rule eligibility only; routing, subscriptions and queue/sender checks still govern delivery.
+   * @returns IssueCompoundAlertPreview Draft rule conditions at the observation time.
+   * @throws ApiError
+   */
+  public static previewIssueCompoundAlert({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: PreviewIssueCompoundAlertRequest,
+  }): CancelablePromise<IssueCompoundAlertPreview> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issue-compound-alert-policy/preview',
       path: {
         'slug': slug,
       },

@@ -20,7 +20,7 @@ func WrapOrganization(store Store, next authmw.AccountHandler) authmw.AccountHan
 		}
 		org, err := store.OrgByID(r.Context(), mem.OrgID)
 		if err != nil {
-			writeLookupError(w, err)
+			writeLookupError(w, r, err)
 			return
 		}
 		if org.Personal {

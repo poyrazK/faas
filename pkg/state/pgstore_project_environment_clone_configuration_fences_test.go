@@ -584,22 +584,6 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	if len(accountPurge) != 2 {
 		t.Fatal("missing account purge ordering downgrade")
 	}
-	// Organization ownership later points the guard's account foreign key at
-	// resource namespaces. The guard migration recreates the table, so replay
-	// that step of its Up section after the chain.
-	ownershipRaw, err := migrations.FS.ReadFile("20261018003100004_org_project_ownership.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var ownershipGuardKey []string
-	for _, line := range strings.Split(strings.SplitN(string(ownershipRaw), "-- +goose Down", 2)[0], "\n") {
-		if strings.HasPrefix(line, "ALTER TABLE project_environment_clone_configuration_guards ") {
-			ownershipGuardKey = append(ownershipGuardKey, line)
-		}
-	}
-	if len(ownershipGuardKey) != 2 {
-		t.Fatalf("organization ownership guard key statements = %q, want drop and add", ownershipGuardKey)
-	}
 	f := newCloneConfigurationFenceFixture(t)
 	tx, err := f.pool.Begin(f.ctx)
 	if err != nil {
@@ -660,7 +644,10 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	if _, err := tx.Exec(f.ctx, accountPurge[0]); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(f.ctx, strings.Join(ownershipGuardKey, "\n")); err != nil {
+	// 20261018003100004 (#4882) later points the guard's owner at the durable
+	// resource namespace; reapply it so the comparison covers this round trip.
+	if _, err := tx.Exec(f.ctx, `ALTER TABLE project_environment_clone_configuration_guards DROP CONSTRAINT project_environment_clone_configuration_guards_account_id_fkey;
+ALTER TABLE project_environment_clone_configuration_guards ADD CONSTRAINT project_environment_clone_configuration_guards_account_id_fkey FOREIGN KEY (account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.QueryRow(f.ctx, shape).Scan(&after); err != nil || before != after {

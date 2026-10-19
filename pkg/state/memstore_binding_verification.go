@@ -27,6 +27,9 @@ func (m *MemStore) ListBindingVerificationTasks(_ context.Context, accountID, ap
 		if pin.Type == "service" && pin.TargetDeploymentID != selection.ServiceTargets[pin.Binding] {
 			continue
 		}
+		if pin.Type == "service" && (pin.ManagedService != nil) != selection.ManagedService {
+			continue
+		}
 		matches := selection.DeploymentID != "" && sameDeploymentID(task.DeploymentID, selection.DeploymentID)
 		if selection.DeploymentID != "" && !selection.AllowFallback && !matches {
 			continue

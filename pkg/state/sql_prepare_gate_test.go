@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/onebox-faas/faas/pkg/datarepair"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
@@ -94,6 +95,18 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 	}
 	defer qualificationConn.Release()
 
+	// Selective data repair (ADR-20261016) runs in the customer's database
+	// against the gregale_repair schema its owner installs.
+	repairPool := pgtest.OpenDatabase(t)
+	if _, err := repairPool.Exec(ctx, datarepair.Schema()); err != nil {
+		t.Fatalf("install data repair schema: %v", err)
+	}
+	repairConn, err := repairPool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repairConn.Release()
+
 	stmts := literalSQLStatements(t, "../../pkg", "../../cmd")
 	if len(stmts) < 500 {
 		t.Fatalf("found only %d SQL literals; the source walk is broken", len(stmts))
@@ -116,12 +129,24 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 		"42P10": true, // invalid_column_reference
 		"42P08": true, // ambiguous_parameter / inconsistent parameter types
 	}
-	var customerStatements, mcpStatements, qualificationStatements int
+	var customerStatements, mcpStatements, qualificationStatements, repairStatements int
 	for i, s := range stmts {
 		name := fmt.Sprintf("sql_gate_%d", i)
 		target := conn
 		query := strings.ReplaceAll(s.sql, "public.", "")
 		pos := filepath.ToSlash(s.pos)
+		// The data-api starter template owns gregale_data_api in the customer's
+		// database (cmd/gregale/templates/data-api); the neon package's SQL tests
+		// install that schema and run these statements against it.
+		if strings.HasPrefix(pos, "../../pkg/managedpostgres/neon/refresh_rotation.go:") || strings.HasPrefix(pos, "../../pkg/managedpostgres/neon/sql_deadline_policy.go:") {
+			continue
+		}
+		// Managed PostgreSQL pipelines (ADR-1591) create gregale_pipeline in the
+		// customer's destination database when a mirror starts
+		// (pkg/datapipeline/engine.go); the package's own tests run this SQL there.
+		if strings.HasPrefix(pos, "../../pkg/datapipeline/") && strings.Contains(s.sql, "gregale_pipeline.") {
+			continue
+		}
 		if strings.HasPrefix(pos, "../../pkg/commit/") || strings.HasPrefix(pos, "../../pkg/commitmanaged/") {
 			target = customerConn
 			query = s.sql
@@ -130,6 +155,10 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 			target = mcpConn
 			query = s.sql
 			mcpStatements++
+		} else if strings.HasPrefix(pos, "../../pkg/datarepair/") {
+			target = repairConn
+			query = s.sql
+			repairStatements++
 		} else if strings.HasPrefix(pos, "../../pkg/managedpostgres/neon/restore_probe.go:") {
 			target = qualificationConn
 			query = s.sql
@@ -157,7 +186,10 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 	if mcpStatements == 0 {
 		t.Fatal("customer MCP SQL was absent from the source walk")
 	}
-	t.Logf("validated %d platform, %d Commit, %d MCP and %d qualification SQL literals", len(stmts)-customerStatements-mcpStatements-qualificationStatements, customerStatements, mcpStatements, qualificationStatements)
+	if repairStatements == 0 {
+		t.Fatal("customer data repair SQL was absent from the source walk")
+	}
+	t.Logf("validated %d platform, %d Commit, %d MCP, %d data repair and %d qualification SQL literals", len(stmts)-customerStatements-mcpStatements-repairStatements-qualificationStatements, customerStatements, mcpStatements, repairStatements, qualificationStatements)
 }
 
 func mcpStarterSchemaStatements(t *testing.T) []string {
@@ -169,7 +201,7 @@ func mcpStarterSchemaStatements(t *testing.T) []string {
 	var statements []string
 	for _, declaration := range f.Decls {
 		function, ok := declaration.(*ast.FuncDecl)
-		if !ok || function.Name.Name != "initialize" || function.Body == nil {
+		if !ok || function.Name.Name != "migrateTaskSchema" || function.Body == nil {
 			continue
 		}
 		ast.Inspect(function.Body, func(node ast.Node) bool {
@@ -196,7 +228,7 @@ func mcpStarterSchemaStatements(t *testing.T) []string {
 		})
 	}
 	if len(statements) == 0 {
-		t.Fatal("MCP starter schema initializer was absent from the source walk")
+		t.Fatal("MCP starter schema migration (migrateTaskSchema) was absent from the source walk")
 	}
 	return statements
 }

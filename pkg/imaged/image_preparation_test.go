@@ -14,6 +14,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 type crashingImageStore struct {
@@ -77,6 +79,7 @@ func TestImagePreparationResumesAfterCrash(t *testing.T) {
 					// A new handler and loop recover from PostgreSQL/MemStore, without the
 					// original event or an in-process copy of the preparation.
 					restarted := imagePreparationHandler(t, store, builder, notif, &scans)
+					restarted.WithOpsMetrics(wire.NewOpsMetrics("imaged"))
 					restarted.appsRoot = h.appsRoot
 					loop := NewLoop(LoopConfig{Handler: restarted, Store: store})
 					loop.recoverBuildHandoffs(context.Background())
@@ -101,10 +104,20 @@ func TestImagePreparationResumesAfterCrash(t *testing.T) {
 					if findNotify(notif, db.NotifySnapshotPrime) == nil {
 						t.Fatal("no snapshot handoff")
 					}
+					if got := testutil.ToFloat64(restarted.handoffMetrics.commits.WithLabelValues("handed_off")); got != 1 {
+						t.Fatalf("restart handoff commits=%v", got)
+					}
 					before := len(notif.calls)
 					loop.recoverBuildHandoffs(context.Background())
 					if len(notif.calls) != before || len(builder.calls) != wantBuilds {
 						t.Fatal("completed checkpoint replayed")
+					}
+					if got := testutil.ToFloat64(restarted.handoffMetrics.commits.WithLabelValues("handed_off")); got != 1 {
+						t.Fatalf("replay fabricated handoff commits=%v", got)
+					}
+					progress, err := store.(state.ImagePreparationProgressObservationStore).ImagePreparationProgressSnapshot(t.Context(), "node-a")
+					if err != nil || progress != (state.ImagePreparationProgressSnapshot{}) {
+						t.Fatalf("recovered checkpoint remains pending: %+v %v", progress, err)
 					}
 				})
 			}

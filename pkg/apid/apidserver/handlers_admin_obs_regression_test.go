@@ -29,7 +29,12 @@ func TestObsRegressionCoverageZero(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1728000000,"0"]}]}}`)
+		value := int64(0)
+		query := r.URL.Query().Get("query")
+		if strings.Contains(query, "timestamp(") || strings.Contains(query, "last_evaluation_timestamp_seconds") {
+			value = time.Now().Unix()
+		}
+		fmt.Fprintf(w, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1728000000,"%d"]}]}}`, value)
 	}))
 	defer p.Close()
 	*(*e.S()).PromqlClient() = promql.NewClient(p.URL, p.Client())
@@ -53,7 +58,7 @@ func TestObsRegressionPrometheusOutage(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if rec.Code != 200 || len(got.Items) != 0 || len(got.UnavailableSources) != 1 || got.UnavailableSources[0] != "prometheus" {
+	if rec.Code != 200 || len(got.Items) != 0 || len(got.UnavailableSources) != 2 || got.UnavailableSources[0] != "prometheus" || got.UnavailableSources[1] != "platform_alert_history" {
 		t.Fatalf("unexpected result: status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
@@ -128,7 +133,7 @@ func TestObsRegressionIncidentCap(t *testing.T) {
 
 type obsFailedApps struct{ Store state.Store }
 
-func (f *obsFailedApps) ListApps(context.Context, string) ([]state.App, error) {
+func (f *obsFailedApps) OperatorTenantApps(context.Context, string) ([]api.ObsTenantApp, error) {
 	return nil, errors.New("database unavailable")
 }
 
@@ -169,6 +174,10 @@ func TestObsRegressionWakeNodeBuckets(t *testing.T) {
 func TestObsRegressionAlertsPreserveIdentityAndSeverity(t *testing.T) {
 	e := gapEnv(t)
 	p := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/alerts" {
+			fmt.Fprint(w, `{"status":"success","data":{"alerts":[]}}`)
+			return
+		}
 		query := r.URL.Query().Get("query")
 		if !strings.Contains(query, `alertname!="FaasWatchdog"`) || !strings.Contains(query, `severity!="info"`) {
 			t.Errorf("query includes heartbeat or info alerts: %s", query)
@@ -182,7 +191,7 @@ func TestObsRegressionAlertsPreserveIdentityAndSeverity(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Items) != 1 || response.NextCursor == "" || len(response.UnavailableSources) != 0 {
+	if len(response.Items) != 1 || response.NextCursor == "" || len(response.UnavailableSources) != 1 || response.UnavailableSources[0] != "platform_alert_history" || response.Items[0].Status != "unknown" {
 		t.Fatalf("first page: %s", rec.Body.String())
 	}
 	first := response.Items[0]

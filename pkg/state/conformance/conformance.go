@@ -49,6 +49,11 @@ func Run(t *testing.T, open Open) {
 		name string
 		fn   func(*testing.T, *Fixture)
 	}{
+		{"operator_alert_triage_and_retention_are_durable", testOperatorAlertTriageRetention},
+		{"operator_evidence_projections_are_exact", testOperatorEvidenceProjections},
+		{"operator_queue_count_excludes_running_and_terminal_builds", testOperatorQueuedBuildsCount},
+		{"operator_queue_snapshot_preserves_wait_across_requeue", testOperatorBuildQueueSnapshot},
+		{"operator_build_recovery_snapshot_preserves_cleanup_age", testOperatorBuildRecoverySnapshot},
 		{"app_limits_are_persisted_for_each_plan", testAppLimits},
 		{"app_secret_delivery_is_version_fenced", testAppSecretDeliveryVersionFence},
 		{"app_secret_class_survives_legacy_writes", testAppSecretClassSurvivesLegacyWrites},
@@ -105,7 +110,9 @@ func Run(t *testing.T, open Open) {
 		{"archived_logs_are_scoped_to_the_owning_app", testInstanceLogsOwnedByApp},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
 		{"live_state_readers_count_running_instances", testLiveStateReaders},
+		{"live_instance_list_follows_app_ownership", testLiveInstanceListOwnership},
 		{"live_instances_by_node_are_the_nodes_live_rows", testLiveInstancesByNode},
+		{"org_access_fences_and_org_projects", testOrgAccessAndOrgProjects},
 		{"frozen_instance_holds_ram_without_concurrency", testFrozenInstanceState},
 		{"beta_first_success_includes_parked_instances", testBetaFirstSuccess},
 		{"account_credits_issue_list_and_consume", testAccountCredits},
@@ -200,6 +207,7 @@ func Run(t *testing.T, open Open) {
 		{"app_deletion_claim_closes_restore_window", testAppDeletionClaim},
 		{"preview_lifecycle_is_scoped_and_reclaimable", testPreviewLifecycle},
 		{"scenario_test_namespace_is_scoped_and_reaped", testScenarioTestNamespace},
+		{"scenario_containment_and_capture_survive_namespace_cleanup", testScenarioRetainedContainment},
 		{"scenario_action_policy_readers_retain_isolation_after_cleanup", testScenarioActionPolicyReaders},
 		{"mcp_compatibility_snapshots_and_recovery_leases_are_fenced", testMCPCompatibilityAndRecovery},
 		{"preview_teardown_claim_fences_reopen", testPreviewTeardownClaim},

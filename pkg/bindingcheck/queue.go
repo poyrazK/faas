@@ -78,7 +78,11 @@ func (r *Report) checkQueueCanary(item api.AppBindingInventoryItem, policy Polic
 		return
 	}
 	if !item.QueueCanarySupported {
-		r.bindingBlock(item, "queue_canary_unsupported", "The selected deployment must declare safe canary handling.")
+		code := item.QueueCanaryReason
+		if code == "" {
+			code = "queue_canary_unsupported"
+		}
+		r.bindingBlock(item, code, "The selected deployment and current consumer must be eligible for safe canary handling.")
 		return
 	}
 	c := item.QueueCanary

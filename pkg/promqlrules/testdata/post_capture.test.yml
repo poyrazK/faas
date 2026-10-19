@@ -1,0 +1,4739 @@
+# Durable publication and activation evidence.
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 1m
+tests:
+- name: known empty
+  interval: 1m
+  input_series:
+  - &id001
+    series: up{job="imaged",instance="a"}
+    values: 1x90
+  - &id002
+    series: imaged_post_capture_collection_success{job="imaged",instance="a"}
+    values: 1x90
+  - &id003
+    series: imaged_post_capture_collection_last_success_timestamp_seconds{job="imaged",instance="a"}
+    values: 0+60x90
+  - &id004
+    series: imaged_post_capture_observation_enabled{job="imaged",instance="a"}
+    values: 1x90
+  - &id084
+    series: imaged_post_capture_pending{job="imaged",instance="a",class="publication_pending"}
+    values: '0x90'
+  - &id005
+    series: imaged_post_capture_age_unknown{job="imaged",instance="a",class="publication_pending"}
+    values: '0x90'
+  - &id085
+    series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="a",class="publication_pending"}
+    values: '0x90'
+  - &id006
+    series: imaged_post_capture_pending{job="imaged",instance="a",class="activation_pending"}
+    values: '0x90'
+  - &id007
+    series: imaged_post_capture_age_unknown{job="imaged",instance="a",class="activation_pending"}
+    values: '0x90'
+  - &id008
+    series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="a",class="activation_pending"}
+    values: '0x90'
+  - &id009
+    series: imaged_post_capture_pending{job="imaged",instance="a",class="dependency_held"}
+    values: '0x90'
+  - &id010
+    series: imaged_post_capture_age_unknown{job="imaged",instance="a",class="dependency_held"}
+    values: '0x90'
+  - &id011
+    series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="a",class="dependency_held"}
+    values: '0x90'
+  - &id012
+    series: imaged_post_capture_pending{job="imaged",instance="a",class="compatibility_held"}
+    values: '0x90'
+  - &id013
+    series: imaged_post_capture_age_unknown{job="imaged",instance="a",class="compatibility_held"}
+    values: '0x90'
+  - &id014
+    series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="a",class="compatibility_held"}
+    values: '0x90'
+  - &id015
+    series: imaged_post_capture_pending{job="imaged",instance="a",class="hosting_verifying"}
+    values: '0x90'
+  - &id016
+    series: imaged_post_capture_age_unknown{job="imaged",instance="a",class="hosting_verifying"}
+    values: '0x90'
+  - &id017
+    series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="a",class="hosting_verifying"}
+    values: '0x90'
+  - &id018
+    series: imaged_post_capture_pending{job="imaged",instance="a",class="hosting_retry"}
+    values: '0x90'
+  - &id019
+    series: imaged_post_capture_age_unknown{job="imaged",instance="a",class="hosting_retry"}
+    values: '0x90'
+  - &id020
+    series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="a",class="hosting_retry"}
+    values: '0x90'
+  - &id021
+    series: imaged_post_capture_pending{job="imaged",instance="a",class="gate_overdue"}
+    values: '0x90'
+  - &id022
+    series: imaged_post_capture_age_unknown{job="imaged",instance="a",class="gate_overdue"}
+    values: '0x90'
+  - &id023
+    series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="a",class="gate_overdue"}
+    values: '0x90'
+  - &id024
+    series: imaged_post_capture_pending{job="imaged",instance="a",class="unknown"}
+    values: '0x90'
+  - &id025
+    series: imaged_post_capture_age_unknown{job="imaged",instance="a",class="unknown"}
+    values: '0x90'
+  - &id026
+    series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="a",class="unknown"}
+    values: '0x90'
+  - &id027
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="evidence",outcome="success"}
+    values: '0x90'
+  - &id028
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="evidence",outcome="error"}
+    values: '0x90'
+  - &id029
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="evidence",outcome="deferred"}
+    values: '0x90'
+  - &id030
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="evidence",outcome="held"}
+    values: '0x90'
+  - &id031
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="evidence",outcome="canceled"}
+    values: '0x90'
+  - &id032
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="dependency",outcome="success"}
+    values: '0x90'
+  - &id033
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="dependency",outcome="error"}
+    values: '0x90'
+  - &id034
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="dependency",outcome="deferred"}
+    values: '0x90'
+  - &id035
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="dependency",outcome="held"}
+    values: '0x90'
+  - &id036
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="dependency",outcome="canceled"}
+    values: '0x90'
+  - &id037
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="verification",outcome="success"}
+    values: '0x90'
+  - &id038
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="verification",outcome="error"}
+    values: '0x90'
+  - &id039
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="verification",outcome="deferred"}
+    values: '0x90'
+  - &id040
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="verification",outcome="held"}
+    values: '0x90'
+  - &id041
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="verification",outcome="canceled"}
+    values: '0x90'
+  - &id042
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="promotion",outcome="success"}
+    values: '0x90'
+  - &id043
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="promotion",outcome="error"}
+    values: '0x90'
+  - &id044
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="promotion",outcome="deferred"}
+    values: '0x90'
+  - &id045
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="promotion",outcome="held"}
+    values: '0x90'
+  - &id046
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="promotion",outcome="canceled"}
+    values: '0x90'
+  - &id047
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="finalize",outcome="success"}
+    values: '0x90'
+  - &id048
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="finalize",outcome="error"}
+    values: '0x90'
+  - &id049
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="finalize",outcome="deferred"}
+    values: '0x90'
+  - &id050
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="finalize",outcome="held"}
+    values: '0x90'
+  - &id051
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="snapshot",phase="finalize",outcome="canceled"}
+    values: '0x90'
+  - &id052
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="evidence",outcome="success"}
+    values: '0x90'
+  - &id053
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="evidence",outcome="error"}
+    values: '0x90'
+  - &id054
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="evidence",outcome="deferred"}
+    values: '0x90'
+  - &id055
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="evidence",outcome="held"}
+    values: '0x90'
+  - &id056
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="evidence",outcome="canceled"}
+    values: '0x90'
+  - &id057
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="dependency",outcome="success"}
+    values: '0x90'
+  - &id058
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="dependency",outcome="error"}
+    values: '0x90'
+  - &id059
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="dependency",outcome="deferred"}
+    values: '0x90'
+  - &id060
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="dependency",outcome="held"}
+    values: '0x90'
+  - &id061
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="dependency",outcome="canceled"}
+    values: '0x90'
+  - &id062
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="verification",outcome="success"}
+    values: '0x90'
+  - &id063
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="verification",outcome="error"}
+    values: '0x90'
+  - &id064
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="verification",outcome="deferred"}
+    values: '0x90'
+  - &id065
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="verification",outcome="held"}
+    values: '0x90'
+  - &id066
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="verification",outcome="canceled"}
+    values: '0x90'
+  - &id067
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="promotion",outcome="success"}
+    values: '0x90'
+  - &id068
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="promotion",outcome="error"}
+    values: '0x90'
+  - &id069
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="promotion",outcome="deferred"}
+    values: '0x90'
+  - &id070
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="promotion",outcome="held"}
+    values: '0x90'
+  - &id071
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="promotion",outcome="canceled"}
+    values: '0x90'
+  - &id072
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="finalize",outcome="success"}
+    values: '0x90'
+  - &id073
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="finalize",outcome="error"}
+    values: '0x90'
+  - &id074
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="finalize",outcome="deferred"}
+    values: '0x90'
+  - &id075
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="finalize",outcome="held"}
+    values: '0x90'
+  - &id076
+    series: imaged_deployment_activation_attempts_total{job="imaged",instance="a",input="ready",phase="finalize",outcome="canceled"}
+    values: '0x90'
+  - &id077
+    series: imaged_snapshot_publication_total{job="imaged",instance="a",tier="init",outcome="published"}
+    values: '0x90'
+  - &id078
+    series: imaged_snapshot_publication_total{job="imaged",instance="a",tier="init",outcome="duplicate"}
+    values: '0x90'
+  - &id079
+    series: imaged_snapshot_publication_total{job="imaged",instance="a",tier="init",outcome="write_error"}
+    values: '0x90'
+  - &id080
+    series: imaged_snapshot_publication_total{job="imaged",instance="a",tier="init",outcome="policy_error"}
+    values: '0x90'
+  - &id081
+    series: imaged_snapshot_publication_total{job="imaged",instance="a",tier="init",outcome="stale_config"}
+    values: '0x90'
+  - &id082
+    series: imaged_snapshot_publication_total{job="imaged",instance="a",tier="init",outcome="rejected_ram"}
+    values: '0x90'
+  - &id083
+    series: imaged_snapshot_publication_total{job="imaged",instance="a",tier="init",outcome="rejected_ephemeral"}
+    values: '0x90'
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationGateUnfinalized
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationErrors
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="publication_pending"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="imaged_post_capture_oldest_known_boundary_age_seconds",job="imaged",instance="a",class="publication_pending"}'
+      value: 0
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="activation_pending"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="imaged_post_capture_oldest_known_boundary_age_seconds",job="imaged",instance="a",class="activation_pending"}'
+      value: 0
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="dependency_held"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="imaged_post_capture_oldest_known_boundary_age_seconds",job="imaged",instance="a",class="dependency_held"}'
+      value: 0
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="compatibility_held"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="imaged_post_capture_oldest_known_boundary_age_seconds",job="imaged",instance="a",class="compatibility_held"}'
+      value: 0
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="hosting_verifying"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="imaged_post_capture_oldest_known_boundary_age_seconds",job="imaged",instance="a",class="hosting_verifying"}'
+      value: 0
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="hosting_retry"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="imaged_post_capture_oldest_known_boundary_age_seconds",job="imaged",instance="a",class="hosting_retry"}'
+      value: 0
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="gate_overdue"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="imaged_post_capture_oldest_known_boundary_age_seconds",job="imaged",instance="a",class="gate_overdue"}'
+      value: 0
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="unknown"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="imaged_post_capture_oldest_known_boundary_age_seconds",job="imaged",instance="a",class="unknown"}'
+      value: 0
+  - expr: imaged_post_capture_observation_healthy
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="imaged_post_capture_observation_healthy",job="imaged",instance="a"}'
+      value: 1
+- name: publication_pending exact threshold hold and aging without arrivals
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: imaged_post_capture_pending{job="imaged",instance="a",class="publication_pending"}
+    values: 1x90
+  - *id005
+  - series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="a",class="publication_pending"}
+    values: 60x90
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 7m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 11m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 12m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture
+        public_status: internal
+        job: imaged
+        instance: a
+        class: publication_pending
+      exp_annotations:
+        summary: A fresh parked capture still lacks init publication
+        description: A currently unpublished capture has a known parked boundary older than five minutes, held five
+          minutes. Inspect snapshot_written delivery, publication outcomes, runtime receipts and imaged storage/database
+          errors. Parking is evidence of capture, not artifact acceptance or readiness.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 30m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 30m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="publication_pending"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="imaged_post_capture_oldest_known_boundary_age_seconds",job="imaged",instance="a",class="publication_pending"}'
+      value: 300
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="publication_pending"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="imaged_post_capture_oldest_known_boundary_age_seconds",job="imaged",instance="a",class="publication_pending"}'
+      value: 1740
+- name: activation_pending exact threshold hold and aging without arrivals
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - series: imaged_post_capture_pending{job="imaged",instance="a",class="activation_pending"}
+    values: 1x90
+  - *id007
+  - series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="a",class="activation_pending"}
+    values: 60x90
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 7m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 11m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 12m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture
+        public_status: internal
+        job: imaged
+        instance: a
+        class: activation_pending
+      exp_annotations:
+        summary: A published init snapshot still awaits activation
+        description: A currently activation_pending candidate has a known publication or verification boundary older
+          than five minutes, held five minutes. Inspect retained hosting receipts, delivery retries and promotion
+          errors. Age is not continuous class residence; dependency and compatibility holds are separate.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 30m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 30m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="activation_pending"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="imaged_post_capture_oldest_known_boundary_age_seconds",job="imaged",instance="a",class="activation_pending"}'
+      value: 300
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="activation_pending"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="imaged_post_capture_oldest_known_boundary_age_seconds",job="imaged",instance="a",class="activation_pending"}'
+      value: 1740
+- name: hosting_verifying exact threshold hold and aging without arrivals
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - series: imaged_post_capture_pending{job="imaged",instance="a",class="hosting_verifying"}
+    values: 1x90
+  - *id016
+  - series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="a",class="hosting_verifying"}
+    values: 60x90
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 7m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 11m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 12m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture
+        public_status: internal
+        job: imaged
+        instance: a
+        class: hosting_verifying
+      exp_annotations:
+        summary: A published init snapshot still awaits activation
+        description: A currently hosting_verifying candidate has a known publication or verification boundary older
+          than five minutes, held five minutes. Inspect retained hosting receipts, delivery retries and promotion
+          errors. Age is not continuous class residence; dependency and compatibility holds are separate.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 30m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 30m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="hosting_verifying"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="imaged_post_capture_oldest_known_boundary_age_seconds",job="imaged",instance="a",class="hosting_verifying"}'
+      value: 300
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="hosting_verifying"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="imaged_post_capture_oldest_known_boundary_age_seconds",job="imaged",instance="a",class="hosting_verifying"}'
+      value: 1740
+- name: hosting_retry exact threshold hold and aging without arrivals
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - series: imaged_post_capture_pending{job="imaged",instance="a",class="hosting_retry"}
+    values: 1x90
+  - *id019
+  - series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="a",class="hosting_retry"}
+    values: 60x90
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 7m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 11m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 12m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture
+        public_status: internal
+        job: imaged
+        instance: a
+        class: hosting_retry
+      exp_annotations:
+        summary: A published init snapshot still awaits activation
+        description: A currently hosting_retry candidate has a known publication or verification boundary older
+          than five minutes, held five minutes. Inspect retained hosting receipts, delivery retries and promotion
+          errors. Age is not continuous class residence; dependency and compatibility holds are separate.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 30m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 30m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="hosting_retry"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="imaged_post_capture_oldest_known_boundary_age_seconds",job="imaged",instance="a",class="hosting_retry"}'
+      value: 300
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="hosting_retry"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="imaged_post_capture_oldest_known_boundary_age_seconds",job="imaged",instance="a",class="hosting_retry"}'
+      value: 1740
+- name: dependency_held retained intentional gate is not an activation error
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - *id006
+  - *id007
+  - *id008
+  - series: imaged_post_capture_pending{job="imaged",instance="a",class="dependency_held"}
+    values: 1x90
+  - *id010
+  - series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="a",class="dependency_held"}
+    values: 60x90
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 45m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasDeploymentActivationGateUnfinalized
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasSnapshotPublicationErrors
+    exp_alerts: []
+- name: compatibility_held retained intentional gate is not an activation error
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - series: imaged_post_capture_pending{job="imaged",instance="a",class="compatibility_held"}
+    values: 1x90
+  - *id013
+  - series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="a",class="compatibility_held"}
+    values: 60x90
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 45m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasDeploymentActivationGateUnfinalized
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasSnapshotPublicationErrors
+    exp_alerts: []
+- name: failed or expired gate retained without finalization
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - series: imaged_post_capture_pending{job="imaged",instance="a",class="gate_overdue"}
+    values: 1x90
+  - *id022
+  - series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="a",class="gate_overdue"}
+    values: 60x90
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasDeploymentActivationGateUnfinalized
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasDeploymentActivationGateUnfinalized
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture
+        public_status: internal
+        job: imaged
+        instance: a
+        class: gate_overdue
+      exp_annotations:
+        summary: A failed or expired activation gate remains nonterminal
+        description: A snapshotting candidate retains a failed dependency gate or an expired dependency/hosting
+          retry deadline for five minutes. Inspect imaged replay and terminal-evidence writes. Do not bypass the
+          gate or move the serving pointer manually.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+- name: publication resets activation boundary
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: imaged_post_capture_pending{job="imaged",instance="a",class="publication_pending"}
+    values: 1x19 0x70
+  - *id005
+  - series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="a",class="publication_pending"}
+    values: 60x19 0x70
+  - series: imaged_post_capture_pending{job="imaged",instance="a",class="activation_pending"}
+    values: 0x19 1x70
+  - *id007
+  - series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="a",class="activation_pending"}
+    values: 0x19 1200x70
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 19m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture
+        public_status: internal
+        job: imaged
+        instance: a
+        class: publication_pending
+      exp_annotations:
+        summary: A fresh parked capture still lacks init publication
+        description: A currently unpublished capture has a known parked boundary older than five minutes, held five
+          minutes. Inspect snapshot_written delivery, publication outcomes, runtime receipts and imaged storage/database
+          errors. Parking is evidence of capture, not artifact acceptance or readiness.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 20m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 30m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 31m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture
+        public_status: internal
+        job: imaged
+        instance: a
+        class: activation_pending
+      exp_annotations:
+        summary: A published init snapshot still awaits activation
+        description: A currently activation_pending candidate has a known publication or verification boundary older
+          than five minutes, held five minutes. Inspect retained hosting receipts, delivery retries and promotion
+          errors. Age is not continuous class residence; dependency and compatibility holds are separate.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  promql_expr_test:
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="activation_pending"}
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="imaged_post_capture_oldest_known_boundary_age_seconds",job="imaged",instance="a",class="activation_pending"}'
+      value: 0
+- name: publication_pending unknown timing cannot become zero age
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: imaged_post_capture_pending{job="imaged",instance="a",class="publication_pending"}
+    values: 2x90
+  - series: imaged_post_capture_age_unknown{job="imaged",instance="a",class="publication_pending"}
+    values: 2x90
+  - *id085
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 16m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+        class: publication_pending
+      exp_annotations:
+        summary: Post-capture classification or timing evidence is incomplete
+        description: Fresh observations have contained incomplete publication_pending evidence for 15 minutes. Missing,
+          invalid or future times cannot establish a publication or activation wait. Inspect durable capture, stage,
+          gate and verification evidence without inventing timestamps.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_post_capture_observation_healthy
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="imaged_post_capture_observation_healthy",job="imaged",instance="a"}'
+      value: 1
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="publication_pending"}
+    eval_time: 6m
+    exp_samples: []
+- name: activation_pending unknown timing cannot become zero age
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - series: imaged_post_capture_pending{job="imaged",instance="a",class="activation_pending"}
+    values: 2x90
+  - series: imaged_post_capture_age_unknown{job="imaged",instance="a",class="activation_pending"}
+    values: 2x90
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 16m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+        class: activation_pending
+      exp_annotations:
+        summary: Post-capture classification or timing evidence is incomplete
+        description: Fresh observations have contained incomplete activation_pending evidence for 15 minutes. Missing,
+          invalid or future times cannot establish a publication or activation wait. Inspect durable capture, stage,
+          gate and verification evidence without inventing timestamps.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_post_capture_observation_healthy
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="imaged_post_capture_observation_healthy",job="imaged",instance="a"}'
+      value: 1
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="activation_pending"}
+    eval_time: 6m
+    exp_samples: []
+- name: compatibility_held unknown timing cannot become zero age
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - series: imaged_post_capture_pending{job="imaged",instance="a",class="compatibility_held"}
+    values: 2x90
+  - series: imaged_post_capture_age_unknown{job="imaged",instance="a",class="compatibility_held"}
+    values: 2x90
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 16m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+        class: compatibility_held
+      exp_annotations:
+        summary: Post-capture classification or timing evidence is incomplete
+        description: Fresh observations have contained incomplete compatibility_held evidence for 15 minutes. Missing,
+          invalid or future times cannot establish a publication or activation wait. Inspect durable capture, stage,
+          gate and verification evidence without inventing timestamps.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_post_capture_observation_healthy
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="imaged_post_capture_observation_healthy",job="imaged",instance="a"}'
+      value: 1
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="compatibility_held"}
+    eval_time: 6m
+    exp_samples: []
+- name: unknown unknown timing cannot become zero age
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - series: imaged_post_capture_pending{job="imaged",instance="a",class="unknown"}
+    values: 2x90
+  - series: imaged_post_capture_age_unknown{job="imaged",instance="a",class="unknown"}
+    values: 2x90
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 16m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+        class: unknown
+      exp_annotations:
+        summary: Post-capture classification or timing evidence is incomplete
+        description: Fresh observations have contained incomplete unknown evidence for 15 minutes. Missing, invalid
+          or future times cannot establish a publication or activation wait. Inspect durable capture, stage, gate
+          and verification evidence without inventing timestamps.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_post_capture_observation_healthy
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="imaged_post_capture_observation_healthy",job="imaged",instance="a"}'
+      value: 1
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="unknown"}
+    eval_time: 6m
+    exp_samples: []
+- name: mixed known and unknown timings
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: imaged_post_capture_pending{job="imaged",instance="a",class="publication_pending"}
+    values: 2x90
+  - series: imaged_post_capture_age_unknown{job="imaged",instance="a",class="publication_pending"}
+    values: 1x90
+  - series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="a",class="publication_pending"}
+    values: 60x90
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 16m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture
+        public_status: internal
+        job: imaged
+        instance: a
+        class: publication_pending
+      exp_annotations:
+        summary: A fresh parked capture still lacks init publication
+        description: A currently unpublished capture has a known parked boundary older than five minutes, held five
+          minutes. Inspect snapshot_written delivery, publication outcomes, runtime receipts and imaged storage/database
+          errors. Parking is evidence of capture, not artifact acceptance or readiness.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 16m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+        class: publication_pending
+      exp_annotations:
+        summary: Post-capture classification or timing evidence is incomplete
+        description: Fresh observations have contained incomplete publication_pending evidence for 15 minutes. Missing,
+          invalid or future times cannot establish a publication or activation wait. Inspect durable capture, stage,
+          gate and verification evidence without inventing timestamps.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+- name: failed read
+  interval: 1m
+  input_series:
+  - *id001
+  - series: imaged_post_capture_collection_success{job="imaged",instance="a"}
+    values: '0x90'
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Post-capture diagnostics are unavailable
+        description: Imaged is scraped but its post-capture snapshot is missing, failed, inconsistent, older than
+          two minutes, or has incomplete activation counters. Counts and ages are unknown. Check the observer, database,
+          clocks and binary; intentional shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="activation_pending"}
+    eval_time: 6m
+    exp_samples: []
+- name: missing success
+  interval: 1m
+  input_series:
+  - *id001
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Post-capture diagnostics are unavailable
+        description: Imaged is scraped but its post-capture snapshot is missing, failed, inconsistent, older than
+          two minutes, or has incomplete activation counters. Counts and ages are unknown. Check the observer, database,
+          clocks and binary; intentional shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="activation_pending"}
+    eval_time: 6m
+    exp_samples: []
+- name: missing class
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Post-capture diagnostics are unavailable
+        description: Imaged is scraped but its post-capture snapshot is missing, failed, inconsistent, older than
+          two minutes, or has incomplete activation counters. Counts and ages are unknown. Check the observer, database,
+          clocks and binary; intentional shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="activation_pending"}
+    eval_time: 6m
+    exp_samples: []
+- name: future read
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - series: imaged_post_capture_collection_last_success_timestamp_seconds{job="imaged",instance="a"}
+    values: 120+60x90
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Post-capture diagnostics are unavailable
+        description: Imaged is scraped but its post-capture snapshot is missing, failed, inconsistent, older than
+          two minutes, or has incomplete activation counters. Counts and ages are unknown. Check the observer, database,
+          clocks and binary; intentional shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="activation_pending"}
+    eval_time: 6m
+    exp_samples: []
+- name: negative pending
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - series: imaged_post_capture_pending{job="imaged",instance="a",class="activation_pending"}
+    values: -1x90
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Post-capture diagnostics are unavailable
+        description: Imaged is scraped but its post-capture snapshot is missing, failed, inconsistent, older than
+          two minutes, or has incomplete activation counters. Counts and ages are unknown. Check the observer, database,
+          clocks and binary; intentional shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="activation_pending"}
+    eval_time: 6m
+    exp_samples: []
+- name: fractional pending
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - series: imaged_post_capture_pending{job="imaged",instance="a",class="activation_pending"}
+    values: 0.5x90
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Post-capture diagnostics are unavailable
+        description: Imaged is scraped but its post-capture snapshot is missing, failed, inconsistent, older than
+          two minutes, or has incomplete activation counters. Counts and ages are unknown. Check the observer, database,
+          clocks and binary; intentional shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="activation_pending"}
+    eval_time: 6m
+    exp_samples: []
+- name: infinite pending
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - series: imaged_post_capture_pending{job="imaged",instance="a",class="activation_pending"}
+    values: +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf
+      +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf
+      +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf
+      +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf
+      +Inf +Inf +Inf +Inf +Inf
+  - *id007
+  - series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="a",class="activation_pending"}
+    values: 60x90
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Post-capture diagnostics are unavailable
+        description: Imaged is scraped but its post-capture snapshot is missing, failed, inconsistent, older than
+          two minutes, or has incomplete activation counters. Counts and ages are unknown. Check the observer, database,
+          clocks and binary; intentional shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="activation_pending"}
+    eval_time: 6m
+    exp_samples: []
+- name: unknown exceeds count
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - *id006
+  - series: imaged_post_capture_age_unknown{job="imaged",instance="a",class="activation_pending"}
+    values: 1x90
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Post-capture diagnostics are unavailable
+        description: Imaged is scraped but its post-capture snapshot is missing, failed, inconsistent, older than
+          two minutes, or has incomplete activation counters. Counts and ages are unknown. Check the observer, database,
+          clocks and binary; intentional shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="activation_pending"}
+    eval_time: 6m
+    exp_samples: []
+- name: timestamp without known count
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - *id006
+  - *id007
+  - series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="a",class="activation_pending"}
+    values: 60x90
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Post-capture diagnostics are unavailable
+        description: Imaged is scraped but its post-capture snapshot is missing, failed, inconsistent, older than
+          two minutes, or has incomplete activation counters. Counts and ages are unknown. Check the observer, database,
+          clocks and binary; intentional shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="activation_pending"}
+    eval_time: 6m
+    exp_samples: []
+- name: known count without timestamp
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - series: imaged_post_capture_pending{job="imaged",instance="a",class="activation_pending"}
+    values: 1x90
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Post-capture diagnostics are unavailable
+        description: Imaged is scraped but its post-capture snapshot is missing, failed, inconsistent, older than
+          two minutes, or has incomplete activation counters. Counts and ages are unknown. Check the observer, database,
+          clocks and binary; intentional shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="activation_pending"}
+    eval_time: 6m
+    exp_samples: []
+- name: future capture
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: imaged_post_capture_pending{job="imaged",instance="a",class="publication_pending"}
+    values: 1x90
+  - *id005
+  - series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="a",class="publication_pending"}
+    values: 6000x90
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Post-capture diagnostics are unavailable
+        description: Imaged is scraped but its post-capture snapshot is missing, failed, inconsistent, older than
+          two minutes, or has incomplete activation counters. Counts and ages are unknown. Check the observer, database,
+          clocks and binary; intentional shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="activation_pending"}
+    eval_time: 6m
+    exp_samples: []
+- name: unknown class claims known age
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - series: imaged_post_capture_pending{job="imaged",instance="a",class="unknown"}
+    values: 1x90
+  - *id025
+  - series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="a",class="unknown"}
+    values: 60x90
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Post-capture diagnostics are unavailable
+        description: Imaged is scraped but its post-capture snapshot is missing, failed, inconsistent, older than
+          two minutes, or has incomplete activation counters. Counts and ages are unknown. Check the observer, database,
+          clocks and binary; intentional shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="activation_pending"}
+    eval_time: 6m
+    exp_samples: []
+- name: missing activation outcomes
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Post-capture diagnostics are unavailable
+        description: Imaged is scraped but its post-capture snapshot is missing, failed, inconsistent, older than
+          two minutes, or has incomplete activation counters. Counts and ages are unknown. Check the observer, database,
+          clocks and binary; intentional shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="activation_pending"}
+    eval_time: 6m
+    exp_samples: []
+- name: exact freshness ceiling
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - series: imaged_post_capture_collection_last_success_timestamp_seconds{job="imaged",instance="a"}
+    values: 60x90
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 9m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Post-capture diagnostics are unavailable
+        description: Imaged is scraped but its post-capture snapshot is missing, failed, inconsistent, older than
+          two minutes, or has incomplete activation counters. Counts and ages are unknown. Check the observer, database,
+          clocks and binary; intentional shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  promql_expr_test:
+  - expr: imaged_post_capture_observation_healthy
+    eval_time: 3m
+    exp_samples:
+    - labels: '{__name__="imaged_post_capture_observation_healthy",job="imaged",instance="a"}'
+      value: 1
+  - expr: imaged_post_capture_observation_healthy
+    eval_time: 4m
+    exp_samples: []
+- name: publication error ratio and hold
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - series: imaged_snapshot_publication_total{job="imaged",instance="a",tier="init",outcome="write_error"}
+    values: 0+10x90
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasSnapshotPublicationErrors
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasSnapshotPublicationErrors
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Snapshot publication writes or policy reads repeatedly fail
+        description: Publication write_error or policy_error outcomes exceed 10% of publication decisions with at
+          least three errors per rolling five minutes, held five minutes. Inspect database, runtime-policy reads
+          and replay. Stale captures, RAM/policy rejections and customer verification verdicts are excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+- name: rare publication errors
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - series: imaged_snapshot_publication_total{job="imaged",instance="a",tier="init",outcome="published"}
+    values: 0+1000x90
+  - *id078
+  - series: imaged_snapshot_publication_total{job="imaged",instance="a",tier="init",outcome="write_error"}
+    values: 0+10x90
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationErrors
+    exp_alerts: []
+- name: insufficient error volume
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - series: imaged_snapshot_publication_total{job="imaged",instance="a",tier="init",outcome="policy_error"}
+    values: 0+0.1x90
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationErrors
+    exp_alerts: []
+- name: brief error burst
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - series: imaged_snapshot_publication_total{job="imaged",instance="a",tier="init",outcome="write_error"}
+    values: 0 10x89
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasSnapshotPublicationErrors
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasSnapshotPublicationErrors
+    exp_alerts: []
+- name: rejections and stale captures are not infrastructure errors
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - series: imaged_snapshot_publication_total{job="imaged",instance="a",tier="init",outcome="stale_config"}
+    values: 0+100x90
+  - series: imaged_snapshot_publication_total{job="imaged",instance="a",tier="init",outcome="rejected_ram"}
+    values: 0+100x90
+  - series: imaged_snapshot_publication_total{job="imaged",instance="a",tier="init",outcome="rejected_ephemeral"}
+    values: 0+100x90
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationErrors
+    exp_alerts: []
+- name: shutdown withdraws expectation without drain
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - series: imaged_post_capture_observation_enabled{job="imaged",instance="a"}
+    values: 1x19 0x70
+  - *id084
+  - *id005
+  - *id085
+  - series: imaged_post_capture_pending{job="imaged",instance="a",class="activation_pending"}
+    values: 1x90
+  - *id007
+  - series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="a",class="activation_pending"}
+    values: 60x90
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 19m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture
+        public_status: internal
+        job: imaged
+        instance: a
+        class: activation_pending
+      exp_annotations:
+        summary: A published init snapshot still awaits activation
+        description: A currently activation_pending candidate has a known publication or verification boundary older
+          than five minutes, held five minutes. Inspect retained hosting receipts, delivery retries and promotion
+          errors. Age is not continuous class residence; dependency and compatibility holds are separate.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+  - eval_time: 20m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_post_capture_oldest_known_boundary_age_seconds{class="activation_pending"}
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="imaged_post_capture_oldest_known_boundary_age_seconds",job="imaged",instance="a",class="activation_pending"}'
+      value: 1140
+- name: disabled unavailable observer
+  interval: 1m
+  input_series:
+  - *id001
+  - series: imaged_post_capture_collection_success{job="imaged",instance="a"}
+    values: '0x90'
+  - *id003
+  - series: imaged_post_capture_observation_enabled{job="imaged",instance="a"}
+    values: '0x90'
+  - *id084
+  - *id005
+  - *id085
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationGateUnfinalized
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationErrors
+    exp_alerts: []
+- name: down target uses target alert
+  interval: 1m
+  input_series:
+  - series: up{job="imaged",instance="a"}
+    values: '0x90'
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationGateUnfinalized
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationErrors
+    exp_alerts: []
+- name: absent installation
+  interval: 1m
+  input_series: []
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationPending
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasDeploymentActivationGateUnfinalized
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasPostCaptureEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPublicationErrors
+    exp_alerts: []
+- name: another replica cannot lend its missing evidence
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id084
+  - *id005
+  - *id085
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  - *id070
+  - *id071
+  - *id072
+  - *id073
+  - *id074
+  - *id075
+  - *id076
+  - *id077
+  - *id078
+  - *id079
+  - *id080
+  - *id081
+  - *id082
+  - *id083
+  - series: up{job="imaged",instance="b"}
+    values: 1x90
+  - series: imaged_post_capture_collection_success{job="imaged",instance="b"}
+    values: 1x90
+  - series: imaged_post_capture_collection_last_success_timestamp_seconds{job="imaged",instance="b"}
+    values: 0+60x90
+  - series: imaged_post_capture_observation_enabled{job="imaged",instance="b"}
+    values: 1x90
+  - series: imaged_post_capture_pending{job="imaged",instance="b",class="publication_pending"}
+    values: '0x90'
+  - series: imaged_post_capture_age_unknown{job="imaged",instance="b",class="publication_pending"}
+    values: '0x90'
+  - series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="b",class="publication_pending"}
+    values: '0x90'
+  - series: imaged_post_capture_pending{job="imaged",instance="b",class="activation_pending"}
+    values: '0x90'
+  - series: imaged_post_capture_age_unknown{job="imaged",instance="b",class="activation_pending"}
+    values: '0x90'
+  - series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="b",class="activation_pending"}
+    values: '0x90'
+  - series: imaged_post_capture_pending{job="imaged",instance="b",class="dependency_held"}
+    values: '0x90'
+  - series: imaged_post_capture_age_unknown{job="imaged",instance="b",class="dependency_held"}
+    values: '0x90'
+  - series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="b",class="dependency_held"}
+    values: '0x90'
+  - series: imaged_post_capture_pending{job="imaged",instance="b",class="compatibility_held"}
+    values: '0x90'
+  - series: imaged_post_capture_age_unknown{job="imaged",instance="b",class="compatibility_held"}
+    values: '0x90'
+  - series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="b",class="compatibility_held"}
+    values: '0x90'
+  - series: imaged_post_capture_pending{job="imaged",instance="b",class="hosting_verifying"}
+    values: '0x90'
+  - series: imaged_post_capture_age_unknown{job="imaged",instance="b",class="hosting_verifying"}
+    values: '0x90'
+  - series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="b",class="hosting_verifying"}
+    values: '0x90'
+  - series: imaged_post_capture_pending{job="imaged",instance="b",class="hosting_retry"}
+    values: '0x90'
+  - series: imaged_post_capture_age_unknown{job="imaged",instance="b",class="hosting_retry"}
+    values: '0x90'
+  - series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="b",class="hosting_retry"}
+    values: '0x90'
+  - series: imaged_post_capture_pending{job="imaged",instance="b",class="gate_overdue"}
+    values: '0x90'
+  - series: imaged_post_capture_age_unknown{job="imaged",instance="b",class="gate_overdue"}
+    values: '0x90'
+  - series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="b",class="gate_overdue"}
+    values: '0x90'
+  - series: imaged_post_capture_pending{job="imaged",instance="b",class="unknown"}
+    values: '0x90'
+  - series: imaged_post_capture_age_unknown{job="imaged",instance="b",class="unknown"}
+    values: '0x90'
+  - series: imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged",instance="b",class="unknown"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="evidence",outcome="success"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="evidence",outcome="error"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="evidence",outcome="deferred"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="evidence",outcome="held"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="evidence",outcome="canceled"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="dependency",outcome="success"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="dependency",outcome="error"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="dependency",outcome="deferred"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="dependency",outcome="held"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="dependency",outcome="canceled"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="verification",outcome="success"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="verification",outcome="error"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="verification",outcome="deferred"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="verification",outcome="held"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="verification",outcome="canceled"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="promotion",outcome="success"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="promotion",outcome="error"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="promotion",outcome="deferred"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="promotion",outcome="held"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="promotion",outcome="canceled"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="finalize",outcome="success"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="finalize",outcome="error"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="finalize",outcome="deferred"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="finalize",outcome="held"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="snapshot",phase="finalize",outcome="canceled"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="evidence",outcome="success"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="evidence",outcome="error"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="evidence",outcome="deferred"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="evidence",outcome="held"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="evidence",outcome="canceled"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="dependency",outcome="success"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="dependency",outcome="error"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="dependency",outcome="deferred"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="dependency",outcome="held"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="dependency",outcome="canceled"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="verification",outcome="success"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="verification",outcome="error"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="verification",outcome="deferred"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="verification",outcome="held"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="verification",outcome="canceled"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="promotion",outcome="success"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="promotion",outcome="error"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="promotion",outcome="deferred"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="promotion",outcome="held"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="promotion",outcome="canceled"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="finalize",outcome="success"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="finalize",outcome="error"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="finalize",outcome="deferred"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="finalize",outcome="held"}
+    values: '0x90'
+  - series: imaged_deployment_activation_attempts_total{job="imaged",instance="b",input="ready",phase="finalize",outcome="canceled"}
+    values: '0x90'
+  - series: imaged_snapshot_publication_total{job="imaged",instance="b",tier="init",outcome="published"}
+    values: '0x90'
+  - series: imaged_snapshot_publication_total{job="imaged",instance="b",tier="init",outcome="duplicate"}
+    values: '0x90'
+  - series: imaged_snapshot_publication_total{job="imaged",instance="b",tier="init",outcome="write_error"}
+    values: '0x90'
+  - series: imaged_snapshot_publication_total{job="imaged",instance="b",tier="init",outcome="policy_error"}
+    values: '0x90'
+  - series: imaged_snapshot_publication_total{job="imaged",instance="b",tier="init",outcome="stale_config"}
+    values: '0x90'
+  - series: imaged_snapshot_publication_total{job="imaged",instance="b",tier="init",outcome="rejected_ram"}
+    values: '0x90'
+  - series: imaged_snapshot_publication_total{job="imaged",instance="b",tier="init",outcome="rejected_ephemeral"}
+    values: '0x90'
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasPostCaptureTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: post_capture_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Post-capture diagnostics are unavailable
+        description: Imaged is scraped but its post-capture snapshot is missing, failed, inconsistent, older than
+          two minutes, or has incomplete activation counters. Counts and ages are unknown. Check the observer, database,
+          clocks and binary; intentional shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md

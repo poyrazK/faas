@@ -1,0 +1,1471 @@
+# Running claims, durable cleanup, recovery outcomes, and honest unknown states.
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 1m
+tests:
+- name: successful idle observations are zero and successful idle recovery is live
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x120
+  - series: faas_build_running_count{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_running_oldest_started_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: up{job="builderd",instance="b"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="b"}
+    values: 600x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="b"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="b"}
+    values: 1x120
+  alert_rule_test:
+  - eval_time: 25m
+    alertname: FaasBuildRunningOverdue
+    exp_alerts: []
+  - eval_time: 25m
+    alertname: FaasBuildVMCleanupOverdue
+    exp_alerts: []
+  - eval_time: 25m
+    alertname: FaasBuilderReaperFailing
+    exp_alerts: []
+  - eval_time: 25m
+    alertname: FaasBuilderReaperStalled
+    exp_alerts: []
+  - eval_time: 25m
+    alertname: FaasBuildRecoveryTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 25m
+    alertname: FaasBuilderReaperTelemetryUnavailable
+    exp_alerts: []
+  promql_expr_test:
+  - expr: faas_build_running_oldest_age_seconds
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="faas_build_running_oldest_age_seconds",job="apid",instance="a"}'
+      value: 0
+  - expr: faas_build_vm_cleanup_oldest_age_seconds
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="faas_build_vm_cleanup_oldest_age_seconds",job="apid",instance="a"}'
+      value: 0
+- name: one claimed build is visible after leaving the queue and warns after exact allowance and hold
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x120
+  - series: faas_build_running_count{job="apid",instance="a"}
+    values: 1x120
+  - series: faas_build_running_oldest_started_timestamp_seconds{job="apid",instance="a"}
+    values: 60x120
+  - series: faas_build_vm_cleanup_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: up{job="builderd",instance="b"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="b"}
+    values: 600x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="b"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="b"}
+    values: 1x120
+  alert_rule_test:
+  - eval_time: 13m
+    alertname: FaasBuildRunningOverdue
+    exp_alerts: []
+  - eval_time: 18m
+    alertname: FaasBuildRunningOverdue
+    exp_alerts: []
+  - eval_time: 19m
+    alertname: FaasBuildRunningOverdue
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_recovery
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: &id003
+        summary: A running build is overdue for recovery
+        description: A running claim has exceeded the largest configured recovery threshold plus two sweep intervals
+          for 5m. Inspect reaper progress and cleanup workload; this is overdue customer work, not proof that its
+          VM is still running.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildRecovery.md
+  promql_expr_test:
+  - expr: faas_build_running_oldest_age_seconds
+    eval_time: 13m
+    exp_samples:
+    - labels: '{__name__="faas_build_running_oldest_age_seconds",job="apid",instance="a"}'
+      value: 720
+- name: cleanup age includes retrying and claimed obligations
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x120
+  - series: faas_build_running_count{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_running_oldest_started_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_pending{job="apid",instance="a"}
+    values: 1x120
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="a"}
+    values: 60x120
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="a"}
+    values: 1x120
+  - series: up{job="builderd",instance="b"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="b"}
+    values: 600x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="b"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="b"}
+    values: 1x120
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: FaasBuildVMCleanupOverdue
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: FaasBuildVMCleanupOverdue
+    exp_alerts: []
+  - eval_time: 9m
+    alertname: FaasBuildVMCleanupOverdue
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_recovery
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations:
+        summary: Builder VM cleanup is overdue
+        description: A durable cleanup obligation has remained outstanding beyond two configured sweep intervals
+          for 5m. Age survives retries and live claims. Inspect cancel and result-record errors and batch throughput
+          before intervening.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildRecovery.md
+  promql_expr_test:
+  - expr: faas_build_vm_cleanup_oldest_age_seconds
+    eval_time: 3m
+    exp_samples:
+    - labels: '{__name__="faas_build_vm_cleanup_oldest_age_seconds",job="apid",instance="a"}'
+      value: 120
+- name: whole pass failure is separate from stalled success including no first success
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x120
+  - series: faas_build_running_count{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_running_oldest_started_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: up{job="builderd",instance="b"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="b"}
+    values: 600x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="b"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="b"}
+    values: '0x120'
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="b"}
+    values: '0x120'
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuilderReaperFailing
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasBuilderReaperFailing
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_recovery
+        public_status: internal
+        job: builderd
+        instance: b
+      exp_annotations: &id002
+        summary: Builder recovery pass failed
+        description: The latest completed reaper pass has remained unsuccessful for 5m. A successful row sweep does
+          not imply successful VM cleanup or durable result recording. Inspect operation outcomes and logs.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildRecovery.md
+  - eval_time: 10m
+    alertname: FaasBuilderReaperStalled
+    exp_alerts: []
+  - eval_time: 11m
+    alertname: FaasBuilderReaperStalled
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_recovery
+        public_status: internal
+        job: builderd
+        instance: b
+      exp_annotations: &id001
+        summary: Builder recovery has stopped succeeding
+        description: No whole recovery pass has succeeded within two configured intervals plus the full serial cleanup
+          call budget, for 5m. This also detects a loop that never starts on an otherwise idle builder. Capture
+          logs and goroutine evidence before restarting.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildRecovery.md
+- name: idle stopped loop is detected even with previous success and no backlog
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x120
+  - series: faas_build_running_count{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_running_oldest_started_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: up{job="builderd",instance="b"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="b"}
+    values: 600x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="b"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="b"}
+    values: 1x120
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: FaasBuilderReaperStalled
+    exp_alerts: []
+  - eval_time: 11m
+    alertname: FaasBuilderReaperStalled
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_recovery
+        public_status: internal
+        job: builderd
+        instance: b
+      exp_annotations: *id001
+- name: production cadence startup allows full existing serial cleanup budget
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x120
+  - series: faas_build_running_count{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_running_oldest_started_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: up{job="builderd",instance="b"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="b"}
+    values: 600x120
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="b"}
+    values: 1500x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="b"}
+    values: 3840x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: '0x120'
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="b"}
+    values: '0x120'
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="b"}
+    values: '0x120'
+  alert_rule_test:
+  - eval_time: 90m
+    alertname: FaasBuilderReaperFailing
+    exp_alerts: []
+  - eval_time: 85m
+    alertname: FaasBuilderReaperStalled
+    exp_alerts: []
+  - eval_time: 90m
+    alertname: FaasBuilderReaperStalled
+    exp_alerts: []
+  - eval_time: 91m
+    alertname: FaasBuilderReaperStalled
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_recovery
+        public_status: internal
+        job: builderd
+        instance: b
+      exp_annotations: *id001
+- name: success after a failure clears warning and avoids stalled warning
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x120
+  - series: faas_build_running_count{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_running_oldest_started_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: up{job="builderd",instance="b"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="b"}
+    values: 600x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="b"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x6 420+60x113
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="b"}
+    values: 0x6 420+60x113
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="b"}
+    values: 0x6 1x113
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasBuilderReaperFailing
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_recovery
+        public_status: internal
+        job: builderd
+        instance: b
+      exp_annotations: *id002
+  - eval_time: 7m
+    alertname: FaasBuilderReaperFailing
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: FaasBuilderReaperStalled
+    exp_alerts: []
+- name: drain clears both backlog warnings
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x120
+  - series: faas_build_running_count{job="apid",instance="a"}
+    values: 1x19 0x100
+  - series: faas_build_running_oldest_started_timestamp_seconds{job="apid",instance="a"}
+    values: 60x19 0x100
+  - series: faas_build_vm_cleanup_pending{job="apid",instance="a"}
+    values: 1x19 0x100
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="a"}
+    values: 60x19 0x100
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: up{job="builderd",instance="b"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="b"}
+    values: 600x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="b"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="b"}
+    values: 1x120
+  alert_rule_test:
+  - eval_time: 19m
+    alertname: FaasBuildRunningOverdue
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_recovery
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id003
+  - eval_time: 20m
+    alertname: FaasBuildRunningOverdue
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuildVMCleanupOverdue
+    exp_alerts: []
+- name: stopped observation poller becomes unknown and cannot retain backlog warnings
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 60x120
+  - series: faas_build_running_count{job="apid",instance="a"}
+    values: 1x120
+  - series: faas_build_running_oldest_started_timestamp_seconds{job="apid",instance="a"}
+    values: 60x120
+  - series: faas_build_vm_cleanup_pending{job="apid",instance="a"}
+    values: 1x120
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="a"}
+    values: 60x120
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: up{job="builderd",instance="b"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="b"}
+    values: 600x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="b"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="b"}
+    values: 1x120
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: FaasBuildRecoveryTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 9m
+    alertname: FaasBuildRecoveryTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_recovery_telemetry
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: &id004
+        summary: Build recovery state is unavailable
+        description: The running-build and durable VM cleanup snapshot is missing, failed, inconsistent or older
+          than 120 seconds. Backlog state is unknown; inspect apid database access and the observation poller.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildRecovery.md
+  - eval_time: 20m
+    alertname: FaasBuildRunningOverdue
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuildVMCleanupOverdue
+    exp_alerts: []
+  promql_expr_test:
+  - expr: faas_build_running_oldest_age_seconds
+    eval_time: 10m
+    exp_samples: []
+  - expr: faas_build_vm_cleanup_oldest_age_seconds
+    eval_time: 10m
+    exp_samples: []
+- name: all discovered builders contribute conservative configuration
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x120
+  - series: faas_build_running_count{job="apid",instance="a"}
+    values: 1x120
+  - series: faas_build_running_oldest_started_timestamp_seconds{job="apid",instance="a"}
+    values: 60x120
+  - series: faas_build_vm_cleanup_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: up{job="builderd",instance="b"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="b"}
+    values: 600x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="b"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="b"}
+    values: 1x120
+  - series: up{job="builderd",instance="c"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="c"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="c"}
+    values: 300x120
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="c"}
+    values: 1800x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="c"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="c"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="c"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="c"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="c"}
+    values: 1x120
+  alert_rule_test:
+  - eval_time: 46m
+    alertname: FaasBuildRunningOverdue
+    exp_alerts: []
+  - eval_time: 47m
+    alertname: FaasBuildRunningOverdue
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_recovery
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id003
+- name: missing sibling config cannot silently shorten fleet timing allowance
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x120
+  - series: faas_build_running_count{job="apid",instance="a"}
+    values: 1x120
+  - series: faas_build_running_oldest_started_timestamp_seconds{job="apid",instance="a"}
+    values: 60x120
+  - series: faas_build_vm_cleanup_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: up{job="builderd",instance="b"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="b"}
+    values: 600x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="b"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="b"}
+    values: 1x120
+  - series: up{job="builderd",instance="c"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="c"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="c"}
+    values: 300x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="c"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="c"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="c"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="c"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="c"}
+    values: 1x120
+  alert_rule_test:
+  - eval_time: 50m
+    alertname: FaasBuildRunningOverdue
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasBuilderReaperTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_recovery_telemetry
+        public_status: internal
+        job: builderd
+        instance: c
+      exp_annotations: &id005
+        summary: Builder recovery loop telemetry is unavailable
+        description: The builder is scraped but its reaper configuration or progress timestamps are missing or invalid.
+          Recovery health and fleet timing allowances are unknown.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildRecovery.md
+  promql_expr_test:
+  - expr: faas_build_running_recovery_allowance_seconds
+    eval_time: 10m
+    exp_samples: []
+- name: sibling apid cannot repair an incomplete snapshot
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x120
+  - series: faas_build_running_count{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_running_oldest_started_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: up{job="apid",instance="c"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="c"}
+    values: 1x120
+  - series: apid_build_recovery_collection_last_success_timestamp_seconds{job="apid",instance="c"}
+    values: 0+60x120
+  - series: faas_build_running_count{job="apid",instance="c"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_pending{job="apid",instance="c"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="c"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="c"}
+    values: '0x120'
+  - series: up{job="builderd",instance="b"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="b"}
+    values: 600x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="b"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="b"}
+    values: 1x120
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasBuildRecoveryTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_recovery_telemetry
+        public_status: internal
+        job: apid
+        instance: c
+      exp_annotations: *id004
+  promql_expr_test:
+  - expr: faas_build_running_oldest_age_seconds
+    eval_time: 10m
+    exp_samples:
+    - labels: '{__name__="faas_build_running_oldest_age_seconds",job="apid",instance="a"}'
+      value: 0
+- name: invalid apid_build_recovery_collection_success is unknown
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="a"}
+    values: '0x120'
+  - series: apid_build_recovery_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x120
+  - series: faas_build_running_count{job="apid",instance="a"}
+    values: 1x120
+  - series: faas_build_running_oldest_started_timestamp_seconds{job="apid",instance="a"}
+    values: 60x120
+  - series: faas_build_vm_cleanup_pending{job="apid",instance="a"}
+    values: 1x120
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="a"}
+    values: 60x120
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: up{job="builderd",instance="b"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="b"}
+    values: 600x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="b"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="b"}
+    values: 1x120
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasBuildRecoveryTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_recovery_telemetry
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id004
+  - eval_time: 30m
+    alertname: FaasBuildRunningOverdue
+    exp_alerts: []
+  - eval_time: 30m
+    alertname: FaasBuildVMCleanupOverdue
+    exp_alerts: []
+  promql_expr_test:
+  - expr: faas_build_running_oldest_age_seconds
+    eval_time: 10m
+    exp_samples: []
+- name: invalid faas_build_running_oldest_started_timestamp_seconds is unknown
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x120
+  - series: faas_build_running_count{job="apid",instance="a"}
+    values: 1x120
+  - series: faas_build_running_oldest_started_timestamp_seconds{job="apid",instance="a"}
+    values: 9000x120
+  - series: faas_build_vm_cleanup_pending{job="apid",instance="a"}
+    values: 1x120
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="a"}
+    values: 60x120
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: up{job="builderd",instance="b"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="b"}
+    values: 600x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="b"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="b"}
+    values: 1x120
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasBuildRecoveryTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_recovery_telemetry
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id004
+  - eval_time: 30m
+    alertname: FaasBuildRunningOverdue
+    exp_alerts: []
+  - eval_time: 30m
+    alertname: FaasBuildVMCleanupOverdue
+    exp_alerts: []
+  promql_expr_test:
+  - expr: faas_build_running_oldest_age_seconds
+    eval_time: 10m
+    exp_samples: []
+- name: invalid faas_build_vm_cleanup_oldest_created_timestamp_seconds is unknown
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x120
+  - series: faas_build_running_count{job="apid",instance="a"}
+    values: 1x120
+  - series: faas_build_running_oldest_started_timestamp_seconds{job="apid",instance="a"}
+    values: 60x120
+  - series: faas_build_vm_cleanup_pending{job="apid",instance="a"}
+    values: 1x120
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="a"}
+    values: 9000x120
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: up{job="builderd",instance="b"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="b"}
+    values: 600x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="b"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="b"}
+    values: 1x120
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasBuildRecoveryTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_recovery_telemetry
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id004
+  - eval_time: 30m
+    alertname: FaasBuildRunningOverdue
+    exp_alerts: []
+  - eval_time: 30m
+    alertname: FaasBuildVMCleanupOverdue
+    exp_alerts: []
+  promql_expr_test:
+  - expr: faas_build_running_oldest_age_seconds
+    eval_time: 10m
+    exp_samples: []
+- name: invalid faas_build_vm_cleanup_retry_pending is unknown
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x120
+  - series: faas_build_running_count{job="apid",instance="a"}
+    values: 1x120
+  - series: faas_build_running_oldest_started_timestamp_seconds{job="apid",instance="a"}
+    values: 60x120
+  - series: faas_build_vm_cleanup_pending{job="apid",instance="a"}
+    values: 1x120
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="a"}
+    values: 60x120
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="a"}
+    values: 2x120
+  - series: up{job="builderd",instance="b"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="b"}
+    values: 600x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="b"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="b"}
+    values: 1x120
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasBuildRecoveryTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_recovery_telemetry
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id004
+  - eval_time: 30m
+    alertname: FaasBuildRunningOverdue
+    exp_alerts: []
+  - eval_time: 30m
+    alertname: FaasBuildVMCleanupOverdue
+    exp_alerts: []
+  promql_expr_test:
+  - expr: faas_build_running_oldest_age_seconds
+    eval_time: 10m
+    exp_samples: []
+- name: missing faas_build_running_count is unknown
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x120
+  - series: faas_build_running_oldest_started_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: up{job="builderd",instance="b"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="b"}
+    values: 600x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="b"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="b"}
+    values: 1x120
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasBuildRecoveryTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_recovery_telemetry
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id004
+  promql_expr_test:
+  - expr: faas_build_vm_cleanup_oldest_age_seconds
+    eval_time: 10m
+    exp_samples: []
+- name: missing faas_build_vm_cleanup_pending is unknown
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x120
+  - series: faas_build_running_count{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_running_oldest_started_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: up{job="builderd",instance="b"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="b"}
+    values: 600x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="b"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="b"}
+    values: 1x120
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasBuildRecoveryTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_recovery_telemetry
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id004
+  promql_expr_test:
+  - expr: faas_build_vm_cleanup_oldest_age_seconds
+    eval_time: 10m
+    exp_samples: []
+- name: missing apid_build_recovery_collection_last_success_timestamp_seconds is unknown
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="a"}
+    values: 1x120
+  - series: faas_build_running_count{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_running_oldest_started_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: up{job="builderd",instance="b"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="b"}
+    values: 600x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="b"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="b"}
+    values: 1x120
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasBuildRecoveryTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_recovery_telemetry
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id004
+  promql_expr_test:
+  - expr: faas_build_vm_cleanup_oldest_age_seconds
+    eval_time: 10m
+    exp_samples: []
+- name: invalid builderd_build_reaper_last_success_timestamp_seconds is unknown
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x120
+  - series: faas_build_running_count{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_running_oldest_started_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: up{job="builderd",instance="b"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="b"}
+    values: 600x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="b"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="b"}
+    values: 9000x120
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="b"}
+    values: 1x120
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasBuilderReaperTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_recovery_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+      exp_annotations: *id005
+  - eval_time: 30m
+    alertname: FaasBuilderReaperStalled
+    exp_alerts: []
+- name: invalid builderd_build_reaper_interval_seconds is unknown
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x120
+  - series: faas_build_running_count{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_running_oldest_started_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: up{job="builderd",instance="b"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="b"}
+    values: '0x120'
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="b"}
+    values: 600x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="b"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="b"}
+    values: 1x120
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasBuilderReaperTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_recovery_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+      exp_annotations: *id005
+  - eval_time: 30m
+    alertname: FaasBuilderReaperStalled
+    exp_alerts: []
+- name: no targets invents no installation
+  interval: 1m
+  input_series: []
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuildRecoveryTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderReaperTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuildRunningOverdue
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuildVMCleanupOverdue
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderReaperStalled
+    exp_alerts: []
+- name: failed builder scrape makes timing unavailable
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x120
+  - series: faas_build_running_count{job="apid",instance="a"}
+    values: 1x120
+  - series: faas_build_running_oldest_started_timestamp_seconds{job="apid",instance="a"}
+    values: 60x120
+  - series: faas_build_vm_cleanup_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: up{job="builderd",instance="b"}
+    values: '0x120'
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="b"}
+    values: 600x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="b"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="b"}
+    values: 1x120
+  alert_rule_test:
+  - eval_time: 30m
+    alertname: FaasBuildRunningOverdue
+    exp_alerts: []
+  - eval_time: 30m
+    alertname: FaasBuilderReaperStalled
+    exp_alerts: []
+- name: failed observation resets hold and recovery starts a fresh hold
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="a"}
+    values: 1x19 0x2 1x97
+  - series: apid_build_recovery_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x120
+  - series: faas_build_running_count{job="apid",instance="a"}
+    values: 1x120
+  - series: faas_build_running_oldest_started_timestamp_seconds{job="apid",instance="a"}
+    values: 60x120
+  - series: faas_build_vm_cleanup_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: up{job="builderd",instance="b"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="b"}
+    values: 600x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="b"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="b"}
+    values: 1x120
+  alert_rule_test:
+  - eval_time: 19m
+    alertname: FaasBuildRunningOverdue
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_recovery
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id003
+  - eval_time: 20m
+    alertname: FaasBuildRunningOverdue
+    exp_alerts: []
+  - eval_time: 27m
+    alertname: FaasBuildRunningOverdue
+    exp_alerts: []
+  - eval_time: 28m
+    alertname: FaasBuildRunningOverdue
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_recovery
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id003
+- name: removing oldest claim reveals younger work and resets hold
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_success{job="apid",instance="a"}
+    values: 1x120
+  - series: apid_build_recovery_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x120
+  - series: faas_build_running_count{job="apid",instance="a"}
+    values: 1x120
+  - series: faas_build_running_oldest_started_timestamp_seconds{job="apid",instance="a"}
+    values: 60x19 1140x100
+  - series: faas_build_vm_cleanup_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid",instance="a"}
+    values: '0x120'
+  - series: faas_build_vm_cleanup_retry_pending{job="apid",instance="a"}
+    values: '0x120'
+  - series: up{job="builderd",instance="b"}
+    values: 1x120
+  - series: builderd_build_reaper_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_interval_seconds{job="builderd",instance="b"}
+    values: 60x120
+  - series: builderd_build_reaper_threshold_seconds{job="builderd",instance="b"}
+    values: 600x120
+  - series: builderd_build_reaper_cleanup_budget_seconds{job="builderd",instance="b"}
+    values: 120x120
+  - series: builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_success_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x120
+  - series: builderd_build_reaper_last_pass_success{job="builderd",instance="b"}
+    values: 1x120
+  alert_rule_test:
+  - eval_time: 19m
+    alertname: FaasBuildRunningOverdue
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_recovery
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id003
+  - eval_time: 20m
+    alertname: FaasBuildRunningOverdue
+    exp_alerts: []
+  - eval_time: 36m
+    alertname: FaasBuildRunningOverdue
+    exp_alerts: []
+  - eval_time: 37m
+    alertname: FaasBuildRunningOverdue
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_recovery
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id003

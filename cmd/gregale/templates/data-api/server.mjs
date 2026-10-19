@@ -86,7 +86,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
         if (typeof payload.sub !== 'string' || !payload.sub || typeof payload.exp !== 'number') return problem(res, 401, 'token_invalid')
         if (payload.gregale_read_only !== undefined && typeof payload.gregale_read_only !== 'boolean') return problem(res, 401, 'token_invalid')
         if (!admitRateLimit(rateLimiter, payload.sub, res, problem)) return
-        if (payload.gregale_read_only === true && !['GET','HEAD'].includes(req.method)) return problem(res, 403, 'read_only_identity')
+        if ((config.readOnly === true || payload.gregale_read_only === true) && !['GET','HEAD'].includes(req.method)) return problem(res, 403, 'read_only_identity')
         if (guarded) {
           if (!/^[a-f0-9]{64}$/.test(servingFingerprint ?? '')) return problem(res, 503, 'serving_contract_unavailable')
           if (guarded[1] !== servingFingerprint && !acceptedFingerprints.has(guarded[1])) return problem(res, 409, 'schema_contract_mismatch')

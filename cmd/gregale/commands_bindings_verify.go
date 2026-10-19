@@ -403,6 +403,14 @@ func executeServiceBindingProbe(ctx context.Context, client serviceBindingProbeC
 		TimeoutSeconds: bindingProbeTaskTimeoutSeconds,
 		MaxOutputBytes: 4096,
 	}
+	managed, selectionErr := selectedManagedServiceProbe(ctx, client, slug, service)
+	if selectionErr != nil {
+		return report, api.AppTaskResponse{}, "Could not select service-binding canary", 1, selectionErr
+	}
+	if managed != nil {
+		request.Command = []string{api.AppTaskServiceBindingTargetProbeCommand, service, managed.TargetDeploymentID}
+		request.VerificationDeploymentID = managed.CallerDeploymentID
+	}
 	task, err := client.CreateAppTask(ctx, slug, request)
 	if err != nil {
 		report.Error = err.Error()
@@ -481,6 +489,15 @@ func executeServiceBindingProbe(ctx context.Context, client serviceBindingProbeC
 				report.Error = "canary task did not succeed"
 			}
 		}
+		return report, task, "", 1, nil
+	}
+	if managed != nil {
+		if err := confirmManagedServiceProbe(ctx, client, slug, *managed, report, task); err != nil {
+			report.Error = err.Error()
+			return report, task, "", 1, nil
+		}
+	} else if report.ManagedService != nil {
+		report.Error = "managed service context was not selected; use --deployment and retry"
 		return report, task, "", 1, nil
 	}
 	return report, task, "", 0, nil

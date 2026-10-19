@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -35,15 +36,22 @@ func (e *Engine) loadRuntimeDeploymentValues(ctx context.Context, app state.App,
 }
 
 func (e *Engine) loadRuntimeDeploymentValuesForTask(ctx context.Context, app state.App, dep state.Deployment, release bool) (runtimeDeploymentValues, error) {
+	return buildRuntimeDeploymentValues(app, dep, e.readRuntimeDeploymentInputs(ctx, app.AccountID, dep), release)
+}
+
+// buildRuntimeDeploymentValues checks and assembles the values from their
+// three reads. It reads nothing, so the owner cache can keep the reads and
+// build fresh values, with their own maps and slices, for every wake.
+func buildRuntimeDeploymentValues(app state.App, dep state.Deployment, reads runtimeDeploymentInputs, release bool) (runtimeDeploymentValues, error) {
 	accountID := app.AccountID
-	boundary, stamped, err := state.RuntimeConfigChangedAtForScope(ctx, e.store, dep.AppID, dep.Scope)
-	if err != nil {
-		return runtimeDeploymentValues{}, err
+	if reads.boundaryErr != nil {
+		return runtimeDeploymentValues{}, reads.boundaryErr
 	}
-	if !stamped {
+	boundary := reads.boundary
+	if !reads.stamped {
 		boundary = time.Unix(0, 0).UTC()
 	}
-	snapshot, err := e.store.RuntimeAppValuesForDeployment(ctx, accountID, dep.AppID, dep.ID)
+	snapshot, err := reads.snapshot, reads.snapshotErr
 	if err != nil {
 		return runtimeDeploymentValues{}, fmt.Errorf("read owned deployment values: %w", err)
 	}
@@ -84,12 +92,11 @@ func (e *Engine) loadRuntimeDeploymentValuesForTask(ctx context.Context, app sta
 		}
 		result.APIEnv = append(result.APIEnv, fcvm.APIEnvEntry{Key: row.Key, Value: row.Value})
 	}
-	var intent state.AppEnvironmentSecretIntent
-	if reader, ok := e.store.(state.AppEnvironmentSecretIntentReader); ok {
-		intent, err = reader.AppEnvironmentSecretIntent(ctx, accountID, dep.AppID, snapshot.Scope)
-		if err != nil {
-			return runtimeDeploymentValues{}, err
-		}
+	// The intent was read for normalizedDeploymentScope(dep.Scope), which the
+	// check above requires snapshot.Scope to equal.
+	intent := reads.intent
+	if reads.intentErr != nil {
+		return runtimeDeploymentValues{}, reads.intentErr
 	}
 	result.MainSecrets, err = sealedEnvDeliveryFromRowsWithIntent(snapshot.Secrets, accountID, dep.AppID, snapshot.Scope, refs, release, intent, true)
 	if err != nil {
@@ -129,4 +136,54 @@ func sameRuntimeValuesSnapshot(a, b state.RuntimeAppValuesSnapshot) bool {
 	left, leftErr := state.NewRuntimeAppConfigFence(a)
 	right, rightErr := state.NewRuntimeAppConfigFence(b)
 	return leftErr == nil && rightErr == nil && left == right
+}
+
+// runtimeDeploymentInputs are the three independent reads behind
+// loadRuntimeDeploymentValuesForTask. They run concurrently, one round trip
+// on the wake path instead of three in a row; the caller checks their errors
+// in the order the reads used to run, so the result is unchanged.
+type runtimeDeploymentInputs struct {
+	boundary    time.Time
+	stamped     bool
+	boundaryErr error
+	snapshot    state.RuntimeAppValuesSnapshot
+	snapshotErr error
+	intent      state.AppEnvironmentSecretIntent
+	intentErr   error
+}
+
+func (e *Engine) readRuntimeDeploymentInputs(ctx context.Context, accountID string, dep state.Deployment) runtimeDeploymentInputs {
+	var in runtimeDeploymentInputs
+	concurrently(
+		func() {
+			in.boundary, in.stamped, in.boundaryErr = state.RuntimeConfigChangedAtForScope(ctx, e.store, dep.AppID, dep.Scope)
+		},
+		func() {
+			in.snapshot, in.snapshotErr = e.store.RuntimeAppValuesForDeployment(ctx, accountID, dep.AppID, dep.ID)
+		},
+		func() {
+			if reader, ok := e.store.(state.AppEnvironmentSecretIntentReader); ok {
+				in.intent, in.intentErr = reader.AppEnvironmentSecretIntent(ctx, accountID, dep.AppID, normalizedDeploymentScope(dep.Scope))
+			}
+		},
+	)
+	return in
+}
+
+// concurrently runs fns at once and returns when all have finished. Each fn
+// writes only its own results.
+func concurrently(fns ...func()) {
+	if len(fns) == 0 {
+		return
+	}
+	var wg sync.WaitGroup
+	for _, fn := range fns[1:] {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fn()
+		}()
+	}
+	fns[0]()
+	wg.Wait()
 }

@@ -73,6 +73,14 @@ func (c *deploymentBindingProbeClient) CreateAppTask(ctx context.Context, slug s
 	if slug != c.slug || !api.IsBindingVerificationCommand(request.Command, request.CommandShell) {
 		return api.AppTaskResponse{}, fmt.Errorf("deployment selection is limited to binding verification probes")
 	}
+	if len(request.Command) > 1 && (request.Command[0] == api.AppTaskServiceBindingProbeCommand || request.Command[0] == api.AppTaskServiceBindingTargetProbeCommand) {
+		for _, item := range c.inventory.Bindings {
+			if item.Name == request.Command[1] && api.ServiceBindingVerificationUnsupported(item) {
+				return api.AppTaskResponse{}, fmt.Errorf("%s: use reviewed environment qualification", api.ManagedServiceVerificationUnsupported)
+			}
+		}
+	}
+	pinManagedServiceRequest(c.inventory, &request)
 	request.VerificationDeploymentID = c.inventory.RequestedDeploymentID
 	task, err := c.Client.CreateAppTask(ctx, slug, request)
 	if err == nil && (!sameBindingDeployment(task.DeploymentID, request.VerificationDeploymentID) || task.DeploymentScope != c.inventory.VerificationScope) {

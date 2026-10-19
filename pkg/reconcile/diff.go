@@ -68,10 +68,11 @@ type Action struct {
 // avoids spurious project.workload.changed rows on every scan.
 func workloadDiff(
 	scan reposcan.Result,
-	_ state.Project,
+	project state.Project,
 	existing []state.App,
 	exclude map[string]bool,
 ) []Action {
+	availableServices := availableServiceNames(scan, project, existing)
 	// Filter existing apps whose WorkloadName is in exclude.
 	// Without this filter, the removes loop below would emit a
 	// remove Action for every existing app that the scan
@@ -117,7 +118,7 @@ func workloadDiff(
 			continue
 		}
 		desired := resolveStartCommand(w)
-		changed := diffFieldsChanged(a, w, desired, workloadNameSet(scan.Workloads))
+		changed := diffFieldsChanged(a, w, desired, availableServices)
 		if len(changed) == 0 {
 			// No-op: same key, same columns. Skip.
 			continue
@@ -145,7 +146,7 @@ func workloadDiff(
 	// and drives the sequential project build enqueue path. Prefer a
 	// dependency order for creates; fall back to lexical order for a
 	// direct caller that bypassed admission validation.
-	if order, err := reposcan.DependencyOrder(scan.Workloads, scan.Managed); err == nil {
+	if order, err := reposcan.DependencyOrder(scan.Workloads, scan.Managed, scan.DependencyReferences); err == nil {
 		sortActionsByDependencyOrder(creates, order)
 	} else {
 		sortActionsByName(creates, true)

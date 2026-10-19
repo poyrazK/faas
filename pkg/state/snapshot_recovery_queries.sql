@@ -75,3 +75,17 @@ ON CONFLICT (dedupe_key) DO UPDATE SET dedupe_key = excluded.dedupe_key RETURNIN
 -- name: ListOperatorIntentAttemptsByTrace :many
 SELECT * FROM operator_intents WHERE trace_id = sqlc.arg(trace_id)::text
 ORDER BY requested_at DESC, id DESC LIMIT sqlc.arg(row_limit)::bigint;
+
+-- name: BindAdmittedInstanceSnapshotRecovery :execrows
+-- ADR-1741: the admission insert binds the new instance's recovery lineage
+-- in its own transaction. Share locks on the deployment and app order an
+-- operator cold boot, which advances the generation with an UPDATE, before
+-- or after the admission; no row means the binding is refused.
+INSERT INTO instance_snapshot_recovery (instance_id, wake_id, generation, snapshot_id)
+SELECT sqlc.arg(instance_id)::uuid, sqlc.arg(wake_id)::uuid, d.snapshot_recovery_generation, sqlc.narg(snapshot_id)::uuid
+FROM deployments d JOIN apps a ON a.id = d.app_id
+WHERE d.id = sqlc.arg(deployment_id)::uuid AND a.status <> 'deleted'
+  AND (sqlc.narg(snapshot_id)::uuid IS NULL OR EXISTS (
+    SELECT 1 FROM snapshots s WHERE s.id = sqlc.narg(snapshot_id)::uuid AND s.deployment_id = d.id
+      AND NOT s.stale AND NOT s.delete_pending AND s.recovery_generation = d.snapshot_recovery_generation))
+FOR SHARE OF d, a;

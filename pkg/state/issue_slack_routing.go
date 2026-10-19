@@ -60,8 +60,8 @@ func NormalizeIssueSlackRoutingRules(in []IssueSlackRoutingRule) ([]IssueSlackRo
 		if !ApplicationSlackEvent(r.Event) || !ValidSlackRoutingEnvironment(r.Environment) || !ValidIssueSlackChannel(r.ChannelID) {
 			return nil, fmt.Errorf("choose a native alert type, valid environment and Slack channel ID")
 		}
-		if r.FrequencyRuleKey != "" && (!ValidSlackRoutingKey(r.FrequencyRuleKey) || r.Event != "frequency_threshold_reached") {
-			return nil, fmt.Errorf("a frequency-rule key only applies to frequency-threshold alerts")
+		if !validSlackThresholdRuleKey(r.Event, r.FrequencyRuleKey) {
+			return nil, fmt.Errorf("an alert-rule key only applies to frequency or compound threshold alerts")
 		}
 		if r.TeamID != "" {
 			id, err := uuid.Parse(r.TeamID)
@@ -72,6 +72,11 @@ func NormalizeIssueSlackRoutingRules(in []IssueSlackRoutingRule) ([]IssueSlackRo
 		}
 	}
 	return out, nil
+}
+
+// Keep saved rules and draft samples on the same threshold-event vocabulary.
+func validSlackThresholdRuleKey(event, key string) bool {
+	return key == "" || ValidSlackRoutingKey(key) && (event == "frequency_threshold_reached" || event == "compound_threshold_reached")
 }
 
 // Rules preserve owner-defined priority. A channel override never chooses a team.

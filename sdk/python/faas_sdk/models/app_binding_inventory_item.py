@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from ..models.binding_verification import BindingVerification
     from ..models.outbound_binding_probe_policy import OutboundBindingProbePolicy
     from ..models.queue_binding_canary import QueueBindingCanary
+    from ..models.service_binding_inventory_context import ServiceBindingInventoryContext
 
 
 T = TypeVar("T", bound="AppBindingInventoryItem")
@@ -38,13 +39,20 @@ class AppBindingInventoryItem:
     runtime_status: str
     """Last-known queue consumer liveness (healthy, stale or degraded), otherwise unknown."""
     verification_status: str
-    """Latest platform canary: passed, failed, unknown or stale. Deployment or configuration changes invalidate old
-    evidence. Inventory does not run probes."""
+    """Latest platform canary: passed, failed, unknown or stale. Managed edges without a known verification
+    contract remain unsupported. Deployment or configuration changes invalidate old evidence. Inventory does not run
+    probes."""
+    service_context: ServiceBindingInventoryContext | Unset = UNSET
+    """Frozen deployment service edge and current reviewed route metadata. Only the named managed verification
+    contract can qualify this context; ordinary app receipts cannot."""
     service_target_deployment_id: UUID | Unset = UNSET
-    """Exact candidate service recipient required by this inventory selection."""
+    """Exact service recipient selected explicitly or resolved from the managed reviewed release."""
     queue_canary: QueueBindingCanary | Unset = UNSET
     """Retained deployment-bound receipt for an explicitly authorized push queue completion probe."""
     queue_canary_supported: bool | Unset = UNSET
+    """Whether the exact selected deployment and current consumer can admit a canary."""
+    queue_canary_reason: str | Unset = UNSET
+    """Sanitized reason canary publication is unavailable."""
     queue_environment: str | Unset = UNSET
     """Explicit queue environment; empty means shared legacy binding. Distinguishes app-wide scope from an
     environment named app. Consumer-readiness policies require this field; older inventories omit it."""
@@ -98,6 +106,10 @@ class AppBindingInventoryItem:
 
         verification_status = self.verification_status
 
+        service_context: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.service_context, Unset):
+            service_context = self.service_context.to_dict()
+
         service_target_deployment_id: str | Unset = UNSET
         if not isinstance(self.service_target_deployment_id, Unset):
             service_target_deployment_id = str(self.service_target_deployment_id)
@@ -107,6 +119,8 @@ class AppBindingInventoryItem:
             queue_canary = self.queue_canary.to_dict()
 
         queue_canary_supported = self.queue_canary_supported
+
+        queue_canary_reason = self.queue_canary_reason
 
         queue_environment = self.queue_environment
 
@@ -172,12 +186,16 @@ class AppBindingInventoryItem:
                 "verification_status": verification_status,
             }
         )
+        if service_context is not UNSET:
+            field_dict["service_context"] = service_context
         if service_target_deployment_id is not UNSET:
             field_dict["service_target_deployment_id"] = service_target_deployment_id
         if queue_canary is not UNSET:
             field_dict["queue_canary"] = queue_canary
         if queue_canary_supported is not UNSET:
             field_dict["queue_canary_supported"] = queue_canary_supported
+        if queue_canary_reason is not UNSET:
+            field_dict["queue_canary_reason"] = queue_canary_reason
         if queue_environment is not UNSET:
             field_dict["queue_environment"] = queue_environment
         if verification is not UNSET:
@@ -224,6 +242,7 @@ class AppBindingInventoryItem:
         from ..models.binding_verification import BindingVerification
         from ..models.outbound_binding_probe_policy import OutboundBindingProbePolicy
         from ..models.queue_binding_canary import QueueBindingCanary
+        from ..models.service_binding_inventory_context import ServiceBindingInventoryContext
 
         d = dict(src_dict)
         type_ = check_app_binding_inventory_item_type(d.pop("type"))
@@ -242,6 +261,13 @@ class AppBindingInventoryItem:
 
         verification_status = d.pop("verification_status")
 
+        _service_context = d.pop("service_context", UNSET)
+        service_context: ServiceBindingInventoryContext | Unset
+        if isinstance(_service_context, Unset):
+            service_context = UNSET
+        else:
+            service_context = ServiceBindingInventoryContext.from_dict(_service_context)
+
         _service_target_deployment_id = d.pop("service_target_deployment_id", UNSET)
         service_target_deployment_id: UUID | Unset
         if isinstance(_service_target_deployment_id, Unset):
@@ -257,6 +283,8 @@ class AppBindingInventoryItem:
             queue_canary = QueueBindingCanary.from_dict(_queue_canary)
 
         queue_canary_supported = d.pop("queue_canary_supported", UNSET)
+
+        queue_canary_reason = d.pop("queue_canary_reason", UNSET)
 
         queue_environment = d.pop("queue_environment", UNSET)
 
@@ -328,9 +356,11 @@ class AppBindingInventoryItem:
             state=state,
             runtime_status=runtime_status,
             verification_status=verification_status,
+            service_context=service_context,
             service_target_deployment_id=service_target_deployment_id,
             queue_canary=queue_canary,
             queue_canary_supported=queue_canary_supported,
+            queue_canary_reason=queue_canary_reason,
             queue_environment=queue_environment,
             verification=verification,
             refresh=refresh,

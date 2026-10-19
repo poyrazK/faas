@@ -210,7 +210,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/product-control/customer/{slug}/operations/{id}/cancel":              true,
 	"GET /v1/product-control/customer/{slug}/operations/{id}/artifacts/{artifact}": true,
 	"GET /v1/product-control/portal-core.js":                                       true,
-	// ADR-1661: the generated runtime reports with a short-lived, dedicated
+	// ADR-1730: the generated runtime reports with a short-lived, dedicated
 	// workload assertion. Owner API keys cannot publish these observations.
 	"POST /v1/runtime/data-api/connection-observations": true,
 
@@ -285,6 +285,20 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/builder-heartbeats":      true, // ADR-091 — operator-only (operator-side mega-PR Commit 7 / P5)
 	"GET /v1/admin/obs/health":                  true, // Obs-Meta + Trace-IDs Mega-PR / C7 — operator-only meta-obs health snapshot
 	"GET /v1/admin/obs/incidents":               true, // operator-only bounded incident correlation inbox
+
+	"GET /v1/admin/obs/incidents/{kind}/{id}/evidence":               true,
+	"GET /v1/admin/obs/incidents/platform_alert/recurrence":          true, // private retained-episode recurrence diagnostics
+	"GET /v1/admin/obs/incidents/platform_alert/response-times":      true, // private retained-episode response analytics
+	"GET /v1/admin/obs/notification-health":                          true, // private notification pipeline health
+	"GET /v1/admin/obs/collection-history":                           true, // private prospective collection evidence
+	"GET /v1/admin/obs/rule-health":                                  true, // private current alert-rule diagnostics
+	"GET /v1/admin/obs/rule-coverage":                                true, // private explicitly selected rule coverage
+	"GET /v1/admin/obs/recording-coverage":                           true, // private explicitly selected recording coverage
+	"GET /v1/admin/obs/input-health":                                 true, // private explicitly selected telemetry inputs
+	"GET /v1/admin/obs/incidents/platform_alert/summary":             true, // private retained-alert workload summary
+	"GET /v1/admin/obs/incidents/platform_alert/{id}/triage-history": true, // private sanitized operator triage receipts
+	"GET /v1/admin/obs/incidents/{kind}/{id}/context":                true, // private operator incident context
+	"POST /v1/admin/obs/incidents/platform_alert/{id}/triage":        true, // operator cookie session + recent MFA; outside tenant SDK // operator-only bounded incident evidence
 
 	// Operator-side observability mega-PR (PR #1099) P2 recovery
 	// primitives. Same operator-only posture as the ADR-091
@@ -771,6 +785,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":        "GetIssueSourceMaps",
 	"DELETE /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":     "RetireIssueSourceMaps",
 	"GET /v1/apps/{slug}/issues":                                               "ListIssues",
+	"GET /v1/apps/{slug}/issue-compound-alert-policy":                          "GetIssueCompoundAlertPolicy",
+	"PUT /v1/apps/{slug}/issue-compound-alert-policy":                          "SetIssueCompoundAlertPolicy",
+	"POST /v1/apps/{slug}/issue-compound-alert-policy/preview":                 "PreviewIssueCompoundAlert",
 	"GET /v1/apps/{slug}/issue-lifecycle-alert-policy":                         "GetIssueLifecycleAlertPolicy",
 	"PUT /v1/apps/{slug}/issue-lifecycle-alert-policy":                         "SetIssueLifecycleAlertPolicy",
 	"POST /v1/apps/{slug}/issue-lifecycle-alert-policy/preview":                "PreviewIssueLifecycleAlert",
@@ -1045,6 +1062,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/deployments/{id}/promote-with-application-ack":          "PromoteDeploymentWithBindings",
 	"POST /v1/deployments/{id}/promote":                               "PromoteDeploymentWithBindings",
 	"GET /v1/apps/{slug}/bindings":                                    "GetAppBindingInventory",
+	"GET /v1/apps/{slug}/bindings/services/{service}/explanation":     "ExplainAppServiceBinding",
 	"GET /v1/apps/{slug}/bindings/release-policy":                     "GetBindingReleasePolicy",
 	"PUT /v1/apps/{slug}/bindings/release-policy":                     "SetBindingReleasePolicy",
 	"PUT /v1/apps/{slug}/bindings/release-policy-with-object-storage": "SetObjectStorageBindingReleasePolicy",
@@ -1196,27 +1214,40 @@ var methodRouteMap = map[string]string{
 	// Swagger-style verb+resource concat), but the SDK convention
 	// uses ResourceVerb — pin to DestroyPreview so the wire +
 	// SDK verb surface stays uniform with Rollback/Park/Wake.
-	"POST /v1/preview/{slug}/destroy":            "DestroyPreview",
-	"GET /v1/account/export":                     "ExportAccount",
-	"DELETE /v1/account":                         "DeleteAccount",
-	"PATCH /v1/account/plan":                     "ChangePlan",
-	"GET /v1/account":                            "Whoami",
-	"GET /v1/capabilities":                       "GetCapabilities",
-	"POST /v1/executions":                        "CreateExecution",
-	"POST /v1/domains/{domain}/retry":            "RetryDomainVerification",
-	"GET /v1/executions":                         "ListExecutions",
-	"GET /v1/executions/{id}":                    "GetExecution",
-	"GET /v1/executions/{id}/events":             "StreamExecution",
-	"DELETE /v1/executions/{id}":                 "CancelExecution",
-	"GET /v1/apps/{slug}/tasks":                  "ListAppTasks",
-	"POST /v1/apps/{slug}/tasks":                 "CreateAppTask",
-	"GET /v1/apps/{slug}/tasks/{id}":             "GetAppTask",
-	"DELETE /v1/apps/{slug}/tasks/{id}":          "CancelAppTask",
-	"POST /v1/account/restore":                   "RestoreAccount",
-	"GET /v1/account/overage-cap":                "GetOverageCap",   // saved monthly spend cap
-	"POST /v1/account/overage-cap":               "RaiseOverageCap", // issue #561 spend cap
-	"POST /v1/account/mfa/disable-email":         "PostAccountMfaDisableEmail",
-	"POST /v1/account/mfa/disable-email/confirm": "PostAccountMfaDisableEmailConfirm",
+	"POST /v1/preview/{slug}/destroy":                            "DestroyPreview",
+	"GET /v1/account/export":                                     "ExportAccount",
+	"DELETE /v1/account":                                         "DeleteAccount",
+	"PATCH /v1/account/plan":                                     "ChangePlan",
+	"GET /v1/account":                                            "Whoami",
+	"GET /v1/capabilities":                                       "GetCapabilities",
+	"POST /v1/executions":                                        "CreateExecution",
+	"POST /v1/domains/{domain}/retry":                            "RetryDomainVerification",
+	"GET /v1/executions":                                         "ListExecutions",
+	"GET /v1/executions/{id}":                                    "GetExecution",
+	"GET /v1/executions/{id}/events":                             "StreamExecution",
+	"DELETE /v1/executions/{id}":                                 "CancelExecution",
+	"GET /v1/apps/{slug}/tasks":                                  "ListAppTasks",
+	"POST /v1/project-migrations":                                "CreateProjectMigration",
+	"GET /v1/project-migrations":                                 "ListProjectMigrations",
+	"GET /v1/project-migrations/{migration}":                     "GetProjectMigration",
+	"POST /v1/project-migrations/{migration}/resume":             "ResumeProjectMigration",
+	"POST /v1/apps/{slug}/migration-cutovers":                    "CreateMigrationCutover",
+	"GET /v1/apps/{slug}/migration-cutovers":                     "ListMigrationCutovers",
+	"GET /v1/apps/{slug}/migration-cutovers/{plan}":              "GetMigrationCutover",
+	"POST /v1/apps/{slug}/migration-cutovers/{plan}/actions":     "ActOnMigrationCutover",
+	"POST /v1/apps/{slug}/migration-verifications":               "CreateMigrationVerification",
+	"GET /v1/apps/{slug}/migration-verifications":                "ListMigrationVerifications",
+	"GET /v1/apps/{slug}/migration-verifications/{run}":          "GetMigrationVerification",
+	"POST /v1/apps/{slug}/migration-verifications/{run}/advance": "AdvanceMigrationVerification",
+	"POST /v1/apps/{slug}/migration-verifications/{run}/cancel":  "CancelMigrationVerification",
+	"POST /v1/apps/{slug}/tasks":                                 "CreateAppTask",
+	"GET /v1/apps/{slug}/tasks/{id}":                             "GetAppTask",
+	"DELETE /v1/apps/{slug}/tasks/{id}":                          "CancelAppTask",
+	"POST /v1/account/restore":                                   "RestoreAccount",
+	"GET /v1/account/overage-cap":                                "GetOverageCap",   // saved monthly spend cap
+	"POST /v1/account/overage-cap":                               "RaiseOverageCap", // issue #561 spend cap
+	"POST /v1/account/mfa/disable-email":                         "PostAccountMfaDisableEmail",
+	"POST /v1/account/mfa/disable-email/confirm":                 "PostAccountMfaDisableEmailConfirm",
 	// Issue #679 / PR-B / ADR-082 — per-account additive budget on
 	// top of the plan's apps.egress_allowlist cap. The auto-derivation
 	// would concat "Account" + "Egress_allowlist_extra" (the literal
@@ -1239,6 +1270,16 @@ var methodRouteMap = map[string]string{
 	"GET /v1/postgres/databases/{id}/resizes/{resize_id}":                             "GetManagedPostgresResize",
 	"GET /v1/postgres/capabilities":                                                   "GetManagedPostgresCapabilities",
 	"GET /v1/postgres/databases":                                                      "ListManagedPostgresDatabases",
+	"POST /v1/data/connections":                                                       "CreateDataConnection",
+	"GET /v1/data/connections":                                                        "ListDataConnections",
+	"GET /v1/data/connections/{id}/check":                                             "GetDataConnectionCheck",
+	"POST /v1/data/connections/{id}/check":                                            "RequestDataConnectionCheck",
+	"PUT /v1/data/connections/{id}":                                                   "RotateDataConnection",
+	"DELETE /v1/data/connections/{id}":                                                "DeleteDataConnection",
+	"POST /v1/data/pipelines":                                                         "CreateDataPipeline",
+	"GET /v1/data/pipelines":                                                          "ListDataPipelines",
+	"GET /v1/data/pipelines/{id}":                                                     "GetDataPipeline",
+	"POST /v1/data/pipelines/{id}/control":                                            "ControlDataPipeline",
 	"POST /v1/postgres/databases":                                                     "CreateManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}":                                                 "GetManagedPostgresDatabase",
 	"DELETE /v1/postgres/databases/{id}":                                              "DeleteManagedPostgresDatabase",
@@ -2119,6 +2160,7 @@ var methodRouteMap = map[string]string{
 	// ApplyProjectPlan via url.QueryEscape(plan_token).
 	"POST /v1/projects/scan":            "ScanProject",
 	"POST /v1/projects/scan/source-ref": "ScanProjectSourceRef",
+	"POST /v1/projects/apply-plan":      "ApplyCachedProjectPlan",
 	"POST /v1/projects":                 "ApplyProjectPlan",
 	"GET /v1/projects/{slug}/environments/{environment}/promotion-preview": "GetProjectEnvironmentPromotionPreview",
 
