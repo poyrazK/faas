@@ -66,6 +66,16 @@ func serviceWakeIDFrom(ctx context.Context) string {
 	return recorder.id
 }
 
+// serviceWakeIDOf and guestExecutionEvidenceSnapshotOf read the call's
+// evidence from the request, like FirstByteFrom, for observers that run after
+// the response.
+func serviceWakeIDOf(r *http.Request) string { return serviceWakeIDFrom(r.Context()) }
+
+func guestExecutionEvidenceSnapshotOf(r *http.Request) guestExecutionEvidenceSnapshot {
+	snapshot, _ := guestExecutionEvidenceFromContext(r.Context())
+	return snapshot
+}
+
 func (p *ServiceProxy) withServiceRequestObservation(r *http.Request, target ServiceTarget, caller ServiceCaller, endpoint ServiceEndpoint, woken bool) (*http.Request, func(int)) {
 	if p.observeRequest == nil {
 		return r, nil
@@ -84,9 +94,9 @@ func (p *ServiceProxy) withServiceRequestObservation(r *http.Request, target Ser
 			LatencyMS: int(max(p.now().Sub(started), 0) / time.Millisecond), Status: status, ColdBoot: woken,
 		}
 		if woken {
-			observation.WakeID = serviceWakeIDFrom(request.Context())
+			observation.WakeID = serviceWakeIDOf(request)
 		}
-		observation.Guest, _ = guestExecutionEvidenceFromContext(request.Context())
+		observation.Guest = guestExecutionEvidenceSnapshotOf(request)
 		p.observeRequest(request, observation)
 	}
 }
