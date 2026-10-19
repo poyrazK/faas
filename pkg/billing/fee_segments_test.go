@@ -30,9 +30,9 @@ func TestFeesProrateAcrossCardChanges(t *testing.T) {
 			BaseFeeMillicentsPerMonth: base, ProrateMonthlyFees: prorate, EffectiveFrom: from}
 	}
 	for _, tc := range []struct {
-		name                 string
+		name                   string
 		oldProrate, newProrate bool
-		wantOld, wantNew     int64
+		wantOld, wantNew       int64
 	}{
 		{"both prorate", true, true, 1500, 3000},
 		{"old whole month, new prorates", false, true, 3000, 3000},
