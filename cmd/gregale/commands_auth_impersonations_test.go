@@ -1,6 +1,7 @@
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"reflect"
 	"strings"
@@ -17,9 +18,9 @@ func TestAuthImpersonateListAndEnd(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost:
 			w.WriteHeader(http.StatusCreated)
-			writeJSONTest(w, map[string]any{"id": session, "session_id": "s1", "expires_at": "2026-10-19T12:30:00Z", "url": "https://shop.example.com/#access_token=a&refresh_token=r&type=impersonation"})
+			main.WriteJSONTest(w, map[string]any{"id": session, "session_id": "s1", "expires_at": "2026-10-19T12:30:00Z", "url": "https://shop.example.com/#access_token=a&refresh_token=r&type=impersonation"})
 		case r.Method == http.MethodGet:
-			writeJSONTest(w, map[string]any{"impersonations": []map[string]any{
+			main.WriteJSONTest(w, map[string]any{"impersonations": []map[string]any{
 				{"id": session, "email": "ada@example.com", "actor": "admin:0A1B2C3D", "reason": "Ticket 4821", "started_at": "2026-10-19T12:00:00Z", "expires_at": "2026-10-19T12:30:00Z", "active": true},
 			}})
 		default:

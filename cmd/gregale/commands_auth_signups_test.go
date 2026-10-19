@@ -1,6 +1,7 @@
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"reflect"
 	"strings"
@@ -14,13 +15,13 @@ func TestAuthSignupsListApproveAndRemove(t *testing.T) {
 	seen := fakeAuthAdmin(t, key, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
 		switch {
 		case r.Method == http.MethodGet:
-			writeJSONTest(w, map[string]any{"signups": []map[string]any{
+			main.WriteJSONTest(w, map[string]any{"signups": []map[string]any{
 				{"email": "wait@example.com", "requested_at": "2026-10-19T10:00:00Z"},
 				{"email": "ok@example.com", "approved_at": "2026-10-19T11:00:00Z"},
 				{"email": "in@example.com", "approved_at": "2026-10-18T11:00:00Z", "signed_up": true},
 			}, "total": 3, "page": 1, "per_page": 50})
 		case r.Method == http.MethodPost:
-			writeJSONTest(w, map[string]any{"approved": 2, "notified": 1})
+			main.WriteJSONTest(w, map[string]any{"approved": 2, "notified": 1})
 		case r.URL.Path == "/admin/v1/signups/gone@example.com":
 			w.WriteHeader(http.StatusNoContent)
 		default:

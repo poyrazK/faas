@@ -182,9 +182,9 @@ func TestAuthUsersClaimsSetsTypedValuesAndShowsThem(t *testing.T) {
 	seen := fakeAuthAdmin(t, key, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
 		switch {
 		case r.Method == http.MethodPatch:
-			writeJSONTest(w, map[string]any{"claims": body["set"]})
+			main.WriteJSONTest(w, map[string]any{"claims": body["set"]})
 		case r.URL.Path == "/admin/v1/users/"+ada:
-			writeJSONTest(w, map[string]any{"user": map[string]any{"id": ada, "email": "ada@example.com", "claims": map[string]any{"plan": "free"}}})
+			main.WriteJSONTest(w, map[string]any{"user": map[string]any{"id": ada, "email": "ada@example.com", "claims": map[string]any{"plan": "free"}}})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -268,7 +268,7 @@ func TestAuthOrgsAuditPrintsAPageWithItsCursor(t *testing.T) {
 	key := "gaak_" + strings.Repeat("k", 43)
 	const acme = "7c1b2c3d-0000-4000-8000-000000000009"
 	seen := fakeAuthAdmin(t, key, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
-		writeJSONTest(w, map[string]any{"entries": []map[string]any{
+		main.WriteJSONTest(w, map[string]any{"entries": []map[string]any{
 			{"occurred_at": "2026-10-19T10:02:00Z", "action": "member.role_changed", "actor_email": "ada@example.com", "target_email": "bob@example.com", "data": map[string]any{"from": "member", "to": "admin"}},
 			{"occurred_at": "2026-10-19T10:01:00Z", "action": "member.added", "target_email": "bob@example.com", "data": map[string]any{"role": "member"}},
 		}, "next": "WyIyMDI2LTEwLTE5Il0"})
