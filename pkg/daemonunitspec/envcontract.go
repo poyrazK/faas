@@ -688,6 +688,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_REALTIME_LIVE_TLS_CA_FILE", Owners: []string{"realtimed"}, Source: EnvSourceDropin, Default: "", Note: "live-query preview (ADR-20261016151947): CA that verifies livequeryd hubs dialed over wss://; unset uses the system roots"},
 	{Name: "FAAS_REALTIME_LIVE_TLS_CERT_FILE", Owners: []string{"realtimed"}, Source: EnvSourceDropin, Default: "", Note: "live-query preview (ADR-20261016151947): realtimed's client certificate for livequeryd hubs that require one (-client-ca); set with FAAS_REALTIME_LIVE_TLS_KEY_FILE"},
 	{Name: "FAAS_REALTIME_LIVE_TLS_KEY_FILE", Owners: []string{"realtimed"}, Source: EnvSourceDropin, Default: "", Note: "live-query preview (ADR-20261016151947): private key for FAAS_REALTIME_LIVE_TLS_CERT_FILE"},
+	{Name: "FAAS_REALTIME_LIVE_TLS_SERVER_NAME", Owners: []string{"realtimed"}, Source: EnvSourceDropin, Default: "", Note: "live-query preview (ADR-20261016151947): name every livequeryd hub is verified as instead of its URL host; livequeryd.faas with the fleet PKI's live-query leaves"},
 	{Name: "FAAS_REALTIME_MAX_AGE", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_MAX_CONNECTIONS", Owners: []string{"realtimed"}, Source: EnvSourceDefault, Default: "10000", Note: "node connection cap; 6000 with FAAS_REALTIME_FAIR_USE_ENABLED=1, sized to realtimed's 512 MB MemoryMax at ~52 KB per idle connection (ADR-1323); raise only with MemoryMax"},
 	{Name: "FAAS_REALTIME_MAX_MESSAGE_BYTES", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
