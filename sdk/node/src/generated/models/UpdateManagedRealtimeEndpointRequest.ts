@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { RealtimeChannelRule } from './RealtimeChannelRule.js';
 /**
  * Partially update a managed realtime endpoint; omitted fields remain unchanged.
  */
@@ -27,5 +28,9 @@ export type UpdateManagedRealtimeEndpointRequest = {
    * Replace the endpoint's slug. An empty string removes it.
    */
   slug?: string;
+  /**
+   * Replace the endpoint's channel rules. An empty list removes them.
+   */
+  channel_rules?: Array<RealtimeChannelRule>;
 };
 

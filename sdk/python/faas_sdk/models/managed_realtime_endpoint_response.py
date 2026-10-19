@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from ..models.managed_realtime_endpoint_response_auth_required_claims import (
         ManagedRealtimeEndpointResponseAuthRequiredClaims,
     )
+    from ..models.realtime_channel_rule import RealtimeChannelRule
 
 
 T = TypeVar("T", bound="ManagedRealtimeEndpointResponse")
@@ -68,6 +69,7 @@ class ManagedRealtimeEndpointResponse:
     auth_required_claims: ManagedRealtimeEndpointResponseAuthRequiredClaims | Unset = UNSET
     slug: str | Unset = UNSET
     """Name of the endpoint within its app, used by gregale.yaml. Absent for endpoints created without one."""
+    channel_rules: list[RealtimeChannelRule] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -134,6 +136,13 @@ class ManagedRealtimeEndpointResponse:
 
         slug = self.slug
 
+        channel_rules: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.channel_rules, Unset):
+            channel_rules = []
+            for channel_rules_item_data in self.channel_rules:
+                channel_rules_item = channel_rules_item_data.to_dict()
+                channel_rules.append(channel_rules_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -171,6 +180,8 @@ class ManagedRealtimeEndpointResponse:
             field_dict["auth_required_claims"] = auth_required_claims
         if slug is not UNSET:
             field_dict["slug"] = slug
+        if channel_rules is not UNSET:
+            field_dict["channel_rules"] = channel_rules
 
         return field_dict
 
@@ -179,6 +190,7 @@ class ManagedRealtimeEndpointResponse:
         from ..models.managed_realtime_endpoint_response_auth_required_claims import (
             ManagedRealtimeEndpointResponseAuthRequiredClaims,
         )
+        from ..models.realtime_channel_rule import RealtimeChannelRule
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -262,6 +274,15 @@ class ManagedRealtimeEndpointResponse:
 
         slug = d.pop("slug", UNSET)
 
+        _channel_rules = d.pop("channel_rules", UNSET)
+        channel_rules: list[RealtimeChannelRule] | Unset = UNSET
+        if _channel_rules is not UNSET:
+            channel_rules = []
+            for channel_rules_item_data in _channel_rules:
+                channel_rules_item = RealtimeChannelRule.from_dict(channel_rules_item_data)
+
+                channel_rules.append(channel_rules_item)
+
         managed_realtime_endpoint_response = cls(
             id=id,
             app_id=app_id,
@@ -287,6 +308,7 @@ class ManagedRealtimeEndpointResponse:
             auth_algorithms=auth_algorithms,
             auth_required_claims=auth_required_claims,
             slug=slug,
+            channel_rules=channel_rules,
         )
 
         managed_realtime_endpoint_response.additional_properties = d

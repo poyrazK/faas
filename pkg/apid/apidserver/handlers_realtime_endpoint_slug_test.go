@@ -56,4 +56,22 @@ func TestManagedRealtimeEndpointSlug(t *testing.T) {
 	if status, cleared := patch(""); status != http.StatusOK || cleared.Slug != "" {
 		t.Fatalf("clear = %d %+v", status, cleared)
 	}
+
+	// Channel rules are validated, stored and replaced (ADR-20261019102657).
+	rules := []api.RealtimeChannelRule{{Pattern: "org:{org_id}:room:*", Read: true}}
+	rec := e.Do(t, http.MethodPatch, path, api.UpdateManagedRealtimeEndpointRequest{ChannelRules: &rules}, nil)
+	var updated api.ManagedRealtimeEndpointResponse
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &updated) != nil || len(updated.ChannelRules) != 1 {
+		t.Fatalf("set rules = %d %s", rec.Code, rec.Body)
+	}
+	bad := []api.RealtimeChannelRule{{Pattern: "a*b", Read: true}}
+	if rec := e.Do(t, http.MethodPatch, path, api.UpdateManagedRealtimeEndpointRequest{ChannelRules: &bad}, nil); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad rule = %d %s, want 400", rec.Code, rec.Body)
+	}
+	none := []api.RealtimeChannelRule{}
+	rec = e.Do(t, http.MethodPatch, path, api.UpdateManagedRealtimeEndpointRequest{ChannelRules: &none}, nil)
+	updated = api.ManagedRealtimeEndpointResponse{}
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &updated) != nil || len(updated.ChannelRules) != 0 {
+		t.Fatalf("clear rules = %d %s", rec.Code, rec.Body)
+	}
 }

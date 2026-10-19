@@ -55,6 +55,31 @@ realtime:
   the file.
 - A failed deploy rolls all of it back.
 
+### Channel rules
+
+An endpoint whose clients sign in with tokens (`oidc`, or Gregale Auth) can
+grant channels from the token itself, with no authorize callback, so a
+subscription does not wake your app:
+
+```yaml
+    - slug: rooms
+      oidc: {issuer: "https://id.example.com", jwks_url: "https://id.example.com/jwks.json", algorithms: [RS256]}
+      channels:
+        - pattern: "org:{org_id}:room:*"   # {org_id} must equal the token's org_id claim
+          read: true
+        - pattern: "user:{sub}"            # sub is the token's subject
+          read: true
+```
+
+A pattern is literal text, `{claim}` placeholders and an optional trailing `*`.
+A channel that matches a rule is granted (presence included) for as long as the
+token is valid; any other channel goes to your authorize callback as before.
+Use claims your identity provider sets, never ones users can edit. Revoking a
+user takes effect when their token expires, so keep channels that need faster
+revocation on the callback. Activity-scope channels always use the callback.
+The same rules are `channel_rules` on `PATCH …/endpoints/{id}`; an endpoint
+holds up to 32.
+
 ## Fair-use limits
 
 Realtime has no separate charge. Gregale bills compute, and realtime channels,

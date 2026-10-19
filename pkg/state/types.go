@@ -4224,6 +4224,9 @@ type ManagedRealtimeEndpoint struct {
 	// Slug names the endpoint within its app so gregale.yaml can declare it
 	// (ADR-20261019102657). Empty for endpoints created without one.
 	Slug string
+	// ChannelRules authorize channels from verified token claims without the
+	// authorize callback (ADR-20261019102657).
+	ChannelRules []api.RealtimeChannelRule
 }
 
 type UpdateManagedRealtimeEndpointParams struct {
@@ -4249,6 +4252,8 @@ type UpdateManagedRealtimeEndpointParams struct {
 	Enabled                         *bool
 	// Slug replaces the endpoint's slug; an empty value removes it.
 	Slug *string
+	// ChannelRules replaces the endpoint's channel rules.
+	ChannelRules *[]api.RealtimeChannelRule
 }
 
 type ManagedRealtimeEndpointQuotaScope string

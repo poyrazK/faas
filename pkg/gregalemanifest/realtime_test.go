@@ -44,6 +44,15 @@ func TestValidateRealtimeEndpoints(t *testing.T) {
 		{"duplicate group", func(m *Manifest) {
 			m.Realtime.Endpoints[0].ConsumerGroups = append(m.Realtime.Endpoints[0].ConsumerGroups, RealtimeConsumerGroup{Channel: "orders", Name: "billing"})
 		}, "declared twice"},
+		{"channel rules", func(m *Manifest) {
+			m.Realtime.Endpoints[0].Channels = []RealtimeChannelRule{{Pattern: "org:{org_id}:room:*", Read: true}}
+		}, ""},
+		{"channel rules need tokens", func(m *Manifest) {
+			m.Realtime.Endpoints[1].Channels = []RealtimeChannelRule{{Pattern: "room:*", Read: true}}
+		}, "verified tokens"},
+		{"bad channel rule", func(m *Manifest) {
+			m.Realtime.Endpoints[0].Channels = []RealtimeChannelRule{{Pattern: "a*b", Read: true}}
+		}, "only end"},
 		{"trigger names an undeclared endpoint", func(m *Manifest) { m.Triggers[0].Config["endpoint"] = "other" }, "not declared"},
 		{"trigger names endpoint and endpoint_id", func(m *Manifest) {
 			m.Triggers[0].Config["endpoint_id"] = "6f1c2a4e-1d9b-4c7a-9a39-0b8d6f0f4c11"

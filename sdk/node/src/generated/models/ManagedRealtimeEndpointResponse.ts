@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { RealtimeChannelRule } from './RealtimeChannelRule.js';
 /**
  * Durable managed realtime endpoint configuration. Credentials are
  * write-only and represented by a constant mask on every response.
@@ -38,5 +39,6 @@ export type ManagedRealtimeEndpointResponse = {
    * Name of the endpoint within its app, used by gregale.yaml. Absent for endpoints created without one.
    */
   slug?: string;
+  channel_rules?: Array<RealtimeChannelRule>;
 };
 

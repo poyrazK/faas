@@ -118,6 +118,7 @@ func realtimeEndpointResponse(e state.ManagedRealtimeEndpoint) api.ManagedRealti
 		out.AuthTokenMasked = ""
 	}
 	out.Slug = e.Slug
+	out.ChannelRules = e.ChannelRules
 	return out
 }
 
@@ -238,6 +239,7 @@ func (s *Service) syncManagedRealtimeEndpoint(ctx context.Context, row state.Man
 		LiveRoutes:       liveRoutes,
 
 		AccountMaxConnections: accountMaxConnections,
+		ChannelRules:          append([]api.RealtimeChannelRule(nil), row.ChannelRules...),
 		// Live queries ride the v2 protocol, so an endpoint with live routes
 		// (FAAS_LIVE_QUERIES_ACCOUNTS) is marked too.
 		Preview: s.PreviewVisible(row.AccountID) || len(liveRoutes) > 0,
@@ -351,6 +353,10 @@ func (s *Service) CreateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 			return
 		}
 	}
+	if err := api.ValidateRealtimeChannelRules(req.ChannelRules); err != nil {
+		api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+		return
+	}
 	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
@@ -433,6 +439,7 @@ func (s *Service) CreateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 		AllowedOrigins:     append([]string(nil), req.AllowedOrigins...),
 		MaxConnections:     req.MaxConnections, MaxMessageBytes: req.MaxMessageBytes,
 		MaxConnectionAgeSeconds: req.MaxConnectionAgeSeconds, Enabled: enabled, Slug: req.Slug,
+		ChannelRules: append([]api.RealtimeChannelRule(nil), req.ChannelRules...),
 	}, limits.EndpointsPerApp, limits.EndpointsPerAccount)
 	if err != nil {
 		var quotaErr *state.ManagedRealtimeEndpointQuotaError
@@ -655,6 +662,13 @@ func (s *Service) UpdateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 		}
 	}
 	params.Slug = req.Slug
+	if req.ChannelRules != nil {
+		if err := api.ValidateRealtimeChannelRules(*req.ChannelRules); err != nil {
+			api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+			return
+		}
+		params.ChannelRules = req.ChannelRules
+	}
 	row, err := store.UpdateManagedRealtimeEndpoint(r.Context(), existing.ID, params)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {

@@ -2303,6 +2303,15 @@ const (
 	RealtimeConnectionSyncMaxAccounts     = 10_000
 )
 
+// Channel rules (ADR-20261019102657): realtimed authorizes channels from a
+// verified token's claims without the authorize callback. An endpoint holds at
+// most RealtimeChannelRulesMax rules of at most RealtimeChannelRulePatternMax
+// bytes each.
+const (
+	RealtimeChannelRulesMax       = 32
+	RealtimeChannelRulePatternMax = 256
+)
+
 // Channel occupancy (ADR-1324). One read covers at most
 // RealtimeOccupancyChannelsMax channels and asks every realtime node. Live
 // occupancy frames go out at most once per RealtimeOccupancyFrameInterval per

@@ -4,6 +4,8 @@ import (
 	"context"
 	"sort"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // CreateManagedRealtimeEndpointIfUnderQuota mirrors the Postgres transaction:
@@ -53,6 +55,7 @@ func (m *MemStore) CreateManagedRealtimeEndpointIfUnderQuota(_ context.Context, 
 	in.AuthAlgorithms = append([]string(nil), in.AuthAlgorithms...)
 	in.AuthRequiredClaims = cloneManagedRealtimeClaims(in.AuthRequiredClaims)
 	in.AllowedOrigins = append([]string(nil), in.AllowedOrigins...)
+	in.ChannelRules = append([]api.RealtimeChannelRule(nil), in.ChannelRules...)
 	m.managedRealtimeEndpoints[in.ID] = in
 	return in, nil
 }
@@ -151,6 +154,9 @@ func (m *MemStore) UpdateManagedRealtimeEndpoint(_ context.Context, id string, p
 	}
 	if p.Slug != nil {
 		e.Slug = *p.Slug
+	}
+	if p.ChannelRules != nil {
+		e.ChannelRules = append([]api.RealtimeChannelRule(nil), (*p.ChannelRules)...)
 	}
 	e.UpdatedAt = time.Now()
 	m.managedRealtimeEndpoints[id] = e

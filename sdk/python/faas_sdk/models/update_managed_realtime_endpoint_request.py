@@ -17,6 +17,7 @@ from ..models.update_managed_realtime_endpoint_request_auth_mode import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.realtime_channel_rule import RealtimeChannelRule
     from ..models.update_managed_realtime_endpoint_request_auth_required_claims import (
         UpdateManagedRealtimeEndpointRequestAuthRequiredClaims,
     )
@@ -48,6 +49,8 @@ class UpdateManagedRealtimeEndpointRequest:
     enabled: bool | Unset = UNSET
     slug: str | Unset = UNSET
     """Replace the endpoint's slug. An empty string removes it."""
+    channel_rules: list[RealtimeChannelRule] | Unset = UNSET
+    """Replace the endpoint's channel rules. An empty list removes them."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -100,6 +103,13 @@ class UpdateManagedRealtimeEndpointRequest:
 
         slug = self.slug
 
+        channel_rules: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.channel_rules, Unset):
+            channel_rules = []
+            for channel_rules_item_data in self.channel_rules:
+                channel_rules_item = channel_rules_item_data.to_dict()
+                channel_rules.append(channel_rules_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -139,11 +149,14 @@ class UpdateManagedRealtimeEndpointRequest:
             field_dict["enabled"] = enabled
         if slug is not UNSET:
             field_dict["slug"] = slug
+        if channel_rules is not UNSET:
+            field_dict["channel_rules"] = channel_rules
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.realtime_channel_rule import RealtimeChannelRule
         from ..models.update_managed_realtime_endpoint_request_auth_required_claims import (
             UpdateManagedRealtimeEndpointRequestAuthRequiredClaims,
         )
@@ -206,6 +219,15 @@ class UpdateManagedRealtimeEndpointRequest:
 
         slug = d.pop("slug", UNSET)
 
+        _channel_rules = d.pop("channel_rules", UNSET)
+        channel_rules: list[RealtimeChannelRule] | Unset = UNSET
+        if _channel_rules is not UNSET:
+            channel_rules = []
+            for channel_rules_item_data in _channel_rules:
+                channel_rules_item = RealtimeChannelRule.from_dict(channel_rules_item_data)
+
+                channel_rules.append(channel_rules_item)
+
         update_managed_realtime_endpoint_request = cls(
             callback_url=callback_url,
             connect_path=connect_path,
@@ -225,6 +247,7 @@ class UpdateManagedRealtimeEndpointRequest:
             max_connection_age_seconds=max_connection_age_seconds,
             enabled=enabled,
             slug=slug,
+            channel_rules=channel_rules,
         )
 
         update_managed_realtime_endpoint_request.additional_properties = d

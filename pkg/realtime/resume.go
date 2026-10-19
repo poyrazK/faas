@@ -871,6 +871,9 @@ func (m *Manager) checkResumeChannel(ctx context.Context, c *connection, channel
 	if c.ticketToken != "" {
 		return true, nil
 	}
+	if c.identity != nil && channelRulesAllow(endpoint, c.identity.identity, channel) {
+		return true, nil
+	}
 	authorizer, ok := m.hooks.(ChannelAuthorizer)
 	if !ok {
 		return false, errors.New("realtime: channel authorizer unavailable")

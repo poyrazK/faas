@@ -53,12 +53,12 @@ An endpoint may list rules that realtimed evaluates from the verified JWT, with 
 channels:
   - pattern: "org:{org_id}:room:*"   # {claim} must equal the token's claim
     read: true
-    presence: true
   - pattern: "user:{sub}:inbox"
     read: true
 ```
 
-- **Matching.** A pattern is literal text, `{claim}` segments filled from the token (`sub`, `org_id`, `org_role`, `session_id`, or any string claim), and a trailing `*`. The first matching rule decides. A rule grants only what it lists (`read`, `presence`).
+- **Matching.** A pattern is literal text, `{claim}` placeholders filled from the token (`sub`, or any string claim the token carries: realtimed asks the verifier for exactly the claims the rules name), and an optional trailing `*`. A claim value is literal text, never a wildcard. A missing or empty claim never matches. Rules grant `read`, the permission the callback grants today; presence and signals follow a granted subscription as they do now. Activity-scope channels always use the callback.
+- **Where.** realtimed checks the rules before the callback for v2 WebSocket subscriptions and SSE streams, on subscribe and on every 30-second re-authorization, so a rule-granted channel never calls the app. Rules are stored as `managed_realtime_endpoints.channel_rules` and sent to realtimed with the endpoint; `auth: none` endpoints cannot declare them because they have no verified token.
 - **Fallback.** A channel no rule matches goes to the authorize callback as today, if the endpoint has one, and is otherwise denied.
 - **Trade-off, chosen per rule.** A rule trusts the token until it expires (at most 600 seconds for Gregale Auth), so a sign-out or membership change is enforced within the token's lifetime instead of within the 30-second callback refresh. Channels that need faster revocation keep the callback, and principal access controls still revoke immediately.
 - **Limits.** At most 32 rules per endpoint, patterns up to 256 bytes (`pkg/api/limits.go`).

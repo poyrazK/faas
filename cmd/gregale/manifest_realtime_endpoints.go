@@ -112,12 +112,14 @@ type realtimeEndpointPolicy struct {
 	maxConnections                int
 	maxMessageBytes, maxAge       int64
 	enabled                       bool
+	channelRules                  []api.RealtimeChannelRule
 }
 
 func (r realtimeEndpointReconcile) desiredPolicy(ctx context.Context, want gregalemanifest.RealtimeEndpoint) (realtimeEndpointPolicy, error) {
 	p := realtimeEndpointPolicy{origins: append([]string{}, want.AllowedOrigins...), maxConnections: want.MaxConnections,
 		maxMessageBytes: want.MaxMessageBytes, maxAge: want.MaxConnectionAgeSeconds, enabled: want.Enabled == nil || *want.Enabled,
-		connect: api.DefaultRealtimeConnectPath, message: api.DefaultRealtimeMessagePath, disconnect: api.DefaultRealtimeDisconnectPath}
+		connect: api.DefaultRealtimeConnectPath, message: api.DefaultRealtimeMessagePath, disconnect: api.DefaultRealtimeDisconnectPath,
+		channelRules: want.APIChannelRules()}
 	if c := want.Callbacks; c != nil {
 		p.connect, p.message, p.disconnect = orDefault(c.Connect, p.connect), orDefault(c.Message, p.message), orDefault(c.Disconnect, p.disconnect)
 	}
@@ -154,14 +156,16 @@ func policyOf(e api.ManagedRealtimeEndpointResponse) realtimeEndpointPolicy {
 	return realtimeEndpointPolicy{authMode: e.AuthMode, issuer: e.AuthIssuer, jwksURL: e.AuthJWKSURL,
 		audience: append([]string{}, e.AuthAudience...), algorithms: append([]string{}, e.AuthAlgorithms...),
 		origins: append([]string{}, e.AllowedOrigins...), connect: e.ConnectPath, message: e.MessagePath, disconnect: e.DisconnectPath,
-		maxConnections: e.MaxConnections, maxMessageBytes: e.MaxMessageBytes, maxAge: e.MaxConnectionAgeSeconds, enabled: e.Enabled}
+		maxConnections: e.MaxConnections, maxMessageBytes: e.MaxMessageBytes, maxAge: e.MaxConnectionAgeSeconds, enabled: e.Enabled,
+		channelRules: append([]api.RealtimeChannelRule{}, e.ChannelRules...)}
 }
 
 func (p realtimeEndpointPolicy) equal(o realtimeEndpointPolicy) bool {
 	return p.authMode == o.authMode && p.issuer == o.issuer && p.jwksURL == o.jwksURL &&
 		slices.Equal(p.audience, o.audience) && slices.Equal(p.algorithms, o.algorithms) && slices.Equal(p.origins, o.origins) &&
 		p.connect == o.connect && p.message == o.message && p.disconnect == o.disconnect &&
-		p.maxConnections == o.maxConnections && p.maxMessageBytes == o.maxMessageBytes && p.maxAge == o.maxAge && p.enabled == o.enabled
+		p.maxConnections == o.maxConnections && p.maxMessageBytes == o.maxMessageBytes && p.maxAge == o.maxAge && p.enabled == o.enabled &&
+		slices.Equal(p.channelRules, o.channelRules)
 }
 
 // update writes every declared field; the server keeps zero limits as its
@@ -171,7 +175,8 @@ func (p realtimeEndpointPolicy) update() api.UpdateManagedRealtimeEndpointReques
 	audience, algorithms, origins := p.audience, p.algorithms, p.origins
 	connect, message, disconnect := p.connect, p.message, p.disconnect
 	maxConnections, maxMessageBytes, maxAge, enabled := p.maxConnections, p.maxMessageBytes, p.maxAge, p.enabled
-	req := api.UpdateManagedRealtimeEndpointRequest{AuthMode: &mode, AllowedOrigins: &origins,
+	rules := append([]api.RealtimeChannelRule{}, p.channelRules...)
+	req := api.UpdateManagedRealtimeEndpointRequest{AuthMode: &mode, AllowedOrigins: &origins, ChannelRules: &rules,
 		ConnectPath: &connect, MessagePath: &message, DisconnectPath: &disconnect,
 		MaxConnections: &maxConnections, MaxMessageBytes: &maxMessageBytes, MaxConnectionAgeSeconds: &maxAge, Enabled: &enabled}
 	if mode == api.RealtimeAuthModeOIDCJWT {
@@ -235,7 +240,7 @@ func (r realtimeEndpointReconcile) create(ctx context.Context, want gregalemanif
 	req := api.CreateManagedRealtimeEndpointRequest{Slug: want.Slug, CallbackURL: callbackURL, CallbackAuthToken: token,
 		ConnectPath: p.connect, MessagePath: p.message, DisconnectPath: p.disconnect, AuthMode: p.authMode,
 		AllowedOrigins: p.origins, MaxConnections: p.maxConnections, MaxMessageBytes: p.maxMessageBytes,
-		MaxConnectionAgeSeconds: p.maxAge, Enabled: &enabled}
+		MaxConnectionAgeSeconds: p.maxAge, Enabled: &enabled, ChannelRules: p.channelRules}
 	if p.authMode == api.RealtimeAuthModeOIDCJWT {
 		req.AuthIssuer, req.AuthJWKSURL, req.AuthAudience, req.AuthAlgorithms = p.issuer, p.jwksURL, p.audience, p.algorithms
 	}

@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { RealtimeChannelRule } from './RealtimeChannelRule.js';
 /**
  * Create a durable managed realtime endpoint and its callback contract.
  */
@@ -27,5 +28,9 @@ export type CreateManagedRealtimeEndpointRequest = {
    * Optional name of the endpoint within its app, unique per app. gregale.yaml declares endpoints by slug.
    */
   slug?: string;
+  /**
+   * Channels granted from verified token claims without the authorize callback. A matching channel trusts the token until it expires.
+   */
+  channel_rules?: Array<RealtimeChannelRule>;
 };
 

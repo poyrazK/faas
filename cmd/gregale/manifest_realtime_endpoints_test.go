@@ -49,7 +49,8 @@ func (f *fakeRealtimeEndpointClient) CreateManagedRealtimeEndpoint(_ context.Con
 	e := api.ManagedRealtimeEndpointResponse{ID: fmt.Sprintf("00000000-0000-0000-0000-%012d", f.nextID), Slug: req.Slug,
 		CallbackURL: req.CallbackURL, ConnectPath: req.ConnectPath, MessagePath: req.MessagePath, DisconnectPath: req.DisconnectPath,
 		AuthMode: req.AuthMode, AuthIssuer: req.AuthIssuer, AuthJWKSURL: req.AuthJWKSURL, AuthAudience: req.AuthAudience,
-		AuthAlgorithms: req.AuthAlgorithms, AllowedOrigins: req.AllowedOrigins, MaxConnections: req.MaxConnections, Enabled: *req.Enabled}
+		AuthAlgorithms: req.AuthAlgorithms, AllowedOrigins: req.AllowedOrigins, MaxConnections: req.MaxConnections, Enabled: *req.Enabled,
+		ChannelRules: req.ChannelRules}
 	f.endpoints[e.ID] = e
 	f.log = append(f.log, "create "+req.Slug)
 	return e, nil
@@ -71,6 +72,9 @@ func (f *fakeRealtimeEndpointClient) UpdateManagedRealtimeEndpoint(_ context.Con
 	}
 	if req.ConnectPath != nil {
 		e.ConnectPath, e.MessagePath, e.DisconnectPath = *req.ConnectPath, *req.MessagePath, *req.DisconnectPath
+	}
+	if req.ChannelRules != nil {
+		e.ChannelRules = *req.ChannelRules
 	}
 	f.endpoints[id] = e
 	f.log = append(f.log, "update "+e.Slug)
@@ -239,5 +243,31 @@ func TestReconcileManifestRealtimeAuthAppNeedsApplicationAuth(t *testing.T) {
 	if chat.AuthMode != api.RealtimeAuthModeOIDCJWT || chat.CallbackURL != "https://shop-auth.gregale.app" ||
 		chat.AuthIssuer != "https://shop-auth.gregale.app/auth/v1" || !slices.Equal(client.restarts, []string{"shop-auth"}) {
 		t.Fatalf("endpoint %+v restarts %v", chat, client.restarts)
+	}
+}
+
+// adr: 20261019102657 — declared channel rules reach the endpoint and a
+// changed rule set is updated in place.
+func TestReconcileManifestRealtimeChannelRules(t *testing.T) {
+	client := newFakeRealtimeEndpointClient()
+	oidc := &gregalemanifest.RealtimeOIDC{Issuer: "https://id.example", JWKSURL: "https://id.example/jwks", Algorithms: []string{"RS256"}}
+	m := &gregalemanifest.Manifest{Realtime: &gregalemanifest.RealtimeConfig{Endpoints: []gregalemanifest.RealtimeEndpoint{
+		{Slug: "rooms", OIDC: oidc, Channels: []gregalemanifest.RealtimeChannelRule{{Pattern: "org:{org_id}:room:*", Read: true}}},
+	}}}
+	if _, err := reconcileManifestRealtimeEndpoints(t.Context(), client, "shop", m, &manifestCronTransaction{}); err != nil {
+		t.Fatal(err)
+	}
+	rooms, _ := client.bySlug("rooms")
+	if len(rooms.ChannelRules) != 1 || rooms.ChannelRules[0].Pattern != "org:{org_id}:room:*" {
+		t.Fatalf("rules = %+v", rooms.ChannelRules)
+	}
+	m.Realtime.Endpoints[0].Channels = append(m.Realtime.Endpoints[0].Channels, gregalemanifest.RealtimeChannelRule{Pattern: "user:{sub}", Read: true})
+	client.log = nil
+	if _, err := reconcileManifestRealtimeEndpoints(t.Context(), client, "shop", m, &manifestCronTransaction{}); err != nil {
+		t.Fatal(err)
+	}
+	rooms, _ = client.bySlug("rooms")
+	if !slices.Equal(client.log, []string{"update rooms"}) || len(rooms.ChannelRules) != 2 {
+		t.Fatalf("calls %v rules %+v, want one update with both rules", client.log, rooms.ChannelRules)
 	}
 }

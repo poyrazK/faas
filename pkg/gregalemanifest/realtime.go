@@ -38,6 +38,25 @@ type RealtimeEndpoint struct {
 	MaxConnectionAgeSeconds int64                   `yaml:"max_connection_age_seconds,omitempty" toml:"max_connection_age_seconds"`
 	Enabled                 *bool                   `yaml:"enabled,omitempty" toml:"enabled"`
 	ConsumerGroups          []RealtimeConsumerGroup `yaml:"consumer_groups,omitempty" toml:"consumer_groups"`
+	// Channels grant channels from verified token claims without the
+	// authorize callback; they need auth or oidc that issues tokens.
+	Channels []RealtimeChannelRule `yaml:"channels,omitempty" toml:"channels"`
+}
+
+// RealtimeChannelRule grants a channel pattern such as "org:{org_id}:room:*"
+// to tokens whose claims fill its placeholders.
+type RealtimeChannelRule struct {
+	Pattern string `yaml:"pattern" toml:"pattern"`
+	Read    bool   `yaml:"read" toml:"read"`
+}
+
+// APIChannelRules converts the declared rules to their API form.
+func (e RealtimeEndpoint) APIChannelRules() []api.RealtimeChannelRule {
+	out := make([]api.RealtimeChannelRule, 0, len(e.Channels))
+	for _, rule := range e.Channels {
+		out = append(out, api.RealtimeChannelRule{Pattern: rule.Pattern, Read: rule.Read})
+	}
+	return out
 }
 
 // RealtimeOIDC trusts an external identity provider's JWTs.
@@ -154,6 +173,12 @@ func (e RealtimeEndpoint) validate() error {
 		}
 	}
 	if err := api.ValidateRealtimeOrigins(e.AllowedOrigins); err != nil {
+		return err
+	}
+	if len(e.Channels) > 0 && e.Auth == RealtimeAuthNone {
+		return fmt.Errorf("channels need verified tokens; use an Auth app or oidc instead of auth none")
+	}
+	if err := api.ValidateRealtimeChannelRules(e.APIChannelRules()); err != nil {
 		return err
 	}
 	seen := map[string]bool{}

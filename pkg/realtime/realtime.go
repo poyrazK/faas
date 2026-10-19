@@ -200,6 +200,9 @@ type Endpoint struct {
 	// AccountMaxConnections is the account's plan allowance of concurrent
 	// connections across the fleet (ADR-1323). Zero enforces no account limit.
 	AccountMaxConnections int
+	// ChannelRules authorize channels from verified token claims without the
+	// authorize callback (ADR-20261019102657).
+	ChannelRules []api.RealtimeChannelRule
 	// Preview marks an endpoint whose account is in the realtime preview
 	// rollout (ADR-20261019102657). Preview features need both this mark and
 	// the node's own flag, so an apid that sends no mark turns them off.
@@ -676,6 +679,11 @@ func (m *Manager) RegisterEndpoint(e Endpoint) error {
 			return fmt.Errorf("realtime: previous auth token requires an expiry")
 		}
 	}
+	if err := api.ValidateRealtimeChannelRules(e.ChannelRules); err != nil {
+		return fmt.Errorf("realtime: %w", err)
+	}
+	e.ChannelRules = append([]api.RealtimeChannelRule(nil), e.ChannelRules...)
+	auth.ExtractClaims = channelRuleClaims(e.ChannelRules)
 	e.ClientAuth = auth
 	for name, path := range map[string]string{
 		"connect_path":    e.ConnectPath,
