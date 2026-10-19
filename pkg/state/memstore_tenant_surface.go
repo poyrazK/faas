@@ -194,11 +194,11 @@ func (m *MemStore) UpdateTenantSurfaceCert(_ context.Context, in UpdateSurfaceCe
 	if !ok {
 		return ErrNotFound
 	}
-	if s.CertState == in.CertState {
-		// No-op: the row's cert_state already matches the
-		// requested value. Writes are skipped so the
-		// production pg_notify trigger doesn't fire on
-		// idempotent re-entries.
+	if s.CertState == in.CertState && s.CertNotAfter.Equal(in.NotAfter) {
+		// No-op: the row's cert_state and expiry already match.
+		// Writes are skipped so the production pg_notify trigger
+		// doesn't fire on idempotent re-entries; a changed
+		// last_error alone is not written (see PgStore).
 		return nil
 	}
 	s.CertState = in.CertState

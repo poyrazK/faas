@@ -219,6 +219,43 @@ func TestPgStore_TenantSurface_StatusAndCert(t *testing.T) {
 	}
 }
 
+// Every surface UPDATE notifies the cert remint path, so a cert write that
+// changes neither the state nor the expiry must not write; a renewal that
+// keeps cert_state=issued must still record its new expiry.
+func TestPgStore_TenantSurface_CertWriteOnlyOnStateOrExpiryChange(t *testing.T) {
+	s, ctx := pgStore(t)
+	acct, app := pgTenantSurfaceSeed(t, s, ctx, "certguard")
+	lim := api.Limits{TenantSurfacesAllowed: true, TenantSurfacesPerAccount: 5, TenantHostnamesPerSurface: 10}
+	surf, err := s.CreateTenantSurfaceIfUnderQuota(ctx, pgTenantSurfaceParams(acct, app, "cg"), lim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiry := time.Now().Add(10 * 24 * time.Hour).Truncate(time.Second)
+	write := func(st state.CertState, notAfter time.Time, lastError string) state.TenantSurface {
+		t.Helper()
+		if err := s.UpdateTenantSurfaceCert(ctx, state.UpdateSurfaceCertParams{SurfaceID: surf.ID, CertState: st, NotAfter: notAfter, LastError: lastError}); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.GetTenantSurfaceByID(ctx, surf.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	issued := write(state.CertStateIssued, expiry, "")
+	if same := write(state.CertStateIssued, expiry, ""); !same.UpdatedAt.Equal(issued.UpdatedAt) {
+		t.Fatal("an unchanged issued write updated the row")
+	}
+	renewed := write(state.CertStateIssued, expiry.Add(80*24*time.Hour), "")
+	if !renewed.CertNotAfter.Equal(expiry.Add(80*24*time.Hour)) || renewed.UpdatedAt.Equal(issued.UpdatedAt) {
+		t.Fatalf("renewal kept cert_not_after %v; want the new expiry written", renewed.CertNotAfter)
+	}
+	failed := write(state.CertStateFailed, time.Time{}, "order 1 failed")
+	if again := write(state.CertStateFailed, time.Time{}, "order 2 failed"); !again.UpdatedAt.Equal(failed.UpdatedAt) || again.CertLastError != "order 1 failed" {
+		t.Fatalf("a new error text alone rewrote the row: %+v", again)
+	}
+}
+
 func TestPgStore_TenantHostname_PerSurfaceQuota(t *testing.T) {
 	s, ctx := pgStore(t)
 	acct, app := pgTenantSurfaceSeed(t, s, ctx, "hquota")

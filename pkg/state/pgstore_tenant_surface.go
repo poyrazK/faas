@@ -318,7 +318,7 @@ func (s *PgStore) UpdateTenantSurfaceCert(ctx context.Context, in UpdateSurfaceC
 		        cert_last_error = $3,
 		        updated_at = now()
 		  where id = $4
-		    and cert_state is distinct from $1`,
+		    and (cert_state, cert_not_after) is distinct from ($1::text, $2::timestamptz)`,
 		string(in.CertState), notAfter, in.LastError, in.SurfaceID)
 	if err != nil {
 		return mapErr(err)
@@ -329,6 +329,9 @@ func (s *PgStore) UpdateTenantSurfaceCert(ctx context.Context, in UpdateSurfaceC
 		// so this is rare), or (b) the row's cert_state already
 		// matches the new value (the load-bearing no-op path
 		// that suppresses the re-entry notify storm). We
+		// (only last_error would change: a CA error text may differ
+		// on every attempt, and writing it would re-arm the remint
+		// that produced it). We
 		// disambiguate via a follow-up existence check so the
 		// wrapper can still distinguish missing-row from
 		// idempotent flip.
