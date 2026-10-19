@@ -50,7 +50,7 @@ on:
           faas-fleet, production-us (gregale-prod, us-east1) uses
           faas-fleet-us, so one fleet's runner never deploys the other.
         required: false
-        default: production
+        default: production-us
         type: string
       release_tag:
         description: "Existing pre-1.0 release tag published by release.yml (empty with units_run_id)"
@@ -97,7 +97,7 @@ on:
           faas-fleet, production-us (gregale-prod, us-east1) uses
           faas-fleet-us, so one fleet's runner never deploys the other.
         required: false
-        default: production
+        default: production-us
         type: choice
         options:
           - production
