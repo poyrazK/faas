@@ -1,0 +1,35 @@
+package state
+
+import (
+	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
+
+// A scoped source selection has no place for build arguments or a target, so
+// inheriting a live Dockerfile app that uses them must refuse rather than
+// rebuild the final stage with default arguments (ADR-20261019142544).
+func TestObservedWorkloadSourceRefusesDockerfileBuildOptions(t *testing.T) {
+	app := gitOpsIntentApp{Type: AppTypeApp, Sources: []gitOpsSourceBaseline{{
+		Kind: DeploymentKindGitHub, SourceURL: "github://acme/shop@abc123", CommitSHA: "abc123", SourceRoot: "api",
+	}}}
+	app.Manifest.BuildDockerfile = "Dockerfile"
+	source, _, reason := observedWorkloadSource(app, "acme/shop")
+	if reason != "" || source == nil || source.Kind != "dockerfile" || source.Dockerfile != "Dockerfile" {
+		t.Fatalf("plain Dockerfile app: source=%+v reason=%q", source, reason)
+	}
+	for _, options := range []*api.DockerfileBuildOptions{
+		{Target: "runtime"},
+		{Args: map[string]string{"NODE_ENV": "production"}},
+	} {
+		app.Manifest.DockerfileBuild = options
+		source, _, reason = observedWorkloadSource(app, "acme/shop")
+		if source != nil || reason != "live Dockerfile build arguments or target require a reviewed scoped import" {
+			t.Fatalf("options %+v: source=%+v reason=%q", options, source, reason)
+		}
+	}
+	app.Manifest.DockerfileBuild = &api.DockerfileBuildOptions{}
+	if source, _, reason = observedWorkloadSource(app, "acme/shop"); reason != "" || source == nil {
+		t.Fatalf("empty options refused: source=%+v reason=%q", source, reason)
+	}
+}
