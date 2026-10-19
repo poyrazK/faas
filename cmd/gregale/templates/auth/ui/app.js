@@ -311,6 +311,14 @@ export function secondFactors(user) {
   return { factors: verified.filter(factor => factor.factor_type === 'totp' || factor.factor_type === 'phone'), recovery: verified.some(factor => factor.factor_type === 'recovery_code') }
 }
 
+// joinedMessage confirms an accepted invitation. An organization that
+// requires a second factor (sql/0016) is usable only from an aal2 session.
+export function joinedMessage(membership, aal) {
+  const joined = `You joined as ${membership.role}.`
+  if (!membership.mfa_required || aal === 'aal2') return joined
+  return `${joined} This organization requires two-step verification: add a second step to your account, then sign in again, before you use it.`
+}
+
 // completeSignIn asks a user with a verified second factor to complete it
 // after any first-factor sign-in on these pages, so the session handed to
 // the application is aal2; then finish(session) runs.
@@ -474,8 +482,15 @@ async function main() {
         const session = await protect({ email, password }, body => request('POST', '/auth/v1/token?grant_type=password', { body }))
         const membership = await request('POST', '/authz/v1/invitations/accept', { token: session.access_token, body: { token: invitation } })
         sessionStorage.removeItem('gregale.invitation')
-        say(`You joined as ${membership.role}.`)
-        root.append(el('a', { class: 'button', href: handoffURL(config.site_url, session) }, `Continue to ${config.app}`))
+        // Like every sign-in here, a user with a second factor confirms it,
+        // so the session handed over can use an organization requiring one.
+        await completeSignIn(root, session, verified => {
+          render(root, `Join an organization on ${config.app}`)
+          const joined = status(root)
+          joined(joinedMessage(membership, tokenAAL(verified.access_token)))
+          if (membership.mfa_required && tokenAAL(verified.access_token) !== 'aal2') root.append(links([`/ui/account?redirect_to=${encodeURIComponent(config.site_url)}`, 'Add a second step on your account page']))
+          root.append(el('a', { class: 'button', href: handoffURL(config.site_url, verified) }, `Continue to ${config.app}`))
+        })
       } catch (err) { say(err.message) }
     }, 'Sign in and accept', field('Email', 'email', 'email', 'username'), field('Password', 'password', 'password', 'current-password')))
     root.append(links([`/ui/sign-up?redirect_to=${encodeURIComponent(location.origin + '/ui/invitation')}`, 'No account yet? Create one, then reopen this page']))

@@ -444,6 +444,29 @@ GoTrue's audit log records the deletion as an administrator's, since it goes
 through the admin API; the lifecycle event `auth.user.deleted` is the same
 either way.
 
+An organization can require a second factor of its members
+(`organizations.mfa_required`, sql/0016). The check lives in
+`has_permission`, so every surface that already goes through it (row-level
+security via `authorize()`, storage signing, workflows, realtime channels and
+the organization functions) refuses sessions below `aal2` for that
+organization without its own code. It reads the session row, not the token's
+`aal` claim: GoTrue lowers a session to `aal1` when its factor is removed,
+while tokens issued earlier keep saying `aal2` until they expire. The access
+token hook does the opposite and reads the claim, because GoTrue calls it
+inside the transaction that raises the session, before the row shows `aal2`;
+below `aal2` it leaves such an organization's claims out. Members are not
+removed: they keep the membership, still list the organization (with
+`mfa_required`), and get `mfa_required` instead of `forbidden` from the
+organization API so an application can send them to verify. Changing the
+setting needs `mfa:manage` and an `aal2` session in both directions, so
+turning it on cannot lock out the person doing it and a session that skipped
+the second factor cannot turn it off; the application's operator can change
+it through the admin API without being a member. Members with `members:manage`
+see which members have a verified second factor. The subject-level
+`authorize_subject` cannot see a session, so for such an organization it needs
+the user to hold some live `aal2` session. Single sign-on counts as one factor:
+GoTrue does not see the identity provider's own second step.
+
 ### Phone sign-in
 
 Phone sign-in uses GoTrue's own SMS providers (Twilio, Twilio Verify,

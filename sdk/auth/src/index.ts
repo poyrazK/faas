@@ -77,8 +77,14 @@ export type ConnectedApp = Readonly<{ client: { id: string; name: string; uri?: 
 /** One of the signed-in user's own sessions; current is the one making the call. */
 export type UserSession = Readonly<{ id: string; created_at: string; last_active_at: string; user_agent: string | null; ip: string | null; aal: string | null; current: boolean }>
 
-export type Organization = Readonly<{ id: string; slug: string; name: string; role?: string; created_at: string }>
-export type Member = Readonly<{ user_id: string; email: string; role: string; created_at: string }>
+/**
+ * mfa_required: the organization's permissions hold only in sessions
+ * verified with a second factor (aal2); requests from others fail with
+ * mfa_required.
+ */
+export type Organization = Readonly<{ id: string; slug: string; name: string; role?: string; created_at: string; mfa_required?: boolean }>
+/** mfa_enabled (a verified second factor) is shown only to those who manage members, null to others. */
+export type Member = Readonly<{ user_id: string; email: string; role: string; created_at: string; mfa_enabled?: boolean | null }>
 export type Invitation = Readonly<{ id: string; email: string; role: string; expires_at: string; created_at?: string }>
 /** An email domain an organization proves it controls with a DNS TXT record. */
 export type OrgDomain = Readonly<{ domain: string; verified: boolean; verified_at: string | null; record: Readonly<{ type: 'TXT'; name: string; value: string }> }>
@@ -464,9 +470,18 @@ export function createAuthClient(options: AuthClientOptions) {
       list: async () => (await authz<{ organizations: Organization[] }>('GET', '/orgs')).organizations,
       create: (input: { slug: string; name: string }) => authz<Organization>('POST', '/orgs', input),
       /**
+       * Requires (or stops requiring) a verified second factor for the
+       * organization's permissions. Needs mfa:manage (owners hold it) and a
+       * session at aal2 either way; others get forbidden or mfa_required.
+       */
+      setMfaRequired: (org: string, required: boolean) =>
+        authz<Organization>('PATCH', `/orgs/${id(org)}`, { mfa_required: required }),
+      /**
        * Makes org (one the user belongs to) the session's active
        * organization, or none with null, and refreshes the session so its
-       * token carries it. Needs organization claims on in the Auth app.
+       * token carries it. Needs organization claims on in the Auth app. An
+       * organization that requires a second factor fails with mfa_required
+       * until the session is aal2.
        */
       setActive: async (org: string | null): Promise<ActiveOrganization | null> => {
         await authz('POST', '/active-organization', { org })
@@ -489,7 +504,8 @@ export function createAuthClient(options: AuthClientOptions) {
         authz<CreatedInvitation>('POST', `/orgs/${id(org)}/invitations`, { email: input.email, role: input.role, ...(input.expiresIn ? { expires_in: input.expiresIn } : {}) }),
       list: async (org: string) => (await authz<{ invitations: Invitation[] }>('GET', `/orgs/${id(org)}/invitations`)).invitations,
       revoke: (org: string, invitation: string) => authz<null>('DELETE', `/orgs/${id(org)}/invitations/${id(invitation)}`),
-      accept: (token: string) => authz<{ org_id: string; role: string }>('POST', '/invitations/accept', { token }),
+      /** mfa_required: the organization needs a verified second factor before the new member can use it. */
+      accept: (token: string) => authz<{ org_id: string; role: string; mfa_required?: boolean }>('POST', '/invitations/accept', { token }),
     },
     /**
      * Self-service organization SSO, when the app owner turned it on: an

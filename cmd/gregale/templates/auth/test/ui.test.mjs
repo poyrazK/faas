@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
-import { allowedRedirect, consentView, deviceName, errorMessage, fragmentParams, handoffURL, qrImage, secondFactors, tokenAAL } from '../ui/app.js'
+import { allowedRedirect, consentView, deviceName, errorMessage, fragmentParams, handoffURL, joinedMessage, qrImage, secondFactors, tokenAAL } from '../ui/app.js'
 import { createServer } from '../server.mjs'
 
 const site = 'https://shop.example.com'
@@ -108,6 +108,12 @@ test('a CAPTCHA token is required when the check is shown, and sent once', async
   assert.deepEqual(captchaBody({ email: 'a@example.test' }, undefined), { email: 'a@example.test' })
   assert.deepEqual(captchaBody({ email: 'a@example.test' }, 'tok'), { email: 'a@example.test', gotrue_meta_security: { captcha_token: 'tok' } })
   assert.throws(() => captchaBody({}, ''), /security check/)
+})
+
+test('an accepted invitation says when the organization needs a second factor first', () => {
+  assert.equal(joinedMessage({ role: 'member' }, 'aal1'), 'You joined as member.')
+  assert.equal(joinedMessage({ role: 'member', mfa_required: true }, 'aal2'), 'You joined as member.')
+  assert.match(joinedMessage({ role: 'admin', mfa_required: true }, 'aal1'), /^You joined as admin\. This organization requires two-step verification/)
 })
 
 test('a sign-in asks for a verified second factor until the session is aal2', () => {

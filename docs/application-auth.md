@@ -283,7 +283,9 @@ const { codes } = await auth.mfa.recoveryCodes.generate()   // shown once
 
 Require `aal2` where it matters: in row-level security with
 `gregale_auth.claims()->>'aal' = 'aal2'`, or in a backend from
-`claims.AAL` (Go), `claims.aal` (Python) or `claims.aal` (Node).
+`claims.AAL` (Go), `claims.aal` (Python) or `claims.aal` (Node). An
+organization can also require it of its own members; see
+[Require a second factor](#require-a-second-factor).
 
 ### CAPTCHA
 
@@ -367,8 +369,9 @@ redirect URL origins.
 | Method and path | Effect |
 | --- | --- |
 | `POST /authz/v1/orgs` `{slug, name}` | Create an organization; the caller becomes its owner |
-| `GET /authz/v1/orgs` | The caller's organizations and roles |
-| `GET /authz/v1/orgs/{org}/members` | Members (needs `org:read`) |
+| `GET /authz/v1/orgs` | The caller's organizations, roles and whether each requires a second factor |
+| `PATCH /authz/v1/orgs/{org}` `{mfa_required}` | Require a second factor, or stop (needs `mfa:manage` and an `aal2` session) |
+| `GET /authz/v1/orgs/{org}/members` | Members (needs `org:read`); with `members:manage`, whether each has a second factor |
 | `PATCH /authz/v1/orgs/{org}/members/{user}` `{role}` | Change a role (needs `members:manage`; owners only for `owner`) |
 | `DELETE /authz/v1/orgs/{org}/members/{user}` | Remove a member, or leave |
 | `POST /authz/v1/orgs/{org}/invitations` `{email, role, expires_in?}` | Invite; returns the token once |
@@ -413,6 +416,66 @@ billing, use `authorize()`, which reads the membership each time.
 behind `setActive`; it answers `not_found` for an organization the caller
 does not belong to. Tokens issued to third-party OAuth clients never carry
 these claims.
+
+### Require a second factor
+
+An organization's owner can require its members to sign in with a second
+factor. From then on the organization's permissions hold only in sessions
+verified with one (assurance level `aal2`):
+
+```ts
+await auth.organizations.setMfaRequired(org.id, true)
+const members = await auth.members.list(org.id) // mfa_enabled shows who has a second factor
+```
+
+Only someone holding `mfa:manage` (owners hold every permission; grant it to
+a custom role to share it) can change the setting, and only from an `aal2`
+session, in either direction: turning it on cannot lock that person out, and
+a session without the second factor cannot turn it off. Check `mfa_enabled`
+first: members without a second factor lose access until they add one.
+
+The requirement applies everywhere a permission is checked: `authorize()` in
+row-level security and backends, signed storage URLs, workflows, realtime
+channels and the organization API. Members below `aal2` stay members and still
+see the organization in `GET /authz/v1/orgs`, with `mfa_required: true`; the
+organization API and `setActive` refuse them with `403 mfa_required`, so your
+pages can send them to verify:
+
+```ts
+try {
+  await auth.organizations.setActive(org.id)
+} catch (err) {
+  if (err.code !== 'mfa_required') throw err
+  const { next } = await auth.mfa.assuranceLevel()
+  if (next === 'aal2') showCodePrompt() // the user has a factor: challenge and verify it here
+  else location.assign(auth.hostedAccountUrl()) // no factor yet: add one, then sign in again
+}
+```
+
+Adding a factor on the account page signs out the user's other sessions that
+have not passed a second step (GoTrue does this whenever a factor is
+verified), so they sign in again and confirm the new factor. The hosted
+invitation page asks for the second factor after sign-in and says when the
+organization needs one the user does not have yet.
+
+With organization claims on, tokens below `aal2` leave out such an
+organization's `org_*` claims; the token issued when the user verifies a code
+carries them. Removing one's last second factor lowers one's sessions to
+`aal1` at once, and `authorize()` refuses them from the next check. A token
+issued before still says `aal2` until it expires, at most ten minutes later,
+so row-level security that reads the `aal` claim instead of calling
+`authorize()` sees the change only then. Accepting an invitation through the API
+answers `mfa_required: true` when the organization needs a second factor.
+
+Single sign-on counts as one factor: GoTrue cannot see the identity
+provider's own second step, so members who sign in through SSO also need a
+second factor in your app. The application's operator can change the
+requirement for any organization without being a member, for example when
+its owners lost their factors:
+
+```sh
+gregale auth orgs set shop-auth acme --require-mfa off
+```
 
 ## Organization single sign-on
 
@@ -784,6 +847,7 @@ gregale auth users unban shop-auth ada@example.com
 gregale auth users delete shop-auth ada@example.com
 gregale auth orgs list shop-auth
 gregale auth orgs get shop-auth acme
+gregale auth orgs set shop-auth acme --require-mfa on
 ```
 
 The **Activity** tab lists GoTrue's audit log newest first: sign-ins,

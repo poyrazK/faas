@@ -261,9 +261,9 @@
         showAddProvider()
       } else {
         const data = await fetchView('/admin/v1/orgs?' + qs)
-        setTable(['Slug', 'Name', 'Members', 'Created', ''], data.organizations.map(org => {
+        setTable(['Slug', 'Name', 'Members', 'Second factor', 'Created', ''], data.organizations.map(org => {
           const row = el('tr')
-          row.append(el('td', org.slug), el('td', org.name), el('td', org.members), el('td', when(org.created_at)))
+          row.append(el('td', org.slug), el('td', org.name), el('td', org.members), el('td', org.mfa_required ? 'Required' : 'Optional'), el('td', when(org.created_at)))
           const cell = el('td'); cell.append(button('Open', () => showOrg(org.id))); row.append(cell)
           return row
         }))
@@ -347,18 +347,34 @@
       const { organization: org, members, invitations } = await call('GET', '/admin/v1/orgs/' + encodeURIComponent(id))
       const memberTable = el('table')
       memberTable.append(el('tr'))
-      for (const heading of ['Member', 'Role', 'Joined']) memberTable.rows[0].append(el('th', heading, { scope: 'col' }))
+      for (const heading of ['Member', 'Role', 'Second factor', 'Joined']) memberTable.rows[0].append(el('th', heading, { scope: 'col' }))
       for (const member of members) {
         const row = memberTable.insertRow()
         const cell = el('td'); cell.append(button(member.email || member.user_id, () => showUser(member.user_id)))
-        row.append(cell, el('td', member.role), el('td', when(member.created_at)))
+        const factor = member.mfa_enabled ? 'Yes' : org.mfa_required ? 'No: cannot use this organization' : 'No'
+        row.append(cell, el('td', member.role), el('td', factor), el('td', when(member.created_at)))
       }
+      // The organization's owners normally set this; the admin key acts as
+      // the application's operator, for example when every owner lost their factor.
+      const result = el('p', '', { role: 'status' })
+      const without = members.filter(member => !member.mfa_enabled).length
+      const toggle = button(org.mfa_required ? 'Stop requiring a second factor' : 'Require a second factor', async () => {
+        result.textContent = 'Saving…'
+        try {
+          await call('PATCH', '/admin/v1/orgs/' + encodeURIComponent(id), { mfa_required: !org.mfa_required })
+          await showOrg(id)
+          $('detail').querySelector('[role=status]').textContent = org.mfa_required ? 'A second factor is no longer required.' : 'A second factor is now required.'
+        } catch (error) { result.textContent = error.message }
+      })
+      const warning = !org.mfa_required && without ? el('p', without + ' member(s) without a second factor would lose access until they add one.', { class: 'muted' }) : null
       const inviteTable = el('table')
       inviteTable.append(el('tr'))
       for (const heading of ['Invited email', 'Role', 'Expires']) inviteTable.rows[0].append(el('th', heading, { scope: 'col' }))
       for (const invitation of invitations) inviteTable.insertRow().append(el('td', invitation.email), el('td', invitation.role), el('td', when(invitation.expires_at)))
       panel.replaceChildren(
-        el('h2', org.name), facts([['Slug', org.slug], ['Organization ID', org.id], ['Created', when(org.created_at)]]),
+        el('h2', org.name), facts([['Slug', org.slug], ['Organization ID', org.id], ['Created', when(org.created_at)],
+          ['Second factor', org.mfa_required ? 'Required: permissions hold only in sessions verified with one' : 'Optional']]),
+        toggle, ...(warning ? [warning] : []), result,
         el('h3', 'Members (' + members.length + ')'), memberTable,
         el('h3', 'Pending invitations'), invitations.length ? inviteTable : el('p', 'None.', { class: 'muted' }),
         button('Close', () => { panel.hidden = true }),
