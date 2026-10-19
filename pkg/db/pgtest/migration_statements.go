@@ -69,7 +69,7 @@ func ExecMigration(ctx context.Context, t *testing.T, pool *pgxpool.Pool, raw st
 	}
 	defer conn.Release()
 	// A failed run must not leave its session lock_timeout on a pooled connection.
-	defer func() { _, _ = conn.Exec(context.Background(), "RESET lock_timeout") }()
+	defer func() { _, _ = conn.Exec(context.WithoutCancel(ctx), "RESET lock_timeout") }()
 	for _, statement := range MigrationStatements(raw, up) {
 		if _, err := conn.Exec(ctx, statement); err != nil {
 			return err
