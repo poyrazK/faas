@@ -12028,6 +12028,21 @@ type RouteHealthNotificationState struct {
 	UpdatedAt         pgtype.Timestamptz
 }
 
+type RouteInsight struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	Kind            string
+	Method          string
+	Route           string
+	State           string
+	Message         string
+	Evidence        []byte
+	FirstDetectedAt pgtype.Timestamptz
+	LastDetectedAt  pgtype.Timestamptz
+	ResolvedAt      pgtype.Timestamptz
+}
+
 type RouteLifecycleApproval struct {
 	ID                    pgtype.UUID
 	AccountID             pgtype.UUID

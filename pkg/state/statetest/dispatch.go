@@ -141,8 +141,13 @@ var memDispatched = map[string]bool{
 	"RouteAdviceConsumers":                                    true,
 	"RouteAdviceRouteStats":                                   true,
 	"RouteAdviceThrottleExcess":                               true,
+	"ListRouteInsights":                                       true,
+	"ResolveStaleRouteInsights":                               true,
 	"RouteAwakeMinutes":                                       true,
+	"RouteInsightCandidateApps":                               true,
+	"UpsertRouteInsight":                                      true,
 	"RouteAwakeRouteMinutes":                                  true,
+	"RouteAwakeSourceMinutes":                                 true,
 	"RuntimeAppValuesForDeployment":                           true,
 	"RuntimeScalingStateForDeployment":                        true,
 	"SafeReleaseWorkerLeaseHealth":                            true,
@@ -1051,6 +1056,42 @@ func (s *Mem) RouteAdviceThrottleExcess(p0 context.Context, p1 sqlc.RouteAdviceT
 	return s.MemStore.RouteAdviceThrottleExcess(p0, p1)
 }
 
+func (s *Mem) ListRouteInsights(p0 context.Context, p1 sqlc.ListRouteInsightsParams) ([]sqlc.ListRouteInsightsRow, error) {
+	if o, ok := s.over.(interface {
+		ListRouteInsights(context.Context, sqlc.ListRouteInsightsParams) ([]sqlc.ListRouteInsightsRow, error)
+	}); ok {
+		return o.ListRouteInsights(p0, p1)
+	}
+	return s.MemStore.ListRouteInsights(p0, p1)
+}
+
+func (s *Mem) ResolveStaleRouteInsights(p0 context.Context, p1 sqlc.ResolveStaleRouteInsightsParams) (int64, error) {
+	if o, ok := s.over.(interface {
+		ResolveStaleRouteInsights(context.Context, sqlc.ResolveStaleRouteInsightsParams) (int64, error)
+	}); ok {
+		return o.ResolveStaleRouteInsights(p0, p1)
+	}
+	return s.MemStore.ResolveStaleRouteInsights(p0, p1)
+}
+
+func (s *Mem) RouteInsightCandidateApps(p0 context.Context, p1 sqlc.RouteInsightCandidateAppsParams) ([]sqlc.RouteInsightCandidateAppsRow, error) {
+	if o, ok := s.over.(interface {
+		RouteInsightCandidateApps(context.Context, sqlc.RouteInsightCandidateAppsParams) ([]sqlc.RouteInsightCandidateAppsRow, error)
+	}); ok {
+		return o.RouteInsightCandidateApps(p0, p1)
+	}
+	return s.MemStore.RouteInsightCandidateApps(p0, p1)
+}
+
+func (s *Mem) UpsertRouteInsight(p0 context.Context, p1 sqlc.UpsertRouteInsightParams) error {
+	if o, ok := s.over.(interface {
+		UpsertRouteInsight(context.Context, sqlc.UpsertRouteInsightParams) error
+	}); ok {
+		return o.UpsertRouteInsight(p0, p1)
+	}
+	return s.MemStore.UpsertRouteInsight(p0, p1)
+}
+
 func (s *Mem) RouteAwakeMinutes(p0 context.Context, p1 sqlc.RouteAwakeMinutesParams) ([]sqlc.RouteAwakeMinutesRow, error) {
 	if o, ok := s.over.(interface {
 		RouteAwakeMinutes(context.Context, sqlc.RouteAwakeMinutesParams) ([]sqlc.RouteAwakeMinutesRow, error)
@@ -1067,6 +1108,15 @@ func (s *Mem) RouteAwakeRouteMinutes(p0 context.Context, p1 sqlc.RouteAwakeRoute
 		return o.RouteAwakeRouteMinutes(p0, p1)
 	}
 	return s.MemStore.RouteAwakeRouteMinutes(p0, p1)
+}
+
+func (s *Mem) RouteAwakeSourceMinutes(p0 context.Context, p1 sqlc.RouteAwakeSourceMinutesParams) ([]sqlc.RouteAwakeSourceMinutesRow, error) {
+	if o, ok := s.over.(interface {
+		RouteAwakeSourceMinutes(context.Context, sqlc.RouteAwakeSourceMinutesParams) ([]sqlc.RouteAwakeSourceMinutesRow, error)
+	}); ok {
+		return o.RouteAwakeSourceMinutes(p0, p1)
+	}
+	return s.MemStore.RouteAwakeSourceMinutes(p0, p1)
 }
 
 func (s *Mem) RuntimeAppValuesForDeployment(p0 context.Context, p1 string, p2 string, p3 string) (state.RuntimeAppValuesSnapshot, error) {

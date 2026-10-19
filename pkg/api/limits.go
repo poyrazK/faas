@@ -11230,13 +11230,53 @@ const (
 	RouteContentMaxUncacheableShare = 0.5
 )
 
+// RouteCacheRule checks existing cache rules from refill evidence (ADR-1199).
+// On a route with a cache rule the gateway compares each body it stores with
+// the previous one for the URL. A changed body stored no later than the
+// rule's max-age plus RouteContentStaleLagShare of it (at least
+// RouteContentStaleMinLag) is a stale refill: the content almost certainly
+// changed while the cached copy was still being served. A rule is stale when
+// at least RouteCacheRuleMinRefills refills were observed and more than
+// RouteCacheRuleMaxStaleShare of them were stale, and too short when none was
+// stale and the measured safe max-age is at least RouteCacheRuleTooShortFactor
+// times the rule's.
+const (
+	RouteContentStaleLagShare    = 0.1
+	RouteContentStaleMinLag      = 5 * time.Second
+	RouteCacheRuleMinRefills     = 20
+	RouteCacheRuleMaxStaleShare  = 0.05
+	RouteCacheRuleTooShortFactor = 2
+)
+
+// RouteInsight bounds proactive route insights (ADR-1198): every
+// RouteInsightInterval apid evaluates at most RouteInsightMaxApps apps that
+// ran in the last RouteInsightWindow. An insight no evaluation has observed
+// for RouteInsightResolveAfter resolves. A kept_awake insight needs the app
+// awake for at least RouteInsightKeptAwakeMinShare of the window. Listings
+// show active insights and those resolved within RouteInsightResolvedListWindow,
+// at most RouteInsightListLimit rows.
+const (
+	RouteInsightInterval           = 6 * time.Hour
+	RouteInsightWindow             = 24 * time.Hour
+	RouteInsightResolveAfter       = 24 * time.Hour
+	RouteInsightMaxApps            = 500
+	RouteInsightKeptAwakeMinShare  = 0.5
+	RouteInsightListLimit          = 50
+	RouteInsightResolvedListWindow = 7 * 24 * time.Hour
+)
+
 // RoutePriority bounds per-app route priorities for the warm-capacity queue
 // (ADR-978): at most RoutePriorityMaxRules rules, cached by each gateway for
-// RoutePriorityCacheTTL and read only when a request has to queue.
+// RoutePriorityCacheTTL and read only when a request has to queue. The
+// cold-wake queue (ADR-20261018181846) prefetches the rules in the background,
+// bounded by RoutePriorityPrefetchTimeout, and releases each lower class
+// RoutePriorityWakeReleaseStagger after the one above it.
 const (
-	RoutePriorityMaxRules = 20
-	RoutePriorityCacheTTL = 30 * time.Second
-	RoutePriorityMaxApps  = 4096
+	RoutePriorityMaxRules           = 20
+	RoutePriorityCacheTTL           = 30 * time.Second
+	RoutePriorityMaxApps            = 4096
+	RoutePriorityPrefetchTimeout    = 5 * time.Second
+	RoutePriorityWakeReleaseStagger = 25 * time.Millisecond
 )
 
 // RouteHealthPooled bounds stage-pooled evidence for low-traffic routes

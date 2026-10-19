@@ -6,17 +6,14 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-T = TypeVar("T", bound="DeploymentResponseStageState")
+T = TypeVar("T", bound="RouteInsightEvidence")
 
 
 @_attrs_define
-class DeploymentResponseStageState:
-    """Actual stage progress, including retry_requested_stage and retry_restart_reason when prerequisites must be rebuilt.
-    Optional hosting_verification records started_at, deadline_at, attempts, last_error_code, retry_not_before and
-    completed_at during unavailable candidate verification recovery (ADR-481, ADR-482). last_error_code distinguishes
-    publication, gateway, transport and candidate-evidence failures; a transport failure does not attribute blame to the
-    app or platform. retry_not_before is an eligibility floor, not a promised delivery time; completed_at means the
-    attempt finished, while the hosting receipt records its verdict.
+class RouteInsightEvidence:
+    """Measured figures behind the insight: awake share, interval and savings for kept_awake; safe max-age and repeat
+    counts for cacheable; the rule's max-age, refills, stale refills and measured safe max-age for cache_stale and
+    cache_too_short.
 
     """
 
@@ -32,10 +29,10 @@ class DeploymentResponseStageState:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        deployment_response_stage_state = cls()
+        route_insight_evidence = cls()
 
-        deployment_response_stage_state.additional_properties = d
-        return deployment_response_stage_state
+        route_insight_evidence.additional_properties = d
+        return route_insight_evidence
 
     @property
     def additional_keys(self) -> list[str]:

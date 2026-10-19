@@ -1162,15 +1162,21 @@ from .deployment_alias_list_response import DeploymentAliasListResponse
 from .deployment_alias_response import DeploymentAliasResponse
 from .deployment_audit_response import DeploymentAuditResponse
 from .deployment_audit_response_kind import DeploymentAuditResponseKind
+from .deployment_build_dependency_gate import DeploymentBuildDependencyGate
+from .deployment_build_dependency_gate_status import DeploymentBuildDependencyGateStatus
 from .deployment_change import DeploymentChange
 from .deployment_change_after_type_3 import DeploymentChangeAfterType3
 from .deployment_change_before_type_3 import DeploymentChangeBeforeType3
 from .deployment_change_field import DeploymentChangeField
+from .deployment_dependency_gate import DeploymentDependencyGate
+from .deployment_dependency_gate_status import DeploymentDependencyGateStatus
+from .deployment_dependency_pin import DeploymentDependencyPin
 from .deployment_failed_webhook_payload import DeploymentFailedWebhookPayload
 from .deployment_failed_webhook_payload_status import DeploymentFailedWebhookPayloadStatus
 from .deployment_grpc_healthcheck import DeploymentGRPCHealthcheck
 from .deployment_grpc_liveness_probe import DeploymentGRPCLivenessProbe
 from .deployment_healthcheck import DeploymentHealthcheck
+from .deployment_hosting_verification import DeploymentHostingVerification
 from .deployment_list_response import DeploymentListResponse
 from .deployment_live_webhook_payload import DeploymentLiveWebhookPayload
 from .deployment_live_webhook_payload_status import DeploymentLiveWebhookPayloadStatus
@@ -1196,11 +1202,16 @@ from .deployment_response_parked_reason_type_1 import DeploymentResponseParkedRe
 from .deployment_response_parked_reason_type_2_type_1 import DeploymentResponseParkedReasonType2Type1
 from .deployment_response_parked_reason_type_3_type_1 import DeploymentResponseParkedReasonType3Type1
 from .deployment_response_rollout_state import DeploymentResponseRolloutState
-from .deployment_response_stage_state import DeploymentResponseStageState
 from .deployment_response_tag import DeploymentResponseTag
 from .deployment_route_policy_snapshot_response import DeploymentRoutePolicySnapshotResponse
 from .deployment_runtime_response import DeploymentRuntimeResponse
 from .deployment_runtime_response_status import DeploymentRuntimeResponseStatus
+from .deployment_stage_history_entry import DeploymentStageHistoryEntry
+from .deployment_stage_history_entry_name import DeploymentStageHistoryEntryName
+from .deployment_stage_history_entry_status import DeploymentStageHistoryEntryStatus
+from .deployment_stage_state import DeploymentStageState
+from .deployment_stage_state_current import DeploymentStageStateCurrent
+from .deployment_stage_state_retry_requested_stage import DeploymentStageStateRetryRequestedStage
 from .deployment_summary_response import DeploymentSummaryResponse
 from .deployment_worker_drain_status import DeploymentWorkerDrainStatus
 from .detach_environment_git_source_request import DetachEnvironmentGitSourceRequest
@@ -1950,11 +1961,6 @@ from .get_build_sbom_response_200 import GetBuildSbomResponse200
 from .get_builds_status import GetBuildsStatus
 from .get_custom_metric_series_range import GetCustomMetricSeriesRange
 from .get_deployment_open_api_doc_response_200 import GetDeploymentOpenAPIDocResponse200
-from .get_deployment_stages_response_200 import GetDeploymentStagesResponse200
-from .get_deployment_stages_response_200_current import GetDeploymentStagesResponse200Current
-from .get_deployment_stages_response_200_history_item import GetDeploymentStagesResponse200HistoryItem
-from .get_deployment_stages_response_200_history_item_name import GetDeploymentStagesResponse200HistoryItemName
-from .get_deployment_stages_response_200_history_item_status import GetDeploymentStagesResponse200HistoryItemStatus
 from .get_durable_entity_readiness_response_200 import GetDurableEntityReadinessResponse200
 from .get_edge_rule_stats_window import GetEdgeRuleStatsWindow
 from .get_environment_route_budgets_scope import GetEnvironmentRouteBudgetsScope
@@ -2016,6 +2022,11 @@ from .github_webhook_delivery_record_status import GithubWebhookDeliveryRecordSt
 from .grace_window_response import GraceWindowResponse
 from .guarded_debug_regression_action_request import GuardedDebugRegressionActionRequest
 from .guarded_debug_regression_action_request_action import GuardedDebugRegressionActionRequestAction
+from .hosting_route_check_result import HostingRouteCheckResult
+from .hosting_route_check_result_status import HostingRouteCheckResultStatus
+from .hosting_route_check_set import HostingRouteCheckSet
+from .hosting_route_check_set_source import HostingRouteCheckSetSource
+from .hosting_route_check_set_status import HostingRouteCheckSetStatus
 from .image_run_response import ImageRunResponse
 from .image_run_response_image_status import ImageRunResponseImageStatus
 from .image_run_response_status import ImageRunResponseStatus
@@ -4691,6 +4702,8 @@ from .route_assignment import RouteAssignment
 from .route_awake_response import RouteAwakeResponse
 from .route_awake_route import RouteAwakeRoute
 from .route_awake_route_pattern import RouteAwakeRoutePattern
+from .route_awake_source import RouteAwakeSource
+from .route_awake_source_source import RouteAwakeSourceSource
 from .route_awake_suggestion import RouteAwakeSuggestion
 from .route_awake_suggestion_kind import RouteAwakeSuggestionKind
 from .route_awake_what_if import RouteAwakeWhatIf
@@ -4793,6 +4806,11 @@ from .route_health_window_evidence import RouteHealthWindowEvidence
 from .route_health_window_evidence_error_status import RouteHealthWindowEvidenceErrorStatus
 from .route_health_window_evidence_latency_status import RouteHealthWindowEvidenceLatencyStatus
 from .route_health_window_evidence_status import RouteHealthWindowEvidenceStatus
+from .route_insight import RouteInsight
+from .route_insight_evidence import RouteInsightEvidence
+from .route_insight_kind import RouteInsightKind
+from .route_insight_state import RouteInsightState
+from .route_insights_response import RouteInsightsResponse
 from .route_lifecycle_approval import RouteLifecycleApproval
 from .route_lifecycle_approval_checker_version import RouteLifecycleApprovalCheckerVersion
 from .route_lifecycle_approval_compatibility import RouteLifecycleApprovalCompatibility
@@ -6867,15 +6885,21 @@ __all__ = (
     "DeploymentAliasResponse",
     "DeploymentAuditResponse",
     "DeploymentAuditResponseKind",
+    "DeploymentBuildDependencyGate",
+    "DeploymentBuildDependencyGateStatus",
     "DeploymentChange",
     "DeploymentChangeAfterType3",
     "DeploymentChangeBeforeType3",
     "DeploymentChangeField",
+    "DeploymentDependencyGate",
+    "DeploymentDependencyGateStatus",
+    "DeploymentDependencyPin",
     "DeploymentFailedWebhookPayload",
     "DeploymentFailedWebhookPayloadStatus",
     "DeploymentGRPCHealthcheck",
     "DeploymentGRPCLivenessProbe",
     "DeploymentHealthcheck",
+    "DeploymentHostingVerification",
     "DeploymentListResponse",
     "DeploymentLivenessProbe",
     "DeploymentLiveWebhookPayload",
@@ -6901,11 +6925,16 @@ __all__ = (
     "DeploymentResponseParkedReasonType2Type1",
     "DeploymentResponseParkedReasonType3Type1",
     "DeploymentResponseRolloutState",
-    "DeploymentResponseStageState",
     "DeploymentResponseTag",
     "DeploymentRoutePolicySnapshotResponse",
     "DeploymentRuntimeResponse",
     "DeploymentRuntimeResponseStatus",
+    "DeploymentStageHistoryEntry",
+    "DeploymentStageHistoryEntryName",
+    "DeploymentStageHistoryEntryStatus",
+    "DeploymentStageState",
+    "DeploymentStageStateCurrent",
+    "DeploymentStageStateRetryRequestedStage",
     "DeploymentSummaryResponse",
     "DeploymentWorkerDrainStatus",
     "DeployTokenResponse",
@@ -7620,11 +7649,6 @@ __all__ = (
     "GetBuildsStatus",
     "GetCustomMetricSeriesRange",
     "GetDeploymentOpenAPIDocResponse200",
-    "GetDeploymentStagesResponse200",
-    "GetDeploymentStagesResponse200Current",
-    "GetDeploymentStagesResponse200HistoryItem",
-    "GetDeploymentStagesResponse200HistoryItemName",
-    "GetDeploymentStagesResponse200HistoryItemStatus",
     "GetDurableEntityReadinessResponse200",
     "GetEdgeRuleStatsWindow",
     "GetEnvironmentRouteBudgetsScope",
@@ -7682,6 +7706,11 @@ __all__ = (
     "GraceWindowResponse",
     "GuardedDebugRegressionActionRequest",
     "GuardedDebugRegressionActionRequestAction",
+    "HostingRouteCheckResult",
+    "HostingRouteCheckResultStatus",
+    "HostingRouteCheckSet",
+    "HostingRouteCheckSetSource",
+    "HostingRouteCheckSetStatus",
     "ImageRunResponse",
     "ImageRunResponseImageStatus",
     "ImageRunResponseStatus",
@@ -10123,6 +10152,8 @@ __all__ = (
     "RouteAwakeResponse",
     "RouteAwakeRoute",
     "RouteAwakeRoutePattern",
+    "RouteAwakeSource",
+    "RouteAwakeSourceSource",
     "RouteAwakeSuggestion",
     "RouteAwakeSuggestionKind",
     "RouteAwakeWhatIf",
@@ -10225,6 +10256,11 @@ __all__ = (
     "RouteHealthWindowEvidenceErrorStatus",
     "RouteHealthWindowEvidenceLatencyStatus",
     "RouteHealthWindowEvidenceStatus",
+    "RouteInsight",
+    "RouteInsightEvidence",
+    "RouteInsightKind",
+    "RouteInsightsResponse",
+    "RouteInsightState",
     "RouteLifecycleApproval",
     "RouteLifecycleApprovalCheckerVersion",
     "RouteLifecycleApprovalCompatibility",

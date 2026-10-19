@@ -6,7 +6,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.get_deployment_stages_response_200 import GetDeploymentStagesResponse200
+from ...models.deployment_stage_state import DeploymentStageState
 from ...models.problem import Problem
 from ...types import Response
 
@@ -27,9 +27,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> GetDeploymentStagesResponse200 | Problem | None:
+) -> DeploymentStageState | Problem | None:
     if response.status_code == 200:
-        response_200 = GetDeploymentStagesResponse200.from_dict(response.json())
+        response_200 = DeploymentStageState.from_dict(response.json())
 
         return response_200
 
@@ -56,7 +56,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[GetDeploymentStagesResponse200 | Problem]:
+) -> Response[DeploymentStageState | Problem]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -69,7 +69,7 @@ def sync_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[GetDeploymentStagesResponse200 | Problem]:
+) -> Response[DeploymentStageState | Problem]:
     """Get per-deploy closed-stage summary (ADR-117 follow-up).
 
      Returns the closed 6-stage summary for a deployment. Companion
@@ -87,7 +87,8 @@ def sync_detailed(
     `snapshot_prepare` / `readiness`) is enforced at the
     database layer by `deployments_stage_state_current_check`,
     so a malformed row would never reach the wire. The
-    `current` field is the stage the deploy is in right now;
+    `current` field is the stage the deploy is in right now
+    (empty once the deployment is live, failed or cancelled);
     `history` lists the closed rows in transition order
     (oldest → newest), each carrying server-measured
     `duration_ms` so the CLI / dashboard don't have to trust
@@ -106,7 +107,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[GetDeploymentStagesResponse200 | Problem]
+        Response[DeploymentStageState | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -124,7 +125,7 @@ def sync(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> GetDeploymentStagesResponse200 | Problem | None:
+) -> DeploymentStageState | Problem | None:
     """Get per-deploy closed-stage summary (ADR-117 follow-up).
 
      Returns the closed 6-stage summary for a deployment. Companion
@@ -142,7 +143,8 @@ def sync(
     `snapshot_prepare` / `readiness`) is enforced at the
     database layer by `deployments_stage_state_current_check`,
     so a malformed row would never reach the wire. The
-    `current` field is the stage the deploy is in right now;
+    `current` field is the stage the deploy is in right now
+    (empty once the deployment is live, failed or cancelled);
     `history` lists the closed rows in transition order
     (oldest → newest), each carrying server-measured
     `duration_ms` so the CLI / dashboard don't have to trust
@@ -161,7 +163,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        GetDeploymentStagesResponse200 | Problem
+        DeploymentStageState | Problem
     """
 
     return sync_detailed(
@@ -174,7 +176,7 @@ async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[GetDeploymentStagesResponse200 | Problem]:
+) -> Response[DeploymentStageState | Problem]:
     """Get per-deploy closed-stage summary (ADR-117 follow-up).
 
      Returns the closed 6-stage summary for a deployment. Companion
@@ -192,7 +194,8 @@ async def asyncio_detailed(
     `snapshot_prepare` / `readiness`) is enforced at the
     database layer by `deployments_stage_state_current_check`,
     so a malformed row would never reach the wire. The
-    `current` field is the stage the deploy is in right now;
+    `current` field is the stage the deploy is in right now
+    (empty once the deployment is live, failed or cancelled);
     `history` lists the closed rows in transition order
     (oldest → newest), each carrying server-measured
     `duration_ms` so the CLI / dashboard don't have to trust
@@ -211,7 +214,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[GetDeploymentStagesResponse200 | Problem]
+        Response[DeploymentStageState | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -227,7 +230,7 @@ async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> GetDeploymentStagesResponse200 | Problem | None:
+) -> DeploymentStageState | Problem | None:
     """Get per-deploy closed-stage summary (ADR-117 follow-up).
 
      Returns the closed 6-stage summary for a deployment. Companion
@@ -245,7 +248,8 @@ async def asyncio(
     `snapshot_prepare` / `readiness`) is enforced at the
     database layer by `deployments_stage_state_current_check`,
     so a malformed row would never reach the wire. The
-    `current` field is the stage the deploy is in right now;
+    `current` field is the stage the deploy is in right now
+    (empty once the deployment is live, failed or cancelled);
     `history` lists the closed rows in transition order
     (oldest → newest), each carrying server-measured
     `duration_ms` so the CLI / dashboard don't have to trust
@@ -264,7 +268,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        GetDeploymentStagesResponse200 | Problem
+        DeploymentStageState | Problem
     """
 
     return (

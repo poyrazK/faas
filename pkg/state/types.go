@@ -3975,6 +3975,8 @@ const (
 	AppWebhookEventPlatformTenantStatementFinalized        AppWebhookEvent = "platform_tenant.statement.finalized"
 	AppWebhookEventDebugRegressionDetected                 AppWebhookEvent = "debug.regression.detected"
 	AppWebhookEventDebugRegressionResolved                 AppWebhookEvent = "debug.regression.resolved"
+	AppWebhookEventRouteInsightDetected                    AppWebhookEvent = "routes.insight.detected"
+	AppWebhookEventRouteInsightResolved                    AppWebhookEvent = "routes.insight.resolved"
 	AppWebhookEventRouteMonitorViolated                    AppWebhookEvent = "routes.monitor.violated"
 	AppWebhookEventRouteMonitorEscalated                   AppWebhookEvent = "routes.monitor.escalated"
 	AppWebhookEventRouteMonitorRecovered                   AppWebhookEvent = "routes.monitor.recovered"
@@ -4057,6 +4059,8 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventPlatformTenantStatementFinalized,
 	AppWebhookEventDebugRegressionDetected,
 	AppWebhookEventDebugRegressionResolved,
+	AppWebhookEventRouteInsightDetected,
+	AppWebhookEventRouteInsightResolved,
 	AppWebhookEventRouteMonitorViolated,
 	AppWebhookEventRouteMonitorEscalated,
 	AppWebhookEventRouteMonitorRecovered,

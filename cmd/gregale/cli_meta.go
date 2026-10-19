@@ -3474,7 +3474,7 @@ var cliCommands = []cliCommand{
 				{Name: "throttle-missing-key-policy", Short: "kind=throttle: behavior when identity is missing", Value: "POLICY", ClosedSet: []string{"shared", "reject"}},
 				{Name: "throttle-key-field", Short: "kind=throttle: composite key field (ip|country|api_key|consumer_id|jwt_subject|jwt_claim|method|path|header:<name>; repeat)", Value: "FIELD"},
 				{Name: "throttle-count-status", Short: "kind=throttle: charge the bucket only for responses with this status (repeat)", Value: "CODE"},
-				{Name: "cache-stale-if-error-seconds", Short: "kind=cache: serve stale on origin failure (max 300)", Value: "SECONDS"},
+				{Name: "cache-stale-if-error-seconds", Short: "kind=cache: serve stale on origin failure (default 300; 0 disables; max 300)", Value: "SECONDS"},
 				{Name: "budget-allow-override-header", Short: "kind=budget: header allowed to override the budget", Value: "HEADER"},
 				{Name: "retry-allow-non-idempotent", Short: "kind=retry: allow POST/PATCH replay when Idempotency-Key is honored"},
 				{Name: "retry-min-remaining-ms", Short: "kind=retry: remaining request budget required before replay", Value: "MS"},
@@ -3565,7 +3565,7 @@ var cliCommands = []cliCommand{
 				{Name: "throttle-count-status", Short: "kind=throttle: charge the bucket only for responses with this status (repeat)", Value: "CODE"},
 				{Name: "cache-max-age-seconds", Short: "kind=cache: fresh window", Value: "SECONDS"},
 				{Name: "cache-stale-while-revalidate-seconds", Short: "kind=cache: stale-while-revalidate window", Value: "SECONDS"},
-				{Name: "cache-stale-if-error-seconds", Short: "kind=cache: serve stale on origin failure", Value: "SECONDS"},
+				{Name: "cache-stale-if-error-seconds", Short: "kind=cache: serve stale on origin failure (default 300; 0 disables)", Value: "SECONDS"},
 				{Name: "cache-vary-on", Short: "kind=cache: header to vary on (repeatable)", Value: "HEADER", Repeatable: true},
 				{Name: "cache-methods", Short: "kind=cache: cacheable method (repeatable)", Value: "METHOD", Repeatable: true},
 				{Name: "budget-ms", Short: "kind=budget: per-request wall-clock budget", Value: "MS"},
@@ -3706,7 +3706,7 @@ var cliCommands = []cliCommand{
 		}}, {Name: "awake", Positionals: []string{"<slug>"}, Short: "Show which routes keep a scale-to-zero app awake, what each costs in awake time, and how to let it park", Examples: []string{"gregale routes awake my-api", "gregale routes awake my-api --since 24h --json"}, Flags: []cliFlag{
 			{Name: "since", Value: "DURATION", Short: "window to analyze (default 7d; clamped to telemetry retention)"},
 			{Name: "until", Value: "RFC3339", Short: "end of the window (default now)"},
-		}}, {Name: "priority", Positionals: []string{"<slug>"}, Short: "Show or set which routes are served first, and turned away last, when every instance is busy", Examples: []string{"gregale routes priority my-api", "gregale routes priority my-api --critical \"POST /checkout\" --bulk \"/exports/*\"", "gregale routes priority my-api --reset"}, Flags: []cliFlag{
+		}}, {Name: "insights", Positionals: []string{"<slug>"}, Short: "List findings about routes that keep the app awake or are safe to cache, evaluated every six hours", Examples: []string{"gregale routes insights my-api", "gregale routes insights my-api --json"}, Flags: []cliFlag{}}, {Name: "priority", Positionals: []string{"<slug>"}, Short: "Show or set which routes are served first, and turned away last, when every instance is busy", Examples: []string{"gregale routes priority my-api", "gregale routes priority my-api --critical \"POST /checkout\" --bulk \"/exports/*\"", "gregale routes priority my-api --reset"}, Flags: []cliFlag{
 			{Name: "critical", Value: "[METHOD] PATH", Short: "route served first when the app is saturated (repeatable)"},
 			{Name: "bulk", Value: "[METHOD] PATH", Short: "route served last and turned away first (repeatable)"},
 			{Name: "clear", Short: "save no priorities, not even the route-health default"},

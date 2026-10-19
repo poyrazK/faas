@@ -149,6 +149,7 @@ import type { RouteHealthHistoryEntry } from '../models/RouteHealthHistoryEntry.
 import type { RouteHealthHistoryPage } from '../models/RouteHealthHistoryPage.js';
 import type { RouteHealthInvestigation } from '../models/RouteHealthInvestigation.js';
 import type { RouteHealthReport } from '../models/RouteHealthReport.js';
+import type { RouteInsightsResponse } from '../models/RouteInsightsResponse.js';
 import type { RouteLifecycleApproval } from '../models/RouteLifecycleApproval.js';
 import type { RouteLifecycleHistoryPage } from '../models/RouteLifecycleHistoryPage.js';
 import type { RouteMonitorConfig } from '../models/RouteMonitorConfig.js';
@@ -7800,6 +7801,57 @@ export class AppsService {
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * List the app's proactive route insights.
+   * Findings the route insights evaluator records every six hours for
+   * apps that ran in the last day (ADR-1198): `kept_awake` when a client
+   * calling a route at a steady interval keeps a mostly-awake app from
+   * parking, `cacheable` when the gateways measured a route safe to
+   * cache for a given lifetime, and, for routes that already have a cache
+   * rule (ADR-1199), `cache_stale` when refills found the body changed
+   * before the rule's max-age ran out and `cache_too_short` when the body
+   * stayed the same far longer. Active insights come first, then those
+   * resolved in the last seven days. An insight resolves after a day
+   * without being observed. Subscribe app webhooks to
+   * `routes.insight.detected` and `routes.insight.resolved` to be told of
+   * each transition; the webhook payload is the same insight object.
+   * Uses the normal read scopes, completed MFA and the
+   * DebugTelemetryEnabled plan gate.
+   *
+   * @returns RouteInsightsResponse The app's route insights.
+   * @throws ApiError
+   */
+  public static getRouteInsights({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<RouteInsightsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/routes/insights',
+      path: {
+        'slug': slug,
+      },
+      errors: {
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,

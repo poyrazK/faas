@@ -983,6 +983,17 @@ var schemaSpecOnly = map[string]bool{
 	"FailureRule":    true,
 	"FailureRules":   true,
 	"WorkDecision":   true,
+	// deployments.stage_state is served from pkg/state and
+	// pkg/apihostingreceipt structs, not pkg/api DTOs.
+	// TestSpecComplianceDeploymentStageState checks their fields and enums.
+	"DeploymentStageState":          true,
+	"DeploymentStageHistoryEntry":   true,
+	"DeploymentDependencyGate":      true,
+	"DeploymentDependencyPin":       true,
+	"DeploymentBuildDependencyGate": true,
+	"DeploymentHostingVerification": true,
+	"HostingRouteCheckSet":          true,
+	"HostingRouteCheckResult":       true,
 }
 
 // findRepoRoot walks up from the working directory until it finds a go.mod.
@@ -1029,6 +1040,9 @@ func TestSpecCompliance(t *testing.T) {
 	})
 	t.Run("ErrorCodes", func(t *testing.T) {
 		testErrorCodesParity(t, root, spec)
+	})
+	t.Run("EdgeRuleKinds", func(t *testing.T) {
+		testEdgeRuleKindsParity(t, root, spec)
 	})
 }
 
@@ -1775,6 +1789,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "service_wake_ahead.go"),
 		filepath.Join(root, "pkg", "api", "route_priority.go"),
 		filepath.Join(root, "pkg", "api", "route_awake.go"),
+		filepath.Join(root, "pkg", "api", "route_insights.go"),
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

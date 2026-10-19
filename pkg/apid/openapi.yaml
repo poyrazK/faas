@@ -24787,6 +24787,42 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/routes/insights:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getRouteInsights
+      summary: List the app's proactive route insights.
+      description: |
+        Findings the route insights evaluator records every six hours for
+        apps that ran in the last day (ADR-1198): `kept_awake` when a client
+        calling a route at a steady interval keeps a mostly-awake app from
+        parking, `cacheable` when the gateways measured a route safe to
+        cache for a given lifetime, and, for routes that already have a cache
+        rule (ADR-1199), `cache_stale` when refills found the body changed
+        before the rule's max-age ran out and `cache_too_short` when the body
+        stayed the same far longer. Active insights come first, then those
+        resolved in the last seven days. An insight resolves after a day
+        without being observed. Subscribe app webhooks to
+        `routes.insight.detected` and `routes.insight.resolved` to be told of
+        each transition; the webhook payload is the same insight object.
+        Uses the normal read scopes, completed MFA and the
+        DebugTelemetryEnabled plan gate.
+      x-since: 2026-10
+      responses:
+        '200':
+          description: The app's route insights.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteInsightsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/service-wake-ahead:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -29502,7 +29538,8 @@ paths:
         `snapshot_prepare` / `readiness`) is enforced at the
         database layer by `deployments_stage_state_current_check`,
         so a malformed row would never reach the wire. The
-        `current` field is the stage the deploy is in right now;
+        `current` field is the stage the deploy is in right now
+        (empty once the deployment is live, failed or cancelled);
         `history` lists the closed rows in transition order
         (oldest → newest), each carrying server-measured
         `duration_ms` so the CLI / dashboard don't have to trust
@@ -29514,41 +29551,11 @@ paths:
             no account-existence leak).
       responses:
         '200':
-          description: "The raw `deployments.stage_state` jsonb. Shape: {current, current_started_at, history: [{name, started_at, ended_at, duration_ms, status, reason}]}."
+          description: The deployment's stored `stage_state` document, served verbatim.
           content:
             application/json:
               schema:
-                type: object
-                description: The raw `deployments.stage_state` jsonb. Closed-vocabulary enforcement lives at the database layer (`deployments_stage_state_current_check`).
-                properties:
-                  current:
-                    type: string
-                    enum: [source_download, dependency_restore, image_build, security_scan, snapshot_prepare, readiness]
-                  current_started_at:
-                    type: [string, "null"]
-                    format: date-time
-                  history:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        name:
-                          type: string
-                          enum: [source_download, dependency_restore, image_build, security_scan, snapshot_prepare, readiness]
-                        started_at:
-                          type: [string, "null"]
-                          format: date-time
-                        ended_at:
-                          type: [string, "null"]
-                          format: date-time
-                        duration_ms:
-                          type: integer
-                          format: int64
-                        status:
-                          type: string
-                          enum: [completed, failed]
-                        reason:
-                          type: string
+                $ref: '#/components/schemas/DeploymentStageState'
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404':
           description: Deployment row missing or cross-account probe (IDOR-safe; never 403).
@@ -72779,7 +72786,7 @@ components:
     RouteAwakeResponse:
       type: object
       description: "How long the app was awake in the window and which routes kept it awake (ADR-1187). Seconds are instance-seconds of billed running time."
-      required: [slug, from, until, idle_timeout_seconds, window_seconds, awake_seconds, awake_share, mb_seconds, gb_hours, wakes, unattributed_seconds, other_routes_seconds, routes_limit, routes]
+      required: [slug, from, until, idle_timeout_seconds, window_seconds, awake_seconds, awake_share, mb_seconds, gb_hours, wakes, unattributed_seconds, sources, min_instances, other_routes_seconds, routes_limit, routes]
       properties:
         slug: {"type": "string"}
         from: {"type": "string", "format": "date-time"}
@@ -72792,12 +72799,27 @@ components:
         mb_seconds: {"type": "integer", "format": "int64", "description": "Billed MB-seconds in the window."}
         gb_hours: {"type": "number"}
         wakes: {"type": "integer", "format": "int64", "description": "Cold boots in the window."}
-        unattributed_seconds: {"type": "integer", "format": "int64", "description": "Awake time no recorded request explains: synthetic probes, scheduled prewarm, minimum instances, queue, cron and waitUntil work, or telemetry the plan's rate cap dropped."}
+        unattributed_seconds: {"type": "integer", "format": "int64", "description": "Awake time no recorded request, probe or prewarm explains: minimum instances, queue, cron and waitUntil work, probes older than a day, or telemetry the plan's rate cap dropped."}
+        sources:
+          type: array
+          description: "Awake time credited to causes other than customer requests, for minutes no request explains (ADR-1199)."
+          items: { $ref: '#/components/schemas/RouteAwakeSource' }
+        min_instances: {"type": "integer", "description": "The app's current minimum instance count; above zero the app never parks, so unattributed time is expected."}
         other_routes_seconds: {"type": "integer", "format": "int64", "description": "Awake time attributed to routes outside the busiest routes_limit."}
         routes_limit: {"type": "integer"}
         routes:
           type: array
           items: { $ref: '#/components/schemas/RouteAwakeRoute' }
+    RouteAwakeSource:
+      type: object
+      description: "Awake time one non-request cause explains (ADR-1199)."
+      required: [source, events, awake_seconds, awake_share, gb_hours]
+      properties:
+        source: {"type": "string", "enum": ["route_probe", "prewarm"], "description": "route_probe: synthetic canary probes the app answered (ADR-847; kept for a day). prewarm: instances a scheduled prewarm admitted."}
+        events: {"type": "integer", "format": "int64", "description": "Probe requests answered without a 5xx or an auth rejection, or prewarmed instances."}
+        awake_seconds: {"type": "integer", "format": "int64"}
+        awake_share: {"type": "number", "minimum": 0, "maximum": 1}
+        gb_hours: {"type": "number"}
     RouteAwakeRoute:
       type: object
       description: "One route's share of the app's awake time and what removing its requests would change."
@@ -72829,6 +72851,33 @@ components:
       properties:
         kind: {"type": "string", "enum": ["edge_cache", "call_less_often"]}
         message: {"type": "string"}
+    RouteInsightsResponse:
+      type: object
+      description: "An app's active route insights, then those resolved in the last seven days (ADR-1198)."
+      required: [slug, insights]
+      properties:
+        slug: {"type": "string"}
+        insights:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/RouteInsight' }
+    RouteInsight:
+      type: object
+      description: "One finding for a route; also the payload of the routes.insight.detected and routes.insight.resolved webhooks."
+      required: [kind, method, route, state, message, evidence, first_detected_at, last_detected_at]
+      properties:
+        kind: {"type": "string", "enum": ["kept_awake", "cacheable", "cache_stale", "cache_too_short"]}
+        method: {"type": "string"}
+        route: {"type": "string", "description": "Route template, for example /catalog."}
+        state: {"type": "string", "enum": ["active", "resolved"]}
+        message: {"type": "string", "description": "What was observed and what to change."}
+        evidence:
+          type: object
+          additionalProperties: true
+          description: "Measured figures behind the insight: awake share, interval and savings for kept_awake; safe max-age and repeat counts for cacheable; the rule's max-age, refills, stale refills and measured safe max-age for cache_stale and cache_too_short."
+        first_detected_at: {"type": "string", "format": "date-time"}
+        last_detected_at: {"type": "string", "format": "date-time"}
+        resolved_at: {"type": "string", "format": "date-time"}
     RouteAdviceResponse:
       type: object
       description: "Route advisor suggestions derived from retained request telemetry (ADR-976). Nothing is applied."
@@ -80811,6 +80860,11 @@ components:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', example: "hello-world" }
         type: { type: string, enum: [app, function] , example: "app"}
+        project_id:
+          type: string
+          format: uuid
+          description: "Parent project (ADR-050) as a canonical hyphenated UUID. Omitted when the app is standalone. Read-only: app create and update requests do not accept it."
+          example: "3f2b8c1e-6a4d-4e5f-9b7a-1c2d3e4f5a6b"
         visibility: { type: string, enum: [public, internal], default: public, description: "Public exposes the app through the edge; internal keeps it available only to authenticated service-to-service routing. Available on every plan." }
         workload_class:
           type: string
@@ -86291,6 +86345,135 @@ components:
         source: { type: string, enum: [registry, object_storage] }
         sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
 
+    # Wire shape of `deployments.stage_state` (state.StageState, ADR-117).
+    # Served verbatim by GET /v1/deployments/{id}/stages and embedded as
+    # DeploymentResponse.stage_state. TestSpecComplianceDeploymentStageState
+    # pins property names, required fields and enums to the Go structs.
+    DeploymentStageState:
+      type: object
+      description: >-
+        Customer-visible deployment stage progress (ADR-117). `current` is the
+        open stage, or an empty string once the deployment is live, failed or
+        cancelled and that stage has moved into `history`.
+      required: [current, history]
+      properties:
+        current:
+          type: string
+          enum: ['', source_download, dependency_restore, image_build, security_scan, snapshot_prepare, readiness]
+        current_started_at:
+          type: [string, "null"]
+          format: date-time
+          description: Start of the open stage. Null or absent when no stage is open, and on legacy rows created before stage timing.
+        history:
+          type: array
+          description: Closed stages, oldest first. Writers keep the most recent 64 (MaxStageHistory).
+          items: { $ref: '#/components/schemas/DeploymentStageHistoryEntry' }
+        retry_requested_stage:
+          type: string
+          enum: [source_download, dependency_restore, image_build, security_scan, snapshot_prepare, readiness]
+          description: Stage a retry asked to resume from (ADR-162). Present only on retry deployments, which always restart at source_download.
+        retry_restart_reason:
+          type: string
+          description: Why a retry restarted from source_download rather than retry_requested_stage.
+        dependency_gate: { $ref: '#/components/schemas/DeploymentDependencyGate' }
+        build_dependency_gate: { $ref: '#/components/schemas/DeploymentBuildDependencyGate' }
+        hosting_verification: { $ref: '#/components/schemas/DeploymentHostingVerification' }
+    DeploymentStageHistoryEntry:
+      type: object
+      description: One closed stage with server-measured duration.
+      required: [name, started_at, ended_at, duration_ms, status]
+      properties:
+        name:
+          type: string
+          enum: [source_download, dependency_restore, image_build, security_scan, snapshot_prepare, readiness]
+        started_at: { type: [string, "null"], format: date-time }
+        ended_at: { type: [string, "null"], format: date-time }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        status: { type: string, enum: [completed, failed, cancelled] }
+        reason: { type: string, description: Failure or cancellation detail; absent or empty for completed stages. }
+    DeploymentDependencyGate:
+      type: object
+      description: >-
+        Compose dependency readiness gate pinned at admission (ADR-685). The
+        deadline starts when the candidate first presents its own readiness proof.
+      required: [dependencies, status]
+      properties:
+        dependencies:
+          type: array
+          items: { $ref: '#/components/schemas/DeploymentDependencyPin' }
+        started_at: { type: string, format: date-time }
+        deadline_at: { type: string, format: date-time }
+        status: { type: string, enum: [waiting, ready, failed] }
+        blocker: { type: string, description: The dependency or deadline currently blocking release. }
+    DeploymentBuildDependencyGate:
+      type: object
+      description: >-
+        Build-time wait on the API deployments a guided service migration
+        selected (ADR-1666). It is checked before cache lookup and slot
+        allocation and never holds a build slot while waiting.
+      required: [dependencies, status, deadline_at, check_after]
+      properties:
+        dependencies:
+          type: array
+          items: { $ref: '#/components/schemas/DeploymentDependencyPin' }
+        status: { type: string, enum: [waiting, ready, failed] }
+        code: { type: string, description: "Machine-readable reason while waiting or failed, for example build_dependency_not_ready or build_dependency_timeout. Absent once ready." }
+        blocker: { type: string, description: The dependency or deadline currently blocking the build. }
+        deadline_at: { type: string, format: date-time }
+        check_after: { type: string, format: date-time, description: "Earliest time the gate is re-checked. Zero time (0001-01-01T00:00:00Z) when no re-check is scheduled." }
+    DeploymentDependencyPin:
+      type: object
+      description: A dependency deployment captured at admission; it never follows a later deployment.
+      required: [service, app_id, deployment_id]
+      properties:
+        service: { type: string }
+        app_id: { type: string }
+        deployment_id: { type: string }
+    DeploymentHostingVerification:
+      type: object
+      description: >-
+        Candidate hosting verification recovery progress (ADR-481, ADR-482).
+        last_error_code distinguishes publication, gateway, transport and
+        candidate-evidence failures; a transport failure does not attribute blame
+        to the app or platform. retry_not_before is an eligibility floor, not a
+        promised delivery time; completed_at means the attempt finished, while
+        the hosting receipt records its verdict.
+      required: [started_at, deadline_at, attempts]
+      properties:
+        started_at: { type: string, format: date-time }
+        deadline_at: { type: string, format: date-time }
+        attempts: { type: integer, minimum: 0 }
+        last_error_code: { type: string }
+        last_route_checks: { $ref: '#/components/schemas/HostingRouteCheckSet' }
+        retry_not_before: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+    HostingRouteCheckSet:
+      type: object
+      description: API route checks from the app's imported OpenAPI document. document_sha256 binds them to that exact document.
+      required: [source, status, checks]
+      properties:
+        source: { type: string, enum: [app_openapi] }
+        document_sha256: { type: string }
+        status: { type: string, enum: [verified, failed, unavailable] }
+        checks:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/HostingRouteCheckResult' }
+    HostingRouteCheckResult:
+      type: object
+      description: Bounded, non-secret evidence from one authenticated candidate GET. Request and response bodies are omitted.
+      required: [method, path, status, verified_at]
+      properties:
+        method: { type: string }
+        path: { type: string }
+        status: { type: string, enum: [verified, failed, skipped] }
+        status_code: { type: integer }
+        latency_ms: { type: integer, format: int64 }
+        verified_at: { type: string, format: date-time, description: Zero time (0001-01-01T00:00:00Z) when the check did not run. }
+        request_id: { type: string }
+        error_code: { type: string }
+        error: { type: string }
+
     DeploymentResponse:
       description: "One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 / ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape is non-secret by design."
       type: object
@@ -86307,18 +86490,13 @@ components:
         durable_entity_validator:
           $ref: '#/components/schemas/DurableEntityValidatorDeploymentInfo'
         stage_state:
-          type: object
+          $ref: '#/components/schemas/DeploymentStageState'
           description: >-
-            Actual stage progress, including retry_requested_stage and
-            retry_restart_reason when prerequisites must be rebuilt. Optional
-            hosting_verification records started_at, deadline_at, attempts,
-            last_error_code, retry_not_before and completed_at during unavailable
-            candidate verification recovery (ADR-481, ADR-482). last_error_code
-            distinguishes publication, gateway, transport and candidate-evidence
-            failures; a transport failure does not attribute blame to the app or
-            platform. retry_not_before is an
-            eligibility floor, not a promised delivery time; completed_at means
-            the attempt finished, while the hosting receipt records its verdict.
+            Actual stage progress; the same document GET
+            /v1/deployments/{id}/stages serves. retry_requested_stage and
+            retry_restart_reason appear when prerequisites must be rebuilt;
+            hosting_verification appears during unavailable candidate
+            verification recovery (ADR-481, ADR-482).
         dev_patch:
           $ref: '#/components/schemas/DevPatchPreview'
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
@@ -100264,6 +100442,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleGeoAction' }
             - { $ref: '#/components/schemas/EdgeRuleThrottleAction' }
             - { $ref: '#/components/schemas/EdgeRuleBudgetAction' }
+            - { $ref: '#/components/schemas/EdgeRuleCacheAction' }
             - { $ref: '#/components/schemas/EdgeRuleRespondAction' }
             - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
@@ -100336,6 +100515,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleGeoAction' }
             - { $ref: '#/components/schemas/EdgeRuleThrottleAction' }
             - { $ref: '#/components/schemas/EdgeRuleBudgetAction' }
+            - { $ref: '#/components/schemas/EdgeRuleCacheAction' }
             - { $ref: '#/components/schemas/EdgeRuleRespondAction' }
             - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
@@ -100385,6 +100565,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleGeoAction' }
             - { $ref: '#/components/schemas/EdgeRuleThrottleAction' }
             - { $ref: '#/components/schemas/EdgeRuleBudgetAction' }
+            - { $ref: '#/components/schemas/EdgeRuleCacheAction' }
             - { $ref: '#/components/schemas/EdgeRuleRespondAction' }
             - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
@@ -101281,7 +101462,9 @@ components:
             gateway request refreshes the key in the background. Default
             0 (disabled); absolute cap 300.
           * `stale_if_error_seconds` — required. Stale-on-error window
-            in seconds. Default 300; absolute cap 300
+            in seconds; 0 disables it (apid does not replace 0 with a
+            default, so send 300 explicitly for the recommended
+            window). Absolute cap 300
             (`api.ResponseCacheStaleIfErrorMaxSeconds`). During an
             upstream error the gateway returns the cached body within
             this window instead of 502/504.
@@ -101306,8 +101489,8 @@ components:
           default: 60
           description: |
             Fresh window in seconds. 0 = inherit the apid-side default
-            (60s). Positive values are clamped to the platform cap
-            (3600s = 1 hour).
+            (60s). Values above the platform cap
+            (3600s = 1 hour) are rejected with 422.
         stale_while_revalidate_seconds:
           type: integer
           minimum: 0
@@ -101324,8 +101507,8 @@ components:
           default: 300
           description: |
             Stale-on-error window in seconds. 0 = no stale-on-error
-            (errors return 502/504 directly). Positive values are
-            clamped to the platform cap (300s = 5 minutes).
+            (errors return 502/504 directly). Values above the
+            platform cap (300s = 5 minutes) are rejected with 422.
         vary_on:
           type: array
           description: |
@@ -108536,6 +108719,7 @@ components:
         slug: { type: string }
         type: { type: string, enum: [app, function] }
         runtime: { type: string, description: Runtime identifier for functions when configured. }
+        project_id: { type: string, format: uuid, description: Parent project as a canonical hyphenated UUID. Omitted when the app is standalone. }
         status: { type: string }
         created_at: { type: string, format: date-time }
 
@@ -110510,6 +110694,8 @@ components:
               - routes.monitor.violated
               - routes.monitor.escalated
               - routes.monitor.recovered
+              - routes.insight.detected
+              - routes.insight.resolved
               - workflow.finished
               - automation.paused
               - realtime.inbox.acknowledged
@@ -111563,6 +111749,8 @@ components:
               - routes.monitor.violated
               - routes.monitor.escalated
               - routes.monitor.recovered
+              - routes.insight.detected
+              - routes.insight.resolved
               - workflow.finished
               - automation.paused
               - realtime.inbox.acknowledged
@@ -111742,6 +111930,8 @@ components:
               - routes.monitor.violated
               - routes.monitor.escalated
               - routes.monitor.recovered
+              - routes.insight.detected
+              - routes.insight.resolved
               - workflow.finished
               - automation.paused
               - realtime.inbox.acknowledged

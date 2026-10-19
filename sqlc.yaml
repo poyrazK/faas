@@ -271,6 +271,7 @@ sql:
       - "pkg/state/release_review_queries.sql"
       - "pkg/state/route_advice_queries.sql"
       - "pkg/state/route_awake_queries.sql"
+      - "pkg/state/route_insights_queries.sql"
       - "pkg/state/route_priority_queries.sql"
       - "pkg/state/scenario_action_queries.sql"
       - "pkg/state/scenario_cold_queries.sql"
