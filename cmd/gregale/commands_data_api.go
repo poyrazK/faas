@@ -63,12 +63,14 @@ func cmdDataAPI(args []string) int {
 		return cmdDataAPIConfigure(args[1:])
 	case "server-key":
 		return cmdDataAPIServerKey(args[1:])
+	case "usage":
+		return cmdDataAPIUsage(args[1:])
 	case "deploy":
 		return cmdDataAPIDeploy(args[1:])
 	case "sync":
 		return cmdDataAPISync(args[1:])
 	default:
-		return printErr("Unknown Data API command", fmt.Errorf("use create, deploy, configure, server-key, types, diff, refresh, sync, status, rotation, health, replay, diagnostics, check, dev, install, onboard, migration, fixture, explain, verify or transaction"))
+		return printErr("Unknown Data API command", fmt.Errorf("use create, deploy, configure, server-key, usage, types, diff, refresh, sync, status, rotation, health, replay, diagnostics, check, dev, install, onboard, migration, fixture, explain, verify or transaction"))
 	}
 }
 
@@ -218,6 +220,10 @@ func cmdDataAPICreate(args []string) int {
 	// Retain partially configured intent on failure: the ordinary app and
 	// binding recovery paths own cleanup and retries, never an ad-hoc rollback.
 	settings := map[string]string{"DATA_API_SCHEMAS": *schema, "DATA_API_ISSUER": *issuer, "DATA_API_JWKS_URL": *jwks, "DATA_API_AUDIENCE": *audience, "DATA_API_ALLOWED_ORIGINS": *origins, "DATA_API_PUBLIC_READ": *publicRead, "DATA_API_PUBLIC_RPC": *publicRPC}
+	// Usage reporting is on for new APIs whenever the platform API is HTTPS.
+	if origin, ok := dataAPIUsageURL(client.BaseURL()); ok {
+		settings[dataAPIUsageURLKey] = origin
+	}
 	if *aggregates {
 		settings["DATA_API_SQL_DEADLINE"], settings["DATA_API_AGGREGATES"] = "1", "1"
 	}
@@ -260,7 +266,7 @@ func configureDataAPI(ctx context.Context, client *api.Client, app api.AppRespon
 		}
 	}
 	// Optional owner opt-ins are stored only when requested; absence keeps them off.
-	for _, key := range []string{"DATA_API_PUBLIC_READ", "DATA_API_PUBLIC_RPC", "DATA_API_SQL_DEADLINE", "DATA_API_AGGREGATES"} {
+	for _, key := range []string{"DATA_API_PUBLIC_READ", "DATA_API_PUBLIC_RPC", "DATA_API_SQL_DEADLINE", "DATA_API_AGGREGATES", dataAPIUsageURLKey} {
 		if settings[key] == "" {
 			continue
 		}

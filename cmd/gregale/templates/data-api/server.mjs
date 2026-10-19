@@ -17,6 +17,7 @@ import { createRateLimiter, admitRateLimit } from './rate-limit.mjs'
 import { createUserConcurrency, admitUserConcurrency } from './user-concurrency.mjs'
 import { qualifiedConnectionEngine, startConnectionReporter } from './connection-observations.mjs'
 import { createPoolObservation } from './pool.mjs'
+import { createUsage, addResponseBytes } from './usage.mjs'
 import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, clientKey, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions } from './access.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
@@ -31,7 +32,8 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     res.setHeader('Retry-After', String(limits.overloadRetrySeconds))
     problem(res, 503, 'data_api_overloaded')
   })
-  return http.createServer(async (req, res) => {
+  const usage = createUsage(config.usage)
+  const server = http.createServer(async (req, res) => {
     const guarded = /^\/__gregale\/contract\/([a-f0-9]{64})(\/rest\/v1\/.*)$/.exec(req.url)
     if (guarded) req.url = guarded[2]
     traceRequest(req, res, log)
@@ -57,6 +59,8 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       if (!report.ready) markRequest(res, report.checks.refresh === 'unavailable' ? 'data_api_refresh_unavailable' : 'data_api_unavailable')
       return healthResponse(res, report.ready ? 200 : 503, report)
     }
+    // Health checks and preflights are not usage.
+    const counted = usage?.start(res)
     if (!req.url.startsWith('/rest/v1/') && req.url !== '/openapi.json' && req.url !== '/__gregale/schema') return problem(res, 404, 'not_found')
     let rpc
     if (req.url.startsWith('/rest/v1/')) {
@@ -96,7 +100,15 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       serverKeyPermissions = config.serverKeys.find(entry => entry.slot === serverKeySlot).permissions
     }
     markAccess(res, { kind: access, ...(serverKeySlot ? { server_key_slot: serverKeySlot, ...(serverKeyPermissions ? { server_key_restricted: true } : {}) } : {}) })
+    if (counted) counted.access = access
     if (serverKeyPermissions && !serverKeyAllows(req, serverKeyPermissions, config, rpc)) return problem(res, 403, 'server_key_permission_denied')
+    // Owner caps are checked before admission, against month-to-date totals.
+    const cap = usage?.capReached(access)
+    if (cap) {
+      counted.capped = true
+      res.setHeader('Retry-After', String(cap.retryAfter))
+      return problem(res, 429, 'data_api_monthly_cap_reached', { cap: cap.name, limit: cap.limit, observed: cap.observed, docs: 'https://gregale.dev/docs/data-api#usage-and-monthly-caps' })
+    }
     const declared = Number(req.headers['content-length'] ?? 0)
     if (!Number.isSafeInteger(declared) || declared < 0 || declared > limits.bodyBytes) return problem(res, 413, 'request_too_large')
     return admitted(req, res, async () => {
@@ -173,6 +185,9 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       finally { if (userLease) userLease.settled() }
     })
   })
+  server.usage = usage
+  server.on('close', () => usage?.stop())
+  return server
 }
 
 // A deliberate pause is an admission decision, not an engine failure.
@@ -284,6 +299,7 @@ function openAPISpec(response, res, config, restBasePath, deadline) {
       if (Buffer.byteLength(output) > limits.outputBytes) return problem(res, 503, 'schema_document_too_large')
       if (!deadline.check()) return
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+      addResponseBytes(res, Buffer.byteLength(output))
       res.end(output)
     } catch { problem(res, 503, 'data_api_unavailable') }
   })
@@ -336,7 +352,8 @@ export async function main(env = process.env) {
   server.headersTimeout = 10000
   child.on('error', () => { runtimeFailure('data_api_postgrest_start_failed'); process.exitCode = 1; server.close() })
   child.on('exit', code => { process.exitCode = stopping ? 0 : (code || 1); server.close() })
-  for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => { stopping = true; server.close(); child.kill(signal) })
+  // Report the last unreported usage before the process exits.
+  for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => { stopping = true; void server.usage?.flush(); server.close(); child.kill(signal) })
   process.on('SIGUSR1', () => {
     if (config.coordinatedRefresh) runtimeFailure('data_api_uncoordinated_reload_rejected')
     else child.kill('SIGUSR1')

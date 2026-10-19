@@ -1214,6 +1214,49 @@ all. `server-key list` marks restricted slots, and request logs show
 `server_key_restricted`. To change a key's permissions, create a new key with
 the new flags and revoke the old slot.
 
+## Usage and monthly caps
+
+Each Data API reports its usage to Gregale: requests from signed-in users,
+anonymous visitors and server keys, rejected requests (4xx), errors (5xx),
+rows returned and response bytes, per UTC hour.
+
+```sh
+gregale data-api usage shop-data              # last 7 days, per UTC day
+gregale data-api usage shop-data --since 24h  # per hour
+```
+
+The output also shows this month's totals. Use `--json` for the raw numbers;
+the dashboard and SDKs read the same `GET /v1/apps/{slug}/data-api/usage`.
+
+`gregale data-api create` turns reporting on. For a Data API created earlier,
+run `gregale data-api configure shop-data --usage-reporting on`. The runtime
+reports with its own short-lived workload identity, never your keys. These
+counts are usage telemetry for you, not your bill: a Data API is billed like
+any other app.
+
+### Monthly caps
+
+Caps stop a popular or abused public page from sending unbounded traffic to
+your database:
+
+```sh
+gregale data-api configure shop-data --monthly-caps requests=5000000,anonymous=1000000
+gregale data-api configure shop-data --monthly-caps off
+```
+
+`requests` counts every admitted request this UTC month; `anonymous` counts
+only requests without a token. Once a cap is reached, the API answers
+`429 data_api_monthly_cap_reached` with the cap, its limit and the observed
+count, and `Retry-After` set to the start of the next UTC month. A reached
+anonymous cap refuses only anonymous requests, so signed-in users and server
+keys keep working. Caps turn usage reporting on.
+
+Caps are enforced from totals the runtime learns every 15 seconds while it
+serves traffic, so several instances can each go slightly past a cap before
+they hear about it. `data-api diagnostics` counts requests refused by caps.
+Cap values are stored as app secrets and are not shown again; set them again
+to change them.
+
 ## Aggregates
 
 Aggregate queries are off by default. Turn them on with:

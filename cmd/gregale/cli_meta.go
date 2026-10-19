@@ -4880,16 +4880,22 @@ var cliCommands = []cliCommand{
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 				{Name: "timeout", Value: "DURATION", Short: "deployment and release wait (default 15m)"},
 			}},
-			{Name: "configure", Short: "Change public reads, public RPCs or aggregates and fresh-restart the runtime", Positionals: []string{"<name>"}, Flags: []cliFlag{
+			{Name: "configure", Short: "Change public access, aggregates, usage reporting or caps and fresh-restart the runtime", Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "public-read", Value: "SCHEMA.RELATION[,...]", Short: "relations readable without a token"},
 				{Name: "no-public-read", Short: "disable anonymous reads"},
 				{Name: "public-rpc", Value: "SCHEMA.FUNCTION[,...]", Short: "approved STABLE or IMMUTABLE functions callable without a token by GET"},
 				{Name: "no-public-rpc", Short: "disable anonymous RPC calls"},
 				{Name: "public-read-cache", Value: "DURATION|off", Short: "cache canonical public reads and RPC calls at the edge (max 1h)"},
+				{Name: "usage-reporting", Value: "on|off", Short: "report usage to the platform (on for new Data APIs)", ClosedSet: []string{"on", "off"}},
+				{Name: "monthly-caps", Value: "requests=N[,anonymous=N]|off", Short: "monthly owner caps; reached caps answer 429 until the next UTC month"},
 				{Name: "aggregates", Value: "on|off", Short: "aggregate queries; on also enables the SQL deadline", ClosedSet: []string{"on", "off"}},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 				{Name: "no-restart", Short: "store settings without a fresh restart"},
 			}},
+			{Name: "usage", Short: "Show reported requests, rows and bytes per hour or day, and month-to-date totals", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "since", Value: "DURATION", Short: "lookback such as 24h, 7d or 30d (default 7d, max 90d)"},
+				{Name: "granularity", Value: "hour|day", Short: "bucket size (hour covers at most 48h)", ClosedSet: []string{"hour", "day"}},
+			}, Examples: []string{"gregale data-api usage shop-data --since 30d"}},
 			{Name: "server-key", Short: "Manage server keys for trusted backends (RLS still applies)", Subcommands: []cliSub{
 				{Name: "create", Short: "Generate a key, store its hash in a free slot and show the key once", Positionals: []string{"<name>"}, Flags: []cliFlag{
 					{Name: "read-only", Short: "allow only GET and HEAD; RPCs need --rpcs"},

@@ -1581,6 +1581,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := srv.configureLiveQueries(deps.pool, deps.getenv); err != nil {
 		return fmt.Errorf("apid live queries configuration: %w", err)
 	}
+	srv.configureDataAPIUsage(deps.pool)
 	srv.WithResendWebhookSecret(resendSecret)
 	// Issue #246 acceptance item 8: wire the meterd-owned bounce
 	// handler so Resend bounce / complaint events feed the

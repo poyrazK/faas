@@ -20,6 +20,12 @@ closes five product gaps, all opt-in:
   no `Authorization` header when there is no token, so `@gregale/data` serves
   public reads and `rpc(name, args, { get: true })` public RPCs with generated
   types. Without the option, a missing token still throws.
+- **Usage and monthly caps.** `data-api usage` shows requests by access kind,
+  rejections, errors, rows and bytes per hour or day. `configure
+  --monthly-caps requests=N,anonymous=N` refuses requests past an owner cap
+  with `429 data_api_monthly_cap_reached` until the next UTC month. The runtime
+  reports under workload identity, and report ids keep snapshot restores from
+  double counting.
 - **Edge-cached public reads.** `configure --public-read-cache 30s` lets the
   gateway cache serve canonical anonymous reads. Responses are tagged per
   relation so `gregale cache purge --tag data-api:api.products` invalidates

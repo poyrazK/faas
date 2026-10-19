@@ -1,5 +1,6 @@
 import { limits } from './config.mjs'
 import { markResponseLimit } from './logging.mjs'
+import { addResponseBytes } from './usage.mjs'
 
 // Count actual engine body bytes without buffering the response. Pause the
 // engine when the downstream write buffer fills, and resume only after drain.
@@ -39,6 +40,7 @@ export function streamResponse(response, res, method, deadline, problem, publicC
     if (stopped || !deadline.check()) return
     if (chunk.length > limits.responseBytes - bytes) return overflow('stream')
     bytes += chunk.length
+    addResponseBytes(res, chunk.length)
     headers()
     if (!res.write(chunk)) response.pause()
   })

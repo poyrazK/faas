@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 
 // Mirrors pkg/api/limits.go; TestDataAPIRuntimeBounds checks this contract.
-export const limits = Object.freeze({ pool: 2, connectionReportMs: 5000, connectionReportIntervalMs: 15000, connectionReportBytes: 4096, rows: 1000, bodyBytes: 1048576, responseBytes: 16777216, outputBytes: 1048576, queryMs: 15000, lockMs: 5000, relations: 1000, columns: 10000, types: 20000, queuedRequests: 8, admissionWaitMs: 1000, overloadRetrySeconds: 1, healthProbeMs: 2000, healthBytes: 8192, rateLimitDefaultPerSecond: 10, rateLimitDefaultBurst: 20, rateLimitMaxPerSecond: 1000, rateLimitMaxBurst: 1000, rateLimitMaxSubjects: 4096, rateLimitSweepMs: 1000, userConcurrencyMaxSubjects: 4096, userConcurrencyCooldownMs: 15000, publicReadMaxRelations: 64, serverKeySubjectMaxBytes: 255, publicReadMaxAgeSeconds: 3600, cacheTagMaxBytes: 128, cacheTagsMax: 32, serverKeyPermissionsBytes: 4096, serverKeyPermissionsEntries: 64, publicRpcMaxFunctions: 64 })
+export const limits = Object.freeze({ pool: 2, connectionReportMs: 5000, connectionReportIntervalMs: 15000, connectionReportBytes: 4096, rows: 1000, bodyBytes: 1048576, responseBytes: 16777216, outputBytes: 1048576, queryMs: 15000, lockMs: 5000, relations: 1000, columns: 10000, types: 20000, queuedRequests: 8, admissionWaitMs: 1000, overloadRetrySeconds: 1, healthProbeMs: 2000, healthBytes: 8192, rateLimitDefaultPerSecond: 10, rateLimitDefaultBurst: 20, rateLimitMaxPerSecond: 1000, rateLimitMaxBurst: 1000, rateLimitMaxSubjects: 4096, rateLimitSweepMs: 1000, userConcurrencyMaxSubjects: 4096, userConcurrencyCooldownMs: 15000, publicReadMaxRelations: 64, serverKeySubjectMaxBytes: 255, publicReadMaxAgeSeconds: 3600, cacheTagMaxBytes: 128, cacheTagsMax: 32, serverKeyPermissionsBytes: 4096, serverKeyPermissionsEntries: 64, publicRpcMaxFunctions: 64, usageReportMs: 5000, usageReportIntervalMs: 15000, usageReportMaxHours: 48, usageMonthlyCapMax: 1000000000000, usageRestoreJumpMs: 5000 })
 
 export const relationPart = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/
 const schemaPart = /^[a-z][a-z0-9_]{0,62}$/
@@ -177,6 +177,46 @@ export function connectionObservationConfig(env) {
   return Object.freeze({ ...value, endpoint: new URL('/v1/runtime/data-api/connection-observations', api).href, identity: identity.href })
 }
 
+// Owner usage reporting and monthly caps (ADR 20261019102108).
+const capFields = ['requests', 'anonymous_requests']
+
+// Optional owner caps per UTC calendar month. Absent: no caps.
+export function monthlyCaps(value) {
+  if (value === undefined) return null
+  const invalid = () => { throw new Error('Invalid DATA_API_MONTHLY_CAPS') }
+  if (typeof value !== 'string' || value.length > 256) return invalid()
+  let caps
+  try { caps = JSON.parse(value) } catch { return invalid() }
+  if (!caps || typeof caps !== 'object' || Array.isArray(caps) || caps.version !== 1 || Object.keys(caps).some(key => key !== 'version' && !capFields.includes(key))) return invalid()
+  const cap = name => {
+    if (caps[name] === undefined) return null
+    if (!Number.isSafeInteger(caps[name]) || caps[name] < 1 || caps[name] > limits.usageMonthlyCapMax) return invalid()
+    return caps[name]
+  }
+  const parsed = { requests: cap('requests'), anonymous_requests: cap('anonymous_requests') }
+  if (parsed.requests === null && parsed.anonymous_requests === null) return invalid()
+  return Object.freeze(parsed)
+}
+
+// Reporting is on when the app names the platform API; caps need it, since
+// only the platform sees every instance's traffic.
+export function usageConfig(env) {
+  if (env.DATA_API_USAGE_URL === undefined) {
+    if (env.DATA_API_MONTHLY_CAPS !== undefined) throw new Error('DATA_API_MONTHLY_CAPS requires DATA_API_USAGE_URL')
+    return null
+  }
+  const invalid = () => { throw new Error('Invalid Data API usage reporting configuration') }
+  let api, identity
+  try {
+    api = new URL(env.DATA_API_USAGE_URL)
+    identity = new URL(env.FAAS_WORKLOAD_IDENTITY_ENDPOINT)
+  } catch { return invalid() }
+  if (api.protocol !== 'https:' || api.username || api.password || api.pathname !== '/' || api.search || api.hash ||
+    identity.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(identity.hostname) || identity.username || identity.password || identity.pathname !== '/oidc/token' || identity.search || identity.hash) return invalid()
+  identity.searchParams.set('audience', 'gregale:data-api:usage')
+  return Object.freeze({ endpoint: new URL('/v1/runtime/data-api/usage', api).href, identity: identity.href, caps: monthlyCaps(env.DATA_API_MONTHLY_CAPS) })
+}
+
 export function runtimeConfig(env) {
   const connection = databaseURL(env.DATABASE_URL)
   const role = decodeURIComponent(new URL(connection).username)
@@ -195,7 +235,7 @@ export function runtimeConfig(env) {
   if (schemas.includes('gregale_data_api')) throw new Error('Refresh control schema cannot be exposed')
   const secret = randomBytes(32)
   return { connection, role, schemas, auth, secret, coordinatedRefresh, sqlDeadline, queryShapes, aggregates, publicRead: publicReadConfig(env.DATA_API_PUBLIC_READ, schemas), serverKeys: serverKeyConfig(env),
-    publicRpc: publicRpcConfig(env.DATA_API_PUBLIC_RPC, schemas), publicReadMaxAge: publicReadMaxAge(env.DATA_API_PUBLIC_READ_MAX_AGE, env.DATA_API_PUBLIC_READ !== undefined || env.DATA_API_PUBLIC_RPC !== undefined), connectionObservation: connectionObservationConfig(env), rateLimit: rateLimitConfig(env), userConcurrency: userConcurrencyConfig(env, coordinatedRefresh ? limits.pool - 1 : limits.pool), acceptedContracts: acceptedContracts(env.DATA_API_ACCEPTED_CONTRACTS), origins: (env.DATA_API_ALLOWED_ORIGINS ?? '').split(',').filter(Boolean),
+    publicRpc: publicRpcConfig(env.DATA_API_PUBLIC_RPC, schemas), usage: usageConfig(env), publicReadMaxAge: publicReadMaxAge(env.DATA_API_PUBLIC_READ_MAX_AGE, env.DATA_API_PUBLIC_READ !== undefined || env.DATA_API_PUBLIC_RPC !== undefined), connectionObservation: connectionObservationConfig(env), rateLimit: rateLimitConfig(env), userConcurrency: userConcurrencyConfig(env, coordinatedRefresh ? limits.pool - 1 : limits.pool), acceptedContracts: acceptedContracts(env.DATA_API_ACCEPTED_CONTRACTS), origins: (env.DATA_API_ALLOWED_ORIGINS ?? '').split(',').filter(Boolean),
     postgrestEnv: { PGRST_DB_URI: connection, PGRST_DB_SCHEMAS: schemas.join(','), PGRST_JWT_SECRET: secret.toString('base64url'),
       PGRST_SERVER_HOST: '127.0.0.1', PGRST_SERVER_PORT: '3000', PGRST_ADMIN_SERVER_PORT: '3001', PGRST_SERVER_TIMING_ENABLED: 'true',
       PGRST_DB_POOL: String(coordinatedRefresh ? limits.pool - 1 : limits.pool), PGRST_DB_MAX_ROWS: String(limits.rows), ...(sqlDeadline ? { PGRST_DB_PRE_REQUEST: 'gregale_data_api.check_deadline_request', PGRST_DB_CONFIG: 'false' } : coordinatedRefresh ? { PGRST_DB_PRE_REQUEST: 'gregale_data_api.check_request' } : {}), PGRST_DB_CHANNEL_ENABLED: 'false', PGRST_DB_PREPARED_STATEMENTS: 'false', ...(aggregates ? { PGRST_DB_AGGREGATES_ENABLED: 'true' } : {}) } }

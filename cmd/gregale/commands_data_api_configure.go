@@ -144,14 +144,16 @@ func dataAPIAnonymousRemains(ctx context.Context, client *api.Client, app, scope
 }
 
 type dataAPIConfigureReceipt struct {
-	App             string   `json:"app"`
-	Scope           string   `json:"scope"`
-	PublicRead      []string `json:"public_read,omitempty"`
-	PublicRPC       []string `json:"public_rpc,omitempty"`
-	PublicReadCache string   `json:"public_read_cache,omitempty"`
-	Changed         []string `json:"changed"`
-	Restarted       bool     `json:"restarted"`
-	WakeID          string   `json:"wake_id,omitempty"`
+	App             string              `json:"app"`
+	Scope           string              `json:"scope"`
+	PublicRead      []string            `json:"public_read,omitempty"`
+	PublicRPC       []string            `json:"public_rpc,omitempty"`
+	PublicReadCache string              `json:"public_read_cache,omitempty"`
+	UsageReporting  string              `json:"usage_reporting,omitempty"`
+	MonthlyCaps     *dataAPIMonthlyCaps `json:"monthly_caps,omitempty"`
+	Changed         []string            `json:"changed"`
+	Restarted       bool                `json:"restarted"`
+	WakeID          string              `json:"wake_id,omitempty"`
 }
 
 func cmdDataAPIConfigure(args []string) int {
@@ -163,15 +165,17 @@ func cmdDataAPIConfigure(args []string) int {
 	noPublicRPC := fs.Bool("no-public-rpc", false, "disable anonymous RPC calls")
 	aggregates := fs.String("aggregates", "", "on or off; on also enables the SQL deadline")
 	publicReadCache := fs.String("public-read-cache", "", "edge freshness for public reads and RPC calls such as 30s, or off")
+	usageReporting := fs.String("usage-reporting", "", "on or off: report usage to the platform")
+	monthlyCaps := fs.String("monthly-caps", "", "requests=N[,anonymous=N] or off: monthly owner caps (turns usage reporting on)")
 	noRestart := fs.Bool("no-restart", false, "store settings without requesting a fresh restart")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	anonymousOff := *noPublicRead && *noPublicRPC
 	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || api.ValidateScope(*scope) != nil || (*publicRead != "" && *noPublicRead) || (*publicRPC != "" && *noPublicRPC) ||
-		(*publicRead == "" && !*noPublicRead && *publicRPC == "" && !*noPublicRPC && *aggregates == "" && *publicReadCache == "") || !dataAPIDiagnosticAllowed(*aggregates, "", "on", "off") ||
-		(anonymousOff && *publicReadCache != "") {
-		PrintUsage(os.Stderr, "usage: gregale data-api configure NAME [--public-read SCHEMA.RELATION[,...] | --no-public-read] [--public-rpc SCHEMA.FUNCTION[,...] | --no-public-rpc] [--public-read-cache DURATION|off] [--aggregates on|off] [--scope SCOPE] [--no-restart]", "data-api")
+		(*publicRead == "" && !*noPublicRead && *publicRPC == "" && !*noPublicRPC && *aggregates == "" && *publicReadCache == "" && *usageReporting == "" && *monthlyCaps == "") || !dataAPIDiagnosticAllowed(*aggregates, "", "on", "off") ||
+		(anonymousOff && *publicReadCache != "") || !dataAPIDiagnosticAllowed(*usageReporting, "", "on", "off") || (*usageReporting == "off" && *monthlyCaps != "" && *monthlyCaps != "off") {
+		PrintUsage(os.Stderr, "usage: gregale data-api configure NAME [--public-read SCHEMA.RELATION[,...] | --no-public-read] [--public-rpc SCHEMA.FUNCTION[,...] | --no-public-rpc] [--public-read-cache DURATION|off] [--aggregates on|off] [--usage-reporting on|off] [--monthly-caps requests=N[,anonymous=N]|off] [--scope SCOPE] [--no-restart]", "data-api")
 		return 1
 	}
 	cacheSeconds := 0
@@ -189,6 +193,11 @@ func cmdDataAPIConfigure(args []string) int {
 	}
 	if *publicRPC != "" && !validDataAPIPublicRPC(*publicRPC) {
 		return printErr("Invalid --public-rpc", fmt.Errorf("list at most %d unique schema.function names", api.DataAPIPublicRPCMaxFunctions))
+	}
+	if *monthlyCaps != "" && *monthlyCaps != "off" {
+		if _, capsErr := parseDataAPIMonthlyCaps(*monthlyCaps); capsErr != nil {
+			return printErr("Invalid --monthly-caps", capsErr)
+		}
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -217,6 +226,9 @@ func cmdDataAPIConfigure(args []string) int {
 	}
 	if *aggregates != "" {
 		receipt.Changed = append(receipt.Changed, "aggregates")
+	}
+	if err = configureDataAPIUsage(ctx, client, app, *scope, *usageReporting, *monthlyCaps, &receipt); err != nil {
+		return printErr("Could not configure usage reporting", err)
 	}
 	if !*noRestart {
 		restart, restartErr := client.RestartAppFresh(ctx, app)

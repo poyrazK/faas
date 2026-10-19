@@ -15038,9 +15038,9 @@ Deploy a single-app Data API with its migrations as the release task
 
 ### data-api configure
 
-Change public reads, public RPCs or aggregates and fresh-restart the runtime
+Change public access, aggregates, usage reporting or caps and fresh-restart the runtime
 
-`gregale data-api configure [--public-read <SCHEMA.RELATION[,...]>] [--no-public-read] [--public-rpc <SCHEMA.FUNCTION[,...]>] [--no-public-rpc] [--public-read-cache <DURATION|off>] [--aggregates <on|off>] [--scope <SCOPE>] [--no-restart] <name>`
+`gregale data-api configure [--public-read <SCHEMA.RELATION[,...]>] [--no-public-read] [--public-rpc <SCHEMA.FUNCTION[,...]>] [--no-public-rpc] [--public-read-cache <DURATION|off>] [--usage-reporting <on|off>] [--monthly-caps <requests=N[,anonymous=N]|off>] [--aggregates <on|off>] [--scope <SCOPE>] [--no-restart] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -15049,9 +15049,28 @@ Change public reads, public RPCs or aggregates and fresh-restart the runtime
 | `--public-rpc <SCHEMA.FUNCTION[,...]>` | approved STABLE or IMMUTABLE functions callable without a token by GET |  |
 | `--no-public-rpc` | disable anonymous RPC calls |  |
 | `--public-read-cache <DURATION|off>` | cache canonical public reads and RPC calls at the edge (max 1h) |  |
+| `--usage-reporting <on|off>` | report usage to the platform (on for new Data APIs) | one of `on` · `off` |
+| `--monthly-caps <requests=N[,anonymous=N]|off>` | monthly owner caps; reached caps answer 429 until the next UTC month |  |
 | `--aggregates <on|off>` | aggregate queries; on also enables the SQL deadline | one of `on` · `off` |
 | `--scope <SCOPE>` | environment scope |  |
 | `--no-restart` | store settings without a fresh restart |  |
+
+### data-api usage
+
+Show reported requests, rows and bytes per hour or day, and month-to-date totals
+
+`gregale data-api usage [--since <DURATION>] [--granularity <hour|day>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <DURATION>` | lookback such as 24h, 7d or 30d (default 7d, max 90d) |  |
+| `--granularity <hour|day>` | bucket size (hour covers at most 48h) | one of `hour` · `day` |
+
+Examples:
+
+```sh
+gregale data-api usage shop-data --since 30d
+```
 
 ### data-api server-key
 

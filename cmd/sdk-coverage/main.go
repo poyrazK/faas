@@ -213,6 +213,7 @@ var routeExclude = map[string]bool{
 	// ADR-1661: the generated runtime reports with a short-lived, dedicated
 	// workload assertion. Owner API keys cannot publish these observations.
 	"POST /v1/runtime/data-api/connection-observations": true,
+	"POST /v1/runtime/data-api/usage":                   true,
 
 	"GET /v1/account/dpa":                                                    true, // public markdown (no Bearer; SDK consumers don't render HTML)
 	"GET /v1/apps/{slug}/tasks/{id}/attach":                                  true, // ADR-1037 WebSocket attach; the CLI drives it directly
@@ -1250,6 +1251,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/postgres/cutovers/{id}/preflight":                                        "GetManagedPostgresCutoverPreflight",
 	"GET /v1/postgres/databases/{id}/connection-budget":                               "GetManagedPostgresConnectionBudget",
 	"GET /v1/apps/{slug}/data-api/connection-budget":                                  "GetAppDataAPIConnectionBudgets",
+	"GET /v1/apps/{slug}/data-api/usage":                                              "GetAppDataAPIUsage",
 	"POST /v1/postgres/cutovers/{id}/verify":                                          "VerifyManagedPostgresCutover",
 	"POST /v1/postgres/cutovers/{id}/cancel":                                          "CancelManagedPostgresCutover",
 	"GET /v1/apps/{slug}/logs":                                                        "StreamAppLogs",

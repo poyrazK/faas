@@ -3394,6 +3394,32 @@
     "kind": "operational"
   },
   {
+    "table": "data_api_usage_hourly",
+    "columns": [
+      "anonymous_requests",
+      "app_id",
+      "capped_requests",
+      "error_requests",
+      "hour",
+      "rejected_requests",
+      "response_bytes",
+      "rows_returned",
+      "server_requests",
+      "updated_at",
+      "user_requests"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "data_api_usage_reports",
+    "columns": [
+      "app_id",
+      "received_at",
+      "report_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "data_repair_rehearsals",
     "columns": [
       "account_id",
