@@ -374,6 +374,8 @@ redirect URL origins.
 | `POST /authz/v1/orgs/{org}/invitations` `{email, role, expires_in?}` | Invite; returns the token once |
 | `GET`/`DELETE /authz/v1/orgs/{org}/invitations[/{id}]` | List or revoke pending invitations |
 | `POST /authz/v1/invitations/accept` `{token}` | Join, if the caller's confirmed email was invited |
+| `GET /authz/v1/suggested-organizations` | The organization the caller may join by email domain |
+| `POST /authz/v1/orgs/{org}/join` | Join it with its domain's role |
 | `POST /authz/v1/authorize` `{action, resource}` | `{"allowed": true or false}` |
 
 No organization can lose its last owner. Invitations last seven days by default
@@ -501,6 +503,56 @@ An SSO user is a separate account from a password or OAuth account with the
 same address. Because an identity provider vouches only for its own domains,
 an SSO user can accept an organization invitation only for an address in one
 of its provider's domains.
+
+### Join by email domain
+
+Let people at a company's email domain join its organization without an
+invitation, the way Slack and Linear do:
+
+```sh
+gregale auth config shop-auth --org-domains on
+```
+
+An organization's owners, and members whose role grants `domains:manage`
+(or `sso:manage`), verify a domain with the same DNS TXT record as SSO, then
+choose how people at it join:
+
+```ts
+const { record } = await auth.organizations.domains.add(org.id, 'acme.com')
+// Publish record: TXT _gregale-auth.acme.com "gregale-auth-verification=…"
+await auth.organizations.domains.verify(org.id, 'acme.com')
+await auth.organizations.domains.setJoin(org.id, 'acme.com', { join: 'suggest' }) // or 'automatic', or 'off'
+```
+
+With `suggest`, people see the organization and join when they choose; the
+hosted account page offers it too:
+
+```ts
+const [acme] = await auth.organizations.suggested() // { id, slug, name, domain, role }
+await auth.organizations.join(acme.id)
+```
+
+With `automatic`, they join as soon as their address is confirmed, at sign-up
+or when they change it, and turning `automatic` on adds the people already
+there. Both join with the domain's `role` (default `member`, never `owner`).
+The routes are `PATCH /authz/v1/orgs/{org}/domains/{domain}` `{join, role?}`,
+`GET /authz/v1/suggested-organizations` and `POST /authz/v1/orgs/{org}/join`.
+
+Only proven addresses count:
+
+- The address must be confirmed. While `--autoconfirm` is on, anyone could
+  claim any address, so nobody joins by domain; `gregale auth status` says
+  so, and the dashboard (or one `auth config` command) refuses both on.
+- The domain must match exactly: `eng.acme.com` is not `acme.com`.
+- An SSO user's address counts only for a domain their identity provider
+  serves.
+- Anonymous and banned users never join.
+
+A person joins by domain once: someone who left the organization or was
+removed comes back only by invitation. Members stay when a domain is
+removed or joining turned off. A domain can be verified by only one
+organization, so an address leads to at most one. `gregale auth orgs get`
+and the dashboard's organization panel show each domain and how people join.
 
 ## Authorize anywhere with one function
 

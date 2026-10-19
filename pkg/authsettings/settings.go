@@ -69,6 +69,7 @@ const (
 	secretIdentityLinking = "AUTH_IDENTITY_LINKING"
 	secretSelfDeletion    = "AUTH_SELF_DELETION"
 	secretOrgClaims       = "AUTH_ORG_CLAIMS"
+	secretOrgDomains      = "AUTH_ORG_DOMAINS"
 )
 
 // CaptchaProviders are the CAPTCHA services GoTrue verifies and the hosted
@@ -153,6 +154,10 @@ type Change struct {
 	// OrgClaims puts each session's active organization, role and
 	// permissions into its access tokens (org_* claims).
 	OrgClaims *bool
+	// OrgDomains lets organizations verify email domains and let people at
+	// them join. Joining needs confirmed addresses, so the Auth app keeps it
+	// off while Autoconfirm is on.
+	OrgDomains *bool
 }
 
 // Captcha is a CAPTCHA provider and its keys; the secret stays in the app.
@@ -167,6 +172,9 @@ func (c Change) Empty() bool {
 // delete.
 func (c Change) Secrets() (map[string]string, []string, error) {
 	set, unset := map[string]string{}, []string{}
+	if c.OrgDomains != nil && *c.OrgDomains && c.Autoconfirm != nil && *c.Autoconfirm {
+		return nil, nil, errors.New("organizations join people by email domain only when addresses are confirmed; keep autoconfirm off with organization domains")
+	}
 	if c.SiteURL != nil {
 		if !RedirectURL(*c.SiteURL) {
 			return nil, nil, fmt.Errorf("site URL %q must be HTTPS, or HTTP on a loopback host, without credentials or a fragment", *c.SiteURL)
@@ -285,6 +293,9 @@ func (c Change) Secrets() (map[string]string, []string, error) {
 	}
 	if c.OrgClaims != nil {
 		set[secretOrgClaims] = flag(*c.OrgClaims)
+	}
+	if c.OrgDomains != nil {
+		set[secretOrgDomains] = flag(*c.OrgDomains)
 	}
 	if c.AnonymousRetentionDays != nil {
 		days := *c.AnonymousRetentionDays

@@ -614,7 +614,7 @@ async function account(root, config, query) {
     async refresh() {
       let user
       try { user = await ctx.call('GET', '/auth/v1/user') } catch (err) { return say(err.message) }
-      const parts = await Promise.all([profileSection(ctx, user), mfaSection(ctx, user), passkeysSection(ctx), identitiesSection(ctx, user), connectedAppsSection(ctx), sessionsSection(ctx), deletionSection(ctx, root)]
+      const parts = await Promise.all([profileSection(ctx, user), mfaSection(ctx, user), passkeysSection(ctx), identitiesSection(ctx, user), connectedAppsSection(ctx), joinableSection(ctx), sessionsSection(ctx), deletionSection(ctx, root)]
         .map(part => Promise.resolve(part).catch(err => { say(err.message); return null })))
       area.replaceChildren(...parts.filter(Boolean))
     },
@@ -737,6 +737,21 @@ async function connectedAppsSection(ctx) {
   const list = grants.map(grant => row(`${grant.client?.name || 'An application'}, allowed ${when(grant.granted_at)}`,
     confirmButton('Revoke', () => ctx.act(async () => { await ctx.call('DELETE', `/auth/v1/user/oauth/grants?client_id=${encodeURIComponent(grant.client.id)}`); await ctx.refresh() }))))
   return section('Connected apps', ...(list.length ? list : [el('p', {}, 'No other apps can use your account.')]))
+}
+
+// joinableSection offers the organization that verified the person's email
+// domain and lets people at it join (sql/0017).
+async function joinableSection(ctx) {
+  if (ctx.options.organization_domains?.joining !== true) return null
+  const { organizations } = await ctx.call('GET', '/authz/v1/suggested-organizations')
+  if (!organizations.length) return null
+  return section('Organizations you can join', el('p', {}, 'Your organization verified your email domain, so you can join it.'),
+    ...organizations.map(org => row(`${org.name} (${org.domain}), as ${org.role}`,
+      el('button', { type: 'button', class: 'secondary', on: { click: () => ctx.act(async () => {
+        await ctx.call('POST', `/authz/v1/orgs/${encodeURIComponent(org.id)}/join`, {})
+        await ctx.refresh()
+        ctx.say(`You joined ${org.name}.`)
+      }) } }, 'Join'))))
 }
 
 async function sessionsSection(ctx) {

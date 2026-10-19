@@ -169,6 +169,7 @@ test('lists organizations and shows members and pending invitations', async t =>
     if (sql.includes('count(*) OVER ()')) return { rows: [{ id: org, slug: 'acme', name: 'Acme', created_at: 'c', members: 2, total: 7 }] }
     if (sql.startsWith('SELECT id, slug, name, created_at FROM gregale_auth.organizations')) return { rows: [{ id: org, slug: 'acme', name: 'Acme', created_at: 'c' }] }
     if (sql.includes('FROM gregale_auth.memberships m JOIN auth.users')) return { rows: [{ user_id: user, email: 'a@example.test', role: 'owner', created_at: 'c' }] }
+    if (sql.includes('FROM gregale_auth.org_domains')) return { rows: [{ domain: 'acme.com', verified_at: 'v', join_mode: 'suggest', join_role: 'member' }, { domain: 'acme.io', verified_at: null, join_mode: 'off', join_role: 'member' }] }
     return { rows: [{ id: user, email: 'b@example.test', role: 'member', expires_at: 'e', created_at: 'c' }] }
   })
   const { admin } = fakeAdmin([])
@@ -179,6 +180,7 @@ test('lists organizations and shows members and pending invitations', async t =>
   const detail = await call('GET', `/admin/v1/orgs/${org}`, { key })
   assert.equal(detail.body.members[0].role, 'owner')
   assert.equal(detail.body.invitations[0].email, 'b@example.test')
+  assert.deepEqual(detail.body.domains, [{ domain: 'acme.com', verified: true, join: { mode: 'suggest', role: 'member' } }, { domain: 'acme.io', verified: false, join: { mode: 'off', role: 'member' } }])
   assert.equal((await call('GET', '/admin/v1/orgs/nope', { key })).status, 400)
 })
 

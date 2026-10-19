@@ -412,10 +412,14 @@ type authPublicSettings struct {
 		Enabled       bool `json:"enabled"`
 		RetentionDays *int `json:"retention_days"`
 	} `json:"anonymous"`
-	IdentityLinking    bool `json:"identity_linking"`
-	SelfDeletion       bool `json:"self_deletion"`
-	OrganizationClaims bool `json:"organization_claims"`
-	Keys               struct {
+	IdentityLinking     bool `json:"identity_linking"`
+	SelfDeletion        bool `json:"self_deletion"`
+	OrganizationClaims  bool `json:"organization_claims"`
+	OrganizationDomains struct {
+		Enabled bool `json:"enabled"`
+		Joining bool `json:"joining"`
+	} `json:"organization_domains"`
+	Keys struct {
 		Signing   string   `json:"signing"`
 		Verifying []string `json:"verifying"`
 	} `json:"keys"`

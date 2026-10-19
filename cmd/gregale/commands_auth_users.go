@@ -567,6 +567,14 @@ func authOrgsGet(origin, key, id string) int {
 			Role      string `json:"role"`
 			ExpiresAt string `json:"expires_at"`
 		} `json:"invitations"`
+		Domains []struct {
+			Domain   string `json:"domain"`
+			Verified bool   `json:"verified"`
+			Join     struct {
+				Mode string `json:"mode"`
+				Role string `json:"role"`
+			} `json:"join"`
+		} `json:"domains"`
 	}
 	if err := authAdminCall(http.MethodGet, origin, key, "/admin/v1/orgs/"+id, nil, &detail); err != nil {
 		return printErr("Could not read the organization", err)
@@ -584,6 +592,21 @@ func authOrgsGet(origin, key, id string) int {
 		_, _ = fmt.Fprintf(osStdout, "Pending invitations (%d):\n", len(detail.Invitations))
 		for _, invitation := range detail.Invitations {
 			_, _ = fmt.Fprintf(osStdout, "  %-10s  %s  expires %s\n", invitation.Role, invitation.Email, invitation.ExpiresAt)
+		}
+	}
+	if len(detail.Domains) > 0 {
+		_, _ = fmt.Fprintf(osStdout, "Email domains (%d):\n", len(detail.Domains))
+		for _, domain := range detail.Domains {
+			state := "not verified"
+			switch {
+			case domain.Verified && domain.Join.Mode == "suggest":
+				state = "verified; people at it may join as " + domain.Join.Role
+			case domain.Verified && domain.Join.Mode == "automatic":
+				state = "verified; people at it join as " + domain.Join.Role
+			case domain.Verified:
+				state = "verified"
+			}
+			_, _ = fmt.Fprintf(osStdout, "  %s  %s\n", domain.Domain, state)
 		}
 	}
 	return 0

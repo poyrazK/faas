@@ -283,11 +283,13 @@ export async function adminRoute({ pool, admin, external, emails = {} }, method,
     if (!uuid.test(parts[1])) throw new HTTPError(400, 'invalid_id')
     const [org] = await query('SELECT id, slug, name, created_at FROM gregale_auth.organizations WHERE id = $1', [parts[1]])
     if (!org) throw new HTTPError(404, 'not_found')
-    const [members, invitations] = await Promise.all([
+    const [members, invitations, domains] = await Promise.all([
       query('SELECT m.user_id, u.email, m.role, m.created_at FROM gregale_auth.memberships m JOIN auth.users u ON u.id = m.user_id WHERE m.org_id = $1 ORDER BY m.created_at LIMIT 500', [org.id]),
       query('SELECT id, email, role, expires_at, created_at FROM gregale_auth.invitations WHERE org_id = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now() ORDER BY created_at DESC LIMIT 500', [org.id]),
+      // Its email domains, and whether people at each join (sql/0017).
+      query('SELECT domain, verified_at, join_mode, join_role FROM gregale_auth.org_domains WHERE org_id = $1 ORDER BY domain', [org.id]),
     ])
-    return [200, { organization: org, members, invitations }]
+    return [200, { organization: org, members, invitations, domains: domains.map(d => ({ domain: d.domain, verified: d.verified_at !== null, join: { mode: d.join_mode, role: d.join_role } })) }]
   }
   throw new HTTPError(404, 'not_found')
 }

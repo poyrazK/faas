@@ -204,6 +204,22 @@ func TestSelfDeletion(t *testing.T) {
 	}
 }
 
+func TestOrgDomains(t *testing.T) {
+	for value, want := range map[bool]string{true: "1", false: "0"} {
+		set, unset, err := Change{OrgDomains: ptr(value)}.Secrets()
+		if err != nil || len(unset) != 0 || !reflect.DeepEqual(set, map[string]string{"AUTH_ORG_DOMAINS": want}) {
+			t.Fatalf("OrgDomains %v: set %v unset %v err %v", value, set, unset, err)
+		}
+	}
+	// Joining by email domain needs proven addresses.
+	if _, _, err := (Change{OrgDomains: ptr(true), Autoconfirm: ptr(true)}).Secrets(); err == nil {
+		t.Fatal("organization domains with autoconfirm accepted")
+	}
+	if _, _, err := (Change{OrgDomains: ptr(false), Autoconfirm: ptr(true)}).Secrets(); err != nil {
+		t.Fatalf("turning both off-and-on separately refused: %v", err)
+	}
+}
+
 func TestOrgClaims(t *testing.T) {
 	for value, want := range map[bool]string{true: "1", false: "0"} {
 		set, unset, err := Change{OrgClaims: ptr(value)}.Secrets()

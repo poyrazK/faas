@@ -512,6 +512,22 @@ the provider's organization, never its last owner; deleting the record does the
 same rather than deleting the account. Groups are not supported: the
 provider's organization link decides membership.
 
+Organizations can also let people join by email domain
+(`AUTH_ORG_DOMAINS`, sql/0017), reusing the TXT-verified domains of
+self-service SSO without needing SSO. Joining is 'suggest' (the person
+chooses, from the API or the hosted account page) or 'automatic' (triggers on
+`auth.users` and SSO identities add people when their address is confirmed or
+changes, and turning it on adds those already there). It trusts only proven
+addresses: confirmed while the app confirms addresses, which the front writes
+to `domain_join_settings` at startup because the triggers run inside GoTrue's
+transactions and cannot see the app's settings. With `AUTH_AUTOCONFIRM` on,
+anyone could claim any address, so joining stays off; the dashboard and a
+single `auth config` change refuse the combination, and status reports it. SSO users count only for their provider's
+domains, as with invitations. `membership_history` records every membership
+ever made, so domain joining adds a person once and never undoes an owner's
+removal; the triggers do nothing that can fail inside GoTrue's transaction.
+Domains are managed with `domains:manage` or, as before, `sso:manage`.
+
 ### Dark launch
 
 Application Auth reaches no customer until it launches. apid reads

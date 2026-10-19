@@ -355,6 +355,22 @@ test('deletes the user own account and forgets the session', async () => {
   assert.deepEqual(events, ['SIGNED_OUT'])
 })
 
+test('organizations verify domains, people at them join, and SSO shares the same domains', async () => {
+  const api = server({
+    'POST /auth/v1/token': () => [200, tokens(1)],
+    'PATCH /authz/v1/orgs/o1/domains/acme.com': call => [200, { domain: 'acme.com', join: { mode: call.body.join, role: call.body.role ?? 'member' }, joined: 2 }],
+    'GET /authz/v1/suggested-organizations': () => [200, { organizations: [{ id: 'o1', slug: 'acme', name: 'Acme', domain: 'acme.com', role: 'member' }] }],
+    'POST /authz/v1/orgs/o1/join': () => [200, { org_id: 'o1', role: 'member' }],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  assert.equal((await auth.organizations.domains.setJoin('o1', 'acme.com', { join: 'automatic' })).joined, 2)
+  assert.deepEqual(api.calls.at(-1).body, { join: 'automatic' })
+  assert.equal((await auth.organizations.suggested())[0].domain, 'acme.com')
+  assert.deepEqual(await auth.organizations.join('o1'), { org_id: 'o1', role: 'member' })
+  assert.equal(auth.orgSSO.domains, auth.organizations.domains)
+})
+
 test('chooses the active organization and reads it from the refreshed token', async () => {
   const jwt = claims => `eyJhbGciOiJFUzI1NiJ9.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.sig`
   const org = { org_id: 'o1', org_slug: 'acme', org_role: 'admin', org_permissions: ['org:read', 7] }
