@@ -15,7 +15,7 @@
 // The dispatcher (cmdBilling) is pinned by the subcommand routing:
 // `gregale billing help` exits 0; `gregale billing bogus` exits 1.
 
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/browser"
 )
@@ -57,18 +58,18 @@ func TestCmdBillingPortal_PrintFlag(t *testing.T) {
 
 	// Swap the browser opener so an accidental browser call fails
 	// the test loudly. --print must NOT call browser.Open.
-	rec := withRecorder(t)
+	rec := main.WithRecorder(t)
 
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdBillingPortal([]string{"--print"}); code != 0 {
+	if code := main.CmdBillingPortal([]string{"--print"}); code != 0 {
 		t.Fatalf("cmdBillingPortal --print = %d, want 0", code)
 	}
 	if !strings.Contains(stdout.String(), "https://billing.example.com/portal?account=acct_42") {
 		t.Errorf("stdout missing URL; got: %q", stdout.String())
 	}
-	if len(rec.urls) != 0 {
-		t.Errorf("--print opened browser %d times; want 0", len(rec.urls))
+	if len((*rec.Urls())) != 0 {
+		t.Errorf("--print opened browser %d times; want 0", len((*rec.Urls())))
 	}
 }
 
@@ -79,17 +80,17 @@ func TestCmdBillingPortal_NoOpenAlias(t *testing.T) {
 	t.Setenv("FAAS_API", apiURL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	rec := withRecorder(t)
-	stdout, restore := captureStdout(t)
+	rec := main.WithRecorder(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdBillingPortal([]string{"--no-open"}); code != 0 {
+	if code := main.CmdBillingPortal([]string{"--no-open"}); code != 0 {
 		t.Fatalf("cmdBillingPortal --no-open = %d, want 0", code)
 	}
 	if !strings.Contains(stdout.String(), "https://billing.example.com/portal?account=acct_42") {
 		t.Errorf("stdout missing URL; got: %q", stdout.String())
 	}
-	if len(rec.urls) != 0 {
-		t.Errorf("--no-open opened browser %d times; want 0", len(rec.urls))
+	if len((*rec.Urls())) != 0 {
+		t.Errorf("--no-open opened browser %d times; want 0", len((*rec.Urls())))
 	}
 }
 
@@ -100,15 +101,15 @@ func TestCmdBillingPortal_OpensBrowser(t *testing.T) {
 	t.Setenv("FAAS_API", apiURL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	rec := withRecorder(t)
-	if code := cmdBillingPortal(nil); code != 0 {
+	rec := main.WithRecorder(t)
+	if code := main.CmdBillingPortal(nil); code != 0 {
 		t.Fatalf("cmdBillingPortal (default) = %d, want 0", code)
 	}
-	if len(rec.urls) != 1 {
-		t.Fatalf("recorder saw %d launches, want 1", len(rec.urls))
+	if len((*rec.Urls())) != 1 {
+		t.Fatalf("recorder saw %d launches, want 1", len((*rec.Urls())))
 	}
-	if rec.urls[0] != "https://billing.example.com/portal?account=acct_42" {
-		t.Errorf("opened URL = %q, want the substituted portal link", rec.urls[0])
+	if (*rec.Urls())[0] != "https://billing.example.com/portal?account=acct_42" {
+		t.Errorf("opened URL = %q, want the substituted portal link", (*rec.Urls())[0])
 	}
 }
 
@@ -122,11 +123,11 @@ func TestCmdBillingPortal_BrowserOpenFailureExitsZero(t *testing.T) {
 	t.Setenv("FAAS_API", apiURL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	rec := withRecorder(t)
-	rec.err = errBrowserStub
-	stderr, restore := captureStderr(t)
+	rec := main.WithRecorder(t)
+	(*rec.Err()) = errBrowserStub
+	stderr, restore := main.CaptureStderr(t)
 	defer restore()
-	if code := cmdBillingPortal(nil); code != 0 {
+	if code := main.CmdBillingPortal(nil); code != 0 {
 		t.Errorf("cmdBillingPortal on browser failure = %d, want 0", code)
 	}
 	if !strings.Contains(stderr.String(), "Could not open browser") {
@@ -153,9 +154,9 @@ func TestCmdBillingPortal_EmptyURLReturnsFriendlyError(t *testing.T) {
 	t.Setenv("FAAS_API", apiURL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stderr, restore := captureStderr(t)
+	stderr, restore := main.CaptureStderr(t)
 	defer restore()
-	if code := cmdBillingPortal(nil); code != 1 {
+	if code := main.CmdBillingPortal(nil); code != 1 {
 		t.Errorf("cmdBillingPortal on empty URL = %d, want 1 (user error)", code)
 	}
 	if !strings.Contains(stderr.String(), "Billing portal is not configured") {
@@ -164,8 +165,8 @@ func TestCmdBillingPortal_EmptyURLReturnsFriendlyError(t *testing.T) {
 }
 
 func TestCmdBillingPortal_RequiresLogin(t *testing.T) {
-	requireNoAuth(t)
-	if code := cmdBillingPortal(nil); code != 2 {
+	main.RequireNoAuth(t)
+	if code := main.CmdBillingPortal(nil); code != 2 {
 		t.Errorf("cmdBillingPortal no-auth = %d, want 2", code)
 	}
 }
@@ -173,7 +174,7 @@ func TestCmdBillingPortal_RequiresLogin(t *testing.T) {
 func TestCmdBillingPortal_RejectsExtraArgs(t *testing.T) {
 	t.Setenv("FAAS_API", "http://localhost")
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if code := cmdBillingPortal([]string{"--print", "junk"}); code != 1 {
+	if code := main.CmdBillingPortal([]string{"--print", "junk"}); code != 1 {
 		t.Errorf("cmdBillingPortal with extra args = %d, want 1", code)
 	}
 }
@@ -183,9 +184,9 @@ func TestCmdBilling_Dispatch(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	t.Run("bare usage error", func(t *testing.T) {
-		stderr, restore := captureStderr(t)
+		stderr, restore := main.CaptureStderr(t)
 		defer restore()
-		if code := cmdBilling(nil); code != 1 {
+		if code := main.CmdBilling(nil); code != 1 {
 			t.Errorf("cmdBilling (no sub) = %d, want 1", code)
 		}
 		if !strings.Contains(stderr.String(), "usage: gregale billing") {
@@ -193,9 +194,9 @@ func TestCmdBilling_Dispatch(t *testing.T) {
 		}
 	})
 	t.Run("help exits zero", func(t *testing.T) {
-		stdout, restore := captureStdout(t)
+		stdout, restore := main.CaptureStdout(t)
 		defer restore()
-		if code := cmdBilling([]string{"help"}); code != 0 {
+		if code := main.CmdBilling([]string{"help"}); code != 0 {
 			t.Errorf("cmdBilling help = %d, want 0", code)
 		}
 		if !strings.Contains(stdout.String(), "portal") {
@@ -214,9 +215,9 @@ func TestCmdBilling_Dispatch(t *testing.T) {
 		}
 	})
 	t.Run("unknown subcommand exits 1", func(t *testing.T) {
-		stderr, restore := captureStderr(t)
+		stderr, restore := main.CaptureStderr(t)
 		defer restore()
-		if code := cmdBilling([]string{"reticulate-splines"}); code != 1 {
+		if code := main.CmdBilling([]string{"reticulate-splines"}); code != 1 {
 			t.Errorf("cmdBilling unknown sub = %d, want 1", code)
 		}
 		if !strings.Contains(stderr.String(), "unknown subcommand") {
@@ -254,9 +255,9 @@ func TestCmdBillingStatus_RendersCustomerStatus(t *testing.T) {
 	t.Setenv("FAAS_API", apiURL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdBillingStatus(nil); code != 0 {
+	if code := main.CmdBillingStatus(nil); code != 0 {
 		t.Fatalf("cmdBillingStatus = %d, want 0", code)
 	}
 	out := stdout.String()
@@ -277,9 +278,9 @@ func TestCmdBillingStatus_DisabledMode(t *testing.T) {
 	t.Setenv("FAAS_API", apiURL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdBillingStatus(nil); code != 0 {
+	if code := main.CmdBillingStatus(nil); code != 0 {
 		t.Fatalf("cmdBillingStatus = %d, want 0", code)
 	}
 	out := stdout.String()
@@ -293,9 +294,9 @@ func TestCmdBillingStatus_DisabledMode(t *testing.T) {
 func TestCmdBillingStatus_RejectsArgs(t *testing.T) {
 	t.Setenv("FAAS_API", "http://localhost")
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	stderr, restore := captureStderr(t)
+	stderr, restore := main.CaptureStderr(t)
 	defer restore()
-	if code := cmdBillingStatus([]string{"junk"}); code != 1 {
+	if code := main.CmdBillingStatus([]string{"junk"}); code != 1 {
 		t.Errorf("cmdBillingStatus with extra args = %d, want 1", code)
 	}
 	// PR-P4 changed the rejection message to enumerate the four
@@ -337,7 +338,7 @@ func TestParseBillingStatusFlags(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			watch, dur, asJSON, noClear, err := parseBillingStatusFlags(tt.args)
+			watch, dur, asJSON, noClear, err := main.ParseBillingStatusFlags(tt.args)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, wantErr = %v", err, tt.wantErr)
 			}
@@ -432,9 +433,9 @@ func TestCmdBillingRetry_Success(t *testing.T) {
 	t.Setenv("FAAS_API", apiURL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdBillingRetry(nil); code != 0 {
+	if code := main.CmdBillingRetry(nil); code != 0 {
 		t.Errorf("cmdBillingRetry = %d, want 0", code)
 	}
 	out := stdout.String()
@@ -468,9 +469,9 @@ func TestCmdBillingRetry_NoOpenCharge(t *testing.T) {
 	t.Setenv("FAAS_API", apiURL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stderr, restore := captureStderr(t)
+	stderr, restore := main.CaptureStderr(t)
 	defer restore()
-	if code := cmdBillingRetry(nil); code != 4 {
+	if code := main.CmdBillingRetry(nil); code != 4 {
 		t.Errorf("cmdBillingRetry no-open-charge = %d, want 4", code)
 	}
 	if !strings.Contains(stderr.String(), "good standing") {
@@ -480,8 +481,8 @@ func TestCmdBillingRetry_NoOpenCharge(t *testing.T) {
 
 // TestCmdBillingRetry_RequiresLogin pins the no-auth path.
 func TestCmdBillingRetry_RequiresLogin(t *testing.T) {
-	requireNoAuth(t)
-	if code := cmdBillingRetry(nil); code != 2 {
+	main.RequireNoAuth(t)
+	if code := main.CmdBillingRetry(nil); code != 2 {
 		t.Errorf("cmdBillingRetry no-auth = %d, want 2", code)
 	}
 }
@@ -502,9 +503,9 @@ func TestCmdBillingCancel_Success(t *testing.T) {
 	t.Setenv("FAAS_API", apiURL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdBillingCancel([]string{"--yes"}); code != 0 {
+	if code := main.CmdBillingCancel([]string{"--yes"}); code != 0 {
 		t.Errorf("cmdBillingCancel --yes = %d, want 0", code)
 	}
 	if !strings.Contains(stdout.String(), "2026-09-08") {
@@ -533,9 +534,9 @@ func TestCmdBillingCancel_AlreadyCancelledFriendlyHint(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stderr, restore := captureStderr(t)
+	stderr, restore := main.CaptureStderr(t)
 	defer restore()
-	if code := cmdBillingCancel([]string{"--yes"}); code != 5 {
+	if code := main.CmdBillingCancel([]string{"--yes"}); code != 5 {
 		t.Errorf("cmdBillingCancel already-cancelled = %d, want 5", code)
 	}
 	if !strings.Contains(stderr.String(), "No active subscription") {
@@ -561,9 +562,9 @@ func TestCmdBillingPaymentMethod_PrintsAndOpens(t *testing.T) {
 	t.Setenv("FAAS_API", apiURL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdBillingPaymentMethod([]string{"--print"}); code != 0 {
+	if code := main.CmdBillingPaymentMethod([]string{"--print"}); code != 0 {
 		t.Errorf("cmdBillingPaymentMethod --print = %d, want 0", code)
 	}
 	out := stdout.String()
@@ -586,9 +587,9 @@ func TestCmdBillingPaymentMethod_NoCardOnFile(t *testing.T) {
 	t.Setenv("FAAS_API", apiURL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stderr, restore := captureStderr(t)
+	stderr, restore := main.CaptureStderr(t)
 	defer restore()
-	if code := cmdBillingPaymentMethod([]string{"--print"}); code != 1 {
+	if code := main.CmdBillingPaymentMethod([]string{"--print"}); code != 1 {
 		t.Errorf("cmdBillingPaymentMethod no-card = %d, want 1", code)
 	}
 	if !strings.Contains(stderr.String(), "No payment method") {

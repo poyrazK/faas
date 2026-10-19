@@ -666,7 +666,8 @@ export class AccountService {
    * Checks the key against the provider, then seals it at rest. Stripe
    * takes a restricted key (rk_live_… or rk_test_…) with read and write
    * access to invoices and invoice items; Paddle an API key
-   * (pdl_live_apikey_… or pdl_sdbx_apikey_…) with transaction access; Lago
+   * (pdl_live_apikey_… or pdl_sdbx_apikey_…) with transaction access and
+   * read access to customers; Lago
    * an API key and, for the EU region or a self-hosted Lago, api_url. Only
    * the last four characters, the mode and the Lago API URL are ever
    * returned.

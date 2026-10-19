@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -32,7 +33,7 @@ func newParallelWorkflowTestClient(maxConcurrent int) *parallelWorkflowTestClien
 	return &parallelWorkflowTestClient{
 		capabilities:  base.capabilities,
 		runs:          make(map[string]api.ExecutionResponse),
-		createEntered: make(chan string, executionWorkflowMaxSteps),
+		createEntered: make(chan string, main.ExecutionWorkflowMaxSteps),
 		createBlocks:  make(map[string]<-chan struct{}),
 		pollBlocks:    make(map[string]<-chan struct{}),
 		statuses:      make(map[string]api.ExecutionStatus),
@@ -134,9 +135,9 @@ func TestRunExecutionWorkflowParallelFanInRespectsAccountLimit(t *testing.T) {
 		client.createBlocks[label] = releaseRoots
 		client.results[label] = json.RawMessage(fmt.Sprintf(`{"scan":%d}`, index+1))
 	}
-	plan := executionWorkflowPlan{
+	plan := main.ExecutionWorkflowPlan{
 		WorkflowID: "parallel-fan-in", Version: "v1", MaxParallelSteps: 4,
-		Steps: []executionWorkflowStep{
+		Steps: []main.ExecutionWorkflowStep{
 			{Label: "scan-a", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return {scan: 1}"}},
 			{Label: "scan-b", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return {scan: 2}"}},
 			{Label: "scan-c", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return {scan: 3}"}},
@@ -145,12 +146,12 @@ func TestRunExecutionWorkflowParallelFanInRespectsAccountLimit(t *testing.T) {
 		},
 	}
 	type workflowResult struct {
-		result executionWorkflowRunResult
+		result main.ExecutionWorkflowRunResult
 		err    error
 	}
 	done := make(chan workflowResult, 1)
 	go func() {
-		result, err := runExecutionWorkflow(context.Background(), client, plan, time.Millisecond)
+		result, err := main.RunExecutionWorkflow(context.Background(), client, plan, time.Millisecond)
 		done <- workflowResult{result: result, err: err}
 	}()
 
@@ -199,7 +200,7 @@ func TestRunExecutionWorkflowParallelFanInRespectsAccountLimit(t *testing.T) {
 	if mergeRequest == nil {
 		t.Fatal("merge step was not submitted")
 	}
-	var got map[string]executionWorkflowDependencyInput
+	var got map[string]main.ExecutionWorkflowDependencyInput
 	if err := json.Unmarshal(mergeRequest.Input, &got); err != nil {
 		t.Fatalf("decode merge input %s: %v", mergeRequest.Input, err)
 	}
@@ -217,10 +218,10 @@ func TestRunExecutionWorkflowContinuesIndependentBranchesAndProvidesDependencySt
 	client := newParallelWorkflowTestClient(1)
 	client.statuses["fetch-failed"] = api.ExecutionStatusFailed
 	client.results["fetch-good"] = json.RawMessage(`{"items":2}`)
-	plan := executionWorkflowPlan{
+	plan := main.ExecutionWorkflowPlan{
 		WorkflowID: "partial-results", Version: "v1", MaxParallelSteps: 1,
-		FailurePolicy: executionWorkflowFailurePolicyContinueIndependent,
-		Steps: []executionWorkflowStep{
+		FailurePolicy: main.ExecutionWorkflowFailurePolicyContinueIndependent,
+		Steps: []main.ExecutionWorkflowStep{
 			{Label: "fetch-failed", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 			{Label: "analyze-failed", DependsOn: []string{"fetch-failed"}, Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 			{Label: "fetch-good", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
@@ -229,7 +230,7 @@ func TestRunExecutionWorkflowContinuesIndependentBranchesAndProvidesDependencySt
 		},
 	}
 
-	result, err := runExecutionWorkflow(context.Background(), client, plan, time.Millisecond)
+	result, err := main.RunExecutionWorkflow(context.Background(), client, plan, time.Millisecond)
 	if err == nil {
 		t.Fatal("workflow with a failed Run returned success")
 	}
@@ -257,7 +258,7 @@ func TestRunExecutionWorkflowContinuesIndependentBranchesAndProvidesDependencySt
 	if summaryRequest == nil {
 		t.Fatal("summary step was not submitted")
 	}
-	var inputs map[string]executionWorkflowDependencyInput
+	var inputs map[string]main.ExecutionWorkflowDependencyInput
 	if err := json.Unmarshal(summaryRequest.Input, &inputs); err != nil {
 		t.Fatalf("decode summary input %s: %v", summaryRequest.Input, err)
 	}
@@ -278,18 +279,18 @@ func TestRunExecutionWorkflowFailureStopsNewStepsAndDrainsStartedRuns(t *testing
 	client.statuses["first"] = api.ExecutionStatusFailed
 	client.statuses["second"] = api.ExecutionStatusRunning
 	client.pollBlocks["second"] = releaseSecond
-	plan := executionWorkflowPlan{WorkflowID: "parallel-failure", Version: "v1", MaxParallelSteps: 2, Steps: []executionWorkflowStep{
+	plan := main.ExecutionWorkflowPlan{WorkflowID: "parallel-failure", Version: "v1", MaxParallelSteps: 2, Steps: []main.ExecutionWorkflowStep{
 		{Label: "first", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 		{Label: "second", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 		{Label: "never-start", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 	}}
 	type workflowResult struct {
-		result executionWorkflowRunResult
+		result main.ExecutionWorkflowRunResult
 		err    error
 	}
 	done := make(chan workflowResult, 1)
 	go func() {
-		result, err := runExecutionWorkflow(context.Background(), client, plan, time.Millisecond)
+		result, err := main.RunExecutionWorkflow(context.Background(), client, plan, time.Millisecond)
 		done <- workflowResult{result: result, err: err}
 	}()
 
@@ -331,31 +332,31 @@ func TestRunExecutionWorkflowFailureStopsNewStepsAndDrainsStartedRuns(t *testing
 }
 
 func TestExecutionWorkflowPlanValidatesDependencies(t *testing.T) {
-	base := executionWorkflowPlan{WorkflowID: "dependency-validation", Version: "v1", Steps: []executionWorkflowStep{
+	base := main.ExecutionWorkflowPlan{WorkflowID: "dependency-validation", Version: "v1", Steps: []main.ExecutionWorkflowStep{
 		{Label: "first", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 		{Label: "second", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 	}}
 	tests := []struct {
 		name string
-		edit func(*executionWorkflowPlan)
+		edit func(*main.ExecutionWorkflowPlan)
 	}{
-		{name: "unknown dependency", edit: func(plan *executionWorkflowPlan) { plan.Steps[1].DependsOn = []string{"missing"} }},
-		{name: "forward dependency", edit: func(plan *executionWorkflowPlan) { plan.Steps[0].DependsOn = []string{"second"} }},
-		{name: "duplicate dependency", edit: func(plan *executionWorkflowPlan) { plan.Steps[1].DependsOn = []string{"first", "first"} }},
-		{name: "results without dependencies", edit: func(plan *executionWorkflowPlan) { plan.Steps[1].IncludeDependencyResults = true }},
-		{name: "input conflict", edit: func(plan *executionWorkflowPlan) {
+		{name: "unknown dependency", edit: func(plan *main.ExecutionWorkflowPlan) { plan.Steps[1].DependsOn = []string{"missing"} }},
+		{name: "forward dependency", edit: func(plan *main.ExecutionWorkflowPlan) { plan.Steps[0].DependsOn = []string{"second"} }},
+		{name: "duplicate dependency", edit: func(plan *main.ExecutionWorkflowPlan) { plan.Steps[1].DependsOn = []string{"first", "first"} }},
+		{name: "results without dependencies", edit: func(plan *main.ExecutionWorkflowPlan) { plan.Steps[1].IncludeDependencyResults = true }},
+		{name: "input conflict", edit: func(plan *main.ExecutionWorkflowPlan) {
 			plan.Steps[1].DependsOn = []string{"first"}
 			plan.Steps[1].IncludeDependencyResults = true
 			plan.Steps[1].Request.Input = json.RawMessage(`null`)
 		}},
-		{name: "unknown failure policy", edit: func(plan *executionWorkflowPlan) { plan.FailurePolicy = "continue_always" }},
+		{name: "unknown failure policy", edit: func(plan *main.ExecutionWorkflowPlan) { plan.FailurePolicy = "continue_always" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			plan := base
-			plan.Steps = append([]executionWorkflowStep(nil), base.Steps...)
+			plan.Steps = append([]main.ExecutionWorkflowStep(nil), base.Steps...)
 			test.edit(&plan)
-			if _, _, err := executionWorkflowPlanID(plan); err == nil {
+			if _, _, err := main.ExecutionWorkflowPlanID(plan); err == nil {
 				t.Fatal("invalid dependency plan was accepted")
 			}
 		})

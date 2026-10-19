@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/deploydiff"
 )
 
@@ -20,7 +21,7 @@ func TestRunDeployRejectsNegativePRNumberBeforeRequest(t *testing.T) {
 		t.Setenv("FAAS_API", server.URL)
 		t.Setenv("FAAS_TOKEN", "fp_live_negative_pr_guard")
 		args := append([]string{"deploy", "--name", "negative-pr", "--pr-number", "-1", "--dry-run", "--no-doctor"}, sourceArgs...)
-		if code := run(args); code == 0 {
+		if code := main.Run(args); code == 0 {
 			t.Errorf("source args %v accepted a negative PR number", sourceArgs)
 		}
 		if got := requests.Load(); got != 0 {
@@ -33,7 +34,7 @@ func TestRunDeployRejectsNegativePRNumberBeforeRequest(t *testing.T) {
 func TestDeployPreviewPRNumberIntent(t *testing.T) {
 	for _, prNumber := range []int{0, 1, 2147483647} {
 		d := deploydiff.Diff{Slug: "preview"}
-		appendDeployPreviewAnnotationIntent(&d, diffCLIOptions{PRNumber: prNumber})
+		main.AppendDeployPreviewAnnotationIntent(&d, main.DiffCLIOptions{PRNumber: prNumber})
 		var buf bytes.Buffer
 		if err := deploydiff.RenderJSON(&buf, d); err != nil {
 			t.Fatalf("pr=%d render: %v", prNumber, err)
@@ -70,7 +71,7 @@ func TestRunDeployRejectsUnexpectedPositionalBeforeRequest(t *testing.T) {
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_positional_guard")
 
-	code := run([]string{
+	code := main.Run([]string{
 		"deploy",
 		"--tarball", "fail-build.tar.gz",
 		"stray",
@@ -98,7 +99,7 @@ func TestProjectDeployRejectsUnsupportedPolicyBeforeRequest(t *testing.T) {
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_project_policy_guard")
 
-	code := cmdDeployTarball([]string{
+	code := main.CmdDeployTarball([]string{
 		"--tarball", "fixture.tar.gz",
 		"--project-slug", "round15-capture",
 		"--yes",
@@ -146,7 +147,7 @@ func TestProjectDeployRejectsExecutionConfigurationBeforeRequest(t *testing.T) {
 
 			args := []string{"--tarball", "fixture.tar.gz", "--project-slug", "round15-capture", "--yes"}
 			args = append(args, tc.args...)
-			if code := cmdDeployTarball(args); code == 0 {
+			if code := main.CmdDeployTarball(args); code == 0 {
 				t.Fatalf("project deploy accepted %s", tc.name)
 			}
 			if got := requests.Load(); got != 0 {
@@ -168,11 +169,11 @@ func TestRunDeployAppSlugMistakePointsAtName(t *testing.T) {
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_positional_guard")
 	var stderr bytes.Buffer
-	oldErr := osStderr
-	osStderr = &stderr
-	t.Cleanup(func() { osStderr = oldErr })
+	oldErr := (*main.OsStderr)
+	(*main.OsStderr) = &stderr
+	t.Cleanup(func() { (*main.OsStderr) = oldErr })
 
-	if code := run([]string{"deploy", "--app", "my-app", "--no-doctor"}); code == 0 {
+	if code := main.Run([]string{"deploy", "--app", "my-app", "--no-doctor"}); code == 0 {
 		t.Fatal("deploy accepted a slug after --app")
 	}
 	if !strings.Contains(stderr.String(), "--name my-app") {

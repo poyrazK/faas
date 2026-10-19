@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	repairapi "github.com/onebox-faas/faas/pkg/apid/datarepair"
 	"github.com/onebox-faas/faas/pkg/datarepair"
 )
@@ -35,10 +36,10 @@ func TestDataRepairSourcesCLIReadOnlyAndScoped(t *testing.T) {
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "account-token")
 	var out bytes.Buffer
-	previous := osStdout
-	osStdout = &out
-	defer func() { osStdout = previous }()
-	if cmdDataRepair([]string{"sources", "--url", server.URL, "--token-env", "REPAIR_DISCOVERY_TEST_TOKEN", "--release", "bad & percent%", "--since", "2026-10-17T03:00:00+03:00"}) != 0 {
+	previous := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	defer func() { (*main.OsStdout) = previous }()
+	if main.CmdDataRepair([]string{"sources", "--url", server.URL, "--token-env", "REPAIR_DISCOVERY_TEST_TOKEN", "--release", "bad & percent%", "--since", "2026-10-17T03:00:00+03:00"}) != 0 {
 		t.Fatal("executor discovery failed")
 	}
 	if gotPath != "/v1/data-repair/sources" || gotToken != "Bearer executor-token" || gotRelease != "bad & percent%" || gotSince != "2026-10-17T00:00:00Z" {
@@ -49,14 +50,14 @@ func TestDataRepairSourcesCLIReadOnlyAndScoped(t *testing.T) {
 		t.Fatal("source identity lost from CLI output")
 	}
 	out.Reset()
-	if cmdDataRepair([]string{"sources", "--app", "products", "--environment", "production", "--customer", scope.PlatformTenantID}) != 0 {
+	if main.CmdDataRepair([]string{"sources", "--app", "products", "--environment", "production", "--customer", scope.PlatformTenantID}) != 0 {
 		t.Fatal("hosted discovery failed")
 	}
 	if gotPath != "/v1/apps/products/data-repair/sources" || gotToken != "Bearer account-token" || gotCustomer != scope.PlatformTenantID {
 		t.Fatal("hosted discovery used executor authority or lost its configured scope")
 	}
 	out.Reset()
-	if cmdDataRepair([]string{"sources", "--app", "products", "--scopes"}) != 0 || gotPath != "/v1/apps/products/data-repair/source-scopes" {
+	if main.CmdDataRepair([]string{"sources", "--app", "products", "--scopes"}) != 0 || gotPath != "/v1/apps/products/data-repair/source-scopes" {
 		t.Fatal("configured scope discovery failed")
 	}
 	before := calls
@@ -64,7 +65,7 @@ func TestDataRepairSourcesCLIReadOnlyAndScoped(t *testing.T) {
 		{"--limit", "0"}, {"--since", "2026-10-17T00:00:00Z", "--before", "2026-10-17T00:00:00Z"},
 		{"--customer", scope.PlatformTenantID}, {"--app", "products", "--url", server.URL},
 	} {
-		if cmdDataRepair(append([]string{"sources"}, args...)) == 0 {
+		if main.CmdDataRepair(append([]string{"sources"}, args...)) == 0 {
 			t.Fatalf("ambiguous source query accepted: %v", args)
 		}
 	}

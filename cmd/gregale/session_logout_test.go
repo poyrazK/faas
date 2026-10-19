@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -16,8 +17,8 @@ func TestManagedCLISession_LogoutRevokesOnlyTrackedKey(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("FAAS_TOKEN", "")
-	setFakeKeyring(t)
-	token := testAPIKey('a')
+	main.SetFakeKeyring(t)
+	token := main.TestAPIKey('a')
 	deleted := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -35,20 +36,20 @@ func TestManagedCLISession_LogoutRevokesOnlyTrackedKey(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if code := finalizeLogin(context.Background(), NewClient(srv.URL, ""), token, "cli-key-1",
+	if code := main.FinalizeLogin(context.Background(), main.NewClient(srv.URL, ""), token, "cli-key-1",
 		api.AccountResponse{Email: "managed@example.com", Plan: string(api.PlanFree)}); code != 0 {
 		t.Fatalf("finalizeLogin = %d", code)
 	}
-	if code := cmdLogout(); code != 0 {
+	if code := main.CmdLogout(); code != 0 {
 		t.Fatalf("cmdLogout = %d", code)
 	}
 	if deleted != "cli-key-1" {
 		t.Fatalf("deleted key = %q", deleted)
 	}
-	if loadToken() != "" {
+	if main.LoadToken() != "" {
 		t.Fatal("token still present after logout")
 	}
-	if p, _ := cliSessionMetadataPath(); p != "" {
+	if p, _ := main.CliSessionMetadataPath(); p != "" {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
 			t.Fatalf("session metadata still exists: %v", err)
 		}
@@ -60,7 +61,7 @@ func TestNonOwningToken_LogoutDoesNotRevokeServerKey(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("FAAS_TOKEN", "")
-	setFakeKeyring(t)
+	main.SetFakeKeyring(t)
 	deletes := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
@@ -73,11 +74,11 @@ func TestNonOwningToken_LogoutDoesNotRevokeServerKey(t *testing.T) {
 		http.NotFound(w, r)
 	}))
 	defer srv.Close()
-	if code := finalizeLogin(context.Background(), NewClient(srv.URL, ""), testAPIKey('b'), "",
+	if code := main.FinalizeLogin(context.Background(), main.NewClient(srv.URL, ""), main.TestAPIKey('b'), "",
 		api.AccountResponse{Email: "shared@example.com", Plan: string(api.PlanFree)}); code != 0 {
 		t.Fatalf("finalizeLogin = %d", code)
 	}
-	if code := cmdLogout(); code != 0 {
+	if code := main.CmdLogout(); code != 0 {
 		t.Fatalf("cmdLogout = %d", code)
 	}
 	if deletes != 0 {
@@ -87,23 +88,23 @@ func TestNonOwningToken_LogoutDoesNotRevokeServerKey(t *testing.T) {
 
 func TestManagedSessionFingerprintRejectsReplacedToken(t *testing.T) {
 	salt := []byte("01234567890123456789012345678901")
-	meta := cliSessionMetadata{
+	meta := main.CliSessionMetadata{
 		KeyID:            "cli-key-1",
 		Managed:          true,
 		FingerprintSalt:  base64.RawURLEncoding.EncodeToString(salt),
-		TokenFingerprint: tokenFingerprint(testAPIKey('a'), salt),
+		TokenFingerprint: main.TokenFingerprint(main.TestAPIKey('a'), salt),
 	}
-	if !meta.matches(testAPIKey('a')) {
+	if !meta.Matches(main.TestAPIKey('a')) {
 		t.Fatal("managed token did not match its fingerprint")
 	}
-	if meta.matches(testAPIKey('b')) {
+	if meta.Matches(main.TestAPIKey('b')) {
 		t.Fatal("replacement token matched stale session metadata")
 	}
 }
 
 func TestLegacyManagedSessionIsConsumedForRevocation(t *testing.T) {
-	meta := cliSessionMetadata{KeyID: "legacy-key", Managed: true, TokenSHA256: "legacy-digest"}
-	if !meta.matches(testAPIKey('a')) {
+	meta := main.CliSessionMetadata{KeyID: "legacy-key", Managed: true, TokenSHA256: "legacy-digest"}
+	if !meta.Matches(main.TestAPIKey('a')) {
 		t.Fatal("legacy managed metadata must permit one final server revocation")
 	}
 }

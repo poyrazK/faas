@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -7,13 +7,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestValidateParamFlagsBuildParameterOnlyAction(t *testing.T) {
 	fs := flag.NewFlagSet("edge-rules create", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	params := addValidateParamFlags(fs)
+	params := main.AddValidateParamFlags(fs)
 	if err := fs.Parse([]string{
 		"--validate-path-template", "/users/{id}",
 		"--validate-path-schema", `{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}`,
@@ -23,14 +24,14 @@ func TestValidateParamFlagsBuildParameterOnlyAction(t *testing.T) {
 	}
 	visited := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { visited[f.Name] = true })
-	if !edgeRuleValidateFlagsVisited(visited) {
+	if !main.EdgeRuleValidateFlagsVisited(visited) {
 		t.Fatal("parameter flags are not counted as --validate-* flags")
 	}
-	resolved, err := params.resolve(visited)
+	resolved, err := params.Resolve(visited)
 	if err != nil || resolved == nil || resolved.PathTemplate != "/users/{id}" || len(resolved.Headers) != 0 {
 		t.Fatalf("resolve = %+v, %v", resolved, err)
 	}
-	raw, err := buildEdgeRuleAction("validate", edgeRuleActionInputs{ValidateParameters: resolved})
+	raw, err := main.BuildEdgeRuleAction("validate", main.EdgeRuleActionInputs{ValidateParameters: resolved})
 	if err != nil {
 		t.Fatalf("parameter-only action rejected: %v", err)
 	}
@@ -40,11 +41,11 @@ func TestValidateParamFlagsBuildParameterOnlyAction(t *testing.T) {
 	}
 
 	// No flags: no parameters, so a body schema is still required.
-	empty := addValidateParamFlags(flag.NewFlagSet("x", flag.ContinueOnError))
-	if resolved, err := empty.resolve(map[string]bool{}); resolved != nil || err != nil {
+	empty := main.AddValidateParamFlags(flag.NewFlagSet("x", flag.ContinueOnError))
+	if resolved, err := empty.Resolve(map[string]bool{}); resolved != nil || err != nil {
 		t.Fatalf("empty resolve = %+v, %v", resolved, err)
 	}
-	if _, err := buildEdgeRuleAction("validate", edgeRuleActionInputs{}); err == nil || !strings.Contains(err.Error(), "schema or parameters") {
+	if _, err := main.BuildEdgeRuleAction("validate", main.EdgeRuleActionInputs{}); err == nil || !strings.Contains(err.Error(), "schema or parameters") {
 		t.Fatalf("empty validate action = %v", err)
 	}
 }

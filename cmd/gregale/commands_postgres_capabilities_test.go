@@ -1,5 +1,5 @@
 // adr: 592 — portable reader permissions and capability discovery.
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -22,12 +23,12 @@ func TestCmdPostgresCapabilitiesUsesSafeRegionalContract(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	previousOut, previousJSON := osStdout, jsonOutput
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 	for _, asJSON := range []bool{true, false} {
 		var out bytes.Buffer
-		osStdout, jsonOutput = &out, asJSON
-		if code := cmdPostgres([]string{"capabilities", "--region", "eu"}); code != 0 {
+		(*main.OsStdout), (*main.JsonOutput) = &out, asJSON
+		if code := main.CmdPostgres([]string{"capabilities", "--region", "eu"}); code != 0 {
 			t.Fatal("capability command failed", code)
 		}
 		if strings.Contains(out.String(), "PRIVATE_") {

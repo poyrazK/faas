@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -22,9 +23,9 @@ func logDrainTestServer(t *testing.T, created *api.CreateAppLogDrainRequest) *ht
 				t.Errorf("decode create: %v", err)
 			}
 			drain.AuthHeaderMasked = api.AppLogDrainAuthHeaderMasked
-			writeJSONTest(w, drain)
+			main.WriteJSONTest(w, drain)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/web/log-drains":
-			writeJSONTest(w, []api.AppLogDrainResponse{drain})
+			main.WriteJSONTest(w, []api.AppLogDrainResponse{drain})
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/apps/web/log-drains/drain-1":
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -40,9 +41,9 @@ func logDrainTestServer(t *testing.T, created *api.CreateAppLogDrainRequest) *ht
 func captureLogDrainOutput(t *testing.T, asJSON bool) *bytes.Buffer {
 	t.Helper()
 	var out bytes.Buffer
-	oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
-	osStdout, osStderr, jsonOutput = &out, io.Discard, asJSON
-	t.Cleanup(func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON })
+	oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &out, io.Discard, asJSON
+	t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON })
 	return &out
 }
 
@@ -50,8 +51,8 @@ func captureLogDrainOutput(t *testing.T, asJSON bool) *bytes.Buffer {
 func TestCmdLogDrainsListJSON(t *testing.T) {
 	logDrainTestServer(t, &api.CreateAppLogDrainRequest{})
 	out := captureLogDrainOutput(t, false)
-	jsonOutput = true
-	if code := cmdLogDrains([]string{"list", "web"}); code != 0 {
+	(*main.JsonOutput) = true
+	if code := main.CmdLogDrains([]string{"list", "web"}); code != 0 {
 		t.Fatalf("log-drains list exit = %d", code)
 	}
 	var drains []api.AppLogDrainResponse
@@ -67,7 +68,7 @@ func TestCmdLogDrainsAddReadsCredentialFromEnvironment(t *testing.T) {
 	logDrainTestServer(t, &created)
 	out := captureLogDrainOutput(t, false)
 	t.Setenv("LOG_DRAIN_TOKEN", "Bearer drain-secret")
-	if code := cmdLogDrains([]string{"add", "--app", "web", "--url", "https://logs.example.com/in", "--auth-header-env", "LOG_DRAIN_TOKEN"}); code != 0 {
+	if code := main.CmdLogDrains([]string{"add", "--app", "web", "--url", "https://logs.example.com/in", "--auth-header-env", "LOG_DRAIN_TOKEN"}); code != 0 {
 		t.Fatalf("log-drains add exit = %d", code)
 	}
 	if created.AuthHeader != "Authorization: Bearer drain-secret" || created.Kind != "http_json" {
@@ -93,7 +94,7 @@ func TestLogDrainAuthHeaderPairAcceptsTheDocumentedForms(t *testing.T) {
 		{value: "X-Key: a:b", wantErr: true},
 		{value: "X-Key:", wantErr: true},
 	} {
-		got, err := logDrainAuthHeaderPair(tc.value)
+		got, err := main.LogDrainAuthHeaderPair(tc.value)
 		if (err != nil) != tc.wantErr || got != tc.want {
 			t.Errorf("logDrainAuthHeaderPair(%q) = %q, %v; want %q, err=%v", tc.value, got, err, tc.want, tc.wantErr)
 		}
@@ -104,7 +105,7 @@ func TestCmdLogDrainsAddRefusesAnUnsetCredentialVariable(t *testing.T) {
 	var created api.CreateAppLogDrainRequest
 	logDrainTestServer(t, &created)
 	captureLogDrainOutput(t, false)
-	if code := cmdLogDrains([]string{"add", "--app", "web", "--url", "https://logs.example.com/in", "--auth-header-env", "LOG_DRAIN_TOKEN_UNSET"}); code == 0 {
+	if code := main.CmdLogDrains([]string{"add", "--app", "web", "--url", "https://logs.example.com/in", "--auth-header-env", "LOG_DRAIN_TOKEN_UNSET"}); code == 0 {
 		t.Fatal("an unset credential variable created a drain")
 	}
 	if created.TargetURL != "" {
@@ -122,14 +123,14 @@ func TestCmdLogDrainsRmAcceptsTheSlugAfterFlags(t *testing.T) {
 		{"rm", "--app", "web", "--id", "drain-1"},
 	} {
 		out := captureLogDrainOutput(t, false)
-		if code := cmdLogDrains(args); code != 0 {
+		if code := main.CmdLogDrains(args); code != 0 {
 			t.Fatalf("log-drains %q exit = %d", args, code)
 		}
 		if !strings.Contains(out.String(), "Deleted log drain drain-1") {
 			t.Fatalf("log-drains %q output = %q", args, out.String())
 		}
 	}
-	if code := cmdLogDrains([]string{"rm", "--id", "drain-1", "web", "extra"}); code == 0 {
+	if code := main.CmdLogDrains([]string{"rm", "--id", "drain-1", "web", "extra"}); code == 0 {
 		t.Fatal("two positional arguments must still be rejected")
 	}
 }
@@ -157,14 +158,14 @@ func TestCmdLogDrainsRmAcceptsAPositionalID(t *testing.T) {
 		{"rm", "web", id},
 	} {
 		captureLogDrainOutput(t, false)
-		if code := cmdLogDrains(args); code != 0 {
+		if code := main.CmdLogDrains(args); code != 0 {
 			t.Fatalf("log-drains %q exit = %d", args, code)
 		}
 	}
 	if deleted != 3 {
 		t.Fatalf("deleted %d times, want 3", deleted)
 	}
-	if code := cmdLogDrains([]string{"rm", "web", "not-a-drain-id"}); code == 0 {
+	if code := main.CmdLogDrains([]string{"rm", "web", "not-a-drain-id"}); code == 0 {
 		t.Fatal("a non-UUID second positional must still be rejected")
 	}
 }

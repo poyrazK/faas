@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -30,20 +31,20 @@ func TestBucketDeletionsCLI(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "token")
 	var out, stderr bytes.Buffer
-	oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
-	osStdout, osStderr, jsonOutput = &out, &stderr, true
-	t.Cleanup(func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON })
-	if code := cmdBucket([]string{"deletions", "start", "demo", bucket, "key", id, "null"}); code != 0 {
+	oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &out, &stderr, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON })
+	if code := main.CmdBucket([]string{"deletions", "start", "demo", bucket, "key", id, "null"}); code != 0 {
 		t.Fatal(code)
 	}
-	if code := cmdBucket([]string{"deletions", "status", "demo", bucket, id}); code != 0 || calls != 2 {
+	if code := main.CmdBucket([]string{"deletions", "status", "demo", bucket, id}); code != 0 || calls != 2 {
 		t.Fatal(code, calls)
 	}
 	selector = uuid.NewString()
-	if code := cmdBucket([]string{"deletions", "start", "demo", bucket, "key", id, selector}); code != 0 || calls != 3 {
+	if code := main.CmdBucket([]string{"deletions", "start", "demo", bucket, "key", id, selector}); code != 0 || calls != 3 {
 		t.Fatal(code, calls)
 	}
-	if code := cmdBucket([]string{"deletions", "start", "demo", bucket, "key", id, "native"}); code != 1 || calls != 3 {
+	if code := main.CmdBucket([]string{"deletions", "start", "demo", bucket, "key", id, "native"}); code != 1 || calls != 3 {
 		t.Fatal(code, calls)
 	}
 }

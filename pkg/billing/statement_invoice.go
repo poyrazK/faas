@@ -12,21 +12,14 @@ import (
 // invoices hold at most 250 line items, one of which may be rounding.
 const MaxStatementInvoiceLines = 249
 
-// ErrInvoiceCurrencyUnsupported reports a currency whose minor unit is not
-// one hundredth of the main unit. Exports convert millicents to cents.
-var ErrInvoiceCurrencyUnsupported = errors.New("statement invoices support two-decimal currencies only")
+// ErrInvoiceCurrencyUnsupported reports a currency code statements cannot
+// invoice: not three letters, or more than three decimal places
+// (ADR-20261019100330).
+var ErrInvoiceCurrencyUnsupported = errors.New("statement invoices support currencies with at most three decimal places")
 
 // ErrStatementNotInvoiceable reports a statement that cannot become an
 // invoice: unpriced units, unknown price sources, or too many lines.
 var ErrStatementNotInvoiceable = errors.New("statement cannot be exported as an invoice")
-
-// nonTwoDecimalCurrencies are the ISO-4217 codes Stripe prices in zero or
-// three decimal places.
-var nonTwoDecimalCurrencies = map[string]bool{
-	"BIF": true, "CLP": true, "DJF": true, "GNF": true, "JPY": true, "KMF": true, "KRW": true, "MGA": true,
-	"PYG": true, "RWF": true, "UGX": true, "VND": true, "VUV": true, "XAF": true, "XOF": true, "XPF": true,
-	"BHD": true, "JOD": true, "KWD": true, "OMR": true, "TND": true,
-}
 
 // StatementInvoiceLine is one invoice item: units of one price source at
 // one unit price. Free allowance units are their own zero-price line, and
@@ -37,8 +30,8 @@ type StatementInvoiceLine struct {
 	Units                    int64
 	PriceMillicentsPerUnit   int64
 	AmountMillicents         int64
-	// AmountMinor is AmountMillicents in the currency's minor unit (cents),
-	// rounded half away from zero.
+	// AmountMinor is AmountMillicents in the invoice's minor unit, rounded
+	// half away from zero.
 	AmountMinor int64
 	// Credit marks the negative line for prepaid credit (ADR-1306).
 	Credit bool
@@ -51,12 +44,32 @@ type StatementInvoiceLine struct {
 
 // StatementInvoice is a statement converted to invoice items. RoundingMinor
 // is the extra item that makes the items sum to the statement total rounded
-// to the minor unit; zero when no rounding item is needed.
+// to the minor unit; zero when no rounding item is needed. Minor is the unit
+// the minor amounts are written in: ISO 4217 until In converts them.
 type StatementInvoice struct {
-	Currency      string
-	Lines         []StatementInvoiceLine
-	RoundingMinor int64
-	TotalMinor    int64
+	Currency        string
+	Lines           []StatementInvoiceLine
+	RoundingMinor   int64
+	TotalMinor      int64
+	TotalMillicents int64
+	Minor           MinorUnit
+}
+
+// In rewrites the invoice's minor amounts in unit, as a provider writes the
+// currency (ADR-20261019100330); the rounding item absorbs the difference.
+func (inv StatementInvoice) In(unit MinorUnit) StatementInvoice {
+	out := inv
+	out.Minor = unit
+	out.Lines = make([]StatementInvoiceLine, len(inv.Lines))
+	var itemsMinor int64
+	for i, line := range inv.Lines {
+		line.AmountMinor = unit.FromMillicents(line.AmountMillicents)
+		itemsMinor += line.AmountMinor
+		out.Lines[i] = line
+	}
+	out.TotalMinor = unit.FromMillicents(inv.TotalMillicents)
+	out.RoundingMinor = out.TotalMinor - itemsMinor
+	return out
 }
 
 type invoiceLineKey struct {
@@ -156,14 +169,15 @@ func addFeeLines(fees []state.APIConsumerStatementFee, tenant bool, lines map[in
 
 // withCreditLine appends the prepaid credit a statement drew (ADR-1306) as a
 // negative line; the invoice total becomes the amount due rounded to the
-// cent.
+// minor unit.
 func withCreditLine(inv StatementInvoice, creditMillicents, dueMillicents int64) (StatementInvoice, error) {
 	if len(inv.Lines) >= MaxStatementInvoiceLines {
 		return inv, fmt.Errorf("%w: %d invoice lines (1 to %d)", ErrStatementNotInvoiceable, len(inv.Lines)+1, MaxStatementInvoiceLines)
 	}
 	inv.Lines = append(inv.Lines, StatementInvoiceLine{Credit: true, AmountMillicents: -creditMillicents,
-		AmountMinor: -millicentsToCents(creditMillicents)})
-	inv.TotalMinor = millicentsToCents(dueMillicents)
+		AmountMinor: -inv.Minor.FromMillicents(creditMillicents)})
+	inv.TotalMillicents = dueMillicents
+	inv.TotalMinor = inv.Minor.FromMillicents(dueMillicents)
 	var itemsMinor int64
 	for _, line := range inv.Lines {
 		itemsMinor += line.AmountMinor
@@ -195,19 +209,26 @@ func TenantStatementInvoice(statement state.PlatformTenantStatement, cards ...st
 	if err := addFeeLines(statement.Fees, true, lines); err != nil {
 		return inv, err
 	}
-	return finishStatementInvoice(inv, lines, statement.AmountMillicents)
+	inv, err := finishStatementInvoice(inv, lines, statement.AmountMillicents)
+	if err != nil || statement.CreditAppliedMillicents == 0 {
+		return inv, err
+	}
+	// Prepaid credit the statement drew (ADR-20261019100331).
+	return withCreditLine(inv, statement.CreditAppliedMillicents, statement.AmountDueMillicents())
 }
 
 func finishStatementInvoice(inv StatementInvoice, lines map[invoiceLineKey]*StatementInvoiceLine, total int64) (StatementInvoice, error) {
-	if nonTwoDecimalCurrencies[inv.Currency] || len(inv.Currency) != 3 {
-		return inv, ErrInvoiceCurrencyUnsupported
+	unit, err := ISOMinorUnit(inv.Currency)
+	if err != nil {
+		return inv, err
 	}
+	inv.Minor = unit
 	var sum int64
 	for _, line := range lines {
 		if line.Units == 0 && line.AmountMillicents == 0 {
 			continue
 		}
-		line.AmountMinor = millicentsToCents(line.AmountMillicents)
+		line.AmountMinor = unit.FromMillicents(line.AmountMillicents)
 		sum += line.AmountMillicents
 		inv.Lines = append(inv.Lines, *line)
 	}
@@ -227,20 +248,12 @@ func finishStatementInvoice(inv StatementInvoice, lines map[invoiceLineKey]*Stat
 		}
 		return a.PriceMillicentsPerUnit < b.PriceMillicentsPerUnit
 	})
-	inv.TotalMinor = millicentsToCents(total)
+	inv.TotalMillicents = total
+	inv.TotalMinor = unit.FromMillicents(total)
 	var itemsMinor int64
 	for _, line := range inv.Lines {
 		itemsMinor += line.AmountMinor
 	}
 	inv.RoundingMinor = inv.TotalMinor - itemsMinor
 	return inv, nil
-}
-
-// millicentsToCents converts 1/100000 currency units to 1/100, rounding
-// half away from zero.
-func millicentsToCents(millicents int64) int64 {
-	if millicents < 0 {
-		return -((-millicents + 500) / 1000)
-	}
-	return (millicents + 500) / 1000
 }

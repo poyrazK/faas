@@ -1,9 +1,10 @@
-package main
+package main_test
 
 import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -24,7 +25,7 @@ func TestAppNetworkProbeState(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, detail := appNetworkProbeState(tt.row, now)
+			got, detail := main.AppNetworkProbeState(tt.row, now)
 			if got != tt.want || detail != tt.detail {
 				t.Fatalf("state = %q (%q), want %q (%q)", got, detail, tt.want, tt.detail)
 			}
@@ -34,13 +35,13 @@ func TestAppNetworkProbeState(t *testing.T) {
 
 func TestBuildAppNetworkDoctorReport(t *testing.T) {
 	rtt := 9
-	snapshot := appNetworkSnapshot{
-		App:              appNetworkApp{Slug: "demo", Status: "ready"},
+	snapshot := main.AppNetworkSnapshot{
+		App:              main.AppNetworkApp{Slug: "demo", Status: "ready"},
 		EgressAllowlist:  []string{"203.0.113.0/24"},
-		StaticEgress:     appNetworkStaticEgress{Available: true, PlanAllowed: true},
-		ServiceDiscovery: appNetworkServiceDiscovery{Enabled: true},
-		PrivateNetwork:   appNetworkPrivateNetwork{Status: "not_configured"},
-		Upstreams: appNetworkUpstreams{
+		StaticEgress:     main.AppNetworkStaticEgress{Available: true, PlanAllowed: true},
+		ServiceDiscovery: main.AppNetworkServiceDiscovery{Enabled: true},
+		PrivateNetwork:   main.AppNetworkPrivateNetwork{Status: "not_configured"},
+		Upstreams: main.AppNetworkUpstreams{
 			Available: true,
 			Count:     1,
 			Quota:     8,
@@ -54,7 +55,7 @@ func TestBuildAppNetworkDoctorReport(t *testing.T) {
 		ObservedAt: "2026-09-17T12:00:00Z",
 	}
 
-	report := buildAppNetworkDoctorReport(snapshot, time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC))
+	report := main.BuildAppNetworkDoctorReport(snapshot, time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC))
 	if !report.Healthy {
 		t.Fatal("report should remain healthy when checks are advisory")
 	}

@@ -1,8 +1,9 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
 	"errors"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,13 +12,13 @@ import (
 )
 
 func TestSaveCLIConfigWritesRestrictedAtomicFile(t *testing.T) {
-	setupHermeticTokensEnv(t)
+	main.SetupHermeticTokensEnv(t)
 	jsonPref := true
-	if err := saveCLIConfig(cliConfig{APIBase: "api.example.com/", JSON: &jsonPref}); err != nil {
+	if err := main.SaveCLIConfig(main.CliConfig{APIBase: "api.example.com/", JSON: &jsonPref}); err != nil {
 		t.Fatalf("saveCLIConfig: %v", err)
 	}
 
-	path, err := cliConfigPath()
+	path, err := main.CliConfigPath()
 	if err != nil {
 		t.Fatalf("cliConfigPath: %v", err)
 	}
@@ -32,7 +33,7 @@ func TestSaveCLIConfigWritesRestrictedAtomicFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	var got cliConfig
+	var got main.CliConfig
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatalf("decode config: %v", err)
 	}
@@ -49,60 +50,60 @@ func TestSaveCLIConfigWritesRestrictedAtomicFile(t *testing.T) {
 }
 
 func TestAPIBaseConfigPrecedence(t *testing.T) {
-	setupHermeticTokensEnv(t)
+	main.SetupHermeticTokensEnv(t)
 	t.Setenv("FAAS_API", "")
-	if err := saveCLIConfig(cliConfig{APIBase: "https://config.example"}); err != nil {
+	if err := main.SaveCLIConfig(main.CliConfig{APIBase: "https://config.example"}); err != nil {
 		t.Fatalf("saveCLIConfig: %v", err)
 	}
-	if got := apiBase(); got != "https://config.example" {
+	if got := main.ApiBase(); got != "https://config.example" {
 		t.Fatalf("apiBase() = %q, want config value", got)
 	}
 	t.Setenv("FAAS_API", "env.example/ ")
-	if got := apiBase(); got != "https://env.example" {
+	if got := main.ApiBase(); got != "https://env.example" {
 		t.Fatalf("apiBase() = %q, want env override", got)
 	}
 }
 
 func TestConfiguredJSONPreferencePrecedence(t *testing.T) {
-	setupHermeticTokensEnv(t)
+	main.SetupHermeticTokensEnv(t)
 	t.Setenv("FAAS_JSON", "")
 	pref := true
-	if err := saveCLIConfig(cliConfig{JSON: &pref}); err != nil {
+	if err := main.SaveCLIConfig(main.CliConfig{JSON: &pref}); err != nil {
 		t.Fatalf("saveCLIConfig: %v", err)
 	}
-	if got, ok := configuredJSONPreference(); !ok || !got {
+	if got, ok := main.ConfiguredJSONPreference(); !ok || !got {
 		t.Fatalf("configuredJSONPreference() = %t, %t; want true, true", got, ok)
 	}
 	t.Setenv("FAAS_JSON", "off")
-	if got, ok := configuredJSONPreference(); !ok || got {
+	if got, ok := main.ConfiguredJSONPreference(); !ok || got {
 		t.Fatalf("configuredJSONPreference() = %t, %t; want false, true from env", got, ok)
 	}
 }
 
 func TestCmdConfigSetGetList(t *testing.T) {
-	setupHermeticTokensEnv(t)
+	main.SetupHermeticTokensEnv(t)
 	t.Setenv("FAAS_API", "")
 	t.Setenv("FAAS_JSON", "")
-	oldOut := osStdout
+	oldOut := (*main.OsStdout)
 	var out strings.Builder
-	osStdout = &out
-	t.Cleanup(func() { osStdout = oldOut })
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
 
-	if code := cmdConfig([]string{"set", "api-base", "localhost:8080/"}); code != 0 {
+	if code := main.CmdConfig([]string{"set", "api-base", "localhost:8080/"}); code != 0 {
 		t.Fatalf("config set exit = %d", code)
 	}
 	if !strings.Contains(out.String(), "Saved api-base=https://localhost:8080.") {
 		t.Fatalf("set output = %q", out.String())
 	}
 	out.Reset()
-	if code := cmdConfig([]string{"get", "api-base"}); code != 0 {
+	if code := main.CmdConfig([]string{"get", "api-base"}); code != 0 {
 		t.Fatalf("config get exit = %d", code)
 	}
 	if got := out.String(); !strings.Contains(got, "api-base: https://localhost:8080 (source=config)") {
 		t.Fatalf("get output = %q", got)
 	}
 	out.Reset()
-	if code := cmdConfig([]string{"list"}); code != 0 {
+	if code := main.CmdConfig([]string{"list"}); code != 0 {
 		t.Fatalf("config list exit = %d", code)
 	}
 	if got := out.String(); !strings.Contains(got, "api-base") || !strings.Contains(got, "SOURCE") {
@@ -111,27 +112,27 @@ func TestCmdConfigSetGetList(t *testing.T) {
 }
 
 func TestCmdConfigJSONOutputIsStableAndNonSecret(t *testing.T) {
-	setupHermeticTokensEnv(t)
+	main.SetupHermeticTokensEnv(t)
 	t.Setenv("FAAS_API", "")
 	t.Setenv("FAAS_JSON", "")
-	oldOut := osStdout
+	oldOut := (*main.OsStdout)
 	var out strings.Builder
-	osStdout = &out
-	t.Cleanup(func() { osStdout = oldOut })
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
 	pref := true
-	if err := saveCLIConfig(cliConfig{APIBase: "https://config.example", JSON: &pref}); err != nil {
+	if err := main.SaveCLIConfig(main.CliConfig{APIBase: "https://config.example", JSON: &pref}); err != nil {
 		t.Fatalf("saveCLIConfig: %v", err)
 	}
-	oldJSON := jsonOutput
-	jsonOutput = true
-	t.Cleanup(func() { jsonOutput = oldJSON })
-	if code := cmdConfig([]string{"list"}); code != 0 {
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.JsonOutput) = oldJSON })
+	if code := main.CmdConfig([]string{"list"}); code != 0 {
 		t.Fatalf("config list --json exit = %d", code)
 	}
 	dec := json.NewDecoder(strings.NewReader(out.String()))
-	var entries []cliConfigEntry
+	var entries []main.CliConfigEntry
 	for {
-		var entry cliConfigEntry
+		var entry main.CliConfigEntry
 		err := dec.Decode(&entry)
 		if errors.Is(err, io.EOF) {
 			break
@@ -141,7 +142,7 @@ func TestCmdConfigJSONOutputIsStableAndNonSecret(t *testing.T) {
 		}
 		entries = append(entries, entry)
 	}
-	if len(entries) != 2 || entries[0].Key != configKeyAPIBase || entries[1].Key != configKeyJSON {
+	if len(entries) != 2 || entries[0].Key != main.ConfigKeyAPIBase || entries[1].Key != main.ConfigKeyJSON {
 		t.Fatalf("entries = %+v, want api-base then json", entries)
 	}
 	if strings.Contains(out.String(), "token") || strings.Contains(out.String(), "secret") {
@@ -150,13 +151,13 @@ func TestCmdConfigJSONOutputIsStableAndNonSecret(t *testing.T) {
 }
 
 func TestCmdConfigRejectsInvalidValuesWithoutWriting(t *testing.T) {
-	setupHermeticTokensEnv(t)
+	main.SetupHermeticTokensEnv(t)
 	t.Setenv("FAAS_API", "")
 	t.Setenv("FAAS_JSON", "")
-	if code := cmdConfig([]string{"set", "api-base", "https://valid.example"}); code != 0 {
+	if code := main.CmdConfig([]string{"set", "api-base", "https://valid.example"}); code != 0 {
 		t.Fatalf("initial config set exit = %d", code)
 	}
-	path, err := cliConfigPath()
+	path, err := main.CliConfigPath()
 	if err != nil {
 		t.Fatalf("cliConfigPath: %v", err)
 	}
@@ -164,7 +165,7 @@ func TestCmdConfigRejectsInvalidValuesWithoutWriting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read initial config: %v", err)
 	}
-	if code := cmdConfig([]string{"set", "json", "sometimes"}); code == 0 {
+	if code := main.CmdConfig([]string{"set", "json", "sometimes"}); code == 0 {
 		t.Fatal("invalid json preference was accepted")
 	}
 	after, err := os.ReadFile(path)
@@ -174,7 +175,7 @@ func TestCmdConfigRejectsInvalidValuesWithoutWriting(t *testing.T) {
 	if string(after) != string(before) {
 		t.Fatalf("invalid set changed config: before=%q after=%q", before, after)
 	}
-	if code := cmdConfig([]string{"set", "api-base", "https://user:pass@valid.example"}); code == 0 {
+	if code := main.CmdConfig([]string{"set", "api-base", "https://user:pass@valid.example"}); code == 0 {
 		t.Fatal("API base with embedded credentials was accepted")
 	}
 	afterCredentials, err := os.ReadFile(path)

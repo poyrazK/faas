@@ -610,6 +610,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REALTIME_LIVE_TLS_CA_FILE` | realtimed | `dropin` |  |  | `` | live-query preview (ADR-20261016151947): CA that verifies livequeryd hubs dialed over wss://; unset uses the system roots |
 | `FAAS_REALTIME_LIVE_TLS_CERT_FILE` | realtimed | `dropin` |  |  | `` | live-query preview (ADR-20261016151947): realtimed's client certificate for livequeryd hubs that require one (-client-ca); set with FAAS_REALTIME_LIVE_TLS_KEY_FILE |
 | `FAAS_REALTIME_LIVE_TLS_KEY_FILE` | realtimed | `dropin` |  |  | `` | live-query preview (ADR-20261016151947): private key for FAAS_REALTIME_LIVE_TLS_CERT_FILE |
+| `FAAS_REALTIME_LIVE_TLS_SERVER_NAME` | realtimed | `dropin` |  |  | `` | live-query preview (ADR-20261016151947): name every livequeryd hub is verified as instead of its URL host; livequeryd.faas with the fleet PKI's live-query leaves |
 | `FAAS_REALTIME_MAX_AGE` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_MAX_CONNECTIONS` | realtimed | `default` |  | 10000 | `` | node connection cap; 6000 with FAAS_REALTIME_FAIR_USE_ENABLED=1, sized to realtimed's 512 MB MemoryMax at ~52 KB per idle connection (ADR-1323); raise only with MemoryMax |
 | `FAAS_REALTIME_MAX_MESSAGE_BYTES` | realtimed | `default` |  |  | `` |  |

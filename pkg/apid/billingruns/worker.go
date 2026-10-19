@@ -19,7 +19,8 @@ const (
 	tenantSkipReason  = "billed on the platform tenant's statement: this consumer's usage this month is attributed to a platform tenant"
 	overlapSkipReason = "another statement already handed off part of this usage to an invoice"
 	zeroTotalReason   = "nothing to invoice: the statement total is zero"
-	// creditCoveredReason: prepaid credit paid the whole statement (ADR-1306).
+	// creditCoveredReason: prepaid credit paid the whole statement (ADR-1306,
+	// ADR-20261019100331).
 	creditCoveredReason = "nothing to invoice: prepaid credit covers the statement"
 )
 

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -6,15 +6,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestBindingRuntimeRenderingKeepsPassedVerificationSeparate(t *testing.T) {
-	previous := osStdout
+	previous := (*main.OsStdout)
 	var output bytes.Buffer
-	osStdout = &output
-	t.Cleanup(func() { osStdout = previous })
-	renderAppBindingInventory(api.AppBindingInventory{App: "api", Complete: true,
+	(*main.OsStdout) = &output
+	t.Cleanup(func() { (*main.OsStdout) = previous })
+	main.RenderAppBindingInventory(api.AppBindingInventory{App: "api", Complete: true,
 		Bindings: []api.AppBindingInventoryItem{{Type: "postgres", Name: "primary", Binding: "DATABASE_URL", Scope: "production", VerificationStatus: "passed",
 			Refresh: &api.BindingRefresh{WakeID: "wake-1", Status: "retrying", Attempts: 2, FailureReason: "telemetry_missing"}}},
 		RuntimeFreshness: &api.BindingRuntimeFreshness{Source: "instance_started_at", ObservedAt: time.Now().UTC(), Deployments: []api.BindingRuntimeDeployment{
@@ -37,11 +38,11 @@ func TestBindingRuntimeSummaryUsesResourceScopeAndAppWideBindings(t *testing.T) 
 		{"postgres", "app", "updating"}, {"postgres", "missing", "inactive"},
 		{"service", "app", "stale"}, {"queue", "app", "stale"}, {"outbound", "app", "stale"},
 	} {
-		if got := humanBindingRuntimeFreshness(runtime, api.AppBindingInventoryItem{Type: tc.kind, Scope: tc.scope}); got != tc.want {
+		if got := main.HumanBindingRuntimeFreshness(runtime, api.AppBindingInventoryItem{Type: tc.kind, Scope: tc.scope}); got != tc.want {
 			t.Fatalf("%s %s: %s want %s", tc.kind, tc.scope, got, tc.want)
 		}
 	}
-	if got := humanBindingRuntimeFreshness(nil, api.AppBindingInventoryItem{}); got != "unknown" {
+	if got := main.HumanBindingRuntimeFreshness(nil, api.AppBindingInventoryItem{}); got != "unknown" {
 		t.Fatalf("missing runtime=%s", got)
 	}
 }

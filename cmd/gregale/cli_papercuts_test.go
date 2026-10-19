@@ -1,6 +1,7 @@
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,11 +12,11 @@ import (
 // json: error calling MarshalJSON for type json.RawMessage: invalid
 // character 'o' in literal null".
 func TestResolvePayloadRejectsInvalidJSON(t *testing.T) {
-	if _, err := resolvePayload("not-json"); err == nil || !strings.Contains(err.Error(), "--payload must be valid JSON") {
+	if _, err := main.ResolvePayload("not-json"); err == nil || !strings.Contains(err.Error(), "--payload must be valid JSON") {
 		t.Fatalf("resolvePayload(not-json) err = %v, want a --payload validation error", err)
 	}
 	for _, ok := range []string{"", `{"name":"hunt3"}`, "[1,2]", `"text"`, "  "} {
-		if _, err := resolvePayload(ok); err != nil {
+		if _, err := main.ResolvePayload(ok); err != nil {
 			t.Errorf("resolvePayload(%q) = %v, want nil", ok, err)
 		}
 	}
@@ -24,7 +25,7 @@ func TestResolvePayloadRejectsInvalidJSON(t *testing.T) {
 // `invocations wait <id> --timeout 60s` was rejected as a usage error because
 // the flag package stops at the first positional.
 func TestInvocationsWaitAcceptsFlagsAfterID(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/v1/invocations/inv-1") {
 			w.Header().Set("Content-Type", "application/json")
@@ -36,9 +37,9 @@ func TestInvocationsWaitAcceptsFlagsAfterID(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	_, readStderr, restore := swapIO(t)
+	_, readStderr, restore := main.SwapIO(t)
 	defer restore()
-	code := cmdInvocationsWait([]string{"inv-1", "--timeout", "5s", "--interval", "10ms"})
+	code := main.CmdInvocationsWait([]string{"inv-1", "--timeout", "5s", "--interval", "10ms"})
 	stderr := readStderr()
 	if strings.Contains(stderr, "usage: gregale invocations wait") {
 		t.Fatalf("flags after the id were rejected: %s", stderr)

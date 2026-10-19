@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -44,7 +45,7 @@ func TestCmdBindingsVerifyRunsInBoundAppTaskAndReportsStages(t *testing.T) {
 			if len(request.Command) != 2 || request.Command[0] != api.AppTaskServiceBindingProbeCommand || request.Command[1] != "billing" || request.CommandShell {
 				t.Errorf("task command = %+v", request)
 			}
-			if request.TimeoutSeconds != bindingProbeTaskTimeoutSeconds || request.MaxOutputBytes != 4096 {
+			if request.TimeoutSeconds != main.BindingProbeTaskTimeoutSeconds || request.MaxOutputBytes != 4096 {
 				t.Errorf("task limits = %+v", request)
 			}
 			queued := api.AppTaskResponse{ID: "task-1", Status: api.AppTaskStatusQueued}
@@ -58,14 +59,14 @@ func TestCmdBindingsVerifyRunsInBoundAppTaskAndReportsStages(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	previousJSON := jsonOutput
-	jsonOutput = true
-	t.Cleanup(func() { jsonOutput = previousJSON })
+	previousJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.JsonOutput) = previousJSON })
 	var out bytes.Buffer
-	previousOut := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = previousOut })
-	if code := run([]string{"bindings", "verify", "api", "billing", "--poll-interval", "1ms", "--wait-timeout", "1s"}); code != 0 {
+	previousOut := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = previousOut })
+	if code := main.Run([]string{"bindings", "verify", "api", "billing", "--poll-interval", "1ms", "--wait-timeout", "1s"}); code != 0 {
 		t.Fatalf("exit = %d, output = %s", code, out.String())
 	}
 	if createCalls != 1 {
@@ -110,7 +111,7 @@ func TestCmdBindingsVerifyPostgresRunsSelectedManagedBindingCanary(t *testing.T)
 			if !reflect.DeepEqual(request.Command, []string{api.AppTaskPostgresBindingProbeCommand, "DATABASE_URL"}) || request.CommandShell {
 				t.Errorf("task command = %+v", request)
 			}
-			if request.TimeoutSeconds != bindingProbeTaskTimeoutSeconds || request.MaxOutputBytes != 4096 {
+			if request.TimeoutSeconds != main.BindingProbeTaskTimeoutSeconds || request.MaxOutputBytes != 4096 {
 				t.Errorf("task limits = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(api.AppTaskResponse{
@@ -124,15 +125,15 @@ func TestCmdBindingsVerifyPostgresRunsSelectedManagedBindingCanary(t *testing.T)
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	previousJSON := jsonOutput
-	jsonOutput = true
-	t.Cleanup(func() { jsonOutput = previousJSON })
+	previousJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.JsonOutput) = previousJSON })
 	var out bytes.Buffer
-	previousOut := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = previousOut })
+	previousOut := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = previousOut })
 
-	if code := run([]string{"bindings", "verify", "api", "--postgres", "DATABASE_URL", "--poll-interval", "1ms", "--wait-timeout", "1s"}); code != 0 {
+	if code := main.Run([]string{"bindings", "verify", "api", "--postgres", "DATABASE_URL", "--poll-interval", "1ms", "--wait-timeout", "1s"}); code != 0 {
 		t.Fatalf("exit = %d, output = %s", code, out.String())
 	}
 	if createCalls != 1 {
@@ -167,7 +168,7 @@ func TestCmdBindingsVerifyPostgresRejectsUnboundEnvironmentKeyBeforeTaskAdmissio
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	if code := run([]string{"bindings", "verify", "api", "--postgres", "DATABASE_URL"}); code == 0 {
+	if code := main.Run([]string{"bindings", "verify", "api", "--postgres", "DATABASE_URL"}); code == 0 {
 		t.Fatal("verification succeeded for an environment key not bound to this app")
 	}
 	if createCalls != 0 {
@@ -191,7 +192,7 @@ func TestCmdBindingsVerifyRejectsUndeclaredServiceBeforeTaskAdmission(t *testing
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	if code := run([]string{"bindings", "verify", "api", "billing"}); code == 0 {
+	if code := main.Run([]string{"bindings", "verify", "api", "billing"}); code == 0 {
 		t.Fatal("undeclared service unexpectedly verified")
 	}
 	if createCalls != 0 {
@@ -257,21 +258,21 @@ func TestCmdBindingsVerifyAllAggregatesEveryDeclaredService(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	previousJSON := jsonOutput
-	jsonOutput = true
-	t.Cleanup(func() { jsonOutput = previousJSON })
+	previousJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.JsonOutput) = previousJSON })
 	var out bytes.Buffer
-	previousOut := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = previousOut })
+	previousOut := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = previousOut })
 
-	if code := run([]string{"bindings", "verify", "api", "--all", "--poll-interval=1ms", "--wait-timeout=1s"}); code != 1 {
+	if code := main.Run([]string{"bindings", "verify", "api", "--all", "--poll-interval=1ms", "--wait-timeout=1s"}); code != 1 {
 		t.Fatalf("exit = %d, want 1 when a binding fails; output = %s", code, out.String())
 	}
 	if !reflect.DeepEqual(created, []string{"billing", "email"}) {
 		t.Fatalf("verified services = %v, want stable sorted list", created)
 	}
-	var got serviceBindingProbeBatchReport
+	var got main.ServiceBindingProbeBatchReport
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("decode batch report: %v; output=%s", err, out.String())
 	}
@@ -302,7 +303,7 @@ func TestCmdBindingsVerifyAllRejectsAppsWithoutServiceBindings(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	if code := run([]string{"bindings", "verify", "api", "--all"}); code == 0 {
+	if code := main.Run([]string{"bindings", "verify", "api", "--all"}); code == 0 {
 		t.Fatal("verification succeeded with no declared service bindings")
 	}
 	if createCalls != 0 {
@@ -312,36 +313,36 @@ func TestCmdBindingsVerifyAllRejectsAppsWithoutServiceBindings(t *testing.T) {
 
 func TestRenderAppBindingInventory(t *testing.T) {
 	var out bytes.Buffer
-	previousOut := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = previousOut })
+	previousOut := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = previousOut })
 
-	renderAppBindingInventory(appBindingInventory{
+	main.RenderAppBindingInventory(main.AppBindingInventory{
 		App: "api",
-		Bindings: []appBindingInventoryItem{
+		Bindings: []main.AppBindingInventoryItem{
 			{
-				Type: bindingTypePostgres, Name: "primary", Binding: "DATABASE_URL", Scope: "production", Access: "read_write", State: "ready",
+				Type: main.BindingTypePostgres, Name: "primary", Binding: "DATABASE_URL", Scope: "production", Access: "read_write", State: "ready",
 				CredentialGeneration: int64Pointer(2), RotationPending: boolPointer(true),
 			},
 			{
-				Type: bindingTypeObjectStorage, Name: "assets", Binding: "GREGALE_S3_ASSETS", Scope: "production", Access: "read_write", State: "ready",
+				Type: main.BindingTypeObjectStorage, Name: "assets", Binding: "GREGALE_S3_ASSETS", Scope: "production", Access: "read_write", State: "ready",
 				RotationPending: boolPointer(false),
 			},
-			{Type: bindingTypeQueue, Name: "jobs", Binding: "worker", Scope: "app", Access: "push", State: "active"},
+			{Type: main.BindingTypeQueue, Name: "jobs", Binding: "worker", Scope: "app", Access: "push", State: "active"},
 			{
-				Type: bindingTypeService, Name: "billing", Binding: "GREGALE_SERVICE_BILLING_URL",
+				Type: main.BindingTypeService, Name: "billing", Binding: "GREGALE_SERVICE_BILLING_URL",
 				HTTPURL: "http://billing.svc.gregale:10081", HTTPSEnv: "GREGALE_SERVICE_BILLING_HTTPS_URL",
 				HTTPSURL: "https://billing.internal", Transport: "http", Scope: "app", Access: "invoke", State: "enforced",
 			},
 		},
-		Warnings: []string{managedPostgresBindingsWarning},
+		Warnings: []string{main.ManagedPostgresBindingsWarning},
 	})
 
 	for _, want := range []string{
 		"TYPE", "NAME", "BINDING", "SCOPE", "ACCESS", "CONFIGURATION", "CONSUMER", "LIVENESS", "GENERATION", "ROTATING", "CREDENTIAL CONFIGURED",
 		"postgres", "DATABASE_URL", "queue", "worker", "GREGALE_SERVICE_BILLING_URL", "2", "true", "false",
 		"http", "http://billing.svc.gregale:10081", "GREGALE_SERVICE_BILLING_HTTPS_URL", "https://billing.internal",
-		"Warning: " + managedPostgresBindingsWarning,
+		"Warning: " + main.ManagedPostgresBindingsWarning,
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("output missing %q:\n%s", want, out.String())
@@ -372,7 +373,7 @@ func TestCmdBindingsVerifyRejectsMigrationBeforeTaskAdmission(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	if code := run([]string{"bindings", "verify", "api", "--postgres", "SCHEMA_DSN"}); code != 1 || createCalls != 0 {
+	if code := main.Run([]string{"bindings", "verify", "api", "--postgres", "SCHEMA_DSN"}); code != 1 || createCalls != 0 {
 		t.Fatalf("verify exit=%d, task creates=%d", code, createCalls)
 	}
 }

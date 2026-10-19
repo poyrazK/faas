@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -28,11 +29,11 @@ func TestObservabilityCommandsAcceptDocumentedArgumentOrder(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	oldOut := osStdout
-	osStdout = io.Discard
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = io.Discard
 	t.Cleanup(func() {
-		osStdout = oldOut
-		resetJSONOutput()
+		(*main.OsStdout) = oldOut
+		main.ResetJSONOutput()
 	})
 
 	tests := []struct {
@@ -53,9 +54,9 @@ func TestObservabilityCommandsAcceptDocumentedArgumentOrder(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resetJSONOutput()
+			main.ResetJSONOutput()
 			gotPath, gotQuery = "", nil
-			if code := run(tt.args); code != 0 {
+			if code := main.Run(tt.args); code != 0 {
 				t.Fatalf("run(%q) = %d, want 0", tt.args, code)
 			}
 			if gotPath != tt.wantPath {
@@ -73,13 +74,13 @@ func TestObservabilityCommandsStillRejectInvalidArguments(t *testing.T) {
 		name string
 		run  func() int
 	}{
-		{"metrics unknown flag", func() int { return cmdMetrics([]string{"demo", "--wat", "x"}) }},
-		{"metrics extra positional", func() int { return cmdMetrics([]string{"demo", "extra", "--range", "5m"}) }},
-		{"slo unknown flag", func() int { return cmdSLO([]string{"demo", "--wat", "x"}) }},
-		{"slo extra positional", func() int { return cmdSLO([]string{"demo", "extra", "--window", "1h"}) }},
-		{"throttle unknown flag", func() int { return cmdThrottleSuggestions([]string{"demo", "--wat", "x"}) }},
-		{"throttle extra positional", func() int { return cmdThrottleSuggestions([]string{"demo", "extra", "--range", "5m"}) }},
-		{"throttle invalid range", func() int { return cmdThrottleSuggestions([]string{"demo", "--range", "yesterday"}) }},
+		{"metrics unknown flag", func() int { return main.CmdMetrics([]string{"demo", "--wat", "x"}) }},
+		{"metrics extra positional", func() int { return main.CmdMetrics([]string{"demo", "extra", "--range", "5m"}) }},
+		{"slo unknown flag", func() int { return main.CmdSLO([]string{"demo", "--wat", "x"}) }},
+		{"slo extra positional", func() int { return main.CmdSLO([]string{"demo", "extra", "--window", "1h"}) }},
+		{"throttle unknown flag", func() int { return main.CmdThrottleSuggestions([]string{"demo", "--wat", "x"}) }},
+		{"throttle extra positional", func() int { return main.CmdThrottleSuggestions([]string{"demo", "extra", "--range", "5m"}) }},
+		{"throttle invalid range", func() int { return main.CmdThrottleSuggestions([]string{"demo", "--range", "yesterday"}) }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

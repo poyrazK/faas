@@ -1,5 +1,5 @@
 // adr: 679
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -44,14 +45,14 @@ func TestRegistryPublishedCIHandoff(t *testing.T) {
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_ci")
 			var stdout, stderr bytes.Buffer
-			oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
-			osStdout, osStderr, jsonOutput = &stdout, &stderr, true
-			t.Cleanup(func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON })
+			oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+			(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &stdout, &stderr, true
+			t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON })
 			args := []string{"published", "--app", "api", "--image", image, "--scope", "staging"}
 			if tc.wait {
 				args = append(args, "--wait")
 			}
-			if code := cmdRegistry(args); code != tc.wantCode {
+			if code := main.CmdRegistry(args); code != tc.wantCode {
 				t.Fatalf("exit = %d, want %d; stdout=%s stderr=%s", code, tc.wantCode, stdout.String(), stderr.String())
 			}
 			var got api.DeploymentResponse

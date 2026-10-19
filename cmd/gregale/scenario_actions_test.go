@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -9,11 +9,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestScenarioActionsRequireAcknowledgementBeforeDeployment(t *testing.T) {
-	captureSuiteTestOutput(t)
+	main.CaptureSuiteTestOutput(t)
 	for _, tc := range []struct {
 		name, network, networkAck string
 		simulation                bool
@@ -31,7 +32,7 @@ func TestScenarioActionsRequireAcknowledgementBeforeDeployment(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir, scenario := behaviorTestScenario(t)
-			scenario.Project, scenario.Actions = "actions-api", &testActionSpec{Webhooks: "capture", Network: tc.network}
+			scenario.Project, scenario.Actions = "actions-api", &main.TestActionSpec{Webhooks: "capture", Network: tc.network}
 			evidenceVersion, simulationDigest := api.ScenarioActionSnapshotVersion, ""
 			recorderVersion := 0
 			if tc.simulation {
@@ -46,8 +47,8 @@ func TestScenarioActionsRequireAcknowledgementBeforeDeployment(t *testing.T) {
 			if tc.recorderMissing {
 				recorderVersion = 0
 			}
-			writeSuiteTestFile(t, filepath.Join(dir, "package.json"), `{"name":"actions-api","scripts":{"start":"node server.js"}}`)
-			writeSuiteTestFile(t, filepath.Join(dir, "server.js"), "require('http').createServer((r,s)=>s.end('ok')).listen(8080);\n")
+			main.WriteSuiteTestFile(t, filepath.Join(dir, "package.json"), `{"name":"actions-api","scripts":{"start":"node server.js"}}`)
+			main.WriteSuiteTestFile(t, filepath.Join(dir, "server.js"), "require('http').createServer((r,s)=>s.end('ok')).listen(8080);\n")
 			configured, destroyed, released, sealed := 0, 0, 0, 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
@@ -96,7 +97,7 @@ func TestScenarioActionsRequireAcknowledgementBeforeDeployment(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			receipt := runTestProfile(context.Background(), NewClient(server.URL, "synthetic-key"), "notifications", scenario, dir, "warm")
+			receipt := main.RunTestProfile(context.Background(), main.NewClient(server.URL, "synthetic-key"), "notifications", scenario, dir, "warm")
 			if receipt.Status != "failed" || destroyed != 1 {
 				t.Fatalf("failed run lost cleanup: %+v destroyed=%d", receipt, destroyed)
 			}
@@ -115,19 +116,19 @@ func TestScenarioActionsRequireAcknowledgementBeforeDeployment(t *testing.T) {
 }
 
 func TestScenarioActionsRejectHostEnginesAndUnknownModes(t *testing.T) {
-	captureSuiteTestOutput(t)
+	main.CaptureSuiteTestOutput(t)
 	dir, scenario := behaviorTestScenario(t)
-	scenario.Actions = &testActionSpec{Webhooks: "capture"}
-	for _, receipt := range []testRunReceipt{
-		runLocalTest(context.Background(), "notifications", scenario, dir, "http://127.0.0.1:1", testDataCase{}),
-		runSimulatedTest(context.Background(), "notifications", scenario, dir),
+	scenario.Actions = &main.TestActionSpec{Webhooks: "capture"}
+	for _, receipt := range []main.TestRunReceipt{
+		main.RunLocalTest(context.Background(), "notifications", scenario, dir, "http://127.0.0.1:1", main.TestDataCase{}),
+		main.RunSimulatedTest(context.Background(), "notifications", scenario, dir),
 	} {
 		if receipt.Status != "failed" || !strings.Contains(receipt.Error, "requires the real-vm engine") {
 			t.Fatalf("unsupported action capture ran: %+v", receipt)
 		}
 	}
 	for _, mode := range []string{"", "live", "simulate"} {
-		if err := validateTestActions(&testActionSpec{Webhooks: mode}); err == nil {
+		if err := main.ValidateTestActions(&main.TestActionSpec{Webhooks: mode}); err == nil {
 			t.Fatalf("unknown capture mode %q accepted", mode)
 		}
 	}

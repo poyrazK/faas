@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -33,7 +34,7 @@ func TestCmdAccountInvoices(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(api.StatementInvoiceListResponse{Invoices: []api.StatementInvoiceExportResponse{
 			{InvoiceID: "in_2", Customer: "cus_B", PaymentStatus: "draft", Currency: "EUR", AmountMinor: 100}}})
 	})
-	if code := cmdAccount([]string{"invoices", "--status", "unpaid"}); code != 0 {
+	if code := main.CmdAccount([]string{"invoices", "--status", "unpaid"}); code != 0 {
 		t.Fatalf("invoices exit = %d", code)
 	}
 	out := stdout.String()

@@ -25,9 +25,14 @@ package webhookout_test
 //   - Dispatch_5xxAttemptsExhausted: always-503 → ErrAttemptsExhausted.
 //   - Dispatch_NetworkErrorAttemptsExhausted: server closes conn →
 //     ErrAttemptsExhausted.
-//   - Dispatch_BodyTooLarge: 64 KiB body → ErrBodyTooLarge.
+//   - Dispatch_OversizedSuccessBodyDelivered: 200 + 64 KiB body →
+//     success, BodyPrefix truncated to MaxBodyBytes.
+//   - Dispatch_OversizedRetryableBodyRetries: 503 + 64 KiB body still
+//     retries.
+//   - Dispatch_RedirectNotFollowed: 301/302/303/307/308 → ErrTerminal,
+//     redirect target never contacted.
 //   - Dispatch_BodyExactlyAtBoundary: exactly MaxBodyBytes bytes →
-//     nil error (boundary between body-too-large and success).
+//     nil error.
 //   - Dispatch_NoSecretLog: secret substring must not appear in the
 //     captured slog JSON (CLAUDE.md §11 invariant).
 //   - Dispatch_SSRFRejected: dial-time egress guard rejects loopback
@@ -390,9 +395,11 @@ func TestWebhook_Dispatch_NetworkErrorAttemptsExhausted(t *testing.T) {
 	}
 }
 
-// TestWebhook_Dispatch_BodyTooLarge: 64 KiB body → ErrBodyTooLarge,
-// len(BodyPrefix) == MaxBodyBytes.
-func TestWebhook_Dispatch_BodyTooLarge(t *testing.T) {
+// TestWebhook_Dispatch_OversizedSuccessBodyDelivered: a 2xx with a
+// 64 KiB body is a successful delivery. The receiver acted on it before
+// answering, so dead-lettering it would make a DLQ replay redeliver
+// work that already happened. BodyPrefix is truncated to MaxBodyBytes.
+func TestWebhook_Dispatch_OversizedSuccessBodyDelivered(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		// 64 KiB body — way past the 32 KiB cap.
 		_, _ = w.Write(make([]byte, 64*1024))
@@ -401,22 +408,84 @@ func TestWebhook_Dispatch_BodyTooLarge(t *testing.T) {
 
 	d := newTestDispatcher(t, nil, srv.Client())
 	res := d.Dispatch(context.Background(), testTarget(srv.URL), newTestEvent())
-	if !errors.Is(res.Err, webhookout.ErrBodyTooLarge) {
-		t.Errorf("err = %v, want ErrBodyTooLarge", res.Err)
+	if res.Err != nil {
+		t.Errorf("err = %v, want nil for an oversized 2xx body", res.Err)
+	}
+	if res.StatusCode != http.StatusOK || res.Attempts != 1 {
+		t.Errorf("status/attempts = %d/%d, want 200/1", res.StatusCode, res.Attempts)
 	}
 	if len(res.BodyPrefix) != webhookout.MaxBodyBytes {
 		t.Errorf("len(BodyPrefix) = %d, want %d", len(res.BodyPrefix), webhookout.MaxBodyBytes)
 	}
-	// Body too large is a misconfiguration — must NOT retry.
-	if res.Attempts != 1 {
-		t.Errorf("attempts = %d, want 1 (body-too-large must not retry)", res.Attempts)
+}
+
+// TestWebhook_Dispatch_OversizedRetryableBodyRetries: body size never
+// overrides the status. A 503 with a 64 KiB body is still retryable.
+func TestWebhook_Dispatch_OversizedRetryableBodyRetries(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write(make([]byte, 64*1024))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	d := newTestDispatcher(t, &recordingSleeper{}, srv.Client())
+	res := d.Dispatch(context.Background(), testTarget(srv.URL), newTestEvent())
+	if res.Err != nil || res.StatusCode != http.StatusOK || res.Attempts != 2 {
+		t.Fatalf("result = status %d attempts %d err %v, want 200 after 2 attempts", res.StatusCode, res.Attempts, res.Err)
+	}
+}
+
+// TestWebhook_Dispatch_RedirectNotFollowed: a 3xx is never followed. A
+// followed 301/302/303 turns the signed POST into a body-less GET whose
+// 2xx would be recorded as delivered; a followed 307/308 replays the
+// signed delivery to a URL the customer never registered. The redirect
+// is terminal, the redirect target sees nothing, and the caller's own
+// client keeps its redirect policy.
+func TestWebhook_Dispatch_RedirectNotFollowed(t *testing.T) {
+	for _, code := range []int{
+		http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
+		http.StatusTemporaryRedirect, http.StatusPermanentRedirect,
+	} {
+		t.Run(strconv.Itoa(code), func(t *testing.T) {
+			var targetHits atomic.Int32
+			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				targetHits.Add(1)
+				w.WriteHeader(http.StatusOK)
+			}))
+			t.Cleanup(target.Close)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, target.URL, code)
+			}))
+			t.Cleanup(srv.Close)
+
+			client := srv.Client()
+			d := newTestDispatcher(t, &recordingSleeper{}, client)
+			res := d.Dispatch(context.Background(), testTarget(srv.URL), newTestEvent())
+			if !errors.Is(res.Err, webhookout.ErrTerminal) {
+				t.Errorf("err = %v, want ErrTerminal", res.Err)
+			}
+			if res.StatusCode != code || res.Attempts != 1 {
+				t.Errorf("status/attempts = %d/%d, want %d/1", res.StatusCode, res.Attempts, code)
+			}
+			if got := targetHits.Load(); got != 0 {
+				t.Errorf("redirect target hits = %d, want 0", got)
+			}
+			if client.CheckRedirect != nil {
+				t.Error("NewDispatcher mutated the caller's http.Client")
+			}
+		})
 	}
 }
 
 // TestWebhook_Dispatch_BodyExactlyAtBoundary: a body of exactly
 // MaxBodyBytes bytes is NOT over the cap — it lands within the
 // read window and the probe byte reads EOF, so Err is nil. Pins
-// the boundary between ErrBodyTooLarge and the success path.
+// the truncation boundary.
 func TestWebhook_Dispatch_BodyExactlyAtBoundary(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(make([]byte, webhookout.MaxBodyBytes))

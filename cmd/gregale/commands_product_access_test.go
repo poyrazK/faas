@@ -1,5 +1,5 @@
 // ADR-1708: reviewed customer-permission changes preserve app and catalog identity.
-package main
+package main_test
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/productcontrol"
 )
@@ -57,17 +58,17 @@ func TestProductAccessCLIReviewAndApply(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	client := NewClient(srv.URL, "owner")
+	client := main.NewClient(srv.URL, "owner")
 	dir := t.TempDir()
 	policyPath, reviewPath := filepath.Join(dir, "access.json"), filepath.Join(dir, "review.json")
 	if err := os.WriteFile(policyPath, []byte(`{"roles":{"owner":["work:run","billing:read"],"operator":["work:run"],"billing":["billing:read"]}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	c, err := parseProductCommand([]string{"access", "review", "--app", "exports", "--policy-file", policyPath, "--file", reviewPath})
+	c, err := main.ParseProductCommand([]string{"access", "review", "--app", "exports", "--policy-file", policyPath, "--file", reviewPath})
 	if err != nil {
 		t.Fatal(err)
 	}
-	value, err := runProductCommand(t.Context(), client, c)
+	value, err := main.RunProductCommand(t.Context(), client, c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +80,7 @@ func TestProductAccessCLIReviewAndApply(t *testing.T) {
 		t.Fatal("review file is not private", err)
 	}
 	var human bytes.Buffer
-	if err := writeProductOutput(&human, value, false); err != nil {
+	if err := main.WriteProductOutput(&human, value, false); err != nil {
 		t.Fatal(err)
 	}
 	for _, text := range []string{"Current permissions:", "Proposed permissions:", "operator", "View work, Run work", "View billing"} {
@@ -91,19 +92,19 @@ func TestProductAccessCLIReviewAndApply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = runProductCommand(t.Context(), client, c); err == nil {
+	if _, err = main.RunProductCommand(t.Context(), client, c); err == nil {
 		t.Fatal("review overwrote an existing file")
 	}
 	unchanged, err := os.ReadFile(reviewPath)
 	if err != nil || !bytes.Equal(original, unchanged) {
 		t.Fatal("existing review changed", err)
 	}
-	apply, err := parseProductCommand([]string{"access", "apply", "--app", "exports", "--file", reviewPath})
+	apply, err := main.ParseProductCommand([]string{"access", "apply", "--app", "exports", "--file", reviewPath})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if _, err = runProductCommand(t.Context(), client, apply); err != nil {
+		if _, err = main.RunProductCommand(t.Context(), client, apply); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -111,11 +112,11 @@ func TestProductAccessCLIReviewAndApply(t *testing.T) {
 		t.Fatal("same review could not be retried")
 	}
 	wrongApp := apply
-	wrongApp.app = "other"
-	if _, err = runProductCommand(t.Context(), client, wrongApp); err == nil || applies != 2 {
+	(*wrongApp.App()) = "other"
+	if _, err = main.RunProductCommand(t.Context(), client, wrongApp); err == nil || applies != 2 {
 		t.Fatal("review was applied to another product")
 	}
-	var saved productAccessReviewFile
+	var saved main.ProductAccessReviewFile
 	if err = json.Unmarshal(original, &saved); err != nil {
 		t.Fatal(err)
 	}
@@ -127,13 +128,13 @@ func TestProductAccessCLIReviewAndApply(t *testing.T) {
 	if err = os.WriteFile(reviewPath, tampered, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = runProductCommand(t.Context(), client, apply); err == nil || applies != 2 {
+	if _, err = main.RunProductCommand(t.Context(), client, apply); err == nil || applies != 2 {
 		t.Fatal("inconsistent reviewed permission was submitted")
 	}
 	if err = os.WriteFile(reviewPath, []byte(`{"app":"exports","app":"other"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = runProductCommand(t.Context(), client, apply); err == nil || applies != 2 {
+	if _, err = main.RunProductCommand(t.Context(), client, apply); err == nil || applies != 2 {
 		t.Fatal("duplicate JSON selectors were submitted")
 	}
 }
@@ -146,7 +147,7 @@ func TestProductAccessCLIArguments(t *testing.T) {
 		{"access", "apply", "--app", "exports", "--policy-file", "new.json"},
 		{"access", "apply", "--app", "exports", "--file", ""},
 	} {
-		if _, err := parseProductCommand(args); err == nil {
+		if _, err := main.ParseProductCommand(args); err == nil {
 			t.Fatalf("accepted %v", args)
 		}
 	}

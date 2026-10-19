@@ -1991,6 +1991,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/account/platform-tenant-billing-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.PutTenantBillingPolicy))))
 	mux.HandleFunc("DELETE /v1/account/platform-tenant-billing-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.DeleteTenantBillingPolicy))))
 	mux.HandleFunc("GET /v1/account/platform-tenant-overdue-holds", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.ListTenantOverdueHolds))))
+	// ADR-20261019100331: tenant prepaid credit and monthly spend caps.
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/credits", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerCredits.ListTenantCredits))))
+	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/credits", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.consumerCredits.CreateTenantCredit)))))
+	mux.HandleFunc("DELETE /v1/account/platform-tenants/{id}/credits/{credit_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerCredits.VoidTenantCredit))))
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/spend-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerCredits.GetTenantSpendCap))))
+	mux.HandleFunc("PUT /v1/account/platform-tenants/{id}/spend-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerCredits.PutTenantSpendCap))))
+	mux.HandleFunc("DELETE /v1/account/platform-tenants/{id}/spend-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerCredits.DeleteTenantSpendCap))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/usage-statements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenantStatements))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/usage-statements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPlatformTenantStatement)))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/usage-statements/{statement_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantStatement))))

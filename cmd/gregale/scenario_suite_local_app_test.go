@@ -1,9 +1,10 @@
 //go:build unix
 
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net"
 	"net/url"
 	"os"
@@ -21,9 +22,9 @@ func TestScenarioSuiteManagedAppsFinishShutdownBeforeNextMember(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			stdout, stderr := captureSuiteTestOutput(t)
-			first, second := suiteTestScenario("/health"), suiteTestScenario("/health")
-			for _, scenario := range []*testScenario{&first, &second} {
+			stdout, stderr := main.CaptureSuiteTestOutput(t)
+			first, second := main.SuiteTestScenario("/health"), main.SuiteTestScenario("/health")
+			for _, scenario := range []*main.TestScenario{&first, &second} {
 				scenario.Local = managedLocalTestSpec(t, "serve")
 				scenario.Checks[0].Expect.Status = 204
 				scenario.Cleanup = [][]string{managedLocalFixtureCommand(t, "cleanup")}
@@ -31,9 +32,9 @@ func TestScenarioSuiteManagedAppsFinishShutdownBeforeNextMember(t *testing.T) {
 			if failFast {
 				first.Checks[0].Expect.Status = 418
 			}
-			manifest := writeSuiteTestManifest(t, dir, testManifest{
-				Version: 1, Scenarios: map[string]testScenario{"first": first, "second": second},
-				Suites: map[string]testSuite{"smoke": {Scenarios: []testSuiteMember{{Scenario: "first", Engine: "local"}, {Scenario: "second", Engine: "local"}}}},
+			manifest := main.WriteSuiteTestManifest(t, dir, main.TestManifest{
+				Version: 1, Scenarios: map[string]main.TestScenario{"first": first, "second": second},
+				Suites: map[string]main.TestSuite{"smoke": {Scenarios: []main.TestSuiteMember{{Scenario: "first", Engine: "local"}, {Scenario: "second", Engine: "local"}}}},
 			})
 			args := []string{"--suite", "smoke", "--manifest", manifest}
 			wantExit, wantStarts := 0, 2
@@ -41,10 +42,10 @@ func TestScenarioSuiteManagedAppsFinishShutdownBeforeNextMember(t *testing.T) {
 				args = append(args, "--fail-fast")
 				wantExit, wantStarts = 1, 1
 			}
-			if code := cmdTest(args); code != wantExit {
+			if code := main.CmdTest(args); code != wantExit {
 				t.Fatalf("managed suite exit %d: %s", code, stderr)
 			}
-			var receipts []testRunReceipt
+			var receipts []main.TestRunReceipt
 			if err := json.Unmarshal(stdout.Bytes(), &receipts); err != nil || len(receipts) != 2 {
 				t.Fatalf("managed suite receipts = %s (%v)", stdout, err)
 			}

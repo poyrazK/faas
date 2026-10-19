@@ -11772,6 +11772,33 @@
     "kind": "configuration"
   },
   {
+    "table": "platform_tenant_credit_applications",
+    "columns": [
+      "account_id",
+      "amount_millicents",
+      "created_at",
+      "grant_id",
+      "statement_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "platform_tenant_credit_grants",
+    "columns": [
+      "account_id",
+      "amount_millicents",
+      "created_at",
+      "currency",
+      "expires_at",
+      "id",
+      "note",
+      "platform_tenant_id",
+      "remaining_millicents",
+      "voided_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "platform_tenant_hostname_policies",
     "columns": [
       "account_id",
@@ -11920,6 +11947,23 @@
     "kind": "operational"
   },
   {
+    "table": "platform_tenant_spend_caps",
+    "columns": [
+      "account_id",
+      "amount_due_millicents",
+      "capped",
+      "checked_at",
+      "created_at",
+      "currency",
+      "month_start",
+      "monthly_cap_millicents",
+      "next_check_at",
+      "platform_tenant_id",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "platform_tenant_statement_consumers",
     "columns": [
       "app_id",
@@ -11969,6 +12013,7 @@
       "billable_units",
       "coverage",
       "created_at",
+      "credit_applied_millicents",
       "currency",
       "fees",
       "finalized_at",

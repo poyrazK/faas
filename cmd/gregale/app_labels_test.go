@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -14,21 +15,21 @@ import (
 // list|show` named apps by UUID, and `usage` repeated the account-wide
 // allowance on every app row.
 func TestUsageAndDomainsNameAppsBySlug(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	const appID = "0123456789abcdef0123456789abcdef"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/apps":
-			writeJSONTest(w, []api.AppResponse{{ID: appID, Slug: "billing-api"}})
+			main.WriteJSONTest(w, []api.AppResponse{{ID: appID, Slug: "billing-api"}})
 		case "/v1/usage":
-			writeJSONTest(w, []api.UsageResponse{
+			main.WriteJSONTest(w, []api.UsageResponse{
 				{AppID: appID, Requests: 3, MBSeconds: 3_600_000, IncludedGBHours: 1500},
 				{AppID: "deleted-app-id", Requests: 1, MBSeconds: 1, IncludedGBHours: 1500},
 			})
 		case "/v1/domains":
-			writeJSONTest(w, []api.CustomDomainResponse{{Domain: "api.example.com", AppID: appID}})
+			main.WriteJSONTest(w, []api.CustomDomainResponse{{Domain: "api.example.com", AppID: appID}})
 		case "/v1/domains/api.example.com":
-			writeJSONTest(w, api.CustomDomainResponse{Domain: "api.example.com", AppID: appID})
+			main.WriteJSONTest(w, api.CustomDomainResponse{Domain: "api.example.com", AppID: appID})
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
@@ -39,10 +40,10 @@ func TestUsageAndDomainsNameAppsBySlug(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
-	if code := cmdUsageList(nil); code != 0 {
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
+	if code := main.CmdUsageList(nil); code != 0 {
 		t.Fatalf("usage exit = %d", code)
 	}
 	out := stdout.String()
@@ -54,10 +55,10 @@ func TestUsageAndDomainsNameAppsBySlug(t *testing.T) {
 	}
 
 	stdout.Reset()
-	listCode := cmdDomains([]string{"list"})
+	listCode := main.CmdDomains([]string{"list"})
 	listOut := stdout.String()
 	stdout.Reset()
-	showCode := cmdDomainsShow([]string{"api.example.com"})
+	showCode := main.CmdDomainsShow([]string{"api.example.com"})
 	if listCode != 0 || showCode != 0 {
 		t.Fatalf("domains list exit=%d show exit=%d", listCode, showCode)
 	}
