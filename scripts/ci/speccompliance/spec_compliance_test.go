@@ -109,9 +109,6 @@ var routeExclude = map[string]bool{
 	"GET /v1/platform-tenant-self/customer-operation-schedules/{id}": true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
 	"GET /v1/platform-tenant-self/customer-operations/{id}/children": true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
 	"GET /v1/runtime/operations/{id}/children":                       true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
-	"GET /v1/apps/{slug}/operation-schedules":                        true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
-	"GET /v1/platform-tenant-self/customer-operation-schedules":      true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
-	"GET /v1/platform-tenant-self/customer-operation-schedules/{id}": true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
 	// Fixed-executor repair preview routes are documented in docs/data-repair.md;
 	// they are not part of the public SDK contract until native qualification.
 	"GET /v1/apps/{slug}/data-repair/review":                            true,
@@ -352,31 +349,12 @@ var routeExclude = map[string]bool{
 	"DELETE /v1/postgres/databases/{id}/live":      true,
 	"POST /v1/postgres/databases/{id}/live/rotate": true,
 
-	"GET /v1/dev/bridges/{id}/connect":                                       true, // ADR-378 scoped WebSocket transport, described in docs/dev-bridge.md
-	"GET /v1/dev/bridges/{id}/status":                                        true, // attachment-authenticated CLI readiness protocol
-	"GET /v1/account/dpa":                                                    true, // public markdown (no auth)
 	"POST /v1/apps/{slug}/operation-schedules/{id}/cancel":                   true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
 	"POST /v1/platform-tenant-self/customer-operation-schedules":             true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
 	"POST /v1/platform-tenant-self/customer-operation-schedules/{id}/cancel": true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
 	"POST /v1/platform-tenant-self/customer-operation-schedules/{id}/pause":  true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
 	"POST /v1/platform-tenant-self/customer-operation-schedules/{id}/resume": true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
 	"POST /v1/runtime/operations/{id}/children":                              true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
-	"POST /v1/webhooks/stripe":                                               true, // HMAC-signed webhook
-	"POST /v1/webhooks/paddle":                                               true, // HMAC-signed webhook (PR #3 / ADR-025)
-	"POST /v1/webhooks/polar":                                                true, // Standard Webhooks-signed webhook
-	"POST /v1/webhooks/resend":                                               true, // Svix-signed webhook (issue #246 / ADR-115)
-	"GET /v1/compute-nodes":                                                  true, // operator-only (ADR-029)
-	"GET /v1/compute-nodes/{name}":                                           true, // operator-only node detail
-	"POST /v1/compute-nodes":                                                 true, // operator-only
-	"DELETE /v1/compute-nodes/{name}":                                        true, // operator-only
-	"GET /v1/compute-nodes/{name}/heartbeats":                                true, // CP-1: operator-only (heartbeat history; schedd-owned)
-	"GET /v1/compute-nodes/events":                                           true, // CP-1: operator-only SSE on compute_node_changed
-	"GET /v1/internal/metrics/targets":                                       true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
-	"GET /v1/internal/metrics/vmmd-targets":                                  true, // compute daemon metrics use the active node registry
-	"GET /v1/internal/metrics/imaged-targets":                                true, // compute daemon metrics use the active node registry
-	"GET /v1/internal/metrics/builderd-targets":                              true, // compute daemon metrics use the active node registry
-	"GET /v1/internal/metrics/realtimed-targets":                             true, // compute daemon metrics use the active node registry
-	"GET /v1/internal/metrics/promtail-targets":                              true, // issue #274 — loopback Promtail HTTP-SD endpoint
 	// Issue #777 / ADR-091: operator observability backend.
 	// Mirror the operator-only exclusion across both this list
 	// AND cmd/sdk-coverage/main.go::routeExclude. The two lists
