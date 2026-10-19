@@ -10,17 +10,8 @@ var _ EnvironmentQualificationServiceReceiptStore = (*MemStore)(nil)
 
 func (m *MemStore) candidateBindingCatalogSupportedLocked(request EnvironmentWorkloadQualificationRequest) bool {
 	appID, scope := request.AppID, request.FrozenInputs.Scope
-	// Managed PostgreSQL is qualified by credential receipts (ADR-20261019072523).
-	for key, s := range m.secrets {
-		if key.AppID == appID && s.Scope == scope && s.ManagedObjectStorageCredentialID != "" {
-			return false
-		}
-	}
-	for _, c := range m.objectS3Credentials {
-		if c.ManagedAppID == appID && c.ManagedScope == scope && c.Status == ObjectS3CredentialStatusActive {
-			return false
-		}
-	}
+	// Managed PostgreSQL and object storage are qualified by credential
+	// receipts (ADR-20261019072523, ADR-20261019121546).
 	for _, b := range m.outboundAppBindings {
 		if b.AppID == appID {
 			return false
@@ -134,6 +125,15 @@ func (m *MemStore) environmentBindingGraphDeadlineLocked(memory *environmentGitO
 		}
 		if !postgresEnd.IsZero() && postgresEnd.Before(end) {
 			end = postgresEnd
+		}
+		storageEnd, err := candidateObjectStorageEvidenceDeadline(r, m.candidateObjectStorageDeliveriesLocked(r.AppID, r.FrozenInputs.Scope),
+			r.BindingContext.Policy.ObjectStorageRequirements, memory.bindingObjectStorage, m.qualificationSnapshots[r.ReservedInstanceID].Inputs,
+			restore.Inputs, age, time.Now())
+		if err != nil {
+			return time.Time{}, fmt.Errorf("candidate object storage credential evidence is missing or changed: %w", err)
+		}
+		if !storageEnd.IsZero() && storageEnd.Before(end) {
+			end = storageEnd
 		}
 		if !time.Now().Before(end) {
 			return time.Time{}, ErrBindingPromotionExpired

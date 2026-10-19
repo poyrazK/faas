@@ -14410,6 +14410,34 @@ func (q *Queries) EnvironmentQualificationNodeUsedMB(ctx context.Context, db DBT
 	return column_1, err
 }
 
+const environmentQualificationObjectStorageDeadline = `-- name: EnvironmentQualificationObjectStorageDeadline :one
+SELECT environment_binding_object_storage_deadline(q,$1::text,$2::jsonb,$3::bigint,
+ $4::uuid)::timestamptz AS deadline
+FROM environment_workload_qualification_requests q WHERE q.id=$5::uuid
+`
+
+type EnvironmentQualificationObjectStorageDeadlineParams struct {
+	Scope              string
+	Requirements       []byte
+	MaxAgeSeconds      int64
+	RestoredInstanceID pgtype.UUID
+	RequestID          pgtype.UUID
+}
+
+// NULL blocks activation; 'infinity' means the candidate has no object storage binding.
+func (q *Queries) EnvironmentQualificationObjectStorageDeadline(ctx context.Context, db DBTX, arg EnvironmentQualificationObjectStorageDeadlineParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, environmentQualificationObjectStorageDeadline,
+		arg.Scope,
+		arg.Requirements,
+		arg.MaxAgeSeconds,
+		arg.RestoredInstanceID,
+		arg.RequestID,
+	)
+	var deadline pgtype.Timestamptz
+	err := row.Scan(&deadline)
+	return deadline, err
+}
+
 const environmentQualificationPostgresDeadline = `-- name: EnvironmentQualificationPostgresDeadline :one
 SELECT environment_binding_postgres_deadline(q,$1::text,$2::bigint,$3::uuid)::timestamptz AS deadline
 FROM environment_workload_qualification_requests q WHERE q.id=$4::uuid
@@ -64020,6 +64048,72 @@ func (q *Queries) PendingEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, 
 	return items, nil
 }
 
+const pendingEnvironmentQualificationObjectStorageChecks = `-- name: PendingEnvironmentQualificationObjectStorageChecks :many
+SELECT q.id::text AS request_id, q.attempt, c.account_id::text AS account_id, q.app_id::text AS app_id, e.slug AS scope,
+ c.id::text AS credential_id, c.managed_prefix::text AS prefix, c.permission,
+ coalesce(p.object_storage_requirements->>c.managed_prefix,'')::text AS required,
+ (SELECT jsonb_agg(jsonb_build_object('key',s.key,'delivery_version',s.delivery_version,'ciphertext',encode(s.ciphertext,'base64'),
+   'kid',coalesce(s.kid,''),'value_hash',coalesce(s.value_hash,'')) ORDER BY s.key)
+  FROM app_secrets s WHERE s.managed_object_storage_credential_id=c.id AND s.app_id=q.app_id AND s.scope=e.slug)::jsonb AS secrets
+FROM environment_workload_qualification_requests q
+JOIN environment_workload_graphs g ON g.id=q.graph_id
+JOIN project_environments e ON e.id=g.environment_id
+JOIN object_storage_s3_credentials c ON c.managed_app_id=q.app_id AND c.managed_scope=e.slug AND c.status='active' AND c.rotation_parent_id IS NULL
+LEFT JOIN app_binding_release_policies p ON p.app_id=q.app_id AND p.scope=e.slug
+WHERE q.graph_id=$1::uuid AND q.binding_context IS NOT NULL AND q.lease_until>clock_timestamp()
+ AND NOT EXISTS(SELECT 1 FROM object_storage_s3_credentials stage WHERE stage.rotation_parent_id=c.id AND stage.status='active')
+ AND environment_binding_object_storage_deliveries(c.id,q.app_id,e.slug) IS NOT NULL
+ AND environment_object_storage_mode_covers(c.permission,p.object_storage_requirements->>c.managed_prefix)
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_object_storage_receipts r WHERE r.request_id=q.id AND r.attempt=q.attempt AND r.credential_id=c.id)
+ORDER BY q.id, c.id
+`
+
+type PendingEnvironmentQualificationObjectStorageChecksRow struct {
+	RequestID    string
+	Attempt      int64
+	AccountID    string
+	AppID        string
+	Scope        string
+	CredentialID string
+	Prefix       string
+	Permission   string
+	Required     string
+	Secrets      []byte
+}
+
+// ADR-20261019121546: settled managed S3 credentials of a graph's enforced
+// candidates without a receipt for this attempt, with their sealed deliveries.
+func (q *Queries) PendingEnvironmentQualificationObjectStorageChecks(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]PendingEnvironmentQualificationObjectStorageChecksRow, error) {
+	rows, err := db.Query(ctx, pendingEnvironmentQualificationObjectStorageChecks, graphID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PendingEnvironmentQualificationObjectStorageChecksRow{}
+	for rows.Next() {
+		var i PendingEnvironmentQualificationObjectStorageChecksRow
+		if err := rows.Scan(
+			&i.RequestID,
+			&i.Attempt,
+			&i.AccountID,
+			&i.AppID,
+			&i.Scope,
+			&i.CredentialID,
+			&i.Prefix,
+			&i.Permission,
+			&i.Required,
+			&i.Secrets,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pendingEnvironmentQualificationPostgresChecks = `-- name: PendingEnvironmentQualificationPostgresChecks :many
 SELECT q.id::text AS request_id, q.attempt, b.account_id::text AS account_id, q.app_id::text AS app_id, e.slug AS scope,
  b.id::text AS binding_id, b.database_id::text AS database_id, b.environment_key, b.access, b.credential_generation,
@@ -76678,6 +76772,36 @@ func (q *Queries) RecordEnvironmentQualificationJobSmokeReceipt(ctx context.Cont
 		&i.RecordedAt,
 	)
 	return i, err
+}
+
+const recordEnvironmentQualificationObjectStorageReceipt = `-- name: RecordEnvironmentQualificationObjectStorageReceipt :exec
+INSERT INTO environment_qualification_object_storage_receipts(request_id,attempt,credential_id,prefix,permission,mode,deliveries)
+VALUES($1::uuid,$2::bigint,$3::uuid,$4::text,
+ $5::text,$6::text,$7::jsonb)
+ON CONFLICT DO NOTHING
+`
+
+type RecordEnvironmentQualificationObjectStorageReceiptParams struct {
+	RequestID    pgtype.UUID
+	Attempt      int64
+	CredentialID pgtype.UUID
+	Prefix       string
+	Permission   string
+	Mode         string
+	Deliveries   []byte
+}
+
+func (q *Queries) RecordEnvironmentQualificationObjectStorageReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationObjectStorageReceiptParams) error {
+	_, err := db.Exec(ctx, recordEnvironmentQualificationObjectStorageReceipt,
+		arg.RequestID,
+		arg.Attempt,
+		arg.CredentialID,
+		arg.Prefix,
+		arg.Permission,
+		arg.Mode,
+		arg.Deliveries,
+	)
+	return err
 }
 
 const recordEnvironmentQualificationPostgresReceipt = `-- name: RecordEnvironmentQualificationPostgresReceipt :exec

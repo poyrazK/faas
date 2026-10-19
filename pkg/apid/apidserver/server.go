@@ -167,7 +167,10 @@ type server struct {
 	// candidatePostgresVerifier checks one enforced candidate's sealed
 	// PostgreSQL credential (ADR-20261019072523); nil uses the host identities.
 	candidatePostgresVerifier func(context.Context, state.EnvironmentQualificationPostgresCheck) error
-	liveQueries               *livequeries.Service // ADR-20261016151947 live queries per managed database
+	// candidateObjectStorageVerifier checks one candidate's sealed S3 delivery
+	// (ADR-20261019121546); nil uses the host identities and bucket canary.
+	candidateObjectStorageVerifier func(context.Context, state.EnvironmentQualificationObjectStorageCheck) error
+	liveQueries                    *livequeries.Service // ADR-20261016151947 live queries per managed database
 	// liveRollout is who sees live queries (FAAS_LIVE_QUERIES_ACCOUNTS);
 	// nobody until configured.
 	liveRollout                   livequeries.Rollout

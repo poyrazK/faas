@@ -181,7 +181,7 @@ func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context
 		if err := b.queueWorkloadQualification(ctx, lease, plan); err != nil {
 			return false, err
 		}
-		if err := b.verifyCandidatePostgresCredentials(ctx, graph.ID); err != nil {
+		if err := b.verifyCandidateCredentials(ctx, graph.ID); err != nil {
 			return false, err
 		}
 		if activator, ok := b.intent.(state.EnvironmentGitOpsGraphActivationStore); ok {

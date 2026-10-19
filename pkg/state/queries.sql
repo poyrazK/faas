@@ -22170,6 +22170,39 @@ VALUES(sqlc.arg(request_id)::uuid,sqlc.arg(attempt)::bigint,sqlc.arg(binding_id)
  sqlc.arg(access)::text,sqlc.arg(credential_generation)::bigint,sqlc.arg(delivery_version)::bigint)
 ON CONFLICT DO NOTHING;
 
+-- name: PendingEnvironmentQualificationObjectStorageChecks :many
+-- ADR-20261019121546: settled managed S3 credentials of a graph's enforced
+-- candidates without a receipt for this attempt, with their sealed deliveries.
+SELECT q.id::text AS request_id, q.attempt, c.account_id::text AS account_id, q.app_id::text AS app_id, e.slug AS scope,
+ c.id::text AS credential_id, c.managed_prefix::text AS prefix, c.permission,
+ coalesce(p.object_storage_requirements->>c.managed_prefix,'')::text AS required,
+ (SELECT jsonb_agg(jsonb_build_object('key',s.key,'delivery_version',s.delivery_version,'ciphertext',encode(s.ciphertext,'base64'),
+   'kid',coalesce(s.kid,''),'value_hash',coalesce(s.value_hash,'')) ORDER BY s.key)
+  FROM app_secrets s WHERE s.managed_object_storage_credential_id=c.id AND s.app_id=q.app_id AND s.scope=e.slug)::jsonb AS secrets
+FROM environment_workload_qualification_requests q
+JOIN environment_workload_graphs g ON g.id=q.graph_id
+JOIN project_environments e ON e.id=g.environment_id
+JOIN object_storage_s3_credentials c ON c.managed_app_id=q.app_id AND c.managed_scope=e.slug AND c.status='active' AND c.rotation_parent_id IS NULL
+LEFT JOIN app_binding_release_policies p ON p.app_id=q.app_id AND p.scope=e.slug
+WHERE q.graph_id=sqlc.arg(graph_id)::uuid AND q.binding_context IS NOT NULL AND q.lease_until>clock_timestamp()
+ AND NOT EXISTS(SELECT 1 FROM object_storage_s3_credentials stage WHERE stage.rotation_parent_id=c.id AND stage.status='active')
+ AND environment_binding_object_storage_deliveries(c.id,q.app_id,e.slug) IS NOT NULL
+ AND environment_object_storage_mode_covers(c.permission,p.object_storage_requirements->>c.managed_prefix)
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_object_storage_receipts r WHERE r.request_id=q.id AND r.attempt=q.attempt AND r.credential_id=c.id)
+ORDER BY q.id, c.id;
+
+-- name: RecordEnvironmentQualificationObjectStorageReceipt :exec
+INSERT INTO environment_qualification_object_storage_receipts(request_id,attempt,credential_id,prefix,permission,mode,deliveries)
+VALUES(sqlc.arg(request_id)::uuid,sqlc.arg(attempt)::bigint,sqlc.arg(credential_id)::uuid,sqlc.arg(prefix)::text,
+ sqlc.arg(permission)::text,sqlc.arg(mode)::text,sqlc.arg(deliveries)::jsonb)
+ON CONFLICT DO NOTHING;
+
+-- name: EnvironmentQualificationObjectStorageDeadline :one
+-- NULL blocks activation; 'infinity' means the candidate has no object storage binding.
+SELECT environment_binding_object_storage_deadline(q,sqlc.arg(scope)::text,sqlc.arg(requirements)::jsonb,sqlc.arg(max_age_seconds)::bigint,
+ sqlc.arg(restored_instance_id)::uuid)::timestamptz AS deadline
+FROM environment_workload_qualification_requests q WHERE q.id=sqlc.arg(request_id)::uuid;
+
 -- name: EnvironmentQualificationPostgresDeadline :one
 -- NULL blocks activation; 'infinity' means the candidate has no PostgreSQL binding.
 SELECT environment_binding_postgres_deadline(q,sqlc.arg(scope)::text,sqlc.arg(max_age_seconds)::bigint,sqlc.arg(restored_instance_id)::uuid)::timestamptz AS deadline

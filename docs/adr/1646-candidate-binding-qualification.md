@@ -18,3 +18,6 @@ and [checked project releases](1348-checked-project-binding-release-graphs.md).
 Managed PostgreSQL bindings were later admitted by
 [ADR-20261019072523](20261019072523-candidate-postgres-binding-qualification.md)
 through control-plane credential receipts; the other blocked classes above remain.
+Managed object storage followed in
+[ADR-20261019121546](20261019121546-candidate-object-storage-binding-qualification.md);
+outbound integrations remain blocked.

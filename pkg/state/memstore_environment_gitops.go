@@ -12,30 +12,31 @@ import (
 )
 
 type environmentGitOpsMemory struct {
-	retirements        map[string]EnvironmentWorkloadRetirement
-	source             EnvironmentGitSource
-	revisions          map[string]EnvironmentDesiredRevision
-	runs               map[string]EnvironmentGitOpsRun
-	runTokens          map[string]string
-	next               time.Time
-	lease              *EnvironmentGitOpsLease
-	attempts           int
-	resources          map[string]string
-	queues             map[string]string
-	owners             map[string]environmentsync.Ownership
-	overrides          map[string]environmentsync.Override
-	effects            map[string]EnvironmentGitOpsEffect
-	runtime            map[string]EnvironmentGitOpsRuntimeEffect
-	graphs             map[string]EnvironmentWorkloadGraph
-	qualifications     map[string]EnvironmentWorkloadQualificationRequest
-	bindingServices    map[string]EnvironmentQualificationServiceReceipt
-	bindingPostgres    map[string]time.Time
-	bindingReleases    map[string]string
-	retirementPolicies map[string]environmentBindingRetirementPolicy
-	bindingRetirements map[string]environmentBindingRetirementPublication
-	poll               environmentGitSourcePoll
-	approvals          map[string]EnvironmentGitRevisionApproval
-	notifications      environmentGitNotificationState
+	retirements          map[string]EnvironmentWorkloadRetirement
+	source               EnvironmentGitSource
+	revisions            map[string]EnvironmentDesiredRevision
+	runs                 map[string]EnvironmentGitOpsRun
+	runTokens            map[string]string
+	next                 time.Time
+	lease                *EnvironmentGitOpsLease
+	attempts             int
+	resources            map[string]string
+	queues               map[string]string
+	owners               map[string]environmentsync.Ownership
+	overrides            map[string]environmentsync.Override
+	effects              map[string]EnvironmentGitOpsEffect
+	runtime              map[string]EnvironmentGitOpsRuntimeEffect
+	graphs               map[string]EnvironmentWorkloadGraph
+	qualifications       map[string]EnvironmentWorkloadQualificationRequest
+	bindingServices      map[string]EnvironmentQualificationServiceReceipt
+	bindingPostgres      map[string]time.Time
+	bindingObjectStorage map[string]candidateObjectStorageReceipt
+	bindingReleases      map[string]string
+	retirementPolicies   map[string]environmentBindingRetirementPolicy
+	bindingRetirements   map[string]environmentBindingRetirementPublication
+	poll                 environmentGitSourcePoll
+	approvals            map[string]EnvironmentGitRevisionApproval
+	notifications        environmentGitNotificationState
 }
 
 var _ EnvironmentGitOpsStore = (*MemStore)(nil)

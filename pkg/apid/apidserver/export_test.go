@@ -1557,3 +1557,18 @@ func VerifyCandidatePostgresCredentialForTest(ctx context.Context, c state.Envir
 	sink := &appSecretCredentialSink{hmacKey: func() []byte { return hmacKey }, identities: func() []*age.X25519Identity { return identities }, probe: probe}
 	return verifyCandidatePostgresCredentialWith(ctx, sink, c)
 }
+
+// VerifyCandidateObjectStorageCredentialsForTest runs the GitOps backend's
+// pre-activation bucket credential step (ADR-20261019121546) with an injected verifier.
+func VerifyCandidateObjectStorageCredentialsForTest(ctx context.Context, intent state.EnvironmentGitOpsIntentStore, graphID string,
+	verify func(context.Context, state.EnvironmentQualificationObjectStorageCheck) error) error {
+	b := &environmentGitOpsBackend{server: &server{candidateObjectStorageVerifier: verify}, intent: intent}
+	return b.verifyCandidateObjectStorageCredentials(ctx, graphID)
+}
+
+// VerifyCandidateObjectStorageCredentialForTest runs the production verifier
+// with explicit host material and an injected bucket canary.
+func VerifyCandidateObjectStorageCredentialForTest(ctx context.Context, c state.EnvironmentQualificationObjectStorageCheck, identities []*age.X25519Identity,
+	hmacKey []byte, canary func(context.Context, string, string, func(string) string) api.ObjectStorageBindingProbeReport) error {
+	return verifyCandidateObjectStorageCredentialWith(ctx, identities, hmacKey, canary, c)
+}

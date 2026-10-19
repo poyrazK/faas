@@ -88,7 +88,7 @@ func candidateBindingPolicyEqual(a, b api.BindingReleasePolicy) bool {
 
 func candidateBindingPolicySupported(request EnvironmentWorkloadQualificationRequest) bool {
 	c := request.BindingContext
-	if c == nil || c.Policy.Mode != "enforce" || c.Policy.Revision < 1 || c.Policy.AppID != request.AppID || c.Policy.Scope != request.FrozenInputs.Scope || c.Policy.RequireApplicationAck || len(c.Policy.ObjectStorageRequirements) != 0 {
+	if c == nil || c.Policy.Mode != "enforce" || c.Policy.Revision < 1 || c.Policy.AppID != request.AppID || c.Policy.Scope != request.FrozenInputs.Scope || c.Policy.RequireApplicationAck {
 		return false
 	}
 	f := request.FrozenInputs

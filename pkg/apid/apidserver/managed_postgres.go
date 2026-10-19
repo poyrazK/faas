@@ -136,12 +136,12 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 			}
 			return hostSecretRecipient()
 		},
-		managedPostgresHMACKey,
+		hostCredentialHMACKey,
 	)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
-	secretSink.identities = managedPostgresCredentialIdentities
+	secretSink.identities = hostCredentialIdentities
 	secretSink.probe = managedpostgres.VerifyCredentialSQL
 	bindingService, err := managedpostgres.NewBindingService(registry, store, store, secretSink, managedpostgres.BindingServiceOptions{
 		ProvisioningEnabled: provisioningGate,
@@ -182,16 +182,16 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 // month, and its monthly compute units (ADR-1430). Restore history, egress and
 // spend remain operator-configured COGS ceilings; the intersection is applied
 // in managedpostgres so adapters never learn about Gregale plan names.
-// managedPostgresHMACKey and managedPostgresCredentialIdentities are the host
+// hostCredentialHMACKey and hostCredentialIdentities are the host
 // secret providers shared by the credential sink and candidate verification.
-func managedPostgresHMACKey() []byte {
+func hostCredentialHMACKey() []byte {
 	if hostHMACKey == nil {
 		return nil
 	}
 	return hostHMACKeyBytes()
 }
 
-func managedPostgresCredentialIdentities() []*age.X25519Identity {
+func hostCredentialIdentities() []*age.X25519Identity {
 	if mfaIdentities != nil {
 		if ids := mfaIdentities(); len(ids) > 0 {
 			return ids

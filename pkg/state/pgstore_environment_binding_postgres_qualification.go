@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -57,13 +56,5 @@ func candidatePostgresDeadlineTx(ctx context.Context, tx sqlc.DBTX, request Envi
 	if err != nil {
 		return time.Time{}, mapErr(err)
 	}
-	switch {
-	case !deadline.Valid:
-		return time.Time{}, ErrBindingReleaseRequired
-	case deadline.InfinityModifier == pgtype.Infinity:
-		return time.Time{}, nil
-	case deadline.InfinityModifier != pgtype.Finite:
-		return time.Time{}, ErrBindingReleaseRequired
-	}
-	return deadline.Time, nil
+	return candidateDeadlineFromSQL(deadline)
 }

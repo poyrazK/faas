@@ -7,6 +7,18 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Object storage bindings in candidate qualification — 2026-10-19
+
+Enforced managed GitOps graphs also admit managed object storage bindings and
+policy `object_storage_requirements`. apid opens the six sealed deliveries each
+candidate receives and runs the existing bucket canary in the required mode
+(read, write with cleanup, or read_write with download) against the public S3
+endpoint, then records an immutable receipt pinned to those delivery versions.
+Rotation, insufficient permission and requirements without a binding keep
+candidates held. Outbound integrations stay blocked: their evidence needs a
+platform identity for a running instance, which candidates do not have.
+See [ADR-20261019121546](adr/20261019121546-candidate-object-storage-binding-qualification.md).
+
 ## PostgreSQL bindings in candidate qualification — 2026-10-19
 
 Enforced managed GitOps graphs no longer block activation because a member has

@@ -45,6 +45,13 @@ type candidateBindingTestStore interface {
 // These are owner-API fixtures, not native build, guest TLS or KVM evidence.
 func candidateBindingFixture(t *testing.T, basic gitOpsTestStore, kind, age string) (state.EnvironmentGitOpsLease, environmentsync.Plan, []state.EnvironmentWorkloadQualificationRequest, state.EnvironmentWorkloadQualificationPlacement) {
 	t.Helper()
+	return candidateBindingFixtureWith(t, basic, kind, age, nil)
+}
+
+// storage runs before each candidate's enforced policy is stored, so it can
+// create bindings and returns that policy's object storage requirements.
+func candidateBindingFixtureWith(t *testing.T, basic gitOpsTestStore, kind, age string, storage func(accountID, appID, resource string) map[string]string) (state.EnvironmentGitOpsLease, environmentsync.Plan, []state.EnvironmentWorkloadQualificationRequest, state.EnvironmentWorkloadQualificationPlacement) {
+	t.Helper()
 	lease, plan, _ := workloadGraphFixtureWithWorkerSources(t, basic, true, api.ServiceBindingTransportHTTPS, nil, kind)
 	store := basic.(candidateBindingTestStore)
 	preparer := basic.(state.EnvironmentGitOpsPreparationStore)
@@ -73,7 +80,11 @@ func candidateBindingFixture(t *testing.T, basic gitOpsTestStore, kind, age stri
 		if candidate.Resource == "workload/worker" {
 			requirements["orders"] = api.QueueEvidenceHandlerCompletion
 		}
-		if _, err := store.SetBindingReleasePolicy(t.Context(), lease.Source.AccountID, candidate.AppID, "production", api.SetBindingReleasePolicyRequest{Mode: "enforce", ExpectedRevision: new(int64), MaxVerificationAge: age, QueueRequirements: requirements}); err != nil {
+		var storageRequirements map[string]string
+		if storage != nil {
+			storageRequirements = storage(lease.Source.AccountID, candidate.AppID, candidate.Resource)
+		}
+		if _, err := store.SetBindingReleasePolicy(t.Context(), lease.Source.AccountID, candidate.AppID, "production", api.SetBindingReleasePolicyRequest{Mode: "enforce", ExpectedRevision: new(int64), MaxVerificationAge: age, QueueRequirements: requirements, ObjectStorageRequirements: storageRequirements}); err != nil {
 			t.Fatal(err)
 		}
 	}

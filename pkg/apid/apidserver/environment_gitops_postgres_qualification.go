@@ -44,7 +44,7 @@ func (b *environmentGitOpsBackend) verifyCandidatePostgresCredentials(ctx contex
 // verifyCandidatePostgresCredential decrypts the exact sealed delivery with
 // the host identities and runs the read-only ACL probe for its access.
 func verifyCandidatePostgresCredential(ctx context.Context, c state.EnvironmentQualificationPostgresCheck) error {
-	sink := &appSecretCredentialSink{hmacKey: managedPostgresHMACKey, identities: managedPostgresCredentialIdentities, probe: managedpostgres.VerifyCredentialSQL}
+	sink := &appSecretCredentialSink{hmacKey: hostCredentialHMACKey, identities: hostCredentialIdentities, probe: managedpostgres.VerifyCredentialSQL}
 	return verifyCandidatePostgresCredentialWith(ctx, sink, c)
 }
 
