@@ -170,7 +170,8 @@ func (m *Manager) handleLive(ctx context.Context, c *connection, data []byte, su
 }
 
 // queueLive queues a live frame. Live frames count against the connection's
-// outbound budget like any other; a client too slow for them is closed.
+// outbound budget and its endpoint's delivered usage (ADR-1323) like any
+// other; a client too slow for them is closed.
 func (m *Manager) queueLive(ctx context.Context, c *connection, frame []byte) error {
 	err := m.queueOutbound(ctx, c, Message{Data: frame})
 	if errors.Is(err, ErrOutboundQueueFull) {
@@ -179,6 +180,7 @@ func (m *Manager) queueLive(ctx context.Context, c *connection, frame []byte) er
 	if err == nil {
 		m.sentMessages.Add(1)
 		m.sentBytes.Add(uint64(len(frame)))
+		c.state.usage.delivered(len(frame))
 	}
 	return err
 }

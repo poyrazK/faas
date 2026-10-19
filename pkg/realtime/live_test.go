@@ -49,6 +49,13 @@ var testLiveRoute = LiveRoute{KID: "0123456789abcdef", Database: "db", URL: "wss
 
 func newLiveTestManager(t *testing.T, live LiveQueries) *httptest.Server {
 	t.Helper()
+	server, _ := newLiveTestServer(t, live)
+	return server
+}
+
+// newLiveTestServer is newLiveTestManager that also returns the manager.
+func newLiveTestServer(t *testing.T, live LiveQueries) (*httptest.Server, *Manager) {
+	t.Helper()
 	m := NewManager(Config{
 		JWTAuthorizer: &recordingJWTAuthorizer{}, ResumePreview: true,
 		HistoryReader: &testResumeHistory{}, ResumePollInterval: 15 * time.Millisecond, Live: live,
@@ -66,7 +73,7 @@ func newLiveTestManager(t *testing.T, live LiveQueries) *httptest.Server {
 	}
 	server := httptest.NewServer(m.Handler())
 	t.Cleanup(func() { server.Close(); _ = m.Close() })
-	return server
+	return server, m
 }
 
 // adr: 20261016151947 — an endpoint's live routes are checked when it registers, and
@@ -311,6 +318,50 @@ func TestLiveFramesUseTheOutboundBudget(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read: %v", err)
 		}
+	}
+}
+
+// adr: 20261016151947 — live frames are delivered messages like any other, so
+// the endpoint's fair-use usage (ADR-1323) counts them.
+func TestLiveFramesCountAsDeliveredUsage(t *testing.T) {
+	live := &fakeLive{got: make(chan struct{}, 4)}
+	server, m := newLiveTestServer(t, live)
+	client := dialResumeTest(t, server)
+	if err := client.WriteMessage(1, []byte(`{"type":"live.subscribe","subscription":"feed","sealed":"gls1.0123456789abcdef.x"}`)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-live.got:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the live session never received the frame")
+	}
+	live.mu.Lock()
+	send := live.send
+	live.mu.Unlock()
+	frame := `{"type":"live.rows","subscription":"feed","rows":[]}`
+	if err := send([]byte(frame)); err != nil {
+		t.Fatal(err)
+	}
+	_ = client.SetReadDeadline(time.Now().Add(5 * time.Second))
+	for {
+		_, data, err := client.ReadMessage()
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		if string(data) == frame {
+			break
+		}
+	}
+	conns := m.Snapshot()
+	if len(conns) != 1 {
+		t.Fatalf("connections = %d, want 1", len(conns))
+	}
+	c, ok := m.connection(conns[0].ID)
+	if !ok {
+		t.Fatal("connection gone")
+	}
+	if got := c.state.usage.deliveredBytes.Load(); got < int64(len(frame)) {
+		t.Fatalf("delivered bytes = %d, want at least the %d-byte live frame", got, len(frame))
 	}
 }
 
