@@ -25,6 +25,7 @@ type httpFixtureAPI struct {
 	directive                                      int
 	cancelled                                      bool
 	artifact                                       *api.OperationResultArtifact
+	children                                       []api.OperationChildRequest
 }
 
 func httpRequest(t *testing.T, client *http.Client, endpoint, mode string, mutate func(*http.Request)) *http.Response {
@@ -83,6 +84,18 @@ func newHTTPFixtureTest(t *testing.T, state *httpFixtureAPI) *httptest.Server {
 			}
 			state.stages = append(state.stages, report.Stage)
 			_ = json.NewEncoder(w).Encode(api.OperationResponse{ID: httpTestID})
+		case strings.HasSuffix(r.URL.Path, "/children"):
+			var child api.OperationChildRequest
+			if err := json.NewDecoder(r.Body).Decode(&child); err != nil {
+				t.Error("child start body", err)
+			}
+			state.children = append(state.children, child)
+			status := http.StatusCreated
+			if len(state.children) > 1 {
+				status = http.StatusOK
+			}
+			w.WriteHeader(status)
+			_ = json.NewEncoder(w).Encode(api.OperationChildStartResponse{OperationChild: api.OperationChild{Key: child.Key, Operation: api.OperationResponse{ID: "77777777-7777-4777-8777-777777777777"}}, Replayed: status == http.StatusOK})
 		case strings.HasSuffix(r.URL.Path, "/artifact-upload-receipts"):
 			state.lookups++
 			_ = json.NewEncoder(w).Encode(api.OperationArtifactUploadResponse{Available: state.artifact != nil, Artifact: state.artifact})
@@ -223,5 +236,25 @@ func TestCustomerHTTPFixtureRoutesWebhookAndBoundedDefinitions(t *testing.T) {
 	}
 	if post("/exports/bounded", `{"mode":"complete","extra":1}`).StatusCode != http.StatusBadRequest {
 		t.Fatal("the bounded route accepted unknown input fields")
+	}
+}
+
+func TestCustomerHTTPFixtureFanoutStartsAndReplaysOneChild(t *testing.T) {
+	state := &httpFixtureAPI{directive: http.StatusAccepted}
+	server := newHTTPFixtureTest(t, state)
+	response := httpRequest(t, server.Client(), server.URL, "fanout", nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("fanout parent answered %d", response.StatusCode)
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if len(state.children) != 2 || state.children[0].Key != state.children[1].Key || string(state.children[0].Input) != string(state.children[1].Input) {
+		t.Fatalf("children = %+v", state.children)
+	}
+	if c := state.children[0]; c.Operation != "export" || c.Key != httpFixtureChildKey || string(c.Input) != `{"mode":"complete"}` {
+		t.Fatalf("child request = %+v", c)
+	}
+	if state.entered != 1 {
+		t.Fatal("a fanout parent waited for a release directive")
 	}
 }
