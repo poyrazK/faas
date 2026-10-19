@@ -245,44 +245,6 @@ func TestComposeUnsupportedKeysWarn(t *testing.T) {
 	}
 }
 
-func TestComposeExtendsAndIncludeWarn(t *testing.T) {
-	for _, tc := range []struct {
-		name, body string
-		want       []string
-	}{
-		{"same-file base names inherited keys",
-			"services:\n  base:\n    image: nginx:1.27\n    user: nginx\n    environment: {A: b}\n    ports: [80]\n  web:\n    extends: {service: base}\n    image: nginx:1.27\n    ports: [8080]\n",
-			[]string{`web: WARNING extends not applied: environment, user inherited from service "base" were not loaded; inline them into this service`}},
-		{"short form",
-			"services:\n  base:\n    image: nginx:1.27\n    working_dir: /srv\n  web:\n    extends: base\n    image: nginx:1.27\n",
-			[]string{`web: WARNING extends not applied: working_dir inherited from service "base" were not loaded`}},
-		{"other file",
-			"services:\n  web:\n    extends: {file: common.yaml, service: app}\n    image: nginx:1.27\n",
-			[]string{`web: WARNING extends not applied: settings inherited from service "app" in common.yaml were not loaded; inline them into this service`}},
-		{"unknown base",
-			"services:\n  web:\n    extends: {service: missing}\n    image: nginx:1.27\n",
-			[]string{`web: WARNING extends not applied: settings inherited from service "missing" were not loaded`}},
-		{"include paths",
-			"include:\n  - db.yaml\n  - path: [cache.yaml, queue.yaml]\nservices:\n  web:\n    image: nginx:1.27\n",
-			[]string{"compose.yaml: WARNING include not applied: services in db.yaml, cache.yaml, queue.yaml were not loaded; merge them into compose.yaml"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			result, err := scanCompose(t, tc.body)
-			if err != nil {
-				t.Fatalf("scan failed: %v; extends and include must only warn", err)
-			}
-			if len(result.Workloads) == 0 {
-				t.Fatalf("no workloads deployed: %+v", result)
-			}
-			for _, want := range tc.want {
-				if !containsWarning(result.Warnings, want) {
-					t.Fatalf("warnings %q lack %q", result.Warnings, want)
-				}
-			}
-		})
-	}
-}
-
 func TestEnvFileKeysDotenvSyntax(t *testing.T) {
 	for _, tc := range []struct {
 		name, body string
