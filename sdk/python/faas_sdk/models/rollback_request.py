@@ -37,6 +37,10 @@ class RollbackRequest:
    """
     reason: str | Unset = UNSET
     """One-line reason for an exact checked rollback. Cannot be combined with alert_rule_id."""
+    acknowledge_releases: bool | Unset = UNSET
+    """Roll back although release commands ran after the target last served (ADR-1448). Rollback does not undo
+    them. Without it such a rollback is refused with rollback_crosses_release, which lists them. Automated rollbacks
+    never set it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -54,6 +58,8 @@ class RollbackRequest:
 
         reason = self.reason
 
+        acknowledge_releases = self.acknowledge_releases
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -65,6 +71,8 @@ class RollbackRequest:
             field_dict["expected_current_deployment_id"] = expected_current_deployment_id
         if reason is not UNSET:
             field_dict["reason"] = reason
+        if acknowledge_releases is not UNSET:
+            field_dict["acknowledge_releases"] = acknowledge_releases
 
         return field_dict
 
@@ -94,11 +102,14 @@ class RollbackRequest:
 
         reason = d.pop("reason", UNSET)
 
+        acknowledge_releases = d.pop("acknowledge_releases", UNSET)
+
         rollback_request = cls(
             target_deployment_id=target_deployment_id,
             alert_rule_id=alert_rule_id,
             expected_current_deployment_id=expected_current_deployment_id,
             reason=reason,
+            acknowledge_releases=acknowledge_releases,
         )
 
         rollback_request.additional_properties = d

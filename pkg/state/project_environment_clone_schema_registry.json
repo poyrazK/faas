@@ -614,6 +614,57 @@
     "kind": "configuration"
   },
   {
+    "table": "app_config_guard_secrets",
+    "columns": [
+      "ciphertext",
+      "config_key",
+      "existed",
+      "guard_id",
+      "kid",
+      "secret_class",
+      "value_hash"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_config_guards",
+    "columns": [
+      "account_id",
+      "app_id",
+      "base_revision",
+      "closed_at",
+      "decision",
+      "head_revision",
+      "id",
+      "last_change_at",
+      "opened_at",
+      "restorable",
+      "scope",
+      "status",
+      "window_ends_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_config_revisions",
+    "columns": [
+      "account_id",
+      "actor",
+      "app_id",
+      "config_key",
+      "created_at",
+      "guard_id",
+      "id",
+      "restored_revision",
+      "revision",
+      "scope",
+      "secrets",
+      "source",
+      "variables"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_cpu_policy_node_status",
     "columns": [
       "app_id",
@@ -3639,7 +3690,7 @@
       "reason",
       "used_at"
     ],
-    "kind": "configuration"
+    "kind": "operational"
   },
   {
     "table": "deployment_mcp_task_holds",
@@ -3769,6 +3820,26 @@
       "status",
       "target_deployment_id",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "deployment_rollbacks",
+    "columns": [
+      "account_id",
+      "app_id",
+      "audit_id",
+      "error",
+      "error_code",
+      "finished_at",
+      "from_deployment_id",
+      "id",
+      "recovery_ms",
+      "requested_at",
+      "scope",
+      "status",
+      "target_deployment_id",
+      "trigger"
     ],
     "kind": "operational"
   },
@@ -3984,9 +4055,11 @@
       "reordered_by_principal",
       "revision",
       "rollback_on_5xx",
+      "rollback_prepared_at",
       "rollout_aborted_at",
       "rollout_aborted_reason",
       "rollout_completed_at",
+      "rollout_decision",
       "rollout_started_at",
       "rollout_state",
       "rootfs_bytes",
@@ -9046,7 +9119,7 @@
       "request",
       "request_id"
     ],
-    "kind": "customer_data"
+    "kind": "operational"
   },
   {
     "table": "mcp_readiness_fallback_policies",
@@ -9070,7 +9143,7 @@
       "incident_id",
       "snapshot"
     ],
-    "kind": "customer_data"
+    "kind": "operational"
   },
   {
     "table": "mcp_readiness_incident_cursors",
@@ -9109,7 +9182,7 @@
       "sequence",
       "suppression_reason"
     ],
-    "kind": "customer_data"
+    "kind": "operational"
   },
   {
     "table": "mcp_readiness_incidents",
@@ -9125,7 +9198,7 @@
       "rule_id",
       "scope"
     ],
-    "kind": "customer_data"
+    "kind": "operational"
   },
   {
     "table": "mcp_readiness_maintenance_windows",
@@ -9158,7 +9231,7 @@
       "receipt",
       "request_id"
     ],
-    "kind": "customer_data"
+    "kind": "operational"
   },
   {
     "table": "mcp_readiness_pagerduty_ack_events",
@@ -9172,7 +9245,7 @@
       "received_at",
       "rule_id"
     ],
-    "kind": "customer_data"
+    "kind": "operational"
   },
   {
     "table": "mcp_readiness_pagerduty_acknowledgements",

@@ -8291,8 +8291,9 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 			traffic_percent = $4,
 			rollout_state = case when $2 >= canary_total_steps then 'complete' else rollout_state end,
 			rollout_started_at = coalesce(rollout_started_at, $3),
-			rollout_completed_at = case when $2 >= canary_total_steps then $3 else rollout_completed_at end
-		 where id = $1`, dep.ID, persistedStep, now, params.TrafficPercent); err != nil {
+			rollout_completed_at = case when $2 >= canary_total_steps then $3 else rollout_completed_at end,
+			rollout_decision = $5::jsonb
+		 where id = $1`, dep.ID, persistedStep, now, params.TrafficPercent, nullableJSON(params.Decision)); err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: advance canary update: %w", err)
 	}
 	if !terminal {
@@ -8956,7 +8957,13 @@ func rebalanceTrafficAfterFailure(ctx context.Context, tx pgx.Tx, appID, failedI
 // the same closed-set guards so handler tests can pin the same
 // shape against either store.
 func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reason string) (Deployment, int64, error) {
-	return s.recoverRollout(ctx, appID, "", "", action, reason, nil)
+	return s.recoverRollout(ctx, appID, "", "", action, reason, nil, nil)
+}
+
+// RecoverRolloutWithDecision is RecoverRollout recording the validated
+// api.RolloutDecision behind the transition (ADR-1447).
+func (s *PgStore) RecoverRolloutWithDecision(ctx context.Context, appID string, action, reason string, decision json.RawMessage) (Deployment, int64, error) {
+	return s.recoverRollout(ctx, appID, "", "", action, reason, nil, decision)
 }
 
 // RecoverRolloutForDeployment aborts the named candidate only when the
@@ -8966,7 +8973,16 @@ func (s *PgStore) RecoverRolloutForDeployment(ctx context.Context, appID, deploy
 	if deploymentID == "" || expectedPredecessorID == "" || sameDeploymentID(deploymentID, expectedPredecessorID) || action != "abort" {
 		return Deployment{}, 0, ErrRolloutStateInvalid
 	}
-	return s.recoverRollout(ctx, appID, deploymentID, expectedPredecessorID, action, reason, nil)
+	return s.recoverRollout(ctx, appID, deploymentID, expectedPredecessorID, action, reason, nil, nil)
+}
+
+// RecoverRolloutForDeploymentWithDecision is the exact abort recording the
+// circuit-breaker evidence that decided it (ADR-1447).
+func (s *PgStore) RecoverRolloutForDeploymentWithDecision(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string, decision json.RawMessage) (Deployment, int64, error) {
+	if deploymentID == "" || expectedPredecessorID == "" || sameDeploymentID(deploymentID, expectedPredecessorID) || action != "abort" {
+		return Deployment{}, 0, ErrRolloutStateInvalid
+	}
+	return s.recoverRollout(ctx, appID, deploymentID, expectedPredecessorID, action, reason, nil, decision)
 }
 
 // AbortCanaryOnExpiredWorkerLease is the emergency-only path for an in-flight
@@ -8977,16 +8993,16 @@ func (s *PgStore) AbortCanaryOnExpiredWorkerLease(ctx context.Context, appID, de
 	if appID == "" || deploymentID == "" || grace < 0 {
 		return Deployment{}, 0, ErrRolloutStateInvalid
 	}
-	return s.recoverRollout(ctx, appID, deploymentID, "", "abort", "Safe Deploy worker lease expired during active canary", &grace)
+	return s.recoverRollout(ctx, appID, deploymentID, "", "abort", "Safe Deploy worker lease expired during active canary", &grace, nil)
 }
 
-func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string, emergencyGrace *time.Duration) (Deployment, int64, error) {
+func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string, emergencyGrace *time.Duration, decision json.RawMessage) (Deployment, int64, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: recover_rollout begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	updated, auditID, err := s.recoverRolloutTx(ctx, tx, appID, deploymentID, expectedPredecessorID, action, reason, emergencyGrace, nil)
+	updated, auditID, err := s.recoverRolloutTx(ctx, tx, appID, deploymentID, expectedPredecessorID, action, reason, emergencyGrace, nil, decision)
 	if err != nil {
 		return updated, auditID, err
 	}
@@ -8996,7 +9012,11 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 	return updated, auditID, nil
 }
 
-func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploymentID, expectedPredecessorID, action, reason string, emergencyGrace *time.Duration, auditOverride *DeploymentAudit) (Deployment, int64, error) {
+// decision is the validated api.RolloutDecision behind the transition
+// (ADR-1447). It is written in the same UPDATE as the rollout-state change so
+// the rollout outcome webhook trigger sees it; nil clears the column, except
+// on the worker lease expiry abort, which records abort_worker_lease_expired.
+func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploymentID, expectedPredecessorID, action, reason string, emergencyGrace *time.Duration, auditOverride *DeploymentAudit, decision json.RawMessage) (Deployment, int64, error) {
 	if err := pgAuthorizeRouteRemoval(ctx, tx); err != nil {
 		return Deployment{}, 0, err
 	}
@@ -9243,6 +9263,9 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		auditData   []byte
 		newTrafficP int
 	)
+	if decision == nil && emergencyGrace != nil {
+		decision = leaseExpiredRolloutDecision(reason, dep, now)
+	}
 	switch action {
 	case "advance":
 		// Stuck-detection gate. canary_step_started_at NULL or
@@ -9268,9 +9291,10 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 			`update deployments set
 				canary_step = $2,
 				canary_step_started_at = $3,
-				traffic_percent = $4
+				traffic_percent = $4,
+				rollout_decision = $5::jsonb
 			 where id = $1`,
-			dep.ID, newStep, now, newTrafficP); err != nil {
+			dep.ID, newStep, now, newTrafficP, nullableJSON(decision)); err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: recover_rollout stamp advance: %w", err)
 		}
 
@@ -9327,7 +9351,7 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		}
 
 		auditKind = DeployTrafficChanged
-		auditData = rolloutAuditData("advance", reason)
+		auditData = rolloutAuditDataWithDecision("advance", reason, decision)
 
 	case "promote":
 		if dep.CanaryTotalSteps <= 0 || dep.CanaryStep >= dep.CanaryTotalSteps {
@@ -9342,9 +9366,10 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 				canary_step_started_at = $3,
 				traffic_percent = 100,
 				rollout_state = 'complete',
-				rollout_completed_at = $3
+				rollout_completed_at = $3,
+				rollout_decision = $4::jsonb
 			 where id = $1`,
-			dep.ID, dep.CanaryTotalSteps, now); err != nil {
+			dep.ID, dep.CanaryTotalSteps, now, nullableJSON(decision)); err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: recover_rollout stamp promote: %w", err)
 		}
 		if _, err := tx.Exec(ctx,
@@ -9355,7 +9380,7 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		}
 
 		auditKind = DeployTrafficChanged
-		auditData = rolloutAuditData("promote", reason)
+		auditData = rolloutAuditDataWithDecision("promote", reason, decision)
 
 	case "abort":
 		ids, err := sqlc.New().ReadLifecycleTrafficCandidates(ctx, tx, sqlc.ReadLifecycleTrafficCandidatesParams{AppID: appID, DeploymentID: dep.ID})
@@ -9379,9 +9404,10 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 				rollout_state = 'aborted',
 				traffic_percent = 0,
 				rollout_aborted_at = $2,
-				rollout_aborted_reason = $3
+				rollout_aborted_reason = $3,
+				rollout_decision = $4::jsonb
 			 where id = $1`,
-			dep.ID, now, reason); err != nil {
+			dep.ID, now, reason, nullableJSON(decision)); err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: recover_rollout stamp abort: %w", err)
 		}
 		if expectedPredecessorID != "" {
@@ -9446,6 +9472,7 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		if expectedPredecessorID != "" {
 			auditData = rolloutRecoveryAuditData(reason, expectedPredecessorID, bindingReleaseFences(ctx))
 		}
+		auditData = withAuditDecision(auditData, decision)
 	}
 
 	// Audit emit rides the same tx as the deployment stamp. The actor
@@ -9706,6 +9733,11 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceLatest
 				return ErrDeploymentSuperseded
 			}
 		}
+	}
+	// ADR-1446: a prepared rollback is consumed by its promotion. Clearing it
+	// in this transaction means a failed promotion keeps the marker for retry.
+	if _, err := tx.Exec(ctx, `update deployments set rollback_prepared_at = null where id = $1 and rollback_prepared_at is not null`, id); err != nil {
+		return fmt.Errorf("state: clear rollback marker: %w", err)
 	}
 	if _, gateErr := checkDeploymentDependenciesTx(ctx, tx, dep, time.Now().UTC(), false); gateErr != nil {
 		return gateErr
@@ -11077,6 +11109,7 @@ func (s *PgStore) PrepareDeploymentRollback(ctx context.Context, appID, targetDe
 	prepared, err := scanDeploymentWithRootfs(tx.QueryRow(ctx, `
 		update deployments
 		   set status = 'snapshotting',
+		       rollback_prepared_at = $3,
 		       error = '', error_code = '',
 		       traffic_percent = 0,
 		       traffic_percent_explicit = false,
@@ -24971,6 +25004,7 @@ const deploymentSelectColumnsWithRootfs = `
 	canary_step_started_at, canary_stages, coalesce(nullif(rollout_state, ''), 'pending'),
 	rollout_started_at, rollout_completed_at, rollout_aborted_at,
 	coalesce(rollout_aborted_reason, ''), coalesce(service_rollout_handoff, '{}'::jsonb),
+	rollout_decision,
 	-- ADR-124 deployment queue controls (migration 00391/00491). priority
 	-- is NOT NULL DEFAULT 100 so the coalesce is purely for symmetry
 	-- with the rest of the projection (and for the rare pre-PR
@@ -25034,6 +25068,7 @@ const deploymentSelectColumnsQualified = `
 	d.canary_step_started_at, d.canary_stages, coalesce(nullif(d.rollout_state, ''), 'pending'),
 	d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at,
 	coalesce(d.rollout_aborted_reason, ''), coalesce(d.service_rollout_handoff, '{}'::jsonb),
+	d.rollout_decision,
 	-- ADR-124 deployment queue controls (migration 00391/00491). See the
 	-- unqualified-projection counterpart above for the rationale on
 	-- coalesce choices.
@@ -25094,6 +25129,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 	var canaryStepStartedAt *time.Time
 	var rolloutStartedAt, rolloutCompletedAt, rolloutAbortedAt *time.Time
 	var serviceRolloutHandoff json.RawMessage
+	var rolloutDecision []byte
 	// Issue #460 / ADR-053: six override columns scanned here so
 	// the SELECT projections in DeploymentByID / LatestDeployment /
 	// etc. match. The scan order matches the column order in the
@@ -25156,6 +25192,8 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&canaryStepStartedAt, &d.CanaryStages, &d.RolloutState,
 		&rolloutStartedAt, &rolloutCompletedAt, &rolloutAbortedAt,
 		&d.RolloutAbortedReason, &serviceRolloutHandoff,
+		// ADR-1447: nullable jsonb; NULL scans to a nil slice.
+		&rolloutDecision,
 		// ADR-124 deployment queue controls (migration 00391/00491). The
 		// scan order mirrors the SELECT projection above — see the
 		// docblock on deploymentSelectColumnsWithRootfs for the
@@ -25208,6 +25246,9 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 	d.RolloutStartedAt = rolloutStartedAt
 	d.RolloutCompletedAt = rolloutCompletedAt
 	d.RolloutAbortedAt = rolloutAbortedAt
+	if len(rolloutDecision) > 0 {
+		d.RolloutDecision = json.RawMessage(rolloutDecision)
+	}
 	if len(serviceRolloutHandoff) > 0 {
 		if err := json.Unmarshal(serviceRolloutHandoff, &d.ServiceRolloutHandoff); err != nil {
 			return fmt.Errorf("state: decode service rollout handoff: %w", err)

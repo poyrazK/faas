@@ -12,6 +12,8 @@ if TYPE_CHECKING:
     from ..models.binding_check_report import BindingCheckReport
     from ..models.field_error import FieldError
     from ..models.log_excerpt import LogExcerpt
+    from ..models.release_restore_point import ReleaseRestorePoint
+    from ..models.rollback_crossed_release import RollbackCrossedRelease
     from ..models.secret_finding import SecretFinding
 
 
@@ -66,6 +68,11 @@ class Problem:
     """Safe preflight findings for the declared policy at checked_at. Coverage may be complete, partial or none; a
     passed report does not independently establish application readiness or credential use. Optional application
     acknowledgements are version-bound self-attestations."""
+    crossed_releases: list[RollbackCrossedRelease] | Unset = UNSET
+    """rollback_crosses_release: release commands the rollback would not undo (ADR-1448)."""
+    restore_points: list[ReleaseRestorePoint] | Unset = UNSET
+    """rollback_crosses_release: how to restore each managed PostgreSQL database to before those releases
+    (ADR-1448)."""
     type_: str | Unset = UNSET
     instance: str | Unset = UNSET
     """URI reference identifying this problem occurrence when supplied by the caller."""
@@ -188,6 +195,20 @@ class Problem:
         if not isinstance(self.bindings_check, Unset):
             bindings_check = self.bindings_check.to_dict()
 
+        crossed_releases: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.crossed_releases, Unset):
+            crossed_releases = []
+            for crossed_releases_item_data in self.crossed_releases:
+                crossed_releases_item = crossed_releases_item_data.to_dict()
+                crossed_releases.append(crossed_releases_item)
+
+        restore_points: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.restore_points, Unset):
+            restore_points = []
+            for restore_points_item_data in self.restore_points:
+                restore_points_item = restore_points_item_data.to_dict()
+                restore_points.append(restore_points_item)
+
         type_ = self.type_
 
         instance = self.instance
@@ -290,6 +311,10 @@ class Problem:
             field_dict["expected_sequence"] = expected_sequence
         if bindings_check is not UNSET:
             field_dict["bindings_check"] = bindings_check
+        if crossed_releases is not UNSET:
+            field_dict["crossed_releases"] = crossed_releases
+        if restore_points is not UNSET:
+            field_dict["restore_points"] = restore_points
         if type_ is not UNSET:
             field_dict["type"] = type_
         if instance is not UNSET:
@@ -338,6 +363,8 @@ class Problem:
         from ..models.binding_check_report import BindingCheckReport
         from ..models.field_error import FieldError
         from ..models.log_excerpt import LogExcerpt
+        from ..models.release_restore_point import ReleaseRestorePoint
+        from ..models.rollback_crossed_release import RollbackCrossedRelease
         from ..models.secret_finding import SecretFinding
 
         d = dict(src_dict)
@@ -373,6 +400,24 @@ class Problem:
             bindings_check = UNSET
         else:
             bindings_check = BindingCheckReport.from_dict(_bindings_check)
+
+        _crossed_releases = d.pop("crossed_releases", UNSET)
+        crossed_releases: list[RollbackCrossedRelease] | Unset = UNSET
+        if _crossed_releases is not UNSET:
+            crossed_releases = []
+            for crossed_releases_item_data in _crossed_releases:
+                crossed_releases_item = RollbackCrossedRelease.from_dict(crossed_releases_item_data)
+
+                crossed_releases.append(crossed_releases_item)
+
+        _restore_points = d.pop("restore_points", UNSET)
+        restore_points: list[ReleaseRestorePoint] | Unset = UNSET
+        if _restore_points is not UNSET:
+            restore_points = []
+            for restore_points_item_data in _restore_points:
+                restore_points_item = ReleaseRestorePoint.from_dict(restore_points_item_data)
+
+                restore_points.append(restore_points_item)
 
         type_ = d.pop("type", UNSET)
 
@@ -478,6 +523,8 @@ class Problem:
             message_index=message_index,
             expected_sequence=expected_sequence,
             bindings_check=bindings_check,
+            crossed_releases=crossed_releases,
+            restore_points=restore_points,
             type_=type_,
             instance=instance,
             detail=detail,

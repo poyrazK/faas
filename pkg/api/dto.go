@@ -627,6 +627,11 @@ type CreateAppRequest struct {
 	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie,omitempty"`
 	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds,omitempty"`
+	// ReleasePolicy (ADR-1446): "safe" (default) or "immediate".
+	ReleasePolicy string `json:"release_policy,omitempty"`
+	// ReleaseProbePaths (ADR-1449): up to ReleaseProbePathsMax GET paths the
+	// default rollout probe checks instead of "/".
+	ReleaseProbePaths []string `json:"release_probe_paths,omitempty"`
 	// StreamingEnabled (issue #471) lets a customer opt out of
 	// streaming at creation time. nil → plan default (Free off,
 	// Hobby+ on). Explicit false on a Hobby/Pro/Scale plan = opt out
@@ -1060,6 +1065,12 @@ type UpdateAppRequest struct {
 	VersionAffinityCookie        *string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie *bool   `json:"version_affinity_managed_cookie,omitempty"`
 	RevisionPinTTLSeconds        *int    `json:"revision_pin_ttl_seconds,omitempty"`
+	// ReleasePolicy (ADR-1446) replaces the app's default rollout for
+	// production releases: "safe" or "immediate".
+	ReleasePolicy *string `json:"release_policy,omitempty"`
+	// ReleaseProbePaths (ADR-1449) replaces the paths the default rollout
+	// probe checks; an empty list restores "/".
+	ReleaseProbePaths *[]string `json:"release_probe_paths,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 / unset => scale to zero; >0 => keep at least this many
 	// RUNNING instances alive. Pro/Scale only — Free/Hobby get
@@ -2057,6 +2068,12 @@ type AppResponse struct {
 	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie"`
 	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds"`
+	// ReleasePolicy is the effective default rollout for production
+	// releases (ADR-1446): "safe" or "immediate".
+	ReleasePolicy string `json:"release_policy"`
+	// ReleaseProbePaths are the paths the default rollout probe checks; empty
+	// means "/" (ADR-1449).
+	ReleaseProbePaths []string `json:"release_probe_paths,omitempty"`
 	// AppProtocol (ADR-124) is the wire-protocol selector stored on
 	// the apps row. Always "http1" on a Free-or-above app that
 	// didn't set the field — the universal default. Set to "http2"
@@ -3535,11 +3552,23 @@ type DeploymentResponse struct {
 	// 'pending' isn't "" — the dashboard fills in from
 	// pkg/state.SerializeDeployment which always stamps the
 	// resolved value).
-	RolloutState          string                         `json:"rollout_state,omitempty"`
-	RolloutStartedAt      *time.Time                     `json:"rollout_started_at,omitempty"`
-	RolloutCompletedAt    *time.Time                     `json:"rollout_completed_at,omitempty"`
-	RolloutAbortedAt      *time.Time                     `json:"rollout_aborted_at,omitempty"`
-	RolloutAbortedReason  string                         `json:"rollout_aborted_reason,omitempty"`
+	RolloutState         string     `json:"rollout_state,omitempty"`
+	RolloutStartedAt     *time.Time `json:"rollout_started_at,omitempty"`
+	RolloutCompletedAt   *time.Time `json:"rollout_completed_at,omitempty"`
+	RolloutAbortedAt     *time.Time `json:"rollout_aborted_at,omitempty"`
+	RolloutAbortedReason string     `json:"rollout_aborted_reason,omitempty"`
+	// RolloutDecision is the evidence recorded with the latest rollout
+	// transition (ADR-1447). It explains an outcome only when its kind matches:
+	// an advance record for completion, an abort record for an abort.
+	RolloutDecision *RolloutDecision `json:"rollout_decision,omitempty"`
+	// RolloutHold is the newest hold recorded since the current canary step
+	// started, while the rollout is in flight (ADR-1447). Only single-deployment
+	// reads and the deployment summary fill it.
+	RolloutHold *RolloutDecision `json:"rollout_hold,omitempty"`
+	// Release is the deployment's release command run, for a deployment that
+	// declares one (ADR-1448). Only single-deployment reads and the
+	// deployment summary fill it.
+	Release               *DeploymentRelease             `json:"release,omitempty"`
 	RollbackOperation     *RollbackOperation             `json:"rollback_operation,omitempty"`
 	ServiceRolloutHandoff *ServiceRolloutHandoffResponse `json:"service_rollout_handoff,omitempty"`
 }
@@ -3706,6 +3735,9 @@ type AdvanceCanaryRequest struct {
 	ProfileGateRollback bool                 `json:"profile_gate_rollback,omitempty"`
 	ProfileGateOverride *ProfileGateOverride `json:"profile_gate_override,omitempty"`
 	ExpectedStep        int                  `json:"expected_step"`
+	// Decision is the circuit-breaker evidence for this advance (ADR-1447).
+	// Reserved for the lease-bound internal worker; public requests reject it.
+	Decision *RolloutDecision `json:"decision,omitempty"`
 }
 
 // CanaryAdvanceResponse carries the atomically advanced deployment and the
@@ -3960,6 +3992,12 @@ type RollbackRequest struct {
 	// set this; the API does not enforce role because the
 	// underlying endpoint already requires MFA + ScopesDeployWrite.
 	AlertRuleID *string `json:"alert_rule_id,omitempty"`
+
+	// AcknowledgeReleases lets the rollback proceed although release
+	// commands ran after its target last served (ADR-1448). Without it such a
+	// rollback is refused with rollback_crosses_release. Automated rollbacks
+	// never set it.
+	AcknowledgeReleases bool `json:"acknowledge_releases,omitempty"`
 }
 
 // CapabilityStatus is a customer-visible catalog row with the account's
@@ -12269,6 +12307,8 @@ type RecoverDeploymentRolloutRequest struct {
 	Action                          string `json:"action"`
 	Reason                          string `json:"reason,omitempty"`
 	ExpectedPredecessorDeploymentID string `json:"expected_predecessor_deployment_id"`
+	// Decision is the circuit-breaker evidence for the abort (ADR-1447).
+	Decision *RolloutDecision `json:"decision,omitempty"`
 }
 
 // RolloutTransitionResponse is the body returned by
