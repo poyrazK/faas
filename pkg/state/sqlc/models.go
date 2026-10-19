@@ -6654,6 +6654,8 @@ type JobRun struct {
 	OperationID                 pgtype.UUID
 	ExclusiveOperationID        pgtype.UUID
 	ExclusiveGeneration         pgtype.Int8
+	ProcessUser                 pgtype.Text
+	ProcessWorkdir              pgtype.Text
 }
 
 type JobRunAttachSession struct {

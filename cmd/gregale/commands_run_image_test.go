@@ -59,7 +59,8 @@ func TestParseImageRunArgsFollowsDockerSemantics(t *testing.T) {
 	}
 	_, _, restore := swapIO(t)
 	defer restore()
-	for _, bad := range [][]string{{"alpine"}, {"--image", "alpine", "-e", "NOEQUALS"}, {"--image", "alpine", "--timeout", "1500ms"}} {
+	// A bare image argument and `-e KEY` are valid since ADR-1790.
+	for _, bad := range [][]string{{}, {"--image", "alpine", "-e", "=x"}, {"--image", "alpine", "--timeout", "1500ms"}} {
 		if _, ok := parseImageRunArgs(bad); ok {
 			t.Errorf("parse(%q) accepted", bad)
 		}
