@@ -552,7 +552,8 @@ list:
 ]}
 ```
 
-- Prices are millicents per million tokens; EUR 0.15 is 15,000.
+- Prices are US-dollar millicents per million tokens; $0.15 is 15,000. Cost
+  limits and costs are in US dollars too (ADR 20261019123822).
 - The longest matching model prefix wins, and `*` matches any model.
 - An absent cached-input or cache-write price uses the input price.
 - A new list applies to calls settled from then on. Earlier lists stay, so
@@ -805,13 +806,13 @@ answer in text. Check `finish_reason` before reading `tool_calls`.
 
 See [ADR-994](../adr/994-ai-gateway-price-catalog-end-users-affinity.md).
 outboundd and apid embed `pkg/outbound/aiprices/catalog.json`: list prices for
-about 700 models across the six providers, in EUR millicents per million
-tokens. A call's model is priced from the integration's price list first, then
+about 850 models across the six providers, in US-dollar millicents per million
+tokens: the providers' list prices with no exchange rate (ADR 20261019123822). A call's model is priced from the integration's price list first, then
 from the catalog for the integration's provider. Reservations and settlement
 use the same price.
 
-- The file records its LiteLLM source commit, generation date and USD-to-EUR
-  rate. Prices are base-tier list prices; batch, priority, long-context tiers
+- The file records its LiteLLM source commit, generation date and currency.
+  Prices are base-tier list prices; batch, priority, long-context tiers
   and negotiated discounts are not modelled.
 - A dated or versioned model the catalog lacks is priced as its family
   (`gpt-4o-2024-08-06` as `gpt-4o`, `claude-sonnet-4-5@20250929` as
@@ -821,7 +822,7 @@ use the same price.
 - To refresh the catalog, download LiteLLM's
   `model_prices_and_context_window.json` at a pinned commit into its own
   directory, run `python3 -I scripts/gen_ai_price_catalog.py` with that
-  commit and the current ECB rate, and review the diff in a PR.
+  commit, and review the diff in a PR.
 
 ## Per-end-user limits
 

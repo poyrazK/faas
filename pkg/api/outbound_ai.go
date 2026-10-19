@@ -251,17 +251,25 @@ func (p OutboundAIContentPolicy) Valid() bool {
 }
 
 // OutboundAIPriceCatalogResponse is the built-in price catalog of one
-// provider (ADR-994): list prices converted from USD at USDPerEUR and
-// rounded up. It prices the models an integration's own list does not name;
-// a "*" entry in that list turns the catalog off for the integration.
+// provider (ADR-994): list prices in Currency, the billing currency, rounded
+// up (ADR 20261019123822). It prices the models an integration's own list
+// does not name; a "*" entry in that list turns the catalog off for the
+// integration.
 type OutboundAIPriceCatalogResponse struct {
-	AIProvider string                 `json:"ai_provider"`
-	Source     string                 `json:"source"`
-	Generated  string                 `json:"generated"`
-	USDPerEUR  string                 `json:"usd_per_eur"`
-	FXSource   string                 `json:"fx_source"`
-	Entries    []OutboundAIPriceEntry `json:"entries"`
+	AIProvider string `json:"ai_provider"`
+	Source     string `json:"source"`
+	Generated  string `json:"generated"`
+	Currency   string `json:"currency"`
+	// Deprecated: USDPerEUR is always "1" and FXSource names no rate since
+	// the catalog moved to US dollars; released SDKs still require them.
+	USDPerEUR string                 `json:"usd_per_eur"`
+	FXSource  string                 `json:"fx_source"`
+	Entries   []OutboundAIPriceEntry `json:"entries"`
 }
+
+// OutboundAIPriceCatalogFXSource is the deprecated fx_source of a US-dollar
+// catalog (ADR 20261019123822).
+const OutboundAIPriceCatalogFXSource = "none: list prices are in US dollars"
 
 // PutOutboundBindingAIBudgetRequest sets or clears an app's daily AI token
 // limit on one integration binding.

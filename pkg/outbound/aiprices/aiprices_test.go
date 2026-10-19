@@ -28,7 +28,7 @@ func TestDefaultCatalogCoversEveryProvider(t *testing.T) {
 			}
 		}
 	}
-	if catalog.Source == "" || catalog.USDPerEUR == "" || catalog.Generated == "" {
+	if catalog.Source == "" || catalog.Currency != api.BillingCurrency || catalog.Generated == "" {
 		t.Fatalf("catalog header = %+v", catalog)
 	}
 	for _, tc := range []struct {
@@ -63,7 +63,7 @@ func TestDefaultCatalogCoversEveryProvider(t *testing.T) {
 
 func TestLookup(t *testing.T) {
 	catalog, err := Parse([]byte(`{
-		"source": "test", "generated": "2026-10-12", "usd_per_eur": "1", "fx_source": "test",
+		"source": "test", "generated": "2026-10-12", "currency": "USD",
 		"fields": ["input", "cached_input", "cache_write", "output", "input_image", "output_image", "image", "audio_minute", "characters", "video_second", "web_search", "file_search", "code_session_gb", "input_audio", "cached_input_audio", "output_audio"],
 		"providers": {
 			"openai": {"gpt-4o": [1, 1, 1, 4], "gpt-4o-mini": [2, 2, 2, 8], "o1": [3, 3, 3, 12]},
@@ -97,7 +97,7 @@ func TestLookup(t *testing.T) {
 }
 
 func TestParseRejectsInvalidCatalogs(t *testing.T) {
-	header := `"source": "s", "generated": "g", "usd_per_eur": "1", "fx_source": "f", "fields": ["input", "cached_input", "cache_write", "output", "input_image", "output_image", "image", "audio_minute", "characters", "video_second", "web_search", "file_search", "code_session_gb", "input_audio", "cached_input_audio", "output_audio"]`
+	header := `"source": "s", "generated": "g", "currency": "USD", "fields": ["input", "cached_input", "cache_write", "output", "input_image", "output_image", "image", "audio_minute", "characters", "video_second", "web_search", "file_search", "code_session_gb", "input_audio", "cached_input_audio", "output_audio"]`
 	for name, body := range map[string]string{
 		"unknown provider": `{` + header + `, "providers": {"mistral": {"m": [1, 1, 1, 1]}}}`,
 		"negative price":   `{` + header + `, "providers": {"openai": {"m": [-1, 1, 1, 1]}}}`,
@@ -108,7 +108,8 @@ func TestParseRejectsInvalidCatalogs(t *testing.T) {
 		"video too dear":   `{` + header + `, "providers": {"gemini": {"veo": [0, 0, 0, 0, null, null, null, null, null, 10000001]}}}`,
 		"search too dear":  `{` + header + `, "providers": {"openai": {"m": [1, 1, 1, 1, null, null, null, null, null, null, 10000001]}}}`,
 		"audio too dear":   `{` + header + `, "providers": {"openai": {"m": [1, 1, 1, 1, null, null, null, null, null, null, null, null, null, 1000000001]}}}`,
-		"field order":      `{"source": "s", "generated": "g", "usd_per_eur": "1", "fx_source": "f", "fields": ["output"], "providers": {}}`,
+		"field order":      `{"source": "s", "generated": "g", "currency": "USD", "fields": ["output"], "providers": {}}`,
+		"euro catalog":     `{"source": "s", "generated": "g", "currency": "EUR", "fields": []}`,
 	} {
 		if _, err := Parse([]byte(body)); err == nil {
 			t.Errorf("%s: Parse accepted %s", name, body)

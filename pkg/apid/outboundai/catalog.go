@@ -28,7 +28,10 @@ func (s *Service) GetPriceCatalog(w http.ResponseWriter, r *http.Request, _ stat
 		}
 	}
 	out := api.OutboundAIPriceCatalogResponse{AIProvider: provider, Source: catalog.Source, Generated: catalog.Generated,
-		USDPerEUR: catalog.USDPerEUR, FXSource: catalog.FXSource, Entries: make([]api.OutboundAIPriceEntry, 0, len(entries))}
+		Currency: catalog.Currency,
+		// Released SDKs still require the deprecated fields (ADR 20261019123822).
+		USDPerEUR: "1", FXSource: api.OutboundAIPriceCatalogFXSource, //nolint:staticcheck // deprecated fields stay until a release removes them
+		Entries: make([]api.OutboundAIPriceEntry, 0, len(entries))}
 	for _, entry := range entries {
 		cached, write := entry.Price.CachedInput, entry.Price.CacheWrite
 		out.Entries = append(out.Entries, api.OutboundAIPriceEntry{ModelPrefix: entry.Model,

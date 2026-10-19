@@ -35,15 +35,15 @@
     },
     {
       "type": "timeseries",
-      "title": "Customer-priced AI cost (EUR per hour)",
+      "title": "Customer-priced AI cost (USD per hour)",
       "id": 3,
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
-      "description": "Settled cost from customer price lists, rounded up per call. Millicents per second times 3600 / 100000 gives euros per hour. ADR-990.",
+      "description": "Settled cost from customer price lists, rounded up per call. Millicents per second times 3600 / 100000 gives dollars per hour. ADR-990.",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"expr": "sum by (integration_id) (rate(outbound_ai_cost_millicents_total[15m])) * 3600 / 100000", "legendFormat": "{{integration_id}}", "refId": "A"}
       ],
-      "fieldConfig": {"defaults": {"unit": "currencyEUR"}, "overrides": []},
+      "fieldConfig": {"defaults": {"unit": "currencyUSD"}, "overrides": []},
       "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
     },
     {
@@ -342,15 +342,15 @@
     },
     {
       "type": "timeseries",
-      "title": "Provider cost the response cache avoided (EUR per hour)",
+      "title": "Provider cost the response cache avoided (USD per hour)",
       "id": 30,
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 100},
-      "description": "What the provider would have charged for the cache hits' usage at current prices. Millicents per second times 3600 / 100000 gives euros per hour. ADR-1440.",
+      "description": "What the provider would have charged for the cache hits' usage at current prices. Millicents per second times 3600 / 100000 gives dollars per hour. ADR-1440.",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"expr": "sum by (integration_id) (rate(outbound_ai_response_cache_saved_millicents_total[15m])) * 3600 / 100000", "legendFormat": "{{integration_id}}", "refId": "A"}
       ],
-      "fieldConfig": {"defaults": {"unit": "currencyEUR"}, "overrides": []},
+      "fieldConfig": {"defaults": {"unit": "currencyUSD"}, "overrides": []},
       "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
     },
     {

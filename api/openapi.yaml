@@ -5055,8 +5055,8 @@ paths:
       summary: Read the built-in AI price catalog of one provider.
       description: >-
         Requires MFA and read scope (ADR-994). The catalog prices the models an
-        integration's own price list does not name. Prices are list prices
-        converted to EUR at usd_per_eur and rounded up.
+        integration's own price list does not name. Prices are the providers' list
+        prices in US dollars, rounded up (ADR 20261019123822).
       parameters:
         - name: provider
           in: query
@@ -73582,13 +73582,14 @@ components:
       description: >-
         One provider's built-in AI price catalog (ADR-994), generated from LiteLLM's
         MIT-licensed price data. model_prefix holds the catalog model name.
-      required: [ai_provider, source, generated, usd_per_eur, fx_source, entries]
+      required: [ai_provider, source, generated, entries]
       properties:
         ai_provider: { type: string }
         source: { type: string, description: URL of the price data the catalog was generated from. }
         generated: { type: string, format: date }
-        usd_per_eur: { type: string, description: 'USD per EUR used for the conversion, as a decimal string.' }
-        fx_source: { type: string, description: Source and date of the exchange rate. }
+        currency: { type: string, description: 'ISO 4217 currency of every catalog price: the billing currency, USD. Absent from responses of releases before ADR 20261019123822.' }
+        usd_per_eur: { type: string, deprecated: true, description: 'Deprecated: always 1, since the catalog is in US dollars.' }
+        fx_source: { type: string, deprecated: true, description: 'Deprecated: names no exchange rate.' }
         entries:
           type: array
           items: { $ref: '#/components/schemas/OutboundAIPriceEntry' }

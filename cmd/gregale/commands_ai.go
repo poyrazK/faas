@@ -1,6 +1,6 @@
 // commands_ai.go — `gregale ai`: AI gateway settings, prices, per-app
 // limits, usage and fallback routes on managed outbound integrations
-// (ADR-988, ADR-989, ADR-990). Money is entered and shown in euros and sent
+// (ADR-988, ADR-989, ADR-990). Money is entered and shown in US dollars (ADR 20261019123822) and sent
 // to the API as integer millicents; no floating point is involved.
 
 package main
@@ -74,26 +74,26 @@ func boolToExit(failed bool) int {
 	return 0
 }
 
-// parseEuroMillicents reads a non-negative euro amount with at most five
+// parseUSDMillicents reads a non-negative US-dollar amount with at most five
 // decimals ("12.5" is 1,250,000 millicents) using integer arithmetic only.
-func parseEuroMillicents(value string) (int64, error) {
+func parseUSDMillicents(value string) (int64, error) {
 	whole, fraction, _ := strings.Cut(strings.TrimSpace(value), ".")
 	if whole == "" && fraction == "" || len(fraction) > 5 || strings.HasPrefix(whole, "-") || strings.HasPrefix(whole, "+") {
-		return 0, fmt.Errorf("%q is not a euro amount with at most 5 decimals", value)
+		return 0, fmt.Errorf("%q is not a dollar amount with at most 5 decimals", value)
 	}
 	if whole == "" {
 		whole = "0"
 	}
-	euros, err := strconv.ParseInt(whole, 10, 64)
-	if err != nil || euros > api.MaxOutboundAICostMillicents/100_000 {
-		return 0, fmt.Errorf("%q is not a supported euro amount", value)
+	dollars, err := strconv.ParseInt(whole, 10, 64)
+	if err != nil || dollars > api.MaxOutboundAICostMillicents/100_000 {
+		return 0, fmt.Errorf("%q is not a supported dollar amount", value)
 	}
 	fraction += strings.Repeat("0", 5-len(fraction))
 	fractionMillicents, err := strconv.ParseInt(fraction, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("%q is not a euro amount", value)
+		return 0, fmt.Errorf("%q is not a dollar amount", value)
 	}
-	return euros*100_000 + fractionMillicents, nil
+	return dollars*100_000 + fractionMillicents, nil
 }
 
 // optionalLimit applies a limit flag to a current value: "" keeps it,
@@ -136,8 +136,8 @@ func findOutboundIntegration(client *api.Client, integrationID string) (api.Outb
 }
 
 const aiPolicyUsage = "usage: gregale ai policy <integration-id> [--provider openai|anthropic|gemini|azure_openai|bedrock|vertex|off] " +
-	"[--daily-tokens N|none] [--daily-cost EUR|none] [--monthly-cost EUR|none] [--request-log on|off] " +
-	"[--request-log-content on|off] [--user-daily-tokens N|none] [--user-daily-cost EUR|none] [--log-export on|off] " +
+	"[--daily-tokens N|none] [--daily-cost USD|none] [--monthly-cost USD|none] [--request-log on|off] " +
+	"[--request-log-content on|off] [--user-daily-tokens N|none] [--user-daily-cost USD|none] [--log-export on|off] " +
 	"[--allow-unmetered on|off] [--prompt-cache on|off]"
 
 func cmdAIPolicy(args []string) int {
@@ -146,10 +146,10 @@ func cmdAIPolicy(args []string) int {
 	requestLog := fs.String("request-log", "", "log per-call metadata for 7 days: on or off")
 	requestLogContent := fs.String("request-log-content", "", "also keep the first 32 KiB of each logged call's bodies for 3 days: on or off")
 	dailyTokens := fs.String("daily-tokens", "", "UTC-day input+output token limit, or none")
-	dailyCost := fs.String("daily-cost", "", "UTC-day cost limit in EUR, or none")
-	monthlyCost := fs.String("monthly-cost", "", "calendar-month cost limit in EUR, or none")
+	dailyCost := fs.String("daily-cost", "", "UTC-day cost limit in USD, or none")
+	monthlyCost := fs.String("monthly-cost", "", "calendar-month cost limit in USD, or none")
 	userDailyTokens := fs.String("user-daily-tokens", "", "each end user's UTC-day token limit, or none")
-	userDailyCost := fs.String("user-daily-cost", "", "each end user's UTC-day cost limit in EUR, or none")
+	userDailyCost := fs.String("user-daily-cost", "", "each end user's UTC-day cost limit in USD, or none")
 	logExport := fs.String("log-export", "", "send each app call's metadata to the app's log drains: on or off")
 	allowUnmetered := fs.String("allow-unmetered", "", "let through calls the gateway cannot meter, outside the caps: on or off")
 	promptCache := fs.String("prompt-cache", "", "add prompt-cache breakpoints to Claude requests that carry none: on or off")
@@ -222,17 +222,17 @@ func cmdAIPolicy(args []string) int {
 		return printErr("Invalid --prompt-cache", errors.New("use on or off"))
 	}
 	if req.DailyTokenLimit, err = optionalLimit(*dailyTokens, req.DailyTokenLimit, parseTokenCount); err == nil {
-		if req.DailyCostLimitMillicents, err = optionalLimit(*dailyCost, req.DailyCostLimitMillicents, parseEuroMillicents); err == nil {
-			req.MonthlyCostLimitMillicents, err = optionalLimit(*monthlyCost, req.MonthlyCostLimitMillicents, parseEuroMillicents)
+		if req.DailyCostLimitMillicents, err = optionalLimit(*dailyCost, req.DailyCostLimitMillicents, parseUSDMillicents); err == nil {
+			req.MonthlyCostLimitMillicents, err = optionalLimit(*monthlyCost, req.MonthlyCostLimitMillicents, parseUSDMillicents)
 		}
 	}
 	if err == nil {
 		if req.UserDailyTokenLimit, err = optionalLimit(*userDailyTokens, req.UserDailyTokenLimit, parseTokenCount); err == nil {
-			req.UserDailyCostLimitMillicents, err = optionalLimit(*userDailyCost, req.UserDailyCostLimitMillicents, parseEuroMillicents)
+			req.UserDailyCostLimitMillicents, err = optionalLimit(*userDailyCost, req.UserDailyCostLimitMillicents, parseUSDMillicents)
 		}
 	}
 	if err != nil || !req.Valid() {
-		return printErr("Invalid AI policy", errors.Join(err, errors.New("limits, log export, allow-unmetered and prompt-cache need a provider; tokens 1..1e11, costs up to EUR 10,000,000; content capture needs the request log")))
+		return printErr("Invalid AI policy", errors.Join(err, errors.New("limits, log export, allow-unmetered and prompt-cache need a provider; tokens 1..1e11, costs up to USD 10,000,000; content capture needs the request log")))
 	}
 	if err := client.SetOutboundIntegrationAIPolicy(context.Background(), fs.Arg(0), req); err != nil {
 		return printErr("Could not update AI policy", err)

@@ -13,9 +13,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const aiPricesUsage = "usage: gregale ai prices <integration-id> | gregale ai prices set <integration-id> --price model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR] (repeatable)"
+const aiPricesUsage = "usage: gregale ai prices <integration-id> | gregale ai prices set <integration-id> --price model=PREFIX,input=USD,output=USD[,cached=USD][,cache-write=USD] (repeatable)"
 
-// cmdAIPrices shows or replaces a price list. Prices are EUR per million
+// cmdAIPrices shows or replaces a price list. Prices are USD per million
 // tokens; "model=*" prices any model without a longer matching prefix.
 func cmdAIPrices(args []string) int {
 	if len(args) > 0 && args[0] == "set" {
@@ -40,7 +40,7 @@ func cmdAIPrices(args []string) int {
 		_, _ = fmt.Fprintln(osStdout, "(no price list; known models are priced from the built-in catalog, see gregale ai catalog)")
 		return 0
 	}
-	_, _ = fmt.Fprintf(osStdout, "Effective from %s (EUR per million tokens)\n", list.EffectiveFrom.Format("2006-01-02 15:04 UTC"))
+	_, _ = fmt.Fprintf(osStdout, "Effective from %s (USD per million tokens)\n", list.EffectiveFrom.Format("2006-01-02 15:04 UTC"))
 	tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "MODEL PREFIX\tINPUT\tCACHED INPUT\tCACHE WRITE\tOUTPUT\tMEDIA")
 	for _, entry := range list.Entries {
@@ -88,8 +88,8 @@ func formatOptionalPrice(value *int64) string {
 func cmdAIPricesSet(args []string) int {
 	fs := newFlagSet("ai prices set", flag.ContinueOnError)
 	var prices stringListFlag
-	fs.Var(&prices, "price", "model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR][,input-image=EUR][,output-image=EUR] per million tokens, "+
-		"[,image=EUR] per image, [,audio-minute=EUR] per minute, [,characters=EUR] per million characters (repeatable; none clears)")
+	fs.Var(&prices, "price", "model=PREFIX,input=USD,output=USD[,cached=USD][,cache-write=USD][,input-image=USD][,output-image=USD] per million tokens, "+
+		"[,image=USD] per image, [,audio-minute=USD] per minute, [,characters=USD] per million characters (repeatable; none clears)")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 || len(prices) == 0 {
 		return printErr("Invalid ai prices set arguments", errors.New(aiPricesUsage))
 	}
@@ -105,7 +105,7 @@ func cmdAIPricesSet(args []string) int {
 		entries = append(entries, entry)
 	}
 	if !api.ValidOutboundAIPriceEntries(entries) {
-		return printErr("Invalid price list", errors.New("model prefixes must be unique and printable; at most 64 entries; prices up to EUR 10,000 per million tokens"))
+		return printErr("Invalid price list", errors.New("model prefixes must be unique and printable; at most 64 entries; prices up to USD 10,000 per million tokens"))
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -140,7 +140,7 @@ func parseAIPriceSpec(spec string) (api.OutboundAIPriceEntry, error) {
 			entry.ModelPrefix = value
 			continue
 		}
-		millicents, err := parseEuroMillicents(value)
+		millicents, err := parseUSDMillicents(value)
 		if err != nil {
 			return entry, err
 		}

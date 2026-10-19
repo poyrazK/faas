@@ -127,7 +127,7 @@ usage by tag, and cap one tag's daily cost:
 
 ```sh
 gregale ai tags <id> --key feature
-gregale ai tag-limits <id> --set feature=search:20     # EUR per UTC day
+gregale ai tag-limits <id> --set feature=search:20     # USD per UTC day
 gregale ai tags export <id> --from 2026-10-01 --to 2026-10-31 > ai-tags.csv
 ```
 
