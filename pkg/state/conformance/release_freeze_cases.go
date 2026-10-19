@@ -35,7 +35,7 @@ func testReleaseFreezes(t *testing.T, fx *Fixture) {
 	}
 	weekly, err := store.CreateReleaseFreeze(fx.Ctx, state.ReleaseFreeze{AccountID: acct, Kind: state.ReleaseFreezeWeekly,
 		WeeklyDays: 1 << int(time.Friday), WeeklyStartMinute: 16 * 60, WeeklyDurationMinutes: 8 * 60, TimeZone: "Europe/Istanbul",
-		Reason: "no Friday evening releases", CreatedBy: "user:conformance"}, 3, now)
+		Reason: "no Friday evening releases", CreatedBy: "user:conformance"}, 3, now.Add(time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func testReleaseFreezes(t *testing.T, fx *Fixture) {
 		t.Fatalf("weekly freeze = %+v", weekly)
 	}
 	policy, err := store.CreateReleaseFreeze(fx.Ctx, state.ReleaseFreeze{AccountID: acct, AppID: app, Kind: state.ReleaseFreezeAfterRollback,
-		AfterRollbackMinutes: 30, Reason: "settle after a rollback", CreatedBy: "user:conformance"}, 3, now)
+		AfterRollbackMinutes: 30, Reason: "settle after a rollback", CreatedBy: "user:conformance"}, 3, now.Add(2*time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func testReleaseFreezes(t *testing.T, fx *Fixture) {
 		t.Fatalf("after-rollback policy = %+v", policy)
 	}
 	if _, err := store.CreateReleaseFreeze(fx.Ctx, state.ReleaseFreeze{AccountID: acct, Kind: state.ReleaseFreezeWindow,
-		StartsAt: at(0), Reason: "one too many", CreatedBy: "user:conformance"}, 3, now); !errors.Is(err, state.ErrReleaseFreezeLimit) {
+		StartsAt: at(0), Reason: "one too many", CreatedBy: "user:conformance"}, 3, now.Add(3*time.Second)); !errors.Is(err, state.ErrReleaseFreezeLimit) {
 		t.Fatalf("fourth freeze err = %v, want ErrReleaseFreezeLimit", err)
 	}
 
