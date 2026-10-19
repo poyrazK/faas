@@ -7497,6 +7497,32 @@ WHERE i.id=$1 AND i.source='queue';
 -- name: CountProductionPendingInvocations :one
 SELECT count(*) FROM production_invocation_work WHERE app_id=$1 AND source=$2 AND state IN ('pending','dispatching');
 
+-- name: StampDefaultInvocationRetention :execrows
+-- ADR 20261019104819: finished rows whose producer set no horizon get the
+-- plan default from pkg/api/limits.go. Failed and dead-lettered rows keep at
+-- least the failure floor so DLQ replay and execution recovery still find
+-- them. The reaper prunes stamped rows once they are due.
+WITH plan_retention AS (
+    SELECT unnest(sqlc.arg(plans)::text[]) AS plan, unnest(sqlc.arg(retention_seconds)::bigint[]) AS seconds
+), batch AS (
+    SELECT i.id, coalesce(i.completed_at, i.created_at) AS settled_at,
+           CASE WHEN i.state IN ('failed', 'dead_letter') THEN greatest(r.seconds, sqlc.arg(failure_floor_seconds)::bigint)
+                ELSE r.seconds END AS seconds
+    FROM invocations i
+    LEFT JOIN accounts a ON a.id = i.account_id
+    LEFT JOIN orgs o ON o.id = i.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+    JOIN plan_retention r ON r.plan = coalesce(a.plan, o.plan)
+    WHERE i.result_retention_until IS NULL
+      AND i.state IN ('completed', 'failed', 'dead_letter', 'cancelled', 'superseded', 'expired')
+    ORDER BY i.created_at
+    LIMIT sqlc.arg(batch_limit)::integer
+    FOR UPDATE OF i SKIP LOCKED
+)
+UPDATE invocations
+SET result_retention_until = batch.settled_at + make_interval(secs => batch.seconds)
+FROM batch
+WHERE invocations.id = batch.id;
+
 -- name: CountProductionPendingQueueWorkInLane :one
 SELECT count(*) FROM production_invocation_work WHERE app_id=$1 AND source='queue' AND state='pending'
     AND work_policy_name=$2 AND work_key_digest=$3;
