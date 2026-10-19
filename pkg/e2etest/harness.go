@@ -95,6 +95,8 @@ type Harness struct {
 	ScheddSock string
 	VMMDPath   string
 	VMMDSock   string
+	// RealtimeSock is realtimed's socket when the harness boots it.
+	RealtimeSock string
 
 	// startedAt bounds which guest consoles belong to this harness: only files
 	// modified after it are dumped on failure (see DumpLogs).
@@ -247,11 +249,15 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *H
 	// gets the same key when schedd runs. This only writes the key: schedd
 	// itself still starts after vmmd (TestStart_BootsVMMDBeforeSchedd).
 	scheddVerifies := which&Schedd != 0
+	extraEnv = h.prepareRealtimed(which, extraEnv)
 	if which&APID != 0 {
 		if scheddVerifies {
 			h.ensureSignPub(t)
 		}
 		startAPID(t, h, bin, dbURL, extraEnv...)
+	}
+	if which&Realtimed != 0 {
+		startRealtimed(t, h, bin, extraEnv)
 	}
 
 	// Both socket paths are fixed up front: vmmd's env carries schedd's target
@@ -441,6 +447,9 @@ const (
 	// the per-test Unix socket. It lets CI exercise the durable drain without
 	// pretending a missing vmmd bridge is a successful customer response.
 	GatewaySynthStub
+	// Realtimed boots the managed realtime daemon after apid; apid and the
+	// gateways get its socket (ADR-20261019102657 acceptance).
+	Realtimed
 )
 
 // DeployWake is the daemon set the image deploy → snapshot → park → wake
@@ -773,6 +782,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	// for the head value and bump history.
 	pgtest.WaitForMigration(t, pool, e2eMigrationTarget, 30*time.Second)
 
+	extraEnv = h.prepareRealtimed(which, extraEnv)
 	if which&APID != 0 {
 		addr := freeTCPAddr(t)
 		// Every daemon gets its own free metrics port — see
@@ -820,6 +830,9 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 		// cold, concurrently loaded CI runner. Keep waiting for the
 		// listener while still failing promptly on a crashed process.
 		waitTCP(t, addr, 30*time.Second)
+	}
+	if which&Realtimed != 0 {
+		startRealtimed(t, h, bin, extraEnv)
 	}
 	if which&Schedd != 0 {
 		sockPath := filepath.Join(h.SockDir, "schedd.sock")
@@ -1188,6 +1201,48 @@ func (h *Harness) startAdditionalGatewayWithControl(nodeName string, extraEnv ..
 // startGatewaydPublic boots the public edge next to gatewayd-internal. It is
 // opt-in because most metal tests only need the internal HTTP path; the raw
 // TCP acceptance test needs the real gatewayd-public/tcpd composition.
+// prepareRealtimed fixes realtimed's socket before any daemon starts, so
+// apid and gatewayd-internal reach it.
+func (h *Harness) prepareRealtimed(which Which, extraEnv []string) []string {
+	if which&Realtimed == 0 {
+		return extraEnv
+	}
+	h.RealtimeSock = filepath.Join(h.SockDir, "realtimed.sock")
+	return append([]string{"FAAS_REALTIME_SOCKET=" + h.RealtimeSock}, extraEnv...)
+}
+
+// startRealtimed boots realtimed after apid: on a single box it reads
+// retained history, tickets and fleet state from apid's request-telemetry
+// socket. Callers pass the preview flags they exercise in extraEnv.
+func startRealtimed(t *testing.T, h *Harness, bin string, extraEnv []string) {
+	t.Helper()
+	outbox := filepath.Join(h.TmpDir, "realtime-outbox")
+	if err := os.MkdirAll(outbox, 0o700); err != nil {
+		t.Fatalf("e2etest: mkdir realtime outbox: %v", err)
+	}
+	env := []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + os.Getenv("HOME"),
+		"FAAS_REALTIME_SOCKET=" + h.RealtimeSock,
+		"FAAS_REALTIME_CALLBACK_OUTBOX=" + outbox,
+		"FAAS_REALTIME_HEALTH_LISTEN=" + freeTCPAddr(t),
+		"FAAS_REALTIME_HISTORY_TARGET=" + filepath.Join(h.SockDir, "request_telemetry.sock"),
+	}
+	env = append(env, extraEnv...)
+	h.procs = append(h.procs, startProc(t, bin, "realtimed", env))
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		if _, err := os.Stat(h.RealtimeSock); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			dumpProcs(t)
+			t.Fatalf("e2etest: realtimed did not create %s", h.RealtimeSock)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 func startGatewaydPublic(t *testing.T, h *Harness, bin, dbURL string, extraEnv []string) {
 	t.Helper()
 	if h.ScheddSock == "" {
@@ -1894,7 +1949,7 @@ func (h *Harness) RestartAPID() error {
 // Tier A7 (ADR-070) PR-A: the legacy 'gatewayd' binary is gone (its source
 // moved into cmd/gatewayd-internal/). gatewayd-public and the TCP bridge are
 // included so the raw-TCP metal acceptance can boot the production path.
-var DaemonBinaries = []string{"apid", "schedd", "vmmd", "imaged", "gatewayd-internal", "gatewayd-public", "meterd", "builderd", "vmmd-stream-bridge", "vmmd-raw-bridge", "vmmd-tcp-bridge", "vmmd-udp-bridge"}
+var DaemonBinaries = []string{"apid", "schedd", "vmmd", "imaged", "gatewayd-internal", "gatewayd-public", "meterd", "builderd", "realtimed", "vmmd-stream-bridge", "vmmd-raw-bridge", "vmmd-tcp-bridge", "vmmd-udp-bridge"}
 
 // StaticHelperBinaries are built alongside the daemons but with CGO_ENABLED=0,
 // because they execute inside a jailer chroot that contains no dynamic loader
