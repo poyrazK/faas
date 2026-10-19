@@ -1,7 +1,10 @@
+-- migration-compat: expand
 -- ADR-1198: an operation webhook binding either starts Operations (the
 -- ADR-1193 default) or delivers signals to waiting ones, matched by a
--- business subject read from the verified provider payload.
+-- business subject read from the verified provider payload. The previous
+-- release writes start-mode bindings only, which the defaults keep valid.
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 ALTER TABLE customer_operation_webhook_bindings ADD COLUMN IF NOT EXISTS mode text NOT NULL DEFAULT 'start';
 ALTER TABLE customer_operation_webhook_bindings ADD COLUMN IF NOT EXISTS subject_type text;
 ALTER TABLE customer_operation_webhook_bindings ADD COLUMN IF NOT EXISTS subject_id_from text;
