@@ -24,12 +24,13 @@ Operation of the same customer, admitted through the same path as
 `POST /v1/platform-tenant-self/customer-operations`, that also records its
 parent and the parent's key for it.
 
-**Who starts a child.** Only the parent's current execution, through
-`POST /v1/runtime/operations/{id}/children`, with the same workload assertion
-and attempt capability as progress reports. Customer and account credentials
-cannot start a child, and a stale attempt is refused. In this first step the
-parent is an HTTP Operation; job and workflow parents follow with their own
-runtime routes.
+**Who starts a child.** Only the parent's current execution. An HTTP parent
+uses `POST /v1/runtime/operations/{id}/children` with the same workload
+assertion and attempt capability as its progress reports; a job parent uses
+`POST /v1/runtime/job-operations/{id}/children` with its job run proof (run,
+instance, capability, generation). Customer and account credentials cannot
+start a child, and a stale attempt is refused. Workflow parents do not start
+children yet: a workflow step that waits on children is a later step.
 
 **What it may start.** An Operation the parent's deployment defines, named in
 the request (`operation`), for the parent's customer, with an input that
@@ -52,11 +53,13 @@ key conflicts.
 - A parent that settles leaves running children running; they settle on their
   own deadlines and budgets.
 - The parent reads its children's state with
-  `GET /v1/runtime/operations/{id}/children` and decides when it is done (fan-in
-  by polling; a workflow wait on children is a later step).
+  `GET /v1/runtime/operations/{id}/children` (or the job-operations route) and
+  decides when it is done (fan-in by polling; a workflow wait on children is a
+  later step).
 
 **Locks.** A child start takes the workflow admission lock when the child is a
-workflow, then the account, then the parent's execution, then admits the child
+workflow, then the account, then the parent's execution (its invocation, or its
+job run and task, the lock its cancellation takes), then admits the child
 in the same transaction: the account-then-execution order every other
 Operation write already uses.
 

@@ -19,12 +19,22 @@ type OperationChild struct {
 	Operation Operation
 }
 
-// OperationChildStart starts one child of the Operation the authority's
-// current attempt runs.
+// OperationChildStart starts one child of the Operation whose current
+// execution presents the proof: Authority for an HTTP parent, JobAuthority
+// for a job parent.
 type OperationChildStart struct {
-	ParentID  string
-	Authority OperationExecutionAuthority
-	Request   api.OperationChildRequest
+	ParentID     string
+	AccountID    string
+	Authority    OperationExecutionAuthority
+	JobAuthority *JobOperationAuthority
+	Request      api.OperationChildRequest
+}
+
+func (in OperationChildStart) accountID() string {
+	if in.AccountID != "" {
+		return in.AccountID
+	}
+	return in.Authority.AccountID
 }
 
 // OperationChildStore owns customer_operation_children.
@@ -61,8 +71,8 @@ func checkOperationChildParent(parent Operation, isChild bool) error {
 		return ErrOperationChildDepth
 	case parent.State.Terminal() || parent.CancellationRequested:
 		return ErrOperationNotActive
-	case parent.WorkflowRunID != "" || parent.JobRunID != "":
-		return fmt.Errorf("%w: only HTTP Operations start children", ErrInvalidArgument)
+	case parent.WorkflowRunID != "":
+		return fmt.Errorf("%w: workflow Operations do not start children", ErrInvalidArgument)
 	}
 	return nil
 }

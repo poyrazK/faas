@@ -22,15 +22,8 @@ func (m *MemStore) StartChildOperation(_ context.Context, in OperationChildStart
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	data := m.operationMemoryLocked()
-	parent, exists := data.operations[in.ParentID]
-	if !exists || parent.AccountID != in.Authority.AccountID {
-		return OperationChild{}, false, ErrNotFound
-	}
-	inv, exists := m.invocations[in.Authority.InvocationID]
-	if !exists {
-		return OperationChild{}, false, ErrNotFound
-	}
-	if err := ValidateOperationExecutionAuthority(parent, inv, in.Authority, time.Now().UTC()); err != nil {
+	parent, err := m.lockedChildParent(in)
+	if err != nil {
 		return OperationChild{}, false, err
 	}
 	_, isChild := data.childParents[parent.ID]
@@ -72,6 +65,27 @@ func (m *MemStore) StartChildOperation(_ context.Context, in OperationChildStart
 	data.children[parent.ID][in.Request.Key] = memOperationChild{parent: parent.ID, key: in.Request.Key, child: child.ID, createdAt: child.CreatedAt}
 	data.childParents[child.ID] = parent.ID
 	return OperationChild{Key: in.Request.Key, Operation: child}, true, nil
+}
+
+// lockedChildParent checks the presented proof against the parent's current
+// execution.
+func (m *MemStore) lockedChildParent(in OperationChildStart) (Operation, error) {
+	if in.JobAuthority != nil {
+		parent, _, err := m.jobOperationAuthorityLocked(in.ParentID, *in.JobAuthority)
+		if err == nil && parent.AccountID != in.accountID() {
+			err = ErrNotFound
+		}
+		return parent, err
+	}
+	parent, exists := m.operationMemoryLocked().operations[in.ParentID]
+	if !exists || parent.AccountID != in.accountID() {
+		return Operation{}, ErrNotFound
+	}
+	inv, exists := m.invocations[in.Authority.InvocationID]
+	if !exists {
+		return Operation{}, ErrNotFound
+	}
+	return parent, ValidateOperationExecutionAuthority(parent, inv, in.Authority, time.Now().UTC())
 }
 
 func (m *MemStore) OperationChildren(ctx context.Context, accountID, tenantID, parentID string) ([]OperationChild, error) {

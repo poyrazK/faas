@@ -56,16 +56,8 @@ func (s *Service) StartRuntimeChildOperation(w http.ResponseWriter, r *http.Requ
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized, "Workload identity required", "provide a current operation workload assertion"))
 		return
 	}
-	children, ok := s.childStore(w, authority.AccountID)
-	if !ok {
-		return
-	}
 	operations, ok := s.OperationStore(w)
 	if !ok {
-		return
-	}
-	var req api.OperationChildRequest
-	if !DecodeOperationBody(w, r, &req, api.OperationChildBodyMaxBytes) {
 		return
 	}
 	parent, err := operations.OperationByID(r.Context(), authority.AccountID, "", r.PathValue("id"))
@@ -73,7 +65,37 @@ func (s *Service) StartRuntimeChildOperation(w http.ResponseWriter, r *http.Requ
 		writeChildError(w, err)
 		return
 	}
-	def, err := operations.OperationDefinitionForDeployment(r.Context(), parent.AccountID, parent.AppID, parent.DeploymentID, req.Operation)
+	s.startChild(w, r, operations, parent, state.OperationChildStart{ParentID: parent.ID, AccountID: authority.AccountID, Authority: authority})
+}
+
+// StartRuntimeJobChildOperation lets a running job Operation start a child
+// with its job run proof.
+func (s *Service) StartRuntimeJobChildOperation(w http.ResponseWriter, r *http.Request) {
+	adapter, authority, ok := s.jobOperationRuntime(w, r)
+	if !ok {
+		return
+	}
+	operations, ok := s.OperationStore(w)
+	if !ok {
+		return
+	}
+	parent, exists, err := adapter.OperationForJobRun(r.Context(), authority.RunID)
+	if err != nil || !exists {
+		writeChildError(w, state.ErrNotFound)
+		return
+	}
+	s.startChild(w, r, operations, parent, state.OperationChildStart{ParentID: parent.ID, AccountID: parent.AccountID, JobAuthority: &authority})
+}
+
+func (s *Service) startChild(w http.ResponseWriter, r *http.Request, operations state.OperationStore, parent state.Operation, start state.OperationChildStart) {
+	children, ok := s.childStore(w, parent.AccountID)
+	if !ok {
+		return
+	}
+	if !DecodeOperationBody(w, r, &start.Request, api.OperationChildBodyMaxBytes) {
+		return
+	}
+	def, err := operations.OperationDefinitionForDeployment(r.Context(), parent.AccountID, parent.AppID, parent.DeploymentID, start.Request.Operation)
 	if err != nil {
 		writeChildError(w, err)
 		return
@@ -81,7 +103,7 @@ func (s *Service) StartRuntimeChildOperation(w http.ResponseWriter, r *http.Requ
 	if !s.operationAdmissionOpen(w, parent.AccountID, def.AppID, def.Scope, parent.PlatformTenantID, def.Spec) {
 		return
 	}
-	child, created, err := children.StartChildOperation(r.Context(), state.OperationChildStart{ParentID: parent.ID, Authority: authority, Request: req})
+	child, created, err := children.StartChildOperation(r.Context(), start)
 	if err != nil {
 		writeChildError(w, err)
 		return
@@ -102,6 +124,23 @@ func (s *Service) ListRuntimeOperationChildren(w http.ResponseWriter, r *http.Re
 		return
 	}
 	children, ok := s.childStore(w, authority.AccountID)
+	if ok {
+		s.writeChildren(w, r, children, parent.AccountID, "", parent.ID)
+	}
+}
+
+// ListRuntimeJobOperationChildren lets the job parent read its children.
+func (s *Service) ListRuntimeJobOperationChildren(w http.ResponseWriter, r *http.Request) {
+	adapter, authority, ok := s.jobOperationRuntime(w, r)
+	if !ok {
+		return
+	}
+	parent, exists, err := adapter.OperationForJobRun(r.Context(), authority.RunID)
+	if err != nil || !exists {
+		writeChildError(w, state.ErrNotFound)
+		return
+	}
+	children, ok := s.childStore(w, parent.AccountID)
 	if ok {
 		s.writeChildren(w, r, children, parent.AccountID, "", parent.ID)
 	}
