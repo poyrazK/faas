@@ -123,7 +123,7 @@ test('enabled providers get this app\'s callback, and settings report only publi
   assert.equal(config.gotrueEnv.GOTRUE_EXTERNAL_DISCORD_REDIRECT_URI, undefined)
   assert.deepEqual(config.settings, {
     app: 'shop.example.com', site_url: 'https://shop.example.com', redirect_urls: [],
-    signup: { enabled: false, autoconfirm: false }, providers: ['github', 'google'],
+    signup: { enabled: false, autoconfirm: false, access: 'open', allowed_domains: null, block_disposable: false, blocked_domains: 0 }, providers: ['github', 'google'],
     password: { min_length: 12, required: ['lower', 'digit', 'custom'], leaked_password_check: false },
     mfa: { totp: false, phone: false, recovery_codes: false }, email: { configured: false, provider: null, from: null }, events: { lifecycle: false },
     passkeys: { enabled: false, rp_id: 'shop-auth.gregale.app', origins: ['https://shop-auth.gregale.app'] },

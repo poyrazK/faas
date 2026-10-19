@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--mfa-phone on|off] [--recovery-codes on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sms-countries CODES|all] [--sso on|off] [--anonymous on|off] [--anonymous-retention DAYS|forever] [--identity-linking on|off] [--self-deletion on|off] [--org-claims on|off] [--oauth-server on|off] [--oauth-registration on|off] [--org-sso on|off]"
+	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--mfa-phone on|off] [--recovery-codes on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sms-countries CODES|all] [--sso on|off] [--anonymous on|off] [--anonymous-retention DAYS|forever] [--identity-linking on|off] [--self-deletion on|off] [--org-claims on|off] [--signup-domains DOMAINS|any] [--blocked-domains DOMAINS|none] [--block-disposable on|off] [--signup-access open|invite|waitlist] [--oauth-server on|off] [--oauth-registration on|off] [--org-sso on|off]"
 	authProvidersUsage = "usage: gregale auth providers list NAME | gregale auth providers enable NAME PROVIDER --client-id ID [--client-secret-stdin] [--url URL] | gregale auth providers disable NAME PROVIDER"
 )
 
@@ -66,6 +66,10 @@ func cmdAuthConfig(args []string) int {
 	identityLinking := fs.String("identity-linking", "", "on or off: let signed-in users link and unlink sign-in methods")
 	selfDeletion := fs.String("self-deletion", "", "on or off: let signed-in users delete their own accounts after a recent sign-in")
 	orgClaims := fs.String("org-claims", "", "on or off: put each session's active organization, role and permissions in its access tokens")
+	signupDomains := fs.String("signup-domains", "", "only addresses at these domains may sign up, comma-separated (acme.com,acme.io), or any")
+	blockedDomains := fs.String("blocked-domains", "", "refuse sign-ups from these domains and their subdomains, comma-separated, or none")
+	blockDisposable := fs.String("block-disposable", "", "on or off: refuse sign-ups with throwaway email addresses")
+	signupAccess := fs.String("signup-access", "", "who may sign up: open, invite (invited or approved addresses) or waitlist (refused sign-ups wait for approval)")
 	sms := authSMSFlags{
 		provider:  fs.String("sms", "", "phone sign-in by text message through your own SMS account: twilio, twilio_verify, messagebird, textlocal, vonage, or off"),
 		account:   fs.String("sms-account", "", "Twilio account SID or Vonage API key"),
@@ -97,7 +101,7 @@ func cmdAuthConfig(args []string) int {
 		field **bool
 	}{"sso": {sso, &change.SSO}, "org-sso": {orgSSO, &change.OrgSSO}, "oauth-server": {oauthServer, &change.OAuthServer}, "oauth-registration": {oauthRegistration, &change.OAuthRegistration},
 		"mfa-phone": {mfaPhone, &change.MFAPhone}, "recovery-codes": {recoveryCodes, &change.RecoveryCodes},
-		"anonymous": {anonymous, &change.Anonymous}, "identity-linking": {identityLinking, &change.IdentityLinking}, "self-deletion": {selfDeletion, &change.SelfDeletion}, "org-claims": {orgClaims, &change.OrgClaims}} {
+		"anonymous": {anonymous, &change.Anonymous}, "identity-linking": {identityLinking, &change.IdentityLinking}, "self-deletion": {selfDeletion, &change.SelfDeletion}, "org-claims": {orgClaims, &change.OrgClaims}, "block-disposable": {blockDisposable, &change.BlockDisposable}} {
 		if !given[name] {
 			continue
 		}
@@ -106,6 +110,22 @@ func cmdAuthConfig(args []string) int {
 			return printErr("Invalid Auth settings", err)
 		}
 		*target.field = &on
+	}
+	for name, target := range map[string]struct {
+		value, clear string
+		field        **[]string
+	}{"signup-domains": {*signupDomains, "any", &change.SignupAllowedDomains}, "blocked-domains": {*blockedDomains, "none", &change.SignupBlockedDomains}} {
+		if !given[name] {
+			continue
+		}
+		list := []string{}
+		if target.value != target.clear {
+			list = strings.Split(target.value, ",")
+		}
+		*target.field = &list
+	}
+	if given["signup-access"] {
+		change.SignupAccess = signupAccess
 	}
 	if given["anonymous-retention"] {
 		days, err := parseRetentionDays("anonymous-retention", *anonymousRetention)
@@ -434,6 +454,9 @@ func showAuthConfig(ctx context.Context, app api.AppResponse) int {
 	if settings.Signup.Enabled && settings.Signup.Autoconfirm {
 		signup += " (no email confirmation)"
 	}
+	if settings.Signup.Enabled {
+		signup += authSignupRestrictions(settings)
+	}
 	providers := append([]string{"email"}, settings.Providers...)
 	passwords := fmt.Sprintf("at least %d characters", settings.Password.MinLength)
 	if len(settings.Password.Required) > 0 {
@@ -600,4 +623,28 @@ func listAuthProviders(ctx context.Context, app api.AppResponse) int {
 		_, _ = fmt.Fprintln(osStdout, provider)
 	}
 	return 0
+}
+
+// authSignupRestrictions describes who may sign up beyond on or off.
+func authSignupRestrictions(settings authPublicSettings) string {
+	var parts []string
+	switch settings.Signup.Access {
+	case "invite":
+		parts = append(parts, "by invitation or approval")
+	case "waitlist":
+		parts = append(parts, "by invitation or approval, with a waitlist")
+	}
+	if len(settings.Signup.AllowedDomains) > 0 {
+		parts = append(parts, "only "+strings.Join(settings.Signup.AllowedDomains, ", "))
+	}
+	if n := settings.Signup.BlockedDomains; n > 0 {
+		parts = append(parts, fmt.Sprintf("%d blocked domain(s)", n))
+	}
+	if settings.Signup.BlockDisposable {
+		parts = append(parts, "no throwaway addresses")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "; " + strings.Join(parts, "; ")
 }

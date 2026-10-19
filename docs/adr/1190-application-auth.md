@@ -349,6 +349,21 @@ repeated addresses within a batch are skipped because concurrent creates of
 one address race inside GoTrue. Responses report rows by position and never
 echo addresses.
 
+Sign-up restrictions (`AUTH_SIGNUP_ALLOWED_DOMAINS`,
+`AUTH_SIGNUP_BLOCKED_DOMAINS`, `AUTH_SIGNUP_BLOCK_DISPOSABLE`,
+`AUTH_SIGNUP_ACCESS` open|invite|waitlist) are checked in GoTrue's
+before-user-created HTTP hook, which v2.197.0 calls outside its transactions
+for every self-service creation (sign-up, OTP, OAuth, SAML, anonymous, Web3
+and GoTrue's own invite) and not for admin-created users. The hook runs only
+while a restriction is set. Invitation and waitlist access read
+`gregale_auth.signup_access` (sql/0018) and pending organization
+invitations; a refused waitlist sign-up records a request, bounded by
+`AuthWaitlistMaxPending`, rather than adding a public waitlist endpoint that
+would need its own CAPTCHA and rate limits. GoTrue returns the hook's
+refusal as `msg`, so the hosted pages and SDK read a stable code from it.
+The hook fails closed (503). The throwaway list is vendored from the CC0
+disposable-email-domains project.
+
 ### Lifecycle events and activity
 
 `gregale auth config --events on` sets `AUTH_LIFECYCLE_EVENTS` and, if needed,

@@ -300,6 +300,58 @@ widget's token as `captchaToken` to `signUp`, `signInWithPassword`,
 `--captcha off` removes the keys. Changing CAPTCHA always takes all three
 values.
 
+### Who may sign up
+
+Limit sign-up by email domain, refuse throwaway addresses, or open sign-up
+only to invited and approved people, with an optional waitlist:
+
+```sh
+gregale auth config shop-auth --signup-domains acme.com,acme.io     # only these domains (any removes the list)
+gregale auth config shop-auth --blocked-domains spam.example        # refused, with their subdomains (none removes)
+gregale auth config shop-auth --block-disposable on                 # throwaway addresses refused
+gregale auth config shop-auth --signup-access waitlist              # open, invite or waitlist
+```
+
+The Auth app checks every self-service sign-up through GoTrue's
+before-user-created hook: email and phone, magic links and codes, OAuth
+providers, SSO, anonymous users and Web3. Users you create or import with the
+admin key are not checked. An allowed domain matches exactly (`eng.acme.com`
+is not `acme.com`); a blocked or throwaway domain also covers its
+subdomains. The throwaway list is the public-domain
+[disposable-email-domains](https://github.com/disposable-email-domains/disposable-email-domains)
+list, about 10,000 domains, updated with the Auth template. Phone and
+anonymous sign-ups carry no address, so an allowlist or restricted access
+refuses them.
+
+With `--signup-access invite`, an address may sign up when it holds a
+pending organization invitation or you approved it. With `waitlist`, a
+refused sign-up also joins a waitlist (at most 10,000 waiting addresses;
+GoTrue's sign-up rate limits and CAPTCHA stand in front of it). People
+signing in through an identity provider you registered (SSO) are not held
+back by either. Approve addresses, waiting or not:
+
+```sh
+gregale auth signups list shop-auth --status pending
+gregale auth signups approve shop-auth ada@example.com bob@example.com   # emails them; --no-email to skip
+gregale auth signups remove shop-auth eve@example.com
+```
+
+or from the dashboard's **Sign-ups** tab. With an email provider set up,
+approval sends the `signup_approved` email (its wording can be changed like
+the others) with a link to the hosted sign-up page. The admin API routes are
+`GET /admin/v1/signups?status=pending|approved|all`, `POST
+/admin/v1/signups/approve` `{emails, notify?}` and `DELETE
+/admin/v1/signups/{email}`.
+
+A refused sign-up fails with HTTP 403 and a stable code, which the hosted
+pages explain and `@gregale/auth` reports as `AuthError.code`:
+`email_domain_blocked`, `disposable_email`, `email_domain_not_allowed`,
+`signup_restricted` (no address), `signup_invitation_required`, `waitlisted`
+or `waitlist_full`. If the check itself cannot run, sign-up fails with 503
+`signup_check_unavailable` rather than let a restricted sign-up through.
+These rules apply when an account is created: an anonymous user who later
+adds an address, or a user who changes theirs, is not checked again.
+
 ### Other GoTrue settings
 
 Other `GOTRUE_EXTERNAL_*`, `GOTRUE_MFA_*`, `GOTRUE_PASSWORD_*`,

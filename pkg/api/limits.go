@@ -11925,6 +11925,13 @@ const (
 	AuthAdminBodyBytes = 1 << 20
 	AuthImportBatch    = 100
 	AuthAdminPageSize  = 100
+	// AuthSignupDomainsMax bounds each list of sign-up domains (allowed,
+	// blocked); AuthWaitlistMaxPending is the most waiting sign-up requests,
+	// after which new ones are refused as waitlist_full; AuthSignupApproveBatch
+	// is the most addresses one approval takes.
+	AuthSignupDomainsMax   = 100
+	AuthWaitlistMaxPending = 10000
+	AuthSignupApproveBatch = 100
 	// AuthReauthenticationSeconds is how recent a sign-in must be for a
 	// user to delete their own account.
 	AuthReauthenticationSeconds = 600

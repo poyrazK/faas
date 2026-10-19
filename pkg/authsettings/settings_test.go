@@ -3,6 +3,7 @@ package authsettings
 // adr: 1190
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -200,6 +201,28 @@ func TestSelfDeletion(t *testing.T) {
 		set, unset, err := Change{SelfDeletion: ptr(value)}.Secrets()
 		if err != nil || len(unset) != 0 || !reflect.DeepEqual(set, map[string]string{"AUTH_SELF_DELETION": want}) {
 			t.Fatalf("SelfDeletion %v: set %v unset %v err %v", value, set, unset, err)
+		}
+	}
+}
+
+func TestSignupRestrictions(t *testing.T) {
+	set, unset, err := Change{SignupAllowedDomains: &[]string{" Acme.com", "acme.io", "acme.com"}, SignupBlockedDomains: &[]string{}, BlockDisposable: ptr(true), SignupAccess: ptr("waitlist")}.Secrets()
+	want := map[string]string{"AUTH_SIGNUP_ALLOWED_DOMAINS": "acme.com,acme.io", "AUTH_SIGNUP_BLOCK_DISPOSABLE": "1", "AUTH_SIGNUP_ACCESS": "waitlist"}
+	if err != nil || !reflect.DeepEqual(set, want) || !reflect.DeepEqual(unset, []string{"AUTH_SIGNUP_BLOCKED_DOMAINS"}) {
+		t.Fatalf("set %v unset %v err %v", set, unset, err)
+	}
+	many := make([]string, 101)
+	for i := range many {
+		many[i] = fmt.Sprintf("d%d.com", i)
+	}
+	for name, change := range map[string]Change{
+		"unknown access":   {SignupAccess: ptr("closed")},
+		"not a domain":     {SignupAllowedDomains: &[]string{"acme"}},
+		"a domain with @":  {SignupBlockedDomains: &[]string{"@spam.com"}},
+		"too many domains": {SignupBlockedDomains: &many},
+	} {
+		if _, _, err := change.Secrets(); err == nil {
+			t.Errorf("%s accepted", name)
 		}
 	}
 }

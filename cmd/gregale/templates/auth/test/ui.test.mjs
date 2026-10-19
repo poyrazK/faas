@@ -27,6 +27,9 @@ test('puts the session in the fragment and reads GoTrue fragments', () => {
 test('explains known errors without echoing server text', () => {
   assert.equal(errorMessage({ error_code: 'invalid_credentials' }, 400), 'Wrong email or password.')
   assert.equal(errorMessage({ code: 'invitation_email_mismatch' }, 403), 'This invitation was sent to a different email address.')
+  // A sign-up hook's refusal arrives as GoTrue's msg; sentences there are not codes.
+  assert.equal(errorMessage({ code: 403, error_code: 'unknown', msg: 'waitlisted' }, 403), 'You are on the waitlist. We will email you when you can sign up.')
+  assert.equal(errorMessage({ code: 500, msg: 'Database error saving new user' }, 500), 'Something went wrong. Try again.')
   assert.equal(errorMessage({ msg: '<img src=x onerror=alert(1)>' }, 500), 'Something went wrong. Try again.')
   assert.equal(errorMessage(null, 429), 'Too many attempts. Wait a minute and try again.')
   assert.equal(errorMessage({ error_code: 'otp_expired' }, 403), 'That code is wrong or has expired. Request a new one.')

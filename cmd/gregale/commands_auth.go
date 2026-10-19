@@ -31,7 +31,7 @@ const (
 
 func cmdAuth(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale auth <create|status|config|providers|keys|admin-key|users|orgs|emails|import|activity|sso|oauth-clients>", "auth")
+		PrintUsage(os.Stderr, "usage: gregale auth <create|status|config|providers|keys|admin-key|users|orgs|signups|emails|import|activity|sso|oauth-clients>", "auth")
 		return 1
 	}
 	switch args[0] {
@@ -51,6 +51,8 @@ func cmdAuth(args []string) int {
 		return cmdAuthUsers(args[1:])
 	case "orgs":
 		return cmdAuthOrgs(args[1:])
+	case "signups":
+		return cmdAuthSignups(args[1:])
 	case "emails":
 		return cmdAuthEmails(args[1:])
 	case "import":
@@ -66,7 +68,7 @@ func cmdAuth(args []string) int {
 		// Gregale account; other CLIs use the same verbs for account login.
 		return printErr("Not an account command", errors.New("`gregale auth` manages application Auth; use `gregale "+args[0]+"` for your Gregale account"))
 	default:
-		return printErr("Unknown auth command", errors.New("use create, status, config, providers, keys, admin-key, users, orgs, emails, import, activity, sso or oauth-clients"))
+		return printErr("Unknown auth command", errors.New("use create, status, config, providers, keys, admin-key, users, orgs, signups, emails, import, activity, sso or oauth-clients"))
 	}
 }
 

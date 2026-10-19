@@ -351,8 +351,12 @@ type authPublicSettings struct {
 	SiteURL      string   `json:"site_url"`
 	RedirectURLs []string `json:"redirect_urls"`
 	Signup       struct {
-		Enabled     bool `json:"enabled"`
-		Autoconfirm bool `json:"autoconfirm"`
+		Enabled         bool     `json:"enabled"`
+		Autoconfirm     bool     `json:"autoconfirm"`
+		Access          string   `json:"access"`
+		AllowedDomains  []string `json:"allowed_domains"`
+		BlockDisposable bool     `json:"block_disposable"`
+		BlockedDomains  int      `json:"blocked_domains"`
 	} `json:"signup"`
 	Providers []string `json:"providers"`
 	Password  struct {

@@ -27,6 +27,13 @@ test('rejects unsafe Auth URLs', () => {
   assert.doesNotThrow(() => createAuthClient({ url: 'http://localhost:8080', fetch: async () => {} }))
 })
 
+test('a sign-up the Auth app refuses carries its code', async () => {
+  // GoTrue v2.197.0's body for a hook refusal.
+  const api = server({ 'POST /auth/v1/signup': () => [403, { code: 403, error_code: 'unknown', msg: 'waitlisted' }] })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await assert.rejects(auth.signUp({ email: 'a@example.test', password: 'pw' }), err => err.status === 403 && err.code === 'waitlisted')
+})
+
 test('signs in, stores the session and authenticates authz calls', async () => {
   const api = server({
     'POST /auth/v1/token': () => [200, tokens(1)],
