@@ -325,6 +325,7 @@ func (s *Service) applyUpdate(
 	manifest.AllowedServiceCallScopes = a.Workload.AllowedServiceCallScopes
 	manifest.Ports = portsWithInternal(manifest.Ports, a.Workload.InternalPorts)
 	manifest.BuildDockerfile = a.Workload.Dockerfile
+	manifest.DockerfileBuild = a.Workload.DockerfileBuild.Clone()
 	applyProjectImage(&manifest, a.Workload)
 	workloadClass := workloadClassFromScan(a.Workload)
 	params := state.UpdateAppParams{
@@ -405,6 +406,7 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 			PreAuthRateLimit: api.DefaultPreAuthRateLimit(plan),
 
 			BuildDockerfile: w.Dockerfile,
+			DockerfileBuild: w.DockerfileBuild.Clone(),
 		},
 		RequireAuthn:           plan.RequireAuthnDefault(),
 		PublicAuthMode:         plan.PublicAuthModeDefault(),
@@ -438,6 +440,7 @@ func ApplyScannedWorkloadToApp(app state.App, w reposcan.Workload, available map
 	app.Manifest.AllowedServiceCallScopes = w.AllowedServiceCallScopes
 	app.Manifest.Ports = portsWithInternal(app.Manifest.Ports, w.InternalPorts)
 	app.Manifest.BuildDockerfile = w.Dockerfile
+	app.Manifest.DockerfileBuild = w.DockerfileBuild.Clone()
 	applyProjectImage(&app.Manifest, w)
 	return app
 }

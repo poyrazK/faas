@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 // adr: 1790 — image runs boot with the image process and -u/-w overrides.
 
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -17,14 +18,14 @@ import (
 // contract unless it models a vmmd that predates ADR-1790.
 type imageProcessJobVMM struct {
 	ignoresImageProcess bool
-	spec                JobVmmSpec
+	spec                sched.JobVmmSpec
 	calls               int
 }
 
-func (v *imageProcessJobVMM) JobColdBoot(_ context.Context, spec JobVmmSpec) (JobVmmResult, error) {
+func (v *imageProcessJobVMM) JobColdBoot(_ context.Context, spec sched.JobVmmSpec) (sched.JobVmmResult, error) {
 	v.calls++
 	v.spec = spec
-	return JobVmmResult{InstanceID: spec.InstanceID, NodeID: spec.NodeID, Netns: "fc-job-image", HostIP: "10.100.0.28",
+	return sched.JobVmmResult{InstanceID: spec.InstanceID, NodeID: spec.NodeID, Netns: "fc-job-image", HostIP: "10.100.0.28",
 		GuestUID: 20028, ImageProcess: spec.ImageProcess && !v.ignoresImageProcess}, nil
 }
 
@@ -68,9 +69,9 @@ func TestEngineWakeJobPassesImageProcessToVMM(t *testing.T) {
 			store := state.NewMemStore()
 			acct, run := seedImageRun(t, store, tc.user, tc.workdir)
 			vmm := &imageProcessJobVMM{}
-			exits := &recordingJobExitWaiter{specs: make(chan JobExitSpec, 1)}
-			e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").
-				WithJobLeaser(AdaptJobLeaser(NewMemLeaser(nil))).WithJobVmmClient(vmm).WithJobExitWaiter(exits)
+			exits := &recordingJobExitWaiter{specs: make(chan sched.JobExitSpec, 1)}
+			e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0").
+				WithJobLeaser(sched.AdaptJobLeaser(sched.NewMemLeaser(nil))).WithJobVmmClient(vmm).WithJobExitWaiter(exits)
 			if _, err := e.WakeJob(context.Background(), acct.ID, run.ID, 0); err != nil {
 				t.Fatalf("WakeJob: %v", err)
 			}
@@ -89,11 +90,11 @@ func TestEngineWakeJobPassesImageProcessToVMM(t *testing.T) {
 
 func TestEngineWakeJobKeepsOrdinaryJobsOnTheGuestProcess(t *testing.T) {
 	store := state.NewMemStore()
-	acct, _, run := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
+	acct, _, run := sched.SeedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
 	vmm := &imageProcessJobVMM{}
-	exits := &recordingJobExitWaiter{specs: make(chan JobExitSpec, 1)}
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").
-		WithJobLeaser(AdaptJobLeaser(NewMemLeaser(nil))).WithJobVmmClient(vmm).WithJobExitWaiter(exits)
+	exits := &recordingJobExitWaiter{specs: make(chan sched.JobExitSpec, 1)}
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0").
+		WithJobLeaser(sched.AdaptJobLeaser(sched.NewMemLeaser(nil))).WithJobVmmClient(vmm).WithJobExitWaiter(exits)
 	if _, err := e.WakeJob(context.Background(), acct.ID, run.ID, 0); err != nil {
 		t.Fatalf("WakeJob: %v", err)
 	}
@@ -112,8 +113,8 @@ func TestEngineWakeJobFailsImageRunOnVMMWithoutImageProcess(t *testing.T) {
 	store := state.NewMemStore()
 	acct, run := seedImageRun(t, store, "", "")
 	vmm := &imageProcessJobVMM{ignoresImageProcess: true}
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").
-		WithJobLeaser(AdaptJobLeaser(NewMemLeaser(nil))).WithJobVmmClient(vmm)
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0").
+		WithJobLeaser(sched.AdaptJobLeaser(sched.NewMemLeaser(nil))).WithJobVmmClient(vmm)
 	_, err := e.WakeJob(context.Background(), acct.ID, run.ID, 0)
 	if err == nil || !strings.Contains(err.Error(), "image-process mismatch") {
 		t.Fatalf("WakeJob error = %v, want image-process mismatch", err)
