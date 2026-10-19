@@ -194,6 +194,7 @@ var pooledAcquireOK = map[string]string{
 	"pkg/livequery/checkpoint.go":                        "livequeryd's own pool to the customer database it serves (beside it in the database VM, or the compiler's direct URL), never the control-plane transaction pooler; the pinned connection only describes statements (unnamed Prepare) and reads catalogs",
 	"pkg/livequery/compiler.go":                          "livequeryd's own pool to the customer database it serves (beside it in the database VM, or the compiler's direct URL), never the control-plane transaction pooler; the pinned connection only describes statements (unnamed Prepare) and reads catalogs",
 	"pkg/livequery/engine.go":                            "livequeryd's own pool to the customer database it serves (beside it in the database VM, or the compiler's direct URL), never the control-plane transaction pooler; the pinned connection only describes statements (unnamed Prepare) and reads catalogs",
+	"pkg/datapipeline/engine.go":                         "the pipeline engine's pool to the customer's source database, never the control-plane pooler; the acquired connection runs one transaction (CREATE PUBLICATION + COMMENT) and holds no session state",
 }
 
 // TestSessionScopedAcquiresRouteThroughDirectPool is the gate.
