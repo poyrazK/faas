@@ -57,7 +57,6 @@ func TestPgCloneSchemaRegistryCoversMigratedApplicationTablesAndFailsBeforeReser
 		{Table: "mcp_readiness_incident_events", Code: "isolated_data_strategy_unavailable"},
 		{Table: "deployment_mcp_readiness_overrides", Code: "isolated_strategy_unavailable"},
 		{Table: "mcp_readiness_attention_actions", Code: "isolated_data_strategy_unavailable"},
-		{Table: "mcp_readiness_incident_attention", Code: "isolated_data_strategy_unavailable"},
 		{Table: "mcp_readiness_incidents", Code: "isolated_data_strategy_unavailable"},
 		{Table: "mcp_readiness_notification_actions", Code: "isolated_data_strategy_unavailable"},
 		{Table: "mcp_readiness_pagerduty_ack_events", Code: "isolated_data_strategy_unavailable"},
@@ -99,6 +98,9 @@ func TestPgCloneSchemaRegistryCoversMigratedApplicationTablesAndFailsBeforeReser
 	} {
 		assertCloneCoverageBlocker(t, coverage, want)
 	}
+	assertNoCloneCoverageBlocker(t, coverage, state.ProjectEnvironmentCloneCoverageBlocker{
+		Table: "mcp_readiness_incident_attention", Code: "isolated_data_strategy_unavailable",
+	})
 	rawCoverage, err := json.Marshal(coverage)
 	if err != nil || strings.Contains(string(rawCoverage), "must-not-be-in-coverage") {
 		t.Fatal("coverage read tenant values")
@@ -182,4 +184,13 @@ func assertCloneCoverageBlocker(t *testing.T, coverage state.ProjectEnvironmentC
 		}
 	}
 	t.Fatalf("missing blocker %+v in %+v", want, coverage.Blockers)
+}
+
+func assertNoCloneCoverageBlocker(t *testing.T, coverage state.ProjectEnvironmentCloneSchemaCoverage, want state.ProjectEnvironmentCloneCoverageBlocker) {
+	t.Helper()
+	for _, actual := range coverage.Blockers {
+		if actual == want {
+			t.Fatalf("unexpected blocker %+v in %+v", want, coverage.Blockers)
+		}
+	}
 }
