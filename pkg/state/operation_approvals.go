@@ -38,6 +38,9 @@ type OperationApprovalInput struct {
 	Decision           string
 	Comment            string
 	Actor              api.OperationApprovalActor
+	// Input is the approver's form input (ADR-20261019001500); only apid's
+	// gated decision path sets it.
+	Input json.RawMessage
 }
 
 // OperationApprovalStore records approval decisions for waiting operations.
@@ -48,7 +51,8 @@ type OperationApprovalStore interface {
 func validateOperationApproval(in OperationApprovalInput) error {
 	if in.ExpectedGeneration < 1 || !operationApprovalStep.MatchString(in.Step) || len(in.Comment) > api.OperationApprovalCommentMaxBytes ||
 		in.Decision != api.OperationApprovalApproved && in.Decision != api.OperationApprovalRejected ||
-		in.ApproverKind != api.OperationApproverAccount && in.ApproverKind != api.OperationApproverCustomer || in.Actor.Kind != in.ApproverKind {
+		in.ApproverKind != api.OperationApproverAccount && in.ApproverKind != api.OperationApproverCustomer || in.Actor.Kind != in.ApproverKind ||
+		len(in.Input) > api.OperationApprovalInputMaxBytes {
 		return ErrInvalidArgument
 	}
 	return nil
@@ -57,6 +61,10 @@ func validateOperationApproval(in OperationApprovalInput) error {
 // operationApprovalPayload is written only by this path; generic callback
 // completion is refused for operation-linked runs, so it cannot be forged.
 func operationApprovalPayload(in OperationApprovalInput) json.RawMessage {
+	if len(in.Input) > 0 {
+		raw, _ := json.Marshal(api.OperationApprovalInputPayload{Approval: api.OperationApprovalInputDecision{Step: in.Step, Decision: in.Decision, Actor: in.Actor, Comment: in.Comment, Input: in.Input}})
+		return raw
+	}
 	raw, _ := json.Marshal(api.OperationApprovalPayload{Approval: api.OperationApprovalDecision{Step: in.Step, Decision: in.Decision, Actor: in.Actor, Comment: in.Comment}})
 	return raw
 }
@@ -148,6 +156,13 @@ func (s *PgStore) DecideOperationApproval(ctx context.Context, in OperationAppro
 	if err := checkOperationApproval(op, def, in, true, now); err != nil {
 		return Operation{}, err
 	}
+	form, err := operationApprovalFormTx(ctx, tx, op.AccountID, def, in.Step)
+	if err != nil {
+		return Operation{}, err
+	}
+	if err := checkOperationApprovalInput(form, in, op.PlanLimits); err != nil {
+		return Operation{}, err
+	}
 	row, err := q.ReadCustomerOperationWorkflowRun(ctx, tx, runID)
 	if err != nil {
 		return Operation{}, err
@@ -198,6 +213,9 @@ func (m *MemStore) DecideOperationApproval(_ context.Context, in OperationApprov
 	}
 	now := time.Now().UTC()
 	if err := checkOperationApproval(op, def, in, true, now); err != nil {
+		return Operation{}, err
+	}
+	if err := checkOperationApprovalInput(m.operationApprovalFormLocked(op.AccountID, def, in.Step), in, op.PlanLimits); err != nil {
 		return Operation{}, err
 	}
 	run := m.workflowRuns[op.WorkflowRunID]

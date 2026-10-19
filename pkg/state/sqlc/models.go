@@ -1929,6 +1929,19 @@ type CustomerOperation struct {
 	DeadlineAt          pgtype.Timestamptz
 }
 
+type CustomerOperationApprovalForm struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	Scope       string
+	Operation   string
+	Step        string
+	InputSchema []byte
+	Required    bool
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type CustomerOperationAttemptInstance struct {
 	OperationID pgtype.UUID
 	Generation  int32
