@@ -28,6 +28,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -163,11 +165,12 @@ func legacyAccount(ctx context.Context, pool *pgxpool.Pool, email string, plan a
 }
 
 // personalOrgSQL gives account $1 its personal org and owner membership,
-// unless it has one, as 00105_personal_org_backfill.sql does. Since #4882 a
+// unless it has one, as 00105_personal_org_backfill.sql does (the slug hashes
+// the whole id, since fixture ids often share their leading digits). Since #4882 a
 // project or other owned resource of the account requires it.
 const personalOrgSQL = `WITH personal AS (
 	INSERT INTO orgs(id,slug,name,personal_org,personal_owner_account_id,plan,status,created_at,updated_at)
-	SELECT gen_random_uuid(),'u-'||substring(replace(a.id::text,'-','') from 1 for 12),'Personal',true,a.id,a.plan,a.status,a.created_at,now()
+	SELECT gen_random_uuid(),'u-'||substring(md5(a.id::text) from 1 for 30),'Personal',true,a.id,a.plan,a.status,a.created_at,now()
 	FROM accounts a WHERE a.id=$1 AND NOT EXISTS (SELECT 1 FROM orgs o WHERE o.personal_org AND o.personal_owner_account_id=a.id)
 	RETURNING id)
 INSERT INTO org_memberships(org_id,account_id,role) SELECT id,$1,'owner' FROM personal`
@@ -189,3 +192,16 @@ func legacyPersonalOrg(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ac
 // leaves them (and the personal org they bind) in place.
 const deleteAccountSQL = `WITH namespace AS (DELETE FROM resource_namespaces WHERE id=$1)
 DELETE FROM accounts WHERE id=$1`
+
+// openMigrated returns a fully migrated pool. pgtest.OpenMigrated clones the
+// migrated template only with FAAS_PGTEST_TEMPLATE_DATABASE set; the nightly
+// migration history job runs without it and gets an empty schema, so migrate
+// here (a no-op on a template clone).
+func openMigrated(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(t.Context(), pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	return pool
+}

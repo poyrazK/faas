@@ -10,13 +10,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestImagePreparationPhaseTimingMigration(t *testing.T) {
 	ctx := t.Context()
-	pool := pgtest.OpenMigrated(t)
+	pool := openMigrated(t)
 	store := state.NewPgStore(pool)
 	acct, err := store.CreateAccount(ctx, "phase-timing@example.com", api.PlanPro)
 	if err != nil {
