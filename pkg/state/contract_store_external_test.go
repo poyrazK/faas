@@ -15,7 +15,7 @@ import (
 // a package declares and converts to, so the 66 Store-sized interfaces this replaced made this
 // test compile peak at 4.9 GB of heap instead of 1.5 GB (ADR-982).
 type contractTestStore interface {
-	state.Store
+	state.Store // teststorecheck:allow the one Store-sized interface the contracts alias
 	cloneFlagFixtureStore
 	projectEnvironmentQualificationStore
 	state.AccountAbuseHoldStore

@@ -20,6 +20,9 @@ func (m *MemStore) RuntimeAppEnvForDeployment(_ context.Context, accountID, appI
 		return RuntimeAppEnvSnapshot{}, err
 	}
 	owner.Values = m.runtimeAppEnvRowsLocked(owner)
+	if owner.Inherited, err = m.inheritedProjectEnvLocked(owner); err != nil {
+		return RuntimeAppEnvSnapshot{}, err
+	}
 	return owner, nil
 }
 

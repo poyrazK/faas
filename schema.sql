@@ -20213,6 +20213,63 @@ $$;
 
 
 --
+-- Name: project_environment_config_env(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.project_environment_config_env(config jsonb) RETURNS jsonb
+    LANGUAGE sql IMMUTABLE
+    AS $_$
+    SELECT coalesce(jsonb_object_agg(e.key, e.value), '{}'::jsonb)
+      FROM jsonb_each(CASE WHEN jsonb_typeof(config) = 'object' THEN config ELSE '{}'::jsonb END) e
+     WHERE e.key ~ '^[A-Z][A-Z0-9_]*$' AND length(e.key) <= 128
+       AND jsonb_typeof(e.value) IN ('string', 'number', 'boolean');
+$_$;
+
+
+--
+-- Name: project_environment_config_runtime_change(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.project_environment_config_runtime_change() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    previous jsonb;
+BEGIN
+    SELECT c.config_json INTO previous
+      FROM project_environment_config_versions c
+     WHERE c.project_id = NEW.project_id AND c.environment_slug = NEW.environment_slug
+       AND c.version < NEW.version
+     ORDER BY c.version DESC
+     LIMIT 1;
+    IF project_environment_config_env(previous) = project_environment_config_env(NEW.config_json) THEN
+        RETURN NULL;
+    END IF;
+    -- The default scope reads production (workloadEnvironmentSlug).
+    WITH member AS (
+        SELECT a.id FROM apps a
+         WHERE a.project_id = NEW.project_id AND a.account_id = NEW.account_id AND a.status <> 'deleted'
+    ), scopes AS (
+        SELECT unnest(CASE WHEN NEW.environment_slug = 'production'
+            THEN ARRAY['production', 'default'] ELSE ARRAY[NEW.environment_slug] END) AS scope
+    ), stamped AS (
+        INSERT INTO app_runtime_config_scope_changes (app_id, scope, changed_at)
+        SELECT member.id, scopes.scope, clock_timestamp() FROM member, scopes
+        ON CONFLICT (app_id, scope) DO UPDATE
+            SET changed_at = greatest(app_runtime_config_scope_changes.changed_at, excluded.changed_at)
+        RETURNING app_id, scope, changed_at
+    )
+    UPDATE snapshots SET stale = true
+      FROM deployments d, stamped
+     WHERE snapshots.deployment_id = d.id AND d.app_id = stamped.app_id
+       AND coalesce(nullif(d.scope, ''), 'default') = stamped.scope
+       AND NOT snapshots.stale AND snapshots.created_at <= stamped.changed_at;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: project_event_routing_backlog_recipient(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -74569,6 +74626,13 @@ CREATE TRIGGER private_network_set_updated_at_trg BEFORE UPDATE ON public.privat
 --
 
 CREATE TRIGGER project_deactivation_receipt_identity BEFORE INSERT OR UPDATE ON public.project_release_sets FOR EACH ROW EXECUTE FUNCTION public.guard_project_deactivation_receipt();
+
+
+--
+-- Name: project_environment_config_versions project_environment_config_runtime_change; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_environment_config_runtime_change AFTER INSERT ON public.project_environment_config_versions FOR EACH ROW EXECUTE FUNCTION public.project_environment_config_runtime_change();
 
 
 --

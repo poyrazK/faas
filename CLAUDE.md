@@ -29,6 +29,7 @@ make test-changed   # vet + test only what your diff affects (ci-light's selecti
 make test-metal     # integration tests tagged //go:build metal — needs KVM + root
 make leakcheck      # asserts zero leaked netns/TAPs/jail uids/cgroups after tests
 make lint           # golangci-lint + custom checks (see Conventions)
+make lint-changed   # golangci-lint only the packages your diff touches + teststorecheck; use before a PR
 make native-m9-acceptance # guarded two-node failure-safe acceptance on native x86_64
 ```
 
@@ -191,4 +192,7 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
   parameter type): the compiler generates a wrapper for every method of every interface a package
   declares and converts to, ~10 MB per Store-sized interface. In `pkg/state` contract tests, alias
   the shared one (`type fooTestStore = contractTestStore`) and add any new optional store
-  interface to `contractTestStore`.
+  interface to `contractTestStore`. `scripts/ci/teststorecheck` (ci-light, `make lint-changed`)
+  fails a change that adds either kind; a fake that must keep an embedding, because it implements
+  an optional interface a statetest wrapper would hide, marks the field
+  `// teststorecheck:allow <reason>`.

@@ -7629,7 +7629,7 @@ FROM invocation_environment_queue_admissions p WHERE p.invocation_id=i.id AND i.
 
 -- name: ReadRuntimeAppEnvForDeployment :one
 WITH owner AS (
-    SELECT d.id, a.id AS app_id, a.account_id,
+    SELECT d.id, a.id AS app_id, a.account_id, a.project_id,
         COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
         COALESCE(bound.id::text,legacy.id::text,'')::text AS environment_id
     FROM deployments d
@@ -7655,7 +7655,13 @@ WITH owner AS (
 )
 SELECT owner.scope, owner.environment_id,
     COALESCE((SELECT jsonb_agg(jsonb_build_object('key',v.key,'value',v.value,'created_at',v.created_at,'updated_at',v.updated_at) ORDER BY v.key)
-        FROM app_envs v WHERE v.account_id=owner.account_id AND v.app_id=owner.app_id AND v.scope=owner.scope),'[]'::jsonb)::jsonb AS values
+        FROM app_envs v WHERE v.account_id=owner.account_id AND v.app_id=owner.app_id AND v.scope=owner.scope),'[]'::jsonb)::jsonb AS values,
+    -- ADR-1136: the project environment configuration the deployment inherits.
+    COALESCE((SELECT jsonb_build_object('values',c.config_json,'created_at',c.created_at)
+        FROM project_environment_config_versions c
+        WHERE owner.project_id IS NOT NULL AND c.account_id=owner.account_id AND c.project_id=owner.project_id
+            AND c.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END
+        ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config
 FROM owner;
 
 -- name: LockRuntimeSecretEnvironment :one
@@ -7757,7 +7763,7 @@ WHERE o.app_id=sqlc.arg(app_id)::uuid AND o.scope=sqlc.arg(scope)::text AND o.ke
 
 -- name: ReadRuntimeAppValuesForDeployment :one
 WITH owner AS (
-    SELECT d.id, a.id AS app_id, a.account_id,
+    SELECT d.id, a.id AS app_id, a.account_id, a.project_id,
         COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
         COALESCE(bound.id::text,legacy.id::text,'')::text AS environment_id,
         d.environment_workload_runtime,d.override_env_secrets,d.sidecars,COALESCE(d.secret_reload_signal,'')::text AS reload_signal,
@@ -7801,7 +7807,13 @@ SELECT owner.scope,owner.environment_id,owner.environment_workload_runtime,owner
         'managed_object_storage_credential_id',s.managed_object_storage_credential_id) ORDER BY s.key)
         FROM app_secrets s WHERE s.account_id=owner.account_id AND s.app_id=owner.app_id AND s.scope=owner.scope),'[]'::jsonb)::jsonb AS secrets,
     COALESCE((SELECT jsonb_object_agg(signal.sidecar_name,signal.signal) FROM deployment_sidecar_secret_reload_signals signal
-        WHERE signal.deployment_id=owner.id),'{}'::jsonb)::jsonb AS reload_signals
+        WHERE signal.deployment_id=owner.id),'{}'::jsonb)::jsonb AS reload_signals,
+    -- ADR-1136: the project environment configuration the deployment inherits.
+    COALESCE((SELECT jsonb_build_object('values',c.config_json,'created_at',c.created_at)
+        FROM project_environment_config_versions c
+        WHERE owner.project_id IS NOT NULL AND c.account_id=owner.account_id AND c.project_id=owner.project_id
+            AND c.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END
+        ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config
 FROM owner;
 
 -- name: LockRuntimeConfigWorkloadSpec :many

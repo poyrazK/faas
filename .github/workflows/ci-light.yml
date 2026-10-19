@@ -470,6 +470,11 @@ jobs:
       # running: expand/contract, lock_timeout, no blocking index builds.
       - name: migration expand/contract lint
         run: python3 scripts/ci/check_migration_expand_contract.py --base "$LIGHT_DIFF_BASE"
+      # Test types must not embed a state store and test interfaces must not
+      # embed state.Store (CLAUDE.md, ADR-982): each regrows a test compile by
+      # tens of MB. Only this change's additions fail.
+      - name: test store embedding check
+        run: go run ./scripts/ci/teststorecheck -base "$LIGHT_DIFF_BASE"
       - name: migrations check (static)
         run: make migrations-check
       - name: select migration changes

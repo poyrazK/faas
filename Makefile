@@ -845,6 +845,10 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 	  echo "  interactive pass; the bash block above is the manual form."; \
 	  exit 0'
 
+.PHONY: lint-changed
+lint-changed: ## golangci-lint only what your change touches (ci-light's selection vs origin/main) + teststorecheck; BASE=<ref>, DRY_RUN=1
+	@GO=$(GO) bash scripts/lint-changed.sh
+
 .PHONY: lint
 lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check check-durable-entity-sdk-contract check-binding-runner-sync ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
 	@python3 scripts/ci/check_gosec_baseline.py
