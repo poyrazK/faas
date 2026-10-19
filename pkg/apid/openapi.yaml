@@ -97180,6 +97180,29 @@ components:
         tty:
           type: boolean
           description: "Give the interactive command a pseudo-terminal. Requires interactive."
+        user:
+          type: string
+          maxLength: 256
+          description: "ADR-1790: run as name|uid[:group|gid], resolved in the image's passwd and group files, instead of the image USER (docker run -u)."
+        workdir:
+          type: string
+          maxLength: 4096
+          description: "ADR-1790: absolute working directory instead of the image WORKDIR (docker run -w); created when missing."
+        registry_auth:
+          $ref: '#/components/schemas/ImageRunRegistryAuth'
+    ImageRunRegistryAuth:
+      description: "ADR-1790: credential for a private image's registry. apid stores it sealed on the image's runner job for that registry host, exactly as PUT /v1/jobs/{name}/registry-credentials does, and never returns it. Every run that supplies it refreshes it."
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          description: "Registry account or robot name for the image's registry."
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          description: "Registry password or access token; prefer a short-lived read-only token."
     ImageRunResponse:
       description: "Answer to POST /v1/image-runs. job names the runner job; run_id addresses /v1/jobs/{job}/runs/{run_id} once status is queued."
       type: object

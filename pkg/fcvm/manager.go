@@ -4009,6 +4009,9 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 		RunID:          req.RunID,
 		TaskIndex:      req.TaskIndex,
 		Interactive:    req.Interactive,
+		ImageProcess:   req.ImageProcess,
+		ProcessUser:    req.ProcessUser,
+		ProcessWorkdir: req.ProcessWorkdir,
 	}
 	if err = m.vmm.BootColdBootForJob(bootCtx, lease, spec); err != nil {
 		return nil, fmt.Errorf("manager: BootJob %s: vmm boot: %w", req.Instance, err)
@@ -4141,6 +4144,11 @@ type JobBootRequest struct {
 	LeaseToken       string
 	// Interactive holds the command until one client attaches (ADR-1330).
 	Interactive *JobInteractive
+	// ImageProcess, ProcessUser and ProcessWorkdir select the image's process
+	// configuration and its overrides (ADR-1790).
+	ImageProcess   bool
+	ProcessUser    string
+	ProcessWorkdir string
 }
 
 // Wake prefers snapshot restore with cold-boot fallback. Failed attempts unwind;
