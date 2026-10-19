@@ -1,5 +1,5 @@
 // adr: 640
-package sched
+package sched_test
 
 import (
 	"context"
@@ -9,20 +9,21 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type pinnedHandlerExecutor struct {
 	store           state.Store
 	deployments     []string
-	identities      []WorkflowStepIdentity
+	identities      []sched.WorkflowStepIdentity
 	checks, retries int
 }
 
 func (e *pinnedHandlerExecutor) ExecuteStep(context.Context, string, string, string, map[string]string, []byte, time.Duration) (int, []byte, error) {
 	return 0, nil, fmt.Errorf("unscoped execution must not be used")
 }
-func (e *pinnedHandlerExecutor) ExecuteWorkflowStep(ctx context.Context, appID string, identity WorkflowStepIdentity, path, method string, headers map[string]string, input []byte, timeout time.Duration, _ string, _ int64) (int, []byte, error) {
+func (e *pinnedHandlerExecutor) ExecuteWorkflowStep(ctx context.Context, appID string, identity sched.WorkflowStepIdentity, path, method string, headers map[string]string, input []byte, timeout time.Duration, _ string, _ int64) (int, []byte, error) {
 	_, version, err := state.ResolveInvocationVersion(ctx, e.store, state.Invocation{AppID: appID, Source: "workflow", WorkflowRunID: identity.RunID, PlatformTenantID: identity.PlatformTenantID})
 	if err != nil {
 		return 0, nil, err
@@ -75,7 +76,7 @@ func TestWorkflowDeploymentPinSurvivesConditionTimerLoopAndRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	executor := &pinnedHandlerExecutor{store: store}
-	if err := NewWorkflowOrchestrator(store, executor, nil, nil, nil).DispatchTick(ctx); err != nil {
+	if err := sched.NewWorkflowOrchestrator(store, executor, nil, nil, nil).DispatchTick(ctx); err != nil {
 		t.Fatal(err)
 	}
 	parked, _ := store.GetWorkflowRun(ctx, run.ID)
@@ -102,7 +103,7 @@ func TestWorkflowDeploymentPinSurvivesConditionTimerLoopAndRetry(t *testing.T) {
 		if delay := time.Until(current.ScheduledFor); delay > 0 {
 			time.Sleep(delay + 5*time.Millisecond)
 		}
-		if err := NewWorkflowOrchestrator(store, executor, nil, nil, nil).DispatchTick(ctx); err != nil {
+		if err := sched.NewWorkflowOrchestrator(store, executor, nil, nil, nil).DispatchTick(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -120,9 +121,9 @@ func TestWorkflowDeploymentPinSurvivesConditionTimerLoopAndRetry(t *testing.T) {
 func TestWorkflowDeploymentPinRejectsLegacyExecutor(t *testing.T) {
 	store := state.NewMemStore()
 	executor := &foreachExecutor{}
-	orchestrator := NewWorkflowOrchestrator(store, executor, nil, nil, nil)
+	orchestrator := sched.NewWorkflowOrchestrator(store, executor, nil, nil, nil)
 	run := &state.WorkflowRun{AppID: "app", DeploymentID: "pinned", ID: "run"}
-	if _, _, err := orchestrator.executeWorkflowHandler(t.Context(), run, "/handler", "POST", nil, nil, time.Second, "", 0); err == nil {
+	if _, _, err := orchestrator.ExecuteWorkflowHandler(t.Context(), run, "/handler", "POST", nil, nil, time.Second, "", 0); err == nil {
 		t.Fatal("pinned run used executor without durable identity")
 	}
 	if len(executor.inputs) != 0 {

@@ -2344,6 +2344,9 @@ func (e *Engine) ensureWake(ctx context.Context, appID, deploymentID string, wak
 	if err != nil {
 		return CoordOutcome{}, err
 	}
+	if err := e.checkFinancialBudgetAdmission(ctx, selected.app, selected.deployment.ID); err != nil {
+		return CoordOutcome{}, err
+	}
 	ctx = withWakeEnvironment(ctx, selected)
 	coordinatorKey := selected.coordinatorKey()
 	call, isLeader, err := e.wakeCoord.Enter(coordinatorKey, e.wakeFanoutForEnvironment(selected))
@@ -3023,6 +3026,10 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	}
 	environmentKey := runtimeEnvironmentAdmissionKey(scaling.Scope, scaling.EnvironmentID)
 	productionEnvironment := reaperProductionScope(scaling.Scope)
+	if err := e.checkFinancialBudgetAdmission(ctx, app, dep.ID); err != nil {
+		release()
+		return WakeResult{}, err
+	}
 	if err := securityQuarantineErr(dep); err != nil {
 		release()
 		return WakeResult{}, err
@@ -4217,6 +4224,10 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		Bookkeeping: bookkeeping,
 	})
 	tPublished := time.Now()
+	if errors.Is(publishErr, state.ErrFinancialBudgetHeld) {
+		cleanupErr := e.retireFinancialBudgetRuntime(ctx, state.Instance{ID: bootInput.insID, AppID: bootInput.appID, NodeID: bootInput.nodeID})
+		return WakeResult{}, errors.Join(publishErr, cleanupErr)
+	}
 	if errors.Is(publishErr, state.ErrConflict) {
 		if mode == string(state.InstanceModeMirror) {
 			_, cleanupCancel := e.cleanupFailedMirrorAdmission(ctx, bootInput)
@@ -4617,6 +4628,18 @@ func shouldPersistObservedClass(appType state.AppType, executionMode string, obs
 // dedicated cleanup goroutine in cmd/schedd instead of lying about
 // the context here.
 func (e *Engine) timedDestroy(ctx context.Context, nodeID, instanceID string, timeout time.Duration) error {
+	fields, _ := wire.FromContext(ctx)
+	if fields.AppID == "" || fields.WakeID == "" {
+		if ins, err := e.store.InstanceByID(ctx, instanceID); err == nil {
+			if fields.AppID == "" {
+				fields.AppID = ins.AppID
+			}
+			if fields.WakeID == "" {
+				fields.WakeID = ins.WakeID
+			}
+			ctx = wire.WithContext(ctx, fields)
+		}
+	}
 	destroyCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	return e.vmm.Destroy(destroyCtx, e.nodeForRoute(nodeID), instanceID)
@@ -6546,6 +6569,9 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	}
 	primed, err := e.publishOwnedRuntimeWithStandards(ctx, out, publication)
 	if err != nil {
+		if errors.Is(err, state.ErrFinancialBudgetHeld) {
+			return errors.Join(err, e.retireFinancialBudgetRuntime(ctx, ins))
+		}
 		// Best-effort destroy; same rationale as Wake above. Uses a
 		// detached context so a cancelled caller ctx doesn't make the
 		// destroy fire-and-forget (it would still need its own
@@ -7701,7 +7727,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 			}
 		}
 	}
-	return nil
+	return e.seedFinancialPreviewCommandLedger(ctx, apps)
 }
 
 // vmstateHostPathFor returns the deterministic host path the single-box

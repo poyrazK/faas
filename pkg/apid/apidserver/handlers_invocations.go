@@ -29,7 +29,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
-	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // --- decodeJSONLimit --------------------------------------------------------
@@ -407,19 +406,6 @@ func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Head
 	if work != nil && selection.Binding != nil && selection.Binding.DeploymentScope != "" {
 		return state.Invocation{}, "", api.NewProblem(http.StatusConflict, "queue_environment_work_policy_unavailable", "Scoped work policy unavailable", "application-shared work policies cannot manage an environment-owned queue")
 	}
-	n, err := s.store.CountPendingInvocations(ctx, app.ID, state.InvocationQueue)
-	if err != nil {
-		return state.Invocation{}, "", api.ErrCapacity("count queue")
-	}
-	if n >= limits.MaxQueueDepth {
-		replaceable, problem := s.replaceableQueueWorkCount(ctx, app, work)
-		if problem != nil {
-			return state.Invocation{}, "", problem
-		}
-		if n-replaceable >= limits.MaxQueueDepth {
-			return state.Invocation{}, "", api.ErrPlanQueueDepth(limits.MaxQueueDepth, n)
-		}
-	}
 	if problem := validateInvocationRetryPolicy(retryPolicy); problem != nil {
 		return state.Invocation{}, "", problem
 	}
@@ -468,6 +454,9 @@ func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Head
 		Headers:          traceHeaders,
 		DueAt:            time.Now().UTC(),
 		RetryPolicyJSON:  effectiveInvocationRetryPolicy(app, retryPolicy, limits.MaxQueueAttempts),
+		// The store counts and inserts under one app lock, so concurrent
+		// senders cannot overshoot; keep_latest replacement is net zero.
+		AdmissionMaxPending: limits.MaxQueueDepth,
 	}, "enqueue application message", work)
 	if versionProblem != nil {
 		return state.Invocation{}, "", versionProblem
@@ -493,43 +482,6 @@ func canonicalQueueFlagContext(raw string) (header, tenantID string, problem *ap
 		return "", "", api.ErrValidation("flag_context must be a valid Gregale Flags propagation envelope")
 	}
 	return canonical, propagated.CustomerID, nil
-}
-
-func (s *server) replaceableQueueWorkCount(ctx context.Context, app state.App, work *api.InvokeWork) (int, *api.Problem) {
-	if work == nil {
-		return 0, nil
-	}
-	policies, ok := s.store.(state.AppWorkPolicyStore)
-	if !ok {
-		return 0, api.ErrCapacity("work policy store unavailable")
-	}
-	record, err := policies.AppWorkPolicyByName(ctx, app.ID, work.Policy)
-	if errors.Is(err, state.ErrNotFound) {
-		return 0, api.ErrValidation("unknown work policy")
-	}
-	if err != nil {
-		return 0, api.ErrCapacity("lookup work policy")
-	}
-	if record.Policy.PendingUpdates != workpolicy.PendingKeepLatest {
-		return 0, nil
-	}
-	key, err := workpolicy.CanonicalScalar(work.Key)
-	if err != nil {
-		return 0, api.ErrValidation("work key must be a bounded string, number, or boolean")
-	}
-	digest, err := workpolicy.DigestKey(key)
-	if err != nil {
-		return 0, api.ErrValidation("invalid work key")
-	}
-	counter, ok := s.store.(state.PendingQueueWorkCounter)
-	if !ok {
-		return 0, api.ErrCapacity("queue work counter unavailable")
-	}
-	n, err := counter.PendingQueueWorkInLane(ctx, app.ID, record.Policy.Name, digest[:])
-	if err != nil {
-		return 0, api.ErrCapacity("count replaceable queue work")
-	}
-	return n, nil
 }
 
 // queueReceive long-polls on invocation_done scoped to this app; when
@@ -730,6 +682,9 @@ func (s *server) delayedTaskCreate(w http.ResponseWriter, r *http.Request, acct 
 		ResultRetentionUntil:   retentionForRequestAt(sched, req.RetentionSeconds, acct),
 		OnSuccessDestinationID: onSuccessDestination,
 		OnFailureDestinationID: onFailureDestination,
+		// The count above rejects early; the store re-checks under the app
+		// lock so concurrent creates cannot overshoot.
+		AdmissionMaxPending: limits.MaxDelayedTasksPerApp,
 	}, "enqueue delayed task", req.Work)
 	if versionProblem != nil {
 		api.WriteProblem(w, versionProblem)

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/issuetracker"
 )
@@ -72,36 +73,36 @@ func TestIssueTicketSyncPreviewPullRequiresDeploymentAndIsIdempotent(t *testing.
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	t.Setenv("GREGALE_GITHUB_TOKEN", "secret")
-	previousOut, previousJSON := osStdout, jsonOutput
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
 	var out bytes.Buffer
-	osStdout, jsonOutput = &out, true
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &out, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 	provider := &syncCLIProvider{status: issuetracker.Status{Provider: "github", URL: "https://github.com/owner/repo/issues/42", ID: "42", State: "resolved"}}
 	args := []string{"--app", "payments", "--issue", issueID, "--link", linkID, "--direction", "pull"}
-	if runIssueTicketSync(args, provider) != 0 {
+	if main.RunIssueTicketSync(args, provider) != 0 {
 		t.Fatal("preview failed")
 	}
-	var preview issueTicketSyncResult
+	var preview main.IssueTicketSyncResult
 	if err := json.Unmarshal(out.Bytes(), &preview); err != nil || !preview.NeedsDeployment || !preview.WouldChange || preview.Applied {
 		t.Fatal("preview lost required deployment", out.String(), err)
 	}
 	if actions != 0 || provider.writes != 0 {
 		t.Fatal("preview mutated state")
 	}
-	if runIssueTicketSync(append(append([]string{}, args...), "--apply"), provider) == 0 || actions != 0 {
+	if main.RunIssueTicketSync(append(append([]string{}, args...), "--apply"), provider) == 0 || actions != 0 {
 		t.Fatal("resolution applied without a deployment")
 	}
 	apply := append(append([]string{}, args...), "--apply", "--deployment", deploymentID)
-	if runIssueTicketSync(apply, provider) != 0 || actions != 1 || state != "resolved" {
+	if main.RunIssueTicketSync(apply, provider) != 0 || actions != 1 || state != "resolved" {
 		t.Fatal("pull failed to resolve")
 	}
-	if runIssueTicketSync(apply, provider) != 0 || actions != 1 {
+	if main.RunIssueTicketSync(apply, provider) != 0 || actions != 1 {
 		t.Fatal("unchanged lifecycle repeated an action")
 	}
 	state = "open"
 	provider.reads = 0
 	provider.changeOnRecheck = true
-	if runIssueTicketSync(apply, provider) == 0 || actions != 1 {
+	if main.RunIssueTicketSync(apply, provider) == 0 || actions != 1 {
 		t.Fatal("changed provider authority was pulled")
 	}
 	if linkPages < 6 || provider.writes != 0 {
@@ -137,22 +138,22 @@ func TestIssueTicketSyncPushRechecksGroupAndRefusesStaleSource(t *testing.T) {
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	t.Setenv("GREGALE_GITHUB_TOKEN", "secret")
-	previousOut, previousJSON := osStdout, jsonOutput
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
 	var out bytes.Buffer
-	osStdout, jsonOutput = &out, true
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &out, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 	provider := &syncCLIProvider{status: issuetracker.Status{Provider: "github", URL: "https://github.com/owner/repo/issues/42", ID: "42", State: "resolved"}}
 	args := []string{"--app", "payments", "--issue", issueID, "--link", linkID, "--direction", "push", "--apply"}
-	if runIssueTicketSync(args, provider) != 0 || provider.writes != 1 || provider.status.State != "open" {
+	if main.RunIssueTicketSync(args, provider) != 0 || provider.writes != 1 || provider.status.State != "open" {
 		t.Fatal("push did not reopen provider")
 	}
 	stale = true
 	reads = 0
 	provider.status.State = "resolved"
-	if runIssueTicketSync(args, provider) == 0 || provider.writes != 1 {
+	if main.RunIssueTicketSync(args, provider) == 0 || provider.writes != 1 {
 		t.Fatal("regrouped source was pushed")
 	}
-	if cmdIssues([]string{"tickets", "sync", "--app", "payments", "--issue", "invalid", "--link", linkID, "--direction", "push"}) == 0 {
+	if main.CmdIssues([]string{"tickets", "sync", "--app", "payments", "--issue", "invalid", "--link", linkID, "--direction", "push"}) == 0 {
 		t.Fatal("invalid sync IDs accepted")
 	}
 }
@@ -189,15 +190,15 @@ func TestIssueTicketSyncNativeKeepsCredentialsOnServer(t *testing.T) {
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	t.Setenv("GREGALE_GITHUB_TOKEN", "")
-	previousOut, previousJSON := osStdout, jsonOutput
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
 	var out bytes.Buffer
-	osStdout, jsonOutput = &out, true
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &out, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 	args := []string{"--app", "payments", "--issue", issueID, "--link", linkID, "--direction", "push", "--native", "--apply"}
-	if runIssueTicketSync(args, nil) != 0 || nativeWrites != 1 {
+	if main.RunIssueTicketSync(args, nil) != 0 || nativeWrites != 1 {
 		t.Fatal("native push required a local credential")
 	}
-	if runIssueTicketSync(append(args, "--token-env", "SHOULD_NOT_BE_READ"), nil) == 0 || nativeWrites != 1 {
+	if main.RunIssueTicketSync(append(args, "--token-env", "SHOULD_NOT_BE_READ"), nil) == 0 || nativeWrites != 1 {
 		t.Fatal("native mode accepted mixed credentials")
 	}
 }
@@ -252,38 +253,38 @@ func TestIssueTicketSyncNativeLinearPushPullAndPreviewFences(t *testing.T) {
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	t.Setenv("GREGALE_LINEAR_TOKEN", "")
-	previousOut, previousJSON := osStdout, jsonOutput
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
 	var out bytes.Buffer
-	osStdout, jsonOutput = &out, true
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &out, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 	base := []string{"--app", "payments", "--issue", issueID, "--link", linkID, "--native"}
 	push := append(append([]string{}, base...), "--direction", "push")
-	if code := runIssueTicketSync(push, nil); code != 0 || pushes != 0 {
+	if code := main.RunIssueTicketSync(push, nil); code != 0 || pushes != 0 {
 		t.Fatal("preview mutated")
 	}
-	if code := runIssueTicketSync(append(push, "--apply"), nil); code == 0 || pushes != 0 {
+	if code := main.RunIssueTicketSync(append(push, "--apply"), nil); code == 0 || pushes != 0 {
 		t.Fatal("implicit Linear state allowed")
 	}
-	if code := runIssueTicketSync(append(push, "--apply", "--linear-state", workflow), nil); code != 0 || pushes != 1 {
+	if code := main.RunIssueTicketSync(append(push, "--apply", "--linear-state", workflow), nil); code != 0 || pushes != 1 {
 		t.Fatal("native Linear push failed", code)
 	}
 	remote.Status.State = "resolved"
 	pull := append(append([]string{}, base...), "--direction", "pull", "--apply")
-	if code := runIssueTicketSync(pull, nil); code == 0 || actions != 0 {
+	if code := main.RunIssueTicketSync(pull, nil); code == 0 || actions != 0 {
 		t.Fatal("resolution omitted fixing deployment")
 	}
 	reads = 0
 	race = true
-	if code := runIssueTicketSync(append(pull, "--deployment", deployment), nil); code == 0 || actions != 0 {
+	if code := main.RunIssueTicketSync(append(pull, "--deployment", deployment), nil); code == 0 || actions != 0 {
 		t.Fatal("changed group resolved")
 	}
 	reads = 0
 	race = false
 	remote.GroupFingerprint = strings.Repeat("a", 64)
-	if code := runIssueTicketSync(append(pull, "--deployment", deployment), nil); code != 0 || actions != 1 {
+	if code := main.RunIssueTicketSync(append(pull, "--deployment", deployment), nil); code != 0 || actions != 1 {
 		t.Fatal("native Linear pull failed", code)
 	}
-	if code := runIssueTicketSync(append(push, "--token-env", "LOCAL"), nil); code == 0 || pushes != 1 {
+	if code := main.RunIssueTicketSync(append(push, "--token-env", "LOCAL"), nil); code == 0 || pushes != 1 {
 		t.Fatal("native Linear accepted local credential")
 	}
 }

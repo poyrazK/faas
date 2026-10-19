@@ -2706,6 +2706,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	retryBudget.WithObserver(deps.metrics)
 	defer func() { _ = retryBudget.Close() }()
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget)
+	if deps.pgStore != nil {
+		handler.WithFinancialBudgetAdmission(newFinancialBudgetAdmission(deps.pgStore))
+	}
 	if err := configureOperationRoutes(handler, deps); err != nil {
 		return fmt.Errorf("gatewayd-internal: %w", err)
 	}
@@ -3960,6 +3963,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Declared: newWakeAheadDeclared(pgStore, newServiceProxyResolver(pgStore), newServiceProxyAuthorizer(pgStore)),
 		})
 		serviceProxyConfig := gateway.ServiceProxyConfig{
+			AdmitRuntime:              financialBudgetServiceAdmission(pgStore),
 			APIMonetization:           deps.apiMonetization,
 			AdmitManagedAsync:         gateway.NewRehearsalAsyncAdmitter(pgStore),
 			Provider:                  serviceEndpointProvider,

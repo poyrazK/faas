@@ -1074,6 +1074,15 @@ const (
 	FinancialBudgetHistoryMax        = 100
 	FinancialBudgetSpecBytes         = 16384
 	FinancialBudgetOperationKeyBytes = 255
+	FinancialBudgetAlertBatch        = 32
+	FinancialBudgetAlertLease        = time.Minute
+	FinancialBudgetDeliveryInterval  = 30 * time.Second
+	FinancialBudgetAlertSendTimeout  = 20 * time.Second
+	FinancialBudgetAlertRetryBase    = time.Minute
+	FinancialBudgetAlertRetryMax     = time.Hour
+	FinancialBudgetAlertAttemptsMax  = 2147483647
+	FinancialBudgetResidentCountMax  = 2147483647
+	FinancialBudgetCommandClockGrace = 5 * time.Second
 	FinancialSourceIDBytes           = 512
 	FinancialAdjustmentActorBytes    = 256
 	FinancialAdjustmentReasonBytes   = 512
@@ -5718,6 +5727,31 @@ const (
 
 	// Metering (spec §1, §10).
 	OverageMillicentsPerGBHour = 1_000 // $0.01 per GB-RAM-hour (ADR-1430)
+	// ADR-566: strict compute reserves startup, execution, and bounded teardown.
+	// Strict egress credits are conservative interface-byte bounds, not invoice usage.
+	FinancialEgressMinimumCreditBytes = int64(4096)
+	FinancialEgressCreditBytes        = int64(8 * 1024 * 1024)
+	FinancialEgressPollInterval       = 250 * time.Millisecond
+	FinancialEgressFramingFactor      = int64(2)
+	FinancialEgressMinimumPacketBytes = 20
+	// Root bridge sockets reserve this mark bit; remaining bits identify the
+	// original output ifindex. Host policy rejects every other output device.
+	PublicForwardMarkFlag            = uint32(0x80000000)
+	PublicForwardIfIndexMax          = int(0x7fffffff)
+	FinancialComputeLeaseDuration    = 2 * time.Minute
+	FinancialComputeTeardownReserve  = 30 * time.Second
+	FinancialComputeRenewInterval    = 20 * time.Second
+	FinancialComputeRenewMargin      = 5 * time.Second
+	FinancialComputeAuthorityTimeout = 3 * time.Second
+	FinancialComputeOwnerHeartbeat   = 10 * time.Second
+	FinancialComputeInstanceBytes    = 128
+	FinancialComputeRAMMaxMB         = 131_072
+	FinancialComputeActiveMax        = 10_000
+	FinancialComputeQuantityMax      = int64(9007199254740991)
+	// Gateways reuse a warm-traffic budget decision this long. vmmd's local
+	// funded deadline, not this check, bounds strict spending.
+	FinancialBudgetAdmissionCacheTTL  = time.Second
+	FinancialBudgetAdmissionCacheSize = 10_000
 
 	// PreflightRateLimitPerHour bounds anonymous "would this run here" checks per
 	// client IP. The check is unauthenticated, so the ceiling exists to protect
@@ -11383,6 +11417,7 @@ const (
 	MCPWakeHistoryTimeMaxBytes                    = 64
 	WakeHistoryPageDefault                        = 20
 	WakeHistoryPageMax                            = 100
+	AccountTraceWakesMax                          = 32 // wakes one account trace lookup reads to show each request's restore
 	WakeHistoryCursorMaxBytes                     = 2048
 	MCPWakeHistoryCursorMaxBytes                  = 8192
 	MCPProfileFunctionsDefault                    = 10
@@ -11792,6 +11827,21 @@ const (
 	DataAPIRuntimeConnectionReportMaxBytes = 4096
 	DataAPIRuntimeConnectionReportTimeout  = 5 * time.Second
 	DataAPIRuntimeConnectionReportInterval = 15 * time.Second
+	// Owner usage telemetry (ADR-20261019102108): the runtime reports hourly
+	// deltas under workload identity. Owner-facing counts, never billing records.
+	DataAPIUsageReportMaxBytes  = 16 << 10
+	DataAPIUsageReportTimeout   = 5 * time.Second
+	DataAPIUsageReportInterval  = 15 * time.Second
+	DataAPIUsageReportMaxHours  = 48
+	DataAPIUsageMaxDelta        = 1_000_000_000_000
+	DataAPIUsageDedupWindow     = 48 * time.Hour
+	DataAPIUsageRetentionDays   = 90
+	DataAPIUsageQueryMaxDays    = 90
+	DataAPIUsageMonthlyCapMax   = 1_000_000_000_000
+	DataAPIUsagePruneBatchLimit = 1000
+	// A wall-clock jump this large against the monotonic clock means a
+	// snapshot restore: pending counts are dropped, not reported per instance.
+	DataAPIUsageRestoreJump = 5 * time.Second
 	// Operator capacity observations never run in customer request handling.
 	DataAPIConnectionCapacityTimeout     = 10 * time.Second
 	DataAPIConnectionCapacityLease       = 15 * time.Second
@@ -11803,6 +11853,21 @@ const (
 	DataAPIMaxRequestBytes               = 1 << 20
 	DataAPIMaxResponseBytes              = 16 << 20
 	DataAPIMaxOutputBytes                = 1 << 20
+	// Owner opt-ins (ADR 20261018170742): anonymous relation and function
+	// allowlist sizes and the subject a server-key request may act for.
+	DataAPIPublicReadMaxRelations   = 64
+	DataAPIPublicRPCMaxFunctions    = 64
+	DataAPIServerKeySubjectMaxBytes = 255
+	// Edge freshness for canonical anonymous reads, within the gateway cache cap.
+	DataAPIPublicReadMaxAgeSeconds = ResponseCacheMaxAgeMaxSeconds
+	// Per-slot server-key permissions: serialized size and allowlist entries.
+	DataAPIServerKeyPermissionsMaxBytes   = 4096
+	DataAPIServerKeyPermissionsMaxEntries = 64
+	// Single-app projects upload migrations beside the runtime; structural
+	// bounds only, inside the plan's source-archive limit.
+	DataAPISingleAppMigrationsMaxFiles = 4096
+	DataAPISingleAppMigrationsMaxBytes = 16 << 20
+	DataAPIReleaseCommandMaxBytes      = 1024
 	// Fixed v2 customer SQL contract (ADR-1670). Never extend this window in
 	// place: doing so could revive keys whose receipts have already been purged.
 	DataAPIReplayV2WindowMS     = 86400000

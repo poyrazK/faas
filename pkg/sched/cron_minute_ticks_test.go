@@ -1,8 +1,9 @@
 // spec: §5 — cron fires at its scheduled minute.
 
-package sched
+package sched_test
 
 import (
+	"github.com/onebox-faas/faas/pkg/sched"
 	"testing"
 	"time"
 )
@@ -21,7 +22,7 @@ func TestUntilNextMinuteTickAlignsToTheBoundary(t *testing.T) {
 		{46 * time.Second, 15 * time.Second},
 		{59*time.Second + 900*time.Millisecond, 1100 * time.Millisecond},
 	} {
-		if got := untilNextMinuteTick(base.Add(tc.at)); got != tc.want {
+		if got := sched.UntilNextMinuteTick(base.Add(tc.at)); got != tc.want {
 			t.Fatalf("at +%s: wait %s, want %s", tc.at, got, tc.want)
 		}
 	}

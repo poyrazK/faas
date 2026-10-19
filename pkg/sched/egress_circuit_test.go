@@ -1,5 +1,5 @@
 // adr: 201
-package sched
+package sched_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/onebox-faas/faas/pkg/netns"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 // fakeApplier records every whole-set push. `pushes` is the sequence of
@@ -49,12 +50,12 @@ func (f *fakeApplier) opened() int {
 	return n
 }
 
-func staticResolver(addr string) EgressResolver {
+func staticResolver(addr string) sched.EgressResolver {
 	return func(context.Context, string) (string, error) { return addr, nil }
 }
 
-func testUpstream() EgressUpstream {
-	return EgressUpstream{
+func testUpstream() sched.EgressUpstream {
+	return sched.EgressUpstream{
 		AppID: "app-1",
 		Hash:  "a1b2c3d4",
 		Host:  "db.customer.example",
@@ -64,7 +65,7 @@ func testUpstream() EgressUpstream {
 
 func TestEgressBreakerOpensAfterSustainedProbeFailures(t *testing.T) {
 	applier := &fakeApplier{}
-	b := NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil)
+	b := sched.NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil)
 	up := testUpstream()
 	ctx := context.Background()
 
@@ -91,7 +92,7 @@ func TestEgressBreakerOpensAfterSustainedProbeFailures(t *testing.T) {
 // 30 seconds on the strength of one packet.
 func TestEgressBreakerIgnoresSingleFailure(t *testing.T) {
 	applier := &fakeApplier{}
-	b := NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil)
+	b := sched.NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil)
 	up := testUpstream()
 
 	if err := b.Observe(context.Background(), up, false); err != nil {
@@ -114,7 +115,7 @@ func TestEgressBreakerIgnoresSingleFailure(t *testing.T) {
 // request arriving in the trial window, and buy nothing in exchange.
 func TestEgressBreakerKeepsRuleThroughHalfOpenTrial(t *testing.T) {
 	applier := &fakeApplier{}
-	b := NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil)
+	b := sched.NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil)
 	up := testUpstream()
 	ctx := context.Background()
 
@@ -142,7 +143,7 @@ func TestEgressBreakerKeepsRuleThroughHalfOpenTrial(t *testing.T) {
 // install the rule again.
 func TestEgressBreakerDoesNotReinstallWhileOpen(t *testing.T) {
 	applier := &fakeApplier{}
-	b := NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil)
+	b := sched.NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil)
 	up := testUpstream()
 	ctx := context.Background()
 
@@ -162,7 +163,7 @@ func TestEgressBreakerDoesNotEnforceWhenResolveFails(t *testing.T) {
 	resolver := func(context.Context, string) (string, error) {
 		return "", errors.New("nxdomain")
 	}
-	b := NewEgressCircuitBreaker(applier, resolver, nil)
+	b := sched.NewEgressCircuitBreaker(applier, resolver, nil)
 	up := testUpstream()
 	ctx := context.Background()
 
@@ -183,7 +184,7 @@ func TestEgressBreakerDoesNotEnforceWhenResolveFails(t *testing.T) {
 // no enforcement before flipping the data-plane half on.
 func TestEgressBreakerReportOnlyWithoutResolver(t *testing.T) {
 	applier := &fakeApplier{}
-	b := NewEgressCircuitBreaker(applier, nil, nil)
+	b := sched.NewEgressCircuitBreaker(applier, nil, nil)
 	up := testUpstream()
 
 	for i := 0; i < 3; i++ {
@@ -202,7 +203,7 @@ func TestEgressBreakerReportOnlyWithoutResolver(t *testing.T) {
 // silently black-hole a destination nothing is tracking any more.
 func TestEgressBreakerForgetRemovesInstalledRule(t *testing.T) {
 	applier := &fakeApplier{}
-	b := NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil)
+	b := sched.NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil)
 	up := testUpstream()
 	ctx := context.Background()
 
@@ -222,15 +223,15 @@ func TestEgressBreakerForgetRemovesInstalledRule(t *testing.T) {
 // hash, never the plaintext host.
 func TestEgressBreakerNeverKeysOnPlaintextHost(t *testing.T) {
 	up := testUpstream()
-	if strings.Contains(up.key(), up.Host) {
-		t.Fatalf("breaker key %q contains the plaintext host; §11 requires the redacted hash", up.key())
+	if strings.Contains(up.Key(), up.Host) {
+		t.Fatalf("breaker key %q contains the plaintext host; §11 requires the redacted hash", up.Key())
 	}
-	if !strings.Contains(up.key(), up.Hash) {
-		t.Fatalf("breaker key %q does not carry the redacted hash", up.key())
+	if !strings.Contains(up.Key(), up.Hash) {
+		t.Fatalf("breaker key %q does not carry the redacted hash", up.Key())
 	}
 
 	var seenHash string
-	b := NewEgressCircuitBreaker(&fakeApplier{}, staticResolver("203.0.113.9"), nil).
+	b := sched.NewEgressCircuitBreaker(&fakeApplier{}, staticResolver("203.0.113.9"), nil).
 		WithChangeObserver(func(_, hash string, _, _ circuit.State) { seenHash = hash })
 	for i := 0; i < 3; i++ {
 		_ = b.Observe(context.Background(), up, false)
@@ -244,9 +245,9 @@ func TestEgressBreakerNeverKeysOnPlaintextHost(t *testing.T) {
 // a broken Postgres must not fail-fast the app's Redis.
 func TestEgressBreakerIsolatesUpstreamsByPort(t *testing.T) {
 	applier := &fakeApplier{}
-	b := NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil)
+	b := sched.NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil)
 	pg := testUpstream()
-	redis := EgressUpstream{AppID: "app-1", Hash: "deadbeef", Host: "cache.example", Port: 6379}
+	redis := sched.EgressUpstream{AppID: "app-1", Hash: "deadbeef", Host: "cache.example", Port: 6379}
 	ctx := context.Background()
 
 	for i := 0; i < 3; i++ {
@@ -270,7 +271,7 @@ func TestEgressBreakerIsolatesUpstreamsByPort(t *testing.T) {
 func TestEgressBreakerClosesAndRemovesRuleAfterRecovery(t *testing.T) {
 	clock := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	applier := &fakeApplier{}
-	b := NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil).
+	b := sched.NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil).
 		WithClock(func() time.Time { return clock })
 	up := testUpstream()
 	ctx := context.Background()
@@ -307,9 +308,9 @@ func TestEgressBreakerClosesAndRemovesRuleAfterRecovery(t *testing.T) {
 // out of the set and silently un-break a dependency that is still down.
 func TestEgressBreakerPushesUnionOfAppCircuits(t *testing.T) {
 	applier := &fakeApplier{}
-	b := NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil)
-	pg := EgressUpstream{AppID: "app-1", Hash: "aaaa", Host: "db.example", Port: 5432}
-	redis := EgressUpstream{AppID: "app-1", Hash: "bbbb", Host: "cache.example", Port: 6379}
+	b := sched.NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil)
+	pg := sched.EgressUpstream{AppID: "app-1", Hash: "aaaa", Host: "db.example", Port: 5432}
+	redis := sched.EgressUpstream{AppID: "app-1", Hash: "bbbb", Host: "cache.example", Port: 6379}
 	ctx := context.Background()
 
 	for i := 0; i < 3; i++ {
@@ -336,10 +337,10 @@ func TestEgressBreakerPushesUnionOfAppCircuits(t *testing.T) {
 func TestEgressBreakerCloseKeepsSiblingCircuit(t *testing.T) {
 	clock := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	applier := &fakeApplier{}
-	b := NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil).
+	b := sched.NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil).
 		WithClock(func() time.Time { return clock })
-	pg := EgressUpstream{AppID: "app-1", Hash: "aaaa", Host: "db.example", Port: 5432}
-	redis := EgressUpstream{AppID: "app-1", Hash: "bbbb", Host: "cache.example", Port: 6379}
+	pg := sched.EgressUpstream{AppID: "app-1", Hash: "aaaa", Host: "db.example", Port: 5432}
+	redis := sched.EgressUpstream{AppID: "app-1", Hash: "bbbb", Host: "cache.example", Port: 6379}
 	ctx := context.Background()
 
 	for i := 0; i < 3; i++ {
@@ -366,9 +367,9 @@ func TestEgressBreakerCloseKeepsSiblingCircuit(t *testing.T) {
 func TestEgressBreakerNeverMixesAppsInOnePush(t *testing.T) {
 	var seen []string
 	applier := &recordingAppApplier{}
-	b := NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil)
-	a1 := EgressUpstream{AppID: "app-1", Hash: "aaaa", Host: "db1.example", Port: 5432}
-	a2 := EgressUpstream{AppID: "app-2", Hash: "bbbb", Host: "db2.example", Port: 5433}
+	b := sched.NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil)
+	a1 := sched.EgressUpstream{AppID: "app-1", Hash: "aaaa", Host: "db1.example", Port: 5432}
+	a2 := sched.EgressUpstream{AppID: "app-2", Hash: "bbbb", Host: "db2.example", Port: 5433}
 	ctx := context.Background()
 
 	for i := 0; i < 3; i++ {
@@ -404,7 +405,7 @@ func (r *recordingAppApplier) ApplyEgressCircuits(_ context.Context, appID strin
 // dependency is being blocked when the data plane never got the rule.
 func TestEgressBreakerRollsBackOnPushFailure(t *testing.T) {
 	applier := &fakeApplier{err: errors.New("vmmd unavailable")}
-	b := NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil)
+	b := sched.NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), nil)
 	up := testUpstream()
 	ctx := context.Background()
 

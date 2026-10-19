@@ -32,6 +32,7 @@
 # (2026-10-08).
 # Refreshed 2026-10-10 for independently duplicated merged main @ c761890061: ADR-686 and ADR-911.
 # Removed stale ADR-680; earlier branch-owned route/billing renumbering is retained.
+# Refreshed 2026-10-19 for independently duplicated merged main @ b3d5ac1c7b: ADR-1321, ADR-1322 and ADR-1324.
 021
 022
 031
@@ -212,3 +213,6 @@
 1258
 1259
 1260
+1321
+1322
+1324

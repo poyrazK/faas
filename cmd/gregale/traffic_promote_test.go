@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -18,11 +19,11 @@ func TestCmdTrafficPromoteResolvesRevisionAndSetsOneHundredPercent(t *testing.T)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/my-app/deployments":
-			writeJSONTest(w, api.DeploymentListResponse{Items: []api.DeploymentResponse{{
-				ID: deploymentID, Revision: 44, Status: statusLive, TrafficPercent: 0,
+			main.WriteJSONTest(w, api.DeploymentListResponse{Items: []api.DeploymentResponse{{
+				ID: deploymentID, Revision: 44, Status: main.StatusLive, TrafficPercent: 0,
 			}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/"+deploymentID:
-			writeJSONTest(w, api.DeploymentResponse{ID: deploymentID, Revision: 44, Status: statusLive, TrafficPercent: 0})
+			main.WriteJSONTest(w, api.DeploymentResponse{ID: deploymentID, Revision: 44, Status: main.StatusLive, TrafficPercent: 0})
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/deployments/"+deploymentID+"/traffic":
 			patchHits.Add(1)
 			body, err := io.ReadAll(r.Body)
@@ -32,7 +33,7 @@ func TestCmdTrafficPromoteResolvesRevisionAndSetsOneHundredPercent(t *testing.T)
 			if got, want := string(body), `{"traffic_percent":100}`; got != want {
 				t.Fatalf("promotion body = %q, want %q", got, want)
 			}
-			writeJSONTest(w, api.DeploymentResponse{ID: deploymentID, Revision: 44, Status: statusLive, TrafficPercent: 100})
+			main.WriteJSONTest(w, api.DeploymentResponse{ID: deploymentID, Revision: 44, Status: main.StatusLive, TrafficPercent: 100})
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
 		}
@@ -41,9 +42,9 @@ func TestCmdTrafficPromoteResolvesRevisionAndSetsOneHundredPercent(t *testing.T)
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdTraffic([]string{"promote", "--app", "my-app", "--deployment", "v44"}); code != 0 {
+	if code := main.CmdTraffic([]string{"promote", "--app", "my-app", "--deployment", "v44"}); code != 0 {
 		t.Fatalf("traffic promote exit = %d, want 0", code)
 	}
 	if patchHits.Load() != 1 {
@@ -61,14 +62,14 @@ func TestCmdTrafficPromoteIfServingSendsExpectedRevision(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/my-app/deployments":
-			writeJSONTest(w, api.DeploymentListResponse{Items: []api.DeploymentResponse{
-				{ID: candidateID, Revision: 44, Status: statusLive, TrafficPercent: 0},
-				{ID: stableID, Revision: 43, Status: statusLive, TrafficPercent: 100},
+			main.WriteJSONTest(w, api.DeploymentListResponse{Items: []api.DeploymentResponse{
+				{ID: candidateID, Revision: 44, Status: main.StatusLive, TrafficPercent: 0},
+				{ID: stableID, Revision: 43, Status: main.StatusLive, TrafficPercent: 100},
 			}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/"+candidateID:
-			writeJSONTest(w, api.DeploymentResponse{ID: candidateID, Revision: 44, Status: statusLive, TrafficPercent: 0})
+			main.WriteJSONTest(w, api.DeploymentResponse{ID: candidateID, Revision: 44, Status: main.StatusLive, TrafficPercent: 0})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/"+stableID:
-			writeJSONTest(w, api.DeploymentResponse{ID: stableID, Revision: 43, Status: statusLive, TrafficPercent: 100})
+			main.WriteJSONTest(w, api.DeploymentResponse{ID: stableID, Revision: 43, Status: main.StatusLive, TrafficPercent: 100})
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/deployments/"+candidateID+"/traffic":
 			patchHits.Add(1)
 			var req api.UpdateDeploymentTrafficRequest
@@ -78,7 +79,7 @@ func TestCmdTrafficPromoteIfServingSendsExpectedRevision(t *testing.T) {
 			if req.TrafficPercent != 100 || req.ExpectedServingDeploymentID == nil || *req.ExpectedServingDeploymentID != stableID {
 				t.Errorf("promotion body = %+v, want traffic=100 expected=%s", req, stableID)
 			}
-			writeJSONTest(w, api.DeploymentResponse{ID: candidateID, Revision: 44, Status: statusLive, TrafficPercent: 100})
+			main.WriteJSONTest(w, api.DeploymentResponse{ID: candidateID, Revision: 44, Status: main.StatusLive, TrafficPercent: 100})
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
 		}
@@ -86,9 +87,9 @@ func TestCmdTrafficPromoteIfServingSendsExpectedRevision(t *testing.T) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdTraffic([]string{"promote", "--app", "my-app", "--deployment", "v44", "--if-serving", "v43"}); code != 0 {
+	if code := main.CmdTraffic([]string{"promote", "--app", "my-app", "--deployment", "v44", "--if-serving", "v43"}); code != 0 {
 		t.Fatalf("conditional traffic promote exit = %d, want 0", code)
 	}
 	if patchHits.Load() != 1 {
@@ -105,7 +106,7 @@ func TestCmdTrafficPromoteAlreadyAtOneHundredIsIdempotentJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/"+deploymentID:
-			writeJSONTest(w, api.DeploymentResponse{ID: deploymentID, Revision: 44, Status: statusLive, TrafficPercent: 100})
+			main.WriteJSONTest(w, api.DeploymentResponse{ID: deploymentID, Revision: 44, Status: main.StatusLive, TrafficPercent: 100})
 		case r.Method == http.MethodPatch:
 			patchHits.Add(1)
 			http.Error(w, "unexpected mutation", http.StatusInternalServerError)
@@ -117,18 +118,18 @@ func TestCmdTrafficPromoteAlreadyAtOneHundredIsIdempotentJSON(t *testing.T) {
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	previousJSON := jsonOutput
-	jsonOutput = true
-	defer func() { jsonOutput = previousJSON }()
-	if code := cmdTrafficPromote([]string{"--deployment", deploymentID}); code != 0 {
+	previousJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = previousJSON }()
+	if code := main.CmdTrafficPromote([]string{"--deployment", deploymentID}); code != 0 {
 		t.Fatalf("traffic promote retry exit = %d, want 0", code)
 	}
 	if patchHits.Load() != 0 {
 		t.Fatalf("idempotent promotion made %d PATCH requests, want 0", patchHits.Load())
 	}
-	var receipt TrafficPromotionReceipt
+	var receipt main.TrafficPromotionReceipt
 	if err := json.Unmarshal([]byte(stdout.String()), &receipt); err != nil {
 		t.Fatalf("decode promotion receipt: %v\noutput: %s", err, stdout.String())
 	}
@@ -147,16 +148,16 @@ func TestCmdTrafficPromoteRejectsNonLiveDeploymentBeforePatch(t *testing.T) {
 		if r.Method == http.MethodPatch {
 			patchHits.Add(1)
 		}
-		writeJSONTest(w, api.DeploymentResponse{ID: deploymentID, Revision: 44, Status: "building", TrafficPercent: 0})
+		main.WriteJSONTest(w, api.DeploymentResponse{ID: deploymentID, Revision: 44, Status: "building", TrafficPercent: 0})
 	}))
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	oldErr := osStderr
-	osStderr = io.Discard
-	defer func() { osStderr = oldErr }()
-	if code := cmdTrafficPromote([]string{"--deployment", deploymentID}); code == 0 {
+	oldErr := (*main.OsStderr)
+	(*main.OsStderr) = io.Discard
+	defer func() { (*main.OsStderr) = oldErr }()
+	if code := main.CmdTrafficPromote([]string{"--deployment", deploymentID}); code == 0 {
 		t.Fatal("traffic promote accepted a non-live deployment")
 	}
 	if patchHits.Load() != 0 {

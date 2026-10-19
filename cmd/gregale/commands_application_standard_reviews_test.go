@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -51,13 +52,13 @@ func TestOrgStandardInspectionCLI(t *testing.T) {
 						t.Errorf("explicit false request lost: %+v %v", got, err)
 					}
 				}
-				writeJSONTestStatus(w, http.StatusOK, tc.response)
+				main.WriteJSONTestStatus(w, http.StatusOK, tc.response)
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
-			stdout, restore := captureStdout(t)
+			stdout, restore := main.CaptureStdout(t)
 			defer restore()
-			if code := cmdOrgs(append([]string{"standards"}, tc.args...)); code != 0 {
+			if code := main.CmdOrgs(append([]string{"standards"}, tc.args...)); code != 0 {
 				t.Fatalf("CLI exit %d", code)
 			}
 			if !json.Valid([]byte(stdout.String())) || called != 1 {
@@ -74,7 +75,7 @@ func TestOrgStandardInspectionCLIValidation(t *testing.T) {
 	}{
 		{"preview", []string{"--org", "acme"}}, {"show", []string{"--org", "acme", "--id", "bad"}}, {"operation", []string{"--org", "acme", "--id", uuid.Nil.String()}}, {"exceptions", []string{"--org", "acme", "--app", uuid.NewString(), "--limit", "101"}}, {"exceptions", []string{"--org", "acme", "--app", uuid.NewString(), "--after", "bad"}}, {"bad", nil},
 	} {
-		if _, err := parseStandardInspectionCLI(tc.action, tc.args); err == nil {
+		if _, err := main.ParseStandardInspectionCLI(tc.action, tc.args); err == nil {
 			t.Fatalf("accepted %s %v", tc.action, tc.args)
 		}
 	}
@@ -82,7 +83,7 @@ func TestOrgStandardInspectionCLIValidation(t *testing.T) {
 	if err := os.WriteFile(file, []byte(`{"active":true}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readStandardReviewCLI(file); err == nil {
+	if _, err := main.ReadStandardReviewCLI(file); err == nil {
 		t.Fatal("accepted incomplete review file")
 	}
 }

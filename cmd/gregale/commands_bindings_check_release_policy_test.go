@@ -1,5 +1,5 @@
 // adr: 1029 — policy-aware CLI checks fail closed without scheduling provider work.
-package main
+package main_test
 
 import (
 	"bytes"
@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/bindingcheck"
 )
@@ -22,7 +23,7 @@ const releaseCheckAppID = "11111111-1111-4111-8111-111111111111"
 const releaseCheckDeploymentID = "22222222-2222-4222-8222-222222222222"
 
 func storageReleaseCheckInventory(scope, deployment, mode string) api.AppBindingInventory {
-	i := bindingCheckCLIInventory()
+	i := main.BindingCheckCLIInventory()
 	i.Scope, i.VerificationDeploymentID = scope, releaseCheckDeploymentID
 	if deployment != "" {
 		i.RequestedDeploymentID = deployment
@@ -46,7 +47,7 @@ func storageReleaseCheckPolicy() api.BindingReleasePolicy {
 		ObjectStorageRequirements: map[string]string{"ASSETS": "read_write"}}
 }
 
-func runStorageReleaseCheckCLI(t *testing.T, handler http.HandlerFunc, args ...string) (int, bindingReleasePolicyCheckReport, string) {
+func runStorageReleaseCheckCLI(t *testing.T, handler http.HandlerFunc, args ...string) (int, main.BindingReleasePolicyCheckReport, string) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -60,13 +61,13 @@ func runStorageReleaseCheckCLI(t *testing.T, handler http.HandlerFunc, args ...s
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
+	oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
 	var out, errs bytes.Buffer
-	osStdout, osStderr, jsonOutput = &out, &errs, false
-	defer func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON }()
+	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &out, &errs, false
+	defer func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON }()
 	command := append([]string{"bindings", "check", "api", "--json"}, args...)
-	code := run(command)
-	var report bindingReleasePolicyCheckReport
+	code := main.Run(command)
+	var report main.BindingReleasePolicyCheckReport
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatalf("expected one JSON result, exit=%d: %v; out=%s err=%s", code, err, out.String(), errs.String())
 	}
@@ -121,7 +122,7 @@ func TestBindingsCheckReleasePolicyRequiresStoredStorageEvidence(t *testing.T) {
 			if (code == 0) != tc.pass || report.Passed != tc.pass || stderr != "" {
 				t.Fatalf("exit=%d report=%+v stderr=%s", code, report, stderr)
 			}
-			if tc.blocker != "" && !slices.Contains(bindingCheckCLICodes(report.Report), tc.blocker) {
+			if tc.blocker != "" && !slices.Contains(main.BindingCheckCLICodes(report.Report), tc.blocker) {
 				t.Fatalf("required operations were not enforced: %+v", report)
 			}
 			if len(tc.args) == 0 || tc.args[0] == "--release-policy=false" {
@@ -185,7 +186,7 @@ func TestBindingsCheckReleasePolicyCannotWeakenStoredConstraints(t *testing.T) {
 			if !report.ReleasePolicyConfirmed || (code == 0) != (scenario == "policy off") || report.Passed != (scenario == "policy off") {
 				t.Fatalf("policy constraints lost: code=%d %+v", code, report)
 			}
-			if wantCode != "" && !slices.Contains(bindingCheckCLICodes(report.Report), wantCode) {
+			if wantCode != "" && !slices.Contains(main.BindingCheckCLICodes(report.Report), wantCode) {
 				t.Fatalf("missing %s: %+v", wantCode, report)
 			}
 			if scenario == "additional prefix" && (report.ObjectStorageRequirements["OTHER"] != "read" || report.ObjectStorageRequirements["ASSETS"] != "read_write") {
@@ -235,7 +236,7 @@ func TestBindingsCheckReleasePolicyFailsOnUnconfirmedPolicy(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(i)
 				case "/v1/apps/api/bindings/release-policy":
 					n := policyCalls.Add(1)
-					p := copyBindingReleasePolicy(stored)
+					p := main.CopyBindingReleasePolicy(stored)
 					if scenario == "old server" || scenario == "forbidden" || scenario == "confirmation failed" && n > 1 {
 						status := http.StatusNotFound
 						if scenario == "forbidden" {
@@ -274,7 +275,7 @@ func TestBindingsCheckReleasePolicyFailsOnUnconfirmedPolicy(t *testing.T) {
 					t.Errorf("unexpected request: %s", r.URL)
 				}
 			}, args...)
-			if code == 0 || report.Passed || report.ReleasePolicyConfirmed || !slices.Contains(bindingCheckCLICodes(report.Report), wantCode) {
+			if code == 0 || report.Passed || report.ReleasePolicyConfirmed || !slices.Contains(main.BindingCheckCLICodes(report.Report), wantCode) {
 				t.Fatalf("unconfirmed policy produced a pass: exit=%d %+v", code, report)
 			}
 			if (scenario == "old server" || scenario == "forbidden") && policyCalls.Load() != 1 {
@@ -299,7 +300,7 @@ func TestBindingsCheckReleasePolicyWaitsForStorageCanaryAndStopsOnPolicyChange(t
 					serveStorageReleaseCheckApp(w)
 				case "/v1/apps/api/bindings/release-policy":
 					n := policyCalls.Add(1)
-					p := copyBindingReleasePolicy(stored)
+					p := main.CopyBindingReleasePolicy(stored)
 					if scenario == "policy changes" && n >= 3 {
 						p.Revision++
 					}
@@ -328,7 +329,7 @@ func TestBindingsCheckReleasePolicyWaitsForStorageCanaryAndStopsOnPolicyChange(t
 			if (code == 0) != (scenario == "completes") || report.Passed != (scenario == "completes") {
 				t.Fatalf("exit=%d report=%+v inventories=%d policies=%d", code, report, inventoryCalls.Load(), policyCalls.Load())
 			}
-			if scenario == "policy changes" && (report.ReleasePolicyConfirmed || !slices.Contains(bindingCheckCLICodes(report.Report), "release_policy_changed")) {
+			if scenario == "policy changes" && (report.ReleasePolicyConfirmed || !slices.Contains(main.BindingCheckCLICodes(report.Report), "release_policy_changed")) {
 				t.Fatal("wait accepted a changed release policy")
 			}
 			if (scenario == "missing probe" || scenario == "failed cleanup") && inventoryCalls.Load() != 2 {
@@ -360,7 +361,7 @@ func TestBindingsCheckReleasePolicyFinalReadTimeoutCannotReturnPass(t *testing.T
 			t.Errorf("unexpected request: %s", r.URL)
 		}
 	}, "--release-policy", "--timeout", "1s")
-	if code == 0 || report.Passed || report.ReleasePolicyConfirmed || policies.Load() != 2 || !slices.Contains(bindingCheckCLICodes(report.Report), "release_policy_unavailable") || !strings.Contains(stderr, "Binding preflight failed:") {
+	if code == 0 || report.Passed || report.ReleasePolicyConfirmed || policies.Load() != 2 || !slices.Contains(main.BindingCheckCLICodes(report.Report), "release_policy_unavailable") || !strings.Contains(stderr, "Binding preflight failed:") {
 		t.Fatalf("timeout returned a policy pass: code=%d %+v stderr=%s", code, report, stderr)
 	}
 }
@@ -386,7 +387,7 @@ func TestBindingsCheckReleasePolicyFreshInventoryFailureRetainsEffectiveConstrai
 			t.Errorf("unexpected request: %s", r.URL)
 		}
 	}, "--release-policy")
-	if code == 0 || report.Passed || report.ReleasePolicyConfirmed || policies.Load() != 1 || !slices.Contains(bindingCheckCLICodes(report.Report), "release_policy_check_incomplete") {
+	if code == 0 || report.Passed || report.ReleasePolicyConfirmed || policies.Load() != 1 || !slices.Contains(main.BindingCheckCLICodes(report.Report), "release_policy_check_incomplete") {
 		t.Fatalf("failed inventory produced a policy pass: code=%d %+v", code, report)
 	}
 	if report.ObjectStorageRequirements["ASSETS"] != "read_write" || !report.RequireApplicationAck || report.MaxVerificationAge != "5m0s" || len(report.Bindings) != 0 || !report.InventoryGeneratedAt.IsZero() {
@@ -421,11 +422,11 @@ func TestBindingsCheckReleasePolicyCancellationAtFinalReadCannotPass(t *testing.
 				// Completion can coincide with interruption even if the response was decoded.
 				cancel()
 			}
-			return copyBindingReleasePolicy(stored), nil
+			return main.CopyBindingReleasePolicy(stored), nil
 		},
 	}
-	report, err := pollBindingCheckReleasePolicy(ctx, client, bindingcheck.Policy{App: "api", MaxVerificationAge: time.Minute * 10}, false, time.Second)
-	if !errors.Is(err, context.Canceled) || report.Passed || report.ReleasePolicyConfirmed || calls != 2 || !slices.Contains(bindingCheckCLICodes(report.Report), "release_policy_check_incomplete") {
+	report, err := main.PollBindingCheckReleasePolicy(ctx, client, bindingcheck.Policy{App: "api", MaxVerificationAge: time.Minute * 10}, false, time.Second)
+	if !errors.Is(err, context.Canceled) || report.Passed || report.ReleasePolicyConfirmed || calls != 2 || !slices.Contains(main.BindingCheckCLICodes(report.Report), "release_policy_check_incomplete") {
 		t.Fatalf("cancelled final confirmation passed: report=%+v err=%v calls=%d", report, err, calls)
 	}
 }

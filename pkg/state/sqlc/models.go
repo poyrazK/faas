@@ -2963,6 +2963,28 @@ type DataApiRuntimeConnectionObservation struct {
 	ExpiresAt            pgtype.Timestamptz
 }
 
+// ADR-20261019102108 Data API usage per app and UTC hour, from runtime deltas; owner telemetry, not billing.
+type DataApiUsageHourly struct {
+	AppID             pgtype.UUID
+	Hour              pgtype.Timestamptz
+	UserRequests      int64
+	AnonymousRequests int64
+	ServerRequests    int64
+	RejectedRequests  int64
+	ErrorRequests     int64
+	CappedRequests    int64
+	RowsReturned      int64
+	ResponseBytes     int64
+	UpdatedAt         pgtype.Timestamptz
+}
+
+// ADR-20261019102108 applied Data API usage report ids, kept for the dedup window.
+type DataApiUsageReport struct {
+	AppID      pgtype.UUID
+	ReportID   string
+	ReceivedAt pgtype.Timestamptz
+}
+
 type DataConnectionCheck struct {
 	ConnectionID       pgtype.UUID
 	AccountID          pgtype.UUID
@@ -4982,6 +5004,32 @@ type FeatureFlagVersion struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type FinancialBudgetAlert struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	PolicyID            pgtype.UUID
+	Revision            int64
+	PeriodStart         pgtype.Timestamptz
+	ThresholdMillicents int64
+	Payload             []byte
+	State               string
+	Attempts            int32
+	NextAttemptAt       pgtype.Timestamptz
+	LeaseToken          pgtype.UUID
+	DeliveredAt         pgtype.Timestamptz
+	LastError           string
+}
+
+type FinancialBudgetEvaluation struct {
+	AccountID         pgtype.UUID
+	PolicyID          pgtype.UUID
+	Revision          int64
+	PeriodStart       pgtype.Timestamptz
+	EvaluatedAt       pgtype.Timestamptz
+	EvidenceThroughID int64
+	Observation       []byte
+}
+
 type FinancialBudgetPolicy struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID
@@ -5002,9 +5050,124 @@ type FinancialBudgetRevision struct {
 	RecordedAt pgtype.Timestamptz
 }
 
+type FinancialBudgetStop struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	PolicyID      pgtype.UUID
+	Revision      int64
+	PeriodStart   pgtype.Timestamptz
+	PeriodEnd     pgtype.Timestamptz
+	RequestedAt   pgtype.Timestamptz
+	DrainDeadline pgtype.Timestamptz
+	ResumeRule    string
+	Payload       []byte
+}
+
+type FinancialBudgetStopTarget struct {
+	StopID        pgtype.UUID
+	AppID         pgtype.UUID
+	EnvironmentID string
+	State         string
+	ObservedAt    pgtype.Timestamptz
+	ResidentCount int32
+	LastError     string
+}
+
+type FinancialComputeAccountBook struct {
+	AccountID   pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+	PeriodEnd   pgtype.Timestamptz
+	Payload     []byte
+}
+
+type FinancialComputeBook struct {
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+	PeriodEnd   pgtype.Timestamptz
+	Payload     []byte
+}
+
+type FinancialComputeHold struct {
+	AccountID   pgtype.UUID
+	PolicyID    pgtype.UUID
+	Revision    int64
+	PeriodStart pgtype.Timestamptz
+}
+
+type FinancialComputeJobAttempt struct {
+	InstanceID  pgtype.UUID
+	AccountID   pgtype.UUID
+	JobID       pgtype.UUID
+	RunID       pgtype.UUID
+	TaskIndex   int32
+	LeaseToken  pgtype.UUID
+	NodeID      pgtype.UUID
+	Incarnation pgtype.UUID
+	RamMb       int32
+	ClaimedAt   pgtype.Timestamptz
+}
+
+type FinancialComputeJobBook struct {
+	AccountID   pgtype.UUID
+	JobID       pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+	PeriodEnd   pgtype.Timestamptz
+	Payload     []byte
+}
+
+type FinancialComputeLease struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	InstanceID   string
+	NodeID       pgtype.UUID
+	Incarnation  pgtype.UUID
+	PeriodStart  pgtype.Timestamptz
+	Strict       bool
+	StartedAt    pgtype.Timestamptz
+	FundedUntil  pgtype.Timestamptz
+	SettledAt    pgtype.Timestamptz
+	Payload      []byte
+	JobID        pgtype.UUID
+	JobRunID     pgtype.UUID
+	JobTaskIndex pgtype.Int4
+}
+
+type FinancialComputeOwner struct {
+	NodeID                    pgtype.UUID
+	Incarnation               pgtype.UUID
+	Protocol                  int16
+	ObservedAt                pgtype.Timestamptz
+	AccountComputeIncarnation pgtype.UUID
+	JobComputeIncarnation     pgtype.UUID
+	EgressBudgetIncarnation   pgtype.UUID
+}
+
 type FinancialEvidenceCoverage struct {
 	Singleton    bool
 	RetainedFrom pgtype.Timestamptz
+}
+
+type FinancialFundingCurrency struct {
+	Singleton bool
+	Currency  string
+}
+
+type FinancialPreviewCommandRuntime struct {
+	TaskID        pgtype.UUID
+	LeaseToken    pgtype.UUID
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	DeploymentID  pgtype.UUID
+	NodeID        pgtype.UUID
+	EnvironmentID pgtype.UUID
+	Phase         string
+	RamMb         int32
+	CpuMillicores int32
+	RecordedAt    pgtype.Timestamptz
+	RetiredAt     pgtype.Timestamptz
+	PrepareUntil  pgtype.Timestamptz
 }
 
 type FinancialPriceSnapshot struct {

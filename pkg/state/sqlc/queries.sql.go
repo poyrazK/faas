@@ -5509,6 +5509,7 @@ WITH candidate AS (
  SELECT task.id FROM app_tasks task JOIN apps app ON app.id=task.app_id
  WHERE task.status='queued' AND task.cancel_requested_at IS NULL
  AND app.managed_postgres_admission_cutover_id IS NULL
+ AND NOT financial_app_command_held(task.app_id,task.deployment_id,$3::timestamptz)
  AND task.created_at<=$3::timestamptz
  AND (task.retry_at IS NULL OR task.retry_at<=$3)
  AND (task.start_deadline_at IS NULL OR task.start_deadline_at>=$3
@@ -47619,6 +47620,81 @@ func (q *Queries) ListUDPListenersForApp(ctx context.Context, db DBTX, appID str
 	return items, nil
 }
 
+const listWakeHistoryByWakeIDs = `-- name: ListWakeHistoryByWakeIDs :many
+WITH page AS MATERIALIZED (
+ SELECT DISTINCT ON (wake_id) id, app_id, wake_id, state, started_at FROM instances
+ WHERE app_id = ANY($1::uuid[])
+   AND wake_id = ANY($2::uuid[])
+   AND started_at IS NOT NULL
+ ORDER BY wake_id, started_at ASC, id ASC
+)
+SELECT p.id::text AS instance_id, p.app_id::text AS app_id, p.wake_id::text AS wake_id,
+       p.state, p.started_at, bs.data AS boot_data, bs.at AS boot_at,
+       (bs.id IS NOT NULL)::boolean AS has_meta, bc.at AS completed_at
+FROM page p
+LEFT JOIN LATERAL (
+ SELECT id, data, at FROM events
+ WHERE kind = 'wake.boot_started' AND data->>'app_id' = p.app_id::text AND data->>'wake_id' = p.wake_id::text
+ ORDER BY (actor = 'schedd') DESC, at ASC, id ASC LIMIT 1
+) bs ON true
+LEFT JOIN LATERAL (
+ SELECT at FROM events
+ WHERE kind = 'wake.boot_completed' AND data->>'app_id' = p.app_id::text AND data->>'wake_id' = p.wake_id::text
+ ORDER BY at ASC, id ASC LIMIT 1
+) bc ON true
+ORDER BY p.started_at ASC, p.wake_id
+`
+
+type ListWakeHistoryByWakeIDsParams struct {
+	AppIds  []pgtype.UUID
+	WakeIds []pgtype.UUID
+}
+
+type ListWakeHistoryByWakeIDsRow struct {
+	InstanceID  string
+	AppID       string
+	WakeID      string
+	State       string
+	StartedAt   pgtype.Timestamptz
+	BootData    []byte
+	BootAt      pgtype.Timestamptz
+	HasMeta     bool
+	CompletedAt pgtype.Timestamptz
+}
+
+// The account trace view's per-request wakes: one canonical instance per wake
+// (its first), scoped to the account's apps before reading wake metadata, with
+// the same boot and completion reads as ListAppWakeHistoryPage.
+func (q *Queries) ListWakeHistoryByWakeIDs(ctx context.Context, db DBTX, arg ListWakeHistoryByWakeIDsParams) ([]ListWakeHistoryByWakeIDsRow, error) {
+	rows, err := db.Query(ctx, listWakeHistoryByWakeIDs, arg.AppIds, arg.WakeIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListWakeHistoryByWakeIDsRow{}
+	for rows.Next() {
+		var i ListWakeHistoryByWakeIDsRow
+		if err := rows.Scan(
+			&i.InstanceID,
+			&i.AppID,
+			&i.WakeID,
+			&i.State,
+			&i.StartedAt,
+			&i.BootData,
+			&i.BootAt,
+			&i.HasMeta,
+			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWarmPoolReconciliationAppIDs = `-- name: ListWarmPoolReconciliationAppIDs :many
 SELECT a.id::text AS app_id FROM apps a
 WHERE a.status <> 'deleted'
@@ -54267,6 +54343,7 @@ UPDATE app_tasks SET status='running',started_at=$1::timestamptz,attempt_count=a
 retry_at=NULL,stdout_tail='',stderr_tail='',output_truncated=false,exit_code=NULL,failure_code=NULL,failure_message=NULL,updated_at=$1
 WHERE id=$2::text::uuid AND status='restoring' AND lease_token=$3::text::uuid
 AND cancel_requested_at IS NULL AND lease_expires_at>$1
+AND NOT financial_app_command_held(app_id,deployment_id,$1::timestamptz)
 AND (start_deadline_at IS NULL OR start_deadline_at>=$1 OR EXISTS (
  SELECT 1 FROM schedule_occurrences occurrence WHERE occurrence.id=app_tasks.occurrence_id AND occurrence.started_at IS NOT NULL))
 RETURNING id, account_id, app_id, deployment_id, kind, command, command_shell, deployment_scope, artifact_key, image_digest, status, timeout_seconds, max_output_bytes, lease_token, lease_owner, lease_expires_at, cancel_requested_at, stdout_tail, stderr_tail, output_truncated, exit_code, failure_code, failure_message, started_at, finished_at, created_at, updated_at, cron_id, scheduled_for, retry_max, retry_backoff_seconds, attempt_count, retry_at, failure_rules, occurrence_id, start_deadline_at, work_decision, outcome_code, exclusive_operation_id, exclusive_generation, binding_verification

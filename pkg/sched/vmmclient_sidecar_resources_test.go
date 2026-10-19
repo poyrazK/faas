@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 // adr: 175
 
@@ -7,10 +7,11 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 func TestAppSpecToProtoCarriesSidecarResourceIsolation(t *testing.T) {
-	proto := (AppSpec{Sidecars: []fcvm.WorkloadSpec{{
+	proto := (sched.AppSpec{Sidecars: []fcvm.WorkloadSpec{{
 		Name:          "metrics",
 		Type:          "sidecar",
 		SealedSecrets: []fcvm.SealedEnvEntry{{Key: "DATABASE_URL", Ciphertext: []byte("age-ciphertext")}},
@@ -18,7 +19,7 @@ func TestAppSpecToProtoCarriesSidecarResourceIsolation(t *testing.T) {
 		DiskIOProfile: string(api.SidecarDiskIOProfileHigh),
 		StartupProbe:  &api.AppManifestHealthcheck{Test: []string{"CMD", "/ready"}, IntervalS: 5, TimeoutS: 2, Retries: 3, StartPeriodS: 10},
 		LivenessProbe: &api.AppManifestHealthcheck{GRPC: &api.SidecarGRPCProbe{Port: 50051, Service: "grpc.health.v1.Health"}},
-	}}}).toProto()
+	}}}).ToProto()
 	if len(proto.GetSidecars()) != 1 {
 		t.Fatalf("sidecars = %d, want 1", len(proto.GetSidecars()))
 	}

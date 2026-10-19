@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,11 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestRoutesLifecycleHistory(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
 	t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
@@ -29,20 +30,20 @@ func TestRoutesLifecycleHistory(t *testing.T) {
 	}))
 	defer ts.Close()
 	t.Setenv("FAAS_API", ts.URL)
-	oldOut, oldErr := osStdout, osStderr
+	oldOut, oldErr := (*main.OsStdout), (*main.OsStderr)
 	var out, errOut bytes.Buffer
-	osStdout = &out
-	osStderr = &errOut
-	t.Cleanup(func() { osStdout = oldOut; osStderr = oldErr })
-	if code := cmdRoutesLifecycle([]string{"history", "api", "--limit", "2", "--before", "10"}); code != 0 {
+	(*main.OsStdout) = &out
+	(*main.OsStderr) = &errOut
+	t.Cleanup(func() { (*main.OsStdout) = oldOut; (*main.OsStderr) = oldErr })
+	if code := main.CmdRoutesLifecycle([]string{"history", "api", "--limit", "2", "--before", "10"}); code != 0 {
 		t.Fatal(code, errOut.String())
 	}
 	if !strings.Contains(out.String(), "lifecycle_successor_changed_requires_review") || !strings.Contains(out.String(), "approval_expired") || !strings.Contains(out.String(), "--before 8") {
 		t.Fatal(out.String())
 	}
 	out.Reset()
-	jsonOutput = true
-	if code := cmdRoutesLifecycleHistory([]string{"api", "--limit", "2", "--before", "10"}); code != 0 {
+	(*main.JsonOutput) = true
+	if code := main.CmdRoutesLifecycleHistory([]string{"api", "--limit", "2", "--before", "10"}); code != 0 {
 		t.Fatal(code, errOut.String())
 	}
 	var page api.RouteLifecycleHistoryPage
@@ -50,7 +51,7 @@ func TestRoutesLifecycleHistory(t *testing.T) {
 		t.Fatal(out.String())
 	}
 	for _, args := range [][]string{{"api", "--limit", "0"}, {"api", "--limit", "21"}, {"api", "--before", "01"}, {"api", "--before", "9223372036854775808"}, {"api", "extra"}} {
-		if code := cmdRoutesLifecycleHistory(args); code == 0 {
+		if code := main.CmdRoutesLifecycleHistory(args); code == 0 {
 			t.Fatal("invalid", args)
 		}
 	}

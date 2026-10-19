@@ -1,10 +1,11 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
 	"net/http"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -27,19 +28,19 @@ func TestSitesPreviewsRequireOptInAndReviewedGeneration(t *testing.T) {
 	})
 	args := []string{"previews", "revoke", "--site", reviewSiteID, "--preview", reviewReleaseID, "--expected-generation", "1"}
 	t.Setenv("FAAS_FRONTEND_HOSTING_PREVIEWS_ENABLED", "")
-	if cmdSites(args) == 0 || calls != 0 {
+	if main.CmdSites(args) == 0 || calls != 0 {
 		t.Fatal("missing preview flag reached API")
 	}
 	t.Setenv("FAAS_FRONTEND_HOSTING_PREVIEWS_ENABLED", "1")
 	for _, invalid := range [][]string{{"previews", "create", "--site", reviewSiteID, "--release", reviewReleaseID, "--ttl", "73h"}, {"previews", "revoke", "--site", reviewSiteID, "--preview", reviewReleaseID}, {"previews", "list", "--site", reviewSiteID, "--release", reviewReleaseID}} {
-		if cmdSites(invalid) == 0 {
+		if main.CmdSites(invalid) == 0 {
 			t.Fatal("accepted unsafe options", invalid)
 		}
 	}
 	if calls != 0 {
 		t.Fatal("invalid options made API calls")
 	}
-	if cmdSites(args) == 0 || calls != 1 {
+	if main.CmdSites(args) == 0 || calls != 1 {
 		t.Fatal("revoke conflict was retried", calls)
 	}
 }
@@ -61,7 +62,7 @@ func TestSitesPreviewsCreateBindsReleaseAndTTLWithoutPromotion(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(api.HostingPreview{ID: reviewReleaseID})
 	})
 	t.Setenv("FAAS_FRONTEND_HOSTING_PREVIEWS_ENABLED", "1")
-	if cmdSites([]string{"previews", "create", "--site", reviewSiteID, "--release", reviewReleaseID, "--ttl", "5m"}) != 0 || calls != 1 {
+	if main.CmdSites([]string{"previews", "create", "--site", reviewSiteID, "--release", reviewReleaseID, "--ttl", "5m"}) != 0 || calls != 1 {
 		t.Fatal("preview creation changed production", calls)
 	}
 }

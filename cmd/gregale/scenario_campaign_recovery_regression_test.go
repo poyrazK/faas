@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,32 +9,33 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"gopkg.in/yaml.v3"
 )
 
-func campaignRecoveryRegressionFixture(t *testing.T) (testScenario, testRunReceipt, string) {
+func campaignRecoveryRegressionFixture(t *testing.T) (main.TestScenario, main.TestRunReceipt, string) {
 	t.Helper()
-	s := campaignCoverageScenario()
+	s := main.CampaignCoverageScenario()
 	s.Resilience.CampaignCoverage.MinExercised = map[int]int{0: 1, 1: 1}
-	expanded, err := expandTestFaultSweep(s)
+	expanded, err := main.ExpandTestFaultSweep(s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	baseline := recoveryTrendReceipt(t, expanded, "baseline-", 100, 100, 0)
+	baseline := main.RecoveryTrendReceipt(t, expanded, "baseline-", 100, 100, 0)
 	path := filepath.Join(t.TempDir(), "baseline.json")
-	if err = writeTestReport(path, []testRunReceipt{baseline}); err != nil {
+	if err = main.WriteTestReport(path, []main.TestRunReceipt{baseline}); err != nil {
 		t.Fatal(err)
 	}
 	s.Resilience.CampaignCoverage.MinExercised = nil
 	zero := 0.
-	s.Resilience.CampaignCoverage.RecoveryRegression = &testCampaignRecoveryRegressionSpec{FromReport: path, RunID: baseline.RunID, Checks: []testCampaignRecoveryRegressionCheckSpec{{Choice: 0, Limits: testRecoveryTrendConfig{MinSamples: 5, MaxRecoveryIncreasePercent: &zero, MaxP95IncreasePercent: &zero, MaxErrorRateIncrease: &zero}}}}
+	s.Resilience.CampaignCoverage.RecoveryRegression = &main.TestCampaignRecoveryRegressionSpec{FromReport: path, RunID: baseline.RunID, Checks: []main.TestCampaignRecoveryRegressionCheckSpec{{Choice: 0, Limits: main.TestRecoveryTrendConfig{MinSamples: 5, MaxRecoveryIncreasePercent: &zero, MaxP95IncreasePercent: &zero, MaxErrorRateIncrease: &zero}}}}
 	return s, baseline, path
 }
 
 func TestCampaignRecoveryRegressionGateReportsAndReplay(t *testing.T) {
 	s, baseline, path := campaignRecoveryRegressionFixture(t)
 	before, _ := json.Marshal(s)
-	expanded, err := expandTestFaultSweep(s)
+	expanded, err := main.ExpandTestFaultSweep(s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,11 +55,11 @@ func TestCampaignRecoveryRegressionGateReportsAndReplay(t *testing.T) {
 	if pinned == nil || pinned.Coverage.RunID != baseline.RunID || len(pinned.Coverage.ReportSHA256) != 64 {
 		t.Fatal("baseline not pinned")
 	}
-	passed := recoveryTrendReceipt(t, s, "passing-", 100, 100, 0)
+	passed := main.RecoveryTrendReceipt(t, s, "passing-", 100, 100, 0)
 	if passed.Status != "passed" || passed.FaultMatrix.CampaignCoverage.RecoveryRegression.Status != "passed" {
 		t.Fatal("equality rejected", passed.Error)
 	}
-	failed := recoveryTrendReceipt(t, s, "failing-", 150, 160, 2)
+	failed := main.RecoveryTrendReceipt(t, s, "failing-", 150, 160, 2)
 	gate := failed.FaultMatrix.CampaignCoverage.RecoveryRegression
 	if failed.RunID == "" || failed.Replay == nil || !failed.Replay.CampaignCoverage {
 		t.Fatal("gate-only aggregate replay missing")
@@ -66,10 +67,10 @@ func TestCampaignRecoveryRegressionGateReportsAndReplay(t *testing.T) {
 	if failed.Status != "failed" || failed.FaultMatrix.Passed != 3 || gate.Status != "failed" || !strings.Contains(gate.Error, "recovery time") || !strings.Contains(gate.Error, "p95 latency") || !strings.Contains(gate.Error, "error rate") {
 		t.Fatal("passing seed groups concealed regression", failed.Error)
 	}
-	if finishTestRunReports("", []testRunReceipt{failed}, "", "") != 1 {
+	if main.FinishTestRunReports("", []main.TestRunReceipt{failed}, "", "") != 1 {
 		t.Fatal("CI did not fail")
 	}
-	replay, err := prepareTestReplay(&failed, map[string]testScenario{"checkout": s}, ".")
+	replay, err := main.PrepareTestReplay(&failed, map[string]main.TestScenario{"checkout": s}, ".")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,19 +79,19 @@ func TestCampaignRecoveryRegressionGateReportsAndReplay(t *testing.T) {
 	}
 	original := s.Resilience.CampaignCoverage.RecoveryRegression.Checks[0].Limits.MinSamples
 	s.Resilience.CampaignCoverage.RecoveryRegression.Checks[0].Limits.MinSamples = 6
-	if _, err = prepareTestReplay(&failed, map[string]testScenario{"checkout": s}, "."); err == nil {
+	if _, err = main.PrepareTestReplay(&failed, map[string]main.TestScenario{"checkout": s}, "."); err == nil {
 		t.Fatal("changed gate replay permitted")
 	}
 	s.Resilience.CampaignCoverage.RecoveryRegression.Checks[0].Limits.MinSamples = original
 	dir := t.TempDir()
 	html, junit, report := filepath.Join(dir, "report.html"), filepath.Join(dir, "report.xml"), filepath.Join(dir, "report.json")
-	if err = writeTestHTMLReport(html, "", []testRunReceipt{failed}); err != nil {
+	if err = main.WriteTestHTMLReport(html, "", []main.TestRunReceipt{failed}); err != nil {
 		t.Fatal(err)
 	}
-	if err = writeTestJUnit(junit, []testRunReceipt{failed}); err != nil {
+	if err = main.WriteTestJUnit(junit, []main.TestRunReceipt{failed}); err != nil {
 		t.Fatal(err)
 	}
-	if err = writeTestReport(report, []testRunReceipt{failed}); err != nil {
+	if err = main.WriteTestReport(report, []main.TestRunReceipt{failed}); err != nil {
 		t.Fatal(err)
 	}
 	for _, p := range []string{html, junit, report} {
@@ -100,18 +101,18 @@ func TestCampaignRecoveryRegressionGateReportsAndReplay(t *testing.T) {
 		}
 	}
 	var out bytes.Buffer
-	printTestCampaignCoverage(&out, failed.FaultMatrix.CampaignCoverage)
+	main.PrintTestCampaignCoverage(&out, failed.FaultMatrix.CampaignCoverage)
 	if !strings.Contains(out.String(), "current recovery 150") {
 		t.Fatal("terminal evidence missing", out.String())
 	}
-	if err = validateTestCampaignGuidanceOptions(expanded, "checkout", []string{"warm"}, nil); err == nil {
+	if err = main.ValidateTestCampaignGuidanceOptions(expanded, "checkout", []string{"warm"}, nil); err == nil {
 		t.Fatal("profile mismatch accepted")
 	}
 	alias := filepath.Join(dir, "alias.json")
 	if err = os.Link(path, alias); err != nil {
 		t.Fatal(err)
 	}
-	if err = validateTestCampaignGuidanceOptions(expanded, "checkout", []string{"cold"}, []string{alias}); err == nil {
+	if err = main.ValidateTestCampaignGuidanceOptions(expanded, "checkout", []string{"cold"}, []string{alias}); err == nil {
 		t.Fatal("baseline overwritten")
 	}
 	raw, e := os.ReadFile(path)
@@ -121,7 +122,7 @@ func TestCampaignRecoveryRegressionGateReportsAndReplay(t *testing.T) {
 	if err = os.WriteFile(path, append(raw, '\n'), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = prepareTestReplay(&failed, map[string]testScenario{"checkout": s}, "."); err == nil {
+	if _, err = main.PrepareTestReplay(&failed, map[string]main.TestScenario{"checkout": s}, "."); err == nil {
 		t.Fatal("changed baseline replay permitted")
 	}
 }
@@ -149,18 +150,18 @@ func TestCampaignRecoveryRegressionValidation(t *testing.T) {
 			case "missing-baseline":
 				reg.FromReport = "missing.json"
 			case "unconfirmed-baseline":
-				receipts, _, err := readTestBaselineReport(reg.FromReport, nil)
+				receipts, _, err := main.ReadTestBaselineReport(reg.FromReport, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
 				receipts[0].FaultMatrix.Cases[0].Resilience.History[0].Steps[0].Load.ChaosPhases[2].Recovery.Passed = false
-				if err = writeTestReport(reg.FromReport, receipts); err != nil {
+				if err = main.WriteTestReport(reg.FromReport, receipts); err != nil {
 					t.Fatal(err)
 				}
 			case "seeds":
 				s.Resilience.CampaignCoverage.Seeds = []uint64{45, 46, 47}
 			}
-			if _, err := expandTestFaultSweep(s); err == nil {
+			if _, err := main.ExpandTestFaultSweep(s); err == nil {
 				t.Fatal("invalid gate accepted")
 			}
 		})
@@ -170,25 +171,25 @@ func TestCampaignRecoveryRegressionValidation(t *testing.T) {
 func TestCampaignRecoveryRegressionMissingEvidenceAndIndependentFailures(t *testing.T) {
 	s, _, _ := campaignRecoveryRegressionFixture(t)
 	// A passing load SLO cannot replace confirmed recovery evidence.
-	result := runSweepTest(context.Background(), s, func(ctx context.Context, p testRunPlan) testRunReceipt {
-		return campaignCoverageReceipt(t, p, "unconfirmed-"+p.ReplayCase, false)
+	result := main.RunSweepTest(context.Background(), s, func(ctx context.Context, p main.TestRunPlan) main.TestRunReceipt {
+		return main.CampaignCoverageReceipt(t, p, "unconfirmed-"+p.ReplayCase, false)
 	})
 	if result.Status != "failed" || result.FaultMatrix.Passed != 3 || result.FaultMatrix.CampaignCoverage.RecoveryRegression.Status != "failed" {
 		t.Fatal("missing confirmation did not fail gate", result.Error)
 	}
-	expanded, err := expandTestFaultSweep(s)
+	expanded, err := main.ExpandTestFaultSweep(s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	good := recoveryTrendReceipt(t, s, "current-", 100, 100, 0)
+	good := main.RecoveryTrendReceipt(t, s, "current-", 100, 100, 0)
 	good.Status = "failed"
 	good.Error = "existing SLO failure"
 	good.CleanupError = "cleanup failed"
-	if err = evaluateTestCampaignRecoveryRegression(expanded, &good); err != nil || good.Status != "failed" || good.Error != "existing SLO failure" || good.CleanupError != "cleanup failed" {
+	if err = main.EvaluateTestCampaignRecoveryRegression(expanded, &good); err != nil || good.Status != "failed" || good.Error != "existing SLO failure" || good.CleanupError != "cleanup failed" {
 		t.Fatal("gate cleared independent failure")
 	}
 	good.FaultMatrix.Cases[0].Resilience = nil
-	if err = evaluateTestCampaignRecoveryRegression(expanded, &good); err == nil {
+	if err = main.EvaluateTestCampaignRecoveryRegression(expanded, &good); err == nil {
 		t.Fatal("incomplete history accepted")
 	}
 }
@@ -202,61 +203,61 @@ func TestCampaignRecoveryRegressionOfflineManifestAndReplay(t *testing.T) {
 		}
 	}
 	manifest := filepath.Join(dir, "gregale-test.yaml")
-	save := func(s testScenario) map[string]testScenario {
+	save := func(s main.TestScenario) map[string]main.TestScenario {
 		t.Helper()
-		body, err := yaml.Marshal(testManifest{Version: 1, Scenarios: map[string]testScenario{"checkout": s}})
+		body, err := yaml.Marshal(main.TestManifest{Version: 1, Scenarios: map[string]main.TestScenario{"checkout": s}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if err = os.WriteFile(manifest, body, 0600); err != nil {
 			t.Fatal(err)
 		}
-		scenarios, _, err := readTestManifestForScenario(manifest, "checkout", nil)
+		scenarios, _, err := main.ReadTestManifestForScenario(manifest, "checkout", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return scenarios
 	}
-	source := campaignCoverageScenario()
+	source := main.CampaignCoverageScenario()
 	source.Resilience.CampaignCoverage.MinExercised = map[int]int{0: 1, 1: 1}
-	baseline := recoveryTrendReceipt(t, save(source)["checkout"], "baseline-", 100, 100, 0)
+	baseline := main.RecoveryTrendReceipt(t, save(source)["checkout"], "baseline-", 100, 100, 0)
 	path := filepath.Join(dir, "baseline.json")
-	if err := writeTestReport(path, []testRunReceipt{baseline}); err != nil {
+	if err := main.WriteTestReport(path, []main.TestRunReceipt{baseline}); err != nil {
 		t.Fatal(err)
 	}
 	zero := 0.
-	source.Resilience.CampaignCoverage.RecoveryRegression = &testCampaignRecoveryRegressionSpec{FromReport: "baseline.json", RunID: baseline.RunID, Checks: []testCampaignRecoveryRegressionCheckSpec{{Choice: 0, Limits: testRecoveryTrendConfig{MinSamples: 5, MaxRecoveryIncreasePercent: &zero}}}}
+	source.Resilience.CampaignCoverage.RecoveryRegression = &main.TestCampaignRecoveryRegressionSpec{FromReport: "baseline.json", RunID: baseline.RunID, Checks: []main.TestCampaignRecoveryRegressionCheckSpec{{Choice: 0, Limits: main.TestRecoveryTrendConfig{MinSamples: 5, MaxRecoveryIncreasePercent: &zero}}}}
 	normalized := save(source)
-	if cmdTest([]string{"--manifest", manifest, "--scenario", "checkout", "--validate"}) != 0 {
+	if main.CmdTest([]string{"--manifest", manifest, "--scenario", "checkout", "--validate"}) != 0 {
 		t.Fatal("offline validation failed")
 	}
-	failed := recoveryTrendReceipt(t, normalized["checkout"], "current-", 150, 100, 0)
+	failed := main.RecoveryTrendReceipt(t, normalized["checkout"], "current-", 150, 100, 0)
 	report := filepath.Join(dir, "failed.json")
-	if err := writeTestReport(report, []testRunReceipt{failed}); err != nil {
+	if err := main.WriteTestReport(report, []main.TestRunReceipt{failed}); err != nil {
 		t.Fatal(err)
 	}
-	if cmdTestReplay([]string{"--manifest", manifest, "--from", report, "--run-id", failed.RunID, "--validate"}) != 0 {
+	if main.CmdTestReplay([]string{"--manifest", manifest, "--from", report, "--run-id", failed.RunID, "--validate"}) != 0 {
 		t.Fatal("offline aggregate replay failed")
 	}
 }
 
 func TestCampaignRecoveryRegressionNamedTarget(t *testing.T) {
-	s := campaignCoverageScenario()
+	s := main.CampaignCoverageScenario()
 	s.Resilience.CampaignCoverage.MinExercised = map[int]int{0: 1, 1: 1}
 	name := s.Steps[1].Requests[0].Name
-	s.Steps[1].Load.ChaosSchedule[2].StepRecovery = map[string]*testLoadRecoverySpec{name: s.Steps[1].Load.ChaosSchedule[2].Recovery}
-	expanded, err := expandTestFaultSweep(s)
+	s.Steps[1].Load.ChaosSchedule[2].StepRecovery = map[string]*main.TestLoadRecoverySpec{name: s.Steps[1].Load.ChaosSchedule[2].Recovery}
+	expanded, err := main.ExpandTestFaultSweep(s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	baseline := recoveryTrendReceipt(t, expanded, "baseline-", 100, 100, 0)
+	baseline := main.RecoveryTrendReceipt(t, expanded, "baseline-", 100, 100, 0)
 	path := filepath.Join(t.TempDir(), "baseline.json")
-	if err = writeTestReport(path, []testRunReceipt{baseline}); err != nil {
+	if err = main.WriteTestReport(path, []main.TestRunReceipt{baseline}); err != nil {
 		t.Fatal(err)
 	}
 	zero := 0.
-	s.Resilience.CampaignCoverage.RecoveryRegression = &testCampaignRecoveryRegressionSpec{FromReport: path, RunID: baseline.RunID, Checks: []testCampaignRecoveryRegressionCheckSpec{{Choice: 0, Request: name, Limits: testRecoveryTrendConfig{MinSamples: 5, MaxRecoveryIncreasePercent: &zero}}}}
-	current := recoveryTrendReceipt(t, s, "current-", 150, 100, 0)
+	s.Resilience.CampaignCoverage.RecoveryRegression = &main.TestCampaignRecoveryRegressionSpec{FromReport: path, RunID: baseline.RunID, Checks: []main.TestCampaignRecoveryRegressionCheckSpec{{Choice: 0, Request: name, Limits: main.TestRecoveryTrendConfig{MinSamples: 5, MaxRecoveryIncreasePercent: &zero}}}}
+	current := main.RecoveryTrendReceipt(t, s, "current-", 150, 100, 0)
 	if current.Status != "failed" {
 		t.Fatal("endpoint regression did not fail")
 	}

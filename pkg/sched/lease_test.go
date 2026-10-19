@@ -3,11 +3,12 @@
 // classification of ErrLeaseNotFound / ErrLeaseExpired /
 // ErrLeaseHeldByOther. Does not require a DB; the production path is
 // pgx-based and lives in lease_pg.go (covered by metal-tagged tests).
-package sched
+package sched_test
 
 import (
 	"context"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"sync"
 	"testing"
 	"time"
@@ -26,17 +27,17 @@ func memLeaserClock(t time.Time) func() time.Time {
 
 func TestMemLeaser_Acquire_Renew_Release(t *testing.T) {
 	clock := memLeaserClock(time.Unix(1_700_000_000, 0))
-	l := NewMemLeaser(clock)
+	l := sched.NewMemLeaser(clock)
 	ctx := context.Background()
 
-	tok, rec, err := l.Acquire(ctx, "run-1\x000", LeasePolicy{TTL: 60 * time.Second}, "node-A")
+	tok, rec, err := l.Acquire(ctx, "run-1\x000", sched.LeasePolicy{TTL: 60 * time.Second}, "node-A")
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
 	if tok == "" {
 		t.Fatal("Acquire returned empty token")
 	}
-	if rec == nil || rec.key != "run-1\x000" || rec.ownerID != "node-A" {
+	if rec == nil || (*rec.Key()) != "run-1\x000" || (*rec.OwnerID()) != "node-A" {
 		t.Fatalf("Acquire returned unexpected record: %+v", rec)
 	}
 	if got := l.Size(); got != 1 {
@@ -66,23 +67,23 @@ func TestMemLeaser_Acquire_Renew_Release(t *testing.T) {
 	}
 
 	// Second Release is idempotent → ErrLeaseNotFound.
-	if err := l.Release(ctx, tok, "node-A"); !errors.Is(err, ErrLeaseNotFound) {
+	if err := l.Release(ctx, tok, "node-A"); !errors.Is(err, sched.ErrLeaseNotFound) {
 		t.Fatalf("Second Release: want ErrLeaseNotFound, got %v", err)
 	}
 }
 
 func TestMemLeaser_RenewByWrongOwner(t *testing.T) {
 	clock := memLeaserClock(time.Unix(1_700_000_000, 0))
-	l := NewMemLeaser(clock)
+	l := sched.NewMemLeaser(clock)
 	ctx := context.Background()
 
-	tok, _, err := l.Acquire(ctx, "run-2\x007", LeasePolicy{TTL: 60 * time.Second}, "node-A")
+	tok, _, err := l.Acquire(ctx, "run-2\x007", sched.LeasePolicy{TTL: 60 * time.Second}, "node-A")
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
 
 	// Renew from a different owner → ErrLeaseHeldByOther.
-	if err := l.Renew(ctx, tok, "node-B", 30*time.Second); !errors.Is(err, ErrLeaseHeldByOther) {
+	if err := l.Renew(ctx, tok, "node-B", 30*time.Second); !errors.Is(err, sched.ErrLeaseHeldByOther) {
 		t.Fatalf("Renew wrong owner: want ErrLeaseHeldByOther, got %v", err)
 	}
 
@@ -94,14 +95,15 @@ func TestMemLeaser_RenewByWrongOwner(t *testing.T) {
 
 func TestMemLeaser_ReapExpired(t *testing.T) {
 	clock := memLeaserClock(time.Unix(1_700_000_000, 0))
-	l := NewMemLeaser(clock)
+	l := sched.NewMemLeaser(clock)
 	ctx := context.Background()
 
-	tokA, _, _ := l.Acquire(ctx, "k-a", LeasePolicy{TTL: 30 * time.Second}, "node-A")
-	tokB, _, _ := l.Acquire(ctx, "k-b", LeasePolicy{TTL: 90 * time.Second}, "node-A")
+	tokA, _, _ := l.Acquire(ctx, "k-a", sched.LeasePolicy{TTL: 30 * time.Second}, "node-A")
+	tokB, _, _ := l.Acquire(ctx, "k-b", sched.LeasePolicy{TTL: 90 * time.Second}, "node-A")
+	(*
 
 	// Advance "now" past tokA's expiry but before tokB's.
-	l.now = func() time.Time { return time.Unix(1_700_000_040, 0) }
+	l.Now()) = func() time.Time { return time.Unix(1_700_000_040, 0) }
 
 	expired := l.ReapExpired()
 	if len(expired) != 1 || expired[0] != tokA {
@@ -118,22 +120,22 @@ func TestMemLeaser_ReapExpired(t *testing.T) {
 }
 
 func TestMemLeaser_AcquireRejectsBadPolicy(t *testing.T) {
-	l := NewMemLeaser(nil)
+	l := sched.NewMemLeaser(nil)
 	ctx := context.Background()
 
 	cases := []struct {
 		name   string
-		policy LeasePolicy
+		policy sched.LeasePolicy
 	}{
-		{"zero TTL", LeasePolicy{TTL: 0}},
-		{"negative TTL", LeasePolicy{TTL: -1 * time.Second}},
-		{"negative MaxAttempts", LeasePolicy{TTL: time.Second, MaxAttempts: -1}},
-		{"MaxDuration < TTL", LeasePolicy{TTL: 60 * time.Second, MaxDuration: 30 * time.Second}},
+		{"zero TTL", sched.LeasePolicy{TTL: 0}},
+		{"negative TTL", sched.LeasePolicy{TTL: -1 * time.Second}},
+		{"negative MaxAttempts", sched.LeasePolicy{TTL: time.Second, MaxAttempts: -1}},
+		{"MaxDuration < TTL", sched.LeasePolicy{TTL: 60 * time.Second, MaxDuration: 30 * time.Second}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, err := l.Acquire(ctx, "k", tc.policy, "node")
-			if !errors.Is(err, ErrInvalidLeasePolicy) {
+			if !errors.Is(err, sched.ErrInvalidLeasePolicy) {
 				t.Fatalf("want ErrInvalidLeasePolicy, got %v", err)
 			}
 		})
@@ -142,14 +144,14 @@ func TestMemLeaser_AcquireRejectsBadPolicy(t *testing.T) {
 
 func TestMemLeaser_AcquireReacquireFromSameOwner(t *testing.T) {
 	clock := memLeaserClock(time.Unix(1_700_000_000, 0))
-	l := NewMemLeaser(clock)
+	l := sched.NewMemLeaser(clock)
 	ctx := context.Background()
 
-	tok1, _, err := l.Acquire(ctx, "k-shared", LeasePolicy{TTL: 30 * time.Second}, "node-A")
+	tok1, _, err := l.Acquire(ctx, "k-shared", sched.LeasePolicy{TTL: 30 * time.Second}, "node-A")
 	if err != nil {
 		t.Fatalf("first Acquire: %v", err)
 	}
-	tok2, _, err := l.Acquire(ctx, "k-shared", LeasePolicy{TTL: 60 * time.Second}, "node-A")
+	tok2, _, err := l.Acquire(ctx, "k-shared", sched.LeasePolicy{TTL: 60 * time.Second}, "node-A")
 	if err != nil {
 		t.Fatalf("re-Acquire from same owner: %v", err)
 	}
@@ -163,27 +165,27 @@ func TestMemLeaser_AcquireReacquireFromSameOwner(t *testing.T) {
 
 func TestMemLeaser_AcquireRefusesDifferentOwner(t *testing.T) {
 	clock := memLeaserClock(time.Unix(1_700_000_000, 0))
-	l := NewMemLeaser(clock)
+	l := sched.NewMemLeaser(clock)
 	ctx := context.Background()
 
-	_, _, err := l.Acquire(ctx, "k-stolen", LeasePolicy{TTL: 30 * time.Second}, "node-A")
+	_, _, err := l.Acquire(ctx, "k-stolen", sched.LeasePolicy{TTL: 30 * time.Second}, "node-A")
 	if err != nil {
 		t.Fatalf("first Acquire: %v", err)
 	}
-	_, _, err = l.Acquire(ctx, "k-stolen", LeasePolicy{TTL: 30 * time.Second}, "node-B")
-	if !errors.Is(err, ErrLeaseHeldByOther) {
+	_, _, err = l.Acquire(ctx, "k-stolen", sched.LeasePolicy{TTL: 30 * time.Second}, "node-B")
+	if !errors.Is(err, sched.ErrLeaseHeldByOther) {
 		t.Fatalf("re-Acquire from different owner: want ErrLeaseHeldByOther, got %v", err)
 	}
 }
 
 func TestMemLeaser_TokensAreUnique(t *testing.T) {
-	l := NewMemLeaser(nil)
+	l := sched.NewMemLeaser(nil)
 	ctx := context.Background()
-	seen := make(map[LeaseToken]bool)
+	seen := make(map[sched.LeaseToken]bool)
 	for i := 0; i < 1000; i++ {
 		key := []byte("k-")
 		key = append(key, byte('0'+(i/100)%10), byte('0'+(i/10)%10), byte('0'+i%10))
-		tok, _, err := l.Acquire(ctx, string(key), LeasePolicy{TTL: time.Second}, "node")
+		tok, _, err := l.Acquire(ctx, string(key), sched.LeasePolicy{TTL: time.Second}, "node")
 		if err != nil {
 			t.Fatalf("Acquire[%d]: %v", i, err)
 		}

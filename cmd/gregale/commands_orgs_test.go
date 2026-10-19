@@ -5,7 +5,7 @@
 // exits 1, happy path hits the right route with the right body,
 // closed-vocab typos fail locally before the round-trip.
 
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -24,7 +25,7 @@ func TestOrgs_NoSubcommandExitsOne(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "test")
 	t.Setenv("FAAS_API", "http://unused")
-	if code := cmdOrgs(nil); code != 1 {
+	if code := main.CmdOrgs(nil); code != 1 {
 		t.Errorf("orgs (no sub) exit = %d, want 1", code)
 	}
 }
@@ -34,7 +35,7 @@ func TestOrgs_UnknownSubcommandExitsOne(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "test")
 	t.Setenv("FAAS_API", "http://unused")
-	if code := cmdOrgs([]string{"frobnicate"}); code != 1 {
+	if code := main.CmdOrgs([]string{"frobnicate"}); code != 1 {
 		t.Errorf("orgs frobnicate exit = %d, want 1", code)
 	}
 }
@@ -66,7 +67,7 @@ func TestOrgs_NoTokenExitsOne(t *testing.T) {
 		{"seat-usage", "--org", "acme"},
 	} {
 		// errAuth returns exit code 2 (auth), not 1 (user error).
-		if code := cmdOrgs(args); code != 2 {
+		if code := main.CmdOrgs(args); code != 2 {
 			t.Errorf("orgs %v exit = %d, want 2 (auth)", args, code)
 		}
 	}
@@ -93,7 +94,7 @@ func TestOrgs_Ls_HappyPath(t *testing.T) {
 
 	for _, subcommand := range []string{"list", "ls"} {
 		sawMethod, sawPath = "", ""
-		if code := cmdOrgs([]string{subcommand}); code != 0 {
+		if code := main.CmdOrgs([]string{subcommand}); code != 0 {
 			t.Fatalf("orgs %s exit = %d, want 0", subcommand, code)
 		}
 		if sawMethod != "GET" || sawPath != "/v1/orgs" {
@@ -118,7 +119,7 @@ func TestOrgs_Create_HappyPath(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdOrgs([]string{"create", "--slug", "acme", "--name", "ACME Co"}); code != 0 {
+	if code := main.CmdOrgs([]string{"create", "--slug", "acme", "--name", "ACME Co"}); code != 0 {
 		t.Fatalf("orgs create exit = %d, want 0", code)
 	}
 	if sawMethod != "POST" || sawPath != "/v1/orgs" {
@@ -140,7 +141,7 @@ func TestOrgs_Create_MissingNameExitsOne(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdOrgs([]string{"create", "--slug", "acme"}); code != 1 {
+	if code := main.CmdOrgs([]string{"create", "--slug", "acme"}); code != 1 {
 		t.Errorf("orgs create (no --name) exit = %d, want 1", code)
 	}
 }
@@ -159,7 +160,7 @@ func TestOrgs_Info_HappyPath(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdOrgs([]string{"info", "acme"}); code != 0 {
+	if code := main.CmdOrgs([]string{"info", "acme"}); code != 0 {
 		t.Fatalf("orgs info exit = %d, want 0", code)
 	}
 	if sawMethod != "GET" || sawPath != "/v1/orgs/acme" {
@@ -186,7 +187,7 @@ func TestOrgs_Activity_HappyPath(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	code := cmdOrgs([]string{"activity", "--org", "acme", "--before", "cursor+/=", "--kind-prefix", "deploy.",
+	code := main.CmdOrgs([]string{"activity", "--org", "acme", "--before", "cursor+/=", "--kind-prefix", "deploy.",
 		"--actor-type", "github", "--app-id", "11111111-1111-4111-8111-111111111111", "--limit", "25"})
 	if code != 0 {
 		t.Fatalf("orgs activity exit = %d, want 0", code)
@@ -219,7 +220,7 @@ func TestOrgs_Rm_HappyPath(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdOrgs([]string{"rm", "-q", "acme"}); code != 0 {
+	if code := main.CmdOrgs([]string{"rm", "-q", "acme"}); code != 0 {
 		t.Fatalf("orgs rm -q exit = %d, want 0", code)
 	}
 	if sawMethod != "DELETE" || sawPath != "/v1/orgs/acme" {
@@ -231,8 +232,8 @@ func TestOrgs_Rm_JSON(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "test")
-	resetJSONOut(t)
-	jsonOutput = true
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete || r.URL.Path != "/v1/orgs/acme" {
@@ -243,9 +244,9 @@ func TestOrgs_Rm_JSON(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdOrgs([]string{"rm", "-q", "acme"}); code != 0 {
+	if code := main.CmdOrgs([]string{"rm", "-q", "acme"}); code != 0 {
 		t.Fatalf("orgs rm -q exit = %d, want 0", code)
 	}
 	var got map[string]any
@@ -275,7 +276,7 @@ func TestOrgs_MembersLs_HappyPath(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdOrgs([]string{"members", "list", "acme"}); code != 0 {
+	if code := main.CmdOrgs([]string{"members", "list", "acme"}); code != 0 {
 		t.Fatalf("orgs members list exit = %d, want 0", code)
 	}
 	if sawPath != "/v1/orgs/acme/members" {
@@ -299,7 +300,7 @@ func TestOrgs_MembersInvite_HappyPath(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdOrgs([]string{"members", "invite", "--org", "acme", "--email", "x@y.z"}); code != 0 {
+	if code := main.CmdOrgs([]string{"members", "invite", "--org", "acme", "--email", "x@y.z"}); code != 0 {
 		t.Fatalf("orgs members invite exit = %d, want 0", code)
 	}
 	if sawBody.Email != "x@y.z" || sawBody.Role != "developer" {
@@ -321,7 +322,7 @@ func TestOrgs_MembersInvite_OwnerRoleRejected(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 
 	for _, role := range []string{"owner", "owne", "OWNER"} {
-		if code := cmdOrgs([]string{"members", "invite", "--org", "acme", "--email", "x@y.z", "--role", role}); code != 1 {
+		if code := main.CmdOrgs([]string{"members", "invite", "--org", "acme", "--email", "x@y.z", "--role", role}); code != 1 {
 			t.Errorf("orgs members invite --role=%s exit = %d, want 1", role, code)
 		}
 	}
@@ -343,7 +344,7 @@ func TestOrgs_MembersChangeRole_HappyPath(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdOrgs([]string{"members", "change-role", "--org", "acme", "--user", "u-1", "--role", "admin"}); code != 0 {
+	if code := main.CmdOrgs([]string{"members", "change-role", "--org", "acme", "--user", "u-1", "--role", "admin"}); code != 0 {
 		t.Fatalf("orgs members change-role exit = %d, want 0", code)
 	}
 	if sawMethod != "PATCH" || sawPath != "/v1/orgs/acme/members/u-1" {
@@ -368,7 +369,7 @@ func TestOrgs_MembersChangeRole_OwnerRoleRejected(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 
 	for _, role := range []string{"owner", "owne", "OWNER"} {
-		if code := cmdOrgs([]string{"members", "change-role", "--org", "acme", "--user", "u-1", "--role", role}); code != 1 {
+		if code := main.CmdOrgs([]string{"members", "change-role", "--org", "acme", "--user", "u-1", "--role", role}); code != 1 {
 			t.Errorf("orgs members change-role --role=%s exit = %d, want 1", role, code)
 		}
 	}
@@ -388,7 +389,7 @@ func TestOrgs_MembersRm_HappyPath(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdOrgs([]string{"members", "rm", "--org", "acme", "--user", "u-1"}); code != 0 {
+	if code := main.CmdOrgs([]string{"members", "rm", "--org", "acme", "--user", "u-1"}); code != 0 {
 		t.Fatalf("orgs members rm exit = %d, want 0", code)
 	}
 	if sawMethod != "DELETE" || sawPath != "/v1/orgs/acme/members/u-1" {
@@ -413,7 +414,7 @@ func TestOrgs_InvitationsLs_HappyPath(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdOrgs([]string{"invitations", "list", "--org", "acme"}); code != 0 {
+	if code := main.CmdOrgs([]string{"invitations", "list", "--org", "acme"}); code != 0 {
 		t.Fatalf("orgs invitations list exit = %d, want 0", code)
 	}
 	if sawPath != "/v1/orgs/acme/invitations" {
@@ -435,7 +436,7 @@ func TestOrgs_InvitationsRevoke_HappyPath(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdOrgs([]string{"invitations", "revoke", "--org", "acme", "--invitation", "inv-1"}); code != 0 {
+	if code := main.CmdOrgs([]string{"invitations", "revoke", "--org", "acme", "--invitation", "inv-1"}); code != 0 {
 		t.Fatalf("orgs invitations revoke exit = %d, want 0", code)
 	}
 	if sawMethod != "DELETE" || sawPath != "/v1/orgs/acme/invitations/inv-1" {
@@ -459,7 +460,7 @@ func TestOrgs_TransferOwnership_HappyPath(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdOrgs([]string{"transfer-ownership", "--org", "acme", "--to", "u-2"}); code != 0 {
+	if code := main.CmdOrgs([]string{"transfer-ownership", "--org", "acme", "--to", "u-2"}); code != 0 {
 		t.Fatalf("orgs transfer-ownership exit = %d, want 0", code)
 	}
 	if sawMethod != "POST" || sawPath != "/v1/orgs/acme/transfer_ownership" {
@@ -483,7 +484,7 @@ func TestOrgs_SeatUsage_HappyPath(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdOrgs([]string{"seat-usage", "--org", "acme"}); code != 0 {
+	if code := main.CmdOrgs([]string{"seat-usage", "--org", "acme"}); code != 0 {
 		t.Fatalf("orgs seat-usage exit = %d, want 0", code)
 	}
 	if sawPath != "/v1/orgs/acme/seat_usage" {
@@ -498,7 +499,7 @@ func TestInvitations_NoSubcommandExitsOne(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "test")
 	t.Setenv("FAAS_API", "http://unused")
-	if code := cmdInvitations(nil); code != 1 {
+	if code := main.CmdInvitations(nil); code != 1 {
 		t.Errorf("invitations (no sub) exit = %d, want 1", code)
 	}
 }
@@ -516,7 +517,7 @@ func TestInvitations_Peek_HappyPath(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdInvitations([]string{"peek", "tok-once"}); code != 0 {
+	if code := main.CmdInvitations([]string{"peek", "tok-once"}); code != 0 {
 		t.Fatalf("invitations peek exit = %d, want 0", code)
 	}
 	if sawPath != "/v1/invitations/tok-once" {
@@ -538,7 +539,7 @@ func TestInvitations_Accept_HappyPath(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdInvitations([]string{"accept", "tok-once"}); code != 0 {
+	if code := main.CmdInvitations([]string{"accept", "tok-once"}); code != 0 {
 		t.Fatalf("invitations accept exit = %d, want 0", code)
 	}
 	if sawMethod != "POST" || sawPath != "/v1/invitations/tok-once/accept" {
@@ -557,7 +558,7 @@ func TestInvitations_Accept_NoTokenExitsOne(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdInvitations([]string{"accept", "tok-once"}); code != 2 {
+	if code := main.CmdInvitations([]string{"accept", "tok-once"}); code != 2 {
 		t.Errorf("invitations accept (no token) exit = %d, want 2 (auth)", code)
 	}
 }

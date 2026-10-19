@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -52,14 +53,14 @@ func TestCmdAddPostgresCreatesAndBindsWithoutSecrets(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	var out bytes.Buffer
-	previousOut, previousJSON := osStdout, jsonOutput
-	osStdout, jsonOutput = &out, false
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 
-	if code := run([]string{"--json", "add", "postgres", "--app", "api", "--env", "production", "--region", "eu"}); code != 0 {
+	if code := main.Run([]string{"--json", "add", "postgres", "--app", "api", "--env", "production", "--region", "eu"}); code != 0 {
 		t.Fatalf("exit = %d, output = %s", code, out.String())
 	}
-	var got addPostgresResult
+	var got main.AddPostgresResult
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("decode output: %v\n%s", err, out.String())
 	}
@@ -126,19 +127,19 @@ func TestCmdAddBucketCreatesAndReusesBindingWithoutCredentialOutput(t *testing.T
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	var out bytes.Buffer
-	previousOut, previousJSON := osStdout, jsonOutput
-	osStdout, jsonOutput = &out, false
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 
 	args := []string{"--json", "add", "bucket", "assets", "--app", "api", "--env", "production", "--region", "eu"}
-	if code := run(append([]string(nil), args...)); code != 0 {
+	if code := main.Run(append([]string(nil), args...)); code != 0 {
 		t.Fatalf("first add exit = %d, output = %s", code, out.String())
 	}
 	if strings.Contains(out.String(), "AKIA_TEST_SECRET") {
 		t.Fatalf("first add output exposed access key: %s", out.String())
 	}
 	out.Reset()
-	if code := run(append([]string(nil), args...)); code != 0 {
+	if code := main.Run(append([]string(nil), args...)); code != 0 {
 		t.Fatalf("second add exit = %d, output = %s", code, out.String())
 	}
 	if bucketCreates.Load() != 1 || bindingCreates.Load() != 1 {
@@ -156,19 +157,19 @@ func TestCmdAddBucketSaysWhenTheNewBindingReachesRunningInstances(t *testing.T) 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	var out bytes.Buffer
-	previousOut, previousJSON := osStdout, jsonOutput
-	osStdout, jsonOutput = &out, false
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 
 	args := []string{"add", "bucket", "assets", "--app", "api", "--env", "production", "--region", "eu"}
-	if code := run(append([]string(nil), args...)); code != 0 {
+	if code := main.Run(append([]string(nil), args...)); code != 0 {
 		t.Fatalf("first add exit = %d, output = %s", code, out.String())
 	}
 	if !strings.Contains(out.String(), "gregale app api restart") || !strings.Contains(out.String(), "GREGALE_S3_ASSETS_*") {
 		t.Fatalf("new binding output lacks the restart guidance: %s", out.String())
 	}
 	out.Reset()
-	if code := run(append([]string(nil), args...)); code != 0 {
+	if code := main.Run(append([]string(nil), args...)); code != 0 {
 		t.Fatalf("second add exit = %d, output = %s", code, out.String())
 	}
 	if strings.Contains(out.String(), "restart") {
@@ -181,12 +182,12 @@ func TestFindAddPostgresDatabaseIgnoresDeletedAndRejectsAmbiguous(t *testing.T) 
 		{ID: "deleted", Name: "orders", State: "deleted"},
 		{ID: "ready", Name: "orders", State: "ready"},
 	}
-	got, found, err := findAddPostgresDatabase(items, "orders")
+	got, found, err := main.FindAddPostgresDatabase(items, "orders")
 	if err != nil || !found || got.ID != "ready" {
 		t.Fatalf("find existing database = %+v, %v, %v", got, found, err)
 	}
 	items = append(items, api.ManagedPostgresDatabase{ID: "other", Name: "orders", State: "ready"})
-	if _, _, err := findAddPostgresDatabase(items, "orders"); err == nil {
+	if _, _, err := main.FindAddPostgresDatabase(items, "orders"); err == nil {
 		t.Fatal("ambiguous database name unexpectedly resolved")
 	}
 }
@@ -235,14 +236,14 @@ func TestCmdAddPostgresAdoptsWorkCommittedBehindAnUncertainError(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	var out bytes.Buffer
-	previousOut, previousJSON := osStdout, jsonOutput
-	osStdout, jsonOutput = &out, false
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 
-	if code := run([]string{"--json", "add", "postgres", "--app", "api", "--env", "production", "--region", "eu"}); code != 0 {
+	if code := main.Run([]string{"--json", "add", "postgres", "--app", "api", "--env", "production", "--region", "eu"}); code != 0 {
 		t.Fatalf("exit = %d, output = %s", code, out.String())
 	}
-	var got addPostgresResult
+	var got main.AddPostgresResult
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("decode output: %v\n%s", err, out.String())
 	}

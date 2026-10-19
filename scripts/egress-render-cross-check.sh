@@ -38,12 +38,14 @@ render_go() {
   local tenant="${5:-}"
   local svc_bridge="${6:-}"
   local svc_https="${7:-}"
+  local -a render_flags=()
+  if [[ "${8:-}" == "1" ]]; then render_flags+=(--public-forwarding); fi
   local out
   out=$(cd "$SRC_ROOT" && FAAS_PUBLIC_IFACE="$iface" FAAS_MASQUERADE_CIDR="$cidr" \
         FAAS_OVERLAY_CIDRS="$overlay" FAAS_MASQUERADE_CIDR_V6="$v6" \
         FAAS_TENANT_EGRESS_IFACE="$tenant" \
         FAAS_SERVICE_TCP_BRIDGE_IP="$svc_bridge" FAAS_SERVICE_TCP_HTTPS="$svc_https" \
-        go run ./cmd/faas-nft-render 2>/dev/null)
+        go run ./cmd/faas-nft-render "${render_flags[@]}" 2>/dev/null)
   # Normalize trailing newline so the per-row diff is whitespace-
   # insensitive (Go's pkg/netns.Render emits a final \n; the python
   # `print(..., end="")` does not).
@@ -62,6 +64,7 @@ render_jinja() {
   local tenant="${5:-}"
   local svc_bridge="${6:-}"
   local svc_https="${7:-}"
+  local public_forwarding="${8:-}"
   python3 -c "
 from jinja2 import Template
 overlay = '$overlay'
@@ -75,6 +78,7 @@ print(Template(open('$JINJA2').read()).render(
     bridge_cidr='$svc_bridge/16',
     faas_service_tcp_enabled=bool('$svc_bridge'),
     faas_service_tcp_https_enabled='$svc_https' == '1',
+    faas_public_forwarding='$public_forwarding' == '1',
 ), end='')
 " 2>/dev/null | python3 -c "import sys; sys.stdout.write(sys.stdin.read().rstrip('\n') + '\n')"
 }
@@ -164,6 +168,7 @@ main() {
         "tenant-gateway|eth0|10.100.0.0/16|203.0.113.0/24|fc00::/7|wg-tenant"
         "service-tcp|eth0|10.100.0.0/16||||10.100.0.1|"
         "service-tcp-https|ens5|10.101.0.0/16|203.0.113.0/24|||10.101.0.1|1"
+        "public-forwarding|eth0|10.100.0.0/16||||||1"
       )
       ;;
     *)
@@ -172,10 +177,10 @@ main() {
       ;;
   esac
   for row in "${rows[@]}"; do
-    IFS='|' read -r label iface cidr overlay v6 tenant svc_bridge svc_https <<< "$row"
+    IFS='|' read -r label iface cidr overlay v6 tenant svc_bridge svc_https public_forwarding <<< "$row"
     local go_out jinja_out
-    go_out=$(render_go "$iface" "$cidr" "$overlay" "$v6" "$tenant" "$svc_bridge" "$svc_https")
-    jinja_out=$(render_jinja "$iface" "$cidr" "$overlay" "$v6" "$tenant" "$svc_bridge" "$svc_https")
+    go_out=$(render_go "$iface" "$cidr" "$overlay" "$v6" "$tenant" "$svc_bridge" "$svc_https" "$public_forwarding")
+    jinja_out=$(render_jinja "$iface" "$cidr" "$overlay" "$v6" "$tenant" "$svc_bridge" "$svc_https" "$public_forwarding")
     if ! compare "$label" "$go_out" "$jinja_out"; then
       status=1
     fi

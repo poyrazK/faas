@@ -26,7 +26,7 @@
 // match 1:1); the pgstore parity test lives in
 // pkg/state/pgstore_migration_test.go.
 
-package sched
+package sched_test
 
 import (
 	"context"
@@ -38,6 +38,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -125,9 +126,9 @@ func seedStaleComputeNodeForReconcile(t *testing.T, store *state.MemStore) strin
 func TestReconcileExpiredMigrations_ActiveOwnerReinvited(t *testing.T) {
 	store := state.NewMemStore()
 	ops := wire.NewOpsMetrics("schedd")
-	vmm := &fakeVMM{}
-	notif := &fakeNotifier{}
-	e := newEngine(t, store, vmm, notif, "1.10.0")
+	vmm := &sched.FakeVMM{}
+	notif := &sched.FakeNotifier{}
+	e := sched.XNewEngine(t, store, vmm, notif, "1.10.0")
 	e.WithOpsMetrics(ops)
 	nodeID := seedComputeNodeForReconcile(t, store, true)
 	instanceID, _ := seedReconcileFixture(t, store, nodeID)
@@ -159,9 +160,9 @@ func TestReconcileExpiredMigrations_ActiveOwnerReinvited(t *testing.T) {
 func TestReconcileExpiredMigrations_DeadOwnerParked(t *testing.T) {
 	store := state.NewMemStore()
 	ops := wire.NewOpsMetrics("schedd")
-	vmm := &fakeVMM{}
-	notif := &fakeNotifier{}
-	e := newEngine(t, store, vmm, notif, "1.10.0")
+	vmm := &sched.FakeVMM{}
+	notif := &sched.FakeNotifier{}
+	e := sched.XNewEngine(t, store, vmm, notif, "1.10.0")
 	e.WithOpsMetrics(ops)
 	nodeID := seedComputeNodeForReconcile(t, store, true)
 	instanceID, _ := seedReconcileFixture(t, store, nodeID)
@@ -223,9 +224,9 @@ func TestReconcileExpiredMigrations_ConflictOnPeerRollback(t *testing.T) {
 func TestReconcileExpiredMigrations_RespectsPerTickCap(t *testing.T) {
 	store := state.NewMemStore()
 	ops := wire.NewOpsMetrics("schedd")
-	vmm := &fakeVMM{}
-	notif := &fakeNotifier{}
-	e := newEngine(t, store, vmm, notif, "1.10.0")
+	vmm := &sched.FakeVMM{}
+	notif := &sched.FakeNotifier{}
+	e := sched.XNewEngine(t, store, vmm, notif, "1.10.0")
 	e.WithOpsMetrics(ops)
 	e.WithMigratingWatchdogTickLimit(50)
 	nodeID := seedComputeNodeForReconcile(t, store, true)
@@ -251,9 +252,9 @@ func TestReconcileExpiredMigrations_RespectsPerTickCap(t *testing.T) {
 func TestReconcileExpiredMigrations_NoRowsIsNoop(t *testing.T) {
 	store := state.NewMemStore()
 	ops := wire.NewOpsMetrics("schedd")
-	vmm := &fakeVMM{}
-	notif := &fakeNotifier{}
-	e := newEngine(t, store, vmm, notif, "1.10.0")
+	vmm := &sched.FakeVMM{}
+	notif := &sched.FakeNotifier{}
+	e := sched.XNewEngine(t, store, vmm, notif, "1.10.0")
 	e.WithOpsMetrics(ops)
 	reconciled, err := e.ReconcileExpiredMigrations(context.Background())
 	if err != nil {
@@ -267,7 +268,7 @@ func TestReconcileExpiredMigrations_NoRowsIsNoop(t *testing.T) {
 func TestReconcileExpiredMigrations_DoesNotTouchFreshLease(t *testing.T) {
 	store := state.NewMemStore()
 	ops := wire.NewOpsMetrics("schedd")
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 	e.WithOpsMetrics(ops)
 	nodeID := seedComputeNodeForReconcile(t, store, true)
 	instanceID, _ := seedReconcileMemStoreForFreshLease(t, store, nodeID)
@@ -318,7 +319,7 @@ func readMigratingReconcileMetric(t *testing.T, ops *wire.OpsMetrics, outcome st
 	if ops == nil {
 		return 0
 	}
-	body := getMetricsBody(t, ops)
+	body := sched.GetMetricsBody(t, ops)
 	want := `schedd_migrating_reconcile_total{outcome="` + outcome + `"}`
 	for _, line := range strings.Split(body, "\n") {
 		if strings.HasPrefix(line, want) {

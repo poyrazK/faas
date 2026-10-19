@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"net/http"
 	"net/http/httptest"
@@ -25,7 +26,7 @@ func TestBindingRunDiagnosticsCLI(t *testing.T) {
 	}))
 	defer server.Close()
 	for _, args := range [][]string{{"bindings", "verification-runs", "diagnostics", "api", id, "--json"}, {"projects", "environments", "release-sets", "verification-runs", "diagnostics", "project", "production", id, "--json"}} {
-		code, stdout, stderr := captureBindingCLI(t, server.URL, args...)
+		code, stdout, stderr := main.CaptureBindingCLI(t, server.URL, args...)
 		if code != 0 || stderr != "" || !strings.Contains(stdout, "policy_changed") || !strings.Contains(stdout, "review_new_run") || !strings.Contains(stdout, id) {
 			t.Fatalf("missing structured diagnostics: %s %s", stdout, stderr)
 		}

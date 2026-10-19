@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -18,7 +19,7 @@ func TestConsumeLogStreamDrainsDegradedEventBeforeEOF(t *testing.T) {
 	close(errs)
 
 	visited := 0
-	code, err := consumeLogStream(context.Background(), events, errs, func(event api.Event) (bool, int) {
+	code, err := main.ConsumeLogStream(context.Background(), events, errs, func(event api.Event) (bool, int) {
 		visited++
 		if event.Event == "degraded" {
 			return true, 3
@@ -41,7 +42,7 @@ func TestConsumeLogStreamDrainsLogFramesInOrderBeforeTransportError(t *testing.T
 	close(errs)
 
 	var got []string
-	code, err := consumeLogStream(context.Background(), events, errs, func(event api.Event) (bool, int) {
+	code, err := main.ConsumeLogStream(context.Background(), events, errs, func(event api.Event) (bool, int) {
 		got = append(got, event.Data)
 		return false, 0
 	})
