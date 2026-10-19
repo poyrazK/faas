@@ -7188,18 +7188,10 @@ haveApp:
 
 	// Stamp the per-instance identity on the request BEFORE proxying so
 	// the per-node vmmd forwarder (issue #98 / ADR-028) can attribute
-	// the HTTP bytes to this exact instance. ApplyGuestHeaders first clears
-	// customer-supplied claims, then stamps the scheduler-selected identity.
-	identity := target.PlatformIdentity(app.AccountID, requestIDFrom(r))
-	identity.PlatformTenantID = authenticatedFrom(r.Context()).PlatformTenantID
-	if identity.AppID == "" {
-		identity.AppID = app.ID
-	}
-	identity.ApplyGuestHeaders(r.Header)
-	// Keep the same scheduler-authored identity on the request context so
-	// request-scoped logs and any subsequent schedd/vmmd metadata hop cannot
-	// drift from the headers sent to the guest.
-	r = r.WithContext(wire.WithPlatformIdentity(r.Context(), identity))
+	// the HTTP bytes to this exact instance. A retry restamps for its own
+	// target inside the forward closures below.
+	var identity api.PlatformIdentity
+	r, identity = stampTargetIdentity(r, app, target)
 	requestSpan.SetAttributes(pkgtrace.PlatformIdentityAttributes(identity)...)
 
 	// Semantic bridge span. The request context is passed through the existing
@@ -7584,6 +7576,7 @@ haveApp:
 		// returned above and never reach here.
 		h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
+				req, _ = stampTargetIdentity(req, app, tgt)
 				h.proxyByNode(tgt).ServeHTTP(w, req)
 			}, app)
 	} else {
@@ -7599,6 +7592,7 @@ haveApp:
 		capped := h.setupBufferedCapWriter(w, r.Method, app, planCap)
 		h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
+				req, _ = stampTargetIdentity(req, app, tgt)
 				h.proxyFor(tgt.NodeID, planCap).ServeHTTP(w, req)
 			}, app)
 	}
