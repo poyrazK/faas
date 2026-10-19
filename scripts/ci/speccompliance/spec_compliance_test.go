@@ -112,12 +112,6 @@ var routeExclude = map[string]bool{
 	"GET /v1/platform-tenant-self/customer-operation-schedules/{id}": true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
 	"GET /v1/platform-tenant-self/customer-operations/{id}/children": true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
 	"GET /v1/runtime/operations/{id}/children":                       true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
-	"GET /v1/apps/{slug}/operation-schedules":                        true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
-	"GET /v1/apps/{slug}/operations/{id}/children":                   true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
-	"GET /v1/platform-tenant-self/customer-operation-schedules":      true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
-	"GET /v1/platform-tenant-self/customer-operation-schedules/{id}": true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
-	"GET /v1/platform-tenant-self/customer-operations/{id}/children": true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
-	"GET /v1/runtime/operations/{id}/children":                       true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
 	// Fixed-executor repair preview routes are documented in docs/data-repair.md;
 	// they are not part of the public SDK contract until native qualification.
 	"GET /v1/apps/{slug}/data-repair/review":                            true,
@@ -569,7 +563,6 @@ var routeExclude = map[string]bool{
 	// move together.
 	"POST /v1/otel/v1/traces":                   true,
 	"PUT /v1/apps/{slug}/operation-concurrency": true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
-	"POST /v1/otel/v1/traces":                   true,
 
 	// ADR-1293: session-bound HTML progress and CSRF result-check fragments.
 	"GET /dashboard/apps/{slug}/automations/live-verifications/{run_id}":     true, // ADR-1293 session-authenticated HTML progress fragment
