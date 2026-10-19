@@ -320,6 +320,13 @@ are always in GoTrue's redirect allow list so recovery links return to them.
 single-flight because refresh tokens rotate, and `getAccessToken` plugs into
 `@gregale/data`.
 
+Native clients (`sdk/swift`, `sdk/kotlin`) mirror it for mobile apps. Sessions
+live in the Keychain or the Android Keystore. Returns from the browser use
+HTTPS universal links / App Links, because redirect URLs stay HTTPS-only and a
+custom scheme can be claimed by another app. OAuth and emailed links from the
+app use PKCE with the verifier kept in the session store; emailed codes and
+platform ID tokens (Sign in with Apple, Google) need no browser at all.
+
 ### Administration and import
 
 Owners administer users through `/admin/v1` on the Auth app with a key they
