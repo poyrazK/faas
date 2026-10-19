@@ -86411,6 +86411,53 @@ func (q *Queries) StampDeadLetterEventReplay(ctx context.Context, db DBTX, arg S
 	return err
 }
 
+const stampDefaultInvocationRetention = `-- name: StampDefaultInvocationRetention :execrows
+WITH plan_retention AS (
+    SELECT unnest($1::text[]) AS plan, unnest($2::bigint[]) AS seconds
+), batch AS (
+    SELECT i.id, coalesce(i.completed_at, i.created_at) AS settled_at,
+           CASE WHEN i.state IN ('failed', 'dead_letter') THEN greatest(r.seconds, $3::bigint)
+                ELSE r.seconds END AS seconds
+    FROM invocations i
+    LEFT JOIN accounts a ON a.id = i.account_id
+    LEFT JOIN orgs o ON o.id = i.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+    JOIN plan_retention r ON r.plan = coalesce(a.plan, o.plan)
+    WHERE i.result_retention_until IS NULL
+      AND i.state IN ('completed', 'failed', 'dead_letter', 'cancelled', 'superseded', 'expired')
+    ORDER BY i.created_at
+    LIMIT $4::integer
+    FOR UPDATE OF i SKIP LOCKED
+)
+UPDATE invocations
+SET result_retention_until = batch.settled_at + make_interval(secs => batch.seconds)
+FROM batch
+WHERE invocations.id = batch.id
+`
+
+type StampDefaultInvocationRetentionParams struct {
+	Plans               []string
+	RetentionSeconds    []int64
+	FailureFloorSeconds int64
+	BatchLimit          int32
+}
+
+// ADR 20261019104819: finished rows whose producer set no horizon get the
+// plan default from pkg/api/limits.go. Failed and dead-lettered rows keep at
+// least the failure floor so DLQ replay and execution recovery still find
+// them. The reaper prunes stamped rows once they are due.
+func (q *Queries) StampDefaultInvocationRetention(ctx context.Context, db DBTX, arg StampDefaultInvocationRetentionParams) (int64, error) {
+	result, err := db.Exec(ctx, stampDefaultInvocationRetention,
+		arg.Plans,
+		arg.RetentionSeconds,
+		arg.FailureFloorSeconds,
+		arg.BatchLimit,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const stampDeploymentRuntimeBase = `-- name: StampDeploymentRuntimeBase :exec
 UPDATE deployments SET runtime_base=$1::text
 WHERE id=$2::uuid AND status IN ('pending','building','imaging','snapshotting')

@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Finished invocations without a horizon get the plan default retention](20261019104819-invocation-default-retention.md)
 - [Tenant egress denies the NAT64 prefixes](20261018194214-tenant-egress-deny-nat64.md)
 - [ADR-1745: Shared-window compound Issues alerts](1745-shared-window-issue-compound-alerts.md)
 - [ADR-1744: Offline grouping previews and reviewed regression baselines](1744-issue-grouping-previews-and-baselines.md)
