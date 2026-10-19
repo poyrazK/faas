@@ -72,6 +72,10 @@
   argument parsing; a `pkg/sched` test covers the cold-boot RPC's identity
   without wake correlation. The metal test requires every pool boot after
   the deployment's prime to spend less than the full window in vmmd's
-  `wait_ready` phase. On n2 before the prime fix, pool boots of a proven
-  deployment waited 2.0–3.0 s in `wait_ready` (11 s before), and a burst of
-  three was RUNNING at 7.5, 10.6 and 13.9 s (11.9, 23.7 and 35.5 s before).
+  `wait_ready` phase. It passed on n2 (2026-10-18): every pool boot, the
+  first one after the deploy included, waited 2.1–3.0 s in `wait_ready`
+  (about 11 s before); one message was RUNNING at a median 4.9 s (11.9 s
+  before) and leased at 4.0 s; a burst of three was RUNNING at 5.0, 8.5 and
+  11.9 s (11.9, 23.7 and 35.5 s before) and leased at 4.1, 7.6 and 11.0 s.
+  The node's disk was under heavy shared load in that run, which lengthened
+  disk staging (`provision`, 0.6–2.4 s) and the token times.
