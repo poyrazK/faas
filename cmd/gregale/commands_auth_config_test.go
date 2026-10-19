@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/authsettings"
 )
@@ -81,40 +82,40 @@ func authSettingsWorld(t *testing.T, existing []string, running map[string]any) 
 			for _, name := range existing {
 				list.Secrets = append(list.Secrets, api.AppSecretResponse{Key: name, Scope: api.DefaultEnvScope})
 			}
-			writeJSONTest(w, list)
+			main.WriteJSONTest(w, list)
 		case r.Method == "PUT" && strings.HasPrefix(r.URL.Path, prefix+"/"):
 			var body api.PutAppSecretRequest
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			sealed[strings.TrimPrefix(r.URL.Path, prefix+"/")] = body.Value
-			writeJSONTest(w, map[string]any{})
+			main.WriteJSONTest(w, map[string]any{})
 		case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, prefix+"/"):
 			name := strings.TrimPrefix(r.URL.Path, prefix+"/")
 			removed = append(removed, name)
 			// apid answers a removal of a secret the app lacks with 400.
 			if !slices.Contains(existing, name) {
 				w.WriteHeader(http.StatusBadRequest)
-				writeJSONTest(w, map[string]any{"status": 400, "code": "secret_not_found"})
+				main.WriteJSONTest(w, map[string]any{"status": 400, "code": "secret_not_found"})
 				return true
 			}
 			w.WriteHeader(http.StatusNoContent)
 		case r.Method == "POST" && r.URL.Path == "/v1/apps/shop-auth/restart":
 			restarts++
-			writeJSONTest(w, map[string]any{"app_id": "auth-app", "wake_id": "w1"})
+			main.WriteJSONTest(w, map[string]any{"app_id": "auth-app", "wake_id": "w1"})
 		default:
 			return false
 		}
 		return true
 	})
-	old := authAdminHTTPClient
-	authAdminHTTPClient = &http.Client{Transport: authRoundTrip(func(r *http.Request) (*http.Response, error) {
+	old := (*main.AuthAdminHTTPClient)
+	(*main.AuthAdminHTTPClient) = &http.Client{Transport: authRoundTrip(func(r *http.Request) (*http.Response, error) {
 		recorder := httptest.NewRecorder()
 		if r.URL.String() != "https://shop-auth.gregale.app/settings/v1" {
 			t.Errorf("unexpected Auth app request %s", r.URL)
 		}
-		writeJSONTest(recorder, running)
+		main.WriteJSONTest(recorder, running)
 		return recorder.Result(), nil
 	})}
-	t.Cleanup(func() { authAdminHTTPClient = old })
+	t.Cleanup(func() { (*main.AuthAdminHTTPClient) = old })
 	return sealed, &removed, &restarts
 }
 
@@ -123,7 +124,7 @@ func TestAuthConfigWritesTypedSettingsAndRestarts(t *testing.T) {
 	sealed, removed, restarts := authSettingsWorld(t, nil, nil)
 	captureAuthStdout(t)
 	args := []string{"config", "shop-auth", "--signup", "off", "--password-min-length", "12", "--password-require", "lower,digit", "--mfa", "off", "--leaked-password-check", "on", "--redirect-urls", "none", "--email-provider", "none"}
-	if code := cmdAuth(args); code != 0 {
+	if code := main.CmdAuth(args); code != 0 {
 		t.Fatalf("config = %d", code)
 	}
 	want := map[string]string{
@@ -150,7 +151,7 @@ func TestAuthConfigWritesTypedSettingsAndRestarts(t *testing.T) {
 		{"config", "shop-auth", "--site-url", "http://shop.example.com"},
 		{"config", "shop-auth", "--email-provider", "none", "--email-from", "a@example.com"},
 	} {
-		if code := cmdAuth(bad); code == 0 {
+		if code := main.CmdAuth(bad); code == 0 {
 			t.Errorf("%v accepted", bad)
 		}
 	}
@@ -174,7 +175,7 @@ func TestAuthConfigShowsTheRunningSettings(t *testing.T) {
 	}
 	sealed, _, restarts := authSettingsWorld(t, nil, running)
 	out := captureAuthStdout(t)
-	if code := cmdAuth([]string{"config", "shop-auth"}); code != 0 || len(sealed) != 0 || *restarts != 0 {
+	if code := main.CmdAuth([]string{"config", "shop-auth"}); code != 0 || len(sealed) != 0 || *restarts != 0 {
 		t.Fatalf("show = %d, wrote %v", code, sealed)
 	}
 	for _, line := range []string{"sign-in methods: email, google", "at least 12 characters; must include lower; leaked-password check on", "email delivery:  not configured", "signing key:     0A1B2C3D (1 more verifying)"} {
@@ -183,12 +184,12 @@ func TestAuthConfigShowsTheRunningSettings(t *testing.T) {
 		}
 	}
 	out.Reset()
-	jsonOutput = true
-	t.Cleanup(resetJSONOutput) // later tests expect text output
-	if code := cmdAuth([]string{"config", "shop-auth"}); code != 0 {
+	(*main.JsonOutput) = true
+	t.Cleanup(main.ResetJSONOutput) // later tests expect text output
+	if code := main.CmdAuth([]string{"config", "shop-auth"}); code != 0 {
 		t.Fatal("show --json failed")
 	}
-	var shown authPublicSettings
+	var shown main.AuthPublicSettings
 	if err := json.Unmarshal(out.Bytes(), &shown); err != nil || shown.Password.MinLength != 12 || shown.Keys.Signing != "0A1B2C3D" {
 		t.Fatalf("json = %s %v", out, err)
 	}
@@ -199,10 +200,10 @@ func TestAuthProvidersEnableReplacesAndDisableRemoves(t *testing.T) {
 	existing := []string{"GOTRUE_EXTERNAL_GITLAB_URL", "GOTRUE_EXTERNAL_GITLAB_SECRET", "GOTRUE_EXTERNAL_GOOGLE_SECRET", "AUTH_SITE_URL"}
 	sealed, removed, restarts := authSettingsWorld(t, existing, nil)
 	out := captureAuthStdout(t)
-	oldIn := osStdin
-	osStdin = strings.NewReader("gitlab-secret\n")
-	t.Cleanup(func() { osStdin = oldIn })
-	if code := cmdAuth([]string{"providers", "enable", "shop-auth", "gitlab", "--client-id", "app-id", "--client-secret-stdin"}); code != 0 {
+	oldIn := (*main.OsStdin)
+	(*main.OsStdin) = strings.NewReader("gitlab-secret\n")
+	t.Cleanup(func() { (*main.OsStdin) = oldIn })
+	if code := main.CmdAuth([]string{"providers", "enable", "shop-auth", "gitlab", "--client-id", "app-id", "--client-secret-stdin"}); code != 0 {
 		t.Fatalf("enable = %d", code)
 	}
 	want := map[string]string{"GOTRUE_EXTERNAL_GITLAB_ENABLED": "true", "GOTRUE_EXTERNAL_GITLAB_CLIENT_ID": "app-id", "GOTRUE_EXTERNAL_GITLAB_SECRET": "gitlab-secret"}
@@ -213,14 +214,14 @@ func TestAuthProvidersEnableReplacesAndDisableRemoves(t *testing.T) {
 		t.Fatalf("output = %s", out)
 	}
 	*removed = nil
-	if code := cmdAuth([]string{"providers", "disable", "shop-auth", "gitlab"}); code != 0 {
+	if code := main.CmdAuth([]string{"providers", "disable", "shop-auth", "gitlab"}); code != 0 {
 		t.Fatal("disable failed")
 	}
 	sort.Strings(*removed)
 	if !reflect.DeepEqual(*removed, []string{"GOTRUE_EXTERNAL_GITLAB_SECRET", "GOTRUE_EXTERNAL_GITLAB_URL"}) {
 		t.Fatalf("disable removed %v", *removed)
 	}
-	if code := cmdAuth([]string{"providers", "enable", "shop-auth", "myspace", "--client-id", "x"}); code == 0 {
+	if code := main.CmdAuth([]string{"providers", "enable", "shop-auth", "myspace", "--client-id", "x"}); code == 0 {
 		t.Fatal("enabled an unknown provider")
 	}
 }
@@ -234,9 +235,9 @@ func TestAuthConfigEventsMintsThePublishOnlyKeyOnce(t *testing.T) {
 			case r.Method == "GET" && r.URL.Path == "/v1/apps/shop-auth/secrets":
 				list := api.AppSecretListResponse{}
 				if existing {
-					list.Secrets = []api.AppSecretResponse{{Key: authEventsKeyName, Scope: api.DefaultEnvScope}}
+					list.Secrets = []api.AppSecretResponse{{Key: main.AuthEventsKeyName, Scope: api.DefaultEnvScope}}
 				}
-				writeJSONTest(w, list)
+				main.WriteJSONTest(w, list)
 			case r.Method == "POST" && r.URL.Path == "/v1/keys":
 				var body api.CreateKeyRequest
 				_ = json.NewDecoder(r.Body).Decode(&body)
@@ -244,29 +245,29 @@ func TestAuthConfigEventsMintsThePublishOnlyKeyOnce(t *testing.T) {
 					t.Errorf("events key scopes = %v", body.Scopes)
 				}
 				minted++
-				writeJSONTest(w, api.APIKeyResponse{ID: "key-1", Plaintext: "fp_live_events_only"})
+				main.WriteJSONTest(w, api.APIKeyResponse{ID: "key-1", Plaintext: "fp_live_events_only"})
 			case r.Method == "PUT" && strings.HasPrefix(r.URL.Path, "/v1/apps/shop-auth/secrets/"):
 				var body api.PutAppSecretRequest
 				_ = json.NewDecoder(r.Body).Decode(&body)
 				sealed[strings.TrimPrefix(r.URL.Path, "/v1/apps/shop-auth/secrets/")] = body.Value
-				writeJSONTest(w, map[string]any{})
+				main.WriteJSONTest(w, map[string]any{})
 			case r.Method == "POST" && r.URL.Path == "/v1/apps/shop-auth/restart":
 				restarts++
-				writeJSONTest(w, map[string]any{"app_id": "auth-app", "wake_id": "w1"})
+				main.WriteJSONTest(w, map[string]any{"app_id": "auth-app", "wake_id": "w1"})
 			default:
 				return false
 			}
 			return true
 		})
 		captureAuthStdout(t)
-		if code := cmdAuth([]string{"config", "shop-auth", "--events", "on"}); code != 0 {
+		if code := main.CmdAuth([]string{"config", "shop-auth", "--events", "on"}); code != 0 {
 			t.Fatalf("events on = %d", code)
 		}
 		wantMinted := map[bool]int{false: 1, true: 0}[existing]
-		if minted != wantMinted || sealed["AUTH_LIFECYCLE_EVENTS"] != "1" || restarts != 1 || (wantMinted == 1) != (sealed[authEventsKeyName] == "fp_live_events_only") {
+		if minted != wantMinted || sealed["AUTH_LIFECYCLE_EVENTS"] != "1" || restarts != 1 || (wantMinted == 1) != (sealed[main.AuthEventsKeyName] == "fp_live_events_only") {
 			t.Fatalf("existing=%v: minted %d, sealed %v", existing, minted, sealed)
 		}
-		if code := cmdAuth([]string{"config", "shop-auth", "--events", "off"}); code != 0 || sealed["AUTH_LIFECYCLE_EVENTS"] != "0" || minted != wantMinted {
+		if code := main.CmdAuth([]string{"config", "shop-auth", "--events", "off"}); code != 0 || sealed["AUTH_LIFECYCLE_EVENTS"] != "0" || minted != wantMinted {
 			t.Fatalf("events off = %d, minted %d", code, minted)
 		}
 	}
@@ -276,17 +277,17 @@ func TestAuthConfigPasskeys(t *testing.T) {
 	resetJSONEnv(t)
 	sealed, removed, restarts := authSettingsWorld(t, nil, nil)
 	captureAuthStdout(t)
-	if code := cmdAuth([]string{"config", "shop-auth", "--passkeys", "on", "--passkey-rp-id", "example.com"}); code != 0 {
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--passkeys", "on", "--passkey-rp-id", "example.com"}); code != 0 {
 		t.Fatalf("config = %d", code)
 	}
 	if !reflect.DeepEqual(sealed, map[string]string{"GOTRUE_PASSKEY_ENABLED": "true", "AUTH_PASSKEY_RP_ID": "example.com"}) || *restarts != 1 {
 		t.Fatalf("sealed = %v", sealed)
 	}
-	if code := cmdAuth([]string{"config", "shop-auth", "--passkey-rp-id", "none"}); code != 0 || !reflect.DeepEqual(*removed, []string{"AUTH_PASSKEY_RP_ID"}) {
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--passkey-rp-id", "none"}); code != 0 || !reflect.DeepEqual(*removed, []string{"AUTH_PASSKEY_RP_ID"}) {
 		t.Fatalf("none = %d, removed %v", code, *removed)
 	}
 	for _, bad := range [][]string{{"config", "shop-auth", "--passkeys", "yes"}, {"config", "shop-auth", "--passkey-rp-id", "https://example.com"}} {
-		if code := cmdAuth(bad); code == 0 {
+		if code := main.CmdAuth(bad); code == 0 {
 			t.Errorf("%v accepted", bad)
 		}
 	}
@@ -296,12 +297,12 @@ func TestAuthConfigBrandingCaptchaAndRetention(t *testing.T) {
 	resetJSONEnv(t)
 	sealed, removed, restarts := authSettingsWorld(t, nil, nil)
 	captureAuthStdout(t)
-	oldIn := osStdin
-	osStdin = strings.NewReader("1x0000000000000000000000000000000AA\n")
-	t.Cleanup(func() { osStdin = oldIn })
+	oldIn := (*main.OsStdin)
+	(*main.OsStdin) = strings.NewReader("1x0000000000000000000000000000000AA\n")
+	t.Cleanup(func() { (*main.OsStdin) = oldIn })
 	args := []string{"config", "shop-auth", "--brand-name", "Shop", "--brand-color", "#4F46E5", "--brand-logo-url", "https://cdn.example.com/logo.svg",
 		"--captcha", "turnstile", "--captcha-site-key", "1x00000000000000000000AA", "--captcha-secret-stdin", "--activity-retention", "90"}
-	if code := cmdAuth(args); code != 0 {
+	if code := main.CmdAuth(args); code != 0 {
 		t.Fatalf("config = %d", code)
 	}
 	want := map[string]string{
@@ -314,7 +315,7 @@ func TestAuthConfigBrandingCaptchaAndRetention(t *testing.T) {
 		t.Fatalf("sealed = %v", sealed)
 	}
 	*removed = nil
-	if code := cmdAuth([]string{"config", "shop-auth", "--brand-logo-url", "none", "--captcha", "off", "--activity-retention", "forever"}); code != 0 {
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--brand-logo-url", "none", "--captcha", "off", "--activity-retention", "forever"}); code != 0 {
 		t.Fatal("clearing failed")
 	}
 	sort.Strings(*removed)
@@ -327,7 +328,7 @@ func TestAuthConfigBrandingCaptchaAndRetention(t *testing.T) {
 		{"config", "shop-auth", "--activity-retention", "90d"},
 		{"config", "shop-auth", "--brand-color", "blue"},
 	} {
-		if code := cmdAuth(bad); code == 0 {
+		if code := main.CmdAuth(bad); code == 0 {
 			t.Errorf("%v accepted", bad)
 		}
 	}
@@ -337,10 +338,10 @@ func TestAuthConfigPhoneSignIn(t *testing.T) {
 	resetJSONEnv(t)
 	sealed, removed, restarts := authSettingsWorld(t, nil, nil)
 	captureAuthStdout(t)
-	oldIn := osStdin
-	osStdin = strings.NewReader("vonage-api-secret\n")
-	t.Cleanup(func() { osStdin = oldIn })
-	if code := cmdAuth([]string{"config", "shop-auth", "--sms", "vonage", "--sms-account", "vonage-key", "--sms-sender", "Shop", "--sms-secret-stdin"}); code != 0 {
+	oldIn := (*main.OsStdin)
+	(*main.OsStdin) = strings.NewReader("vonage-api-secret\n")
+	t.Cleanup(func() { (*main.OsStdin) = oldIn })
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--sms", "vonage", "--sms-account", "vonage-key", "--sms-sender", "Shop", "--sms-secret-stdin"}); code != 0 {
 		t.Fatalf("config = %d", code)
 	}
 	want := map[string]string{"GOTRUE_EXTERNAL_PHONE_ENABLED": "true", "GOTRUE_SMS_PROVIDER": "vonage", "GOTRUE_SMS_VONAGE_API_KEY": "vonage-key", "GOTRUE_SMS_VONAGE_FROM": "Shop", "GOTRUE_SMS_VONAGE_API_SECRET": "vonage-api-secret"}
@@ -348,7 +349,7 @@ func TestAuthConfigPhoneSignIn(t *testing.T) {
 		t.Fatalf("sealed = %v, removed = %v", sealed, *removed)
 	}
 	*removed = nil
-	if code := cmdAuth([]string{"config", "shop-auth", "--sms", "off"}); code != 0 || sealed["GOTRUE_EXTERNAL_PHONE_ENABLED"] != "false" || !slices.Contains(*removed, "GOTRUE_SMS_VONAGE_API_SECRET") || !slices.Contains(*removed, "GOTRUE_SMS_PROVIDER") {
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--sms", "off"}); code != 0 || sealed["GOTRUE_EXTERNAL_PHONE_ENABLED"] != "false" || !slices.Contains(*removed, "GOTRUE_SMS_VONAGE_API_SECRET") || !slices.Contains(*removed, "GOTRUE_SMS_PROVIDER") {
 		t.Fatalf("off = %d, removed %v", code, *removed)
 	}
 	for _, bad := range [][]string{
@@ -356,8 +357,8 @@ func TestAuthConfigPhoneSignIn(t *testing.T) {
 		{"config", "shop-auth", "--sms-sender", "Shop"},
 		{"config", "shop-auth", "--sms", "sinch", "--sms-sender", "Shop", "--sms-secret-stdin"},
 	} {
-		osStdin = strings.NewReader("secret-value\n")
-		if code := cmdAuth(bad); code == 0 {
+		(*main.OsStdin) = strings.NewReader("secret-value\n")
+		if code := main.CmdAuth(bad); code == 0 {
 			t.Errorf("%v accepted", bad)
 		}
 	}
@@ -367,13 +368,13 @@ func TestAuthConfigSMSCountries(t *testing.T) {
 	resetJSONEnv(t)
 	sealed, removed, _ := authSettingsWorld(t, nil, nil)
 	captureAuthStdout(t)
-	if code := cmdAuth([]string{"config", "shop-auth", "--sms-countries", "+44,1"}); code != 0 || sealed["AUTH_SMS_COUNTRIES"] != "44,1" {
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--sms-countries", "+44,1"}); code != 0 || sealed["AUTH_SMS_COUNTRIES"] != "44,1" {
 		t.Fatalf("countries = %d, sealed %v", code, sealed)
 	}
-	if code := cmdAuth([]string{"config", "shop-auth", "--sms-countries", "all"}); code != 0 || !slices.Contains(*removed, "AUTH_SMS_COUNTRIES") {
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--sms-countries", "all"}); code != 0 || !slices.Contains(*removed, "AUTH_SMS_COUNTRIES") {
 		t.Fatalf("all = %d, removed %v", code, *removed)
 	}
-	if code := cmdAuth([]string{"config", "shop-auth", "--sms-countries", "uk"}); code == 0 {
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--sms-countries", "uk"}); code == 0 {
 		t.Fatal("accepted a country name")
 	}
 }
@@ -382,7 +383,7 @@ func TestAuthConfigMoreMFA(t *testing.T) {
 	resetJSONEnv(t)
 	sealed, _, _ := authSettingsWorld(t, nil, nil)
 	captureAuthStdout(t)
-	if code := cmdAuth([]string{"config", "shop-auth", "--mfa-phone", "on", "--recovery-codes", "on"}); code != 0 {
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--mfa-phone", "on", "--recovery-codes", "on"}); code != 0 {
 		t.Fatalf("config = %d", code)
 	}
 	for _, key := range []string{"GOTRUE_MFA_PHONE_ENROLL_ENABLED", "GOTRUE_MFA_PHONE_VERIFY_ENABLED", "GOTRUE_MFA_RECOVERY_CODES_ENROLL_ENABLED", "GOTRUE_MFA_RECOVERY_CODES_VERIFY_ENABLED"} {
@@ -390,10 +391,10 @@ func TestAuthConfigMoreMFA(t *testing.T) {
 			t.Fatalf("%s = %q", key, sealed[key])
 		}
 	}
-	if code := cmdAuth([]string{"config", "shop-auth", "--mfa-phone", "maybe"}); code == 0 {
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--mfa-phone", "maybe"}); code == 0 {
 		t.Fatal("accepted a value other than on or off")
 	}
-	if got := authMFASummary(authPublicSettings{}); got != "off (enrolled users keep verifying)" {
+	if got := main.AuthMFASummary(main.AuthPublicSettings{}); got != "off (enrolled users keep verifying)" {
 		t.Fatalf("summary = %q", got)
 	}
 }

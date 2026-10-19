@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -44,11 +45,11 @@ func TestCmdCronsCancelRequestsCancellation(t *testing.T) {
 	configureCronCancelClient(t, srv.URL)
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdCronsCancel([]string{cronsCancelID, cronsCancelRunID}); code != 0 {
+	if code := main.CmdCronsCancel([]string{cronsCancelID, cronsCancelRunID}); code != 0 {
 		t.Fatalf("crons cancel = %d", code)
 	}
 	if gotMethod != http.MethodPost || gotPath != "/v1/crons/"+cronsCancelID+"/runs/"+cronsCancelRunID+"/cancel" {
@@ -67,15 +68,15 @@ func TestCmdCronsCancelJSONReturnsTaskReceipt(t *testing.T) {
 	defer srv.Close()
 	configureCronCancelClient(t, srv.URL)
 
-	oldJSON := jsonOutput
-	jsonOutput = true
-	defer func() { jsonOutput = oldJSON }()
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = oldJSON }()
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdCronsCancel([]string{cronsCancelID, cronsCancelRunID}); code != 0 {
+	if code := main.CmdCronsCancel([]string{cronsCancelID, cronsCancelRunID}); code != 0 {
 		t.Fatalf("crons cancel --json = %d", code)
 	}
 	var got api.AppTaskResponse
@@ -97,13 +98,13 @@ func TestCmdCronsCancelRejectsInvalidIDsBeforeRequest(t *testing.T) {
 	configureCronCancelClient(t, srv.URL)
 
 	var stderr bytes.Buffer
-	oldErr := osStderr
-	osStderr = &stderr
-	defer func() { osStderr = oldErr }()
-	if code := cmdCronsCancel([]string{"bad-cron-id", cronsCancelRunID}); code != 1 {
+	oldErr := (*main.OsStderr)
+	(*main.OsStderr) = &stderr
+	defer func() { (*main.OsStderr) = oldErr }()
+	if code := main.CmdCronsCancel([]string{"bad-cron-id", cronsCancelRunID}); code != 1 {
 		t.Fatalf("invalid cron id exit = %d; want 1", code)
 	}
-	if code := cmdCronsCancel([]string{cronsCancelID, "bad-run-id"}); code != 1 {
+	if code := main.CmdCronsCancel([]string{cronsCancelID, "bad-run-id"}); code != 1 {
 		t.Fatalf("invalid run id exit = %d; want 1", code)
 	}
 	if requests != 0 {
@@ -121,7 +122,7 @@ func TestRunDispatchesCronCancel(t *testing.T) {
 	}))
 	defer srv.Close()
 	configureCronCancelClient(t, srv.URL)
-	if code := run([]string{"crons", "cancel", cronsCancelID, cronsCancelRunID}); code != 0 {
+	if code := main.Run([]string{"crons", "cancel", cronsCancelID, cronsCancelRunID}); code != 0 {
 		t.Fatalf("run crons cancel = %d", code)
 	}
 }

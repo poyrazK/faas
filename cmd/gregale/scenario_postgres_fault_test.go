@@ -1,5 +1,5 @@
 // adr: 20261018000200
-package main
+package main_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/rehearsalfault"
 	"github.com/onebox-faas/faas/pkg/rehearsalpg"
@@ -17,7 +18,7 @@ import (
 func TestPostgresFaultRecipeRequiresWarmContainedFixture(t *testing.T) {
 	for _, mode := range []string{"valid", "no_fixture", "no_checkpoint", "cold", "restored", "local", "simulated", "no_permission"} {
 		t.Run(mode, func(t *testing.T) {
-			ss, dir, err := readTestManifest("../../tests/scenario-acceptance/rehearsal-running-job/gregale-postgres-fault-test.yaml")
+			ss, dir, err := main.ReadTestManifest("../../tests/scenario-acceptance/rehearsal-running-job/gregale-postgres-fault-test.yaml")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -35,17 +36,17 @@ func TestPostgresFaultRecipeRequiresWarmContainedFixture(t *testing.T) {
 			case "no_permission":
 				s.ManagedWork.Participants[1].Postgres = ""
 			}
-			if err = validateTestCommandExecution(s, engine, profile); (err == nil) != (mode == "valid") {
+			if err = main.ValidateTestCommandExecution(s, engine, profile); (err == nil) != (mode == "valid") {
 				t.Fatalf("%s: %v", mode, err)
 			}
 			if mode == "valid" {
-				r := testRunReceipt{}
-				if _, err = prepareTestPostgres(dir, s, &r); err != nil {
+				r := main.TestRunReceipt{}
+				if _, err = main.PrepareTestPostgres(dir, s, &r); err != nil {
 					t.Fatal(err)
 				}
-				old := testManagedWorkDigest(s)
+				old := main.TestManagedWorkDigest(s)
 				s.ManagedWork.PostgresFault = nil
-				if old == testManagedWorkDigest(s) {
+				if old == main.TestManagedWorkDigest(s) {
 					t.Fatal("fault scope was not bound into the recipe")
 				}
 			}
@@ -53,7 +54,7 @@ func TestPostgresFaultRecipeRequiresWarmContainedFixture(t *testing.T) {
 	}
 }
 
-func postgresFaultCollectedRun(t *testing.T, mode string) testRunReceipt {
+func postgresFaultCollectedRun(t *testing.T, mode string) main.TestRunReceipt {
 	t.Helper()
 	r := runningSuspendCollectedRun(t, "real_retry")
 	p := r.SuspendResume.Receipts[0]
@@ -85,7 +86,7 @@ func postgresFaultCollectedRun(t *testing.T, mode string) testRunReceipt {
 	case "wrong_resource":
 		w.PostgresFault.ResourceID = uuid.NewString()
 	}
-	newTestActionCollector(t.Context(), scenarioActionClientFunc(func(context.Context, string) (api.ScenarioActionSnapshot, error) { return *s, nil }), &r, s.Workloads)()
+	main.NewTestActionCollector(t.Context(), scenarioActionClientFunc(func(context.Context, string) (api.ScenarioActionSnapshot, error) { return *s, nil }), &r, s.Workloads)()
 	return r
 }
 
@@ -94,24 +95,24 @@ func TestPostgresFaultReportPreservesBudgetFailureAndRejectsMissingProof(t *test
 	for _, tc := range []struct{ mode, want string }{{"complete", "passed"}, {"budget", "failed"}, {"no_recovery", "inconclusive"}, {"wrong_enrollment", "inconclusive"}, {"wrong_resource", "inconclusive"}} {
 		t.Run(tc.mode, func(t *testing.T) {
 			raw, _ := json.Marshal(postgresFaultCollectedRun(t, tc.mode))
-			var r testRunReceipt
+			var r main.TestRunReceipt
 			if err := json.Unmarshal(raw, &r); err != nil {
 				t.Fatal(err)
 			}
-			if c := compareTestActions(before, r); c.Status != tc.want {
+			if c := main.CompareTestActions(before, r); c.Status != tc.want {
 				t.Fatalf("want %s: %+v", tc.want, c)
 			}
 			if tc.mode == "budget" {
-				if r.Actions.Evidence.Status != "complete" || !testExecutionCompleteForEvidence(r) {
+				if r.Actions.Evidence.Status != "complete" || !main.TestExecutionCompleteForEvidence(r) {
 					t.Fatal("measured budget violation lost complete evidence")
 				}
 				r.CleanupError = "fixture retained"
-				if c := compareTestActions(before, r); c.Status != "inconclusive" {
+				if c := main.CompareTestActions(before, r); c.Status != "inconclusive" {
 					t.Fatal("budget violation excused cleanup failure")
 				}
 				r.CleanupError = ""
 				r.Error += "; operation failed"
-				if c := compareTestActions(before, r); c.Status != "inconclusive" {
+				if c := main.CompareTestActions(before, r); c.Status != "inconclusive" {
 					t.Fatal("budget violation excused another operation failure")
 				}
 			}

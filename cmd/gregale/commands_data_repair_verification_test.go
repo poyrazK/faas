@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/datarepair"
 )
 
@@ -56,10 +57,10 @@ func TestDataRepairVerificationCLISeparatesCommitAndObservations(t *testing.T) {
 				args = append(args, "--url", server.URL)
 			}
 			var out bytes.Buffer
-			old := osStdout
-			osStdout = &out
-			status := cmdDataRepair(args)
-			osStdout = old
+			old := (*main.OsStdout)
+			(*main.OsStdout) = &out
+			status := main.CmdDataRepair(args)
+			(*main.OsStdout) = old
 			server.Close()
 			if calls != 1 || (status != 0) != (state == "purged" || state == "invalid") {
 				t.Fatalf("hosted=%t state=%s status=%d requests=%d", hosted, state, status, calls)

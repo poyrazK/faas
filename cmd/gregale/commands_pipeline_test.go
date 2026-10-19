@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -11,11 +11,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestPipelineCreateRegistersSourceAndProvisionsMirror(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "test-token")
@@ -37,27 +38,27 @@ func TestPipelineCreateRegistersSourceAndProvisionsMirror(t *testing.T) {
 			if json.NewDecoder(r.Body).Decode(&req) != nil || req.ConnectionURL != raw || req.Name != "orders-source" {
 				t.Error("source registration changed")
 			}
-			writeJSONTest(w, api.DataConnection{ID: sourceID, Name: req.Name, Revision: 1})
+			main.WriteJSONTest(w, api.DataConnection{ID: sourceID, Name: req.Name, Revision: 1})
 		case "GET /v1/data/connections":
-			writeJSONTest(w, api.DataConnectionList{Items: []api.DataConnection{{ID: sourceID, Name: "orders-source", Revision: 1}}})
+			main.WriteJSONTest(w, api.DataConnectionList{Items: []api.DataConnection{{ID: sourceID, Name: "orders-source", Revision: 1}}})
 		case "POST /v1/data/connections/" + sourceID + "/check":
 			var req api.RequestDataConnectionCheck
 			if json.NewDecoder(r.Body).Decode(&req) != nil || req.ExpectedRevision != 1 {
 				t.Error("check request lost source revision")
 			}
-			writeJSONTest(w, api.DataConnectionCheck{ID: uuid.NewString(), ConnectionID: sourceID, ConnectionRevision: 1, State: "passed", Fresh: true, Capacity: fixtureReadyPipelineCapacity(), Tables: []api.DataSourceTable{{Name: "orders", Supported: true}}})
+			main.WriteJSONTest(w, api.DataConnectionCheck{ID: uuid.NewString(), ConnectionID: sourceID, ConnectionRevision: 1, State: "passed", Fresh: true, Capacity: fixtureReadyPipelineCapacity(), Tables: []api.DataSourceTable{{Name: "orders", Supported: true}}})
 		case "POST /v1/postgres/databases":
 			var req api.CreateManagedPostgresDatabaseRequest
 			if json.NewDecoder(r.Body).Decode(&req) != nil || req.Name != "orders-mirror" || req.Region != "test-region" || req.PostgresMajor != 16 {
 				t.Error("mirror placement changed")
 			}
-			writeJSONTest(w, api.ManagedPostgresDatabase{ID: databaseID, State: "ready"})
+			main.WriteJSONTest(w, api.ManagedPostgresDatabase{ID: databaseID, State: "ready"})
 		case "POST /v1/data/pipelines":
 			var req api.CreateDataPipelineRequest
 			if json.NewDecoder(r.Body).Decode(&req) != nil || req.SourceConnectionID != sourceID || req.DatabaseID != databaseID || len(req.ReadSubjects) != 1 || req.ReadSubjects[0] != "alice" {
 				t.Error("pipeline did not bind the prepared resources")
 			}
-			writeJSONTest(w, api.DataPipeline{ID: pipelineID, State: "live", ObservationFresh: true, Revision: 1})
+			main.WriteJSONTest(w, api.DataPipeline{ID: pipelineID, State: "live", ObservationFresh: true, Revision: 1})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
@@ -65,14 +66,14 @@ func TestPipelineCreateRegistersSourceAndProvisionsMirror(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
-	if code := cmdPipeline([]string{"create", "orders", "--url-file", file, "--region", "test-region", "--tables", "orders", "--read-subjects", "alice", "--wait"}); code != 0 {
+	if code := main.CmdPipeline([]string{"create", "orders", "--url-file", file, "--region", "test-region", "--tables", "orders", "--read-subjects", "alice", "--wait"}); code != 0 {
 		t.Fatalf("pipeline create exited %d", code)
 	}
 	if len(steps) != 7 {
 		t.Fatalf("unexpected journey: %v", steps)
 	}
 	steps = nil
-	if code := cmdPipeline([]string{"create", "invalid", "--url-file", file, "--region", "test-region", "--tables", "orders;drop", "--read-subjects", "alice"}); code == 0 {
+	if code := main.CmdPipeline([]string{"create", "invalid", "--url-file", file, "--region", "test-region", "--tables", "orders;drop", "--read-subjects", "alice"}); code == 0 {
 		t.Fatal("invalid selection accepted")
 	}
 	if len(steps) != 0 {
@@ -81,7 +82,7 @@ func TestPipelineCreateRegistersSourceAndProvisionsMirror(t *testing.T) {
 }
 
 func TestPipelineCheckFailureStopsBeforeProvisioning(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "test-token")
@@ -90,9 +91,9 @@ func TestPipelineCheckFailureStopsBeforeProvisioning(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method + " " + r.URL.Path {
 		case "GET /v1/data/connections":
-			writeJSONTest(w, api.DataConnectionList{Items: []api.DataConnection{{ID: sourceID, Revision: 1}}})
+			main.WriteJSONTest(w, api.DataConnectionList{Items: []api.DataConnection{{ID: sourceID, Revision: 1}}})
 		case "POST /v1/data/connections/" + sourceID + "/check":
-			writeJSONTest(w, api.DataConnectionCheck{ID: uuid.NewString(), ConnectionID: sourceID, State: "blocked", Fresh: true, Checks: []api.DataConnectionIssue{{Code: "source_replication_permission_required", State: "blocked", Remediation: "Grant REPLICATION"}}})
+			main.WriteJSONTest(w, api.DataConnectionCheck{ID: uuid.NewString(), ConnectionID: sourceID, State: "blocked", Fresh: true, Checks: []api.DataConnectionIssue{{Code: "source_replication_permission_required", State: "blocked", Remediation: "Grant REPLICATION"}}})
 		default:
 			provisioned = true
 			http.Error(w, "unexpected provisioning", 500)
@@ -100,7 +101,7 @@ func TestPipelineCheckFailureStopsBeforeProvisioning(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
-	if code := cmdPipeline([]string{"create", "orders", "--connection", sourceID, "--tables", "orders", "--read-subjects", "alice"}); code == 0 {
+	if code := main.CmdPipeline([]string{"create", "orders", "--connection", sourceID, "--tables", "orders", "--read-subjects", "alice"}); code == 0 {
 		t.Fatal("blocked preflight succeeded")
 	}
 	if provisioned {
@@ -109,7 +110,7 @@ func TestPipelineCheckFailureStopsBeforeProvisioning(t *testing.T) {
 }
 
 func TestPipelineConnectionChecksAndTables(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "test-token")
@@ -120,16 +121,16 @@ func TestPipelineConnectionChecksAndTables(t *testing.T) {
 		requests++
 		switch r.Method + " " + r.URL.Path {
 		case "GET /v1/data/connections":
-			writeJSONTest(w, api.DataConnectionList{Items: []api.DataConnection{{ID: sourceID, Revision: 2}}})
+			main.WriteJSONTest(w, api.DataConnectionList{Items: []api.DataConnection{{ID: sourceID, Revision: 2}}})
 		case "POST /v1/data/connections/" + sourceID + "/check":
 			var req api.RequestDataConnectionCheck
 			if json.NewDecoder(r.Body).Decode(&req) != nil || req.ExpectedRevision != 2 || req.DatabaseID != databaseID {
 				t.Error("connection check did not bind the selected credential and mirror")
 			}
 			jobs++
-			writeJSONTest(w, check)
+			main.WriteJSONTest(w, check)
 		case "GET /v1/data/connections/" + sourceID + "/check":
-			writeJSONTest(w, check)
+			main.WriteJSONTest(w, check)
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
@@ -137,16 +138,16 @@ func TestPipelineConnectionChecksAndTables(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
-	if code := cmdPipeline([]string{"connection", "check", sourceID, "--database", databaseID}); code != 0 {
+	if code := main.CmdPipeline([]string{"connection", "check", sourceID, "--database", databaseID}); code != 0 {
 		t.Fatalf("connection check exited %d", code)
 	}
-	if code := cmdPipeline([]string{"connection", "tables", sourceID}); code != 0 {
+	if code := main.CmdPipeline([]string{"connection", "tables", sourceID}); code != 0 {
 		t.Fatalf("table inspection exited %d", code)
 	}
 	if jobs != 1 || requests != 3 {
 		t.Fatal("table inspection unexpectedly probed the source again")
 	}
-	if code := cmdPipeline([]string{"connection", "tables", sourceID, "--database", databaseID}); code == 0 || requests != 3 {
+	if code := main.CmdPipeline([]string{"connection", "tables", sourceID, "--database", databaseID}); code == 0 || requests != 3 {
 		t.Fatal("table inspection silently accepted a mirror it did not check")
 	}
 }
@@ -166,18 +167,18 @@ func TestPipelineWaitRequiresFreshHealthAndConclusiveVerification(t *testing.T) 
 	reader.next.ObservationFresh = true
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if _, err := waitDataPipeline(ctx, reader, p, "live", time.Millisecond); err != nil || reader.calls == 0 {
+	if _, err := main.WaitDataPipeline(ctx, reader, p, "live", time.Millisecond); err != nil || reader.calls == 0 {
 		t.Fatal("stale live status accepted or fresh status not observed")
 	}
 	p.ObservationFresh = true
 	p.Verification = "inconclusive"
-	if _, err := waitDataPipeline(ctx, reader, p, "verified", time.Millisecond); err == nil {
+	if _, err := main.WaitDataPipeline(ctx, reader, p, "verified", time.Millisecond); err == nil {
 		t.Fatal("inconclusive verification passed")
 	}
 	p.State = "resync_required"
 	p.Verification = "mismatch"
 	p.Reason = "replica_mismatch"
-	if _, err := waitDataPipeline(ctx, reader, p, "verified", time.Millisecond); err == nil {
+	if _, err := main.WaitDataPipeline(ctx, reader, p, "verified", time.Millisecond); err == nil {
 		t.Fatal("mismatched replica passed")
 	}
 }
@@ -187,10 +188,10 @@ func TestPipelineWaitAcceptsDurableCleanupAfterHealthExpires(t *testing.T) {
 	reader := &pipelineStatusReader{}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if _, err := waitDataPipeline(ctx, reader, p, "deleted", time.Millisecond); err != nil || reader.calls != 0 {
+	if _, err := main.WaitDataPipeline(ctx, reader, p, "deleted", time.Millisecond); err != nil || reader.calls != 0 {
 		t.Fatal("completed cleanup was treated as stale live health")
 	}
-	if _, err := waitDataPipeline(ctx, reader, p, "live", time.Millisecond); err == nil {
+	if _, err := main.WaitDataPipeline(ctx, reader, p, "live", time.Millisecond); err == nil {
 		t.Fatal("wait for an impossible live state did not fail")
 	}
 }
@@ -215,7 +216,7 @@ func TestPipelineCapacityRejectsUnknownExpiredOrIncompleteEvidence(t *testing.T)
 			case "exhausted":
 				c.Capacity.Source.ReservedConnections = 100
 			}
-			if checkCapacityForCreate(c, true) == nil {
+			if main.CheckCapacityForCreate(c, true) == nil {
 				t.Fatal("invalid capacity permitted provisioning")
 			}
 		})

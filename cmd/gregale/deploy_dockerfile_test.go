@@ -1,8 +1,9 @@
-package main
+package main_test
 
 import (
 	"archive/tar"
 	"compress/gzip"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,12 +44,12 @@ func TestValidateExplicitDockerfileArchive(t *testing.T) {
 		"repo/apps/api/Dockerfile":   "FROM node:22\n",
 		"repo/apps/api/package.json": "{}",
 	})
-	if err := validateExplicitDockerfileArchive(withRoot, "apps/api"); err != nil {
+	if err := main.ValidateExplicitDockerfileArchive(withRoot, "apps/api"); err != nil {
 		t.Fatalf("nested Dockerfile rejected: %v", err)
 	}
 
 	without := writeDockerfilePreviewArchive(t, map[string]string{"package.json": "{}"})
-	if err := validateExplicitDockerfileArchive(without, ""); err == nil || !strings.Contains(err.Error(), "no Dockerfile") {
+	if err := main.ValidateExplicitDockerfileArchive(without, ""); err == nil || !strings.Contains(err.Error(), "no Dockerfile") {
 		t.Fatalf("missing Dockerfile error = %v", err)
 	}
 }

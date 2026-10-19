@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,15 +10,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"gopkg.in/yaml.v3"
 )
 
-func runCampaignRequirementsTest(t *testing.T, s testScenario, noMatches bool, failedSeed uint64) testRunReceipt {
+func runCampaignRequirementsTest(t *testing.T, s main.TestScenario, noMatches bool, failedSeed uint64) main.TestRunReceipt {
 	t.Helper()
 	calls := 0
-	return runSweepTest(context.Background(), s, func(ctx context.Context, plan testRunPlan) testRunReceipt {
+	return main.RunSweepTest(context.Background(), s, func(ctx context.Context, plan main.TestRunPlan) main.TestRunReceipt {
 		calls++
-		r := campaignCoverageReceipt(t, plan, fmt.Sprintf("requirements-leaf-%d", calls), failedSeed != 0 && plan.CampaignSeed.Seed == failedSeed)
+		r := main.CampaignCoverageReceipt(t, plan, fmt.Sprintf("requirements-leaf-%d", calls), failedSeed != 0 && plan.CampaignSeed.Seed == failedSeed)
 		if noMatches {
 			for i := range r.Steps[0].Load.ChaosPhases {
 				if x := r.Steps[0].Load.ChaosPhases[i].Chaos; x != nil {
@@ -31,7 +32,7 @@ func runCampaignRequirementsTest(t *testing.T, s testScenario, noMatches bool, f
 }
 
 func TestCampaignRequirementsGateAndExactBoundary(t *testing.T) {
-	s := campaignCoverageScenario()
+	s := main.CampaignCoverageScenario()
 	baseline := runCampaignRequirementsTest(t, s, false, 0)
 	limits := map[int]int{}
 	for _, choice := range baseline.FaultMatrix.CampaignCoverage.Choices {
@@ -51,7 +52,7 @@ func TestCampaignRequirementsGateAndExactBoundary(t *testing.T) {
 	if result.RunID == "" || result.Replay == nil || !result.Replay.CampaignCoverage || result.Replay.Version != 10 {
 		t.Fatal("batch failure cannot be replayed")
 	}
-	if finishTestRunReports("", []testRunReceipt{result}, "", "") != 1 {
+	if main.FinishTestRunReports("", []main.TestRunReceipt{result}, "", "") != 1 {
 		t.Fatal("coverage failure did not fail CI exit status")
 	}
 	s.Resilience.CampaignCoverage.MinExercised = map[int]int{0: 1}
@@ -68,13 +69,13 @@ func TestCampaignRequirementsGateAndExactBoundary(t *testing.T) {
 
 func TestCampaignRequirementsValidationAndUnselectedChoices(t *testing.T) {
 	for _, invalid := range []map[int]int{{-1: 1}, {2: 1}, {0: 0}, {0: -1}, {0: 10}} {
-		s := campaignCoverageScenario()
+		s := main.CampaignCoverageScenario()
 		s.Resilience.CampaignCoverage.MinExercised = invalid
-		if _, err := expandTestFaultSweep(s); err == nil {
+		if _, err := main.ExpandTestFaultSweep(s); err == nil {
 			t.Fatal("invalid requirement accepted", invalid)
 		}
 	}
-	s := campaignCoverageScenario()
+	s := main.CampaignCoverageScenario()
 	c := s.Steps[1].Load.FaultCampaign
 	for len(c.Choices) < 16 {
 		c.Choices = append(c.Choices, c.Choices[0])
@@ -98,25 +99,25 @@ func TestCampaignRequirementsValidationAndUnselectedChoices(t *testing.T) {
 }
 
 func TestCampaignRequirementsBatchAndLeafReplay(t *testing.T) {
-	s := campaignCoverageScenario()
+	s := main.CampaignCoverageScenario()
 	s.Resilience.CampaignCoverage.MinExercised = map[int]int{0: 1}
 	result := runCampaignRequirementsTest(t, s, true, 0)
-	selected, err := selectTestReplay([]testRunReceipt{result}, result.RunID)
+	selected, err := main.SelectTestReplay([]main.TestRunReceipt{result}, result.RunID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := prepareTestReplay(selected, map[string]testScenario{"checkout": s}, ".")
+	prepared, err := main.PrepareTestReplay(selected, map[string]main.TestScenario{"checkout": s}, ".")
 	if err != nil || prepared.Scenario.Resilience == nil || len(prepared.Scenario.Resilience.CampaignCoverage.Seeds) != 3 || prepared.Scenario.Resilience.CampaignCoverage.MinExercised[0] != 1 {
 		t.Fatal("batch replay dropped seeds or requirements", err)
 	}
 	calls := 0
-	replayed := runTestFaultMatrix(context.Background(), testRunPlan{Prepared: &prepared, Profile: "cold", ReplayManifest: result.Replay, ReplayOf: result.RunID}, func(ctx context.Context, plan testRunPlan) testRunReceipt {
+	replayed := main.RunTestFaultMatrix(context.Background(), main.TestRunPlan{Prepared: &prepared, Profile: "cold", ReplayManifest: result.Replay, ReplayOf: result.RunID}, func(ctx context.Context, plan main.TestRunPlan) main.TestRunReceipt {
 		if plan.ReplayManifest != nil {
 			t.Fatal("batch replay descriptor leaked into leaf")
 		}
-		return runTestResilience(ctx, plan, func(ctx context.Context, plan testRunPlan) testRunReceipt {
+		return main.RunTestResilience(ctx, plan, func(ctx context.Context, plan main.TestRunPlan) main.TestRunReceipt {
 			calls++
-			return campaignCoverageReceipt(t, plan, fmt.Sprintf("requirements-replay-%d", calls), plan.CampaignSeed.Seed == 43)
+			return main.CampaignCoverageReceipt(t, plan, fmt.Sprintf("requirements-replay-%d", calls), plan.CampaignSeed.Seed == 43)
 		})
 	})
 	if calls != 3 || replayed.ReplayOf != result.RunID || replayed.FaultMatrix.CampaignCoverage.RequirementsStatus != "passed" || replayed.Status != "failed" {
@@ -126,12 +127,12 @@ func TestCampaignRequirementsBatchAndLeafReplay(t *testing.T) {
 	if leaf.Replay.Version != 1 || leaf.Replay.CampaignCoverage || leaf.Replay.MatrixCase != "campaign-seed-43" {
 		t.Fatal("leaf replay lost isolated scope")
 	}
-	if _, err := prepareTestReplay(&leaf, map[string]testScenario{"checkout": s}, "."); err != nil {
+	if _, err := main.PrepareTestReplay(&leaf, map[string]main.TestScenario{"checkout": s}, "."); err != nil {
 		t.Fatal(err)
 	}
 	for _, kind := range []string{"minimum", "remove", "seeds", "runs", "version", "marker", "edits", "case"} {
 		t.Run(kind, func(t *testing.T) {
-			changed := campaignCoverageScenario()
+			changed := main.CampaignCoverageScenario()
 			changed.Resilience.CampaignCoverage.MinExercised = map[int]int{0: 1}
 			row := result
 			descriptor := *result.Replay
@@ -152,15 +153,15 @@ func TestCampaignRequirementsBatchAndLeafReplay(t *testing.T) {
 			case "marker":
 				descriptor.CampaignCoverage = false
 			case "edits":
-				descriptor.RemovedRules = []testFaultRuleRef{{Step: "load", Phase: "fault", Index: 0}}
+				descriptor.RemovedRules = []main.TestFaultRuleRef{{Step: "load", Phase: "fault", Index: 0}}
 			case "case":
 				descriptor.MatrixCase = "campaign-seed-43"
 			}
-			if _, err := prepareTestReplay(&row, map[string]testScenario{"checkout": changed}, "."); err == nil {
+			if _, err := main.PrepareTestReplay(&row, map[string]main.TestScenario{"checkout": changed}, "."); err == nil {
 				t.Fatal("changed or inconsistent batch replay accepted")
 			}
 			if kind == "minimum" || kind == "remove" {
-				if _, err := prepareTestReplay(&leaf, map[string]testScenario{"checkout": changed}, "."); err == nil {
+				if _, err := main.PrepareTestReplay(&leaf, map[string]main.TestScenario{"checkout": changed}, "."); err == nil {
 					t.Fatal("leaf replay ignored changed coverage requirements")
 				}
 			}
@@ -169,18 +170,18 @@ func TestCampaignRequirementsBatchAndLeafReplay(t *testing.T) {
 }
 
 func TestCampaignRequirementsReportsAndOfflineReplay(t *testing.T) {
-	s := campaignCoverageScenario()
+	s := main.CampaignCoverageScenario()
 	s.Resilience.CampaignCoverage.MinExercised = map[int]int{0: 1, 1: 1}
 	result := runCampaignRequirementsTest(t, s, true, 0)
 	dir := t.TempDir()
 	html, xml, report := filepath.Join(dir, "requirements.html"), filepath.Join(dir, "requirements.xml"), filepath.Join(dir, "requirements.json")
-	if err := writeTestHTMLReport(html, "", []testRunReceipt{result}); err != nil {
+	if err := main.WriteTestHTMLReport(html, "", []main.TestRunReceipt{result}); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeTestJUnit(xml, []testRunReceipt{result}); err != nil {
+	if err := main.WriteTestJUnit(xml, []main.TestRunReceipt{result}); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeTestReport(report, []testRunReceipt{result}); err != nil {
+	if err := main.WriteTestReport(report, []main.TestRunReceipt{result}); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{html, xml, report} {
@@ -190,7 +191,7 @@ func TestCampaignRequirementsReportsAndOfflineReplay(t *testing.T) {
 		}
 	}
 	var out bytes.Buffer
-	printTestCampaignCoverage(&out, result.FaultMatrix.CampaignCoverage)
+	main.PrintTestCampaignCoverage(&out, result.FaultMatrix.CampaignCoverage)
 	if !strings.Contains(out.String(), "choice 0: 0 exercised, requires 1 (failed)") || !strings.Contains(out.String(), "choice 1: 0 exercised, requires 1 (failed)") {
 		t.Fatal("terminal requirement details missing", out.String())
 	}
@@ -199,7 +200,7 @@ func TestCampaignRequirementsReportsAndOfflineReplay(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	body, err := yaml.Marshal(testManifest{Version: 1, Scenarios: map[string]testScenario{"checkout": s}})
+	body, err := yaml.Marshal(main.TestManifest{Version: 1, Scenarios: map[string]main.TestScenario{"checkout": s}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,16 +208,16 @@ func TestCampaignRequirementsReportsAndOfflineReplay(t *testing.T) {
 	if err := os.WriteFile(manifest, body, 0600); err != nil {
 		t.Fatal(err)
 	}
-	normalized, _, err := readTestManifestForScenario(manifest, "checkout", nil)
+	normalized, _, err := main.ReadTestManifestForScenario(manifest, "checkout", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	result = runCampaignRequirementsTest(t, normalized["checkout"], true, 0)
-	if err := writeTestReport(report, []testRunReceipt{result}); err != nil {
+	if err := main.WriteTestReport(report, []main.TestRunReceipt{result}); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("FAAS_TOKEN", "")
-	if cmdTest([]string{"--manifest", manifest, "--scenario", "checkout", "--validate"}) != 0 || cmdTestReplay([]string{"--manifest", manifest, "--from", report, "--run-id", result.RunID, "--validate"}) != 0 {
+	if main.CmdTest([]string{"--manifest", manifest, "--scenario", "checkout", "--validate"}) != 0 || main.CmdTestReplay([]string{"--manifest", manifest, "--from", report, "--run-id", result.RunID, "--validate"}) != 0 {
 		t.Fatal("offline requirement validation or batch replay failed")
 	}
 	encoded, _ := json.Marshal(result.Replay)
@@ -226,11 +227,11 @@ func TestCampaignRequirementsReportsAndOfflineReplay(t *testing.T) {
 }
 
 func TestCampaignRequirementsDuplicateEvidenceCannotPass(t *testing.T) {
-	s := campaignCoverageScenario()
+	s := main.CampaignCoverageScenario()
 	baseline := runCampaignRequirementsTest(t, s, false, 0)
 	s.Resilience.CampaignCoverage.MinExercised = map[int]int{0: baseline.FaultMatrix.CampaignCoverage.Choices[0].Exercised + 1}
-	result := runSweepTest(context.Background(), s, func(ctx context.Context, plan testRunPlan) testRunReceipt {
-		r := campaignCoverageReceipt(t, plan, fmt.Sprintf("requirements-duplicate-%d", plan.CampaignSeed.Seed), false)
+	result := main.RunSweepTest(context.Background(), s, func(ctx context.Context, plan main.TestRunPlan) main.TestRunReceipt {
+		r := main.CampaignCoverageReceipt(t, plan, fmt.Sprintf("requirements-duplicate-%d", plan.CampaignSeed.Seed), false)
 		if plan.CampaignSeed.Seed == 42 {
 			p := r.Steps[0].Load.ChaosPhases[3]
 			r.Steps[0].Load.ChaosPhases = append(r.Steps[0].Load.ChaosPhases, p)
@@ -245,12 +246,12 @@ func TestCampaignRequirementsDuplicateEvidenceCannotPass(t *testing.T) {
 func TestCampaignRequirementsCannotOverrideInterruptedOrFailedCleanup(t *testing.T) {
 	for _, kind := range []string{"cancel", "cleanup"} {
 		t.Run(kind, func(t *testing.T) {
-			s := campaignCoverageScenario()
+			s := main.CampaignCoverageScenario()
 			s.Resilience.CampaignCoverage.MinExercised = map[int]int{0: 1}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			result := runSweepTest(ctx, s, func(ctx context.Context, plan testRunPlan) testRunReceipt {
-				r := campaignCoverageReceipt(t, plan, "requirements-stopped", false)
+			result := main.RunSweepTest(ctx, s, func(ctx context.Context, plan main.TestRunPlan) main.TestRunReceipt {
+				r := main.CampaignCoverageReceipt(t, plan, "requirements-stopped", false)
 				if kind == "cancel" {
 					cancel()
 				} else {
@@ -266,27 +267,27 @@ func TestCampaignRequirementsCannotOverrideInterruptedOrFailedCleanup(t *testing
 }
 
 func TestCampaignRequirementsSurviveLeafMinimization(t *testing.T) {
-	s := campaignCoverageScenario()
+	s := main.CampaignCoverageScenario()
 	s.Resilience.CampaignCoverage.MinExercised = map[int]int{0: 1}
 	result := runCampaignRequirementsTest(t, s, false, 43)
 	original := result.FaultMatrix.Cases[1].Resilience.History[0]
-	prepared, err := prepareTestReplay(&original, map[string]testScenario{"checkout": s}, ".")
+	prepared, err := main.PrepareTestReplay(&original, map[string]main.TestScenario{"checkout": s}, ".")
 	if err != nil {
 		t.Fatal(err)
 	}
-	opts := minimizationTestOptions()
-	opts.Target = testMinimizationTarget{Step: "load", Phase: "recovery-cycle-2"}
-	minimized := runTestFaultMinimization(context.Background(), prepared, &original, opts, func(ctx context.Context, plan testRunPlan) testRunReceipt {
-		return campaignCoverageReceipt(t, plan, fmt.Sprintf("requirements-min-%d", plan.Attempt), true)
+	opts := main.MinimizationTestOptions()
+	opts.Target = main.TestMinimizationTarget{Step: "load", Phase: "recovery-cycle-2"}
+	minimized := main.RunTestFaultMinimization(context.Background(), prepared, &original, opts, func(ctx context.Context, plan main.TestRunPlan) main.TestRunReceipt {
+		return main.CampaignCoverageReceipt(t, plan, fmt.Sprintf("requirements-min-%d", plan.Attempt), true)
 	})
 	if minimized.Status != "passed" || minimized.Minimization.RemainingRules != 1 {
 		t.Fatal("leaf minimization failed", minimized.Error)
 	}
-	selected, err := selectTestReplay([]testRunReceipt{minimized}, minimized.Minimization.BestRunID)
+	selected, err := main.SelectTestReplay([]main.TestRunReceipt{minimized}, minimized.Minimization.BestRunID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	best, err := prepareTestReplay(selected, map[string]testScenario{"checkout": s}, ".")
+	best, err := main.PrepareTestReplay(selected, map[string]main.TestScenario{"checkout": s}, ".")
 	if err != nil || best.Scenario.Steps[1].Load.FaultCampaign.CoverageRequirements[0] != 1 || len(best.Scenario.Steps[1].Load.ChaosSchedule[1].Rules) != 0 {
 		t.Fatal("minimized replay lost requirements or restored removed fault", err)
 	}

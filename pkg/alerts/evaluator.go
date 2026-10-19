@@ -326,7 +326,7 @@ func NewEvaluator(o EvaluatorOptions) *Evaluator {
 type Stats struct {
 	Evaluated           int // rules walked this tick (enabled list)
 	Fired               int // rules that crossed the threshold
-	Delivered           int // rules whose dispatch returned 2xx/3xx
+	Delivered           int // rules whose dispatch returned 2xx
 	Failed              int // rules whose dispatch hit a terminal/retry-exhausted state
 	SkippedDegraded     int // rules skipped because Prometheus returned a degraded source
 	SkippedInsufficient int // target-signal rules without enough selected failures

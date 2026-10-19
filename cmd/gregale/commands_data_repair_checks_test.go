@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"os"
@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -15,18 +16,18 @@ func TestDataRepairNamedPolicyCLIFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte(valid), 0600); err != nil {
 		t.Fatal(err)
 	}
-	policy, err := dataRepairCheckPolicyFile(path)
+	policy, err := main.DataRepairCheckPolicyFile(path)
 	if err != nil || len(policy.Checks) != 1 || policy.Checks[0].Name != "Declared rule" {
 		t.Fatal("named policy file", err)
 	}
 	if err := os.WriteFile(path, []byte(strings.Repeat(" ", api.DataRepairMaxRequestBytes)+valid), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dataRepairCheckPolicyFile(path); err == nil {
+	if _, err := main.DataRepairCheckPolicyFile(path); err == nil {
 		t.Fatal("oversized policy file accepted")
 	}
 	// Selection fails before any application database or executor is contacted.
-	if cmdDataRepair([]string{"serve", "--checks-file", "legacy.sql", "--checks-policy-file", path}) == 0 {
+	if main.CmdDataRepair([]string{"serve", "--checks-file", "legacy.sql", "--checks-policy-file", path}) == 0 {
 		t.Fatal("mixed check authorities accepted")
 	}
 }

@@ -1,5 +1,5 @@
 // adr: 650 — a refresh wait proves restart completion and uncached engine readiness.
-package main
+package main_test
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -47,10 +48,10 @@ func newDataAPIRefreshTestServer(t *testing.T, wakeID string, statuses []api.Run
 		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/notes":
-			writeJSONTest(w, api.AppResponse{ID: "app", Slug: "notes", URL: health.URL})
+			main.WriteJSONTest(w, api.AppResponse{ID: "app", Slug: "notes", URL: health.URL})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/notes/restart" && r.URL.RawQuery == "fresh=true":
 			fixture.restarts.Add(1)
-			writeJSONTest(w, api.AppRestartResponse{WakeID: wakeID})
+			main.WriteJSONTest(w, api.AppRestartResponse{WakeID: wakeID})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/notes/runtime-config-restarts/wake-1":
 			index := int(fixture.statusReads.Add(1)) - 1
 			if index >= len(statuses) {
@@ -60,7 +61,7 @@ func newDataAPIRefreshTestServer(t *testing.T, wakeID string, statuses []api.Run
 			if status.Status == "completed" {
 				completed.Store(true)
 			}
-			writeJSONTest(w, status)
+			main.WriteJSONTest(w, status)
 		default:
 			t.Errorf("unexpected management request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -79,7 +80,7 @@ func TestDataAPIRefreshWaitJourney(t *testing.T) {
 		{"--wait", "--timeout=5s", "notes"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			resetJSONOut(t)
+			main.ResetJSONOut(t)
 			var probes atomic.Int32
 			fixture := newDataAPIRefreshTestServer(t, "wake-1", []api.RuntimeConfigRestartStatusResponse{
 				{WakeID: "wake-1", Status: "queued"},
@@ -89,15 +90,15 @@ func TestDataAPIRefreshWaitJourney(t *testing.T) {
 					w.WriteHeader(http.StatusServiceUnavailable)
 					return
 				}
-				writeJSONTest(w, map[string]bool{"ready": true})
+				main.WriteJSONTest(w, map[string]bool{"ready": true})
 			})
-			out, stderr, restore := swapIO(t)
+			out, stderr, restore := main.SwapIO(t)
 			defer restore()
-			if code := run(append([]string{"--json", "data-api", "refresh"}, args...)); code != 0 {
+			if code := main.Run(append([]string{"--json", "data-api", "refresh"}, args...)); code != 0 {
 				t.Fatalf("refresh exit=%d: %s", code, stderr())
 			}
 			decoder := json.NewDecoder(out)
-			var receipt dataAPIRefreshReceipt
+			var receipt main.DataAPIRefreshReceipt
 			if err := decoder.Decode(&receipt); err != nil || receipt.WakeID != "wake-1" || receipt.Status != "completed" || !receipt.Ready {
 				t.Fatalf("receipt=%+v err=%v", receipt, err)
 			}
@@ -121,7 +122,7 @@ func TestDataAPIRestartWaitAcceptsRetryProgress(t *testing.T) {
 	fixture := newDataAPIRefreshTestServer(t, "wake-1", statuses, func(http.ResponseWriter, *http.Request) { t.Error("unexpected health request") })
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := waitDataAPIRestart(ctx, fixture.client, "notes", "wake-1", time.Millisecond); err != nil {
+	if err := main.WaitDataAPIRestart(ctx, fixture.client, "notes", "wake-1", time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
 	if fixture.statusReads.Load() != 4 || fixture.restarts.Load() != 0 {
@@ -150,7 +151,7 @@ func TestDataAPIRefreshWaitFailures(t *testing.T) {
 		{name: "oversized response", wakeID: "wake-1", status: "completed", statusWake: "wake-1", healthStatus: 200, healthBody: `{"ready":true}` + strings.Repeat(" ", 8192), want: "valid Data API readiness response"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			resetJSONOut(t)
+			main.ResetJSONOut(t)
 			fixture := newDataAPIRefreshTestServer(t, tc.wakeID, []api.RuntimeConfigRestartStatusResponse{
 				{WakeID: tc.statusWake, Status: tc.status, FailureReason: tc.reason},
 			}, func(w http.ResponseWriter, r *http.Request) {
@@ -164,14 +165,14 @@ func TestDataAPIRefreshWaitFailures(t *testing.T) {
 				w.WriteHeader(tc.healthStatus)
 				_, _ = io.WriteString(w, tc.healthBody)
 			})
-			_, stderr, restore := swapIO(t)
+			_, stderr, restore := main.SwapIO(t)
 			defer restore()
 			timeout := "5s"
 			switch tc.name {
 			case "restart deadline", "unready engine", "health request deadline":
 				timeout = "300ms"
 			}
-			if code := cmdDataAPIRefresh([]string{"notes", "--wait", "--timeout=" + timeout}); code == 0 {
+			if code := main.CmdDataAPIRefresh([]string{"notes", "--wait", "--timeout=" + timeout}); code == 0 {
 				t.Fatal("unverified refresh reported success")
 			}
 			diagnostic := stderr()
@@ -196,21 +197,21 @@ func TestDataAPIRefreshRejectsInvalidWaitFlagsBeforeMutation(t *testing.T) {
 		{"INVALID", "--wait"}, {"notes", "--unknown"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			resetJSONOut(t)
-			f := authedFakeAPI(t, `{}`, http.StatusOK)
-			if code := cmdDataAPIRefresh(args); code != 1 || f.sawMethod != "" {
-				t.Fatalf("invalid flags exit=%d request=%s", code, f.sawMethod)
+			main.ResetJSONOut(t)
+			f := main.AuthedFakeAPI(t, `{}`, http.StatusOK)
+			if code := main.CmdDataAPIRefresh(args); code != 1 || (*f.SawMethod()) != "" {
+				t.Fatalf("invalid flags exit=%d request=%s", code, (*f.SawMethod()))
 			}
 		})
 	}
 }
 
 func TestDataAPIRefreshWaitTimeoutJSON(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	fixture := newDataAPIRefreshTestServer(t, "wake-1", []api.RuntimeConfigRestartStatusResponse{{WakeID: "wake-1", Status: "queued"}}, func(http.ResponseWriter, *http.Request) { t.Error("unexpected health request") })
-	out, stderr, restore := swapIO(t)
+	out, stderr, restore := main.SwapIO(t)
 	defer restore()
-	if code := run([]string{"--json", "data-api", "refresh", "notes", "--wait", "--timeout=300ms"}); code == 0 {
+	if code := main.Run([]string{"--json", "data-api", "refresh", "notes", "--wait", "--timeout=300ms"}); code == 0 {
 		t.Fatal("timed out refresh reported success")
 	}
 	var problem api.Problem
@@ -225,11 +226,11 @@ func TestDataAPIRefreshWaitTimeoutJSON(t *testing.T) {
 
 func TestDataAPIReadinessURL(t *testing.T) {
 	for _, address := range []string{"http://app.example", "https://user:password@app.example", "https://app.example/path", "https://app.example?token=secret", "https://app.example/#fragment", ""} {
-		if _, err := dataAPIReadinessURL(api.AppResponse{URL: address}); err == nil {
+		if _, err := main.DataAPIReadinessURL(api.AppResponse{URL: address}); err == nil {
 			t.Fatalf("invalid app URL accepted: %q", address)
 		}
 	}
-	address, err := dataAPIReadinessURL(api.AppResponse{URL: "https://platform.example", CanonicalURL: "https://canonical.example/"})
+	address, err := main.DataAPIReadinessURL(api.AppResponse{URL: "https://platform.example", CanonicalURL: "https://canonical.example/"})
 	if err != nil || address != "https://canonical.example/healthz" {
 		t.Fatalf("canonical readiness URL=%q err=%v", address, err)
 	}
@@ -239,7 +240,7 @@ func TestDataAPIRefreshCancellation(t *testing.T) {
 	fixture := newDataAPIRefreshTestServer(t, "wake-1", []api.RuntimeConfigRestartStatusResponse{{WakeID: "wake-1", Status: "queued"}}, func(http.ResponseWriter, *http.Request) { t.Error("unexpected health request") })
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := waitDataAPIRefresh(ctx, fixture.client, "notes", "wake-1", "https://unused.example/healthz", time.Second); !errors.Is(err, context.Canceled) {
+	if err := main.WaitDataAPIRefresh(ctx, fixture.client, "notes", "wake-1", "https://unused.example/healthz", time.Second); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled wait error=%v", err)
 	}
 	if fixture.statusReads.Load() != 0 || fixture.healthReads.Load() != 0 {

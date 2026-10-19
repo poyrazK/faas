@@ -10,7 +10,7 @@
 // must hit the canonical HTTP verb + path, send the canonical body
 // shape, and render the canonical success / failure line. No DB,
 // no pgx — just the http.Handler that the SDK round-trips to.
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -56,7 +57,7 @@ func TestCmdMirrorList_HappyPath(t *testing.T) {
 		atomic.AddInt32(&hits, 1)
 		gotMethod = r.Method
 		gotPath = r.URL.Path
-		writeJSONTest(w, api.MirrorRuleListResponse{
+		main.WriteJSONTest(w, api.MirrorRuleListResponse{
 			Rules: []api.MirrorRuleResponse{mirrorRuleTestFixture()},
 			Count: 1,
 		})
@@ -65,7 +66,7 @@ func TestCmdMirrorList_HappyPath(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
 
-	if code := cmdMirrorList([]string{"--app", wantSlug}); code != 0 {
+	if code := main.CmdMirrorList([]string{"--app", wantSlug}); code != 0 {
 		t.Fatalf("cmdMirrorList exit = %d, want 0", code)
 	}
 	if atomic.LoadInt32(&hits) != 1 {
@@ -92,7 +93,7 @@ func TestCmdMirrorReplay_HappyPath(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Fatal(err)
 		}
-		writeJSONTest(w, api.MirrorReplayBatchResponse{
+		main.WriteJSONTest(w, api.MirrorReplayBatchResponse{
 			Queued: 1,
 			Invocations: []api.MirrorReplayInvocation{{
 				RequestID: "old-1", MirrorInvocationID: "inv-1", Status: "queued",
@@ -102,7 +103,7 @@ func TestCmdMirrorReplay_HappyPath(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
-	if code := cmdMirrorReplay([]string{"--app", "myapp", "--id", "rule-1", "--file", corpusPath, "--allow-unsafe-methods"}); code != 0 {
+	if code := main.CmdMirrorReplay([]string{"--app", "myapp", "--id", "rule-1", "--file", corpusPath, "--allow-unsafe-methods"}); code != 0 {
 		t.Fatalf("cmdMirrorReplay exit = %d", code)
 	}
 	if !got.AllowUnsafeMethods || len(got.Requests) != 1 || got.Requests[0].Path != "/checkout" {
@@ -121,7 +122,7 @@ func TestCmdMirrorList_MissingApp(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
-	if code := cmdMirrorList([]string{}); code == 0 {
+	if code := main.CmdMirrorList([]string{}); code == 0 {
 		t.Errorf("missing --app exit = 0, want non-zero")
 	}
 	if atomic.LoadInt32(&hits) != 0 {
@@ -151,15 +152,15 @@ func TestCmdMirrorCreate_HappyPath(t *testing.T) {
 		gotPath = r.URL.Path
 		body, _ := io.ReadAll(r.Body)
 		gotBody = string(body)
-		writeJSONTest(w, mirrorRuleTestFixture())
+		main.WriteJSONTest(w, mirrorRuleTestFixture())
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
 
-	out, restoreOut := captureStdout(t)
+	out, restoreOut := main.CaptureStdout(t)
 	defer restoreOut()
-	if code := cmdMirrorCreate([]string{
+	if code := main.CmdMirrorCreate([]string{
 		"--app", wantSlug,
 		"--source", wantSource,
 		"--mirror", wantMirror,
@@ -217,11 +218,11 @@ func TestCmdMirrorCreate_MissingFlags(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
 	// Missing --mirror.
-	if code := cmdMirrorCreate([]string{"--app", "myapp", "--source", "dep_x"}); code == 0 {
+	if code := main.CmdMirrorCreate([]string{"--app", "myapp", "--source", "dep_x"}); code == 0 {
 		t.Errorf("missing --mirror exit = 0, want non-zero")
 	}
 	// Missing --source.
-	if code := cmdMirrorCreate([]string{"--app", "myapp", "--mirror", "dep_x"}); code == 0 {
+	if code := main.CmdMirrorCreate([]string{"--app", "myapp", "--mirror", "dep_x"}); code == 0 {
 		t.Errorf("missing --source exit = 0, want non-zero")
 	}
 	if atomic.LoadInt32(&hits) != 0 {
@@ -241,13 +242,13 @@ func TestCmdMirrorInfo_HappyPath(t *testing.T) {
 		atomic.AddInt32(&hits, 1)
 		gotMethod = r.Method
 		gotPath = r.URL.Path
-		writeJSONTest(w, mirrorRuleTestFixture())
+		main.WriteJSONTest(w, mirrorRuleTestFixture())
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
 
-	if code := cmdMirrorInfo([]string{"--app", wantSlug, "--id", wantID}); code != 0 {
+	if code := main.CmdMirrorInfo([]string{"--app", wantSlug, "--id", wantID}); code != 0 {
 		t.Fatalf("cmdMirrorInfo exit = %d, want 0", code)
 	}
 	if gotMethod != "GET" {
@@ -275,13 +276,13 @@ func TestCmdMirrorUpdate_PatchSemantics(t *testing.T) {
 		gotPath = r.URL.Path
 		body, _ := io.ReadAll(r.Body)
 		gotBody = string(body)
-		writeJSONTest(w, mirrorRuleTestFixture())
+		main.WriteJSONTest(w, mirrorRuleTestFixture())
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
 
-	if code := cmdMirrorUpdate([]string{
+	if code := main.CmdMirrorUpdate([]string{
 		"--app", wantSlug,
 		"--id", wantID,
 		"--percent", "0",
@@ -321,13 +322,13 @@ func TestCmdMirrorUpdate_ExplicitFalseSemantics(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&hits, 1)
 		gotBody, _ = io.ReadAll(r.Body)
-		writeJSONTest(w, mirrorRuleTestFixture())
+		main.WriteJSONTest(w, mirrorRuleTestFixture())
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
 
-	if code := cmdMirrorUpdate([]string{"--app", wantSlug, "--id", wantID, "--include-body=false"}); code != 0 {
+	if code := main.CmdMirrorUpdate([]string{"--app", wantSlug, "--id", wantID, "--include-body=false"}); code != 0 {
 		t.Fatalf("--include-body=false exit = %d, want 0", code)
 	}
 	var sent map[string]any
@@ -340,7 +341,7 @@ func TestCmdMirrorUpdate_ExplicitFalseSemantics(t *testing.T) {
 
 	for _, flagArg := range []string{"--enable=false", "--disable=false", "--no-include-body=false", "--clear-redact=false"} {
 		before := atomic.LoadInt32(&hits)
-		if code := cmdMirrorUpdate([]string{"--app", wantSlug, "--id", wantID, flagArg}); code == 0 {
+		if code := main.CmdMirrorUpdate([]string{"--app", wantSlug, "--id", wantID, flagArg}); code == 0 {
 			t.Errorf("%s exit = 0, want non-zero no-op", flagArg)
 		}
 		if after := atomic.LoadInt32(&hits); after != before {
@@ -361,10 +362,10 @@ func TestCmdMirrorUpdate_MutuallyExclusive(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
-	if code := cmdMirrorUpdate([]string{"--app", "x", "--id", "y", "--enable", "--disable"}); code == 0 {
+	if code := main.CmdMirrorUpdate([]string{"--app", "x", "--id", "y", "--enable", "--disable"}); code == 0 {
 		t.Errorf("--enable + --disable exit = 0, want non-zero")
 	}
-	if code := cmdMirrorUpdate([]string{"--app", "x", "--id", "y", "--include-body", "--no-include-body"}); code == 0 {
+	if code := main.CmdMirrorUpdate([]string{"--app", "x", "--id", "y", "--include-body", "--no-include-body"}); code == 0 {
 		t.Errorf("--include-body + --no-include-body exit = 0, want non-zero")
 	}
 	if atomic.LoadInt32(&hits) != 0 {
@@ -390,7 +391,7 @@ func TestCmdMirrorRm_HappyPath(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
 
-	if code := cmdMirrorRm([]string{"--app", wantSlug, "--id", wantID}); code != 0 {
+	if code := main.CmdMirrorRm([]string{"--app", wantSlug, "--id", wantID}); code != 0 {
 		t.Fatalf("cmdMirrorRm exit = %d, want 0", code)
 	}
 	if gotMethod != "DELETE" {
@@ -414,7 +415,7 @@ func TestCmdMirrorSummary_WindowDefault(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&hits, 1)
 		gotRawQuery = r.URL.RawQuery
-		writeJSONTest(w, api.MirrorSummaryResponse{
+		main.WriteJSONTest(w, api.MirrorSummaryResponse{
 			TotalInvocations: 10,
 			WindowSeconds:    3600,
 		})
@@ -423,7 +424,7 @@ func TestCmdMirrorSummary_WindowDefault(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
 
-	if code := cmdMirrorSummary([]string{"--app", wantSlug, "--id", wantID}); code != 0 {
+	if code := main.CmdMirrorSummary([]string{"--app", wantSlug, "--id", wantID}); code != 0 {
 		t.Fatalf("cmdMirrorSummary exit = %d, want 0", code)
 	}
 	if gotRawQuery != "window=1h" {
@@ -441,13 +442,13 @@ func TestCmdMirrorSummary_WindowExplicit(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&hits, 1)
 		gotRawQuery = r.URL.RawQuery
-		writeJSONTest(w, api.MirrorSummaryResponse{WindowSeconds: 604800})
+		main.WriteJSONTest(w, api.MirrorSummaryResponse{WindowSeconds: 604800})
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
 
-	if code := cmdMirrorSummary([]string{"--app", wantSlug, "--id", wantID, "--window", "7d"}); code != 0 {
+	if code := main.CmdMirrorSummary([]string{"--app", wantSlug, "--id", wantID, "--window", "7d"}); code != 0 {
 		t.Fatalf("cmdMirrorSummary exit = %d, want 0", code)
 	}
 	if gotRawQuery != "window=7d" {
@@ -465,7 +466,7 @@ func TestCmdMirror_DispatchUnknown(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
-	if code := cmdMirror([]string{"bogus"}); code == 0 {
+	if code := main.CmdMirror([]string{"bogus"}); code == 0 {
 		t.Errorf("unknown sub exit = 0, want non-zero")
 	}
 	if atomic.LoadInt32(&hits) != 0 {
@@ -481,13 +482,13 @@ func TestCmdMirrorList_EmptyTable(t *testing.T) {
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&hits, 1)
-		writeJSONTest(w, api.MirrorRuleListResponse{Rules: nil, Count: 0})
+		main.WriteJSONTest(w, api.MirrorRuleListResponse{Rules: nil, Count: 0})
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
 
-	if code := cmdMirrorList([]string{"--app", "empty"}); code != 0 {
+	if code := main.CmdMirrorList([]string{"--app", "empty"}); code != 0 {
 		t.Fatalf("cmdMirrorList exit = %d, want 0", code)
 	}
 	if atomic.LoadInt32(&hits) != 1 {
@@ -502,15 +503,15 @@ func TestCmdMirrorList_EmptyTable(t *testing.T) {
 // elsewhere); we only assert exit == 0 with --json.
 func TestCmdMirrorList_JsonOutput(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSONTest(w, api.MirrorRuleListResponse{Rules: []api.MirrorRuleResponse{mirrorRuleTestFixture()}, Count: 1})
+		main.WriteJSONTest(w, api.MirrorRuleListResponse{Rules: []api.MirrorRuleResponse{mirrorRuleTestFixture()}, Count: 1})
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
-	prevJSON := jsonOutput
-	jsonOutput = true
-	t.Cleanup(func() { jsonOutput = prevJSON })
-	if code := cmdMirrorList([]string{"--app", "x"}); code != 0 {
+	prevJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.JsonOutput) = prevJSON })
+	if code := main.CmdMirrorList([]string{"--app", "x"}); code != 0 {
 		t.Fatalf("cmdMirrorList --json exit = %d, want 0", code)
 	}
 }
@@ -521,7 +522,7 @@ func TestCmdMirrorList_JsonOutput(t *testing.T) {
 // shows up as a failure here.
 func TestRenderMirrorRule(t *testing.T) {
 	var sb strings.Builder
-	renderMirrorRule(&sb, mirrorRuleTestFixture())
+	main.RenderMirrorRule(&sb, mirrorRuleTestFixture())
 	out := sb.String()
 	if !strings.Contains(out, "100%") {
 		t.Errorf("rendered row missing '100%%': %q", out)

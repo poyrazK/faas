@@ -9,10 +9,11 @@
 // unrelated commands, a too-strict threshold would make the
 // feature invisible for common typos like `webhoks` → `webhooks`.
 
-package main
+package main_test
 
 import (
 	"bytes"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"strings"
 	"testing"
 )
@@ -44,7 +45,7 @@ func TestLevenshtein_KnownPairs(t *testing.T) {
 		{"gregale", "Gregale", 1}, // case-sensitive
 	}
 	for _, tc := range cases {
-		got := levenshtein(tc.a, tc.b)
+		got := main.Levenshtein(tc.a, tc.b)
 		if got != tc.want {
 			t.Errorf("levenshtein(%q, %q) = %d, want %d", tc.a, tc.b, got, tc.want)
 		}
@@ -103,7 +104,7 @@ func TestSuggestCommand_TableDriven(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := suggestCommand(tc.query)
+			got, ok := main.SuggestCommand(tc.query)
 			if ok != tc.wantOK {
 				t.Fatalf("suggestCommand(%q) ok = %v, want %v (got %q)", tc.query, ok, tc.wantOK, got)
 			}
@@ -127,12 +128,12 @@ func TestSuggestCommand_TableDriven(t *testing.T) {
 // print. webhoks has only webhooks at distance ≤2, so the
 // single-winner branch fires and the suggestion surfaces.
 func TestCmdMan_UnknownCommandSuggests(t *testing.T) {
-	stdout, restoreOut := captureStdout(t)
+	stdout, restoreOut := main.CaptureStdout(t)
 	defer restoreOut()
-	stderr, restoreErr := captureStderr(t)
+	stderr, restoreErr := main.CaptureStderr(t)
 	defer restoreErr()
 
-	code := cmdMan([]string{"webhoks"})
+	code := main.CmdMan([]string{"webhoks"})
 	if code != 1 {
 		t.Errorf("cmdMan(webhoks) = %d, want 1", code)
 	}
@@ -156,12 +157,12 @@ func TestCmdMan_UnknownCommandSuggests(t *testing.T) {
 // app/apps/ps at distance 1) must NOT print a "Did you mean"
 // suggestion, even though the algorithm found candidates.
 func TestCmdMan_TiedTypoNoSuggestion(t *testing.T) {
-	stdout, restoreOut := captureStdout(t)
+	stdout, restoreOut := main.CaptureStdout(t)
 	defer restoreOut()
-	stderr, restoreErr := captureStderr(t)
+	stderr, restoreErr := main.CaptureStderr(t)
 	defer restoreErr()
 
-	code := cmdMan([]string{"aps"})
+	code := main.CmdMan([]string{"aps"})
 	if code != 1 {
 		t.Errorf("cmdMan(aps) = %d, want 1", code)
 	}
@@ -178,12 +179,12 @@ func TestCmdMan_TiedTypoNoSuggestion(t *testing.T) {
 // a query at distance > 2 from every cliCommand.Name must NOT
 // print a suggestion (the algorithm suppresses it).
 func TestCmdMan_UnknownCommandNoSuggestion(t *testing.T) {
-	stdout, restoreOut := captureStdout(t)
+	stdout, restoreOut := main.CaptureStdout(t)
 	defer restoreOut()
-	stderr, restoreErr := captureStderr(t)
+	stderr, restoreErr := main.CaptureStderr(t)
 	defer restoreErr()
 
-	code := cmdMan([]string{"zzzzzzzzzz"})
+	code := main.CmdMan([]string{"zzzzzzzzzz"})
 	if code != 1 {
 		t.Errorf("cmdMan(zzzzzzzzzz) = %d, want 1", code)
 	}
@@ -200,12 +201,12 @@ func TestCmdMan_UnknownCommandNoSuggestion(t *testing.T) {
 // boundary: a valid command (which lookupCliCommand finds) prints
 // roff on stdout and never hits the suggestion branch.
 func TestCmdMan_KnownCommandDoesNotSuggest(t *testing.T) {
-	stdout, restoreOut := captureStdout(t)
+	stdout, restoreOut := main.CaptureStdout(t)
 	defer restoreOut()
-	stderr, restoreErr := captureStderr(t)
+	stderr, restoreErr := main.CaptureStderr(t)
 	defer restoreErr()
 
-	code := cmdMan([]string{"apps"})
+	code := main.CmdMan([]string{"apps"})
 	if code != 0 {
 		t.Errorf("cmdMan(apps) = %d, want 0", code)
 	}
@@ -240,7 +241,7 @@ func TestCmdMan_KnownCommandDoesNotSuggest(t *testing.T) {
 // len(args)==0) and is pinned separately in
 // TestSuggestSubcommand_PicksClosest_Empty below.
 func TestSuggestSubcommand_PicksClosest(t *testing.T) {
-	c, ok := lookupCliCommand("alerts")
+	c, ok := main.LookupCliCommand("alerts")
 	if !ok {
 		t.Fatal("alerts not in cliCommands manifest — extractor broken or test fired pre-init")
 	}
@@ -259,7 +260,7 @@ func TestSuggestSubcommand_PicksClosest(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, _ := suggestSubcommand(tc.query, c)
+			got, _ := main.SuggestSubcommand(tc.query, c)
 			if got != tc.want {
 				t.Errorf("suggestSubcommand(%q, alerts) = %q, want %q", tc.query, got, tc.want)
 			}
@@ -279,11 +280,11 @@ func TestSuggestSubcommand_PicksClosest(t *testing.T) {
 // If the manifest grows a 1-char subcommand, this test fails
 // loudly — that's the intent.
 func TestSuggestSubcommand_PicksClosest_Empty(t *testing.T) {
-	c, ok := lookupCliCommand("alerts")
+	c, ok := main.LookupCliCommand("alerts")
 	if !ok {
 		t.Fatal("alerts not in cliCommands manifest")
 	}
-	got, ok := suggestSubcommand("", c)
+	got, ok := main.SuggestSubcommand("", c)
 	if !ok {
 		t.Errorf("empty query should pick the shortest subcommand; got ok=false")
 	}
@@ -300,11 +301,11 @@ func TestSuggestSubcommand_PicksClosest_Empty(t *testing.T) {
 // intent: surfaces manifest drift that would otherwise hide as a
 // hidden missing suggestion.
 func TestSuggestSubcommand_SuppressesTies(t *testing.T) {
-	c, ok := lookupCliCommand("alerts")
+	c, ok := main.LookupCliCommand("alerts")
 	if !ok {
 		t.Fatal("alerts not in cliCommands manifest")
 	}
-	if got, _ := suggestSubcommand("lst", c); got != "list" {
+	if got, _ := main.SuggestSubcommand("lst", c); got != "list" {
 		t.Fatalf("expected single-winner 'list'; got %q", got)
 	}
 }
@@ -321,11 +322,11 @@ func TestSuggestSubcommand_SuppressesTies(t *testing.T) {
 // dispatcher path. Co-locating keeps the suggestion surface in
 // one file.
 func TestDispatcher_CmdAlertsUnknownSuggests(t *testing.T) {
-	stdout, restoreOut := captureStdout(t)
+	stdout, restoreOut := main.CaptureStdout(t)
 	defer restoreOut()
 
 	var stderrBuf bytes.Buffer
-	_ = captureStderrSwap(t, &stderrBuf, func() int { return cmdAlerts([]string{"listz"}) })
+	_ = main.CaptureStderrSwap(t, &stderrBuf, func() int { return main.CmdAlerts([]string{"listz"}) })
 
 	if !strings.Contains(stderrBuf.String(), `unknown alerts subcommand "listz"`) {
 		t.Errorf("stderr missing unknown-subcommand line, got:\n%s", stderrBuf.String())

@@ -2027,6 +2027,8 @@ export type { PlatformTenantCredentialMetadata } from './models/PlatformTenantCr
 export type { PlatformTenantCredentialPolicyResponse } from './models/PlatformTenantCredentialPolicyResponse.js';
 export type { PlatformTenantCredentialResult } from './models/PlatformTenantCredentialResult.js';
 export type { PlatformTenantCredentialsResponse } from './models/PlatformTenantCredentialsResponse.js';
+export type { PlatformTenantCreditListResponse } from './models/PlatformTenantCreditListResponse.js';
+export type { PlatformTenantCreditResponse } from './models/PlatformTenantCreditResponse.js';
 export type { PlatformTenantCustomerLifecycleWebhookPayload } from './models/PlatformTenantCustomerLifecycleWebhookPayload.js';
 export type { PlatformTenantDetailResponse } from './models/PlatformTenantDetailResponse.js';
 export type { PlatformTenantHostnamePolicyResponse } from './models/PlatformTenantHostnamePolicyResponse.js';
@@ -2069,6 +2071,7 @@ export type { PlatformTenantSelfConsumersResponse } from './models/PlatformTenan
 export type { PlatformTenantSelfDeploymentResponse } from './models/PlatformTenantSelfDeploymentResponse.js';
 export type { PlatformTenantSelfHostnameResponse } from './models/PlatformTenantSelfHostnameResponse.js';
 export type { PlatformTenantSelfStatementListResponse } from './models/PlatformTenantSelfStatementListResponse.js';
+export type { PlatformTenantSpendCapResponse } from './models/PlatformTenantSpendCapResponse.js';
 export type { PlatformTenantStatementFinalizedWebhookPayload } from './models/PlatformTenantStatementFinalizedWebhookPayload.js';
 export type { PlatformTenantStatementHandoffResponse } from './models/PlatformTenantStatementHandoffResponse.js';
 export type { PlatformTenantStatementLineResponse } from './models/PlatformTenantStatementLineResponse.js';

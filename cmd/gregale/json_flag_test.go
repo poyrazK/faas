@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,88 +8,89 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestApplyJSONFlag_StripsFlagAndSetsOutput(t *testing.T) {
-	resetJSONOutput()
-	defer resetJSONOutput()
-	got := applyJSONFlag([]string{"--json", "apps"})
+	main.ResetJSONOutput()
+	defer main.ResetJSONOutput()
+	got := main.ApplyJSONFlag([]string{"--json", "apps"})
 	if got[0] != "apps" {
 		t.Fatalf("expected --json stripped, got %v", got)
 	}
-	if !jsonOutput {
+	if !(*main.JsonOutput) {
 		t.Fatal("expected jsonOutput=true")
 	}
 }
 
 func TestApplyJSONFlag_ShortFlag(t *testing.T) {
-	resetJSONOutput()
-	defer resetJSONOutput()
-	got := applyJSONFlag([]string{"-j", "whoami"})
+	main.ResetJSONOutput()
+	defer main.ResetJSONOutput()
+	got := main.ApplyJSONFlag([]string{"-j", "whoami"})
 	if got[0] != "whoami" {
 		t.Fatalf("expected -j stripped, got %v", got)
 	}
-	if !jsonOutput {
+	if !(*main.JsonOutput) {
 		t.Fatal("expected jsonOutput=true")
 	}
 }
 
 func TestApplyJSONFlag_EqualsForm(t *testing.T) {
-	resetJSONOutput()
-	defer resetJSONOutput()
-	got := applyJSONFlag([]string{"--json=true", "ps"})
+	main.ResetJSONOutput()
+	defer main.ResetJSONOutput()
+	got := main.ApplyJSONFlag([]string{"--json=true", "ps"})
 	if got[0] != "ps" {
 		t.Fatalf("expected --json=true stripped, got %v", got)
 	}
-	if !jsonOutput {
+	if !(*main.JsonOutput) {
 		t.Fatal("expected jsonOutput=true")
 	}
 }
 
 func TestApplyJSONFlag_EqualsFalseOverridesEnv(t *testing.T) {
-	resetJSONOutput()
-	defer resetJSONOutput()
+	main.ResetJSONOutput()
+	defer main.ResetJSONOutput()
 	t.Setenv("FAAS_JSON", "1")
-	got := applyJSONFlag([]string{"--json=false", "usage"})
+	got := main.ApplyJSONFlag([]string{"--json=false", "usage"})
 	if got[0] != "usage" {
 		t.Fatalf("expected --json=false stripped, got %v", got)
 	}
-	if jsonOutput {
+	if *main.JsonOutput {
 		t.Fatal("expected jsonOutput=false")
 	}
 }
 
 func TestApplyJSONFlag_EnvFallback(t *testing.T) {
-	resetJSONOutput()
-	defer resetJSONOutput()
+	main.ResetJSONOutput()
+	defer main.ResetJSONOutput()
 	t.Setenv("FAAS_JSON", "1")
-	got := applyJSONFlag([]string{"status"})
+	got := main.ApplyJSONFlag([]string{"status"})
 	if len(got) != 1 || got[0] != "status" {
 		t.Fatalf("expected args unchanged, got %v", got)
 	}
-	if !jsonOutput {
+	if !(*main.JsonOutput) {
 		t.Fatal("expected jsonOutput=true from env")
 	}
 }
 
 func TestApplyJSONFlag_NoFlagNoOp(t *testing.T) {
-	resetJSONOutput()
-	defer resetJSONOutput()
-	got := applyJSONFlag([]string{"status", "--foo"})
+	main.ResetJSONOutput()
+	defer main.ResetJSONOutput()
+	got := main.ApplyJSONFlag([]string{"status", "--foo"})
 	if got[0] != "status" || got[1] != "--foo" {
 		t.Fatalf("expected unchanged, got %v", got)
 	}
-	if jsonOutput {
+	if *main.JsonOutput {
 		t.Fatal("expected jsonOutput=false")
 	}
 }
 
 func TestApplyJSONFlag_Idempotent(t *testing.T) {
-	resetJSONOutput()
-	defer resetJSONOutput()
-	first := applyJSONFlag([]string{"--json", "apps"})
-	second := applyJSONFlag(first)
+	main.ResetJSONOutput()
+	defer main.ResetJSONOutput()
+	first := main.ApplyJSONFlag([]string{"--json", "apps"})
+	second := main.ApplyJSONFlag(first)
 	if second[0] != "apps" {
 		t.Fatalf("expected idempotent strip, got %v", second)
 	}
@@ -114,15 +115,15 @@ func TestApplyJSONFlag_EqualsTruthyValue(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run("suffix="+tc.suffix, func(t *testing.T) {
-			resetJSONOutput()
-			defer resetJSONOutput()
+			main.ResetJSONOutput()
+			defer main.ResetJSONOutput()
 			args := []string{"--json=" + tc.suffix, "apps"}
-			got := applyJSONFlag(args)
+			got := main.ApplyJSONFlag(args)
 			if got[0] != "apps" {
 				t.Fatalf("expected --json=%s stripped, got %v", tc.suffix, got)
 			}
-			if jsonOutput != tc.want {
-				t.Errorf("--json=%s → jsonOutput=%v, want %v", tc.suffix, jsonOutput, tc.want)
+			if (*main.JsonOutput) != tc.want {
+				t.Errorf("--json=%s → jsonOutput=%v, want %v", tc.suffix, (*main.JsonOutput), tc.want)
 			}
 		})
 	}
@@ -130,21 +131,21 @@ func TestApplyJSONFlag_EqualsTruthyValue(t *testing.T) {
 
 func TestRunRejectsMisspelledJSONFlag(t *testing.T) {
 	for _, args := range [][]string{{"--json=flase", "deploy", "--plan"}, {"apps", "--json=tru"}} {
-		if code := run(args); code != 1 {
+		if code := main.Run(args); code != 1 {
 			t.Errorf("run(%v) = %d, want 1", args, code)
 		}
 	}
 }
 
 func TestWriteJSON_IndentedScalar(t *testing.T) {
-	resetJSONOutput()
+	main.ResetJSONOutput()
 	var buf bytes.Buffer
-	prev := osStdout
-	osStdout = &buf
-	defer func() { osStdout = prev }()
+	prev := (*main.OsStdout)
+	(*main.OsStdout) = &buf
+	defer func() { (*main.OsStdout) = prev }()
 
 	v := api.AccountResponse{Email: "a@b", Plan: "hobby", Status: "active"}
-	if err := writeJSON(v); err != nil {
+	if err := main.WriteJSON(v); err != nil {
 		t.Fatalf("writeJSON: %v", err)
 	}
 	out := buf.String()
@@ -165,17 +166,17 @@ func TestWriteJSON_IndentedScalar(t *testing.T) {
 }
 
 func TestWriteNDJSON_OneObjectPerLine(t *testing.T) {
-	resetJSONOutput()
+	main.ResetJSONOutput()
 	var buf bytes.Buffer
-	prev := osStdout
-	osStdout = &buf
-	defer func() { osStdout = prev }()
+	prev := (*main.OsStdout)
+	(*main.OsStdout) = &buf
+	defer func() { (*main.OsStdout) = prev }()
 
 	items := []api.AppResponse{
 		{Slug: "a", Status: "live"},
 		{Slug: "b", Status: "parked"},
 	}
-	if err := writeNDJSON(items); err != nil {
+	if err := main.WriteNDJSON(items); err != nil {
 		t.Fatalf("writeNDJSON: %v", err)
 	}
 	out := buf.String()
@@ -192,14 +193,14 @@ func TestWriteNDJSON_OneObjectPerLine(t *testing.T) {
 }
 
 func TestWriteNDJSON_EmptySliceWritesNothing(t *testing.T) {
-	resetJSONOutput()
+	main.ResetJSONOutput()
 	var buf bytes.Buffer
-	prev := osStdout
-	osStdout = &buf
-	defer func() { osStdout = prev }()
+	prev := (*main.OsStdout)
+	(*main.OsStdout) = &buf
+	defer func() { (*main.OsStdout) = prev }()
 
 	var items []api.AppResponse
-	if err := writeNDJSON(items); err != nil {
+	if err := main.WriteNDJSON(items); err != nil {
 		t.Fatalf("writeNDJSON: %v", err)
 	}
 	if buf.Len() != 0 {
@@ -208,7 +209,7 @@ func TestWriteNDJSON_EmptySliceWritesNothing(t *testing.T) {
 }
 
 func TestWriteJSONProblem_WritesOneJSONLineToStderr(t *testing.T) {
-	resetJSONOutput()
+	main.ResetJSONOutput()
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("pipe: %v", err)
@@ -218,7 +219,7 @@ func TestWriteJSONProblem_WritesOneJSONLineToStderr(t *testing.T) {
 	defer func() { os.Stderr = prev }()
 
 	p := api.Problem{Status: 404, Code: api.CodeNotFound, Title: "Not found", Detail: "app missing"}
-	if err := writeJSONProblem(p); err != nil {
+	if err := main.WriteJSONProblem(p); err != nil {
 		t.Fatalf("writeJSONProblem: %v", err)
 	}
 	_ = w.Close()
@@ -237,7 +238,7 @@ func TestWriteJSONProblem_WritesOneJSONLineToStderr(t *testing.T) {
 }
 
 func TestJsonOut_NilIsZero(t *testing.T) {
-	if got := jsonOut(nil); got != 0 {
+	if got := main.JsonOut(nil); got != 0 {
 		t.Fatalf("expected 0, got %d", got)
 	}
 }

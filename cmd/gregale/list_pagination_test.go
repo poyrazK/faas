@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -21,7 +22,7 @@ func TestListPaginationTraversalGuards(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			calls := 0
-			items, next, err := collectListPages(ctx, "start", true, func(_ context.Context, cursor string) ([]int, string, error) {
+			items, next, err := main.CollectListPages(ctx, "start", true, func(_ context.Context, cursor string) ([]int, string, error) {
 				calls++
 				if mode == "error" && calls == 2 {
 					return nil, "", errors.New("page failed")
@@ -35,13 +36,13 @@ func TestListPaginationTraversalGuards(t *testing.T) {
 				if mode == "cycle" && calls == 3 {
 					return []int{calls}, "page-1", nil
 				}
-				if mode == "last-page" && calls == maxCLIListPages {
+				if mode == "last-page" && calls == main.MaxCLIListPages {
 					return []int{calls}, "", nil
 				}
 				return []int{calls}, fmt.Sprintf("page-%d", calls), nil
 			})
 			if mode == "last-page" {
-				if err != nil || next != "" || len(items) != maxCLIListPages {
+				if err != nil || next != "" || len(items) != main.MaxCLIListPages {
 					t.Fatalf("items=%d next=%s err=%v", len(items), next, err)
 				}
 				return
@@ -49,7 +50,7 @@ func TestListPaginationTraversalGuards(t *testing.T) {
 			if err == nil || items != nil || next != "" {
 				t.Fatalf("partial results: items=%v next=%s err=%v", items, next, err)
 			}
-			if mode == "bound" && calls != maxCLIListPages {
+			if mode == "bound" && calls != main.MaxCLIListPages {
 				t.Fatalf("calls=%d", calls)
 			}
 			if mode == "cancel" && !errors.Is(err, context.Canceled) {
@@ -64,7 +65,7 @@ func TestListPaginationCommandContract(t *testing.T) {
 		for _, machine := range []bool{false, true} {
 			for _, mode := range []string{"page", "all", "empty-page", "api-error", "repeat"} {
 				t.Run(fmt.Sprintf("%s/json=%t/%s", kind, machine, mode), func(t *testing.T) {
-					setupCLIRegression(t)
+					main.SetupCLIRegression(t)
 					// Isolate account listing from any ambient linked project.
 					t.Chdir(t.TempDir())
 					command := []string{"deployments"}
@@ -125,14 +126,14 @@ func TestListPaginationCommandContract(t *testing.T) {
 					}))
 					defer server.Close()
 					t.Setenv("FAAS_API", server.URL)
-					t.Setenv("FAAS_TOKEN", testAPIKey('a'))
-					code, out, errOut := capturePreviewRun(t, command)
+					t.Setenv("FAAS_TOKEN", main.TestAPIKey('a'))
+					code, out, errOut := main.CapturePreviewRun(t, command)
 					if mode == "api-error" || mode == "repeat" {
 						if code == 0 || out != "" {
 							t.Fatalf("exit=%d stdout=%s stderr=%s", code, out, errOut)
 						}
 						if machine {
-							assertOneProblem(t, errOut)
+							main.AssertOneProblem(t, errOut)
 						}
 						return
 					}
@@ -205,20 +206,20 @@ func TestListPaginationLimitsAndHelp(t *testing.T) {
 		}
 		for _, limit := range invalidLimits {
 			t.Run(strings.Join(command, "_")+limit, func(t *testing.T) {
-				setupCLIRegression(t)
+				main.SetupCLIRegression(t)
 				t.Setenv("FAAS_API", "http://example.invalid")
-				t.Setenv("FAAS_TOKEN", testAPIKey('a'))
+				t.Setenv("FAAS_TOKEN", main.TestAPIKey('a'))
 				args := append(append([]string{}, command...), "--limit", limit, "--json")
-				code, out, errOut := capturePreviewRun(t, args)
+				code, out, errOut := main.CapturePreviewRun(t, args)
 				if code != 1 || out != "" {
 					t.Fatalf("exit=%d stdout=%s", code, out)
 				}
-				assertOneProblem(t, errOut)
+				main.AssertOneProblem(t, errOut)
 			})
 		}
 		t.Run(strings.Join(command, "_")+"help", func(t *testing.T) {
-			setupCLIRegression(t)
-			code, out, errOut := capturePreviewRun(t, append(append([]string{}, command...), "--help"))
+			main.SetupCLIRegression(t)
+			code, out, errOut := main.CapturePreviewRun(t, append(append([]string{}, command...), "--help"))
 			if code != 0 {
 				t.Fatalf("exit=%d stderr=%s", code, errOut)
 			}
@@ -232,8 +233,8 @@ func TestListPaginationLimitsAndHelp(t *testing.T) {
 }
 
 func TestListPaginationCompletionMetadata(t *testing.T) {
-	for _, command := range customerCliCommands() {
-		var flags []cliFlag
+	for _, command := range main.CustomerCliCommands() {
+		var flags []main.CliFlag
 		switch command.Name {
 		case "deployments":
 			flags = command.Flags
@@ -246,7 +247,7 @@ func TestListPaginationCompletionMetadata(t *testing.T) {
 		default:
 			continue
 		}
-		found := map[string]cliFlag{}
+		found := map[string]main.CliFlag{}
 		for _, flag := range flags {
 			found[flag.Name] = flag
 		}
@@ -264,7 +265,7 @@ func TestListPaginationCompletionMetadata(t *testing.T) {
 
 func TestListPaginationEmptyAndSinglePage(t *testing.T) {
 	calls := 0
-	items, next, err := collectListPages(context.Background(), "start", false, func(_ context.Context, cursor string) ([]int, string, error) {
+	items, next, err := main.CollectListPages(context.Background(), "start", false, func(_ context.Context, cursor string) ([]int, string, error) {
 		calls++
 		if cursor != "start" {
 			t.Errorf("cursor=%s", cursor)
@@ -276,7 +277,7 @@ func TestListPaginationEmptyAndSinglePage(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, _, err = collectListPages(ctx, "", true, func(context.Context, string) ([]int, string, error) {
+	_, _, err = main.CollectListPages(ctx, "", true, func(context.Context, string) ([]int, string, error) {
 		t.Fatal("cancelled traversal requested a page")
 		return nil, "", nil
 	})
@@ -293,7 +294,7 @@ func TestListPaginationAcceptedLimitBoundaries(t *testing.T) {
 		}
 		for _, limit := range []int{1, maximum} {
 			t.Run(fmt.Sprintf("%s/%d", kind, limit), func(t *testing.T) {
-				setupCLIRegression(t)
+				main.SetupCLIRegression(t)
 				requests := 0
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					requests++
@@ -308,13 +309,13 @@ func TestListPaginationAcceptedLimitBoundaries(t *testing.T) {
 				}))
 				defer server.Close()
 				t.Setenv("FAAS_API", server.URL)
-				t.Setenv("FAAS_TOKEN", testAPIKey('a'))
+				t.Setenv("FAAS_TOKEN", main.TestAPIKey('a'))
 				command := []string{"deployments", "--app", "demo"}
 				if kind == "invocations" {
 					command = []string{"invocations", "list"}
 				}
 				command = append(command, "--cursor", "ignored", "--before", "legacy-cursor", "--limit", fmt.Sprint(limit), "--all", "--json")
-				code, out, errOut := capturePreviewRun(t, command)
+				code, out, errOut := main.CapturePreviewRun(t, command)
 				if code != 0 || requests != 1 || errOut != "" {
 					t.Fatalf("exit=%d requests=%d stdout=%s stderr=%s", code, requests, out, errOut)
 				}

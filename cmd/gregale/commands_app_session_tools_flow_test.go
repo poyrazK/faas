@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -14,6 +14,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apptaskmux"
 )
@@ -100,7 +101,7 @@ func TestPortForwardSessionRelaysThroughGateway(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	client := api.NewClient(server.URL, "key")
-	session, closeSession, err := openAppTaskStreamSession(ctx, client, "api", []string{api.AppTaskPortForwardCommand, "db.svc.gregale:5432"}, 5*time.Second)
+	session, closeSession, err := main.OpenAppTaskStreamSession(ctx, client, "api", []string{api.AppTaskPortForwardCommand, "db.svc.gregale:5432"}, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +111,7 @@ func TestPortForwardSessionRelaysThroughGateway(t *testing.T) {
 	}
 	ln, _ := net.Listen("tcp", "127.0.0.1:0")
 	forwarded := make(chan error, 1)
-	go func() { forwarded <- apptaskmux.Forward(ctx, ln, session, session.stdout) }()
+	go func() { forwarded <- apptaskmux.Forward(ctx, ln, session, (*session.Stdout())) }()
 
 	conn, err := net.Dial("tcp", ln.Addr().String())
 	if err != nil {
@@ -141,13 +142,13 @@ func TestCopySessionExtractsArchive(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	session, closeSession, err := openAppTaskStreamSession(ctx, api.NewClient(server.URL, "key"), "api", []string{api.AppTaskCopyOutCommand, "/app/dist"}, 5*time.Second)
+	session, closeSession, err := main.OpenAppTaskStreamSession(ctx, api.NewClient(server.URL, "key"), "api", []string{api.AppTaskCopyOutCommand, "/app/dist"}, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer closeSession()
 	dest := t.TempDir()
-	if err := extractAppTaskTar(session.stdout, dest); err != nil {
+	if err := main.ExtractAppTaskTar((*session.Stdout()), dest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := session.Wait(ctx); err != nil {

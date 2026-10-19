@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"net/http"
 	"testing"
@@ -32,12 +33,12 @@ func TestAutomationRetryParentEvidenceCLI(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			captureAutomationStdout(t)
+			main.CaptureAutomationStdout(t)
 			args := []string{"recovery-retry-evidence", "--parent", "--app", "consumer", "--review", inspectorRunID, "--action", recoveryInvocationID}
 			if repair {
 				args = append(args, "--repair", "--request-id", recoveryInvocationID, "--reason", "verified")
 			}
-			if code := cmdAutomations(args); code != 0 || calls != 1 {
+			if code := main.CmdAutomations(args); code != 0 || calls != 1 {
 				t.Fatalf("exit %d calls %d", code, calls)
 			}
 		})

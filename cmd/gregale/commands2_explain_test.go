@@ -1,8 +1,9 @@
-package main
+package main_test
 
 import (
 	"bytes"
 	"fmt"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,23 +14,23 @@ import (
 // contract. Lines split on the first two spaces: ts, level,
 // message. info/warn/error are counted; anything else is ignored.
 func TestExplainCollector_BucketsByLevel(t *testing.T) {
-	c := newExplainCollector("test-app", "deploy-1")
-	c.observe("2026-08-18T10:00:00Z info Starting up")
-	c.observe("2026-08-18T10:00:01Z warn Slow query")
-	c.observe("2026-08-18T10:00:02Z error Connection refused on :8080")
-	c.observe("2026-08-18T10:00:03Z error Connection refused on :8080")
-	c.observe("2026-08-18T10:00:04Z info Ready")
-	if c.infoCount != 2 {
-		t.Errorf("expected 2 info, got %d", c.infoCount)
+	c := main.NewExplainCollector("test-app", "deploy-1")
+	c.Observe("2026-08-18T10:00:00Z info Starting up")
+	c.Observe("2026-08-18T10:00:01Z warn Slow query")
+	c.Observe("2026-08-18T10:00:02Z error Connection refused on :8080")
+	c.Observe("2026-08-18T10:00:03Z error Connection refused on :8080")
+	c.Observe("2026-08-18T10:00:04Z info Ready")
+	if (*c.InfoCount()) != 2 {
+		t.Errorf("expected 2 info, got %d", (*c.InfoCount()))
 	}
-	if c.warnCount != 1 {
-		t.Errorf("expected 1 warn, got %d", c.warnCount)
+	if (*c.WarnCount()) != 1 {
+		t.Errorf("expected 1 warn, got %d", (*c.WarnCount()))
 	}
-	if c.errorCount != 2 {
-		t.Errorf("expected 2 errors, got %d", c.errorCount)
+	if (*c.ErrorCount()) != 2 {
+		t.Errorf("expected 2 errors, got %d", (*c.ErrorCount()))
 	}
-	if !strings.Contains(c.lastError, "Connection refused") {
-		t.Errorf("lastError must contain 'Connection refused', got %q", c.lastError)
+	if !strings.Contains((*c.LastError()), "Connection refused") {
+		t.Errorf("lastError must contain 'Connection refused', got %q", (*c.LastError()))
 	}
 }
 
@@ -38,13 +39,13 @@ func TestExplainCollector_BucketsByLevel(t *testing.T) {
 // "levels:" / "top:" prefixes; changing the shape is a wire
 // break for any tool that already parses the summary.
 func TestExplainCollector_FlushShape(t *testing.T) {
-	c := newExplainCollector("test-app", "deploy-1")
-	c.observe("2026-08-18T10:00:00Z error Connection refused")
-	c.observe("2026-08-18T10:00:01Z error Connection refused")
-	c.observe("2026-08-18T10:00:02Z error Timeout waiting for handshake")
-	c.observe("2026-08-18T10:00:03Z info Ready")
+	c := main.NewExplainCollector("test-app", "deploy-1")
+	c.Observe("2026-08-18T10:00:00Z error Connection refused")
+	c.Observe("2026-08-18T10:00:01Z error Connection refused")
+	c.Observe("2026-08-18T10:00:02Z error Timeout waiting for handshake")
+	c.Observe("2026-08-18T10:00:03Z info Ready")
 	var buf bytes.Buffer
-	c.flush(&buf)
+	c.Flush(&buf)
 	out := buf.String()
 	for _, want := range []string{"explain: test-app", "deployment deploy-1", "error:", "levels:", "top:"} {
 		if !strings.Contains(out, want) {
@@ -65,11 +66,11 @@ func TestExplainCollector_FlushShape(t *testing.T) {
 // nothing errors, the summary still emits 4 lines and uses
 // "(none)" / "(no error patterns)" so the line count is stable.
 func TestExplainCollector_NoErrors(t *testing.T) {
-	c := newExplainCollector("test-app", "")
-	c.observe("2026-08-18T10:00:00Z info Starting up")
-	c.observe("2026-08-18T10:00:01Z info Ready")
+	c := main.NewExplainCollector("test-app", "")
+	c.Observe("2026-08-18T10:00:00Z info Starting up")
+	c.Observe("2026-08-18T10:00:01Z info Ready")
 	var buf bytes.Buffer
-	c.flush(&buf)
+	c.Flush(&buf)
 	out := buf.String()
 	if !strings.Contains(out, "error:  (none)") {
 		t.Errorf("expected '(none)' for clean run, got:\n%s", out)
@@ -90,7 +91,7 @@ func TestTopPatterns_SortedByCountThenAlphabetical(t *testing.T) {
 		"delta":   5,
 		"epsilon": 1,
 	}
-	out := topPatterns(in, 3)
+	out := main.TopPatterns(in, 3)
 	want := []string{"delta (N5)", "alpha (N3)", "beta (N3)"}
 	if len(out) != 3 {
 		t.Fatalf("expected 3 entries, got %d: %v", len(out), out)
@@ -105,7 +106,7 @@ func TestTopPatterns_SortedByCountThenAlphabetical(t *testing.T) {
 // TestTopPatterns_EmptyInput pins the empty-input contract:
 // returns nil so the caller can render "(no error patterns)".
 func TestTopPatterns_EmptyInput(t *testing.T) {
-	out := topPatterns(map[string]int{}, 3)
+	out := main.TopPatterns(map[string]int{}, 3)
 	if out != nil {
 		t.Errorf("expected nil, got %v", out)
 	}
@@ -115,14 +116,14 @@ func TestTopPatterns_EmptyInput(t *testing.T) {
 // prefix bucket contract. The same error message fired 100x with
 // timestamps + IDs in the suffix must coalesce into ONE bucket.
 func TestExplainCollector_PatternBucketPrefix(t *testing.T) {
-	c := newExplainCollector("test-app", "")
+	c := main.NewExplainCollector("test-app", "")
 	for i := 0; i < 100; i++ {
-		c.observe("2026-08-18T10:00:00Z error Connection refused: req=12345 trace=abc")
+		c.Observe("2026-08-18T10:00:00Z error Connection refused: req=12345 trace=abc")
 	}
-	if len(c.patterns) != 1 {
-		t.Errorf("expected 1 pattern bucket (coalesced by 64-byte prefix), got %d: %v", len(c.patterns), c.patterns)
+	if len((*c.Patterns())) != 1 {
+		t.Errorf("expected 1 pattern bucket (coalesced by 64-byte prefix), got %d: %v", len((*c.Patterns())), (*c.Patterns()))
 	}
-	for _, v := range c.patterns {
+	for _, v := range *c.Patterns() {
 		if v != 100 {
 			t.Errorf("expected pattern count 100, got %d", v)
 		}
@@ -130,13 +131,13 @@ func TestExplainCollector_PatternBucketPrefix(t *testing.T) {
 }
 
 func TestCmdLogsExplain_ParsesStructuredProductionFrames(t *testing.T) {
-	previousJSON := jsonOutput
-	jsonOutput = false
-	t.Cleanup(func() { jsonOutput = previousJSON })
+	previousJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	t.Cleanup(func() { (*main.JsonOutput) = previousJSON })
 	var stdout bytes.Buffer
-	previousOut := osStdout
-	osStdout = &stdout
-	t.Cleanup(func() { osStdout = previousOut })
+	previousOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	t.Cleanup(func() { (*main.OsStdout) = previousOut })
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -149,7 +150,7 @@ func TestCmdLogsExplain_ParsesStructuredProductionFrames(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
 
-	if code := cmdLogs([]string{"myapp", "--explain"}); code != 0 {
+	if code := main.CmdLogs([]string{"myapp", "--explain"}); code != 0 {
 		t.Fatalf("cmdLogs = %d, want 0; output=%q", code, stdout.String())
 	}
 	out := stdout.String()
@@ -162,13 +163,13 @@ func TestCmdLogsExplain_ParsesStructuredProductionFrames(t *testing.T) {
 }
 
 func TestCmdLogsExplainRejectsJSONMode(t *testing.T) {
-	previousJSON := jsonOutput
-	jsonOutput = true
-	t.Cleanup(func() { jsonOutput = previousJSON })
-	_, readStderr, restore := swapIO(t)
+	previousJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.JsonOutput) = previousJSON })
+	_, readStderr, restore := main.SwapIO(t)
 	defer restore()
 
-	if code := cmdLogs([]string{"myapp", "--explain"}); code != 2 {
+	if code := main.CmdLogs([]string{"myapp", "--explain"}); code != 2 {
 		t.Fatalf("cmdLogs = %d, want 2", code)
 	}
 	if stderr := readStderr(); !strings.Contains(stderr, `"code":"validation_failed"`) {
@@ -187,20 +188,20 @@ func TestExplainCollector_StructuredSeverityFallbacks(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			c := newExplainCollector("test-app", "")
-			c.observe(tc.record)
+			c := main.NewExplainCollector("test-app", "")
+			c.Observe(tc.record)
 			switch tc.wantLevel {
 			case "error":
-				if c.errorCount != 1 {
-					t.Fatalf("errorCount=%d, want 1", c.errorCount)
+				if (*c.ErrorCount()) != 1 {
+					t.Fatalf("errorCount=%d, want 1", (*c.ErrorCount()))
 				}
 			case "warn":
-				if c.warnCount != 1 {
-					t.Fatalf("warnCount=%d, want 1", c.warnCount)
+				if (*c.WarnCount()) != 1 {
+					t.Fatalf("warnCount=%d, want 1", (*c.WarnCount()))
 				}
 			case "info":
-				if c.infoCount != 1 {
-					t.Fatalf("infoCount=%d, want 1", c.infoCount)
+				if (*c.InfoCount()) != 1 {
+					t.Fatalf("infoCount=%d, want 1", (*c.InfoCount()))
 				}
 			}
 		})

@@ -2,7 +2,7 @@
 // commands_crons_update_test.go: httptest.NewServer fake + t.Setenv
 // + osStdout swap + jsonOutput swap. The dispatch placement lives in
 // main_test.go (see TestRun_DispatchCronsRuns below).
-package main
+package main_test
 
 import (
 	"bytes"
@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -72,7 +73,7 @@ func TestFormatCronDuration_Bands(t *testing.T) {
 		{int64Ptr(3600000), "3600s"},
 	}
 	for _, c := range cases {
-		got := formatCronDuration(c.in)
+		got := main.FormatCronDuration(c.in)
 		if got != c.want {
 			t.Errorf("formatCronDuration(%v) = %q, want %q", c.in, got, c.want)
 		}
@@ -95,11 +96,11 @@ func TestCmdCronsRuns_HappyPath_MultiRow(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdCronsRuns([]string{cronsRunsID}); code != 0 {
+	if code := main.CmdCronsRuns([]string{cronsRunsID}); code != 0 {
 		t.Errorf("crons runs = %d, want 0", code)
 	}
 	if gotMethod != http.MethodGet {
@@ -146,13 +147,13 @@ func TestCmdCronsRuns_DetailShowsTaskOutput(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout, stderr bytes.Buffer
-	oldOut, oldErr := osStdout, osStderr
-	osStdout, osStderr = &stdout, &stderr
-	defer func() { osStdout, osStderr = oldOut, oldErr }()
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
+	oldOut, oldErr := (*main.OsStdout), (*main.OsStderr)
+	(*main.OsStdout), (*main.OsStderr) = &stdout, &stderr
+	defer func() { (*main.OsStdout), (*main.OsStderr) = oldOut, oldErr }()
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
 
-	if code := cmdCronsRuns([]string{cronsRunsID, "--run", runID}); code != 0 {
+	if code := main.CmdCronsRuns([]string{cronsRunsID, "--run", runID}); code != 0 {
 		t.Fatalf("crons runs detail = %d, want 0; stderr=%s", code, stderr.String())
 	}
 	if gotMethod != http.MethodGet || gotPath != "/v1/crons/"+cronsRunsID+"/runs/"+runID {
@@ -174,12 +175,12 @@ func TestCmdCronsRuns_DetailRejectsBadOrMixedFlagsBeforeRequest(t *testing.T) {
 		{cronsRunsID, "--run", "fedcba98-7654-3210-fedc-ba9876543210", "--before", "cursor"},
 	} {
 		var stdout, stderr bytes.Buffer
-		oldOut, oldErr := osStdout, osStderr
-		osStdout, osStderr = &stdout, &stderr
-		if code := cmdCronsRuns(args); code != 1 {
+		oldOut, oldErr := (*main.OsStdout), (*main.OsStderr)
+		(*main.OsStdout), (*main.OsStderr) = &stdout, &stderr
+		if code := main.CmdCronsRuns(args); code != 1 {
 			t.Errorf("cmdCronsRuns(%v) = %d, want 1", args, code)
 		}
-		osStdout, osStderr = oldOut, oldErr
+		(*main.OsStdout), (*main.OsStderr) = oldOut, oldErr
 	}
 }
 
@@ -193,11 +194,11 @@ func TestCmdCronsRuns_Empty(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdCronsRuns([]string{cronsRunsID}); code != 0 {
+	if code := main.CmdCronsRuns([]string{cronsRunsID}); code != 0 {
 		t.Errorf("crons runs (empty) = %d, want 0", code)
 	}
 	if got := strings.TrimSpace(stdout.String()); got != "(no runs)" {
@@ -217,15 +218,15 @@ func TestCmdCronsRuns_JSON_Envelope(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
-	jsonOutput = true
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
+	(*main.JsonOutput) = true
 
-	if code := cmdCronsRuns([]string{cronsRunsID}); code != 0 {
+	if code := main.CmdCronsRuns([]string{cronsRunsID}); code != 0 {
 		t.Errorf("crons runs json = %d, want 0", code)
 	}
 	var resp api.ListCronRunsResponse
@@ -269,11 +270,11 @@ func TestCmdCronsRuns_LimitAndBeforePassThrough(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdCronsRuns([]string{"--limit", "5", "--before", "fedcba9876543210fedcba9876543210", cronsRunsID}); code != 0 {
+	if code := main.CmdCronsRuns([]string{"--limit", "5", "--before", "fedcba9876543210fedcba9876543210", cronsRunsID}); code != 0 {
 		t.Errorf("crons runs with flags = %d, want 0", code)
 	}
 	// url.Values.Encode() orders keys alphabetically: before, limit.
@@ -295,7 +296,7 @@ func TestCmdCronsRuns_BadID_NoServerCall(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdCronsRuns([]string{"not-hex"}); code != 1 {
+	if code := main.CmdCronsRuns([]string{"not-hex"}); code != 1 {
 		t.Errorf("crons runs bad id = %d, want 1", code)
 	}
 	if calls != 0 {
@@ -313,7 +314,7 @@ func TestCmdCronsRuns_MissingID_NoServerCall(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdCronsRuns([]string{}); code != 1 {
+	if code := main.CmdCronsRuns([]string{}); code != 1 {
 		t.Errorf("crons runs no args = %d, want 1", code)
 	}
 	if calls != 0 {
@@ -331,7 +332,7 @@ func TestCmdCronsRuns_ExtraPositional(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdCronsRuns([]string{cronsRunsID, "extra"}); code != 1 {
+	if code := main.CmdCronsRuns([]string{cronsRunsID, "extra"}); code != 1 {
 		t.Errorf("crons runs extra positional = %d, want 1", code)
 	}
 	if calls != 0 {
@@ -352,7 +353,7 @@ func TestCmdCronsRuns_Unauthenticated(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("FAAS_TOKEN", "")
 
-	if code := cmdCronsRuns([]string{cronsRunsID}); code == 0 {
+	if code := main.CmdCronsRuns([]string{cronsRunsID}); code == 0 {
 		t.Errorf("crons runs unauth = 0, want nonzero")
 	}
 	if calls != 0 {
@@ -388,7 +389,7 @@ func TestCmdCronsRuns_ServerNotFound(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdCronsRuns([]string{cronsRunsID}); code == 0 {
+	if code := main.CmdCronsRuns([]string{cronsRunsID}); code == 0 {
 		t.Errorf("crons runs 404 = 0, want nonzero")
 	}
 }
@@ -414,7 +415,7 @@ func TestRun_DispatchCronsRuns(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
-	if code := run([]string{"crons", "runs", cronsRunsID}); code != 0 {
+	if code := main.Run([]string{"crons", "runs", cronsRunsID}); code != 0 {
 		t.Errorf("run crons runs = %d, want 0", code)
 	}
 }
@@ -442,12 +443,12 @@ func TestCmdCronsRuns_NoGlyphsInCapturedBuffer(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
-	defer withTTYForTest(false)()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
+	defer main.WithTTYForTest(false)()
 
-	if code := cmdCronsRuns([]string{cronsRunsID}); code != 0 {
+	if code := main.CmdCronsRuns([]string{cronsRunsID}); code != 0 {
 		t.Errorf("crons runs = %d, want 0", code)
 	}
 	body := stdout.String()

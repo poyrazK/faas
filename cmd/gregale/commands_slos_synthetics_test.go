@@ -1,4 +1,4 @@
-package main
+package main_test
 
 // adr: 747, 748 — `gregale slos` and `gregale synthetics` print the API's
 // JSON unchanged under --json and require --app.
@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -36,13 +37,13 @@ func sloSyntheticsTestServer(t *testing.T) {
 }
 
 func TestCmdSLOsAndSyntheticsJSONOutput(t *testing.T) {
-	resetJSONOutput()
+	main.ResetJSONOutput()
 	sloSyntheticsTestServer(t)
 	buf := captureChannelsStdout(t)
-	jsonOutput = true
-	defer func() { resetJSONOutput() }()
+	(*main.JsonOutput) = true
+	defer func() { main.ResetJSONOutput() }()
 
-	if code := cmdSLOs([]string{"list", "--app", "shop"}); code != 0 {
+	if code := main.CmdSLOs([]string{"list", "--app", "shop"}); code != 0 {
 		t.Fatalf("gregale slos list --json = %d", code)
 	}
 	var slos []api.SLOResponse
@@ -51,7 +52,7 @@ func TestCmdSLOsAndSyntheticsJSONOutput(t *testing.T) {
 	}
 
 	buf.Reset()
-	if code := cmdSynthetics([]string{"list", "--app", "shop"}); code != 0 {
+	if code := main.CmdSynthetics([]string{"list", "--app", "shop"}); code != 0 {
 		t.Fatalf("gregale synthetics list --json = %d", code)
 	}
 	var checks []api.SyntheticCheckResponse
@@ -61,7 +62,7 @@ func TestCmdSLOsAndSyntheticsJSONOutput(t *testing.T) {
 }
 
 func TestCmdSLOsAndSyntheticsRequireApp(t *testing.T) {
-	resetJSONOutput()
+	main.ResetJSONOutput()
 	sloSyntheticsTestServer(t)
 	captureChannelsStdout(t)
 	tests := []struct {
@@ -69,10 +70,10 @@ func TestCmdSLOsAndSyntheticsRequireApp(t *testing.T) {
 		run  func([]string) int
 		args []string
 	}{
-		{"slos without subcommand", cmdSLOs, nil},
-		{"slos list without app", cmdSLOs, []string{"list"}},
-		{"synthetics without subcommand", cmdSynthetics, nil},
-		{"synthetics list without app", cmdSynthetics, []string{"list"}},
+		{"slos without subcommand", main.CmdSLOs, nil},
+		{"slos list without app", main.CmdSLOs, []string{"list"}},
+		{"synthetics without subcommand", main.CmdSynthetics, nil},
+		{"synthetics list without app", main.CmdSynthetics, []string{"list"}},
 	}
 	for _, tt := range tests {
 		if code := tt.run(tt.args); code == 0 {

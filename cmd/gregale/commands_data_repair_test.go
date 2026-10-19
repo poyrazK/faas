@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	repairapi "github.com/onebox-faas/faas/pkg/apid/datarepair"
 	"github.com/onebox-faas/faas/pkg/datarepair"
@@ -31,7 +32,7 @@ func TestDataRepairRetentionCLIRequiresReviewedBatch(t *testing.T) {
 		{"plan", "--limit", "0"},
 		{"get", id, "--yes"},
 	} {
-		if cmdDataRepair(append([]string{"retention"}, args...)) == 0 {
+		if main.CmdDataRepair(append([]string{"retention"}, args...)) == 0 {
 			t.Fatalf("unreviewed or ambiguous purge accepted: %v", args)
 		}
 	}
@@ -45,19 +46,19 @@ func TestDataRepairRetentionCLIRequiresReviewedBatch(t *testing.T) {
 		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := dataRepairRetentionScope(path); err == nil {
+		if _, err := main.DataRepairRetentionScope(path); err == nil {
 			t.Fatal("ambiguous or oversized maintenance scope accepted")
 		}
 	}
 	var out bytes.Buffer
-	oldOut := osStdout
-	osStdout = &out
-	defer func() { osStdout = oldOut }()
-	if cmdDataRepair([]string{"retention", "schema"}) != 0 || out.String() != datarepair.RetentionSchema() {
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	defer func() { (*main.OsStdout) = oldOut }()
+	if main.CmdDataRepair([]string{"retention", "schema"}) != 0 || out.String() != datarepair.RetentionSchema() {
 		t.Fatal("owner upgrade was not emitted without connecting")
 	}
 	out.Reset()
-	if cmdDataRepair([]string{"schema", "--upgrade"}) != 0 || out.String() != datarepair.UpgradeSchema() {
+	if main.CmdDataRepair([]string{"schema", "--upgrade"}) != 0 || out.String() != datarepair.UpgradeSchema() {
 		t.Fatal("contract upgrade was not emitted without connecting")
 	}
 }
@@ -86,18 +87,18 @@ func TestDataRepairCLIApprovalAndTransport(t *testing.T) {
 	id := uuid.NewString()
 	digest := strings.Repeat("a", 64)
 	for _, verb := range []string{"approve", "apply"} {
-		if status := cmdDataRepair([]string{verb, id, "--url", server.URL, "--digest", digest}); status == 0 {
+		if status := main.CmdDataRepair([]string{verb, id, "--url", server.URL, "--digest", digest}); status == 0 {
 			t.Fatalf("unconfirmed %s submitted", verb)
 		}
 	}
 	if calls != 0 {
 		t.Fatal("invalid commands contacted executor")
 	}
-	if status := cmdDataRepair([]string{"approve", id, "--url", server.URL, "--digest", digest, "--yes"}); status != 0 || calls != 1 {
+	if status := main.CmdDataRepair([]string{"approve", id, "--url", server.URL, "--digest", digest, "--yes"}); status != 0 || calls != 1 {
 		t.Fatalf("approved request: %d %d", status, calls)
 	}
 	for _, base := range []string{"http://external.example", "https://user:password@example.com", "https://example.com?token=bad", "file:///tmp/repair"} {
-		if _, err := repairEndpoint(base); err == nil {
+		if _, err := main.RepairEndpoint(base); err == nil {
 			t.Fatalf("unsafe URL accepted: %s", base)
 		}
 	}
@@ -138,17 +139,17 @@ func TestDataRepairManagedCLIIdentityAndApproval(t *testing.T) {
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "managed-test-token")
 	for _, args := range [][]string{{"approve", id, "--digest", digest, "--app", "products"}, {"apply", id, "--digest", digest, "--app", "products"}, {"plan", source, "--app", "products"}} {
-		if cmdDataRepair(args) == 0 {
+		if main.CmdDataRepair(args) == 0 {
 			t.Fatal("unconfirmed/unreserved managed request accepted")
 		}
 	}
 	if calls != 0 {
 		t.Fatal("invalid command contacted management API")
 	}
-	if cmdDataRepair([]string{"plan", source, "--app", "products", "--repair-operation", id}) != 0 {
+	if main.CmdDataRepair([]string{"plan", source, "--app", "products", "--repair-operation", id}) != 0 {
 		t.Fatal("reserved prepare failed")
 	}
-	if cmdDataRepair([]string{"approve", id, "--app", "products", "--digest", digest, "--yes"}) != 0 {
+	if main.CmdDataRepair([]string{"approve", id, "--app", "products", "--digest", digest, "--yes"}) != 0 {
 		t.Fatal("reviewed managed approval failed")
 	}
 	if posts != 2 || calls != 3 {

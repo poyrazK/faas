@@ -27,7 +27,8 @@ var monetizationVerbs = map[string][]string{
 	"platform-tenants": {"rate-cards", "rate-card-create", "statements", "statement-draft", "statement-show",
 		"statement-finalize", "statement-handoff", "statement-export", "plans", "plan-create", "plan-update",
 		"set-plan", "plan-history", "trial", "trial-set", "trial-end", "billing-policy", "billing-policy-set",
-		"billing-policy-delete", "overdue-holds"},
+		"billing-policy-delete", "overdue-holds", "credits", "credit-grant", "credit-void", "spend-cap", "spend-cap-set",
+		"spend-cap-delete"},
 	"account": {"billing-connection", "billing-run", "invoices"},
 }
 

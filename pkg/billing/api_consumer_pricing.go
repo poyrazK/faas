@@ -245,6 +245,9 @@ type APIConsumerUsageQuote struct {
 type QuoteOptions struct {
 	VolumeSteps          map[string]int
 	TrialStart, TrialEnd time.Time
+	// EndedAt is when the consumer was revoked; prorating cards stop
+	// charging monthly fees there (ADR-20261019100332).
+	EndedAt time.Time
 }
 
 // inTrial reports whether minute falls in the trial.
