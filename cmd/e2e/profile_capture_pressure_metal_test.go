@@ -201,6 +201,24 @@ func (a pressureApp) captures(t *testing.T) []api.ProfileCapture {
 	return list.Captures
 }
 
+// ramMB is the app's configured RAM, which the OOM capture reports as its
+// plan memory. It follows the app default rather than a fixed plan size.
+func (a pressureApp) ramMB(t *testing.T) int {
+	t.Helper()
+	b, s := doReq(t, a.h, a.key, http.MethodGet, "/v1/apps/"+a.slug, nil)
+	if s != http.StatusOK {
+		t.Fatalf("get app: status=%d body=%s", s, b)
+	}
+	var app api.AppResponse
+	if err := json.Unmarshal(b, &app); err != nil {
+		t.Fatal(err)
+	}
+	if app.RAMMB <= 0 {
+		t.Fatalf("app ram_mb = %d; want a positive value", app.RAMMB)
+	}
+	return app.RAMMB
+}
+
 // tryGetWithHost is doGetWithHost for requests expected to fail: a transport
 // error returns status 0 instead of failing the test.
 func tryGetWithHost(client *http.Client, url, host string, timeout time.Duration) int {
@@ -285,7 +303,7 @@ func TestProfileCaptureOOMMetal(t *testing.T) {
 		t.Fatal("the fixture was never OOM-killed")
 	}
 	a.waitCapture(t, auto, 90*time.Second, func(c *api.ProfileCapture) bool { return c.Done() && c.OOMKilledAt != nil })
-	if auto.Status != api.ProfileCaptureReady || !auto.Partial || auto.OOMPeakMB <= 0 || auto.OOMPlanMB != 256 ||
+	if auto.Status != api.ProfileCaptureReady || !auto.Partial || auto.OOMPeakMB <= 0 || auto.OOMPlanMB != a.ramMB(t) ||
 		auto.DeploymentID != a.depID || auto.Processes < 1 || !strings.Contains(auto.Reason, "OOM-killed") {
 		t.Fatalf("OOM capture = %+v; want a ready, partial heap capture linked to the kill", auto)
 	}
