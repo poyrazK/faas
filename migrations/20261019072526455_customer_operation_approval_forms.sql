@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- ADR-20261019001500: an approval form names the structured input an approver
 -- submits with a decision, for one approval step of an Operation name in an
 -- app environment.
