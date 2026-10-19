@@ -6847,6 +6847,19 @@ groups:
           description: "The oldest Operation held by a per-customer concurrency policy has waited {{ $value | humanizeDuration }} and no queued Operation started in 30m. Either every queued customer is still at its limit, or apid's queue releaser has stopped (ADR-20261018210500)."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerOperations.md"
 
+      - alert: FaasCustomerOperationFanInStuck
+        expr: max(apid_customer_operation_fan_in_oldest_seconds) > 600
+        for: 10m
+        labels:
+          severity: warn
+          component: apid
+          family: customer_operations
+          public_status: internal
+        annotations:
+          summary: "A workflow Operation's children settled but it was not resumed"
+          description: "A workflow Operation waiting on operation.children.settled has had every child settled for {{ $value | humanizeDuration }} without the signal. apid's fan-in signaler is failing for it; the run waits until its step times out (ADR-20261018183000)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerOperations.md"
+
   # Starter-reported protocol signals, not host-verified authorization outcomes.
   # No alert is inferred from event silence: idle apps emit no protocol events.
   - name: faas_mcp_protocol

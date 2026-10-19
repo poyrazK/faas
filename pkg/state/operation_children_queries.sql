@@ -28,7 +28,8 @@ SELECT o.id, o.account_id,
     count(co.id)::bigint AS total,
     count(*) FILTER (WHERE co.state = 'succeeded')::bigint AS succeeded,
     count(*) FILTER (WHERE co.state = 'failed')::bigint AS failed,
-    count(*) FILTER (WHERE co.state = 'cancelled')::bigint AS cancelled
+    count(*) FILTER (WHERE co.state = 'cancelled')::bigint AS cancelled,
+    greatest((o.record ->> 'updated_at')::timestamptz, max((co.record ->> 'updated_at')::timestamptz))::timestamptz AS ready_since
 FROM customer_operations o
 LEFT JOIN customer_operation_children c ON c.parent_operation_id = o.id
 LEFT JOIN customer_operations co ON co.id = c.child_operation_id
@@ -37,4 +38,5 @@ WHERE o.state = 'waiting' AND (o.record -> 'waiting' ->> 'kind') = 'event'
   AND NOT EXISTS (SELECT 1 FROM workflow_events e WHERE e.run_id = o.workflow_run_id AND e.event_name = sqlc.arg(event)::text)
 GROUP BY o.id, o.account_id
 HAVING count(co.id) = count(*) FILTER (WHERE co.state IN ('succeeded', 'failed', 'cancelled'))
+ORDER BY ready_since, o.id
 LIMIT sqlc.arg(row_limit);

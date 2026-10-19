@@ -159,7 +159,8 @@ func (s *PgStore) OperationChildSettlements(ctx context.Context, limit int) ([]O
 	out := make([]OperationChildSettlement, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, OperationChildSettlement{AccountID: pgUUIDString(row.AccountID), ParentID: pgUUIDString(row.ID),
-			Children: api.OperationChildrenSettled{Total: row.Total, Succeeded: row.Succeeded, Failed: row.Failed, Cancelled: row.Cancelled}})
+			Children:   api.OperationChildrenSettled{Total: row.Total, Succeeded: row.Succeeded, Failed: row.Failed, Cancelled: row.Cancelled},
+			ReadySince: row.ReadySince.Time})
 	}
 	return out, nil
 }

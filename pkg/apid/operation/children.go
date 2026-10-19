@@ -135,6 +135,8 @@ func (s *Service) startChild(w http.ResponseWriter, r *http.Request, operations 
 	if !ok {
 		return
 	}
+	result := "refused"
+	defer func() { s.Metrics.childStart(childParentKind(start), result) }()
 	if !DecodeOperationBody(w, r, &start.Request, api.OperationChildBodyMaxBytes) {
 		return
 	}
@@ -151,9 +153,9 @@ func (s *Service) startChild(w http.ResponseWriter, r *http.Request, operations 
 		writeChildError(w, err)
 		return
 	}
-	status := http.StatusOK
+	status, result := http.StatusOK, "replayed"
 	if created {
-		status = http.StatusCreated
+		status, result = http.StatusCreated, "started"
 		s.Host.EmitAudit(r.Context(), "app.operation_child_started", &parent.AccountID, map[string]any{"parent_operation_id": parent.ID, "operation_id": child.Operation.ID, "key": child.Key, "platform_tenant_id": parent.PlatformTenantID})
 	}
 	httpkit.WriteJSON(w, status, api.OperationChildStartResponse{OperationChild: api.OperationChild{Key: child.Key, Operation: child.Operation.OperationResponse}, Replayed: !created})
@@ -300,6 +302,7 @@ func (s *Service) RunChildSettlementSignals(ctx context.Context) {
 }
 
 func (s *Service) signalSettledChildren(ctx context.Context, children state.OperationChildStore, signals state.OperationSignalStore) {
+	now := time.Now()
 	settled, err := children.OperationChildSettlements(ctx, childSettlementBatch)
 	if err != nil {
 		if ctx.Err() == nil {
@@ -307,15 +310,42 @@ func (s *Service) signalSettledChildren(ctx context.Context, children state.Oper
 		}
 		return
 	}
+	// Parents of accounts outside the allowlist get no signal; they wait out
+	// their step's timeout and do not count as stuck.
+	var oldest *time.Time
 	for _, parent := range settled {
 		if !api.OperationChildrenEnabled(parent.AccountID) {
 			continue
 		}
+		if oldest == nil || parent.ReadySince.Before(*oldest) {
+			ready := parent.ReadySince
+			oldest = &ready
+		}
 		payload, _ := json.Marshal(parent.Children)
 		_, err := signals.SignalOperation(ctx, state.OperationSignalInput{AccountID: parent.AccountID, OperationID: parent.ParentID, SignalID: childSettlementSignalID,
 			Event: api.OperationChildrenSettledEvent, Payload: payload, Source: api.OperationSignalSourceAccount})
-		if err != nil && !errors.Is(err, state.ErrOperationNotActive) && !errors.Is(err, state.ErrOperationSignalUnexpected) && ctx.Err() == nil {
+		switch {
+		case err == nil:
+			s.Metrics.fanInSignal("signaled")
+		case errors.Is(err, state.ErrOperationNotActive), errors.Is(err, state.ErrOperationSignalUnexpected):
+			s.Metrics.fanInSignal("skipped")
+		case ctx.Err() != nil:
+			return
+		default:
+			s.Metrics.fanInSignal("error")
 			s.Host.Logger().Warn("children-settled signal failed", "parent_operation_id", parent.ParentID, "err", err)
 		}
 	}
+	s.Metrics.fanIn(oldest, now)
+}
+
+// childParentKind names the parent's execution for metrics.
+func childParentKind(start state.OperationChildStart) string {
+	switch {
+	case start.WorkflowAuthority != nil:
+		return "workflow"
+	case start.JobAuthority != nil:
+		return "job"
+	}
+	return "http"
 }

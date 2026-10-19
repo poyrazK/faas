@@ -68,7 +68,16 @@ skipping a run that already holds the event. For accounts with child
 Operations the event name is reserved: customer and account signals and
 webhook bindings naming it are refused (422 `operation_signal_reserved`). Workflow events are matched by name for the
 whole run, so a workflow fans in on children once; a second wait on the event
-resumes with the first signal.
+resumes with the first signal. A parent whose account leaves the allowlist
+is not signalled and waits out its step's timeout.
+
+**Operations.** apid counts child starts
+(`apid_customer_operation_child_starts_total{parent,result}`) and fan-in
+signals (`apid_customer_operation_fan_in_signals_total{result}`), and reports
+how long the oldest ready parent has gone without its signal
+(`apid_customer_operation_fan_in_oldest_seconds`);
+`FaasCustomerOperationFanInStuck` warns when that passes ten minutes for ten
+minutes.
 
 **Locks.** A child start takes the workflow admission lock when the child is a
 workflow, then the account, then the parent's execution (its invocation, its

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -56,6 +57,9 @@ type OperationChildSettlement struct {
 	AccountID string
 	ParentID  string
 	Children  api.OperationChildrenSettled
+	// ReadySince is when the parent became ready for the signal: the later
+	// of its own last change and its last child's.
+	ReadySince time.Time
 }
 
 func validateOperationChildRequest(req api.OperationChildRequest) error {

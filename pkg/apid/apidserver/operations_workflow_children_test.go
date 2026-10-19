@@ -19,13 +19,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/apid/operation"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	//nolint:depguard // The integration harness drives schedd-owned workflow execution.
@@ -113,6 +116,8 @@ func testWorkflowChildrenFanIn(t *testing.T, kind string) {
 	}
 	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
 	(*srv.Operation()).AdmissionEnabled = true
+	registry := prometheus.NewRegistry()
+	srv.Operation().Metrics = operation.NewMetrics(registry, "apid")
 	private, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -190,9 +195,14 @@ func testWorkflowChildrenFanIn(t *testing.T, kind string) {
 		t.Fatalf("customer sent the reserved event: %v", err)
 	}
 
-	signals, cancel := context.WithCancel(ctx)
-	defer cancel()
-	go srv.Operation().RunChildSettlementSignals(signals)
+	settlements := store.(state.OperationChildStore)
+	runSignals := func() (stop func()) {
+		signals, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() { srv.Operation().RunChildSettlementSignals(signals); close(done) }()
+		return func() { cancel(); <-done }
+	}
+	stopSignals := runSignals()
 	tick := func() {
 		if err := orchestrator.DispatchTick(ctx); err != nil {
 			t.Fatal(err)
@@ -211,9 +221,22 @@ func testWorkflowChildrenFanIn(t *testing.T, kind string) {
 	if !waiting() {
 		t.Fatal("parent resumed with one child pending")
 	}
+	if ready, err := settlements.OperationChildSettlements(ctx, 10); err != nil || len(ready) != 0 {
+		t.Fatalf("parent ready with one child pending: %+v %v", ready, err)
+	}
+	// With the signaler paused, the settled parent is listed with its counts
+	// and the time its last child settled.
+	stopSignals()
+	before := time.Now().Add(-time.Second)
 	if _, err := ops.CancelOperation(ctx, acct.ID, "", children[1].Operation.ID, children[1].Operation.Generation); err != nil {
 		t.Fatal(err)
 	}
+	ready, err := settlements.OperationChildSettlements(ctx, 10)
+	if err != nil || len(ready) != 1 || ready[0].ParentID != parent.ID || ready[0].AccountID != acct.ID ||
+		ready[0].Children != (api.OperationChildrenSettled{Total: 2, Cancelled: 2}) || ready[0].ReadySince.Before(before) || ready[0].ReadySince.After(time.Now()) {
+		t.Fatalf("settlements = %+v %v", ready, err)
+	}
+	defer runSignals()()
 	childrenEventually(t, 15*time.Second, "parent succeeded after its children settled", func() bool {
 		tick()
 		op, err := ops.OperationByID(ctx, acct.ID, "", parent.ID)
@@ -232,6 +255,48 @@ func testWorkflowChildrenFanIn(t *testing.T, kind string) {
 	if signal == nil {
 		t.Fatalf("parent events lack the children-settled signal: %+v", page.Events)
 	}
+	// A signaled parent leaves the scan; the counters saw two starts, one
+	// replay and one signal.
+	if ready, err := settlements.OperationChildSettlements(ctx, 10); err != nil || len(ready) != 0 {
+		t.Fatalf("signaled parent still listed: %+v %v", ready, err)
+	}
+	starts := func(result string) float64 {
+		return childrenMetric(t, registry, "apid_customer_operation_child_starts_total", "workflow", result)
+	}
+	signaled := childrenMetric(t, registry, "apid_customer_operation_fan_in_signals_total", "signaled")
+	failed := childrenMetric(t, registry, "apid_customer_operation_fan_in_signals_total", "error")
+	if starts("started") != 2 || starts("replayed") != 1 || signaled != 1 || failed != 0 {
+		t.Fatalf("child starts started=%v replayed=%v, fan-in signaled=%v error=%v", starts("started"), starts("replayed"), signaled, failed)
+	}
+}
+
+// childrenMetric reads one counter or gauge sample by its label values in
+// label-name order; absent reads 0.
+func childrenMetric(t *testing.T, registry *prometheus.Registry, name string, values ...string) float64 {
+	t.Helper()
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+		for _, sample := range family.GetMetric() {
+			got := []string{}
+			for _, pair := range sample.GetLabel() {
+				got = append(got, pair.GetValue())
+			}
+			if strings.Join(got, ",") != strings.Join(values, ",") {
+				continue
+			}
+			if sample.GetCounter() != nil {
+				return sample.GetCounter().GetValue()
+			}
+			return sample.GetGauge().GetValue()
+		}
+	}
+	return 0
 }
 
 func childrenEventually(t *testing.T, budget time.Duration, label string, ready func() bool) {

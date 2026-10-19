@@ -89,3 +89,37 @@ func TestMetricsReportOperationQueue(t *testing.T) {
 	none.operationQueue(1, &oldest, now)
 	none.operationQueueReleases(1)
 }
+
+// ADR-20261018183000: child starts count by parent and result; the fan-in
+// gauge reads how long the oldest ready parent has waited, 0 when none.
+func TestMetricsReportChildren(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg, "apid")
+	if again := NewMetrics(reg, "apid"); again.childStarts != m.childStarts || again.fanInSignals != m.fanInSignals || again.fanInOldest != m.fanInOldest {
+		t.Fatal("a second registration made second child metrics")
+	}
+	m.childStart("job", "started")
+	m.childStart("job", "replayed")
+	m.childStart("job", "started")
+	m.fanInSignal("error")
+	now := time.Now()
+	ready := now.Add(-45 * time.Second)
+	m.fanIn(&ready, now)
+	if started, replayed, failed, age := testutil.ToFloat64(m.childStarts.WithLabelValues("job", "started")), testutil.ToFloat64(m.childStarts.WithLabelValues("job", "replayed")), testutil.ToFloat64(m.fanInSignals.WithLabelValues("error")), testutil.ToFloat64(m.fanInOldest); started != 2 || replayed != 1 || failed != 1 || age != 45 {
+		t.Fatalf("started=%v replayed=%v error=%v oldest=%v", started, replayed, failed, age)
+	}
+	future := now.Add(time.Second)
+	m.fanIn(&future, now)
+	if age := testutil.ToFloat64(m.fanInOldest); age != 0 {
+		t.Fatalf("a parent ready after the pass began reported %v", age)
+	}
+	m.fanIn(&ready, now)
+	m.fanIn(nil, now)
+	if age := testutil.ToFloat64(m.fanInOldest); age != 0 {
+		t.Fatalf("no ready parent reported %v", age)
+	}
+	var none *Metrics
+	none.childStart("http", "refused")
+	none.fanInSignal("signaled")
+	none.fanIn(&ready, now)
+}

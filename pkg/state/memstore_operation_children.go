@@ -133,10 +133,13 @@ func (m *MemStore) OperationChildSettlements(_ context.Context, limit int) ([]Op
 		if m.workflowEventNamedLocked(op.WorkflowRunID, api.OperationChildrenSettledEvent) {
 			continue // signalled; the scheduler has yet to resume it
 		}
-		settled, counts := true, api.OperationChildrenSettled{}
+		settled, counts, ready := true, api.OperationChildrenSettled{}, op.UpdatedAt
 		for _, row := range data.children[op.ID] {
 			child := data.operations[row.child]
 			counts.Total++
+			if child.UpdatedAt.After(ready) {
+				ready = child.UpdatedAt
+			}
 			switch child.State {
 			case api.OperationSucceeded:
 				counts.Succeeded++
@@ -149,11 +152,18 @@ func (m *MemStore) OperationChildSettlements(_ context.Context, limit int) ([]Op
 			}
 		}
 		if settled {
-			out = append(out, OperationChildSettlement{AccountID: op.AccountID, ParentID: op.ID, Children: counts})
+			out = append(out, OperationChildSettlement{AccountID: op.AccountID, ParentID: op.ID, Children: counts, ReadySince: ready})
 		}
-		if len(out) >= limit {
-			break
+	}
+	// Oldest first, as the Postgres store returns them.
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].ReadySince.Equal(out[j].ReadySince) {
+			return out[i].ReadySince.Before(out[j].ReadySince)
 		}
+		return out[i].ParentID < out[j].ParentID
+	})
+	if len(out) > limit {
+		out = out[:limit]
 	}
 	return out, nil
 }
