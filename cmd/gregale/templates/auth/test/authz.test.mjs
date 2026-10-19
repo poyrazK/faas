@@ -289,6 +289,27 @@ test('deletes the caller own account only when the app allows it', async t => {
   assert.equal((await client('DELETE', '/account')).body.code, 'oauth_client_token')
 })
 
+test('requires a second factor for an organization and tells members refused for lacking one', async t => {
+  let blocked = true
+  const pool = fakePool((sql, args) => {
+    if (sql.includes('set_organization_mfa')) return { rows: [{ id: args[0], slug: 'acme', name: 'Acme', mfa_required: args[1] }] }
+    if (sql.includes('list_members')) throw Object.assign(new Error('forbidden'), { code: '42501' })
+    if (sql.includes('mfa_blocks')) return { rows: [{ blocked }] }
+    if (sql.includes('list_organizations')) return { rows: [{ id: org, slug: 'acme', mfa_required: true }] }
+    return { rows: [] }
+  })
+  const call = await serve(t, pool)
+  assert.deepEqual((await call('PATCH', `/orgs/${org}`, { body: { mfa_required: true } })).body, { id: org, slug: 'acme', name: 'Acme', mfa_required: true })
+  for (const body of [{}, { mfa_required: 'yes' }, { mfa_required: null }]) assert.equal((await call('PATCH', `/orgs/${org}`, { body })).body.code, 'invalid_mfa_required')
+  assert.equal((await call('GET', '/orgs')).body.organizations[0].mfa_required, true)
+  assert.match(pool.log.find(q => q.sql.includes('list_organizations')).sql, /mfa_required FROM gregale_auth\.list_organizations/)
+  assert.deepEqual((await call('GET', `/orgs/${org}/members`)).body, { status: 403, code: 'mfa_required' })
+  assert.deepEqual(pool.log.find(q => q.sql.includes('mfa_blocks')).args, [org])
+  blocked = false
+  assert.deepEqual((await call('GET', `/orgs/${org}/members`)).body, { status: 403, code: 'forbidden' }, 'a refusal for another reason stays forbidden')
+  assert.equal((await call('GET', `/orgs/${org}/nowhere`)).status, 404)
+})
+
 test('chooses the session organization only when organization claims are on', async t => {
   const pool = fakePool((sql, args) => sql.includes('set_active_organization') ? { rows: args[0] ? [{ id: args[0], slug: 'acme', role: 'member' }] : [] } : { rows: [] })
   const off = await serve(t, pool)

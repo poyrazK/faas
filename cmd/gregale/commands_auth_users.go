@@ -25,7 +25,7 @@ import (
 
 const (
 	authUsersUsage = "usage: gregale auth users <list|get|claims|impersonate|sign-out|ban|unban|delete> NAME [USER] [--search TEXT] [--page N] [--limit N] [--set NAME=VALUE] [--unset NAME] [--reason TEXT] [--minutes N] [--for DURATION] [--yes] [--admin-key-stdin]"
-	authOrgsUsage  = "usage: gregale auth orgs <list|get|audit> NAME [ORG] [--search TEXT] [--page N] [--limit N] [--cursor NEXT] [--admin-key-stdin]"
+	authOrgsUsage  = "usage: gregale auth orgs <list|get|audit|set> NAME [ORG] [--search TEXT] [--page N] [--limit N] [--cursor NEXT] [--require-mfa on|off] [--admin-key-stdin]"
 	// authBanForever is the ban `--for forever` asks for: a hundred years,
 	// GoTrue's usual stand-in for a permanent ban.
 	authBanForever = "876000h"
@@ -61,11 +61,12 @@ type authAdminUserPage struct {
 }
 
 type authAdminOrg struct {
-	ID        string `json:"id"`
-	Slug      string `json:"slug"`
-	Name      string `json:"name"`
-	CreatedAt string `json:"created_at"`
-	Members   *int   `json:"members,omitempty"`
+	ID          string `json:"id"`
+	Slug        string `json:"slug"`
+	Name        string `json:"name"`
+	CreatedAt   string `json:"created_at"`
+	MFARequired bool   `json:"mfa_required"`
+	Members     *int   `json:"members,omitempty"`
 }
 
 type authAdminOrgPage struct {
@@ -603,19 +604,21 @@ func cmdAuthOrgs(args []string) int {
 	fs := newFlagSet("auth orgs "+args[0], flag.ContinueOnError)
 	list := addAuthListFlags(fs, "organization's slug or name")
 	cursor := fs.String("cursor", "", "audit: where the next page starts, from the previous page's More line")
+	requireMFA := fs.String("require-mfa", "", "on or off: whether the organization's permissions need a verified second factor")
 	keyStdin := fs.Bool("admin-key-stdin", false, "read the admin key from stdin (prompted on a terminal)")
 	if err := parseInterspersed(fs, args[1:]); err != nil {
 		return 1
 	}
-	want := map[string]int{"list": 1, "get": 2, "audit": 2}[args[0]]
+	want := map[string]int{"list": 1, "get": 2, "audit": 2, "set": 2}[args[0]]
 	if want == 0 || fs.NArg() != want || !api.ValidAppSlug(fs.Arg(0)) || (want == 2 && !authImportUUID.MatchString(fs.Arg(1)) && !authOrgSlug.MatchString(fs.Arg(1))) {
 		PrintUsage(os.Stderr, authOrgsUsage, "auth")
 		return 1
 	}
-	if args[0] != "list" {
-		if err := authOnlyFlags(fs, map[string][]string{"audit": {"cursor", "limit"}}[args[0]]); err != nil {
-			return printErr("Invalid flags", err)
-		}
+	if err := authOnlyFlags(fs, map[string][]string{"list": {"search", "page", "limit"}, "audit": {"cursor", "limit"}, "set": {"require-mfa"}}[args[0]]); err != nil {
+		return printErr("Invalid flags", err)
+	}
+	if args[0] == "set" && *requireMFA != "on" && *requireMFA != "off" {
+		return printErr("Invalid flags", errors.New("set needs --require-mfa on or off"))
 	}
 	if len(*cursor) > 200 || strings.ContainsAny(*cursor, " \t\n") {
 		return printErr("Invalid flags", errors.New(`--cursor takes the value a page prints after "More:"`))
@@ -638,7 +641,41 @@ func cmdAuthOrgs(args []string) int {
 	if args[0] == "audit" {
 		return authOrgsAudit(origin, key, id, *cursor, *list.limit)
 	}
+	if args[0] == "set" {
+		return authOrgsSetMFA(origin, key, id, *requireMFA == "on")
+	}
 	return authOrgsGet(origin, key, id)
+}
+
+// authOrgsSetMFA turns an organization's second-factor requirement on or
+// off. The admin key acts as the application's operator, so no member has
+// to be signed in; members' sessions below aal2 lose or regain access at
+// their next request.
+func authOrgsSetMFA(origin, key, id string, required bool) int {
+	var updated struct {
+		Organization authAdminOrg `json:"organization"`
+	}
+	if err := authAdminCall(http.MethodPatch, origin, key, "/admin/v1/orgs/"+id, map[string]any{"mfa_required": required}, &updated); err != nil {
+		return printErr("Could not change the organization", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(updated))
+	}
+	org := updated.Organization
+	if org.MFARequired {
+		_, _ = fmt.Fprintf(osStdout, "Organization %s now requires a second factor: its permissions hold only in sessions verified with one.\n", org.Slug)
+	} else {
+		_, _ = fmt.Fprintf(osStdout, "Organization %s no longer requires a second factor.\n", org.Slug)
+	}
+	return 0
+}
+
+// authMFAText describes an organization's second-factor requirement.
+func authMFAText(required bool) string {
+	if required {
+		return "second factor required"
+	}
+	return "second factor optional"
 }
 
 // authResolveOrg returns the ID of the organization an ID or slug names.
@@ -681,7 +718,11 @@ func authOrgsList(origin, key, query string) int {
 		if org.Members != nil {
 			members = *org.Members
 		}
-		_, _ = fmt.Fprintf(osStdout, "%s  %-24s  %4d members  %s\n", org.ID, org.Slug, members, org.Name)
+		mfa := ""
+		if org.MFARequired {
+			mfa = "  (second factor required)"
+		}
+		_, _ = fmt.Fprintf(osStdout, "%s  %-24s  %4d members  %s%s\n", org.ID, org.Slug, members, org.Name, mfa)
 	}
 	if page.Page*page.PerPage < page.Total {
 		_, _ = fmt.Fprintf(osStdout, "Page %d of %d organizations; next: --page %d\n", page.Page, page.Total, page.Page+1)
@@ -733,10 +774,11 @@ func authOrgsGet(origin, key, id string) int {
 	var detail struct {
 		Organization authAdminOrg `json:"organization"`
 		Members      []struct {
-			UserID    string  `json:"user_id"`
-			Email     *string `json:"email"`
-			Role      string  `json:"role"`
-			CreatedAt string  `json:"created_at"`
+			UserID     string  `json:"user_id"`
+			Email      *string `json:"email"`
+			Role       string  `json:"role"`
+			CreatedAt  string  `json:"created_at"`
+			MFAEnabled *bool   `json:"mfa_enabled"`
 		} `json:"members"`
 		Invitations []struct {
 			ID        string `json:"id"`
@@ -752,10 +794,16 @@ func authOrgsGet(origin, key, id string) int {
 		return jsonOut(writeJSON(detail))
 	}
 	org := detail.Organization
-	_, _ = fmt.Fprintf(osStdout, "Organization %s (%s)\n  id       %s\n  created  %s\n", org.Slug, org.Name, org.ID, org.CreatedAt)
+	_, _ = fmt.Fprintf(osStdout, "Organization %s (%s)\n  id       %s\n  created  %s\n  sign-in  %s\n", org.Slug, org.Name, org.ID, org.CreatedAt, authMFAText(org.MFARequired))
 	_, _ = fmt.Fprintf(osStdout, "Members (%d):\n", len(detail.Members))
 	for _, member := range detail.Members {
-		_, _ = fmt.Fprintf(osStdout, "  %s  %-10s  %s\n", member.UserID, member.Role, authOr(member.Email, "-"))
+		factor := ""
+		if member.MFAEnabled != nil && *member.MFAEnabled {
+			factor = "  second factor"
+		} else if member.MFAEnabled != nil && org.MFARequired {
+			factor = "  no second factor: cannot use this organization"
+		}
+		_, _ = fmt.Fprintf(osStdout, "  %s  %-10s  %s%s\n", member.UserID, member.Role, authOr(member.Email, "-"), factor)
 	}
 	if len(detail.Invitations) > 0 {
 		_, _ = fmt.Fprintf(osStdout, "Pending invitations (%d):\n", len(detail.Invitations))

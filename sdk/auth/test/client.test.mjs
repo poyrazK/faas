@@ -439,3 +439,16 @@ test('chooses the active organization and reads it from the refreshed token', as
   assert.equal(await auth.organizations.setActive(null), null)
   assert.deepEqual(api.calls.at(-2).body, { org: null })
 })
+
+test('an organization requires a second factor, and members without one are told so', async () => {
+  const api = server({
+    'POST /auth/v1/token': () => [200, tokens(1)],
+    'PATCH /authz/v1/orgs/o1': call => [200, { id: 'o1', slug: 'acme', name: 'Acme', mfa_required: call.body.mfa_required }],
+    'GET /authz/v1/orgs/o2/members': () => [403, { status: 403, code: 'mfa_required' }],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  assert.equal((await auth.organizations.setMfaRequired('o1', true)).mfa_required, true)
+  assert.deepEqual(api.calls.at(-1).body, { mfa_required: true })
+  await assert.rejects(auth.members.list('o2'), err => err.status === 403 && err.code === 'mfa_required')
+})

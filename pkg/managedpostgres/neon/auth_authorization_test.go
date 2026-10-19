@@ -30,7 +30,8 @@ CREATE TABLE auth.identities (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), use
 CREATE TABLE auth.sso_providers (id uuid PRIMARY KEY);
 CREATE TABLE auth.sso_domains (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), sso_provider_id uuid NOT NULL REFERENCES auth.sso_providers ON DELETE CASCADE, domain text NOT NULL);
 CREATE TABLE auth.sessions (id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES auth.users ON DELETE CASCADE, not_after timestamptz, aal text, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(), refreshed_at timestamp, user_agent text, ip inet, oauth_client_id uuid);
-CREATE TABLE auth.audit_log_entries (instance_id uuid, id uuid PRIMARY KEY, payload json, created_at timestamptz, ip_address varchar(64) NOT NULL DEFAULT '');`
+CREATE TABLE auth.audit_log_entries (instance_id uuid, id uuid PRIMARY KEY, payload json, created_at timestamptz, ip_address varchar(64) NOT NULL DEFAULT '');
+CREATE TABLE auth.mfa_factors (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES auth.users ON DELETE CASCADE, factor_type text NOT NULL, status text NOT NULL);`
 
 type authUser struct{ id, session uuid.UUID }
 
@@ -451,6 +452,121 @@ func TestSQLOrganizationAuditLogRecordsChangesAndSignIns(t *testing.T) {
 		t.Fatal(err)
 	}
 	deniedSQL(t, f.connect(t, f.readonly.name), `SELECT gregale_auth.org_audit_feed('`+org.String()+`', NULL, NULL, 10)`)
+}
+
+// TestSQLOrganizationMFARequirementHoldsPermissionsToAAL2Sessions pins
+// sql/0016: once an organization requires a second factor, its permissions
+// hold only in sessions GoTrue raised to aal2, and only someone holding
+// mfa:manage in such a session changes the requirement.
+func TestSQLOrganizationMFARequirementHoldsPermissionsToAAL2Sessions(t *testing.T) {
+	f := newCredentialFixture(t)
+	ctx := context.Background()
+	_, owner := installAuthorization(t, f)
+	alice, bob := newAuthUser(t, owner, "alice@example.test"), newAuthUser(t, owner, "bob@example.test")
+	actAs(ctx, t, owner, alice)
+	var org uuid.UUID
+	if err := owner.QueryRow(ctx, `SELECT id FROM gregale_auth.create_organization('acme', 'Acme')`).Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	executeSQL(t, owner, `INSERT INTO gregale_auth.memberships (org_id, user_id, role) VALUES ($1, $2, 'member')`, org, bob.id)
+	executeSQL(t, owner, `SELECT gregale_auth.apply_authz('{"policies":[{"action":"read","resource":"doc","permission":"org:read"}]}')`)
+	aal := func(u authUser, level string) {
+		executeSQL(t, owner, `UPDATE auth.sessions SET aal = $2 WHERE id = $1`, u.session, level)
+	}
+	resource := "org/" + org.String() + "/doc/1"
+	allowed := func(u authUser) bool {
+		actAs(ctx, t, owner, u)
+		return queryBool(t, owner, `SELECT gregale_auth.authorize('read', $1)`, resource)
+	}
+	setMFA := `SELECT gregale_auth.set_organization_mfa($1, $2)`
+	if !allowed(bob) {
+		t.Fatal("a member was refused before any requirement")
+	}
+
+	// Changing the requirement needs mfa:manage and an aal2 session.
+	actAs(ctx, t, owner, alice)
+	wantSQLError(t, owner, "42501", "mfa_required", setMFA, org, true)
+	aal(bob, "aal2")
+	actAs(ctx, t, owner, bob)
+	wantSQLError(t, owner, "42501", "forbidden", setMFA, org, true)
+	aal(bob, "aal1")
+	aal(alice, "aal2")
+	actAs(ctx, t, owner, alice)
+	executeSQL(t, owner, setMFA, org, true)
+
+	// Below aal2 a member keeps the membership and loses its permissions.
+	if allowed(bob) || !allowed(alice) {
+		t.Fatal("the requirement did not hold permissions to aal2 sessions")
+	}
+	actAs(ctx, t, owner, bob)
+	if !queryBool(t, owner, `SELECT gregale_auth.mfa_blocks($1)`, org) {
+		t.Fatal("mfa_blocks does not explain the refusal")
+	}
+	wantSQLError(t, owner, "42501", "forbidden", `SELECT gregale_auth.list_members($1)`, org)
+	wantSQLError(t, owner, "42501", "mfa_required", `SELECT gregale_auth.set_active_organization($1)`, org)
+	if !queryBool(t, owner, `SELECT mfa_required FROM gregale_auth.list_organizations() WHERE id = $1`, org) {
+		t.Fatal("a member cannot see that the organization requires a second factor")
+	}
+	if !queryBool(t, owner, `SELECT gregale_auth.authorize_subject($1, 'read', $2) IS FALSE`, bob.id, resource) {
+		t.Fatal("subject authorization ignored the requirement")
+	}
+
+	// Verifying a factor raises the session; removing it lowers it again.
+	aal(bob, "aal2")
+	if !allowed(bob) || !queryBool(t, owner, `SELECT gregale_auth.authorize_subject($1, 'read', $2)`, bob.id, resource) {
+		t.Fatal("an aal2 member was refused")
+	}
+	executeSQL(t, owner, `SELECT gregale_auth.set_active_organization($1)`, org)
+	executeSQL(t, owner, `INSERT INTO auth.mfa_factors (user_id, factor_type, status) VALUES ($1, 'totp', 'verified'), ($2, 'recovery_code', 'verified')`, bob.id, alice.id)
+	memberMFA := func(u authUser) map[uuid.UUID]*bool {
+		actAs(ctx, t, owner, u)
+		rows, err := owner.Query(ctx, `SELECT user_id, mfa_enabled FROM gregale_auth.list_members($1)`, org)
+		if err != nil {
+			t.Fatal(err)
+		}
+		listed, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (struct {
+			id      uuid.UUID
+			enabled *bool
+		}, error) {
+			var v struct {
+				id      uuid.UUID
+				enabled *bool
+			}
+			return v, row.Scan(&v.id, &v.enabled)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[uuid.UUID]*bool{}
+		for _, v := range listed {
+			out[v.id] = v.enabled
+		}
+		return out
+	}
+	// Owners see who has a factor (recovery codes alone do not count);
+	// plain members do not.
+	if got := memberMFA(alice); got[bob.id] == nil || !*got[bob.id] || got[alice.id] == nil || *got[alice.id] {
+		t.Fatalf("an owner sees second factors as %v", got)
+	}
+	if got := memberMFA(bob); got[bob.id] != nil || got[alice.id] != nil {
+		t.Fatalf("a member sees second factors as %v", got)
+	}
+	aal(bob, "aal1")
+	if allowed(bob) {
+		t.Fatal("a session lowered to aal1 kept its permissions")
+	}
+	actAs(ctx, t, owner, alice)
+	executeSQL(t, owner, setMFA, org, false)
+	if !allowed(bob) {
+		t.Fatal("turning the requirement off did not restore access")
+	}
+	if err := f.manager.Ensure(ctx, f.material, f.readonly); err != nil {
+		t.Fatal(err)
+	}
+	reader := f.connect(t, f.readonly.name)
+	deniedSQL(t, reader, `SELECT gregale_auth.set_organization_mfa('`+org.String()+`', false)`)
+	deniedSQL(t, reader, `SELECT gregale_auth.mfa_blocks('`+org.String()+`')`)
+	deniedSQL(t, reader, `SELECT gregale_auth.session_mfa()`)
 }
 
 // TestSQLLifecycleEventsRecordUserChangesOnlyWhenEnabled pins the outbox the
