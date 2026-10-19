@@ -820,8 +820,11 @@ type IncrementRequestTelemetryRequest struct {
 	// ADR-1188: how an anonymous GET body compared with the previous response
 	// for its URL on the same gateway; empty when not observed. Never a hash.
 	ContentOutcome string `protobuf:"bytes,37,opt,name=content_outcome,json=contentOutcome,proto3" json:"content_outcome,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// ADR-1138: trace_id was inferred by Gregale (the calling instance sent no
+	// traceparent and was serving exactly one request) rather than propagated.
+	TraceInferred bool `protobuf:"varint,38,opt,name=trace_inferred,json=traceInferred,proto3" json:"trace_inferred,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *IncrementRequestTelemetryRequest) Reset() {
@@ -1111,6 +1114,13 @@ func (x *IncrementRequestTelemetryRequest) GetContentOutcome() string {
 		return x.ContentOutcome
 	}
 	return ""
+}
+
+func (x *IncrementRequestTelemetryRequest) GetTraceInferred() bool {
+	if x != nil {
+		return x.TraceInferred
+	}
+	return false
 }
 
 // IncrementRequestTelemetryResponse is the per-record outcome the
@@ -1480,7 +1490,7 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\n" +
 	"request_id\x18\t \x01(\tR\trequestId\x12\x1b\n" +
 	"\tsource_ip\x18\n" +
-	" \x01(\tR\bsourceIp\"\x98\v\n" +
+	" \x01(\tR\bsourceIp\"\xbf\v\n" +
 	" IncrementRequestTelemetryRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
@@ -1525,7 +1535,8 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\x1aplatform_tenant_surface_id\x18\" \x01(\tR\x17platformTenantSurfaceId\x12W\n" +
 	")platform_tenant_jwt_authorization_rule_id\x18# \x01(\tR$platformTenantJwtAuthorizationRuleId\x12,\n" +
 	"\x12flag_evidence_json\x18$ \x01(\tR\x10flagEvidenceJson\x12'\n" +
-	"\x0fcontent_outcome\x18% \x01(\tR\x0econtentOutcome\"c\n" +
+	"\x0fcontent_outcome\x18% \x01(\tR\x0econtentOutcome\x12%\n" +
+	"\x0etrace_inferred\x18& \x01(\bR\rtraceInferred\"c\n" +
 	"!IncrementRequestTelemetryResponse\x12\x18\n" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12$\n" +
 	"\x0eretry_after_ms\x18\x02 \x01(\x03R\fretryAfterMs\"\xc6\x03\n" +

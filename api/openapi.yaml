@@ -113519,6 +113519,7 @@ components:
         count: { type: integer, minimum: 1, description: "Number of original requests represented by this collapsed telemetry row." }
         cold_boot: { type: boolean }
         trace_id: { type: [string, 'null'], description: "W3C distributed-tracing identifier (32 hex chars), separate from request_id." }
+        trace_inferred: { type: boolean, description: "True when Gregale linked this service call to its caller's trace because the caller sent no traceparent and was serving exactly one request (ADR-1138): the trace id is inferred, not propagated." }
         received_at: { type: string, format: date-time }
         wake_id: { type: string, description: "Opaque wake identifier when this request admitted a wake; omitted for warm requests." }
         instance_id: { type: string, description: "Opaque instance identifier that served the request; omitted when no target was reached." }

@@ -101,6 +101,11 @@ func TestTraceMatchBreakdown(t *testing.T) {
 			Request: api.DebugTelemetryRequestItem{LatencyMS: 700, ColdBoot: true, WakeID: "w4"},
 			Wake:    &api.AccountTraceWake{WakeID: "w4", Method: "cold_boot"},
 		}, "found the app parked (wake w4)"},
+		{"inferred link", api.AccountTraceMatch{
+			Request: api.DebugTelemetryRequestItem{LatencyMS: 900, ColdBoot: true, WakeID: "w6", TraceInferred: true},
+			Wake:    &api.AccountTraceWake{WakeID: "w6", Method: "restore", ReadyInMS: 610},
+		}, "trace linked by Gregale · woke by restore in 610 ms (wake w6)"},
+		{"inferred link on a warm call", api.AccountTraceMatch{Request: api.DebugTelemetryRequestItem{LatencyMS: 40, TraceInferred: true}}, "trace linked by Gregale"},
 		{"bucketed parts exceed the latency", api.AccountTraceMatch{
 			Request: api.DebugTelemetryRequestItem{LatencyMS: 600, ColdBoot: true, WakeID: "w5", Guest: guest(20)},
 			Wake:    &api.AccountTraceWake{WakeID: "w5", Method: "restore", ReadyInMS: 590},
