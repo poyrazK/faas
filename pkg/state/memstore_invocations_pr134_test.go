@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -10,19 +10,20 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // TestMemStore_PR134AsyncContract exercises every PR-A/B/C/E memstore
 // method that was previously 0%-covered. Pushes pkg/state coverage
 // above the 70% floor by exercising ~10 new functions in one sweep.
 func TestMemStore_PR134AsyncContract(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	acct, err := m.CreateAccount(ctx, "pr134@localhost", api.PlanHobby)
 	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
 	}
-	app, err := m.CreateApp(ctx, App{ID: newID(), Slug: "pr134-app", AccountID: acct.ID, RAMMB: 256, Runtime: "node22"})
+	app, err := m.CreateApp(ctx, state.App{ID: state.NewID(), Slug: "pr134-app", AccountID: acct.ID, RAMMB: 256, Runtime: "node22"})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
@@ -43,7 +44,7 @@ func TestMemStore_PR134AsyncContract(t *testing.T) {
 	if mx, cur, err := m.GetAccountAsyncQuota(ctx, acct.ID); err != nil || mx != 2 || cur != 0 {
 		t.Errorf("Get(acct) = (%d,%d,%v), want (2,0,nil)", mx, cur, err)
 	}
-	if _, _, err := m.GetAccountAsyncQuota(ctx, "missing-acct"); !errors.Is(err, ErrNotFound) {
+	if _, _, err := m.GetAccountAsyncQuota(ctx, "missing-acct"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("Get(missing) = %v, want ErrNotFound", err)
 	}
 
@@ -51,8 +52,8 @@ func TestMemStore_PR134AsyncContract(t *testing.T) {
 	var ids [3]string
 	deadline := time.Now().Add(time.Hour)
 	for i := range ids {
-		inv, err := m.EnqueueInvocation(ctx, Invocation{
-			AppID: app.ID, AccountID: acct.ID, Source: InvocationAsyncInvoke,
+		inv, err := m.EnqueueInvocation(ctx, state.Invocation{
+			AppID: app.ID, AccountID: acct.ID, Source: state.InvocationAsyncInvoke,
 			DueAt: time.Now(), DeadlineAt: &deadline,
 			Payload: json.RawMessage(`{"x":1}`)})
 		if err != nil {
@@ -63,16 +64,16 @@ func TestMemStore_PR134AsyncContract(t *testing.T) {
 
 	// ClaimInvocationWithCap: succeeds under cap, ErrQuotaExceeded at cap.
 	got, err := m.ClaimInvocationWithCap(ctx, ids[0], "inst-A", 60, 2)
-	if err != nil || got.State != InvocationDispatching {
+	if err != nil || got.State != state.InvocationDispatching {
 		t.Errorf("ClaimWithCap[0] = (%+v, %v), want dispatching/nil", got, err)
 	}
 	if _, err := m.ClaimInvocationWithCap(ctx, ids[1], "inst-B", 60, 2); err != nil {
 		t.Errorf("ClaimWithCap[1] at cur=1/2: %v", err)
 	}
-	if _, err := m.ClaimInvocationWithCap(ctx, ids[2], "inst-C", 60, 2); !errors.Is(err, ErrQuotaExceeded) {
+	if _, err := m.ClaimInvocationWithCap(ctx, ids[2], "inst-C", 60, 2); !errors.Is(err, state.ErrQuotaExceeded) {
 		t.Errorf("ClaimWithCap[2] at cur=2/2 = %v, want ErrQuotaExceeded", err)
 	}
-	if _, err := m.ClaimInvocationWithCap(ctx, "missing-id", "inst-X", 60, 2); !errors.Is(err, ErrNotFound) {
+	if _, err := m.ClaimInvocationWithCap(ctx, "missing-id", "inst-X", 60, 2); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("ClaimWithCap(missing) = %v, want ErrNotFound", err)
 	}
 
@@ -97,7 +98,7 @@ func TestMemStore_PR134AsyncContract(t *testing.T) {
 	past := time.Now().Add(-time.Second)
 	inv0, _ := m.InvocationByID(ctx, ids[0])
 	inv0.ResultRetentionUntil = &past
-	m.invocations[inv0.ID] = inv0
+	(*m.Invocations())[inv0.ID] = inv0
 	expired, err := m.ListExpiredInvocationsForReaper(ctx, time.Now(), 10)
 	if err != nil {
 		t.Errorf("ListExpired: %v", err)
@@ -121,7 +122,7 @@ func TestMemStore_PR134AsyncContract(t *testing.T) {
 	inv1, _ := m.InvocationByID(ctx, ids[1])
 	breached := time.Now().Add(-time.Minute)
 	inv1.DeadlineAt = &breached
-	m.invocations[inv1.ID] = inv1
+	(*m.Invocations())[inv1.ID] = inv1
 	br, err := m.ListDeadlineBreachedInvocations(ctx, time.Now(), 10)
 	if err != nil {
 		t.Errorf("ListBreached: %v", err)
@@ -140,10 +141,10 @@ func TestMemStore_PR134AsyncContract(t *testing.T) {
 		t.Errorf("ForceDeadline = (%d, %v), want (1, nil)", forced, err)
 	}
 	inv1, _ = m.InvocationByID(ctx, ids[1])
-	if inv1.State != InvocationDeadLetter {
+	if inv1.State != state.InvocationDeadLetter {
 		t.Errorf("forced row state = %q, want dead_letter", inv1.State)
 	}
-	if inv1.Outcome == nil || *inv1.Outcome != OutcomeTimeout {
+	if inv1.Outcome == nil || *inv1.Outcome != state.OutcomeTimeout {
 		t.Errorf("forced row outcome = %v, want OutcomeTimeout", inv1.Outcome)
 	}
 
@@ -152,19 +153,19 @@ func TestMemStore_PR134AsyncContract(t *testing.T) {
 	if err != nil {
 		t.Errorf("RetryQueueDeadLetter happy: %v", err)
 	}
-	if got2.State != InvocationPending || got2.Attempts != 0 || got2.LastError != "" {
+	if got2.State != state.InvocationPending || got2.Attempts != 0 || got2.LastError != "" {
 		t.Errorf("replayed = %+v, want state=pending attempts=0 last_error=''", got2)
 	}
 	if got2.LastReplayedAt == nil {
 		t.Error("LastReplayedAt not stamped")
 	}
-	if _, err := m.RetryQueueDeadLetter(ctx, "other-acct", ids[1]); !errors.Is(err, ErrNotFound) {
+	if _, err := m.RetryQueueDeadLetter(ctx, "other-acct", ids[1]); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("RetryQueueDeadLetter(scope mismatch) = %v, want ErrNotFound", err)
 	}
-	if _, err := m.RetryQueueDeadLetter(ctx, acct.ID, ids[2]); !errors.Is(err, ErrNotFound) {
+	if _, err := m.RetryQueueDeadLetter(ctx, acct.ID, ids[2]); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("RetryQueueDeadLetter(wrong state, ids[2] pending) = %v, want ErrNotFound", err)
 	}
-	if _, err := m.RetryQueueDeadLetter(ctx, acct.ID, "ghost"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.RetryQueueDeadLetter(ctx, acct.ID, "ghost"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("RetryQueueDeadLetter(missing) = %v, want ErrNotFound", err)
 	}
 

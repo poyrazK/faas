@@ -9,11 +9,12 @@
 // The pgstore impl uses the same shape with raw SQL; the test
 // surface is the MemStore twin's seam.
 
-package state
+package state_test
 
 import (
 	"context"
 	"encoding/json"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
@@ -27,7 +28,7 @@ import (
 // would never bleed into a sidecar's audit view.
 func TestMemStore_ListEventsBySidecar_FiltersByKindAndName(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	now := time.Now()
 	if err := m.AppendEvent(ctx, "vmmd", "wake.sidecar_init_exit", nil,
 		mustJSON(t, map[string]any{"sidecar_name": "metrics", "status": "init_ok", "exit_code": 0})); err != nil {
@@ -67,7 +68,7 @@ func TestMemStore_ListEventsBySidecar_FiltersByKindAndName(t *testing.T) {
 // cap; limit>0 truncates the at-ordered result.
 func TestMemStore_ListEventsBySidecar_Limit(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	for i := 0; i < 5; i++ {
 		if err := m.AppendEvent(ctx, "vmmd", "wake.sidecar_init_exit", nil,
 			mustJSON(t, map[string]any{"sidecar_name": "metrics", "status": "init_ok"})); err != nil {
@@ -89,7 +90,7 @@ func TestMemStore_ListEventsBySidecar_Limit(t *testing.T) {
 // result as "no audit rows" not "query failed".
 func TestMemStore_ListEventsBySidecar_NoMatch(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	if err := m.AppendEvent(ctx, "vmmd", "wake.sidecar_init_exit", nil,
 		mustJSON(t, map[string]any{"sidecar_name": "logger"})); err != nil {
 		t.Fatalf("append: %v", err)

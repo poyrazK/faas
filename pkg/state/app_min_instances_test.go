@@ -1,8 +1,9 @@
-package state
+package state_test
 
 import (
 	"context"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 )
 
@@ -22,9 +23,9 @@ func TestSetAppMinInstances_RoundTrip(t *testing.T) {
 	ctx := context.Background()
 	stores := []struct {
 		name  string
-		store Store
+		store state.Store
 	}{
-		{"MemStore", NewMemStore()},
+		{"MemStore", state.NewMemStore()},
 	}
 
 	for _, s := range stores {
@@ -33,7 +34,7 @@ func TestSetAppMinInstances_RoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			app, err := s.store.CreateApp(ctx, App{AccountID: acct.ID, Slug: "api"})
+			app, err := s.store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "api"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -68,7 +69,7 @@ func TestSetAppMinInstances_RoundTrip(t *testing.T) {
 				t.Errorf("after Set 0: MinInstances = %d, want 0", got.MinInstances)
 			}
 			// Unknown app → ErrNotFound.
-			if err := s.store.SetAppMinInstances(ctx, "missing-id", 1); !errors.Is(err, ErrNotFound) {
+			if err := s.store.SetAppMinInstances(ctx, "missing-id", 1); !errors.Is(err, state.ErrNotFound) {
 				t.Errorf("unknown app: err = %v, want ErrNotFound", err)
 			}
 		})
@@ -85,12 +86,12 @@ func TestSetAppMinInstances_RoundTrip(t *testing.T) {
 //     (explicit scale-to-zero is a deliberate opt-out)
 func TestUpdateApp_WithMinInstances(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	acct, err := store.CreateAccount(ctx, "alice@example.com", "free")
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: acct.ID, Slug: "api"})
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "api"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +102,7 @@ func TestUpdateApp_WithMinInstances(t *testing.T) {
 	}
 
 	// PATCH that omits min_instances — column stays at 2.
-	updated, err := store.UpdateApp(ctx, app.ID, UpdateAppParams{})
+	updated, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +112,7 @@ func TestUpdateApp_WithMinInstances(t *testing.T) {
 
 	// PATCH with explicit zero — column becomes 0.
 	zero := 0
-	updated, err = store.UpdateApp(ctx, app.ID, UpdateAppParams{
+	updated, err = store.UpdateApp(ctx, app.ID, state.UpdateAppParams{
 		MinInstances: &zero, SetMinInstances: true,
 	})
 	if err != nil {
@@ -123,7 +124,7 @@ func TestUpdateApp_WithMinInstances(t *testing.T) {
 
 	// PATCH with non-zero value — column becomes that value.
 	three := 3
-	updated, err = store.UpdateApp(ctx, app.ID, UpdateAppParams{
+	updated, err = store.UpdateApp(ctx, app.ID, state.UpdateAppParams{
 		MinInstances: &three, SetMinInstances: true,
 	})
 	if err != nil {

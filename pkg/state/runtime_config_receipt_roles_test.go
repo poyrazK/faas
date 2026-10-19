@@ -1,6 +1,6 @@
 // adr: 568 — runtime evidence must reflect the actual sealed serving inputs.
 // adr: 462 — migration credentials are restricted to persisted release tasks.
-package state
+package state_test
 
 import (
 	"testing"
@@ -8,21 +8,22 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestRuntimeConfigReceiptServingCredentialAudience(t *testing.T) {
 	ctx := t.Context()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "receipt-audience-"+uuid.NewString()+"@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "receipt-audience", Type: AppTypeApp, RAMMB: 256})
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "receipt-audience", Type: state.AppTypeApp, RAMMB: 256})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for key, access := range map[string]string{"DATABASE_URL": "read_write", "MIGRATION_DATABASE_URL": "migration"} {
-		err = store.PutManagedPostgresSecret(ctx, AppSecret{AccountID: account.ID, AppID: app.ID, Scope: "default", Key: key,
+		err = store.PutManagedPostgresSecret(ctx, state.AppSecret{AccountID: account.ID, AppID: app.ID, Scope: "default", Key: key,
 			Ciphertext: []byte("sealed"), Kid: "recipient", ManagedPostgresBindingID: "binding-" + key,
 			ManagedPostgresAccess: access, ManagedCredentialRef: "credential-" + key, ManagedCredentialGeneration: 1})
 		if err != nil {
@@ -37,15 +38,15 @@ func TestRuntimeConfigReceiptServingCredentialAudience(t *testing.T) {
 	for _, row := range rows {
 		versions[row.Key] = row.DeliveryVersion
 	}
-	boundary, _, err := RuntimeConfigChangedAtForScope(ctx, store, app.ID, "default")
+	boundary, _, err := state.RuntimeConfigChangedAtForScope(ctx, store, app.ID, "default")
 	if err != nil {
 		t.Fatal(err)
 	}
-	serving := RuntimeConfigInputs{Scope: "default", Boundary: boundary, Variables: map[string]string{},
+	serving := state.RuntimeConfigInputs{Scope: "default", Boundary: boundary, Variables: map[string]string{},
 		SecretVersions: map[string]int64{"default/DATABASE_URL": versions["DATABASE_URL"]},
 		SecretRefs:     map[string]string{"DATABASE_URL": "secret:DATABASE_URL"}, AllSecrets: true}
 	for _, implicit := range []bool{false, true} {
-		inputs := cloneRuntimeConfigInputs(serving)
+		inputs := state.CloneRuntimeConfigInputs(serving)
 		if implicit {
 			inputs.SecretRefs = map[string]string{}
 		}
@@ -54,7 +55,7 @@ func TestRuntimeConfigReceiptServingCredentialAudience(t *testing.T) {
 		}
 	}
 	for _, alias := range []bool{false, true} {
-		forged := cloneRuntimeConfigInputs(serving)
+		forged := state.CloneRuntimeConfigInputs(serving)
 		forged.AllSecrets = false
 		forged.SecretVersions["default/MIGRATION_DATABASE_URL"] = versions["MIGRATION_DATABASE_URL"]
 		if alias {
@@ -71,14 +72,14 @@ func TestRuntimeConfigReceiptServingCredentialAudience(t *testing.T) {
 }
 
 func TestRuntimeConfigInputsFreshUsesPersistedTimestampPrecision(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	changedAt := time.Date(2026, 10, 8, 12, 0, 0, 123456789, time.UTC)
-	store.mu.Lock()
-	store.environmentRuntimeConfigChangedAt = make(map[environmentRuntimeKey]time.Time)
-	store.environmentRuntimeConfigChangedAt[environmentRuntimeKey{AppID: "app", Scope: "default"}] = changedAt
-	store.mu.Unlock()
+	(*store.Mu()).Lock()
+	(*store.EnvironmentRuntimeConfigChangedAt()) = make(map[state.EnvironmentRuntimeKey]time.Time)
+	(*store.EnvironmentRuntimeConfigChangedAt())[state.EnvironmentRuntimeKey{AppID: "app", Scope: "default"}] = changedAt
+	(*store.Mu()).Unlock()
 
-	inputs := RuntimeConfigInputs{Scope: "default", Boundary: changedAt.Truncate(time.Microsecond),
+	inputs := state.RuntimeConfigInputs{Scope: "default", Boundary: changedAt.Truncate(time.Microsecond),
 		Variables: map[string]string{}, SecretVersions: map[string]int64{}, SecretRefs: map[string]string{}}
 	fresh, err := store.RuntimeConfigInputsFresh(t.Context(), "app", inputs)
 	if err != nil || !fresh {

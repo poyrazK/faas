@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,25 +7,26 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreProjectEnvironmentCleanupJobCanBeRetried(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "environment-cleanup@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := store.CreateProject(ctx, Project{AccountID: account.ID, Slug: "cleanup-shop", ScanSource: ProjectScanSourceCompose})
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "cleanup-shop", ScanSource: state.ProjectScanSourceCompose})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateProjectEnvironment(ctx, ProjectEnvironment{
+	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{
 		AccountID: account.ID, ProjectID: project.ID, Slug: "staging",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	resources := ProjectEnvironmentCleanupResources{Postgres: []ProjectEnvironmentPostgresCleanupResource{{
+	resources := state.ProjectEnvironmentCleanupResources{Postgres: []state.ProjectEnvironmentPostgresCleanupResource{{
 		AppID: "app-id", Scope: "staging", BindingID: "binding-id", DatabaseID: "database-id",
 		DatabaseName: "env-staging-0123456789ab", RestoreSourceDatabaseID: "source-database-id", DeleteDatabase: true,
 	}}}
@@ -36,7 +37,7 @@ func TestMemStoreProjectEnvironmentCleanupJobCanBeRetried(t *testing.T) {
 	if job.ID == "" || job.LeaseToken != "request-lease" || job.Resources.Postgres[0].DatabaseID != "database-id" {
 		t.Fatalf("cleanup job=%+v", job)
 	}
-	if _, err := store.ProjectEnvironmentBySlug(ctx, account.ID, project.ID, "staging"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.ProjectEnvironmentBySlug(ctx, account.ID, project.ID, "staging"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("environment remains after delete: %v", err)
 	}
 
@@ -49,13 +50,13 @@ func TestMemStoreProjectEnvironmentCleanupJobCanBeRetried(t *testing.T) {
 		t.Fatalf("claimed job=%+v", claimed)
 	}
 	nextAttempt := claimAt.Add(time.Minute)
-	if err := store.RetryProjectEnvironmentCleanup(ctx, claimed.ID, "wrong-lease", nextAttempt); !errors.Is(err, ErrConflict) {
+	if err := store.RetryProjectEnvironmentCleanup(ctx, claimed.ID, "wrong-lease", nextAttempt); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("retry with wrong lease = %v, want conflict", err)
 	}
 	if err := store.RetryProjectEnvironmentCleanup(ctx, claimed.ID, claimed.LeaseToken, nextAttempt); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ClaimNextProjectEnvironmentCleanup(ctx, "worker-too-early", nextAttempt.Add(-time.Second), time.Minute); !errors.Is(err, ErrNotFound) {
+	if _, err := store.ClaimNextProjectEnvironmentCleanup(ctx, "worker-too-early", nextAttempt.Add(-time.Second), time.Minute); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("early claim = %v, want not found", err)
 	}
 	claimed, err = store.ClaimNextProjectEnvironmentCleanup(ctx, "worker-lease-2", nextAttempt, time.Minute)
@@ -68,13 +69,13 @@ func TestMemStoreProjectEnvironmentCleanupJobCanBeRetried(t *testing.T) {
 	if err := store.CompleteProjectEnvironmentCleanup(ctx, claimed.ID, claimed.LeaseToken); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ClaimNextProjectEnvironmentCleanup(ctx, "worker-lease-3", nextAttempt.Add(time.Hour), time.Minute); !errors.Is(err, ErrNotFound) {
+	if _, err := store.ClaimNextProjectEnvironmentCleanup(ctx, "worker-lease-3", nextAttempt.Add(time.Hour), time.Minute); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("claim after completion = %v, want not found", err)
 	}
 }
 
 func TestProjectEnvironmentCleanupResourcesValidateScopeAndCloneIdentity(t *testing.T) {
-	valid := ProjectEnvironmentCleanupResources{Postgres: []ProjectEnvironmentPostgresCleanupResource{{
+	valid := state.ProjectEnvironmentCleanupResources{Postgres: []state.ProjectEnvironmentPostgresCleanupResource{{
 		AppID: "app", Scope: "staging", BindingID: "binding", DatabaseID: "database",
 		DatabaseName: "env-staging-hash", RestoreSourceDatabaseID: "source", DeleteDatabase: true,
 	}}}
@@ -82,12 +83,12 @@ func TestProjectEnvironmentCleanupResourcesValidateScopeAndCloneIdentity(t *test
 		t.Fatalf("valid resources rejected: %v", err)
 	}
 	valid.Postgres[0].Scope = "production"
-	if err := valid.ValidateForEnvironment("staging"); !errors.Is(err, ErrInvalidArgument) {
+	if err := valid.ValidateForEnvironment("staging"); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("cross-scope cleanup resources = %v, want invalid argument", err)
 	}
 	valid.Postgres[0].Scope = "staging"
 	valid.Postgres[0].RestoreSourceDatabaseID = ""
-	if err := valid.ValidateForEnvironment("staging"); !errors.Is(err, ErrInvalidArgument) {
+	if err := valid.ValidateForEnvironment("staging"); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("unowned database deletion = %v, want invalid argument", err)
 	}
 }

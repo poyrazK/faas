@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,16 +7,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreCertIssuanceFailureAgeAndCooldown(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	acct, err := m.CreateAccount(ctx, "cert-failure@example.com", api.PlanHobby)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := m.CreateApp(ctx, App{ID: uuid.NewString(), AccountID: acct.ID, Slug: "cert-failure-app", Status: AppActive})
+	app, err := m.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: acct.ID, Slug: "cert-failure-app", Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +27,7 @@ func TestMemStoreCertIssuanceFailureAgeAndCooldown(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	failedAt := now.Add(-16 * time.Minute)
-	if err := m.UpdateCustomDomainCertStatus(ctx, domain.Domain, CustomDomainCertFailed, time.Time{}, "dns-01 failed", failedAt); err != nil {
+	if err := m.UpdateCustomDomainCertStatus(ctx, domain.Domain, state.CustomDomainCertFailed, time.Time{}, "dns-01 failed", failedAt); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := m.CountFailedCertIssuancesSince(ctx, acct.ID, app.ID, now.Add(-15*time.Minute)); err != nil || got != 1 {

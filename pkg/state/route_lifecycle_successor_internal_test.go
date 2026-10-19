@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"encoding/json"
@@ -9,36 +9,37 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestLifecycleSuccessorTransactionFence(t *testing.T) {
 	for _, change := range []string{"capture_content", "domain_binding", "target_visibility", "target_traffic", "graph_generation", "workload_pin", "missing_workload_pin"} {
 		t.Run(change, func(t *testing.T) {
 			pool := pgtest.OpenMigrated(t)
-			store := NewPgStore(pool)
+			store := state.NewPgStore(pool)
 			ctx := t.Context()
 			acct, err := store.CreateAccount(ctx, "successor-fence@example.test", api.PlanPro)
 			if err != nil {
 				t.Fatal(err)
 			}
-			source, err := store.CreateApp(ctx, App{AccountID: acct.ID, Slug: "source-fence", Type: AppTypeApp, RAMMB: 512, MaxConcurrency: 1})
+			source, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "source-fence", Type: state.AppTypeApp, RAMMB: 512, MaxConcurrency: 1})
 			if err != nil {
 				t.Fatal(err)
 			}
 			projectID := ""
 			if change == "graph_generation" || change == "workload_pin" || change == "missing_workload_pin" {
-				project, e := store.CreateProject(ctx, Project{AccountID: acct.ID, Slug: "fence-project"})
+				project, e := store.CreateProject(ctx, state.Project{AccountID: acct.ID, Slug: "fence-project"})
 				if e != nil {
 					t.Fatal(e)
 				}
 				projectID = project.ID
 			}
-			target, err := store.CreateApp(ctx, App{AccountID: acct.ID, ProjectID: projectID, Manifest: AppManifest{RevisionPinTTLSeconds: 3600}, Slug: "target-fence", Type: AppTypeApp, RAMMB: 512, MaxConcurrency: 1})
+			target, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, ProjectID: projectID, Manifest: state.AppManifest{RevisionPinTTLSeconds: 3600}, Slug: "target-fence", Type: state.AppTypeApp, RAMMB: 512, MaxConcurrency: 1})
 			if err != nil {
 				t.Fatal(err)
 			}
 			if projectID != "" {
-				settings, e := WorkloadSettingsFromApp(target)
+				settings, e := state.WorkloadSettingsFromApp(target)
 				if e != nil {
 					t.Fatal(e)
 				}
@@ -46,9 +47,9 @@ func TestLifecycleSuccessorTransactionFence(t *testing.T) {
 					t.Fatal(e)
 				}
 			}
-			create := func(app App, dark bool) Deployment {
+			create := func(app state.App, dark bool) state.Deployment {
 				t.Helper()
-				d, e := store.CreateDeployment(ctx, Deployment{ID: uuid.NewString(), AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:fence", Scope: "production", TrafficPercentExplicit: dark})
+				d, e := store.CreateDeployment(ctx, state.Deployment{ID: uuid.NewString(), AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:fence", Scope: "production", TrafficPercentExplicit: dark})
 				if e != nil {
 					t.Fatal(e)
 				}
@@ -59,7 +60,7 @@ func TestLifecycleSuccessorTransactionFence(t *testing.T) {
 			}
 			baseline, candidate, destination := create(source, false), create(source, true), create(target, false)
 			if projectID != "" {
-				if _, err = store.PublishProjectReleaseSet(ctx, acct.ID, projectID, "production", 3600, []ProjectReleaseMember{{AppID: target.ID, DeploymentID: destination.ID}}); err != nil {
+				if _, err = store.PublishProjectReleaseSet(ctx, acct.ID, projectID, "production", 3600, []state.ProjectReleaseMember{{AppID: target.ID, DeploymentID: destination.ID}}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -98,7 +99,7 @@ func TestLifecycleSuccessorTransactionFence(t *testing.T) {
 			_, c, _ := store.GetDeploymentOpenAPIDoc(ctx, candidate.ID, acct.ID)
 			_, d, _ := store.GetDeploymentOpenAPIDoc(ctx, destination.ID, acct.ID)
 			request := api.ApproveRouteLifecycleRequest{ExpectedGateRevision: &gate.Revision, ExpectedRequirementsRevision: &saved.Revision, ExpectedRemovalPolicyRevision: &zero, ConfigurationSHA256: strings.Repeat("a", 64), BaselineDeploymentID: baseline.ID, CandidateDeploymentID: candidate.ID, BaselineContractSHA256: fmt.Sprintf("%x", b.DocSHA256), CandidateContractSHA256: fmt.Sprintf("%x", c.DocSHA256), Mappings: []api.RouteLifecycleMapping{{Method: "GET", Path: "/health", SuccessorMethod: "GET", SuccessorPath: "/next", SuccessorURL: "https://successor.example.test/next", SuccessorAppID: target.ID, SuccessorDeploymentID: destination.ID, SuccessorContractSHA256: fmt.Sprintf("%x", d.DocSHA256)}}}
-			receipt, err := store.ApproveRouteLifecycle(ctx, acct.ID, source.ID, "owner:test", request, func(RoutePolicySnapshot) string { return strings.Repeat("a", 64) }, func(RoutePolicySnapshot, *RoutePolicyContract, *RoutePolicyContract, []api.RouteLifecycleMapping) error {
+			receipt, err := store.ApproveRouteLifecycle(ctx, acct.ID, source.ID, "owner:test", request, func(state.RoutePolicySnapshot) string { return strings.Repeat("a", 64) }, func(state.RoutePolicySnapshot, *state.RoutePolicyContract, *state.RoutePolicyContract, []api.RouteLifecycleMapping) error {
 				return nil
 			})
 			if change == "missing_workload_pin" {
@@ -115,7 +116,7 @@ func TestLifecycleSuccessorTransactionFence(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer tx.Rollback(ctx)
-			if err = pgAuthorizeProductionLifecycle(ctx, tx, candidate.ID, false); err != nil {
+			if err = state.PgAuthorizeProductionLifecycle(ctx, tx, candidate.ID, false); err != nil {
 				t.Fatal(err)
 			}
 			switch change {

@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,11 +7,12 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemPlatformTenantPageCursorSurvivesNewTenantAndTiedTimestamps(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "platform-tenant-cursor@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
@@ -28,14 +29,14 @@ func TestMemPlatformTenantPageCursorSurvivesNewTenantAndTiedTimestamps(t *testin
 
 	// Force a timestamp tie so the ID portion of the cursor determines order.
 	tiedAt := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
-	store.mu.Lock()
-	for id, tenant := range store.platformTenants {
+	(*store.Mu()).Lock()
+	for id, tenant := range *store.PlatformTenants() {
 		if tenant.AccountID == account.ID {
 			tenant.CreatedAt = tiedAt
-			store.platformTenants[id] = tenant
+			(*store.PlatformTenants())[id] = tenant
 		}
 	}
-	store.mu.Unlock()
+	(*store.Mu()).Unlock()
 
 	first, token, err := store.ListPlatformTenantsPage(ctx, account.ID, 1, 0, "")
 	if err != nil || len(first) != 1 || token == "" {
@@ -46,10 +47,10 @@ func TestMemPlatformTenantPageCursorSurvivesNewTenantAndTiedTimestamps(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	store.mu.Lock()
+	(*store.Mu()).Lock()
 	inserted.CreatedAt = tiedAt.Add(time.Second)
-	store.platformTenants[inserted.ID] = inserted
-	store.mu.Unlock()
+	(*store.PlatformTenants())[inserted.ID] = inserted
+	(*store.Mu()).Unlock()
 
 	second, nextToken, err := store.ListPlatformTenantsPage(ctx, account.ID, 1, 0, token)
 	if err != nil || len(second) != 1 {
@@ -74,7 +75,7 @@ func TestMemPlatformTenantPageCursorSurvivesNewTenantAndTiedTimestamps(t *testin
 }
 
 func TestMemPlatformTenantPageRejectsInvalidCursorAndOffsetCombination(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(context.Background(), "platform-tenant-cursor-invalid@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +89,7 @@ func TestMemPlatformTenantPageRejectsInvalidCursorAndOffsetCombination(t *testin
 		{name: "offset with cursor", offset: 1, token: "1:00000000000000000000000000000001"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, _, err := store.ListPlatformTenantsPage(context.Background(), account.ID, 10, tc.offset, tc.token); !errors.Is(err, ErrInvalidArgument) {
+			if _, _, err := store.ListPlatformTenantsPage(context.Background(), account.ID, 10, tc.offset, tc.token); !errors.Is(err, state.ErrInvalidArgument) {
 				t.Fatalf("error = %v, want ErrInvalidArgument", err)
 			}
 		})

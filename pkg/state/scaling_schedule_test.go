@@ -1,8 +1,9 @@
 // adr: 195 — scheduled scaling floors.
-package state
+package state_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/pkg/state"
 	"reflect"
 	"testing"
 	"time"
@@ -20,20 +21,20 @@ func TestEffectiveMinInstanceSecondsInMinute(t *testing.T) {
 		name               string
 		static, deployment int
 		timezone           string
-		schedules          []ScalingSchedule
+		schedules          []state.ScalingSchedule
 		want               int64
 	}{
 		{"static", 2, 0, "UTC", nil, 120},
 		{"deployment_lower_bound", 1, 3, "UTC", nil, 180},
-		{"partial_close", 0, 0, "UTC", []ScalingSchedule{{Cron: "0 9 * * *", DurationS: 90, MinInstances: 2}}, 60},
-		{"static_below_schedule", 1, 0, "UTC", []ScalingSchedule{{Cron: "0 9 * * *", DurationS: 90, MinInstances: 3}}, 120},
-		{"overlapping_windows_take_max", 0, 0, "UTC", []ScalingSchedule{{Cron: "0 9 * * *", DurationS: 90, MinInstances: 3}, {Cron: "1 9 * * *", DurationS: 60, MinInstances: 2}}, 150},
-		{"recurring_overlap", 0, 0, "UTC", []ScalingSchedule{{Cron: "* * * * *", DurationS: 90, MinInstances: 2}}, 120},
-		{"timezone", 0, 0, ist, []ScalingSchedule{{Cron: "0 12 * * *", DurationS: 90, MinInstances: 2}}, 60},
-		{"invalid_schedule", 1, 0, "UTC", []ScalingSchedule{{Cron: "invalid", DurationS: 90, MinInstances: 3}}, 60},
+		{"partial_close", 0, 0, "UTC", []state.ScalingSchedule{{Cron: "0 9 * * *", DurationS: 90, MinInstances: 2}}, 60},
+		{"static_below_schedule", 1, 0, "UTC", []state.ScalingSchedule{{Cron: "0 9 * * *", DurationS: 90, MinInstances: 3}}, 120},
+		{"overlapping_windows_take_max", 0, 0, "UTC", []state.ScalingSchedule{{Cron: "0 9 * * *", DurationS: 90, MinInstances: 3}, {Cron: "1 9 * * *", DurationS: 60, MinInstances: 2}}, 150},
+		{"recurring_overlap", 0, 0, "UTC", []state.ScalingSchedule{{Cron: "* * * * *", DurationS: 90, MinInstances: 2}}, 120},
+		{"timezone", 0, 0, ist, []state.ScalingSchedule{{Cron: "0 12 * * *", DurationS: 90, MinInstances: 2}}, 60},
+		{"invalid_schedule", 1, 0, "UTC", []state.ScalingSchedule{{Cron: "invalid", DurationS: 90, MinInstances: 3}}, 60},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			app := App{MinInstances: tc.static, ScalingPolicy: &ScalingPolicy{Timezone: tc.timezone, Schedules: tc.schedules}}
+			app := state.App{MinInstances: tc.static, ScalingPolicy: &state.ScalingPolicy{Timezone: tc.timezone, Schedules: tc.schedules}}
 			if got := app.EffectiveMinInstanceSecondsInMinute(minute, tc.deployment); got != tc.want {
 				t.Fatalf("floor seconds = %d, want %d", got, tc.want)
 			}
@@ -52,10 +53,10 @@ func at(t *testing.T, iso string) time.Time {
 
 // weekdayMornings keeps 3 instances warm for 12h from 08:00 Istanbul time,
 // Monday to Friday.
-func weekdayMornings() *ScalingPolicy {
-	return &ScalingPolicy{
+func weekdayMornings() *state.ScalingPolicy {
+	return &state.ScalingPolicy{
 		Timezone: ist,
-		Schedules: []ScalingSchedule{{
+		Schedules: []state.ScalingSchedule{{
 			Cron: "0 8 * * 1-5", DurationS: 12 * 3600, MinInstances: 3,
 		}},
 	}
@@ -113,12 +114,12 @@ func TestScheduledMinInstances_TimezoneIsHonoured(t *testing.T) {
 // TestScheduledMinInstances_OverlappingWindowsTakeMax pins that order
 // carries no meaning. A customer must not lose capacity by reordering a list.
 func TestScheduledMinInstances_OverlappingWindowsTakeMax(t *testing.T) {
-	low := ScalingSchedule{Cron: "0 8 * * *", DurationS: 12 * 3600, MinInstances: 2}
-	high := ScalingSchedule{Cron: "0 9 * * *", DurationS: 2 * 3600, MinInstances: 7}
+	low := state.ScalingSchedule{Cron: "0 8 * * *", DurationS: 12 * 3600, MinInstances: 2}
+	high := state.ScalingSchedule{Cron: "0 9 * * *", DurationS: 2 * 3600, MinInstances: 7}
 	when := at(t, "2026-09-21T07:00:00Z") // 10:00 Istanbul: both open.
 
-	forward := &ScalingPolicy{Timezone: ist, Schedules: []ScalingSchedule{low, high}}
-	reversed := &ScalingPolicy{Timezone: ist, Schedules: []ScalingSchedule{high, low}}
+	forward := &state.ScalingPolicy{Timezone: ist, Schedules: []state.ScalingSchedule{low, high}}
+	reversed := &state.ScalingPolicy{Timezone: ist, Schedules: []state.ScalingSchedule{high, low}}
 	if got := forward.ScheduledMinInstancesAt(when); got != 7 {
 		t.Errorf("low-then-high = %d, want 7", got)
 	}
@@ -130,12 +131,12 @@ func TestScheduledMinInstances_OverlappingWindowsTakeMax(t *testing.T) {
 // TestEffectiveMinInstances_ScheduleOnlyRaises is the safety property. A
 // window must never park an app that the static floor would keep warm.
 func TestEffectiveMinInstances_ScheduleOnlyRaises(t *testing.T) {
-	app := &App{
+	app := &state.App{
 		MinInstances: 5,
-		ScalingPolicy: &ScalingPolicy{
+		ScalingPolicy: &state.ScalingPolicy{
 			Timezone: ist,
 			// A schedule asking for LESS than the static floor.
-			Schedules: []ScalingSchedule{{Cron: "0 8 * * *", DurationS: 3600, MinInstances: 1}},
+			Schedules: []state.ScalingSchedule{{Cron: "0 8 * * *", DurationS: 3600, MinInstances: 1}},
 		},
 	}
 	inside := app.EffectiveMinInstancesAt(at(t, "2026-09-21T05:30:00Z"))
@@ -146,7 +147,7 @@ func TestEffectiveMinInstances_ScheduleOnlyRaises(t *testing.T) {
 }
 
 func TestEffectiveMinInstances_ScheduleRaisesAboveStatic(t *testing.T) {
-	app := &App{ScalingPolicy: weekdayMornings()} // static floor 0
+	app := &state.App{ScalingPolicy: weekdayMornings()} // static floor 0
 	if got := app.EffectiveMinInstancesAt(at(t, "2026-09-21T11:00:00Z")); got != 3 {
 		t.Errorf("inside the window = %d, want 3", got)
 	}
@@ -160,13 +161,13 @@ func TestEffectiveMinInstances_ScheduleRaisesAboveStatic(t *testing.T) {
 // not read as permanently active — that would pin instances forever and bill
 // for them.
 func TestScalingSchedule_MalformedRowIsInert(t *testing.T) {
-	for _, s := range []ScalingSchedule{
+	for _, s := range []state.ScalingSchedule{
 		{Cron: "not a cron", DurationS: 3600, MinInstances: 3},
 		{Cron: "0 8 * * *", DurationS: 0, MinInstances: 3},
 		{Cron: "0 8 * * *", DurationS: 3600, MinInstances: 0},
 		{Cron: "", DurationS: 3600, MinInstances: 3},
 	} {
-		p := &ScalingPolicy{Timezone: ist, Schedules: []ScalingSchedule{s}}
+		p := &state.ScalingPolicy{Timezone: ist, Schedules: []state.ScalingSchedule{s}}
 		if got := p.ScheduledMinInstancesAt(at(t, "2026-09-21T11:00:00Z")); got != 0 {
 			t.Errorf("%+v yielded floor %d, want 0", s, got)
 		}
@@ -184,19 +185,19 @@ func TestScalingSchedule_MalformedRowIsInert(t *testing.T) {
 func TestMaxReachableMinInstances(t *testing.T) {
 	cases := []struct {
 		name   string
-		policy *ScalingPolicy
+		policy *state.ScalingPolicy
 		want   int
 	}{
 		{"nil", nil, 0},
-		{"static only", &ScalingPolicy{MinInstances: 2}, 2},
+		{"static only", &state.ScalingPolicy{MinInstances: 2}, 2},
 		{"schedule only", weekdayMornings(), 3},
-		{"static higher", &ScalingPolicy{
+		{"static higher", &state.ScalingPolicy{
 			MinInstances: 9,
-			Schedules:    []ScalingSchedule{{Cron: "0 8 * * *", DurationS: 3600, MinInstances: 3}},
+			Schedules:    []state.ScalingSchedule{{Cron: "0 8 * * *", DurationS: 3600, MinInstances: 3}},
 		}, 9},
-		{"schedule higher", &ScalingPolicy{
+		{"schedule higher", &state.ScalingPolicy{
 			MinInstances: 1,
-			Schedules:    []ScalingSchedule{{Cron: "0 8 * * *", DurationS: 3600, MinInstances: 6}},
+			Schedules:    []state.ScalingSchedule{{Cron: "0 8 * * *", DurationS: 3600, MinInstances: 6}},
 		}, 6},
 	}
 	for _, c := range cases {
@@ -223,7 +224,7 @@ func TestScalingPolicy_SchedulesRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	var out ScalingPolicy
+	var out state.ScalingPolicy
 	if err := out.UnmarshalJSON(blob); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -251,11 +252,11 @@ func TestScalingPolicy_SchedulesRoundTrip(t *testing.T) {
 // value and requires the decoded policy to equal the encoded one, so a field
 // added later without a decode path fails here rather than in production.
 func TestScalingPolicy_EveryFieldSurvivesJSONRoundTrip(t *testing.T) {
-	in := ScalingPolicy{
+	in := state.ScalingPolicy{
 		MinInstances:            2,
 		MaxInstances:            9,
-		Target:                  &ScalingTarget{Metric: "rps", Value: 12.5},
-		Targets:                 []ScalingTarget{{Metric: "cpu", Value: 70}, {Metric: "queue_depth", Value: 5}},
+		Target:                  &state.ScalingTarget{Metric: "rps", Value: 12.5},
+		Targets:                 []state.ScalingTarget{{Metric: "cpu", Value: 70}, {Metric: "queue_depth", Value: 5}},
 		ScaleOutCooldownS:       7,
 		ScaleInCooldownS:        77,
 		ConcurrencyOverflow:     "drop",
@@ -264,13 +265,13 @@ func TestScalingPolicy_EveryFieldSurvivesJSONRoundTrip(t *testing.T) {
 		WakeMaxQueueDepth:       31,
 		WakeMaxQueueWaitSeconds: 41,
 		Timezone:                ist,
-		Schedules:               []ScalingSchedule{{Cron: "0 8 * * 1-5", DurationS: 43200, MinInstances: 3}},
+		Schedules:               []state.ScalingSchedule{{Cron: "0 8 * * 1-5", DurationS: 43200, MinInstances: 3}},
 	}
 	blob, err := json.Marshal(in)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	var out ScalingPolicy
+	var out state.ScalingPolicy
 	if err := json.Unmarshal(blob, &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -285,9 +286,9 @@ func TestScalingPolicy_EveryFieldSurvivesJSONRoundTrip(t *testing.T) {
 // time, so Window reported the warm floor open at every instant — the app
 // was held (and billed) warm forever.
 func TestScheduledMinInstances_NeverFiringScheduleIsNeverOpen(t *testing.T) {
-	p := &ScalingPolicy{
+	p := &state.ScalingPolicy{
 		Timezone: ist,
-		Schedules: []ScalingSchedule{{
+		Schedules: []state.ScalingSchedule{{
 			Cron: "0 8 30 2 *", DurationS: 3600, MinInstances: 3,
 		}},
 	}

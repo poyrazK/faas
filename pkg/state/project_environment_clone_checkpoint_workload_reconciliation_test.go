@@ -1,12 +1,15 @@
-package state
+package state_test
 
-import "testing"
+import (
+	"github.com/onebox-faas/faas/pkg/state"
+	"testing"
+)
 
 func TestCheckpointClosedWorkloadResourcesRequireFrozenIdentity(t *testing.T) {
-	w := ProjectEnvironmentCloneWorkload{AppID: "app-id", WorkloadSlug: "app", SourceDeploymentID: "source-deployment", TargetDeploymentID: "target-deployment", SourceHash: "artifact", SourceSettingsHash: "settings", SourceValuesHash: "values", SourcePoliciesHash: "policies", SourceProjectConfigHash: "project"}
-	records := []projectCloneWorkloadRecord{{ProjectEnvironmentCloneWorkload: w}}
-	op := ProjectEnvironmentCloneOperation{SourceEnvironment: "production", SourceRevisionHash: "revision"}
-	for _, r := range []ProjectEnvironmentCloneResource{
+	w := state.ProjectEnvironmentCloneWorkload{AppID: "app-id", WorkloadSlug: "app", SourceDeploymentID: "source-deployment", TargetDeploymentID: "target-deployment", SourceHash: "artifact", SourceSettingsHash: "settings", SourceValuesHash: "values", SourcePoliciesHash: "policies", SourceProjectConfigHash: "project"}
+	records := []state.ProjectCloneWorkloadRecord{{ProjectEnvironmentCloneWorkload: w}}
+	op := state.ProjectEnvironmentCloneOperation{SourceEnvironment: "production", SourceRevisionHash: "revision"}
+	for _, r := range []state.ProjectEnvironmentCloneResource{
 		{Kind: "source_revision", Name: "production", SourceVersion: "revision"},
 		{Kind: "project_config", Name: "production", SourceVersion: "project"},
 		{Kind: "workload", Name: "app", SourceID: "source-deployment", TargetID: "target-deployment", SourceVersion: "artifact"},
@@ -20,7 +23,7 @@ func TestCheckpointClosedWorkloadResourcesRequireFrozenIdentity(t *testing.T) {
 			for _, status := range []string{"captured", "ready", "compensated"} {
 				owned := r
 				owned.Status = status
-				if !checkpointClosedWorkloadResource(op, records, owned) {
+				if !state.CheckpointClosedWorkloadResource(op, records, owned) {
 					t.Fatal("original entry not recognized", owned)
 				}
 			}
@@ -40,15 +43,15 @@ func TestCheckpointClosedWorkloadResourcesRequireFrozenIdentity(t *testing.T) {
 				case "capture":
 					bad.CapturePoint = "unowned"
 				}
-				if checkpointClosedWorkloadResource(op, records, bad) {
+				if state.CheckpointClosedWorkloadResource(op, records, bad) {
 					t.Fatal("foreign entry recognized", field, bad)
 				}
 			}
 			bad := r
 			bad.SourceVersion = "foreign"
-			op.Resources = []ProjectEnvironmentCloneResource{r, bad}
-			b := ProjectEnvironmentCloneCheckpointCompensationBlocker{Kind: r.Kind, Name: r.Name, TargetID: r.TargetID}
-			if checkpointClosedWorkloadBlocker(op, records, b) {
+			op.Resources = []state.ProjectEnvironmentCloneResource{r, bad}
+			b := state.ProjectEnvironmentCloneCheckpointCompensationBlocker{Kind: r.Kind, Name: r.Name, TargetID: r.TargetID}
+			if state.CheckpointClosedWorkloadBlocker(op, records, b) {
 				t.Fatal("duplicate labels hid unowned version")
 			}
 		})

@@ -1,20 +1,21 @@
-package state
+package state_test
 
 import (
 	"encoding/json"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemAppWakeTransitionRecoversReadyInstanceAndDedupes(t *testing.T) {
-	store, ctx, account, app := webhookFixture(t)
-	parked := AppEvictedCold
-	if _, err := store.UpdateApp(ctx, app.ID, UpdateAppParams{Status: &parked}); err != nil {
+	store, ctx, account, app := state.WebhookFixture(t)
+	parked := state.AppEvictedCold
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Status: &parked}); err != nil {
 		t.Fatal(err)
 	}
-	hook := memSampleWebhook(account.ID, app.ID)
-	hook.EventFilter = []string{string(AppWebhookEventAppWoken)}
+	hook := state.MemSampleWebhook(account.ID, app.ID)
+	hook.EventFilter = []string{string(state.AppWebhookEventAppWoken)}
 	hook, err := store.CreateAppWebhook(ctx, hook)
 	if err != nil {
 		t.Fatal(err)
@@ -30,12 +31,12 @@ func TestMemAppWakeTransitionRecoversReadyInstanceAndDedupes(t *testing.T) {
 	if complete, err := store.CompleteReadyAppWakeTransition(ctx, transition.ID, uuid.NewString(), uuid.NewString()); err != nil || complete {
 		t.Fatalf("completed transition without ready instance = %v, %v", complete, err)
 	}
-	dep, err := store.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:wake-outbox", Status: DeployLive})
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:wake-outbox", Status: state.DeployLive})
 	if err != nil {
 		t.Fatal(err)
 	}
 	wakeID := "0198f89a-0000-7000-8000-000000000011"
-	instance, err := store.CreateInstance(ctx, app.ID, dep.ID, string(StateRunning), 128, "node-1", wakeID)
+	instance, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 128, "node-1", wakeID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,11 +58,11 @@ func TestMemAppWakeTransitionRecoversReadyInstanceAndDedupes(t *testing.T) {
 	if rolledBack, err := store.AbortAppWakeTransition(ctx, transition.ID); err != nil || rolledBack {
 		t.Fatalf("abort completed transition = %v, %v", rolledBack, err)
 	}
-	if current, err := store.AppByID(ctx, app.ID); err != nil || current.Status != AppActive {
+	if current, err := store.AppByID(ctx, app.ID); err != nil || current.Status != state.AppActive {
 		t.Fatalf("app after completed wake abort = %q, %v; want active", current.Status, err)
 	}
 	deliveries, _, err := store.ListAppWebhookDeliveries(ctx, app.ID, hook.ID, 10, "")
-	if err != nil || len(deliveries) != 1 || deliveries[0].Event != AppWebhookEventAppWoken {
+	if err != nil || len(deliveries) != 1 || deliveries[0].Event != state.AppWebhookEventAppWoken {
 		t.Fatalf("deliveries = %+v, %v; want one app.woken", deliveries, err)
 	}
 	var payload map[string]any
@@ -75,9 +76,9 @@ func TestMemAppWakeTransitionRecoversReadyInstanceAndDedupes(t *testing.T) {
 
 func TestMemAppWakeTransitionFailureAndParkSupersede(t *testing.T) {
 	t.Run("failed boot", func(t *testing.T) {
-		store, ctx, _, app := webhookFixture(t)
-		parked := AppEvictedCold
-		if _, err := store.UpdateApp(ctx, app.ID, UpdateAppParams{Status: &parked}); err != nil {
+		store, ctx, _, app := state.WebhookFixture(t)
+		parked := state.AppEvictedCold
+		if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Status: &parked}); err != nil {
 			t.Fatal(err)
 		}
 		transition, changed, err := store.BeginAppWakeTransition(ctx, app.ID)
@@ -88,7 +89,7 @@ func TestMemAppWakeTransitionFailureAndParkSupersede(t *testing.T) {
 			t.Fatalf("abort wake transition = %v, %v", rolledBack, err)
 		}
 		current, err := store.AppByID(ctx, app.ID)
-		if err != nil || current.Status != AppEvictedCold {
+		if err != nil || current.Status != state.AppEvictedCold {
 			t.Fatalf("app after failed wake = %q, %v; want evicted_cold", current.Status, err)
 		}
 		if n, err := store.DrainReadyAppWakeTransitions(ctx, 16); err != nil || n != 0 {
@@ -97,16 +98,16 @@ func TestMemAppWakeTransitionFailureAndParkSupersede(t *testing.T) {
 	})
 
 	t.Run("park wins", func(t *testing.T) {
-		store, ctx, _, app := webhookFixture(t)
-		parked := AppEvictedCold
-		if _, err := store.UpdateApp(ctx, app.ID, UpdateAppParams{Status: &parked}); err != nil {
+		store, ctx, _, app := state.WebhookFixture(t)
+		parked := state.AppEvictedCold
+		if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Status: &parked}); err != nil {
 			t.Fatal(err)
 		}
 		transition, changed, err := store.BeginAppWakeTransition(ctx, app.ID)
 		if err != nil || !changed {
 			t.Fatalf("begin wake transition = %+v changed=%v err=%v", transition, changed, err)
 		}
-		if _, changed, err := store.BeginAppParkTransition(ctx, app.ID, AppActive); err != nil || !changed {
+		if _, changed, err := store.BeginAppParkTransition(ctx, app.ID, state.AppActive); err != nil || !changed {
 			t.Fatalf("begin park transition changed=%v err=%v", changed, err)
 		}
 		if n, err := store.DrainReadyAppWakeTransitions(ctx, 16); err != nil || n != 0 {
@@ -119,8 +120,8 @@ func TestMemAppWakeTransitionFailureAndParkSupersede(t *testing.T) {
 }
 
 func TestMemAppLifecycleTransitionHealthTracksPendingOnly(t *testing.T) {
-	store, ctx, _, app := webhookFixture(t)
-	if _, changed, err := store.BeginAppParkTransition(ctx, app.ID, AppActive); err != nil || !changed {
+	store, ctx, _, app := state.WebhookFixture(t)
+	if _, changed, err := store.BeginAppParkTransition(ctx, app.ID, state.AppActive); err != nil || !changed {
 		t.Fatalf("begin park transition changed=%v err=%v", changed, err)
 	}
 	health, err := store.AppLifecycleTransitionHealth(ctx)

@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -9,29 +9,30 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type queueLeaseFixture struct {
-	store   *MemStore
-	account Account
-	app     App
-	binding QueueBinding
+	store   *state.MemStore
+	account state.Account
+	app     state.App
+	binding state.QueueBinding
 }
 
 func newQueueLeaseFixture(t *testing.T, plan api.Plan, mode string, maxConcurrency int) queueLeaseFixture {
 	t.Helper()
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "leases@example.test", plan)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "lease-worker", Type: AppTypeApp, WorkloadClass: WorkloadClassWorker, Status: AppActive})
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "lease-worker", Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassWorker, Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := store.CreateQueueBinding(ctx, QueueBinding{AccountID: account.ID, AppID: app.ID, Name: "jobs", QueueName: "jobs",
-		Mode: mode, WorkloadClass: WorkloadClassWorker, Enabled: true, MaxConcurrency: maxConcurrency})
+	binding, err := store.CreateQueueBinding(ctx, state.QueueBinding{AccountID: account.ID, AppID: app.ID, Name: "jobs", QueueName: "jobs",
+		Mode: mode, WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: maxConcurrency})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,8 +43,8 @@ func (f queueLeaseFixture) enqueue(t *testing.T, n int) []string {
 	t.Helper()
 	ids := make([]string, 0, n)
 	for i := range n {
-		inv, err := f.store.EnqueueInvocation(context.Background(), Invocation{AccountID: f.account.ID, AppID: f.app.ID,
-			Source: InvocationQueue, QueueName: "jobs", QueueBindingID: f.binding.ID, DueAt: time.Now().Add(-time.Duration(n-i) * time.Millisecond),
+		inv, err := f.store.EnqueueInvocation(context.Background(), state.Invocation{AccountID: f.account.ID, AppID: f.app.ID,
+			Source: state.InvocationQueue, QueueName: "jobs", QueueBindingID: f.binding.ID, DueAt: time.Now().Add(-time.Duration(n-i) * time.Millisecond),
 			Payload: json.RawMessage(`{"n":1}`)})
 		if err != nil {
 			t.Fatal(err)
@@ -53,9 +54,9 @@ func (f queueLeaseFixture) enqueue(t *testing.T, n int) []string {
 	return ids
 }
 
-func (f queueLeaseFixture) lease(t *testing.T, max, visibility int, instance string) []QueueLease {
+func (f queueLeaseFixture) lease(t *testing.T, max, visibility int, instance string) []state.QueueLease {
 	t.Helper()
-	leases, err := f.store.LeaseQueueMessages(context.Background(), QueueLeaseRequest{AccountID: f.account.ID, AppID: f.app.ID,
+	leases, err := f.store.LeaseQueueMessages(context.Background(), state.QueueLeaseRequest{AccountID: f.account.ID, AppID: f.app.ID,
 		QueueName: "jobs", MaxMessages: max, VisibilitySeconds: visibility, InstanceID: instance})
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +64,7 @@ func (f queueLeaseFixture) lease(t *testing.T, max, visibility int, instance str
 	return leases
 }
 
-func (f queueLeaseFixture) state(t *testing.T, id string) Invocation {
+func (f queueLeaseFixture) state(t *testing.T, id string) state.Invocation {
 	t.Helper()
 	inv, err := f.store.InvocationByID(context.Background(), id)
 	if err != nil {
@@ -86,15 +87,15 @@ func TestQueueLeaseAckCompletesInFIFOOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out.Succeeded) != 1 || len(out.Failed) != 1 || out.Failed[0].Reason != QueueLeaseReasonInvalid {
+	if len(out.Succeeded) != 1 || len(out.Failed) != 1 || out.Failed[0].Reason != state.QueueLeaseReasonInvalid {
 		t.Fatalf("ack outcome %+v", out)
 	}
-	if got := f.state(t, ids[0]); got.State != InvocationCompleted {
+	if got := f.state(t, ids[0]); got.State != state.InvocationCompleted {
 		t.Fatalf("acked message is %s", got.State)
 	}
 	// A second ack of the same receipt no longer owns the message.
 	out, err = f.store.AckQueueLeases(context.Background(), f.account.ID, f.app.ID, "jobs", []string{leases[0].Receipt})
-	if err != nil || len(out.Failed) != 1 || out.Failed[0].Reason != QueueLeaseReasonExpired {
+	if err != nil || len(out.Failed) != 1 || out.Failed[0].Reason != state.QueueLeaseReasonExpired {
 		t.Fatalf("re-ack outcome %+v err=%v", out, err)
 	}
 }
@@ -115,8 +116,8 @@ func TestQueueLeaseStopsAtResponseBudget(t *testing.T) {
 	big := json.RawMessage(`"` + strings.Repeat("a", api.QueueLeaseMaxResponseBytes/3) + `"`)
 	huge := json.RawMessage(`"` + strings.Repeat("b", api.QueueLeaseMaxResponseBytes+1) + `"`)
 	for i, payload := range []json.RawMessage{big, big, big, huge} {
-		if _, err := f.store.EnqueueInvocation(context.Background(), Invocation{AccountID: f.account.ID, AppID: f.app.ID,
-			Source: InvocationQueue, QueueName: "jobs", QueueBindingID: f.binding.ID, DueAt: time.Now().Add(time.Duration(i-10) * time.Millisecond),
+		if _, err := f.store.EnqueueInvocation(context.Background(), state.Invocation{AccountID: f.account.ID, AppID: f.app.ID,
+			Source: state.InvocationQueue, QueueName: "jobs", QueueBindingID: f.binding.ID, DueAt: time.Now().Add(time.Duration(i-10) * time.Millisecond),
 			Payload: payload}); err != nil {
 			t.Fatal(err)
 		}
@@ -148,15 +149,15 @@ func TestQueueLeaseNackRetriesThenDeadLetters(t *testing.T) {
 		}
 		got := f.state(t, id)
 		if attempt < 3 {
-			if got.State != InvocationPending || got.LastError != "boom" {
+			if got.State != state.InvocationPending || got.LastError != "boom" {
 				t.Fatalf("attempt %d: state %s error %q", attempt, got.State, got.LastError)
 			}
 			// Make the retry due now so the next lease sees it.
 			got.DueAt = time.Now().Add(-time.Millisecond)
-			f.store.mu.Lock()
-			f.store.invocations[id] = got
-			f.store.mu.Unlock()
-		} else if got.State != InvocationDeadLetter {
+			(*f.store.Mu()).Lock()
+			(*f.store.Invocations())[id] = got
+			(*f.store.Mu()).Unlock()
+		} else if got.State != state.InvocationDeadLetter {
 			t.Fatalf("budget spent: state %s, want dead_letter", got.State)
 		}
 	}
@@ -169,7 +170,7 @@ func TestQueueLeaseNackDelayPostponesRetry(t *testing.T) {
 	if _, err := f.store.NackQueueLeases(context.Background(), f.account.ID, f.app.ID, "jobs", []string{leases[0].Receipt}, time.Hour, ""); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.state(t, id); got.State != InvocationPending || got.DueAt.Before(time.Now().Add(59*time.Minute)) {
+	if got := f.state(t, id); got.State != state.InvocationPending || got.DueAt.Before(time.Now().Add(59*time.Minute)) {
 		t.Fatalf("delayed nack: state %s due %s", got.State, got.DueAt)
 	}
 	if got := len(f.lease(t, 1, 30, "")); got != 0 {
@@ -185,13 +186,13 @@ func TestQueueLeaseExpiryRedeliversAndFencesStaleReceipt(t *testing.T) {
 	inv := f.state(t, id)
 	past := time.Now().Add(-time.Second)
 	inv.LeaseExpiresAt = &past
-	f.store.mu.Lock()
-	f.store.invocations[id] = inv
-	f.store.mu.Unlock()
+	(*f.store.Mu()).Lock()
+	(*f.store.Invocations())[id] = inv
+	(*f.store.Mu()).Unlock()
 	if _, err := f.store.RequeueExpiredInvocations(context.Background(), time.Now(), 10); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.state(t, id); got.State != InvocationPending {
+	if got := f.state(t, id); got.State != state.InvocationPending {
 		t.Fatalf("expired lease left the message %s", got.State)
 	}
 	second := f.lease(t, 1, 30, "instance-b")[0]
@@ -202,7 +203,7 @@ func TestQueueLeaseExpiryRedeliversAndFencesStaleReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out.Succeeded) != 1 || out.Succeeded[0] != second.Receipt || len(out.Failed) != 1 || out.Failed[0].Reason != QueueLeaseReasonExpired {
+	if len(out.Succeeded) != 1 || out.Succeeded[0] != second.Receipt || len(out.Failed) != 1 || out.Failed[0].Reason != state.QueueLeaseReasonExpired {
 		t.Fatalf("stale receipt was not fenced: %+v", out)
 	}
 }
@@ -228,12 +229,12 @@ func TestQueueLeaseExtendAndInstanceTracking(t *testing.T) {
 func TestQueueLeaseRequiresEnabledPullBinding(t *testing.T) {
 	f := newQueueLeaseFixture(t, api.PlanPro, "push", 5)
 	f.enqueue(t, 1)
-	_, err := f.store.LeaseQueueMessages(context.Background(), QueueLeaseRequest{AccountID: f.account.ID, AppID: f.app.ID, QueueName: "jobs"})
-	if !errors.Is(err, ErrNotFound) {
+	_, err := f.store.LeaseQueueMessages(context.Background(), state.QueueLeaseRequest{AccountID: f.account.ID, AppID: f.app.ID, QueueName: "jobs"})
+	if !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("push binding leased: err=%v", err)
 	}
-	_, err = f.store.LeaseQueueMessages(context.Background(), QueueLeaseRequest{AccountID: f.account.ID, AppID: f.app.ID, QueueName: "jobs", MaxMessages: api.QueueLeaseMaxMessages + 1})
-	if !errors.Is(err, ErrInvalidArgument) && !errors.Is(err, ErrNotFound) {
+	_, err = f.store.LeaseQueueMessages(context.Background(), state.QueueLeaseRequest{AccountID: f.account.ID, AppID: f.app.ID, QueueName: "jobs", MaxMessages: api.QueueLeaseMaxMessages + 1})
+	if !errors.Is(err, state.ErrInvalidArgument) && !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("oversized lease: err=%v", err)
 	}
 }

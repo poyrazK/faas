@@ -1,15 +1,16 @@
 // adr: 206
-package state
+package state_test
 
 import (
 	"context"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestMemStoreServiceCallerKeys(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 
 	if keys, err := store.ListServiceCallerKeys(ctx); err != nil || len(keys) != 0 {
 		t.Fatalf("empty store = %v, %v; want no keys and no error", keys, err)
@@ -17,7 +18,7 @@ func TestMemStoreServiceCallerKeys(t *testing.T) {
 
 	pem := "-----BEGIN PUBLIC KEY-----\nAAA\n-----END PUBLIC KEY-----\n"
 	for _, node := range []string{"node-b", "node-a"} {
-		if err := store.PublishServiceCallerKey(ctx, ServiceCallerKey{
+		if err := store.PublishServiceCallerKey(ctx, state.ServiceCallerKey{
 			NodeID: node, KeyID: "kid-" + node, PublicKeyPEM: pem,
 		}); err != nil {
 			t.Fatalf("publish %s: %v", node, err)
@@ -36,7 +37,7 @@ func TestMemStoreServiceCallerKeys(t *testing.T) {
 
 	// Rotation retains the previous public key for the assertion maximum TTL
 	// so requests minted just before rotation remain verifiable.
-	if err := store.PublishServiceCallerKey(ctx, ServiceCallerKey{
+	if err := store.PublishServiceCallerKey(ctx, state.ServiceCallerKey{
 		NodeID: "node-a", KeyID: "kid-rotated", PublicKeyPEM: pem,
 	}); err != nil {
 		t.Fatalf("rotate: %v", err)
@@ -57,12 +58,11 @@ func TestMemStoreServiceCallerKeys(t *testing.T) {
 			t.Errorf("rotated key set is missing %q: %+v", keyID, keys)
 		}
 	}
-
-	store.mu.Lock()
-	history := store.serviceCallerKeyHistory["kid-node-a"]
-	history.retireAt = time.Now().Add(-time.Second)
-	store.serviceCallerKeyHistory["kid-node-a"] = history
-	store.mu.Unlock()
+	(*store.Mu()).Lock()
+	history := (*store.ServiceCallerKeyHistory())["kid-node-a"]
+	(*history.RetireAt()) = time.Now().Add(-time.Second)
+	(*store.ServiceCallerKeyHistory())["kid-node-a"] = history
+	(*store.Mu()).Unlock()
 	keys, err = store.ListServiceCallerKeys(ctx)
 	if err != nil || len(keys) != 2 {
 		t.Fatalf("expired history = %+v, %v; want only current keys", keys, err)
@@ -71,16 +71,16 @@ func TestMemStoreServiceCallerKeys(t *testing.T) {
 
 func TestMemStoreServiceCallerKeyValidation(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	pem := "-----BEGIN PUBLIC KEY-----\nAAA\n-----END PUBLIC KEY-----\n"
 
 	tests := []struct {
 		name string
-		key  ServiceCallerKey
+		key  state.ServiceCallerKey
 	}{
-		{"no node", ServiceCallerKey{KeyID: "k", PublicKeyPEM: pem}},
-		{"no kid", ServiceCallerKey{NodeID: "n", PublicKeyPEM: pem}},
-		{"no pem", ServiceCallerKey{NodeID: "n", KeyID: "k"}},
+		{"no node", state.ServiceCallerKey{KeyID: "k", PublicKeyPEM: pem}},
+		{"no kid", state.ServiceCallerKey{NodeID: "n", PublicKeyPEM: pem}},
+		{"no pem", state.ServiceCallerKey{NodeID: "n", KeyID: "k"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
