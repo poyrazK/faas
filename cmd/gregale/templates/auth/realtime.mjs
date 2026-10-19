@@ -1,11 +1,12 @@
 import { timingSafeEqual } from 'node:crypto'
 import { limits } from './config.mjs'
+import { inSession } from './authz.mjs'
 
 // Managed realtime channel authorization (ADR-1190 phase 5). A realtime
 // endpoint created with `gregale realtime create APP --auth AUTH_APP` calls
 // POST /realtime/authorize-channel here with a callback token sealed in this
-// app. Realtime passes only the token's subject, so the check is user-level
-// (gregale_auth.authorize_subject): active, unbanned, with a live session.
+// app. The callback carries the verified token's subject and session_id.
+// Reuse the same session-aware authorization function as the Data API.
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -43,9 +44,11 @@ export function createRealtimeAuthorizer({ pool, tokens }) {
       try { event = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { return reply(400) }
       const activity = event?.permission === 'read_activity'
       const resource = channelResource(activity ? event.activity_parent_channel || event.channel : event?.channel)
-      if (event?.type !== 'realtime.authorize_channel' || !uuid.test(event.principal ?? '') || !resource) return reply(403)
+      if (event?.type !== 'realtime.authorize_channel' || typeof event.principal !== 'string' || !uuid.test(event.principal) ||
+          typeof event.session_id !== 'string' || !uuid.test(event.session_id) || !resource) return reply(403)
       try {
-        const { rows: [{ allowed }] } = await pool.query('SELECT gregale_auth.authorize_subject($1, $2, $3) AS allowed', [event.principal, activity ? 'realtime:activity' : 'realtime:read', resource])
+        const { rows: [{ allowed }] } = await inSession(pool, { sub: event.principal, session_id: event.session_id }, client =>
+          client.query('SELECT gregale_auth.authorize($1, $2) AS allowed', [activity ? 'realtime:activity' : 'realtime:read', resource]))
         reply(allowed ? 204 : 403)
       } catch (err) {
         console.error(JSON.stringify({ level: 'error', event: 'realtime_authorize_failed', sqlstate: err?.code ?? null }))

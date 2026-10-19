@@ -254,7 +254,7 @@ func testInitialEvidenceRepair(t *testing.T, manual bool) {
 				}
 				if manual {
 					if pg, ok := s.(*PgStore); ok {
-						s = NewPgStore(pg.pool)
+						s = NewPgStore(pg.pool.Pool)
 						evidence = s.(WorkflowInitialEvidenceStore)
 					}
 					if _, err = s.(WorkflowInitialManualCompletionStore).ProcessNextWorkflowInitialManualCompletion(ctx, time.Now().UTC()); err != nil {

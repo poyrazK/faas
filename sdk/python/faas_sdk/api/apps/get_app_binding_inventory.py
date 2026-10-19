@@ -16,6 +16,7 @@ def _get_kwargs(
     slug: str,
     *,
     deployment_id: UUID | Unset = UNSET,
+    service_targets: str | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
@@ -25,6 +26,8 @@ def _get_kwargs(
     if not isinstance(deployment_id, Unset):
         json_deployment_id = str(deployment_id)
     params["deployment_id"] = json_deployment_id
+
+    params["service_targets"] = service_targets
 
     params["scope"] = scope
 
@@ -106,11 +109,20 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     deployment_id: UUID | Unset = UNSET,
+    service_targets: str | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> Response[AppBindingInventory | Problem]:
     """Inspect all runtime resource bindings attached to an app.
 
-     Read-only, best-effort metadata for service, PostgreSQL, object-storage,
+     Service entries use the selected deployment's frozen environment graph
+    when managed; without deployment_id the current live deployment is selected.
+    Logical service names remain distinct from physical target app identities.
+    service_context reports the reviewed route and a context revision, never
+    connectivity evidence. Ordinary task-probe verification of managed services
+    is unsupported and app-scoped receipts are excluded. Managed target routes
+    cannot be overridden through service_targets. Invalid frozen context or
+    unreadable routes make complete=false without falling back to app settings.
+    Read-only, best-effort metadata for service, PostgreSQL, object-storage,
     queue and outbound bindings. Requires apps:read or admin. PostgreSQL
     sections additionally require managed-postgres:read or admin; object
     storage sections require storage:manage or admin, matching the existing
@@ -129,6 +141,7 @@ def sync_detailed(
     Args:
         slug (str):
         deployment_id (UUID | Unset):
+        service_targets (str | Unset):
         scope (str | Unset):
 
     Raises:
@@ -142,6 +155,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         deployment_id=deployment_id,
+        service_targets=service_targets,
         scope=scope,
     )
 
@@ -157,11 +171,20 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     deployment_id: UUID | Unset = UNSET,
+    service_targets: str | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> AppBindingInventory | Problem | None:
     """Inspect all runtime resource bindings attached to an app.
 
-     Read-only, best-effort metadata for service, PostgreSQL, object-storage,
+     Service entries use the selected deployment's frozen environment graph
+    when managed; without deployment_id the current live deployment is selected.
+    Logical service names remain distinct from physical target app identities.
+    service_context reports the reviewed route and a context revision, never
+    connectivity evidence. Ordinary task-probe verification of managed services
+    is unsupported and app-scoped receipts are excluded. Managed target routes
+    cannot be overridden through service_targets. Invalid frozen context or
+    unreadable routes make complete=false without falling back to app settings.
+    Read-only, best-effort metadata for service, PostgreSQL, object-storage,
     queue and outbound bindings. Requires apps:read or admin. PostgreSQL
     sections additionally require managed-postgres:read or admin; object
     storage sections require storage:manage or admin, matching the existing
@@ -180,6 +203,7 @@ def sync(
     Args:
         slug (str):
         deployment_id (UUID | Unset):
+        service_targets (str | Unset):
         scope (str | Unset):
 
     Raises:
@@ -194,6 +218,7 @@ def sync(
         slug=slug,
         client=client,
         deployment_id=deployment_id,
+        service_targets=service_targets,
         scope=scope,
     ).parsed
 
@@ -203,11 +228,20 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     deployment_id: UUID | Unset = UNSET,
+    service_targets: str | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> Response[AppBindingInventory | Problem]:
     """Inspect all runtime resource bindings attached to an app.
 
-     Read-only, best-effort metadata for service, PostgreSQL, object-storage,
+     Service entries use the selected deployment's frozen environment graph
+    when managed; without deployment_id the current live deployment is selected.
+    Logical service names remain distinct from physical target app identities.
+    service_context reports the reviewed route and a context revision, never
+    connectivity evidence. Ordinary task-probe verification of managed services
+    is unsupported and app-scoped receipts are excluded. Managed target routes
+    cannot be overridden through service_targets. Invalid frozen context or
+    unreadable routes make complete=false without falling back to app settings.
+    Read-only, best-effort metadata for service, PostgreSQL, object-storage,
     queue and outbound bindings. Requires apps:read or admin. PostgreSQL
     sections additionally require managed-postgres:read or admin; object
     storage sections require storage:manage or admin, matching the existing
@@ -226,6 +260,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         deployment_id (UUID | Unset):
+        service_targets (str | Unset):
         scope (str | Unset):
 
     Raises:
@@ -239,6 +274,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         deployment_id=deployment_id,
+        service_targets=service_targets,
         scope=scope,
     )
 
@@ -252,11 +288,20 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     deployment_id: UUID | Unset = UNSET,
+    service_targets: str | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> AppBindingInventory | Problem | None:
     """Inspect all runtime resource bindings attached to an app.
 
-     Read-only, best-effort metadata for service, PostgreSQL, object-storage,
+     Service entries use the selected deployment's frozen environment graph
+    when managed; without deployment_id the current live deployment is selected.
+    Logical service names remain distinct from physical target app identities.
+    service_context reports the reviewed route and a context revision, never
+    connectivity evidence. Ordinary task-probe verification of managed services
+    is unsupported and app-scoped receipts are excluded. Managed target routes
+    cannot be overridden through service_targets. Invalid frozen context or
+    unreadable routes make complete=false without falling back to app settings.
+    Read-only, best-effort metadata for service, PostgreSQL, object-storage,
     queue and outbound bindings. Requires apps:read or admin. PostgreSQL
     sections additionally require managed-postgres:read or admin; object
     storage sections require storage:manage or admin, matching the existing
@@ -275,6 +320,7 @@ async def asyncio(
     Args:
         slug (str):
         deployment_id (UUID | Unset):
+        service_targets (str | Unset):
         scope (str | Unset):
 
     Raises:
@@ -290,6 +336,7 @@ async def asyncio(
             slug=slug,
             client=client,
             deployment_id=deployment_id,
+            service_targets=service_targets,
             scope=scope,
         )
     ).parsed

@@ -8,15 +8,20 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-func (m *MemStore) ListAccountObjectBuckets(_ context.Context, account string, limit int32) ([]ObjectBucket, error) {
+func (m *MemStore) ListAccountObjectBuckets(ctx context.Context, account string, limit int32) ([]ObjectBucket, error) {
 	if limit < 1 || limit > api.ObjectOwnedCleanupBucketBatch {
 		return nil, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []ObjectBucket
+		return zero0, err
+	}
+
 	rows := []ObjectBucket{}
 	for _, b := range m.objectBuckets {
-		if b.AccountID == account && b.State != "deleted" {
+		if b.AccountID == account && b.State != "deleted" && m.personalObjectBucketLocked(b) {
 			rows = append(rows, b)
 		}
 	}

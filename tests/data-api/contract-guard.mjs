@@ -25,7 +25,9 @@ export async function verifyRuntimeContractGuard({ url, token, subject, owner, e
   assert.equal(inserted.error, null)
   assert.equal((await matching.from('notes').delete().eq('id', inserted.data.id)).error, null)
   // Guarded OpenAPI exports must not accidentally produce unguarded clients.
-  const document = await (await fetch(`${url}/__gregale/contract/${expectedFingerprint}/rest/v1/`, { headers: { Authorization: `Bearer ${token}` } })).json()
+  const exported = await fetch(`${url}/__gregale/contract/${expectedFingerprint}/rest/v1/`, { headers: { Authorization: `Bearer ${token}` } })
+  const document = await exported.json()
+  assert.equal(exported.status, 200, JSON.stringify(document))
   assert.equal(document.basePath, `/__gregale/contract/${expectedFingerprint}/rest/v1`)
 }
 
@@ -46,7 +48,9 @@ export async function verifyAcceptedContractRollout({ createServer, config, veri
       assert.equal(rpc.error, null)
       await owner.query("DELETE FROM api.notes WHERE body='older-rollout-rpc'")
       const headers = { Authorization: `Bearer ${userA.token}` }
-      const document = await (await fetch(`${url}/__gregale/contract/${olderFingerprint}/rest/v1/`, { headers })).json()
+      const exported = await fetch(`${url}/__gregale/contract/${olderFingerprint}/rest/v1/`, { headers })
+      const document = await exported.json()
+      assert.equal(exported.status, 200, JSON.stringify(document))
       assert.equal(document.basePath, `/__gregale/contract/${olderFingerprint}/rest/v1`)
       const advertised = await (await fetch(url + '/__gregale/schema', { headers })).json()
       assert.equal(advertised.fingerprint, config.fingerprint, 'acceptance must not advertise the older schema as current')

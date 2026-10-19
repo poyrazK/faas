@@ -317,6 +317,11 @@ func (d *Drain) Tick(ctx context.Context) {
 	// work so the next scheduler tick can make progress. The store update is
 	// conditional on the expired lease and bounded to the same batch size as
 	// the hot queue walk.
+	if acknowledgments, ok := d.store.(state.EventAcknowledgmentStore); ok {
+		if _, err := acknowledgments.ExpireEventAcknowledgments(ctx, d.batchSize); err != nil {
+			d.log.Warn("drain: expire event acknowledgments", "err", err)
+		}
+	}
 	if reclaimer, ok := d.store.(expiredInvocationReclaimer); ok {
 		reclaimed, err := reclaimer.RequeueExpiredInvocations(ctx, d.now(), d.batchSize)
 		if err != nil {
@@ -835,6 +840,15 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		}
 	}
 	cap := d.accountAsyncCap(ctx, inv)
+	if faults, ok := d.store.(interface {
+		ScenarioWorkerDispatchBlocked(context.Context, string) (bool, error)
+	}); ok {
+		blocked, faultErr := faults.ScenarioWorkerDispatchBlocked(ctx, inv.AppID)
+		if faultErr != nil || blocked {
+			release()
+			return
+		}
+	}
 	claimed, err := d.store.ClaimInvocationWithCap(ctx, inv.ID, "", leaseSeconds, cap)
 	if err != nil {
 		release()
@@ -904,6 +918,7 @@ func (d *Drain) acquireLongDispatch(inv state.Invocation) (func(), bool) {
 // deliverClaimed wakes the app, delivers a claimed invocation and records
 // its outcome. timeout is how long the invocation may run (ADR-1180).
 func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeout time.Duration) {
+	stopLease := func() {}
 	claimCtx, stopClaim := d.operationClaimContext(ctx, inv)
 	defer stopClaim()
 	if timeout > api.AsyncInvocationTimeoutFloor {
@@ -913,7 +928,6 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 		var cancelDispatch context.CancelFunc
 		claimCtx, cancelDispatch = context.WithTimeout(withLongDispatch(claimCtx), api.AsyncInvocationDispatchTimeout(timeout))
 		defer cancelDispatch()
-		var stopLease func()
 		claimCtx, stopLease = d.keepInvocationLease(claimCtx, inv)
 		defer stopLease()
 	}
@@ -1042,6 +1056,20 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 		d.emitDone(ctx, inv)
 		return
 	}
+	acknowledgmentToken, ackErr := d.prepareEventAcknowledgment(ctx, inv)
+	if ackErr != nil {
+		if failErr := d.store.FailInvocation(ctx, inv.ID, "prepare event acknowledgment: "+ackErr.Error(), d.invocationRetryDelay(inv), d.invocationAttemptBudget(ctx, inv), failOutcome(ackErr), state.WithInvocationClaim(inv)); failErr != nil {
+			d.log.Warn("drain: event acknowledgment preparation failed", "inv", inv.ID, "err", failErr)
+		}
+		return
+	}
+	if acknowledgmentToken != "" {
+		inv, ackErr = state.WithEventAcknowledgmentToken(inv, acknowledgmentToken)
+		if ackErr != nil {
+			d.log.Warn("drain: encode event acknowledgment", "inv", inv.ID, "err", ackErr)
+			return
+		}
+	}
 	var dispatched state.Invocation
 	if prewoken, ok := d.gateway.(prewokenGatewaySynth); ok {
 		dispatched, err = prewoken.InvokeWithWake(claimCtx, inv.AppID, inv, wakeRes)
@@ -1079,6 +1107,14 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 			d.emitDeadLetter(ctx, inv, "dead_letter")
 		}
 		d.log.Warn("drain: invoke", "inv", inv.ID, "inst", wakeRes.InstanceID, "err", err, "permanent", retryAfter == 0)
+		return
+	}
+	if acknowledgmentToken != "" && dispatched.ResponseStatusCode == http.StatusAccepted {
+		// Stop scheduler renewal before handing the lease to the consumer.
+		stopLease()
+		if _, err := d.store.(state.EventAcknowledgmentStore).AcceptEventAcknowledgment(ctx, inv, acknowledgmentToken); err != nil {
+			d.log.Warn("drain: event acknowledgment handoff uncertain", "inv", inv.ID, "err", err)
+		}
 		return
 	}
 	// 6. Complete.
@@ -1293,7 +1329,7 @@ func (d *Drain) isAccountActive(ctx context.Context, appID string) bool {
 	if cached, ok := d.accts.get(app.AccountID); ok {
 		return cached.active
 	}
-	acct, err := d.engine.Store().AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, d.engine.Store(), app)
 	if err != nil {
 		return true
 	}
@@ -1322,7 +1358,7 @@ func (d *Drain) invocationAttemptBudget(ctx context.Context, inv state.Invocatio
 			"inv_id", inv.ID, "app_id", inv.AppID, "err", err)
 		return api.EffectiveRetryMaxAttempts(requested, api.DurableRetryMaxAttempts)
 	}
-	acct, err := d.engine.Store().AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, d.engine.Store(), app)
 	if err != nil {
 		d.log.WarnContext(ctx, "invocationAttemptBudget: AccountByID failed; using finite safety ceiling",
 			"inv_id", inv.ID, "app_id", inv.AppID, "account_id", app.AccountID, "err", err)
@@ -1360,7 +1396,7 @@ func (d *Drain) accountAsyncCap(ctx context.Context, inv state.Invocation) int {
 			"inv_id", inv.ID, "app_id", inv.AppID, "err", err)
 		return 0
 	}
-	acct, err := d.engine.Store().AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, d.engine.Store(), app)
 	if err != nil {
 		d.log.WarnContext(ctx, "accountAsyncCap: AccountByID failed; falling back to 0 cap",
 			"inv_id", inv.ID, "app_id", inv.AppID, "account_id", app.AccountID, "err", err)

@@ -8,6 +8,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.trigger_broker_poison_strategy import TriggerBrokerPoisonStrategy, check_trigger_broker_poison_strategy
+from ..models.trigger_delivery import TriggerDelivery, check_trigger_delivery
 from ..models.trigger_kind import TriggerKind, check_trigger_kind
 from ..models.trigger_source_type_1 import TriggerSourceType1, check_trigger_source_type_1
 from ..models.trigger_source_type_2_type_1 import TriggerSourceType2Type1, check_trigger_source_type_2_type_1
@@ -79,6 +80,9 @@ class Trigger:
     updated_at: datetime.datetime
     slug: str | Unset = UNSET
     """Unique-per-app handle. Required for non-cron kinds; ignored on cron."""
+    delivery: TriggerDelivery | Unset = UNSET
+    """record invokes the function once per record; batch invokes it once per dispatch batch with every record
+    (ADR-1321)."""
     retry_policy: RetryPolicyDTO | Unset = UNSET
     """ADR-134 PR-B. Wire shape for dispatch.RetryPolicy. max_attempts
     is a requested total-attempt count; zero inherits the applicable
@@ -131,6 +135,10 @@ class Trigger:
         updated_at = self.updated_at.isoformat()
 
         slug = self.slug
+
+        delivery: str | Unset = UNSET
+        if not isinstance(self.delivery, Unset):
+            delivery = self.delivery
 
         retry_policy: dict[str, Any] | Unset = UNSET
         if not isinstance(self.retry_policy, Unset):
@@ -191,6 +199,8 @@ class Trigger:
         )
         if slug is not UNSET:
             field_dict["slug"] = slug
+        if delivery is not UNSET:
+            field_dict["delivery"] = delivery
         if retry_policy is not UNSET:
             field_dict["retry_policy"] = retry_policy
         if filter_criteria is not UNSET:
@@ -240,6 +250,13 @@ class Trigger:
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
         slug = d.pop("slug", UNSET)
+
+        _delivery = d.pop("delivery", UNSET)
+        delivery: TriggerDelivery | Unset
+        if isinstance(_delivery, Unset):
+            delivery = UNSET
+        else:
+            delivery = check_trigger_delivery(_delivery)
 
         _retry_policy = d.pop("retry_policy", UNSET)
         retry_policy: RetryPolicyDTO | Unset
@@ -332,6 +349,7 @@ class Trigger:
             created_at=created_at,
             updated_at=updated_at,
             slug=slug,
+            delivery=delivery,
             retry_policy=retry_policy,
             filter_criteria=filter_criteria,
             schedule=schedule,

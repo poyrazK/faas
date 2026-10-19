@@ -1,0 +1,82 @@
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 30s
+tests:
+- name: sustained failures and latency with sufficient traffic
+  interval: 30s
+  input_series:
+  - series: vmmd_mcp_protocol_requests_total{app_id="busy",tool="greet",outcome="success"}
+    values: 0+7x40
+  - series: vmmd_mcp_protocol_requests_total{app_id="busy",tool="greet",outcome="tool_error"}
+    values: 0+3x40
+  - series: vmmd_mcp_protocol_execution_seconds_bucket{app_id="busy",tool="greet",le="1"}
+    values: 0+0x40
+  - series: vmmd_mcp_protocol_execution_seconds_bucket{app_id="busy",tool="greet",le="10"}
+    values: 0+10x40
+  - series: vmmd_mcp_protocol_execution_seconds_bucket{app_id="busy",tool="greet",le="+Inf"}
+    values: 0+10x40
+  - series: vmmd_mcp_protocol_execution_seconds_count{app_id="busy",tool="greet"}
+    values: 0+10x40
+  - series: vmmd_mcp_protocol_capacity_dropped_total{job="vmmd"}
+    values: 0+1x40
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: FaasMCPProtocolHighErrorRate
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: vmmd
+        family: mcp_protocol
+        public_status: internal
+        app_id: busy
+      exp_annotations:
+        summary: MCP protocol failures exceed ten percent
+        description: Starter-reported RPC/tool failures or timeouts exceed ten percent with at least twenty observed
+          calls in each five-minute window. Cancellations are tracked separately. Review the app's MCP performance
+          dashboard and logs.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMCPProtocolPerformance.md
+  - eval_time: 15m
+    alertname: FaasMCPProtocolSlowExecution
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: vmmd
+        family: mcp_protocol
+        public_status: internal
+        app_id: busy
+      exp_annotations:
+        summary: MCP execution p95 exceeds five seconds
+        description: At least twenty response-construction measurements per five-minute window show sustained slow
+          execution. This excludes SSE delivery lifetime and background task execution.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMCPProtocolPerformance.md
+  - eval_time: 15m
+    alertname: FaasMCPProtocolAggregationCapacity
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: vmmd
+        family: mcp_protocol
+        public_status: internal
+        job: vmmd
+      exp_annotations:
+        summary: MCP protocol aggregation is dropping observations
+        description: The bounded per-host app table is full. Performance charts may be incomplete. Inspect active
+          app placement and aggregation capacity.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMCPProtocolPerformance.md
+- name: sparse traffic and short bursts stay quiet
+  interval: 30s
+  input_series:
+  - series: vmmd_mcp_protocol_requests_total{app_id="sparse",tool="greet",outcome="tool_error"}
+    values: 0+1x40
+  - series: vmmd_mcp_protocol_requests_total{app_id="short-burst",tool="greet",outcome="tool_error"}
+    values: 0+10x5 50+0x35
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: FaasMCPProtocolHighErrorRate
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: FaasMCPProtocolSlowExecution
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: FaasMCPProtocolAggregationCapacity
+    exp_alerts: []

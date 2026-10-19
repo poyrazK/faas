@@ -53,6 +53,7 @@ type publicReadHandler struct {
 	client         *http.Client
 	now            func() time.Time
 	log            *slog.Logger
+	mounts         *publicMountCache
 }
 
 // NewPublicReadHandler mounts ready public buckets on app hostnames. A route
@@ -98,6 +99,7 @@ func NewPublicReadHandler(c PublicReadConfig) (http.Handler, error) {
 		accounting: c.Accounting, enabled: c.Enabled,
 		appsDomain: appsDomain, next: c.Next,
 		client: c.HTTPClient, now: c.Now, log: c.Log,
+		mounts: newPublicMountCache(),
 	}, nil
 }
 
@@ -247,50 +249,18 @@ func (h *publicReadHandler) lookup(r *http.Request) (state.ObjectBucket, string,
 	} else {
 		host = strings.Trim(host, "[]")
 	}
-	var app state.App
-	var err error
-	if h.appsDomain != "" && strings.HasSuffix(host, "."+h.appsDomain) {
-		slug := strings.TrimSuffix(host, "."+h.appsDomain)
-		if slug == "" || strings.Contains(slug, ".") {
-			return state.ObjectBucket{}, "", false, nil
-		}
-		app, err = h.store.AppBySlug(r.Context(), slug)
-	} else {
-		domain, domainErr := h.store.DomainByName(r.Context(), host)
-		if domainErr != nil {
-			if errors.Is(domainErr, state.ErrNotFound) {
-				return state.ObjectBucket{}, "", false, nil
-			}
-			return state.ObjectBucket{}, "", false, domainErr
-		}
-		if !domain.Verified() {
-			return state.ObjectBucket{}, "", false, nil
-		}
-		app, err = h.store.AppByID(r.Context(), domain.AppID)
-	}
-	if err != nil {
-		if errors.Is(err, state.ErrNotFound) {
-			return state.ObjectBucket{}, "", false, nil
-		}
-		return state.ObjectBucket{}, "", false, err
-	}
-	buckets, err := h.store.ListObjectBuckets(r.Context(), app.AccountID, app.ID)
+	buckets, err := h.hostMounts(r.Context(), host)
 	if err != nil {
 		return state.ObjectBucket{}, "", false, err
 	}
 	path, err := url.PathUnescape(r.URL.EscapedPath())
 	if err != nil {
-		for _, bucket := range buckets {
-			if bucket.State == "ready" && bucket.PublicRead && ValidPublicReadPath(true, bucket.ServeAt) {
-				return bucket, "", true, err
-			}
+		if len(buckets) > 0 {
+			return buckets[0], "", true, err
 		}
 		return state.ObjectBucket{}, "", false, err
 	}
 	for _, bucket := range buckets {
-		if bucket.State != "ready" || !bucket.PublicRead || !ValidPublicReadPath(true, bucket.ServeAt) {
-			continue
-		}
 		if path == bucket.ServeAt {
 			return bucket, "", true, nil
 		}
@@ -299,6 +269,60 @@ func (h *publicReadHandler) lookup(r *http.Request) (state.ObjectBucket, string,
 		}
 	}
 	return state.ObjectBucket{}, "", false, nil
+}
+
+// hostMounts resolves host to its servable public buckets, reusing a recent
+// answer (see publicMountTTL). A host that names no app has no mounts.
+func (h *publicReadHandler) hostMounts(ctx context.Context, host string) ([]state.ObjectBucket, error) {
+	now := time.Now()
+	if buckets, ok := h.mounts.get(host, now); ok {
+		return buckets, nil
+	}
+	app, found, err := h.hostApp(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	var buckets []state.ObjectBucket
+	if found {
+		all, err := h.store.ListObjectBuckets(ctx, app.AccountID, app.ID)
+		if err != nil {
+			return nil, err
+		}
+		buckets = servableMounts(all)
+	}
+	h.mounts.put(host, buckets, now)
+	return buckets, nil
+}
+
+func (h *publicReadHandler) hostApp(ctx context.Context, host string) (state.App, bool, error) {
+	var app state.App
+	var err error
+	if h.appsDomain != "" && strings.HasSuffix(host, "."+h.appsDomain) {
+		slug := strings.TrimSuffix(host, "."+h.appsDomain)
+		if slug == "" || strings.Contains(slug, ".") {
+			return state.App{}, false, nil
+		}
+		app, err = h.store.AppBySlug(ctx, slug)
+	} else {
+		domain, domainErr := h.store.DomainByName(ctx, host)
+		if domainErr != nil {
+			if errors.Is(domainErr, state.ErrNotFound) {
+				return state.App{}, false, nil
+			}
+			return state.App{}, false, domainErr
+		}
+		if !domain.Verified() {
+			return state.App{}, false, nil
+		}
+		app, err = h.store.AppByID(ctx, domain.AppID)
+	}
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return state.App{}, false, nil
+		}
+		return state.App{}, false, err
+	}
+	return app, true, nil
 }
 
 func validPublicKey(key string) bool {

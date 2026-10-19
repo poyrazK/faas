@@ -36,6 +36,7 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -113,4 +114,20 @@ func (s *server) getDeploymentURL(w http.ResponseWriter, r *http.Request, acct s
 	resp.Host = host
 	resp.URL = wire.DeployPreviewURIScheme + "://" + host
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// The preview host is platform-generated; request Host and customer URLs are never used.
+func (s *server) mcpReadinessPreview(ctx context.Context, app state.App, d state.Deployment) (string, error) {
+	if d.Status != state.DeployLive || !d.DeploymentPreviewActive() || wire.DeployWildcardSuffix == "" {
+		return "", state.ErrConflict
+	}
+	ordinal, err := s.store.DeploymentOrdinal(ctx, app.ID, d.ID)
+	if err != nil {
+		return "", err
+	}
+	host := gateway.BuildDeploymentPreviewURL(wire.DeployWildcardSuffix, ordinal, app.Slug)
+	if host == "" {
+		return "", state.ErrConflict
+	}
+	return "https://" + host, nil
 }

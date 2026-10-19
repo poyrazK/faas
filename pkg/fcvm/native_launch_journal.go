@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	core "github.com/onebox-faas/faas/pkg/datarepair"
 )
 
 // The journal is outside the tenant chroot, on the same host-lifetime tmpfs.
@@ -23,16 +24,17 @@ import (
 // A prepared record has no authorized process. An authorized record binds one
 // exact PID/start-time incarnation; revocation is irreversible for that token.
 type nativeLaunchRecord struct {
-	Version          int    `json:"version"`
-	Generation       string `json:"generation"`
-	KernelBootID     string `json:"kernel_boot_id"`
-	Lease            Lease  `json:"lease"`
-	Authorized       bool   `json:"authorized"`
-	PID              int    `json:"pid"`
-	StartTime        uint64 `json:"start_time"`
-	Revoked          bool   `json:"revoked"`
-	ExitConfirmed    bool   `json:"exit_confirmed"`
-	ResourcesRemoved bool   `json:"resources_removed"`
+	Version          int                    `json:"version"`
+	Generation       string                 `json:"generation"`
+	KernelBootID     string                 `json:"kernel_boot_id"`
+	Lease            Lease                  `json:"lease"`
+	Authorized       bool                   `json:"authorized"`
+	PID              int                    `json:"pid"`
+	StartTime        uint64                 `json:"start_time"`
+	Revoked          bool                   `json:"revoked"`
+	ExitConfirmed    bool                   `json:"exit_confirmed"`
+	ResourcesRemoved bool                   `json:"resources_removed"`
+	Producer         nativeProducerIdentity `json:"producer,omitzero"`
 }
 
 type nativeLaunchJournal struct {
@@ -52,7 +54,11 @@ type nativeLaunchJournal struct {
 // cannot turn a damaged record into fresh boot authority. The lease has the
 // exact canonical fields emitted by this journal version, including zeroes.
 func (r *nativeLaunchRecord) UnmarshalJSON(data []byte) error {
-	fields, err := nativeJournalObjectFields(data, []string{"version", "generation", "kernel_boot_id", "lease", "authorized", "pid", "start_time", "revoked", "exit_confirmed", "resources_removed"})
+	keys := []string{"version", "generation", "kernel_boot_id", "lease", "authorized", "pid", "start_time", "revoked", "exit_confirmed", "resources_removed"}
+	fields, err := nativeJournalObjectFields(data, keys)
+	if err != nil {
+		fields, err = nativeJournalObjectFields(data, append(keys, "producer"))
+	}
 	if err != nil {
 		return err
 	}
@@ -62,7 +68,15 @@ func (r *nativeLaunchRecord) UnmarshalJSON(data []byte) error {
 	type plain nativeLaunchRecord
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	return decoder.Decode((*plain)(r))
+	var decoded plain
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	*r = nativeLaunchRecord(decoded)
+	if _, present := fields["producer"]; present != (r.Version == 2) {
+		return errors.New("native producer: version requires its exact field set")
+	}
+	return r.validateProducer()
 }
 
 func nativeJournalLeaseFields() []string {
@@ -143,6 +157,14 @@ func (j *nativeLaunchJournal) lock(ctx context.Context, instance string) (*os.Fi
 }
 
 func (j *nativeLaunchJournal) prepare(ctx context.Context, lease Lease) (err error) {
+	migrationLock, migrationErr := j.lockMigrationPreparation(ctx, lease.Instance)
+	if migrationErr != nil {
+		return migrationErr
+	}
+	if migrationLock != nil {
+		defer func() { err = errors.Join(err, migrationLock.Close()) }()
+	}
+
 	lock, incoming, err := j.lockQualificationProducer(ctx, lease.Instance)
 	if err != nil {
 		return err
@@ -158,12 +180,19 @@ func (j *nativeLaunchJournal) prepare(ctx context.Context, lease Lease) (err err
 		}
 		generation = bound
 	}
+	generation, err = j.bindMigrationPhysical(ctx, lease, generation)
+	if err != nil {
+		return err
+	}
 	return j.prepareGeneration(ctx, lease, generation)
 }
 
 // The incoming binding is durable before this physical record can authorize
 // any native producer. Both writes share the outer incoming-request lock.
 func (j *nativeLaunchJournal) prepareGeneration(ctx context.Context, lease Lease, generation string) (err error) {
+	if err := j.requireDataRepairProducer(ctx, lease.Instance); err != nil {
+		return err
+	}
 	if err := validateNativeJournalLease(lease); err != nil {
 		return err
 	}
@@ -182,7 +211,16 @@ func (j *nativeLaunchJournal) prepareGeneration(ctx context.Context, lease Lease
 		}
 		return fmt.Errorf("native journal: instance %s already has a launch record", lease.Instance)
 	}
-	return j.write(nativeLaunchRecord{Version: 1, Generation: generation, KernelBootID: bootID, Lease: lease})
+	record := nativeLaunchRecord{Version: 1, Generation: generation, KernelBootID: bootID, Lease: lease}
+	if producer, ok := ctx.Value(nativeProducerContextKey{}).(nativeProducerIdentity); ok {
+		frame, repair := ctx.Value(dataRepairContextKey{}).(core.RehearsalFrame)
+		parent, readErr := readDataRepairRecord(filepath.Join(j.root, "data-repair", lease.Instance+".json"))
+		if readErr != nil || !repair || !parent.Frame.Same(frame) || parent.Revoked || parent.NativeGeneration != "" {
+			return errors.New("native producer: repair enrollment has no original task frame")
+		}
+		record.Version, record.Producer = 2, producer
+	}
+	return j.write(record)
 }
 
 func (j *nativeLaunchJournal) currentBootID() (string, error) {
@@ -240,6 +278,9 @@ func (j *nativeLaunchJournal) beginPhysicalLaunch(ctx context.Context, lease Lea
 			return nil, err
 		}
 		return nil, errors.New("native journal: launch record is not available to this lease")
+	}
+	if err := j.requireRepairProducerContext(ctx, record); err != nil {
+		return nil, errors.Join(err, lock.Close())
 	}
 	loops := nativeLoopMountJournal{owner: j, backend: j.loopMounts}
 	if err := loops.requireRetired(record); err != nil {
@@ -521,7 +562,10 @@ func (r nativeLaunchRecord) validate(instance string) error {
 	if err := validateNativeJournalLease(r.Lease); err != nil {
 		return err
 	}
-	if r.Version != 1 || r.Lease.Instance != instance {
+	if err := r.validateProducer(); err != nil {
+		return err
+	}
+	if r.Lease.Instance != instance {
 		return errors.New("native journal: record version or instance is invalid")
 	}
 	if generation, err := uuid.Parse(r.Generation); err != nil || generation == uuid.Nil {

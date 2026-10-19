@@ -12,6 +12,10 @@ import (
 
 const maxAPIConsumerUsageStatementInt64 = int64(1<<63 - 1)
 
+// MaxAPIConsumerStatementFees bounds one statement's fees: a base fee and a
+// minimum per price stream (ADR-1316, ADR-1317).
+const MaxAPIConsumerStatementFees = 64
+
 // APIConsumerUsageStatementStore is the persistence boundary for durable
 // usage snapshots. It is intentionally optional, like the usage and rate-card
 // capabilities, so existing Store test doubles remain source-compatible.
@@ -96,6 +100,9 @@ func validateAPIConsumerUsageStatementInput(input APIConsumerUsageStatementInput
 		if bucket.WindowStart.Before(input.PeriodStart) || !bucket.WindowStart.Before(input.PeriodEnd) {
 			return fmt.Errorf("consumer usage statement: bucket %d is outside the period", i)
 		}
+		if bucket.Unit != "" && (bucket.Unit == APIConsumerRateCardUnitRequest || !ValidAPIConsumerRateCardUnit(bucket.Unit)) {
+			return fmt.Errorf("consumer usage statement: bucket %d has an unknown unit", i)
+		}
 		tiered := bucket.TierUnits != nil
 		if bucket.BillableUnits < 0 || bucket.PriceMillicentsPerUnit < 0 || (bucket.AmountMillicents < 0 && !tiered) {
 			return fmt.Errorf("consumer usage statement: bucket %d values must be non-negative", i)
@@ -146,13 +153,46 @@ func validateAPIConsumerUsageStatementInput(input APIConsumerUsageStatementInput
 		units += bucket.BillableUnits
 		amount += bucket.AmountMillicents
 	}
+	fees, err := sumStatementFees(input.Fees, input.Currency)
+	if err != nil {
+		return fmt.Errorf("consumer usage statement: %w", err)
+	}
+	if !addsWithin(amount, fees) {
+		return fmt.Errorf("consumer usage statement: fee totals overflow")
+	}
+	amount += fees
 	if units != input.BillableUnits || unpriced != input.UnpricedUnits || amount != input.AmountMillicents {
-		return fmt.Errorf("consumer usage statement: bucket totals do not match statement totals")
+		return fmt.Errorf("consumer usage statement: bucket and fee totals do not match statement totals")
 	}
 	return nil
 }
 
+// sumStatementFees validates a statement's fees (ADR-1316, ADR-1322) and
+// returns their total: at most MaxAPIConsumerStatementFees, each a
+// non-negative base fee or a minimum top-up of a rate card, in a priced
+// statement.
+func sumStatementFees(fees []APIConsumerStatementFee, currency string) (int64, error) {
+	if len(fees) > MaxAPIConsumerStatementFees {
+		return 0, fmt.Errorf("at most %d fees", MaxAPIConsumerStatementFees)
+	}
+	var total int64
+	for i, fee := range fees {
+		if (fee.Kind != StatementFeeBase && fee.Kind != StatementFeeMinimum) || (fee.Kind == StatementFeeBase && fee.AmountMillicents < 0) {
+			return 0, fmt.Errorf("fee %d must be a non-negative base_fee or a minimum", i)
+		}
+		if _, err := uuid.Parse(fee.RateCardID); err != nil || currency == "" {
+			return 0, fmt.Errorf("fee %d needs a rate card and a statement currency", i)
+		}
+		if !addsWithin(total, fee.AmountMillicents) {
+			return 0, fmt.Errorf("fee totals overflow")
+		}
+		total += fee.AmountMillicents
+	}
+	return total, nil
+}
+
 func cloneAPIConsumerUsageStatement(statement APIConsumerUsageStatement) APIConsumerUsageStatement {
+	statement.Fees = slices.Clone(statement.Fees)
 	statement.Buckets = append([]APIConsumerUsageStatementBucket(nil), statement.Buckets...)
 	for i := range statement.Buckets {
 		statement.Buckets[i].TierUnits = slices.Clone(statement.Buckets[i].TierUnits)
@@ -198,14 +238,14 @@ func validateTierUnits(bucket APIConsumerUsageStatementBucket) error {
 func sameAPIConsumerUsageStatementSnapshot(draft APIConsumerUsageStatement, input APIConsumerUsageStatementInput) bool {
 	if draft.Currency != input.Currency || draft.BillableUnits != input.BillableUnits ||
 		draft.UnpricedUnits != input.UnpricedUnits || draft.AmountMillicents != input.AmountMillicents ||
-		draft.Priced != input.Priced || len(draft.Buckets) != len(input.Buckets) {
+		draft.Priced != input.Priced || len(draft.Buckets) != len(input.Buckets) || !slices.Equal(draft.Fees, input.Fees) {
 		return false
 	}
 	for i := range draft.Buckets {
 		a, b := draft.Buckets[i], input.Buckets[i]
 		if !a.WindowStart.Equal(b.WindowStart) || a.BillableUnits != b.BillableUnits || a.Charged() != b.Charged() || a.RateCardID != b.RateCardID ||
 			a.Currency != b.Currency || a.PriceMillicentsPerUnit != b.PriceMillicentsPerUnit || a.AmountMillicents != b.AmountMillicents ||
-			!slices.Equal(a.TierUnits, b.TierUnits) {
+			!slices.Equal(a.TierUnits, b.TierUnits) || a.Unit != b.Unit || a.Trial != b.Trial {
 			return false
 		}
 	}

@@ -14,10 +14,11 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type snapshotCatalogPublicationStore struct {
-	*state.MemStore
+	MemStore  *state.MemStore
 	record    state.ApplicationStandardSnapshotCaptureRecord
 	err       error
 	published *state.Snapshot
@@ -53,23 +54,23 @@ func (s *snapshotCatalogPublicationStore) GetApplicationStandardSnapshotCapture(
 func snapshotCatalogPublicationFixture(t *testing.T) (*Handler, *snapshotCatalogPublicationStore, state.App, state.Deployment, snapshotWrittenPayload) {
 	t.Helper()
 	s := &snapshotCatalogPublicationStore{MemStore: state.NewMemStore()}
-	account, err := s.CreateAccount(t.Context(), "snapshot-catalog@example.com", "pro")
+	account, err := s.MemStore.CreateAccount(t.Context(), "snapshot-catalog@example.com", "pro")
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := s.CreateApp(t.Context(), state.App{AccountID: account.ID, Slug: "snapshot-catalog", RAMMB: 128})
+	app, err := s.MemStore.CreateApp(t.Context(), state.App{AccountID: account.ID, Slug: "snapshot-catalog", RAMMB: 128})
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, err := s.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployLive})
+	dep, err := s.MemStore.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployLive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	node, err := s.ComputeNodeByName(t.Context(), state.DefaultLocalNodeName)
+	node, err := s.MemStore.ComputeNodeByName(t.Context(), state.DefaultLocalNodeName)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ins, err := s.CreateInstance(t.Context(), app.ID, dep.ID, string(state.StateParked), 128, node.ID, "")
+	ins, err := s.MemStore.CreateInstance(t.Context(), app.ID, dep.ID, string(state.StateParked), 128, node.ID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +94,7 @@ func snapshotCatalogPublicationFixture(t *testing.T) (*Handler, *snapshotCatalog
 	}
 	s.record = state.ApplicationStandardSnapshotCaptureRecord{ExpectedState: string(state.StateRunning), Grant: g, Acknowledgment: &a, CreatedAt: now, ReceivedAt: now}
 	p := snapshotWrittenPayload{DeploymentID: dep.ID, SourceInstanceID: ins.ID, SourceStartedAt: ins.StartedAt, NodeID: node.ID, StorageKey: key, ApplicationStandardCaptureToken: token, FCVersion: g.FCVersion, Tier: state.SnapshotTierWarm, MemBytes: c.Memory.Bytes, VMStateBytes: c.VMState.Bytes, StoredBytes: 4096}
-	return New(s, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()), s, app, dep, p
+	return New(statetest.NewMem(s), &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()), s, app, dep, p
 }
 
 func TestStandardSnapshotPublicationRecordsOnlyMatchingCatalogReference(t *testing.T) {

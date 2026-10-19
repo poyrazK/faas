@@ -15,21 +15,22 @@ import (
 // EnvironmentWorkloadQualificationRequest binds qualification work to one
 // prepared graph member and its exact artifact. Claimed is not qualified.
 type EnvironmentWorkloadQualificationRequest struct {
-	ID                 string                      `json:"id"`
-	GraphID            string                      `json:"graph_id"`
-	DeploymentID       string                      `json:"deployment_id"`
-	AppID              string                      `json:"app_id"`
-	Resource           string                      `json:"resource"`
-	Artifact           EnvironmentWorkloadArtifact `json:"artifact"`
-	FrozenInputs       EnvironmentWorkloadRuntime  `json:"-"`
-	ExecutionMode      string                      `json:"execution_mode"`
-	Phase              string                      `json:"phase"`
-	CreatedAt          time.Time                   `json:"created_at"`
-	WorkerID           string                      `json:"worker_id,omitempty"`
-	LeaseUntil         *time.Time                  `json:"lease_until,omitempty"`
-	Attempt            int64                       `json:"attempt"`
-	ReservedInstanceID string                      `json:"reserved_instance_id,omitempty"`
-	LeaseToken         string                      `json:"-"`
+	ID                 string                                  `json:"id"`
+	GraphID            string                                  `json:"graph_id"`
+	DeploymentID       string                                  `json:"deployment_id"`
+	AppID              string                                  `json:"app_id"`
+	Resource           string                                  `json:"resource"`
+	Artifact           EnvironmentWorkloadArtifact             `json:"artifact"`
+	FrozenInputs       EnvironmentWorkloadRuntime              `json:"-"`
+	ExecutionMode      string                                  `json:"execution_mode"`
+	Phase              string                                  `json:"phase"`
+	CreatedAt          time.Time                               `json:"created_at"`
+	WorkerID           string                                  `json:"worker_id,omitempty"`
+	LeaseUntil         *time.Time                              `json:"lease_until,omitempty"`
+	Attempt            int64                                   `json:"attempt"`
+	ReservedInstanceID string                                  `json:"reserved_instance_id,omitempty"`
+	LeaseToken         string                                  `json:"-"`
+	BindingContext     *EnvironmentQualificationBindingContext `json:"-"`
 }
 
 type EnvironmentWorkloadArtifact struct {
@@ -85,6 +86,10 @@ func cloneQualificationRequest(request EnvironmentWorkloadQualificationRequest) 
 	raw, _ = json.Marshal(request.FrozenInputs)
 	_ = json.Unmarshal(raw, &copy.FrozenInputs)
 	copy.LeaseToken = request.LeaseToken
+	if request.BindingContext != nil {
+		raw, _ = json.Marshal(request.BindingContext)
+		_ = json.Unmarshal(raw, &copy.BindingContext)
+	}
 	return copy
 }
 

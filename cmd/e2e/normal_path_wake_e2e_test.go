@@ -37,6 +37,7 @@ import (
 	"time"
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/state"
 	"google.golang.org/grpc"
@@ -89,7 +90,8 @@ func seedNormalPathSnapshot(t *testing.T, f *normalPathFixture, deploymentID str
 	}
 	memBytes := opts.memBytes
 	if memBytes == 0 {
-		memBytes = int64(e2etest.FakeSnapshotRAMMB) << 20
+		// Seed the actual admitted app shape, including current plan defaults.
+		memBytes = int64(f.app.RAMMB) << 20
 	}
 	snap, err := store.CreateSnapshot(ctx, state.Snapshot{
 		DeploymentID: deploymentID,
@@ -208,7 +210,7 @@ func TestE2E_NormalPath_UnusableSnapshotColdBoots(t *testing.T) {
 			// into the admitted memory size.
 			name: "ram shape skew",
 			slug: "wake-ramskew",
-			opts: normalPathSnapshotOpts{memBytes: int64(e2etest.FakeSnapshotRAMMB+128) << 20},
+			opts: normalPathSnapshotOpts{memBytes: int64(api.MustLimitsFor(api.PlanHobby).RAMMB+128) << 20},
 		},
 	}
 

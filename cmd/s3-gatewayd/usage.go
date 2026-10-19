@@ -49,7 +49,11 @@ func usageExportJobs(registry *objectstorage.Registry, store state.ObjectStorage
 					if bucket.AccountID == "" || bucket.PhysicalName == "" {
 						return nil, objectstorage.ErrInvalid
 					}
-					out = append(out, objectstorage.OVHUsageBucket{AccountID: bucket.AccountID, PhysicalName: bucket.PhysicalName})
+					subject := bucket.UsageSubjectID
+					if subject == "" {
+						subject = bucket.AccountID
+					}
+					out = append(out, objectstorage.OVHUsageBucket{AccountID: subject, PhysicalName: bucket.PhysicalName})
 				}
 				return out, nil
 			}
@@ -70,7 +74,7 @@ func usageExportJobs(registry *objectstorage.Registry, store state.ObjectStorage
 			}
 			jobs = append(jobs, objectstorage.UsageExportJob{
 				BackendID: backend.ID, BackendFingerprint: backend.Fingerprint,
-				ReportPath: backend.UsageReportsPath, Exporter: exporter,
+				ReportPath: backend.UsageReportsPath, Exporter: periodUsageExporter{exporter: exporter},
 				CoverageLag: time.Hour,
 			})
 		default:

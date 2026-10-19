@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/wakehistory"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -54,6 +55,16 @@ func (s *server) getAppWakeTimeline(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 
+	if r.URL.Query().Get("pagination") != "" || r.URL.Query().Get("cursor") != "" {
+		out, problem := wakehistory.ReadPage(r.Context(), s.store, acct.ID, app, r.URL.Query())
+		if problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
 	since, until, ok := parseWakeTimelineWindow(w, r)
 	if !ok {
 		return

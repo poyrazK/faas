@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"filippo.io/age"
 	"fmt"
 	"io"
 	"net/http"
@@ -116,12 +115,7 @@ func (s *server) createInboundWebhookEndpointValidated(w http.ResponseWriter, r 
 		api.WriteProblem(w, api.ErrCapacity("inbound webhook store unavailable"))
 		return
 	}
-	// The getter is nil until apid loads an age recipient; calling it
-	// would panic the request instead of refusing it.
-	var recipient *age.X25519Recipient
-	if setSecretRecipient != nil {
-		recipient = setSecretRecipient()
-	}
+	recipient := hostSecretRecipient()
 	if recipient == nil {
 		api.WriteProblem(w, api.ErrCapacity("host identity not loaded — refusing to seal webhook secret"))
 		return
@@ -249,7 +243,7 @@ func sealInboundWebhookSecret(plaintext string, provider state.InboundWebhookPro
 	if provider == state.InboundWebhookProviderGeneric && len(plaintext) < api.InboundWebhookGenericSecretMinBytes {
 		return nil, inboundWebhookProblem(http.StatusBadRequest, "generic signing_secret must contain at least 32 bytes")
 	}
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if recipient == nil {
 		return nil, api.ErrCapacity("host identity not loaded — refusing to seal webhook secret")
 	}
@@ -350,7 +344,7 @@ func (s *server) receiveVerifiedInboundWebhook(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, api.ErrCapacity("could not resolve inbound webhook app"))
 		return
 	}
-	acct, err := s.store.AccountByID(r.Context(), app.AccountID)
+	acct, err := state.AppResourceAccount(r.Context(), s.store, app)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not resolve inbound webhook account"))
 		return

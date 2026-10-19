@@ -10,10 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
-type standardRuntimeReceiptTestStore interface {
-	standardSnapshotTestStore
-	InstanceApplicationStandardRuntimeReceiptStore
-}
+type standardRuntimeReceiptTestStore = contractTestStore
 
 func standardRuntimeReceiptOwnedHistory(t *testing.T, s standardRuntimeReceiptTestStore) {
 	t.Helper()

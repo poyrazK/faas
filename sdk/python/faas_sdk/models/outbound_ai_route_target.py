@@ -18,12 +18,16 @@ class OutboundAIRouteTarget:
 
     integration_id: UUID
     model: str | Unset = UNSET
+    weight: int | Unset = UNSET
+    """A weighted route's share of first attempts for this target; 0 makes it a fallback only (ADR-1434)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         integration_id = str(self.integration_id)
 
         model = self.model
+
+        weight = self.weight
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -34,6 +38,8 @@ class OutboundAIRouteTarget:
         )
         if model is not UNSET:
             field_dict["model"] = model
+        if weight is not UNSET:
+            field_dict["weight"] = weight
 
         return field_dict
 
@@ -44,9 +50,12 @@ class OutboundAIRouteTarget:
 
         model = d.pop("model", UNSET)
 
+        weight = d.pop("weight", UNSET)
+
         outbound_ai_route_target = cls(
             integration_id=integration_id,
             model=model,
+            weight=weight,
         )
 
         outbound_ai_route_target.additional_properties = d

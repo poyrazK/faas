@@ -185,6 +185,9 @@ func (m *MemStore) admitOperationLocked(admission OperationAdmission, releaseErr
 		return Operation{}, false, ErrNotFound
 	}
 	acct := m.accounts[admission.AccountID]
+	if err := m.checkProductCustomerIdentityLocked(def, admission); err != nil {
+		return Operation{}, false, err
+	}
 	limits := api.MustLimitsFor(acct.Plan)
 	now := time.Now().UTC()
 	op, inv, key, fingerprint, err := prepareOperationAdmission(def, admission, limits, now)
@@ -248,7 +251,11 @@ func (m *MemStore) admitOperationLocked(admission OperationAdmission, releaseErr
 			return Operation{}, false, err
 		}
 	}
+	if err := m.prepareProductOperationLocked(&op, def, admission, now); err != nil {
+		return Operation{}, false, err
+	}
 	m.operationPinsLocked(op)
+	m.insertProductOperationLocked(op)
 	data.operations[op.ID] = cloneOperation(op)
 	data.events[op.ID] = []api.OperationEvent{initialOperationEvent(op)}
 	data.receipts[key] = operationIdentityReceipt{AccountID: op.AccountID, AppID: op.AppID, OperationID: op.ID, Fingerprint: fingerprint, ExpiresAt: now.Add(time.Duration(limits.Operations.IdempotencyRetentionSeconds) * time.Second)}

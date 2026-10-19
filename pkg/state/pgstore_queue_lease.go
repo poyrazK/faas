@@ -24,7 +24,7 @@ func (s *PgStore) LeaseQueueMessages(ctx context.Context, req QueueLeaseRequest)
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	account, err := readEnvironmentQueueDeliveryAccount(ctx, tx, req.AccountID)
+	account, err := readEnvironmentQueueDeliveryAccount(ctx, tx, req.AccountID, req.AppID)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +143,7 @@ func (s *PgStore) AckQueueLeases(ctx context.Context, accountID, appID, queueNam
 
 func (s *PgStore) NackQueueLeases(ctx context.Context, accountID, appID, queueName string, receipts []string, delay time.Duration, lastError string) (QueueLeaseOutcome, error) {
 	return s.settleQueueLeases(ctx, accountID, appID, queueName, receipts, func(ctx context.Context, tx pgx.Tx, inv Invocation, now time.Time) (bool, error) {
-		account, err := readEnvironmentQueueDeliveryAccount(ctx, tx, accountID)
+		account, err := readEnvironmentQueueDeliveryAccount(ctx, tx, accountID, appID)
 		if err != nil {
 			return false, err
 		}
@@ -170,7 +170,7 @@ func (s *PgStore) NackQueueLeases(ctx context.Context, accountID, appID, queueNa
 }
 
 func (s *PgStore) ExtendQueueLeases(ctx context.Context, accountID, appID, queueName string, receipts []string, visibilitySeconds int) (QueueLeaseOutcome, error) {
-	account, err := s.AccountByID(ctx, accountID)
+	account, err := queuePolicyAccountDB(ctx, s.pool, accountID, appID, false)
 	if err != nil {
 		return QueueLeaseOutcome{}, err
 	}
@@ -227,6 +227,9 @@ func (s *PgStore) settleQueueLease(ctx context.Context, accountID, appID, queueN
 		return "", err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if _, err := queuePolicyAccountDB(ctx, tx, accountID, appID, true); err != nil {
+		return "", err
+	}
 	q := sqlc.New()
 	row, err := q.LockQueueLeaseInvocation(ctx, tx, mustPgUUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {

@@ -1,0 +1,23 @@
+# ADR-1504: Stripe payment status for exported statements, and billing notifications
+
+- **Status:** accepted
+- **Date:** 2026-10-14
+- **Decision:** apid follows each draft invoice it created in an account's Stripe (ADR-1502) until it reaches a final state. It emails the account when billing needs attention.
+  - **Status sync.** A background worker reads `GET /v1/invoices/{id}` with the account's stored key. It records the payment status (`draft`, `open`, `paid`, `void`, `uncollectible`, or `deleted` when Stripe no longer has a draft), the amount paid and remaining, the due date, the paid time and the hosted invoice URL. Polling follows the status:
+    - drafts every 6 hours;
+    - open invoices every hour, and every 6 hours once overdue;
+    - uncollectible invoices daily, because Stripe can still mark them paid;
+    - `paid`, `void` and `deleted` are final and stop polling.
+  - **Visibility.** Statement export responses carry the payment fields. `GET /v1/account/statement-invoices?status=` lists the account's exported invoices with filters `unpaid` (draft, open or uncollectible), `overdue` (open past its due date) and each single status. Billing run items show the payment status of their statement's export. The CLI lists them with `gregale account invoices`.
+  - **Notifications.** apid emails the account owner in two cases:
+    - when a billing run completes with held or failed customers, and after every scheduled run as a summary;
+    - once a day, a digest of invoices that became overdue with an amount remaining. Each invoice is reported once.
+- **Why:** Exports stopped at a draft: Gregale never learned whether the customer's customer paid. Scheduled billing runs (ADR-1503) could hold or fail customers without anyone looking.
+- **Consequences:**
+  - **Reliable delivery.** A sync error (Stripe 5xx or network) retries after 15 minutes; a rejected key retries after 6 hours, until the account reconnects Stripe. Workers claim due exports by pushing their next sync time forward with `FOR UPDATE SKIP LOCKED`, so apid replicas do not poll one invoice twice. Notifications record `notified_at` and `overdue_notified_at` only after the mailer accepts the message. A failed send retries on a later tick, and stable message IDs let the provider drop duplicates.
+  - **Status changes.** Every status change emits a `statement_invoice.status_changed` audit event. Gregale still never finalizes, sends or charges an invoice: status flows from Stripe to Gregale only.
+  - **Limits.** Poll intervals, tick interval, batch sizes and the digest window live in `pkg/api/limits.go`. Polling costs one Stripe read per non-final invoice per interval, well inside Stripe's read limits at today's volumes.
+- **Rejected alternatives:**
+  - Receiving Stripe webhooks would be immediate, but each account would have to register an endpoint and signing secret in its own Stripe account, and missed events would still need reconciliation polling. Polling needs nothing beyond the stored key.
+  - App webhooks for payment changes would duplicate the statement webhook outbox for a signal operators asked to see, not to automate. The stored status allows adding one later without migration.
+  - SMS or chat notifications need per-account channel configuration that does not exist yet. Email goes to the account's verified address.

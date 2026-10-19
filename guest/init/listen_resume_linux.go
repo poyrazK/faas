@@ -301,8 +301,18 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 		_, _ = f.Write([]byte{VsockResumeAckJSON})
 		return
 	}
+	// ADR-022: host entropy is what makes two restores of one snapshot
+	// diverge (virtio-rng state is part of the snapshot, and the CRNG is
+	// only rekeyed after it is mixed in). A resume without it would serve
+	// with the snapshot's random state, so it NACKs and vmmd cold-boots.
+	if req.Entropy == "" {
+		log.Warn("vsock resume entropy missing")
+		resumeDiag("resume: entropy missing")
+		_, _ = f.Write([]byte{VsockResumeAckEntropyLength})
+		return
+	}
 	var entropy []byte
-	if req.Entropy != "" {
+	{
 		decoded, decErr := base64.StdEncoding.DecodeString(req.Entropy)
 		if decErr != nil {
 			log.Warn("vsock resume entropy base64", "err", decErr)

@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -34,13 +35,8 @@ type cacheRuleContextKey struct{}
 // the matched rule + the cache key components that were
 // resolved at the top of ServeHTTP.
 type cacheRuleSnapshot struct {
-	Rule         *EdgeRuleCacheResolved
-	AppID        string
-	DeploymentID string
-	Method       string
-	Path         string
-	Query        string
-	VaryHash     [32]byte
+	Rule *EdgeRuleCacheResolved
+	CacheKey
 }
 
 // withCacheRuleContext stashes the snapshot on ctx.
@@ -52,8 +48,18 @@ func withCacheRuleContextForDeployment(ctx context.Context, rule *EdgeRuleCacheR
 	if rule == nil {
 		return ctx
 	}
+	return withCacheKeyContext(ctx, rule, CacheKey{
+		AppID: appID, DeploymentID: deploymentID, RuleID: rule.ID, Method: method,
+		NormalizedPath: path, Query: query, VaryHash: varyHash,
+	})
+}
+
+func withCacheKeyContext(ctx context.Context, rule *EdgeRuleCacheResolved, key CacheKey) context.Context {
+	if rule == nil {
+		return ctx
+	}
 	return context.WithValue(ctx, cacheRuleContextKey{}, &cacheRuleSnapshot{
-		Rule: rule, AppID: appID, DeploymentID: deploymentID, Method: method, Path: path, Query: query, VaryHash: varyHash,
+		Rule: rule, CacheKey: key,
 	})
 }
 
@@ -101,21 +107,13 @@ func (h *Handler) serveStaleWhileWaking(w http.ResponseWriter, r *http.Request, 
 	if snap == nil || snap.Rule == nil || snap.Rule.StaleIfErrorSeconds <= 0 {
 		return false, ""
 	}
-	if r.Header.Get("Authorization") != "" || hasSessionCookie(r) {
+	if hasCacheCredentials(r) {
 		return false, ""
 	}
 	if r.Method != "GET" && r.Method != "HEAD" {
 		return false, ""
 	}
-	key := CacheKey{
-		AppID:          snap.AppID,
-		DeploymentID:   snap.DeploymentID,
-		RuleID:         snap.Rule.ID,
-		Method:         snap.Method,
-		NormalizedPath: snap.Path,
-		Query:          snap.Query,
-		VaryHash:       snap.VaryHash,
-	}
+	key := snap.CacheKey
 	outcome, entry := h.responseCache.Get(key)
 	if outcome != "stale_if_error_eligible" {
 		return false, ""
@@ -156,15 +154,7 @@ func (h *Handler) startStaleWhileWakingRefresh(r *http.Request, app App, rule *E
 	if snap == nil {
 		return
 	}
-	key := CacheKey{
-		AppID:          snap.AppID,
-		DeploymentID:   snap.DeploymentID,
-		RuleID:         snap.Rule.ID,
-		Method:         snap.Method,
-		NormalizedPath: snap.Path,
-		Query:          snap.Query,
-		VaryHash:       snap.VaryHash,
-	}
+	key := snap.CacheKey
 	h.startCacheRefresh(r, app, rule, key)
 }
 
@@ -236,7 +226,7 @@ func (h *Handler) refreshCacheFromWarmTarget(ctx context.Context, r *http.Reques
 	rec := &statusRecorder{ResponseWriter: base, status: http.StatusOK}
 	cw := newCacheWriter(rec, rec, rule, ResponseCachePerEntryMaxBytes)
 	cw.servedDeploymentID = target.DeploymentID
-	capped := h.setupBufferedCapWriter(cw, app, app.Plan.MaxResponseBodyBytes())
+	capped := h.setupBufferedCapWriter(cw, r.Method, app, app.Plan.MaxResponseBodyBytes())
 	request := r.Clone(ctx)
 	request.Body = http.NoBody
 	identity := target.PlatformIdentity(app.AccountID, requestIDFrom(request))
@@ -245,12 +235,22 @@ func (h *Handler) refreshCacheFromWarmTarget(ctx context.Context, r *http.Reques
 	}
 	identity.ApplyGuestHeaders(request.Header)
 	request.Header.Set("x-faas-protocol", decideProtocol(app))
+	// Refresh runs outside net/http's handler goroutine. A transport abort
+	// must leave the stale entry intact instead of crashing the process.
+	defer func() {
+		if failure := recover(); failure != nil {
+			if err, ok := failure.(error); ok && errors.Is(err, http.ErrAbortHandler) {
+				return
+			}
+			panic(failure)
+		}
+	}()
 	if h.proxyByNode != nil {
 		h.proxyByNode(target).ServeHTTP(capped, request)
 	} else {
 		h.proxyFor(target.NodeID, app.Plan.MaxResponseBodyBytes()).ServeHTTP(capped, request)
 	}
-	if cw.shouldStore() {
+	if ctx.Err() == nil && cw.shouldStore() {
 		cw.finishCacheCapture(h.responseCache, key, time.Now())
 		if h.metrics != nil {
 			h.metrics.responseCacheBytes.Set(float64(h.responseCache.Bytes()))
@@ -314,21 +314,13 @@ func (h *Handler) tryServeStaleOnWakeError(w http.ResponseWriter, r *http.Reques
 	// ServeHTTP; the check is duplicated here so the security
 	// posture is the single chokepoint, not a stateful
 	// contract between two call sites.
-	if r.Header.Get("Authorization") != "" || hasSessionCookie(r) {
+	if hasCacheCredentials(r) {
 		return false, ""
 	}
 	if r.Method != "GET" && r.Method != "HEAD" {
 		return false, ""
 	}
-	key := CacheKey{
-		AppID:          snap.AppID,
-		DeploymentID:   snap.DeploymentID,
-		RuleID:         snap.Rule.ID,
-		Method:         snap.Method,
-		NormalizedPath: snap.Path,
-		Query:          snap.Query,
-		VaryHash:       snap.VaryHash,
-	}
+	key := snap.CacheKey
 	outcome, entry := h.responseCache.Get(key)
 	if outcome != "stale_if_error_eligible" {
 		return false, ""

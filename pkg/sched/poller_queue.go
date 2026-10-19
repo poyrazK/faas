@@ -325,7 +325,7 @@ func (q *queuePoller) AckWithDeployment(ctx context.Context, t sqlc.Trigger, ack
 	for _, acknowledgement := range acknowledgements {
 		ids = append(ids, acknowledgement.ItemIdentifier)
 	}
-	if q.source != "queue" || !t.QueueBindingID.Valid || t.QueueBindingScope == "" || !t.QueueBindingEnvironmentID.Valid {
+	if q.source != "queue" || !t.QueueBindingID.Valid {
 		return q.Ack(ctx, t, ids)
 	}
 	claimedIDs, attempts, generations := q.currentClaims(ids)

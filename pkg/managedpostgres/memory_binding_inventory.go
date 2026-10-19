@@ -13,7 +13,7 @@ func (s *MemoryStore) ListBindingsForApp(_ context.Context, accountID, appID, sc
 	items := make([]AppBindingInventory, 0)
 	for _, b := range s.bindings {
 		d, ok := s.databases[b.DatabaseID]
-		if !ok || d.AccountID != accountID || d.State == StateDeleted || b.AccountID != accountID ||
+		if !ok || d.AccountID != b.DatabaseNamespace() || d.State == StateDeleted || b.AccountID != accountID ||
 			b.AppID != appID || b.State == BindingStateDeleted || scope != "" && b.Scope != scope {
 			continue
 		}

@@ -26,9 +26,12 @@ func render(catalog productcap.Catalog) string {
 	var out []byte
 	out = append(out, "# Gregale API-hosting capability matrix\n\n"...)
 	out = append(out, "<!-- GENERATED — do not edit by hand; regenerate with `make capabilities-md`. -->\n\n"...)
-	out = append(out, "This matrix is generated from [`pkg/productcap/catalog.json`](../pkg/productcap/catalog.json). Maturity is the product promise: `internal` is operator-only, `preview` is usable with explicit qualification, `beta` is supported for production-shaped use, and `ga` is generally available.\n\n"...)
+	out = append(out, "This customer capability matrix is generated from [`pkg/productcap/catalog.json`](../pkg/productcap/catalog.json). Internal capabilities are omitted. Maturity is the product promise: `preview` is usable with explicit qualification, `beta` is supported for production-shaped use, and `ga` is generally available.\n\n"...)
 	out = append(out, "| Capability | Category | Maturity | Plans | Description | Acceptance evidence |\n|---|---|---|---|---|---|\n"...)
 	for _, capability := range catalog.Capabilities {
+		if capability.Maturity == productcap.MaturityInternal {
+			continue
+		}
 		plans := "—"
 		if len(capability.Plans) > 0 {
 			plans = joinPlans(capability.Plans)

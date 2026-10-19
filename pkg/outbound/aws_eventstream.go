@@ -2,6 +2,8 @@ package outbound
 
 import (
 	"encoding/binary"
+	"encoding/json"
+	"hash/crc32"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -148,4 +150,37 @@ func awsEventStreamHeaderValue(valueType byte, rest []byte) (value, after []byte
 		return nil, nil, false
 	}
 	return rest[2 : 2+valueLen], rest[2+valueLen:], true
+}
+
+// encodeAWSEventMessage frames headers and a payload as one event-stream
+// message with its prelude and message CRCs, for a response check that
+// rewrites or ends a Bedrock stream (ADR-1435). Messages are bounded by
+// OutboundAIResponseCheckMaxBytes, so the lengths fit.
+func encodeAWSEventMessage(headers, payload []byte) []byte {
+	total := awsEventStreamPreludeBytes + len(headers) + len(payload) + awsEventStreamTrailerBytes
+	out := make([]byte, 0, total)
+	out = binary.BigEndian.AppendUint32(out, uint32(total))        //nolint:gosec // bounded by OutboundAIResponseCheckMaxBytes.
+	out = binary.BigEndian.AppendUint32(out, uint32(len(headers))) //nolint:gosec // bounded by OutboundAIResponseCheckMaxBytes.
+	out = binary.BigEndian.AppendUint32(out, crc32.ChecksumIEEE(out))
+	out = append(append(out, headers...), payload...)
+	return binary.BigEndian.AppendUint32(out, crc32.ChecksumIEEE(out))
+}
+
+// awsEventStreamStringHeader encodes one string header.
+func awsEventStreamStringHeader(name, value string) []byte {
+	out := append([]byte{byte(len(name))}, name...)
+	out = append(out, 7)
+	out = binary.BigEndian.AppendUint16(out, uint16(len(value))) //nolint:gosec // gateway-chosen short values.
+	return append(out, value...)
+}
+
+// awsGatewayException ends a Bedrock stream with an exception message that
+// AWS SDKs raise, naming the gateway's error code (ADR-1435).
+func awsGatewayException(code, message string) []byte {
+	var headers []byte
+	headers = append(headers, awsEventStreamStringHeader(":message-type", "exception")...)
+	headers = append(headers, awsEventStreamStringHeader(":exception-type", "validationException")...)
+	headers = append(headers, awsEventStreamStringHeader(":content-type", "application/json")...)
+	payload, _ := json.Marshal(map[string]string{"message": message, "code": code})
+	return encodeAWSEventMessage(headers, payload)
 }

@@ -11,8 +11,10 @@ from ..models.platform_tenant_statement_finalized_webhook_payload_status import 
     PlatformTenantStatementFinalizedWebhookPayloadStatus,
     check_platform_tenant_statement_finalized_webhook_payload_status,
 )
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.api_consumer_statement_fee_response import APIConsumerStatementFeeResponse
     from ..models.platform_tenant_statement_line_response import PlatformTenantStatementLineResponse
 
 
@@ -39,6 +41,8 @@ class PlatformTenantStatementFinalizedWebhookPayload:
     lines: list[PlatformTenantStatementLineResponse]
     as_of: datetime.datetime
     finalized_at: datetime.datetime
+    fees: list[APIConsumerStatementFeeResponse] | Unset = UNSET
+    """The revision's monthly base fees and minimum top-ups (ADR-1322), included in amount_millicents."""
 
     def to_dict(self) -> dict[str, Any]:
         platform_tenant_id = str(self.platform_tenant_id)
@@ -74,6 +78,13 @@ class PlatformTenantStatementFinalizedWebhookPayload:
 
         finalized_at = self.finalized_at.isoformat()
 
+        fees: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.fees, Unset):
+            fees = []
+            for fees_item_data in self.fees:
+                fees_item = fees_item_data.to_dict()
+                fees.append(fees_item)
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -95,11 +106,14 @@ class PlatformTenantStatementFinalizedWebhookPayload:
                 "finalized_at": finalized_at,
             }
         )
+        if fees is not UNSET:
+            field_dict["fees"] = fees
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.api_consumer_statement_fee_response import APIConsumerStatementFeeResponse
         from ..models.platform_tenant_statement_line_response import PlatformTenantStatementLineResponse
 
         d = dict(src_dict)
@@ -138,6 +152,15 @@ class PlatformTenantStatementFinalizedWebhookPayload:
 
         finalized_at = datetime.datetime.fromisoformat(d.pop("finalized_at"))
 
+        _fees = d.pop("fees", UNSET)
+        fees: list[APIConsumerStatementFeeResponse] | Unset = UNSET
+        if _fees is not UNSET:
+            fees = []
+            for fees_item_data in _fees:
+                fees_item = APIConsumerStatementFeeResponse.from_dict(fees_item_data)
+
+                fees.append(fees_item)
+
         platform_tenant_statement_finalized_webhook_payload = cls(
             platform_tenant_id=platform_tenant_id,
             external_ref=external_ref,
@@ -154,6 +177,7 @@ class PlatformTenantStatementFinalizedWebhookPayload:
             lines=lines,
             as_of=as_of,
             finalized_at=finalized_at,
+            fees=fees,
         )
 
         return platform_tenant_statement_finalized_webhook_payload

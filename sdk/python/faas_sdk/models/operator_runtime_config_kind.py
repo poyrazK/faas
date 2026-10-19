@@ -1,12 +1,16 @@
 from typing import Literal
 
-OperatorRuntimeConfigKind = Literal["boolean", "duration", "enum", "integer", "secret_reference", "string"]
+OperatorRuntimeConfigKind = Literal[
+    "boolean", "duration", "enum", "integer", "platform_flag", "platform_flag_groups", "secret_reference", "string"
+]
 
 OPERATOR_RUNTIME_CONFIG_KIND_VALUES: set[OperatorRuntimeConfigKind] = {
     "boolean",
     "duration",
     "enum",
     "integer",
+    "platform_flag",
+    "platform_flag_groups",
     "secret_reference",
     "string",
 }

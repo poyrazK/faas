@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	probesql "github.com/onebox-faas/faas/pkg/managedpostgres/credentialdelivery/sqlc"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/credentialprobe"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 )
@@ -40,7 +40,7 @@ func NewPoolWorkload(ctx context.Context, config Config) (*PoolWorkload, error) 
 	if _, err := config.key(); err != nil || config.RuntimeURI == "" || config.ReaderURI == "" || config.MigrationURI != "" {
 		return nil, ErrProbe
 	}
-	if managedpostgres.VerifyCredentialSQL(ctx, config.RuntimeURI, managedpostgres.CredentialReadWrite, config.PostgresMajor) != nil || managedpostgres.VerifyCredentialSQL(ctx, config.ReaderURI, managedpostgres.CredentialReadOnly, config.PostgresMajor) != nil {
+	if credentialprobe.VerifyCredentialSQL(ctx, config.RuntimeURI, credentialprobe.ReadWrite, config.PostgresMajor) != nil || credentialprobe.VerifyCredentialSQL(ctx, config.ReaderURI, credentialprobe.ReadOnly, config.PostgresMajor) != nil {
 		return nil, ErrProbe
 	}
 	p := &PoolWorkload{config: config, gate: semaphore.NewWeighted(poolConcurrency), generation: 1}
@@ -65,7 +65,7 @@ func NewPoolWorkload(ctx context.Context, config Config) (*PoolWorkload, error) 
 }
 
 func openPool(ctx context.Context, uri string) (*pgxpool.Pool, error) {
-	conn, err := managedpostgres.CredentialSQLConfig(uri)
+	conn, err := credentialprobe.CredentialSQLConfig(uri)
 	if err != nil {
 		return nil, ErrProbe
 	}

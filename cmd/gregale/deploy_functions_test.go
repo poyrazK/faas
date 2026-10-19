@@ -3,10 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -27,6 +30,18 @@ type fakeFunctionSetClient struct {
 	updatedPaths  []string
 	idleUpdates   map[string]int
 	nextID        int
+	// ADR-1342 settings and routes.
+	updates  map[string][]api.UpdateAppRequest
+	env      map[string]map[string]string
+	secrets  map[string]map[string]string
+	domains  []api.CustomDomainResponse
+	rules    map[string][]api.EdgeRuleResponse
+	ruleLog  []string
+	eventLog []string
+	// ADR-1342 queue bindings and event triggers.
+	bindings map[string][]api.QueueBindingResponse
+	batches  []api.CreateTriggerBatchRequest
+	batchErr string
 }
 
 func newFakeFunctionSetClient() *fakeFunctionSetClient {
@@ -37,7 +52,45 @@ func newFakeFunctionSetClient() *fakeFunctionSetClient {
 		notifications: map[string][]api.ObjectNotificationRule{},
 		endpoints:     map[string][]api.InboundWebhookEndpointResponse{},
 		idleUpdates:   map[string]int{},
+		updates:       map[string][]api.UpdateAppRequest{},
+		env:           map[string]map[string]string{},
+		secrets:       map[string]map[string]string{},
+		rules:         map[string][]api.EdgeRuleResponse{},
+		bindings:      map[string][]api.QueueBindingResponse{},
 	}
+}
+
+func (f *fakeFunctionSetClient) ListQueueBindings(_ context.Context, slug string) ([]api.QueueBindingResponse, error) {
+	return f.bindings[slug], nil
+}
+func (f *fakeFunctionSetClient) CreateQueueBinding(_ context.Context, slug string, req api.CreateQueueBindingRequest) (api.QueueBindingResponse, error) {
+	row := api.QueueBindingResponse{ID: f.id(), Name: req.Name, QueueName: req.QueueName, Mode: req.Mode, WorkloadClass: req.WorkloadClass, MaxConcurrency: req.MaxConcurrency, Enabled: *req.Enabled}
+	f.bindings[slug] = append(f.bindings[slug], row)
+	f.eventLog = append(f.eventLog, "bind:"+slug+":"+req.Name)
+	return row, nil
+}
+func (f *fakeFunctionSetClient) UpdateQueueBinding(_ context.Context, slug, id string, req api.UpdateQueueBindingRequest) (api.QueueBindingResponse, error) {
+	for i, row := range f.bindings[slug] {
+		if row.ID == id {
+			row.QueueName, row.MaxConcurrency = *req.QueueName, *req.MaxConcurrency
+			f.bindings[slug][i] = row
+			f.eventLog = append(f.eventLog, "rebind:"+slug+":"+row.Name)
+			return row, nil
+		}
+	}
+	return api.QueueBindingResponse{}, errors.New("no binding")
+}
+func (f *fakeFunctionSetClient) DeleteQueueBinding(_ context.Context, slug, id string) error {
+	f.bindings[slug] = slices.DeleteFunc(f.bindings[slug], func(row api.QueueBindingResponse) bool { return row.ID == id })
+	f.eventLog = append(f.eventLog, "unbind:"+slug)
+	return nil
+}
+func (f *fakeFunctionSetClient) PostTriggersBatchCreate(_ context.Context, req api.CreateTriggerBatchRequest) (map[string]any, error) {
+	f.batches = append(f.batches, req)
+	if f.batchErr != "" {
+		return map[string]any{"created": []any{}, "errors": []any{map[string]any{"message": f.batchErr}}}, nil
+	}
+	return map[string]any{"created": []any{}}, nil
 }
 
 func (f *fakeFunctionSetClient) id() string {
@@ -73,7 +126,7 @@ func (f *fakeFunctionSetClient) DeleteCron(_ context.Context, id string) error {
 func (f *fakeFunctionSetClient) GetApp(_ context.Context, slug string) (api.AppResponse, error) {
 	app, ok := f.apps[slug]
 	if !ok {
-		return app, errors.New("no app " + slug)
+		return app, &api.APIError{Problem: api.Problem{Status: 404, Detail: "no app " + slug}}
 	}
 	return app, nil
 }
@@ -81,7 +134,68 @@ func (f *fakeFunctionSetClient) UpdateApp(_ context.Context, slug string, req ap
 	if req.IdleTimeoutS != nil {
 		f.idleUpdates[slug] = *req.IdleTimeoutS
 	}
+	f.updates[slug] = append(f.updates[slug], req)
+	f.eventLog = append(f.eventLog, "update:"+slug)
 	return f.apps[slug], nil
+}
+func (f *fakeFunctionSetClient) PutAppsSlugEnvKey(_ context.Context, slug, key, value string) error {
+	if f.env[slug] == nil {
+		f.env[slug] = map[string]string{}
+	}
+	f.env[slug][key] = value
+	f.eventLog = append(f.eventLog, "env:"+slug+":"+key)
+	return nil
+}
+func (f *fakeFunctionSetClient) GetAppsSlugEnv(_ context.Context, slug string) (api.AppEnvListResponse, error) {
+	var out api.AppEnvListResponse
+	for _, key := range slices.Sorted(maps.Keys(f.env[slug])) {
+		out.Env = append(out.Env, api.AppEnvResponse{Key: key})
+	}
+	return out, nil
+}
+func (f *fakeFunctionSetClient) DeleteAppsSlugEnvKey(_ context.Context, slug, key string) error {
+	delete(f.env[slug], key)
+	f.eventLog = append(f.eventLog, "unset:"+slug+":"+key)
+	return nil
+}
+func (f *fakeFunctionSetClient) ListSecrets(_ context.Context, slug string) (api.AppSecretListResponse, error) {
+	var out api.AppSecretListResponse
+	for key := range f.secrets[slug] {
+		out.Secrets = append(out.Secrets, api.AppSecretResponse{Key: key})
+	}
+	return out, nil
+}
+func (f *fakeFunctionSetClient) SetSecret(_ context.Context, slug, key, value string) error {
+	if f.secrets[slug] == nil {
+		f.secrets[slug] = map[string]string{}
+	}
+	f.secrets[slug][key] = value
+	f.eventLog = append(f.eventLog, "secret:"+slug+":"+key)
+	return nil
+}
+func (f *fakeFunctionSetClient) ListDomains(context.Context) ([]api.CustomDomainResponse, error) {
+	return f.domains, nil
+}
+func (f *fakeFunctionSetClient) ListEdgeRulesForApp(_ context.Context, slug string) ([]api.EdgeRuleResponse, error) {
+	return f.rules[slug], nil
+}
+func (f *fakeFunctionSetClient) CreateEdgeRule(_ context.Context, slug string, req api.CreateEdgeRuleRequest) (api.EdgeRuleResponse, error) {
+	rule := api.EdgeRuleResponse{ID: f.id(), MatchHost: req.MatchHost, MatchPath: req.MatchPath, Kind: req.Kind, Action: req.Action, Name: req.Name, Priority: *req.Priority, Enabled: true}
+	f.rules[slug] = append(f.rules[slug], rule)
+	f.ruleLog = append(f.ruleLog, "create:"+slug+":"+req.MatchHost+req.MatchPath)
+	return rule, nil
+}
+func (f *fakeFunctionSetClient) DeleteEdgeRule(_ context.Context, id string) error {
+	for slug, rules := range f.rules {
+		for i, rule := range rules {
+			if rule.ID == id {
+				f.rules[slug] = append(rules[:i:i], rules[i+1:]...)
+				f.ruleLog = append(f.ruleLog, "delete:"+slug+":"+rule.Name)
+				return nil
+			}
+		}
+	}
+	return errors.New("no rule " + id)
 }
 func (f *fakeFunctionSetClient) ListApps(context.Context) ([]api.AppResponse, error) {
 	return f.listApps, nil
@@ -422,5 +536,268 @@ func TestReconcileFunctionWebhooks(t *testing.T) {
 	changed := []gregalemanifest.FunctionWebhook{{Name: "legacy", Provider: "stripe", SigningSecretEnv: "S"}}
 	if err := reconcileFunctionWebhooks(context.Background(), client, &out, "shop-pay", changed, func(string) string { return "" }); err == nil || !strings.Contains(err.Error(), "cannot change") {
 		t.Fatalf("provider change error = %v", err)
+	}
+}
+
+// ADR-1342: a function's build-shaping settings, env and secrets reach its
+// app before its deployment is built; a new function's app is reserved
+// first. min_instances follows the deploy.
+func TestFunctionSetAppliesSettingsBeforeDeploy(t *testing.T) {
+	manifest := `functions:
+  - name: users
+    root: f
+    runtime: node24
+    ram_mb: 512
+    request_timeout_s: 120
+    concurrency: 8
+    min_instances: 1
+    env:
+      LOG_LEVEL: debug
+    secrets_from_env: [DATABASE_URL, API_TOKEN]
+`
+	dir := writeFunctionProject(t, manifest, "f")
+	m, _, _ := functionSetManifest(dir)
+	client := newFakeFunctionSetClient()
+	client.secrets["shop-users"] = map[string]string{"API_TOKEN": "kept"}
+	var out bytes.Buffer
+	d := functionSetDeploy{
+		cwd: dir, projectDir: dir, projectSlug: "shop", manifest: m, out: &out,
+		getenv: func(k string) string { return map[string]string{"DATABASE_URL": "postgres://db"}[k] },
+		deployOne: func(args []string) int {
+			if slices.Contains(args, "--create-only") {
+				client.apps["shop-users"] = api.AppResponse{ID: testFunctionAppID, Slug: "shop-users", Type: "function", RAMMB: 256}
+				client.eventLog = append(client.eventLog, "create:"+strings.Join(args, " "))
+				return 0
+			}
+			client.eventLog = append(client.eventLog, "deploy")
+			return 0
+		},
+	}
+	if code := d.run(context.Background(), client); code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out.String())
+	}
+	want := []string{
+		"create:--create-only --name shop-users --function --runtime node24 --handler handler.handler",
+		"update:shop-users", "env:shop-users:LOG_LEVEL", "secret:shop-users:DATABASE_URL",
+		"deploy", "update:shop-users",
+	}
+	if !reflect.DeepEqual(client.eventLog, want) {
+		t.Fatalf("events = %q\nwant     %q", client.eventLog, want)
+	}
+	pre, post := client.updates["shop-users"][0], client.updates["shop-users"][1]
+	if pre.RAMMB == nil || *pre.RAMMB != 512 || pre.RequestTimeoutS == nil || *pre.RequestTimeoutS != 120 ||
+		pre.FunctionConcurrency == nil || *pre.FunctionConcurrency != 8 || pre.MinInstances != nil {
+		t.Fatalf("pre-deploy update = %+v", pre)
+	}
+	if post.MinInstances == nil || *post.MinInstances != 1 || post.RAMMB != nil {
+		t.Fatalf("post-deploy update = %+v", post)
+	}
+	if client.secrets["shop-users"]["API_TOKEN"] != "kept" || strings.Contains(out.String(), "postgres://db") {
+		t.Fatalf("secrets = %v; output:\n%s", client.secrets, out.String())
+	}
+
+	// A secret neither exported nor already set stops the function before
+	// it deploys.
+	client.eventLog = nil
+	d.getenv = func(string) string { return "" }
+	client.secrets["shop-users"] = map[string]string{}
+	if code := d.run(context.Background(), client); code != 1 {
+		t.Fatalf("missing secret exit = %d", code)
+	}
+	if slices.Contains(client.eventLog, "deploy") || !strings.Contains(out.String(), "export DATABASE_URL") {
+		t.Fatalf("deployed without its secret: %q\n%s", client.eventLog, out.String())
+	}
+}
+
+// ADR-1342: a function's queue bindings push to it by default and match the
+// manifest; its event triggers reach the trigger batch endpoint scoped to
+// its app. An omitted queue_bindings leaves bindings alone.
+func TestFunctionSetQueueBindingsAndEventTriggers(t *testing.T) {
+	manifest := `functions:
+  - name: worker
+    root: f
+    runtime: node24
+    queue_bindings:
+      - name: jobs
+        queue_name: jobs
+        max_concurrency: 4
+    event_triggers:
+      - source: billing.*
+        type: invoice.paid
+`
+	dir := writeFunctionProject(t, manifest, "f")
+	m, _, err := functionSetManifest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := newFakeFunctionSetClient()
+	client.apps["shop-worker"] = api.AppResponse{ID: testFunctionAppID, Slug: "shop-worker", Type: "function"}
+	client.bindings["shop-worker"] = []api.QueueBindingResponse{{ID: "old", Name: "stale", QueueName: "stale", Mode: "push", WorkloadClass: "http", Enabled: true, MaxConcurrency: 1}}
+	var out bytes.Buffer
+	d := functionSetDeploy{cwd: dir, projectDir: dir, projectSlug: "shop", manifest: m, out: &out,
+		deployOne: func([]string) int { return 0 }}
+	if code := d.run(context.Background(), client); code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out.String())
+	}
+	got := client.bindings["shop-worker"]
+	if len(got) != 1 || got[0].Name != "jobs" || got[0].Mode != "push" || got[0].WorkloadClass != "http" || got[0].MaxConcurrency != 4 {
+		t.Fatalf("bindings = %+v, want only push/http jobs with max_concurrency 4", got)
+	}
+	if len(client.batches) != 1 || client.batches[0].AppID != testFunctionAppID {
+		t.Fatalf("batches = %+v", client.batches)
+	}
+	sent, err := gregalemanifest.ParseBytes([]byte(client.batches[0].ManifestYAML))
+	if err != nil {
+		t.Fatalf("batch manifest %q: %v", client.batches[0].ManifestYAML, err)
+	}
+	if len(sent.EventTriggers) != 1 || sent.EventTriggers[0].App != "shop-worker" || sent.EventTriggers[0].Source != "billing.*" || sent.EventTriggers[0].Type != "invoice.paid" {
+		t.Fatalf("batch event triggers = %+v", sent.EventTriggers)
+	}
+
+	// --no-triggers skips both.
+	client.batches = nil
+	client.bindings["shop-worker"] = nil
+	d.noTriggers = true
+	if code := d.run(context.Background(), client); code != 0 {
+		t.Fatalf("no-triggers exit = %d\n%s", code, out.String())
+	}
+	if len(client.batches) != 0 || len(client.bindings["shop-worker"]) != 0 {
+		t.Fatalf("--no-triggers applied bindings %+v or batches %+v", client.bindings, client.batches)
+	}
+
+	// A rejected event trigger fails the function's configuration.
+	d.noTriggers = false
+	client.batchErr = "event_triggers: event work policy must exist on the target app"
+	if code := d.run(context.Background(), client); code != 1 || !strings.Contains(out.String(), "work policy must exist") {
+		t.Fatalf("batch error exit = %d\n%s", code, out.String())
+	}
+
+	// Without queue_bindings the app's bindings are left alone; an empty
+	// list removes them.
+	for _, tc := range []struct {
+		name, section string
+		want          int
+	}{
+		{"omitted", "", 1},
+		{"empty", "    queue_bindings: []\n", 0},
+	} {
+		dir := writeFunctionProject(t, "functions:\n  - name: worker\n    root: f\n    runtime: node24\n"+tc.section, "f")
+		m, _, _ := functionSetManifest(dir)
+		client.batchErr = ""
+		client.bindings["shop-worker"] = []api.QueueBindingResponse{{ID: "kept", Name: "manual", QueueName: "manual", Mode: "push", WorkloadClass: "http", Enabled: true, MaxConcurrency: 1}}
+		d := functionSetDeploy{cwd: dir, projectDir: dir, projectSlug: "shop", manifest: m, out: &out,
+			deployOne: func([]string) int { return 0 }}
+		if code := d.run(context.Background(), client); code != 0 {
+			t.Fatalf("%s: exit = %d\n%s", tc.name, code, out.String())
+		}
+		if len(client.bindings["shop-worker"]) != tc.want {
+			t.Fatalf("%s: bindings = %+v, want %d", tc.name, client.bindings["shop-worker"], tc.want)
+		}
+	}
+}
+
+// prune_env makes env: a function's whole env; without it, keys the
+// manifest drops stay.
+func TestFunctionSetPruneEnv(t *testing.T) {
+	for _, tc := range []struct {
+		name, prune string
+		want        []string
+	}{
+		{"keeps dropped keys", "", []string{"HAND_SET", "LOG_LEVEL", "OLD"}},
+		{"prunes dropped keys", "    prune_env: true\n", []string{"LOG_LEVEL"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manifest := "functions:\n  - name: users\n    root: f\n    runtime: node24\n    env:\n      LOG_LEVEL: debug\n" + tc.prune
+			dir := writeFunctionProject(t, manifest, "f")
+			m, _, _ := functionSetManifest(dir)
+			client := newFakeFunctionSetClient()
+			client.apps["shop-users"] = api.AppResponse{ID: testFunctionAppID, Slug: "shop-users", Type: "function"}
+			client.env["shop-users"] = map[string]string{"OLD": "1", "HAND_SET": "2", "LOG_LEVEL": "info"}
+			var out bytes.Buffer
+			d := functionSetDeploy{cwd: dir, projectDir: dir, projectSlug: "shop", manifest: m, out: &out,
+				deployOne: func([]string) int { return 0 }}
+			if code := d.run(context.Background(), client); code != 0 {
+				t.Fatalf("exit = %d\n%s", code, out.String())
+			}
+			if got := slices.Sorted(maps.Keys(client.env["shop-users"])); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("env keys = %v, want %v\n%s", got, tc.want, out.String())
+			}
+			if client.env["shop-users"]["LOG_LEVEL"] != "debug" {
+				t.Fatalf("LOG_LEVEL = %q", client.env["shop-users"]["LOG_LEVEL"])
+			}
+			if tc.prune != "" && !strings.Contains(out.String(), "removed env OLD from shop-users") {
+				t.Fatalf("pruning not reported:\n%s", out.String())
+			}
+		})
+	}
+}
+
+// ADR-1342: routes become kind=route edge rules on the entry function's
+// hosts, most specific first; managed rules the manifest drops are removed
+// and other rules are kept.
+func TestFunctionSetReconcilesRoutes(t *testing.T) {
+	manifest := `functions:
+  - name: web
+    root: fw
+    runtime: node24
+    entry: true
+  - name: users
+    root: fu
+    runtime: node24
+    routes: ["/users/*"]
+  - name: admin
+    root: fa
+    runtime: node24
+    routes: ["/users/admin/*"]
+`
+	dir := writeFunctionProject(t, manifest, "fw", "fu", "fa")
+	m, _, _ := functionSetManifest(dir)
+	client := newFakeFunctionSetClient()
+	for _, slug := range []string{"shop-web", "shop-users", "shop-admin"} {
+		client.apps[slug] = api.AppResponse{ID: "id-" + slug, Slug: slug, Type: "function", URL: "https://" + slug + ".gregale.app"}
+	}
+	client.domains = []api.CustomDomainResponse{
+		{Domain: "Shop.Example.com", AppID: "id-shop-web", Verified: true},
+		{Domain: "pending.example.com", AppID: "id-shop-web"},
+		{Domain: "other.example.com", AppID: "id-shop-users", Verified: true},
+	}
+	client.rules["shop-web"] = []api.EdgeRuleResponse{
+		{ID: "mine", Name: "by hand", Kind: "route", MatchHost: "shop-web.gregale.app", MatchPath: "/x/*"},
+		{ID: "stale", Name: "functions:old", Kind: "route", MatchHost: "shop-web.gregale.app", MatchPath: "/old/*", Priority: 500},
+	}
+	client.rules["shop-users"] = []api.EdgeRuleResponse{{ID: "moved", Name: "functions:users", Kind: "route", MatchHost: "x", MatchPath: "/users/*"}}
+	var out bytes.Buffer
+	d := functionSetDeploy{cwd: dir, projectDir: dir, projectSlug: "shop", manifest: m, out: &out, deployOne: func([]string) int { return 0 }}
+	if code := d.run(context.Background(), client); code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out.String())
+	}
+	type got struct {
+		host, path, target string
+		priority           int
+	}
+	var rules []got
+	for _, rule := range client.rules["shop-web"] {
+		var action api.EdgeRuleRouteAction
+		_ = json.Unmarshal(rule.Action, &action)
+		rules = append(rules, got{rule.MatchHost, rule.MatchPath, action.TargetAppSlug, rule.Priority})
+	}
+	want := []got{
+		{"shop-web.gregale.app", "/x/*", "", 0},
+		{"shop-web.gregale.app", "/users/admin/*", "shop-admin", 500},
+		{"shop.example.com", "/users/admin/*", "shop-admin", 500},
+		{"shop-web.gregale.app", "/users/*", "shop-users", 501},
+		{"shop.example.com", "/users/*", "shop-users", 501},
+	}
+	if !reflect.DeepEqual(rules, want) {
+		t.Fatalf("entry rules = %+v\nwant %+v", rules, want)
+	}
+	if len(client.rules["shop-users"]) != 0 {
+		t.Fatalf("managed rule left on a non-entry app: %+v", client.rules["shop-users"])
+	}
+
+	// A second deploy with nothing changed writes no rules.
+	client.ruleLog = nil
+	if code := d.run(context.Background(), client); code != 0 || len(client.ruleLog) != 0 {
+		t.Fatalf("idempotent run: exit %d, rule writes %v", code, client.ruleLog)
 	}
 }

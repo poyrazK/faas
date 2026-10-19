@@ -447,11 +447,29 @@ func TestResourceSubscriptionCrossSessionChangesCoalesce(t *testing.T) {
 }
 
 func TestResourceSubscriptionRemoteGrantRevocationAndLeaseExpiry(t *testing.T) {
-	for _, why := range []string{"revocation", "access_expiry"} {
-		t.Run(why, func(t *testing.T) {
+	for _, test := range []struct{ why, uri string }{
+		{"revocation", "gregale://default/apps/alpha/health"},
+		{"access_expiry", "gregale://default/apps/alpha/health"},
+		{"revocation", regressionResourceURI},
+		{"access_expiry", regressionResourceURI},
+	} {
+		t.Run(test.why+"/"+test.uri, func(t *testing.T) {
 			f := newRemoteFixture(t, false)
+			f.mu.Lock()
+			f.apiHook = func(w http.ResponseWriter, req *http.Request, account string) bool {
+				if req.URL.Path == "/v1/apps/alpha/debug/regressions" {
+					_ = json.NewEncoder(w).Encode(regressionsFixture())
+					return true
+				}
+				if req.URL.Path == "/v1/deployments/"+discoveryDeploymentID || req.URL.Path == "/v1/deployments/"+comparisonTargetID {
+					_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: strings.TrimPrefix(req.URL.Path, "/v1/deployments/"), AppID: account + "-app", Scope: "staging"})
+					return true
+				}
+				return false
+			}
+			f.mu.Unlock()
 			native := api.NewClient(f.opts.APIBase, "fp_test_alice_remote_key")
-			s, m, err := newManagementServer(native, Options{APIBase: f.opts.APIBase, accountID: "alice", grantID: "subscription-fixture", AllowedApps: map[string]string{"alpha": "alice-app"}})
+			s, m, err := newManagementServer(native, Options{APIBase: f.opts.APIBase, accountID: "alice", grantID: "subscription-fixture", AllowedApps: map[string]string{"alpha": "alice-app"}, Environments: &EnvironmentConsent{RequestReadApps: map[string]string{"alpha": "alice-app"}}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -463,7 +481,7 @@ func TestResourceSubscriptionRemoteGrantRevocationAndLeaseExpiry(t *testing.T) {
 			}
 			token := "gmcp_at_subscription_fixture"
 			expiry := time.Now().Add(time.Minute)
-			if why == "access_expiry" {
+			if test.why == "access_expiry" {
 				expiry = time.Now().Add(500 * time.Millisecond)
 			}
 			g := &oauthGrant{id: "subscription-fixture", accountID: "alice", server: s, management: m, client: native, accessExpires: expiry, expires: time.Now().Add(time.Hour), accessHash: tokenHash(token)}
@@ -488,7 +506,7 @@ func TestResourceSubscriptionRemoteGrantRevocationAndLeaseExpiry(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = cs.Close() })
-			if err := cs.Subscribe(t.Context(), &mcp.SubscribeParams{URI: "gregale://default/apps/alpha/health"}); err != nil {
+			if err := cs.Subscribe(t.Context(), &mcp.SubscribeParams{URI: test.uri}); err != nil {
 				t.Fatal(err)
 			}
 			select {
@@ -501,14 +519,14 @@ func TestResourceSubscriptionRemoteGrantRevocationAndLeaseExpiry(t *testing.T) {
 			case <-time.After(time.Second):
 				t.Fatal("authenticated listen was not acknowledged")
 			}
-			if why == "revocation" {
+			if test.why == "revocation" {
 				r.mu.Lock()
 				r.revokeLocked(g)
 				r.mu.Unlock()
 			}
 			h := &subscriptionHarness{manager: m, ctx: t.Context()}
 			awaitResourceGroups(t, h, 0)
-			if why == "revocation" {
+			if test.why == "revocation" {
 				m.subscriptions.mu.Lock()
 				stopped := m.subscriptions.stopped
 				m.subscriptions.mu.Unlock()

@@ -39,6 +39,12 @@ func (m *MemStore) CreateEnvironmentQualificationRestore(ctx context.Context, cl
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return EnvironmentQualificationRestoreAdmission{}, err
+	}
+	if err := m.checkNodeAdmissionLocked(ctx, placement.NodeID); err != nil {
+		return EnvironmentQualificationRestoreAdmission{}, err
+	}
 	current, capture, err := m.qualificationRestoreCurrentLocked(claimed)
 	if err != nil {
 		return zero, err

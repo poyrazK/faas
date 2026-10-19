@@ -7,27 +7,6 @@ import (
 	"time"
 )
 
-// RealtimeLimits describes the managed realtime endpoint allowance for a plan.
-// It is kept separate from Limits so adding the opt-in realtime surface does
-// not change the long-lived Limits struct consumed by every daemon.
-type RealtimeLimits struct {
-	Plan                Plan
-	EndpointsPerApp     int
-	EndpointsPerAccount int
-}
-
-var realtimeLimits = map[Plan]RealtimeLimits{
-	PlanFree:  {Plan: PlanFree},
-	PlanHobby: {Plan: PlanHobby, EndpointsPerApp: 2, EndpointsPerAccount: 10},
-	PlanPro:   {Plan: PlanPro, EndpointsPerApp: 10, EndpointsPerAccount: 50},
-	PlanScale: {Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250},
-}
-
-func RealtimeLimitsFor(p Plan) (RealtimeLimits, bool) {
-	l, ok := realtimeLimits[p]
-	return l, ok
-}
-
 const (
 	RealtimeCallbackAuthTokenMaxBytes = 256
 	RealtimeAuthTokenMaxBytes         = 256
@@ -331,6 +310,26 @@ type ManagedRealtimeConnectionListResponse struct {
 	Partial          bool                                `json:"partial"`
 	NodesQueried     int                                 `json:"nodes_queried"`
 	NodesUnavailable int                                 `json:"nodes_unavailable"`
+}
+
+// ManagedRealtimeChannelOccupancy is how many subscriptions a channel has
+// across the fleet (ADR-1324). Subscribers counts every open subscription:
+// WebSocket, read-only ticket and SSE. PresenceMembers counts distinct
+// presence members, which may group several connections of one principal.
+type ManagedRealtimeChannelOccupancy struct {
+	Channel         string `json:"channel"`
+	Subscribers     int    `json:"subscribers"`
+	PresenceMembers int    `json:"presence_members"`
+}
+
+// ManagedRealtimeOccupancyResponse answers an occupancy read. Partial is true
+// when a realtime node could not be asked; counts then cover the nodes that
+// answered.
+type ManagedRealtimeOccupancyResponse struct {
+	Channels         []ManagedRealtimeChannelOccupancy `json:"channels"`
+	Partial          bool                              `json:"partial"`
+	NodesQueried     int                               `json:"nodes_queried"`
+	NodesUnavailable int                               `json:"nodes_unavailable"`
 }
 
 // ManagedRealtimeDrainRequest selects a bounded set of live connections to

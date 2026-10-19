@@ -39,6 +39,8 @@ package mail
 import (
 	"fmt"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // RecoveryCodeBurnedBody renders the "you used one of your MFA
@@ -66,6 +68,11 @@ import (
 // `burnedAt` is the moment the consume committed; rendered as UTC
 // so the customer doesn't have to do timezone arithmetic.
 func RecoveryCodeBurnedBody(email string, remaining int, burnedAt time.Time) (subject, body string) {
+	return RecoveryCodeBurnedBodyV1(email, remaining, burnedAt)
+}
+
+// RecoveryCodeBurnedBodyV1 is frozen for retries of saved security events.
+func RecoveryCodeBurnedBodyV1(email string, remaining int, burnedAt time.Time) (subject, body string) {
 	email = safeRecipient(email)
 	atStr := burnedAt.UTC().Format("2006-01-02 15:04 UTC")
 	subject = "Recovery code used on your Gregale account"
@@ -160,5 +167,62 @@ password and contact support@gregale.dev so we can investigate.
 
 — Gregale
 `, email, atStr, confirmAfter, confirmURL)
+	return
+}
+
+// MFADisableEmailRequestedBodyV1 is frozen for durable requests. The delivery
+// deadline is independent of the one-day confirmation window after cooldown.
+func MFADisableEmailRequestedBodyV1(email, confirmURL string, requestedAt time.Time) (subject, body string) {
+	email = safeRecipient(email)
+	requested := requestedAt.UTC().Format("2006-01-02 15:04 UTC")
+	ready := requestedAt.UTC().Add(api.MFADisableEmailCooldown).Format("2006-01-02 15:04 UTC")
+	expiry := requestedAt.UTC().Add(api.MFADisableEmailCooldown + api.MFADisableEmailConfirmWindow).Format("2006-01-02 15:04 UTC")
+	subject = "Confirm MFA disable on your Gregale account (24h wait)"
+	body = fmt.Sprintf(`Hi,
+
+Someone — hopefully you — requested to disable MFA on your Gregale
+account (%s) at %s.
+
+This is the only path that works when you've lost BOTH your
+authenticator device AND all your recovery codes. The 24-hour wait is
+deliberate friction: an attacker who controls your account still has
+to hold it for a day before MFA turns off.
+
+You can confirm the disable after %s by opening this link from a
+trusted device:
+
+    %s
+
+If you did not request this, do nothing — the request expires at
+%s and no action is taken. You should also change your
+password and contact support@gregale.dev so we can investigate.
+
+— Gregale
+`, email, requested, ready, confirmURL, expiry)
+	return
+}
+
+// MFADisabledBodyV1 is frozen for retries of committed MFA removal events.
+func MFADisabledBodyV1(email, method string, disabledAt time.Time) (subject, body string) {
+	label := "an email confirmation after the waiting period"
+	switch method {
+	case "password":
+		label = "your password from an MFA-verified session"
+	case "recovery_code":
+		label = "a recovery code"
+	}
+	subject = "MFA disabled on your Gregale account"
+	body = fmt.Sprintf(`Hi,
+
+MFA was disabled for your Gregale account (%s) at %s using %s.
+The authenticator and its recovery codes were removed.
+
+If this was you, sign in and enroll MFA again to protect your account.
+
+If this was not you, change your password immediately, revoke other
+sessions and contact support@gregale.dev.
+
+— Gregale
+`, safeRecipient(email), disabledAt.UTC().Format("2006-01-02 15:04:05 UTC"), label)
 	return
 }

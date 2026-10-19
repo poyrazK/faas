@@ -269,3 +269,32 @@ func TestKeyFromSecret_OtpauthURLShape(t *testing.T) {
 		t.Errorf("decoded secret length = %d, want 20", len(decoded))
 	}
 }
+
+// The otpauth URL (and therefore the QR code) must carry the same
+// secret VerifyCode checks against. An authenticator app that scans
+// the QR generates codes from key.Secret(); if that differs from the
+// stored secret, every code the app shows is rejected.
+func TestKeyFromSecret_URLCarriesStoredSecret(t *testing.T) {
+	secret, err := GenerateSecret()
+	if err != nil {
+		t.Fatalf("GenerateSecret: %v", err)
+	}
+	key, err := KeyFromSecret(secret, "alice@example.com")
+	if err != nil {
+		t.Fatalf("KeyFromSecret: %v", err)
+	}
+	if got := strings.ToUpper(key.Secret()); got != secret {
+		t.Fatalf("otpauth secret = %q, want stored secret %q", got, secret)
+	}
+	code, err := totp.GenerateCodeCustom(key.Secret(), time.Now().UTC(), totp.ValidateOpts{
+		Period:    30,
+		Digits:    otp.DigitsSix,
+		Algorithm: otp.AlgorithmSHA1,
+	})
+	if err != nil {
+		t.Fatalf("totp.GenerateCodeCustom: %v", err)
+	}
+	if !VerifyCode(secret, code) {
+		t.Fatal("VerifyCode rejected a code generated from the QR's secret")
+	}
+}

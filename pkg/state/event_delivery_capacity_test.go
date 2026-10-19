@@ -343,8 +343,8 @@ func TestEventDeliveryReplaySharesConsumerCapacity(t *testing.T) {
 func TestEventRoutingFairClaimsAcrossAccountsAndConsumers(t *testing.T) {
 	forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, _ *pgxpool.Pool) {
 		ctx := context.Background()
-		a := newCapacityFixture(t, store.(routingAdmissionTestStore), false)
-		b := newCapacityFixture(t, store.(routingAdmissionTestStore), false)
+		a := newCapacityFixture(t, store, false)
+		b := newCapacityFixture(t, store, false)
 		// Queue three older receipts for one account and one for a second account.
 		for _, f := range []capacityFixture{a, a, a, b} {
 			envelope, err := (events.Envelope{ID: uuid.NewString(), Source: "orders", Type: "order.created", Data: json.RawMessage(`{}`)}).Normalize(f.account, time.Now().UTC())
@@ -388,7 +388,7 @@ func TestEventRoutingFairClaimsAcrossAccountsAndConsumers(t *testing.T) {
 	})
 	forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, _ *pgxpool.Pool) {
 		ctx := context.Background()
-		f := newCapacityFixture(t, store.(routingAdmissionTestStore), true)
+		f := newCapacityFixture(t, store, true)
 		if _, _, err := store.UpsertEventSubscription(ctx, f.account, f.app, "orders", "*", nil); err != nil {
 			t.Fatal(err)
 		}
@@ -507,7 +507,7 @@ func TestEventDeliveryKeepLatestAndKeyedReplayAtCapacity(t *testing.T) {
 func TestEventWholeRoutingFairConsumerBehindBacklog(t *testing.T) {
 	forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, _ *pgxpool.Pool) {
 		ctx := context.Background()
-		f := newCapacityFixture(t, store.(routingAdmissionTestStore), false)
+		f := newCapacityFixture(t, store, false)
 		f.publish(t, "already-served")
 		appendEvent := func(kind string) {
 			t.Helper()
@@ -541,9 +541,8 @@ func TestEventWholeRoutingFairConsumerBehindBacklog(t *testing.T) {
 }
 
 func TestEventDeliveryApplicationAndAccountCapacityAndPlanChange(t *testing.T) {
-	forRecipientClaimStores(t, func(t *testing.T, base recipientClaimTestStore, _ *pgxpool.Pool) {
+	forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, _ *pgxpool.Pool) {
 		ctx := context.Background()
-		store := base.(routingAdmissionTestStore)
 		f := newCapacityFixture(t, store, false)
 		limits := api.MustLimitsFor(api.PlanFree).EventDeliveries
 		consumer := func(app, source string) capacityFixture {

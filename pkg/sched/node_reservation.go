@@ -38,6 +38,7 @@ func (e *Engine) nodeCapacityProblem(err error) error {
 	}
 	e.log.Warn("sched: admit refused by the durable per-node reservation (ADR-193)",
 		"err", err)
-	return api.ErrCapacity(
-		"RAM headroom: the selected compute node is at its per-node admission ceiling")
+	return explainAdmission(api.ErrCapacity(
+		"RAM headroom: the selected compute node is at its per-node admission ceiling"),
+		api.WorkerAdmissionBlocker{Code: "node_ram", Resource: "ram_mb"})
 }

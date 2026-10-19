@@ -20,6 +20,7 @@ from ..models.app_manifest_execution_mode_type_3_type_1 import (
     check_app_manifest_execution_mode_type_3_type_1,
 )
 from ..models.app_manifest_pause import AppManifestPause, check_app_manifest_pause
+from ..models.app_manifest_release_policy import AppManifestReleasePolicy, check_app_manifest_release_policy
 from ..models.app_manifest_restart_policy_type_1 import (
     AppManifestRestartPolicyType1,
     check_app_manifest_restart_policy_type_1,
@@ -156,6 +157,9 @@ class AppManifest:
     means 'use plan default'."""
     request_timeout_s: int | None | Unset = UNSET
     """Runtime request wall-clock timeout in seconds. 0 inherits the plan/type default."""
+    function_concurrency: int | None | Unset = UNSET
+    """Per-worker request concurrency imaged stamps into the function's build as FAAS_FUNCTION_CONCURRENCY
+    (ADR-1342). 0 or 1 means one request per worker."""
     service_replicas: ServiceReplicas | Unset = UNSET
     """Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E).
     Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
@@ -189,6 +193,10 @@ class AppManifest:
     """Whether the edge issues its own host-only rollout-affinity cookie."""
     revision_pin_ttl_seconds: int | Unset = 0
     """Configured revision pin window in seconds; zero disables pinning."""
+    release_policy: AppManifestReleasePolicy | Unset = UNSET
+    """Effective default rollout for production releases (ADR-1446, ADR-1450)."""
+    release_probe_paths: list[str] | Unset = UNSET
+    """Paths the default rollout probe checks; absent means / (ADR-1449)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -329,6 +337,12 @@ class AppManifest:
         else:
             request_timeout_s = self.request_timeout_s
 
+        function_concurrency: int | None | Unset
+        if isinstance(self.function_concurrency, Unset):
+            function_concurrency = UNSET
+        else:
+            function_concurrency = self.function_concurrency
+
         service_replicas: dict[str, Any] | Unset = UNSET
         if not isinstance(self.service_replicas, Unset):
             service_replicas = self.service_replicas.to_dict()
@@ -370,6 +384,14 @@ class AppManifest:
         version_affinity_managed_cookie = self.version_affinity_managed_cookie
 
         revision_pin_ttl_seconds = self.revision_pin_ttl_seconds
+
+        release_policy: str | Unset = UNSET
+        if not isinstance(self.release_policy, Unset):
+            release_policy = self.release_policy
+
+        release_probe_paths: list[str] | Unset = UNSET
+        if not isinstance(self.release_probe_paths, Unset):
+            release_probe_paths = self.release_probe_paths
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -424,6 +446,8 @@ class AppManifest:
             field_dict["max_retries"] = max_retries
         if request_timeout_s is not UNSET:
             field_dict["request_timeout_s"] = request_timeout_s
+        if function_concurrency is not UNSET:
+            field_dict["function_concurrency"] = function_concurrency
         if service_replicas is not UNSET:
             field_dict["service_replicas"] = service_replicas
         if worker_replicas is not UNSET:
@@ -450,6 +474,10 @@ class AppManifest:
             field_dict["version_affinity_managed_cookie"] = version_affinity_managed_cookie
         if revision_pin_ttl_seconds is not UNSET:
             field_dict["revision_pin_ttl_seconds"] = revision_pin_ttl_seconds
+        if release_policy is not UNSET:
+            field_dict["release_policy"] = release_policy
+        if release_probe_paths is not UNSET:
+            field_dict["release_probe_paths"] = release_probe_paths
 
         return field_dict
 
@@ -769,6 +797,15 @@ class AppManifest:
 
         request_timeout_s = _parse_request_timeout_s(d.pop("request_timeout_s", UNSET))
 
+        def _parse_function_concurrency(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        function_concurrency = _parse_function_concurrency(d.pop("function_concurrency", UNSET))
+
         _service_replicas = d.pop("service_replicas", UNSET)
         service_replicas: ServiceReplicas | Unset
         if isinstance(_service_replicas, Unset):
@@ -829,6 +866,15 @@ class AppManifest:
 
         revision_pin_ttl_seconds = d.pop("revision_pin_ttl_seconds", UNSET)
 
+        _release_policy = d.pop("release_policy", UNSET)
+        release_policy: AppManifestReleasePolicy | Unset
+        if isinstance(_release_policy, Unset):
+            release_policy = UNSET
+        else:
+            release_policy = check_app_manifest_release_policy(_release_policy)
+
+        release_probe_paths = cast(list[str], d.pop("release_probe_paths", UNSET))
+
         app_manifest = cls(
             entrypoint=entrypoint,
             profiling=profiling,
@@ -854,6 +900,7 @@ class AppManifest:
             startup_deadline_s=startup_deadline_s,
             max_retries=max_retries,
             request_timeout_s=request_timeout_s,
+            function_concurrency=function_concurrency,
             service_replicas=service_replicas,
             worker_replicas=worker_replicas,
             favicon=favicon,
@@ -867,6 +914,8 @@ class AppManifest:
             version_affinity_cookie=version_affinity_cookie,
             version_affinity_managed_cookie=version_affinity_managed_cookie,
             revision_pin_ttl_seconds=revision_pin_ttl_seconds,
+            release_policy=release_policy,
+            release_probe_paths=release_probe_paths,
         )
 
         app_manifest.additional_properties = d

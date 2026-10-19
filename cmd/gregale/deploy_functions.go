@@ -3,15 +3,23 @@ package main
 // deploy_functions.go — `functions:` fan-out for `gregale deploy` (ADR-985).
 //
 // A manifest that lists several functions deploys each one as its own
-// function app through the ordinary single-function deploy path, then
-// reconciles that function's idle timeout, cron triggers, bucket events and
-// inbound webhooks. Functions deploy in manifest order and the fan-out stops
-// at the first failure; re-running the deploy converges.
+// function app through the ordinary single-function deploy path. A
+// function's RAM, request timeout, concurrency, env and secrets are put on
+// its app before its deployment is built; its idle timeout, minimum
+// instances, cron triggers, bucket events and inbound webhooks are
+// reconciled after (ADR-1342). Once every function is live, the entry
+// function's hosts get one kind=route edge rule per declared route.
+// Functions deploy in manifest order and the fan-out stops at the first
+// failure; re-running the deploy converges.
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -22,11 +30,14 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
+	"gopkg.in/yaml.v3"
 )
 
 // functionSetClient is the API surface the post-deploy reconcile needs.
 type functionSetClient interface {
 	manifestCronClient
+	manifestQueueBindingClient
+	PostTriggersBatchCreate(ctx context.Context, req api.CreateTriggerBatchRequest) (map[string]any, error)
 	GetApp(ctx context.Context, slug string) (api.AppResponse, error)
 	UpdateApp(ctx context.Context, slug string, req api.UpdateAppRequest) (api.AppResponse, error)
 	ListApps(ctx context.Context) ([]api.AppResponse, error)
@@ -36,6 +47,15 @@ type functionSetClient interface {
 	ListInboundWebhookEndpoints(ctx context.Context, slug string) ([]api.InboundWebhookEndpointResponse, error)
 	CreateInboundWebhookEndpoint(ctx context.Context, slug string, req api.CreateInboundWebhookEndpointRequest) (api.InboundWebhookEndpointResponse, error)
 	UpdateInboundWebhookEndpoint(ctx context.Context, slug, id string, req api.UpdateInboundWebhookEndpointRequest) (api.InboundWebhookEndpointResponse, error)
+	PutAppsSlugEnvKey(ctx context.Context, slug, key, value string) error
+	GetAppsSlugEnv(ctx context.Context, slug string) (api.AppEnvListResponse, error)
+	DeleteAppsSlugEnvKey(ctx context.Context, slug, key string) error
+	ListSecrets(ctx context.Context, slug string) (api.AppSecretListResponse, error)
+	SetSecret(ctx context.Context, slug, key, value string) error
+	ListDomains(ctx context.Context) ([]api.CustomDomainResponse, error)
+	ListEdgeRulesForApp(ctx context.Context, slug string) ([]api.EdgeRuleResponse, error)
+	CreateEdgeRule(ctx context.Context, slug string, req api.CreateEdgeRuleRequest) (api.EdgeRuleResponse, error)
+	DeleteEdgeRule(ctx context.Context, id string) error
 }
 
 // functionSetDeploy carries the parent deploy's resolved inputs.
@@ -147,6 +167,12 @@ func functionDeployArgs(args []string, fn plannedFunction) []string {
 	return append(out, "--path", fn.root, "--name", fn.slug, "--function", "--runtime", fn.runtime, "--handler", fn.handler, "--no-triggers")
 }
 
+// functionCreateArgs reserves a function's app without a deployment, so its
+// settings are in place before its first build.
+func functionCreateArgs(fn plannedFunction) []string {
+	return []string{"--create-only", "--name", fn.slug, "--function", "--runtime", fn.runtime, "--handler", fn.handler}
+}
+
 // stripDeployFlags removes value flags (both -x v and -x=v forms).
 func stripDeployFlags(args []string, names ...string) []string {
 	out := make([]string, 0, len(args))
@@ -185,6 +211,13 @@ func (d functionSetDeploy) run(ctx context.Context, client functionSetClient) in
 	done := make([]string, 0, len(planned))
 	for i, fn := range planned {
 		_, _ = fmt.Fprintf(d.out, "\n[%d/%d] %s → %s (%s, %s)\n", i+1, len(planned), fn.spec.Name, fn.slug, fn.runtime, fn.root)
+		if !d.planOnly && client != nil {
+			if err := d.applySettings(ctx, client, fn); err != nil {
+				_, _ = fmt.Fprintf(d.out, "function %s: its settings did not apply, so it was not deployed: %v\n", fn.spec.Name, err)
+				d.summarize(done, fn, planned[i+1:])
+				return 1
+			}
+		}
 		if code := d.deployOne(functionDeployArgs(d.args, fn)); code != 0 {
 			d.summarize(done, fn, planned[i+1:])
 			return code
@@ -197,6 +230,13 @@ func (d functionSetDeploy) run(ctx context.Context, client functionSetClient) in
 			}
 		}
 		done = append(done, fn.slug)
+	}
+	if !d.planOnly && client != nil {
+		if err := d.reconcileRoutes(ctx, client, planned); err != nil {
+			d.summarize(done, plannedFunction{}, nil)
+			_, _ = fmt.Fprintf(d.out, "Every function is deployed, but the routes did not apply: %v\n", err)
+			return 1
+		}
 	}
 	d.summarize(done, plannedFunction{}, nil)
 	if !d.planOnly && client != nil {
@@ -253,10 +293,19 @@ func (d functionSetDeploy) reconcile(ctx context.Context, client functionSetClie
 	if err != nil {
 		return fmt.Errorf("read app %s: %w", fn.slug, err)
 	}
+	var update api.UpdateAppRequest
 	if fn.spec.IdleTimeoutS != 0 && app.IdleTimeoutS != fn.spec.IdleTimeoutS {
 		idle := fn.spec.IdleTimeoutS
-		if _, err := client.UpdateApp(ctx, fn.slug, api.UpdateAppRequest{IdleTimeoutS: &idle}); err != nil {
-			return fmt.Errorf("set idle_timeout_s: %w", err)
+		update.IdleTimeoutS = &idle
+	}
+	// The floor applies once a deployment exists to keep warm.
+	if fn.spec.MinInstances != nil && app.MinInstances != *fn.spec.MinInstances {
+		floor := *fn.spec.MinInstances
+		update.MinInstances = &floor
+	}
+	if update.IdleTimeoutS != nil || update.MinInstances != nil {
+		if _, err := client.UpdateApp(ctx, fn.slug, update); err != nil {
+			return fmt.Errorf("set idle_timeout_s / min_instances: %w", err)
 		}
 	}
 	if d.noTriggers {
@@ -273,6 +322,12 @@ func (d functionSetDeploy) reconcile(ctx context.Context, client functionSetClie
 	if err != nil {
 		return fmt.Errorf("cron triggers: %w", err)
 	}
+	if err := reconcileManifestRealtimeTriggers(ctx, client, fn.slug, functionRealtimeTriggers(d.manifest, fn), txn); err != nil {
+		if rollbackErr := txn.rollback(ctx); rollbackErr != nil {
+			err = errors.Join(err, rollbackErr)
+		}
+		return fmt.Errorf("realtime triggers: %w", err)
+	}
 	txn.commit()
 	acct, err := client.Whoami(ctx)
 	if err != nil {
@@ -281,14 +336,333 @@ func (d functionSetDeploy) reconcile(ctx context.Context, client functionSetClie
 	if err := reconcileFunctionBucketEvents(ctx, client, fn.slug, app.ID, acct.ID, fn.spec.BucketEvents); err != nil {
 		return fmt.Errorf("bucket events: %w", err)
 	}
-	getenv := d.getenv
-	if getenv == nil {
-		getenv = os.Getenv
-	}
-	if err := reconcileFunctionWebhooks(ctx, client, d.out, fn.slug, fn.spec.Webhooks, getenv); err != nil {
+	if err := reconcileFunctionWebhooks(ctx, client, d.out, fn.slug, fn.spec.Webhooks, d.lookupEnv()); err != nil {
 		return fmt.Errorf("webhooks: %w", err)
 	}
+	if fn.spec.QueueBindings != nil {
+		if err := reconcileQueueBindings(ctx, client, fn.slug, fn.spec.QueueBindings, "push", "http"); err != nil {
+			return fmt.Errorf("queue bindings: %w", err)
+		}
+	}
+	if err := applyFunctionEventTriggers(ctx, client, fn.slug, app.ID, fn.spec.EventTriggers); err != nil {
+		return fmt.Errorf("event triggers: %w", err)
+	}
 	return nil
+}
+
+// applyFunctionEventTriggers subscribes a function to its declared events
+// through the trigger batch endpoint, which applies them the way a deploy
+// applies a manifest's event_triggers (ADR-1342).
+func applyFunctionEventTriggers(ctx context.Context, client functionSetClient, slug, appID string, triggers []gregalemanifest.EventTrigger) error {
+	if len(triggers) == 0 {
+		return nil
+	}
+	scoped := make([]gregalemanifest.EventTrigger, len(triggers))
+	for i, trigger := range triggers {
+		trigger.App = slug
+		scoped[i] = trigger
+	}
+	doc, err := yaml.Marshal(struct {
+		EventTriggers []gregalemanifest.EventTrigger `yaml:"event_triggers"`
+	}{scoped})
+	if err != nil {
+		return fmt.Errorf("encode: %w", err)
+	}
+	out, err := client.PostTriggersBatchCreate(ctx, api.CreateTriggerBatchRequest{AppID: appID, ManifestYAML: string(doc)})
+	if err != nil {
+		return err
+	}
+	failures, _ := out["errors"].([]any)
+	if len(failures) == 0 {
+		return nil
+	}
+	messages := make([]string, 0, len(failures))
+	for _, failure := range failures {
+		if row, ok := failure.(map[string]any); ok {
+			messages = append(messages, fmt.Sprint(row["message"]))
+		}
+	}
+	return errors.New(strings.Join(messages, "; "))
+}
+
+func (d functionSetDeploy) lookupEnv() func(string) string {
+	if d.getenv == nil {
+		return os.Getenv
+	}
+	return d.getenv
+}
+
+// applySettings puts a function's pre-deploy settings on its app before its
+// deployment is built (ADR-1342): RAM and concurrency shape the build, and
+// env and secrets reach its first wake. A new function's app is created
+// first, without a deployment.
+func (d functionSetDeploy) applySettings(ctx context.Context, client functionSetClient, fn plannedFunction) error {
+	if !fn.spec.HasPreDeploySettings() {
+		return nil
+	}
+	app, err := client.GetApp(ctx, fn.slug)
+	if isNotFound(err) {
+		if code := d.deployOne(functionCreateArgs(fn)); code != 0 {
+			return fmt.Errorf("create app %s: exit status %d", fn.slug, code)
+		}
+		app, err = client.GetApp(ctx, fn.slug)
+	}
+	if err != nil {
+		return fmt.Errorf("read app %s: %w", fn.slug, err)
+	}
+	if update, changed := functionSettingsUpdate(fn.spec, app); changed {
+		if _, err := client.UpdateApp(ctx, fn.slug, update); err != nil {
+			return fmt.Errorf("update app settings: %w", err)
+		}
+	}
+	for _, key := range slices.Sorted(maps.Keys(fn.spec.Env)) {
+		if err := client.PutAppsSlugEnvKey(ctx, fn.slug, key, fn.spec.Env[key]); err != nil {
+			return fmt.Errorf("set env %s: %w", key, err)
+		}
+	}
+	if fn.spec.PruneEnv {
+		if err := pruneFunctionEnv(ctx, client, d.out, fn.slug, fn.spec.Env); err != nil {
+			return err
+		}
+	}
+	return sealFunctionSecrets(ctx, client, fn.slug, fn.spec.SecretsFromEnv, d.lookupEnv())
+}
+
+// pruneFunctionEnv removes the default-scope env keys a prune_env function
+// does not declare. Secrets and scoped env are separate and never touched.
+func pruneFunctionEnv(ctx context.Context, client functionSetClient, out io.Writer, slug string, keep map[string]string) error {
+	current, err := client.GetAppsSlugEnv(ctx, slug)
+	if err != nil {
+		return fmt.Errorf("list env: %w", err)
+	}
+	for _, row := range current.Env {
+		if _, declared := keep[row.Key]; declared {
+			continue
+		}
+		if err := client.DeleteAppsSlugEnvKey(ctx, slug, row.Key); err != nil {
+			return fmt.Errorf("remove env %s: %w", row.Key, err)
+		}
+		_, _ = fmt.Fprintf(out, "removed env %s from %s (prune_env)\n", row.Key, slug)
+	}
+	return nil
+}
+
+// functionSettingsUpdate is the app PATCH that brings an app to a function's
+// declared RAM, request timeout and concurrency.
+func functionSettingsUpdate(spec gregalemanifest.FunctionSpec, app api.AppResponse) (api.UpdateAppRequest, bool) {
+	var update api.UpdateAppRequest
+	changed := false
+	if spec.RAMMB != 0 && app.RAMMB != spec.RAMMB {
+		ram := spec.RAMMB
+		update.RAMMB, changed = &ram, true
+	}
+	if spec.RequestTimeoutS != 0 && app.RequestTimeoutS != spec.RequestTimeoutS {
+		timeout := spec.RequestTimeoutS
+		update.RequestTimeoutS, changed = &timeout, true
+	}
+	if spec.Concurrency != 0 && max(app.FunctionConcurrency, 1) != spec.Concurrency {
+		concurrency := spec.Concurrency
+		update.FunctionConcurrency, changed = &concurrency, true
+	}
+	return update, changed
+}
+
+// sealFunctionSecrets seals each named secret from the deployer's
+// environment. A name unset there keeps the value the app already has; a
+// secret the app has never had fails the deploy, since the function needs it.
+func sealFunctionSecrets(ctx context.Context, client functionSetClient, slug string, names []string, getenv func(string) string) error {
+	var existing map[string]bool
+	for _, name := range names {
+		if value := getenv(name); value != "" {
+			if err := client.SetSecret(ctx, slug, name, value); err != nil {
+				return fmt.Errorf("seal secret %s: %w", name, err)
+			}
+			continue
+		}
+		if existing == nil {
+			list, err := client.ListSecrets(ctx, slug)
+			if err != nil {
+				return fmt.Errorf("list secrets: %w", err)
+			}
+			existing = map[string]bool{}
+			for _, secret := range list.Secrets {
+				existing[secret.Key] = true
+			}
+		}
+		if !existing[name] {
+			return fmt.Errorf("secret %s is not set on %s yet; export %s and deploy again", name, slug, name)
+		}
+	}
+	return nil
+}
+
+// functionRouteRulePrefix names the edge rules a functions manifest owns
+// (ADR-1342). Rules with any other name are never touched.
+const functionRouteRulePrefix = "functions:"
+
+// functionRoutePriority places managed routes after the default priority of
+// rules added by hand; the most specific route comes first.
+const functionRoutePriority = 500
+
+// reconcileRoutes gives the entry function's hosts one kind=route edge rule
+// per declared route and removes the managed rules the manifest no longer
+// declares from every function app.
+func (d functionSetDeploy) reconcileRoutes(ctx context.Context, client functionSetClient, planned []plannedFunction) error {
+	desired, entry, err := desiredFunctionRoutes(ctx, client, planned)
+	if err != nil {
+		return err
+	}
+	for _, fn := range planned {
+		rules, err := client.ListEdgeRulesForApp(ctx, fn.slug)
+		if err != nil {
+			if fn.slug != entry {
+				continue
+			}
+			return fmt.Errorf("list edge rules of %s: %w", fn.slug, err)
+		}
+		var want []api.CreateEdgeRuleRequest
+		if fn.slug == entry {
+			want = desired
+		}
+		if err := reconcileRouteRules(ctx, client, fn.slug, rules, want); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// desiredFunctionRoutes lists the route rules for the entry function's
+// hosts, most specific route first.
+func desiredFunctionRoutes(ctx context.Context, client functionSetClient, planned []plannedFunction) ([]api.CreateEdgeRuleRequest, string, error) {
+	type route struct{ glob, function, target string }
+	var routes []route
+	entry := ""
+	for _, fn := range planned {
+		if fn.spec.Entry {
+			entry = fn.slug
+		}
+		for _, glob := range fn.spec.Routes {
+			routes = append(routes, route{glob, fn.spec.Name, fn.slug})
+		}
+	}
+	if entry == "" || len(routes) == 0 {
+		return nil, entry, nil
+	}
+	hosts, err := functionEntryHosts(ctx, client, entry)
+	if err != nil {
+		return nil, "", err
+	}
+	sort.SliceStable(routes, func(i, j int) bool {
+		a, b := routeSpecificity(routes[i].glob), routeSpecificity(routes[j].glob)
+		if a != b {
+			return a > b
+		}
+		return routes[i].glob < routes[j].glob
+	})
+	var out []api.CreateEdgeRuleRequest
+	for i, r := range routes {
+		action, err := json.Marshal(api.EdgeRuleRouteAction{TargetAppSlug: r.target})
+		if err != nil {
+			return nil, "", err
+		}
+		priority := functionRoutePriority + i
+		for _, host := range hosts {
+			out = append(out, api.CreateEdgeRuleRequest{
+				MatchHost: host, MatchPath: r.glob, Kind: "route", Action: action,
+				Priority: &priority, Name: functionRouteRulePrefix + r.function,
+			})
+		}
+	}
+	return out, entry, nil
+}
+
+// routeSpecificity ranks a path glob by its literal prefix: /users/admin/*
+// is more specific than /users/*.
+func routeSpecificity(glob string) int {
+	if i := strings.IndexAny(glob, "*?["); i >= 0 {
+		return i
+	}
+	return len(glob) + 1
+}
+
+// functionEntryHosts returns the entry app's platform host and its verified
+// custom domains.
+func functionEntryHosts(ctx context.Context, client functionSetClient, slug string) ([]string, error) {
+	app, err := client.GetApp(ctx, slug)
+	if err != nil {
+		return nil, fmt.Errorf("read entry app %s: %w", slug, err)
+	}
+	var hosts []string
+	if u, err := url.Parse(app.URL); err == nil && u.Hostname() != "" {
+		hosts = append(hosts, strings.ToLower(u.Hostname()))
+	}
+	domains, err := client.ListDomains(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list custom domains: %w", err)
+	}
+	for _, domain := range domains {
+		if domain.AppID == app.ID && domain.Verified && domain.Environment == "" {
+			hosts = append(hosts, strings.ToLower(domain.Domain))
+		}
+	}
+	if len(hosts) == 0 {
+		return nil, fmt.Errorf("entry app %s has no address", slug)
+	}
+	sort.Strings(hosts)
+	return slices.Compact(hosts), nil
+}
+
+// reconcileRouteRules creates the wanted route rules an app lacks, then
+// deletes its managed route rules that are no longer wanted.
+func reconcileRouteRules(ctx context.Context, client functionSetClient, slug string, current []api.EdgeRuleResponse, want []api.CreateEdgeRuleRequest) error {
+	key := func(host, matchPath, name string, priority int, action []byte) string {
+		var route api.EdgeRuleRouteAction
+		_ = json.Unmarshal(action, &route)
+		return strings.Join([]string{strings.ToLower(host), matchPath, name, fmt.Sprint(priority), route.TargetAppSlug}, "\x00")
+	}
+	have := map[string]api.EdgeRuleResponse{}
+	for _, rule := range current {
+		if rule.Kind == "route" && strings.HasPrefix(rule.Name, functionRouteRulePrefix) {
+			have[key(rule.MatchHost, rule.MatchPath, rule.Name, rule.Priority, rule.Action)] = rule
+		}
+	}
+	wanted := map[string]bool{}
+	for _, req := range want {
+		k := key(req.MatchHost, req.MatchPath, req.Name, *req.Priority, req.Action)
+		wanted[k] = true
+		if _, ok := have[k]; ok {
+			continue
+		}
+		if _, err := client.CreateEdgeRule(ctx, slug, req); err != nil {
+			return fmt.Errorf("route %s on %s: %w", req.MatchPath, req.MatchHost, err)
+		}
+	}
+	for _, k := range slices.Sorted(maps.Keys(have)) {
+		if wanted[k] {
+			continue
+		}
+		if err := client.DeleteEdgeRule(ctx, have[k].ID); err != nil {
+			return fmt.Errorf("remove route %s on %s: %w", have[k].MatchPath, have[k].MatchHost, err)
+		}
+	}
+	return nil
+}
+
+// functionRealtimeTriggers selects one function's realtime triggers with the
+// function name rewritten to its app slug. A function that declares none is
+// left alone unless the manifest explicitly clears every trigger.
+func functionRealtimeTriggers(m *gregalemanifest.Manifest, fn plannedFunction) *gregalemanifest.Manifest {
+	out := &gregalemanifest.Manifest{}
+	if m.Triggers != nil && len(m.Triggers) == 0 {
+		out.Triggers = []gregalemanifest.Trigger{}
+	}
+	for _, trigger := range m.Triggers {
+		if trigger.Kind == gregalemanifest.TriggerKindRealtime && trigger.App == fn.spec.Name {
+			trigger.App = fn.slug
+			out.Triggers = append(out.Triggers, trigger)
+		}
+	}
+	return out
 }
 
 // functionARN is the object-notification destination for a function app.

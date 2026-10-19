@@ -54,6 +54,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		dockerfile          string // highest-tier seed's dockerfile
 		image               string // highest-tier seed's prebuilt image
 		healthcheck         *api.ComposeHealthcheck
+		imageProcess        *api.ComposeProcess
 		class               Class
 		command             []string
 		commandShell        bool
@@ -143,6 +144,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		if !b.imageSet && (s.imageSet || s.image != "") {
 			b.image = s.image
 			b.healthcheck = s.healthcheck.Clone()
+			b.imageProcess = s.imageProcess.Clone()
 			b.imageSet = true
 		}
 		// Per-field: first non-empty wins (and never overwrites).
@@ -246,6 +248,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			Command:             b.command,
 			CommandShell:        b.commandShell,
 			ImageHealthcheck:    b.healthcheck.Clone(),
+			ImageProcess:        b.imageProcess.Clone(),
 			DependsOn:           b.dependsOn,
 			DependsOnConditions: maps.Clone(b.dependsOnConditions),
 

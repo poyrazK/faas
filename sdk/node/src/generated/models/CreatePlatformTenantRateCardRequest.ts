@@ -18,8 +18,32 @@ export type CreatePlatformTenantRateCardRequest = {
    */
   tiers?: Array<APIConsumerRateCardTier>;
   /**
-   * UTC minute at which the version starts; omitted means the next UTC minute. Cannot be in the past once any tenant card has included units or tiers.
+   * Counts each request on a listed "METHOD /template" route as that many units (1..1000, at most 50 routes; ADR-1307), including surface and JWT-rule requests (ADR-1310). Unlisted routes count 1. Statements for periods it prices must cover one calendar month.
+   */
+  route_weights?: Record<string, number>;
+  /**
+   * UTC minute at which the version starts; omitted means the next UTC minute. Cannot be in the past once any tenant card has included units, tiers, route weights, monthly fees, or a unit other than requests.
    */
   effective_from?: string | null;
+  /**
+   * What the card prices (ADR-1310, ADR-1319): requests; the compute seconds or response megabytes of billable requests, rounded per subject minute; or app:<meter>, the units the app reports in its Gregale-Usage header. Cards of different units price side by side; non-request cards take no route weights, are month-priced and cannot be backdated.
+   */
+  unit?: string;
+  /**
+   * How the tenant ladder prices a month (ADR-1309): graduated by each unit's position, or volume, every unit of the month at the step the tenant's total reaches. volume needs tiers.
+   */
+  tier_mode?: 'graduated' | 'volume';
+  /**
+   * Fixed charge per tenant per UTC month while this card is in force when the tenant's month starts (ADR-1322). Statements for periods it prices must cover one calendar month.
+   */
+  base_fee_millicents_per_month?: number;
+  /**
+   * Minimum usage charge per tenant per UTC month for this card's unit; statements top up the difference (ADR-1322).
+   */
+  minimum_millicents_per_month?: number;
+  /**
+   * Scale the base fee and minimum in the tenant's first month to the share of it left after the tenant was created (ADR-1325).
+   */
+  prorate_monthly_fees?: boolean;
 };
 

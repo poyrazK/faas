@@ -15,7 +15,10 @@ const (
 	realtimedMetricsDiscoveryPath = "/v1/internal/metrics/realtimed-targets"
 	promtailMetricsDiscoveryPath  = "/v1/internal/metrics/promtail-targets"
 	scheddMetricsDiscoveryPath    = "/v1/internal/metrics/schedd-targets"
-	maxMetricsDiscoveryTargets    = 1000
+	// ADR-1343 §5: the app edge on each compute node, when the cell runs it.
+	gatewaydPublicEdgeMetricsDiscoveryPath = "/v1/internal/metrics/gatewayd-public-edge-targets"
+	cloudflaredMetricsDiscoveryPath        = "/v1/internal/metrics/cloudflared-targets"
+	maxMetricsDiscoveryTargets             = 1000
 )
 
 // metricsDiscoveryHandler is mounted only on apid's loopback metrics server.
@@ -31,6 +34,8 @@ func (s *server) metricsDiscoveryHandler() http.Handler {
 	mux.HandleFunc("GET "+realtimedMetricsDiscoveryPath, s.realtimedMetricsDiscovery)
 	mux.HandleFunc("GET "+promtailMetricsDiscoveryPath, s.promtailMetricsDiscovery)
 	mux.HandleFunc("GET "+scheddMetricsDiscoveryPath, s.scheddMetricsDiscovery)
+	mux.HandleFunc("GET "+gatewaydPublicEdgeMetricsDiscoveryPath, s.gatewaydPublicEdgeMetricsDiscovery)
+	mux.HandleFunc("GET "+cloudflaredMetricsDiscoveryPath, s.cloudflaredMetricsDiscovery)
 	return mux
 }
 
@@ -88,6 +93,19 @@ func (s *server) promtailMetricsDiscovery(w http.ResponseWriter, r *http.Request
 
 func (s *server) scheddMetricsDiscovery(w http.ResponseWriter, r *http.Request) {
 	s.metricsDiscovery(w, r, "schedd-compute", daemonMetricsTarget("9103"))
+}
+
+// gatewaydPublicEdgeMetricsDiscovery and cloudflaredMetricsDiscovery serve the
+// app edge on every active compute node (ADR-1343 §5): gatewayd-public in
+// compute edge mode on its control port, and the Cloudflare Tunnel connector
+// on its metrics port. Prometheus queries them only when the cell runs the
+// edge, so a node without it is never probed.
+func (s *server) gatewaydPublicEdgeMetricsDiscovery(w http.ResponseWriter, r *http.Request) {
+	s.metricsDiscovery(w, r, "gatewayd-public-edge", daemonMetricsTarget("9092"))
+}
+
+func (s *server) cloudflaredMetricsDiscovery(w http.ResponseWriter, r *http.Request) {
+	s.metricsDiscovery(w, r, "cloudflared", daemonMetricsTarget("20241"))
 }
 
 func (s *server) metricsDiscovery(w http.ResponseWriter, r *http.Request, job string, targetFn func(string) (string, bool)) {

@@ -18,10 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/imagepublisher"
 )
 
-type registryRootfsTestStore interface {
-	registryVerificationTestStore
-	DeploymentRegistryRootfsStore
-}
+type registryRootfsTestStore = contractTestStore
 
 func registryRootfsFixture(t *testing.T, s registryRootfsTestStore, sidecar bool) (DeploymentRegistryRootfsInput, DeploymentRegistryVerification, App, Deployment) {
 	t.Helper()

@@ -1,0 +1,34 @@
+name = "gregale-internal-hosting"
+main = "worker.mjs"
+compatibility_date = "2026-10-15"
+workers_dev = false
+preview_urls = false
+
+[vars]
+FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED = "false"
+HOSTING_DOMAIN = "gregale-hosting.example"
+FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED = "false"
+FAAS_FRONTEND_HOSTING_CONFIG_ENABLED = "false"
+# Opt in only after configuring a wildcard Cloudflare Access application.
+FAAS_FRONTEND_HOSTING_ENABLED = "false"
+FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED = "false"
+ACCESS_TEAM_DOMAIN = "your-team.cloudflareaccess.com"
+ACCESS_AUD = "replace-with-access-application-audience"
+INTERNAL_EMAILS = ""
+ORIGIN_ID = "replace-with-endpoint-and-bucket-fingerprint"
+
+[[r2_buckets]]
+binding = "ARTIFACTS"
+bucket_name = "gregale-internal-hosting"
+
+[[kv_namespaces]]
+binding = "ROUTES"
+id = "replace-with-the-routing-namespace-id"
+
+# Add only the isolated hosting zone's wildcard route after Access is ready.
+# Never attach this Worker to the Gregale dashboard/API zone or R2 API endpoint.
+
+# Opt in only after reviewing Analytics Engine pricing and retention.
+# [[analytics_engine_datasets]]
+# binding = "ANALYTICS"
+# dataset = "gregale_internal_hosting_traffic"

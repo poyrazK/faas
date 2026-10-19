@@ -105,7 +105,7 @@ func (p *Pusher) PushHour(ctx context.Context) (int, error) {
 	}
 	now := p.now()
 	start, end := HourWindow(now)
-	accounts, err := p.store.ListAllAccounts(ctx)
+	accounts, err := state.ListBillingResourceAccounts(ctx, p.store)
 	if err != nil {
 		return 0, err
 	}
@@ -232,7 +232,7 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 	if err != nil {
 		return 0, err
 	}
-	accounts, err := p.store.ListAllAccounts(ctx)
+	accounts, err := state.ListBillingResourceAccounts(ctx, p.store)
 	if err != nil {
 		return 0, err
 	}

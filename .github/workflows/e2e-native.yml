@@ -48,9 +48,10 @@ on:
           customer-workflow-operations-only: native customer workflow files,
           crash/resume, cancellation, deadlines, owner revocation and cleanup;
           customer-http-operations-only: native ordinary HTTP Operations files,
-          progress, crash/recovery, cancellation, owner revocation and cleanup.
+          progress, crash/recovery, cancellation, owner revocation and cleanup;
+          bindings: strict PostgreSQL, storage and queue guest qualification.
         type: choice
-        options: [smoke, full, qualify, jobs-only, containers, exclusive-operations-only, managed-operation-only, customer-job-operations-only, customer-workflow-operations-only, customer-http-operations-only]
+        options: [smoke, full, qualify, jobs-only, containers, exclusive-operations-only, managed-operation-only, customer-job-operations-only, customer-workflow-operations-only, customer-http-operations-only, bindings]
         default: smoke
       keep_node_running:
         description: >-
@@ -88,7 +89,7 @@ jobs:
     # with a less obvious error than this check.
     if: >-
       github.event_name == 'schedule' ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.lane != 'bindings')
     runs-on: ubuntu-latest
     # 150 min: the suite is the whole ./cmd/e2e package under -race, including
     # real cold boots, builder microVM builds and the 100-cycle wake loop. The
@@ -735,3 +736,121 @@ jobs:
           set -euo pipefail
           gcloud compute instances stop "$GCP_INSTANCE" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE"
+
+
+  binding-native:
+    name: binding guest qualification (native amd64)
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.lane == 'bindings'
+    runs-on: ubuntu-latest
+    # Separate job: 270m covers the four 45m/60m/40m/90m suite alarms plus
+    # compilation/cleanup; 300m leaves staging, collection and node-stop time.
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Build clean binding source and pinned Go bundles
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          bash scripts/ci/package-binding-native-source.sh "$SOURCE_SHA" "$RUNNER_TEMP/binding-source.tar.gz"
+          bash scripts/ci/package-go-toolchain.sh "$(go env GOROOT)" "$RUNNER_TEMP/binding-go.tar.gz"
+      - id: auth
+        name: Authenticate to GCP with GitHub OIDC
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Start the dedicated acceptance node
+        id: compute-node
+        run: |
+          set -euo pipefail
+          status="$(gcloud compute instances describe "$GCP_INSTANCE" --project "$GCP_PROJECT" --zone "$GCP_ZONE" --format='value(status)')"
+          case "$status" in
+            RUNNING) ;;
+            TERMINATED) gcloud compute instances start "$GCP_INSTANCE" --quiet --project "$GCP_PROJECT" --zone "$GCP_ZONE" ;;
+            *) echo '::error::Acceptance node is unavailable'; exit 1 ;;
+          esac
+          scripts/ci/gcp-oslogin-preflight.sh --project "$GCP_PROJECT" --zone "$GCP_ZONE" --instance "$GCP_INSTANCE"
+          for attempt in {1..24}; do
+            if gcloud compute ssh "$GCP_INSTANCE" --quiet --project "$GCP_PROJECT" --zone "$GCP_ZONE" --command true >/dev/null 2>&1; then exit 0; fi
+            sleep 5
+          done
+          echo '::error::Acceptance node did not become SSH-ready'
+          exit 1
+      - name: Stage clean binding source
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-bindings-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "umask 077; mkdir '$remote_root' && sudo /usr/local/sbin/faas-canary-artifacts register --path '$remote_root' --run-id '${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --kind native-e2e"
+          gcloud compute scp "$RUNNER_TEMP/binding-source.tar.gz" "$RUNNER_TEMP/binding-go.tar.gz" \
+            "$GCP_INSTANCE:$remote_root/" --quiet --project "$GCP_PROJECT" --zone "$GCP_ZONE"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "tar -xzf '$remote_root/binding-source.tar.gz' -C '$remote_root' && mkdir -p '$remote_root/tools/go' && tar -xzf '$remote_root/binding-go.tar.gz' -C '$remote_root/tools/go' && sudo chown -R root:root '$remote_root/source' '$remote_root/tools'"
+      - name: Run strict binding guest journeys serially
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-bindings-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-bindings-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          # Uses only host-owned disposable SQL/CA/runtime configuration.
+          # A virtual or unconfigured host fails closed, without qualifying.
+          gcloud compute ssh "$GCP_INSTANCE" --quiet --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=270m --property=TimeoutStopSec=120 --property='StandardOutput=append:$remote_root/binding-native.log' --property='StandardError=append:$remote_root/binding-native.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' /bin/bash scripts/ci/run-binding-native.sh"
+      - name: Refresh binding authentication for cleanup
+        if: always() && steps.auth.outcome == 'success'
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+      - name: Collect bounded binding evidence
+        if: always() && steps.compute-node.outcome == 'success'
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-bindings-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          # Only this wrapper's fixed diagnostics enter the job log.
+          gcloud compute ssh "$GCP_INSTANCE" --quiet --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo grep '^binding native:' '$remote_root/binding-native.log'" || true
+          # Raw test/daemon logs stay private on the registered host bundle.
+          # Only bounded reports are transferred and retained in Actions.
+          gcloud compute ssh "$GCP_INSTANCE" --quiet --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo tar -C '$remote_root/binding-evidence/public' -czf - . > '$remote_root/binding-public.tar.gz'"
+          gcloud compute scp "$GCP_INSTANCE:$remote_root/binding-public.tar.gz" "$RUNNER_TEMP/binding-public.tar.gz" \
+            --quiet --project "$GCP_PROJECT" --zone "$GCP_ZONE"
+          mkdir "$RUNNER_TEMP/binding-evidence"
+          tar -xzf "$RUNNER_TEMP/binding-public.tar.gz" -C "$RUNNER_TEMP/binding-evidence"
+          # An empty/partial public directory cannot make a successful gate.
+          test -s "$RUNNER_TEMP/binding-evidence/summary.json"
+      - name: Retain binding reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: binding-native-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/binding-evidence/*.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Finalize successful binding artifacts
+        # Failed bundles retain their existing bounded abandoned-run lease for
+        # private diagnosis; the normal retention sweep owns their removal.
+        if: always() && steps.compute-node.outcome == 'success' && job.status == 'success'
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-bindings-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo /usr/local/sbin/faas-canary-artifacts finish --path '$remote_root' --state success"
+      - name: Stop the binding acceptance node
+        if: always() && steps.auth.outcome == 'success' && inputs.keep_node_running != true
+        run: |
+          set -euo pipefail
+          gcloud compute instances stop "$GCP_INSTANCE" --quiet --project "$GCP_PROJECT" --zone "$GCP_ZONE"

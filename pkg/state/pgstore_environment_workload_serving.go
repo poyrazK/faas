@@ -50,6 +50,11 @@ func (s *PgStore) CompleteEnvironmentQueueDeliveryClaims(ctx context.Context, ap
 		if _, completed := finalizedSet[acknowledgement.InvocationID]; !completed {
 			continue
 		}
+		if canonicalStateUUID(acknowledgement.DeploymentID) && canonicalStateUUID(acknowledgement.BindingID) && acknowledgement.AppID == appID && acknowledgement.TriggerID == triggerID {
+			if err := sqlc.New().FinishQueueCanary(ctx, tx, sqlc.FinishQueueCanaryParams{BindingID: mustPgUUID(acknowledgement.BindingID), ID: mustPgUUID(acknowledgement.InvocationID), AppID: mustPgUUID(appID), TriggerID: mustPgUUID(triggerID), DeploymentID: mustPgUUID(acknowledgement.DeploymentID)}); err != nil {
+				return nil, mapErr(err)
+			}
+		}
 		if acknowledgement.Mode != "push" || !canonicalStateUUID(acknowledgement.AppID) || !canonicalStateUUID(acknowledgement.BindingID) ||
 			!canonicalStateUUID(acknowledgement.TriggerID) || !canonicalStateUUID(acknowledgement.DeploymentID) ||
 			!canonicalStateUUID(acknowledgement.InvocationID) || strings.TrimSpace(acknowledgement.Scope) == "" {
@@ -328,6 +333,18 @@ func (s *PgStore) PrepareEnvironmentGitOpsWorkloadServing(ctx context.Context, l
 			}); err != nil {
 				return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)
 			}
+		}
+	}
+	if _, err := q.SetEnvironmentGitOpsLeaseContext(ctx, tx, lease.LeaseToken); err != nil {
+		return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)
+	}
+	weightsCurrent, err := q.EnvironmentWorkloadServingCutoverWeightsMatch(ctx, tx, graphID)
+	if err != nil {
+		return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)
+	}
+	if !weightsCurrent.Valid || !weightsCurrent.Bool {
+		if _, err := q.AuthorizeEnvironmentBindingTraffic(ctx, tx, sqlc.AuthorizeEnvironmentBindingTrafficParams{GraphID: graphID, ReleaseID: mustPgUUID(release.ID)}); err != nil {
+			return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)
 		}
 	}
 	// Validate every app's live siblings before changing any weights. A normal

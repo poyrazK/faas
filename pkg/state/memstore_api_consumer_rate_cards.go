@@ -28,23 +28,27 @@ func (m *MemStore) CreateAPIConsumerRateCardVersion(_ context.Context, in APICon
 		}
 	}
 	for _, card := range m.apiConsumerRateCards {
-		if card.AppID == in.AppID && card.PlanID == in.PlanID && card.EffectiveFrom.Equal(in.EffectiveFrom) {
+		if card.AppID == in.AppID && card.PlanID == in.PlanID && card.Unit == in.Unit && card.EffectiveFrom.Equal(in.EffectiveFrom) {
 			return APIConsumerRateCard{}, ErrConflict
 		}
 	}
 	card := APIConsumerRateCard{
-		ID:                     uuid.NewString(),
-		AccountID:              in.AccountID,
-		AppID:                  in.AppID,
-		Currency:               in.Currency,
-		Unit:                   APIConsumerRateCardUnitRequest,
-		PriceMillicentsPerUnit: in.PriceMillicentsPerUnit,
-		IncludedUnitsPerMonth:  in.IncludedUnitsPerMonth,
-		Tiers:                  in.Tiers,
-		RouteWeights:           in.RouteWeights,
-		PlanID:                 in.PlanID,
-		EffectiveFrom:          in.EffectiveFrom,
-		CreatedAt:              time.Now().UTC(),
+		ID:                        uuid.NewString(),
+		AccountID:                 in.AccountID,
+		AppID:                     in.AppID,
+		Currency:                  in.Currency,
+		Unit:                      in.Unit,
+		PriceMillicentsPerUnit:    in.PriceMillicentsPerUnit,
+		IncludedUnitsPerMonth:     in.IncludedUnitsPerMonth,
+		Tiers:                     in.Tiers,
+		TierMode:                  in.TierMode,
+		BaseFeeMillicentsPerMonth: in.BaseFeeMillicentsPerMonth,
+		MinimumMillicentsPerMonth: in.MinimumMillicentsPerMonth,
+		ProrateMonthlyFees:        in.ProrateMonthlyFees,
+		RouteWeights:              in.RouteWeights,
+		PlanID:                    in.PlanID,
+		EffectiveFrom:             in.EffectiveFrom,
+		CreatedAt:                 time.Now().UTC(),
 	}
 	m.apiConsumerRateCards[card.ID] = card
 	out := card
