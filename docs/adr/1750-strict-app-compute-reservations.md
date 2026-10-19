@@ -97,8 +97,18 @@ Run [native acceptance](../runbooks/financial-strict-compute-acceptance.md), the
 full VM suite and leakcheck on dedicated native x86_64 Linux KVM. Compilation,
 skipped metal tests or cloud checks cannot promote the strict capability.
 
+Release is per account through the `strict_budgets` platform flag
+([ADR-1700](1700-platform-flags.md)). It is off until an operator writes it.
+Without it, creating or enabling any strict budget (app, job or account,
+including the shared egress cap of ADR-1746 to ADR-1748) returns 422
+`financial_budget_activation_unavailable`. A strict budget that is already
+enabled keeps enforcing and stays editable, and disabling or deleting one is
+never gated, so withdrawing the flag cannot strand a customer's cap. The flag
+gates customer activation only: vmmd still registers every native boot, as
+activation requires.
+
 - **Rejected:** reclaim expired funds without retirement; infer strict caps
   from delayed totals; bill stale rows beyond funding; use shared net allowance
   for app caps; silently skip unsupported VM constructors.
-- **Rollback:** disable new strict policies first. Keep financial enforcement
+- **Rollback:** disable new strict policies first (withdraw `strict_budgets`). Keep financial enforcement
   and recovery until every strict attempt settles; preserve financial history.
