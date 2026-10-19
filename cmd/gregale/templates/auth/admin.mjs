@@ -5,6 +5,7 @@ import { HTTPError, readJSON } from './authz.mjs'
 import { ssoRoute } from './sso.mjs'
 import { oauthRoute } from './oauth.mjs'
 import { emailRoute } from './emails.mjs'
+import { signupsRoute } from './signups.mjs'
 
 // /admin/v1: owner administration of an application Auth app (ADR-1190
 // phase 6). The owner holds the key; the app stores only its SHA-256 as
@@ -263,6 +264,7 @@ export async function adminRoute({ pool, admin, external, emails = {} }, method,
   if (parts[0] === 'sso') return ssoRoute({ query, admin, goTrueError, external }, method, parts, body)
   if (parts[0] === 'oauth') return oauthRoute({ admin, goTrueError }, method, parts, body)
   if (parts[0] === 'emails') return emailRoute({ pool, external, ...emails }, method, parts, body)
+  if (parts[0] === 'signups') return signupsRoute({ pool, mailer: emails.mailer, external, app: emails.app, pageParams, likePattern }, method, parts, url, body)
   const user = parts[0] === 'users' && parts[1] && parts[1] !== 'import' ? (uuid.test(parts[1]) ? parts[1] : null) : undefined
   if (user === null) throw new HTTPError(400, 'invalid_id')
 

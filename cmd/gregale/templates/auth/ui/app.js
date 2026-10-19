@@ -123,7 +123,10 @@ export function providerName(id) {
 }
 
 export function errorMessage(body, status) {
-  const code = body?.error_code ?? body?.code ?? body?.error
+  // GoTrue reports a hook's refusal (sign-up restrictions) as msg, with
+  // error_code "unknown".
+  const hookCode = typeof body?.msg === 'string' && /^[a-z_]+$/.test(body.msg) ? body.msg : undefined
+  const code = (body?.error_code === 'unknown' ? undefined : body?.error_code) ?? hookCode ?? body?.code ?? body?.error
   const known = {
     invalid_credentials: 'Wrong email or password.',
     email_not_confirmed: 'Confirm your email address first; check your inbox.',
@@ -132,6 +135,14 @@ export function errorMessage(body, status) {
     over_email_send_rate_limit: 'Too many emails sent. Wait a minute and try again.',
     email_provider_unconfigured: 'This application cannot send email yet.',
     signup_disabled: 'Sign-up is closed for this application.',
+    email_domain_blocked: 'Sign-up is not open to addresses at this domain.',
+    disposable_email: 'Use a permanent email address; temporary ones cannot sign up.',
+    email_domain_not_allowed: 'Sign-up is open only to addresses at the domains this application allows.',
+    signup_restricted: 'Sign up with an email address; this application checks who may join.',
+    signup_invitation_required: 'Sign-up is by invitation. Ask for an invitation to this address.',
+    waitlisted: 'You are on the waitlist. We will email you when you can sign up.',
+    waitlist_full: 'The waitlist is full. Try again later.',
+    signup_check_unavailable: 'Sign-up is briefly unavailable. Try again in a minute.',
     invitation_invalid: 'This invitation is no longer valid.',
     invitation_email_mismatch: 'This invitation was sent to a different email address.',
     already_member: 'You are already a member.',

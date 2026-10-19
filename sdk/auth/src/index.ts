@@ -186,7 +186,11 @@ export function createAuthClient(options: AuthClientOptions) {
     let data: any = null
     try { data = text ? JSON.parse(text) : null } catch { data = null }
     if (!response.ok) {
-      const code = data?.error_code ?? data?.code ?? data?.error
+      // GoTrue reports a hook's refusal (sign-up restrictions) as msg, with
+      // error_code "unknown".
+      const hookCode = typeof data?.msg === 'string' && /^[a-z0-9_]{1,64}$/.test(data.msg) ? data.msg : undefined
+      const errorCode = data?.error_code === 'unknown' ? undefined : data?.error_code
+      const code = errorCode ?? hookCode ?? data?.code ?? data?.error
       throw new AuthError(response.status, typeof code === 'string' && /^[a-z0-9_]{1,64}$/.test(code) ? code : `http_${response.status}`)
     }
     return data as T

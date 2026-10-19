@@ -16,6 +16,10 @@
 <label>Site URL (users return here after signing in)<input name="site_url" type="url" size="50" required></label>
 <label>Other allowed redirect URLs, one per line<textarea name="redirect_urls" rows="3" cols="50"></textarea></label>
 <label>Sign-up<select name="signup"><option value="on">Anyone can sign up</option><option value="off">Only invited or administrator-created users</option></select></label>
+<label>Who may sign up<select name="signup_access"><option value="open">Anyone</option><option value="invite">Invited or approved addresses</option><option value="waitlist">Invited or approved addresses; others join a waitlist</option></select></label>
+<label>Only addresses at these domains may sign up (blank for any), one per line<textarea name="signup_domains" rows="2" cols="50"></textarea></label>
+<label>Refuse sign-ups from these domains and their subdomains, one per line<textarea name="blocked_domains" rows="2" cols="50" placeholder="Not shown once saved; enter the whole list to replace it"></textarea></label>
+<label>Throwaway email addresses<select name="block_disposable"><option value="off">Allowed</option><option value="on">Refused at sign-up</option></select></label>
 <label>Email confirmation<select name="autoconfirm"><option value="off">Required before signing in</option><option value="on">Skipped (development only)</option></select></label>
 <label>Minimum password length<input name="password_min_length" type="number" min="6" max="72" required></label>
 <fieldset id="password-classes"><legend>Passwords must include</legend><label><input type="checkbox" value="lower"> lowercase</label><label><input type="checkbox" value="upper"> uppercase</label><label><input type="checkbox" value="digit"> digit</label><label><input type="checkbox" value="symbol"> symbol</label></fieldset>
@@ -93,7 +97,7 @@
 <p id="key-error" class="danger" role="alert"></p>
 <p>Create a key with <code>gregale auth admin-key create {{.Data.Slug}}</code>. This page sends it only to <code>{{.Data.AuthOrigin}}</code> and keeps it in this browser tab until you close the tab or choose Forget key. User records go from your Auth app to this browser and never through Gregale.</p></section>
 <section id="workspace" hidden>
-<nav aria-label="Views"><button type="button" data-tab="users" aria-pressed="true">Users</button><button type="button" data-tab="orgs" aria-pressed="false">Organizations</button><button type="button" data-tab="activity" aria-pressed="false">Activity</button><button type="button" data-tab="sso" aria-pressed="false">SSO</button><button type="button" data-tab="emails" aria-pressed="false">Emails</button><button type="button" id="forget">Forget key</button></nav>
+<nav aria-label="Views"><button type="button" data-tab="users" aria-pressed="true">Users</button><button type="button" data-tab="orgs" aria-pressed="false">Organizations</button><button type="button" data-tab="activity" aria-pressed="false">Activity</button><button type="button" data-tab="sso" aria-pressed="false">SSO</button><button type="button" data-tab="signups" aria-pressed="false">Sign-ups</button><button type="button" data-tab="emails" aria-pressed="false">Emails</button><button type="button" id="forget">Forget key</button></nav>
 <form id="search" role="search"><label for="query" class="muted">Search</label><input type="search" id="query" maxlength="200"><button type="submit">Search</button><button type="button" id="export" hidden>Export CSV</button></form>
 <p id="status" role="status" aria-live="polite"></p>
 <table id="list"><thead></thead><tbody></tbody></table>
@@ -129,7 +133,7 @@
   }
   const emailLabels = {
     signup: 'Confirm sign-up', invite: 'Invitation to sign up', magiclink: 'Sign-in link', recovery: 'Password reset', email_change: 'Email change',
-    code: 'Verification code', security_notice: 'Security notice', organization_invitation: 'Organization invitation',
+    code: 'Verification code', security_notice: 'Security notice', organization_invitation: 'Organization invitation', signup_approved: 'Sign-up approved',
   }
   const el = (tag, text, attrs = {}) => {
     const node = document.createElement(tag)
@@ -236,6 +240,35 @@
         setTable(['Time', 'Event', 'User'], activityRows(data.entries, true))
         pager(null, data.more)
         say(data.entries.length ? '' : 'No activity matches.')
+      } else if (tab === 'signups') {
+        // Who may sign up while sign-up is by invitation or waitlist.
+        const data = await fetchView('/admin/v1/signups?' + qs)
+        const act = async (label, method, path, body) => {
+          say(label + '…')
+          try { await call(method, path, body); await load() } catch (error) { say(error.message) }
+        }
+        setTable(['Email', 'State', ''], data.signups.map(signup => {
+          const row = el('tr')
+          const state = signup.signed_up ? 'Signed up' : signup.approved_at ? 'Approved ' + when(signup.approved_at) + (signup.notified_at ? ', emailed' : '') : 'Waiting since ' + when(signup.requested_at)
+          row.append(el('td', signup.email), el('td', state))
+          const cell = el('td')
+          if (!signup.approved_at) cell.append(button('Approve', () => act('Approving', 'POST', '/admin/v1/signups/approve', { emails: [signup.email] })))
+          cell.append(button('Remove', () => act('Removing', 'DELETE', '/admin/v1/signups/' + encodeURIComponent(signup.email))))
+          row.append(cell)
+          return row
+        }))
+        pager(data.total)
+        const approve = el('form')
+        const addresses = el('input', null, { type: 'text', size: '50', 'aria-label': 'Addresses to approve, separated by commas or spaces', placeholder: 'ada@example.com, bob@example.com' })
+        approve.append(addresses, el('button', 'Approve and email', { type: 'submit' }))
+        approve.addEventListener('submit', event => {
+          event.preventDefault()
+          const emails = addresses.value.split(/[\s,]+/).filter(Boolean)
+          if (emails.length) act('Approving', 'POST', '/admin/v1/signups/approve', { emails })
+        })
+        $('detail').replaceChildren(el('h2', 'Approve addresses'), el('p', 'Approved addresses may sign up while sign-up is by invitation or waitlist; with an email provider set up they are told so.', { class: 'muted' }), approve)
+        $('detail').hidden = false
+        say(data.signups.length ? '' : 'No waiting or approved addresses.')
       } else if (tab === 'emails') {
         const data = await fetchView('/admin/v1/emails')
         setTable(['Email', 'Subject', 'Wording', ''], data.emails.map(email => {
@@ -586,6 +619,8 @@
     const values = {
       site_url: settings.site_url, redirect_urls: settings.redirect_urls.join('\n'), signup: settings.signup.enabled ? 'on' : 'off',
       autoconfirm: settings.signup.autoconfirm ? 'on' : 'off', password_min_length: String(settings.password.min_length),
+      signup_access: settings.signup.access ?? 'open', signup_domains: (settings.signup.allowed_domains ?? []).join('\n'), blocked_domains: '',
+      block_disposable: settings.signup.block_disposable ? 'on' : 'off',
       leaked_password_check: settings.password.leaked_password_check ? 'on' : 'off', mfa: settings.mfa.totp ? 'on' : 'off',
       mfa_phone: settings.mfa.phone ? 'on' : 'off', recovery_codes: settings.mfa.recovery_codes ? 'on' : 'off',
       passkeys: settings.passkeys?.enabled ? 'on' : 'off',

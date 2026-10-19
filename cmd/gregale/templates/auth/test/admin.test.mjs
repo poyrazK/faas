@@ -255,6 +255,6 @@ test('serves email templates behind the admin key', async t => {
   assert.equal((await call('GET', '/admin/v1/emails')).status, 401)
   const listed = await call('GET', '/admin/v1/emails', { key })
   assert.equal(listed.status, 200)
-  assert.equal(listed.body.emails.length, 8)
+  assert.equal(listed.body.emails.length, 9)
   assert.equal((await call('PATCH', '/admin/v1/emails/signup', { key, body: { body: '{{nope}}' } })).body.code, 'unknown_placeholder')
 })

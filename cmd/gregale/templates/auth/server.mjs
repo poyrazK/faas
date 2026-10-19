@@ -14,6 +14,7 @@ import { createEventPublisher, lifecycleConfig, publishesAfter, setLifecycleEven
 import { createAnonymousPruner, createAuditPruner } from './retention.mjs'
 import { bodyAllowed, smsSendPath } from './sms.mjs'
 import { createScimHandler } from './scim.mjs'
+import { signupRefusal } from './signups.mjs'
 import { goMemoryLimit, gotrue, limits, pagePolicy, runtimeConfig } from './config.mjs'
 import { accessTokenClaims, authorizationDetails, authorizationResource, bearerClaims, clientTokenAllowed, consentLocation, isClientToken, registrationOpen, wellKnownPath } from './oauth.mjs'
 
@@ -217,9 +218,10 @@ export function start(env = process.env) {
   pool.on('error', () => {})
   const tokenHook = config.oauth || config.orgClaims
   const accessToken = tokenHook ? payload => accessTokenClaims(pool, payload, { orgClaims: config.orgClaims }) : null
-  const hooks = createHookServer({ secret, mailer, api: config.api, app: config.app, accessToken, templates: () => loadEmailTemplates(pool) })
+  const beforeUserCreated = config.signups ? payload => signupRefusal(pool, config.signups, payload) : null
+  const hooks = createHookServer({ secret, mailer, api: config.api, app: config.app, accessToken, beforeUserCreated, templates: () => loadEmailTemplates(pool) })
   hooks.listen(hookAddress.port, hookAddress.host)
-  const child = spawn(gotrue.binary, ['serve'], { env: { ...config.gotrueEnv, ...hookEnv(secret, { accessToken: tokenHook }), GOMEMLIMIT: goMemoryLimit() }, stdio: ['ignore', 'pipe', 'pipe'] })
+  const child = spawn(gotrue.binary, ['serve'], { env: { ...config.gotrueEnv, ...hookEnv(secret, { accessToken: tokenHook, beforeUserCreated: Boolean(beforeUserCreated) }), GOMEMLIMIT: goMemoryLimit() }, stdio: ['ignore', 'pipe', 'pipe'] })
   filterLogs(child.stdout, process.stdout)
   filterLogs(child.stderr, process.stderr)
   const invitations = { mailer, external: config.external, app: config.app }
