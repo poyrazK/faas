@@ -26,10 +26,6 @@ faas_livequeryd_keys_identity_src: ""
 # live_queries_unavailable.
 faas_livequeryd_keys_recipient_src: ""
 
-# FAAS_LIVE_QUERIES_ACCOUNTS for apid: comma-separated account UUIDs that see
-# live queries, or "*" for every account. Empty keeps them hidden.
-faas_live_queries_accounts: ""
-
 faas_livequeryd_slot: gregale_live
 faas_livequeryd_publication: gregale_live
 # Install the schema-change log (event triggers) and create the publication.

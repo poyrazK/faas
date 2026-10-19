@@ -489,8 +489,8 @@ Live queries are invisible to customers until launch.
 4. Run livequeryd with these flags. The `livequeryd_service` Ansible role
    does this on the control plane (`faas_livequeryd_managed: true`; see its
    README): it passes secrets as systemd credentials, wires apid's recipient
-   file and `FAAS_LIVE_QUERIES_ACCOUNTS`, and opens the hub port to compute
-   nodes.
+   file, and opens the hub port to compute nodes. Which accounts see live
+   queries is the `live_queries` platform flag (ADR-1700).
    - `-database-url-file`: a file holding the database connection string
      (`-database-url` puts its password in the process list);
    - `-keys-dsn-file`: a file holding a read-only control-plane connection

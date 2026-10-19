@@ -1,6 +1,5 @@
 # Managed by the livequeryd_service role (ADR-20261016151947): apid seals each
-# database's live secret to livequeryd's age recipient, and shows live queries
-# only to the listed accounts.
+# database's live secret to livequeryd's age recipient. Which accounts see live
+# queries is the live_queries platform flag (ADR-1700), set at runtime.
 [Service]
 Environment=FAAS_APID_LIVE_KEY_RECIPIENT_FILE=/etc/faas/livequeryd/keys.recipient
-Environment=FAAS_LIVE_QUERIES_ACCOUNTS={{ faas_live_queries_accounts }}

@@ -4,8 +4,10 @@ Runs the live-query hub (`livequeryd`, ADR-20261016151947) for one managed
 database on the control plane, and wires apid for live queries.
 
 Live queries are a dark-launched preview. Nothing here runs unless the
-inventory sets `faas_livequeryd_managed: true`, and customers see live queries
-only when their account is listed in `faas_live_queries_accounts`.
+inventory sets `faas_livequeryd_managed: true`. Customers see live queries
+only when the `live_queries` platform flag (ADR-1700) includes their account.
+Operators set that flag at runtime in the operator console; it is off by
+default.
 
 ## What the role does
 
@@ -23,8 +25,9 @@ only when their account is listed in `faas_live_queries_accounts`.
   The secrets live in `/etc/faas/secrets/livequeryd/` as 0400 root:root and
   reach the hub as files under `%d`, never on its command line.
 - Gives apid the identity's public recipient as
-  `FAAS_APID_LIVE_KEY_RECIPIENT_FILE`, plus `FAAS_LIVE_QUERIES_ACCOUNTS`
-  (`faas-apid.service.d/99-faas-live-queries.conf`).
+  `FAAS_APID_LIVE_KEY_RECIPIENT_FILE`
+  (`faas-apid.service.d/99-faas-live-queries.conf`). It does not set
+  `FAAS_LIVE_QUERIES_ACCOUNTS`, which is only the flag's boot fallback.
 - Keeps the checkpoint in `/var/lib/faas/livequeryd`, so a restart resumes from
   the replication slot.
 - Starts the hub and waits for `/readyz` on `faas_livequeryd_metrics_listen`
@@ -32,7 +35,8 @@ only when their account is listed in `faas_live_queries_accounts`.
 
 With `faas_livequeryd_enabled: false`, the role:
 - stops and disables the hub;
-- removes both drop-ins, which also hides live queries in apid.
+- removes both drop-ins. Without the recipient, apid answers
+  `live_queries_unavailable` even to accounts the flag includes.
 
 A release (`cd-controlplane`) updates and restarts the hub only on hosts that
 have the hub drop-in.
@@ -60,7 +64,6 @@ faas_livequeryd_database_url_src: secrets/live/database-url      # postgres://..
 faas_livequeryd_keys_dsn_src: secrets/live/keys-dsn              # read-only control-plane DSN
 faas_livequeryd_keys_identity_src: secrets/live/keys.age         # age-keygen output
 faas_livequeryd_keys_recipient_src: secrets/live/keys.recipient  # age-keygen -y keys.age
-faas_live_queries_accounts: "<your account UUID>"
 
 # TLS for realtimed on compute nodes. The certificate's SANs must cover the
 # host in live_hub_url; the client CA verifies realtimed's client certificates.

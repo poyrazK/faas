@@ -91,6 +91,7 @@ const (
 	configRevisionsFile              = "config_revisions.go"     // ADR-1451 guarded, reversible config changes
 	changeTimelineFile               = "change_timeline.go"      // ADR-751 app change timeline DTOs
 	customMetricSeriesFile           = "custom_metric_series.go" // ADR-745 custom metric history DTOs
+	operatorPlatformFlagsFile        = "operator_platform_flags.go"
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -1428,12 +1429,14 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "data_api_runtime_connections.go"), // ADR-1730 private runtime reporting.
 		filepath.Join(root, "pkg", "api", "data_api_connection_budget.go"),   // ADR-650 read-only shared database planning DTOs.
 		filepath.Join(root, "pkg", "api", "compose_healthcheck.go"),
+		filepath.Join(root, "pkg", "api", "compose_process.go"), // ADR-1337 Compose process overrides for prebuilt images.
 		filepath.Join(root, "pkg", "api", "environment_gitops.go"),
 		filepath.Join(root, "pkg", "api", "environment_workload_retirement.go"), // ADR-1331 retained workload retirement and recovery DTO
 		filepath.Join(root, "pkg", "api", "environment_gitops_preview.go"),
 		filepath.Join(root, "pkg", "api", "environment_gitops_notifications.go"),
 		filepath.Join(root, "pkg", "api", "environment_definition.go"),
 		filepath.Join(root, "pkg", "api", dtoFile),
+		filepath.Join(root, "pkg", "api", "deleted_apps.go"),
 		filepath.Join(root, "pkg", "api", "deployment_response_check.go"),
 		filepath.Join(root, "pkg", "api", devBucketsFile),
 		filepath.Join(root, "pkg", "api", "mcp_policy.go"),
@@ -1634,6 +1637,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", oidcFile),
 		filepath.Join(root, "pkg", "api", envDiffFile),
 		filepath.Join(root, "pkg", "api", operatorConfigFile),
+		filepath.Join(root, "pkg", "api", operatorPlatformFlagsFile), // ADR-1700 — platform flags
 		filepath.Join(root, "pkg", "api", obsFile),
 		filepath.Join(root, "pkg", "api", "obs_triage.go"),
 		filepath.Join(root, "pkg", "api", "obs_triage_history.go"),

@@ -15973,5 +15973,20 @@
       "workflow_name"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "runtime_config_apply_receipts",
+    "columns": [
+      "config_key",
+      "daemon",
+      "error",
+      "instance",
+      "reported_at",
+      "scope",
+      "scope_id",
+      "status",
+      "version"
+    ],
+    "kind": "platform_configuration"
   }
 ]

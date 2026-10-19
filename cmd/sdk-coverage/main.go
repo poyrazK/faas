@@ -334,6 +334,10 @@ var routeExclude = map[string]bool{
 	"PATCH /v1/admin/config/{key}":                       true, // operator-only runtime configuration write
 	"GET /v1/admin/config-operations/{id}":               true, // operator-only runtime configuration operation polling
 	"GET /v1/admin/config/{key}/revisions":               true, // operator-only runtime configuration history
+	"GET /v1/admin/flags":                                true, // ADR-1700 operator-only platform flag catalog
+	"GET /v1/admin/flags/{key}":                          true, // ADR-1700 operator-only platform flag detail
+	"GET /v1/admin/flags/{key}/decision":                 true, // ADR-1700 operator-only platform flag inspector
+	"GET /v1/admin/accounts/{id}/flags":                  true, // ADR-1700 operator-only per-account platform flags
 	"GET /v1/admin/managed-postgres/usage/{account_id}":  true, // operator-only COGS/capacity view; public SDK is customer-scoped
 
 	// Dashboard auth (issue #165 PR #2, ADR-032). The SDK uses the
@@ -1102,6 +1106,9 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/crons/{id}":                                                                               "DeleteCron",
 	"DELETE /v1/apps/{slug}":                                                                              "DeleteApp",
 	"POST /v1/apps/{slug}/restore":                                                                        "RestoreApp",
+	"GET /v1/deleted-apps":                                                                                "ListDeletedApps",
+	"GET /v1/deleted-apps/{id}":                                                                           "GetDeletedApp",
+	"POST /v1/deleted-apps/{id}/restore":                                                                  "RestoreDeletedApp",
 	"DELETE /v1/apps/{slug}/secrets/{key}":                                                                "UnsetSecret",
 	"GET /v1/apps/{slug}/secret-revocations/{revocation_id}":                                              "GetSecretRevocation",
 	"GET /v1/apps/{slug}/config/revisions":                                                                "ListConfigRevisions",

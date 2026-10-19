@@ -9740,6 +9740,102 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/admin/flags:
+    get:
+      tags: [operator]
+      operationId: listOperatorPlatformFlags
+      summary: List platform flags
+      description: |
+        Returns every catalogued platform flag (ADR-1700) with apid's live
+        definition, the per-daemon apply receipts and convergence, and the
+        shared account groups. Change a flag with
+        PATCH /v1/admin/config/{config_key}. Operator-only.
+      responses:
+        '200':
+          description: Platform flags and groups
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperatorPlatformFlagList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/admin/flags/{key}:
+    get:
+      tags: [operator]
+      operationId: getOperatorPlatformFlag
+      summary: Get a platform flag
+      description: One platform flag with its live definition, apply receipts and convergence. Operator-only.
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema: { type: string }
+          description: Platform flag key, for example ai_gateway.
+      responses:
+        '200':
+          description: Platform flag
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperatorPlatformFlag' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/admin/flags/{key}/decision:
+    get:
+      tags: [operator]
+      operationId: inspectOperatorPlatformFlag
+      summary: Explain a platform flag for an account
+      description: |
+        Evaluates the flag for one account against apid's live definition
+        and reports the matching rule, the reason, and whether the account's
+        plan is entitled to the capability the flag releases. Records
+        nothing. Operator-only.
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema: { type: string }
+          description: Platform flag key.
+        - name: account_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+          description: Account to evaluate.
+      responses:
+        '200':
+          description: Decision
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperatorPlatformFlagDecision' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/admin/accounts/{id}/flags:
+    get:
+      tags: [operator]
+      operationId: listOperatorAccountPlatformFlags
+      summary: List platform flags for an account
+      description: Every platform flag decided for one account, with plan entitlement. Operator-only.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Account ID.
+      responses:
+        '200':
+          description: Decisions for the account
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperatorAccountPlatformFlags' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 
   # ─── Account ──────────────────────────────────────────────────────────────
 
@@ -18523,6 +18619,98 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/deleted-apps:
+    get:
+      tags: [apps]
+      operationId: listDeletedApps
+      summary: List account-owned retained deleted apps.
+      description: |
+        Bounded lifecycle inventory; never includes another account's tombstones.
+        Eligibility does not reserve quota or capacity. Use the returned deadline
+        and evaluation time, not a deadline inferred from the browser clock.
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum records in this account-owned page.
+          schema: { type: integer, minimum: 1, maximum: 50, default: 25 }
+        - name: cursor
+          in: query
+          description: Opaque cursor from this account and inventory order. Restart when rejected.
+          schema: { type: string, maxLength: 1024 }
+      responses:
+        '200':
+          description: One bounded account-owned page.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeletedAppListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/deleted-apps/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Exact deleted-app ID returned by this account's inventory.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: getDeletedApp
+      summary: Read one account-owned deleted app before restore review.
+      description: Returns current lifecycle evidence for the exact owned retained ID; foreign and restored IDs are absent.
+      responses:
+        '200':
+          description: Current lifecycle evidence; active or foreign apps return 404.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeletedAppSummary' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/deleted-apps/{id}/restore:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Exact account-owned deleted-app ID; never resolved to a replacement slug.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [apps]
+      operationId: restoreDeletedApp
+      summary: Restore an identified app within its retained deletion window.
+      description: |
+        Requires deploy-write, MFA completion and trusted browser origin for cookie
+        authentication. Rechecks identity, deadline, purge claim, quota and capacity.
+        This operation has no idempotent replay receipt. After an uncertain response,
+        reconcile exact-ID reads; never automatically retry or fall back to slug restore.
+        Success acknowledges restoration, not execution health.
+      requestBody:
+        description: Optional empty object; no dry-run or other fields are accepted.
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, maxProperties: 0 }
+      responses:
+        '200':
+          description: The restored exact app.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/restore:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -18530,12 +18718,28 @@ paths:
       tags: [apps]
       operationId: restoreApp
       summary: Restore an app during its deletion grace window.
+      description: |
+        Bodyless legacy callers remain supported. An optional expected_app_id
+        fences the selected identity on updated servers. For mixed-version
+        safety, use the dedicated deleted-app ID route instead of relying on
+        legacy body handling. This route has no idempotent replay receipt.
+      requestBody:
+        description: Optional reviewed app identity on updated servers; bodyless callers remain compatible.
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                expected_app_id: { type: string, format: uuid, minLength: 32, maxLength: 36 }
       responses:
         '200':
           description: The restored app.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AppResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
@@ -72958,7 +73162,7 @@ components:
       required: [slug, enabled]
       properties:
         slug: {"type": "string"}
-        enabled: {"type": "boolean", "description": "Whether a cold wake of this app also wakes the services it is measured to call."}
+        enabled: {"type": "boolean", "description": "Whether a cold wake of this app also wakes the services it declares or is measured to call."}
         updated_at: {"type": "string", "format": "date-time", "description": "Omitted until the opt-in is first changed."}
         learned: { $ref: '#/components/schemas/ServiceWakeAheadLearned' }
     ServiceWakeAheadLearned:
@@ -78129,7 +78333,7 @@ components:
         label: { type: string }
         description: { type: string }
         category: { type: string }
-        kind: { type: string, enum: [boolean, integer, duration, string, enum, secret_reference] }
+        kind: { type: string, enum: [boolean, integer, duration, string, enum, secret_reference, platform_flag, platform_flag_groups] }
         default_value: {}
         desired_value: {}
         effective_value: {}
@@ -78194,6 +78398,137 @@ components:
         version: { type: integer, format: int64, minimum: 1 }
         reason: { type: string, minLength: 3, maxLength: 500 }
         expected_version: { type: integer, format: int64, minimum: 0 }
+
+    # ─── Platform flags (ADR-1700) ───────────────────────────────────────
+
+    PlatformFlagRule:
+      description: "One targeting rule of a platform flag. Accounts, group, plans and rollout combine with AND; the first matching rule decides."
+      type: object
+      required: [id, value]
+      properties:
+        id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        accounts:
+          type: array
+          maxItems: 1000
+          items: { type: string, format: uuid }
+        group: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        plans:
+          type: array
+          items: { type: string, enum: [free, hobby, pro, scale] }
+        rollout: { type: integer, minimum: 0, maximum: 10000, description: "Basis points of the accounts the other constraints admit." }
+        value: { type: boolean }
+
+    PlatformFlagDefinition:
+      description: "Stored value of a platform flag. Enabled is the kill switch; default applies to accounts no rule matches."
+      type: object
+      required: [enabled, default]
+      properties:
+        enabled: { type: boolean }
+        default: { type: boolean }
+        rules:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/PlatformFlagRule' }
+
+    OperatorRuntimeConfigApplyReceipt:
+      description: "What one daemon instance reported applying for a runtime-configuration key."
+      type: object
+      required: [config_key, daemon, instance, version, status, reported_at]
+      properties:
+        config_key: { type: string }
+        daemon: { type: string }
+        instance: { type: string }
+        version: { type: integer, format: int64 }
+        status: { type: string, enum: [applied, failed] }
+        error: { type: string }
+        reported_at: { type: string, format: date-time }
+
+    OperatorPlatformFlagConvergence:
+      description: "Consumers of a platform flag grouped by whether every instance applied its current version."
+      type: object
+      required: [converged, pending, failed]
+      properties:
+        converged: { type: array, items: { type: string } }
+        pending: { type: array, items: { type: string } }
+        failed: { type: array, items: { type: string } }
+
+    OperatorPlatformFlag:
+      description: "One catalogued platform flag with its live definition, apply receipts and convergence."
+      type: object
+      required: [key, config_key, label, description, adr, consumers, legacy_env, definition,
+                 source, version, status, receipts, convergence]
+      properties:
+        key: { type: string }
+        config_key: { type: string, description: "Runtime-configuration key that stores the flag; write it with PATCH /v1/admin/config/{key}." }
+        label: { type: string }
+        description: { type: string }
+        capability: { type: string }
+        adr: { type: string }
+        consumers: { type: array, items: { type: string } }
+        legacy_env: { type: array, items: { type: string } }
+        retire_by: { type: string, format: date }
+        definition: { $ref: '#/components/schemas/PlatformFlagDefinition' }
+        source: { type: string, enum: [default_or_environment, operator] }
+        version: { type: integer, format: int64 }
+        status: { type: string, enum: [pending, applied, failed, blocked] }
+        last_error: { type: string }
+        updated_at: { type: string, format: date-time }
+        receipts:
+          type: array
+          items: { $ref: '#/components/schemas/OperatorRuntimeConfigApplyReceipt' }
+        convergence: { $ref: '#/components/schemas/OperatorPlatformFlagConvergence' }
+
+    OperatorPlatformFlagGroups:
+      description: "Shared named account sets referenced by platform-flag rules."
+      type: object
+      required: [config_key, groups, references, version]
+      properties:
+        config_key: { type: string }
+        groups:
+          type: object
+          additionalProperties: { type: array, items: { type: string, format: uuid } }
+        references:
+          type: object
+          additionalProperties: { type: array, items: { type: string } }
+        version: { type: integer, format: int64 }
+
+    OperatorPlatformFlagList:
+      description: "Every platform flag and the shared account groups."
+      type: object
+      required: [items, groups, generated_at]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OperatorPlatformFlag' }
+        groups: { $ref: '#/components/schemas/OperatorPlatformFlagGroups' }
+        generated_at: { type: string, format: date-time }
+
+    OperatorPlatformFlagDecision:
+      description: "One platform flag decided for one account. Available is the decision and the plan entitlement of the released capability."
+      type: object
+      required: [flag, account_id, plan, enabled, reason, version, available]
+      properties:
+        flag: { type: string }
+        account_id: { type: string, format: uuid }
+        plan: { type: string }
+        enabled: { type: boolean }
+        reason: { type: string, enum: [unknown_flag, flag_disabled, account_missing, rule_match, default] }
+        rule_id: { type: string }
+        bucket: { type: integer, minimum: 0, maximum: 9999 }
+        version: { type: integer, format: int64 }
+        entitled: { type: boolean }
+        available: { type: boolean }
+
+    OperatorAccountPlatformFlags:
+      description: "Every platform flag decided for one account."
+      type: object
+      required: [account_id, plan, items]
+      properties:
+        account_id: { type: string, format: uuid }
+        plan: { type: string }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OperatorPlatformFlagDecision' }
 
     # ─── Dashboard auth (issue #165 PR #2, ADR-032) ──────────────────────
 
@@ -80845,6 +81180,29 @@ components:
         scheduler_node_id: { type: string, description: Scheduler owner node when this app is sharded. }
         observed_at: { type: [string, "null"], format: date-time }
         stale: { type: boolean }
+
+    DeletedAppSummary:
+      type: object
+      description: Account-owned retained lifecycle metadata. Eligibility never reserves quota or proves execution health.
+      required: [account_id, id, slug, deleted_at, delete_grace_until, restore_eligible, restore_blocker, evaluated_at]
+      properties:
+        account_id: { type: string, format: uuid }
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        deleted_at: { type: [string, "null"], format: date-time }
+        delete_grace_until: { type: [string, "null"], format: date-time }
+        restore_eligible: { type: boolean }
+        restore_blocker: { type: string, enum: ['', grace_expired, purge_started, metadata_unavailable] }
+        evaluated_at: { type: string, format: date-time }
+    DeletedAppListResponse:
+      type: object
+      description: Bounded account-owned tombstone inventory and its opaque cursor.
+      required: [account_id, apps, evaluated_at]
+      properties:
+        account_id: { type: string, format: uuid }
+        apps: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/DeletedAppSummary' } }
+        next_cursor: { type: string, maxLength: 1024 }
+        evaluated_at: { type: string, format: date-time }
 
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172)."
@@ -99382,6 +99740,27 @@ components:
         start_period_ns: { type: integer, format: int64, minimum: 0 }
         start_interval_ns: { type: integer, format: int64, minimum: 0 }
         retries: { type: integer, minimum: 0 }
+    ComposeProcess:
+      type: object
+      description: "Compose process overrides for a prebuilt image (ADR-1337). Omitted fields inherit the image's ENTRYPOINT, USER, WORKDIR and stop settings."
+      properties:
+        entrypoint:
+          type: array
+          items: { type: string }
+          description: "Replaces the image ENTRYPOINT and drops its CMD; the Compose command supplies the arguments. An empty array clears the ENTRYPOINT."
+        user:
+          type: string
+          description: "User name or id, optionally with :group, resolved against the image's /etc/passwd and /etc/group."
+        working_dir:
+          type: string
+          description: "Clean absolute working directory."
+        stop_signal:
+          type: string
+          enum: [SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2]
+        stop_grace_period_s:
+          type: integer
+          minimum: 1
+          description: "Seconds between the stop signal and SIGKILL, capped by the plan."
     PlanWorkload:
       description: "One discovered unit of work. Mirrors reposcan.Workload."
       type: object
@@ -99409,6 +99788,9 @@ components:
         image_healthcheck:
           $ref: '#/components/schemas/ComposeHealthcheck'
           description: "Compose healthcheck override for prebuilt image workloads, captured per deployment."
+        image_process:
+          $ref: '#/components/schemas/ComposeProcess'
+          description: "Compose entrypoint, user, working_dir and stop overrides for prebuilt image workloads, captured per deployment."
         command:
           type: array
           items: { type: string }

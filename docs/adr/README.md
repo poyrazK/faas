@@ -231,6 +231,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1333 | [Durable managed PostgreSQL activation preflight](1333-managed-postgres-activation-preflight.md) | accepted for catalog inspection; customer activation disabled | Recoverable preflight revisions check restored targets, staged SQL verification and source bindings without publishing credentials |
 | 1334 | [Durable cutover source SQL connection fences](1334-managed-postgres-cutover-source-fences.md) | accepted for internal controller plumbing; customer activation disabled | Owned SQL fences share maintenance authority, survive lost replies and retain pins until confirmed cancellation cleanup |
 | 1335 | [Source writer inventory and provider isolation evidence](1335-managed-postgres-source-writer-isolation.md) | accepted for internal recovery plumbing; customer activation disabled | Immutable catalog baselines, writer diagnostics and expiring provider evidence fail closed on drift or unsupported guarantees |
+| 1337 | [Compose process overrides and unsupported-key reporting](1337-compose-process-overrides-and-key-reporting.md) | accepted | Prebuilt image services honour entrypoint/user/working_dir/stop_signal/stop_grace_period via a frozen `image_command` v2; `env_file` adds variable names; other keys, including unresolved `extends`/`include`, warn |
 | 1170 | [Developer watch mode for apps with a build step](1170-developer-watch-mode.md) | proposed | Opt-in `gregale dev --watch`: a builder-made developer image runs the framework's dev server and ADR-740 patches reach its own hot reload |
 | 1114 | [Reversible issue group links](1114-reversible-issue-group-links.md) | accepted | Merge fingerprint groups without moving evidence; split an original group back out with its lifetime history |
 | 1113 | [Deployment-local issue source maps](1113-deployment-local-issue-source-maps.md) | accepted | Node reporters map bounded local artifacts to original frames while preserving generated stack evidence |
@@ -1674,6 +1675,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [Worker recovery diagnostics and alerts](20261017223000-worker-recovery-diagnostics.md)
 - [Worker admission explanations](20261018090000-worker-admission-explanations.md)
 - [ADR 202610171900: Release compatibility gates (N±1, deploy order, skew and migration checks, SLO gate)](202610171900-release-compatibility-gates.md)
+- [ADR-1700: Platform flags: per-account release gates managed at runtime](1700-platform-flags.md)
 
 - [ADR-1650: Per-unit control-plane releases](1650-per-unit-control-plane-releases.md)
 
@@ -1688,5 +1690,6 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261017233500: Explicit selected-app traces through management MCP](20261017233500-management-mcp-selected-traces.md)
 
 - [ADR-1136: Project environment configuration reaches every service as environment variables](1136-project-environment-config-as-environment-variables.md)
+- [ADR-1137: Declared dependencies seed opt-in wake-ahead](1137-declared-dependencies-seed-wake-ahead.md) — an opted-in app wakes its declared dependencies until 20 wakes of evidence decide (amends ADR-977)
 
 - [ADR-20261018181846: Route priority in the cold-wake queue](20261018181846-route-priority-in-the-wake-queue.md)

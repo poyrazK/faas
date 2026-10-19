@@ -238,6 +238,43 @@ func (q *Queries) AccountByOIDCIssuerSubject(ctx context.Context, db DBTX, arg A
 	return i, err
 }
 
+const accountDeletedAppByID = `-- name: AccountDeletedAppByID :one
+SELECT id::text AS id, slug, deleted_at, delete_grace_until,
+       coalesce(deleted_at, created_at)::timestamptz AS sort_at,
+       (purge_claimed_at IS NOT NULL)::boolean AS purge_started
+FROM apps
+WHERE account_id = $1::text::uuid
+  AND id = $2::text::uuid AND status = 'deleted'
+`
+
+type AccountDeletedAppByIDParams struct {
+	AccountID string
+	AppID     string
+}
+
+type AccountDeletedAppByIDRow struct {
+	ID               string
+	Slug             string
+	DeletedAt        pgtype.Timestamptz
+	DeleteGraceUntil pgtype.Timestamptz
+	SortAt           pgtype.Timestamptz
+	PurgeStarted     bool
+}
+
+func (q *Queries) AccountDeletedAppByID(ctx context.Context, db DBTX, arg AccountDeletedAppByIDParams) (AccountDeletedAppByIDRow, error) {
+	row := db.QueryRow(ctx, accountDeletedAppByID, arg.AccountID, arg.AppID)
+	var i AccountDeletedAppByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.Slug,
+		&i.DeletedAt,
+		&i.DeleteGraceUntil,
+		&i.SortAt,
+		&i.PurgeStarted,
+	)
+	return i, err
+}
+
 const accountIDByGitHubOIDCRepositoryIdentity = `-- name: AccountIDByGitHubOIDCRepositoryIdentity :one
 select min(a.github_install_account_id::text)::uuid as account_id
 from apps a
@@ -36959,6 +36996,67 @@ func (q *Queries) ListAccountCustomerOperationsBySubject(ctx context.Context, db
 			return nil, err
 		}
 		items = append(items, summary)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAccountDeletedApps = `-- name: ListAccountDeletedApps :many
+SELECT id::text AS id, slug, deleted_at, delete_grace_until,
+       coalesce(deleted_at, created_at)::timestamptz AS sort_at,
+       (purge_claimed_at IS NOT NULL)::boolean AS purge_started
+FROM apps
+WHERE account_id = $1::text::uuid AND status = 'deleted'
+  AND ($2::text = '' OR
+       (coalesce(deleted_at, created_at), id::text) <
+       ($3::timestamptz, $2::text))
+ORDER BY coalesce(deleted_at, created_at) DESC, id::text DESC
+LIMIT $4::int
+`
+
+type ListAccountDeletedAppsParams struct {
+	AccountID string
+	BeforeID  string
+	BeforeAt  pgtype.Timestamptz
+	PageLimit int32
+}
+
+type ListAccountDeletedAppsRow struct {
+	ID               string
+	Slug             string
+	DeletedAt        pgtype.Timestamptz
+	DeleteGraceUntil pgtype.Timestamptz
+	SortAt           pgtype.Timestamptz
+	PurgeStarted     bool
+}
+
+func (q *Queries) ListAccountDeletedApps(ctx context.Context, db DBTX, arg ListAccountDeletedAppsParams) ([]ListAccountDeletedAppsRow, error) {
+	rows, err := db.Query(ctx, listAccountDeletedApps,
+		arg.AccountID,
+		arg.BeforeID,
+		arg.BeforeAt,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAccountDeletedAppsRow{}
+	for rows.Next() {
+		var i ListAccountDeletedAppsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Slug,
+			&i.DeletedAt,
+			&i.DeleteGraceUntil,
+			&i.SortAt,
+			&i.PurgeStarted,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

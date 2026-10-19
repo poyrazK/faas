@@ -113,6 +113,7 @@ type workloadSeed struct {
 	dockerfile          string
 	image               string
 	healthcheck         *api.ComposeHealthcheck
+	imageProcess        *api.ComposeProcess
 	imageSet            bool // explicit image strategy, including a Compose source build
 	command             []string
 	commandShell        bool

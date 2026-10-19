@@ -1036,7 +1036,8 @@ Phase 0 did not cover:
     - The unit is an `OptionalRegistry` entry, generated like s3-gatewayd's.
     - The role's drop-in holds the database's flags and loads its secrets
       as systemd credentials.
-    - The role wires apid's recipient and account gate.
+    - The role wires apid's recipient. Accounts are released by the
+      `live_queries` platform flag (ADR-1700), not by the role.
     - nftables opens the hub port to compute nodes.
     - cd-controlplane restarts the hub only where it is configured.
     - livequeryd gained `-database-url-file`, `/readyz`, systemd readiness

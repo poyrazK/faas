@@ -83,6 +83,7 @@ func Run(t *testing.T, open Open) {
 		{"fire_now_claim_respects_node_ownership_and_handoff", testFireNowNodeOwnershipAndHandoff},
 		{"manual_command_cron_fire_now_is_idempotent_and_keeps_schedule_cursor", testManualCommandCronFireNow},
 		{"runtime_config_operation_claim_is_exactly_once", testRuntimeConfigOperationClaimIsExactlyOnce},
+		{"runtime_config_apply_receipts_never_regress", testRuntimeConfigApplyReceiptsNeverRegress},
 		{"trigger_record_claim_is_bounded_and_scoped", testTriggerRecordClaimIsBoundedAndScoped},
 		{"vmmd_upsert_preserves_operator_state", testVmmdUpsertPreservesOperatorState},
 		{"deployment_live_pointer_swaps_atomically", testDeploymentLivePointer},

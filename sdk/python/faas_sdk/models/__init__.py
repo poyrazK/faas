@@ -720,6 +720,8 @@ from .complete_object_multipart_upload_request import CompleteObjectMultipartUpl
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
 from .compose_healthcheck import ComposeHealthcheck
+from .compose_process import ComposeProcess
+from .compose_process_stop_signal import ComposeProcessStopSignal
 from .config_change_receipt import ConfigChangeReceipt
 from .config_guard import ConfigGuard
 from .config_guard_decision import ConfigGuardDecision
@@ -1150,6 +1152,9 @@ from .delete_deployment_scope_exclusion_response_200 import DeleteDeploymentScop
 from .delete_exclusive_operation_trigger_binding_source import DeleteExclusiveOperationTriggerBindingSource
 from .delete_financial_budget_request import DeleteFinancialBudgetRequest
 from .delete_secret_prefer import DeleteSecretPrefer
+from .deleted_app_list_response import DeletedAppListResponse
+from .deleted_app_summary import DeletedAppSummary
+from .deleted_app_summary_restore_blocker import DeletedAppSummaryRestoreBlocker
 from .deliver_app_event_request import DeliverAppEventRequest
 from .deliver_app_event_response import DeliverAppEventResponse
 from .deliver_app_event_response_status import DeliverAppEventResponseStatus
@@ -3722,6 +3727,7 @@ from .operation_workflow_unmet_invariant import OperationWorkflowUnmetInvariant
 from .operation_workflow_unmet_invariant_reason import OperationWorkflowUnmetInvariantReason
 from .operation_workflow_verification_duration import OperationWorkflowVerificationDuration
 from .operation_workflow_verification_performance import OperationWorkflowVerificationPerformance
+from .operator_account_platform_flags import OperatorAccountPlatformFlags
 from .operator_intent_accepted_response import OperatorIntentAcceptedResponse
 from .operator_intent_accepted_response_kind import OperatorIntentAcceptedResponseKind
 from .operator_intent_accepted_response_previous_state import OperatorIntentAcceptedResponsePreviousState
@@ -3733,10 +3739,22 @@ from .operator_park_execution_response import OperatorParkExecutionResponse
 from .operator_park_execution_response_action import OperatorParkExecutionResponseAction
 from .operator_park_execution_response_phase import OperatorParkExecutionResponsePhase
 from .operator_park_execution_response_terminal_state import OperatorParkExecutionResponseTerminalState
+from .operator_platform_flag import OperatorPlatformFlag
+from .operator_platform_flag_convergence import OperatorPlatformFlagConvergence
+from .operator_platform_flag_decision import OperatorPlatformFlagDecision
+from .operator_platform_flag_decision_reason import OperatorPlatformFlagDecisionReason
+from .operator_platform_flag_groups import OperatorPlatformFlagGroups
+from .operator_platform_flag_groups_groups import OperatorPlatformFlagGroupsGroups
+from .operator_platform_flag_groups_references import OperatorPlatformFlagGroupsReferences
+from .operator_platform_flag_list import OperatorPlatformFlagList
+from .operator_platform_flag_source import OperatorPlatformFlagSource
+from .operator_platform_flag_status import OperatorPlatformFlagStatus
 from .operator_restart_execution_response import OperatorRestartExecutionResponse
 from .operator_restart_execution_response_phase import OperatorRestartExecutionResponsePhase
 from .operator_runtime_config import OperatorRuntimeConfig
 from .operator_runtime_config_apply_mode import OperatorRuntimeConfigApplyMode
+from .operator_runtime_config_apply_receipt import OperatorRuntimeConfigApplyReceipt
+from .operator_runtime_config_apply_receipt_status import OperatorRuntimeConfigApplyReceiptStatus
 from .operator_runtime_config_kind import OperatorRuntimeConfigKind
 from .operator_runtime_config_operation import OperatorRuntimeConfigOperation
 from .operator_runtime_config_operation_apply_mode import OperatorRuntimeConfigOperationApplyMode
@@ -3895,6 +3913,9 @@ from .plan_workload_class import PlanWorkloadClass
 from .plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
 from .plan_workload_depends_on_conditions_additional_property import PlanWorkloadDependsOnConditionsAdditionalProperty
 from .plan_workload_tier import PlanWorkloadTier
+from .platform_flag_definition import PlatformFlagDefinition
+from .platform_flag_rule import PlatformFlagRule
+from .platform_flag_rule_plans_item import PlatformFlagRulePlansItem
 from .platform_tenant_access_token_list_response import PlatformTenantAccessTokenListResponse
 from .platform_tenant_access_token_response import PlatformTenantAccessTokenResponse
 from .platform_tenant_access_token_response_scopes_item import PlatformTenantAccessTokenResponseScopesItem
@@ -4627,7 +4648,9 @@ from .resize_managed_postgres_database_request import ResizeManagedPostgresDatab
 from .resize_managed_postgres_database_request_service_class import ResizeManagedPostgresDatabaseRequestServiceClass
 from .resolved_execution_limits import ResolvedExecutionLimits
 from .resource_profile import ResourceProfile
+from .restore_app_body import RestoreAppBody
 from .restore_automation_revision_request import RestoreAutomationRevisionRequest
+from .restore_deleted_app_body import RestoreDeletedAppBody
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
 from .restore_mcp_readiness_policy_request import RestoreMCPReadinessPolicyRequest
 from .resume_automation_failure_pause_request import ResumeAutomationFailurePauseRequest
@@ -6466,6 +6489,8 @@ __all__ = (
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
     "ComposeHealthcheck",
+    "ComposeProcess",
+    "ComposeProcessStopSignal",
     "ConfigChangeReceipt",
     "ConfigGuard",
     "ConfigGuardDecision",
@@ -6872,6 +6897,9 @@ __all__ = (
     "DelayedTaskResponse",
     "DelayedTaskResponseState",
     "DeleteAccountSessionBody",
+    "DeletedAppListResponse",
+    "DeletedAppSummary",
+    "DeletedAppSummaryRestoreBlocker",
     "DeleteDeploymentScopeExclusionResponse200",
     "DeleteExclusiveOperationTriggerBindingSource",
     "DeleteFinancialBudgetRequest",
@@ -9234,6 +9262,7 @@ __all__ = (
     "OperationWorkflowUnmetInvariantReason",
     "OperationWorkflowVerificationDuration",
     "OperationWorkflowVerificationPerformance",
+    "OperatorAccountPlatformFlags",
     "OperatorIntentAcceptedResponse",
     "OperatorIntentAcceptedResponseKind",
     "OperatorIntentAcceptedResponsePreviousState",
@@ -9245,10 +9274,22 @@ __all__ = (
     "OperatorParkExecutionResponseAction",
     "OperatorParkExecutionResponsePhase",
     "OperatorParkExecutionResponseTerminalState",
+    "OperatorPlatformFlag",
+    "OperatorPlatformFlagConvergence",
+    "OperatorPlatformFlagDecision",
+    "OperatorPlatformFlagDecisionReason",
+    "OperatorPlatformFlagGroups",
+    "OperatorPlatformFlagGroupsGroups",
+    "OperatorPlatformFlagGroupsReferences",
+    "OperatorPlatformFlagList",
+    "OperatorPlatformFlagSource",
+    "OperatorPlatformFlagStatus",
     "OperatorRestartExecutionResponse",
     "OperatorRestartExecutionResponsePhase",
     "OperatorRuntimeConfig",
     "OperatorRuntimeConfigApplyMode",
+    "OperatorRuntimeConfigApplyReceipt",
+    "OperatorRuntimeConfigApplyReceiptStatus",
     "OperatorRuntimeConfigKind",
     "OperatorRuntimeConfigOperation",
     "OperatorRuntimeConfigOperationApplyMode",
@@ -9403,6 +9444,9 @@ __all__ = (
     "PlanWorkloadDependsOnConditions",
     "PlanWorkloadDependsOnConditionsAdditionalProperty",
     "PlanWorkloadTier",
+    "PlatformFlagDefinition",
+    "PlatformFlagRule",
+    "PlatformFlagRulePlansItem",
     "PlatformTenantAccessTokenListResponse",
     "PlatformTenantAccessTokenResponse",
     "PlatformTenantAccessTokenResponseScopesItem",
@@ -10083,7 +10127,9 @@ __all__ = (
     "ResizeManagedPostgresDatabaseRequestServiceClass",
     "ResolvedExecutionLimits",
     "ResourceProfile",
+    "RestoreAppBody",
     "RestoreAutomationRevisionRequest",
+    "RestoreDeletedAppBody",
     "RestoreManagedPostgresDatabaseRequest",
     "RestoreMCPReadinessPolicyRequest",
     "ResumeAutomationFailurePauseRequest",

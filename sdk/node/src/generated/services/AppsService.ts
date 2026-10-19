@@ -66,6 +66,8 @@ import type { DebugRequestEvidenceResponse } from '../models/DebugRequestEvidenc
 import type { DebugRunningResponse } from '../models/DebugRunningResponse.js';
 import type { DebugTelemetryListResponse } from '../models/DebugTelemetryListResponse.js';
 import type { DebugTelemetryRequestItem } from '../models/DebugTelemetryRequestItem.js';
+import type { DeletedAppListResponse } from '../models/DeletedAppListResponse.js';
+import type { DeletedAppSummary } from '../models/DeletedAppSummary.js';
 import type { DeployTokenResponse } from '../models/DeployTokenResponse.js';
 import type { DiscoveredRoutesResponse } from '../models/DiscoveredRoutesResponse.js';
 import type { EdgeProtectionResponse } from '../models/EdgeProtectionResponse.js';
@@ -1596,17 +1598,161 @@ export class AppsService {
     });
   }
   /**
+   * List account-owned retained deleted apps.
+   * Bounded lifecycle inventory; never includes another account's tombstones.
+   * Eligibility does not reserve quota or capacity. Use the returned deadline
+   * and evaluation time, not a deadline inferred from the browser clock.
+   *
+   * @returns DeletedAppListResponse One bounded account-owned page.
+   * @throws ApiError
+   */
+  public static listDeletedApps({
+    limit = 25,
+    cursor,
+  }: {
+    /**
+     * Maximum records in this account-owned page.
+     */
+    limit?: number,
+    /**
+     * Opaque cursor from this account and inventory order. Restart when rejected.
+     */
+    cursor?: string,
+  }): CancelablePromise<DeletedAppListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/deleted-apps',
+      query: {
+        'limit': limit,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read one account-owned deleted app before restore review.
+   * Returns current lifecycle evidence for the exact owned retained ID; foreign and restored IDs are absent.
+   * @returns DeletedAppSummary Current lifecycle evidence; active or foreign apps return 404.
+   * @throws ApiError
+   */
+  public static getDeletedApp({
+    id,
+  }: {
+    /**
+     * Exact deleted-app ID returned by this account's inventory.
+     */
+    id: string,
+  }): CancelablePromise<DeletedAppSummary> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/deleted-apps/{id}',
+      path: {
+        'id': id,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Restore an identified app within its retained deletion window.
+   * Requires deploy-write, MFA completion and trusted browser origin for cookie
+   * authentication. Rechecks identity, deadline, purge claim, quota and capacity.
+   * This operation has no idempotent replay receipt. After an uncertain response,
+   * reconcile exact-ID reads; never automatically retry or fall back to slug restore.
+   * Success acknowledges restoration, not execution health.
+   *
+   * @returns AppResponse The restored exact app.
+   * @throws ApiError
+   */
+  public static restoreDeletedApp({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Exact account-owned deleted-app ID; never resolved to a replacement slug.
+     */
+    id: string,
+    /**
+     * Optional empty object; no dry-run or other fields are accepted.
+     */
+    requestBody?: Record<string, any>,
+  }): CancelablePromise<AppResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/deleted-apps/{id}/restore',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Restore an app during its deletion grace window.
+   * Bodyless legacy callers remain supported. An optional expected_app_id
+   * fences the selected identity on updated servers. For mixed-version
+   * safety, use the dedicated deleted-app ID route instead of relying on
+   * legacy body handling. This route has no idempotent replay receipt.
+   *
    * @returns AppResponse The restored app.
    * @throws ApiError
    */
   public static restoreApp({
     slug,
+    requestBody,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Optional reviewed app identity on updated servers; bodyless callers remain compatible.
+     */
+    requestBody?: {
+      expected_app_id?: string;
+    },
   }): CancelablePromise<AppResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -1614,7 +1760,10 @@ export class AppsService {
       path: {
         'slug': slug,
       },
+      body: requestBody,
+      mediaType: 'application/json',
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
