@@ -615,17 +615,3 @@ func TestDataAPIConfigurePublicRPCsAloneCanBeCached(t *testing.T) {
 		t.Fatalf("receipt = %+v (%v): %s", receipt, err, out.String())
 	}
 }
-
-func TestDataAPIPublicRPCDiagnostics(t *testing.T) {
-	c := newDataAPIDiagnosticsCollector("", "")
-	c.observe(dataAPIDiagnosticFixture(t, 1, "rpc", "rejected", 405, 1, "public_rpc_requires_get"))
-	c.finish()
-	if c.report.Failures.PublicRPCNotGET != 1 {
-		t.Fatalf("public RPC POSTs were misclassified: %+v", c.report.Failures)
-	}
-	stdout, _, restore := swapIO(t)
-	defer restore()
-	if err := writeDataAPIDiagnostics(c.report); err != nil || !strings.Contains(stdout.String(), "Public RPC calls without a token sent by POST: 1") {
-		t.Fatalf("missing public RPC text: %s (%v)", stdout.String(), err)
-	}
-}

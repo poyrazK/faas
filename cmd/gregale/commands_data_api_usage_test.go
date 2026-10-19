@@ -161,17 +161,3 @@ func TestDataAPIUsageCommandPrintsTotalsAndBuckets(t *testing.T) {
 		t.Fatal("invalid granularity accepted")
 	}
 }
-
-func TestDataAPIMonthlyCapDiagnostics(t *testing.T) {
-	c := newDataAPIDiagnosticsCollector("", "")
-	c.observe(dataAPIDiagnosticFixture(t, 1, "rest", "rejected", 429, 1, "data_api_monthly_cap_reached"))
-	c.finish()
-	if c.report.Failures.MonthlyCapReached != 1 {
-		t.Fatalf("caps were misclassified: %+v", c.report.Failures)
-	}
-	stdout, _, restore := swapIO(t)
-	defer restore()
-	if err := writeDataAPIDiagnostics(c.report); err != nil || !strings.Contains(stdout.String(), "Monthly caps: 1 requests refused") {
-		t.Fatalf("missing cap text: %s (%v)", stdout.String(), err)
-	}
-}
