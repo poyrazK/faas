@@ -449,10 +449,15 @@ type Account struct {
 	// value is never returned by AccountByID or used as a human principal.
 	ResourceOrgID            string
 	ResourceOwnershipEnabled bool
-	ID                       string
-	Email                    string
-	Plan                     api.Plan
-	Status                   AccountStatus
+	// AsyncQuotaPooled is set on a resource projection once the organization's
+	// async reservations moved to its own counter. Until then a company app's
+	// reservations stay on its storage namespace's counter, which the
+	// previous release also decrements (ADR-202610171908).
+	AsyncQuotaPooled bool
+	ID               string
+	Email            string
+	Plan             api.Plan
+	Status           AccountStatus
 	// ProviderCustomerID is the per-account `cus_…` returned by Stripe when
 	// the customer signs up (spec §4.7). The unique index makes it a
 	// stable webhook lookup key.

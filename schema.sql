@@ -241,6 +241,7 @@ DECLARE moved record; total bigint:=0; changed integer;
 BEGIN
  PERFORM id FROM orgs WHERE id=company AND NOT personal_org AND resource_ownership_enabled FOR UPDATE;
  IF NOT FOUND THEN RETURN; END IF;
+ UPDATE orgs SET async_quota_pooled_at=now() WHERE id=company AND async_quota_pooled_at IS NULL;
  -- Lock accepted work before counters; completion has the same row-before-counter order.
  PERFORM i.id FROM invocations i JOIN apps a ON a.id=i.app_id WHERE a.org_id=company
    AND i.quota_reserved AND i.async_quota_subject_id<>company ORDER BY i.id FOR UPDATE OF i;
@@ -260,19 +261,6 @@ BEGIN
   UPDATE invocations i SET async_quota_subject_id=company FROM apps a
    WHERE a.id=i.app_id AND a.org_id=company AND i.quota_reserved AND i.async_quota_subject_id<>company;
  END IF;
-END $$;
-
-
---
--- Name: adopt_queue_reservations_on_org_adoption(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.adopt_queue_reservations_on_org_adoption() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
- IF NEW.resource_ownership_enabled AND NOT OLD.resource_ownership_enabled THEN PERFORM adopt_org_async_reservations(NEW.id); END IF;
- RETURN NEW;
 END $$;
 
 
@@ -17287,8 +17275,9 @@ END $$;
 CREATE FUNCTION public.invocation_async_subject(app uuid, namespace uuid) RETURNS uuid
     LANGUAGE sql STABLE
     AS $$
- SELECT CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE a.account_id END
- FROM apps a JOIN orgs o ON o.id=a.org_id WHERE a.id=app AND a.account_id=namespace;
+ SELECT CASE WHEN o.id IS NOT NULL AND NOT o.personal_org AND o.resource_ownership_enabled
+             AND o.async_quota_pooled_at IS NOT NULL THEN o.id ELSE a.account_id END
+ FROM apps a LEFT JOIN orgs o ON o.id=a.org_id WHERE a.id=app AND a.account_id=namespace;
 $$;
 
 
@@ -17713,6 +17702,7 @@ CREATE TABLE public.orgs (
     billing_address text DEFAULT ''::text NOT NULL,
     tax_id text DEFAULT ''::text NOT NULL,
     object_storage_owned_from timestamp with time zone,
+    async_quota_pooled_at timestamp with time zone,
     CONSTRAINT org_object_storage_owned_from_finite CHECK (((object_storage_owned_from IS NULL) OR isfinite(object_storage_owned_from))),
     CONSTRAINT orgs_personal_owner_link CHECK ((((personal_org = true) AND (personal_owner_account_id IS NOT NULL)) OR ((personal_org = false) AND (personal_owner_account_id IS NULL)))),
     CONSTRAINT orgs_plan_chk CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
@@ -24602,8 +24592,7 @@ CREATE FUNCTION public.stamp_invocation_async_subject() RETURNS trigger
 DECLARE expected uuid;
 BEGIN
  IF NEW.quota_reserved THEN
-  expected:=invocation_async_subject(NEW.app_id,NEW.account_id);
-  IF expected IS NULL THEN RAISE EXCEPTION 'invalid invocation quota ownership' USING ERRCODE='23514'; END IF;
+  expected:=coalesce(invocation_async_subject(NEW.app_id,NEW.account_id),NEW.account_id);
   IF TG_OP='INSERT' OR NOT OLD.quota_reserved THEN
    NEW.async_quota_subject_id:=expected;
   ELSIF NEW.async_quota_subject_id IS DISTINCT FROM OLD.async_quota_subject_id AND NEW.async_quota_subject_id IS DISTINCT FROM expected THEN
@@ -75519,13 +75508,6 @@ CREATE TRIGGER org_owner_identity BEFORE INSERT OR UPDATE OF role, removed_at, a
 --
 
 CREATE TRIGGER org_queue_bindings_guard BEFORE UPDATE OF status, deleted_pending ON public.orgs FOR EACH ROW EXECUTE FUNCTION public.guard_org_queue_bindings();
-
-
---
--- Name: orgs org_queue_reservation_adoption; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER org_queue_reservation_adoption AFTER UPDATE OF resource_ownership_enabled ON public.orgs FOR EACH ROW EXECUTE FUNCTION public.adopt_queue_reservations_on_org_adoption();
 
 
 --
