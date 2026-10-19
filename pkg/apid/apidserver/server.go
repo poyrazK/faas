@@ -143,7 +143,10 @@ type server struct {
 	configGuardTelemetry state.ConfigGuardTelemetryStore
 	// postReleaseTelemetry overrides the store's request telemetry for the
 	// post-release watch (ADR-1445); nil reads it from the store.
-	postReleaseTelemetry  rollbackOn5xxTelemetry
+	postReleaseTelemetry rollbackOn5xxTelemetry
+	// releaseGateEvidence overrides the store's release gate evidence
+	// reader for the post-release watch (ADR-20261019071734; tests).
+	releaseGateEvidence   state.ReleaseGateEvidenceStore
 	featureFlagsEnabled   bool
 	aiGatewayEnabled      bool
 	aiGatewayRollout      outbound.AIGatewayRollout // ADR-998
@@ -4089,6 +4092,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/freezes", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.createReleaseFreeze)))
 	mux.HandleFunc("DELETE /v1/freezes/{id}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.liftReleaseFreeze)))
 	mux.HandleFunc("GET /v1/apps/{slug}/freeze-status", s.authLimited(s.requireScope(api.ScopesDeploymentReadSurface...)(s.getReleaseFreezeStatus)))
+	// ADR-20261019071734: release gates on customer signals.
+	mux.HandleFunc("GET /v1/apps/{slug}/release-gates", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listReleaseGates)))
+	mux.HandleFunc("POST /v1/apps/{slug}/release-gates", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.createReleaseGate)))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/release-gates/{name}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteReleaseGate)))
 
 	// Data upstreams (ADR-098 §D4 / PR-B). The full handler family is
 	// gated on s.dataPlacementEnabled (FAAS_DATA_PLACEMENT=1); when

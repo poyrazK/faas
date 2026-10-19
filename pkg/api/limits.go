@@ -739,6 +739,21 @@ const ReleaseFreezeReasonMax = 200
 const ReleaseFreezeWeeklyMaxMinutes = 7 * 24 * 60
 const ReleaseFreezeAfterRollbackMax = 24 * time.Hour
 
+// Release gates (ADR-20261019071734). An app holds at most
+// ReleaseGatesPerAppMax gates. Defaults: an SLO gate fails at a burn rate of
+// ReleaseGateDefaultMaxBurnRate, a new_errors gate at more than
+// ReleaseGateDefaultMaxNewGroups groups of at least
+// ReleaseGateDefaultMinEvents events, and a gate needs
+// ReleaseGateDefaultMinSamples requests or metric values before it is
+// judged. A decision lists at most ReleaseGateErrorClassesMax error classes
+// per gate. Plan-independent.
+const ReleaseGatesPerAppMax = 10
+const ReleaseGateDefaultMaxBurnRate = 10
+const ReleaseGateDefaultMaxNewGroups = 0
+const ReleaseGateDefaultMinEvents = 3
+const ReleaseGateDefaultMinSamples = 20
+const ReleaseGateErrorClassesMax = 5
+
 // Verified rollback outcomes (ADR-1446). apid resolves each plain rollback
 // every RollbackOutcomeCheckInterval: complete once the target serves,
 // failed when it leaves activation without serving or when

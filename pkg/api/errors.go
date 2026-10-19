@@ -890,6 +890,11 @@ const (
 	// CodeReleaseFreezeLimit means the account already holds
 	// ReleaseFreezesMax freezes that have not ended.
 	CodeReleaseFreezeLimit = "release_freeze_limit"
+	// CodeReleaseGateLimit means the app already has ReleaseGatesPerAppMax
+	// release gates (ADR-20261019071734).
+	CodeReleaseGateLimit = "release_gate_limit"
+	// CodeReleaseGateNotFound means the app has no release gate by that name.
+	CodeReleaseGateNotFound = "release_gate_not_found"
 	// CodeConfigRevisionNotFound means the scope has no such config revision
 	// (ADR-1451), or it was pruned past ConfigRevisionsRetained.
 	CodeConfigRevisionNotFound = "config_revision_not_found"

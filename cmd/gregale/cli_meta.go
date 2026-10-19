@@ -151,7 +151,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "API"
 	case "add", "ai", "automations", "bindings", "bucket", "crons", "delayed-task", "events", "send", "deliver", "invocations", "entities", "jobs", "operations", "customer-operations", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
-	case "canary", "freeze", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-ahead", "wake-timeline", "workers":
+	case "canary", "freeze", "mirror", "park", "release-gates", "ps", "queue", "dlq", "traffic", "wake", "wake-ahead", "wake-timeline", "workers":
 		return "Delivery"
 	case "alerts", "analytics", "channels", "audit-events", "debug", "inspect", "log-drains", "logs", "metrics", "realtime", "slo", "slos", "status", "synthetics", "tail", "throttle-suggestions", "trace":
 		return "Observe"
@@ -1806,6 +1806,38 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "lift", Short: "Lift a freeze", Positionals: []string{"<id>"}},
 			{Name: "status", Short: "Show whether production releases of an app are frozen now", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+			}},
+		},
+	},
+	{
+		Name:    "release-gates",
+		DocSlug: "release-gates",
+		Short:   "Abort rollouts and roll back releases on your SLOs, new error groups, or custom metrics",
+		Examples: []string{
+			"gregale release-gates add --app my-api --name checkout-slo --slo checkout --max-burn-rate 10",
+			"gregale release-gates add --app my-api --name no-new-errors --new-errors --min-events 3",
+			"gregale release-gates add --app my-api --name orders --metric orders_per_minute --below 5",
+			"gregale release-gates list --app my-api",
+		},
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List an app's release gates (ADR-20261019071734)", Aliases: []string{"ls"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+			}},
+			{Name: "add", Short: "Add a release gate", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+				{Name: "name", Short: "gate name", Value: "NAME", Req: true},
+				{Name: "slo", Short: "fail when this SLO burns too fast", Value: "NAME"},
+				{Name: "max-burn-rate", Short: "SLO burn rate that fails the gate (default 10)", Value: "N"},
+				{Name: "new-errors", Short: "fail when the release introduces new error groups", Bool: true},
+				{Name: "max-new-groups", Short: "new error groups allowed (default 0)", Value: "N"},
+				{Name: "min-events", Short: "events before a new error group counts (default 3)", Value: "N"},
+				{Name: "metric", Short: "fail when this custom metric crosses a bound", Value: "NAME"},
+				{Name: "below", Short: "fail when the metric averages below this", Value: "VALUE"},
+				{Name: "above", Short: "fail when the metric averages above this", Value: "VALUE"},
+				{Name: "min-samples", Short: "requests or metric values before the gate is judged (default 20)", Value: "N"},
+			}},
+			{Name: "rm", Short: "Remove a release gate", Aliases: []string{"delete"}, Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
 			}},
 		},

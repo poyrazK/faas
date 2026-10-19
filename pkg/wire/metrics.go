@@ -3232,6 +3232,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}, []string{"event"})
 	for _, event := range []string{
 		"abort_5xx", "abort_p95_latency", "abort_cold_boot_p95", "abort_cpu_per_request", "abort_dependency_errors", "abort_oom", "abort_crash_loop",
+		"abort_release_gate",
 		"hold_insufficient_samples", "hold_signal_unavailable", "hold_observation_unavailable", "hold_recovery_failed",
 		"advance_low_traffic", "advance_probe_evidence",
 	} {
@@ -8783,6 +8784,7 @@ func (m *OpsMetrics) CanaryProgressionCircuitBreakerTotal(event string) promethe
 	}
 	switch event {
 	case "abort_5xx", "abort_p95_latency", "abort_cold_boot_p95", "abort_cpu_per_request", "abort_dependency_errors", "abort_oom", "abort_crash_loop",
+		"abort_release_gate",
 		"hold_insufficient_samples", "hold_signal_unavailable", "hold_observation_unavailable", "hold_recovery_failed",
 		"advance_low_traffic", "advance_probe_evidence":
 		return m.canaryProgressionCircuitBreakerTotal.WithLabelValues(event)

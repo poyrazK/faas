@@ -27620,6 +27620,69 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/release-gates:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: listReleaseGates
+      summary: List an app's release gates (ADR-20261019071734).
+      description: "Gates on the app's SLOs, new error groups and custom metrics. The canary circuit breaker and the post-release watch abort or roll back a release that fails one."
+      responses:
+        '200':
+          description: The app's release gates.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListReleaseGatesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [deployments]
+      operationId: createReleaseGate
+      summary: Add a release gate (ADR-20261019071734).
+      description: "An slo gate names one of the app's SLOs; a new_errors gate counts error groups the release produced first; a custom_metric gate bounds a custom metric's average. Omitted numbers take Gregale's defaults."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateReleaseGateRequest' }
+            example: {"name": "checkout-slo", "kind": "slo", "slo": "checkout", "max_burn_rate": 10}
+      responses:
+        '201':
+          description: The release gate.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseGate' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/release-gates/{name}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        description: The release gate's name.
+        schema: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$' }
+    delete:
+      tags: [deployments]
+      operationId: deleteReleaseGate
+      summary: Remove a release gate (ADR-20261019071734).
+      description: "404 `release_gate_not_found` when the app has no gate with this name."
+      responses:
+        '200':
+          description: The removed release gate.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseGate' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/config/rollback:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -83897,7 +83960,7 @@ components:
         kind: { type: string, enum: [advance, hold, abort] }
         rule:
           type: string
-          enum: [advance_healthy, advance_probe_evidence, advance_low_traffic, advance_no_predecessor, advance_manual, hold_insufficient_samples, hold_signal_unavailable, hold_observation_unavailable, hold_health_alert, abort_5xx, abort_p95_latency, abort_cold_boot_p95, abort_cpu_per_request, abort_dependency_errors, abort_oom, abort_crash_loop, abort_manual, abort_worker_lease_expired, abort_post_release_5xx, abort_post_release_p95_latency]
+          enum: [advance_healthy, advance_probe_evidence, advance_low_traffic, advance_no_predecessor, advance_manual, hold_insufficient_samples, hold_signal_unavailable, hold_observation_unavailable, hold_health_alert, abort_5xx, abort_p95_latency, abort_cold_boot_p95, abort_cpu_per_request, abort_dependency_errors, abort_oom, abort_crash_loop, abort_manual, abort_worker_lease_expired, abort_post_release_5xx, abort_post_release_p95_latency, abort_release_gate, abort_post_release_gate]
           description: "Closed set; the breaker rules reuse the canary_progression_circuit_breaker_total event names."
         summary: { type: string, maxLength: 256, description: "The circuit breaker's aggregate-only reason." }
         step: { type: integer, minimum: 0, description: "Zero-based canary step that was evaluated." }
@@ -83909,6 +83972,11 @@ components:
         stable: { $ref: '#/components/schemas/RolloutDecisionSample' }
         probes_included: { type: boolean, description: "The 5xx sample included synthetic probes of the app (ADR-1446)." }
         signals: { $ref: '#/components/schemas/RolloutDecisionSignals' }
+        gates:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/ReleaseGateResult' }
+          description: "The release gates judged with this decision (ADR-20261019071734)."
         decided_at: { type: string, format: date-time }
 
     RolloutDecisionSample:
@@ -99650,6 +99718,58 @@ components:
         frozen: { type: boolean }
         active: { type: array, items: { $ref: '#/components/schemas/ReleaseFreeze' }, description: "The freezes refusing a production release now." }
         next: { $ref: '#/components/schemas/ReleaseFreeze' }
+    ReleaseGate:
+      description: "One of an app's release gates (ADR-20261019071734)."
+      type: object
+      required: [name, kind, min_samples, created_by, created_at]
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$' }
+        kind: { type: string, enum: [slo, new_errors, custom_metric] }
+        slo: { type: string, description: "slo gates: the SLO judged." }
+        max_burn_rate: { type: integer, minimum: 1, maximum: 1000, description: "slo gates: the burn rate that fails the gate." }
+        max_new_groups: { type: integer, minimum: 0, maximum: 100, description: "new_errors gates: new error groups allowed." }
+        min_events: { type: integer, minimum: 1, maximum: 100000, description: "new_errors gates: events before a group counts." }
+        metric: { type: string, description: "custom_metric gates: the custom metric." }
+        comparison: { type: string, enum: [below, above], description: "custom_metric gates: which side of the threshold fails." }
+        threshold: { type: number, description: "custom_metric gates: the bound on the metric's average." }
+        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Requests or metric values a release needs before the gate is judged." }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+    CreateReleaseGateRequest:
+      description: "Adds a release gate. Give exactly one kind's fields; omitted numbers take Gregale's defaults."
+      type: object
+      required: [name, kind]
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$' }
+        kind: { type: string, enum: [slo, new_errors, custom_metric] }
+        slo: { type: string, description: "slo gates: the name of one of the app's SLOs." }
+        max_burn_rate: { type: integer, minimum: 1, maximum: 1000, description: "slo gates: default 10." }
+        max_new_groups: { type: integer, minimum: 0, maximum: 100, description: "new_errors gates: default 0." }
+        min_events: { type: integer, minimum: 1, maximum: 100000, description: "new_errors gates: default 3." }
+        metric: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$', description: "custom_metric gates: the custom metric's name." }
+        comparison: { type: string, enum: [below, above], description: "custom_metric gates: fail when the average is below or above the threshold." }
+        threshold: { type: number, description: "custom_metric gates: the bound." }
+        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Default 20." }
+    ListReleaseGatesResponse:
+      description: "An app's release gates, by name."
+      type: object
+      required: [gates]
+      properties:
+        gates: { type: array, items: { $ref: '#/components/schemas/ReleaseGate' } }
+    ReleaseGateResult:
+      description: "One judged release gate in a rollout decision. Aggregates only: no routes, messages or metric labels."
+      type: object
+      required: [name, kind, passed, summary, observed, bound, samples]
+      properties:
+        name: { type: string }
+        kind: { type: string, enum: [slo, new_errors, custom_metric] }
+        passed: { type: boolean }
+        observed: { type: number, description: "The burn rate, new error groups, or metric average." }
+        bound: { type: number, description: "The value that fails the gate." }
+        samples: { type: integer, format: int64, minimum: 0, description: "The release's requests, new-error events, or metric values." }
+        baseline_bad_fraction: { type: number, description: "slo gates: the predecessor's bad fraction." }
+        error_classes: { type: array, maxItems: 5, items: { type: string }, description: "new_errors gates: the new groups' error classes." }
+        summary: { type: string, description: "What the gate measured, in one line." }
     ConfigRollbackRequest:
       description: "The config revision whose variables a rollback restores (ADR-1451)."
       type: object

@@ -1114,6 +1114,24 @@ type AppRegistryCredential struct {
 	LastUsedAt        pgtype.Timestamptz
 }
 
+type AppReleaseGate struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	Name         string
+	Kind         string
+	SloID        pgtype.UUID
+	MaxBurnRate  pgtype.Int4
+	MaxNewGroups pgtype.Int4
+	MinEvents    pgtype.Int4
+	MetricName   pgtype.Text
+	Comparison   pgtype.Text
+	Threshold    pgtype.Float8
+	MinSamples   int32
+	CreatedBy    string
+	CreatedAt    pgtype.Timestamptz
+}
+
 type AppResourceAccount struct {
 	AppID                  pgtype.UUID
 	ID                     pgtype.UUID

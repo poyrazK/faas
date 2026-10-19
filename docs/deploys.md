@@ -129,6 +129,44 @@ checked it. The point must be inside the database's restore window.
 deployment's release run as `release`: its status, start and finish times,
 and the databases it can migrate.
 
+## Release gates
+
+Gregale already stops a release whose 5xx rate, latency, crashes or memory
+regress. Release gates add the signals only your app knows about
+([ADR-20261019071734](adr/20261019071734-release-gates-on-customer-signals.md)):
+
+```bash
+# Abort or roll back when the release burns the checkout SLO 10x too fast.
+gregale release-gates add --name checkout-slo --slo checkout --max-burn-rate 10
+# ...when it introduces a new error group with 3 or more events.
+gregale release-gates add --name no-new-errors --new-errors --min-events 3
+# ...when orders per minute average below 5.
+gregale release-gates add --name orders --metric orders_per_minute --below 5
+
+gregale release-gates list
+gregale release-gates rm orders
+```
+
+The canary judges every gate on each tick, over the traffic since the rollout
+started. The post-release watch judges them again for 30 minutes after the
+release reaches 100%. When a gate fails, the canary is aborted (rule
+`abort_release_gate`) or the release is rolled back (rule
+`abort_post_release_gate`). The rollout decision names the gate and what it
+measured.
+
+How each gate judges:
+- **`slo` gates** compare the release's bad requests with the SLO's error
+  budget. 5xx count as bad for availability SLOs; requests slower than the
+  threshold count for latency SLOs. A gate fails only when the release is
+  also worse than the revision it replaces.
+- **`new_errors` gates** count error groups that the release produced first.
+- **`custom_metric` gates** bound the metric's average. Custom metrics are
+  reported per app, not per revision, so these gates are most useful after
+  the release takes all the traffic.
+
+A gate that has too few requests or values (`--min-samples`, default 20) is
+not judged. A gate never holds a rollout on missing evidence.
+
 ## Deploy freezes
 
 A freeze stops new production releases of one app, or of every app in the

@@ -331,6 +331,8 @@ type MemStore struct {
 	configGuardSecrets map[string]map[string]ConfigGuardSecret
 	// releaseFreezes mirrors release_freezes (ADR-20261019071733).
 	releaseFreezes map[string]ReleaseFreeze
+	// releaseGates mirrors app_release_gates (ADR-20261019071734).
+	releaseGates map[string]ReleaseGate
 	// Snapshot restore reservations are separate from mu so the coordinator
 	// can serialize only its short lease/count critical section.
 	snapshotRestorePressureMu sync.Mutex

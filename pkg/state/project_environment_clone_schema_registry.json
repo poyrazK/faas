@@ -1133,6 +1133,27 @@
     "kind": "configuration"
   },
   {
+    "table": "app_release_gates",
+    "columns": [
+      "account_id",
+      "app_id",
+      "comparison",
+      "created_at",
+      "created_by",
+      "id",
+      "kind",
+      "max_burn_rate",
+      "max_new_groups",
+      "metric_name",
+      "min_events",
+      "min_samples",
+      "name",
+      "slo_id",
+      "threshold"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "app_route_priorities",
     "columns": [
       "account_id",
