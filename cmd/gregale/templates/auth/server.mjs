@@ -14,6 +14,7 @@ import { createEventPublisher, lifecycleConfig, publishesAfter, setLifecycleEven
 import { createAnonymousPruner, createAuditPruner } from './retention.mjs'
 import { bodyAllowed, smsSendPath } from './sms.mjs'
 import { createScimHandler } from './scim.mjs'
+import { impersonated, impersonationBlocked } from './impersonation.mjs'
 import { goMemoryLimit, gotrue, limits, pagePolicy, runtimeConfig } from './config.mjs'
 import { accessTokenClaims, authorizationDetails, authorizationResource, bearerClaims, clientTokenAllowed, consentLocation, isClientToken, registrationOpen, wellKnownPath } from './oauth.mjs'
 
@@ -115,7 +116,10 @@ function readBody(req, res, bodyBytes, done) {
 export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin, settings, smsCountries = null, scim, oauth = null } = {}) {
   return http.createServer((req, res) => {
     // A third-party OAuth client's token is good here only for userinfo.
-    if (isClientToken(bearerClaims(req.headers.authorization)) && !clientTokenAllowed(req.method, req.url)) return problem(res, 403, 'oauth_client_token')
+    const bearer = bearerClaims(req.headers.authorization)
+    if (isClientToken(bearer) && !clientTokenAllowed(req.method, req.url)) return problem(res, 403, 'oauth_client_token')
+    // A session support staff opened as a user cannot change the account.
+    if (impersonated(bearer) && impersonationBlocked(req.method, req.url)) return problem(res, 403, 'impersonation_restricted')
     if (settings && req.url.split('?')[0] === '/settings/v1') return serveSettings(req, res, settings)
     if (realtime && req.url === '/realtime/authorize-channel') return realtime(req, res)
     if (admin && /^\/admin\/v1([/?]|$)/.test(req.url)) return admin(req, res)
@@ -215,8 +219,8 @@ export function start(env = process.env) {
   // connection that the database closed while it slept.
   const pool = new pg.Pool({ connectionString: config.gotrueEnv.DATABASE_URL, max: limits.frontPool, idleTimeoutMillis: 5000 })
   pool.on('error', () => {})
-  const tokenHook = config.oauth || config.orgClaims
-  const accessToken = tokenHook ? payload => accessTokenClaims(pool, payload, { orgClaims: config.orgClaims }) : null
+  const tokenHook = config.oauth || config.orgClaims || config.impersonation
+  const accessToken = tokenHook ? payload => accessTokenClaims(pool, payload, { orgClaims: config.orgClaims, impersonation: config.impersonation }) : null
   const hooks = createHookServer({ secret, mailer, api: config.api, app: config.app, accessToken, templates: () => loadEmailTemplates(pool) })
   hooks.listen(hookAddress.port, hookAddress.host)
   const child = spawn(gotrue.binary, ['serve'], { env: { ...config.gotrueEnv, ...hookEnv(secret, { accessToken: tokenHook }), GOMEMLIMIT: goMemoryLimit() }, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -233,7 +237,8 @@ export function start(env = process.env) {
   // The dashboard is served from the Gregale API origin.
   let dashboard = []
   try { dashboard = [new URL(env.AUTH_GREGALE_API_URL).origin] } catch { /* no dashboard origin sealed */ }
-  const admin = createAdminHandler({ pool, admin: goTrue, keys: adminKeyHashes(env), origins: dashboard, external: config.external, emails: { mailer, api: config.api, app: config.app } })
+  const admin = createAdminHandler({ pool, admin: goTrue, keys: adminKeyHashes(env), origins: dashboard, external: config.external, emails: { mailer, api: config.api, app: config.app },
+    impersonation: config.impersonation ? { siteURL: config.gotrueEnv.GOTRUE_SITE_URL } : null })
   const scim = createScimHandler({ pool, admin: goTrue, base: config.external })
   const oauth = config.oauth ? {
     location: location => consentLocation(location, config.gotrueEnv.GOTRUE_SITE_URL, config.external),

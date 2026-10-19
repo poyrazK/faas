@@ -178,7 +178,10 @@ export async function route(pool, claims, method, path, body, services = {}) {
   // The caller's own sessions (sql/0013); the current one ends through
   // GoTrue's logout, and all the others through logout?scope=others.
   if (path === '/sessions' && method === 'GET') {
-    return [200, { sessions: await rows('SELECT id, created_at, last_active_at, user_agent, ip, aal, current FROM gregale_auth.list_sessions()') }]
+    // A session support staff opened as the caller is marked (impersonation.mjs).
+    return [200, { sessions: await rows(`SELECT s.id, s.created_at, s.last_active_at, s.user_agent, s.ip, s.aal, s.current,
+        EXISTS (SELECT 1 FROM gregale_auth.impersonations i WHERE i.session_id = s.id AND i.ended_at IS NULL AND i.expires_at > now()) AS impersonated
+      FROM gregale_auth.list_sessions() s`) }]
   }
   if (parts[0] === 'sessions' && parts.length === 2 && method === 'DELETE') {
     await rows('SELECT gregale_auth.end_session($1)', [requireUUID(parts[1])])

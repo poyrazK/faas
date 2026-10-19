@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	authUsersUsage = "usage: gregale auth users <list|get|sign-out|ban|unban|delete> NAME [USER] [--search TEXT] [--page N] [--limit N] [--for DURATION] [--yes] [--admin-key-stdin]"
+	authUsersUsage = "usage: gregale auth users <list|get|impersonate|sign-out|ban|unban|delete> NAME [USER] [--search TEXT] [--page N] [--limit N] [--reason TEXT] [--minutes N] [--for DURATION] [--yes] [--admin-key-stdin]"
 	authOrgsUsage  = "usage: gregale auth orgs <list|get> NAME [ORG] [--search TEXT] [--page N] [--limit N] [--admin-key-stdin]"
 	// authBanForever is the ban `--for forever` asks for: a hundred years,
 	// GoTrue's usual stand-in for a permanent ban.
@@ -125,7 +125,7 @@ func authAdminTarget(slug string, keyStdin bool) (origin, key string, code int) 
 // authUserFlags lists the flags each users subcommand takes besides
 // --admin-key-stdin.
 var authUserFlags = map[string][]string{
-	"list": {"search", "page", "limit"}, "get": nil, "sign-out": nil, "ban": {"for"}, "unban": nil, "delete": {"yes", "quiet"},
+	"list": {"search", "page", "limit"}, "get": nil, "impersonate": {"reason", "minutes"}, "sign-out": nil, "ban": {"for"}, "unban": nil, "delete": {"yes", "quiet"},
 }
 
 func cmdAuthUsers(args []string) int {
@@ -138,6 +138,8 @@ func cmdAuthUsers(args []string) int {
 	duration := fs.String("for", "", "how long a ban lasts: hours (24h), days (7d) or forever")
 	yes := fs.Bool("yes", false, "delete without the typed confirmation")
 	fs.BoolVar(yes, "quiet", false, "delete without the typed confirmation (for scripts)")
+	reason := fs.String("reason", "", "why you open a session as the user (recorded; required)")
+	minutes := fs.Int("minutes", api.AuthImpersonationDefaultMinutes, fmt.Sprintf("how long the session lasts, 5 to %d minutes", api.AuthImpersonationMaxMinutes))
 	keyStdin := fs.Bool("admin-key-stdin", false, "read the admin key from stdin (prompted on a terminal)")
 	if err := parseInterspersed(fs, args[1:]); err != nil {
 		return 1
@@ -163,6 +165,13 @@ func cmdAuthUsers(args []string) int {
 		}
 	case "unban":
 		ban = "none"
+	case "impersonate":
+		if strings.TrimSpace(*reason) == "" || len(*reason) > 200 {
+			return printErr("Reason required", errors.New("give --reason, up to 200 characters, such as a support ticket"))
+		}
+		if *minutes < 5 || *minutes > api.AuthImpersonationMaxMinutes {
+			return printErr("Invalid flags", fmt.Errorf("--minutes must be 5 to %d", api.AuthImpersonationMaxMinutes))
+		}
 	case "delete":
 		if code := requireAutomationConfirmation(*yes, "--yes"); code != 0 {
 			return code
@@ -194,6 +203,8 @@ func cmdAuthUsers(args []string) int {
 	switch args[0] {
 	case "get":
 		return authUsersGet(origin, key, user)
+	case "impersonate":
+		return authUsersImpersonate(origin, key, user, strings.TrimSpace(*reason), *minutes)
 	case "sign-out":
 		return authUsersSignOut(origin, key, user)
 	case "delete":
@@ -297,6 +308,28 @@ func authUsersList(origin, key, query string) int {
 	if page.Total != nil && page.Page*page.PerPage < *page.Total {
 		_, _ = fmt.Fprintf(osStdout, "Page %d of %d users; next: --page %d\n", page.Page, *page.Total, page.Page+1)
 	}
+	return 0
+}
+
+// authUsersImpersonate opens a time-limited session as the user and prints
+// the link that hands it to the app. Anyone holding the link acts as the
+// user until the session ends.
+func authUsersImpersonate(origin, key string, ref authAdminUser, reason string, minutes int) int {
+	var started struct {
+		ID        string `json:"id"`
+		SessionID string `json:"session_id"`
+		ExpiresAt string `json:"expires_at"`
+		URL       string `json:"url"`
+	}
+	if err := authAdminCall(http.MethodPost, origin, key, "/admin/v1/users/"+ref.ID+"/impersonate", map[string]any{"reason": reason, "minutes": minutes}, &started); err != nil {
+		return printErr("Could not open a session as the user", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(started))
+	}
+	PrintOK(osStdout, "Session %s opened as %s until %s", started.ID, authUserLabel(ref), started.ExpiresAt)
+	_, _ = fmt.Fprintf(osStdout, "Open this link in a private window; it signs in as the user, so do not share it:\n%s\n", started.URL)
+	_, _ = fmt.Fprintf(osStdout, "The user's password, email, second factors, linked sign-ins and account cannot be changed from it.\nEnd it early with: gregale auth impersonations end NAME %s\n", started.ID)
 	return 0
 }
 

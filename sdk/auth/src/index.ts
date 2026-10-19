@@ -460,6 +460,16 @@ export function createAuthClient(options: AuthClientOptions) {
       await clear()
       return { organizations_deleted: result.organizations_deleted }
     },
+    /**
+     * Who is using this session as the user, when the app's support staff
+     * opened it (impersonation), such as "admin:0A1B2C3D"; null otherwise.
+     * Show a banner, and leave actions the person must take to them.
+     */
+    async actor(): Promise<string | null> {
+      const session = await getSession()
+      const act = session ? payload(session.accessToken).act as { sub?: unknown } | undefined : undefined
+      return typeof act?.sub === 'string' ? act.sub : null
+    },
     organizations: {
       list: async () => (await authz<{ organizations: Organization[] }>('GET', '/orgs')).organizations,
       create: (input: { slug: string; name: string }) => authz<Organization>('POST', '/orgs', input),

@@ -27,6 +27,18 @@ test('rejects unsafe Auth URLs', () => {
   assert.doesNotThrow(() => createAuthClient({ url: 'http://localhost:8080', fetch: async () => {} }))
 })
 
+test('a session support staff opened says who acts', async () => {
+  const jwt = claims => `eyJhbGciOiJFUzI1NiJ9.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.sig`
+  let next = { ...tokens(1), access_token: jwt({ sub: 'u1' }) }
+  const api = server({ 'POST /auth/v1/token': () => [200, next] })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  assert.equal(await auth.actor(), null)
+  next = { ...tokens(2), access_token: jwt({ sub: 'u1', act: { sub: 'admin:0A1B2C3D' } }) }
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  assert.equal(await auth.actor(), 'admin:0A1B2C3D')
+})
+
 test('signs in, stores the session and authenticates authz calls', async () => {
   const api = server({
     'POST /auth/v1/token': () => [200, tokens(1)],

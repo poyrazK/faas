@@ -349,6 +349,20 @@ repeated addresses within a batch are skipped because concurrent creates of
 one address race inside GoTrue. Responses report rows by position and never
 echo addresses.
 
+Impersonation (`AUTH_IMPERSONATION`, off by default) lets the admin key
+open a session as a user. GoTrue v2.197.0 has no administrator sign-in, so
+the front generates a magic link through the admin API and redeems it
+server-side, which yields a real session that every authorization surface
+already understands; minting tokens ourselves would lack the session row
+that `session_active()` requires. The front then caps the session with
+`auth.sessions.not_after` (5 to 60 minutes), records it in
+`gregale_auth.impersonations` (sql/0019) with the key's ID and the reason,
+and refreshes once so the access token hook adds `act` before the session is
+handed over. Account changes are refused at the front from tokens with
+`act`, by path, before GoTrue sees them; dropping `act` would break the
+token's signature, so reading the unverified payload there is safe. Admin
+keys now carry their IDs so the record names the key that acted.
+
 ### Lifecycle events and activity
 
 `gregale auth config --events on` sets `AUTH_LIFECYCLE_EVENTS` and, if needed,

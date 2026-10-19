@@ -415,6 +415,7 @@ type authPublicSettings struct {
 	IdentityLinking    bool `json:"identity_linking"`
 	SelfDeletion       bool `json:"self_deletion"`
 	OrganizationClaims bool `json:"organization_claims"`
+	Impersonation      bool `json:"impersonation"`
 	Keys               struct {
 		Signing   string   `json:"signing"`
 		Verifying []string `json:"verifying"`

@@ -69,6 +69,7 @@ const (
 	secretIdentityLinking = "AUTH_IDENTITY_LINKING"
 	secretSelfDeletion    = "AUTH_SELF_DELETION"
 	secretOrgClaims       = "AUTH_ORG_CLAIMS"
+	secretImpersonation   = "AUTH_IMPERSONATION"
 )
 
 // CaptchaProviders are the CAPTCHA services GoTrue verifies and the hosted
@@ -153,6 +154,8 @@ type Change struct {
 	// OrgClaims puts each session's active organization, role and
 	// permissions into its access tokens (org_* claims).
 	OrgClaims *bool
+	// Impersonation lets the admin key open time-limited sessions as users.
+	Impersonation *bool
 }
 
 // Captcha is a CAPTCHA provider and its keys; the secret stays in the app.
@@ -285,6 +288,9 @@ func (c Change) Secrets() (map[string]string, []string, error) {
 	}
 	if c.OrgClaims != nil {
 		set[secretOrgClaims] = flag(*c.OrgClaims)
+	}
+	if c.Impersonation != nil {
+		set[secretImpersonation] = flag(*c.Impersonation)
 	}
 	if c.AnonymousRetentionDays != nil {
 		days := *c.AnonymousRetentionDays

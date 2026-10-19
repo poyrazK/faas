@@ -115,6 +115,44 @@ export async function handler(request: Request) {
 }
 ```
 
+### Open the app as a user (impersonation)
+
+Support staff can see exactly what a user sees, without their password:
+
+```sh
+gregale auth config shop-auth --impersonation on
+gregale auth users impersonate shop-auth ada@example.com --reason 'Ticket 4821: billing page blank' --minutes 15
+```
+
+The command prints a link to your site URL that carries a new session for
+the user; open it in a private window, where `@gregale/auth`'s
+`sessionFromUrl()` picks it up as it does after a hosted sign-in. The
+dashboard's user panel has the same under **Open as this user**. The
+session is real (row-level security, `authorize()`, realtime and storage
+treat it like the user's own) and:
+
+- lasts 5 to 60 minutes (default 30), after which it cannot refresh;
+- is recorded with the admin key that opened it and the reason given:
+  `gregale auth impersonations list shop-auth [--user ada@example.com]`;
+  `gregale auth impersonations end shop-auth ID` ends it early;
+- carries `act: {"sub": "admin:<key ID>"}` (RFC 8693) in its tokens, which
+  the backend SDKs report as `claims.actor` (Node and Python) and
+  `claims.Actor` (Go), `auth.actor()` in the browser, and row-level security
+  reads as `gregale_auth.claims() -> 'act'`. Use it to show a banner and to
+  refuse what only the person may do, such as paying;
+- cannot change the user's password, email, phone, second factors,
+  passkeys or linked sign-ins, approve third-party apps, end their other
+  sessions or delete the account (`403 impersonation_restricted`); signing
+  itself out works;
+- appears to the user on their account page as opened by support.
+
+Only users with a confirmed email address can be opened: GoTrue has no
+"sign in as" for administrators, so the Auth app redeems a one-time sign-in
+link for them, which also updates their last sign-in time. Banned users
+cannot be opened. The admin API routes are `POST
+/admin/v1/users/{id}/impersonate` `{reason, minutes?}`, `GET
+/admin/v1/impersonations[?user=]` and `DELETE /admin/v1/impersonations/{id}`.
+
 ## Your data
 
 Users, sessions and identities live in the `auth` schema of your own database,

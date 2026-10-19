@@ -132,6 +132,14 @@ def test_verify_accepts_an_auth_app_token():
     assert claims.organization is None
 
 
+def test_verify_reads_the_impersonating_actor():
+    key, clock = Key("0A1B2C3D"), Clock()
+    auth = AuthApp(key).client(clock)
+    assert auth.verify(key.sign({**user_claims(clock), "act": {"sub": "admin:0A1B2C3D"}})).actor == "admin:0A1B2C3D"
+    assert auth.verify(key.sign(user_claims(clock))).actor is None
+    assert auth.verify(key.sign({**user_claims(clock), "act": "admin"})).actor is None
+
+
 def test_verify_reads_the_active_organization():
     key, clock = Key("0A1B2C3D"), Clock()
     auth = AuthApp(key).client(clock)
