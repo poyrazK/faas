@@ -96,24 +96,28 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
-	"DELETE /v1/apps/{slug}/operation-concurrency/{id}":                        true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
-	"GET /v1/apps/{slug}/operation-concurrency":                                true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
-	"GET /v1/apps/{slug}/operation-schedules":                                  true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
-	"GET /v1/apps/{slug}/operations/{id}/children":                             true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
-	"GET /v1/platform-tenant-self/customer-operation-queue":                    true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
-	"GET /v1/platform-tenant-self/customer-operation-schedules":                true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
-	"GET /v1/platform-tenant-self/customer-operation-schedules/{id}":           true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
-	"GET /v1/platform-tenant-self/customer-operations/{id}/children":           true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
-	"GET /v1/runtime/operations/{id}/children":                                 true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules":                true, // session + CSRF adapter for the public split-rule creation API
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}":      true, // session + CSRF adapter for the public split-rule update API
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}/undo": true, // session + CSRF adapter for the public split-rule undo API
-	"POST /dashboard/apps/{slug}/profiles/deployment-policy":                   true, // session + CSRF adapter for automatic profiling policy
-	"POST /dashboard/apps/{slug}/profiles/investigations/{id}/check":           true, // session + CSRF adapter for the profiling regression API
-	"POST /dashboard/apps/{slug}/profiles/investigations":                      true, // session + CSRF adapter for the profiling investigation API
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions":                    true, // scoped HTML/CSRF adapter for the public issue action API
-	"POST /dashboard/apps/{slug}/issues/impact-alert-policy":                   true, // scoped HTML/CSRF adapter for issue impact alert policy updates
-	"POST /dashboard/apps/{slug}/issues/ownership-rules":                       true, // scoped HTML/CSRF adapter for issue ownership routing policy updates
+	"DELETE /v1/apps/{slug}/operation-approval-forms/{id}":                        true, // ADR-20261019001500 approval input forms; gated by FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS until prod-tested
+	"DELETE /v1/apps/{slug}/operation-concurrency/{id}":                           true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
+	"GET /v1/apps/{slug}/operation-approval-forms":                                true, // ADR-20261019001500 approval input forms; gated by FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS until prod-tested
+	"GET /v1/apps/{slug}/operation-concurrency":                                   true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
+	"GET /v1/apps/{slug}/operation-schedules":                                     true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
+	"GET /v1/apps/{slug}/operations/{id}/approvals/{step}/form":                   true, // ADR-20261019001500 approval input forms; gated by FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS until prod-tested
+	"GET /v1/apps/{slug}/operations/{id}/children":                                true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
+	"GET /v1/platform-tenant-self/customer-operation-queue":                       true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
+	"GET /v1/platform-tenant-self/customer-operation-schedules":                   true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
+	"GET /v1/platform-tenant-self/customer-operation-schedules/{id}":              true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
+	"GET /v1/platform-tenant-self/customer-operations/{id}/approvals/{step}/form": true, // ADR-20261019001500 approval input forms; gated by FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS until prod-tested
+	"GET /v1/platform-tenant-self/customer-operations/{id}/children":              true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
+	"GET /v1/runtime/operations/{id}/children":                                    true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules":                   true, // session + CSRF adapter for the public split-rule creation API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}":         true, // session + CSRF adapter for the public split-rule update API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}/undo":    true, // session + CSRF adapter for the public split-rule undo API
+	"POST /dashboard/apps/{slug}/profiles/deployment-policy":                      true, // session + CSRF adapter for automatic profiling policy
+	"POST /dashboard/apps/{slug}/profiles/investigations/{id}/check":              true, // session + CSRF adapter for the profiling regression API
+	"POST /dashboard/apps/{slug}/profiles/investigations":                         true, // session + CSRF adapter for the profiling investigation API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions":                       true, // scoped HTML/CSRF adapter for the public issue action API
+	"POST /dashboard/apps/{slug}/issues/impact-alert-policy":                      true, // scoped HTML/CSRF adapter for issue impact alert policy updates
+	"POST /dashboard/apps/{slug}/issues/ownership-rules":                          true, // scoped HTML/CSRF adapter for issue ownership routing policy updates
 
 	"GET /v1/dev/bridges/{id}/connect":                                       true, // ADR-378 scoped WebSocket transport, described in docs/dev-bridge.md
 	"GET /v1/dev/bridges/{id}/status":                                        true, // attachment-authenticated CLI readiness protocol
@@ -322,8 +326,9 @@ var routeExclude = map[string]bool{
 	// typed wrapper. Mirror the exclusion in
 	// cmd/sdk-coverage/main.go::routeExclude; the two lists must
 	// move together.
-	"POST /v1/otel/v1/traces":                   true,
-	"PUT /v1/apps/{slug}/operation-concurrency": true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
+	"POST /v1/otel/v1/traces":                      true,
+	"PUT /v1/apps/{slug}/operation-approval-forms": true, // ADR-20261019001500 approval input forms; gated by FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS until prod-tested
+	"PUT /v1/apps/{slug}/operation-concurrency":    true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
 }
 
 func init() {

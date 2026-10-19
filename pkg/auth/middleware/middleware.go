@@ -828,6 +828,10 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 		if len(parts) == 4 && parts[1] != "" && parts[2] == "approvals" && parts[3] != "" {
 			return method == http.MethodPost
 		}
+		// ADR-20261019001500: a customer reads the form of an approval it decides.
+		if len(parts) == 5 && parts[1] != "" && parts[2] == "approvals" && parts[3] != "" && parts[4] == "form" {
+			return method == http.MethodGet
+		}
 		return false
 	}
 	if strings.HasPrefix(suffix, "invocations/") {
