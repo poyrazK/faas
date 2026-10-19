@@ -716,6 +716,10 @@ type Querier interface {
 	DeleteExpiredBindingVerificationRunReceipts(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	DeleteExpiredMirrorSlotLeases(ctx context.Context, db DBTX, ruleID pgtype.UUID) (int64, error)
 	DeleteExpiredOperationWebhookReceipts(ctx context.Context, db DBTX, arg DeleteExpiredOperationWebhookReceiptsParams) (int64, error)
+	// One bounded retention batch: rows past an explicit result_retention_until,
+	// and unpinned terminal rows older than the default ages. Dead letters keep
+	// the longer age; work-policy records keep explicit retention only.
+	DeleteExpiredTriggerRecords(ctx context.Context, db DBTX, arg DeleteExpiredTriggerRecordsParams) (int64, error)
 	DeleteExternalTriggerDeadLetterAudit(ctx context.Context, db DBTX, recordID pgtype.UUID) error
 	DeleteGitLabOAuthConnection(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	DeleteNotificationChannel(ctx context.Context, db DBTX, arg DeleteNotificationChannelParams) (int64, error)
@@ -5156,6 +5160,9 @@ type Querier interface {
 	SetServiceCapacityProtection(ctx context.Context, db DBTX, enabled bool) ([]byte, error)
 	SetServiceWakeAhead(ctx context.Context, db DBTX, arg SetServiceWakeAheadParams) (SetServiceWakeAheadRow, error)
 	SetSyntheticCheckEnabled(ctx context.Context, db DBTX, arg SetSyntheticCheckEnabledParams) (SyntheticCheck, error)
+	// ADR-1321: switch a public trigger between per-record and batch delivery.
+	// The CHECK constraint refuses batch for cron and queue triggers.
+	SetTriggerDelivery(ctx context.Context, db DBTX, arg SetTriggerDeliveryParams) (int64, error)
 	SetUDPListenerEnabled(ctx context.Context, db DBTX, arg SetUDPListenerEnabledParams) (AppUdpListener, error)
 	SetVerificationRunTaskDeadline(ctx context.Context, db DBTX, arg SetVerificationRunTaskDeadlineParams) error
 	SetWorkflowRunWakeFenced(ctx context.Context, db DBTX, arg SetWorkflowRunWakeFencedParams) (int64, error)
@@ -5210,6 +5217,9 @@ type Querier interface {
 	SummarizeCustomerOperationWorkflowOutcomes(ctx context.Context, db DBTX, arg SummarizeCustomerOperationWorkflowOutcomesParams) ([]byte, error)
 	SummarizeCustomerOperationWorkflowPerformance(ctx context.Context, db DBTX, arg SummarizeCustomerOperationWorkflowPerformanceParams) ([][]byte, error)
 	SupersedeEnvironmentGitOpsRuns(ctx context.Context, db DBTX, arg SupersedeEnvironmentGitOpsRunsParams) error
+	// Ends one realtime delivery's records whatever stage they reached; the
+	// consumer group redelivers under a new item identifier (ADR-1322).
+	SupersedeTriggerRecordItems(ctx context.Context, db DBTX, arg SupersedeTriggerRecordItemsParams) (int64, error)
 	SuppressMCPReminder(ctx context.Context, db DBTX, arg SuppressMCPReminderParams) error
 	SweepCountedMirrorResults(ctx context.Context, db DBTX, cutoff pgtype.Timestamptz) (int64, error)
 	SweepUnboundNativeWorkflowRuns(ctx context.Context, db DBTX, ageMs int64) (int64, error)

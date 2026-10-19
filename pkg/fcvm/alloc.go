@@ -359,8 +359,10 @@ const (
 	// in `ip saddr` cannot alias-collide with the bridge /16.
 	staticEgressPoolBase = "10.200.0.0"
 	// staticEgressPoolMax is the capacity of the static-egress
-	// pool (the /16 minus network + broadcast). 65,534 slots.
-	staticEgressPoolMax = 65534
+	// pool: the /16 minus the network address, .0.1 (skipped by
+	// hostIPOffset) and the broadcast address. 65,533 slots; the
+	// last maps to 10.200.255.254.
+	staticEgressPoolMax = 65536 - 3
 )
 
 // StaticEgressReservation is the (account, app, customer-IP,

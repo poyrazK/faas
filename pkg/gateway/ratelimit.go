@@ -449,8 +449,11 @@ func (l *Limiter) allowTokenKeyedLocked(id string, rps, burst float64, pinnedKey
 			l.elems[id] = l.ll.PushFront(b)
 		}
 	} else {
-		b.rps, b.burst = rps, burst
+		// Refill under the old policy, then install the new one, as
+		// allowTokenWithCentralKey does: an edited rule must not apply its
+		// new rate to the time before the edit.
 		b.tokens += now.Sub(b.last).Seconds() * b.rps
+		b.rps, b.burst = rps, burst
 		if b.tokens > b.burst {
 			b.tokens = b.burst
 		}

@@ -1252,6 +1252,7 @@ export type { ManagedRealtimeAfterVersionQuery } from './ManagedRealtimeAfterVer
 export type { ManagedRealtimeBatchMessageRequest } from './ManagedRealtimeBatchMessageRequest.js';
 export type { ManagedRealtimeChannelBatchRequest } from './ManagedRealtimeChannelBatchRequest.js';
 export type { ManagedRealtimeChannelBatchResponse } from './ManagedRealtimeChannelBatchResponse.js';
+export type { ManagedRealtimeChannelOccupancy } from './ManagedRealtimeChannelOccupancy.js';
 export type { ManagedRealtimeChannelPath } from './ManagedRealtimeChannelPath.js';
 export type { ManagedRealtimeChannelSnapshotRequest } from './ManagedRealtimeChannelSnapshotRequest.js';
 export type { ManagedRealtimeChannelSnapshotResponse } from './ManagedRealtimeChannelSnapshotResponse.js';
@@ -1282,6 +1283,7 @@ export type { ManagedRealtimeMessageRequest } from './ManagedRealtimeMessageRequ
 export type { ManagedRealtimeNotificationControlResponse } from './ManagedRealtimeNotificationControlResponse.js';
 export type { ManagedRealtimeNotificationRescheduleRequest } from './ManagedRealtimeNotificationRescheduleRequest.js';
 export type { ManagedRealtimeNotificationTimelineEvent } from './ManagedRealtimeNotificationTimelineEvent.js';
+export type { ManagedRealtimeOccupancyResponse } from './ManagedRealtimeOccupancyResponse.js';
 export type { ManagedRealtimePrincipalMessageRequest } from './ManagedRealtimePrincipalMessageRequest.js';
 export type { ManagedRealtimePrincipalQuery } from './ManagedRealtimePrincipalQuery.js';
 export type { ManagedRealtimePrincipalQueryBounded } from './ManagedRealtimePrincipalQueryBounded.js';
@@ -2313,6 +2315,7 @@ export type { RealtimeDeadLetterPreviewItem } from './RealtimeDeadLetterPreviewI
 export type { RealtimeDeadLetterPreviewRequest } from './RealtimeDeadLetterPreviewRequest.js';
 export type { RealtimeDeadLetterReplayOutcome } from './RealtimeDeadLetterReplayOutcome.js';
 export type { RealtimeDeadLetterReplaySelection } from './RealtimeDeadLetterReplaySelection.js';
+export type { RealtimeEndpointUsageHour } from './RealtimeEndpointUsageHour.js';
 export type { RealtimeNotificationPreferences } from './RealtimeNotificationPreferences.js';
 export type { RealtimeNotificationRateLimit } from './RealtimeNotificationRateLimit.js';
 export type { RealtimePublisherCredential } from './RealtimePublisherCredential.js';
@@ -2328,6 +2331,10 @@ export type { RealtimeReplayJobWebhookPayload } from './RealtimeReplayJobWebhook
 export type { RealtimeScheduleCompletionWebhookPayload } from './RealtimeScheduleCompletionWebhookPayload.js';
 export type { RealtimeTicketRequest } from './RealtimeTicketRequest.js';
 export type { RealtimeTicketResponse } from './RealtimeTicketResponse.js';
+export type { RealtimeTicketsRevokeResponse } from './RealtimeTicketsRevokeResponse.js';
+export type { RealtimeTriggerConfig } from './RealtimeTriggerConfig.js';
+export type { RealtimeUsageHour } from './RealtimeUsageHour.js';
+export type { RealtimeUsageResponse } from './RealtimeUsageResponse.js';
 export type { RealtimeWorkerBatchClaimRequest } from './RealtimeWorkerBatchClaimRequest.js';
 export type { RealtimeWorkerClaimRequest } from './RealtimeWorkerClaimRequest.js';
 export type { RealtimeWorkerCredential } from './RealtimeWorkerCredential.js';

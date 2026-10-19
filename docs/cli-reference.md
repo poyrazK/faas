@@ -6155,7 +6155,7 @@ List triggers
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | filter to an app slug |  |
-| `--kind <value>` | filter by trigger kind | one of `cron` · `kafka` · `nats` · `redis_streams` · `sqs_compat` · `queue` |
+| `--kind <value>` | filter by trigger kind | one of `cron` · `kafka` · `nats` · `redis_streams` · `sqs_compat` · `queue` · `realtime` |
 
 ### triggers get
 
@@ -6167,12 +6167,12 @@ Show one trigger
 
 Create a broker trigger
 
-`gregale triggers create --app <slug> --kind <kind> [--slug <slug>] [--config <JSON>] [--enabled] [--disabled] [--batch-size <N>] [--batch-window-ms <N>] [--max-attempts <N>] [--payload-max-bytes <N>] [--broker-poison-strategy <commit|seek-to-offset>]`
+`gregale triggers create --app <slug> --kind <kind> [--slug <slug>] [--config <JSON>] [--enabled] [--disabled] [--batch-size <N>] [--batch-window-ms <N>] [--max-attempts <N>] [--payload-max-bytes <N>] [--broker-poison-strategy <commit|seek-to-offset>] [--delivery <record|batch>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
-| `--kind <kind>` | trigger kind | required; one of `kafka` · `nats` · `redis_streams` · `sqs_compat` · `queue` |
+| `--kind <kind>` | trigger kind | required; one of `kafka` · `nats` · `redis_streams` · `sqs_compat` · `queue` · `realtime` |
 | `--slug <slug>` | trigger slug (required for non-cron kinds) |  |
 | `--config <JSON>` | JSON config (inline \| @file \| -) |  |
 | `--enabled` | enable the trigger |  |
@@ -6182,12 +6182,13 @@ Create a broker trigger
 | `--max-attempts <N>` | maximum delivery attempts |  |
 | `--payload-max-bytes <N>` | maximum broker payload size |  |
 | `--broker-poison-strategy <commit|seek-to-offset>` | kafka poison strategy | one of `commit` · `seek-to-offset` |
+| `--delivery <record|batch>` | one invocation per record or per dispatch batch | one of `record` · `batch` |
 
 ### triggers update
 
 Update one trigger
 
-`gregale triggers update [--enabled] [--disabled] [--config <JSON>] [--schedule <EXPR>] [--path <PATH>] [--batch-size <N>] [--batch-window-ms <N>] [--max-attempts <N>] [--payload-max-bytes <N>] [--broker-poison-strategy <commit|seek-to-offset>] <id>`
+`gregale triggers update [--enabled] [--disabled] [--config <JSON>] [--schedule <EXPR>] [--path <PATH>] [--batch-size <N>] [--batch-window-ms <N>] [--max-attempts <N>] [--payload-max-bytes <N>] [--broker-poison-strategy <commit|seek-to-offset>] [--delivery <record|batch>] <id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6201,6 +6202,7 @@ Update one trigger
 | `--max-attempts <N>` | maximum delivery attempts |  |
 | `--payload-max-bytes <N>` | maximum broker payload size |  |
 | `--broker-poison-strategy <commit|seek-to-offset>` | kafka poison strategy | one of `commit` · `seek-to-offset` |
+| `--delivery <record|batch>` | one invocation per record or per dispatch batch | one of `record` · `batch` |
 
 ### triggers delete
 
@@ -6233,7 +6235,7 @@ List recent trigger records
 
 | Flag | Meaning | |
 |---|---|---|
-| `--state <STATE>` | filter by record state | one of `pending` · `claimed` · `succeeded` · `retry` · `dead_letter` |
+| `--state <STATE>` | filter by record state | one of `pending` · `claimed` · `succeeded` · `retry` · `dead_letter` · `superseded` |
 
 ### triggers retry
 
@@ -15105,6 +15107,16 @@ List managed realtime endpoints
 
 `gregale realtime list <app>`
 
+### realtime usage
+
+Show open connections against the plan&#39;s fair-use limit and recent hourly usage
+
+`gregale realtime usage [--hours <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--hours <N>` | UTC hours of usage to show (1-744, default 24) |  |
+
 ### realtime get
 
 Show one endpoint and safe auth-rotation status
@@ -15192,6 +15204,12 @@ List live connections for an endpoint
 | `--principal <PRINCIPAL>` | only connections for this authenticated principal |  |
 | `--limit <N>` | maximum connections to return (1-1000) |  |
 | `--cursor <TOKEN>` | continue from a previous response&#39;s next_cursor |  |
+
+### realtime occupancy
+
+Count subscribers and presence members on channels
+
+`gregale realtime occupancy <app> <endpoint-id> <channel>...`
 
 ### realtime drain
 

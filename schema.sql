@@ -18914,6 +18914,23 @@ $$;
 
 
 --
+-- Name: notify_realtime_trigger_ready(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.notify_realtime_trigger_ready() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE bound uuid;
+BEGIN
+ FOR bound IN SELECT trigger_id FROM managed_realtime_consumer_groups
+   WHERE endpoint_id=NEW.endpoint_id AND channel=NEW.channel AND trigger_id IS NOT NULL LOOP
+  PERFORM pg_notify('trigger_ready', json_build_object('trigger_id', bound, 'source', 'realtime')::text);
+ END LOOP;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: notify_runtime_config_changed(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -38429,6 +38446,7 @@ CREATE TABLE public.managed_realtime_consumer_groups (
     deduplication_metadata_key text DEFAULT ''::text NOT NULL,
     deduplication_window_seconds integer DEFAULT 0 NOT NULL,
     duplicate_messages bigint DEFAULT 0 NOT NULL,
+    trigger_id uuid,
     CONSTRAINT managed_realtime_consumer_gr_dead_letter_retention_second_check CHECK (((dead_letter_retention_seconds = 0) OR ((dead_letter_retention_seconds >= 3600) AND (dead_letter_retention_seconds <= 2592000)))),
     CONSTRAINT managed_realtime_consumer_gr_deduplication_window_seconds_check CHECK (((deduplication_window_seconds = 0) OR ((deduplication_window_seconds >= 60) AND (deduplication_window_seconds <= 86400)))),
     CONSTRAINT managed_realtime_consumer_gro_circuit_probe_fencing_token_check CHECK (((circuit_probe_fencing_token IS NULL) OR (circuit_probe_fencing_token > 0))),
@@ -39267,6 +39285,7 @@ CREATE TABLE public.managed_realtime_subscription_tickets (
     channels jsonb NOT NULL,
     issued_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     expires_at timestamp with time zone NOT NULL,
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
     CONSTRAINT managed_realtime_subscription_tickets_channels_check CHECK (((jsonb_typeof(channels) = 'array'::text) AND ((jsonb_array_length(channels) >= 1) AND (jsonb_array_length(channels) <= 32)))),
     CONSTRAINT managed_realtime_subscription_tickets_check CHECK (((expires_at > issued_at) AND (expires_at <= (issued_at + '00:05:00'::interval)))),
     CONSTRAINT managed_realtime_subscription_tickets_principal_check CHECK (((octet_length(principal) >= 1) AND (octet_length(principal) <= 256))),
@@ -45941,6 +45960,58 @@ CREATE TABLE public.queue_bindings (
 
 
 --
+-- Name: realtime_node_connection_syncs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.realtime_node_connection_syncs (
+    node_name text NOT NULL,
+    synced_at timestamp with time zone NOT NULL,
+    CONSTRAINT realtime_node_connection_syncs_node_name_check CHECK (((length(node_name) >= 1) AND (length(node_name) <= 253)))
+);
+
+
+--
+-- Name: realtime_node_connections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.realtime_node_connections (
+    node_name text NOT NULL,
+    account_id uuid NOT NULL,
+    connections integer NOT NULL,
+    CONSTRAINT realtime_node_connections_connections_check CHECK ((connections > 0))
+);
+
+
+--
+-- Name: realtime_usage_hours; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.realtime_usage_hours (
+    endpoint_id uuid NOT NULL,
+    hour timestamp with time zone NOT NULL,
+    node_name text NOT NULL,
+    incarnation uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    minute_peak_connections integer[] NOT NULL,
+    connection_seconds bigint NOT NULL,
+    delivered_messages bigint NOT NULL,
+    delivered_bytes bigint NOT NULL,
+    received_messages bigint NOT NULL,
+    received_bytes bigint NOT NULL,
+    reported_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT realtime_usage_hours_connection_seconds_check CHECK ((connection_seconds >= 0)),
+    CONSTRAINT realtime_usage_hours_delivered_bytes_check CHECK ((delivered_bytes >= 0)),
+    CONSTRAINT realtime_usage_hours_delivered_messages_check CHECK ((delivered_messages >= 0)),
+    CONSTRAINT realtime_usage_hours_hour_check CHECK ((((EXTRACT(epoch FROM hour))::bigint % (3600)::bigint) = 0)),
+    CONSTRAINT realtime_usage_hours_minute_peak_connections_check CHECK (((cardinality(minute_peak_connections) = 60) AND (0 <= ALL (minute_peak_connections)))),
+    CONSTRAINT realtime_usage_hours_node_name_check CHECK (((length(node_name) >= 1) AND (length(node_name) <= 253))),
+    CONSTRAINT realtime_usage_hours_received_bytes_check CHECK ((received_bytes >= 0)),
+    CONSTRAINT realtime_usage_hours_received_messages_check CHECK ((received_messages >= 0))
+);
+
+
+--
 -- Name: recent_build_claims; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -48234,12 +48305,14 @@ CREATE TABLE public.triggers (
     queue_binding_id uuid,
     queue_binding_scope text DEFAULT ''::text NOT NULL,
     queue_binding_environment_id uuid,
+    delivery text DEFAULT 'record'::text NOT NULL,
     CONSTRAINT queue_consumer_scope_shape CHECK ((((queue_binding_scope = ''::text) AND (queue_binding_environment_id IS NULL)) OR ((queue_binding_id IS NOT NULL) AND (queue_binding_scope ~ '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$'::text) AND (queue_binding_environment_id IS NOT NULL)))),
     CONSTRAINT triggers_batch_size_max_check CHECK (((batch_size_max >= 1) AND (batch_size_max <= 5000))),
     CONSTRAINT triggers_batch_window_ms_check CHECK (((batch_window_ms >= 10) AND (batch_window_ms <= 600000))),
     CONSTRAINT triggers_broker_poison_strategy_check CHECK ((broker_poison_strategy = ANY (ARRAY['commit'::text, 'seek-to-offset'::text]))),
     CONSTRAINT triggers_check CHECK ((((kind = 'cron'::text) AND (cron_id IS NOT NULL) AND (source IS NULL)) OR ((kind <> 'cron'::text) AND (cron_id IS NULL)))),
-    CONSTRAINT triggers_kind_check CHECK ((kind = ANY (ARRAY['cron'::text, 'kafka'::text, 'nats'::text, 'redis_streams'::text, 'sqs_compat'::text, 'queue'::text]))),
+    CONSTRAINT triggers_delivery_check CHECK (((delivery = ANY (ARRAY['record'::text, 'batch'::text])) AND ((delivery = 'record'::text) OR (kind <> ALL (ARRAY['cron'::text, 'queue'::text]))))),
+    CONSTRAINT triggers_kind_check CHECK ((kind = ANY (ARRAY['cron'::text, 'kafka'::text, 'nats'::text, 'redis_streams'::text, 'sqs_compat'::text, 'queue'::text, 'realtime'::text]))),
     CONSTRAINT triggers_max_attempts_check CHECK (((max_attempts >= 1) AND (max_attempts <= 25))),
     CONSTRAINT triggers_payload_max_bytes_check CHECK (((payload_max_bytes >= 1024) AND (payload_max_bytes <= 67108864))),
     CONSTRAINT triggers_queue_binding_projection_check CHECK (((queue_binding_id IS NULL) OR ((kind = 'queue'::text) AND (NOT (source IS DISTINCT FROM 'queue'::text)) AND (NOT ((config ->> 'mode'::text) IS DISTINCT FROM 'queue'::text)) AND (NOT ((config ->> 'queue_binding_id'::text) IS DISTINCT FROM (queue_binding_id)::text))))),
@@ -58912,6 +58985,30 @@ ALTER TABLE ONLY public.queue_bindings
 
 
 --
+-- Name: realtime_node_connection_syncs realtime_node_connection_syncs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.realtime_node_connection_syncs
+    ADD CONSTRAINT realtime_node_connection_syncs_pkey PRIMARY KEY (node_name);
+
+
+--
+-- Name: realtime_node_connections realtime_node_connections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.realtime_node_connections
+    ADD CONSTRAINT realtime_node_connections_pkey PRIMARY KEY (node_name, account_id);
+
+
+--
+-- Name: realtime_usage_hours realtime_usage_hours_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.realtime_usage_hours
+    ADD CONSTRAINT realtime_usage_hours_pkey PRIMARY KEY (endpoint_id, hour, node_name, incarnation);
+
+
+--
 -- Name: release_bundles release_bundles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -65727,6 +65824,13 @@ CREATE INDEX managed_realtime_connection_owners_node_idx ON public.managed_realt
 
 
 --
+-- Name: managed_realtime_consumer_groups_trigger; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX managed_realtime_consumer_groups_trigger ON public.managed_realtime_consumer_groups USING btree (trigger_id) WHERE (trigger_id IS NOT NULL);
+
+
+--
 -- Name: managed_realtime_direct_message_deliveries_node_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -65934,6 +66038,20 @@ CREATE INDEX managed_realtime_schedule_group_idx ON public.managed_realtime_sche
 --
 
 CREATE INDEX managed_realtime_subscription_tickets_endpoint_expiry ON public.managed_realtime_subscription_tickets USING btree (endpoint_id, expires_at);
+
+
+--
+-- Name: managed_realtime_subscription_tickets_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX managed_realtime_subscription_tickets_id ON public.managed_realtime_subscription_tickets USING btree (endpoint_id, id);
+
+
+--
+-- Name: managed_realtime_subscription_tickets_principal; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_subscription_tickets_principal ON public.managed_realtime_subscription_tickets USING btree (endpoint_id, principal);
 
 
 --
@@ -68002,6 +68120,13 @@ CREATE INDEX realtime_group_ordering_predecessor ON public.managed_realtime_cons
 
 
 --
+-- Name: realtime_node_connections_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX realtime_node_connections_account ON public.realtime_node_connections USING btree (account_id);
+
+
+--
 -- Name: realtime_publisher_credentials_endpoint; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -68020,6 +68145,20 @@ CREATE INDEX realtime_replay_jobs_due ON public.managed_realtime_replay_jobs USI
 --
 
 CREATE INDEX realtime_settlement_receipts_expiry ON public.managed_realtime_group_settlement_receipts USING btree (group_id, expires_at);
+
+
+--
+-- Name: realtime_usage_hours_account_hour; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX realtime_usage_hours_account_hour ON public.realtime_usage_hours USING btree (account_id, hour);
+
+
+--
+-- Name: realtime_usage_hours_hour; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX realtime_usage_hours_hour ON public.realtime_usage_hours USING btree (hour);
 
 
 --
@@ -68909,6 +69048,13 @@ CREATE INDEX trigger_records_dlq_idx ON public.trigger_records USING btree (trig
 --
 
 CREATE INDEX trigger_records_due_idx ON public.trigger_records USING btree (trigger_id, next_fire_at) WHERE (state = ANY (ARRAY['pending'::text, 'retry'::text]));
+
+
+--
+-- Name: trigger_records_terminal_age_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trigger_records_terminal_age_idx ON public.trigger_records USING btree (COALESCE(last_dispatched_at, received_at)) WHERE ((result_retention_until IS NULL) AND (work_policy_name IS NULL) AND (state = ANY (ARRAY['succeeded'::text, 'superseded'::text, 'cancelled'::text, 'expired'::text, 'dead_letter'::text])));
 
 
 --
@@ -73375,6 +73521,13 @@ CREATE TRIGGER managed_realtime_notification_outcome AFTER INSERT OR UPDATE ON p
 --
 
 CREATE TRIGGER managed_realtime_push_timeline AFTER INSERT OR UPDATE ON public.managed_realtime_push_deliveries FOR EACH ROW EXECUTE FUNCTION public.faas_record_notification_timeline();
+
+
+--
+-- Name: managed_realtime_channel_messages managed_realtime_trigger_ready; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_realtime_trigger_ready AFTER INSERT ON public.managed_realtime_channel_messages FOR EACH ROW EXECUTE FUNCTION public.notify_realtime_trigger_ready();
 
 
 --
@@ -83141,6 +83294,14 @@ ALTER TABLE ONLY public.managed_realtime_consumer_groups
 
 
 --
+-- Name: managed_realtime_consumer_groups managed_realtime_consumer_groups_trigger_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_consumer_groups
+    ADD CONSTRAINT managed_realtime_consumer_groups_trigger_id_fkey FOREIGN KEY (trigger_id) REFERENCES public.triggers(id) ON DELETE SET NULL;
+
+
+--
 -- Name: managed_realtime_direct_message_deliveries managed_realtime_direct_message_del_endpoint_id_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -87370,6 +87531,14 @@ ALTER TABLE ONLY public.queue_bindings
 
 ALTER TABLE ONLY public.queue_bindings
     ADD CONSTRAINT queue_bindings_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id);
+
+
+--
+-- Name: realtime_node_connections realtime_node_connections_node_name_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.realtime_node_connections
+    ADD CONSTRAINT realtime_node_connections_node_name_fkey FOREIGN KEY (node_name) REFERENCES public.realtime_node_connection_syncs(node_name) ON DELETE CASCADE;
 
 
 --

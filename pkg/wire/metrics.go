@@ -4573,7 +4573,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// source values are the closed trigger-kind vocabulary
 	// (see pkg/events/trigger.go + pkg/gregalemanifest).
 	esmSourceClosedSet := []string{
-		"kafka", "nats", "redis_streams", "sqs_compat", "queue", "cron",
+		"kafka", "nats", "redis_streams", "sqs_compat", "queue", "cron", "realtime",
 	}
 	esmOutcomeClosedSet := []string{"success", "empty", "error"}
 	esmPollsTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -10647,7 +10647,7 @@ const (
 
 func isESMSource(source string) bool {
 	switch source {
-	case "kafka", "nats", "redis_streams", "sqs_compat", "queue", "cron":
+	case "kafka", "nats", "redis_streams", "sqs_compat", "queue", "cron", "realtime":
 		return true
 	default:
 		return false

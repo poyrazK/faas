@@ -1972,6 +1972,7 @@ var cliCommands = []cliCommand{
 				{Name: "max-attempts", Short: "maximum delivery attempts", Value: "N"},
 				{Name: "payload-max-bytes", Short: "maximum broker payload size", Value: "N"},
 				{Name: "broker-poison-strategy", Short: "kafka poison strategy", Value: "commit|seek-to-offset", ClosedSet: []string{api.BrokerPoisonStrategyCommit, api.BrokerPoisonStrategySeekToOffset}},
+				{Name: "delivery", Short: "one invocation per record or per dispatch batch", Value: "record|batch", ClosedSet: []string{api.TriggerDeliveryRecord, api.TriggerDeliveryBatch}},
 			}},
 			{Name: "update", Short: "Update one trigger", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "enabled", Short: "enable the trigger"},
@@ -1984,6 +1985,7 @@ var cliCommands = []cliCommand{
 				{Name: "max-attempts", Short: "maximum delivery attempts", Value: "N"},
 				{Name: "payload-max-bytes", Short: "maximum broker payload size", Value: "N"},
 				{Name: "broker-poison-strategy", Short: "kafka poison strategy", Value: "commit|seek-to-offset", ClosedSet: []string{api.BrokerPoisonStrategyCommit, api.BrokerPoisonStrategySeekToOffset}},
+				{Name: "delivery", Short: "one invocation per record or per dispatch batch", Value: "record|batch", ClosedSet: []string{api.TriggerDeliveryRecord, api.TriggerDeliveryBatch}},
 			}},
 			{Name: "delete", Short: "Delete one trigger", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "quiet", Short: "skip the typed confirmation (for scripts)"},
@@ -5213,6 +5215,9 @@ var cliCommands = []cliCommand{
 		Short:   "Manage realtime endpoints, policies, connections, channels, and auth",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List managed realtime endpoints", Positionals: []string{"<app>"}},
+			{Name: "usage", Short: "Show open connections against the plan's fair-use limit and recent hourly usage", Flags: []cliFlag{
+				{Name: "hours", Short: "UTC hours of usage to show (1-744, default 24)", Value: "N"},
+			}},
 			{Name: "get", Short: "Show one endpoint and safe auth-rotation status", Positionals: []string{"<app>", "<endpoint-id>"}},
 			{Name: "create", Short: "Create a managed realtime endpoint", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "callback-url", Short: "application callback URL", Req: true, Value: "URL"},
@@ -5267,6 +5272,7 @@ var cliCommands = []cliCommand{
 				{Name: "limit", Short: "maximum connections to return (1-1000)", Value: "N"},
 				{Name: "cursor", Short: "continue from a previous response's next_cursor", Value: "TOKEN"},
 			}},
+			{Name: "occupancy", Short: "Count subscribers and presence members on channels", Positionals: []string{"<app>", "<endpoint-id>", "<channel>..."}},
 			{Name: "drain", Short: "Close a bounded, filtered set of live connections", Positionals: []string{"<app>", "<endpoint-id>"}, Flags: []cliFlag{
 				{Name: "reason", Short: "required audit reason", Req: true, Value: "TEXT"},
 				{Name: "channel", Short: "only connections subscribed to this channel", Value: "CHANNEL"},

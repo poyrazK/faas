@@ -34,6 +34,19 @@ Each [`gregale dev`](gregale-dev.md) environment keeps a lease that every sync r
 | **Pro** | 5 | 168h |
 | **Scale** | 10 | 336h |
 
+## Managed realtime
+
+Realtime is included on every paid plan at no extra charge: Gregale bills compute, and channels, consumer groups and delivery are software. Limits apply only where realtime holds real capacity. Retained history is bounded per endpoint, and functions triggered by channel messages bill as normal compute.
+
+| Plan | Endpoints per app | Endpoints per account | Concurrent connections per account |
+|---|---:|---:|---:|
+| **Free** | — | — | — |
+| **Hobby** | 2 | 10 | 200 |
+| **Pro** | 10 | 50 | 1,000 |
+| **Scale** | 25 | 250 | 5,000 |
+
+The connection limit counts open WebSocket and SSE connections across all of an account's endpoints. One account may also hold at most 50% of a single realtime node's connections; see [realtime fair use](realtime.md#fair-use-limits).
+
 ## Choose a plan
 
 Start on **Free** for a small public API or a trial. **Hobby** unlocks the paid observability, async, and data surfaces. **Pro** is the normal production tier for teams, while **Scale** raises the app, concurrency, RAM, and usage ceilings. Feature maturity and entitlement are listed in the [capability matrix](capabilities.md).

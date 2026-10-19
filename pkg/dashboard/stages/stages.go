@@ -473,7 +473,7 @@ func RenderSummaryHTML(ss state.StageState, status string, terminalAt time.Time)
 			case stageStatusFailed:
 				tail = fmt.Sprintf(" · failed at %s", terminalAt.UTC().Format(time.RFC3339))
 			default:
-				tail = fmt.Sprintf(" · %s at %s", status, terminalAt.UTC().Format(time.RFC3339))
+				tail = fmt.Sprintf(" · %s at %s", htmlEscape(status), terminalAt.UTC().Format(time.RFC3339))
 			}
 		}
 		footerHTML = fmt.Sprintf(`<p class="stage-footer">Total: %s%s</p>`, htmlEscape(totalStr), tail)

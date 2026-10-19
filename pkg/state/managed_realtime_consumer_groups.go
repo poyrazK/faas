@@ -76,9 +76,11 @@ type RealtimeConsumerGroup struct {
 	ActiveWorkers              int                         `json:"active_workers"`
 	HistoryUnavailable         bool                        `json:"history_unavailable"`
 	CapacityBlocked            bool                        `json:"capacity_blocked"`
-	LeaseSeconds               int                         `json:"lease_seconds"`
-	MaxAttempts                int                         `json:"max_attempts"`
-	CreatedAt                  time.Time                   `json:"created_at"`
+	// TriggerID names the realtime trigger consuming this group (ADR-1322).
+	TriggerID    string    `json:"trigger_id,omitempty"`
+	LeaseSeconds int       `json:"lease_seconds"`
+	MaxAttempts  int       `json:"max_attempts"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 type RealtimeConsumerGroupMessage struct {
 	Sequence        string            `json:"sequence"`

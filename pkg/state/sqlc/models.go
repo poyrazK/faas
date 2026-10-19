@@ -7388,6 +7388,7 @@ type ManagedRealtimeConsumerGroup struct {
 	DeduplicationMetadataKey   string
 	DeduplicationWindowSeconds int32
 	DuplicateMessages          int64
+	TriggerID                  pgtype.UUID
 }
 
 type ManagedRealtimeConsumerGroupAlert struct {
@@ -7874,6 +7875,7 @@ type ManagedRealtimeSubscriptionTicket struct {
 	Channels   []byte
 	IssuedAt   pgtype.Timestamptz
 	ExpiresAt  pgtype.Timestamptz
+	ID         pgtype.UUID
 }
 
 type ManagedRealtimeWorkerCredential struct {
@@ -11660,6 +11662,33 @@ type QueueBindingCanary struct {
 	CompletedGeneration   pgtype.Int8
 }
 
+type RealtimeNodeConnection struct {
+	NodeName    string
+	AccountID   pgtype.UUID
+	Connections int32
+}
+
+type RealtimeNodeConnectionSync struct {
+	NodeName string
+	SyncedAt pgtype.Timestamptz
+}
+
+type RealtimeUsageHour struct {
+	EndpointID            pgtype.UUID
+	Hour                  pgtype.Timestamptz
+	NodeName              string
+	Incarnation           pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	MinutePeakConnections []int32
+	ConnectionSeconds     int64
+	DeliveredMessages     int64
+	DeliveredBytes        int64
+	ReceivedMessages      int64
+	ReceivedBytes         int64
+	ReportedAt            pgtype.Timestamptz
+}
+
 type RecentBuildClaim struct {
 	AccountID pgtype.UUID
 	ClaimedAt pgtype.Timestamptz
@@ -12899,6 +12928,7 @@ type Trigger struct {
 	QueueBindingID            pgtype.UUID
 	QueueBindingScope         string
 	QueueBindingEnvironmentID pgtype.UUID
+	Delivery                  string
 }
 
 type TriggerConsumerHealth struct {
