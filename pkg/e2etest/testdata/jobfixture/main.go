@@ -18,7 +18,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: job-fixture success|fail|sleep|ticks|oom|contract|customer-operation|customer-workflow|interactive")
+		fmt.Fprintln(os.Stderr, "usage: job-fixture success|fail|sleep|ticks|oom|contract|customer-operation|customer-workflow|interactive|whoami")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -72,6 +72,12 @@ func main() {
 		}
 	case "interactive":
 		os.Exit(runInteractive())
+	case "whoami":
+		// ADR-1790: report the process identity, directory and environment
+		// the guest gave the command.
+		cwd, _ := os.Getwd()
+		fmt.Printf("uid=%d gid=%d cwd=%s home=%s from_image=%s\n",
+			os.Getuid(), os.Getgid(), cwd, os.Getenv("HOME"), os.Getenv("FIXTURE_FROM_IMAGE"))
 	default:
 		fmt.Fprintf(os.Stderr, "unknown job fixture mode %q\n", os.Args[1])
 		os.Exit(2)

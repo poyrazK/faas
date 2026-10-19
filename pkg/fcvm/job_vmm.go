@@ -44,6 +44,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/jobresult"
+	"github.com/onebox-faas/faas/pkg/ociidentity"
 )
 
 // JobManifest is the JSON shape vmmd writes to drive1 at
@@ -87,6 +88,11 @@ type JobManifest struct {
 	// guest-init that predates it rejects the unknown field and fails the
 	// task rather than running the command without stdin.
 	Interactive *JobInteractive `json:"interactive,omitempty"`
+	// ImageProcess runs the command with the image's ENV, USER and WORKDIR
+	// from /etc/faas/app.json (ADR-1790); User and Workdir override them.
+	ImageProcess bool   `json:"image_process,omitempty"`
+	User         string `json:"user,omitempty"`
+	Workdir      string `json:"workdir,omitempty"`
 }
 
 // JobInteractive is ADR-1330's guest contract: the supervisor accepts one
@@ -192,6 +198,9 @@ func (s JobColdBootSpec) Validate() error {
 	case s.Tap == "":
 		return fmt.Errorf("fcvm: job cold boot: empty tap device")
 	}
+	if err := s.validateImageProcess(); err != nil {
+		return err
+	}
 	if in := s.Interactive; in != nil {
 		switch {
 		case s.StartHeld:
@@ -214,6 +223,24 @@ func (s JobColdBootSpec) Validate() error {
 		if len(value) > 32*1024 || strings.IndexByte(value, 0) >= 0 {
 			return fmt.Errorf("fcvm: job cold boot: env value for %q is invalid or too large", key)
 		}
+	}
+	return nil
+}
+
+// validateImageProcess checks ADR-1790's overrides, which apply only to an
+// image process.
+func (s JobColdBootSpec) validateImageProcess() error {
+	if !s.ImageProcess {
+		if s.ProcessUser != "" || s.ProcessWorkdir != "" {
+			return fmt.Errorf("fcvm: job cold boot: a process user or workdir requires an image process")
+		}
+		return nil
+	}
+	if len(s.ProcessUser) > api.ImageRunUserMaxBytes || ociidentity.ValidateSpec(s.ProcessUser) != nil {
+		return fmt.Errorf("fcvm: job cold boot: invalid process user")
+	}
+	if err := api.ValidateImageRunWorkdir(s.ProcessWorkdir); err != nil {
+		return fmt.Errorf("fcvm: job cold boot: %w", err)
 	}
 	return nil
 }
@@ -329,6 +356,9 @@ func (v *JailerVMM) BootColdBootForJob(ctx context.Context, l Lease, spec JobCol
 		VsockJobExitPort:    VsockJobExitPort,
 		VsockJobExitMsgType: VsockJobExitMsgType,
 		Interactive:         spec.Interactive,
+		ImageProcess:        spec.ImageProcess,
+		User:                spec.ProcessUser,
+		Workdir:             spec.ProcessWorkdir,
 	}
 
 	// bootNoWait provisions a private drive1 first, then stages the manifest and
