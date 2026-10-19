@@ -2275,8 +2275,12 @@ export class OrgsService {
       },
       errors: {
         401: `code: unauthorized`,
-        403: `\`403 Forbidden\` — the org is at the member cap. Stable
-        code \`org_member_cap_exceeded\`.
+        403: `\`403 Forbidden\` — the org is at the member cap (stable code
+        \`org_member_cap_exceeded\`), the caller has no fresh step-up
+        (\`step_up_required\`), or the accepting account has not
+        verified its email address (\`email_verification_required\`).
+        The invitation's email match binds acceptance to the invitee
+        only for a verified address.
         `,
         409: `\`409 Conflict\` — the bearer is already an active member
         of the target org. The wire detail carries the
