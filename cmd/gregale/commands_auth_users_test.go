@@ -261,3 +261,33 @@ func TestAuthUsersListAndOrgs(t *testing.T) {
 		t.Fatal("a slug lookup matched part of another slug")
 	}
 }
+
+func TestAuthOrgsAuditPrintsAPageWithItsCursor(t *testing.T) {
+	resetJSONEnv(t)
+	authIssuerServer(t, func(http.ResponseWriter, *http.Request) bool { return false })
+	key := "gaak_" + strings.Repeat("k", 43)
+	const acme = "7c1b2c3d-0000-4000-8000-000000000009"
+	seen := fakeAuthAdmin(t, key, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
+		writeJSONTest(w, map[string]any{"entries": []map[string]any{
+			{"occurred_at": "2026-10-19T10:02:00Z", "action": "member.role_changed", "actor_email": "ada@example.com", "target_email": "bob@example.com", "data": map[string]any{"from": "member", "to": "admin"}},
+			{"occurred_at": "2026-10-19T10:01:00Z", "action": "member.added", "target_email": "bob@example.com", "data": map[string]any{"role": "member"}},
+		}, "next": "WyIyMDI2LTEwLTE5Il0"})
+	})
+	out := captureAuthStdout(t)
+	if code := runAuthAdmin(t, key, "orgs", "audit", "shop-auth", acme, "--limit", "2", "--cursor", "WyJ4Il0"); code != 0 {
+		t.Fatalf("audit = %d\n%s", code, out)
+	}
+	if want := []string{"GET /admin/v1/orgs/" + acme + "/audit-log?cursor=WyJ4Il0&limit=2"}; !reflect.DeepEqual(*seen, want) {
+		t.Fatalf("requests %v", *seen)
+	}
+	for _, line := range []string{"member.role_changed", "by ada@example.com", `{"from":"member","to":"admin"}`, "by (the application)", "More: --cursor WyIyMDI2LTEwLTE5Il0"} {
+		if !strings.Contains(out.String(), line) {
+			t.Fatalf("output lacks %q:\n%s", line, out)
+		}
+	}
+	for _, args := range [][]string{{"orgs", "audit", "shop-auth", acme, "--cursor", "a b"}, {"orgs", "get", "shop-auth", acme, "--cursor", "WyJ4Il0"}} {
+		if code := runAuthAdmin(t, key, args...); code == 0 {
+			t.Errorf("%v accepted", args)
+		}
+	}
+}

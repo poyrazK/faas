@@ -78,6 +78,16 @@ export type ConnectedApp = Readonly<{ client: { id: string; name: string; uri?: 
 export type UserSession = Readonly<{ id: string; created_at: string; last_active_at: string; user_agent: string | null; ip: string | null; aal: string | null; current: boolean }>
 
 export type Organization = Readonly<{ id: string; slug: string; name: string; role?: string; created_at: string }>
+/**
+ * One entry of an organization's audit log. actor_id is null for changes the
+ * app's operator, an identity provider or SCIM made.
+ */
+export type AuditEntry = Readonly<{
+  id: string; occurred_at: string
+  action: 'organization.created' | 'member.added' | 'member.role_changed' | 'member.removed' | 'member.signed_in' | 'invitation.created' | 'invitation.revoked'
+    | 'invitation.accepted' | 'domain.added' | 'domain.verified' | 'domain.removed' | 'sso.connected' | 'sso.updated' | 'sso.disconnected'
+  actor_id: string | null; actor_email: string | null; target_user_id: string | null; target_email: string | null; data: Readonly<Record<string, unknown>>
+}>
 export type Member = Readonly<{ user_id: string; email: string; role: string; created_at: string }>
 export type Invitation = Readonly<{ id: string; email: string; role: string; expires_at: string; created_at?: string }>
 /** An email domain an organization proves it controls with a DNS TXT record. */
@@ -477,6 +487,14 @@ export function createAuthClient(options: AuthClientOptions) {
     organizations: {
       list: async () => (await authz<{ organizations: Organization[] }>('GET', '/orgs')).organizations,
       create: (input: { slug: string; name: string }) => authz<Organization>('POST', '/orgs', input),
+      /**
+       * The organization's audit log, newest first (needs audit:read; owners
+       * hold it). Pass the returned next as cursor for the following page.
+       */
+      auditLog: (org: string, input: { cursor?: string; limit?: number } = {}) => {
+        const query = new URLSearchParams({ ...(input.cursor ? { cursor: input.cursor } : {}), ...(input.limit ? { limit: String(input.limit) } : {}) }).toString()
+        return authz<{ entries: AuditEntry[]; next: string | null }>('GET', `/orgs/${id(org)}/audit-log${query ? `?${query}` : ''}`)
+      },
       /**
        * Makes org (one the user belongs to) the session's active
        * organization, or none with null, and refreshes the session so its

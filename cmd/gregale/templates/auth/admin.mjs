@@ -1,7 +1,7 @@
 import { createHash, createPrivateKey, randomBytes, sign, timingSafeEqual } from 'node:crypto'
 import http from 'node:http'
 import { gotrue, limits } from './config.mjs'
-import { HTTPError, readJSON } from './authz.mjs'
+import { auditColumns, auditPage, auditReply, HTTPError, readJSON } from './authz.mjs'
 import { ssoRoute } from './sso.mjs'
 import { oauthRoute } from './oauth.mjs'
 import { emailRoute } from './emails.mjs'
@@ -329,6 +329,11 @@ export async function adminRoute({ pool, admin, external, emails = {}, impersona
       FROM gregale_auth.organizations o WHERE $1 = '' OR o.slug ILIKE $2 ESCAPE '\\' OR o.name ILIKE $2 ESCAPE '\\'
       ORDER BY o.created_at DESC, o.id LIMIT $3 OFFSET $4`, [search, likePattern(search), perPage, (page - 1) * perPage])
     return [200, { organizations: rows.map(({ total, ...org }) => org), total: rows[0]?.total ?? 0, page, per_page: perPage }]
+  }
+  if (parts[0] === 'orgs' && parts.length === 3 && parts[2] === 'audit-log' && method === 'GET') {
+    if (!uuid.test(parts[1])) throw new HTTPError(400, 'invalid_id')
+    const { at, id, limit } = auditPage(url.searchParams)
+    return auditReply(await query(`SELECT ${auditColumns} FROM gregale_auth.org_audit_feed($1, $2, $3, $4)`, [parts[1], at, id, limit]), limit)
   }
   if (parts[0] === 'orgs' && parts.length === 2 && method === 'GET') {
     if (!uuid.test(parts[1])) throw new HTTPError(400, 'invalid_id')

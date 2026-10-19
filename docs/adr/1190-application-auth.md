@@ -553,6 +553,18 @@ the provider's organization, never its last owner; deleting the record does the
 same rather than deleting the account. Groups are not supported: the
 provider's organization link decides membership.
 
+Each organization has an audit log (sql/0020) that its owners, or roles
+granted `audit:read`, read through `/authz/v1/orgs/{org}/audit-log`.
+Triggers on the organization tables record changes in the same transaction
+as the change, whichever path made it (the organization API, the admin key,
+SSO and SCIM joins inside GoTrue's transactions, domain joining), so no
+surface can skip the record; the actor is the verified caller the front
+set in `request.jwt.claims`, and null otherwise. A trigger skips an
+organization that is being deleted, so cascades cannot fail. Members'
+sign-ins are read from GoTrue's audit log at query time, for current
+members, rather than copied per organization. Entries follow the app's
+activity retention.
+
 ### Dark launch
 
 Application Auth reaches no customer until it launches. apid reads

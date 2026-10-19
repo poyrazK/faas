@@ -111,6 +111,31 @@ function requireString(body, name, max) {
   return value
 }
 
+// An audit log cursor is the last entry's position at the database's full
+// precision with its ID, so a page never skips entries made in the same
+// millisecond. auditPage reads ?cursor=&limit=<1..100>; auditReply adds the
+// next page's cursor.
+export const auditColumns = 'id, occurred_at, occurred_at::text AS position, action, actor_id, actor_email, target_user_id, target_email, data'
+
+export function auditPage(query) {
+  const cursor = query?.get('cursor') ?? null
+  let at = null, id = null
+  if (cursor !== null) {
+    try { [at, id] = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) } catch { throw new HTTPError(400, 'invalid_cursor') }
+    // PostgreSQL's own text for a timestamptz, which it reads back exactly.
+    if (typeof at !== 'string' || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?[+-]\d{2}(:\d{2}){0,2}$/.test(at) || !uuid.test(id ?? '')) throw new HTTPError(400, 'invalid_cursor')
+  }
+  const limit = Number(query?.get('limit') ?? 50)
+  if (!Number.isInteger(limit) || limit < 1 || limit > limits.adminPageSize) throw new HTTPError(400, 'invalid_limit')
+  return { at, id, limit }
+}
+
+export function auditReply(rows, limit) {
+  const entries = rows.map(({ position, ...entry }) => entry)
+  const last = rows.at(-1)
+  return [200, { entries, next: rows.length === limit ? Buffer.from(JSON.stringify([last.position, last.id])).toString('base64url') : null }]
+}
+
 // routes returns [status, body] for one authenticated request.
 export async function route(pool, claims, method, path, body, services = {}) {
   const invitations = services.invitations ?? {}
@@ -139,6 +164,12 @@ export async function route(pool, claims, method, path, body, services = {}) {
     if (parts[2] === 'domains' || parts[2] === 'sso') {
       if (!services.orgSSO) throw new HTTPError(403, 'org_sso_disabled')
       return orgSSORoute({ rows, ...services.orgSSO }, org, method, parts.slice(2), body)
+    }
+    // The organization's audit log (sql/0020), newest first; next is the
+    // cursor for the following page.
+    if (parts[2] === 'audit-log' && parts.length === 3 && method === 'GET') {
+      const { at, id, limit } = auditPage(services.query)
+      return auditReply(await rows(`SELECT ${auditColumns} FROM gregale_auth.org_audit_entries($1, $2, $3, $4)`, [org, at, id, limit]), limit)
     }
     if (parts[2] === 'members' && parts.length === 3 && method === 'GET') {
       return [200, { members: await rows('SELECT user_id, email, role, created_at FROM gregale_auth.list_members($1)', [org]) }]
