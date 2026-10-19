@@ -2688,9 +2688,7 @@ func (m *Manager) MarkInstanceTailTerminal(ctx context.Context, instance string,
 	// a 1 ms task is 1 second, a 1000 ms task is 1 second, a
 	// 1001 ms task is 2 seconds. tail_seconds is informational
 	// only; an over-count is safe (it does not enter billing).
-	if elapsedMs > 0 {
-		inst.tailSecondsAccum += (elapsedMs + 999) / 1000
-	}
+	inst.tailSecondsAccum = addTailSeconds(inst.tailSecondsAccum, elapsedMs, inst.Plan)
 	appID = inst.AppID
 	m.mu.Unlock()
 	// Mirror to SQL so schedd's reaper (PR 4) sees the same
@@ -2708,6 +2706,29 @@ func (m *Manager) MarkInstanceTailTerminal(ctx context.Context, instance string,
 	}
 	_ = outcome
 	return true, appID, nil
+}
+
+// maxTailSecondsPerTick caps one instance's tail seconds between two sampler
+// reads. usage_daily sums usage_minutes.tail_seconds into a bigint in one
+// statement for the whole fleet, so an unbounded value from one guest would
+// fail every account's rollup.
+const maxTailSecondsPerTick int64 = 1<<31 - 1
+
+// addTailSeconds adds one waitUntil task's duration, rounded up to whole
+// seconds, to accum. elapsedMs comes from the guest. The runner cancels a
+// task at the plan's TailTimeoutSeconds, so a longer report is clamped to that
+// ceiling plus one second of grace, and the sum saturates at
+// maxTailSecondsPerTick.
+func addTailSeconds(accum, elapsedMs int64, plan api.Plan) int64 {
+	if elapsedMs <= 0 {
+		return accum
+	}
+	ceilingMs := int64(plan.TailTimeoutSeconds()+1) * 1000
+	seconds := (min(elapsedMs, ceilingMs) + 999) / 1000
+	if accum >= maxTailSecondsPerTick-seconds {
+		return maxTailSecondsPerTick
+	}
+	return accum + seconds
 }
 
 // ReadAndResetTailSeconds (issue #667 / ADR-078) atomically
@@ -2917,6 +2938,27 @@ func (m *Manager) InstanceDeploymentIDAndAppID(instance string) (deploymentID, a
 	inst, ok := m.live[instance]
 	if !ok {
 		return "", "", fmt.Errorf("fcvm: InstanceDeploymentIDAndAppID %s: not live", instance)
+	}
+	return inst.DeploymentID, inst.AppID, nil
+}
+
+// ErrUndeclaredSidecar reports a guest sidecar event that names a workload the
+// instance was not booted with.
+var ErrUndeclaredSidecar = errors.New("fcvm: sidecar not declared for instance")
+
+// InstanceSidecarOwner returns the deployment and app of a live instance that
+// runs the named sidecar. Sidecar names in guest lifecycle frames are
+// guest-controlled and become metric labels and event fields, so vmmd accepts
+// only the sidecars the instance was booted with.
+func (m *Manager) InstanceSidecarOwner(instance, sidecar string) (deploymentID, appID string, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.live[instance]
+	if !ok {
+		return "", "", fmt.Errorf("fcvm: InstanceSidecarOwner %s: not live", instance)
+	}
+	if sidecar == "" || sidecar == WorkloadNameMain || !hasWorkloadName(inst.WorkloadNames, sidecar) {
+		return "", "", fmt.Errorf("%w: instance %s", ErrUndeclaredSidecar, instance)
 	}
 	return inst.DeploymentID, inst.AppID, nil
 }
@@ -6068,6 +6110,26 @@ func (m *Manager) LastLivenessDestroyAtForDeployment(deploymentID string) time.T
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.cooldownByDeployment[deploymentID]
+}
+
+// SetInstanceSidecarsForTest is a test-only seam that records the sidecars a
+// RegisterInstanceForTest instance was booted with, so the cmd/vmmd guest
+// event receiver tests can exercise InstanceSidecarOwner. Production code
+// MUST NOT call this; Wake sets the names from the boot request.
+func (m *Manager) SetInstanceSidecarsForTest(instanceID string, sidecars ...string) *Manager {
+	if m == nil {
+		return m
+	}
+	specs := make([]WorkloadSpec, 0, len(sidecars))
+	for _, name := range sidecars {
+		specs = append(specs, WorkloadSpec{Name: name})
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if inst := m.live[instanceID]; inst != nil {
+		inst.WorkloadNames = workloadNamesFor(specs)
+	}
+	return m
 }
 
 // RegisterInstanceForTest is a test-only seam that injects an

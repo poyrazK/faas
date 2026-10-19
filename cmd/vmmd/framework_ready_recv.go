@@ -321,9 +321,9 @@ func (r *FrameworkReadyReceiver) dispatchSidecarInitExit(instance string, wire s
 		r.log.Warn("sidecar_init_exit unknown status", "instance", instance, "status", wire.Status)
 		return
 	}
-	depID, appID, perr := r.mgr.InstanceDeploymentIDAndAppID(instance)
+	depID, appID, perr := r.mgr.InstanceSidecarOwner(instance, wire.Sidecar)
 	if perr != nil {
-		r.log.Debug("sidecar_init_exit unknown instance", "instance", instance, "err", perr)
+		r.log.Debug("sidecar_init_exit dropped", "instance", instance, "err", perr)
 		return
 	}
 	r.emitter.EmitSidecarInitExit(r.ctx, instance, appID, depID, "" /* wakeID not on wire — see pkg/events.SidecarInitExit's struct doc */, wire)
@@ -349,9 +349,9 @@ func (r *FrameworkReadyReceiver) dispatchSidecarInitExit(instance string, wire s
 // guest-init Supervisor.OnCrash emit hook to actually drive
 // type=0x03.
 func (r *FrameworkReadyReceiver) dispatchSidecarRestart(instance string, wire sidecarRestartWire) {
-	appID, perr := r.mgr.InstanceAppID(instance)
+	_, appID, perr := r.mgr.InstanceSidecarOwner(instance, wire.Sidecar)
 	if perr != nil {
-		r.log.Debug("sidecar_restart unknown instance", "instance", instance, "err", perr)
+		r.log.Debug("sidecar_restart dropped", "instance", instance, "err", perr)
 		return
 	}
 	r.emitter.EmitSidecarRestart(r.ctx, instance, appID, "" /* wakeID not on wire — see pkg/events.SidecarRestart's struct doc */, wire)
@@ -370,9 +370,9 @@ func (r *FrameworkReadyReceiver) dispatchSidecarHealth(instance string, wire sid
 		return
 	}
 	wire.Reason = clampSidecarHealthReason(wire.Reason)
-	appID, perr := r.mgr.InstanceAppID(instance)
+	_, appID, perr := r.mgr.InstanceSidecarOwner(instance, wire.Sidecar)
 	if perr != nil {
-		r.log.Debug("sidecar_health unknown instance", "instance", instance, "err", perr)
+		r.log.Debug("sidecar_health dropped", "instance", instance, "err", perr)
 		return
 	}
 	r.emitter.EmitSidecarHealth(r.ctx, instance, appID, "", wire)
