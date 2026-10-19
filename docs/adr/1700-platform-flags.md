@@ -21,6 +21,11 @@
   - **First flags.**
     - `ai_gateway` replaces `ai_gateway_enabled`/`FAAS_AI_GATEWAY_ENABLED` and `ai_gateway_accounts`/`FAAS_AI_GATEWAY_ACCOUNTS` in both apid and outboundd.
     - `customer_flags` replaces `flags_enabled`/`FAAS_FLAGS_ENABLED`.
+  - **Gates added after their environment variables shipped.** Each of these keeps its existing gate until an operator writes the flag (version > 0); from then on the flag decides. Its environment value is also seeded as version 0, so the operator surfaces show what is in effect.
+    - `application_auth`: `FAAS_APPLICATION_AUTH_ENABLED` and `FAAS_APPLICATION_AUTH_ACCOUNTS` (ADR-1190), still re-read on every call until then.
+    - `live_queries`: `FAAS_LIVE_QUERIES_ACCOUNTS` (ADR-20261016151947). It is decided by account only, because the realtime path knows only the account. Unless it includes every account, the live routes stay hidden before routing.
+    - `change_timeline`: `FAAS_CHANGE_TIMELINE_ENABLED` (ADR-751).
+    - `anomaly_alerts`: `FAAS_ANOMALY_ALERTS_ENABLED` (ADR-744). Existing baseline rules keep evaluating while it is off; only creating or changing one is refused.
   - **Operator surfaces.**
     - Read endpoints:
       - `GET /v1/admin/flags`: every flag with its definition, version and receipts, plus the groups.
@@ -78,3 +83,7 @@
 | apid, customer Flags management | `customer_flags` for the account | `403 forbidden` with a hint naming the cause |
 | apid, `GET /v1/runtime/flags` | `customer_flags` kill switch, then for the workload's account | `403 forbidden` |
 | `GET /v1/capabilities` | flag for the account | `runtime_unavailable` |
+| apid, Auth screens, `auth` credential mode | `application_auth` for the account | unchanged from ADR-1190: screens hidden, `auth` treated as unknown |
+| apid, live-query routes and realtime live routes | `live_queries` for the account | unregistered-route answer; no live routes offered |
+| apid, `GET /v1/apps/{slug}/changes` | `change_timeline` for the account | `503 change_timeline_unavailable` |
+| apid, alert rule create/update with a baseline comparison | `anomaly_alerts` for the account | `503 anomaly_alerts_unavailable` |

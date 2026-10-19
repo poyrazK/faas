@@ -31,8 +31,12 @@ const (
 // Flag keys. Each one is consumed through Set.Enabled by the daemons listed
 // in its Spec.Consumers.
 const (
-	AIGateway     = "ai_gateway"
-	CustomerFlags = "customer_flags"
+	AIGateway       = "ai_gateway"
+	CustomerFlags   = "customer_flags"
+	ApplicationAuth = "application_auth"
+	LiveQueries     = "live_queries"
+	ChangeTimeline  = "change_timeline"
+	AnomalyAlerts   = "anomaly_alerts"
 )
 
 // Spec declares one platform flag. Adding a flag is a code change: the
@@ -78,6 +82,38 @@ var catalog = []Spec{
 		ADR:         "ADR-377",
 		Consumers:   []string{"apid"},
 		LegacyEnv:   []string{"FAAS_FLAGS_ENABLED"},
+	},
+	{
+		Key:         ApplicationAuth,
+		Label:       "Application Auth",
+		Description: "Release application Auth (the Auth screens and the auth credential mode) to accounts. Apps already using Auth keep running while it is off.",
+		ADR:         "ADR-1190",
+		Consumers:   []string{"apid"},
+		LegacyEnv:   []string{"FAAS_APPLICATION_AUTH_ENABLED", "FAAS_APPLICATION_AUTH_ACCOUNTS"},
+	},
+	{
+		Key:         LiveQueries,
+		Label:       "Live queries",
+		Description: "Release live queries (incremental SQL results over realtime) to accounts. Decided by account only: plan rules never match. Unless every account is included, the live-query routes stay hidden from accounts outside it.",
+		ADR:         "ADR-20261016151947",
+		Consumers:   []string{"apid"},
+		LegacyEnv:   []string{"FAAS_LIVE_QUERIES_ACCOUNTS"},
+	},
+	{
+		Key:         ChangeTimeline,
+		Label:       "Change timeline",
+		Description: "Release the app change timeline preview (GET /v1/apps/{slug}/changes and its dashboard page) to accounts.",
+		ADR:         "ADR-751",
+		Consumers:   []string{"apid"},
+		LegacyEnv:   []string{"FAAS_CHANGE_TIMELINE_ENABLED"},
+	},
+	{
+		Key:         AnomalyAlerts,
+		Label:       "Anomaly alerts",
+		Description: "Release baseline alert comparisons (above_baseline, below_baseline) to accounts. Existing rules keep evaluating while it is off; only creating or changing one is refused.",
+		ADR:         "ADR-744",
+		Consumers:   []string{"apid"},
+		LegacyEnv:   []string{"FAAS_ANOMALY_ALERTS_ENABLED"},
 	},
 }
 

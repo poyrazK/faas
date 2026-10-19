@@ -96,3 +96,45 @@ func (s *server) missingReferencedGroups(proposed platformflags.Groups) []string
 	slices.Sort(missing)
 	return missing
 }
+
+// platformFlagOr decides a flag whose pre-ADR-1700 gate still runs in place:
+// once an operator has written the flag (version > 0) it decides for the
+// account; until then legacy, the existing gate, decides as before. The
+// environment value is also seeded as version 0 so the operator surfaces show
+// what is in effect.
+func (s *server) platformFlagOr(flagKey string, acct state.Account, legacy bool) bool {
+	if _, version, ok := s.platformFlags().Snapshot().Definition(flagKey); ok && version > 0 {
+		return s.platformFlagEnabled(flagKey, acct)
+	}
+	return legacy
+}
+
+// applicationAuthEnabled is the application_auth release gate (ADR-1190).
+func (s *server) applicationAuthEnabled(acct state.Account) bool {
+	return s.platformFlagOr(platformflags.ApplicationAuth, acct, api.ApplicationAuthEnabled(acct.ID))
+}
+
+// changeTimelineFor is the change_timeline release gate (ADR-751).
+func (s *server) changeTimelineFor(acct state.Account) bool {
+	return s.platformFlagOr(platformflags.ChangeTimeline, acct, s.changeTimelineEnabled)
+}
+
+// seedEnvPlatformFlags records the environment gates that predate their
+// platform flags as each flag's boot fallback (version 0). Live queries seed
+// theirs in configureLiveQueries, where the rollout is parsed.
+func (s *server) seedEnvPlatformFlags(getenv func(string) string) {
+	authAll := false
+	switch strings.ToLower(strings.TrimSpace(getenv("FAAS_APPLICATION_AUTH_ENABLED"))) {
+	case "1", "true", "yes", "on":
+		authAll = true
+	}
+	var authAccounts []string
+	for _, id := range strings.Split(getenv("FAAS_APPLICATION_AUTH_ACCOUNTS"), ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			authAccounts = append(authAccounts, id)
+		}
+	}
+	s.seedPlatformFlag(platformflags.ApplicationAuth, platformflags.FromAccountList(authAll || len(authAccounts) > 0, authAll, authAccounts))
+	s.seedPlatformFlag(platformflags.ChangeTimeline, platformflags.FromAccountList(s.changeTimelineEnabled, true, nil))
+	s.seedPlatformFlag(platformflags.AnomalyAlerts, platformflags.FromAccountList(s.anomalyAlertsEnabled, true, nil))
+}

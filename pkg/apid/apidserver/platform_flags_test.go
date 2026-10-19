@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -213,4 +214,95 @@ func containsDetail(body []byte, want string) bool {
 		return false
 	}
 	return strings.Contains(problem.Detail, want) || strings.Contains(problem.Hint, want)
+}
+
+// The gates that shipped as environment variables before their platform
+// flags keep deciding until an operator writes the flag; from then on the
+// flag decides, per account, without a restart.
+func TestEnvGatesYieldToOperatorPlatformFlags(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	s, acct := *e.S(), *e.Acct()
+	other := state.Account{ID: uuid.NewString(), Plan: api.PlanPro}
+	only := func(id string) json.RawMessage {
+		return platformflags.Definition{Enabled: true, Rules: []platformflags.Rule{
+			platformFlagRule("pilot", true, func(r *platformflags.Rule) { r.Accounts = []string{id} }),
+		}}.Marshal()
+	}
+	apply := func(flag string, value json.RawMessage, version int64) {
+		t.Helper()
+		if _, err := s.ApplyRuntimeConfig(platformflags.ConfigKey(flag), value, version); err != nil {
+			t.Fatalf("apply %s v%d: %v", flag, version, err)
+		}
+	}
+	off := platformflags.Definition{}.Marshal()
+
+	t.Run("application_auth", func(t *testing.T) {
+		t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "1")
+		if !s.ApplicationAuthEnabledFor(acct) {
+			t.Fatal("the environment gate must decide until an operator writes the flag")
+		}
+		apply(platformflags.ApplicationAuth, off, 1)
+		if s.ApplicationAuthEnabledFor(acct) {
+			t.Fatal("an operator kill switch must override FAAS_APPLICATION_AUTH_ENABLED")
+		}
+		apply(platformflags.ApplicationAuth, only(acct.ID), 2)
+		if !s.ApplicationAuthEnabledFor(acct) || s.ApplicationAuthEnabledFor(other) {
+			t.Fatal("the operator rule must release Auth to the listed account only")
+		}
+	})
+	t.Run("change_timeline", func(t *testing.T) {
+		if !s.ChangeTimelineEnabledFor(acct, true) || s.ChangeTimelineEnabledFor(acct, false) {
+			t.Fatal("FAAS_CHANGE_TIMELINE_ENABLED must decide until an operator writes the flag")
+		}
+		apply(platformflags.ChangeTimeline, only(acct.ID), 1)
+		if !s.ChangeTimelineEnabledFor(acct, false) || s.ChangeTimelineEnabledFor(other, true) {
+			t.Fatal("the operator rule must decide once written, whatever the environment says")
+		}
+	})
+	t.Run("anomaly_alerts", func(t *testing.T) {
+		if s.AnomalyAlertsAllowedFor(acct, false) || !s.AnomalyAlertsAllowedFor(acct, true) {
+			t.Fatal("FAAS_ANOMALY_ALERTS_ENABLED must decide until an operator writes the flag")
+		}
+		apply(platformflags.AnomalyAlerts, only(acct.ID), 1)
+		if !s.AnomalyAlertsAllowedFor(acct, false) || s.AnomalyAlertsAllowedFor(other, true) {
+			t.Fatal("the operator rule must decide once written, whatever the environment says")
+		}
+	})
+	t.Run("live_queries", func(t *testing.T) {
+		if err := s.ConfigureLiveQueriesForTest(func(string) string { return "" }); err != nil {
+			t.Fatal(err)
+		}
+		if !s.LiveGate().Off() {
+			t.Fatal("an empty FAAS_LIVE_QUERIES_ACCOUNTS must keep live queries off")
+		}
+		apply(platformflags.LiveQueries, only(acct.ID), 1)
+		livePath := httptest.NewRequest(http.MethodGet, "/v1/postgres/databases/db-1/live", nil)
+		gate := s.LiveGate()
+		if gate.Off() || !gate.Allows(acct.ID) || gate.Allows(other.ID) || !gate.Hidden(livePath) {
+			t.Fatal("an account rule must release live queries to that account and keep the routes hidden")
+		}
+		apply(platformflags.LiveQueries, platformflags.Definition{Enabled: true, Default: true}.Marshal(), 2)
+		if gate := s.LiveGate(); !gate.Allows(other.ID) || gate.Hidden(livePath) {
+			t.Fatal("releasing to every account must stop hiding the routes")
+		}
+	})
+}
+
+func TestEnvGatesSeedTheirPlatformFlags(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	s, acct := *e.S(), *e.Acct()
+	s.SeedEnvPlatformFlags(func(key string) string {
+		if key == "FAAS_APPLICATION_AUTH_ACCOUNTS" {
+			return " " + acct.ID + " ,"
+		}
+		return ""
+	})
+	def, version, ok := s.PlatformFlagSet().Snapshot().Definition(platformflags.ApplicationAuth)
+	want := []string{uuid.MustParse(acct.ID).String()} // stored in canonical form
+	if !ok || version != 0 || !def.Enabled || def.Default || len(def.Rules) != 1 || !slices.Equal(def.Rules[0].Accounts, want) {
+		t.Fatalf("application_auth boot fallback = %+v (v%d), want the listed account only", def, version)
+	}
+	if def, _, _ := s.PlatformFlagSet().Snapshot().Definition(platformflags.ChangeTimeline); def.Enabled {
+		t.Fatal("an unset FAAS_CHANGE_TIMELINE_ENABLED must seed change_timeline off")
+	}
 }

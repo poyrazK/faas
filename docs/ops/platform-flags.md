@@ -50,9 +50,28 @@ flag still cannot use a capability its plan lacks; the inspector reports both.
 | --- | --- | --- | --- |
 | `ai_gateway` | AI gateway preview (ADR-998) | apid, outboundd | `ai_gateway_enabled`/`FAAS_AI_GATEWAY_ENABLED`, `ai_gateway_accounts`/`FAAS_AI_GATEWAY_ACCOUNTS` |
 | `customer_flags` | Customer Flags (ADR-377) | apid | `flags_enabled`/`FAAS_FLAGS_ENABLED` |
+| `application_auth` | Application Auth: the Auth screens and the `auth` credential mode (ADR-1190) | apid | `FAAS_APPLICATION_AUTH_ENABLED`, `FAAS_APPLICATION_AUTH_ACCOUNTS` |
+| `live_queries` | Live queries (ADR-20261016151947) | apid | `FAAS_LIVE_QUERIES_ACCOUNTS` |
+| `change_timeline` | App change timeline preview (ADR-751) | apid | `FAAS_CHANGE_TIMELINE_ENABLED` |
+| `anomaly_alerts` | Baseline alert comparisons (ADR-744) | apid | `FAAS_ANOMALY_ALERTS_ENABLED` |
 
 The environment and TOML values seed the flag at boot. Once an operator has
 written the flag, they are ignored, including after a restart.
+
+The last four flags were added after their environment gates had shipped.
+Until an operator writes one of them, its existing gate still decides, and
+`FAAS_APPLICATION_AUTH_*` is still re-read on every call. The first operator
+write hands the decision to the flag.
+
+Two of these flags have limits:
+
+- `live_queries` is decided by account only, because the realtime path knows
+  only the account. Plan rules never match it.
+- Unless `live_queries` includes every account, the live-query routes stay
+  hidden from accounts outside it.
+
+Turning `anomaly_alerts` off refuses only new or changed baseline rules.
+Existing rules keep evaluating.
 
 ## Day-to-day commands
 

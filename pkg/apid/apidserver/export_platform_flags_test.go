@@ -3,7 +3,9 @@ package apidserver
 import (
 	"encoding/json"
 
+	"github.com/onebox-faas/faas/pkg/apid/livequeries"
 	"github.com/onebox-faas/faas/pkg/platformflags"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // EnablePlatformFlagForAll seeds a platform flag on for every account: the
@@ -16,6 +18,31 @@ func (r *server) EnablePlatformFlagForAll(flagKey string) {
 func (r *server) SeedPlatformFlag(flagKey string, def platformflags.Definition) {
 	r.seedPlatformFlag(flagKey, def)
 }
+
+// SeedEnvPlatformFlags seeds the env-gated flags' boot fallbacks from getenv.
+func (r *server) SeedEnvPlatformFlags(getenv func(string) string) { r.seedEnvPlatformFlags(getenv) }
+
+// ApplicationAuthEnabledFor is the application_auth release gate.
+func (r *server) ApplicationAuthEnabledFor(acct state.Account) bool {
+	return r.applicationAuthEnabled(acct)
+}
+
+// ChangeTimelineEnabledFor is the change_timeline release gate; legacy sets
+// FAAS_CHANGE_TIMELINE_ENABLED's parsed value first.
+func (r *server) ChangeTimelineEnabledFor(acct state.Account, legacy bool) bool {
+	r.changeTimelineEnabled = legacy
+	return r.changeTimelineFor(acct)
+}
+
+// AnomalyAlertsAllowedFor reports whether a baseline comparison is admitted
+// for acct; legacy sets FAAS_ANOMALY_ALERTS_ENABLED's parsed value first.
+func (r *server) AnomalyAlertsAllowedFor(acct state.Account, legacy bool) bool {
+	r.anomalyAlertsEnabled = legacy
+	return r.anomalyAlertsGate(acct, "above_baseline") == nil
+}
+
+// LiveGate is the live-query gate currently in effect.
+func (r *server) LiveGate() livequeries.Gate { return r.liveGate() }
 
 // PlatformFlagOn reports a platform flag's kill switch.
 func (r *server) PlatformFlagOn(flagKey string) bool { return r.platformFlagOn(flagKey) }
