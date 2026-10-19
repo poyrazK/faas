@@ -93,6 +93,7 @@ func (f *productStatementFake) StatementHandoffBlocked(ctx context.Context, acco
 // resumes it, and credit notes or statements handed off by hand never export.
 func TestProductControlStatementExport(t *testing.T) {
 	t.Setenv("FAAS_SCAN_SPOOL_ROOT", t.TempDir())
+	withBillingKeys(t)
 	ctx := t.Context()
 	mem := state.NewMemStore()
 	account, err := mem.CreateAccount(ctx, "export-http@example.com", api.PlanPro)
