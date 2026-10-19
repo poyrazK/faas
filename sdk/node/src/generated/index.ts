@@ -1010,6 +1010,7 @@ export type { HostingRouteCheckResult } from './models/HostingRouteCheckResult.j
 export type { HostingRouteCheckSet } from './models/HostingRouteCheckSet.js';
 export type { Id32 } from './models/Id32.js';
 export type { IdempotencyKey } from './models/IdempotencyKey.js';
+export type { ImageRunRegistryAuth } from './models/ImageRunRegistryAuth.js';
 export type { ImageRunResponse } from './models/ImageRunResponse.js';
 export type { InboundWebhookEndpointResponse } from './models/InboundWebhookEndpointResponse.js';
 export type { InboundWebhookReceiptResponse } from './models/InboundWebhookReceiptResponse.js';

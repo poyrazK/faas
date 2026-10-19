@@ -1004,6 +1004,7 @@ export type { HostingRouteCheckResult } from './HostingRouteCheckResult.js';
 export type { HostingRouteCheckSet } from './HostingRouteCheckSet.js';
 export type { Id32 } from './Id32.js';
 export type { IdempotencyKey } from './IdempotencyKey.js';
+export type { ImageRunRegistryAuth } from './ImageRunRegistryAuth.js';
 export type { ImageRunResponse } from './ImageRunResponse.js';
 export type { InboundWebhookEndpointResponse } from './InboundWebhookEndpointResponse.js';
 export type { InboundWebhookReceiptResponse } from './InboundWebhookReceiptResponse.js';

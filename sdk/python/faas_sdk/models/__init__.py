@@ -2042,6 +2042,7 @@ from .hosting_route_check_result_status import HostingRouteCheckResultStatus
 from .hosting_route_check_set import HostingRouteCheckSet
 from .hosting_route_check_set_source import HostingRouteCheckSetSource
 from .hosting_route_check_set_status import HostingRouteCheckSetStatus
+from .image_run_registry_auth import ImageRunRegistryAuth
 from .image_run_response import ImageRunResponse
 from .image_run_response_image_status import ImageRunResponseImageStatus
 from .image_run_response_status import ImageRunResponseStatus
@@ -7759,6 +7760,7 @@ __all__ = (
     "HostingRouteCheckSet",
     "HostingRouteCheckSetSource",
     "HostingRouteCheckSetStatus",
+    "ImageRunRegistryAuth",
     "ImageRunResponse",
     "ImageRunResponseImageStatus",
     "ImageRunResponseStatus",
