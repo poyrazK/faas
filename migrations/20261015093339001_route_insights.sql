@@ -1,7 +1,9 @@
+-- migration-compat: expand
 -- filename: 20261015093339001_route_insights.sql
 
 -- +goose Up
 -- +goose StatementBegin
+SET LOCAL lock_timeout = '5s';
 -- ADR-1198: proactive route insights. apid's evaluator records one row per
 -- app, kind and route; the row is the source of truth and a trigger enqueues
 -- the customer webhooks in the same transaction as each transition, like the
@@ -11,7 +13,7 @@ CREATE TABLE IF NOT EXISTS route_insights (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-    kind text NOT NULL CHECK (kind IN ('kept_awake', 'cacheable')),
+    kind text NOT NULL CHECK (kind IN ('kept_awake', 'cacheable', 'cache_stale', 'cache_too_short')),
     method text NOT NULL CHECK (method IN ('GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS')),
     route text NOT NULL CHECK (route LIKE '/%' AND char_length(route) <= 512),
     state text NOT NULL CHECK (state IN ('active', 'resolved')),
@@ -26,19 +28,8 @@ CREATE TABLE IF NOT EXISTS route_insights (
 );
 CREATE INDEX IF NOT EXISTS route_insights_active_idx ON route_insights (app_id) WHERE state = 'active';
 
--- One delivery per subscription and transition: the transition timestamp is
--- part of the payload, so an insight that resolves and returns is
--- deliverable again while retried writes of one transition stay idempotent.
-CREATE UNIQUE INDEX IF NOT EXISTS app_webhook_deliveries_route_insight_transition_uniq
-    ON app_webhook_deliveries (
-        webhook_id,
-        event,
-        (payload ->> 'kind'),
-        (payload ->> 'method'),
-        (payload ->> 'route'),
-        (payload ->> 'transition_id')
-    )
-    WHERE event IN ('routes.insight.detected', 'routes.insight.resolved');
+-- 20261019072505518 builds the unique index that makes retried transitions
+-- idempotent; it builds concurrently, so it lives in its own migration.
 
 CREATE OR REPLACE FUNCTION enqueue_route_insight_webhooks()
 RETURNS trigger LANGUAGE plpgsql AS $$
@@ -104,6 +95,5 @@ EXECUTE FUNCTION enqueue_route_insight_webhooks();
 DROP TRIGGER IF EXISTS route_insights_webhooks_state ON route_insights;
 DROP TRIGGER IF EXISTS route_insights_webhooks_insert ON route_insights;
 DROP FUNCTION IF EXISTS enqueue_route_insight_webhooks();
-DROP INDEX IF EXISTS app_webhook_deliveries_route_insight_transition_uniq;
 DROP TABLE IF EXISTS route_insights;
 -- +goose StatementEnd

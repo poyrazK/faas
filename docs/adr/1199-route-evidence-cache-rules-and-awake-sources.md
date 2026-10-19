@@ -37,7 +37,8 @@ buffered the body, so nothing new is held. The telemetry outcome is:
   cache will not store the response.
 
 A migration adds `stale` to the `request_telemetry.content_outcome` CHECK,
-re-added `NOT VALID` and then validated so the scan does not block inserts.
+re-added `NOT VALID`; a second migration validates it in its own
+transaction, so the scan does not block inserts.
 
 **Check rules.** The route advisor's statistics count stale refills. For the
 enabled cache rule the gateway would apply to a GET route (lowest priority

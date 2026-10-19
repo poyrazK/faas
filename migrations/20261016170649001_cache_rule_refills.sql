@@ -1,13 +1,15 @@
+-- migration-compat: expand
 -- filename: 20261016170649001_cache_rule_refills.sql
 
 -- ADR-1199: cache rules checked from refill evidence. Request telemetry gains
 -- the stale content outcome: on a route with a cache rule, the stored body
--- changed within the rule's max-age. Route insights gain the cache_stale and
--- cache_too_short kinds. Both checks are re-added NOT VALID and validated, so
--- the scan does not hold an exclusive lock.
+-- changed within the rule's max-age. The check is re-added NOT VALID, so this
+-- migration holds its exclusive lock only briefly; 20261019072506758
+-- validates it in a separate transaction under a lock that allows writes.
 
 -- +goose Up
 -- +goose StatementBegin
+SET LOCAL lock_timeout = '5s';
 ALTER TABLE request_telemetry DROP CONSTRAINT IF EXISTS request_telemetry_content_outcome_check;
 ALTER TABLE request_telemetry
   ADD CONSTRAINT request_telemetry_content_outcome_check CHECK (content_outcome IN (
@@ -16,22 +18,11 @@ ALTER TABLE request_telemetry
     'changed_60', 'changed_300', 'changed_3600', 'changed_long',
     'stale'
   )) NOT VALID;
-ALTER TABLE request_telemetry VALIDATE CONSTRAINT request_telemetry_content_outcome_check;
-
-ALTER TABLE route_insights DROP CONSTRAINT IF EXISTS route_insights_kind_check;
-ALTER TABLE route_insights
-  ADD CONSTRAINT route_insights_kind_check
-  CHECK (kind IN ('kept_awake', 'cacheable', 'cache_stale', 'cache_too_short')) NOT VALID;
-ALTER TABLE route_insights VALIDATE CONSTRAINT route_insights_kind_check;
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
-DELETE FROM route_insights WHERE kind IN ('cache_stale', 'cache_too_short');
-ALTER TABLE route_insights DROP CONSTRAINT IF EXISTS route_insights_kind_check;
-ALTER TABLE route_insights
-  ADD CONSTRAINT route_insights_kind_check CHECK (kind IN ('kept_awake', 'cacheable')) NOT VALID;
-
+SET LOCAL lock_timeout = '5s';
 ALTER TABLE request_telemetry DROP CONSTRAINT IF EXISTS request_telemetry_content_outcome_check;
 ALTER TABLE request_telemetry
   ADD CONSTRAINT request_telemetry_content_outcome_check CHECK (content_outcome IN (
