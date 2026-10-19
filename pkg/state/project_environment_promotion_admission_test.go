@@ -205,7 +205,7 @@ func testPromotionAdmission(t *testing.T, factory func(*testing.T) Store) {
 			freeAdmission(t, store, jobs)
 			// A fresh PgStore represents a restarted process; persisted queue timing is authoritative.
 			if pg, ok := store.(*PgStore); ok {
-				store = NewPgStore(pg.pool)
+				store = NewPgStore(pg.pool.Pool)
 			}
 			before := time.Now().UTC()
 			next = dispatchAdmission(t, store, f.promotion, h.Generation)
@@ -298,7 +298,7 @@ func testConcurrentAdmission(t *testing.T, store Store) {
 		wg.Go(func() {
 			s := f.store
 			if pg, ok := s.(*PgStore); ok {
-				s = NewPgStore(pg.pool)
+				s = NewPgStore(pg.pool.Pool)
 			}
 			p, _, err := s.CreateProjectEnvironmentPromotion(t.Context(), f.promotion, f.workloads)
 			f.promotion = p
@@ -369,7 +369,7 @@ func testConcurrentAdmissionDispatch(t *testing.T, store Store) {
 		wg.Go(func() {
 			s := store
 			if pg, ok := s.(*PgStore); ok {
-				s = NewPgStore(pg.pool)
+				s = NewPgStore(pg.pool.Pool)
 			}
 			h, err := s.(ProjectPromotionAdmissionStore).DispatchProjectEnvironmentPromotion(ctx, f.account.ID, f.promotion.ID, tokens[i], 1)
 			results <- h

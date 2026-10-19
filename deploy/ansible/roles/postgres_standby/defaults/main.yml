@@ -1,0 +1,44 @@
+---
+# ADR-1344 §8: the warm standby's asynchronous streaming replica.
+
+# The single control-plane host, whose cluster this standby replicates. The
+# role asserts there is exactly one before it delegates anything there.
+faas_postgres_primary_inventory_host: "{{ (groups['control_plane'] | default(['']))[0] }}"
+
+# The primary's private address. Defaults to the address the discovery play
+# published for the control-plane host.
+faas_postgres_primary_host: "{{ hostvars[faas_postgres_primary_inventory_host].faas_private_dns_address }}"
+faas_postgres_primary_port: 5432
+
+# Where the primary's postgres role keeps its replication certificate, and
+# where this standby pins a copy of it for sslmode=verify-full. The pinned copy
+# lives outside the data directory, which a reseed empties.
+faas_postgres_replication_tls_dir: /etc/postgresql/faas-tls
+faas_postgres_standby_primary_cert: /var/lib/postgresql/faas-primary-replication.crt
+
+# Physical slot the primary keeps for this standby (postgres role).
+faas_postgres_standby_slot: faas_standby
+
+# Settings a hot standby must hold at least at the primary's value, or it
+# refuses read-only connections. They are copied from the primary on every
+# run so a primary-side change never strands the standby.
+faas_postgres_standby_mirrored_settings:
+  - max_connections
+  - max_prepared_transactions
+  - max_locks_per_transaction
+  - max_wal_senders
+  - max_worker_processes
+
+# Seeding wipes the local data directory. The role seeds a fresh host on its
+# own, and a seeded standby only with faas_postgres_standby_reseed=true (for
+# example after FaasPostgresStandbySlotLost). A cluster that is not in
+# recovery and holds the faas database looks like a primary and is never
+# wiped unless faas_postgres_standby_wipe_primary names this exact host.
+faas_postgres_standby_reseed: false
+faas_postgres_standby_wipe_primary: ""
+
+# The distro cluster's data directory (postgres role: Ubuntu's main cluster).
+faas_postgres_standby_data_dir: "/var/lib/postgresql/{{ postgres_major_version }}/main"
+
+# Upper bound for one pg_basebackup run, in seconds.
+faas_postgres_standby_seed_timeout: 21600

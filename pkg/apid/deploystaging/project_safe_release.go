@@ -37,6 +37,9 @@ func ReconcileSafeProjectReleases(ctx context.Context, store SafeProjectReleaseS
 			}
 			continue
 		}
+		// Publication requires the preflight to cover the exact graph the store
+		// activates; an unchecked graph is left building for the next pass.
+		var prechecked []state.ProjectReleaseMember
 		if err == nil && receipt.Apply.SafeRelease != nil && receipt.Status == "complete" && time.Now().Before(receipt.Apply.SafeRelease.Deadline) {
 			deployments := map[string]state.Deployment{}
 			for _, build := range receipt.Apply.Builds {
@@ -54,6 +57,9 @@ func ReconcileSafeProjectReleases(ctx context.Context, store SafeProjectReleaseS
 				members, status, _ := state.ProjectSafeReleaseCandidates(receipt, deployments)
 				if status == "activated" {
 					err = check(ctx, members)
+					if err == nil {
+						prechecked = members
+					}
 					if err == nil && receipt.Apply.SafeRelease.ReleaseCommand != nil && receipt.Apply.SafeRelease.ReleaseCommand.VerifyBaseline {
 						err = reconcileMigrationBaseline(ctx, store, job, receipt, check, probes)
 					}
@@ -61,7 +67,7 @@ func ReconcileSafeProjectReleases(ctx context.Context, store SafeProjectReleaseS
 			}
 		}
 		if err == nil {
-			_, err = store.ReconcileSafeProjectSubmission(ctx, job.AccountID, job.AttemptID)
+			_, err = store.ReconcileSafeProjectSubmission(state.ContextWithPrecheckedProjectRelease(ctx, prechecked), job.AccountID, job.AttemptID)
 		}
 		if err != nil && firstError == nil {
 			firstError = fmt.Errorf("safe project attempt %s: %w", job.AttemptID, err)

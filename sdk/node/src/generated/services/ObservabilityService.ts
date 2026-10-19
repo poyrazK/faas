@@ -389,6 +389,8 @@ export class ObservabilityService {
     wakeId,
     since,
     limit = 200,
+    pagination,
+    cursor,
   }: {
     /**
      * App slug (lowercase, kebab-case; per-account unique).
@@ -405,13 +407,21 @@ export class ObservabilityService {
      */
     wakeId: string,
     /**
-     * Only return rows with `at >= since` (RFC 3339).
+     * Exclusive at > since lower bound (RFC3339). Omission reads from retained history. keyset_v1 normalizes to UTC/PostgreSQL microseconds.
      */
     since?: string,
     /**
-     * Max frames to return. Silently capped at 1000.
+     * Max frames to return. Values outside 1..1000 are rejected.
      */
     limit?: number,
+    /**
+     * Opt in to app-scoped timestamp/event-ID keyset pagination. Omit for the unchanged legacy timestamp-hint contract.
+     */
+    pagination?: 'keyset_v1',
+    /**
+     * Opaque page.next_cursor from keyset_v1. Requires pagination=keyset_v1 and the same account, immutable app, wake, normalized since and limit. Selection data, not authorization; pages are live retained reads, not a snapshot.
+     */
+    cursor?: string,
   }): CancelablePromise<WakeTimelineResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -423,6 +433,8 @@ export class ObservabilityService {
       query: {
         'since': since,
         'limit': limit,
+        'pagination': pagination,
+        'cursor': cursor,
       },
       errors: {
         400: `Malformed query parameter on the wake-timeline read — \`since\` not RFC 3339 or \`limit\` out of range.`,

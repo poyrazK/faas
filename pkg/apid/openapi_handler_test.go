@@ -235,11 +235,11 @@ func TestOpenAPIJSONLazyInitialization(t *testing.T) {
 		}
 		return
 	}
-	if openapiJSON != nil {
+	if openapiJSON[0].body != nil || openapiJSON[1].body != nil {
 		t.Fatal("JSON was converted during package initialization")
 	}
 	ServeOpenAPISpec(httptest.NewRecorder(), httptest.NewRequest("GET", "/v1/openapi.yaml", nil))
-	if openapiJSON != nil {
+	if openapiJSON[0].body != nil || openapiJSON[1].body != nil {
 		t.Fatal("serving YAML unnecessarily converted the JSON spec")
 	}
 	const clients = 8

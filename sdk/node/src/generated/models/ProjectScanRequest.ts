@@ -7,9 +7,13 @@
  */
 export type ProjectScanRequest = {
   /**
-   * JSON-encoded ProjectReleaseConfigRequest for atomic-config-verify; contains only non-secret workload variables.
+   * Preserve repository service identities and suggest project-prefixed app names. Requires no_triggers and no repository push binding; apply repeats the reviewed setting.
    */
-  release_config?: string;
+  migration?: boolean;
+  /**
+   * Exact repository service names mapped to Gregale app names. Existing project members retain their names. Names are checked for format, reservation and availability; they are never allocated by scan. Multipart clients send this field as JSON.
+   */
+  app_slugs?: Record<string, string>;
   /**
    * tar.gz of the repo root.
    */

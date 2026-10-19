@@ -13,13 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type gatewayMeterStore interface {
-	accountingStore
-	state.ObjectStorageProviderUsageStore
-	state.ObjectStorageProviderEgressStore
-	state.ObjectStorageGatewayEgressStore
-	state.ObjectStorageGatewayRequestStore
-}
+type gatewayMeterStore = contractTestStore
 
 func gatewaySafetyPolicy() api.ObjectStoragePolicy {
 	p := accountingPolicy()

@@ -12,10 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type customerUsageV2Store interface {
-	accountingStore
-	state.ObjectStorageCustomerUsageV2Store
-}
+type customerUsageV2Store = contractTestStore
 
 func TestObjectCustomerUsageV2Mem(t *testing.T) { objectCustomerUsageV2Suite(t, state.NewMemStore()) }
 func TestObjectCustomerUsageV2PG(t *testing.T) {

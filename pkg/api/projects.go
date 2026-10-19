@@ -8,6 +8,7 @@ import (
 // ProjectSummaryResponse is the stable account-scoped project list shape.
 type ProjectSummaryResponse struct {
 	ID               string `json:"id"`
+	OrgID            string `json:"org_id,omitempty"`
 	Slug             string `json:"slug"`
 	RepoFullName     string `json:"repo_full_name,omitempty"`
 	ProductionBranch string `json:"production_branch,omitempty"`
@@ -99,15 +100,18 @@ type PublishProjectReleaseSetRequest struct {
 
 // ProjectReleaseSetResponse is the published immutable deployment graph.
 type ProjectReleaseSetResponse struct {
-	ID          string                            `json:"id"`
-	AccountID   string                            `json:"account_id"`
-	ProjectID   string                            `json:"project_id"`
-	Environment string                            `json:"environment"`
-	Active      bool                              `json:"active"`
-	TTLSeconds  int                               `json:"ttl_seconds"`
-	ExpiresAt   *time.Time                        `json:"expires_at,omitempty"`
-	CreatedAt   time.Time                         `json:"created_at"`
-	Members     []ProjectReleaseSetMemberResponse `json:"members"`
+	Deactivation              *ProjectReleaseDeactivationReceipt `json:"deactivation,omitempty"`
+	RollbackSourceReleaseID   string                             `json:"rollback_source_release_id,omitempty"`
+	RollbackPreviousReleaseID string                             `json:"rollback_previous_release_id,omitempty"`
+	ID                        string                             `json:"id"`
+	AccountID                 string                             `json:"account_id"`
+	ProjectID                 string                             `json:"project_id"`
+	Environment               string                             `json:"environment"`
+	Active                    bool                               `json:"active"`
+	TTLSeconds                int                                `json:"ttl_seconds"`
+	ExpiresAt                 *time.Time                         `json:"expires_at,omitempty"`
+	CreatedAt                 time.Time                          `json:"created_at"`
+	Members                   []ProjectReleaseSetMemberResponse  `json:"members"`
 }
 
 // ProjectReleaseSetListResponse includes retired and expired release graphs.

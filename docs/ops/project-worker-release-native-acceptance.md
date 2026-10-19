@@ -1,6 +1,6 @@
 # Native project worker release acceptance
 
-ADR-1408 admission remains disabled by default. This suite supplies the native
+ADR-20261019120008 admission remains disabled by default. This suite supplies the native
 qualification path for `gregale deploy --project --atomic --verify --workers`,
 including paired runtime variables. No native pass is recorded by adding or
 compiling these tests.
@@ -55,7 +55,7 @@ PostgreSQL database. Run only through the guarded owner so host locking, service
 restoration and cleanup remain active. No production admission setting is changed
 by this workflow; the flag is enabled only inside the private test harness.
 
-Collect the combined log, the three `ADR-1408 native` observation lines, the
+Collect the combined log, the three `ADR-20261019120008 native` observation lines, the
 parent and child PASS lines, and the final leakcheck result for the exact tested
 source commit. Only after that evidence passes should an operator enable
 `FAAS_ATOMIC_WORKER_RELEASES_ENABLED=1` through the normal deployment process.

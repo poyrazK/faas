@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 1441
+// adr: 20261019120041
 func TestReadinessPostgresReadOnly(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	writer := state.NewPgStore(pool)

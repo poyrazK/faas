@@ -88,3 +88,34 @@ func TestRuntimeReleasePrimeWakeAndLookupFailure(t *testing.T) {
 		t.Fatal("legacy behavior changed", key, err)
 	}
 }
+
+// spec: §4.6
+// H10-140: a source-built container app built for a shared runner base boots
+// that base; a runtime base on any other deployment is refused rather than
+// booted on a base its layer was not built for.
+func TestDeploymentBaseKey(t *testing.T) {
+	ctx := context.Background()
+	e := newEngine(t, state.NewMemStore(), &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	tests := []struct {
+		name    string
+		app     state.App
+		base    string
+		want    string
+		wantErr bool
+	}{
+		{name: "app base", app: state.App{Type: state.AppTypeApp}, want: BaseKey("")},
+		{name: "function base", app: state.App{Type: state.AppTypeFunction, Runtime: "node22"}, want: BaseKey("node22")},
+		{name: "shared runner base", app: state.App{Type: state.AppTypeApp}, base: "node24", want: BaseKey("node24")},
+		{name: "function with a runtime base", app: state.App{Type: state.AppTypeFunction, Runtime: "node22"}, base: "node24", wantErr: true},
+		{name: "container with its own runtime", app: state.App{Type: state.AppTypeApp, Runtime: "go124"}, base: "node24", wantErr: true},
+		{name: "unknown runtime base", app: state.App{Type: state.AppTypeApp}, base: "python312", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := e.deploymentBaseKey(ctx, tt.app, state.Deployment{RuntimeBase: tt.base}, "legacy/layer.ext4")
+			if (err != nil) != tt.wantErr || got != tt.want {
+				t.Fatalf("deploymentBaseKey = %q, %v; want %q (error %v)", got, err, tt.want, tt.wantErr)
+			}
+		})
+	}
+}

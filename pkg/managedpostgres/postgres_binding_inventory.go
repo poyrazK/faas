@@ -19,7 +19,7 @@ func (s *PostgresStore) ListBindingsForApp(ctx context.Context, accountID, appID
 	if err != nil {
 		return nil, err
 	}
-	rows, err := sqlc.New().AppManagedPostgresBindingInventory(ctx, s.pool, sqlc.AppManagedPostgresBindingInventoryParams{
+	rows, err := sqlc.New().AppManagedPostgresBindingInventory(ctx, s.catalog, sqlc.AppManagedPostgresBindingInventoryParams{
 		AccountID: account, AppID: app, ScopeFilter: scope,
 	})
 	if err != nil {

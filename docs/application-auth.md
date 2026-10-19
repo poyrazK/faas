@@ -42,14 +42,14 @@ Verify the tokens wherever they are used:
   then write row-level security policies (see below).
 - **Edge JWT rules:** `gregale edge-rules create --app APP --kind jwt
   --match-host HOST --jwt-auth shop-auth` requires a valid token on a route.
-- **Your own backend:** the Go and Python SDKs (see below).
+- **Your own backend:** the Go, Python and Node SDKs (see below).
 
 Sign-out and bans end refresh immediately. A token already issued stays valid
 for edge-only checks until it expires, at most 600 seconds later.
 
 ### In your backend
 
-The Go and Python SDKs check a token's ES256 signature against the Auth app's
+The Go, Python and Node SDKs check a token's ES256 signature against the Auth app's
 published keys, its issuer (`https://<auth-host>/auth/v1`), its audience
 (`authenticated`) and its expiry, allowing 60 seconds of clock skew. They cache
 the keys for five minutes and refetch at most every 30 seconds when a token
@@ -95,6 +95,26 @@ async def current_user(authorization: str | None = Header(None)):
 
 `verify` and `authorize` are the synchronous forms for Flask or Django.
 
+Node, Deno, Bun and edge runtimes (`@gregale/auth/server`, WebCrypto only):
+
+```ts
+import { createVerifier, bearerToken, resource, AuthError } from '@gregale/auth/server'
+
+const auth = createVerifier({ url: 'https://shop-auth.gregale.app' })
+
+export async function handler(request: Request) {
+  try {
+    const token = bearerToken(request.headers.get('authorization'))
+    const claims = await auth.verify(token) // claims.sub is the user ID
+    if (!(await auth.authorize(token, 'read', resource(orgId, 'doc', docId)))) return new Response(null, { status: 403 })
+    // ...
+  } catch (err) {
+    if (err instanceof AuthError) return new Response(null, { status: err.status }) // 401, or 503 when the keys cannot be fetched
+    throw err
+  }
+}
+```
+
 ## Your data
 
 Users, sessions and identities live in the `auth` schema of your own database,
@@ -104,8 +124,13 @@ and your runtime and read-only bindings cannot read `auth`. Creation fails if
 your database already has an `auth` schema owned by another role.
 
 GoTrue migrations run in the deployment's release task. The image checks every
-pinned upstream migration byte for byte and replaces one migration whose grants
-assumed a role named `postgres`.
+pinned upstream migration byte for byte. The release runner verifies the raw
+files again, applies the overlay for a migration whose grants assumed a role
+named `postgres`, and records progress in `auth.schema_migrations`. Each file and
+its version record commit together; retries skip recorded versions. GoTrue's
+stock migration command uses embedded SQL and cannot apply this overlay, so the
+release runner applies the verified files directly. Serving uses `auth serve`
+and performs no migration.
 
 ## Change settings
 
@@ -129,6 +154,7 @@ gregale auth config shop-auth --email-provider resend --email-from 'Shop <auth@s
 | `--password-require CLASSES` | `lower`, `upper`, `digit` and `symbol`, comma-separated, or `none`. |
 | `--leaked-password-check on\|off` | Refuse passwords found in known breaches (Have I Been Pwned). |
 | `--mfa on\|off` | Let users enrol an authenticator app (TOTP). `off` stops new enrolments; enrolled users keep verifying. |
+| `--mfa-phone on\|off`, `--recovery-codes on\|off` | SMS codes as a second factor, and one-time recovery codes (see Two-step verification). |
 | `--email-provider`, `--email-from`, `--email-api-key-stdin` | HTTPS email delivery (see Email); `--email-provider none` removes it. |
 | `--authz FILE` | Replace custom roles and policies (see Organizations and roles). |
 | `--events on\|off` | Publish user lifecycle events to your event bus (see Lifecycle events). |
@@ -137,7 +163,9 @@ gregale auth config shop-auth --email-provider resend --email-from 'Shop <auth@s
 | `--captcha turnstile\|hcaptcha\|off`, `--captcha-site-key`, `--captcha-secret-stdin` | A CAPTCHA on sign-up, sign-in and password reset (see CAPTCHA). |
 | `--activity-retention DAYS\|forever` | How long sign-in activity is kept (see Manage users). |
 | `--sms PROVIDER\|off`, `--sms-account`, `--sms-sender`, `--sms-secret-stdin` | Phone sign-in by text message (see Phone sign-in). |
+| `--sms-countries CODES\|all` | The countries phone sign-in may text (see Phone sign-in). |
 | `--sso on\|off` | Organization single sign-on with SAML (see Organization single sign-on). |
+| `--org-sso on\|off` | Let organizations connect their own identity provider (see Organization single sign-on). |
 
 Settings are app secrets, which are write-only, so the CLI and the dashboard
 read them back from the running app's public `/settings/v1`. It reports only
@@ -215,12 +243,47 @@ app secret to change it. In your own pages, use
 `@gregale/auth`. Numbers need their country code (`+447700900123`).
 
 Anyone can make the Auth app text any number, which costs you money and
-attracts SMS pumping fraud. Turn on CAPTCHA with phone sign-in: it protects
-sending a code. GoTrue also sends at most 30 messages an hour per running
+attracts SMS pumping fraud, where bots make apps text premium numbers abroad.
+Turn on CAPTCHA with phone sign-in: it protects sending a code. Also limit
+the countries the app texts to those you serve, by calling code:
+
+```sh
+gregale auth config shop-auth --sms-countries 1,44,49
+```
+
+The Auth app then refuses to text, or to add as a phone or MFA factor, any
+number outside those countries, answering `sms_country_not_allowed` before
+anything is sent. `1` covers the United States, Canada and the other North
+American numbering plan countries. `--sms-countries all` removes the limit. GoTrue also sends at most 30 messages an hour per running
 instance and one code a minute per number. Codes last five minutes; set
 `GOTRUE_SMS_OTP_EXP` (seconds) to change that. `--sms off` turns phone sign-in off and
 removes the provider's credentials; changing provider removes the previous
 one's.
+
+### Two-step verification
+
+Users can add a second factor: an authenticator app (on by default), SMS codes
+(`--mfa-phone on`, which needs an SMS provider; see Phone sign-in) or both.
+With `--recovery-codes on` they can also create one-time recovery codes, which
+stand in for a lost second factor but never replace it. A user who has a
+second factor signs in at assurance level `aal1` and reaches `aal2` by
+entering a code.
+
+The hosted sign-in pages ask for the code after a password, phone or passkey
+sign-in, offer the user's other factors and recovery codes, and hand the
+application an `aal2` session. In your own pages, use `@gregale/auth`:
+
+```ts
+const { totp } = await auth.mfa.enrollTOTP({ friendlyName: 'Phone app' }) // show totp.qr_code
+const challenge = await auth.mfa.challenge(factorId)
+await auth.mfa.verify({ factorId, challengeId: challenge.id, code })
+const { current, next } = await auth.mfa.assuranceLevel() // next is 'aal2' when the user must verify
+const { codes } = await auth.mfa.recoveryCodes.generate()   // shown once
+```
+
+Require `aal2` where it matters: in row-level security with
+`gregale_auth.claims()->>'aal' = 'aal2'`, or in a backend from
+`claims.AAL` (Go), `claims.aal` (Python) or `claims.aal` (Node).
 
 ### CAPTCHA
 
@@ -317,6 +380,40 @@ No organization can lose its last owner. Invitations last seven days by default
 (300 seconds to 14 days); a user can create up to 100 organizations, and an
 organization can hold 500 pending invitations.
 
+### The active organization in tokens
+
+Turn on organization claims to let your backend read a user's organization
+and role from the token it already verifies, without calling the Auth app:
+
+```sh
+gregale auth config shop-auth --org-claims on
+```
+
+The browser picks the organization a session acts in; the session's next
+tokens carry it:
+
+```ts
+await auth.organizations.setActive(org.id) // refreshes the session
+const active = await auth.organizations.active() // { id, slug, role, permissions } or null
+await auth.organizations.setActive(null) // act in none
+```
+
+Tokens then hold `org_id`, `org_slug`, `org_role` and `org_permissions` (the
+role's permissions, `*` for owners). The backend SDKs return them as
+`claims.organization` (Node and Python) and `claims.Organization` (Go), and
+row-level security can read `gregale_auth.claims() ->> 'org_id'`. Each session
+has its own choice, so two tabs can act in different organizations; ending the
+session or deleting the organization clears it.
+
+A token keeps the role it was issued with until it expires, at most ten
+minutes later; removing a member or changing their role shows in their next
+token. For checks that must be current, such as removing members or changing
+billing, use `authorize()`, which reads the membership each time.
+`POST /authz/v1/active-organization` `{org}` (or `{"org": null}`) is the API
+behind `setActive`; it answers `not_found` for an organization the caller
+does not belong to. Tokens issued to third-party OAuth clients never carry
+these claims.
+
 ## Organization single sign-on
 
 Let your business customers sign in through their company's identity
@@ -342,8 +439,63 @@ identity provider's URL to navigate to. With `--org`, they join that
 organization with `--role` (default `member`, never `owner`) the first time
 they sign in, and the provider's existing users join when you link it.
 `gregale auth sso list`, `update` (`--org none` unlinks; members stay) and
-`remove` manage providers. Identity providers live in your database, like
+`remove` manage providers, as does the **SSO** tab of the dashboard's Auth
+page, which uses the same admin key as the users screens. Identity providers live in your database, like
 your users.
+
+### Provisioning with SCIM
+
+Let the identity provider add and remove people for you. Create a SCIM token
+for a provider and enter it, with the SCIM base URL, in the identity
+provider's provisioning settings (Okta: SCIM 2.0 with header auth; Entra ID:
+"Non-gallery application", provisioning mode Automatic):
+
+```sh
+printf '%s' "$ADMIN_KEY" | gregale auth sso scim-token shop-auth PROVIDER_ID --admin-key-stdin
+```
+
+The token is shown once; creating another replaces it, and `--revoke` removes
+it. The Auth app then serves `/scim/v2/Users` for that provider's people:
+
+- **Provisioning** records a person; their first SSO sign-in links the record
+  to their account by user name or email. A person who already signed in
+  through the provider is linked at once.
+- **Deprovisioning** (`active: false`, or deleting the person) bans the linked
+  account, ends its sessions and removes it from the provider's organization
+  (never its last owner). Reactivating lifts the ban and returns the person
+  to the organization. A deprovisioned person who has never signed in is
+  banned on their first sign-in.
+- Lookups by `userName eq` and `externalId eq`, replace (`PUT`) and both Okta
+  and Entra ID `PATCH` forms are supported. Groups are not: the provider's
+  `--org` and `--role` decide membership.
+
+### Self-service SSO for organizations
+
+Let your business customers set up SSO themselves:
+
+```sh
+gregale auth config shop-auth --sso on --org-sso on
+```
+
+An organization's owners, and members whose role grants `sso:manage`, then
+prove they control an email domain and connect their identity provider from
+your application, with `@gregale/auth`:
+
+```ts
+const { record } = await auth.orgSSO.domains.add(org.id, 'acme.com')
+// Publish record: TXT _gregale-auth.acme.com "gregale-auth-verification=…"
+await auth.orgSSO.domains.verify(org.id, 'acme.com')
+await auth.orgSSO.providers.add(org.id, { metadataUrl: 'https://acme.okta.com/app/abc/sso/saml/metadata', domains: ['acme.com'], role: 'member' })
+const { token, scim_url } = await auth.orgSSO.providers.scimToken(org.id, providerId) // optional SCIM
+```
+
+The Auth app looks the TXT record up itself. A domain can be verified by
+only one organization, so no organization can send another's people to its
+identity provider, and a provider may serve only its organization's verified
+domains. Each organization may connect up to three providers, and a provider
+never grants the owner role. The same routes are on `/authz/v1/orgs/{org}/domains`
+and `/authz/v1/orgs/{org}/sso` for other clients. `--org-sso off` stops new
+changes; providers already connected keep working.
 
 An SSO user is a separate account from a password or OAuth account with the
 same address. Because an identity provider vouches only for its own domains,
@@ -384,6 +536,41 @@ inviter. Without a provider, flows that need email fail with
 `email_provider_unconfigured`; use OAuth providers, or `--autoconfirm` during
 development. Links and codes are never logged.
 
+### Your wording
+
+Each email has a default subject and body that you can replace, in any
+language. A template is plain text with placeholders; the Auth app escapes
+every value and lays the text out as HTML in the same simple style for every
+email, so templates cannot add markup. Separate paragraphs with a blank line.
+
+| Type | Sent when | Placeholders |
+| --- | --- | --- |
+| `signup` | someone signs up and must confirm their address | `{{app}}` `{{email}}` `{{link}}` `{{code}}` |
+| `invite` | you invite someone to create an account | `{{app}}` `{{email}}` `{{link}}` `{{code}}` |
+| `magiclink` | someone asks for a sign-in link | `{{app}}` `{{email}}` `{{link}}` `{{code}}` |
+| `recovery` | someone resets their password | `{{app}}` `{{email}}` `{{link}}` `{{code}}` |
+| `email_change` | someone changes their address (sent to both addresses) | `{{app}}` `{{email}}` `{{new_email}}` `{{link}}` `{{code}}` |
+| `code` | a one-time code is needed, such as before a sensitive change | `{{app}}` `{{email}}` `{{code}}` |
+| `security_notice` | a password, address, phone, sign-in method or second factor changes | `{{app}}` `{{email}}` `{{event}}` |
+| `organization_invitation` | a member invites someone to an organization | `{{app}}` `{{email}}` `{{org}}` `{{link}}` |
+
+When an email carries a link or code and your body does not place
+`{{link}}` or `{{code}}`, it is added at the end. Subjects take at most 150
+characters and cannot contain the link or code; bodies take at most 4,000
+bytes. Edit templates on the dashboard's **Emails** tab, or with the admin key
+from a terminal:
+
+```sh
+gregale auth emails list shop-auth
+gregale auth emails set shop-auth signup --subject 'Welcome to {{app}}' --body-file signup.txt
+gregale auth emails preview shop-auth signup --send-to you@example.com
+gregale auth emails reset shop-auth signup
+```
+
+A preview renders with example values and, with `--send-to`, goes out through
+your provider; it saves nothing. Saved templates apply to the next email, with
+no restart. They are kept in your database, in `gregale_auth.email_templates`.
+
 ## Hosted pages
 
 Send users to `https://<auth-host>/ui/sign-in?redirect_to=<your URL>`. The
@@ -400,7 +587,8 @@ gregale auth config shop-auth --brand-name Shop --brand-color '#4f46e5' --brand-
 ```
 
 The name also appears in emails and passkey prompts. The logo loads from its
-HTTPS URL; the pages allow that URL's origin for images and nothing else.
+HTTPS URL; besides the pages' own files, the only images allowed are from that
+URL's origin and the inline QR code of an authenticator app.
 
 Read the session with `@gregale/auth`:
 
@@ -411,6 +599,55 @@ const auth = createAuthClient({ url: 'https://shop-auth.gregale.app' })
 await auth.sessionFromUrl()
 const token = await auth.getAccessToken()
 ```
+
+### Account page
+
+Link signed-in users to `https://<auth-host>/ui/account?redirect_to=<your URL>`,
+or `auth.hostedAccountUrl({ redirectTo })`. The page signs them in again,
+including their second step, and lets them:
+
+- change their email address (confirmed by link) and password;
+- add or remove an authenticator app or text-message codes and create
+  recovery codes, as far as `--mfa`, `--mfa-phone` and `--recovery-codes`
+  allow (turning one on signs out every session that has not passed a second
+  step, which may include your app in the same browser);
+- add and remove passkeys;
+- link and unlink sign-in providers when identity linking is on;
+- revoke apps they allowed through the OAuth server;
+- see where they are signed in (device, IP address and last activity) and
+  sign out any of those sessions, or all but the page's own;
+- delete their account, if you allow it (below).
+
+The page keeps its session only in the tab and ends it when the person
+returns or closes the tab. People whose organization signs them in (SSO)
+cannot change their email address or password here.
+
+Your own pages can do the same with `@gregale/auth`:
+
+```ts
+const sessions = await auth.sessions.list() // { id, user_agent, ip, last_active_at, current, … }
+await auth.sessions.revoke(sessions[1].id)
+await auth.signOut({ scope: 'others' }) // every session but this one
+```
+
+### Let people delete their accounts
+
+Self-service deletion is off until you turn it on:
+
+```sh
+gregale auth config shop-auth --self-deletion on
+```
+
+Then the account page offers it, and `await auth.deleteAccount()` does it
+from your own pages. Either way the person needs a sign-in from the last ten
+minutes, including their second step if they have one; otherwise the call
+fails with `reauthentication_required`. Anonymous users can always delete
+themselves, since they cannot sign in again. Deletion follows the same rules
+as yours from the dashboard: the only owner of an organization that has other
+members is refused (`last_owner`, naming the organizations), and
+organizations whose only member they were are deleted with them. With
+lifecycle events on, `auth.user.deleted` tells your app to remove the
+person's data.
 
 ## Files, realtime channels and workflows
 
@@ -443,8 +680,26 @@ gregale realtime create shop --auth shop-auth --allowed-origin https://shop.exam
 
 Name channels `org:<org id>:<kind>:<name>`, for example `org:…:room:lobby`, and
 add a policy such as `{"action": "realtime:read", "resource": "room", "permission": "org:read"}`.
-Subscriptions are checked when they start. A ban, deletion or global sign-out
-stops new subscriptions; an open connection keeps its grant until it closes.
+Retained WebSocket and SSE channel grants have a 30-second lifetime. A ban,
+deletion, global sign-out or membership change is enforced when that check next
+runs. Expired grants block further channel output until the check succeeds.
+Idle WebSocket cleanup also includes the history poll interval and callback
+deadline. A definitive denial removes the subscription; a callback outage ends
+the connection so the client can reconnect. Already delivered data cannot be
+recalled. Active subscriptions can keep the Auth app awake through these checks.
+
+The callback checks the token's specific `session_id`, its user and the channel
+policy. Signing out one session revokes its retained channels on their next
+refresh even if another device remains signed in. Retained WebSockets and SSE
+also reverify their JWTs; tokens must include `exp`, and clients reconnect with a
+refreshed token after expiry. Signing-key changes follow the existing JWKS cache
+contract. Principal access controls remain available for explicit revocation.
+Legacy management subscriptions, inbox/direct-message session authorization and
+subscription tickets keep their existing access-control contracts.
+
+Existing Auth apps need a redeploy from the updated template for session-specific
+checks. Deploy the realtime daemon first, update the Auth app, then reconnect
+clients; the updated Auth callback rejects callers that omit the session ID.
 Do not set connect, message or disconnect callback paths on this endpoint; its
 callback URL is the Auth app.
 
@@ -513,6 +768,24 @@ organizations with their members and pending invitations. Deleting the last
 owner of an organization that has other members is refused; organizations
 whose only member was the deleted user are removed with them.
 
+The same actions work from a terminal with the key, which the CLI prompts for
+or reads with `--admin-key-stdin`. Name a user by ID or email address, and an
+organization by ID or slug. A ban lasts hours (`24h`), days (`7d`) or
+`forever`. Deleting asks you to type `delete user`; with `--admin-key-stdin`,
+pass `--yes` instead. User records go straight from your Auth app to your
+terminal:
+
+```sh
+gregale auth users list shop-auth --search example.com
+gregale auth users get shop-auth ada@example.com
+gregale auth users sign-out shop-auth ada@example.com
+gregale auth users ban shop-auth ada@example.com --for 7d
+gregale auth users unban shop-auth ada@example.com
+gregale auth users delete shop-auth ada@example.com
+gregale auth orgs list shop-auth
+gregale auth orgs get shop-auth acme
+```
+
 The **Activity** tab lists GoTrue's audit log newest first: sign-ins,
 sign-ups, password resets and changes, and administrator actions such as bans
 and deletions, which are reported against the affected user. A user's panel
@@ -568,3 +841,15 @@ reported as `email_exists`.
 - The dashboard page reaches the Auth app at its canonical address. If you
   serve the dashboard from another origin than the Gregale API URL that
   `gregale auth create` used, the Auth app refuses the page's requests.
+
+## The `auth` credential mode
+
+Application Auth uses the separately qualified `auth` managed Postgres
+credential mode: direct connections, for serving and release tasks. GoTrue
+enables row-level security on every table it creates, so the auth login acts as
+a dedicated non-login owner of only the `auth` and `gregale_auth` schemas. That
+owner never joins the customer schema owner and has no database `CREATE`,
+temporary-object or customer-schema access. Issuance fails closed when an
+`auth` schema already belongs to another role. Neon advertises the mode only
+when the backend sets `auth_enabled: true` and passes fresh qualification
+including the `auth_credentials_probe`.

@@ -1,4 +1,6 @@
+-- migration-compat: expand
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE TABLE IF NOT EXISTS project_environment_promotion_health (
  promotion_id uuid PRIMARY KEY REFERENCES project_environment_promotions(id) ON DELETE CASCADE,
  generation bigint NOT NULL CHECK (generation >= 1),

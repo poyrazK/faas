@@ -17,6 +17,21 @@ type ProjectSafeReleaseStore interface {
 	ReconcileSafeProjectSubmission(context.Context, string, string) (*api.ProjectSafeRelease, error)
 }
 
+type precheckedReleaseMembersKey struct{}
+
+// ContextWithPrecheckedProjectRelease records the exact candidate members
+// whose artifact preflight passed before reconciliation. A reconciler carrying
+// it publishes only that set: a graph that became ready after the unlocked
+// read waits for its own preflight on the next pass.
+func ContextWithPrecheckedProjectRelease(ctx context.Context, members []ProjectReleaseMember) context.Context {
+	return context.WithValue(ctx, precheckedReleaseMembersKey{}, append([]ProjectReleaseMember{}, members...))
+}
+
+func precheckedReleaseAllows(ctx context.Context, members []ProjectReleaseMember) bool {
+	checked, ok := ctx.Value(precheckedReleaseMembersKey{}).([]ProjectReleaseMember)
+	return !ok || sameReleaseMembers(checked, members)
+}
+
 func ProjectSafeReleaseCandidates(r api.ProjectSubmissionReceipt, deployments map[string]Deployment) ([]ProjectReleaseMember, string, string) {
 	if r.Status != "complete" || !r.SelectionComplete || len(r.Apply.Builds) == 0 {
 		return nil, "failed", "Submission did not complete; production was not switched."
@@ -77,7 +92,7 @@ func (m *MemStore) ListPendingSafeProjectSubmissions(_ context.Context) ([]SafeP
 	}
 	return out, nil
 }
-func (m *MemStore) ReconcileSafeProjectSubmission(_ context.Context, accountID, attemptID string) (*api.ProjectSafeRelease, error) {
+func (m *MemStore) ReconcileSafeProjectSubmission(ctx context.Context, accountID, attemptID string) (*api.ProjectSafeRelease, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	key := accountID + "\x00" + attemptID
@@ -127,6 +142,9 @@ func (m *MemStore) ReconcileSafeProjectSubmission(_ context.Context, accountID, 
 		}
 	}
 	if status == "activated" {
+		if !precheckedReleaseAllows(ctx, members) {
+			return safe, nil
+		}
 		if !validProgressiveRelease(safe) {
 			return nil, ErrConflict
 		}
@@ -291,6 +309,9 @@ func (s *PgStore) ReconcileSafeProjectSubmission(ctx context.Context, accountID,
 		}
 	}
 	if status == "activated" {
+		if !precheckedReleaseAllows(ctx, members) {
+			return safe, nil
+		}
 		// Publish and checkpoint share one transaction: a lost commit response or
 		// APID restart can never publish a second graph for the same attempt.
 		if !validProgressiveRelease(safe) {

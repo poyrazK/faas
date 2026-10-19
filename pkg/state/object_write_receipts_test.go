@@ -15,11 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type writeReceiptStore interface {
-	gatewayUploadStore
-	state.ObjectWriteReceiptStore
-	state.ObjectUploadRouteStore
-}
+type writeReceiptStore = contractTestStore
 
 // adr: 537
 func TestObjectWriteReceiptsMem(t *testing.T) { writeReceiptsSuite(t, state.NewMemStore()) }

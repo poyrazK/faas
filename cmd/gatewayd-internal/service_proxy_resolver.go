@@ -22,10 +22,12 @@ import (
 func newServiceProxyResolver(store state.Store) gateway.ServiceProxyResolver {
 	return func(ctx context.Context, callerAppID, service string) (gateway.ServiceTarget, bool, error) {
 		scopedPreviewCaller := false
+		var productionCaller state.App
 		if isAppID(callerAppID) {
 			caller, err := store.AppByID(ctx, callerAppID)
 			switch {
 			case err == nil:
+				productionCaller = caller
 				if caller.Status == state.AppDeleted {
 					return gateway.ServiceTarget{}, false, nil
 				}
@@ -74,7 +76,12 @@ func newServiceProxyResolver(store state.Store) gateway.ServiceProxyResolver {
 			}
 		}
 
-		app, err := store.AppBySlug(ctx, service)
+		if scopedPreviewCaller {
+			// The sibling lookup above owns preview isolation. A permitted
+			// production fallback uses the same project alias as production.
+			productionCaller.PreviewOfSlug = ""
+		}
+		app, err := state.AppByServiceName(ctx, store, productionCaller, service)
 		if errors.Is(err, state.ErrNotFound) {
 			return gateway.ServiceTarget{}, false, nil
 		}

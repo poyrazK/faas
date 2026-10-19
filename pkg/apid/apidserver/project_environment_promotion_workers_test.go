@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 1440
+// adr: 20261019120040
 func TestPromotionWorkerAPIContract(t *testing.T) {
 	oldDelay := routeProbeChallengeDelay
 	routeProbeChallengeDelay = 0
@@ -136,7 +136,7 @@ func TestPromotionWorkerAPIContract(t *testing.T) {
 	}
 }
 
-// adr: 1440
+// adr: 20261019120040
 func addPromotionAPIWorker(t *testing.T, store *state.MemStore, account state.Account, project state.Project, name, scenario string, index int) state.App {
 	t.Helper()
 	ctx := t.Context()

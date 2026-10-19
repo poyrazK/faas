@@ -16,7 +16,7 @@ func (s *server) prepareProjectRetry(r *http.Request, acct state.Account, req *s
 	if len(value) > 32768 || json.Unmarshal([]byte(value), &req.RetryTargets) != nil || len(req.RetryTargets) == 0 {
 		return api.ErrValidation("invalid project retry targets")
 	}
-	if !api.ValidDeploymentAttemptID(r.Header.Get(api.DeploymentAttemptHeader)) || !req.NoTriggers || len(req.Secrets) > 0 || len(req.Exclude) > 0 || req.PersistExclude {
+	if !api.ValidDeploymentAttemptID(r.Header.Get(api.DeploymentAttemptHeader)) || !req.NoTriggers || len(req.Secrets) > 0 || len(req.InitialSecrets) > 0 || len(req.Exclude) > 0 || req.PersistExclude {
 		return api.ErrValidation("project retry requires a fresh tracked attempt, --only and --no-triggers, without secret or exclusion changes")
 	}
 	project, err := s.store.ProjectBySlug(r.Context(), acct.ID, req.ProjectSlug)

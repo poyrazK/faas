@@ -1,4 +1,6 @@
+-- migration-compat: expand
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE TABLE IF NOT EXISTS deployment_cron_activations (
  app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
  upload_id text REFERENCES upload_sessions(id) ON DELETE SET NULL,

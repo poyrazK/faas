@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestDevSetupReceiptIsReadyAndSecretSafe(t *testing.T) {
@@ -167,12 +167,147 @@ func TestCmdDevSetupTTLPrecedence(t *testing.T) {
 	}
 }
 
-func TestDevSetupDevArgsForwardsLease(t *testing.T) {
-	args := devSetupDevArgs("", "", "", "", false, false, false, false, "", 72*time.Hour)
-	if strings.Join(args, " ") != "--ttl 72h" {
-		t.Fatalf("args = %v, want --ttl 72h", args)
+func TestDevSetupRecoveryPreservesEffectiveOptions(t *testing.T) {
+	for _, tc := range []struct {
+		name, profile              string
+		nested, authenticated, bad bool
+	}{
+		{name: "nested source", nested: true},
+		{name: "external source and profile", profile: "staging"},
+		{name: "source errors", profile: "staging", authenticated: true, bad: true},
+		{name: "ready", profile: "staging", authenticated: true},
+		{name: "explicit default", profile: "default"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupConnectionProfiles(t)
+			if tc.profile == "default" {
+				if err := saveCLIConfig(cliConfig{ActiveProfile: "staging", Profiles: map[string]connectionProfile{"staging": {APIBase: "https://staging.example"}}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cwd := t.TempDir()
+			t.Chdir(cwd)
+			source := filepath.Join(t.TempDir(), "app $demo")
+			if tc.nested {
+				source = filepath.Join(cwd, "app $demo")
+			}
+			if err := os.MkdirAll(source, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			fixtures := map[string]string{
+				"package.json":  `{}`,
+				".env.dev":      "API_TOKEN=do-not-render\n",
+				".env.services": "REDIS_URL=redis://cache.example.test\n",
+			}
+			if tc.bad {
+				fixtures["server.js"] = "app.listen(8080, '127.0.0.1');\n"
+			}
+			for name, body := range fixtures {
+				if err := os.WriteFile(filepath.Join(source, name), []byte(body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.authenticated {
+				t.Setenv("FAAS_TOKEN", testAPIKey('a'))
+			}
+			prefix := []string{"gregale"}
+			if tc.profile != "" {
+				prefix = append(prefix, "--profile", tc.profile)
+			}
+			args := append(slices.Clone(prefix[1:]), "--json", "dev", "setup", "--path", source, "--name", "demo",
+				"--env-file", filepath.Join(source, ".env.dev"), "--service-override-file", filepath.Join(source, ".env.services"),
+				"--postgres", "--postgres-region", "eu-central-1", "--ttl", "72h", "--bucket", "uploads", "--bucket", "cache")
+			ready := tc.authenticated && !tc.bad
+			if !ready {
+				args = append(args, "--start", "--once", "--no-logs", "--open")
+			}
+			stdout, stderr, restore := swapIO(t)
+			defer restore()
+			code := run(args)
+			var receipt devSetupReceipt
+			if err := json.Unmarshal(stdout.Bytes(), &receipt); err != nil {
+				t.Fatalf("invalid receipt: %v; stdout=%q stderr=%q", err, stdout.String(), stderr())
+			}
+			if (code == 0) != ready || receipt.Ready != ready || stderr() != "" {
+				t.Fatalf("exit=%d ready=%t want=%t stderr=%q", code, receipt.Ready, ready, stderr())
+			}
+			displayPath := source
+			if tc.nested {
+				displayPath = filepath.Base(source)
+			}
+			want := append(slices.Clone(prefix), "dev", "--path", displayPath, "--name", "demo",
+				"--env-file", filepath.Join(displayPath, ".env.dev"), "--service-override-file", filepath.Join(displayPath, ".env.services"))
+			if !ready {
+				want = append(want, "--once", "--no-logs", "--open")
+			}
+			want = append(want, "--postgres", "--postgres-region", "eu-central-1", "--ttl", "72h", "--bucket", "uploads", "--bucket", "cache")
+			if !slices.Equal(receipt.StartCommand, want) {
+				t.Fatalf("start_command=%q want=%q", receipt.StartCommand, want)
+			}
+			if !tc.authenticated && receipt.Next[0] != strings.Join(prefix, " ")+" login" {
+				t.Fatalf("login lost profile: %q", receipt.Next)
+			}
+			next := receipt.Next[len(receipt.Next)-1]
+			command := strings.Join(prefix, " ") + " dev"
+			if !ready {
+				command += " setup --start"
+			}
+			for _, fragment := range []string{command, "--path '" + displayPath + "'", "--name demo", "--env-file '", "--service-override-file '", "--postgres --postgres-region eu-central-1", "--ttl 72h", "--bucket uploads --bucket cache"} {
+				if !strings.Contains(next, fragment) {
+					t.Errorf("next command missing %q: %s", fragment, next)
+				}
+			}
+			if !ready && !strings.Contains(next, "--once --no-logs --open") {
+				t.Errorf("next command lost start options: %s", next)
+			}
+			if strings.Contains(stdout.String(), "do-not-render") {
+				t.Fatal("receipt leaked an environment value")
+			}
+		})
 	}
-	if args := devSetupDevArgs("", "", "", "", false, false, false, false, "", 0); len(args) != 0 {
-		t.Fatalf("args without lease = %v, want none", args)
+}
+
+func TestDevSetupRecoveryPreservesDisabledManifestDefaults(t *testing.T) {
+	setupConnectionProfiles(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	for name, body := range map[string]string{
+		"package.json": `{}`,
+		"gregale.yaml": "dev:\n  postgres: true\n  env_file: missing.env\n  service_override_file: missing.services\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	args := []string{"--json", "dev", "setup", "--path", ".", "--name", "demo", "--postgres=false", "--env-file", "", "--service-override-file", ""}
+	for attempt := range 2 {
+		stdout, stderr, restore := swapIO(t)
+		code := run(args)
+		output, errorOutput := stdout.String(), stderr()
+		restore()
+		var receipt devSetupReceipt
+		if err := json.Unmarshal([]byte(output), &receipt); err != nil || code != 1 || errorOutput != "" {
+			t.Fatalf("attempt=%d exit=%d err=%v stdout=%q stderr=%q", attempt, code, err, output, errorOutput)
+		}
+		for _, flag := range []string{"--postgres=false", "--env-file", "--service-override-file", "--path"} {
+			if !slices.Contains(receipt.StartCommand, flag) {
+				t.Errorf("attempt=%d start command lost %s: %q", attempt, flag, receipt.StartCommand)
+			}
+		}
+		// Reapply the advertised options to the unchanged manifest. Missing
+		// empty overrides would try to open the deliberately absent files.
+		args = append([]string{"--json", "dev", "setup"}, receipt.StartCommand[2:]...)
+	}
+}
+
+func TestDevSetupShellCommandQuotesMetacharacters(t *testing.T) {
+	for _, tc := range []struct{ arg, want string }{
+		{"./app;echo", "'./app;echo'"},
+		{"./app$USER", "'./app$USER'"},
+		{"./app'one", "'./app'\"'\"'one'"},
+	} {
+		if got := devSetupShellCommand([]string{"gregale", "dev", "--path", tc.arg}); got != "gregale dev --path "+tc.want {
+			t.Errorf("command for %q = %q", tc.arg, got)
+		}
 	}
 }

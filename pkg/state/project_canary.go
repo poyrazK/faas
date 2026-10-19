@@ -317,7 +317,7 @@ func (m *MemStore) advanceProjectCanaryLocked(key string, r api.ProjectSubmissio
 			c.Policy, err = advanceCanaryDecision(safe, c.Policy, round, ready, baselineReady, time.Now().UTC(), canaryEffects{
 				activate: func() error {
 					graph := m.projectReleaseSets[safe.ReleaseID]
-					if _, err := m.publishProjectReleaseWithIDLocked(c.AccountID, c.ProjectID, "production", &safe.PreviousReleaseID, nil, safe.TTLSeconds, graph.Members, graph.ID); err != nil {
+					if _, err := m.publishProjectReleaseWithIDLocked(context.Background(), c.AccountID, c.ProjectID, "production", &safe.PreviousReleaseID, nil, safe.TTLSeconds, graph.Members, graph.ID); err != nil {
 						return err
 					}
 					safe.Configuration.TargetVersion = configuration.Previous.Version
@@ -331,7 +331,7 @@ func (m *MemStore) advanceProjectCanaryLocked(key string, r api.ProjectSubmissio
 					if !releasePubliclyUsable(base, time.Now()) {
 						return ErrConflict
 					}
-					graph, err := m.publishGuardedProjectReleaseSetLocked(c.AccountID, c.ProjectID, "production", &safe.ReleaseID, nil, safe.TTLSeconds, base.Members)
+					graph, err := m.publishGuardedProjectReleaseSetLocked(context.Background(), c.AccountID, c.ProjectID, "production", &safe.ReleaseID, nil, safe.TTLSeconds, base.Members)
 					if err != nil {
 						return err
 					}

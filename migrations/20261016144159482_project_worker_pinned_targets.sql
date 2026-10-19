@@ -1,4 +1,6 @@
+-- migration-compat: expand
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE INDEX IF NOT EXISTS project_worker_release_pins_app_target ON project_worker_release_pins(app_id,deployment_id);
 CREATE OR REPLACE VIEW project_worker_pinned_targets AS
 SELECT DISTINCT p.app_id,p.deployment_id FROM project_worker_release_pins p

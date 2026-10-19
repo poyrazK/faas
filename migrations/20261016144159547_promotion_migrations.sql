@@ -1,4 +1,6 @@
+-- migration-compat: expand
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- Preserve a later phase expansion when this migration's ledger row is replayed.
 -- +goose StatementBegin
 DO $$ BEGIN

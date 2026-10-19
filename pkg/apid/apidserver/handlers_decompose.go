@@ -31,6 +31,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/deploystaging"
+	"github.com/onebox-faas/faas/pkg/apid/projectmigration"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -113,6 +114,11 @@ func (s *server) scanProject(w http.ResponseWriter, r *http.Request, acct state.
 //nolint:contextcheck // r carries reqbudget.Detached(r.Context()) on purpose (ADR-093 amendment)
 func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	ctx, cancel := reqbudget.Detached(r.Context(), api.ProjectApplyTimeout) // ADR-093 amendment
+	if run := projectmigration.FromContext(ctx); run != nil {
+		originalCancel := cancel
+		ctx, cancel = context.WithDeadline(ctx, run.Deadline())
+		defer originalCancel()
+	}
 	defer cancel()
 	r = r.WithContext(ctx)
 	planToken := r.URL.Query().Get("plan_token")
@@ -408,7 +414,7 @@ func (s *server) emitProjectApplyExclusionAudits(
 				rows[i].ID = appIDs[strings.ToLower(rows[i].Slug)]
 			}
 		}
-		emitSkippedAuditRows(ctx, s.audit, actor, acct.ID, project.ID, resp.SourceSHA256, rows)
+		emitSkippedAuditRows(ctx, s.audit, actor, acct.ID, project.ID, resp.SourceSHA256, rows, resp.WorkloadNames)
 	}
 
 	if len(resp.PersistedExclusions) == 0 {

@@ -149,7 +149,7 @@ func testPromotionWorkerMode(t *testing.T, factory func(*testing.T) Store, coord
 			}
 			if scenario == "restart_hold" {
 				if s, ok := f.store.(*PgStore); ok {
-					f.store = NewPgStore(s.pool)
+					f.store = NewPgStore(s.pool.Pool)
 				}
 				held, err = f.store.(ProjectReleaseWorkerStore).HeldProjectReleaseWorkers(ctx, worker.ID)
 				requirePromotionSnapshot(t, err)

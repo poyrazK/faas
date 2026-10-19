@@ -19,6 +19,12 @@ func (m *MemStore) CreateEnvironmentWorkloadQualificationInstance(ctx context.Co
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return EnvironmentWorkloadQualificationAdmission{}, err
+	}
+	if err := m.checkNodeAdmissionLocked(ctx, placement.NodeID); err != nil {
+		return EnvironmentWorkloadQualificationAdmission{}, err
+	}
 	memory, current, err := m.qualificationLocked(claimed.ID)
 	if err != nil {
 		return EnvironmentWorkloadQualificationAdmission{}, err
@@ -89,6 +95,12 @@ func (m *MemStore) CreateEnvironmentWorkloadQualificationInstance(ctx context.Co
 func (m *MemStore) guardInstanceRuntimeTransitionLocked(ctx context.Context, old, next Instance) error {
 	if next.State != "parked" && next.State != "stopped" && next.State != "failed" && m.migrationDeploymentRetiredLocked(next.DeploymentID) {
 		return ErrConflict
+	}
+	if err := m.guardMigrationAdmissionSourceLocked(old, next); err != nil {
+		return err
+	}
+	if err := m.checkInstanceNodeAdmissionLocked(ctx, old, next); err != nil {
+		return err
 	}
 	if err := m.guardQualificationRuntimeTransitionLocked(old, next); err != nil {
 		return err

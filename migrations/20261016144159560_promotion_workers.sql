@@ -1,4 +1,6 @@
+-- migration-compat: expand
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- A derived hold, scoped to the promotion's frozen worker policy. It authorizes
 -- startup only; queue admission remains owned by the active release graph.
 CREATE OR REPLACE VIEW project_promotion_worker_targets AS

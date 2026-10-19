@@ -110,7 +110,7 @@ func TestWorkflowRecoveryFailureInventoryStores(t *testing.T) {
 			t.Fatal(err)
 		}
 		if pg, ok := s.(*PgStore); ok {
-			s = NewPgStore(pg.pool)
+			s = NewPgStore(pg.pool.Pool)
 		}
 		out, err = s.(WorkflowRecoveryPolicyEvaluationStore).EvaluateWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, req)
 		if err != nil || out.FailureCoverage.CapturedFailures != 2 || out.ProposedTotals.Unknown != 2 {

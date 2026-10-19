@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 1441
+// adr: 20261019120041
 func TestReadinessCollectsBlockersAndTracksLogicalChanges(t *testing.T) {
 	store := state.NewMemStore()
 	account, project, app := seedReadiness(t, store)
@@ -46,7 +46,7 @@ func TestReadinessCollectsBlockersAndTracksLogicalChanges(t *testing.T) {
 	}
 }
 
-// adr: 1441
+// adr: 20261019120041
 func TestReadinessUnknownAndHTTPStrictness(t *testing.T) {
 	store := state.NewMemStore()
 	account, project, _ := seedReadiness(t, store)
@@ -85,7 +85,7 @@ func TestReadinessUnknownAndHTTPStrictness(t *testing.T) {
 	}
 }
 
-// adr: 1441
+// adr: 20261019120041
 func TestReadinessReportsIndependentReleaseAndDependencyFailures(t *testing.T) {
 	store := state.NewMemStore()
 	account, project, _ := seedReadiness(t, store)
@@ -110,7 +110,7 @@ func TestReadinessReportsIndependentReleaseAndDependencyFailures(t *testing.T) {
 	}
 }
 
-// adr: 1441
+// adr: 20261019120041
 func TestReadinessMetadataBoundsAndManagedBindings(t *testing.T) {
 	store := state.NewMemStore()
 	account, project, _ := seedReadiness(t, store)

@@ -26,6 +26,10 @@ func TestPgCloneMigrationRecoveryOriginalLeaseAndHandoff(t *testing.T) {
 	}
 	w := in.Plan.Workloads[0]
 	node := resolveDefaultLocal(t, ctx, s)
+	// The lease names the node the instance is migrating from, distinct from
+	// where it is now scheduled. It must be a real node that has not been
+	// closed (ADR-1530 source lease guard).
+	sourceNode := pgTestComputeNode(t, ctx, s, true, 0)
 	expected := map[string]state.ProjectEnvironmentCloneMigrationHolding{}
 	seed := func(dep string, expired, completed bool) state.ProjectEnvironmentCloneMigrationHolding {
 		t.Helper()
@@ -38,7 +42,7 @@ func TestPgCloneMigrationRecoveryOriginalLeaseAndHandoff(t *testing.T) {
 		if expired {
 			until = at.Add(-time.Minute)
 		}
-		lease := state.MigrationLease{InstanceID: ins.ID, LeaseToken: uuid.NewString(), SourceNodeID: uuid.NewString(), CreatedAt: at.Add(-2 * time.Minute), LeaseExpiresAt: until, Pending: true}
+		lease := state.MigrationLease{InstanceID: ins.ID, LeaseToken: uuid.NewString(), SourceNodeID: sourceNode, CreatedAt: at.Add(-2 * time.Minute), LeaseExpiresAt: until, Pending: true}
 		if err = s.ReserveMigrationLease(ctx, lease); err != nil {
 			t.Fatal(err)
 		}

@@ -38,8 +38,11 @@ func TestBindingPromotionRevisionTriggersWatchExistingColumns(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if len(tables) != 23 {
+	if len(tables) != 24 {
 		t.Fatalf("revision triggers=%d: %v", len(tables), tables)
+	}
+	if _, ok := args["queue_binding_canaries"]; !ok {
+		t.Fatal("queue canary changes must invalidate binding promotion evidence")
 	}
 	for _, table := range tables {
 		for _, column := range args[table] {
@@ -102,6 +105,31 @@ func TestBindingPromotionRevisionMutationRollbackAndMigrationRoundTrip(t *testin
 		t.Fatal("account policy did not invalidate bound apps")
 	}
 	before = revision(app)
+	// Newer canary triggers depend on the original revision functions. Walk
+	// their actual downgrade/upgrade chain around the original migrations,
+	// and restore the consumer-poll successor after reinstalling the fence.
+	type successor struct{ name, up, down string }
+	var successors []successor
+	for _, name := range []string{
+		"20261016150020007_queue_binding_canaries.sql",
+		"20261016150020008_queue_canary_invocation_fences.sql",
+		"20261017002535947_binding_promotion_ignores_consumer_polls.sql",
+	} {
+		raw, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		up, down, ok := strings.Cut(string(raw), "-- +goose Down")
+		if !ok {
+			t.Fatalf("missing successor rollback: %s", name)
+		}
+		successors = append(successors, successor{name, up, down})
+	}
+	for i := len(successors) - 1; i >= 0; i-- {
+		if _, err := pool.Exec(ctx, successors[i].down); err != nil {
+			t.Fatalf("%s Down: %v", successors[i].name, err)
+		}
+	}
 	dependency, err := os.ReadFile("20261004190339147_service_binding_dependency_revision.sql")
 	if err != nil {
 		t.Fatal(err)
@@ -182,6 +210,15 @@ func TestBindingPromotionRevisionMutationRollbackAndMigrationRoundTrip(t *testin
 	}
 	if _, err := pool.Exec(ctx, dependencyUp); err != nil {
 		t.Fatal(err)
+	}
+	for _, successor := range successors {
+		if _, err := pool.Exec(ctx, successor.up); err != nil {
+			t.Fatalf("%s Up: %v", successor.name, err)
+		}
+	}
+	var healthArgs []byte
+	if err := pool.QueryRow(ctx, `SELECT tgargs FROM pg_trigger WHERE tgrelid='trigger_consumer_health'::regclass AND tgname='binding_promotion_revision'`).Scan(&healthArgs); err != nil || string(healthArgs) != "trigger_id,last_error_at\x00" {
+		t.Fatalf("round trip lost the consumer-poll successor: %q %v", healthArgs, err)
 	}
 }
 

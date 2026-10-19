@@ -1,7 +1,7 @@
 # Managed PostgreSQL expand/contract qualification
 
 The `project-migration-sql-only` lane qualifies the application-SQL and credential
-boundaries of ADR-1417. Adding or compiling it does not qualify production;
+boundaries of ADR-20261019120017. Adding or compiling it does not qualify production;
 contract admission remains disabled by default.
 
 `TestProjectMigrationSQLSuccessMetal` and

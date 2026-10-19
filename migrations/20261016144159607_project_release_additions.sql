@@ -1,6 +1,8 @@
+-- migration-compat: expand
 -- filename: 20261016144159607_project_release_additions.sql
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS project_release_additions (
     app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,

@@ -7,7 +7,7 @@ exercise intent and receipts; they do not qualify guest execution.
 The executable `promotion-migrations` partition of
 [`project-environment-promotion-only`](environment-promotion-native-acceptance.md)
 implements the single-HTTP-app success, rollback, nonzero-after-expansion and
-uncertain-result/resume cases under ADR-1433. It uses real source/destination TLS
+uncertain-result/resume cases under ADR-20261019120033. It uses real source/destination TLS
 databases and counts every command invocation, including a duplicate that fails
 DDL. Native execution remains pending. Multi-service graphs, the resolve action,
 drift, stale dispatch/RPC races, unavailable vmmd, competing release-mode lanes

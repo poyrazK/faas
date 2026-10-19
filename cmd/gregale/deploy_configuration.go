@@ -20,7 +20,7 @@ func (s *savedDeploySession) readCronConfiguration(ctx context.Context, c deploy
 		return true, fmt.Errorf("read deployment configuration status: %w", err)
 	}
 	if d.Configuration == nil {
-		return false, nil // APID predates ADR-1454; preserve existing recovery.
+		return false, nil // APID predates ADR-20261019120054; preserve existing recovery.
 	}
 	if d.ID != s.record.DeploymentID || d.AppID != s.record.AppID {
 		return true, fmt.Errorf("configuration status belongs to a different deployment or app")

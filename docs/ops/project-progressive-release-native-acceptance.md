@@ -1,6 +1,6 @@
 # Native progressive project deploy acceptance
 
-ADR-1413 production admission remains disabled. The `project-progressive-release-only`
+ADR-20261019120013 production admission remains disabled. The `project-progressive-release-only`
 lane runs four independent scenarios through native builder microVMs, PostgreSQL,
 APID, schedd, vmmd, gateways and real HTTP/worker guests. Adding or compiling this
 suite does not qualify progressive deployment.
@@ -182,7 +182,7 @@ final leakcheck and successful runner completion. The lane has a 120-minute test
 budget inside a 125-minute native envelope. This qualifies retention eligibility
 and runnable retained code, not physical artifact garbage collection. Native
 execution remains pending; local checks and the admission change do not enable
-progressive deployment in production. See [ADR-1419](../adr/1419-project-rollback-retention-admission.md).
+progressive deployment in production. See [ADR-20261019120019](../adr/20261019120019-project-rollback-retention-admission.md).
 
 ## Atomic secret release qualification
 

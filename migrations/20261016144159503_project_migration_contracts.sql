@@ -1,4 +1,6 @@
+-- migration-compat: expand
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE TABLE IF NOT EXISTS project_migration_contracts (
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -33,7 +35,7 @@ SELECT c.* FROM project_migration_contracts c LEFT JOIN app_tasks t ON t.id=c.ta
 WHERE c.task_id IS NOT NULL AND (t.id IS NULL OR t.status IN ('queued','restoring','running'));
 CREATE OR REPLACE VIEW project_migration_task_admission AS
 SELECT t.id FROM app_tasks t JOIN apps a ON a.id=t.app_id
-WHERE NOT EXISTS(SELECT 1 FROM project_migration_retired_deployments f WHERE f.deployment_id=t.deployment_id)
+WHERE NOT EXISTS(SELECT 1 FROM project_migration_contracts f WHERE f.retired_deployment_ids @> ARRAY[t.deployment_id])
 AND NOT EXISTS(SELECT 1 FROM project_migration_pending_contracts c WHERE c.project_id=a.project_id AND c.task_id<>t.id)
 AND NOT EXISTS(SELECT 1 FROM project_migration_contracts c WHERE c.task_id=t.id AND (
  NOT EXISTS(SELECT 1 FROM project_release_sets r WHERE r.id=c.release_id AND r.project_id=c.project_id AND r.active)
@@ -49,7 +51,7 @@ BEGIN
  SELECT project_id INTO project FROM apps WHERE id=NEW.app_id;
  IF project IS NULL OR NOT EXISTS(SELECT 1 FROM project_migration_contracts c WHERE c.project_id=project) THEN RETURN NEW; END IF;
  PERFORM 1 FROM projects WHERE id=project FOR UPDATE;
- IF EXISTS(SELECT 1 FROM project_migration_retired_deployments f WHERE f.deployment_id=deployment) THEN
+ IF EXISTS(SELECT 1 FROM project_migration_contracts f WHERE f.retired_deployment_ids @> ARRAY[deployment]) THEN
   IF TG_TABLE_NAME='instances' THEN
    IF NEW.state IN ('parked','stopped','failed') THEN RETURN NEW; END IF;
   ELSIF TG_TABLE_NAME='deployments' THEN
@@ -74,7 +76,9 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-CREATE OR REPLACE TRIGGER project_migration_instance_fence BEFORE INSERT OR UPDATE OF state,deployment_id ON instances FOR EACH ROW EXECUTE FUNCTION guard_project_migration_retirement();
+-- Retirement must serialize with contract admission before the native runtime
+-- guard takes its NOWAIT app fence; the aa_ prefix makes this trigger fire first.
+CREATE OR REPLACE TRIGGER aa_project_migration_instance_fence BEFORE INSERT OR UPDATE OF state,deployment_id ON instances FOR EACH ROW EXECUTE FUNCTION guard_project_migration_retirement();
 CREATE OR REPLACE TRIGGER project_migration_deployment_fence BEFORE INSERT OR UPDATE OF status,traffic_percent ON deployments FOR EACH ROW EXECUTE FUNCTION guard_project_migration_retirement();
 CREATE OR REPLACE TRIGGER project_migration_task_fence BEFORE INSERT OR UPDATE OF status ON app_tasks FOR EACH ROW EXECUTE FUNCTION guard_project_migration_retirement();
 CREATE OR REPLACE TRIGGER project_migration_revision_fence BEFORE INSERT OR UPDATE ON deployment_revision_pins FOR EACH ROW EXECUTE FUNCTION guard_project_migration_retirement();
@@ -110,7 +114,7 @@ DO $$ BEGIN
  END IF;
 END $$;
 -- +goose StatementEnd
-DROP TRIGGER project_migration_instance_fence ON instances;
+DROP TRIGGER aa_project_migration_instance_fence ON instances;
 DROP TRIGGER project_migration_deployment_fence ON deployments;
 DROP TRIGGER project_migration_task_fence ON app_tasks;
 DROP TRIGGER project_migration_revision_fence ON deployment_revision_pins;

@@ -9,11 +9,13 @@ import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
 import type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
 import type { DeploymentPromotionHold } from './DeploymentPromotionHold.js';
 import type { DeploymentReadinessProbe } from './DeploymentReadinessProbe.js';
+import type { DeploymentRelease } from './DeploymentRelease.js';
 import type { DeploymentWorkerDrainStatus } from './DeploymentWorkerDrainStatus.js';
 import type { DevPatchPreview } from './DevPatchPreview.js';
 import type { DurableEntityValidatorDeploymentInfo } from './DurableEntityValidatorDeploymentInfo.js';
 import type { LogExcerpt } from './LogExcerpt.js';
 import type { RollbackOperation } from './RollbackOperation.js';
+import type { RolloutDecision } from './RolloutDecision.js';
 import type { ScanResult } from './ScanResult.js';
 import type { SecretScanResult } from './SecretScanResult.js';
 import type { ServiceRolloutHandoffResponse } from './ServiceRolloutHandoffResponse.js';
@@ -232,7 +234,7 @@ export type DeploymentResponse = {
   /**
    * Canary preset used by the deployment's progressive rollout. `none` preserves the default 100% deployment path.
    */
-  canary_preset?: 'none' | 'slow' | 'balanced' | 'aggressive' | '1-10-50-100';
+  canary_preset?: 'none' | 'slow' | 'balanced' | 'aggressive' | '1-10-50-100' | 'adaptive';
   /**
    * Current zero-based canary ladder step.
    */
@@ -265,6 +267,18 @@ export type DeploymentResponse = {
    * Operator or orchestrator reason recorded when the rollout is aborted.
    */
   rollout_aborted_reason?: string;
+  /**
+   * Evidence recorded with the latest rollout transition (ADR-1447). It explains an outcome only when its kind matches: an advance record for completion, an abort record for an abort.
+   */
+  rollout_decision?: RolloutDecision;
+  /**
+   * The newest hold recorded since the current canary step started, while the rollout is in flight (ADR-1447). Filled on GET /v1/deployments/{id} and the deployment summary.
+   */
+  rollout_hold?: RolloutDecision;
+  /**
+   * The deployment's release command run, for a deployment that declares one (ADR-1448). Filled on GET /v1/deployments/{id} and the deployment summary.
+   */
+  release?: DeploymentRelease;
   rollback_operation?: RollbackOperation;
   service_rollout_handoff?: ServiceRolloutHandoffResponse;
 };

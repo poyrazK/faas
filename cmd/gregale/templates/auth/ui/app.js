@@ -3,7 +3,7 @@
 // application only in the URL fragment, only to the site URL or an allowed
 // redirect URL, and are never written to storage by these pages.
 
-export const routes = ['sign-in', 'sign-up', 'forgot-password', 'reset-password', 'invitation', 'phone', 'sso']
+export const routes = ['sign-in', 'sign-up', 'forgot-password', 'reset-password', 'invitation', 'phone', 'sso', 'consent', 'account']
 
 // allowedRedirect returns target when it is the site URL or starts with an
 // allowed redirect URL (the same list GoTrue enforces), else the site URL.
@@ -19,6 +19,47 @@ export function allowedRedirect(target, siteURL, redirectURLs) {
     } catch { return false }
   })
   return allowed ? url.toString() : siteURL
+}
+
+// What each OpenID scope lets a client see, in the consent page's words.
+const scopeLabels = { openid: 'Know who you are', email: 'See your email address', profile: 'See your name and profile picture', phone: 'See your phone number' }
+
+// consentView is what the consent page says about an authorization: who is
+// signed in, what the client may see, which resource it asked for and where
+// the person returns. The client's name is its own claim; where it sends
+// people back is not.
+export function consentView(details) {
+  const scopes = String(details.scope ?? '').split(/\s+/).filter(Boolean)
+  let destination = details.redirect_uri ?? ''
+  try {
+    const url = new URL(destination)
+    destination = ['http:', 'https:'].includes(url.protocol) ? url.host : url.protocol.replace(/:$/, ' app')
+  } catch { destination = 'an unknown address' }
+  return {
+    name: String(details.client?.name || 'An application').slice(0, 100),
+    account: details.user?.email ?? null,
+    abilities: scopes.map(scope => scopeLabels[scope] ?? `Use the ${scope} permission`),
+    resource: typeof details.resource === 'string' ? details.resource : null,
+    destination,
+  }
+}
+
+// deviceName describes a session's device from its user agent the way other
+// account pages do, as in "Chrome on macOS". Order matters: Chrome's agent
+// also names Safari, and an iPhone's also names Mac OS X.
+export function deviceName(userAgent) {
+  const ua = String(userAgent ?? '')
+  if (!ua) return 'Unknown device'
+  const browser = [['Edg/', 'Edge'], ['OPR/', 'Opera'], ['CriOS/', 'Chrome'], ['FxiOS/', 'Firefox'], ['Firefox/', 'Firefox'], ['Chrome/', 'Chrome'], ['Safari/', 'Safari']].find(([token]) => ua.includes(token))?.[1]
+  const system = [['iPhone', 'iPhone'], ['iPad', 'iPad'], ['Android', 'Android'], ['Windows', 'Windows'], ['CrOS', 'ChromeOS'], ['Mac OS X', 'macOS'], ['Linux', 'Linux']].find(([token]) => ua.includes(token))?.[1]
+  if (!browser) return system ? `An app on ${system}` : 'An app or script'
+  return system ? `${browser} on ${system}` : browser
+}
+
+// qrImage turns the QR code GoTrue v2.197.0 returns for a new authenticator
+// app, raw SVG markup, into an image URL.
+export function qrImage(qr) {
+  return String(qr).startsWith('data:') ? qr : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(qr)}`
 }
 
 // fragmentParams reads OAuth-style results GoTrue puts in the fragment.
@@ -98,14 +139,25 @@ export function errorMessage(body, status) {
     webauthn_challenge_not_found: 'The passkey request expired. Try again.',
     passkey_not_found: 'This passkey is no longer registered. Sign in another way.',
     captcha_failed: 'The security check failed or expired. Complete it again.',
+    mfa_verification_failed: 'That code is wrong. Try again.',
+    mfa_challenge_expired: 'That code has expired. Request a new one.',
+    mfa_recovery_codes_locked: 'Too many wrong recovery codes. Wait 15 minutes and try again.',
+    oauth_authorization_not_found: 'This request has expired. Go back to the app and try again.',
     otp_expired: 'That code is wrong or has expired. Request a new one.',
     over_sms_send_rate_limit: 'Too many codes sent. Wait a minute and try again.',
     sms_send_failed: 'We could not text this number. Check it and try again.',
     phone_provider_disabled: 'Phone sign-in is turned off for this application.',
+    sms_country_not_allowed: 'This application cannot text numbers in that country.',
     validation_failed: 'Check what you entered and try again. Phone numbers need their country code.',
     sso_provider_not_found: 'No organization sign-in is set up for this email domain.',
     sso_provider_disabled: 'Organization sign-in for this domain is turned off.',
     saml_provider_disabled: 'Organization sign-in is turned off for this application.',
+    reauthentication_required: 'Sign in again to do this; your sign-in is too old.',
+    current_session: 'Use Back to leave; this page signs itself out.',
+  }
+  if (code === 'last_owner') {
+    const orgs = Array.isArray(body?.organizations) ? body.organizations.join(', ') : 'an organization'
+    return `You are the only owner of ${orgs}, which has other members. Make another member an owner first.`
   }
   return known[code] ?? (status === 429 ? 'Too many attempts. Wait a minute and try again.' : 'Something went wrong. Try again.')
 }
@@ -247,6 +299,50 @@ async function offerPasskey(root, settings, session, done) {
     el('button', { type: 'button', class: 'secondary', on: { click: () => done(session) } }, 'Not now')))
 }
 
+// tokenAAL reads the assurance level of an access token GoTrue just issued.
+export function tokenAAL(token) {
+  try { return JSON.parse(new TextDecoder().decode(fromBase64url(token.split('.')[1]))).aal ?? 'aal1' } catch { return 'aal1' }
+}
+
+// secondFactors returns a user's verified factors that can be challenged on
+// these pages, and whether recovery codes can stand in for them.
+export function secondFactors(user) {
+  const verified = (user?.factors ?? []).filter(factor => factor.status === 'verified')
+  return { factors: verified.filter(factor => factor.factor_type === 'totp' || factor.factor_type === 'phone'), recovery: verified.some(factor => factor.factor_type === 'recovery_code') }
+}
+
+// completeSignIn asks a user with a verified second factor to complete it
+// after any first-factor sign-in on these pages, so the session handed to
+// the application is aal2; then finish(session) runs.
+async function completeSignIn(root, session, finish) {
+  if (tokenAAL(session.access_token) === 'aal2') return finish(session)
+  const user = await request('GET', '/auth/v1/user', { token: session.access_token }).catch(() => null)
+  const { factors, recovery } = secondFactors(user)
+  if (!factors.length) return finish(session)
+  const token = session.access_token
+  render(root, 'Two-step verification')
+  const say = status(root)
+  const area = el('div')
+  root.append(area)
+  const useFactor = async factor => {
+    let challenge
+    try { challenge = await request('POST', `/auth/v1/factors/${encodeURIComponent(factor.id)}/challenge`, { token, body: {} }) } catch (err) { return say(err.message) }
+    say(factor.factor_type === 'phone' ? `We texted a code to ${factor.phone ?? 'your phone'}.` : `Enter the code from ${factor.friendly_name || 'your authenticator app'}.`)
+    area.replaceChildren(plainForm(async ({ code }) => {
+      try { finish(await request('POST', `/auth/v1/factors/${encodeURIComponent(factor.id)}/verify`, { token, body: { challenge_id: challenge.id, code: code.trim() } })) } catch (err) { say(err.message) }
+    }, 'Verify', el('label', {}, 'Code', el('input', { name: 'code', inputmode: 'numeric', autocomplete: 'one-time-code', required: '' }))))
+  }
+  const useRecovery = () => {
+    say('Enter one of your recovery codes. Each code works once.')
+    area.replaceChildren(plainForm(async ({ code }) => {
+      try { finish(await request('POST', '/auth/v1/factors/recovery-codes/verify', { token, body: { code: code.trim() } })) } catch (err) { say(err.message) }
+    }, 'Verify', el('label', {}, 'Recovery code', el('input', { name: 'code', autocomplete: 'off', spellcheck: 'false', required: '' }))))
+  }
+  const choices = [...factors.slice(1).map(factor => [factor.factor_type === 'phone' ? 'Text me a code instead' : `Use ${factor.friendly_name || 'an authenticator app'} instead`, () => useFactor(factor)]), ...(recovery ? [['Use a recovery code', useRecovery]] : [])]
+  if (choices.length) root.append(el('div', { class: 'providers' }, ...choices.map(([label, onClick]) => el('button', { type: 'button', class: 'secondary', on: { click: onClick } }, label))))
+  await useFactor(factors[0])
+}
+
 function links(...items) {
   return el('nav', {}, ...items.map(([href, label]) => el('a', { href }, label)))
 }
@@ -259,7 +355,8 @@ async function main() {
   captcha = config.captcha ?? null
   const settings = await request('GET', '/auth/v1/settings').catch(() => ({}))
   const query = new URLSearchParams(location.search)
-  const target = allowedRedirect(query.get('redirect_to'), config.site_url, config.redirect_urls)
+  // Signing in for the consent or account page returns to it with the session.
+  const target = allowedRedirect(query.get('redirect_to'), config.site_url, [...config.redirect_urls, `${location.origin}/ui/consent`, `${location.origin}/ui/account`])
   const keep = path => `${path}?redirect_to=${encodeURIComponent(target)}`
   const done = session => { location.replace(handoffURL(target, session)) }
 
@@ -269,7 +366,7 @@ async function main() {
     const signIn = form(async ({ email, password }, protect) => {
       let session
       try { session = await protect({ email, password }, body => request('POST', '/auth/v1/token?grant_type=password', { body })) } catch (err) { return say(err.message) }
-      await offerPasskey(root, settings, session, done)
+      await completeSignIn(root, session, verified => offerPasskey(root, settings, verified, done))
     }, 'Sign in', field('Email', 'email', 'email', 'username webauthn'), field('Password', 'password', 'password', 'current-password'))
     // A magic link needs only the email address from the same form.
     signIn.append(el('button', { type: 'button', class: 'secondary', on: { click: async () => {
@@ -284,7 +381,7 @@ async function main() {
     const providers = Object.entries(settings.external ?? {}).filter(([name, on]) => on && !['email', 'phone', 'anonymous_users', 'saml'].includes(name))
     const passkey = passkeysAvailable(settings) ? [el('button', { type: 'button', class: 'secondary', on: { click: async event => {
       event.target.disabled = true
-      try { done(await signInWithPasskey(signIn.protect)) } catch (err) { say(passkeyFailure(err)); event.target.disabled = false }
+      try { await completeSignIn(root, await signInWithPasskey(signIn.protect), done) } catch (err) { say(passkeyFailure(err)); event.target.disabled = false }
     } } }, 'Sign in with a passkey')] : []
     if (providers.length || passkey.length) {
       root.append(el('p', { class: 'divider' }, 'or'), el('div', { class: 'providers' }, ...passkey, ...providers.map(([name]) =>
@@ -306,7 +403,7 @@ async function main() {
       sendCode.replaceWith(plainForm(async ({ code }) => {
         let session
         try { session = await request('POST', '/auth/v1/verify', { body: { type: 'sms', phone, token: code.trim() } }) } catch (err) { return say(err.message) }
-        await offerPasskey(root, settings, session, done)
+        await completeSignIn(root, session, verified => offerPasskey(root, settings, verified, done))
       }, 'Sign in', el('label', {}, 'Code', el('input', { name: 'code', inputmode: 'numeric', autocomplete: 'one-time-code', pattern: '[0-9 ]{6,12}', required: '' }))))
     }, 'Text me a code', el('label', {}, 'Phone number, with country code', el('input', { name: 'phone', type: 'tel', autocomplete: 'tel', placeholder: '+44 7700 900123', required: '' })))
     root.append(sendCode, links([keep('/ui/phone'), 'Use a different number or get a new code'], [keep('/ui/sign-in'), 'Sign in another way']))
@@ -382,9 +479,296 @@ async function main() {
       } catch (err) { say(err.message) }
     }, 'Sign in and accept', field('Email', 'email', 'email', 'username'), field('Password', 'password', 'password', 'current-password')))
     root.append(links([`/ui/sign-up?redirect_to=${encodeURIComponent(location.origin + '/ui/invitation')}`, 'No account yet? Create one, then reopen this page']))
+  } else if (route === 'consent') {
+    await consent(root, config, query)
+  } else if (route === 'account') {
+    await account(root, config, query)
   } else {
     render(root, 'Page not found')
   }
+}
+
+// consent approves or denies an OAuth client's request. GoTrue's server
+// sends people here; they sign in on these pages first, and the session
+// made for the decision ends after it.
+async function consent(root, config, query) {
+  const id = query.get('authorization_id') ?? ''
+  const here = `${location.origin}/ui/consent?authorization_id=${encodeURIComponent(id)}`
+  const session = fragmentParams(location.hash)
+  history.replaceState(null, '', location.pathname + location.search)
+  render(root, 'Allow access?')
+  const say = status(root)
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) return say('This request is incomplete. Go back to the app and try again.')
+  if (!session.access_token) return location.replace(`/ui/sign-in?redirect_to=${encodeURIComponent(here)}`)
+  const end = () => request('POST', '/auth/v1/logout?scope=local', { token: session.access_token }).catch(() => {})
+  let details
+  try { details = await request('GET', `/auth/v1/oauth/authorizations/${encodeURIComponent(id)}`, { token: session.access_token }) } catch (err) { await end(); return say(err.message) }
+  // A client already approved for these permissions goes straight back.
+  if (details.redirect_url) { await end(); return location.replace(details.redirect_url) }
+  const view = consentView(details)
+  render(root, `${view.name} wants to use your ${config.app} account`)
+  const decide = async action => {
+    for (const button of root.querySelectorAll('button')) button.disabled = true
+    try {
+      const { redirect_url: next } = await request('POST', `/auth/v1/oauth/authorizations/${encodeURIComponent(id)}/consent`, { token: session.access_token, body: { action } })
+      await end()
+      location.replace(next)
+    } catch (err) {
+      say(err.message)
+      for (const button of root.querySelectorAll('button')) button.disabled = false
+    }
+  }
+  root.append(
+    ...(view.account ? [el('p', {}, `Signed in as ${view.account}.`)] : []),
+    el('p', {}, `${view.name} will be able to:`),
+    el('ul', {}, ...view.abilities.map(line => el('li', {}, line))),
+    ...(view.resource ? [el('p', {}, `It asks for access to ${view.resource}.`)] : []),
+    el('p', {}, `Afterwards you return to ${view.destination}. Only allow apps you trust.`),
+    el('div', { class: 'providers' },
+      el('button', { type: 'button', on: { click: () => decide('approve') } }, 'Allow'),
+      el('button', { type: 'button', class: 'secondary', on: { click: () => decide('deny') } }, 'Deny')),
+    el('nav', {}, el('a', { href: '#', on: { click: async event => {
+      // Another account starts after this session ends.
+      event.preventDefault()
+      await end()
+      location.replace(`/ui/sign-in?redirect_to=${encodeURIComponent(here)}`)
+    } } }, 'Use another account')))
+}
+
+const when = value => { const date = new Date(value); return Number.isNaN(date.getTime()) ? 'unknown' : date.toLocaleString() }
+
+function section(title, ...children) {
+  return el('section', {}, el('h2', {}, title), ...children.filter(Boolean))
+}
+
+function row(label, ...controls) {
+  return el('div', { class: 'row' }, el('span', {}, label), ...controls)
+}
+
+function actions(list) {
+  return list.length ? el('div', { class: 'providers' }, ...list.map(([label, onClick]) => el('button', { type: 'button', class: 'secondary', on: { click: onClick } }, label))) : null
+}
+
+// confirmButton acts on a second click within five seconds, for changes
+// that weaken or end something.
+function confirmButton(label, action) {
+  const button = el('button', { type: 'button', class: 'secondary' }, label)
+  let armed = null
+  button.addEventListener('click', async () => {
+    if (!armed) {
+      button.textContent = `${label}? Click again`
+      armed = setTimeout(() => { armed = null; button.textContent = label }, 5000)
+      return
+    }
+    clearTimeout(armed)
+    armed = null
+    button.disabled = true
+    try { await action() } finally { button.disabled = false; button.textContent = label }
+  })
+  return button
+}
+
+// account lets a signed-in person manage their own account. Like the consent
+// page it signs in first, completing any second factor, and keeps that
+// session only in this tab's memory; leaving the page ends it.
+async function account(root, config, query) {
+  const back = allowedRedirect(query.get('redirect_to'), config.site_url, config.redirect_urls)
+  const here = `${location.origin}/ui/account?redirect_to=${encodeURIComponent(back)}`
+  let session = fragmentParams(location.hash)
+  history.replaceState(null, '', location.pathname + location.search)
+  if (!session.access_token) return location.replace(`/ui/sign-in?redirect_to=${encodeURIComponent(here)}`)
+  root.classList.add('wide')
+  render(root, `Your ${config.app} account`)
+  const say = status(root)
+  const area = el('div')
+  let ended = false
+  const end = async () => {
+    if (ended) return
+    ended = true
+    await request('POST', '/auth/v1/logout?scope=local', { token: session.access_token }).catch(() => {})
+  }
+  // A closed tab ends the session too; keepalive lets the request finish.
+  addEventListener('pagehide', () => {
+    if (ended) return
+    ended = true
+    fetch('/auth/v1/logout?scope=local', { method: 'POST', keepalive: true, headers: { Authorization: `Bearer ${session.access_token}` } }).catch(() => {})
+  })
+  root.append(area, el('div', { class: 'providers' }, el('button', { type: 'button', on: { click: async () => { await end(); location.replace(back) } } }, `Back to ${config.app}`)))
+  let expiresAt = Number(session.expires_at) || Math.floor(Date.now() / 1000) + Number(session.expires_in || 0)
+  const ctx = {
+    say, here, config,
+    options: await request('GET', '/settings/v1').catch(() => ({})),
+    adopt(next) { session = next; expiresAt = next.expires_at ?? Math.floor(Date.now() / 1000) + next.expires_in },
+    // token renews the session shortly before it expires.
+    async token() {
+      if (expiresAt - 30 <= Date.now() / 1000) ctx.adopt(await request('POST', '/auth/v1/token?grant_type=refresh_token', { body: { refresh_token: session.refresh_token } }))
+      return session.access_token
+    },
+    async call(method, path, body) { return request(method, path, { token: await ctx.token(), body }) },
+    async act(work) { try { await work() } catch (err) { say(passkeyFailure(err)) } },
+    // Linking a provider leaves through its sign-in and returns with a new
+    // session; this one stays listed under sessions until it is signed out.
+    // Deleting the account ends every session with it.
+    leave() { ended = true },
+    back,
+    async refresh() {
+      let user
+      try { user = await ctx.call('GET', '/auth/v1/user') } catch (err) { return say(err.message) }
+      const parts = await Promise.all([profileSection(ctx, user), mfaSection(ctx, user), passkeysSection(ctx), identitiesSection(ctx, user), connectedAppsSection(ctx), sessionsSection(ctx), deletionSection(ctx, root)]
+        .map(part => Promise.resolve(part).catch(err => { say(err.message); return null })))
+      area.replaceChildren(...parts.filter(Boolean))
+    },
+  }
+  await ctx.refresh()
+}
+
+function profileSection(ctx, user) {
+  const lines = [
+    el('p', {}, `Email: ${user.email || 'none'}${user.email && !user.email_confirmed_at ? ' (not confirmed)' : ''}`),
+    ...(user.phone ? [el('p', {}, `Phone: ${user.phone}`)] : []),
+  ]
+  // Organization sign-in owns the email address and the password.
+  if (user.is_sso_user) return section('Profile', ...lines, el('p', {}, 'Your organization manages your email address and password.'))
+  const email = plainForm(async values => {
+    try {
+      await ctx.call('PUT', '/auth/v1/user', { email: values.email })
+      email.reset()
+      ctx.say(`We sent a confirmation link. The change completes once ${values.email} is confirmed.`)
+    } catch (err) { ctx.say(err.message) }
+  }, 'Change email', field('New email', 'email', 'email', 'email'))
+  const hasPassword = (user.identities ?? []).some(identity => identity.provider === 'email')
+  const password = plainForm(async values => {
+    try {
+      await ctx.call('PUT', '/auth/v1/user', { password: values.password })
+      password.reset()
+      ctx.say('Your password is saved.')
+    } catch (err) { ctx.say(err.message) }
+  }, hasPassword ? 'Change password' : 'Set a password',
+  // Password managers file the new password under this account.
+  el('input', { type: 'hidden', name: 'username', autocomplete: 'username', value: user.email ?? '' }), field('New password', 'password', 'password', 'new-password'))
+  return section('Profile', ...lines, email, password)
+}
+
+// codeForm verifies a factor with a code: an existing challenge (a text
+// message already sent) or, for an authenticator app, one made on submit.
+// Verifying returns an aal2 session, which replaces this page's; GoTrue
+// also ends every session of the user that has not passed a second step.
+function codeForm(ctx, factorId, challengeId, label) {
+  return plainForm(async ({ code }) => {
+    try {
+      const factor = encodeURIComponent(factorId)
+      const challenge = challengeId ?? (await ctx.call('POST', `/auth/v1/factors/${factor}/challenge`, {})).id
+      ctx.adopt(await ctx.call('POST', `/auth/v1/factors/${factor}/verify`, { challenge_id: challenge, code: code.trim() }))
+      await ctx.refresh()
+      ctx.say('Two-step verification is on. Devices signed in without it were signed out.')
+    } catch (err) { ctx.say(err.message) }
+  }, label, el('label', {}, 'Code', el('input', { name: 'code', inputmode: 'numeric', autocomplete: 'one-time-code', required: '' })))
+}
+
+async function mfaSection(ctx, user) {
+  const mfa = ctx.options.mfa ?? {}
+  const verified = (user.factors ?? []).filter(factor => factor.status === 'verified')
+  const factors = verified.filter(factor => factor.factor_type === 'totp' || factor.factor_type === 'phone')
+  const recovery = verified.some(factor => factor.factor_type === 'recovery_code')
+  if (!mfa.totp && !mfa.phone && !factors.length) return null
+  const work = el('div')
+  const list = factors.map(factor => row(factor.factor_type === 'phone' ? `Text message to ${factor.phone ?? 'your phone'}` : factor.friendly_name || 'Authenticator app',
+    confirmButton('Remove', () => ctx.act(async () => { await ctx.call('DELETE', `/auth/v1/factors/${encodeURIComponent(factor.id)}`); await ctx.refresh() }))))
+  if (recovery) {
+    const state = await ctx.call('GET', '/auth/v1/factors/recovery-codes').catch(() => null)
+    if (state) list.push(row(`Recovery codes: ${state.remaining ?? 0} of ${state.total} left`))
+  }
+  const choices = []
+  if (mfa.totp) {
+    choices.push(['Add an authenticator app', () => ctx.act(async () => {
+      const factor = await ctx.call('POST', '/auth/v1/factors', { factor_type: 'totp' })
+      work.replaceChildren(el('p', {}, 'Scan this code with your authenticator app, or enter the key by hand. Then enter the code it shows.'),
+        el('img', { class: 'qr', src: qrImage(factor.totp.qr_code), alt: 'QR code for your authenticator app' }), el('p', {}, el('code', {}, factor.totp.secret)),
+        codeForm(ctx, factor.id, null, 'Turn on'))
+    })])
+  }
+  if (mfa.phone) {
+    choices.push(['Add text message codes', () => {
+      work.replaceChildren(plainForm(async ({ phone }) => ctx.act(async () => {
+        const factor = await ctx.call('POST', '/auth/v1/factors', { factor_type: 'phone', phone })
+        const challenge = await ctx.call('POST', `/auth/v1/factors/${encodeURIComponent(factor.id)}/challenge`, {})
+        ctx.say(`We texted a code to ${phone}.`)
+        work.replaceChildren(codeForm(ctx, factor.id, challenge.id, 'Turn on'))
+      }), 'Text me a code', el('label', {}, 'Phone number, with country code', el('input', { name: 'phone', type: 'tel', autocomplete: 'tel', required: '' }))))
+    }])
+  }
+  if (mfa.recovery_codes && factors.length) {
+    choices.push([recovery ? 'Replace recovery codes' : 'Create recovery codes', () => ctx.act(async () => {
+      const codes = await ctx.call('POST', recovery ? '/auth/v1/factors/recovery-codes/regenerate' : '/auth/v1/factors/recovery-codes', {})
+      work.replaceChildren(el('p', {}, 'Save these codes somewhere safe; they are shown only now. Each one works once in place of your second step.'),
+        el('ul', { class: 'codes' }, ...(codes.codes ?? []).map(code => el('li', {}, el('code', {}, code)))))
+    })])
+  }
+  return section('Two-step verification', el('p', {}, factors.length ? 'Sign-ins are confirmed with:' : 'Add a second step to protect your account.'), ...list, actions(choices), work)
+}
+
+async function passkeysSection(ctx) {
+  if (!ctx.options.passkeys?.enabled) return null
+  const passkeys = (await ctx.call('GET', '/auth/v1/passkeys')) ?? []
+  const list = passkeys.map(passkey => row(`${passkey.friendly_name || 'Passkey'}, added ${when(passkey.created_at)}${passkey.last_used_at ? `, last used ${when(passkey.last_used_at)}` : ''}`,
+    confirmButton('Remove', () => ctx.act(async () => { await ctx.call('DELETE', `/auth/v1/passkeys/${encodeURIComponent(passkey.id)}`); await ctx.refresh() }))))
+  const add = typeof PublicKeyCredential === 'undefined' ? [] : [['Add a passkey', () => ctx.act(async () => { await addPasskey({ access_token: await ctx.token() }); await ctx.refresh() })]]
+  return section('Passkeys', ...(list.length ? list : [el('p', {}, 'No passkeys yet.')]), actions(add))
+}
+
+function identitiesSection(ctx, user) {
+  const identities = user.identities ?? []
+  const linking = ctx.options.identity_linking === true
+  const list = identities.map(identity => row(`${providerName(identity.provider)}${identity.identity_data?.email ? ` (${identity.identity_data.email})` : ''}`,
+    ...(linking && identities.length > 1 ? [confirmButton('Unlink', () => ctx.act(async () => { await ctx.call('DELETE', `/auth/v1/user/identities/${encodeURIComponent(identity.identity_id)}`); await ctx.refresh() }))] : [])))
+  const linkable = linking ? (ctx.options.providers ?? []).filter(provider => !identities.some(identity => identity.provider === provider)) : []
+  const links = linkable.map(provider => [`Link ${providerName(provider)}`, () => ctx.act(async () => {
+    const { url } = await ctx.call('GET', `/auth/v1/user/identities/authorize?${new URLSearchParams({ provider, redirect_to: ctx.here, skip_http_redirect: 'true' })}`)
+    if (new URL(url).protocol !== 'https:') throw new Error('This sign-in method is misconfigured.')
+    ctx.leave()
+    location.assign(url)
+  })])
+  return section('Sign-in methods', ...list, actions(links))
+}
+
+async function connectedAppsSection(ctx) {
+  if (!ctx.options.oauth?.enabled) return null
+  const grants = (await ctx.call('GET', '/auth/v1/user/oauth/grants')) ?? []
+  const list = grants.map(grant => row(`${grant.client?.name || 'An application'}, allowed ${when(grant.granted_at)}`,
+    confirmButton('Revoke', () => ctx.act(async () => { await ctx.call('DELETE', `/auth/v1/user/oauth/grants?client_id=${encodeURIComponent(grant.client.id)}`); await ctx.refresh() }))))
+  return section('Connected apps', ...(list.length ? list : [el('p', {}, 'No other apps can use your account.')]))
+}
+
+async function sessionsSection(ctx) {
+  const { sessions } = await ctx.call('GET', '/authz/v1/sessions')
+  const list = sessions.map(s => row(`${deviceName(s.user_agent)}${s.ip ? `, ${s.ip}` : ''}: ${s.current ? 'this page' : `active ${when(s.last_active_at)}`}`,
+    ...(s.current ? [] : [confirmButton('Sign out', () => ctx.act(async () => { await ctx.call('DELETE', `/authz/v1/sessions/${encodeURIComponent(s.id)}`); await ctx.refresh() }))])))
+  const others = sessions.some(s => !s.current) ? [['Sign out everywhere else', () => ctx.act(async () => {
+    await ctx.call('POST', '/auth/v1/logout?scope=others')
+    await ctx.refresh()
+    ctx.say(`Signed out everywhere else, including ${ctx.config.app} in this browser.`)
+  })]] : []
+  return section('Where you are signed in', el('p', {}, `This page has its own session; ${ctx.config.app} in this browser is listed separately.`), ...list, actions(others))
+}
+
+// deletionSection lets people delete their own account when the app allows
+// it. The page's session is a fresh sign-in, which the Auth app requires.
+function deletionSection(ctx, root) {
+  if (ctx.options.self_deletion !== true) return null
+  const confirmation = 'delete my account'
+  const node = section('Delete your account',
+    el('p', {}, `This deletes your ${ctx.config.app} account and signs you out everywhere. It cannot be undone. Type "${confirmation}" to confirm.`),
+    plainForm(async ({ confirm }) => {
+      if (confirm.trim() !== confirmation) return ctx.say(`Type "${confirmation}" to confirm.`)
+      try {
+        await ctx.call('DELETE', '/authz/v1/account')
+        ctx.leave()
+        render(root, 'Your account is deleted')
+        root.append(el('p', {}, `Your ${ctx.config.app} account and its sign-in methods are gone.`), el('a', { class: 'button', href: ctx.back }, `Back to ${ctx.config.app}`))
+      } catch (err) { ctx.say(err.message) }
+    }, 'Delete my account', el('label', {}, 'Confirmation', el('input', { name: 'confirm', autocomplete: 'off', spellcheck: 'false', required: '' }))))
+  node.classList.add('danger')
+  return node
 }
 
 if (typeof document !== 'undefined') {

@@ -16,23 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
-type recipientClaimTestStore interface {
-	state.Store
-	state.AppWorkPolicyStore
-	state.EventWorkBindingStore
-	state.EventSubscriptionStore
-	state.PublishedEventWorkStore
-	state.PublishedEventRecipientWorkStore
-	state.PublishedEventRecipientProgressStore
-	state.EventFanoutReplayStore
-	state.EventFanoutReplayBatchStore
-	state.EventFanoutAttemptHistoryStore
-	state.PublishedEventRetentionStore
-	state.EventReceiptStore
-	state.EventReceiptReplayStore
-	state.EventReceiptAcceptanceStore
-	state.WorkCancellationStore
-}
+type recipientClaimTestStore = contractTestStore
 
 func TestEventRecipientOrderedKeyBlocksYoungerUntilRetrySettles(t *testing.T) {
 	forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, _ *pgxpool.Pool) {
@@ -206,23 +190,23 @@ func seedRecipientClaims(t *testing.T, store recipientClaimTestStore) (context.C
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := uuid.Parse(account.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Use the stored ID as is: MemStore's IDs are not canonical UUID text,
+	// and an app filed under a reformatted ID has no owning account (#4882
+	// resolves the app's resource owner when a claim reserves quota).
+	accountID := account.ID
 	app, err := store.CreateApp(ctx, state.App{
-		ID: uuid.NewString(), AccountID: id.String(), Slug: "recipient-claims", Type: state.AppTypeApp,
+		ID: uuid.NewString(), AccountID: accountID, Slug: "recipient-claims", Type: state.AppTypeApp,
 		RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, pattern := range [][2]string{{"orders", "order.created"}, {"orders", "*"}, {"*", "order.created"}} {
-		if _, _, err := store.UpsertEventSubscription(ctx, id.String(), app.ID, pattern[0], pattern[1], nil); err != nil {
+		if _, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID, pattern[0], pattern[1], nil); err != nil {
 			t.Fatal(err)
 		}
 	}
-	envelope, err := (events.Envelope{ID: "evt-three-consumers", Source: "orders", Type: "order.created", Data: json.RawMessage(`{"order_id":"o-1"}`)}).Normalize(id.String(), time.Now().UTC())
+	envelope, err := (events.Envelope{ID: "evt-three-consumers", Source: "orders", Type: "order.created", Data: json.RawMessage(`{"order_id":"o-1"}`)}).Normalize(accountID, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +214,6 @@ func seedRecipientClaims(t *testing.T, store recipientClaimTestStore) (context.C
 	if err != nil {
 		t.Fatal(err)
 	}
-	accountID := id.String()
 	if err := store.AppendEvent(ctx, "apid", "event.published", &accountID, payload); err != nil {
 		t.Fatal(err)
 	}

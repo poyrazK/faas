@@ -26,7 +26,7 @@ restore both services, worker admission and captured configuration when fresh
 baseline evidence permits. The expanded schema remains in place. Unknown SQL
 results never authorize automatic replay: inspect the database and use the
 existing migration recovery `resume` action after scheduler-confirmed teardown.
-Worker-containing replacement resolution is defined by ADR-1438. To qualify it,
+Worker-containing replacement resolution is defined by ADR-20261019120038. To qualify it,
 leave the migration uncertain, publish corrected frontend/API/worker artifacts with
 `--sync-config --verify --workers` and no migration, and verify that repair succeeds.
 Collect sufficient successful jobs for that selected replacement before requesting
@@ -128,7 +128,7 @@ installation. Actual native execution remains pending; production flags stay off
 
 ## Multiple-worker qualification
 
-ADR-1440 adds up to eight push workers with one owned consumer each. Repeat the
+ADR-20261019120040 adds up to eight push workers with one owned consumer each. Repeat the
 core cases with independent email, billing and webhook workers before approving
 `worker_set`. Require startup/configuration and fresh delivery windows for every
 worker. Remove the final worker's startup proof through an owned runtime fault,

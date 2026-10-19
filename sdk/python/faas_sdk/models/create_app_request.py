@@ -24,6 +24,10 @@ from ..models.create_app_request_execution_mode import (
     check_create_app_request_execution_mode,
 )
 from ..models.create_app_request_pause import CreateAppRequestPause, check_create_app_request_pause
+from ..models.create_app_request_release_policy import (
+    CreateAppRequestReleasePolicy,
+    check_create_app_request_release_policy,
+)
 from ..models.create_app_request_restart_policy import (
     CreateAppRequestRestartPolicy,
     check_create_app_request_restart_policy,
@@ -108,6 +112,9 @@ class CreateAppRequest:
     request_timeout_s: int | Unset = UNSET
     """Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default; the current platform
     ceiling is 30 seconds."""
+    function_concurrency: int | Unset = UNSET
+    """Requests one Node or Python function worker may serve at once (ADR-1342). Omitted, 0 or 1 keeps one request
+    per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads."""
     execution_mode: CreateAppRequestExecutionMode | Unset = UNSET
     """Lifecycle contract for the app. Default is request; service/worker/job are plan-gated."""
     restart_policy: CreateAppRequestRestartPolicy | Unset = UNSET
@@ -179,6 +186,10 @@ class CreateAppRequest:
     version_affinity_cookie; omitted uses false."""
     revision_pin_ttl_seconds: int | Unset = 0
     """Maximum lifetime of a superseded deployment for revision-pinned requests; zero disables pinning."""
+    release_policy: CreateAppRequestReleasePolicy | Unset = UNSET
+    """Default rollout for production releases that name no rollout policy (ADR-1446, ADR-1450). Omit for safe."""
+    release_probe_paths: list[str] | Unset = UNSET
+    """Up to 3 concrete GET paths the default rollout probe checks instead of / (ADR-1449)."""
     streaming_enabled: bool | Unset = UNSET
     """Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471)."""
     websocket_enabled: bool | Unset = UNSET
@@ -287,6 +298,8 @@ class CreateAppRequest:
 
         request_timeout_s = self.request_timeout_s
 
+        function_concurrency = self.function_concurrency
+
         execution_mode: str | Unset = UNSET
         if not isinstance(self.execution_mode, Unset):
             execution_mode = self.execution_mode
@@ -368,6 +381,14 @@ class CreateAppRequest:
 
         revision_pin_ttl_seconds = self.revision_pin_ttl_seconds
 
+        release_policy: str | Unset = UNSET
+        if not isinstance(self.release_policy, Unset):
+            release_policy = self.release_policy
+
+        release_probe_paths: list[str] | Unset = UNSET
+        if not isinstance(self.release_probe_paths, Unset):
+            release_probe_paths = self.release_probe_paths
+
         streaming_enabled = self.streaming_enabled
 
         websocket_enabled = self.websocket_enabled
@@ -441,6 +462,8 @@ class CreateAppRequest:
             field_dict["idle_timeout_s"] = idle_timeout_s
         if request_timeout_s is not UNSET:
             field_dict["request_timeout_s"] = request_timeout_s
+        if function_concurrency is not UNSET:
+            field_dict["function_concurrency"] = function_concurrency
         if execution_mode is not UNSET:
             field_dict["execution_mode"] = execution_mode
         if restart_policy is not UNSET:
@@ -489,6 +512,10 @@ class CreateAppRequest:
             field_dict["version_affinity_managed_cookie"] = version_affinity_managed_cookie
         if revision_pin_ttl_seconds is not UNSET:
             field_dict["revision_pin_ttl_seconds"] = revision_pin_ttl_seconds
+        if release_policy is not UNSET:
+            field_dict["release_policy"] = release_policy
+        if release_probe_paths is not UNSET:
+            field_dict["release_probe_paths"] = release_probe_paths
         if streaming_enabled is not UNSET:
             field_dict["streaming_enabled"] = streaming_enabled
         if websocket_enabled is not UNSET:
@@ -626,6 +653,8 @@ class CreateAppRequest:
 
         request_timeout_s = d.pop("request_timeout_s", UNSET)
 
+        function_concurrency = d.pop("function_concurrency", UNSET)
+
         _execution_mode = d.pop("execution_mode", UNSET)
         execution_mode: CreateAppRequestExecutionMode | Unset
         if isinstance(_execution_mode, Unset):
@@ -745,6 +774,15 @@ class CreateAppRequest:
 
         revision_pin_ttl_seconds = d.pop("revision_pin_ttl_seconds", UNSET)
 
+        _release_policy = d.pop("release_policy", UNSET)
+        release_policy: CreateAppRequestReleasePolicy | Unset
+        if isinstance(_release_policy, Unset):
+            release_policy = UNSET
+        else:
+            release_policy = check_create_app_request_release_policy(_release_policy)
+
+        release_probe_paths = cast(list[str], d.pop("release_probe_paths", UNSET))
+
         streaming_enabled = d.pop("streaming_enabled", UNSET)
 
         websocket_enabled = d.pop("websocket_enabled", UNSET)
@@ -801,6 +839,7 @@ class CreateAppRequest:
             max_concurrency=max_concurrency,
             idle_timeout_s=idle_timeout_s,
             request_timeout_s=request_timeout_s,
+            function_concurrency=function_concurrency,
             execution_mode=execution_mode,
             restart_policy=restart_policy,
             after_restore=after_restore,
@@ -825,6 +864,8 @@ class CreateAppRequest:
             version_affinity_cookie=version_affinity_cookie,
             version_affinity_managed_cookie=version_affinity_managed_cookie,
             revision_pin_ttl_seconds=revision_pin_ttl_seconds,
+            release_policy=release_policy,
+            release_probe_paths=release_probe_paths,
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,
             route_metrics_enabled=route_metrics_enabled,

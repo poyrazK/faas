@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationDataRepair } from './OperationDataRepair.js';
 import type { OperationDeliveryResponse } from './OperationDeliveryResponse.js';
 import type { OperationLimits } from './OperationLimits.js';
 import type { OperationProgress } from './OperationProgress.js';
@@ -31,6 +32,7 @@ export type OperationResponse = {
    */
   failure_code?: string;
   waiting?: OperationWaitingState;
+  data_repair?: OperationDataRepair;
   limits?: OperationLimits;
   /**
    * Absolute deadline fixed at acceptance; waits, retries and recovery count against it.

@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ProjectInitialSecrets } from './ProjectInitialSecrets.js';
 /**
  * Multipart body for POST /v1/projects (apply). Same shape as
  * ProjectScanRequest; the apply handler resolves AppIDs and
@@ -10,9 +11,13 @@
  */
 export type ProjectApplyRequest = {
   /**
-   * Planned non-secret workload variables encoded as ProjectReleaseConfigRequest JSON for atomic-config-verify admission.
+   * Apply the reviewed migration naming mode, preserving repository service identities and project-prefixed app allocations. Automatic triggers and repository push bindings must be disabled.
    */
-  release_config?: string;
+  migration?: boolean;
+  /**
+   * Reviewed repository service-to-app allocations for this apply. Preserve existing project app names and repeat the exact selected names from review; multipart clients encode this object as JSON.
+   */
+  app_slugs?: Record<string, string>;
   source: Blob;
   project_slug?: string;
   repo_full_name?: string;
@@ -39,5 +44,6 @@ export type ProjectApplyRequest = {
    * Override the customer identity policy for selected workloads (Hobby and above). Must match the scan override. Omitted uses Compose declarations and preserves existing app policy.
    */
   platform_tenant_required?: boolean;
+  initial_secrets?: ProjectInitialSecrets;
 };
 

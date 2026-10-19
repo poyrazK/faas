@@ -1,4 +1,6 @@
+-- migration-compat: expand
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE TABLE IF NOT EXISTS project_worker_job_evidence (
  invocation_id uuid NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
  replay_generation bigint NOT NULL CHECK(replay_generation>=0),

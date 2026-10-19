@@ -1,4 +1,6 @@
+-- migration-compat: expand
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION release_secret_document_envelopes(payload jsonb, kind text) RETURNS SETOF jsonb
 LANGUAGE sql IMMUTABLE AS $$

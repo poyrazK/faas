@@ -1,4 +1,6 @@
+-- migration-compat: expand
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 ALTER TABLE project_environment_promotion_health
  ADD COLUMN IF NOT EXISTS next_check_at timestamptz NOT NULL DEFAULT now() CHECK (isfinite(next_check_at)),
  ADD COLUMN IF NOT EXISTS last_claimed_at timestamptz NOT NULL DEFAULT '-infinity' CHECK (isfinite(last_claimed_at) OR last_claimed_at='-infinity'::timestamptz);

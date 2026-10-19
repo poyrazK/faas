@@ -14,6 +14,7 @@ func PlanWorkload(w Workload) api.PlanWorkload {
 	}
 	return api.PlanWorkload{
 		Name:                w.Name,
+		AppSlug:             w.AppSlug,
 		RootDir:             w.RootDir,
 		Dockerfile:          w.Dockerfile,
 		Image:               w.Image,

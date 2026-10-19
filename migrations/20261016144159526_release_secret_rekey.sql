@@ -1,4 +1,6 @@
+-- migration-compat: expand
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE TABLE IF NOT EXISTS release_secret_key_retirements (
  kid text PRIMARY KEY CHECK(kid ~ '^age1[0-9a-z]{58}$'),
  retired_at timestamptz NOT NULL DEFAULT now() CHECK(isfinite(retired_at))

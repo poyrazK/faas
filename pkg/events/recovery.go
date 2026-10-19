@@ -23,8 +23,8 @@ const (
 	// follow as the recovery arbiter confirms completion.
 	NodeDraining = "node.draining"
 	// NodeDrained — drain completed cleanly. The recovery arbiter
-	// stamps this once the NodeMarkDrainCompleted CAS lands
-	// (lifecycle 'draining' → 'active' with zero live instances).
+	// stamps this once generation-fenced completion commits
+	// (lifecycle 'draining' → 'maintenance' with zero resident instances).
 	// Payload: {node_id, node_name, initiated_at, completed_at,
 	// drained_instance_count}.
 	NodeDrained = "node.drained"
@@ -34,7 +34,7 @@ const (
 	// here.
 	NodeFailed = "node.failed"
 	// NodeRecovered — recovery arbiter confirmed the node is back
-	// healthy. Stamped after NodeMarkRecovered lands (lifecycle
+	// healthy. Stamped by generation-fenced completion (lifecycle
 	// 'recovering' → 'active' with last_recovery_outcome='succeeded').
 	// Payload: {node_id, node_name, recovery_initiated_at,
 	// recovered_at, migrated_count, recreated_count}.

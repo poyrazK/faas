@@ -67,7 +67,7 @@ func TestWorkflowRecoveryAttentionCapture(t *testing.T) {
 					t.Fatalf("monitor=%v %v", did, err)
 				}
 				if pg, ok := store.(*PgStore); ok {
-					monitor = NewPgStore(pg.pool)
+					monitor = NewPgStore(pg.pool.Pool)
 				}
 				if did, err := monitor.ProcessNextWorkflowRecoveryExecutionAttention(ctx, now.Add(time.Hour)); err != nil || did {
 					t.Fatalf("duplicate=%v %v", did, err)

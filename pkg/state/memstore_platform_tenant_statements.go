@@ -170,6 +170,7 @@ func (m *MemStore) CreatePlatformTenantStatement(_ context.Context, in PlatformT
 		Status: APIConsumerUsageStatementDraft, Currency: in.Currency, BillableUnits: in.BillableUnits,
 		UnpricedUnits: in.UnpricedUnits, AmountMillicents: in.AmountMillicents,
 		Lines:    append([]PlatformTenantStatementLine(nil), in.Lines...),
+		Fees:     append([]APIConsumerStatementFee(nil), in.Fees...),
 		Coverage: append([]PlatformTenantStatementCoverage(nil), in.Coverage...),
 		AsOf:     in.AsOf, CreatedAt: now}
 	m.platformTenantStatements[out.ID] = out
@@ -394,35 +395,8 @@ func (m *MemStore) CreatePlatformTenantStatementHandoff(_ context.Context, in Pl
 	if statement.Status != APIConsumerUsageStatementFinalized || statement.Currency == "" {
 		return PlatformTenantStatementHandoff{}, false, ErrConflict
 	}
-	for _, h := range m.apiConsumerUsageStatementHandoffs {
-		other := m.apiConsumerUsageStatements[h.StatementID]
-		if h.AccountID == in.AccountID && (h.ExternalInvoiceID == in.ExternalInvoiceID ||
-			(windowsOverlap(statement.PeriodStart, statement.PeriodEnd, other.PeriodStart, other.PeriodEnd) &&
-				tenantStatementIncludesConsumer(statement, other.AppID, other.ConsumerID))) {
-			return PlatformTenantStatementHandoff{}, false, ErrConflict
-		}
-	}
-	for _, h := range m.platformTenantStatementHandoffs {
-		other := m.platformTenantStatements[h.StatementID]
-		if h.AccountID != in.AccountID {
-			continue
-		}
-		if h.ExternalInvoiceID == in.ExternalInvoiceID {
-			return PlatformTenantStatementHandoff{}, false, ErrConflict
-		}
-		if other.TenantID == statement.TenantID && other.PeriodStart.Equal(statement.PeriodStart) && other.PeriodEnd.Equal(statement.PeriodEnd) {
-			continue
-		}
-		if !windowsOverlap(statement.PeriodStart, statement.PeriodEnd, other.PeriodStart, other.PeriodEnd) {
-			continue
-		}
-		for _, line := range statement.Lines {
-			if tenantStatementIncludesConsumer(other, line.AppID, line.ConsumerID) ||
-				tenantStatementIncludesSurface(other, line.AppID, line.SurfaceID) ||
-				tenantStatementIncludesJWTAuthorizationRule(other, line.AppID, line.JWTAuthorizationRuleID) {
-				return PlatformTenantStatementHandoff{}, false, ErrConflict
-			}
-		}
+	if m.externalInvoiceHandedOffLocked(in.AccountID, in.ExternalInvoiceID) || m.tenantHandoffOverlapLocked(statement) {
+		return PlatformTenantStatementHandoff{}, false, ErrConflict
 	}
 	out := PlatformTenantStatementHandoff{ID: uuid.NewString(), AccountID: in.AccountID, TenantID: in.TenantID,
 		StatementID: in.StatementID, ExternalInvoiceID: in.ExternalInvoiceID, Currency: statement.Currency,

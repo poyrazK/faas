@@ -1,4 +1,4 @@
-// projectworker is the native ADR-1408 acceptance workload. It has no network
+// projectworker is the native ADR-20261019120008 acceptance workload. It has no network
 // dependencies and runs as either the HTTP app or its push-queue worker.
 package main
 

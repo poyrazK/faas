@@ -1,0 +1,9 @@
+# ADR-1384: Service binding reliability and transport CLI
+
+- **Date:** 2026-10-16
+- **Status:** accepted
+- **Context:** The service binding CLI configures authorization but timeout/retry policy and canonical service URL transport still require raw API updates. Removing targets can implicitly remove stored reliability overrides without the CLI preview exposing that effect.
+- **Decision:** Extend the existing service policy JSON file with `service_reliability` and `service_binding_transport`. Use shared API normalization and bounds. Validate policy shapes and limits before network access, then check reliability membership against the current or explicitly replaced target list before any mutation. Targets and overrides may change together in one ordinary app PATCH.
+- **Partial-update semantics:** Omitted reliability preserves overrides for retained bindings. Explicit null or an empty object clears every override; nonempty maps replace the map. Target removal retains the API's pruning behavior. Preview and saved receipts include implicit pruning, but the CLI never sends an inferred reliability replacement when the field was omitted. Null/omitted transport leaves it unchanged; explicit transport must normalize to http or https.
+- **Safety and meaning:** Non-idempotent retries require the existing explicit per-target flag. Existing gateway retry limits and authority remain unchanged. Transport selects canonical injected URLs; it neither enforces HTTPS-only requests nor proves guest adoption. Preview is a snapshot, with the server authoritative during update.
+- **Validation:** Race regressions cover same-request additions/removals, unknown dependencies without mutations, replacement/reset/omission, canonical names and transport, bounds and unknown fields, explicit non-idempotent opt-in, and implicit pruning visible in preview and saved receipt without an explicit reliability PATCH. Help, API surface inventory and generated reference stay aligned.

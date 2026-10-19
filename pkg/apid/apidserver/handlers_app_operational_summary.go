@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/workerrecovery"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -96,6 +97,7 @@ func appOperationalWindows(out *api.AppOperationalMonitoring, report api.RouteMo
 
 func (s *server) appOperationalRecovery(ctx context.Context, acct state.Account, app state.App) api.AppOperationalRecovery {
 	out := api.AppOperationalRecovery{Rollbacks: []api.AppOperationalRollback{}, Restarts: []api.RuntimeConfigRestartStatusResponse{}}
+	out.Workers = workerrecovery.Collect(ctx, s.store, app, acct, "", time.Now().UTC())
 	if store, ok := s.store.(state.AppOperationalStore); ok {
 		rows, err := store.ListAppPendingRollbacks(ctx, acct.ID, app.ID)
 		out.RollbacksAvailable = err == nil

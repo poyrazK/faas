@@ -2,6 +2,8 @@
 
 - **Status:** proposed
 - **Date:** 2026-10-07
+- **Amended by:** ADR-1521 (the queue now writes batches through one RPC and
+  one insert per flush).
 - **Amends:** ADR-127 (production debugger). The exact public-ID index added
   in #3670 keeps its schema and RPC.
 - **Decision:** gatewayd-internal no longer writes the request-ID journal before

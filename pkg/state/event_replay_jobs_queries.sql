@@ -14,7 +14,7 @@ RETURNING id;
 SELECT a.id AS app_id, a.account_id, a.slug AS app_slug, d.id AS deployment_id,
        definition.value AS workflow, ac.plan
 FROM apps a
-JOIN accounts ac ON ac.id=a.account_id
+JOIN app_resource_accounts ac ON ac.app_id = a.id
 JOIN LATERAL (
     SELECT dep.id, dep.workflows FROM deployments dep
     WHERE dep.app_id=a.id AND dep.status='live' AND dep.scope='default'

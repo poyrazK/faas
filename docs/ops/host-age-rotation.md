@@ -592,7 +592,7 @@ is either running or not.
   by `cmd/apid/rekey_runner.go::Runner` (PR-C).
 - `cmd/gregale/commands_host_age.go` — the operator CLI.
 
-## Release snapshot rotation and retirement (ADR-1421)
+## Release snapshot rotation and retirement (ADR-20261019120021)
 
 The APID `FAAS_REKEY_ENABLED=true` worker also covers staged release secret
 bundles, immutable deployment snapshots and saved release captures. It retains
@@ -633,4 +633,4 @@ Restart every reader after retiring an overlap identity to discard cached keys.
 
 Atomic secret admission remains disabled until the strengthened native lane
 proves cold boot and rollback after key removal. See
-[ADR-1421](../adr/1421-release-secret-envelope-rotation.md).
+[ADR-20261019120021](../adr/20261019120021-release-secret-envelope-rotation.md).

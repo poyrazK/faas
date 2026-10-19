@@ -134,12 +134,15 @@ func TestCmdMetrics_DegradedSourceWarnsOnZeroes(t *testing.T) {
 // --- client-side rejections -------------------------------------------------
 
 func TestCmdMetrics_NoPositional(t *testing.T) {
+	previous := nonInteractive
+	nonInteractive = true
+	t.Cleanup(func() { nonInteractive = previous })
 	_, readStderr, restore := swapIO(t)
 	defer restore()
 	if code := cmdMetrics(nil); code != 1 {
 		t.Errorf("metrics bare = %d, want 1", code)
 	}
-	if !strings.Contains(readStderr(), "usage: gregale metrics") {
+	if !strings.Contains(readStderr(), "app target is required") {
 		t.Errorf("stderr missing usage line\nfull: %s", readStderr())
 	}
 }

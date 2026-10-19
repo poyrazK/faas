@@ -78,96 +78,24 @@ func TestPgApplicationStandardProjectApprovalMembershipRace(t *testing.T) {
 		}
 		return p
 	}
+	// A project's workloads share its account and organization (#4882): a
+	// foreign account cannot join the project, so it can neither make an
+	// approval busy or stale nor cross the approved scope afterwards.
+	insertForeign := func(label, slug string) {
+		t.Helper()
+		_, err := pool.Exec(ctx, `INSERT INTO apps (account_id,org_id,slug,ram_mb,project_id,workload_name) VALUES ($1,$2,$3,128,$4,$3)`, foreign.Account.ID, foreign.PersonalOrg.ID, slug, project.ID)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "23514" || pgErr.ConstraintName != "project_workload_owner" {
+			t.Fatalf("%s: foreign app joined the project: %v", label, err)
+		}
+	}
 	p := preview()
-	// A foreign member that wins the project parent first makes the review
-	// busy, then stale after it commits; no cross-org assignment is written.
-	writer, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
+	insertForeign("before approval", "foreign-project-first")
+	op, err := s.ApproveApplicationStandardReview(ctx, f.owner.PersonalOrg.ID, f.owner.Account.ID, p.ID, p.ApprovalHash)
+	if err != nil || op.AssignmentID == "" {
+		t.Fatalf("project approval: %+v %v", op, err)
 	}
-	defer writer.Rollback(ctx)
-	var foreignApp string
-	if err := writer.QueryRow(ctx, `INSERT INTO apps (account_id,org_id,slug,ram_mb,project_id,workload_name) VALUES ($1,$2,'foreign-project-first',128,$3,'foreign') RETURNING id::text`, foreign.Account.ID, foreign.PersonalOrg.ID, project.ID).Scan(&foreignApp); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.ApproveApplicationStandardReview(ctx, f.owner.PersonalOrg.ID, f.owner.Account.ID, p.ID, p.ApprovalHash); !errors.Is(err, ErrApplicationStandardReviewBusy) {
-		t.Fatalf("foreign membership was not fenced: %v", err)
-	}
-	assertStandardApprovalNoWrites(t, t.Context(), pool)
-	if err := writer.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.ApproveApplicationStandardReview(ctx, f.owner.PersonalOrg.ID, f.owner.Account.ID, p.ID, p.ApprovalHash); !errors.Is(err, ErrApplicationStandardReviewStale) {
-		t.Fatalf("foreign membership was assigned: %v", err)
-	}
-	assertStandardApprovalNoWrites(t, t.Context(), pool)
-	if _, err := pool.Exec(ctx, `DELETE FROM apps WHERE id=$1`, foreignApp); err != nil {
-		t.Fatal(err)
-	}
-	p = preview()
-	// Conversely, an in-flight approved assignment holds the project fence.
-	// The blocked foreign insert must recheck ownership after commit.
-	locked, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer locked.Rollback(ctx)
-	if _, err := sqlc.New().LockApplicationStandardApprovalOrg(ctx, locked, mustPgUUID(f.owner.PersonalOrg.ID)); err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := lockStandardReviewInputs(ctx, locked, f.owner.PersonalOrg.ID, f.owner.Account.ID, p.Request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fresh, err := buildStandardReview(snapshot, p.Request, p.ID, p.CreatedBy, time.Now().UTC())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := validateStandardReviewHash(p, fresh, p.ApprovalHash, time.Now().UTC()); err != nil {
-		t.Fatal(err)
-	}
-	op, err := newStandardOperation(fresh, f.owner.Account.ID, time.Now().UTC())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := persistStandardApproval(ctx, locked, p.Request, op); err != nil {
-		t.Fatal(err)
-	}
-	blocked, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer blocked.Rollback(ctx)
-	var pid int
-	if err := blocked.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
-		t.Fatal(err)
-	}
-	result := make(chan error, 1)
-	go func() {
-		_, err := blocked.Exec(ctx, `INSERT INTO apps (account_id,org_id,slug,ram_mb,project_id,workload_name) VALUES ($1,$2,'foreign-project-late',128,$3,'late')`, foreign.Account.ID, foreign.PersonalOrg.ID, project.ID)
-		result <- err
-	}()
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		var waiting bool
-		if err := pool.QueryRow(ctx, `SELECT coalesce(wait_event_type='Lock',false) FROM pg_stat_activity WHERE pid=$1`, pid).Scan(&waiting); err != nil {
-			t.Fatal(err)
-		}
-		if waiting {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("foreign insert did not wait on the project fence")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if err := locked.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	var pgErr *pgconn.PgError
-	if err := <-result; !errors.As(err, &pgErr) || pgErr.ConstraintName != "application_standard_scope_owner" {
-		t.Fatalf("foreign app crossed approved scope: %v", err)
-	}
+	insertForeign("after approval", "foreign-project-late")
 }
 
 func TestPgApplicationStandardApprovalExpired(t *testing.T) {

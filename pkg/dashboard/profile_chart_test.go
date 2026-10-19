@@ -12,7 +12,7 @@ import (
 )
 
 func TestCPUChartDrillDownPreservesScopeAndMissingIntervals(t *testing.T) {
-	now := time.Now().Truncate(time.Second)
+	now := time.Now().UTC().Truncate(time.Second)
 	q := api.ProfileQuery{DeploymentID: "chosen-deployment", Runtime: "node24", Start: now, End: now.Add(4 * time.Minute)}
 	chart := BuildProfileCPUChart("an-app", q, q, []promql.QueryRangeSample{
 		{Timestamp: now.Add(time.Minute).Unix(), Value: .2},

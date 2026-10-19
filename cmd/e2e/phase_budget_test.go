@@ -29,14 +29,35 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/e2etest"
+	"gopkg.in/yaml.v3"
 )
 
-func phaseOuterBudgets(t *testing.T) map[string]time.Duration {
+// The binding journeys run in a separate, mutually exclusive job. Their cap
+// cannot overwrite the last platform phase or inflate that job's budget sum.
+func nativePlatformWorkflow(t *testing.T) []byte {
 	t.Helper()
 	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "e2e-native.yml"))
 	if err != nil {
-		t.Fatalf("read e2e-native workflow: %v", err)
+		t.Fatal(err)
 	}
+	var workflow struct{ Jobs map[string]yaml.Node }
+	if err := yaml.Unmarshal(body, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	job, ok := workflow.Jobs["e2e-native"]
+	if !ok {
+		t.Fatal("missing platform native job")
+	}
+	body, err = yaml.Marshal(&job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+func phaseOuterBudgets(t *testing.T) map[string]time.Duration {
+	t.Helper()
+	body := nativePlatformWorkflow(t)
 	phaseRe := regexp.MustCompile(`PHASE:\s*([\w-]+)`)
 	maxRe := regexp.MustCompile(`RuntimeMaxSec=(\w+)`)
 
@@ -140,10 +161,7 @@ func TestSourceBuildingPhasesHaveABuildSizedBudget(t *testing.T) {
 // node is never stopped. Run 35115616655 hit 150m against 325m of caps: no
 // verdict, and the node billed until the next dispatch happened to find it.
 func TestJobTimeoutCoversEveryPhaseCap(t *testing.T) {
-	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "e2e-native.yml"))
-	if err != nil {
-		t.Fatalf("read e2e-native workflow: %v", err)
-	}
+	body := nativePlatformWorkflow(t)
 	m := regexp.MustCompile(`(?m)^\s*timeout-minutes:\s*(\d+)`).FindStringSubmatch(string(body))
 	if m == nil {
 		t.Fatal("no job timeout-minutes in the workflow; a wedged run would hold the node until GitHub's 6h default")

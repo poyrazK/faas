@@ -20,6 +20,7 @@ const MaxPreambleBytes = 12 << 10
 // Run (ADR-990) it also lists the integrations granted to that Run; the
 // mTLS channel from vmmd authenticates the list like the assertion itself.
 type Preamble struct {
+	RecorderRequestID     string   `json:"recorder_request_id,omitempty"`
 	Assertion             string   `json:"assertion"`
 	ExecutionIntegrations []string `json:"execution_integrations,omitempty"`
 }

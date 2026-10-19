@@ -21,6 +21,10 @@ import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js
  * An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172).
  */
 export type AppResponse = {
+  /**
+   * Opaque fingerprint of app identity, source ownership and service binding settings. Use as the atomic precondition for a reviewed service-only update.
+   */
+  service_binding_fingerprint?: string;
   id: string;
   slug: string;
   type: 'app' | 'function';
@@ -55,6 +59,10 @@ export type AppResponse = {
    * Configured per-app request wall-clock timeout in seconds; 0 means the plan/type default.
    */
   request_timeout_s?: number;
+  /**
+   * Requests one Node or Python function worker serves at once (ADR-1342). 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next deploy.
+   */
+  function_concurrency?: number;
   min_instances: number;
   /**
    * Customer-visible app state. `undeployed` is projected when the app has no deployment rows; its persisted lifecycle remains active until the first deploy.
@@ -164,6 +172,14 @@ export type AppResponse = {
    * Retain superseded live deployments for revision-pinned requests for up to this many seconds. Zero disables revision pinning.
    */
   revision_pin_ttl_seconds?: number;
+  /**
+   * Default rollout for production releases that name no rollout policy (ADR-1446). safe (or unset) uses the adaptive health-gated canary (ADR-1321: each stage advances on clean evidence after a minute) with first-wake 5xx rollback; fast uses the aggressive ladder with the same rollback (ADR-1450); immediate moves all traffic at once.
+   */
+  release_policy?: 'safe' | 'fast' | 'immediate';
+  /**
+   * Up to 3 concrete GET paths the default rollout probe checks instead of / (ADR-1449). No queries, fragments, wildcards or parameters.
+   */
+  release_probe_paths?: Array<string>;
   /**
    * Per-app per-route observability flag (ADR-093). When true, gatewayd-internal emits gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes. Default-on for Hobby/Pro/Scale; Free customers always see this as false. PATCH-true on Free is rejected by apid with 403 plan_route_metrics_not_allowed.
    */

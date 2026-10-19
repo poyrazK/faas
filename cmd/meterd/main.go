@@ -56,6 +56,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssocket"
+	"github.com/onebox-faas/faas/pkg/internalmail"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/promql"
@@ -1020,12 +1021,28 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// suspended → deleted_pending transitions (spec §4.7, §17). Wired
 	// into the loop alongside sample/quota/stripe so all five timers
 	// share the same ctx-cancel lifecycle.
+	quotaWarningCommands, err := configureQuotaWarningCommands(ctx, deps.getenv)
+	if err != nil {
+		return err
+	}
+	nonpaymentDeletionCommands, err := configureNonpaymentDeletionCommands(ctx, deps.getenv)
+	if err != nil {
+		return err
+	}
+	suspensionCommands, err := configureSuspensionCommands(ctx, deps.getenv)
+	if err != nil {
+		return err
+	}
 	dunning := meter.NewDunning(meter.DunningParams{
-		Store:  store,
-		Parker: parker,
-		Mailer: mailer,
-		Notif:  pn,
-		Log:    log,
+		NonpaymentDeletionCommands:  nonpaymentDeletionCommands,
+		NonpaymentDeletionRequested: func() bool { return deps.getenv(internalmail.NonpaymentDeletionOutboxEnableEnv) == "1" },
+		SuspensionCommands:          suspensionCommands,
+		SuspensionRequested:         func() bool { return deps.getenv(internalmail.AccountSuspendedOutboxEnableEnv) == "1" },
+		Store:                       store,
+		Parker:                      parker,
+		Mailer:                      mailer,
+		Notif:                       pn,
+		Log:                         log,
 	})
 
 	// Per-daemon Prometheus registry (ADR-015) — built unconditionally
@@ -1151,7 +1168,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// loop's contract is "at most one", matching the design note at
 	// pkg/alerts/evaluator.go.
 	promClient := buildPromQLClient(deps)
+	// ADR-748: probe customer synthetic checks against their public hostnames.
+	appsDomain := deps.getenv("FAAS_APPS_DOMAIN")
+	if appsDomain == "" {
+		appsDomain = "gregale.dev" // apid's default for unset deployments
+	}
+	go runSyntheticChecks(ctx, store, appsDomain, log)
 	evaluator := buildAlertEvaluatorWithPromQL(deps, store, log, ops, promClient)
+	// ADR-749: deliver alerts to Slack, PagerDuty and email channels.
+	evaluator.SetChannels(newAlertChannelSender(mailer), newAlertChannelCounter(ops.Registry()))
+	// ADR-747: record customer SLO budget hours from Prometheus.
+	go runSLORollup(ctx, store, promClient, log)
 	// ADR-098 PR-C: connection-aware upstream probe + partition
 	// cron. The FAAS_UPSTREAM_PROBE environment value is the
 	// bootstrap fallback; the durable data-placement flag can
@@ -1204,6 +1231,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// gauges without a nil check (zero value is a no-op).
 	jobMetrics := meter.NewJobMetrics()
 	loop := meter.NewLoop(store, cpu, parker, pusher, pn, mailer, dunning, residency, evaluator, deps.now, log, mc, ops).
+		WithQuotaWarnings(func() bool { return deps.getenv(internalmail.QuotaWarningOutboxEnableEnv) == "1" }, quotaWarningCommands).
 		WithBillingEnabled(billingMode.Enabled()).
 		WithEgress(egress).
 		WithProbe(probe).

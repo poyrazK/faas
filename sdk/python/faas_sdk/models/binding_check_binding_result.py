@@ -15,6 +15,10 @@ from ..models.binding_check_binding_result_required_object_storage_mode import (
     BindingCheckBindingResultRequiredObjectStorageMode,
     check_binding_check_binding_result_required_object_storage_mode,
 )
+from ..models.binding_check_binding_result_required_queue_evidence import (
+    BindingCheckBindingResultRequiredQueueEvidence,
+    check_binding_check_binding_result_required_queue_evidence,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -33,6 +37,8 @@ class BindingCheckBindingResult:
     scope: str
     status: str
     """passed, blocked, unsupported or skipped."""
+    required_queue_evidence: BindingCheckBindingResultRequiredQueueEvidence | Unset = UNSET
+    """Explicit scheduler readiness requirement; a passed policy result does not imply queue connectivity."""
     object_storage_mode: BindingCheckBindingResultObjectStorageMode | Unset = UNSET
     """Exact admitted canary mode. Older evidence with no mode is listing-only and cannot satisfy write
     requirements."""
@@ -58,6 +64,10 @@ class BindingCheckBindingResult:
         scope = self.scope
 
         status = self.status
+
+        required_queue_evidence: str | Unset = UNSET
+        if not isinstance(self.required_queue_evidence, Unset):
+            required_queue_evidence = self.required_queue_evidence
 
         object_storage_mode: str | Unset = UNSET
         if not isinstance(self.object_storage_mode, Unset):
@@ -93,6 +103,8 @@ class BindingCheckBindingResult:
                 "status": status,
             }
         )
+        if required_queue_evidence is not UNSET:
+            field_dict["required_queue_evidence"] = required_queue_evidence
         if object_storage_mode is not UNSET:
             field_dict["object_storage_mode"] = object_storage_mode
         if required_object_storage_mode is not UNSET:
@@ -124,6 +136,15 @@ class BindingCheckBindingResult:
         scope = d.pop("scope")
 
         status = d.pop("status")
+
+        _required_queue_evidence = d.pop("required_queue_evidence", UNSET)
+        required_queue_evidence: BindingCheckBindingResultRequiredQueueEvidence | Unset
+        if isinstance(_required_queue_evidence, Unset):
+            required_queue_evidence = UNSET
+        else:
+            required_queue_evidence = check_binding_check_binding_result_required_queue_evidence(
+                _required_queue_evidence
+            )
 
         _object_storage_mode = d.pop("object_storage_mode", UNSET)
         object_storage_mode: BindingCheckBindingResultObjectStorageMode | Unset
@@ -168,6 +189,7 @@ class BindingCheckBindingResult:
             name=name,
             scope=scope,
             status=status,
+            required_queue_evidence=required_queue_evidence,
             object_storage_mode=object_storage_mode,
             required_object_storage_mode=required_object_storage_mode,
             binding=binding,

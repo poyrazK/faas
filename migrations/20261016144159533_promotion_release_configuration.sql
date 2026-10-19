@@ -1,4 +1,6 @@
+-- migration-compat: expand
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE TABLE IF NOT EXISTS project_environment_promotion_release_config (
  promotion_id uuid PRIMARY KEY REFERENCES project_environment_promotions(id) ON DELETE CASCADE,
  payload jsonb NOT NULL CHECK (jsonb_typeof(payload)='object' AND payload ? 'hash' AND jsonb_typeof(payload->'hash')='string' AND payload->>'hash' ~ '^[a-f0-9]{64}$')

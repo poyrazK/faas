@@ -174,6 +174,7 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 	if appOK {
 		appURL = canonicalAppURL(app)
 	}
+	noHTTP := appOK && servesNoHTTP(app.Manifest.ExecutionMode)
 	if final.CanaryTotalSteps > 0 && final.RolloutState == rolloutStateAborted {
 		reason := final.RolloutAbortedReason
 		if reason == "" {
@@ -198,6 +199,11 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 		}
 		PrintProgress(osStdout, "Rollout: %d%% traffic · step %d/%d · in progress", final.TrafficPercent, step, final.CanaryTotalSteps)
 		PrintProgress(osStdout, "follow: gregale deployment wait %s --rollout", final.ID)
+		// ADR-1446: a production release rolls out behind the health-gated
+		// canary by default, so name both ways out of it.
+		if appOK && app.ReleasePolicy != api.ReleasePolicyImmediate {
+			PrintProgress(osStdout, "A health-gated rollout is this app's default: skip it once with --rollout immediate, or always with gregale app %s --release-policy immediate", appSlug)
+		}
 	} else if darkDeploy {
 		if final.TrafficPercent != 0 {
 			PrintFail(osStderr, "Deployment %s became live with %d%% production traffic; expected 0%%. Inspect with: gregale traffic status %s", final.ID, final.TrafficPercent, appSlug)
@@ -221,16 +227,28 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 		} else {
 			PrintProgress(osStdout, "Promotion: inspect current traffic with gregale traffic status %s", appSlug)
 		}
+	} else if noHTTP {
+		// A worker or job has no URL to visit; the cold-wake and access
+		// lines describe request apps only (H10-137).
+		if label := renderRevision(final.Revision); label != "" {
+			PrintOK(osStdout, "Deployed %s.", label)
+		} else {
+			PrintOK(osStdout, "Deployed.")
+		}
 	} else if label := renderRevision(final.Revision); label != "" {
 		PrintOK(osStdout, "Deployed %s. %s", label, appURL)
 	} else {
 		PrintOK(osStdout, "Deployed. %s", appURL)
 	}
 	renderCronActivation(ctx, final)
-	if !darkDeploy {
+	switch {
+	case darkDeploy:
+	case noHTTP:
+		printDeployNoHTTPSentence(app.Manifest.ExecutionMode, appSlug)
+	default:
 		printDeployColdWakeSentence()
 	}
-	if appOK {
+	if appOK && !noHTTP {
 		renderDeploymentAccess(osStdout, app, appSlug)
 	}
 	if cache := formatArtifactCacheSummary(final.BuildCacheStatus, final.CacheKeySHA256); cache != "" {
@@ -410,6 +428,10 @@ func writeWaitedDeploymentReceiptUntil(ctx context.Context, c *Client, dep api.D
 }
 
 func writeWaitedDeploymentReceiptUntilWithOptions(ctx context.Context, c *Client, dep api.DeploymentResponse, prov *zeroConfigProvenance, appURL, sourceSHA256, appSlug string, deadline time.Duration, waitForRollout, darkDeploy bool, simplePlans ...*simpleapp.Plan) int {
+	return writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx, c, dep, prov, appURL, sourceSHA256, appSlug, deadline, waitForRollout, darkDeploy, nil, simplePlans...)
+}
+
+func writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx context.Context, c *Client, dep api.DeploymentResponse, prov *zeroConfigProvenance, appURL, sourceSHA256, appSlug string, deadline time.Duration, waitForRollout, darkDeploy bool, sourceMaps *api.IssueSourceMapsMetadata, simplePlans ...*simpleapp.Plan) int {
 	if deadline <= 0 {
 		deadline = defaultDeployWaitTimeout
 	}
@@ -428,6 +450,7 @@ func writeWaitedDeploymentReceiptUntilWithOptions(ctx context.Context, c *Client
 			receiptDep = final
 		}
 		receipt := newDeployReceipt(receiptDep, prov, appURL, sourceSHA256, simplePlans...)
+		receipt.IssueSourceMaps = sourceMaps
 		receipt.Interrupted = errors.Is(ctx.Err(), context.Canceled)
 		receipt.TimedOut = !receipt.Interrupted
 		receipt.WaitStage = stage
@@ -446,6 +469,7 @@ func writeWaitedDeploymentReceiptUntilWithOptions(ctx context.Context, c *Client
 		configurationErr = session.applySettings(ctx, c)
 	}
 	receipt := newDeployReceipt(final, prov, appURL, sourceSHA256, simplePlans...)
+	receipt.IssueSourceMaps = sourceMaps
 	if final.Status == statusLive && darkDeploy && final.TrafficPercent == 0 {
 		receipt.PreviewURL = deploymentPreviewURL(ctx, c, final.ID)
 		receipt.PromotionCommand, _ = deploymentPromotionCommand(ctx, c, appSlug, final)
@@ -463,6 +487,7 @@ func writeWaitedDeploymentReceiptUntilWithOptions(ctx context.Context, c *Client
 	if receipt.WaitStage != "" {
 		receipt.Recovery = newDeployRecovery(receipt.WaitStage, appSlug, final.ID, "", deadline, waitForRollout)
 		receipt.Recovery.ResumeCommand = ""
+		receipt.Recovery.NextCommand = failedDeploymentRecovery(appSlug, final).NextCommand
 		receipt.Recovery.Hint = "The deployment or rollout reached a failed terminal state. Inspect the deployment and its logs before submitting a corrected deployment."
 	}
 	if configurationErr != nil {

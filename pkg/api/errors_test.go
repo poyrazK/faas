@@ -169,15 +169,15 @@ func TestErrPlanLimitApps(t *testing.T) {
 }
 
 func TestErrPlanLimitRAM(t *testing.T) {
-	l := MustLimitsFor(PlanPro) // 512 MB
-	p := ErrPlanLimitRAM(l, 1024)
+	l := MustLimitsFor(PlanPro) // 1024 MB
+	p := ErrPlanLimitRAM(l, 2048)
 	if p.Code != CodePlanLimitRAM {
 		t.Errorf("Code = %q", p.Code)
 	}
-	if p.Limit == nil || *p.Limit != 512 {
-		t.Errorf("Limit = %v, want 512", p.Limit)
+	if p.Limit == nil || *p.Limit != 1024 {
+		t.Errorf("Limit = %v, want 1024", p.Limit)
 	}
-	if !strings.Contains(p.Detail, "512") || !strings.Contains(p.Detail, "1024") {
+	if !strings.Contains(p.Detail, "1024") || !strings.Contains(p.Detail, "2048") {
 		t.Errorf("Detail %q should name cap + request", p.Detail)
 	}
 }
@@ -537,7 +537,7 @@ func TestValidateAppConfig(t *testing.T) {
 		wantCode string
 	}{
 		{name: "under caps (hobby)", plan: PlanHobby, ramMB: 256, maxConc: 2, wantNil: true},
-		{name: "ram over cap (hobby: 256)", plan: PlanHobby, ramMB: 512, maxConc: 2, wantCode: CodePlanLimitRAM},
+		{name: "ram over cap (hobby: 512)", plan: PlanHobby, ramMB: 1024, maxConc: 2, wantCode: CodePlanLimitRAM},
 		{name: "concur over cap (hobby: 2)", plan: PlanHobby, ramMB: 128, maxConc: 5, wantCode: CodePlanLimitConcur},
 		// RAM is checked first, so over-cap RAM + over-cap concurrency returns the RAM error.
 		{name: "both over — RAM wins", plan: PlanHobby, ramMB: 9999, maxConc: 9999, wantCode: CodePlanLimitRAM},
@@ -570,8 +570,8 @@ func TestValidateAppCPURAMPair(t *testing.T) {
 		guestVCPU int
 		wantOK    bool
 	}{
-		{name: "free canonical", plan: PlanFree, ramMB: 128, guestVCPU: 2, wantOK: true},
-		{name: "scale canonical", plan: PlanScale, ramMB: 1024, guestVCPU: 4, wantOK: true},
+		{name: "free canonical", plan: PlanFree, ramMB: 256, guestVCPU: 2, wantOK: true},
+		{name: "scale canonical", plan: PlanScale, ramMB: 2048, guestVCPU: 4, wantOK: true},
 		{name: "wrong vcpu", plan: PlanScale, ramMB: 128, guestVCPU: 8},
 		{name: "wrong ram", plan: PlanScale, ramMB: 128, guestVCPU: 4},
 	} {

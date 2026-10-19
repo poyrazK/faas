@@ -233,7 +233,17 @@ func (s *Service) Plan(
 	if err != nil {
 		return Result{}, fmt.Errorf("reconcile: plan: validate workload admission: %w", err)
 	}
-	if err := validateWorkloadAdmissionWithManaged(scan.Workloads, scan.Managed, accountApps, project.ID); err != nil {
+	if project.OrgID != "" {
+		visible := accountApps[:0]
+		for _, app := range accountApps {
+			if app.OrgID == project.OrgID {
+				visible = append(visible, app)
+			}
+		}
+		accountApps = visible
+	}
+	scan.Workloads = PreserveAppSlugs(scan.Workloads, accountApps, project.ID)
+	if err := validateWorkloadAdmissionWithManaged(scan.Workloads, scan.Managed, accountApps, project.ID, scan.DependencyReferences); err != nil {
 		return Result{}, err
 	}
 
@@ -248,7 +258,7 @@ func (s *Service) Plan(
 	// path is read-only but its projections feed the same handler
 	// surface, so the projected Auth values must match what the
 	// apply path would actually write.
-	acct, err := s.Store.AccountByID(ctx, project.AccountID)
+	acct, err := state.ProjectResourceAccount(ctx, s.Store, project)
 	if err != nil {
 		return Result{}, fmt.Errorf("reconcile: plan: load account: %w", err)
 	}
@@ -276,7 +286,7 @@ func (s *Service) Plan(
 	for _, a := range actions {
 		switch a.Op {
 		case "create":
-			draft := workloadToDraftApp(project, a.Workload, a.StartCommand, acct.Plan, workloadNameSet(scan.Workloads))
+			draft := workloadToDraftApp(project, a.Workload, a.StartCommand, acct.Plan, availableServiceNames(scan, project, existing))
 			out.Added = append(out.Added, draft)
 		case "update":
 			out.Changed = append(out.Changed, a.App)

@@ -69,6 +69,25 @@ var setSecretRecipient func() *age.X25519Recipient
 // Tests that don't seal pass without plumbing.
 var hostHMACKey func() []byte
 
+// hostSecretRecipient is setSecretRecipient's value, or nil when apid started
+// without a host recipient. Callers answer 503 on nil; calling the nil
+// setSecretRecipient directly panicked instead.
+func hostSecretRecipient() *age.X25519Recipient {
+	if setSecretRecipient == nil {
+		return nil
+	}
+	return setSecretRecipient()
+}
+
+// hostHMACKeyBytes is hostHMACKey's value, or nil when apid started without
+// a host HMAC key.
+func hostHMACKeyBytes() []byte {
+	if hostHMACKey == nil {
+		return nil
+	}
+	return hostHMACKey()
+}
+
 // listSecrets returns every secret on the app, key + timestamps only.
 // Ciphertext never leaves apid except via schedd → vmmd. Quota info is
 // included so the CLI can show "3/25 secrets" without a separate call.
@@ -289,18 +308,22 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrValidation("invalid JSON body"))
 		return
 	}
-	if prob := s.setAppSecret(r.Context(), acct, app, scope, key, req); prob != nil {
+	receipt, prob := s.setAppSecret(r, acct, app, scope, key, req)
+	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
 	writeJSON(w, http.StatusOK, struct {
-		Key string `json:"key"`
-	}{Key: key})
+		Key          string                   `json:"key"`
+		ConfigChange *api.ConfigChangeReceipt `json:"config_change,omitempty"`
+	}{Key: key, ConfigChange: receipt})
 }
 
 // setAppSecret is shared by the secret PUT route and project apply. Both paths
-// enforce quota, seal at rest, invalidate snapshots, and emit runtime/audit events.
-func (s *server) setAppSecret(ctx stdctx, acct state.Account, app state.App, scope, key string, req api.PutAppSecretRequest) *api.Problem {
+// enforce quota, seal at rest, record a config revision, invalidate snapshots,
+// and emit runtime/audit events.
+func (s *server) setAppSecret(r *http.Request, acct state.Account, app state.App, scope, key string, req api.PutAppSecretRequest) (*api.ConfigChangeReceipt, *api.Problem) {
+	ctx := r.Context()
 	safeAppSlug := strings.NewReplacer("\n", "", "\r", "").Replace(logsanitize.Field(app.Slug))
 	safeScope := strings.NewReplacer("\n", "", "\r", "").Replace(logsanitize.Field(scope))
 	limits := api.MustLimitsFor(acct.Plan)
@@ -308,21 +331,24 @@ func (s *server) setAppSecret(ctx stdctx, acct state.Account, app state.App, sco
 	// depth — if a future refactor drops one of the two, the other still
 	// protects.
 	if prob := req.Validate(limits.SecretValueMaxBytes); prob != nil {
-		return prob
+		return nil, prob
 	}
 	if prob := s.checkSecretQuota(ctx, acct, app, scope, key, limits); prob != nil {
-		return prob
+		return nil, prob
 	}
+	change := s.beginConfigChange(r, acct, app, scope, key)
 	if prob := s.sealAndPersist(ctx, acct, app, scope, key, req.Value, req.SecretClass, limits); prob != nil {
-		return prob
+		s.abandonConfigChange(ctx, change)
+		return nil, prob
 	}
+	revision := s.finishConfigChange(ctx, change, state.ConfigSourceSecretSet, key, false)
 	invalidated, err := s.invalidateAppSnapshots(ctx, app.ID)
 	if err != nil {
 		s.log.Error("secret set: invalidate snapshots", "app", safeAppSlug, "err", err)
 		s.audit.Emit(ctx, "secret.snapshot_invalidation_failed", &acct.ID, map[string]any{
 			"app_id": app.ID, "scope": scope, "name": key, "operation": "set",
 		})
-		return api.ErrCapacity("could not invalidate application snapshots")
+		return nil, api.ErrCapacity("could not invalidate application snapshots")
 	}
 	// Audit + log. VALUE never reaches slog. logsanitize.RedactValue is
 	// used defensively even though we never log req.Value directly — a
@@ -347,7 +373,7 @@ func (s *server) setAppSecret(ctx stdctx, acct state.Account, app state.App, sco
 		"snapshots_invalidated":  invalidated,
 	})
 	s.notifyRuntimeConfigChange(ctx, db.NotifySecretRotated, acct, app, "set", scope, key)
-	return nil
+	return configChangeReceipt(change, revision), nil
 }
 
 // sealAndPersist runs the "no-recipient / seal / persist" portion of
@@ -383,13 +409,13 @@ func (s *server) setAppSecret(ctx stdctx, acct state.Account, app state.App, sco
 // HMAC key is a misconfiguration that must surface as a 5xx, not
 // a silently empty value_hash.
 func (s *server) sealAndPersist(c stdctx, acct state.Account, app state.App, scope, key, value, secretClass string, limits api.Limits) *api.Problem {
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if recipient == nil {
 		return customerCapacityProblem(s.log, "store app secret", "Secret storage temporarily unavailable",
 			"Gregale could not securely store this value.",
 			"Retry in a few seconds; if it still fails, contact support.", nil)
 	}
-	hmacKey := hostHMACKey()
+	hmacKey := hostHMACKeyBytes()
 	if len(hmacKey) == 0 {
 		// ADR-117 PR-C: defensible refuse-to-seal for the case where
 		// env-driven secrets are enabled but the per-host HMAC key
@@ -523,8 +549,10 @@ func (s *server) deleteSecret(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, prob)
 		return
 	}
+	change := s.beginConfigChange(r, acct, app, scope, "")
 	revocation, err := s.store.DeleteAppSecretInScopeWithRevocation(r.Context(), acct.ID, app.ID, scope, key)
 	if err != nil {
+		s.abandonConfigChange(r.Context(), change)
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.ErrSecretNotFound(key))
 			return
@@ -536,6 +564,8 @@ func (s *server) deleteSecret(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, api.ErrCapacity("could not delete secret"))
 		return
 	}
+	// ADR-1451: deletion is revocation; a guard never restores it.
+	s.finishConfigChange(r.Context(), change, state.ConfigSourceSecretDelete, key, true)
 	invalidated, err := s.invalidateAppSnapshots(r.Context(), app.ID)
 	if err != nil {
 		s.log.Error("secret delete: invalidate snapshots", "app", safeAppSlug, "err", err)

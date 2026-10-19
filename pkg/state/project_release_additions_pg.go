@@ -198,5 +198,5 @@ func (m *MemStore) publishSafeProjectReleaseLocked(accountID, attemptID, project
 	if safe.AddServices {
 		change = &releaseAdditionChange{attemptID, safe, rollback}
 	}
-	return m.publishProjectReleaseWithIDLocked(accountID, projectID, "production", &expected, nil, safe.TTLSeconds, members, "", change)
+	return m.publishProjectReleaseWithIDLocked(context.Background(), accountID, projectID, "production", &expected, nil, safe.TTLSeconds, members, "", change)
 }

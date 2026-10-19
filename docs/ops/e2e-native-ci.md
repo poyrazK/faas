@@ -193,7 +193,7 @@ workload-identity provider condition revokes GitHub authentication before SSH.
 
 ## Project worker release lane
 
-Select `project-worker-release-only` for the ADR-1408 mixed HTTP/push-worker
+Select `project-worker-release-only` for the ADR-20261019120008 mixed HTTP/push-worker
 qualification. It exercises isolated candidate startup/configuration, real queue
 delivery, controller restart recovery, atomic publication, critical-probe rollback,
 unlaunchable-worker refusal and bounded retirement of a SIGTERM-resistant guest.

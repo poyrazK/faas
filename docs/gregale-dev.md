@@ -11,6 +11,41 @@ From an application directory:
 gregale dev
 ```
 
+The normal `dev` entry point runs the local source checks used by `dev setup`
+before provisioning. Blocking source errors include a `doctor --path` command;
+warnings remain visible. Source and app defaults come from the selected source
+directory, including with `--path`. The app default supplies the developer
+session name; the session still uses an isolated developer app and resources.
+On exit, the CLI explains the lease and prints exact `dev info` and `dev --stop`
+commands retaining the source, session name, and connection profile.
+
+## Save setup for the next session or a teammate
+
+Preview the portable choices, then save them:
+
+```sh
+gregale dev setup --env-file .env.dev --postgres --ttl 72h --save --dry-run
+gregale dev setup --env-file .env.dev --postgres --ttl 72h --save
+gregale dev
+```
+
+`--save` records the effective lease, database and bucket choices, and relative
+env-file and service-override-file references in `gregale.yaml` (or the existing
+`gregale.yml`). It preserves unrelated manifest settings, comments, and file
+permissions. It never exports file contents or credentials. Referenced files must
+be inside the source directory; each developer supplies their own values. Session
+names remain local choices. Existing hosting, seed, debug, and watch configuration
+continues to work.
+
+Saving requires valid local source checks but no login or network access.
+`--dry-run` requires `--save` and writes nothing. Add `--start` to save and then
+start the developer loop after authentication; it cannot be combined with
+`--dry-run`. JSON output adds a `saved_config` object describing the selected
+values and destination. TOML manifests require an explicit migration before
+using this YAML writer.
+
+## The development loop
+
 The CLI detects the application shape, uploads the current working tree
 (including uncommitted changes), waits for the real build, prints a stable URL,
 and watches deployable files for the next change. Watching continues while a

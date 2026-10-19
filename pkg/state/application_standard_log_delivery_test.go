@@ -1,7 +1,6 @@
 package state
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -12,11 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appstandards"
 )
 
-type standardLogDeliveryTestStore interface {
-	standardLocalIntentTestStore
-	ApplicationStandardLogDeliveryStore
-	ListEnabledAppLogDrains(context.Context) ([]AppLogDrain, error)
-}
+type standardLogDeliveryTestStore = contractTestStore
 
 func TestMemApplicationStandardLogDelivery(t *testing.T) {
 	standardLogDeliveryLifecycle(t, NewMemStore())

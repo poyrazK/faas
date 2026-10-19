@@ -197,6 +197,18 @@ func (s *Service) syncManagedRealtimeEndpoint(ctx context.Context, row state.Man
 	if err != nil {
 		return err
 	}
+	accountMaxConnections, err := s.realtimeAccountConnectionLimit(ctx, row.AccountID)
+	if err != nil {
+		return err
+	}
+	var liveRoutes []realtime.LiveRoute
+	if s.LiveRoutes != nil {
+		// A failed lookup leaves the node's registration as it was rather
+		// than withdrawing routes that may still be valid.
+		if liveRoutes, err = s.LiveRoutes(ctx, row.AccountID, row.AppID); err != nil {
+			return fmt.Errorf("live routes for endpoint %s: %w", row.ID, err)
+		}
+	}
 	authMode := row.AuthMode
 	if authMode == "" {
 		if len(authToken) > 0 {
@@ -222,7 +234,48 @@ func (s *Service) syncManagedRealtimeEndpoint(ctx context.Context, row state.Man
 		MaxConnections:   row.MaxConnections,
 		MaxMessageBytes:  row.MaxMessageBytes,
 		MaxConnectionAge: time.Duration(row.MaxConnectionAgeSeconds) * time.Second,
+		LiveRoutes:       liveRoutes,
+
+		AccountMaxConnections: accountMaxConnections,
 	})
+}
+
+// realtimeAccountConnectionLimit is the account's plan allowance of concurrent
+// realtime connections (ADR-1323), or zero without fair use. Plan changes
+// reach realtimed with the next endpoint reconcile.
+func (s *Service) realtimeAccountConnectionLimit(ctx context.Context, accountID string) (int, error) {
+	if !s.FairUseEnabled {
+		return 0, nil
+	}
+	acct, err := s.Host.Store().AccountByID(ctx, accountID)
+	if err != nil {
+		return 0, fmt.Errorf("realtime account %s plan: %w", accountID, err)
+	}
+	limits, ok := api.RealtimeLimitsFor(acct.Plan)
+	if !ok {
+		return 0, fmt.Errorf("realtime account %s: unknown plan %q", accountID, acct.Plan)
+	}
+	return limits.ConnectionsPerAccount, nil
+}
+
+// SyncAppEndpoints registers an app's endpoints again, so a change to its
+// live routes reaches realtimed without waiting for reconciliation.
+func (s *Service) SyncAppEndpoints(ctx context.Context, appID string) error {
+	store, ok := realtimeEndpointStore(s)
+	if !ok || s.Registrar == nil {
+		return nil
+	}
+	rows, err := store.ListManagedRealtimeEndpointsForApp(ctx, appID)
+	if err != nil {
+		return fmt.Errorf("list realtime endpoints for app %s: %w", appID, err)
+	}
+	var errs []error
+	for _, row := range rows {
+		if err := s.syncManagedRealtimeEndpoint(ctx, row); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (s *Service) unsealRealtimeCredential(ctx context.Context, sealed []byte) ([]byte, error) {

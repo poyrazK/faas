@@ -417,12 +417,12 @@ func TestFrozenCandidatesPreferTheSessionInstance(t *testing.T) {
 	if err != nil || len(plain) != 2 {
 		t.Fatalf("candidates = %v, %v", plain, err)
 	}
-	last := plain[1].ID
+	last := plain[1].ins.ID
 	hinted, err := f.e.frozenCandidates(WithPreferredInstance(t.Context(), last), f.app, f.dep)
-	if err != nil || len(hinted) != 2 || hinted[0].ID != last || hinted[1].ID != plain[0].ID {
+	if err != nil || len(hinted) != 2 || hinted[0].ins.ID != last || hinted[1].ins.ID != plain[0].ins.ID {
 		t.Fatalf("hinted candidates = %v, %v; want %s first", hinted, err, last)
 	}
-	if got, _ := f.e.frozenCandidates(WithPreferredInstance(t.Context(), "elsewhere"), f.app, f.dep); got[0].ID != plain[0].ID {
+	if got, _ := f.e.frozenCandidates(WithPreferredInstance(t.Context(), "elsewhere"), f.app, f.dep); got[0].ins.ID != plain[0].ins.ID {
 		t.Fatal("a hint naming no candidate reordered them")
 	}
 }

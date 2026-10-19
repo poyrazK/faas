@@ -73,7 +73,7 @@ func TestProjectSubmissionLegacyFingerprintCompatible(t *testing.T) {
 	s, store, account, key := projectSecretsTestServer(t, api.ScopesAdminOnly)
 	attempt := strings.Repeat("d", 32)
 	sourceHash := sha256.Sum256(projectSecretArchive(t))
-	// The ordinary request fingerprint from ADR-1402, before retry targets.
+	// The ordinary request fingerprint from ADR-20261019120002, before retry targets.
 	payload, err := json.Marshal([]any{hex.EncodeToString(sourceHash[:]), "demo", "", "main", int64(0), map[string]bool{}, map[string]bool{}, false, false, "", (*bool)(nil), map[string]string(nil)})
 	if err != nil {
 		t.Fatal(err)

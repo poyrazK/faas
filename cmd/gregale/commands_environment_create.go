@@ -70,5 +70,8 @@ func environmentProjectSlug(explicit string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if linked.Project == "" {
+		return "", errors.New("this checkout remembers a standalone app; run `gregale link <project-slug>` or pass --project to manage project environments")
+	}
 	return linked.Project, nil
 }

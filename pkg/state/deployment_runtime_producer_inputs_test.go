@@ -14,10 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/imagepublisher"
 )
 
-type runtimeProducerInputTestStore interface {
-	runtimeArtifactInputTestStore
-	DeploymentRuntimeProducerInputStore
-}
+type runtimeProducerInputTestStore = contractTestStore
 
 func runtimeProducerInputsLifecycle(t *testing.T, s runtimeProducerInputTestStore) {
 	t.Helper()

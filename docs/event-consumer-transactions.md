@@ -128,6 +128,9 @@ PostgreSQL remain separate transactions; delivery remains at least once.
 
 ## Node handler
 
+For detached durable workers, the [Node acknowledgment worker](event-acknowledgment-node-worker.md)
+combines this receipt transaction with platform lease renewal and completion.
+
 Install `eventConsumerReceiptSchema` explicitly as the database owner. Supply a
 `pg.Pool` to the wrapper; it leases and releases a dedicated connection. Acceptance
 IDs are decimal **strings**, including in `newEventConsumerRequest`, so values
@@ -283,3 +286,21 @@ The same callback inserts compose; the source destination determines whether
 Gregale accepts a managed Operation or an application-event fanout. Install the
 publication checkpoint upgrade explicitly and retain consumer receipts across
 all relevant replay paths.
+
+## Long-running preparation
+
+The Go SDK offers [application-owned processing leases](event-consumer-processing.md)
+for durable claims, renewal and fenced transactional completion before HTTP success.
+The [Node](event-consumer-processing-node.md) and
+[Python](event-consumer-processing-python.md) SDKs use the same application-owned
+schema and compose independently acquired claims with their acknowledgment workers.
+
+## Deferred acknowledgment worker (Go)
+
+[Go worker acknowledgments](event-acknowledgment-worker.md) connects these receipt
+transactions and optional preparation leases to platform renew/complete/retry/
+dead-letter callbacks, with receipt-only recovery after uncertain commits.
+
+The [Node durable acknowledgment worker](event-acknowledgment-node-intents.md)
+adds an internal pre-commit hook for saving completion intents with the receipt.
+Ordinary receipt helpers do not access the optional intent table.

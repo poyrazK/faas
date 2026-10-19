@@ -1,7 +1,7 @@
 # Native environment promotion acceptance
 
 The `project-environment-promotion-only` lane exercises staging-to-production
-promotion and recovery under ADR-1423/1025/1026/1027/1028/1029/1031/1033/1035. It is an explicit, bounded acceptance lane, compiled
+promotion and recovery under ADR-20261019120023/1025/1026/1027/1028/1029/1031/1033/1035. It is an explicit, bounded acceptance lane, compiled
 with `metal,promotionacceptance`. It does not enable production admission or
 replace the remaining scenarios in [the promotion qualification runbook](promotion-health-native-acceptance.md).
 Adding, compiling or locally checking this lane does not record a native pass.
@@ -131,7 +131,7 @@ ordinary production deployment process.
 
 ## Capacity admission qualification
 
-The `promotion-admission` partition implements ADR-1432 and must execute on the
+The `promotion-admission` partition implements ADR-20261019120032 and must execute on the
 designated host. The original 21-operation load cohort alone cannot qualify the
 queue. Portable parser/fixture checks and tagged compilation do not record a pass.
 
@@ -167,7 +167,7 @@ timestamps, SQL session disappearance and restart/replay results. No secret or
 SQL driver diagnostic belongs in evidence.
 
 All six partitions are required for the combined report. See
-[ADR-1433](../adr/1433-native-promotion-migration-qualification.md) and the
+[ADR-20261019120033](../adr/20261019120033-native-promotion-migration-qualification.md) and the
 [migration runbook](promotion-migration-native-acceptance.md) for the implemented
 scope and remaining native requirements before enabling migration admission.
 
@@ -189,4 +189,4 @@ and reviewing the native run, retain the publication report bytes and use their
 SHA-256 for the `publication-crash-boundaries` receipt in
 [controlled rollout](promotion-rollout.md). Review any additional applicable
 operator-control publication variants before signing; the partition does not
-implicitly qualify those variants or migration execution. See ADR-1435 for scope.
+implicitly qualify those variants or migration execution. See ADR-20261019120035 for scope.

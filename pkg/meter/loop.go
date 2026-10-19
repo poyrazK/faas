@@ -41,8 +41,10 @@ type Loop struct {
 	pusher billing.Provider
 	// billingDisabled keeps sampling, quota enforcement, and the billing
 	// health heartbeat active while provider delivery is intentionally paused.
-	billingDisabled bool
-	notif           Notifier
+	billingDisabled       bool
+	notif                 Notifier
+	quotaWarningRequested func() bool
+	quotaWarningCommands  QuotaWarningCommands
 	// mailer is the customer-facing email sender (spec §171 "dunning +
 	// quota mails reference email"). Shared with the dunning timer —
 	// both loops hand off the same Sender via DunningSender's local
@@ -571,7 +573,7 @@ type AlertsEvaluator = alerts.Evaluator
 // pgstore.go:380-381, :668); today's behaviour is acceptable per
 // the cap's documented "advisory for the overage row only" contract.
 func (l *Loop) runQuotaOnce(ctx context.Context) {
-	accounts, err := l.store.ListAllAccounts(ctx)
+	accounts, err := state.ListBillingResourceAccounts(ctx, l.store)
 	if err != nil {
 		l.log.Warn("meter: quota list_accounts", "err", err)
 		return
@@ -603,7 +605,7 @@ func (l *Loop) runQuotaOnce(ctx context.Context) {
 			}
 		}
 		used := MonthlyUsageGB(usages)
-		if _, err := EnforceQuota(ctx, l.store, l.notif, l.parker, l.mailer, l.log, acct, used, now); err != nil {
+		if _, err := (QuotaParams{Store: l.store, Notif: l.notif, Parker: l.parker, Mailer: l.mailer, Log: l.log, WarningRequested: l.quotaWarningRequested, WarningCommands: l.quotaWarningCommands}).Enforce(ctx, acct, used, now); err != nil {
 			// EnforceQuota already logged + skipped parked-instance failures;
 			// only status/structural errors reach here.
 			if errors.Is(err, state.ErrNotFound) {
@@ -682,7 +684,7 @@ func (l *Loop) emitFloorApplied(ctx context.Context, rows []RolledRow) {
 	// is fetched via ListAllApps; if that fails the floor
 	// counter still increments with plan="" so the ops
 	// surface never silently drops a metric row.
-	accounts, err := l.store.ListAllAccounts(ctx)
+	accounts, err := state.ListBillingResourceAccounts(ctx, l.store)
 	if err != nil {
 		l.log.Warn("meter: floor emit list_accounts", "err", err)
 		for range floorApps {
@@ -704,7 +706,7 @@ func (l *Loop) emitFloorApplied(ctx context.Context, rows []RolledRow) {
 	}
 	appAccount := make(map[string]string, len(apps))
 	for _, a := range apps {
-		appAccount[a.ID] = a.AccountID
+		appAccount[a.ID] = meterAppSubject(a, accountPlan)
 	}
 	for appID := range floorApps {
 		acctID, ok := appAccount[appID]
@@ -788,3 +790,10 @@ func (l *Loop) LastTick(name string) (time.Time, bool) {
 // inspecting the full account struct.
 //nolint:unused // exposed for downstream callers; not used inside pkg/meter
 // (helper functions intentionally removed — see commit history if needed)
+
+// WithQuotaWarnings adds the private daily warning handoff without granting
+// meterd mail-body encryption or generic send authority.
+func (l *Loop) WithQuotaWarnings(requested func() bool, commands QuotaWarningCommands) *Loop {
+	l.quotaWarningRequested, l.quotaWarningCommands = requested, commands
+	return l
+}

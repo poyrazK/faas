@@ -59,6 +59,10 @@ func canUseResumableUpload(sh shape, runtime, handler string, dockerfile bool, s
 // the server session alive across CLI process restarts; the archive itself is
 // never copied to the local state directory.
 func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, progress resumableUploadProgress, options ...api.UploadDeployOptions) (dep api.DeploymentResponse, sourceSHA256 string, supported bool, err error) {
+	return deployResumableTarball(c, ctx, slug, path, progress, nil, options...)
+}
+
+func deployResumableTarball(c *Client, ctx context.Context, slug, path string, progress resumableUploadProgress, observe func(deployUploadIdentity) error, options ...api.UploadDeployOptions) (dep api.DeploymentResponse, sourceSHA256 string, supported bool, err error) {
 	phase := "upload"
 	outcome := deploySubmissionRejected
 	defer func() {
@@ -152,8 +156,21 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 			// A saved session may already have committed a deployment.
 			phase = "submission"
 			outcome = deploySubmissionUnknown
+			if observe != nil {
+				if err := observe(deployUploadIdentity{UploadID: state.UploadID, TotalSize: state.TotalSize}); err != nil {
+					return api.DeploymentResponse{}, "", true, fmt.Errorf("save upload identity: %w", err)
+				}
+			}
 			remote, discoverErr := c.GetUploadSession(ctx, state.UploadID)
 			if discoverErr == nil {
+				if observe != nil {
+					if remote.UploadID != state.UploadID || remote.AppSlug != slug || remote.TotalSize != info.Size() {
+						return api.DeploymentResponse{}, "", true, errors.New("discovered upload does not match its recorded identity")
+					}
+					if remote.Status == "" || (remote.DeploymentID != nil && *remote.DeploymentID != "" && remote.Status != "committed" && remote.Status != "complete" && remote.Status != "completed") {
+						return api.DeploymentResponse{}, "", true, errors.New("discovered upload has contradictory or missing acceptance evidence")
+					}
+				}
 				switch strings.ToLower(remote.Status) {
 				case "committed", "complete", "completed":
 					if err := validateDiscoveredUpload(state, remote, info.Size()); err != nil {
@@ -211,6 +228,11 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 			} else if isUploadSessionRestart(discoverErr) {
 				if state.CommitAttempted {
 					return api.DeploymentResponse{}, "", true, fmt.Errorf("discover upload after an uncertain commit: %w", discoverErr)
+				}
+				// Guided workflows journal the upload identity; a missing
+				// session cannot prove their submission was rejected.
+				if observe != nil {
+					return api.DeploymentResponse{}, "", true, fmt.Errorf("saved upload outcome is unconfirmed: %w", discoverErr)
 				}
 				outcome = deploySubmissionRejected
 				stateFound = false
@@ -287,6 +309,11 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 
 		if session.ReceivedBytes > 0 && progress != nil {
 			progress(session.ReceivedBytes, session.TotalSize)
+		}
+		if observe != nil {
+			if err := observe(deployUploadIdentity{UploadID: session.UploadID, TotalSize: session.TotalSize}); err != nil {
+				return api.DeploymentResponse{}, "", true, fmt.Errorf("save upload identity: %w", err)
+			}
 		}
 		err = uploadSessionChunks(ctx, c, session, f, progress)
 		if err != nil {

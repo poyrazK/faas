@@ -19,7 +19,10 @@ def _get_kwargs(
     *,
     confirm: PostForceColdBootAppConfirm,
     reason: str | Unset = UNSET,
+    idempotency_key: str,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    headers["Idempotency-Key"] = idempotency_key
 
     params: dict[str, Any] = {}
 
@@ -38,6 +41,7 @@ def _get_kwargs(
         "params": params,
     }
 
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -69,6 +73,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
 
@@ -97,6 +106,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     confirm: PostForceColdBootAppConfirm,
     reason: str | Unset = UNSET,
+    idempotency_key: str,
 ) -> Response[OperatorIntentAcceptedResponse | Problem]:
     r"""Enqueue a force-cold-boot intent for an app's latest deployment (admin-only).
 
@@ -121,10 +131,27 @@ def sync_detailed(
     Requires `?confirm=true` as a tripwire. Optional
     `?reason=<slug>` defaults to `operator_force_cold_boot`.
 
+    ADR-1524: requires an MFA-verified operator session with step-up in
+    the last five minutes, admin scope, the operator allowlist and same
+    origin. Bearer keys do not satisfy step-up. Requires one
+    Idempotency-Key (1-255 visible ASCII characters), an empty body,
+    exactly one confirm=true and at most one reason; other query
+    parameters are rejected. The key is scoped to the actor across all
+    three recovery routes. Intent, exact 202 response and attributed
+    request audit handoff commit atomically. Matching retries return
+    the original response before reading mutable target state, without
+    expiry; changed action, target or reason returns 409
+    operator_submission_conflict. Trace changes do not change identity.
+    An existing legacy recovery cache/reservation returns 409
+    operator_submission_legacy and requires reconciliation. Notification
+    after acceptance is best effort; the scheduler safety tick recovers
+    a lost notification.
+
     Args:
         slug (str):
         confirm (PostForceColdBootAppConfirm):
         reason (str | Unset):
+        idempotency_key (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -138,6 +165,7 @@ def sync_detailed(
         slug=slug,
         confirm=confirm,
         reason=reason,
+        idempotency_key=idempotency_key,
     )
 
     response = client.get_httpx_client().request(
@@ -153,6 +181,7 @@ def sync(
     client: AuthenticatedClient | Client,
     confirm: PostForceColdBootAppConfirm,
     reason: str | Unset = UNSET,
+    idempotency_key: str,
 ) -> OperatorIntentAcceptedResponse | Problem | None:
     r"""Enqueue a force-cold-boot intent for an app's latest deployment (admin-only).
 
@@ -177,10 +206,27 @@ def sync(
     Requires `?confirm=true` as a tripwire. Optional
     `?reason=<slug>` defaults to `operator_force_cold_boot`.
 
+    ADR-1524: requires an MFA-verified operator session with step-up in
+    the last five minutes, admin scope, the operator allowlist and same
+    origin. Bearer keys do not satisfy step-up. Requires one
+    Idempotency-Key (1-255 visible ASCII characters), an empty body,
+    exactly one confirm=true and at most one reason; other query
+    parameters are rejected. The key is scoped to the actor across all
+    three recovery routes. Intent, exact 202 response and attributed
+    request audit handoff commit atomically. Matching retries return
+    the original response before reading mutable target state, without
+    expiry; changed action, target or reason returns 409
+    operator_submission_conflict. Trace changes do not change identity.
+    An existing legacy recovery cache/reservation returns 409
+    operator_submission_legacy and requires reconciliation. Notification
+    after acceptance is best effort; the scheduler safety tick recovers
+    a lost notification.
+
     Args:
         slug (str):
         confirm (PostForceColdBootAppConfirm):
         reason (str | Unset):
+        idempotency_key (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -195,6 +241,7 @@ def sync(
         client=client,
         confirm=confirm,
         reason=reason,
+        idempotency_key=idempotency_key,
     ).parsed
 
 
@@ -204,6 +251,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     confirm: PostForceColdBootAppConfirm,
     reason: str | Unset = UNSET,
+    idempotency_key: str,
 ) -> Response[OperatorIntentAcceptedResponse | Problem]:
     r"""Enqueue a force-cold-boot intent for an app's latest deployment (admin-only).
 
@@ -228,10 +276,27 @@ async def asyncio_detailed(
     Requires `?confirm=true` as a tripwire. Optional
     `?reason=<slug>` defaults to `operator_force_cold_boot`.
 
+    ADR-1524: requires an MFA-verified operator session with step-up in
+    the last five minutes, admin scope, the operator allowlist and same
+    origin. Bearer keys do not satisfy step-up. Requires one
+    Idempotency-Key (1-255 visible ASCII characters), an empty body,
+    exactly one confirm=true and at most one reason; other query
+    parameters are rejected. The key is scoped to the actor across all
+    three recovery routes. Intent, exact 202 response and attributed
+    request audit handoff commit atomically. Matching retries return
+    the original response before reading mutable target state, without
+    expiry; changed action, target or reason returns 409
+    operator_submission_conflict. Trace changes do not change identity.
+    An existing legacy recovery cache/reservation returns 409
+    operator_submission_legacy and requires reconciliation. Notification
+    after acceptance is best effort; the scheduler safety tick recovers
+    a lost notification.
+
     Args:
         slug (str):
         confirm (PostForceColdBootAppConfirm):
         reason (str | Unset):
+        idempotency_key (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -245,6 +310,7 @@ async def asyncio_detailed(
         slug=slug,
         confirm=confirm,
         reason=reason,
+        idempotency_key=idempotency_key,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -258,6 +324,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     confirm: PostForceColdBootAppConfirm,
     reason: str | Unset = UNSET,
+    idempotency_key: str,
 ) -> OperatorIntentAcceptedResponse | Problem | None:
     r"""Enqueue a force-cold-boot intent for an app's latest deployment (admin-only).
 
@@ -282,10 +349,27 @@ async def asyncio(
     Requires `?confirm=true` as a tripwire. Optional
     `?reason=<slug>` defaults to `operator_force_cold_boot`.
 
+    ADR-1524: requires an MFA-verified operator session with step-up in
+    the last five minutes, admin scope, the operator allowlist and same
+    origin. Bearer keys do not satisfy step-up. Requires one
+    Idempotency-Key (1-255 visible ASCII characters), an empty body,
+    exactly one confirm=true and at most one reason; other query
+    parameters are rejected. The key is scoped to the actor across all
+    three recovery routes. Intent, exact 202 response and attributed
+    request audit handoff commit atomically. Matching retries return
+    the original response before reading mutable target state, without
+    expiry; changed action, target or reason returns 409
+    operator_submission_conflict. Trace changes do not change identity.
+    An existing legacy recovery cache/reservation returns 409
+    operator_submission_legacy and requires reconciliation. Notification
+    after acceptance is best effort; the scheduler safety tick recovers
+    a lost notification.
+
     Args:
         slug (str):
         confirm (PostForceColdBootAppConfirm):
         reason (str | Unset):
+        idempotency_key (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -301,5 +385,6 @@ async def asyncio(
             client=client,
             confirm=confirm,
             reason=reason,
+            idempotency_key=idempotency_key,
         )
     ).parsed

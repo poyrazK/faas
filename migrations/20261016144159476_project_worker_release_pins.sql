@@ -1,4 +1,6 @@
+-- migration-compat: expand
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE TABLE IF NOT EXISTS project_worker_release_pins (
   root_invocation_id uuid PRIMARY KEY REFERENCES invocations(id) ON DELETE CASCADE,
   app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,

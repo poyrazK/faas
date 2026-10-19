@@ -1,0 +1,70 @@
+{{define "automation-live-suite-progress"}}{{with .Data.LiveSuiteProgress}}
+<div id="automation-live-suite-progress" data-url="{{.URL}}" data-auto="{{$.Data.LiveSuiteAuto}}" data-interval-ms="{{.IntervalMS}}" data-timeout-ms="{{.TimeoutMS}}" data-max-requests="{{.MaxRequests}}">
+<p data-suite-progress-status role="status" aria-live="polite">Confirm continuation to check existing runs and start remaining cases.</p>
+<button data-suite-progress-stop type="button" hidden>Stop advancing this suite</button>
+<noscript><p>Use Continue suite to check progress and admit the next case. Already admitted runs continue independently.</p></noscript>
+</div>
+<script nonce="{{$.Nonce}}">
+(() => {
+  const panel = document.getElementById('automation-live-suite-progress');
+  let result = document.getElementById('automation-live-suite-result');
+  if (!panel || !result || result.dataset.suiteManaged !== 'true') return;
+  const form = result.closest('form');
+  const status = panel.querySelector('[data-suite-progress-status]');
+  const pause = panel.querySelector('[data-suite-progress-stop]');
+  const endpoint = new URL(panel.dataset.url, location.href);
+  const interval = Number(panel.dataset.intervalMs), timeout = Number(panel.dataset.timeoutMs), limit = Number(panel.dataset.maxRequests);
+  if (!form || endpoint.origin !== location.origin || ![interval, timeout, limit].every(n => Number.isSafeInteger(n) && n > 0)) return;
+  const identity = ['suiteId', 'suiteManaged', 'suiteVersion', 'suitePublished', 'suiteDeployment'];
+  const target = Object.fromEntries(identity.map(key => [key, result.dataset[key]]));
+  const outcomes = ['passed', 'failed', 'pending', 'incomplete', 'unavailable', 'outdated'];
+  let active = false, busy = false, generation = 0, remaining = 0, timer = null, controller = null;
+  const visible = () => document.visibilityState === 'visible';
+  function stop(message) {
+    active = false; generation++; clearTimeout(timer); controller?.abort(); pause.hidden = true; status.textContent = message;
+  }
+  function schedule(delay) { clearTimeout(timer); if (active && visible()) timer = setTimeout(tick, delay); }
+  async function tick() {
+    if (!active || busy || !visible()) return;
+    busy = true;
+    const epoch = generation, abort = new AbortController();
+    controller = abort;
+    const deadline = setTimeout(() => abort.abort(), timeout);
+    try {
+      if (remaining-- <= 0) throw new Error('Automatic progress reached its limit. Confirm continuation again to inspect this same suite.');
+      const csrf = form.querySelector('input[name=csrf_token]')?.value;
+      if (!csrf) throw new Error('Reopen this suite before continuing.');
+      const response = await fetch(endpoint.href, {method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: abort.signal,
+        headers: {Accept: 'text/html', 'Content-Type': 'application/x-www-form-urlencoded'}, body: new URLSearchParams({csrf_token: csrf, confirm_real_actions: 'yes'})});
+      if (!response.ok) throw new Error('Suite progress stopped. Reopen this same suite and resolve availability or permission problems before continuing.');
+      if (!response.headers.get('content-type')?.startsWith('text/html')) throw new Error('Unexpected suite response. Reopen this suite.');
+      const html = await response.text();
+      if (epoch !== generation || !active || !visible()) return;
+      const nodes = new DOMParser().parseFromString(html, 'text/html').querySelectorAll('#automation-live-suite-result');
+      const next = nodes[0];
+      if (nodes.length !== 1 || !identity.every(key => next.dataset[key] === target[key]) || !outcomes.includes(next.dataset.suiteOutcome)) throw new Error('Suite identity changed. Reopen the original suite.');
+      result.replaceWith(document.importNode(next, true)); result = document.getElementById('automation-live-suite-result');
+      const outcome = result.dataset.suiteOutcome;
+      if (!['pending', 'incomplete'].includes(outcome)) { stop('Suite progress stopped: ' + outcome + '. Review the recorded results.'); return; }
+      status.textContent = 'Checking existing runs and advancing cases in order. Already admitted runs may perform real actions.';
+    } catch (error) {
+      if (epoch === generation && active) stop(error.name === 'AbortError' ? 'Progress timed out. Confirm continuation of this same suite to recover its saved run identities.' : error.message);
+    } finally {
+      clearTimeout(deadline); if (controller === abort) controller = null; busy = false; schedule(interval);
+    }
+  }
+  function begin(authorized) {
+    if (!authorized && !result.querySelector('input[name=confirm_live_suite_continue]')?.checked) { status.textContent = 'Confirm real actions before continuing this suite.'; return; }
+    generation++; controller?.abort(); active = true; remaining = limit; pause.hidden = false; schedule(0);
+  }
+  form.addEventListener('submit', event => {
+    if (event.submitter?.matches('[data-live-suite-continue]')) { event.preventDefault(); begin(false); }
+    else stop('Automatic suite progress stopped while leaving this page.');
+  });
+  pause.addEventListener('click', () => stop('Automatic progress stopped. Already admitted runs continue; confirm continuation to use their saved identities.'));
+  document.addEventListener('visibilitychange', () => { if (!visible() && active) stop('Suite advancement stopped while this page was hidden. Confirm continuation when ready.'); });
+  window.addEventListener('pagehide', () => stop('Suite advancement stopped after leaving this page.'));
+  if (panel.dataset.auto === 'true' && visible()) begin(true);
+})();
+</script>
+{{end}}{{end}}

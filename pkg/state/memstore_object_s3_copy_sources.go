@@ -22,9 +22,14 @@ func (m *MemStore) ownedCopySourceCredentialLocked(account, bucket, credential s
 	return c, nil
 }
 
-func (m *MemStore) ListObjectS3CopySources(_ context.Context, account, bucket, credential string) ([]ObjectS3CopySource, error) {
+func (m *MemStore) ListObjectS3CopySources(ctx context.Context, account, bucket, credential string) ([]ObjectS3CopySource, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []ObjectS3CopySource
+		return zero0, err
+	}
+
 	if _, err := m.ownedCopySourceCredentialLocked(account, bucket, credential); err != nil {
 		return nil, err
 	}
@@ -38,12 +43,17 @@ func (m *MemStore) ListObjectS3CopySources(_ context.Context, account, bucket, c
 	return out, nil
 }
 
-func (m *MemStore) SetObjectS3CopySource(_ context.Context, account, bucket, credential, source, prefix string) (ObjectS3CopySource, error) {
+func (m *MemStore) SetObjectS3CopySource(ctx context.Context, account, bucket, credential, source, prefix string) (ObjectS3CopySource, error) {
 	if !validObjectCopySourcePrefix(prefix) {
 		return ObjectS3CopySource{}, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectS3CopySource
+		return zero0, err
+	}
+
 	c, err := m.ownedCopySourceCredentialLocked(account, bucket, credential)
 	if err != nil {
 		return ObjectS3CopySource{}, err
@@ -80,9 +90,13 @@ func (m *MemStore) SetObjectS3CopySource(_ context.Context, account, bucket, cre
 	return g, nil
 }
 
-func (m *MemStore) DeleteObjectS3CopySource(_ context.Context, account, bucket, credential, source string) error {
+func (m *MemStore) DeleteObjectS3CopySource(ctx context.Context, account, bucket, credential, source string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	if _, err := m.ownedCopySourceCredentialLocked(account, bucket, credential); err != nil {
 		return err
 	}
@@ -114,15 +128,26 @@ func (m *MemStore) resolveObjectS3CopySourceLocked(account, credential, source, 
 	return g, b, nil
 }
 
-func (m *MemStore) ResolveObjectS3CopySource(_ context.Context, account, credential, source, key string) (ObjectS3CopySource, ObjectBucket, error) {
+func (m *MemStore) ResolveObjectS3CopySource(ctx context.Context, account, credential, source, key string) (ObjectS3CopySource, ObjectBucket, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectS3CopySource
+		var zero1 ObjectBucket
+		return zero0, zero1, err
+	}
+
 	return m.resolveObjectS3CopySourceLocked(account, credential, source, key)
 }
 
-func (m *MemStore) GetObjectS3CopySourceBucket(_ context.Context, account, id string) (ObjectBucket, error) {
+func (m *MemStore) GetObjectS3CopySourceBucket(ctx context.Context, account, id string) (ObjectBucket, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucket
+		return zero0, err
+	}
+
 	b, ok := m.objectBuckets[id]
 	if !ok || b.AccountID != account || b.State == "deleted" {
 		return ObjectBucket{}, ErrNotFound

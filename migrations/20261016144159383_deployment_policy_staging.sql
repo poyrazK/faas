@@ -1,4 +1,6 @@
+-- migration-compat: expand
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 ALTER TABLE apps
     ADD COLUMN IF NOT EXISTS deployment_policy_revision bigint NOT NULL DEFAULT 0 CHECK (deployment_policy_revision >= 0),
     ADD COLUMN IF NOT EXISTS deployment_policy_owner text NOT NULL DEFAULT '' CHECK (deployment_policy_owner = '' OR deployment_policy_owner ~ '^[0-9a-f]{32}$'),

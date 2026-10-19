@@ -13,14 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type cloneBindingTestStore interface {
-	cloneWorkloadTestStore
-	state.ProjectEnvironmentCloneBindingCaptureStore
-	state.ObjectBucketStore
-	state.ObjectS3CredentialBindingStore
-	state.ObjectBucketAccessStore
-	CreateAPIKey(context.Context, string, []byte, string, []string) (state.APIKey, error)
-}
+type cloneBindingTestStore = contractTestStore
 
 // ADR-590: independent buckets and credential/access policies belong to the
 // frozen catalogue even when no application secret refers to them.

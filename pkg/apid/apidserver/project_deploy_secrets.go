@@ -64,7 +64,7 @@ func (s *server) applyProjectDeploySecrets(r *http.Request, acct state.Account, 
 	sort.Strings(keys)
 	for _, app := range apps {
 		for _, key := range keys {
-			if prob := s.setAppSecret(r.Context(), acct, app, scope, key, api.PutAppSecretRequest{Value: secrets[key]}); prob != nil {
+			if _, prob := s.setAppSecret(r, acct, app, scope, key, api.PutAppSecretRequest{Value: secrets[key]}); prob != nil {
 				return prob
 			}
 		}

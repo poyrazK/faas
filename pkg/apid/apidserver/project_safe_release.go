@@ -56,7 +56,7 @@ func (s *server) prepareSafeProjectRelease(r *http.Request, acct state.Account, 
 	if req.Environment == "" {
 		req.Environment = "production"
 	}
-	if mode != "atomic" && mode != "atomic-verify" && mode != "atomic-config-verify" && mode != "atomic-migrate-verify" && mode != "atomic-config-migrate-verify" || !req.NoTriggers || len(req.Secrets) > 0 || len(req.Only) > 0 || len(req.Exclude) > 0 || req.PersistExclude || len(req.RetryTargets) > 0 || req.Environment != "" && req.Environment != "production" {
+	if mode != "atomic" && mode != "atomic-verify" && mode != "atomic-config-verify" && mode != "atomic-migrate-verify" && mode != "atomic-config-migrate-verify" || !req.NoTriggers || len(req.Secrets) > 0 || len(req.InitialSecrets) > 0 || len(req.Only) > 0 || len(req.Exclude) > 0 || req.PersistExclude || len(req.RetryTargets) > 0 || req.Migration || req.Environment != "" && req.Environment != "production" {
 		return api.ErrValidation("safe project deploy requires production, --no-triggers, and the complete project without secret or exclusion changes")
 	}
 	if apply && deploystaging.ProjectSubmissionFromContext(r.Context()) == nil {

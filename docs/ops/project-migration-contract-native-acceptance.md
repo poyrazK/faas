@@ -1,6 +1,6 @@
 # Native migration contract qualification
 
-ADR-1417 admission remains disabled by default. The new
+ADR-20261019120017 admission remains disabled by default. The new
 `project-migration-contract-only` lane is a qualification harness, not evidence
 that this capability has passed on native hardware.
 

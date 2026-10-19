@@ -61,7 +61,9 @@ func (m *MemStore) CreateProjectEnvironmentConfigVersion(_ context.Context, conf
 		config.CreatedAt = time.Now().UTC()
 	}
 	config.Values = append(json.RawMessage(nil), config.Values...)
+	before := m.latestProjectEnvironmentConfigValuesLocked(config.ProjectID, config.EnvironmentSlug)
 	m.projectEnvironmentConfigs[key] = append(versions, config)
+	m.projectConfigRuntimeChangeLocked(config.ProjectID, config.EnvironmentSlug, before, config.Values, config.CreatedAt)
 	touchGitOpsMemoryIntent(memory)
 	return cloneProjectEnvironmentConfig(config), nil
 }
@@ -137,8 +139,38 @@ func (m *MemStore) appendProjectEnvironmentPromotionConfigLocked(promotion Proje
 		EnvironmentSlug: promotion.ToEnvironment, Version: int64(len(versions) + 1),
 		ConfigHash: hash, Values: append(json.RawMessage(nil), values...), CreatedAt: time.Now().UTC(),
 	}
+	before := m.latestProjectEnvironmentConfigValuesLocked(promotion.ProjectID, promotion.ToEnvironment)
 	m.projectEnvironmentConfigs[key] = append(versions, config)
+	m.projectConfigRuntimeChangeLocked(promotion.ProjectID, promotion.ToEnvironment, before, config.Values, config.CreatedAt)
 	return config.Version
+}
+
+// latestProjectEnvironmentConfigValuesLocked returns the latest stored values,
+// or nil when the environment has no version yet.
+func (m *MemStore) latestProjectEnvironmentConfigValuesLocked(projectID, environment string) json.RawMessage {
+	versions := m.projectEnvironmentConfigs[projectEnvironmentConfigKey(projectID, environment)]
+	if len(versions) == 0 {
+		return nil
+	}
+	return versions[len(versions)-1].Values
+}
+
+// projectConfigRuntimeChangeLocked mirrors the PostgreSQL trigger on
+// project_environment_config_versions (ADR-1136): when a new version changes
+// the delivered variables, every member app is stamped in the affected scopes
+// and its older snapshots there are marked stale.
+func (m *MemStore) projectConfigRuntimeChangeLocked(projectID, environment string, before, after json.RawMessage, at time.Time) {
+	if !projectConfigRuntimeEnvChanged(before, after) {
+		return
+	}
+	for id, app := range m.apps {
+		if app.ProjectID != projectID || app.Status == "deleted" {
+			continue
+		}
+		for _, scope := range projectConfigScopes(environment) {
+			m.markEnvironmentRuntimeChangedAndSnapshotsLocked(id, scope, at)
+		}
+	}
 }
 
 func cloneProjectEnvironmentConfig(config ProjectEnvironmentConfig) ProjectEnvironmentConfig {

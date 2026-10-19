@@ -39,7 +39,7 @@ func (m *MemStore) standardRuntimeSnapshotLocked(ins Instance) ([]byte, error) {
 	if !exists || (org.Status != OrgStatusActive && org.Status != OrgStatusPastDue) || org.DeletedPending {
 		return nil, ErrApplicationStandardsPending
 	}
-	account, exists := m.accounts[app.AccountID]
+	account, exists := m.appResourceAccountLocked(app)
 	if !exists || !account.Active() {
 		return nil, ErrApplicationStandardsPending
 	}
@@ -165,7 +165,7 @@ func (m *MemStore) guardInstanceStandardRuntimeLocked(ctx context.Context, ins I
 }
 
 func (m *MemStore) guardUnownedStandardRuntimeLocked(app App) error {
-	account, exists := m.accounts[app.AccountID]
+	account, exists := m.appResourceAccountLocked(app)
 	if app.Status == AppDeleted || !exists || !account.Active() {
 		return ErrApplicationStandardsPending
 	}

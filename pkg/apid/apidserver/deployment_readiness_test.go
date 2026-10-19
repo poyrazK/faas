@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 1441
+// adr: 20261019120041
 func TestProjectDeploymentReadinessAdapter(t *testing.T) {
 	srv, store, account, project, _ := newProjectLifecycleFixture(t)
 	if _, err := store.UpdateProjectEnvironmentProtection(t.Context(), account.ID, project.ID, "production", false); err != nil {
@@ -40,7 +40,7 @@ func TestProjectDeploymentReadinessAdapter(t *testing.T) {
 	}
 }
 
-// adr: 1441
+// adr: 20261019120041
 func TestProjectDeploymentReadinessReadScope(t *testing.T) {
 	srv, store, account, key := projectSecretsTestServer(t, api.ScopesDeploymentReadSurface)
 	raw := []byte(`{"environment":"production","workloads":[{"workload":{"name":"api","class":"http"}}]}`)

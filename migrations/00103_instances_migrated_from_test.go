@@ -534,9 +534,11 @@ func TestMigration_00103_8_DownSymmetry(t *testing.T) {
 	pool := pgtest.Open(t)
 	defer pool.Close()
 
-	if err := db.MigrateUp(ctx, pool); err != nil {
-		t.Fatalf("MigrateUp: %v", err)
-	}
+	// Stage only through 00103 so later migrations' triggers do not depend
+	// on instances.lease_token while this migration's down body is tested
+	// (20261017140000003's instance_migration_admission_guard fires on
+	// UPDATE OF lease_token). Same staging as the 00090 and 00123 tests.
+	migrateUpTo(t, ctx, pool, 103)
 
 	// Down body — drop in the reverse order of creation.
 	// (The actual migration uses ALTER TABLE ... DROP

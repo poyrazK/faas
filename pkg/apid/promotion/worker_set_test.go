@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 1440
+// adr: 20261019120040
 func TestWorkerSetPolicyHashAndApproval(t *testing.T) {
 	worker := func(app, binding string) *api.ProjectReleaseWorker {
 		return &api.ProjectReleaseWorker{AppID: app, Slug: app, BindingID: binding, BindingHash: strings.Repeat("a", 64), PreviousDeploymentID: "previous-" + app, DrainSeconds: 30, Status: "building"}
@@ -50,7 +50,7 @@ func TestWorkerSetPolicyHashAndApproval(t *testing.T) {
 	}
 }
 
-// adr: 1440
+// adr: 20261019120040
 func TestWorkerSetProbesExcludeEveryWorker(t *testing.T) {
 	policy := api.ProjectPromotionHealthPolicy{Workers: []*api.ProjectReleaseWorker{{AppID: "billing", Slug: "billing"}, {AppID: "mail", Slug: "mail"}}}
 	graph := state.ProjectReleaseSet{Members: []state.ProjectReleaseMember{{AppID: "api", DeploymentID: "api-dep"}, {AppID: "mail", DeploymentID: "mail-dep"}, {AppID: "billing", DeploymentID: "billing-dep"}}}

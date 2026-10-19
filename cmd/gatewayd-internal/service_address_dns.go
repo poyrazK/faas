@@ -90,7 +90,10 @@ func resolveServiceAddress(ctx context.Context, store state.Store, resolve gatew
 		targetAppID = target.AppID
 	}
 	app, err := store.AppByID(ctx, targetAppID)
-	if err != nil || app.Status == state.AppDeleted || app.AccountID != caller.AccountID {
+	source, sourceErr := store.AppByID(ctx, caller.AppID)
+	// Synthetic addresses are indexed within a storage namespace. A company
+	// spanning several namespaces must use the app-ID-based service bridge.
+	if err != nil || sourceErr != nil || source.AccountID != caller.AccountID || app.AccountID != caller.AccountID || source.Status == state.AppDeleted || app.Status == state.AppDeleted || !state.SameAppResourceOwner(source, app) {
 		return netip.Addr{}, false
 	}
 	index, err := store.AppServiceAddressIndex(ctx, app.ID)

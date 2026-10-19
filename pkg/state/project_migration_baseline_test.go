@@ -134,7 +134,7 @@ func testMigrationBaseline(t *testing.T, factory func(*testing.T) Store) {
 			}
 			// A reconstructed Postgres adapter must recover proof from durable storage.
 			if pg, ok := store.(*PgStore); ok {
-				store = NewPgStore(pg.pool)
+				store = NewPgStore(pg.pool.Pool)
 				gate = store.(ProjectSafeReleaseStore)
 				recorder = store.(ProjectMigrationBaselineStore)
 			}

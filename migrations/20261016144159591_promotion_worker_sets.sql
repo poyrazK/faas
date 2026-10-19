@@ -1,6 +1,8 @@
+-- migration-compat: expand
 -- filename: 20261016144159591_promotion_worker_sets.sql
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $$ BEGIN
  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_promotion_health'::regclass AND conname='promotion_worker_set_shape') THEN

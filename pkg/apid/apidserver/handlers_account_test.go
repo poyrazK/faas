@@ -1096,6 +1096,7 @@ func TestGetAccountEgressAllowlistExtra_ReturnsPlanCap(t *testing.T) {
 // read is the new value.
 func TestSetAccountEgressAllowlistExtra_RoundTrip(t *testing.T) {
 	e := setup(t, api.PlanPro)
+	e.s.WithAdminAllowlist(e.acct.Email)
 	rec := e.do(t, "PATCH", "/v1/account/egress_allowlist_extra",
 		api.SetAccountEgressAllowlistExtraRequest{Extra: 8}, nil)
 	if rec.Code != 200 {
@@ -1126,6 +1127,7 @@ func TestSetAccountEgressAllowlistExtra_RoundTrip(t *testing.T) {
 // and the value is allowed.
 func TestSetAccountEgressAllowlistExtra_AtMaxAccepted(t *testing.T) {
 	e := setup(t, api.PlanScale)
+	e.s.WithAdminAllowlist(e.acct.Email)
 	rec := e.do(t, "PATCH", "/v1/account/egress_allowlist_extra",
 		api.SetAccountEgressAllowlistExtraRequest{Extra: api.MaxAccountEgressAllowlistExtra}, nil)
 	if rec.Code != 200 {
@@ -1146,6 +1148,7 @@ func TestSetAccountEgressAllowlistExtra_AtMaxAccepted(t *testing.T) {
 // error code. No audit row is emitted on the rejected branch.
 func TestSetAccountEgressAllowlistExtra_OverMaxRejected(t *testing.T) {
 	e := setup(t, api.PlanScale)
+	e.s.WithAdminAllowlist(e.acct.Email)
 	rec := e.do(t, "PATCH", "/v1/account/egress_allowlist_extra",
 		api.SetAccountEgressAllowlistExtraRequest{Extra: api.MaxAccountEgressAllowlistExtra + 1}, nil)
 	assertProblem(t, rec, 400, api.CodeAccountEgressAllowlistExtraOutOfRange)
@@ -1156,6 +1159,7 @@ func TestSetAccountEgressAllowlistExtra_OverMaxRejected(t *testing.T) {
 // documented error code (no audit row).
 func TestSetAccountEgressAllowlistExtra_NegativeRejected(t *testing.T) {
 	e := setup(t, api.PlanScale)
+	e.s.WithAdminAllowlist(e.acct.Email)
 	rec := e.do(t, "PATCH", "/v1/account/egress_allowlist_extra",
 		api.SetAccountEgressAllowlistExtraRequest{Extra: -1}, nil)
 	assertProblem(t, rec, 400, api.CodeAccountEgressAllowlistExtraOutOfRange)
@@ -1168,6 +1172,7 @@ func TestSetAccountEgressAllowlistExtra_NegativeRejected(t *testing.T) {
 // cap without leaving a permanent override.
 func TestSetAccountEgressAllowlistExtra_ClearByZero(t *testing.T) {
 	e := setup(t, api.PlanPro)
+	e.s.WithAdminAllowlist(e.acct.Email)
 	if err := e.store.SetAccountEgressAllowlistExtra(context.Background(), e.acct.ID, 8); err != nil {
 		t.Fatalf("seed extra=8: %v", err)
 	}
@@ -1192,6 +1197,7 @@ func TestSetAccountEgressAllowlistExtra_ClearByZero(t *testing.T) {
 // lands, the next read is the new value).
 func TestSetAccountEgressAllowlistExtra_EmitsAuditRow(t *testing.T) {
 	e := setup(t, api.PlanPro)
+	e.s.WithAdminAllowlist(e.acct.Email)
 	// Seed a prior override so the audit row's old_extra reads
 	// from a non-zero value.
 	if err := e.store.SetAccountEgressAllowlistExtra(context.Background(), e.acct.ID, 4); err != nil {
@@ -1256,6 +1262,28 @@ func TestSetAccountEgressAllowlistExtra_EmitsAuditRow(t *testing.T) {
 // key has no admin scope. The setup helper creates a key with
 // api.ScopesAdminOnly so the negative test stands up a fresh
 // account + a single apps:read scope (no admin).
+// TestSetAccountEgressAllowlistExtra_RejectsCustomer: the admin scope
+// that every customer's session and default key hold does not let a
+// customer raise their own allowlist cap. Only the operator allowlist
+// does; the value stays unchanged and GET still answers.
+func TestSetAccountEgressAllowlistExtra_RejectsCustomer(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	e.s.WithAdminAllowlist("ops@gregale.dev")
+	rec := e.do(t, "PATCH", "/v1/account/egress_allowlist_extra",
+		api.SetAccountEgressAllowlistExtraRequest{Extra: 8}, nil)
+	assertProblem(t, rec, 403, "admin_required")
+	extra, err := e.store.GetAccountEgressAllowlistExtra(context.Background(), e.acct.ID)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		t.Fatal(err)
+	}
+	if extra != 0 {
+		t.Fatalf("extra = %d after a refused customer PATCH, want 0", extra)
+	}
+	if rec := e.do(t, "GET", "/v1/account/egress_allowlist_extra", nil, nil); rec.Code != 200 {
+		t.Fatalf("customer GET status %d: %s", rec.Code, rec.Body)
+	}
+}
+
 func TestSetAccountEgressAllowlistExtra_RejectsNonAdminScope(t *testing.T) {
 	store := state.NewMemStore()
 	acct, err := store.CreateAccount(context.Background(), "non-admin@example.com", api.PlanPro)

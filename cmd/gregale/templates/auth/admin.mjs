@@ -3,6 +3,8 @@ import http from 'node:http'
 import { gotrue, limits } from './config.mjs'
 import { HTTPError, readJSON } from './authz.mjs'
 import { ssoRoute } from './sso.mjs'
+import { oauthRoute } from './oauth.mjs'
+import { emailRoute } from './emails.mjs'
 
 // /admin/v1: owner administration of an application Auth app (ADR-1190
 // phase 6). The owner holds the key; the app stores only its SHA-256 as
@@ -71,7 +73,7 @@ export function goTrueAdmin(signer, port = gotrue.port) {
   })
 }
 
-function goTrueError({ status, data }) {
+export function goTrueError({ status, data }) {
   if (status >= 500) return new HTTPError(503, 'auth_unavailable')
   if (status === 404) return new HTTPError(404, 'not_found')
   // GoTrue's error codes are stable identifiers; its messages are not echoed.
@@ -94,7 +96,7 @@ function pageParams(query) {
   const page = Number(query.get('page') ?? 1)
   const perPage = Number(query.get('per_page') ?? 50)
   if (!Number.isInteger(page) || page < 1 || page > 100000) throw new HTTPError(400, 'invalid_page')
-  if (!Number.isInteger(perPage) || perPage < 1 || perPage > 100) throw new HTTPError(400, 'invalid_per_page')
+  if (!Number.isInteger(perPage) || perPage < 1 || perPage > limits.adminPageSize) throw new HTTPError(400, 'invalid_per_page')
   const search = query.get('search') ?? ''
   if (search.length > 200 || /[\x00-\x1f\x7f]/.test(search)) throw new HTTPError(400, 'invalid_search')
   return { page, perPage, search }
@@ -111,6 +113,35 @@ const lastOwnerSQL = `SELECT o.slug FROM gregale_auth.memberships m JOIN gregale
   ORDER BY o.slug LIMIT 20`
 const soleMemberSQL = `SELECT m.org_id FROM gregale_auth.memberships m
   WHERE m.user_id = $1 AND NOT EXISTS (SELECT 1 FROM gregale_auth.memberships x WHERE x.org_id = m.org_id AND x.user_id <> $1)`
+
+// deleteUser removes a user through GoTrue's admin API and returns
+// [status, body]. The last owner of an organization with other members is
+// refused; organizations only this user belonged to would be unreachable,
+// so they go too.
+export async function deleteUser({ pool, admin }, user) {
+  const { rows: blocked } = await pool.query(lastOwnerSQL, [user])
+  if (blocked.length) return [409, { status: 409, code: 'last_owner', organizations: blocked.map(r => r.slug) }]
+  const sole = (await pool.query(soleMemberSQL, [user])).rows.map(r => r.org_id)
+  const response = await admin('DELETE', `/admin/users/${user}`)
+  if (response.status !== 200) throw goTrueError(response)
+  const { rowCount } = sole.length
+    ? await pool.query('DELETE FROM gregale_auth.organizations o WHERE o.id = ANY($1::uuid[]) AND NOT EXISTS (SELECT 1 FROM gregale_auth.memberships x WHERE x.org_id = o.id)', [sole])
+    : { rowCount: 0 }
+  return [200, { deleted: true, organizations_deleted: rowCount }]
+}
+
+// deleteOwnAccount lets a signed-in person delete themselves (AUTH_SELF_DELETION).
+// Their session must be recent and, if they have a second factor, have
+// passed it; an anonymous user cannot sign in again, so only holds the
+// session. claims come from a token GoTrue verified.
+export async function deleteOwnAccount({ pool, admin }, claims) {
+  const { rows: [session] } = await pool.query(`SELECT u.is_anonymous OR (s.created_at > now() - make_interval(secs => $3)
+      AND (s.aal = 'aal2' OR NOT EXISTS (SELECT 1 FROM auth.mfa_factors f WHERE f.user_id = u.id AND f.status = 'verified' AND f.factor_type::text <> 'recovery_code'))) AS allowed
+    FROM auth.sessions s JOIN auth.users u ON u.id = s.user_id WHERE s.id = $2 AND s.user_id = $1`, [claims.sub, claims.session_id, limits.reauthenticationSeconds])
+  if (!session) throw new HTTPError(401, 'not_authenticated')
+  if (!session.allowed) throw new HTTPError(403, 'reauthentication_required')
+  return deleteUser({ pool, admin }, claims.sub)
+}
 
 const hashFormats = [/^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/, /^\$argon2(id|i|d)\$v=(16|19)\$m=\d+,t=\d+,p=\d+(,[^$]*)?\$[^$]*\$[^$]+$/, /^\$fbscrypt\$v=\d+,n=\d+,r=\d+,p=\d+(,[^$]*)?\$[^$]+\$[^$]+$/]
 
@@ -196,11 +227,13 @@ async function activity(query, params) {
 }
 
 // adminRoute returns [status, body] for one authorized request.
-export async function adminRoute({ pool, admin }, method, url, body) {
+export async function adminRoute({ pool, admin, external, emails = {} }, method, url, body) {
   const path = url.pathname.replace(/^\/admin\/v1/, '')
   const parts = path.split('/').filter(Boolean)
   const query = async (sql, args) => (await pool.query(sql, args)).rows
-  if (parts[0] === 'sso') return ssoRoute({ query, admin, goTrueError }, method, parts, body)
+  if (parts[0] === 'sso') return ssoRoute({ query, admin, goTrueError, external }, method, parts, body)
+  if (parts[0] === 'oauth') return oauthRoute({ admin, goTrueError }, method, parts, body)
+  if (parts[0] === 'emails') return emailRoute({ pool, external, ...emails }, method, parts, body)
   const user = parts[0] === 'users' && parts[1] && parts[1] !== 'import' ? (uuid.test(parts[1]) ? parts[1] : null) : undefined
   if (user === null) throw new HTTPError(400, 'invalid_id')
 
@@ -237,18 +270,7 @@ export async function adminRoute({ pool, admin }, method, url, body) {
     if (duration !== 'none') await pool.query('DELETE FROM auth.sessions WHERE user_id = $1', [user])
     return [200, { user: userView(response.data) }]
   }
-  if (user && parts.length === 2 && method === 'DELETE') {
-    const blocked = await query(lastOwnerSQL, [user])
-    if (blocked.length) return [409, { status: 409, code: 'last_owner', organizations: blocked.map(r => r.slug) }]
-    const sole = (await query(soleMemberSQL, [user])).map(r => r.org_id)
-    const response = await admin('DELETE', `/admin/users/${user}`)
-    if (response.status !== 200) throw goTrueError(response)
-    // Organizations only this user belonged to would be unreachable.
-    const { rowCount } = sole.length
-      ? await pool.query('DELETE FROM gregale_auth.organizations o WHERE o.id = ANY($1::uuid[]) AND NOT EXISTS (SELECT 1 FROM gregale_auth.memberships x WHERE x.org_id = o.id)', [sole])
-      : { rowCount: 0 }
-    return [200, { deleted: true, organizations_deleted: rowCount }]
-  }
+  if (user && parts.length === 2 && method === 'DELETE') return deleteUser({ pool, admin }, user)
   if (path === '/activity' && method === 'GET') return [200, await activity(query, url.searchParams)]
   if (path === '/orgs' && method === 'GET') {
     const { page, perPage, search } = pageParams(url.searchParams)
@@ -271,7 +293,7 @@ export async function adminRoute({ pool, admin }, method, url, body) {
 }
 
 // createAdminHandler serves /admin/v1. Without a key it does not exist.
-export function createAdminHandler({ pool, admin, keys, origins = [] }) {
+export function createAdminHandler({ pool, admin, keys, origins = [], external, emails = {} }) {
   const allowed = new Set(origins)
   return async (req, res) => {
     const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
@@ -288,7 +310,7 @@ export function createAdminHandler({ pool, admin, keys, origins = [] }) {
       if (!keyMatches(keys, req.headers.authorization)) { req.resume(); throw new HTTPError(401, 'invalid_admin_key') }
       const url = new URL(req.url, 'http://admin.invalid')
       const body = await readJSON(req, limits.adminBodyBytes)
-      const [status, payload] = await adminRoute({ pool, admin }, req.method, url, body)
+      const [status, payload] = await adminRoute({ pool, admin, external, emails }, req.method, url, body)
       reply(status, payload)
     } catch (err) {
       const failure = err instanceof HTTPError ? err : new HTTPError(500, 'internal_error')

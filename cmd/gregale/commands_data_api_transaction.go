@@ -20,17 +20,24 @@ func cmdDataAPITransaction(args []string) int {
 	fs := newFlagSet("data-api transaction init", flag.ContinueOnError)
 	name := fs.String("name", "", "function/table prefix")
 	output := fs.String("output", "", "new package directory")
+	contract := fs.String("contract", "v1", "receipt contract: v1 or v2")
 	if parseInterspersed(fs, args[1:]) != nil {
 		return 1
 	}
 	if fs.NArg() != 0 || *output == "" || !regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`).MatchString(*name) || strings.HasPrefix(*name, "pg_") || strings.HasPrefix(*name, "gregale_") {
 		return printErr("Invalid transaction options", errors.New("use a simple lowercase name up to 32 characters and a new output directory"))
 	}
-	if err := buildDataAPITransaction(*name, *output); err != nil {
+	if err := buildDataAPITransactionContract(*name, *output, *contract); err != nil {
 		return printErr("Transaction init failed", err)
 	}
 	if jsonOutput {
-		raw, _ := json.Marshal(map[string]any{"version": 1, "command": "data-api transaction init", "status": "needs_review", "function": "api." + *name, "output": *output})
+		report := map[string]any{"version": 1, "command": "data-api transaction init", "status": "needs_review", "function": "api." + *name, "output": *output}
+		if *contract == "v2" {
+			report["contract"] = "v2"
+			report["function"] = "api." + *name + "_v2"
+			report["receipt_function"] = "api.read_" + *name + "_receipt_v2"
+		}
+		raw, _ := json.Marshal(report)
 		if _, err := fmt.Fprintln(osStdout, string(raw)); err != nil {
 			return printErr("Output failed", err)
 		}
@@ -42,6 +49,13 @@ func cmdDataAPITransaction(args []string) int {
 	return 0
 }
 func buildDataAPITransaction(name, output string) error {
+	return buildDataAPITransactionContract(name, output, "v1")
+}
+
+func buildDataAPITransactionContract(name, output, contract string) error {
+	if contract != "v1" && contract != "v2" {
+		return errors.New("receipt contract must be v1 or v2")
+	}
 	if !regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`).MatchString(name) || strings.HasPrefix(name, "pg_") || strings.HasPrefix(name, "gregale_") {
 		return errors.New("invalid transaction name")
 	}
@@ -58,8 +72,18 @@ func buildDataAPITransaction(name, output string) error {
 			_ = os.RemoveAll(target)
 		}
 	}()
-	for _, file := range []string{"migration.sql", "client.ts", "fixture.sql", "README.md", "access-checks.json", "data-checks.json"} {
-		raw, err := templates.FS.ReadFile("data-api/transactions/" + file)
+	source := "data-api/transactions/"
+	files := []string{"migration.sql", "client.ts", "fixture.sql", "README.md", "access-checks.json", "data-checks.json"}
+	if contract == "v2" {
+		source += "v2/"
+		files = append(files, "cleanup-receipts.mjs", "receipt-diagnostics.mjs", "receipt-diagnostics-core.mjs", "package.json")
+	}
+	for _, file := range files {
+		path := source + file
+		if file == "receipt-diagnostics-core.mjs" {
+			path = "data-api-starter/migrations/" + file
+		}
+		raw, err := templates.FS.ReadFile(path)
 		if err != nil {
 			return err
 		}

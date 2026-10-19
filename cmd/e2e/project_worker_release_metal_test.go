@@ -1,6 +1,6 @@
 //go:build metal
 
-// adr: 1408 — qualify the real project release owner, queue gateway and guests.
+// adr: 20261019120008 — qualify the real project release owner, queue gateway and guests.
 package e2e_test
 
 import (
@@ -127,7 +127,7 @@ func (f *projectWorkerNativeFixture) qualifyHandoffAndRollback(t *testing.T) {
 		}
 	}
 	f.assertNoResubmission(t, accepted)
-	t.Logf("ADR-1408 native handoff: attempt=%s old_worker=%s candidate_worker=%s restored_worker=%s drain=%s; completed jobs preserved=%d", attempt, old.ID, candidate.ID, restored.ID, drain, len(f.completed))
+	t.Logf("ADR-20261019120008 native handoff: attempt=%s old_worker=%s candidate_worker=%s restored_worker=%s drain=%s; completed jobs preserved=%d", attempt, old.ID, candidate.ID, restored.ID, drain, len(f.completed))
 }
 
 func (f *projectWorkerNativeFixture) qualifyStartupFailure(t *testing.T) {
@@ -143,7 +143,7 @@ func (f *projectWorkerNativeFixture) qualifyStartupFailure(t *testing.T) {
 	f.awaitCompleted(t, job)
 	assertProjectWorkerReceived(t, old, "after-startup-failure", "stable", "stable-config")
 	f.assertNoResubmission(t, accepted)
-	t.Logf("ADR-1408 native startup failure: attempt=%s graph=%s production_worker=%s job=%s", attempt, f.baseline.ID, old.ID, job)
+	t.Logf("ADR-20261019120008 native startup failure: attempt=%s graph=%s production_worker=%s job=%s", attempt, f.baseline.ID, old.ID, job)
 }
 
 func (f *projectWorkerNativeFixture) qualifyForcedDrain(t *testing.T) {
@@ -173,7 +173,7 @@ func (f *projectWorkerNativeFixture) qualifyForcedDrain(t *testing.T) {
 	}
 	f.assertHTTP(t, "successor", "successor-config")
 	f.assertNoResubmission(t, accepted)
-	t.Logf("ADR-1408 native forced drain: attempt=%s retired_worker=%s active_worker=%s drain=%s grace=%s graph=%s", attempt, old.ID, candidate.ID, drain, projectWorkerNativeGrace, succeeded.Apply.SafeRelease.ReleaseID)
+	t.Logf("ADR-20261019120008 native forced drain: attempt=%s retired_worker=%s active_worker=%s drain=%s grace=%s graph=%s", attempt, old.ID, candidate.ID, drain, projectWorkerNativeGrace, succeeded.Apply.SafeRelease.ReleaseID)
 }
 
 func assertProjectWorkerIsolated(t *testing.T, instance state.Instance, generation, mode string) {

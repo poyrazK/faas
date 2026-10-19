@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/gofrs/flock"
 	"github.com/google/uuid"
@@ -31,6 +32,33 @@ func (m *appLogDrainManager) acquireLogSpoolLease() error {
 	}
 	m.spoolLease = l
 	return nil
+}
+
+// waitForLogSpoolLease takes the spool lease, retrying every interval while
+// another process holds it. A hand-off successor starts while the old
+// generation still delivers; the old generation stops its workers and
+// releases the spool once the successor serves (ADR-1736), and log delivery
+// resumes here from the spool's durable cursors.
+func (m *appLogDrainManager) waitForLogSpoolLease(ctx context.Context, interval time.Duration) bool {
+	warned := false
+	for {
+		err := m.acquireLogSpoolLease()
+		if err == nil {
+			if warned {
+				m.log.InfoContext(ctx, "log drain spool acquired")
+			}
+			return true
+		}
+		if !warned {
+			m.log.WarnContext(ctx, "acquire log drain spool; retrying", slog.String("code", "spool_unavailable"))
+			warned = true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(interval):
+		}
+	}
 }
 
 func (m *appLogDrainManager) stopAllLogWorkersJoined(ctx context.Context) {

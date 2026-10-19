@@ -101,7 +101,7 @@ func TestWorkflowRecoveryRetainedResultsAndNotifications(t *testing.T) {
 						t.Fatal(err)
 					}
 					// New store instance proves capture survives a server restart.
-					fresh := NewPgStore(pg.pool)
+					fresh := NewPgStore(pg.pool.Pool)
 					recovery = fresh
 					notices = fresh
 				}

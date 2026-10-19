@@ -1,4 +1,6 @@
+-- migration-compat: expand
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 ALTER TABLE project_environment_promotion_migrations
  ADD COLUMN IF NOT EXISTS runtime_node_id uuid REFERENCES compute_nodes(id),
  ADD COLUMN IF NOT EXISTS runtime_instance_id uuid,

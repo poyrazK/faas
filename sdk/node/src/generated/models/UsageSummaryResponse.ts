@@ -13,7 +13,7 @@ export type UsageSummaryResponse = {
   included_gb_hours: number;
   overage_gb_hours: number;
   /**
-   * Integer cents. Includes compute at €0.01/GB-h and configured live egress overage; shadow egress is excluded.
+   * Integer cents. Includes compute at $0.01/GB-h and configured live egress overage; shadow egress is excluded.
    */
   overage_cents: number;
   /**

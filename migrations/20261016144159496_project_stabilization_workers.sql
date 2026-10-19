@@ -1,4 +1,6 @@
+-- migration-compat: expand
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE OR REPLACE VIEW project_worker_canary_targets AS
 SELECT DISTINCT a.id AS app_id,m.deployment_id FROM project_release_canaries c
 JOIN project_submissions s ON s.account_id=c.account_id AND s.attempt_id=c.attempt_id

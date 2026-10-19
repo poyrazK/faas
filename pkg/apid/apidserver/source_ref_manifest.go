@@ -246,7 +246,7 @@ func readSourceRefArchiveFileBytes(sourcePath, sourceRoot string, names []string
 		if nextErr != nil {
 			return nil, "", false, fmt.Errorf("read source archive: %w", nextErr)
 		}
-		name := strings.TrimPrefix(strings.TrimSuffix(hdr.Name, "/"), "./")
+		name := strings.TrimSuffix(tarball.TrimLeadingDotSlash(hdr.Name), "/")
 		rank, ok := wanted[name]
 		if !ok || hdr.Typeflag != tar.TypeReg {
 			continue
@@ -279,7 +279,7 @@ func sourceRefManifestCandidates(sourcePath, sourceRoot string) ([]string, error
 	}
 	roots := make([]string, 0, 2)
 	for _, root := range []string{selected, prefix} {
-		root = strings.Trim(path.Clean(root), "/.")
+		root = strings.Trim(path.Clean(root), "/")
 		if root == "." {
 			root = ""
 		}
@@ -520,6 +520,10 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		if problem := applyTriggerRetryPolicy(&createReq); problem != nil {
 			return staged, problem
 		}
+		delivery, deliveryProblem := s.requestedTriggerDelivery(kind, nonEmptyStringPointer(declaration.Delivery))
+		if deliveryProblem != nil {
+			return staged, deliveryProblem
+		}
 		bsm, bwm, attempts, payload, poison, capProblem := enforceCreateTriggerCaps(&createReq, acct.Plan, limits)
 		if capProblem != nil {
 			return staged, capProblem
@@ -528,10 +532,17 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		if sealProblem != nil {
 			return staged, sealProblem
 		}
-		initialEnabled := declaration.IsEnabled() && declaration.WorkPolicy == ""
-		created, createErr := s.store.CreateTriggerIfUnderQuota(ctx, app.ID, string(kind), declaration.Slug, initialEnabled, sealed, triggerSourceForConfig(kind, sealed), bsm, bwm, attempts, payload, poison, limits)
+		enableAtCreate := declaration.IsEnabled() && declaration.WorkPolicy == ""
+		created, createErr := s.store.CreateTriggerIfUnderQuota(ctx, app.ID, string(kind), declaration.Slug, enableAtCreate && delivery == api.TriggerDeliveryRecord, sealed, triggerSourceForConfig(kind, sealed), bsm, bwm, attempts, payload, poison, limits)
 		if createErr != nil {
 			return staged, sourceRefManifestStoreProblem(createErr, acct.Plan, false)
+		}
+		if delivery != api.TriggerDeliveryRecord {
+			// A failed switch deletes the trigger, so it is not staged.
+			var problem *api.Problem
+			if created, problem = s.applyTriggerDelivery(ctx, created, delivery, enableAtCreate); problem != nil {
+				return staged, problem
+			}
 		}
 		id := uuidFromPgtype(created.ID).String()
 		staged.triggerIDs = append(staged.triggerIDs, id)

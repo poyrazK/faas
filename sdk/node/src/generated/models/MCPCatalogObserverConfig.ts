@@ -13,7 +13,7 @@ export type MCPCatalogObserverConfig = {
   timeout_seconds: number;
   endpoint: string;
   /**
-   * App default-scope secret named secret:NAME; its current value is loaded for each check
+   * App secret in the connection environment named secret:NAME; its current value is loaded for each check
    */
   secret_ref?: string;
   oauth?: MCPCatalogObserverOAuthConfig;

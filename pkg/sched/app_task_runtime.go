@@ -6,6 +6,8 @@ import (
 	"fmt"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
+	"github.com/onebox-faas/faas/pkg/rehearsalrecorder"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -52,7 +54,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task deployment: %w", err)
 	}
 	if dep.AppID != app.ID || dep.RootfsKey == "" || dep.RootfsKey != request.ArtifactKey ||
-		dep.ImageDigest == "" || dep.ImageDigest != request.ImageDigest ||
+		dep.ImageDigest != request.ImageDigest ||
 		normalizedDeploymentScope(dep.Scope) != normalizedDeploymentScope(request.DeploymentScope) {
 		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
 	}
@@ -63,7 +65,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task workload settings: %w", err)
 	}
-	acct, err := e.store.AccountByID(ctx, request.AccountID)
+	acct, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task account: %w", err)
 	}
@@ -91,6 +93,32 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	if err != nil || task.DeploymentID != dep.ID || task.Kind != request.Kind {
 		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
 	}
+	// Only a current managed probe can restore a reviewed source build without
+	// an OCI digest. Ordinary tasks retain their image-only admission contract.
+	if dep.ImageDigest == "" && (task.BindingVerification == nil || task.BindingVerification.ManagedService == nil) {
+		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
+	}
+	if task.BindingVerification != nil && task.BindingVerification.ManagedService != nil {
+		store, ok := e.store.(state.ManagedServiceProbeStore)
+		if !ok || state.ManagedServiceProbeCurrent(ctx, store, task) != nil {
+			return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
+		}
+	}
+	runID, err := e.rehearsalNetworkRun(ctx, app.ID)
+	if err != nil {
+		return ResolvedAppTaskRuntime{}, err
+	}
+	if runID != "" || rehearsalcommand.IsCommand(task.Command) {
+		store, ok := e.store.(interface {
+			ScenarioRehearsalCommand(context.Context, rehearsalrecorder.Identity) (rehearsalcommand.Spec, error)
+		})
+		if !ok || runID == "" {
+			return ResolvedAppTaskRuntime{}, errors.New("contained command policy unavailable")
+		}
+		if _, err := store.ScenarioRehearsalCommand(ctx, rehearsalrecorder.Identity{AccountID: app.AccountID, AppID: app.ID, RunID: runID, InstanceID: request.ID, DeploymentID: dep.ID}); err != nil {
+			return ResolvedAppTaskRuntime{}, err
+		}
+	}
 	migration := task.Kind == state.AppTaskKindRelease
 	if recorder, ok := e.store.(state.ProjectMigrationTaskRuntimeStore); ok && !migration {
 		contract, readErr := recorder.ProjectMigrationTaskIsContract(ctx, task)
@@ -114,12 +142,13 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
-	pinnedBase, err := e.artifactBaseKey(ctx, app, request.ArtifactKey)
+	pinnedBase, err := e.deploymentBaseKey(ctx, app, dep, request.ArtifactKey)
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, withAppTaskStage("base_layer", err)
 	}
 	spec := AppSpec{
-		BaseKey: pinnedBase, LayerKey: request.ArtifactKey,
+		RehearsalRunID: runID,
+		BaseKey:        pinnedBase, LayerKey: request.ArtifactKey,
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
 		CPUMillicores: int32(effectiveAppCPUMillicores(app)), EgressMbit: int32(limits.EgressMbit),
 		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan), ExecutionMode: executionModeForApp(app),
@@ -159,10 +188,26 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	}); err != nil {
 		return ResolvedAppTaskRuntime{}, withAppTaskStage("admission", err)
 	}
+	var publish func(context.Context, *AppTaskRestoreOutcome) error
+	if runID != "" {
+		publisher, ok := e.store.(interface {
+			RecordScenarioCommandNetwork(context.Context, rehearsalrecorder.Identity, string, string, string) error
+		})
+		if !ok || task.LeaseToken == nil {
+			e.ledger.Release(runtimeID)
+			return ResolvedAppTaskRuntime{}, errors.New("contained command network publisher unavailable")
+		}
+		identity := rehearsalrecorder.Identity{AccountID: app.AccountID, AppID: app.ID, RunID: runID, InstanceID: request.ID, DeploymentID: dep.ID}
+		publish = func(ctx context.Context, out *AppTaskRestoreOutcome) error {
+			return publisher.RecordScenarioCommandNetwork(ctx, identity, placement.NodeID, *task.LeaseToken, out.HostIP)
+		}
+	}
 	return ResolvedAppTaskRuntime{
+		publish:   publish,
 		NodeID:    placement.NodeID,
 		RuntimeID: runtimeID,
-		Spec:      AppTaskRestoreSpec{Instance: runtimeID, DeploymentID: dep.ID, App: spec},
+		Spec: AppTaskRestoreSpec{Instance: runtimeID, DeploymentID: dep.ID, App: spec,
+			RequireServiceCallerIdentity: task.BindingVerification != nil && task.BindingVerification.ManagedService != nil},
 		release: func() {
 			e.ledger.Release(runtimeID)
 		},

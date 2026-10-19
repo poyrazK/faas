@@ -13,6 +13,9 @@ import (
 
 func TestProjectContextTestSandboxPreservesAncestorContext(t *testing.T) {
 	parent := t.TempDir()
+	if !projectContextRootAllowed(parent) {
+		t.Fatalf("test temporary directory escaped the project-context sandbox: %s", parent)
+	}
 	if _, err := saveProjectContext(parent, localProjectContext{Version: 1, Project: "shop"}); err != nil {
 		t.Fatal(err)
 	}

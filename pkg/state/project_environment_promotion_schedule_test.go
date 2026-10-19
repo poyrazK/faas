@@ -124,7 +124,7 @@ func testPromotionSchedule(t *testing.T, factory func(*testing.T) Store) {
 			if scenario == "fleet_limit" || scenario == "account_limit" {
 				schedulers := []ProjectPromotionHealthScheduler{scheduler}
 				if pg, ok := store.(*PgStore); ok {
-					schedulers = append(schedulers, NewPgStore(pg.pool))
+					schedulers = append(schedulers, NewPgStore(pg.pool.Pool))
 				}
 				var wg sync.WaitGroup
 				var mu sync.Mutex
@@ -190,7 +190,7 @@ func testPromotionSchedule(t *testing.T, factory func(*testing.T) Store) {
 				t.Fatal("no claim")
 			}
 			if s, ok := store.(*PgStore); ok && scenario == "restart" {
-				store = NewPgStore(s.pool)
+				store = NewPgStore(s.pool.Pool)
 				scheduler = store.(ProjectPromotionHealthScheduler)
 				health = store.(ProjectPromotionHealthStore)
 			}

@@ -5,9 +5,9 @@ import (
 	"time"
 )
 
-func (m *MemStore) CreateDeploymentForEnvironmentPromotion(_ context.Context, deployment Deployment, input ProjectEnvironmentPromotionWorkloadSpecInput) (Deployment, error) {
+func (m *MemStore) CreateDeploymentForEnvironmentPromotion(ctx context.Context, deployment Deployment, input ProjectEnvironmentPromotionWorkloadSpecInput) (Deployment, error) {
 	deployment = promotionDeploymentCreationMetadata(deployment)
-	created, _, err := m.createDeployment(deployment, nil, &input)
+	created, _, err := m.createDeployment(ctx, deployment, nil, &input)
 	return created, err
 }
 

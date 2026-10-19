@@ -31,10 +31,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
+	"github.com/onebox-faas/faas/pkg/eventrecording"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/heartbeatretention"
@@ -48,6 +50,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched/instancestats"
 	"github.com/onebox-faas/faas/pkg/sched/prewarm"
 	"github.com/onebox-faas/faas/pkg/sched/recentload"
+	"github.com/onebox-faas/faas/pkg/sched/repairhealth"
 	"github.com/onebox-faas/faas/pkg/sched/scaleup"
 	"github.com/onebox-faas/faas/pkg/sched/targets"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
@@ -447,6 +450,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	vmmRotator.Set(vmmTLS)
 	store := state.NewPgStore(pool)
+	stopEventWriter, err := eventrecording.Start(ctx, store, "schedd", cfg.EventAcknowledgmentWriterSlot, cfg.EventAcknowledgmentWriterRoster, log)
+	if err != nil {
+		return err
+	}
+	defer stopEventWriter()
 
 	// Phase 2 / Gate A: resolve this schedd's owner node id at
 	// startup. Empty cfg.NodeName → empty owner (legacy
@@ -568,6 +576,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	ledger := sched.NewNodeLedger()
 	ops := wire.NewOpsMetrics("schedd")
+	appTaskMetrics := sched.NewAppTaskMetrics(ops.Registry(), appTaskEnabled, appTaskDispatchConcurrency)
+	go appTaskMetrics.RunObservation(ctx, store, log)
+	repairHealth := &repairhealth.Collector{Store: store, Metrics: repairhealth.NewMetrics(ops.Registry(), ops.MetricPrefix()), Log: log}
+	go repairHealth.Run(ctx)
 	wire.BootStamps(ctx, "schedd", ops)
 	wire.RegisterDefaultOps(ops)
 	// ADR-190 follow-up: export this pool's live statistics so the
@@ -576,6 +588,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	heartbeatRetentionMetrics := heartbeatretention.NewMetrics(ops.Registry(), ops.MetricPrefix())
 	heartbeatRetention := heartbeatretention.New(store, log, heartbeatRetentionMetrics)
 	go heartbeatRetention.Run(ctx)
+	if err := startNodeLeaseKeeper(ctx, store, ownerNodeID, ops, log); err != nil {
+		return err
+	}
+	leaseGuard, err := newNodeLeaseGuard(store, ops, log)
+	if err != nil {
+		return err
+	}
 	workflowMetrics := wire.NewWorkflowMetrics(ops.Registry())
 	prewarmMetrics := wire.NewPrewarmMetrics(ops.Registry())
 	privateNetworkMetrics := privatenetwork.NewMetrics(ops.Registry(), ops.MetricPrefix())
@@ -619,6 +638,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return artifactErr
 	}
 	engine.WithValidatorArtifactCheck(validatorArtifacts.Check)
+	// The notifier and the store share this pool, so a wake's
+	// instance_changed can commit with its RUNNING publication.
+	engine.WithNotifyInPublication()
 	// ADR-1344 §5 rule 4: a schedd that waited for Postgres at boot holds
 	// its liveness verdicts for a full staleness window; every heartbeat is
 	// old because nobody could write.
@@ -634,6 +656,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// scheduler's fleet-wide placement; a configured owner pins this
 	// schedd to its registered compute node.
 	engine.WithOwnerNodeID(ownerNodeID)
+	if leaseGuard != nil {
+		engine.WithTakeoverGuard(leaseGuard)
+	}
 	engine.WithNodeRegistry(nodeRegistry)
 	engine.WithEnvironmentQualificationServiceProxyForTransport(environmentQualificationServiceProxyResolver(store, ownerNodeID,
 		os.Getenv(environmentQualificationServiceProxyHTTPEnv), os.Getenv(environmentQualificationServiceProxyHTTPSEnv)))
@@ -954,6 +979,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("schedd jobs dispatch disabled — set FAAS_JOBS_DISPATCH=1 to enable (Mega-1 cluster-wide gate)")
 	}
 	engine.WithJobVmmClient(vmmRouter).WithJobExitWaiter(vmmRouter)
+	engine.WithCIJobsRuntime(ci.NewPostgresStore(pool), ci.ConfigFromEnv(os.Getenv), os.Getenv(ci.RuntimeURLEnv))
 	if leaser := sched.NewPgLeaserFromPool(pool, ownerNodeID, nil); leaser != nil {
 		engine.WithJobLeaser(sched.AdaptJobLeaser(leaser))
 	}
@@ -963,6 +989,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := engine.SeedLedger(ctx); err != nil {
 		seedLedgerReady = false
 		log.Warn("seed ledger", "err", err)
+	}
+	if err := engine.SeedDataRepairRehearsals(ctx); err != nil {
+		return fmt.Errorf("schedd: seed repair rehearsal capacity: %w", err)
+	}
+	if err := startDataRepairRehearsals(ctx, engine, store, vmmRouter, ownerNodeID, seedLedgerReady, log); err != nil {
+		return err
 	}
 	qualificationDispatchValue := os.Getenv("FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_DISPATCH")
 	qualificationDispatchRequested := environmentQualificationDispatchEnabled(qualificationDispatchValue)
@@ -1023,6 +1055,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("schedd: listen %s: %w", listenTarget, err)
 	}
+	// faas-schedd.socket keeps the listener open across restarts; it must
+	// carry only the address schedd serves (listen_addr / socket_path).
+	if err := wire.RequireInheritedListenersClaimed("schedd"); err != nil {
+		_ = lis.Close()
+		return err
+	}
 	// Issue #571 PR-A2: /readyz probe (PG ping + gRPC bound).
 	// Probe construction is platform-portable — pool may be nil
 	// in unit tests that don't wire a real pgxpool; the probe
@@ -1037,9 +1075,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// so a panic during the ~465 lines of setup below cannot
 	// leave /readyz reporting ready while no gRPC server is
 	// actually running (PR #1091 review Finding 5).
-	gsrv := grpc.NewServer(append(
+	// Gateways' warm-hint and log streams and vmmd's capacity reports stay
+	// open indefinitely; the drain ends them at shutdown so GracefulStop
+	// waits only for unary RPCs and the replacement starts sooner.
+	streamDrain := wire.NewStreamDrain()
+	gsrv := grpc.NewServer(append(append(
 		wire.ServerCredsOrEmpty(serverTLS),
-		wire.TraceServerOptions()...,
+		wire.TraceServerOptions()...),
+		streamDrain.ServerOption(),
 	)...)
 	// scheddgrpc.New(gsrv) is called after the instancestats.Reader
 	// is constructed below, so the server can serve
@@ -1547,6 +1590,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithNodeRegistry(nodeRegistry).
 		WithEvents(eventsPlatform).
 		WithReachableHook(engine.DestroyLostVMs)
+	if leaseGuard != nil {
+		hb.WithTakeoverGuard(leaseGuard)
+	}
 	hb.Interval = cfg.HeartbeatInterval
 	hb.Staleness = cfg.HeartbeatStaleness
 	// FAAS_HEARTBEAT_FAILURE_THRESHOLD overrides how many consecutive failed
@@ -1613,6 +1659,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		log.Info("frozen tier enabled (ADR-1151)", "apps", cfg.FrozenTierApps,
 			"frozen_ttl_seconds", api.FrozenTTLSeconds, "frozen_max_per_node", api.FrozenMaxPerNode)
+	}
+	if cfg.FrozenFastPath {
+		engine.EnableFrozenFastPath()
+		log.Info("frozen fast path enabled (ADR-1740)")
+	}
+	if cfg.OwnerCache {
+		if err := startOwnerCache(ctx, pool, engine, log); err != nil {
+			return err
+		}
+		log.Info("owner cache enabled (ADR-1741)")
 	}
 	// The local Reader above deliberately contains only instances physically
 	// resident on this node: scheddgrpc.ListInstanceStats and meterd rely on
@@ -1739,6 +1795,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// ADR-134 PR-B / EPIC #1278: expire async invocations and route
 		// deadline-breached rows through their configured failure destination.
 		WithInvocationsRetention(sched.NewInvocationsRetention(store, log)).
+		// Terminal trigger_records past their explicit retention or the
+		// default ages in pkg/api (TriggerRecordRetention and
+		// TriggerDeadLetterRetention). Off until
+		// FAAS_TRIGGER_LEDGER_RETENTION_ENABLED=1; nil opts out.
+		WithTriggersRetention(triggersRetention(store, log, os.Getenv("FAAS_TRIGGER_LEDGER_RETENTION_ENABLED"))).
 		WithHeartbeat(hb).
 		WithInstanceStats(statsPoller).
 		WithInstanceActivity(autoscaleReader).
@@ -2196,7 +2257,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		backend := sched.NewRoutedVmmdAppTaskBackend(vmmRouter, engine.ResolveAppTaskRuntime)
 		appTaskCoordinator = sched.NewAppTaskCoordinator(store, backend, sched.AppTaskCoordinatorConfig{
-			Enabled: true, Owner: owner, MaxConcurrent: appTaskDispatchConcurrency,
+			Enabled: true, Owner: owner, MaxConcurrent: appTaskDispatchConcurrency, Metrics: appTaskMetrics,
 		}, log)
 		log.Info("schedd: app task dispatch enabled", "owner", owner, "max_concurrent", appTaskDispatchConcurrency)
 	}
@@ -2440,6 +2501,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer stopCancel()
+	streamDrain.Begin()
 	//nolint:contextcheck // shutdown must outlive the canceled daemon context.
 	stopGRPCServer(stopCtx, gsrv)
 	if httpSrv != nil {
@@ -2492,6 +2554,16 @@ func workflowsDispatchEnabled(value string) bool {
 // only the explicit value 1 enables the scheduler during rollout.
 func prewarmEnabled(value string) bool {
 	return strings.TrimSpace(value) == "1"
+}
+
+// triggersRetention returns the trigger-ledger reaper when value is exactly
+// "1". It deletes terminal rows past their explicit retention or the default
+// ages, so it stays off until trigger ledgers have been tested end to end.
+func triggersRetention(store state.Store, log *slog.Logger, value string) *sched.TriggersRetention {
+	if strings.TrimSpace(value) != "1" {
+		return nil
+	}
+	return sched.NewTriggersRetention(store, log)
 }
 
 // subscribeWithReconnect drains a pg_notify-style feed via the

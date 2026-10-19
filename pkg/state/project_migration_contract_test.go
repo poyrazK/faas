@@ -292,7 +292,7 @@ func testMigrationContract(t *testing.T, factory func(*testing.T) Store) {
 				t.Fatalf("admission: %+v %v status=%+v", result, err, view)
 			}
 			if pg, ok := store.(*PgStore); ok {
-				store = NewPgStore(pg.pool)
+				store = NewPgStore(pg.pool.Pool)
 				contracts = store.(ProjectMigrationContractStore)
 			}
 			replay, err := contracts.AdmitProjectMigrationContract(ctx, f.account, f.attempt, req, ProjectMigrationContractEvidence{})

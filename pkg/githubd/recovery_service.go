@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // WebhookRecoveryStore is the operator-facing subset of the durable delivery
@@ -12,6 +14,22 @@ import (
 type WebhookRecoveryStore interface {
 	ListWebhookDeliveries(context.Context, string, int) ([]WebhookDeliveryRecord, error)
 	RetryWebhookDelivery(context.Context, string) (bool, error)
+}
+
+func (s *RecoveryService) GetCIPullRequest(ctx context.Context, account string, installation int64, repository string, number int64) (githubdgrpc.CIPullRequest, error) {
+	service, ok := s.Service.(githubdgrpc.CIPullRequestService)
+	if !ok {
+		return githubdgrpc.CIPullRequest{}, status.Error(codes.Unimplemented, "githubd: CI pull request lookup is not configured")
+	}
+	return service.GetCIPullRequest(ctx, account, installation, repository, number)
+}
+
+func (s *RecoveryService) GetCIChangedFiles(ctx context.Context, account string, installation int64, repository, base, head string) (githubdgrpc.CIChangedFiles, error) {
+	service, ok := s.Service.(githubdgrpc.CIChangedFilesService)
+	if !ok {
+		return githubdgrpc.CIChangedFiles{}, status.Error(codes.Unimplemented, "githubd: CI comparison is not configured")
+	}
+	return service.GetCIChangedFiles(ctx, account, installation, repository, base, head)
 }
 
 // CheckRecoveryStore is the operator-facing subset of the Check Run outbox.

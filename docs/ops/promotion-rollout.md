@@ -17,7 +17,7 @@ supplemental cases must pass on the designated hosts first.
    [HTTP/worker qualification](promotion-health-native-acceptance.md) and
    [migration qualification](promotion-migration-native-acceptance.md). For `publication-crash-boundaries`, retain and review the new
    `promotion-publication` report and any applicable operator-control variants. Record a
-   SHA-256 for the reviewed private evidence of every required gate in ADR-1434.
+   SHA-256 for the reviewed private evidence of every required gate in ADR-20261019120034.
    Do not mark an unexecuted case passed because another partition passed.
 3. Select explicit account/project UUID pairs and capabilities. Start with a
    small internal cohort. The approval and local policy must both include each
@@ -88,7 +88,7 @@ evidence; this illustrative input cannot pass validation:
 
 Embed the complete aggregate JSON object as `native_report`, without editing its
 source revision, tests, observations or combined log hash. Add the extra gate
-receipts from ADR-1434 for each requested capability. A receipt digest must name
+receipts from ADR-20261019120034 for each requested capability. A receipt digest must name
 the evidence that was actually reviewed, rather than a placeholder or arbitrary
 constant. Set an explicit short expiry, no more than seven days after issuance.
 
@@ -209,5 +209,5 @@ reviewed, source-bound receipts for `promotion-secret-cutover`,
 `promotion-secret-key-rotation`, in addition to the common verified-promotion
 gates. Qualify real guest delivery, daemon restarts, retained rollback, envelope
 rotation with old-key removal and final leakcheck as described in
-[ADR-1442](../adr/1442-secret-aware-environment-promotion.md). No production
+[ADR-20261019120042](../adr/20261019120042-secret-aware-environment-promotion.md). No production
 qualification was performed in the managed workspace.

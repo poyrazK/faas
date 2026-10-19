@@ -1,4 +1,6 @@
+-- migration-compat: expand
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE TABLE IF NOT EXISTS deployment_submission_receipts (
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     attempt_id text NOT NULL CHECK (attempt_id ~ '^[0-9a-f]{32}$'),

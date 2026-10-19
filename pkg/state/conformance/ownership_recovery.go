@@ -83,14 +83,14 @@ func testOwnershipRecoveryTransfer(t *testing.T, fx *Fixture) {
 		t.Fatal(err)
 	}
 	for _, lifecycle := range []state.NodeLifecycle{state.NodeLifecycleDraining, state.NodeLifecycleRecovering, state.NodeLifecycleMaintenance, state.NodeLifecycleUnavailable} {
-		if err := fx.Store.NodeSetLifecycle(fx.Ctx, destination.ID, state.NodeLifecycleActive, lifecycle); err != nil {
+		// Isolate rejected destinations: resetting a recovering node would
+		// require a generation-bound completion receipt (ADR-1527).
+		blocked := ownershipDestination(t, fx)
+		if err := fx.Store.NodeSetLifecycle(fx.Ctx, blocked.ID, state.NodeLifecycleActive, lifecycle); err != nil {
 			t.Fatal(err)
 		}
-		if err := transfer(); !errors.Is(err, state.ErrConflict) {
+		if err := fx.Store.ReassignOrphanedAppOwner(fx.Ctx, fx.App.ID, fx.Node.ID, blocked.ID, 60); !errors.Is(err, state.ErrConflict) {
 			t.Fatalf("destination %s accepted: %v", lifecycle, err)
-		}
-		if err := fx.Store.NodeSetLifecycle(fx.Ctx, destination.ID, lifecycle, state.NodeLifecycleActive); err != nil {
-			t.Fatal(err)
 		}
 	}
 	const contenders = 8

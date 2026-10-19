@@ -47,7 +47,7 @@ this evidence before enabling the flag through normal production deployment.
 This workspace has no `/dev/kvm` and is not the designated native host. Native
 qualification remains pending; the admission default stays disabled.
 
-## HTTP frontend/API graph qualification (ADR-1424)
+## HTTP frontend/API graph qualification (ADR-20261019120024)
 
 Keep service graph admission disabled until the designated native KVM host passes
 this case in addition to the checks above. Build frontend and API versions that
@@ -80,7 +80,7 @@ secret evidence as a boolean comparison, never a secret value or body in receipt
 7. Run the native test-metal and leakcheck gates; retain command output and bounded
    revision/status evidence. Keep admission disabled if any native gate is missing.
 
-## Coordinated HTTP and push-worker qualification (ADR-1427)
+## Coordinated HTTP and push-worker qualification (ADR-20261019120027)
 
 The executable [environment promotion acceptance lane](environment-promotion-native-acceptance.md)
 covers success, candidate/retained worker recovery, cross-cutover retry pins and
@@ -120,7 +120,7 @@ Enable promotion health and worker admission only for this qualification.
    and admission disablement after acceptance. Run metal/leak checks and retain
    redacted graph/task/runtime evidence before production enablement.
 
-## Operator abort and guarded recovery (ADR-1428)
+## Operator abort and guarded recovery (ADR-20261019120028)
 
 The automated `promotion-controls` partition now covers pre-cutover abort,
 post-cutover restoration, retained worker VM loss, and blocked-then-repaired
@@ -156,7 +156,7 @@ status generation for each new command and preserve request/receipt identities.
 Retain commit-bound logs, receipt IDs, graph/configuration IDs, artifact identities,
 job version pins and native cleanup evidence alongside the existing lane report.
 
-## Concurrent reconciliation (ADR-1429)
+## Concurrent reconciliation (ADR-20261019120029)
 
 Updated APID dispatchers share four live promotion health leases, with at most two
 per account. One slot prefers due rollback/restoration and migration recovery;

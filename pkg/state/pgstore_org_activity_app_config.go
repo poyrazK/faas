@@ -31,6 +31,10 @@ func (s *PgStore) UpdateAppWithActivity(ctx context.Context, id string, p Update
 	if err != nil {
 		return App{}, 0, err
 	}
+	p, err = prepareServiceBindingPlanUpdate(before, p)
+	if err != nil {
+		return App{}, 0, err
+	}
 	after, err := updateApp(ctx, tx, id, p)
 	if err != nil {
 		return App{}, 0, err
