@@ -400,6 +400,7 @@ type MemStore struct {
 	objectAuthorizations        map[string]int64
 	objectUsageCutovers         map[string]time.Time
 	objectOrgOwnedFrom          map[string]time.Time
+	orgAsyncQuotaPooled         map[string]time.Time
 	objectProviderRequests      map[string]int64
 	objectAccessGrants          map[string]ObjectBucketAccessGrant
 	objectS3Credentials         map[string]ObjectS3Credential
