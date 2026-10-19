@@ -265,8 +265,14 @@ func (s *Service) ownerDocuments(r *http.Request, c *ownerContext, scope state.P
 	if err != nil {
 		return err
 	}
+	if err := s.withInvoices(r.Context(), c.account.ID, &page, true); err != nil {
+		return err
+	}
 	for _, doc := range page.Documents {
 		item := dashboard.ProductControlDocument{ID: doc.ID, Kind: doc.Kind, Amount: ownerMoney(doc.Currency, doc.AmountMillicents), CreatedAt: doc.CreatedAt.UTC().Format(time.RFC3339), OperationID: doc.OperationID, StatementID: doc.StatementID, Reason: doc.Reason}
+		if doc.Invoice != nil {
+			item.Exported, item.Invoice, item.InvoiceURL, item.DashboardURL = true, ownerInvoice(*doc.Invoice), doc.Invoice.HostedInvoiceURL, doc.Invoice.DashboardURL
+		}
 		handoff, err := c.billing.GetProductBillingHandoff(r.Context(), scope, doc.ID)
 		if err == nil {
 			item.Reference = handoff.ExternalInvoiceID
@@ -288,6 +294,39 @@ func ownerDocumentPage(r *http.Request, c *ownerContext, scope state.ProductBill
 	}
 	doc, err := c.owner.GetProductOwnerDocument(r.Context(), scope, q.Get("document"))
 	return api.ProductBillingDocuments{Documents: []api.ProductBillingDocument{doc}}, err
+}
+
+// ownerInvoice summarises a statement's export and payment status.
+func ownerInvoice(e api.ProductDocumentInvoice) string {
+	provider := map[string]string{"stripe": "Stripe", "paddle": "Paddle", "lago": "Lago"}[e.Provider]
+	if e.ExportStatus != state.StatementInvoiceExportCompleted {
+		return "Export to " + provider + " has not finished. Retry gregale product statements export; it resumes the same invoice."
+	}
+	status := e.PaymentStatus
+	switch {
+	case e.Overdue:
+		status = "overdue"
+	case status == "":
+		status = "payment status not synced yet"
+	}
+	parts := []string{"Invoiced in " + provider + " as " + e.InvoiceID, status}
+	if e.DueAt != nil {
+		parts = append(parts, "due "+e.DueAt.UTC().Format("2006-01-02"))
+	}
+	if e.AmountRemainingMinor != nil {
+		parts = append(parts, ownerMinor(e.Currency, *e.AmountRemainingMinor)+" remaining")
+	}
+	return strings.Join(parts, " · ")
+}
+
+// ownerMinor formats an amount in the currency's minor unit (cents).
+func ownerMinor(currency string, n int64) string {
+	sign := ""
+	if n < 0 {
+		sign = "-"
+		n = -n
+	}
+	return fmt.Sprintf("%s %s%d.%02d", currency, sign, n/100, n%100)
 }
 
 func ownerMoney(currency string, n int64) string {
@@ -342,6 +381,8 @@ func (s *Service) ownerError(w http.ResponseWriter, r *http.Request, c *ownerCon
 		status, message = 409, "Reconcile unresolved runs or explicitly waive their charges before finalizing."
 	case errors.Is(err, state.ErrProductBillingOpenPeriod):
 		status, message = 409, "Only a closed UTC month can be finalized."
+	case errors.Is(err, errDocumentExported):
+		status, message = 409, "This statement was exported to your billing provider, which records its invoice as the handoff."
 	case errors.Is(err, state.ErrConflict):
 		status, message = 409, "This action conflicts with retained evidence. Review current assignments, credit balances, or invoice handoffs."
 	}

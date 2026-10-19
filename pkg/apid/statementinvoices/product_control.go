@@ -3,6 +3,7 @@ package statementinvoices
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -102,6 +103,25 @@ func productStatementInvoiceSource(ctx context.Context, acct state.Account, stor
 		return err
 	}
 	return src, nil
+}
+
+// ProductStatementInvoice returns a Product Control statement's export, or
+// nil before one starts (ADR-20261018212918). Callers pass a document they
+// have already scoped to the account, app and customer.
+func (s *Service) ProductStatementInvoice(ctx context.Context, accountID, documentID string) (*api.StatementInvoiceExportResponse, error) {
+	exports, ok := s.Host.Store().(state.StatementInvoiceExportStore)
+	if !ok {
+		return nil, nil
+	}
+	export, err := exports.GetStatementInvoiceExport(ctx, accountID, state.StatementSourceProductControl, documentID)
+	if errors.Is(err, state.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load product statement invoice: %w", err)
+	}
+	out := statementInvoiceExportResponse(export)
+	return &out, nil
 }
 
 // GetProductStatementExport returns a Product Control statement's export,

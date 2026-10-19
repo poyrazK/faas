@@ -44,6 +44,9 @@ type Service struct {
 	// (ADR-20261018212918): document, provider and customer, or document.
 	ExportInvoice func(context.Context, state.Account, state.ProductBillingScope, string, string, string) (api.StatementInvoiceExportResponse, *api.Problem)
 	InvoiceExport func(context.Context, state.Account, state.ProductBillingScope, string) (api.StatementInvoiceExportResponse, *api.Problem)
+	// DocumentInvoice reads a scoped statement's export by account and
+	// document, nil before one starts.
+	DocumentInvoice func(context.Context, string, string) (*api.StatementInvoiceExportResponse, error)
 }
 
 func (s *Service) Start(w http.ResponseWriter, r *http.Request, acct state.Account) {

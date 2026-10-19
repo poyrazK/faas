@@ -343,6 +343,33 @@ test('billing displays immutable statements and signed credit notes with explici
   assert.ok(b.calls.filter(c => c.path.includes('/billing?')).every(c => c.options.method === undefined));
 });
 
+// adr: 20261018212918 — exported statements show the provider's payment status and only its own https invoice page.
+test('billing shows exported statement invoices and links only to the provider https page', async () => {
+  const statement = (id, invoice) => ({ id, kind: 'statement', currency: 'EUR', amount_millicents: 50000, invoice });
+  const b = browser(async path => {
+    if (!path.includes('/billing?')) return;
+    return { ok: true, status: 200, json: async () => ({
+      review: { period: '2026-09', currency: 'EUR', finalized: { amount_millicents: 50000 } },
+      documents: { documents: [
+        statement(randomUUID(), { payment_status: 'open', overdue: true, currency: 'EUR', amount_minor: 1250, amount_remaining_minor: 1250, due_at: '2026-10-15T00:00:00Z', hosted_invoice_url: 'https://invoice.stripe.com/i/acct_1/in_2' }),
+        statement(randomUUID(), { payment_status: 'paid', overdue: false, currency: 'EUR', amount_minor: 50, amount_remaining_minor: 0, hosted_invoice_url: 'javascript:alert(1)' }),
+        statement(randomUUID(), { overdue: false, currency: 'EUR', amount_minor: 50 }),
+      ], next_cursor: '' },
+    }) };
+  });
+  await b.signIn(); b.get('billing-period').value = '2026-09';
+  await b.get('billing-form').onsubmit({ preventDefault() {} });
+  const [overdue, paid, unsynced] = b.get('billing-documents').children;
+  assert.equal(overdue.children[0].textContent, 'Invoice overdue · due 2026-10-15 · EUR 12.50 remaining');
+  const pay = overdue.children[1];
+  assert.equal(pay.tag, 'a'); assert.equal(pay.textContent, 'View and pay invoice'); assert.equal(pay.href, 'https://invoice.stripe.com/i/acct_1/in_2');
+  assert.equal(pay.target, '_blank'); assert.equal(pay.rel, 'noopener noreferrer');
+  assert.equal(paid.children[0].textContent, 'Invoice paid');
+  assert.equal(paid.children.length, 1, 'a non-https invoice link must not render');
+  assert.equal(unsynced.children[0].textContent, 'Invoice issued; payment status not available yet');
+  assert.equal(unsynced.children.length, 1);
+});
+
 test('billing responses cannot restore another workspace after logout', async () => {
   let resolveBilling;
   const b = browser(path => path.includes('/billing?') ? new Promise(resolve => { resolveBilling = resolve; }) : undefined);

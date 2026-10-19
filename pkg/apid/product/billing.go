@@ -32,6 +32,8 @@ func billingRespond(w http.ResponseWriter, value any, err error) {
 		code, detail = "product_billing_unresolved", "Reconcile unresolved operations or explicitly waive their charges before finalizing."
 	case errors.Is(err, state.ErrProductBillingOpenPeriod):
 		code, detail = "product_billing_period_open", "Only a closed UTC month can be finalized."
+	case errors.Is(err, errDocumentExported):
+		code, detail = "product_billing_exported", "This statement was exported to your billing provider, which records its invoice as the handoff. Read it with statements export-status."
 	case errors.Is(err, state.ErrConflict):
 		code, detail = "product_billing_conflict", "This change conflicts with retained billing evidence. Finalize charges before crediting; preserve credit IDs and invoice references on retries."
 	}
@@ -66,6 +68,9 @@ func (s *Service) BillingDocuments(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	value, err := store.ListProductBillingDocuments(r.Context(), scope, r.URL.Query().Get("cursor"))
+	if err == nil {
+		err = s.withInvoices(r.Context(), acct.ID, &value, true)
+	}
 	billingRespond(w, value, err)
 }
 
@@ -126,7 +131,7 @@ func (s *Service) BillingHandoff(w http.ResponseWriter, r *http.Request, acct st
 	if !ok {
 		return
 	}
-	value, err := store.HandoffProductBilling(r.Context(), scope, r.PathValue("document"), req.ExternalInvoiceID)
+	value, err := s.handoffManually(r.Context(), store, acct.ID, scope, r.PathValue("document"), req.ExternalInvoiceID)
 	if err == nil {
 		s.Host.EmitAudit(r.Context(), "product.billing.invoice_handoff", &acct.ID, map[string]any{"app_id": scope.AppID, "tenant_id": scope.TenantID, "document_id": value.DocumentID})
 	}
@@ -214,5 +219,8 @@ func (s *Service) CustomerBilling(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 	docs, err := store.ListProductBillingDocuments(r.Context(), scope, r.URL.Query().Get("cursor"))
+	if err == nil {
+		err = s.withInvoices(r.Context(), acct.ID, &docs, false)
+	}
 	billingRespond(w, api.ProductCustomerBilling{Review: review, Documents: docs}, err)
 }

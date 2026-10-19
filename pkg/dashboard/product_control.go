@@ -24,6 +24,10 @@ type ProductControlRun struct {
 }
 type ProductControlDocument struct {
 	ID, Kind, Amount, CreatedAt, Reference, OperationID, StatementID, Reason string
+	// Exported statements show their provider invoice and payment status
+	// instead of the manual handoff form (ADR-20261018212918).
+	Exported                          bool
+	Invoice, InvoiceURL, DashboardURL string
 }
 type ProductControlComparison struct{ Feature, Before, After string }
 
