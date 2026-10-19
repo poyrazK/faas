@@ -72,8 +72,12 @@ type BuildManifest struct {
 	BuildContext          string            `json:"build_context,omitempty"`   // extracted repository context
 	Workdir               string            `json:"workdir"`                   // default /build/src
 	DockerfilePath        string            `json:"dockerfile_path,omitempty"` // relative to Workdir; empty = Dockerfile
-	OutDir                string            `json:"out_dir"`                   // default /build/out
-	Framework             BuildFramework    `json:"framework"`
+	// DockerfileBuild is the Compose build arguments and target stage
+	// (ADR-20261019142544). Only Dockerfile builds receive it, and the guest
+	// acknowledges its digest so an older guest cannot silently ignore it.
+	DockerfileBuild *DockerfileBuildOptions `json:"dockerfile_build,omitempty"`
+	OutDir          string                  `json:"out_dir"` // default /build/out
+	Framework       BuildFramework          `json:"framework"`
 	// Runtime and RuntimeBaseRef make the builder output reproducible with
 	// imaged's deployment layer. Railpack otherwise chooses its own mutable
 	// runtime base (currently railpack-runtime), which cannot be consumed by
@@ -132,6 +136,9 @@ type BuildManifest struct {
 type BuildDone struct {
 	BuildDependencyDigest string `json:"build_dependency_digest,omitempty"`
 	PublicBuildURLsSHA256 string `json:"public_build_urls_sha256,omitempty"`
+	// DockerfileBuildSHA256 acknowledges the applied build arguments and
+	// target (ADR-20261019142544); empty when the manifest carried none.
+	DockerfileBuildSHA256 string `json:"dockerfile_build_sha256,omitempty"`
 	SchemaVersion         int    `json:"schema_version"`
 	BuildID               string `json:"build_id"`
 	ExitCode              int    `json:"exit_code"`

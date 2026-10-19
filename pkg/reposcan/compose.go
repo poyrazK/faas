@@ -78,7 +78,14 @@ func buildFromAny(v any) (string, string, bool, error) {
 			return "", "", false, fmt.Errorf("dockerfile path must name a file")
 		}
 		if ctx == "" && df == "" {
-			return "", "", false, nil
+			// Compose defaults the context to the project directory; a
+			// declaration with only build options still builds it.
+			_, hasArgs := x["args"]
+			_, hasTarget := x["target"]
+			if !hasArgs && !hasTarget {
+				return "", "", false, nil
+			}
+			ctx = "."
 		}
 		return ctx, df, true, nil
 	}
@@ -303,6 +310,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		}
 		var healthcheck *api.ComposeHealthcheck
 		var process *api.ComposeProcess
+		var dockerfileBuild *api.DockerfileBuildOptions
 		if image != "" {
 			var err error
 			healthcheck, err = composeHealthcheck(s.Healthcheck)
@@ -320,6 +328,16 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			if keys := composeProcessKeys(s); len(keys) > 0 {
 				warnings = append(warnings, "reposcan: "+src+": "+name+": "+strings.Join(keys, ", ")+
 					" ignored: Compose process overrides apply only to prebuilt images; set ENTRYPOINT, USER, WORKDIR or STOPSIGNAL in the Dockerfile")
+			}
+			rawBuild, _ := rawService["build"].(map[string]any)
+			var buildWarnings []string
+			var err error
+			dockerfileBuild, buildWarnings, err = composeDockerfileBuild(fsys, s.Build, rawBuild, composeEnv, ctx, df)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
+			}
+			for _, warning := range buildWarnings {
+				warnings = append(warnings, "reposcan: "+src+": "+name+": "+warning)
 			}
 		}
 		fileEnvKeys, envFileWarnings, envFileErr := composeEnvFileKeys(fsys, s.EnvFile)
@@ -345,6 +363,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			name:                name,
 			rootDir:             ctx,
 			dockerfile:          df,
+			dockerfileBuild:     dockerfileBuild,
 			image:               image,
 			imageSet:            true,
 			healthcheck:         healthcheck,

@@ -13575,6 +13575,16 @@ const ServiceMapMaxEdges = 500
 // default of the per-app metrics endpoints.
 const ServiceMapDefaultRange = "1h"
 
+// Compose build arguments and target stage for Dockerfile builds
+// (ADR-20261019142544). They are stored on the app and every deployment, so
+// they are bounded like other stored build configuration.
+const (
+	DockerfileBuildArgsMax             = 64
+	DockerfileBuildArgValueMaxBytes    = 4096
+	DockerfileBuildArgsEncodedMaxBytes = 32 << 10
+	DockerfileBuildTargetMaxBytes      = 128
+)
+
 // Public build configuration is intentionally limited to reviewed URL values.
 const (
 	PublicBuildURLsMaxPerApp       = 10

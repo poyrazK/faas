@@ -7282,17 +7282,21 @@ type SourceTarballDeployRequest struct {
 // existing app, and which existing app row the update targets. ID is
 // empty when Action == "create".
 type PlanWorkload struct {
-	AppSlug             string              `json:"app_slug,omitempty"`
-	PublicURL           string              `json:"public_url,omitempty"`
-	Name                string              `json:"name"`
-	RootDir             string              `json:"root_dir"`
-	Dockerfile          string              `json:"dockerfile,omitempty"`
-	Image               string              `json:"image,omitempty"`
-	ImageHealthcheck    *ComposeHealthcheck `json:"image_healthcheck,omitempty"`
-	ImageProcess        *ComposeProcess     `json:"image_process,omitempty"`
-	Command             []string            `json:"command"`
-	DependsOn           []string            `json:"depends_on,omitempty"`
-	DependsOnConditions map[string]string   `json:"depends_on_conditions,omitempty"`
+	AppSlug          string              `json:"app_slug,omitempty"`
+	PublicURL        string              `json:"public_url,omitempty"`
+	Name             string              `json:"name"`
+	RootDir          string              `json:"root_dir"`
+	Dockerfile       string              `json:"dockerfile,omitempty"`
+	Image            string              `json:"image,omitempty"`
+	ImageHealthcheck *ComposeHealthcheck `json:"image_healthcheck,omitempty"`
+	ImageProcess     *ComposeProcess     `json:"image_process,omitempty"`
+	// BuildTarget and BuildArgs show a source-built service's Compose build
+	// options (ADR-20261019142544); argument values stay out of plans.
+	BuildTarget         string            `json:"build_target,omitempty"`
+	BuildArgs           []string          `json:"build_args,omitempty"`
+	Command             []string          `json:"command"`
+	DependsOn           []string          `json:"depends_on,omitempty"`
+	DependsOnConditions map[string]string `json:"depends_on_conditions,omitempty"`
 
 	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
 	// ServiceBindingTransport opts a Compose workload into the HTTPS-first

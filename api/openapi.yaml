@@ -100237,6 +100237,13 @@ components:
         image_process:
           $ref: '#/components/schemas/ComposeProcess'
           description: "Compose entrypoint, user, working_dir and stop overrides for prebuilt image workloads, captured per deployment."
+        build_target:
+          type: string
+          description: "Dockerfile stage a source-built Compose service builds (build.target, ADR-20261019142544). Omitted builds the final stage."
+        build_args:
+          type: array
+          items: { type: string }
+          description: "Names of the Compose build.args passed to the Dockerfile build, sorted. Values are not returned."
         command:
           type: array
           items: { type: string }
