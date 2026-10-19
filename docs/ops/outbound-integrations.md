@@ -603,6 +603,7 @@ Larger bodies stream exactly as before, without these features.
 
 ## AI automatic prompt caching
 
+
 `gregale ai policy <id> --prompt-cache on` (or `auto_prompt_cache` in the AI
 policy) lets the gateway add prompt-cache breakpoints to Claude requests that
 carry none (ADR-1437). It covers:
@@ -645,6 +646,14 @@ marks.
 OpenAI and Gemini cache prompts without markers, so the setting changes
 nothing for them. A marked body is re-encoded as JSON: key order changes, the
 content does not.
+
+Prefixes are shared across outboundd replicas (ADR 20261019132139). A replica
+that has not seen a prefix asks `outbound_ai_prompt_prefixes`, which holds
+SHA-256 hashes only, and marks it if any replica saw it within five minutes.
+The lookup is bounded at 200 ms and fails open to the replica's own memory.
+Rows are pruned hourly after ten minutes, and
+`outbound_ai_prompt_cache_shared_total{result}` counts lookups (repeated,
+first, refreshed, error).
 
 ## AI fallback routes
 

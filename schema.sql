@@ -40173,6 +40173,20 @@ CREATE TABLE public.outbound_ai_price_lists (
 
 
 --
+-- Name: outbound_ai_prompt_prefixes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_prompt_prefixes (
+    integration_id uuid NOT NULL,
+    prefix_hash bytea NOT NULL,
+    seen_at timestamp with time zone DEFAULT now() NOT NULL,
+    previous_seen_at timestamp with time zone,
+    CONSTRAINT outbound_ai_prompt_prefixes_hash_chk CHECK ((octet_length(prefix_hash) = 32)),
+    CONSTRAINT outbound_ai_prompt_prefixes_seen_chk CHECK (((previous_seen_at IS NULL) OR (previous_seen_at <= seen_at)))
+);
+
+
+--
 -- Name: outbound_ai_replay_results; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -54777,6 +54791,14 @@ ALTER TABLE ONLY public.outbound_ai_price_lists
 
 
 --
+-- Name: outbound_ai_prompt_prefixes outbound_ai_prompt_prefixes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_prompt_prefixes
+    ADD CONSTRAINT outbound_ai_prompt_prefixes_pkey PRIMARY KEY (integration_id, prefix_hash);
+
+
+--
 -- Name: outbound_ai_replay_results outbound_ai_replay_results_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -64543,6 +64565,13 @@ CREATE INDEX outbound_ai_log_exports_prune_idx ON public.outbound_ai_log_exports
 --
 
 CREATE INDEX outbound_ai_price_lists_current_idx ON public.outbound_ai_price_lists USING btree (integration_id, effective_from DESC);
+
+
+--
+-- Name: outbound_ai_prompt_prefixes_seen_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_prompt_prefixes_seen_at_idx ON public.outbound_ai_prompt_prefixes USING btree (seen_at);
 
 
 --
@@ -81647,6 +81676,14 @@ ALTER TABLE ONLY public.outbound_ai_price_entries
 
 ALTER TABLE ONLY public.outbound_ai_price_lists
     ADD CONSTRAINT outbound_ai_price_lists_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_prompt_prefixes outbound_ai_prompt_prefixes_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_prompt_prefixes
+    ADD CONSTRAINT outbound_ai_prompt_prefixes_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
 
 
 --

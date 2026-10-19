@@ -1270,6 +1270,12 @@ const (
 	// repeated prefix must recur within.
 	OutboundAIPromptCacheMinTokens       = 1_024
 	OutboundAIPromptCacheLifetimeSeconds = 300
+	// OutboundAIPromptPrefixRefreshSeconds is how often a replica refreshes
+	// a prefix it keeps seeing for the others, and
+	// OutboundAIPromptPrefixLookupTimeout bounds asking them about a new one
+	// (ADR 20261019132139).
+	OutboundAIPromptPrefixRefreshSeconds = 60
+	OutboundAIPromptPrefixLookupTimeout  = 200 * time.Millisecond
 	OutboundAIUserIDMaxBytes             = 64
 	// Opt-in content capture (ADR-996): the bytes kept of each logged
 	// call's request and response body, the captures per integration and

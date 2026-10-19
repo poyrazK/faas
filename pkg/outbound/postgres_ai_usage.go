@@ -601,6 +601,9 @@ func (b *PostgresBackend) PruneAIUsage(ctx context.Context) (int64, error) {
 		// ADR-995: end users' alerts follow the per-user rollup retention, and
 		// tags' alerts the tag rollup's (ADR-1438).
 		{`DELETE FROM outbound_ai_budget_alerts WHERE (end_user IS NOT NULL OR tag IS NOT NULL) AND period_start < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},
+		// ADR 20261019132139: shared prompt prefixes outlive two cache lifetimes.
+		{`DELETE FROM outbound_ai_prompt_prefixes WHERE seen_at < now() - make_interval(secs => $1::int)`,
+			2 * api.OutboundAIPromptCacheLifetimeSeconds},
 		// ADR-1120: a settled call's key only has to outlive its retries.
 		{`DELETE FROM outbound_ai_settlements WHERE settled_at < now() - make_interval(mins => $1::int)`, api.OutboundAISettlementKeyRetentionMinutes},
 		// ADR-1340: canary rows and export lines.

@@ -405,6 +405,19 @@
       ],
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
       "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Shared prompt-prefix lookups (5m)",
+      "id": 36,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 125},
+      "description": "Lookups of prompt prefixes this outboundd had not seen: repeated (another replica saw it, so it is marked), first, refreshed (a background refresh of a prefix this replica keeps seeing) or error (Postgres was slow or failing; the call used local memory). ADR 20261019132139.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (result) (rate(outbound_ai_prompt_cache_shared_total[5m]))", "legendFormat": "{{result}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
     }
   ],
   "refresh": "1m",

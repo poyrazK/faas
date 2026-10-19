@@ -9006,6 +9006,13 @@ type OutboundAiPriceList struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type OutboundAiPromptPrefix struct {
+	IntegrationID  pgtype.UUID
+	PrefixHash     []byte
+	SeenAt         pgtype.Timestamptz
+	PreviousSeenAt pgtype.Timestamptz
+}
+
 type OutboundAiReplay struct {
 	ID                   pgtype.UUID
 	AccountID            pgtype.UUID

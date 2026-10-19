@@ -47,6 +47,7 @@ type Metrics struct {
 	aiLogExports           *prometheus.CounterVec
 	aiResponseChecks       *prometheus.CounterVec
 	aiRealtimeSessions     *prometheus.CounterVec
+	aiPromptPrefixShared   *prometheus.CounterVec
 	aiRealtimeActive       prometheus.Gauge
 	aiResponseFindings     *prometheus.CounterVec
 	aiPromptCacheMarks     *prometheus.CounterVec
@@ -207,6 +208,10 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_ai_realtime_sessions_total",
 			Help: "AI realtime sessions by event: opened, unmetered, and closed by the client, the provider, a cap, the duration bound, unreadable usage or an error (ADR 20261019072722).",
 		}, []string{"event"}),
+		aiPromptPrefixShared: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_prompt_cache_shared_total",
+			Help: "Shared prompt-prefix lookups by integration and result: repeated, first, refreshed or error (ADR 20261019132139).",
+		}, []string{"integration_id", "result"}),
 		aiRealtimeActive: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "outbound_ai_realtime_sessions_active",
 			Help: "AI realtime sessions open on this outboundd (ADR 20261019072722).",
@@ -261,6 +266,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.aiResponseCacheSaved,
 		m.aiRealtimeSessions,
 		m.aiRealtimeActive,
+		m.aiPromptPrefixShared,
 	}
 	for _, collector := range collectors {
 		if err := reg.Register(collector); err != nil {
@@ -469,6 +475,15 @@ func (m *Metrics) ObserveAIRealtimeSession(event string) {
 		return
 	}
 	m.aiRealtimeSessions.WithLabelValues(event).Inc()
+}
+
+// ObserveAIPromptPrefixShared counts one shared prompt-prefix lookup
+// (ADR 20261019132139).
+func (m *Metrics) ObserveAIPromptPrefixShared(integrationID, result string) {
+	if m == nil || m.aiPromptPrefixShared == nil {
+		return
+	}
+	m.aiPromptPrefixShared.WithLabelValues(integrationID, result).Inc()
 }
 
 // AddAIRealtimeActive moves the open realtime session gauge.

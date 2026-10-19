@@ -10620,6 +10620,16 @@
     "kind": "configuration"
   },
   {
+    "table": "outbound_ai_prompt_prefixes",
+    "columns": [
+      "integration_id",
+      "prefix_hash",
+      "previous_seen_at",
+      "seen_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "outbound_ai_replay_results",
     "columns": [
       "cost_millicents",

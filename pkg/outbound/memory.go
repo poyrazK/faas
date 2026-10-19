@@ -112,6 +112,8 @@ type MemoryBackend struct {
 	// and log drains (ADR-1340), bounded like the request log.
 	routeAttempts []AIRouteAttemptRecord
 	logExports    []AILogExport
+	// promptPrefixes are shared prompt-prefix sightings (ADR 20261019132139).
+	promptPrefixes map[memoryPromptPrefixKey]time.Time
 }
 
 func NewMemoryBackend() *MemoryBackend {
