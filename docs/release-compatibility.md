@@ -160,7 +160,7 @@ each checked against its own base, found that 94% lock at most 3 tables
 and 86% lock at most 2. The #4882 cutover locked 42 tables in one
 transaction.
 
-An `UPDATE` or `DELETE` of an existing table is **batched** when either of
+An `UPDATE` or `DELETE` of an existing table is **batched** when any of
 these holds:
 
 - its rows come from a `SELECT … FROM <that table> … LIMIT n`, with n at
