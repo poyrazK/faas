@@ -569,6 +569,107 @@ func TestSQLOrganizationMFARequirementHoldsPermissionsToAAL2Sessions(t *testing.
 	deniedSQL(t, reader, `SELECT gregale_auth.session_mfa()`)
 }
 
+// TestSQLDomainJoinAddsProvenPeopleOnceAndOnlyWhileAddressesAreConfirmed
+// pins sql/0017: people with a confirmed address at an organization's
+// verified domain join it at once or when they choose, never twice, and not
+// at all while the app confirms addresses without asking.
+func TestSQLDomainJoinAddsProvenPeopleOnceAndOnlyWhileAddressesAreConfirmed(t *testing.T) {
+	f := newCredentialFixture(t)
+	ctx := context.Background()
+	_, owner := installAuthorization(t, f)
+	executeSQL(t, owner, `UPDATE gregale_auth.domain_join_settings SET enabled = true`)
+	alice := newAuthUser(t, owner, "alice@acme.com")
+	bob := newAuthUser(t, owner, "bob@acme.com")
+	other := newAuthUser(t, owner, "dave@globex.com")
+	unconfirmed := uuid.New()
+	executeSQL(t, owner, `INSERT INTO auth.users (id, email) VALUES ($1, 'carol@acme.com')`, unconfirmed)
+	actAs(ctx, t, owner, alice)
+	var org uuid.UUID
+	if err := owner.QueryRow(ctx, `SELECT id FROM gregale_auth.create_organization('acme', 'Acme')`).Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	executeSQL(t, owner, `SELECT gregale_auth.add_org_domain($1, 'acme.com', $2)`, org, strings.Repeat("a", 32))
+	executeSQL(t, owner, `SELECT gregale_auth.add_org_domain($1, 'acme.io', $2)`, org, strings.Repeat("b", 32))
+	setJoin := `SELECT joined FROM gregale_auth.set_domain_join($1, $2, $3, $4)`
+	wantSQLError(t, owner, "42501", "domain_not_verified", setJoin, org, "acme.com", "suggest", "member")
+	executeSQL(t, owner, `SELECT gregale_auth.verify_org_domain($1, 'acme.com')`, org)
+	wantSQLError(t, owner, "22023", "unknown_role", setJoin, org, "acme.com", "automatic", "owner")
+	wantSQLError(t, owner, "22023", "invalid_join_mode", setJoin, org, "acme.com", "always", "member")
+	member := func(u uuid.UUID) bool {
+		return queryBool(t, owner, `SELECT EXISTS (SELECT 1 FROM gregale_auth.memberships WHERE org_id = $1 AND user_id = $2)`, org, u)
+	}
+
+	// Turning on 'automatic' adds the confirmed people already at the domain.
+	var joined int
+	if err := owner.QueryRow(ctx, setJoin, org, "acme.com", "automatic", "member").Scan(&joined); err != nil || joined != 1 {
+		t.Fatalf("automatic joined %d, %v", joined, err)
+	}
+	if !member(bob.id) || member(unconfirmed) || member(other.id) {
+		t.Fatal("automatic join added the wrong people")
+	}
+	// New people join when their address is confirmed.
+	eve := newAuthUser(t, owner, "Eve@ACME.com")
+	executeSQL(t, owner, `UPDATE auth.users SET email_confirmed_at = now() WHERE id = $1`, unconfirmed)
+	if !member(eve.id) || !member(unconfirmed) {
+		t.Fatal("a newly confirmed address did not join")
+	}
+
+	// Someone removed comes back only by invitation.
+	actAs(ctx, t, owner, alice)
+	executeSQL(t, owner, `SELECT gregale_auth.remove_member($1, $2)`, org, bob.id)
+	executeSQL(t, owner, setJoin, org, "acme.com", "suggest", "member")
+	executeSQL(t, owner, setJoin, org, "acme.com", "automatic", "member")
+	if member(bob.id) {
+		t.Fatal("a removed member was added again")
+	}
+	actAs(ctx, t, owner, bob)
+	wantSQLError(t, owner, "P0002", "not_found", `SELECT gregale_auth.join_organization($1)`, org)
+
+	// With 'suggest', people see the organization and join when they choose.
+	actAs(ctx, t, owner, alice)
+	executeSQL(t, owner, setJoin, org, "acme.com", "suggest", "member")
+	grace := newAuthUser(t, owner, "grace@acme.com")
+	if member(grace.id) {
+		t.Fatal("'suggest' added someone at once")
+	}
+	actAs(ctx, t, owner, grace)
+	var suggested string
+	if err := owner.QueryRow(ctx, `SELECT slug FROM gregale_auth.suggested_organizations()`).Scan(&suggested); err != nil || suggested != "acme" {
+		t.Fatalf("suggested %q, %v", suggested, err)
+	}
+	executeSQL(t, owner, `SELECT gregale_auth.join_organization($1)`, org)
+	wantSQLError(t, owner, "23505", "already_member", `SELECT gregale_auth.join_organization($1)`, org)
+	actAs(ctx, t, owner, other)
+	wantSQLError(t, owner, "P0002", "not_found", `SELECT gregale_auth.join_organization($1)`, org)
+
+	// While the app confirms addresses without asking, nobody joins by domain.
+	executeSQL(t, owner, `UPDATE gregale_auth.domain_join_settings SET enabled = false`)
+	actAs(ctx, t, owner, alice)
+	executeSQL(t, owner, setJoin, org, "acme.com", "automatic", "member")
+	hank := newAuthUser(t, owner, "hank@acme.com")
+	if member(hank.id) {
+		t.Fatal("an address confirmed without asking joined")
+	}
+	actAs(ctx, t, owner, hank)
+	if queryBool(t, owner, `SELECT EXISTS (SELECT 1 FROM gregale_auth.suggested_organizations())`) {
+		t.Fatal("an unproven address was offered the organization")
+	}
+
+	// A custom role used for joining cannot be removed from the app's roles.
+	executeSQL(t, owner, `SELECT gregale_auth.apply_authz('{"roles":{"viewer":["org:read"]}}')`)
+	actAs(ctx, t, owner, alice)
+	executeSQL(t, owner, setJoin, org, "acme.com", "suggest", "viewer")
+	wantSQLError(t, owner, "23503", "role_in_use", `SELECT gregale_auth.apply_authz('{}')`)
+
+	if err := f.manager.Ensure(ctx, f.material, f.readonly); err != nil {
+		t.Fatal(err)
+	}
+	reader := f.connect(t, f.readonly.name)
+	deniedSQL(t, reader, `SELECT gregale_auth.set_domain_join('`+org.String()+`', 'acme.com', 'automatic', 'member')`)
+	deniedSQL(t, reader, `SELECT gregale_auth.suggested_organizations()`)
+	deniedSQL(t, reader, `SELECT gregale_auth.join_organization('`+org.String()+`')`)
+}
+
 // TestSQLLifecycleEventsRecordUserChangesOnlyWhenEnabled pins the outbox the
 // Auth app publishes (ADR-1190): nothing while off, one row per change while
 // on, and never an address or metadata.

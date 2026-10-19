@@ -244,7 +244,8 @@ func TestAuthUsersListAndOrgs(t *testing.T) {
 			main.WriteJSONTest(w, map[string]any{"organization": map[string]any{"id": acme, "slug": "acme", "name": "Acme", "created_at": "2026-10-01T00:00:00Z", "mfa_required": true},
 				"members": []map[string]any{{"user_id": "6a1b2c3d-0000-4000-8000-000000000001", "email": "ada@example.com", "role": "owner", "mfa_enabled": true},
 					{"user_id": "6a1b2c3d-0000-4000-8000-000000000002", "email": "bob@example.com", "role": "member", "mfa_enabled": false}},
-				"invitations": []map[string]any{{"id": "i1", "email": "eve@example.com", "role": "member", "expires_at": "2026-10-24T00:00:00Z"}}})
+				"invitations": []map[string]any{{"id": "i1", "email": "eve@example.com", "role": "member", "expires_at": "2026-10-24T00:00:00Z"}},
+				"domains":     []map[string]any{{"domain": "acme.com", "verified": true, "join": map[string]any{"mode": "automatic", "role": "member"}}, {"domain": "acme.io", "verified": false, "join": map[string]any{"mode": "off", "role": "member"}}}})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -265,7 +266,7 @@ func TestAuthUsersListAndOrgs(t *testing.T) {
 	}
 	for _, line := range []string{"last sign-in 2026-10-17T09:00:00Z", "unconfirmed", "(anonymous)", "+15555550100", "banned until 2999-01-01", "Page 1 of 120 users; next: --page 2",
 		"Organization acme (Acme)", "sign-in  second factor required", "Members (2):", "ada@example.com  second factor", "bob@example.com  no second factor: cannot use this organization",
-		"Pending invitations (1):", "eve@example.com", "Organization acme now requires a second factor"} {
+		"Pending invitations (1):", "eve@example.com", "Organization acme now requires a second factor", "Email domains (2):", "acme.com  verified; people at it join as member", "acme.io  not verified"} {
 		if !strings.Contains(out.String(), line) {
 			t.Fatalf("output lacks %q:\n%s", line, out)
 		}

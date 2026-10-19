@@ -117,6 +117,15 @@ test('wallet sign-in allows the hosted pages\' host as GoTrue checks a signed me
   assert.deepEqual(on.settings.web3, { ethereum: true, solana: false })
 })
 
+test('joining by email domain needs addresses the app confirms', () => {
+  for (const [extra, enabled, joining] of [[{}, false, false], [{ AUTH_ORG_DOMAINS: '1' }, true, true], [{ AUTH_ORG_DOMAINS: '1', AUTH_AUTOCONFIRM: '1' }, true, false]]) {
+    const config = runtimeConfig(env(extra))
+    assert.deepEqual([config.orgDomains, config.domainJoin], [enabled, joining], JSON.stringify(extra))
+    assert.deepEqual(config.settings.organization_domains, { enabled, joining })
+  }
+  assert.throws(() => runtimeConfig(env({ AUTH_ORG_DOMAINS: 'yes' })), /Invalid AUTH_ORG_DOMAINS/)
+})
+
 test('enabled providers get this app\'s callback, and settings report only public values', () => {
   const config = runtimeConfig(env({
     ...keySecret('FFFF0001'),
@@ -135,7 +144,7 @@ test('enabled providers get this app\'s callback, and settings report only publi
     password: { min_length: 12, required: ['lower', 'digit', 'custom'], leaked_password_check: false },
     mfa: { totp: false, phone: false, recovery_codes: false }, email: { configured: false, provider: null, from: null }, events: { lifecycle: false },
     passkeys: { enabled: false, rp_id: 'shop-auth.gregale.app', origins: ['https://shop-auth.gregale.app'] },
-    branding: { name: 'shop.example.com', color: null, logo_url: null }, captcha: null, activity: { retention_days: null }, anonymous: { enabled: false, retention_days: null }, identity_linking: false, self_deletion: false, organization_claims: false, impersonation: false, web3: { ethereum: false, solana: false }, sessions: { max_age_minutes: null, idle_minutes: null, single_per_user: false }, phone: { enabled: false, provider: null, countries: null }, sso: { enabled: false, entity_id: null, acs_url: null, self_service: false }, oauth: { enabled: false, dynamic_registration: false, issuer: null, metadata_url: null, default_audience: null }, keys: { signing: '0A1B2C3D', verifying: ['FFFF0001'] },
+    branding: { name: 'shop.example.com', color: null, logo_url: null }, captcha: null, activity: { retention_days: null }, anonymous: { enabled: false, retention_days: null }, identity_linking: false, self_deletion: false, organization_claims: false, impersonation: false, web3: { ethereum: false, solana: false }, sessions: { max_age_minutes: null, idle_minutes: null, single_per_user: false }, organization_domains: { enabled: false, joining: false }, phone: { enabled: false, provider: null, countries: null }, sso: { enabled: false, entity_id: null, acs_url: null, self_service: false }, oauth: { enabled: false, dynamic_registration: false, issuer: null, metadata_url: null, default_audience: null }, keys: { signing: '0A1B2C3D', verifying: ['FFFF0001'] },
   })
   assert.ok(!JSON.stringify(config.settings).includes('provider-secret'))
   assert.deepEqual(runtimeConfig(env()).settings.password, { min_length: 6, required: [], leaked_password_check: false })

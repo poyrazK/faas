@@ -77,6 +77,7 @@ const (
 	secretSessionMaxAge   = "AUTH_SESSION_MAX_AGE_MINUTES"
 	secretSessionIdle     = "AUTH_SESSION_IDLE_MINUTES"
 	secretSingleSession   = "AUTH_SINGLE_SESSION"
+	secretOrgDomains      = "AUTH_ORG_DOMAINS"
 )
 
 // SignupAccessModes are who may sign up: anyone, invited or approved
@@ -221,6 +222,10 @@ func FormatSessionLimit(minutes int) string {
 		return strconv.Itoa(minutes/60) + "h"
 	}
 	return strconv.Itoa(minutes) + "m"
+	// OrgDomains lets organizations verify email domains and let people at
+	// them join. Joining needs confirmed addresses, so the Auth app keeps it
+	// off while Autoconfirm is on.
+	OrgDomains * bool
 }
 
 // Captcha is a CAPTCHA provider and its keys; the secret stays in the app.
@@ -235,6 +240,9 @@ func (c Change) Empty() bool {
 // delete.
 func (c Change) Secrets() (map[string]string, []string, error) {
 	set, unset := map[string]string{}, []string{}
+	if c.OrgDomains != nil && *c.OrgDomains && c.Autoconfirm != nil && *c.Autoconfirm {
+		return nil, nil, errors.New("organizations join people by email domain only when addresses are confirmed; keep autoconfirm off with organization domains")
+	}
 	if c.SiteURL != nil {
 		if !RedirectURL(*c.SiteURL) {
 			return nil, nil, fmt.Errorf("site URL %q must be HTTPS, or HTTP on a loopback host, without credentials or a fragment", *c.SiteURL)
@@ -409,6 +417,9 @@ func (c Change) Secrets() (map[string]string, []string, error) {
 	}
 	if c.SingleSession != nil {
 		set[secretSingleSession] = flag(*c.SingleSession)
+	}
+	if c.OrgDomains != nil {
+		set[secretOrgDomains] = flag(*c.OrgDomains)
 	}
 	if c.AnonymousRetentionDays != nil {
 		days := *c.AnonymousRetentionDays
