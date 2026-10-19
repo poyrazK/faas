@@ -238,12 +238,11 @@ func TestDataAPIServerKeySlotsRefuseSilentReplacement(t *testing.T) {
 
 func readArchive(t *testing.T, path string) map[string]string {
 	t.Helper()
-	f, err := os.Open(path)
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = f.Close() }()
-	gz, err := gzip.NewReader(f)
+	gz, err := gzip.NewReader(bytes.NewReader(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
