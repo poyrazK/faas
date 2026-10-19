@@ -195,6 +195,15 @@ func (s *PgStore) ResolveEnvironmentQualificationService(ctx context.Context, re
 		return zero, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	route, err := s.resolveEnvironmentQualificationServiceTx(ctx, tx, request)
+	if err != nil {
+		return zero, err
+	}
+	return route, mapErr(tx.Commit(ctx))
+}
+
+func (s *PgStore) resolveEnvironmentQualificationServiceTx(ctx context.Context, tx pgx.Tx, request EnvironmentQualificationServiceRequest) (EnvironmentQualificationServiceRoute, error) {
+	var zero EnvironmentQualificationServiceRoute
 	instanceID, held, err := qualificationNetworkInstance(ctx, tx, request.NodeID, request.HostIP)
 	if err != nil {
 		return zero, err
@@ -276,5 +285,5 @@ func (s *PgStore) ResolveEnvironmentQualificationService(ctx context.Context, re
 	if !time.Now().Before(route.Deadline) {
 		return zero, ErrConflict
 	}
-	return route, mapErr(tx.Commit(ctx))
+	return route, nil
 }

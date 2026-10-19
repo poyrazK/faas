@@ -1,0 +1,685 @@
+# Fleet queue snapshots, collection health, hold times, and recovery.
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 1m
+tests:
+- name: strict depth threshold and full ten minute hold
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 80x30
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x30
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x30
+  - series: up{job="apid",instance="a"}
+    values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts: []
+  - eval_time: 11m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations:
+        summary: builderd build queue > 50 queued builds for 10m
+        description: 'The fleet-total queued-builds gauge `faas_build_queue_depth` has exceeded 50 for 10m. With
+          builderd limited to one microVM under the 5 GiB parent cgroup, sustained depth > 50 means builds are arriving
+          faster than the safe drain rate. Triage: `gregalectl builds list --status=queued` for in-flight builds
+          and `/v1/admin/obs/builder-heartbeats` for liveness, then recover per the runbook.'
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md
+  - eval_time: 11m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+- name: fresh depth 0 is healthy without backlog
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: '0x30'
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x30
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x30
+  - series: up{job="apid",instance="a"}
+    values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: '0x30'
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+- name: fresh depth 50 is healthy without backlog
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 50x30
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x30
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x30
+  - series: up{job="apid",instance="a"}
+    values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+- name: backlog recovers immediately on a fresh empty read
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 80x11 0x19
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x30
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x30
+  - series: up{job="apid",instance="a"}
+    values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x11 0x19
+  alert_rule_test:
+  - eval_time: 11m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations:
+        summary: builderd build queue > 50 queued builds for 10m
+        description: 'The fleet-total queued-builds gauge `faas_build_queue_depth` has exceeded 50 for 10m. With
+          builderd limited to one microVM under the 5 GiB parent cgroup, sustained depth > 50 means builds are arriving
+          faster than the safe drain rate. Triage: `gregalectl builds list --status=queued` for in-flight builds
+          and `/v1/admin/obs/builder-heartbeats` for liveness, then recover per the runbook.'
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md
+  - eval_time: 12m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts: []
+  - eval_time: 12m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+- name: missing depth cannot look healthy
+  interval: 1m
+  input_series:
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x30
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x30
+  - series: up{job="apid",instance="a"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations:
+        summary: Build queue observation unavailable
+        description: A scraped apid has no successful, complete build queue observation at most 120 seconds old
+          for 5m. Queue depth is unknown, not zero. Inspect apid queue collection and database health; another apid's
+          successful fleet snapshot cannot establish this collector's health.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md
+  - eval_time: 15m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts: []
+- name: missing success cannot look healthy
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 80x30
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x30
+  - series: up{job="apid",instance="a"}
+    values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations:
+        summary: Build queue observation unavailable
+        description: A scraped apid has no successful, complete build queue observation at most 120 seconds old
+          for 5m. Queue depth is unknown, not zero. Inspect apid queue collection and database health; another apid's
+          successful fleet snapshot cannot establish this collector's health.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md
+  - eval_time: 15m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts: []
+- name: missing at cannot look healthy
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 80x30
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x30
+  - series: up{job="apid",instance="a"}
+    values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations:
+        summary: Build queue observation unavailable
+        description: A scraped apid has no successful, complete build queue observation at most 120 seconds old
+          for 5m. Queue depth is unknown, not zero. Inspect apid queue collection and database health; another apid's
+          successful fleet snapshot cannot establish this collector's health.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md
+  - eval_time: 15m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts: []
+- name: all queue metrics missing on a scraped apid
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations:
+        summary: Build queue observation unavailable
+        description: A scraped apid has no successful, complete build queue observation at most 120 seconds old
+          for 5m. Queue depth is unknown, not zero. Inspect apid queue collection and database health; another apid's
+          successful fleet snapshot cannot establish this collector's health.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md
+  - eval_time: 15m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts: []
+- name: bootstrap or first failed read is unknown
+  interval: 1m
+  input_series:
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: '0x30'
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: '0x30'
+  - series: up{job="apid",instance="a"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations:
+        summary: Build queue observation unavailable
+        description: A scraped apid has no successful, complete build queue observation at most 120 seconds old
+          for 5m. Queue depth is unknown, not zero. Inspect apid queue collection and database health; another apid's
+          successful fleet snapshot cannot establish this collector's health.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md
+  - eval_time: 15m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts: []
+- name: failed read rejects a still visible last-good high count
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 80x30
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: '0x30'
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x30
+  - series: up{job="apid",instance="a"}
+    values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations:
+        summary: Build queue observation unavailable
+        description: A scraped apid has no successful, complete build queue observation at most 120 seconds old
+          for 5m. Queue depth is unknown, not zero. Inspect apid queue collection and database health; another apid's
+          successful fleet snapshot cannot establish this collector's health.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md
+  - eval_time: 15m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts: []
+- name: frozen successful snapshot expires after exactly 120 seconds
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 80x30
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x30
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 120x30
+  - series: up{job="apid",instance="a"}
+    values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 9m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations:
+        summary: Build queue observation unavailable
+        description: A scraped apid has no successful, complete build queue observation at most 120 seconds old
+          for 5m. Queue depth is unknown, not zero. Inspect apid queue collection and database health; another apid's
+          successful fleet snapshot cannot establish this collector's health.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md
+  - eval_time: 15m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts: []
+- name: future timestamp never proves freshness
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 80x30
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x30
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 10000x30
+  - series: up{job="apid",instance="a"}
+    values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations:
+        summary: Build queue observation unavailable
+        description: A scraped apid has no successful, complete build queue observation at most 120 seconds old
+          for 5m. Queue depth is unknown, not zero. Inspect apid queue collection and database health; another apid's
+          successful fleet snapshot cannot establish this collector's health.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md
+  - eval_time: 15m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts: []
+- name: nonnegative queue and boolean success are required
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: -1x30
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 2x30
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x30
+  - series: up{job="apid",instance="a"}
+    values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations:
+        summary: Build queue observation unavailable
+        description: A scraped apid has no successful, complete build queue observation at most 120 seconds old
+          for 5m. Queue depth is unknown, not zero. Inspect apid queue collection and database health; another apid's
+          successful fleet snapshot cannot establish this collector's health.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md
+  - eval_time: 15m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts: []
+- name: failure resets backlog hold and recovery clears health warning
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 80x30
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x12 0x6 1x10
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x12 720x6 1200+60x10
+  - series: up{job="apid",instance="a"}
+    values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 12m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations:
+        summary: builderd build queue > 50 queued builds for 10m
+        description: 'The fleet-total queued-builds gauge `faas_build_queue_depth` has exceeded 50 for 10m. With
+          builderd limited to one microVM under the 5 GiB parent cgroup, sustained depth > 50 means builds are arriving
+          faster than the safe drain rate. Triage: `gregalectl builds list --status=queued` for in-flight builds
+          and `/v1/admin/obs/builder-heartbeats` for liveness, then recover per the runbook.'
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md
+  - eval_time: 13m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts: []
+  - eval_time: 17m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 18m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations:
+        summary: Build queue observation unavailable
+        description: A scraped apid has no successful, complete build queue observation at most 120 seconds old
+          for 5m. Queue depth is unknown, not zero. Inspect apid queue collection and database health; another apid's
+          successful fleet snapshot cannot establish this collector's health.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md
+  - eval_time: 20m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 29m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts: []
+  - eval_time: 30m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations:
+        summary: builderd build queue > 50 queued builds for 10m
+        description: 'The fleet-total queued-builds gauge `faas_build_queue_depth` has exceeded 50 for 10m. With
+          builderd limited to one microVM under the 5 GiB parent cgroup, sustained depth > 50 means builds are arriving
+          faster than the safe drain rate. Triage: `gregalectl builds list --status=queued` for in-flight builds
+          and `/v1/admin/obs/builder-heartbeats` for liveness, then recover per the runbook.'
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md
+- name: failed scrape uses existing apid down alert and cannot keep backlog active
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 80x30
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x30
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x30
+  - series: up{job="apid",instance="a"}
+    values: '0x30'
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+- name: unconfigured apid is not an invented queue installation
+  interval: 1m
+  input_series: []
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+- name: independent fleet snapshots are never summed
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 30x30
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x30
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x30
+  - series: up{job="apid",instance="a"}
+    values: 1x30
+  - series: faas_build_queue_depth{job="apid",instance="b"}
+    values: 30x30
+  - series: apid_build_queue_collection_success{job="apid",instance="b"}
+    values: 1x30
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="b"}
+    values: 0+60x30
+  - series: up{job="apid",instance="b"}
+    values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="b"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+- name: healthy sibling cannot conceal a failed collector
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 80x30
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: '0x30'
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x30
+  - series: up{job="apid",instance="a"}
+    values: 1x30
+  - series: faas_build_queue_depth{job="apid",instance="b"}
+    values: '0x30'
+  - series: apid_build_queue_collection_success{job="apid",instance="b"}
+    values: 1x30
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="b"}
+    values: 0+60x30
+  - series: up{job="apid",instance="b"}
+    values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="b"}
+    values: '0x30'
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations:
+        summary: Build queue observation unavailable
+        description: A scraped apid has no successful, complete build queue observation at most 120 seconds old
+          for 5m. Queue depth is unknown, not zero. Inspect apid queue collection and database health; another apid's
+          successful fleet snapshot cannot establish this collector's health.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md
+  - eval_time: 15m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts: []
+- name: timestamp from a sibling cannot complete another snapshot
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 80x30
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x30
+  - series: up{job="apid",instance="a"}
+    values: 1x30
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="b"}
+    values: 0+60x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations:
+        summary: Build queue observation unavailable
+        description: A scraped apid has no successful, complete build queue observation at most 120 seconds old
+          for 5m. Queue depth is unknown, not zero. Inspect apid queue collection and database health; another apid's
+          successful fleet snapshot cannot establish this collector's health.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md
+  - eval_time: 15m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts: []
+- name: queue series from a different job cannot satisfy apid collection
+  interval: 1m
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x30
+  - series: faas_build_queue_depth{job="other",instance="a"}
+    values: 80x30
+  - series: apid_build_queue_collection_success{job="other",instance="a"}
+    values: 1x30
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="other",instance="a"}
+    values: 0+60x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="other",instance="a"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations:
+        summary: Build queue observation unavailable
+        description: A scraped apid has no successful, complete build queue observation at most 120 seconds old
+          for 5m. Queue depth is unknown, not zero. Inspect apid queue collection and database health; another apid's
+          successful fleet snapshot cannot establish this collector's health.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md
+  - eval_time: 15m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts: []
+- name: freshness boundary remains healthy through exactly 120 seconds
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 80x30
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x30
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 120x30
+  - series: up{job="apid",instance="a"}
+    values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+  promql_expr_test:
+  - expr: faas_build_queue_observation_healthy
+    eval_time: 4m
+    exp_samples:
+    - labels: '{__name__="faas_build_queue_observation_healthy",job="apid",instance="a"}'
+      value: 1
+  - expr: faas_build_queue_observation_healthy
+    eval_time: 5m
+    exp_samples: []

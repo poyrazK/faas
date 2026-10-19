@@ -176,7 +176,7 @@ func RunControlServer(ctx context.Context, addr string, mux *http.ServeMux) erro
 	}
 	srv := NewControlHTTPServer(addr, mux)
 	// A hand-off successor inherits the listener its predecessor serves on
-	// (ADR-20261018072701) instead of failing to bind the same port.
+	// (ADR-1736) instead of failing to bind the same port.
 	l, err := wire.ListenInherited("tcp", addr)
 	if err != nil {
 		return err

@@ -13,6 +13,7 @@ import (
 // adr: 1307 — plan-create sends weights and the budget, plan-update keeps
 // terms it was not given, and set-plan resolves the plan by name.
 func TestCmdPlatformTenantPlans(t *testing.T) {
+	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1") // adr: 20261018090210 — exercises released monetization
 	var created, updated api.PlatformTenantPlanRequest
 	var assigned api.AssignPlatformTenantPlanRequest
 	existing := api.PlatformTenantPlanResponse{ID: "p1", Name: "growth", Currency: "EUR", PriceMillicentsPerUnit: 20,

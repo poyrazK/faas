@@ -1,5 +1,11 @@
 # Architecture Decision Records
 
+- [Tenant egress denies the NAT64 prefixes](20261018194214-tenant-egress-deny-nat64.md)
+- [ADR-1745: Shared-window compound Issues alerts](1745-shared-window-issue-compound-alerts.md)
+- [ADR-1744: Offline grouping previews and reviewed regression baselines](1744-issue-grouping-previews-and-baselines.md)
+- [ADR-1743: Publish final Node build source maps with build completion](1743-builder-issue-source-map-publication.md)
+- [ADR-1742: Publish prebuilt Issues source maps during CLI deployment](1742-deploy-issue-source-map-publication.md)
+
 - [Preserve request identity in response caching](20261017214848-response-cache-request-identity.md)
 
 - [Restart-safe Go acknowledgment recovery alerts](20261017182028-go-recovery-alert-checkpoints.md)
@@ -123,7 +129,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
-| 1658 | [Owner-authorized deployment response checks](1658-owner-authorized-deployment-response-checks.md) | accepted; native deployment validation pending | Exact-deployment GET checks through the trusted gateway, with bounded HTTP evidence and no forwarded account credentials |
+| 1728 | [Owner-authorized deployment response checks](1728-owner-authorized-deployment-response-checks.md) | accepted; native deployment validation pending | Exact-deployment GET checks through the trusted gateway, with bounded HTTP evidence and no forwarded account credentials |
 | 2026101709 | [Receipt-bound repairable operation transactions](2026101709-repairable-operation-transactions.md) | accepted for internal qualification | Go, Node and Python capture, business writes and receipt bindings commit together; replay survives payload compaction |
 | 2026101708 | [Application writer capture readiness](2026101708-repair-capture-readiness.md) | accepted for internal qualification | Read-only checks on the actual application writer connection |
 | 2026101707 | [Read-only selective repair readiness](2026101707-repair-readiness.md) | accepted for internal qualification | Bounded executor catalog, enrollment and policy diagnostics |
@@ -225,6 +231,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1333 | [Durable managed PostgreSQL activation preflight](1333-managed-postgres-activation-preflight.md) | accepted for catalog inspection; customer activation disabled | Recoverable preflight revisions check restored targets, staged SQL verification and source bindings without publishing credentials |
 | 1334 | [Durable cutover source SQL connection fences](1334-managed-postgres-cutover-source-fences.md) | accepted for internal controller plumbing; customer activation disabled | Owned SQL fences share maintenance authority, survive lost replies and retain pins until confirmed cancellation cleanup |
 | 1335 | [Source writer inventory and provider isolation evidence](1335-managed-postgres-source-writer-isolation.md) | accepted for internal recovery plumbing; customer activation disabled | Immutable catalog baselines, writer diagnostics and expiring provider evidence fail closed on drift or unsupported guarantees |
+| 1337 | [Compose process overrides and unsupported-key reporting](1337-compose-process-overrides-and-key-reporting.md) | accepted | Prebuilt image services honour entrypoint/user/working_dir/stop_signal/stop_grace_period via a frozen `image_command` v2; `env_file` adds variable names; other keys, including unresolved `extends`/`include`, warn |
 | 1170 | [Developer watch mode for apps with a build step](1170-developer-watch-mode.md) | proposed | Opt-in `gregale dev --watch`: a builder-made developer image runs the framework's dev server and ADR-740 patches reach its own hot reload |
 | 1114 | [Reversible issue group links](1114-reversible-issue-group-links.md) | accepted | Merge fingerprint groups without moving evidence; split an original group back out with its lifetime history |
 | 1113 | [Deployment-local issue source maps](1113-deployment-local-issue-source-maps.md) | accepted | Node reporters map bounded local artifacts to original frames while preserving generated stack evidence |
@@ -308,6 +315,11 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1316 | [Monthly base fee and minimum spend](1316-monthly-base-fee-and-minimum-spend.md) | accepted | App cards charge a base fee and a minimum per consumer month; statements carry fee lines and billing runs include idle consumers |
 | 1317 | [Several units priced at once](1317-parallel-unit-price-streams.md) | accepted | App cards of different units are parallel price histories; statement buckets and coverage are keyed by minute and unit |
 | 1318 | [App-reported usage units](1318-app-reported-usage-units.md) | accepted | Apps report units in a Gregale-Usage header or trailer; apid keeps them per consumer, meter and minute, and app:<meter> cards price them |
+| 1319 | [Customer-wide cards price several units, including app-reported ones](1319-platform-tenant-unit-streams-and-app-units.md) | accepted | Platform tenant cards of different units are parallel streams across every subject; tenant surfaces and JWT rules record app-reported units; assigning a plan stops other units |
+| 1322 | [Monthly fees and free trials for platform tenants](1322-platform-tenant-fees-and-trials.md) | accepted | Tenant cards and plans charge a base fee and minimum per tenant month; tenant statements and webhooks carry fees; tenants get one free trial |
+| 1324 | [Block platform tenants with overdue invoices](1324-block-tenants-with-overdue-invoices.md) | accepted | An account rule holds tenants whose exported invoice is unpaid past its due date; tenant admission answers 402 tenant_invoice_overdue |
+| 1325 | [Prorated monthly fees in the first month](1325-prorated-monthly-fees.md) | accepted | App and tenant cards can prorate the base fee and minimum of the month a consumer or tenant is created, by minutes left |
+| 20261018090210 | [API monetization behind a release flag](20261018090210-api-monetization-release-flag.md) | accepted | Runtime setting `api_monetization_enabled` (default off) hides its routes before auth, spec paths, CLI verbs, webhook events and starter billing, and pauses its workers and gateway enforcement |
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
 | 712 | [Object-storage durable entities](712-object-storage-durable-entities.md) | internal prototype; qualification pending | SQL-free entity state and retry receipts, opt-in alarms and checkpointed cleanup |
 | 1446 | [Safe releases by default](1446-safe-releases-by-default.md) | accepted; n2 drills passed | Default balanced canary and 5xx rollback for production releases, bounded low-traffic hold, crash-loop gate, unfenced plain rollback, verified rollback outcomes |
@@ -751,6 +763,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1162 | [Billing delivery finality, a hard spend cap, and plan-history allowances](1162-billing-delivery-finality-spend-cap-and-plan-history.md) | accepted | `MeterUsageFinalAfter` gates provider delivery on final minutes; the spend cap bills up to the cap and parks capped accounts (`SpendCapJobDeferInterval` defers queued job tasks); app purge keeps usage; the month's allowance follows recorded plan activations |
 | 1163 | [Live job task output](1163-live-job-task-output.md) | accepted | Compute-gateway SSE `GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream` follows the task VM ring; `gregale run --image` streams live, `gregale jobs logs --follow` |
 | 1330 | [Interactive image runs (`gregale run -it --image`)](1330-interactive-image-runs.md) | accepted for an operator-gated preview | The job guest holds its command until one client attaches over ADR-1037's token, WebSocket and `AttachAppTask` transport; the job supervisor keeps timeout, cancellation and exit receipt; gate `FAAS_INTERACTIVE_IMAGE_RUNS` |
+| 1790 | [Image runs: Docker process semantics, `-u/-w`, env files and private registries](1790-image-run-docker-process-and-registry-auth.md) | accepted | Image runs take the image's ENV, USER, WORKDIR and PATH lookup; `gregale run` adds `-u`, `-w`, `--env-file`, `-e KEY`, a positional image and `--registry-username` (credential sealed on the runner job, refreshed per run) |
 | 1235 | [Spec §12 operator alerts ship at warn](1235-spec12-operator-alerts-at-warn.md) | accepted | 26 §12 alerts that had no rule are implemented with fixtures, all warn and `public_status: internal` until paging is triaged; write-relay and safe-deploy names corrected to the exported `gatewayd_` / `meterd_` series |
 | 1236 | [Paging set: page only on symptoms that need a human now](1236-paging-set.md) | accepted | 96 page alerts become 27: 24 kept, 72 demoted to warn, near-expiry certificate pages and access-gating edge-rule compile errors added; every page alert has a firing fixture |
 | 1320 | [Object-storage plan allowances, plan ceilings, and the overage cap](1320-object-storage-plan-allowances-ceilings-and-overage-cap.md) | accepted; every plan at zero until pricing | `Limits.ObjectStorage` holds per-plan ceilings and allowances; allowances are removed before month-close pricing and follow plan history; ceilings tighten the operator policy at URL admission and gateway checks; the month-close charge is held under the overage cap after the month's compute and live egress |
@@ -986,6 +999,9 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1152: Route feature evidence, advisor settings, and token-free rollout completion](1152-route-feature-evidence-and-rollout-completion.md) — show learned wake-ahead edges and queue outcomes, suggest the settings, and complete finished rollouts without the safe-release tokens (#1926)
 - [ADR-1187: Route awake report](1187-route-awake-report.md) — which routes keep a scale-to-zero app awake, what removing each would save, and edge-cache or polling suggestions
 - [ADR-1188: Learned cacheability](1188-learned-cacheability.md) — compare anonymous GET bodies with the previous response per URL to measure whether a route is safe to cache, and for how long
+- [ADR-1189: Safe Deploy and scheduled prewarm on by default](1189-safe-releases-and-prewarm-on-by-default.md) — the control-plane role provisions the Safe Deploy token pair and schedd runs the prewarm drain
+- [ADR-1198: Proactive route insights](1198-proactive-route-insights.md) — apid records routes that keep apps awake or are safe to cache, and notifies app webhooks of each transition
+- [ADR-1199: Route evidence — cache rules and awake sources](1199-route-evidence-cache-rules-and-awake-sources.md) — the gateway observes cache rule refills so stale or too-short rules become insights, and the awake report credits route probes and prewarm
 - [ADR-480: Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md)
 - [ADR-493: Observed customer exposure for route changes](493-route-customer-exposure.md) — bounded, read-only request-time customer usage evidence in preview reports
 - [ADR-494: Advisory customer route health](494-advisory-customer-route-health.md) — compare tenant or consumer route health while preserving sparse and attribution coverage
@@ -1051,19 +1067,25 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 ## Data API execution and recovery
 
-- [ADR-1660: Data API connection-capacity observations](1660-data-api-connection-capacity-observations.md)
+- [ADR-1729: Data API connection-capacity observations](1729-data-api-connection-capacity-observations.md)
 
-- [ADR-1661: Data API runtime connection-demand observations](1661-data-api-runtime-connection-demand.md)
+- [ADR-1730: Data API runtime connection-demand observations](1730-data-api-runtime-connection-demand.md)
 
-- [ADR-1662: Data API database timing telemetry](1662-data-api-database-timing-telemetry.md)
+- [ADR-1731: Data API database timing telemetry](1731-data-api-database-timing-telemetry.md)
 
-- [ADR-1663: Data API per-user concurrent request limits](1663-data-api-user-concurrency-limits.md)
+- [ADR-1732: Data API per-user concurrent request limits](1732-data-api-user-concurrency-limits.md)
 
-- [ADR-1664: Data API lock waits and contention recovery](1664-data-api-lock-contention-policy.md)
+- [ADR-1733: Data API lock waits and contention recovery](1733-data-api-lock-contention-policy.md)
 
-- [ADR-1665: Data API deadlines across SQL transaction retries](1665-data-api-sql-retry-deadlines.md)
+- [ADR-1734: Data API deadlines across SQL transaction retries](1734-data-api-sql-retry-deadlines.md)
 
-- [ADR-1666: Owner-approved deadline grants during credential rotation](1666-data-api-deadline-grant-rotation.md)
+- [ADR-1735: Owner-approved deadline grants during credential rotation](1735-data-api-deadline-grant-rotation.md)
+
+- [ADR-1736: Zero-downtime daemon restarts](1736-zero-downtime-daemon-restarts.md)
+
+- [ADR-1737: Internal mail service with independent activation and delivery gates](2026101501-internal-mail-service.md)
+
+- [ADR-1738: Durable producer handoff for internal account-deletion email](2026101601-mail-producer-outbox.md)
 
 - [ADR-1667: Coordinated SQL refresh across credential rotation](1667-data-api-coordinated-refresh-rotation.md)
 
@@ -1182,6 +1204,10 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1115: HTTP SSE subscriptions for retained realtime channels](1115-realtime-sse-subscriptions.md)
 - [ADR-1116: Transactional retained-channel webhooks](1116-realtime-channel-webhooks.md)
 - [ADR-1117: Short-lived channel subscription tickets](1117-realtime-subscription-tickets.md)
+- [ADR-1322: Realtime channels as function triggers](1322-realtime-channel-function-triggers.md)
+- [ADR-1323: Realtime is free, with fair-use limits](1323-realtime-usage-metering-and-plan-limits.md)
+- [ADR-1324: Realtime channel occupancy](1324-realtime-channel-occupancy.md)
+- [ADR-1321: Batched trigger delivery](1321-batched-trigger-delivery.md)
 - [ADR-1027: Receive-only SDK transport fallback](1027-realtime-transport-fallback.md)
 - [ADR-1028: Realtime event inspector](1028-realtime-event-inspector.md)
 - [ADR 1029: Backend-visible channel processing acknowledgements](1029-realtime-processing-acknowledgement-status.md)
@@ -1486,9 +1512,22 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1380: Python PostgreSQL native acceptance](1380-python-postgres-native-acceptance.md)
 - [ADR-1381: Queue worker completion acceptance](1381-queue-worker-completion-acceptance.md)
 
+- [ADR-1658: Guided migration of an existing service](1658-guided-service-migration.md)
+- [ADR-1659: Resumable migration verification](1659-resumable-migration-verification.md)
+- [ADR-1660: Background migration verification and service recovery](1660-background-migration-verification.md)
+- [ADR-1661: Saved production cutover and DNS recovery](1661-guided-production-cutover.md)
+- [ADR-1662: Saved multi-service migration progress](1662-project-migration-journal.md)
+- [ADR-1663: Separate migration service names from app names](1663-migration-service-app-names.md)
+- [ADR-1664: Map migration runtime variables to selected services](1664-migration-runtime-connections.md)
+- [ADR-1665: Configure public frontend URLs before migration builds](1665-public-frontend-migration-urls.md)
+- [ADR-1666: Wait for selected APIs before migration builds](1666-migration-build-dependency-waits.md)
+
 - [ADR-1260: Initial-failure policy dry run](1260-initial-failure-policy-dry-run.md)
 - [ADR-1261: Durable first-recovery reviews](1261-durable-initial-recovery-reviews.md)
 - [ADR-1135: Sparse extent encoding for remote drives and snapshot memory](1135-sparse-extent-encoding-for-remote-artifacts.md)
+- [ADR-20261015120000000: Operator incident evidence](20261015120000000-operator-incident-evidence.md)
+- [ADR-20261016120000000: Operator alert workload summary](20261016120000000-operator-alert-workload-summary.md)
+
 
 [ADR-202610171028: Site hosting GitHub OIDC](202610171028-site-hosting-github-oidc.md) specifies explicit immutable trust and short-lived preview credentials.
 
@@ -1517,6 +1556,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1528: Node admission generation fencing](1528-node-admission-generation-fencing.md) — transactional lifecycle/generation checks, fresh placement retries and migration destination validation.
 
 - [ADR-1529: Durable inbound migration reservations](1529-durable-inbound-migration-reservations.md) — persistent destination capacity, one adoption dispatch, original-generation cleanup and atomic ownership conversion.
+- [ADR-1740: Frozen fast path — a thaw is a ledger check, the vmmd call beside one read, and one guarded update](1740-frozen-fast-path.md)
+- [ADR-1741: schedd owner cache — per-app runtime generations and one guarded write per wake](1741-schedd-owner-cache.md)
 
 - [ADR-1530: Durable migration source retirement](1530-durable-migration-source-retirement.md) — original physical source receipts, atomic retirement accounting and maintenance fencing after ownership moves.
 
@@ -1599,6 +1640,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1499: Native issue lifecycle alert policy](1499-issue-lifecycle-alert-policy.md)
 - [ADR-1500: Source-built apps run on the shared runtime base](1500-shared-runtime-source-apps.md)
 - [ADR-1501: Reconcile worker pools once at scheduler start](1501-worker-startup-reconcile.md)
+- [ADR-1591: Managed Postgres data pipelines](1591-managed-postgres-data-pipelines.md)
 
 - [ADR-20261017190802: Reviewed source-backed scheduled Jobs](20261017190802-gitops-source-scheduled-jobs.md)
 
@@ -1659,6 +1701,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [Worker recovery diagnostics and alerts](20261017223000-worker-recovery-diagnostics.md)
 - [Worker admission explanations](20261018090000-worker-admission-explanations.md)
 - [ADR 202610171900: Release compatibility gates (N±1, deploy order, skew and migration checks, SLO gate)](202610171900-release-compatibility-gates.md)
+- [ADR-1700: Platform flags: per-account release gates managed at runtime](1700-platform-flags.md)
 
 - [ADR-1650: Per-unit control-plane releases](1650-per-unit-control-plane-releases.md)
 
@@ -1671,3 +1714,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261017232000: Incident evidence bundles through management MCP](20261017232000-management-mcp-incident-bundles.md)
 
 - [ADR-20261017233500: Explicit selected-app traces through management MCP](20261017233500-management-mcp-selected-traces.md)
+
+- [ADR-1136: Project environment configuration reaches every service as environment variables](1136-project-environment-config-as-environment-variables.md)
+- [ADR-1137: Declared dependencies seed opt-in wake-ahead](1137-declared-dependencies-seed-wake-ahead.md) — an opted-in app wakes its declared dependencies until 20 wakes of evidence decide (amends ADR-977)
+
+- [ADR-20261018181846: Route priority in the cold-wake queue](20261018181846-route-priority-in-the-wake-queue.md)

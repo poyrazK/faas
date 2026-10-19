@@ -1,6 +1,6 @@
 //go:build unix
 
-// Two-generation hand-off (docs/adr/20261018072701-zero-downtime-daemon-restarts.md).
+// Two-generation hand-off (docs/adr/1736-zero-downtime-daemon-restarts.md).
 
 package wire_test
 

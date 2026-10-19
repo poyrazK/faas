@@ -2,6 +2,7 @@
 
 - **Status:** accepted
 - **Amended:** 2026-09-12 (public beta uses the maintained `v0` Action ref)
+- **Amended:** 2026-10-19 (the vendored CLI is committed gzip-compressed)
 - **Date:** 2026-08-11
 - **Issue:** #270 (`SDK: Publish an official GitHub deploy action`)
 - **Labels:** `tier-2-public-launch`, `customer-facing`, `dx`
@@ -81,7 +82,11 @@ The action lives at `poyrazK/faas/.github/actions/deploy`. Layout:
 The release workflow runs `go build` for the linux-amd64 target with
 the same `LDFLAGS` (`pkg/wire.Version` stamping) that
 `poyrazK/faas`'s `Makefile:15-17` already uses, generates a
-`SHA256SUMS` file, copies the binary into `.github/actions/deploy/bin/gregale`,
+`SHA256SUMS` file, copies the binary gzip-compressed into
+`.github/actions/deploy/bin/gregale.gz` (amended 2026-10-19: the bare
+linux-amd64 binary reached 102 MB in rc.274 and GitHub refuses files over
+100 MB; `src/cli.sh` unpacks it once per job into `RUNNER_TEMP` and checks
+it against `SHA256SUMS`, and a bare `bin/gregale` still works),
 updates `src/version.txt`, commits everything to a `release/v<tag>`
 branch, **force-updates the `vN` moving tag** so customers pinned at
 `@v0` always resolve to the latest public-beta vendored binary, and attaches the

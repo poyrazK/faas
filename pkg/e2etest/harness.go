@@ -314,6 +314,9 @@ failure_report_dir = %q
 			}
 			cfg += fmt.Sprintf("native_process_recovery = true\nprepared_networks = 0\nnative_image_staging_root = %q\nnative_snapshot_publication_root = %q\n", images, publications)
 		}
+		if ca := os.Getenv("FAAS_E2E_SERVICE_HTTPS_CA"); ca != "" {
+			cfg += fmt.Sprintf("service_proxy_ca_path = %q\n", ca)
+		}
 		if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 			t.Fatalf("e2etest: write vmmd.toml: %v", err)
 		}
@@ -1031,6 +1034,10 @@ func gatewaydConfig(addr, controlAddr, apidLoopback string, guestDNS bool) strin
 		// setDefaultLocalScheddTarget keeps the seeded node's endpoint current.
 		config += fmt.Sprintf("service_proxy_listen=%q\nnode_name=%q\n",
 			net.JoinHostPort(bridge, strconv.Itoa(netns.ServiceProxyPort)), "default-local")
+		if ca := os.Getenv("FAAS_E2E_SERVICE_HTTPS_CA"); ca != "" {
+			config += fmt.Sprintf("service_proxy_https_listen=%q\nservice_proxy_tls_ca_path=%q\nservice_proxy_tls_cert_path=%q\nservice_proxy_tls_key_path=%q\n",
+				net.JoinHostPort(bridge, "443"), ca, os.Getenv("FAAS_E2E_SERVICE_HTTPS_CERT"), os.Getenv("FAAS_E2E_SERVICE_HTTPS_KEY"))
+		}
 		// ADR-576: private TCP service addresses ride the same bridge. The
 		// test also passes FAAS_SERVICE_TCP_ENABLED=1 to vmmd so the netns
 		// admission and host NAT exist.

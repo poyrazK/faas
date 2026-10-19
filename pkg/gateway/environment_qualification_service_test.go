@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -217,3 +218,70 @@ func TestEnvironmentQualificationServiceAllowsHTTPSAndCancelsRevokedStream(t *te
 		t.Fatal(w.Code)
 	}
 }
+
+type qualificationExchangeStore struct {
+	*qualificationServiceStub
+	recorded int
+}
+
+func (s *qualificationExchangeStore) RecordEnvironmentQualificationServiceExchange(context.Context, state.EnvironmentQualificationServiceRequest, state.EnvironmentQualificationServiceRoute) error {
+	s.recorded++
+	return nil
+}
+
+func TestEnvironmentQualificationRecordsOnlyCompleteRestoredHTTPSExchange(t *testing.T) {
+	for _, test := range []struct {
+		name                              string
+		status                            int
+		tls, restored, cancel, writeError bool
+		want                              int
+	}{
+		{name: "restored HTTPS", status: 204, tls: true, restored: true, want: 1},
+		{name: "failed handler", status: 503, tls: true, restored: true},
+		{name: "redirect", status: 302, tls: true, restored: true},
+		{name: "plain HTTP", status: 204, restored: true},
+		{name: "capture producer", status: 204, tls: true},
+		{name: "cancelled stream", status: 204, tls: true, restored: true, cancel: true},
+		{name: "short write", status: 200, tls: true, restored: true, writeError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			base, graph := privateServiceFixture()
+			base.route.RequireHTTPS = true
+			if test.restored {
+				base.route.Caller.CaptureInstanceID = uuid.NewString()
+				base.route.Target.CaptureInstanceID = uuid.NewString()
+			}
+			store := &qualificationExchangeStore{qualificationServiceStub: base}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			proxy := NewEnvironmentQualificationServiceProxy(EnvironmentQualificationServiceProxyConfig{Store: store, ResolveNode: func(context.Context, string) (string, error) { return uuid.NewString(), nil }, Forward: func(Target) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(test.status)
+					if test.writeError {
+						_, _ = w.Write([]byte("discarded"))
+					}
+					if test.cancel {
+						cancel()
+					}
+				})
+			}})
+			request := httptest.NewRequest(http.MethodGet, EnvironmentQualificationServicePrefix+graph+"/backend/health", nil).WithContext(ctx)
+			request.RemoteAddr = "10.100.0.2:1234"
+			if test.tls {
+				request.TLS = &tls.ConnectionState{Version: tls.VersionTLS13}
+			}
+			var response http.ResponseWriter = httptest.NewRecorder()
+			if test.writeError {
+				response = qualificationShortWriter{response}
+			}
+			proxy.ServeHTTP(response, request)
+			if store.recorded != test.want {
+				t.Fatalf("recorded=%d want=%d", store.recorded, test.want)
+			}
+		})
+	}
+}
+
+type qualificationShortWriter struct{ http.ResponseWriter }
+
+func (w qualificationShortWriter) Write(p []byte) (int, error) { return len(p) - 1, io.ErrShortWrite }

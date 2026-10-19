@@ -29,6 +29,7 @@ func TestWakeHistoryPageHTTP(t *testing.T) {
 		}
 	}
 	free := apidserver.Setup(t, api.PlanFree)
+	apidserver.MustSeedApp(t, free, "history-page") // the gate applies to the caller's own app (#4882)
 	if r := free.Do(t, http.MethodGet, path+"?pagination=keyset_v1", nil, nil); r.Code != 402 {
 		t.Fatal("Free bypassed gate")
 	}

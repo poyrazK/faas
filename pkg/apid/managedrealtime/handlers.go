@@ -197,6 +197,10 @@ func (s *Service) syncManagedRealtimeEndpoint(ctx context.Context, row state.Man
 	if err != nil {
 		return err
 	}
+	accountMaxConnections, err := s.realtimeAccountConnectionLimit(ctx, row.AccountID)
+	if err != nil {
+		return err
+	}
 	var liveRoutes []realtime.LiveRoute
 	if s.LiveRoutes != nil {
 		// A failed lookup leaves the node's registration as it was rather
@@ -231,7 +235,27 @@ func (s *Service) syncManagedRealtimeEndpoint(ctx context.Context, row state.Man
 		MaxMessageBytes:  row.MaxMessageBytes,
 		MaxConnectionAge: time.Duration(row.MaxConnectionAgeSeconds) * time.Second,
 		LiveRoutes:       liveRoutes,
+
+		AccountMaxConnections: accountMaxConnections,
 	})
+}
+
+// realtimeAccountConnectionLimit is the account's plan allowance of concurrent
+// realtime connections (ADR-1323), or zero without fair use. Plan changes
+// reach realtimed with the next endpoint reconcile.
+func (s *Service) realtimeAccountConnectionLimit(ctx context.Context, accountID string) (int, error) {
+	if !s.FairUseEnabled {
+		return 0, nil
+	}
+	acct, err := s.Host.Store().AccountByID(ctx, accountID)
+	if err != nil {
+		return 0, fmt.Errorf("realtime account %s plan: %w", accountID, err)
+	}
+	limits, ok := api.RealtimeLimitsFor(acct.Plan)
+	if !ok {
+		return 0, fmt.Errorf("realtime account %s: unknown plan %q", accountID, acct.Plan)
+	}
+	return limits.ConnectionsPerAccount, nil
 }
 
 // SyncAppEndpoints registers an app's endpoints again, so a change to its

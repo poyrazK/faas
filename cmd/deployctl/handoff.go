@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-// Two-generation hand-off (docs/adr/20261018072701-zero-downtime-daemon-restarts.md).
+// Two-generation hand-off (docs/adr/1736-zero-downtime-daemon-restarts.md).
 // A daemon whose unit reloads by hand-off is reloaded instead of restarted
 // when nothing it read at start has changed: the successor inherits the old
 // process's environment, credentials and sockets, so only a new binary can

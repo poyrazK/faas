@@ -182,9 +182,7 @@ func TestMigrations_00086_AppsRequireSigned(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("delete app: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `
-		delete from accounts where id = '00000000-0000-0000-0000-000000000086'
-	`); err != nil {
+	if _, err := pool.Exec(ctx, deleteAccountSQL, "00000000-0000-0000-0000-000000000086"); err != nil {
 		t.Fatalf("delete account: %v", err)
 	}
 	if err := pool.QueryRow(ctx, `

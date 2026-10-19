@@ -168,3 +168,40 @@ func TestSynthBatchRestoresDelayedTaskScope(t *testing.T) {
 		t.Fatalf("delayed-task push delivery: calls=%d err=%v", calls, err)
 	}
 }
+
+func TestSynthBatchRestoresBoundQueueOrigin(t *testing.T) {
+	ctx := t.Context()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "bound-batch@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "bound-batch", Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassWorker, Manifest: state.AppManifest{ExecutionMode: api.ExecutionModeWorker}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer, err := store.CreateQueueBindingWithConsumer(ctx, state.QueueBinding{AccountID: account.ID, AppID: app.ID, Name: "jobs", QueueName: "jobs", Mode: "push", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := store.EnqueueInvocation(ctx, state.Invocation{AccountID: account.ID, AppID: app.ID, Source: state.InvocationQueue, QueueBindingID: consumer.Binding.ID, QueueName: "jobs", Payload: []byte(`{"job":true}`), DueAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := store.ClaimInvocation(ctx, row.ID, "", 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	adapter := &synthAdapter{store: store, invokeWithStatus: func(_ context.Context, _ string, inv state.Invocation) (state.Invocation, int, error) {
+		calls++
+		if inv.Source != state.InvocationQueue || inv.QueueName != "jobs" || inv.QueueBindingID != claim.QueueBindingID || inv.DeploymentScope != claim.DeploymentScope || inv.Attempts != claim.Attempts {
+			t.Errorf("bound queue origin lost: %+v", inv)
+		}
+		return inv, http.StatusOK, nil
+	}}
+	wire := state.Invocation{ID: claim.ID, AppID: app.ID, Source: "esm", Attempts: claim.Attempts, ReplayGeneration: claim.ReplayGeneration, Payload: claim.Payload, Headers: claim.Headers}
+	if _, _, err := adapter.InvokeWithStatus(ctx, app.ID, wire); err != nil || calls != 1 {
+		t.Fatalf("bound queue transport: calls=%d %v", calls, err)
+	}
+}

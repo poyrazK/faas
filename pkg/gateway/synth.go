@@ -325,7 +325,7 @@ func (s *SynthServer) Start() error {
 		_ = lis.Close()
 		return fmt.Errorf("gateway synth: chmod: %w", err)
 	}
-	wire.Share(lis) // a hand-off successor serves the same socket (ADR-20261018072701)
+	wire.Share(lis) // a hand-off successor serves the same socket (ADR-1736)
 	s.serve(lis)
 	return nil
 }
@@ -732,6 +732,9 @@ type batchDispatchRequest struct {
 	Source       string                `json:"source"`
 	TriggerID    string                `json:"trigger_id"`
 	Records      []batchDispatchRecord `json:"records"`
+	// Delivery "batch" invokes the function once for every record
+	// (ADR-1321); empty keeps one invocation per record.
+	Delivery string `json:"delivery,omitempty"`
 }
 
 // batchDispatchRecord is one trigger-delivered record's envelope.
@@ -933,7 +936,13 @@ func (s *SynthServer) handleInvocationDispatchBatch(w http.ResponseWriter, r *ht
 	defer cancel()
 
 	results := make([]batchDispatchResult, 0, len(req.Records))
-	for _, rec := range req.Records {
+	// Batch delivery (ADR-1321) answers every record with one invocation;
+	// otherwise each record is invoked on its own below.
+	perRecord := req.Records
+	if batchDeliveryEligible(req) {
+		results, perRecord = s.dispatchBatchAsOneInvocation(ctx, req, recordTimeout), nil
+	}
+	for _, rec := range perRecord {
 		if ctx.Err() != nil {
 			// Total-batch timeout fired (or client disconnected).
 			// Mark every remaining record with batch_timeout so

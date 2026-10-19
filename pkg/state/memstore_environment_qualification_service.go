@@ -115,6 +115,11 @@ func (m *MemStore) ResolveEnvironmentQualificationService(ctx context.Context, r
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.resolveEnvironmentQualificationServiceLocked(request)
+}
+
+func (m *MemStore) resolveEnvironmentQualificationServiceLocked(request EnvironmentQualificationServiceRequest) (EnvironmentQualificationServiceRoute, error) {
+	var zero EnvironmentQualificationServiceRoute
 	ins, err := m.qualificationNetworkInstanceLocked(request.NodeID, request.HostIP)
 	if err != nil || ins.ID == "" || !m.deployments[ins.DeploymentID].EnvironmentWorkloadHeld() {
 		return zero, ErrConflict

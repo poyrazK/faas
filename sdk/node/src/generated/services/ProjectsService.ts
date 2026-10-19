@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { AdoptEnvironmentGitOpsRequest } from '../models/AdoptEnvironmentGitOpsRequest.js';
 import type { AdoptEnvironmentGitOpsResponse } from '../models/AdoptEnvironmentGitOpsResponse.js';
+import type { ApplyCachedProjectPlanRequest } from '../models/ApplyCachedProjectPlanRequest.js';
 import type { ApplyResponse } from '../models/ApplyResponse.js';
 import type { ApproveEnvironmentGitRevisionRequest } from '../models/ApproveEnvironmentGitRevisionRequest.js';
 import type { ApproveEnvironmentGitRevisionResponse } from '../models/ApproveEnvironmentGitRevisionResponse.js';
@@ -11,6 +12,7 @@ import type { BindingVerificationRunList } from '../models/BindingVerificationRu
 import type { BrowserPromotionApprovalExchange } from '../models/BrowserPromotionApprovalExchange.js';
 import type { BrowserPromotionApprovalRequest } from '../models/BrowserPromotionApprovalRequest.js';
 import type { BrowserPromotionApprovalResponse } from '../models/BrowserPromotionApprovalResponse.js';
+import type { CancelablePromise } from '../core/CancelablePromise.js';
 import type { CheckedProjectReleaseManifest } from '../models/CheckedProjectReleaseManifest.js';
 import type { CheckedProjectReleaseResponse } from '../models/CheckedProjectReleaseResponse.js';
 import type { CreateEnvironmentGitSourceRequest } from '../models/CreateEnvironmentGitSourceRequest.js';
@@ -18,6 +20,7 @@ import type { CreateProjectBindingVerificationRunRequest } from '../models/Creat
 import type { CreateProjectEnvironmentApprovalRequest } from '../models/CreateProjectEnvironmentApprovalRequest.js';
 import type { CreateProjectEnvironmentQualificationRequest } from '../models/CreateProjectEnvironmentQualificationRequest.js';
 import type { CreateProjectEnvironmentRequest } from '../models/CreateProjectEnvironmentRequest.js';
+import type { CreateProjectMigrationRequest } from '../models/CreateProjectMigrationRequest.js';
 import type { DetachEnvironmentGitSourceRequest } from '../models/DetachEnvironmentGitSourceRequest.js';
 import type { EnvironmentFieldOwnershipRequest } from '../models/EnvironmentFieldOwnershipRequest.js';
 import type { EnvironmentFieldOwnershipResponse } from '../models/EnvironmentFieldOwnershipResponse.js';
@@ -36,6 +39,7 @@ import type { PreviewEnvironmentGitRevisionRequest } from '../models/PreviewEnvi
 import type { PreviewEnvironmentGitRevisionResponse } from '../models/PreviewEnvironmentGitRevisionResponse.js';
 import type { PreviewEnvironmentGitRollbackRequest } from '../models/PreviewEnvironmentGitRollbackRequest.js';
 import type { PreviewEnvironmentGitRollbackResponse } from '../models/PreviewEnvironmentGitRollbackResponse.js';
+import type { Problem } from '../models/Problem.js';
 import type { ProjectApplyRequest } from '../models/ProjectApplyRequest.js';
 import type { ProjectBindingVerificationReview } from '../models/ProjectBindingVerificationReview.js';
 import type { ProjectBindingVerificationRun } from '../models/ProjectBindingVerificationRun.js';
@@ -58,6 +62,8 @@ import type { ProjectEnvironmentReleaseListResponse } from '../models/ProjectEnv
 import type { ProjectEnvironmentResponse } from '../models/ProjectEnvironmentResponse.js';
 import type { ProjectEnvironmentRoutePolicyResponse } from '../models/ProjectEnvironmentRoutePolicyResponse.js';
 import type { ProjectEnvironmentStateResponse } from '../models/ProjectEnvironmentStateResponse.js';
+import type { ProjectMigration } from '../models/ProjectMigration.js';
+import type { ProjectMigrationList } from '../models/ProjectMigrationList.js';
 import type { ProjectReleaseSetListResponse } from '../models/ProjectReleaseSetListResponse.js';
 import type { ProjectReleaseSetResponse } from '../models/ProjectReleaseSetResponse.js';
 import type { ProjectReleaseStage } from '../models/ProjectReleaseStage.js';
@@ -70,6 +76,7 @@ import type { PublishProjectReleaseSetRequest } from '../models/PublishProjectRe
 import type { RebindEnvironmentGitSourceRequest } from '../models/RebindEnvironmentGitSourceRequest.js';
 import type { RemoveEnvironmentGitOpsOverrideRequest } from '../models/RemoveEnvironmentGitOpsOverrideRequest.js';
 import type { ReplaceProjectEnvironmentQueueBindingsRequest } from '../models/ReplaceProjectEnvironmentQueueBindingsRequest.js';
+import type { ResumeProjectMigrationRequest } from '../models/ResumeProjectMigrationRequest.js';
 import type { ReviewProjectBindingVerificationRequest } from '../models/ReviewProjectBindingVerificationRequest.js';
 import type { StageProjectReleaseRequest } from '../models/StageProjectReleaseRequest.js';
 import type { UpdateProjectEnvironmentConfigRequest } from '../models/UpdateProjectEnvironmentConfigRequest.js';
@@ -77,10 +84,131 @@ import type { UpdateProjectEnvironmentEdgePolicyRequest } from '../models/Update
 import type { UpdateProjectEnvironmentRequest } from '../models/UpdateProjectEnvironmentRequest.js';
 import type { UpdateProjectEnvironmentRoutePolicyRequest } from '../models/UpdateProjectEnvironmentRoutePolicyRequest.js';
 import type { UpdateProjectRequest } from '../models/UpdateProjectRequest.js';
-import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class ProjectsService {
+  /**
+   * Save and apply a reviewed multi-service migration
+   * Save and apply a reviewed multi-service migration. Source-backed HTTP and GraphQL services only. Secret values are request-only; the receipt retains key names. Existing reconcile, sealing, deployment admission, verification and cutover owners remain authoritative. No domain or production traffic changes are performed by this endpoint.
+   * @returns ProjectMigration Save and apply a reviewed multi-service migration result.
+   * @returns Problem Save and apply a reviewed multi-service migration error.
+   * @throws ApiError
+   */
+  public static createProjectMigration({
+    requestBody,
+  }: {
+    requestBody: CreateProjectMigrationRequest,
+  }): CancelablePromise<ProjectMigration | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/project-migrations',
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * List saved project migrations for the authenticated account
+   * List saved project migrations for the authenticated account. Source-backed HTTP and GraphQL services only. Secret values are request-only; the receipt retains key names. Existing reconcile, sealing, deployment admission, verification and cutover owners remain authoritative. No domain or production traffic changes are performed by this endpoint.
+   * @returns ProjectMigrationList List saved project migrations for the authenticated account result.
+   * @returns Problem List saved project migrations for the authenticated account error.
+   * @throws ApiError
+   */
+  public static listProjectMigrations({
+    project,
+  }: {
+    /**
+     * Optional exact project slug to filter migration records.
+     */
+    project?: string,
+  }): CancelablePromise<ProjectMigrationList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/project-migrations',
+      query: {
+        'project': project,
+      },
+    });
+  }
+  /**
+   * Inspect each reserved deployment and its recorded verification and cutover
+   * Inspect each reserved deployment and its recorded verification and cutover. Source-backed HTTP and GraphQL services only. Secret values are request-only; the receipt retains key names. Existing reconcile, sealing, deployment admission, verification and cutover owners remain authoritative. No domain or production traffic changes are performed by this endpoint.
+   * @returns ProjectMigration Inspect each reserved deployment and its recorded verification and cutover result.
+   * @returns Problem Inspect each reserved deployment and its recorded verification and cutover error.
+   * @throws ApiError
+   */
+  public static getProjectMigration({
+    migration,
+  }: {
+    /**
+     * Creator-owned migration journal UUID.
+     */
+    migration: string,
+  }): CancelablePromise<ProjectMigration | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/project-migrations/{migration}',
+      path: {
+        'migration': migration,
+      },
+    });
+  }
+  /**
+   * Resume unfinished migration services while preserving accepted deployments
+   * Resume unfinished migration services while preserving accepted deployments. Source-backed HTTP and GraphQL services only. Secret values are request-only; the receipt retains key names. Existing reconcile, sealing, deployment admission, verification and cutover owners remain authoritative. No domain or production traffic changes are performed by this endpoint.
+   * @returns ProjectMigration Resume unfinished migration services while preserving accepted deployments result.
+   * @returns Problem Resume unfinished migration services while preserving accepted deployments error.
+   * @throws ApiError
+   */
+  public static resumeProjectMigration({
+    migration,
+    requestBody,
+  }: {
+    /**
+     * Saved migration to resume after reviewing unfinished services.
+     */
+    migration: string,
+    requestBody: ResumeProjectMigrationRequest,
+  }): CancelablePromise<ProjectMigration | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/project-migrations/{migration}/resume',
+      path: {
+        'migration': migration,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Deploy an account-owned reviewed project source without another upload.
+   * Applies the exact archive retained by a project scan, not the current
+   * head of a mutable Git ref. The normal scanner and apply admission gates
+   * run again. The account-scoped source expires after one hour; rescan on
+   * preview_expired. Initial secrets require secrets:write or admin and are
+   * sealed before any deployment is enqueued. Failed configuration starts
+   * no builds; saved apps and any completed configuration remain available
+   * for correction. Values are never included in responses or scan plans.
+   *
+   * @returns ApplyResponse Project applied with per-workload deployment receipts.
+   * @throws ApiError
+   */
+  public static applyCachedProjectPlan({
+    requestBody,
+  }: {
+    requestBody: ApplyCachedProjectPlanRequest,
+  }): CancelablePromise<ApplyResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/apply-plan',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        403: `The caller lacks deployment or secret write permission.`,
+        409: `The plan is stale, blocked, or requires environment approval.`,
+        410: `The account-owned reviewed source expired; scan again.`,
+      },
+    });
+  }
   /**
    * Scan an uploaded tarball and return a deploy plan.
    * Dry-run. Accepts a multipart upload (`source=<tar.gz>`,
@@ -1013,166 +1141,6 @@ export class ProjectsService {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/projects/{slug}/environments/{environment}/gitops/plan',
-      path: {
-        'slug': slug,
-        'environment': environment,
-      },
-      body: requestBody,
-      mediaType: 'application/json',
-      errors: {
-        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        409: `code: conflict`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
-        \`profile_investigation_limit\`.
-        `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
-        host age recipient not loaded → registry credential PUT
-        returns 503 instead of accepting plaintext).
-        `,
-      },
-    });
-  }
-  /**
-   * Preview image promotion from a proven serving environment release.
-   * Read-only, value-redacted proposal. Reads both bound sources, source release, current graph evidence, artifacts, target intent and ownership on one snapshot. Source builds without a portable artifact reference are blocked. The hash grants no approval or execution authority; expected_plan_hash rejects changed observations. Target review and fresh qualification remain required.
-   * @returns PreviewEnvironmentGitPromotionResponse Read-only promotion proposal; blockers prevent patch and manifest export.
-   * @throws ApiError
-   */
-  public static previewEnvironmentGitPromotion({
-    slug,
-    environment,
-    requestBody,
-  }: {
-    /**
-     * Project owning the environment Git authority.
-     */
-    slug: string,
-    /**
-     * Registered environment selected for Git intent management.
-     */
-    environment: string,
-    /**
-     * Source environment, immutable target-manifest commit, and optional previously reviewed observation hash.
-     */
-    requestBody: PreviewEnvironmentGitPromotionRequest,
-  }): CancelablePromise<PreviewEnvironmentGitPromotionResponse> {
-    return __request(OpenAPI, {
-      method: 'POST',
-      url: '/v1/projects/{slug}/environments/{environment}/gitops/promotion-plan',
-      path: {
-        'slug': slug,
-        'environment': environment,
-      },
-      body: requestBody,
-      mediaType: 'application/json',
-      errors: {
-        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        409: `code: conflict`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
-        \`profile_investigation_limit\`.
-        `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
-        host age recipient not loaded → registry credential PUT
-        returns 503 instead of accepting plaintext).
-        `,
-      },
-    });
-  }
-  /**
-   * List retained GitOps serving releases and current rollback eligibility.
-   * Verifies the immutable target manifest commit through the bound provider and assesses each release using the rollback planner on one scoped observation snapshot per page. Only completed serving history of the current source is listed. Eligibility can change after observation. Release compatibility deadlines do not guarantee artifact retention. This read-only catalog never pins artifacts or authorizes rollback execution.
-   * @returns ListEnvironmentGitReleasesResponse Bounded recovery catalog with current eligibility and public artifact identities.
-   * @throws ApiError
-   */
-  public static listEnvironmentGitReleases({
-    slug,
-    environment,
-    targetCommitSha,
-    before,
-  }: {
-    /**
-     * Project owning the environment Git authority.
-     */
-    slug: string,
-    /**
-     * Registered environment selected for Git intent management.
-     */
-    environment: string,
-    /**
-     * Immutable commit containing the target manifest whose configuration will be preserved.
-     */
-    targetCommitSha: string,
-    /**
-     * next_before release UUID from the previous recovery page in this Git source scope.
-     */
-    before?: string,
-  }): CancelablePromise<ListEnvironmentGitReleasesResponse> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/projects/{slug}/environments/{environment}/gitops/releases',
-      path: {
-        'slug': slug,
-        'environment': environment,
-      },
-      query: {
-        'target_commit_sha': targetCommitSha,
-        'before': before,
-      },
-      errors: {
-        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        409: `code: conflict`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
-        \`profile_investigation_limit\`.
-        `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
-        host age recipient not loaded → registry credential PUT
-        returns 503 instead of accepting plaintext).
-        `,
-      },
-    });
-  }
-  /**
-   * Propose a code rollback from a retained GitOps serving release.
-   * Read-only, value-redacted proposal selecting exact retained artifacts in this environment. Rechecks historical serving evidence, current artifact trust, identity mappings, target intent and ownership on one snapshot. It preserves current configuration and changes only compatible workload sources. Review the observation hash before export; normal Git approval and fresh qualification remain required.
-   * @returns PreviewEnvironmentGitRollbackResponse Read-only rollback proposal; blockers prevent patch and manifest export.
-   * @throws ApiError
-   */
-  public static previewEnvironmentGitRollback({
-    slug,
-    environment,
-    requestBody,
-  }: {
-    /**
-     * Project owning the environment Git authority.
-     */
-    slug: string,
-    /**
-     * Registered environment selected for Git intent management.
-     */
-    environment: string,
-    /**
-     * Retained release UUID, immutable target-manifest commit, and optional previously reviewed observation hash.
-     */
-    requestBody: PreviewEnvironmentGitRollbackRequest,
-  }): CancelablePromise<PreviewEnvironmentGitRollbackResponse> {
-    return __request(OpenAPI, {
-      method: 'POST',
-      url: '/v1/projects/{slug}/environments/{environment}/gitops/rollback-plan',
       path: {
         'slug': slug,
         'environment': environment,

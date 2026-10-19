@@ -192,6 +192,10 @@ func interpolateComposeCandidate(candidate *composeCandidate, values map[string]
 	}{
 		{name: "build", value: &candidate.Build},
 		{name: "command", value: &candidate.Command},
+		{name: "entrypoint", value: &candidate.Entrypoint},
+		{name: "user", value: &candidate.User},
+		{name: "stop_grace_period", value: &candidate.StopGracePeriod},
+		{name: "env_file", value: &candidate.EnvFile},
 	}
 	for _, field := range fields {
 		resolved, err := interpolateComposeValue(*field.value, values, source, service, field.name)
@@ -223,6 +227,19 @@ func interpolateComposeCandidate(candidate *composeCandidate, values map[string]
 		return err
 	}
 	candidate.Image = image
+	for _, field := range []struct {
+		name  string
+		value *string
+	}{
+		{name: "working_dir", value: &candidate.WorkingDir},
+		{name: "stop_signal", value: &candidate.StopSignal},
+	} {
+		resolved, err := interpolateComposeString(*field.value, values, source, service, field.name)
+		if err != nil {
+			return err
+		}
+		*field.value = resolved
+	}
 	policy, err := interpolateComposeString(candidate.ServiceBindingPolicy, values, source, service, "x-gregale-service-policy")
 	if err != nil {
 		return err

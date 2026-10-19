@@ -209,6 +209,54 @@ func TestRetentionOnceRequestIDJournalUsesBoundedExpiryDelete(t *testing.T) {
 	}
 }
 
+func TestRetentionOnceRealtimeUsageUsesBoundedThirteenMonthDelete(t *testing.T) {
+	r := &recordingExecer{rowsFn: func(i int) int64 {
+		if i == 0 {
+			return RetentionBatchSize
+		}
+		return 3
+	}}
+	got, err := RetentionOnceRealtimeUsage(context.Background(), r)
+	if err != nil || got != RetentionBatchSize+3 {
+		t.Fatalf("RetentionOnceRealtimeUsage = %d, %v", got, err)
+	}
+	calls := r.callsCopy()
+	if len(calls) != 2 {
+		t.Fatalf("exec calls = %d, want a full batch then a short read", len(calls))
+	}
+	for _, want := range []string{"DELETE FROM public.realtime_usage_hours", "WHERE ctid IN (", "hour < (now() - interval '13 months')", "LIMIT $1"} {
+		if !strings.Contains(calls[0].SQL, want) {
+			t.Errorf("realtime usage retention SQL missing %q: %s", want, calls[0].SQL)
+		}
+	}
+}
+
+func TestRetentionLoopAlsoAgesOutRealtimeUsage(t *testing.T) {
+	r := &recordingExecer{rowsFn: func(int) int64 { return 0 }}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		RetentionLoop(ctx, r, 5*time.Millisecond, nil)
+		close(done)
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		seen := false
+		for _, c := range r.callsCopy() {
+			seen = seen || strings.Contains(c.SQL, "realtime_usage_hours")
+		}
+		if seen {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("RetentionLoop never pruned realtime_usage_hours")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	<-done
+}
+
 func TestRetentionLoop_StopsOnContextCancel(t *testing.T) {
 	r := &recordingExecer{}
 	ctx, cancel := context.WithCancel(context.Background())

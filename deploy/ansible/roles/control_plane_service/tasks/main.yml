@@ -146,6 +146,24 @@
     - { src: "faas-meterd.service", dest: "/etc/systemd/system/faas-meterd.service" }
   register: cp_units
 
+# ADR-1591: install without enabling; staging pilot and keys are configured explicitly.
+- name: control_plane_service — install private data pipeline worker unit
+  ansible.builtin.copy:
+    src: faas-apid-data-pipeline-worker.service
+    dest: /etc/systemd/system/faas-apid-data-pipeline-worker.service
+    owner: root
+    group: root
+    mode: "0644"
+
+# ADR-1591: independent catalog health monitor; install without enabling.
+- name: control_plane_service — install private pipeline alert worker unit
+  ansible.builtin.copy:
+    src: faas-apid-data-pipeline-alert-worker.service
+    dest: /etc/systemd/system/faas-apid-data-pipeline-alert-worker.service
+    owner: root
+    group: root
+    mode: "0644"
+
 # ADR-531: ship the private worker without enabling it. The same APID user owns
 # customer-intent writes; data capture remains gated in the coordinator.
 - name: control_plane_service — install private clone worker unit
@@ -280,7 +298,7 @@
     enabled: true
   when: control_plane_apid_enabled.rc == 0
 
-# ADR-20261018072701: faas_schedd_listen_addr is schedd's listen address. The same
+# ADR-1736: faas_schedd_listen_addr is schedd's listen address. The same
 # variable renders schedd's FAAS_SCHEDD_LISTEN_ADDR and faas-schedd.socket's
 # ListenStream, so the durable socket always carries the address schedd
 # serves (schedd refuses an inherited socket it does not serve). Empty keeps
@@ -550,6 +568,7 @@
   loop:
     - { path: "/var/log/faas", user: "faas-apid" }
     - { path: "/var/spool/faas", user: "faas-apid" }
+    - { path: "/var/spool/faas/builds", user: "faas-apid" }
     - { path: "/etc/faas/statuspage", user: "faas-apid" }
   # imaged-owned dirs (/srv/fc/snap, /srv/fc/sigs) moved to
   # compute_only_service — those travel with the imaged unit and its
@@ -1024,6 +1043,24 @@
   ansible.builtin.debug:
     msg: "{{ faas_mail_transport_assert.stdout }}"
   when: faas_mail_transport_assert.stdout != ""
+
+# ADR-1189: Safe Deploy (canary progression, alert rollbacks, stuck-canary
+# recovery) runs only when APID and meterd share the internal service-token
+# pair. Generate it once when missing; existing values are never replaced and
+# a value set in only one file is copied to the other. To switch Safe Deploy
+# off, set faas_safe_releases_enabled: false before removing the tokens, or the
+# next run puts them back (docs/runbooks/FaasSafeDeployRollout.md).
+- name: control_plane_service — provision the Safe Deploy token pair (ADR-1189)
+  ansible.builtin.script:
+    cmd: provision-safe-release-tokens.sh /etc/faas/sealed.env /etc/faas/secrets/meterd/billing.env
+    executable: /bin/bash
+  register: faas_safe_release_tokens
+  changed_when: "'changed=1' in faas_safe_release_tokens.stdout"
+  when: faas_safe_releases_enabled | bool
+  no_log: true
+  notify:
+    - restart faas-apid
+    - restart faas-meterd
 
 - name: control_plane_service — configure signed VM inventory repair
   ansible.builtin.template:

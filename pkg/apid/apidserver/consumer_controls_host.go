@@ -31,3 +31,11 @@ func (h consumerControlsHost) AppRoute(w http.ResponseWriter, r *http.Request, a
 func (h consumerControlsHost) Audit(ctx context.Context, event, accountID string, fields map[string]any) {
 	h.s.audit.Emit(ctx, event, &accountID, fields)
 }
+
+func (h consumerControlsHost) TenantRoute(w http.ResponseWriter, r *http.Request, acct state.Account) (state.PlatformTenant, bool) {
+	tenants, ok := h.s.platformTenantStore(w, acct)
+	if !ok {
+		return state.PlatformTenant{}, false
+	}
+	return h.s.platformTenantByPath(w, r, acct, tenants)
+}

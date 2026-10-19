@@ -28,7 +28,7 @@ func TestCheckedRollbackSnapshotSmokeStagesHistoricalDeploymentWithoutCutover(t 
 				if err != nil {
 					t.Fatal(err)
 				}
-				profile, err := frameworkprofile.CaptureImageRuntime(nil, &api.ComposeHealthcheck{Test: []string{"CMD", "/original-check"}})
+				profile, err := frameworkprofile.CaptureImageRuntime(nil, &api.ComposeHealthcheck{Test: []string{"CMD", "/original-check"}}, nil)
 				if err != nil {
 					t.Fatal(err)
 				}

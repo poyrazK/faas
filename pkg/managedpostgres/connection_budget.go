@@ -7,25 +7,30 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/managedpostgres/connectioncapacity"
+	"github.com/onebox-faas/faas/pkg/connectioncapacity"
+	sqlcapacity "github.com/onebox-faas/faas/pkg/managedpostgres/connectioncapacity"
 )
 
 // ConnectionBudgetSnapshot is a credential-free catalog read. Counts are
-// potential consumers, not live SQL sessions. Runtime pool versions and external
-// consumers remain unverified. Capacity comes only from the operator cache.
+// potential consumers, not live SQL sessions. Admission is available only for
+// exact placements with a qualified allocation and durable credential ceilings.
 type ConnectionBudgetSnapshot struct {
 	DatabaseID, DatabaseName, DatabaseState, BackendFingerprint string
 	Generation                                                  int64
 	CheckedAt                                                   time.Time
 	Truncated, ModelsVerified, OtherConsumersCovered            bool
 	InventoryUnavailable                                        bool
+	NativeReplication                                           bool
 	Bindings                                                    []connectionBudgetBinding
 	Capacity                                                    *ConnectionBudgetCapacityEvidence
+	Admission                                                   *connectioncapacity.Snapshot
 }
 
 // ConnectionBudgetCapacityEvidence must come from a qualified, cached observer
 // of this exact database/generation and tenant-usable allocation. Compute class
 // and PostgreSQL max_connections alone do not establish usable capacity.
+// The canonical pool model remains advisory. Qualified pipeline mirrors use
+// the independent Admission ledger and enforce login ceilings instead.
 type ConnectionBudgetCapacityEvidence struct {
 	DatabaseID, BackendFingerprint string
 	Generation, UsableConnections  int64
@@ -34,7 +39,7 @@ type ConnectionBudgetCapacityEvidence struct {
 	AllocationCheckedAt            time.Time
 	AllocationExpiresAt            time.Time
 	AllocationConnections          int64
-	SQL                            *connectioncapacity.Observation
+	SQL                            *sqlcapacity.Observation
 }
 
 func (c *ConnectionBudgetCapacityEvidence) valid(databaseID, fingerprint string, generation int64, asOf, now time.Time) bool {
@@ -141,6 +146,9 @@ func (s *BindingService) AppConnectionBudgets(ctx context.Context, accountID, ap
 }
 
 func describeConnectionBudget(s ConnectionBudgetSnapshot, now time.Time) api.ManagedPostgresConnectionBudget {
+	if s.Admission != nil {
+		return describeAdmittedBudget(s, now)
+	}
 	if len(s.Bindings) > api.DataAPIConnectionBudgetMaxBindings {
 		s.Truncated = true
 		s.Bindings = s.Bindings[:api.DataAPIConnectionBudgetMaxBindings]
@@ -165,6 +173,9 @@ func describeConnectionBudget(s ConnectionBudgetSnapshot, now time.Time) api.Man
 	}
 	if !s.ModelsVerified {
 		add("runtime_pool_configuration_unverified")
+	}
+	if s.NativeReplication {
+		add("native_replication_connections_unmodeled")
 	}
 	if !s.OtherConsumersCovered {
 		add("external_consumers_unobserved")
@@ -212,6 +223,27 @@ func describeConnectionBudget(s ConnectionBudgetSnapshot, now time.Time) api.Man
 		if out.Demand.ModeledPeakConnections > *out.Capacity.UsableConnections {
 			out.State = "over_budget"
 		}
+	}
+	return out
+}
+
+func describeAdmittedBudget(s ConnectionBudgetSnapshot, now time.Time) api.ManagedPostgresConnectionBudget {
+	r := s.Admission
+	out := api.ManagedPostgresConnectionBudget{Version: 1, DatabaseID: s.DatabaseID, DatabaseName: s.DatabaseName, State: "unknown", Enforced: true, Model: "qualified_shared_connection_limits",
+		CheckedAt: r.ObservedAt.UTC().Format(time.RFC3339Nano), ExpiresAt: r.ExpiresAt.UTC().Format(time.RFC3339Nano), Reasons: []string{}, Capacity: api.ConnectionBudgetCapacity{State: "unknown"}}
+	out.Inventory.Bindings = int64(len(s.Bindings))
+	out.Demand.ModeledPeakConnections = r.Reserved.Connections
+	if !r.Fresh(now) || r.Connections < 1 || s.DatabaseState != string(StateReady) {
+		out.Reasons = append(out.Reasons, "capacity_unverified")
+		return out
+	}
+	out.Capacity.State = "verified"
+	value := r.Connections
+	out.Capacity.UsableConnections = &value
+	out.State = "within_budget"
+	if !r.Fits(connectioncapacity.Limits{}) {
+		out.State = "over_budget"
+		out.Reasons = append(out.Reasons, "reserved_capacity_exceeds_allocation")
 	}
 	return out
 }

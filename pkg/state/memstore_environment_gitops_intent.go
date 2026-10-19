@@ -586,7 +586,9 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 	}
 	if configChanged {
 		key := projectEnvironmentConfigKey(source.ProjectID, source.EnvironmentSlug)
+		before := m.latestProjectEnvironmentConfigValuesLocked(source.ProjectID, source.EnvironmentSlug)
 		m.projectEnvironmentConfigs[key] = append(m.projectEnvironmentConfigs[key], ProjectEnvironmentConfig{ID: newID(), AccountID: source.AccountID, ProjectID: source.ProjectID, EnvironmentSlug: source.EnvironmentSlug, Version: int64(len(m.projectEnvironmentConfigs[key]) + 1), Values: configValues, ConfigHash: configHash, CreatedAt: now})
+		m.projectConfigRuntimeChangeLocked(source.ProjectID, source.EnvironmentSlug, before, configValues, now)
 	}
 	if len(steps) > 0 {
 		memory.source.IntentVersion++

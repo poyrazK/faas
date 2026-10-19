@@ -28,6 +28,9 @@ func platformTenantStatementResponse(s state.PlatformTenantStatement) api.Platfo
 			PriceMillicentsPerUnit: line.PriceMillicentsPerUnit, AmountMillicents: line.AmountMillicents,
 		})
 	}
+	for _, fee := range s.Fees {
+		out.Fees = append(out.Fees, api.APIConsumerStatementFeeResponse{Kind: fee.Kind, RateCardID: fee.RateCardID, AmountMillicents: fee.AmountMillicents})
+	}
 	return out
 }
 
@@ -140,8 +143,12 @@ func (s *server) quotePlatformTenantStatement(ctx context.Context, accountID, te
 	if err != nil {
 		return state.PlatformTenantStatementInput{}, err
 	}
+	opts, err := s.tenantQuoteOptions(ctx, accountID, tenantID)
+	if err != nil {
+		return state.PlatformTenantStatementInput{}, err
+	}
 	if billing.TenantMonthlyPricing(tenantCards, start, end) {
-		return s.quotePlatformTenantMonth(ctx, accountID, tenantID, start, end, revision, priorStatus, usageDelta, tenantCards)
+		return s.quotePlatformTenantMonth(ctx, accountID, tenantID, start, end, revision, priorStatus, usageDelta, tenantCards, opts)
 	}
 	for _, bucket := range usageDelta {
 		if _, loaded := cards[bucket.AppID]; loaded {
@@ -154,14 +161,55 @@ func (s *server) quotePlatformTenantStatement(ctx context.Context, accountID, te
 		cards[bucket.AppID] = appCards
 	}
 	return billing.BuildPlatformTenantStatementFromDelta(accountID, tenantID, start, end, time.Now().UTC(), revision,
-		priorStatus, usageDelta, cards, tenantCards)
+		priorStatus, usageDelta, cards, tenantCards, opts)
 }
 
-// quotePlatformTenantMonth re-prices a whole month for tenant allowances
-// and tiers (ADR-975) and bills the difference from finalized revisions.
+// tenantQuoteOptions are how a tenant's usage is priced beyond its cards:
+// its trial (ADR-1322).
+func (s *server) tenantQuoteOptions(ctx context.Context, accountID, tenantID string) (billing.QuoteOptions, error) {
+	trials, ok := s.store.(state.PlatformTenantTrialStore)
+	if !ok {
+		return billing.QuoteOptions{}, nil
+	}
+	trial, err := trials.GetPlatformTenantTrial(ctx, accountID, tenantID)
+	if errors.Is(err, state.ErrNotFound) {
+		return billing.QuoteOptions{}, nil
+	}
+	if err != nil {
+		return billing.QuoteOptions{}, fmt.Errorf("load tenant trial: %w", err)
+	}
+	return billing.QuoteOptions{TrialStart: trial.StartsAt, TrialEnd: trial.EndsAt}, nil
+}
+
+// tenantMeterUsage loads the month's app-reported units for each meter a
+// tenant card prices (ADR-1319).
+func (s *server) tenantMeterUsage(ctx context.Context, accountID, tenantID string, tenantCards []state.PlatformTenantRateCard,
+	start, end time.Time) (map[string][]state.PlatformTenantMeterUsageBucket, error) {
+	meters := map[string][]state.PlatformTenantMeterUsageBucket{}
+	store, ok := s.store.(state.PlatformTenantMeterUsageStore)
+	for _, card := range tenantCards {
+		meter, isMeter := state.AppMeterOfUnit(card.Unit)
+		if _, loaded := meters[meter]; !isMeter || loaded {
+			continue
+		}
+		if !ok {
+			return nil, errors.New("platform tenant meter usage is unavailable")
+		}
+		rows, err := store.ListPlatformTenantMeterUsage(ctx, accountID, tenantID, meter, start, end)
+		if err != nil {
+			return nil, fmt.Errorf("list tenant meter usage: %w", err)
+		}
+		meters[meter] = rows
+	}
+	return meters, nil
+}
+
+// quotePlatformTenantMonth re-prices a whole month for tenant allowances,
+// tiers and unit streams (ADR-975, ADR-1319) and bills the difference from
+// finalized revisions, plus monthly fees (ADR-1322).
 func (s *server) quotePlatformTenantMonth(ctx context.Context, accountID, tenantID string, start, end time.Time,
 	revision int, priorStatus state.APIConsumerUsageStatementStatus, usageDelta []state.APIConsumerUsageBucket,
-	tenantCards []state.PlatformTenantRateCard) (state.PlatformTenantStatementInput, error) {
+	tenantCards []state.PlatformTenantRateCard, opts billing.QuoteOptions) (state.PlatformTenantStatementInput, error) {
 	statements, okStatements := s.store.(state.PlatformTenantStatementStore)
 	cardsStore, okCards := s.store.(state.APIConsumerRateCardStore)
 	if !okStatements || !okCards {
@@ -191,9 +239,23 @@ func (s *server) quotePlatformTenantMonth(ctx context.Context, accountID, tenant
 	if err != nil {
 		return state.PlatformTenantStatementInput{}, err
 	}
-	now := time.Now().UTC()
-	in, err := billing.BuildPlatformTenantMonthStatement(accountID, tenantID, start, end, now, revision, priorStatus,
-		usageDelta, monthUsage, cards, tenantCards, previous, routes)
+	meters, err := s.tenantMeterUsage(ctx, accountID, tenantID, tenantCards, start, end)
+	if err != nil {
+		return state.PlatformTenantStatementInput{}, err
+	}
+	tenants, ok := s.store.(state.PlatformTenantStore)
+	if !ok {
+		return state.PlatformTenantStatementInput{}, state.ErrNotFound
+	}
+	tenant, err := tenants.GetPlatformTenant(ctx, accountID, tenantID)
+	if err != nil {
+		return state.PlatformTenantStatementInput{}, err
+	}
+	month := billing.TenantMonth{AccountID: accountID, TenantID: tenantID, Start: start, End: end, AsOf: time.Now().UTC(),
+		Revision: revision, PriorStatus: priorStatus, UsageDelta: usageDelta, MonthUsage: monthUsage, CardsByApp: cards,
+		TenantCards: tenantCards, Previous: previous, Inputs: billing.TenantUsageInputs{Routes: routes, Meters: meters},
+		TenantCreated: tenant.CreatedAt, Options: opts}
+	in, err := billing.BuildTenantMonthStatement(month)
 	if !errors.Is(err, billing.ErrTenantChargeDecreased) {
 		return in, err
 	}
@@ -203,8 +265,8 @@ func (s *server) quotePlatformTenantMonth(ctx context.Context, accountID, tenant
 	if len(locked) == 0 {
 		return in, err
 	}
-	return billing.BuildPlatformTenantMonthStatement(accountID, tenantID, start, end, now, revision, priorStatus,
-		usageDelta, monthUsage, cards, tenantCards, previous, routes, billing.QuoteOptions{VolumeSteps: locked})
+	month.Options.VolumeSteps = locked
+	return billing.BuildTenantMonthStatement(month)
 }
 
 // tenantRouteUsage loads each subject's route counts when a tenant card
@@ -258,13 +320,13 @@ func tenantStatementProblem(err error) *api.Problem {
 			"Mixed statement currencies", "all priced app usage in one tenant statement must use the same currency")
 	case errors.Is(err, billing.ErrNoNewTenantUsage):
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"No tenant usage", "the requested period has no billable tenant-attributed usage")
+			"No tenant usage", "the requested period has no billable tenant-attributed usage and no monthly fee to bill")
 	case errors.Is(err, billing.ErrAPIConsumerAllowanceInTenantStatement):
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 			"App pricing needs an app statement", "an app rate card with included units, tiers, route weights, or a plan cannot price minutes no platform tenant rate card covers; add a tenant rate card in force for those minutes or bill through app consumer statements")
 	case errors.Is(err, billing.ErrTenantMonthPeriodRequired):
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Calendar month required", "a platform tenant rate card with a monthly allowance or tiers prices this period, so the statement must cover exactly one UTC calendar month")
+			"Calendar month required", "a platform tenant rate card with a monthly allowance, tiers, route weights, monthly fees or a unit other than requests prices this period, so the statement must cover exactly one UTC calendar month")
 	case errors.Is(err, billing.ErrTenantMonthOverlap):
 		return api.NewProblem(http.StatusConflict, api.CodeConflict,
 			"Month already partly billed", "a finalized statement for another period covers minutes of this month; bill this tenant by calendar month once a monthly allowance or tiers apply")

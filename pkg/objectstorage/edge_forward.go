@@ -41,7 +41,7 @@ func NewPublicReadForwarder(c PublicReadForwardConfig) (http.Handler, error) {
 		appsDomain = "gregale.dev"
 	}
 	return &publicReadForwarder{
-		match:   &publicReadHandler{store: c.Store, appsDomain: appsDomain},
+		match:   &publicReadHandler{store: c.Store, appsDomain: appsDomain, mounts: newPublicMountCache()},
 		forward: c.Forward, next: c.Next, log: c.Log,
 	}, nil
 }

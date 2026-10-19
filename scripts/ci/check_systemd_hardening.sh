@@ -60,7 +60,7 @@ for socket_unit in "${apid_socket_units[@]}"; do
   done
 done
 
-# Durable unix listeners (docs/adr/20261018072701-zero-downtime-daemon-restarts.md).
+# Durable unix listeners (docs/adr/1736-zero-downtime-daemon-restarts.md).
 # Socket permissions are the authentication boundary (ADR-015): the daemons
 # refuse an inherited socket that grants access to other users.
 unix_socket_units=(

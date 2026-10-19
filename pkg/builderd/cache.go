@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +19,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/buildcache"
+	"github.com/onebox-faas/faas/pkg/issues"
 	"golang.org/x/sys/unix"
 )
 
@@ -42,7 +42,10 @@ type CacheToolchain struct {
 	RailpackVer        string `json:"railpack_version,omitempty"`
 	// DevPatch keeps the producing build's ADR-740 source map so a cache hit
 	// reports the same map as the build it reuses.
-	DevPatch *api.DevPatchSourceMap `json:"dev_patch,omitempty"`
+	DevPatch                   *api.DevPatchSourceMap             `json:"dev_patch,omitempty"`
+	IssueSourceMaps            *api.PublishIssueSourceMapsRequest `json:"issue_source_maps,omitempty"`
+	IssueSourceMapsDigest      string                             `json:"issue_source_maps_digest,omitempty"`
+	IssueSourceMapsImageSHA256 string                             `json:"issue_source_maps_image_sha256,omitempty"`
 }
 
 // Cache stores produced OCI tarballs. Deployment builds use a versioned
@@ -188,8 +191,14 @@ func (c *Cache) lookupKey(sourceHash string, fw Framework, plan api.Plan) (Cache
 		return CacheEntry{}, false
 	}
 	var toolchain CacheToolchain
-	if metadata, err := os.ReadFile(filepath.Join(filepath.Dir(p), "toolchain.json")); err == nil {
-		_ = json.Unmarshal(metadata, &toolchain)
+	if root, err := os.OpenRoot(filepath.Dir(p)); err == nil {
+		if metadata, err := issues.ReadSourceMapBuildFile(root, "toolchain.json", api.IssueSourceMapBuildMetadataMaxBytes); err == nil {
+			var decoded CacheToolchain
+			if issues.DecodeSourceMapBuildJSON(metadata, &decoded) == nil {
+				toolchain = decoded
+			}
+		}
+		_ = root.Close()
 	}
 	return CacheEntry{Path: p, Bytes: st.Size(), Toolchain: toolchain}, true
 }
@@ -259,7 +268,7 @@ func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPa
 				return err
 			}
 		}
-		if toolchain.BuildkitVer != "" || toolchain.RailpackVer != "" || toolchain.DevPatch != nil || toolchain.OriginDeploymentID != "" {
+		if toolchain.BuildkitVer != "" || toolchain.RailpackVer != "" || toolchain.DevPatch != nil || toolchain.OriginDeploymentID != "" || toolchain.IssueSourceMaps != nil {
 			if err := writeCacheMetadata(filepath.Join(filepath.Dir(dst), "toolchain.json"), toolchain); err != nil {
 				return err
 			}
@@ -338,7 +347,7 @@ func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPa
 	if err := writeCacheSidecar(filepath.Join(filepath.Dir(dst), "artifact.sha256"), hex.EncodeToString(digest.Sum(nil))); err != nil {
 		return err
 	}
-	if toolchain.BuildkitVer != "" || toolchain.RailpackVer != "" || toolchain.DevPatch != nil || toolchain.OriginDeploymentID != "" {
+	if toolchain.BuildkitVer != "" || toolchain.RailpackVer != "" || toolchain.DevPatch != nil || toolchain.OriginDeploymentID != "" || toolchain.IssueSourceMaps != nil {
 		if err := writeCacheMetadata(filepath.Join(filepath.Dir(dst), "toolchain.json"), toolchain); err != nil {
 			return err
 		}
@@ -398,7 +407,7 @@ func writeCacheSidecar(cs, value string) error {
 }
 
 func writeCacheMetadata(path string, toolchain CacheToolchain) error {
-	data, err := json.Marshal(toolchain)
+	data, err := boundedBuildCacheMetadata(toolchain)
 	if err != nil {
 		return fmt.Errorf("cache: marshal toolchain metadata: %w", err)
 	}

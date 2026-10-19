@@ -45,6 +45,9 @@ import (
 // is safe for concurrent use.
 type PgStore struct {
 	pool *orgAccessPool
+	// admission remembers whether the database has the instance admission
+	// functions (ADR-1741).
+	admission *admissionFunctionProbe
 }
 
 // NewPgStore wraps a pool. The pool is owned by the caller; PgStore does not
@@ -54,7 +57,7 @@ func NewPgStore(pool *pgxpool.Pool) *PgStore {
 	if pool == nil {
 		return &PgStore{}
 	}
-	return &PgStore{pool: &orgAccessPool{Pool: pool}}
+	return &PgStore{pool: &orgAccessPool{Pool: pool}, admission: &admissionFunctionProbe{}}
 }
 
 // Ping tests database connectivity through the underlying connection pool.
@@ -2683,8 +2686,8 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 	if workloadClass == "" {
 		workloadClass = WorkloadClassHTTP
 	}
-	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, warm_pool_size, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores, visibility, retry_policy, org_id, platform_tenant_required)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37::jsonb, coalesce(nullif($38, '')::uuid, (select id from orgs where personal_org = true and personal_owner_account_id = $1)), $39)
+	insertAppSQL := `insert into apps (id, account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, warm_pool_size, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores, visibility, retry_policy, org_id, platform_tenant_required)
+		 values (coalesce(nullif($40, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37::jsonb, coalesce(nullif($38, '')::uuid, (select id from orgs where personal_org = true and personal_owner_account_id = $1)), $39)
 		returning ` + appsSelectColumns
 	// status: same fallback as CreateApp above — empty Go Status would
 	// trip 23514 on the CHECK constraint, so coerce to AppActive. The
@@ -2746,7 +2749,7 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 		// coerced to 'http1' so the schema DEFAULT and the
 		// explicit-write path converge on the same universal
 		// default. Mirrors the binding in CreateApp above.
-		appProtocol, cpuMillicores, string(visibility), retryPolicy, nullString(app.OrgID), app.PlatformTenantRequired)
+		appProtocol, cpuMillicores, string(visibility), retryPolicy, nullString(app.OrgID), app.PlatformTenantRequired, app.ID)
 	created, err := scanApp(row)
 	if err != nil {
 		return App{}, err
@@ -7198,6 +7201,9 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 			return Deployment{}, 0, mapErr(err)
 		}
 	}
+	if err := captureBuildDependencyGateTx(ctx, tx, created, d.BuildDependencies); err != nil {
+		return Deployment{}, 0, err
+	}
 	if err := captureDeploymentDependenciesTx(ctx, tx, created); err != nil {
 		return Deployment{}, 0, err
 	}
@@ -10881,6 +10887,14 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 	}); err != nil {
 		return Deployment{}, err
 	}
+	if err := retryBuildDependencyGateTx(ctx, tx, created, failedID); err != nil {
+		return Deployment{}, err
+	}
+	if err := sqlc.New().CopyDeploymentPublicBuildURLs(ctx, tx, sqlc.CopyDeploymentPublicBuildURLsParams{
+		DeploymentID: mustPgUUID(created.ID), SourceDeploymentID: mustPgUUID(failedID),
+	}); err != nil {
+		return Deployment{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, err
 	}
@@ -12630,20 +12644,15 @@ func (s *PgStore) SweepStuckRunningBuildsWithIDs(ctx context.Context, threshold 
 
 // QueuedBuildsCount (operator-side observability mega-PR / Commit 7
 // — P5) returns the number of builds currently in 'queued' state
-// across the fleet. Per-node labeling is deferred (builds.target_node_id
-// is not yet a column — adding it is a follow-up migration per the
-// PR-open checklist). Today the gauge is a fleet-total; the operator
-// dashboard renders "X builds in the queue" without per-schedd
-// attribution. A partial index on builds(status='queued') keeps
-// this O(matches) instead of O(table).
+// across the fleet. It excludes running and terminal builds and does not
+// attribute queued builds to a node. A queued-only index supports periodic
+// reads; callers still bound the count with a deadline.
 func (s *PgStore) QueuedBuildsCount(ctx context.Context) (int, error) {
-	var n int
-	if err := s.pool.QueryRow(ctx,
-		`select count(*) from builds where status = 'queued'`,
-	).Scan(&n); err != nil {
+	n, err := sqlc.New().OperatorQueuedBuildsCount(ctx, s.pool)
+	if err != nil {
 		return 0, fmt.Errorf("state: count queued builds: %w", err)
 	}
-	return n, nil
+	return int(n), nil
 }
 
 // ClaimQueuedBuild atomically transitions queued → running via a single
@@ -12656,7 +12665,7 @@ func (s *PgStore) ClaimQueuedBuild(ctx context.Context, id string) (Build, error
 	row := s.pool.QueryRow(ctx,
 		`update builds
 		   set status = 'running', started_at = now()
-		 where id = $1 and status = 'queued'
+		 where id = $1 and status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now())
 		 returning id, deployment_id, kind, source_bytes, status,
 		           coalesce(failure_class,''), coalesce(log_path,''),
 		           started_at, finished_at, enqueued_at,
@@ -12687,7 +12696,7 @@ func (s *PgStore) ClaimQueuedBuildWithNodeAffinity(ctx context.Context, id, node
 		   set status = 'running', started_at = now()
 		  from deployments d
 		 where b.id = $1
-		   and b.status = 'queued'
+		   and b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now())
 		   and d.id = b.deployment_id
 		   and (
 		     b.enqueued_at <= now() - $3::interval
@@ -12735,7 +12744,7 @@ func (s *PgStore) ClaimNextQueuedBuild(ctx context.Context) (Build, error) {
 		   set status = 'running', started_at = now()
 		 where id = (
 		   select id from builds
-		    where status = 'queued'
+		    where status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now())
 		    order by enqueued_at asc
 		    limit 1
 		    for update skip locked
@@ -12763,12 +12772,12 @@ func (s *PgStore) ClaimNextQueuedBuild(ctx context.Context) (Build, error) {
 func (s *PgStore) ClaimNextQueuedBuildWithFairness(ctx context.Context, fairnessWindow time.Duration) (Build, error) {
 	row := s.pool.QueryRow(ctx,
 		`update builds set status='running', started_at = now()
-    where status = 'queued' and id = (
+    where status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now()) and id = (
       select b.id
         from builds b
         join deployments d on d.id = b.deployment_id
         join apps a on a.id = d.app_id
-       where b.status = 'queued'
+       where b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now())
        order by exists (
          select 1 from recent_build_claims r
           where r.account_id = a.account_id
@@ -12806,12 +12815,12 @@ func (s *PgStore) ClaimNextQueuedBuildWithNodeAffinity(ctx context.Context, node
 	}
 	row := s.pool.QueryRow(ctx,
 		`update builds set status = 'running', started_at = now()
-		 where status = 'queued' and id = (
+		 where status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now()) and id = (
 		   select b.id
 		     from builds b
 		     join deployments d on d.id = b.deployment_id
 		     join apps a on a.id = d.app_id
-		    where b.status = 'queued'
+		    where b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now())
 		      and (
 		        b.enqueued_at <= now() - $2::interval
 		        or coalesce((
@@ -17122,6 +17131,13 @@ func (s *PgStore) CreateInstanceWithMode(ctx context.Context, appID, deploymentI
 			return reserveAccountWorker(ctx, tx, appID, deploymentID)
 		}
 	}
+	// ADR-1741: a resident admission without a worker reservation is one
+	// statement when the database has the admission functions.
+	if reserve == nil && IsLive(strings.ToLower(state)) {
+		if inst, handled, err := s.admitWakeInstance(ctx, appID, deploymentID, state, ramMB, nodeID, wakeID, mode); handled {
+			return inst, err
+		}
+	}
 	return s.insertInstanceWithReservations(ctx, nodeID, state, ramMB, reserve, func(q instanceInserter) (Instance, error) {
 		row := q.QueryRow(ctx,
 			`insert into instances (app_id, deployment_id, state, ram_mb, node_id, wake_id, started_at, mode)
@@ -17236,6 +17252,36 @@ func (s *PgStore) ListInstancesForApp(ctx context.Context, appID string) ([]Inst
 		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
 		 from instances where app_id = $1 order by started_at desc`, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanInstances(rows)
+}
+
+// ListBillingWindowInstances returns, across every app, the instances a meter
+// roll of [since, end) can write a row for: live instances, instances with
+// lifecycle-ledger residency in the window, and instances parked or stopped in
+// it. The meter passes since as the rolled minute less its catch-up window, so
+// an instance that ended recently still drains the telemetry its sources hold.
+// It replaces one ListInstancesForApp per app per rolled minute, which carried
+// every retained wake of every app to the meter. Rows are grouped by app,
+// newest start first within an app, as ListInstancesForApp orders them.
+func (s *PgStore) ListBillingWindowInstances(ctx context.Context, since, end time.Time) ([]Instance, error) {
+	rows, err := s.pool.Query(ctx,
+		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
+		   from instances
+		  where app_id is not null
+		    and (state = any($1::text[])
+		         or parked_at >= $2
+		         or terminal_at >= $2
+		         or id in (select instance_id
+		                     from instance_billing_intervals
+		                    where started_at < $3
+		                      and coalesce(ended_at, $3) > $2))
+		  order by app_id, started_at desc`,
+		LiveStates(), since.UTC(), end.UTC())
 	if err != nil {
 		return nil, err
 	}
@@ -18587,6 +18633,18 @@ func (s *PgStore) ComputeNodeUsedCPUMillicoresByNode(ctx context.Context, nodeID
 		}
 		parsedIDs = append(parsedIDs, parsed)
 	}
+	// The live sum and the migration reservations are independent reads; a
+	// wake's placement waits for both, so they run concurrently (ADR-1741).
+	var (
+		resources     []sqlc.MigrationAdmissionNodeResourcesRow
+		resourcesErr  error
+		resourcesRead = make(chan struct{})
+	)
+	go func() {
+		defer close(resourcesRead)
+		resources, resourcesErr = s.migrationAdmissionResources(ctx, nodeIDs)
+	}()
+	defer func() { <-resourcesRead }()
 	rows, err := s.pool.Query(ctx, `
 		select i.node_id::text,
 		       coalesce(sum(case
@@ -18615,9 +18673,9 @@ func (s *PgStore) ComputeNodeUsedCPUMillicoresByNode(ctx context.Context, nodeID
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("state: iterate compute nodes used_cpu_millicores: %w", err)
 	}
-	resources, err := s.migrationAdmissionResources(ctx, nodeIDs)
-	if err != nil {
-		return nil, err
+	<-resourcesRead
+	if resourcesErr != nil {
+		return nil, resourcesErr
 	}
 	for _, resource := range resources {
 		used[resource.NodeID] += resource.CpuMillicores
@@ -26602,7 +26660,7 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 	}
 
 	q := ownersql.New()
-	for _, purge := range []func(context.Context, ownersql.DBTX, pgtype.UUID) error{q.PurgePersonalSecrets, q.PurgePersonalSigners, q.PurgePersonalRegistry, q.PurgePersonalInvocations, q.PurgePersonalDailyUsage, q.PurgePersonalBuilderUsage, q.PurgePersonalSnapshotStorage} {
+	for _, purge := range []func(context.Context, ownersql.DBTX, pgtype.UUID) error{q.PurgePersonalSecrets, q.PurgePersonalSigners, q.PurgePersonalRegistry, q.PurgePersonalOperations, q.PurgePersonalInvocations, q.PurgePersonalDailyUsage, q.PurgePersonalBuilderUsage, q.PurgePersonalSnapshotStorage} {
 		if err := purge(ctx, tx, mustPgUUID(id)); err != nil {
 			return fmt.Errorf("state: purge personal app children: %w", err)
 		}
@@ -30104,7 +30162,7 @@ func (s *PgStore) CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, sl
 		 returning id, account_id, app_id, kind, slug, enabled, config,
 		           batch_size_max, batch_window_ms, max_attempts,
 		           cron_id, source, payload_max_bytes, broker_poison_strategy,
-		           created_at, updated_at`,
+		           delivery, created_at, updated_at`,
 		accountID, appID, kind, slug, enabled, config,
 		batchSizeMax, batchWindowMs, maxAttempts,
 		pgtype.UUID{}, nullableTriggerSource(source), payloadMaxBytes, bps)
@@ -30113,7 +30171,7 @@ func (s *PgStore) CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, sl
 		&t.ID, &t.AccountID, &t.AppID, &t.Kind, &t.Slug, &t.Enabled,
 		&t.Config, &t.BatchSizeMax, &t.BatchWindowMs, &t.MaxAttempts,
 		&t.CronID, &t.Source, &t.PayloadMaxBytes, &t.BrokerPoisonStrategy,
-		&t.CreatedAt, &t.UpdatedAt,
+		&t.Delivery, &t.CreatedAt, &t.UpdatedAt,
 	); err != nil {
 		return sqlc.Trigger{}, mapErr(err)
 	}
@@ -30457,6 +30515,7 @@ func (s *PgStore) triggerQueries() *sqlc.Queries { return sqlc.New() }
 func triggerRowToTrigger(r sqlc.TriggerByIDRow) sqlc.Trigger {
 	return sqlc.Trigger{
 		ID:                        r.ID,
+		Delivery:                  r.Delivery,
 		QueueBindingID:            r.QueueBindingID,
 		QueueBindingScope:         r.QueueBindingScope,
 		QueueBindingEnvironmentID: r.QueueBindingEnvironmentID,
@@ -30486,6 +30545,7 @@ func triggerRowToTrigger(r sqlc.TriggerByIDRow) sqlc.Trigger {
 func triggerListRowToTrigger(r sqlc.ListTriggersForAppRow) sqlc.Trigger {
 	return sqlc.Trigger{
 		ID:                        r.ID,
+		Delivery:                  r.Delivery,
 		QueueBindingID:            r.QueueBindingID,
 		QueueBindingScope:         r.QueueBindingScope,
 		QueueBindingEnvironmentID: r.QueueBindingEnvironmentID,
@@ -30513,6 +30573,7 @@ func triggerListRowToTrigger(r sqlc.ListTriggersForAppRow) sqlc.Trigger {
 func triggerEnabledRowToTrigger(r sqlc.ListEnabledTriggersRow) sqlc.Trigger {
 	return sqlc.Trigger{
 		ID:                        r.ID,
+		Delivery:                  r.Delivery,
 		QueueBindingID:            r.QueueBindingID,
 		QueueBindingScope:         r.QueueBindingScope,
 		QueueBindingEnvironmentID: r.QueueBindingEnvironmentID,

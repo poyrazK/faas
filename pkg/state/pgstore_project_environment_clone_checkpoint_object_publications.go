@@ -63,7 +63,7 @@ func checkpointObjectPublicationSecretsTx(ctx context.Context, tx pgx.Tx, p Proj
 		return fmt.Errorf("checkpoint object publication secret ownership: %w", ErrConflict)
 	}
 	for i, r := range rows {
-		if r.DeliveryVersion != 1 || r.DeliveredVersion.Valid || r.DeliveryStatus != "pending" || r.OrgID.Valid {
+		if r.DeliveryVersion != 1 || r.DeliveredVersion.Valid || r.DeliveryStatus != "pending" || !r.OrgMatchesApp {
 			return fmt.Errorf("checkpoint object publication secret ownership: %w", ErrConflict)
 		}
 		actual := AppSecret{AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), Scope: r.Scope, Key: r.Key, Ciphertext: r.Ciphertext, Kid: r.Kid.String, ValueHash: r.ValueHash.String, SecretClass: r.SecretClass, SecretVersion: r.SecretVersion.Int64, ManagedPostgresBindingID: pgUUIDStringNullable(r.ManagedPostgresBindingID), ManagedCredentialRef: r.ManagedCredentialRef.String, ManagedCredentialGeneration: r.ManagedCredentialGeneration.Int64, ManagedObjectStorageCredentialID: pgUUIDStringNullable(r.ManagedObjectStorageCredentialID)}

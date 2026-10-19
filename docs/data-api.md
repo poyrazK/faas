@@ -127,7 +127,7 @@ values are excluded. `data-api diagnostics` counts
 `user_concurrency_limits_observed` as a recent finding, without changing current
 readiness. SDK `classifyDataError` returns `concurrency_limited` / `wait`; it adds
 no automatic retries. Reconcile earlier uncertain writes independently.
-See [ADR-1663](adr/1663-data-api-user-concurrency-limits.md).
+See [ADR-1732](adr/1732-data-api-user-concurrency-limits.md).
 
 ## Database lock waits
 
@@ -175,7 +175,7 @@ checks. It does not change timeouts. Database-specific settings or trusted RPC
 functions can override login defaults or catch SQL errors; these defaults do not
 guarantee cancelled SQL stops. Disposable provider qualification verifies effective
 timeouts on its new connection, independently of deployed pools.
-See [ADR-1664](adr/1664-data-api-lock-contention-policy.md).
+See [ADR-1733](adr/1733-data-api-lock-contention-policy.md).
 
 ## SQL deadlines across transaction retries
 
@@ -238,7 +238,7 @@ resource scopes without an approval retain manual setup. Keep coordinated SQL
 refresh grants and gate setup manual: any `gregale_data_api.refresh_gate` in this
 database blocks automated preparation for enrolled bindings. Unenrollment remains
 available after a gate is added. This prevents adopting a candidate that bypasses
-the predecessor's pause/fingerprint contract. See [ADR-1666](adr/1666-data-api-deadline-grant-rotation.md).
+the predecessor's pause/fingerprint contract. See [ADR-1735](adr/1735-data-api-deadline-grant-rotation.md).
 
 The coordinated enrollment below replaces that manual rotation boundary for
 supported managed bindings.
@@ -263,7 +263,7 @@ the future deadline. Backward clock steps can extend elapsed work. Pool acquisit
 is not cancelled by this hook: an expired queued request is refused when its hook
 runs. Trusted SQL functions can override timeouts or catch errors, and external
 effects/sequences are not rolled back. HTTP abort still does not prove SQL stopped.
-See [ADR-1665](adr/1665-data-api-sql-retry-deadlines.md) for the boundaries and tests.
+See [ADR-1734](adr/1734-data-api-sql-retry-deadlines.md) for the boundaries and tests.
 
 ## Credential rotation with coordinated SQL refresh
 
@@ -3161,7 +3161,7 @@ latencies. `data-api health` includes the REST/RPC sample under
 percentiles in text. These are retained sample observations; missing timings do
 not change current readiness or make an otherwise complete report partial.
 Rebuild the runtime from the updated template to enable this on an existing app.
-See [ADR-1662](adr/1662-data-api-database-timing-telemetry.md).
+See [ADR-1731](adr/1731-data-api-database-timing-telemetry.md).
 
 Request IDs are deduplicated across the sample. `--request-id UUID` narrows all
 summaries and includes the matching safe metadata record in `matches`. A missing

@@ -427,6 +427,10 @@ func writeWaitedDeploymentReceiptUntil(ctx context.Context, c *Client, dep api.D
 }
 
 func writeWaitedDeploymentReceiptUntilWithOptions(ctx context.Context, c *Client, dep api.DeploymentResponse, prov *zeroConfigProvenance, appURL, sourceSHA256, appSlug string, deadline time.Duration, waitForRollout, darkDeploy bool, simplePlans ...*simpleapp.Plan) int {
+	return writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx, c, dep, prov, appURL, sourceSHA256, appSlug, deadline, waitForRollout, darkDeploy, nil, simplePlans...)
+}
+
+func writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx context.Context, c *Client, dep api.DeploymentResponse, prov *zeroConfigProvenance, appURL, sourceSHA256, appSlug string, deadline time.Duration, waitForRollout, darkDeploy bool, sourceMaps *api.IssueSourceMapsMetadata, simplePlans ...*simpleapp.Plan) int {
 	if deadline <= 0 {
 		deadline = defaultDeployWaitTimeout
 	}
@@ -445,6 +449,7 @@ func writeWaitedDeploymentReceiptUntilWithOptions(ctx context.Context, c *Client
 			receiptDep = final
 		}
 		receipt := newDeployReceipt(receiptDep, prov, appURL, sourceSHA256, simplePlans...)
+		receipt.IssueSourceMaps = sourceMaps
 		receipt.Interrupted = errors.Is(ctx.Err(), context.Canceled)
 		receipt.TimedOut = !receipt.Interrupted
 		receipt.WaitStage = stage
@@ -459,6 +464,7 @@ func writeWaitedDeploymentReceiptUntilWithOptions(ctx context.Context, c *Client
 		return printDeploymentWaitRecovery(context.DeadlineExceeded, receiptDep, appSlug, stage, deadline, waitForRollout, 3)
 	}
 	receipt := newDeployReceipt(final, prov, appURL, sourceSHA256, simplePlans...)
+	receipt.IssueSourceMaps = sourceMaps
 	if final.Status == statusLive && darkDeploy && final.TrafficPercent == 0 {
 		receipt.PreviewURL = deploymentPreviewURL(ctx, c, final.ID)
 		receipt.PromotionCommand, _ = deploymentPromotionCommand(ctx, c, appSlug, final)

@@ -37,7 +37,7 @@ func (m *appLogDrainManager) acquireLogSpoolLease() error {
 // waitForLogSpoolLease takes the spool lease, retrying every interval while
 // another process holds it. A hand-off successor starts while the old
 // generation still delivers; the old generation stops its workers and
-// releases the spool once the successor serves (ADR-20261018072701), and log delivery
+// releases the spool once the successor serves (ADR-1736), and log delivery
 // resumes here from the spool's durable cursors.
 func (m *appLogDrainManager) waitForLogSpoolLease(ctx context.Context, interval time.Duration) bool {
 	warned := false

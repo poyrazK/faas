@@ -68,7 +68,7 @@ Commands:
   jobs         Cross-account job-run diagnosis and guarded cancellation (active|inspect|cancel)
   deployments  Cross-account deployment diagnosis and guarded retry/cancellation (active|inspect|cancel|retry)
   deploy        Provider-neutral node adoption + fleet topology tools (deploy claim|fleet-bundle|prepare-node|join-node|join-fleet|rollback-node|add-node)
-  obs           Operator incident inbox, health, fleet overview, and capacity (obs incidents|health|overview|capacity)
+  obs           Operator incidents, evidence, context, health, fleet overview, and capacity (obs incidents|evidence|context|health|overview|capacity)
   debug         Operator-side smoke harness for the OTel spans writer (debug otel-smoke; ADR-127 PR-D)
   github        GitHub delivery + Check Run recovery (status|retry-delivery|retry-check)
   status        Publish incidents and maintenance (status incident|maintenance ...)
@@ -217,6 +217,10 @@ func run(args []string) int {
 		// Runtime configuration reads and hot-only mutations through
 		// apid. The CLI refuses apply modes that require a rollout.
 		return cmdConfigDispatch(args[1:])
+	case dispatchFlags:
+		// ADR-1700 platform flags: per-account release gates, written
+		// through the hot runtime-configuration path with a version check.
+		return cmdFlagsDispatch(args[1:])
 	case dispatchAudit:
 		// Exact, indexed trace correlation through the read-only operator API.
 		return cmdAuditDispatch(args[1:])

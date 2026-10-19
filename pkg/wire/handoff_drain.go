@@ -10,7 +10,7 @@ import (
 )
 
 // OldGenerationDrain returns the context a hand-off's old generation
-// finishes its requests in (docs/adr/20261018072701-zero-downtime-daemon-restarts.md).
+// finishes its requests in (docs/adr/1736-zero-downtime-daemon-restarts.md).
 // It ends api.HandoffDrainMaxSeconds from now. endStreams runs one grace
 // before that, so SSE and WebSocket clients reconnect to the successor
 // before the bound cuts them; when stopping ends (the unit is stopping, or a

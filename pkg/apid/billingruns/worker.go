@@ -33,7 +33,7 @@ func (s *Service) Start(ctx context.Context, log *slog.Logger) {
 		ticker := time.NewTicker(api.BillingRunTickInterval)
 		defer ticker.Stop()
 		for {
-			if err := s.RunOnce(ctx); err != nil && ctx.Err() == nil {
+			if err := s.tick(ctx); err != nil && ctx.Err() == nil {
 				log.Warn("billing runs failed", "err", err)
 			}
 			select {

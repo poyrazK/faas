@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -163,7 +164,18 @@ func projectSourceRefStreamProblem(copyErr, closeErr error, stats *StreamSourceR
 }
 
 func writeProjectSourceRefFields(writer *multipart.Writer, req api.ProjectSourceRefScanRequest, installID int64) error {
+	if req.Migration {
+		req.RepoFullName = ""
+		installID = 0
+		req.NoTriggers = true
+	}
+	slugs, err := json.Marshal(req.AppSlugs)
+	if err != nil {
+		return fmt.Errorf("encode app names: %w", err)
+	}
 	fields := map[string]string{
+		"app_slugs":         string(slugs),
+		"migration":         strconv.FormatBool(req.Migration),
 		"project_slug":      req.ProjectSlug,
 		"repo_full_name":    req.RepoFullName,
 		"production_branch": req.ProductionBranch,

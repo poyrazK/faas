@@ -11,7 +11,7 @@ import (
 
 // Absorb moves the callbacks pending in the outbox rooted at dir, and its
 // dead letters, into q. A two-generation hand-off leaves the old generation's
-// outbox in its own directory (docs/adr/20261018072701-zero-downtime-daemon-restarts.md);
+// outbox in its own directory (docs/adr/1736-zero-downtime-daemon-restarts.md);
 // the generation that adopts it delivers those callbacks in their per-connection
 // order. Event IDs are kept, so a callback already in q is not added twice.
 // ErrCallbackOutboxFull stops the move; what is left stays in dir.

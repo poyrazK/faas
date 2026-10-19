@@ -189,6 +189,9 @@ func loadAppTaskRuntime(log *slog.Logger) (appTaskRuntime, *apptaskproto.Result)
 }
 
 func executeAppTaskCommand(ctx context.Context, req apptaskproto.Request, manifest api.AppManifest, secrets, apiEnv map[string]string, stdout, stderr io.Writer) (apptaskproto.Result, error) {
+	if len(req.Command) > 0 && req.Command[0] == api.AppTaskMigrationDependenciesCommand {
+		return executeMigrationDependencies(ctx, req, manifest, secrets, apiEnv, stdout)
+	}
 	if rehearsalcommand.IsCommand(req.Command) {
 		return executeRehearsalCommand(ctx, req, manifest, secrets, apiEnv, stdout)
 	}

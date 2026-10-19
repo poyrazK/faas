@@ -40,7 +40,7 @@ func (s *server) renderAppChangesDashboard(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *server) dashboardAppChangesData(r *http.Request, acct state.Account, app state.App) dashboard.AppChangesData {
-	data := dashboard.AppChangesData{Enabled: s.changeTimelineEnabled, AppSlug: app.Slug, Range: "24h", Ranges: []string{"24h", "7d"}}
+	data := dashboard.AppChangesData{Enabled: s.changeTimelineFor(acct), AppSlug: app.Slug, Range: "24h", Ranges: []string{"24h", "7d"}}
 	if !data.Enabled {
 		return data
 	}

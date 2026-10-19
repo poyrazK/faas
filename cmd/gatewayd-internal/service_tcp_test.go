@@ -223,7 +223,7 @@ func TestStartServiceTCPProxy(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 
-	// ADR-20261018072701: a hand-off's old generation stops accepting and returns once
+	// ADR-1736: a hand-off's old generation stops accepting and returns once
 	// its sessions end, without reporting the closed listener as a failure.
 	handoffCtx, handoffCancel := context.WithCancel(context.Background())
 	defer handoffCancel()

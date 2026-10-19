@@ -13,7 +13,7 @@ import (
 // starts the production service. Keeping the listening socket outside the
 // process lets TCP handshakes queue while the old apid exits and its
 // replacement starts. A two-generation hand-off's successor serves the
-// socket its predecessor passed (ADR-20261018072701). Local and test runs retain the
+// socket its predecessor passed (ADR-1736). Local and test runs retain the
 // ordinary net.Listen path when no activation environment is present.
 func apidListener(network, addr string) (net.Listener, error) {
 	pidValue, hasPID := os.LookupEnv("LISTEN_PID")

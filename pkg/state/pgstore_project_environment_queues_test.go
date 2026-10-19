@@ -162,7 +162,20 @@ func TestPgCloneQueueConfigurationIsFrozenAndLeased(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE queue_bindings SET account_id=$2 WHERE id=$1`, prod.ID, foreign.ID); err != nil {
+	// bind_queue_organization (#4882) now refuses a binding whose account is
+	// not its app's, so forge the corrupted row with triggers disabled for
+	// this one write: clone capture must still reject it if one exists.
+	forge, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := forge.Exec(ctx, `SET LOCAL session_replication_role = replica`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := forge.Exec(ctx, `UPDATE queue_bindings SET account_id=$2 WHERE id=$1`, prod.ID, foreign.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := forge.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
 	invalid = request

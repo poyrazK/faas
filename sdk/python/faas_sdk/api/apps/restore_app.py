@@ -8,12 +8,16 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.app_response import AppResponse
 from ...models.problem import Problem
-from ...types import Response
+from ...models.restore_app_body import RestoreAppBody
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
+    *,
+    body: RestoreAppBody | Unset = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -22,6 +26,12 @@ def _get_kwargs(
         ),
     }
 
+    if not isinstance(body, Unset):
+        _kwargs["json"] = body.to_dict()
+
+    headers["Content-Type"] = "application/json"
+
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -30,6 +40,11 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         response_200 = AppResponse.from_dict(response.json())
 
         return response_200
+
+    if response.status_code == 400:
+        response_400 = Problem.from_dict(response.json())
+
+        return response_400
 
     if response.status_code == 401:
         response_401 = Problem.from_dict(response.json())
@@ -72,11 +87,18 @@ def sync_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    body: RestoreAppBody | Unset = UNSET,
 ) -> Response[AppResponse | Problem]:
     """Restore an app during its deletion grace window.
 
+     Bodyless legacy callers remain supported. An optional expected_app_id
+    fences the selected identity on updated servers. For mixed-version
+    safety, use the dedicated deleted-app ID route instead of relying on
+    legacy body handling. This route has no idempotent replay receipt.
+
     Args:
         slug (str):
+        body (RestoreAppBody | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -88,6 +110,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        body=body,
     )
 
     response = client.get_httpx_client().request(
@@ -101,11 +124,18 @@ def sync(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    body: RestoreAppBody | Unset = UNSET,
 ) -> AppResponse | Problem | None:
     """Restore an app during its deletion grace window.
 
+     Bodyless legacy callers remain supported. An optional expected_app_id
+    fences the selected identity on updated servers. For mixed-version
+    safety, use the dedicated deleted-app ID route instead of relying on
+    legacy body handling. This route has no idempotent replay receipt.
+
     Args:
         slug (str):
+        body (RestoreAppBody | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -118,6 +148,7 @@ def sync(
     return sync_detailed(
         slug=slug,
         client=client,
+        body=body,
     ).parsed
 
 
@@ -125,11 +156,18 @@ async def asyncio_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    body: RestoreAppBody | Unset = UNSET,
 ) -> Response[AppResponse | Problem]:
     """Restore an app during its deletion grace window.
 
+     Bodyless legacy callers remain supported. An optional expected_app_id
+    fences the selected identity on updated servers. For mixed-version
+    safety, use the dedicated deleted-app ID route instead of relying on
+    legacy body handling. This route has no idempotent replay receipt.
+
     Args:
         slug (str):
+        body (RestoreAppBody | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -141,6 +179,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        body=body,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -152,11 +191,18 @@ async def asyncio(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    body: RestoreAppBody | Unset = UNSET,
 ) -> AppResponse | Problem | None:
     """Restore an app during its deletion grace window.
 
+     Bodyless legacy callers remain supported. An optional expected_app_id
+    fences the selected identity on updated servers. For mixed-version
+    safety, use the dedicated deleted-app ID route instead of relying on
+    legacy body handling. This route has no idempotent replay receipt.
+
     Args:
         slug (str):
+        body (RestoreAppBody | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -170,5 +216,6 @@ async def asyncio(
         await asyncio_detailed(
             slug=slug,
             client=client,
+            body=body,
         )
     ).parsed

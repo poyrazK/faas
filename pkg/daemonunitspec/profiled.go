@@ -11,7 +11,7 @@ func UnitProfiled() daemonunit.Unit {
 	u.EnvironmentFile = "-/etc/faas/profiling.env -/etc/faas/otel.env"
 	u.Environment = []daemonunit.KV{{Key: "FAAS_PROFILE_SOCKET", Value: "/run/faas/profiled.sock"}}
 	u.ReadWritePaths = []string{"/run/faas"}
-	// profiled does not hand off on reload (ADR-20261018072701); it keeps the plain
+	// profiled does not hand off on reload (ADR-1736); it keeps the plain
 	// service shape realtimed had.
 	u.Type, u.NotifyAccess, u.ExecReload, u.WatchdogSec, u.OOMPolicy = "simple", "", "", "", ""
 	return u

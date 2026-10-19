@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
+	"github.com/onebox-faas/faas/pkg/apid/datapipelines"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
@@ -59,6 +60,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
+
+var ResolveAlertmanagerURL = resolveAlertmanagerURL
 
 // Package-level types
 type AffectedPartition = affectedPartition
@@ -115,6 +118,13 @@ type RuntimeConfigManager = runtimeConfigManager
 type RuntimeConfigRestartNotifier = runtimeConfigRestartNotifier
 type ScanPlanResponse = scanPlanResponse
 type Server = server
+
+func (s *server) DataPipelines() **datapipelines.Handler { return &s.dataPipelines }
+
+func (s *server) ConfigurePipelineAPIApp(ctx context.Context, a state.Account, app state.App) error {
+	return s.configurePipelineAPIApp(ctx, a, app)
+}
+
 type SourceRefManagedPostgresProvider = sourceRefManagedPostgresProvider
 type SourceRefTestEnv = sourceRefTestEnv
 type SpyNotifier = spyNotifier
@@ -304,7 +314,6 @@ var BuildDebugDependencyComparisonBetween = buildDebugDependencyComparisonBetwee
 var BuildDebugDependencyDeploymentComparison = buildDebugDependencyDeploymentComparison
 var BuildDebugDependencyLatencyHistory = buildDebugDependencyLatencyHistory
 var BuildEnvDiffResponse = buildEnvDiffResponse
-var BuildObsCapacityProfiles = buildObsCapacityProfiles
 var BuildObsTenantUsageProfiles = buildObsTenantUsageProfiles
 var BuildSourceRefTarGz = buildSourceRefTarGz
 var BuildTestAlertEvent = buildTestAlertEvent
@@ -621,7 +630,6 @@ var StoreAsAuthenticator = storeAsAuthenticator
 var StoreAsSessionLookup = storeAsSessionLookup
 var StorePlanCache = storePlanCache
 var StripeWebhookHarness = stripeWebhookHarness
-var SummariseBetaFunnel = summariseBetaFunnel
 var SummarizeDevSyncHistory = summarizeDevSyncHistory
 var SummarizeRuntimePolicySchedulerStatus = summarizeRuntimePolicySchedulerStatus
 var SummarizeRuntimePolicyStatus = summarizeRuntimePolicyStatus
@@ -864,7 +872,6 @@ func (r *safeReleaseLeaseMetrics) SecondsLeft() *prometheus.Gauge  { return &r.s
 
 // Members of server
 func (r *server) AdminAllowlist() **adminAllowlist                   { return &r.adminAllowlist }
-func (r *server) AiGatewayEnabled() *bool                            { return &r.aiGatewayEnabled }
 func (r *server) AppEvents() *appevents.Service                      { return &r.appEvents }
 func (r *server) Audit() **auditor                                   { return &r.audit }
 func (r *server) DevBridgeEnabled() *bool                            { return &r.devBridgeEnabled }
@@ -872,7 +879,6 @@ func (r *server) DevBridgeURL() *string                              { return &r
 func (r *server) Domain() *string                                    { return &r.domain }
 func (r *server) Durable() *durable.Service                          { return &r.durable }
 func (r *server) EdgeRules() *edgerules.Service                      { return &r.edgeRules }
-func (r *server) FeatureFlagsEnabled() *bool                         { return &r.featureFlagsEnabled }
 func (r *server) FlagsWorkloadVerifier() **workloadidentity.Verifier { return &r.flagsWorkloadVerifier }
 func (r *server) WorkloadVerifier() **workloadidentity.Verifier      { return &r.workloadVerifier }
 func (r *server) Log() **slog.Logger                                 { return &r.log }
@@ -1363,6 +1369,18 @@ func (r *statusMetrics) MarkRollupSuccess(p0 time.Time) { r.markRollupSuccess(p0
 func (r *statusMetrics) ObserveEvaluation(p0 string)    { r.observeEvaluation(p0) }
 func (r *statusMetrics) ObserveMutation(p0 string, p1 string, p2 string) {
 	r.observeMutation(p0, p1, p2)
+}
+
+func (r *server) DrainMigrationVerificationsForTest(ctx context.Context) error {
+	worker, ok := r.migrationVerificationWorker()
+	if !ok {
+		return nil
+	}
+	return worker.Drain(ctx)
+}
+
+func (r *server) RestoreMigrationServiceForTest(ctx context.Context, account, app string, run api.MigrationVerification) (string, error) {
+	return r.restoreMigrationService(ctx, account, app, run)
 }
 
 // Members of testEnv

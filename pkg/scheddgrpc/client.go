@@ -137,7 +137,7 @@ func DialContext(ctx context.Context, target string, tlsCfg *tls.Config) (*Clien
 // while schedd is down; reconnect attempts stay at most a second apart so a
 // wake proceeds as soon as the replacement listens. A socket-activated
 // schedd keeps the connect from failing at all
-// (docs/adr/20261018072701-zero-downtime-daemon-restarts.md).
+// (docs/adr/1736-zero-downtime-daemon-restarts.md).
 var (
 	waitForScheduler       = grpc.WaitForReady(true)
 	schedulerConnectParams = grpc.ConnectParams{

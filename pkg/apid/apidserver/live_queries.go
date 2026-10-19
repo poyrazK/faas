@@ -11,6 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/livequeries"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -27,6 +28,8 @@ func (s *server) configureLiveQueries(pool *pgxpool.Pool, getenv func(string) st
 		return err
 	}
 	s.liveRollout = rollout
+	all, accounts := rollout.Accounts()
+	s.seedPlatformFlag(platformflags.LiveQueries, platformflags.FromAccountList(!rollout.Off(), all, accounts))
 	svc := &livequeries.Service{
 		DatabaseProblem: managedPostgresProblem,
 		Audit: func(ctx context.Context, action, accountID string, fields map[string]any) {
@@ -58,7 +61,7 @@ func (s *server) configureLiveQueries(pool *pgxpool.Pool, getenv func(string) st
 // live databases bound to the app, each with its database's hub. This is the
 // check that an endpoint serves only databases its app is bound to.
 func (s *server) liveRoutes(ctx context.Context, store *livekeys.Store, accountID, appID string) ([]realtime.LiveRoute, error) {
-	if !s.liveRollout.Allows(accountID) {
+	if !s.liveGate().Allows(accountID) {
 		return nil, nil // outside the rollout the protocol is not offered at all
 	}
 	keys, err := store.AppRoutes(ctx, accountID, appID)
@@ -101,14 +104,42 @@ func (s *server) resyncLiveEndpoints(ctx context.Context, store *livekeys.Store,
 	}()
 }
 
-// liveRoute and liveAccount read the rollout per request: apid tests build
-// the handler before they configure live queries.
+// liveRoute and liveAccount read the gate per request: apid tests build the
+// handler before they configure live queries, and an operator can change the
+// live_queries platform flag at runtime.
 func (s *server) liveRoute(next http.HandlerFunc) http.HandlerFunc {
-	return livequeries.Route(func() livequeries.Rollout { return s.liveRollout }, next)
+	return livequeries.Route(s.liveGate, next)
 }
 
 func (s *server) liveAccount(next accountHandler) accountHandler {
-	return livequeries.Account(func() livequeries.Rollout { return s.liveRollout }, next)
+	return livequeries.Account(s.liveGate, next)
+}
+
+// liveGate is the live_queries platform flag (ADR-1700) once an operator has
+// written it, and FAAS_LIVE_QUERIES_ACCOUNTS until then.
+func (s *server) liveGate() livequeries.Gate {
+	snapshot := s.platformFlags().Snapshot()
+	if def, version, ok := snapshot.Definition(platformflags.LiveQueries); ok && version > 0 {
+		return liveFlagGate{snapshot: snapshot, everyone: def.Enabled && def.Default && len(def.Rules) == 0}
+	}
+	return s.liveRollout
+}
+
+// liveFlagGate adapts a platform-flag snapshot to livequeries.Gate. Only the
+// account is known on the realtime path, so plan rules never match.
+type liveFlagGate struct {
+	snapshot *platformflags.Snapshot
+	everyone bool
+}
+
+func (g liveFlagGate) Allows(accountID string) bool {
+	return g.snapshot.Enabled(platformflags.LiveQueries, platformflags.Subject{AccountID: accountID})
+}
+
+func (g liveFlagGate) Off() bool { return !g.snapshot.GloballyEnabled(platformflags.LiveQueries) }
+
+func (g liveFlagGate) Hidden(req *http.Request) bool {
+	return !g.everyone && livequeries.IsLivePath(req.URL.Path)
 }
 
 func (s *server) getLiveQueries(w http.ResponseWriter, r *http.Request, acct state.Account) {

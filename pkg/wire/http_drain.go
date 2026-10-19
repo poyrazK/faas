@@ -15,7 +15,7 @@ import (
 // accepted just before the listener closed, whose request was still in
 // flight, was closed with no response and the client saw EOF. Under load
 // every restart lost a few such requests
-// (docs/adr/20261018072701-zero-downtime-daemon-restarts.md).
+// (docs/adr/1736-zero-downtime-daemon-restarts.md).
 //
 // Shutdown therefore first closes the listeners, then waits until every
 // accepted connection has delivered its first request, closes any that sent

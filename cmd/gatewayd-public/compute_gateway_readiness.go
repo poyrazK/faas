@@ -14,7 +14,7 @@ import (
 )
 
 // A compute node's gatewayd-internal may hold its data listener in a
-// systemd socket (ADR-20261018072701). While it restarts, dials to it still connect
+// systemd socket (ADR-1736). While it restarts, dials to it still connect
 // and requests wait in the socket's backlog. The pool probes every node and
 // skips one whose gatewayd-internal has not answered /healthz within
 // restartWait: new requests wait for a restarting node at most that long

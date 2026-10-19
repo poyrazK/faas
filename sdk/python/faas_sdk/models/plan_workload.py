@@ -16,6 +16,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.compose_healthcheck import ComposeHealthcheck
+    from ..models.compose_process import ComposeProcess
     from ..models.plan_detected_by import PlanDetectedBy
     from ..models.plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
     from ..models.service_caller_scopes import ServiceCallerScopes
@@ -35,6 +36,12 @@ class PlanWorkload:
     remain available outside this directory."""
     command: list[str]
     ports: list[int]
+    public_url: str | Unset = UNSET
+    """Reviewed public HTTPS base URL derived from this app allocation and installation domain. Absent when
+    wildcard app URLs are disabled."""
+    app_slug: str | Unset = UNSET
+    """Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original
+    identity. Present for migration scans and existing allocations."""
     platform_tenant_required: bool | Unset = UNSET
     """Requested customer identity policy from Compose x-gregale-platform-tenant-required or the request override.
     Omitted preserves existing app policy; new apps default to false."""
@@ -47,6 +54,9 @@ class PlanWorkload:
     """Partial Compose override for a prebuilt image HEALTHCHECK. Empty test and zero timing/retry values inherit
     image settings. NONE disables the check. Durations retain nanosecond precision; positive durations must be at
     least 1ms."""
+    image_process: ComposeProcess | Unset = UNSET
+    """Compose process overrides for a prebuilt image (ADR-1337). Omitted fields inherit the image's ENTRYPOINT,
+    USER, WORKDIR and stop settings."""
     depends_on: list[str] | Unset = UNSET
     """Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects
     GREGALE_SERVICE_<NAME>_URL plus GREGALE_SERVICE_<NAME>_HTTPS_URL for workload dependencies."""
@@ -76,6 +86,8 @@ class PlanWorkload:
     """cron expression when declared (CronJob, render, serverless)"""
     env_keys: list[str] | Unset = UNSET
     """KEYS only — never values; spec §11 forbids logging secrets"""
+    required_env_keys: list[str] | Unset = UNSET
+    """Explicit names from .gregale/required-secrets.json. Detected env_keys alone do not establish requirements."""
     source: str | Unset = UNSET
     """detector provenance, e.g. compose.yaml: api"""
     tier: PlanWorkloadTier | Unset = UNSET
@@ -104,6 +116,10 @@ class PlanWorkload:
 
         ports = self.ports
 
+        public_url = self.public_url
+
+        app_slug = self.app_slug
+
         platform_tenant_required = self.platform_tenant_required
 
         dockerfile = self.dockerfile
@@ -113,6 +129,10 @@ class PlanWorkload:
         image_healthcheck: dict[str, Any] | Unset = UNSET
         if not isinstance(self.image_healthcheck, Unset):
             image_healthcheck = self.image_healthcheck.to_dict()
+
+        image_process: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.image_process, Unset):
+            image_process = self.image_process.to_dict()
 
         depends_on: list[str] | Unset = UNSET
         if not isinstance(self.depends_on, Unset):
@@ -156,6 +176,10 @@ class PlanWorkload:
         if not isinstance(self.env_keys, Unset):
             env_keys = self.env_keys
 
+        required_env_keys: list[str] | Unset = UNSET
+        if not isinstance(self.required_env_keys, Unset):
+            required_env_keys = self.required_env_keys
+
         source = self.source
 
         tier: str | Unset = UNSET
@@ -182,6 +206,10 @@ class PlanWorkload:
                 "ports": ports,
             }
         )
+        if public_url is not UNSET:
+            field_dict["public_url"] = public_url
+        if app_slug is not UNSET:
+            field_dict["app_slug"] = app_slug
         if platform_tenant_required is not UNSET:
             field_dict["platform_tenant_required"] = platform_tenant_required
         if dockerfile is not UNSET:
@@ -190,6 +218,8 @@ class PlanWorkload:
             field_dict["image"] = image
         if image_healthcheck is not UNSET:
             field_dict["image_healthcheck"] = image_healthcheck
+        if image_process is not UNSET:
+            field_dict["image_process"] = image_process
         if depends_on is not UNSET:
             field_dict["depends_on"] = depends_on
         if depends_on_conditions is not UNSET:
@@ -212,6 +242,8 @@ class PlanWorkload:
             field_dict["schedule"] = schedule
         if env_keys is not UNSET:
             field_dict["env_keys"] = env_keys
+        if required_env_keys is not UNSET:
+            field_dict["required_env_keys"] = required_env_keys
         if source is not UNSET:
             field_dict["source"] = source
         if tier is not UNSET:
@@ -228,6 +260,7 @@ class PlanWorkload:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.compose_healthcheck import ComposeHealthcheck
+        from ..models.compose_process import ComposeProcess
         from ..models.plan_detected_by import PlanDetectedBy
         from ..models.plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
         from ..models.service_caller_scopes import ServiceCallerScopes
@@ -242,6 +275,10 @@ class PlanWorkload:
 
         ports = cast(list[int], d.pop("ports"))
 
+        public_url = d.pop("public_url", UNSET)
+
+        app_slug = d.pop("app_slug", UNSET)
+
         platform_tenant_required = d.pop("platform_tenant_required", UNSET)
 
         dockerfile = d.pop("dockerfile", UNSET)
@@ -254,6 +291,13 @@ class PlanWorkload:
             image_healthcheck = UNSET
         else:
             image_healthcheck = ComposeHealthcheck.from_dict(_image_healthcheck)
+
+        _image_process = d.pop("image_process", UNSET)
+        image_process: ComposeProcess | Unset
+        if isinstance(_image_process, Unset):
+            image_process = UNSET
+        else:
+            image_process = ComposeProcess.from_dict(_image_process)
 
         depends_on = cast(list[str], d.pop("depends_on", UNSET))
 
@@ -312,6 +356,8 @@ class PlanWorkload:
 
         env_keys = cast(list[str], d.pop("env_keys", UNSET))
 
+        required_env_keys = cast(list[str], d.pop("required_env_keys", UNSET))
+
         source = d.pop("source", UNSET)
 
         _tier = d.pop("tier", UNSET)
@@ -342,10 +388,13 @@ class PlanWorkload:
             root_dir=root_dir,
             command=command,
             ports=ports,
+            public_url=public_url,
+            app_slug=app_slug,
             platform_tenant_required=platform_tenant_required,
             dockerfile=dockerfile,
             image=image,
             image_healthcheck=image_healthcheck,
+            image_process=image_process,
             depends_on=depends_on,
             depends_on_conditions=depends_on_conditions,
             service_binding_policy=service_binding_policy,
@@ -357,6 +406,7 @@ class PlanWorkload:
             class_=class_,
             schedule=schedule,
             env_keys=env_keys,
+            required_env_keys=required_env_keys,
             source=source,
             tier=tier,
             action=action,

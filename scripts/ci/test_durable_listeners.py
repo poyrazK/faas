@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the durable-listener drop-ins (ADR-20261018072701); never touch a host.
+"""Render the durable-listener drop-ins (ADR-1736); never touch a host.
 
 A socket unit must carry exactly the address its daemon serves: the daemon
 refuses an inherited socket it does not serve. These tests render the role

@@ -14,13 +14,15 @@ import (
 )
 
 const platformTenantPlanCols = `id, account_id, name, currency, price_millicents_per_unit, included_units_per_month,
-	tiers, route_weights, max_requests_per_minute, max_requests_per_day, created_at, updated_at, unit, tier_mode`
+	tiers, route_weights, max_requests_per_minute, max_requests_per_day, created_at, updated_at, unit, tier_mode,
+	base_fee_millicents_per_month, minimum_millicents_per_month, prorate_monthly_fees`
 
 func scanPlatformTenantPlan(row pgx.Row) (PlatformTenantPlan, error) {
 	var p PlatformTenantPlan
 	var tiers, weights []byte
 	err := row.Scan(&p.ID, &p.AccountID, &p.Name, &p.Currency, &p.PriceMillicentsPerUnit, &p.IncludedUnitsPerMonth,
-		&tiers, &weights, &p.MaxRequestsPerMinute, &p.MaxRequestsPerDay, &p.CreatedAt, &p.UpdatedAt, &p.Unit, &p.TierMode)
+		&tiers, &weights, &p.MaxRequestsPerMinute, &p.MaxRequestsPerDay, &p.CreatedAt, &p.UpdatedAt, &p.Unit, &p.TierMode,
+		&p.BaseFeeMillicentsPerMonth, &p.MinimumMillicentsPerMonth, &p.ProrateMonthlyFees)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PlatformTenantPlan{}, ErrNotFound
 	}
@@ -90,10 +92,12 @@ func (s *PgStore) CreatePlatformTenantPlan(ctx context.Context, p PlatformTenant
 	}
 	created, err := scanPlatformTenantPlan(tx.QueryRow(ctx, `insert into platform_tenant_plans
 			(account_id, name, currency, price_millicents_per_unit, included_units_per_month, tiers, route_weights,
-			 max_requests_per_minute, max_requests_per_day, unit, tier_mode)
-		values ($1::uuid, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11)
+			 max_requests_per_minute, max_requests_per_day, unit, tier_mode,
+			 base_fee_millicents_per_month, minimum_millicents_per_month, prorate_monthly_fees)
+		values ($1::uuid, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12, $13, $14)
 		returning `+platformTenantPlanCols, p.AccountID, p.Name, p.Currency, p.PriceMillicentsPerUnit, p.IncludedUnitsPerMonth,
-		tiers, weights, p.MaxRequestsPerMinute, p.MaxRequestsPerDay, p.Unit, p.TierMode))
+		tiers, weights, p.MaxRequestsPerMinute, p.MaxRequestsPerDay, p.Unit, p.TierMode,
+		p.BaseFeeMillicentsPerMonth, p.MinimumMillicentsPerMonth, p.ProrateMonthlyFees))
 	if uniqueViolation(err) {
 		return PlatformTenantPlan{}, ErrConflict
 	}
@@ -145,10 +149,12 @@ func (s *PgStore) UpdatePlatformTenantPlan(ctx context.Context, p PlatformTenant
 	updated, err := scanPlatformTenantPlan(s.pool.QueryRow(ctx, `update platform_tenant_plans
 		   set name = $3, currency = $4, price_millicents_per_unit = $5, included_units_per_month = $6,
 		       tiers = $7::jsonb, route_weights = $8::jsonb, max_requests_per_minute = $9, max_requests_per_day = $10,
-		       unit = $11, tier_mode = $12, updated_at = now()
+		       unit = $11, tier_mode = $12, base_fee_millicents_per_month = $13, minimum_millicents_per_month = $14,
+		       prorate_monthly_fees = $15, updated_at = now()
 		 where account_id = $1::uuid and id = $2::uuid
 		returning `+platformTenantPlanCols, p.AccountID, p.ID, p.Name, p.Currency, p.PriceMillicentsPerUnit,
-		p.IncludedUnitsPerMonth, tiers, weights, p.MaxRequestsPerMinute, p.MaxRequestsPerDay, p.Unit, p.TierMode))
+		p.IncludedUnitsPerMonth, tiers, weights, p.MaxRequestsPerMinute, p.MaxRequestsPerDay, p.Unit, p.TierMode,
+		p.BaseFeeMillicentsPerMonth, p.MinimumMillicentsPerMonth, p.ProrateMonthlyFees))
 	if uniqueViolation(err) {
 		return PlatformTenantPlan{}, ErrConflict
 	}

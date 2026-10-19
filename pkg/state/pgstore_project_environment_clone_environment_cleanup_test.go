@@ -246,7 +246,7 @@ func TestPgCloneEnvironmentCleanupMigrationRefusesEvidence(t *testing.T) {
 // column must be classified before the deletion inventory can stay complete.
 func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 	_, _, pool := pgWithPool(t)
-	rows, err := pool.Query(t.Context(), `SELECT c.table_name||'.'||c.column_name FROM information_schema.columns c JOIN information_schema.tables t USING(table_schema,table_name) WHERE c.table_schema='public' AND t.table_type='BASE TABLE' AND c.column_name IN ('environment_id','environment_slug','environment','scope','deployment_scope','managed_scope','queue_binding_scope','queue_binding_environment_id','mcp_readiness_scope') ORDER BY 1`)
+	rows, err := pool.Query(t.Context(), `SELECT c.table_name||'.'||c.column_name FROM information_schema.columns c JOIN information_schema.tables t USING(table_schema,table_name) WHERE c.table_schema='public' AND t.table_type='BASE TABLE' AND c.column_name IN ('environment_id','environment_slug','environment','scope','deployment_scope','managed_scope','queue_binding_scope','queue_binding_environment_id') ORDER BY 1`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,9 +263,10 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 	expected := []string{
-		"alert_rules.mcp_readiness_scope",
 		"app_binding_release_policies.scope",
 		"app_binding_release_policy_history.scope",
+		"app_config_guards.scope",    // Closed and open config guard windows are change history; app_envs already blocks while configuration remains.
+		"app_config_revisions.scope", // Append-only configuration revision history.
 		"app_environment_route_budgets.environment_id",
 		"app_environment_route_budgets.scope",
 		"app_environment_secret_ref_suppressions.environment_id",
@@ -275,8 +276,8 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"app_environment_workload_intents.environment_id",
 		"app_envs.scope",
 		"app_issues.environment",
-		"app_mcp_readiness_policies.scope",
-		"app_mcp_readiness_policy_history.scope", // Retained policy history blocks cleanup until its own lifecycle removes it.
+		"app_mcp_readiness_policies.scope",       // Per-environment readiness gate configuration blocks scope cleanup.
+		"app_mcp_readiness_policy_history.scope", // Append-only policy audit history is retained evidence.
 		"app_runtime_config_scope_changes.scope",
 		"app_secret_revocations.scope",
 		"app_secret_runtime_reload_observations.scope",
@@ -294,6 +295,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"data_upstreams.scope",
 		"deployment_openapi_snapshots.scope",
 		"deployment_rollback_operations.scope",
+		"deployment_rollbacks.scope", // Rollback outcome history; deployment_rollback_operations blocks in-flight work.
 		"deployment_route_policy_snapshots.scope",
 		"deployment_runtime_environment_owners.environment_id",
 		"deployments.scope",
@@ -309,11 +311,11 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"exclusive_work_keys.environment_id",
 		"feature_flag_versions.environment_id",
 		"github_deploy_branches.scope",
-		"hosting_oidc_trusts.environment", // External GitHub claim; its site FK retains the actual Gregale environment.
-		"hosting_sites.environment",       // Composite environment FK blocks cleanup until hosting retirement.
+		"hosting_oidc_trusts.environment", // GitHub Actions OIDC environment claim, not a Gregale environment; its site FK is classified.
+		"hosting_sites.environment",       // Sites reference the environment through a composite foreign key.
 		"instance_runtime_config_receipts.scope",
-		"internal_mail_reputation_events.scope", // Mail producer/domain enum; not a Gregale environment.
-		"internal_mail_reputation_holds.scope",  // Mail producer/domain enum; not a Gregale environment.
+		"internal_mail_reputation_events.scope", // Mail reputation scope (producer or domain), not an environment.
+		"internal_mail_reputation_holds.scope",  // Mail reputation scope (producer or domain), not an environment.
 		"invocation_environment_queue_admissions.environment_id",
 		"invocation_work_environment_admissions.environment_id",
 		"invocation_work_environment_domains.environment_id",
@@ -325,12 +327,12 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"managed_postgres_bindings.scope",
 		"managed_postgres_cutover_drain_plan_members.deployment_scope", // Immutable captured retirement evidence survives environment retention.
 		"managed_postgres_cutovers.scope",
-		"mcp_readiness_incidents.scope",
-		"mcp_readiness_maintenance_windows.scope",
+		"mcp_readiness_incidents.scope",           // Rule-owned incident state blocks scope cleanup until its rule retires it.
+		"mcp_readiness_maintenance_windows.scope", // Cancelled or expired windows still block, like other inactive scope rows.
 		"object_buckets.scope",
 		"object_storage_s3_credentials.managed_scope",
 		"pg_ratelimit_counters.scope",
-		"platform_mail_deployment_fences.scope",              // Retain monotonic app/scope tombstones across cleanup; never reset delivery fences.
+		"platform_mail_deployment_fences.scope",              // Monotonic mail outbox fence; a recreated environment continues its revisions.
 		"production_lifecycle_reviews.scope",                 // Retained historical deployment review evidence.
 		"project_binding_verification_runs.environment_slug", // Scope-only verification receipts block metadata cleanup.
 		"project_environment_approvals.environment_slug",
@@ -429,7 +431,7 @@ func TestPgCloneEnvironmentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 		case <-ticker.C:
 		}
 	}
-	for _, borrower := range []string{"foreign_key", "hosting", "scope", "workflow_state", "workflow_readiness", "binding_verification", "project_binding_verification", "release_stage", "app_mcp_readiness_policies", "app_mcp_readiness_policy_history", "mcp_readiness_incidents", "mcp_readiness_maintenance_windows", "alert_rules"} {
+	for _, borrower := range []string{"foreign_key", "scope", "workflow_state", "workflow_readiness", "binding_verification", "project_binding_verification", "release_stage", "mcp_readiness_policy", "mcp_readiness_incident", "mcp_readiness_maintenance"} {
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -440,8 +442,6 @@ func TestPgCloneEnvironmentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 		}
 		if borrower == "foreign_key" {
 			_, err = tx.Exec(ctx, "INSERT INTO custom_domains(domain,app_id,environment_id) VALUES('racing.example.com',$1,$2)", appID, native.Plan.EnvironmentID)
-		} else if borrower == "hosting" {
-			_, err = tx.Exec(ctx, "INSERT INTO hosting_sites(id,account_id,project_id,environment,name,hostname,origin_id) VALUES(gen_random_uuid(),$1,$2,$3,'racing','racing.example.com',$4)", l.Operation.AccountID, l.Operation.ProjectID, l.Operation.TargetEnvironment, strings.Repeat("a", 64))
 		} else if borrower == "workflow_readiness" {
 			_, err = tx.Exec(ctx, "LOCK TABLE customer_workflow_readiness_subscriptions IN ROW EXCLUSIVE MODE")
 		} else if borrower == "workflow_state" {
@@ -450,10 +450,14 @@ func TestPgCloneEnvironmentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 			_, err = tx.Exec(ctx, "LOCK TABLE binding_verification_runs IN ROW EXCLUSIVE MODE")
 		} else if borrower == "project_binding_verification" {
 			_, err = tx.Exec(ctx, "LOCK TABLE project_binding_verification_runs IN ROW EXCLUSIVE MODE")
-		} else if strings.HasPrefix(borrower, "app_mcp_readiness_") || strings.HasPrefix(borrower, "mcp_readiness_") || borrower == "alert_rules" {
-			_, err = tx.Exec(ctx, "LOCK TABLE "+borrower+" IN ROW EXCLUSIVE MODE")
 		} else if borrower == "release_stage" {
 			_, err = tx.Exec(ctx, "LOCK TABLE project_release_stages IN ROW EXCLUSIVE MODE")
+		} else if borrower == "mcp_readiness_policy" {
+			_, err = tx.Exec(ctx, "LOCK TABLE app_mcp_readiness_policies IN ROW EXCLUSIVE MODE")
+		} else if borrower == "mcp_readiness_incident" {
+			_, err = tx.Exec(ctx, "LOCK TABLE mcp_readiness_incidents IN ROW EXCLUSIVE MODE")
+		} else if borrower == "mcp_readiness_maintenance" {
+			_, err = tx.Exec(ctx, "LOCK TABLE mcp_readiness_maintenance_windows IN ROW EXCLUSIVE MODE")
 		} else {
 			_, err = tx.Exec(ctx, "INSERT INTO github_deploy_branches(project_id,branch,scope) VALUES($1,'racing',$2)", l.Operation.ProjectID, l.Operation.TargetEnvironment)
 		}

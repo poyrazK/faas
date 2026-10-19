@@ -13,6 +13,7 @@ import (
 // adr: 1306 — credit-grant and spend-cap-set send the flags as requests, a
 // zero cap is sent explicitly, and missing amounts never reach the API.
 func TestCmdConsumerCreditsAndSpendCap(t *testing.T) {
+	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1") // adr: 20261018090210 — exercises released monetization
 	var grant api.CreateAPIConsumerCreditRequest
 	var spendCap api.PutAPIConsumerSpendCapRequest
 	due := int64(125000)

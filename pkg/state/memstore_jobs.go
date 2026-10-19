@@ -831,6 +831,9 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 	if len(inputs) > 0 && len(inputs) != tasks {
 		return JobRun{}, nil, fmt.Errorf("state: input count %d must equal tasks %d", len(inputs), tasks)
 	}
+	if err := validateJobRunProcess(opts); err != nil {
+		return JobRun{}, nil, err
+	}
 	if err := validateJobRunAttach(opts, tasks, retryMaxOverride); err != nil {
 		return JobRun{}, nil, err
 	}
@@ -906,6 +909,8 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 		RetryMax:                    &retryMax,
 		TaskTimeoutS:                &timeout,
 		Command:                     command,
+		ProcessUser:                 opts.ProcessUser,
+		ProcessWorkdir:              opts.ProcessWorkdir,
 		ImageRefSnapshot:            job.ImageRef,
 		ImageResolvedDigestSnapshot: job.ImageResolvedDigest,
 		ImageStorageKeySnapshot:     job.ImageStorageKey,
@@ -995,7 +1000,8 @@ func (m *MemStore) JobRunReplayFailed(_ context.Context, sourceRunID, accountID 
 		Tasks: len(failed), Parallelism: source.Parallelism,
 		ExecutionClass: "standard", FailurePolicy: source.FailurePolicy,
 		RetryMax: source.RetryMax, TaskTimeoutS: source.TaskTimeoutS,
-		Command:          append([]string(nil), source.Command...),
+		Command:     append([]string(nil), source.Command...),
+		ProcessUser: source.ProcessUser, ProcessWorkdir: source.ProcessWorkdir,
 		ImageRefSnapshot: job.ImageRef, ImageResolvedDigestSnapshot: job.ImageResolvedDigest,
 		ImageStorageKeySnapshot: job.ImageStorageKey, RAMMBSnapshot: source.RAMMBSnapshot,
 		EffectiveEnvSnapshot: append(json.RawMessage(nil), source.EffectiveEnvSnapshot...),

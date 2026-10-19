@@ -101,8 +101,9 @@ func (s *server) adminRuntimeConfigList(w http.ResponseWriter, r *http.Request, 
 	for _, row := range rows {
 		byKey[row.Key] = row
 	}
-	items := make([]runtimeConfigEntryResponse, 0, len(runtimeConfigCatalog))
-	for _, def := range s.runtimeConfig.Definitions() {
+	defs := s.runtimeConfig.Definitions()
+	items := make([]runtimeConfigEntryResponse, 0, len(defs))
+	for _, def := range defs {
 		row, exists := byKey[def.Key]
 		item := runtimeConfigEntryResponse{
 			Key:               def.Key,
@@ -172,10 +173,12 @@ func (s *server) adminRuntimeConfigPatch(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid configuration value", "value must be valid JSON matching the catalog type"))
 		return
 	}
-	if err := validateRuntimeConfigValue(def, req.Value); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid configuration value", err.Error()))
+	value, prob := s.checkRuntimeConfigChange(def, req.Value)
+	if prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
+	req.Value = value
 	if len(req.Reason) < 3 || len(req.Reason) > 500 {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid change reason", "reason must be 3..500 characters"))
 		return
@@ -286,6 +289,7 @@ func (s *server) adminRuntimeConfigPatch(w http.ResponseWriter, r *http.Request,
 func (s *server) applyHotRuntimeConfig(ctx context.Context, row state.RuntimeConfig) error {
 	applied, err := s.runtimeConfig.applyVersion(row.Key, row.DesiredValue, row.Version)
 	if err != nil {
+		s.runtimeConfig.recordReceipt(ctx, s.store, row, err)
 		_ = s.store.MarkRuntimeConfigApplied(ctx, row.Key, row.Scope, row.ScopeID, row.Version, nil, err.Error())
 		return err
 	}
@@ -293,6 +297,7 @@ func (s *server) applyHotRuntimeConfig(ctx context.Context, row state.RuntimeCon
 		_ = s.runtimeConfig.reconcile(ctx, s.store)
 		return state.ErrRuntimeConfigConflict
 	}
+	s.runtimeConfig.recordReceipt(ctx, s.store, row, nil)
 	if err := s.store.MarkRuntimeConfigApplied(ctx, row.Key, row.Scope, row.ScopeID, row.Version, row.DesiredValue, ""); err != nil {
 		if errors.Is(err, state.ErrRuntimeConfigConflict) {
 			_ = s.runtimeConfig.reconcile(ctx, s.store)
@@ -357,6 +362,10 @@ func (s *server) adminRuntimeConfigRollback(w http.ResponseWriter, r *http.Reque
 	}
 	if err := validateRuntimeConfigValue(def, revision.NewValue); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Configuration revision is incompatible", "the catalog type changed and this revision cannot be applied"))
+		return
+	}
+	if _, prob := s.checkRuntimeConfigChange(def, revision.NewValue); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	reason := fmt.Sprintf("rollback to v%d: %s", req.Version, req.Reason)

@@ -441,6 +441,9 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 	if command == nil { // existing runs created before command snapshots
 		command = job.Command
 	}
+	// An image run takes the image's USER, WORKDIR and ENV, as Docker does
+	// (ADR-1790); other jobs keep the guest default.
+	imageProcess := job.Kind == state.JobKindImageRun
 	interactive, err := e.jobRunAttach(ctx, runID)
 	if ciOwned {
 		if runtimeInputs != nil || len(sealedEnv) != 0 || len(operationEnv) != 0 {
@@ -480,6 +483,9 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 		BaseKey:          BaseKey(""),
 		VcpuCount:        1,
 		Interactive:      interactive,
+		ImageProcess:     imageProcess,
+		ProcessUser:      run.ProcessUser,
+		ProcessWorkdir:   run.ProcessWorkdir,
 	})
 	if err != nil {
 		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, effectiveJobRetryMax(job, run), "job_vmm_cold_boot_failed", "job VM failed to boot before execution; verify the image artifact exists and is readable")
@@ -496,6 +502,13 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0,
 			"job_vmm_start_gate_mismatch", "job VM did not honor the reviewed service-binding start gate; retry the run")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob vmmd held-start mismatch: requested=%t returned=%t", startHeld, out.StartHeld)
+	}
+	if out.ImageProcess != imageProcess {
+		// A vmmd that predates ADR-1790 runs the command without the image's
+		// USER, WORKDIR and ENV, and ignores -u/-w.
+		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0,
+			"job_vmm_image_process_unsupported", "this node cannot run image runs with the image's user and environment yet; start the run again after the platform update")
+		return JobWakeResult{}, fmt.Errorf("sched: WakeJob vmmd image-process mismatch: requested=%t returned=%t", imageProcess, out.ImageProcess)
 	}
 	if out.Interactive != (interactive != nil) {
 		// A vmmd that predates ADR-1330 boots the command without stdin.
@@ -1332,6 +1345,11 @@ type JobVmmSpec struct {
 	// Interactive holds the guest command until one client attaches
 	// (ADR-1330). Only the token digest is carried.
 	Interactive *state.JobRunAttach
+	// ImageProcess runs an image run with the image's ENV, USER and
+	// WORKDIR; ProcessUser and ProcessWorkdir override them (ADR-1790).
+	ImageProcess   bool
+	ProcessUser    string
+	ProcessWorkdir string
 }
 
 // JobVmmResult is the vmmd-side cold-boot outcome.
@@ -1345,6 +1363,8 @@ type JobVmmResult struct {
 	// Interactive echoes JobVmmSpec.Interactive; an older vmmd leaves it
 	// false.
 	Interactive bool
+	// ImageProcess echoes JobVmmSpec.ImageProcess (ADR-1790).
+	ImageProcess bool
 }
 
 type JobStartSpec struct {

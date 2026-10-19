@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/google/uuid"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -101,6 +103,13 @@ func (s *PgStore) ActivateEnvironmentGitOpsWorkloadGraph(ctx context.Context, le
 		}
 		return ProjectReleaseSet{}, false, err
 	}
+	required, err := checkEnvironmentBindingGraphTx(ctx, tx, lease.Source.ProjectID, lease.Source.EnvironmentSlug, graph, members)
+	if err != nil {
+		return ProjectReleaseSet{}, false, err
+	}
+	if required {
+		ctx = context.WithValue(ctx, qualifiedEnvironmentReleaseKey{}, uuid.NewString())
+	}
 	expectedActiveID := &activeID
 	candidateFallbackExclusions := make(map[string]struct{}, len(graph.Members))
 	for _, member := range graph.Members {
@@ -113,6 +122,21 @@ func (s *PgStore) ActivateEnvironmentGitOpsWorkloadGraph(ctx context.Context, le
 		func(ctx context.Context, tx pgx.Tx) error {
 			if _, err := sqlc.New().SetEnvironmentGitOpsLeaseContext(ctx, tx, lease.LeaseToken); err != nil {
 				return mapErr(err)
+			}
+			if required {
+				// Recheck after the publisher has locked every project member and
+				// before unholding any candidate. The deferred SQL guard checks
+				// membership, policies, artifacts and expiry again at commit.
+				if _, err := checkEnvironmentBindingGraphTx(ctx, tx, lease.Source.ProjectID, lease.Source.EnvironmentSlug, graph, members); err != nil {
+					return err
+				}
+				body, err := json.Marshal(candidateBindingMemberIDs(members))
+				if err != nil {
+					return err
+				}
+				if _, err := sqlc.New().AuthorizeEnvironmentBindingRelease(ctx, tx, sqlc.AuthorizeEnvironmentBindingReleaseParams{GraphID: mustPgUUID(graph.ID), ReleaseID: mustPgUUID(ctx.Value(qualifiedEnvironmentReleaseKey{}).(string)), PriorRelease: activeID, Members: body}); err != nil {
+					return mapErr(err)
+				}
 			}
 			var activationToken string
 			if err := tx.QueryRow(ctx, `select set_config('gregale.gitops_activation',$1,true)`, lease.LeaseToken).Scan(&activationToken); err != nil {
