@@ -25,7 +25,7 @@ func (s *server) selectBindingServiceTargets(r *http.Request, app state.App, cal
 		if !declared[service] || !api.IsServiceBindingTargetProbeCommand([]string{api.AppTaskServiceBindingTargetProbeCommand, service, id}, false) {
 			return api.ErrValidation("service targets require declared services and canonical deployment UUIDs")
 		}
-		target, err := s.store.AppBySlug(r.Context(), service)
+		target, err := state.AppByServiceName(r.Context(), s.store, app, service)
 		if err != nil || target.AccountID != app.AccountID || target.Status == state.AppDeleted || target.PreviewOfSlug != "" {
 			return api.ErrValidation("service target is unavailable")
 		}

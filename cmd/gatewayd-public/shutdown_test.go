@@ -146,7 +146,7 @@ func discardLogger() *slog.Logger {
 
 // TestDrainOldGenerationKeepsStreamsUntilStopping: after a hand-off the old
 // generation keeps an SSE stream open (it is not cut at the restart grace)
-// and ends it cleanly when the unit stops (ADR-1580).
+// and ends it cleanly when the unit stops (ADR-1736).
 func TestDrainOldGenerationKeepsStreamsUntilStopping(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

@@ -21,6 +21,55 @@ import (
 	"time"
 )
 
+// Migration verification shares normal task and wake admission. These bounds
+// limit orchestration receipts, not customer compute entitlements.
+const (
+	AppSlugMaxLength                      = 40
+	ProjectAppSlugsMaxBytes               = 16 << 10
+	ProjectMigrationMaxServices           = 10
+	ProjectMigrationListLimit             = 20
+	ProjectMigrationMaxAttempts           = 8
+	ProjectMigrationMaxServiceConnections = 10
+	ProjectMigrationRetention             = 90 * 24 * time.Hour
+	ProjectMigrationRequestMaxBytes       = 2 << 20
+	ProjectMigrationPersistTimeout        = 5 * time.Second
+	ProjectMigrationLeaseGrace            = 15 * time.Second
+
+	MigrationCutoverMaxHostnameBytes       = 253
+	MigrationCutoverMaxLabelBytes          = 63
+	MigrationCutoverMaxRecords             = 16
+	MigrationCutoverListLimit              = 20
+	MigrationCutoverRetention              = 90 * 24 * time.Hour
+	MigrationCutoverMinTTL                 = 0
+	MigrationCutoverMaxTTL                 = 2147483647
+	MigrationCutoverCheckDuration          = 30 * time.Minute
+	MigrationCutoverLease                  = 40 * time.Second
+	MigrationCutoverProbeTimeout           = 10 * time.Second
+	MigrationCutoverCheckInterval          = 30 * time.Second
+	MigrationCutoverPollInterval           = 5 * time.Second
+	MigrationCutoverWorkerBatch            = 16
+	MigrationCutoverWorkers                = 2
+	MigrationCutoverRequestMaxBytes        = 16 << 10
+	MigrationCutoverDefaultErrorBPS  int64 = 100
+	MigrationCutoverDefaultP95MS     int64 = 1000
+
+	MigrationVerificationTTL            = 10 * time.Minute
+	MigrationVerificationLease          = 55 * time.Second
+	MigrationVerificationRetention      = 30 * 24 * time.Hour
+	MigrationVerificationMaxActive      = 1
+	MigrationVerificationListLimit      = 20
+	MigrationVerificationMaxPathBytes   = 512
+	MigrationVerificationTaskTimeout    = 30
+	MigrationVerificationMaxOutputBytes = 8192
+	MigrationVerificationPollInterval   = time.Second
+	MigrationVerificationStepInterval   = 2 * time.Second
+	MigrationVerificationRetryMax       = 30 * time.Second
+	MigrationVerificationWorkerBatch    = 32
+	MigrationVerificationWorkers        = 4
+	MigrationVerificationCancelAttempts = 8
+	MigrationVerificationPersistTimeout = 5 * time.Second
+)
+
 // Email verification keeps its existing 24-hour, single-use credential policy.
 const (
 	EmailVerificationTTL        = 24 * time.Hour
@@ -6829,10 +6878,10 @@ const (
 	// ComputeGatewayRestartWaitSeconds caps how long gatewayd-public keeps
 	// sending new requests to a compute node whose gatewayd-internal stopped
 	// answering (for example while it restarts behind its durable socket)
-	// before failing over to another node (ADR-1580). Override with
+	// before failing over to another node (ADR-1736). Override with
 	// FAAS_COMPUTE_GATEWAY_RESTART_WAIT.
 	ComputeGatewayRestartWaitSeconds = 3
-	// Two-generation hand-off (ADR-1580). A hand-off starts the new release
+	// Two-generation hand-off (ADR-1736). A hand-off starts the new release
 	// beside the running one on the same listening sockets; the old generation
 	// stops accepting and finishes what it holds.
 	//
@@ -6855,7 +6904,7 @@ const (
 	HandoffMemoryWaitSeconds = 60
 	// APIDMemoryMaxMB is faas-apid.service's MemoryMax, and APIDGoMemLimitMB
 	// its GOMEMLIMIT, a soft per-process bound. A reload runs two apid
-	// generations in one cgroup (ADR-1580). Production over 14 days
+	// generations in one cgroup (ADR-1736). Production over 14 days
 	// (2026-10-18): steady state 51-94 MB per process, spikes to 257 MB, and
 	// two OOM kills at the previous 256 MB cap (ADR 20261018132058).
 	APIDMemoryMaxMB                 = 512
@@ -7198,7 +7247,7 @@ const (
 	// graceful-restart GOAWAY was never processed; the transport retries it on
 	// a new connection only when it can rewind the body. Larger or chunked
 	// bodies keep streaming and can still fail in that window
-	// (docs/adr/1580-zero-downtime-daemon-restarts.md).
+	// (docs/adr/1736-zero-downtime-daemon-restarts.md).
 	InternalHopReplayableBodyBytes = 64 << 10 // 64 KiB
 )
 
@@ -10597,7 +10646,7 @@ const (
 	IssueMaxClockSkew     = 5 * time.Minute
 )
 
-// Offline grouping evaluation and reviewed partition snapshots (ADR-1738).
+// Offline grouping evaluation and reviewed partition snapshots (ADR-1744).
 const (
 	IssueGroupingEvaluationCasesMax         = 10000
 	IssueGroupingEvaluationCorpusMaxBytes   = 8 << 20
@@ -10625,7 +10674,7 @@ const (
 	IssueTagValueMaxBytes          = 128
 )
 
-// Match Node build discovery's bundle hashing bounds (ADR-1736).
+// Match Node build discovery's bundle hashing bounds (ADR-1742).
 const (
 	IssueSourceMapBundleMaxBytes      = 16 << 20
 	IssueSourceMapBundlesMaxBytes     = 64 << 20
@@ -13299,6 +13348,14 @@ const ServiceMapMaxEdges = 500
 // default of the per-app metrics endpoints.
 const ServiceMapDefaultRange = "1h"
 
+// Public build configuration is intentionally limited to reviewed URL values.
+const (
+	PublicBuildURLsMaxPerApp       = 10
+	PublicBuildURLsEncodedMaxBytes = 24000 // Mirrored by the deployment_public_build_urls CHECK.
+	PublicBuildURLMaxBytes         = 2048
+	PublicBuildPlanMaxBytes        = 8 << 20
+)
+
 // ServiceMapHighErrorRatePct is the edge error rate the dashboard highlights.
 const ServiceMapHighErrorRatePct = 5.0
 
@@ -13326,6 +13383,83 @@ const (
 	WorkerRecoveryFailureCountMax         = 32
 	WorkerRecoveryConcurrentApps          = 8
 	WorkerRecoveryBatchSize               = 32
+)
+
+// Pipeline limits are intentionally separate from Data API request limits.
+// Native replication holds connections independently of application traffic.
+const (
+	DataPipelinePilotAccountsMax           = 100
+	DataPipelineConnectionsMax             = 10
+	DataPipelinesMax                       = 3
+	DataPipelineGenerationsMax             = 1000
+	DataPipelineHistoryMax                 = 100
+	DataPipelineSchemaRefreshAppsMax       = 100
+	DataPipelineSchemaRetriesMax           = 10
+	DataPipelineSetupsMax                  = 3
+	DataPipelineSetupsPerConnection        = 1
+	DataPipelineSetupHistoryMax            = 100
+	DataPipelineObservationMaxAge          = 90 * time.Second
+	DataPipelineRetentionWarningBytes      = DataPipelineRetainedWALMaxBytes * 4 / 5
+	DataPipelineLiveLagMaxBytes            = int64(16 << 20)
+	DataPipelineTablesMax                  = 16
+	DataPipelineRetainedTablesMax          = 32
+	DataPipelineColumnsMax                 = 128
+	DataPipelineSubjectsMax                = 32
+	DataPipelineSubjectMaxBytes            = 256
+	DataPipelineCredentialMaxBytes         = 8192
+	DataPipelineRequestMaxBytes            = 32768
+	DataPipelineLease                      = 60 * time.Second
+	DataPipelineOperationTimeout           = 20 * time.Second
+	DataPipelinePollInterval               = 15 * time.Second
+	DataPipelineVerificationChunkRows      = 2000
+	DataPipelineVerificationChunkBytes     = 4 << 20
+	DataPipelineVerificationRangesMax      = 4096
+	DataPipelineVerificationSealRangesMax  = 2
+	DataPipelineVerificationChunksPerTick  = 4
+	DataPipelineVerificationLockTimeout    = 250 * time.Millisecond
+	DataPipelineVerificationCatchupTimeout = 2 * time.Second
+	DataPipelineVerificationQueryTimeout   = 2 * time.Second
+	DataPipelineVerificationPoll           = 25 * time.Millisecond
+	DataPipelineVerificationBytesMax       = 16 << 20
+	DataPipelineRetainedWALMaxBytes        = int64(1 << 30)
+	DataPipelineDiscoveryTablesMax         = 128
+	DataPipelineCheckMaxBytes              = 4 << 20
+	DataPipelineCheckEnvelopeBytes         = 4096
+	DataPipelineCheckMaxAge                = 90 * time.Second
+	DataPipelineCheckRetryInterval         = 15 * time.Second
+	DataPipelineCopyWorkersMax             = 2
+	DataPipelineCopyStallTimeout           = 5 * time.Minute
+	// Admission reserves the copy peak until confirmed deletion, including
+	// control/verification sessions. Credential rotations reserve both logins.
+	DataPipelineControlConnections        = 2
+	DataPipelineBindingConnections        = 42 // 2 connections × (Scale concurrency 20 + rollout 1)
+	DataPipelineAuthBindingConnections    = 84 // 4 connections × (Scale concurrency 20 + rollout 1)
+	DataPipelineBindingControlConnections = 2
+	DataPipelineCapacityMaxAge            = 30 * time.Second
+	DataPipelineQualificationMaxAge       = 24 * time.Hour
+	DataPipelineQualificationsMax         = 200
+	DataPipelineDashboardRefresh          = 2 * time.Second
+)
+
+// Pipeline health webhooks have one encrypted destination per pipeline. The
+// independent catalog worker debounces incidents and recovery before delivery.
+const (
+	DataPipelineAlertDebounce           = 2 * time.Minute
+	DataPipelineAlertRecoveryDebounce   = 30 * time.Second
+	DataPipelineAlertCheckInterval      = 15 * time.Second
+	DataPipelineAlertWorkerInterval     = time.Second
+	DataPipelineAlertBatch              = 32
+	DataPipelineAlertHistoryMax         = 100
+	DataPipelineAlertPendingMax         = 100
+	DataPipelineAlertAttemptsMax        = 7
+	DataPipelineAlertAttemptTimeout     = 10 * time.Second
+	DataPipelineAlertLease              = 30 * time.Second
+	DataPipelineAlertRetryBase          = 30 * time.Second
+	DataPipelineAlertRetryMax           = 6 * time.Hour
+	DataPipelineAlertURLMaxBytes        = 2048
+	DataPipelineAlertSecretMinBytes     = 32
+	DataPipelineAlertSecretMaxBytes     = 256
+	DataPipelineAlertRetryAfterMaxBytes = 256
 )
 
 // MCPReadinessFallbackMaxFailures bounds completed primary failures before failover.
@@ -13362,6 +13496,13 @@ const (
 	MCPReadinessPagerDutySummaryMaxBytes          = 1024
 	MCPReadinessPagerDutyTimeoutSeconds           = 30
 	MCPReadinessPagerDutyMaxRetryAfterSeconds     = 86400
+)
+
+// Migration builds may wait for APIs without consuming a builder slot.
+const (
+	ProjectMigrationBuildGateMaxBytes = 16000 // Mirrored by the deployment_build_dependency_gates CHECK.
+	ProjectMigrationBuildWaitTimeout  = 30 * time.Minute
+	ProjectMigrationBuildWaitPoll     = 5 * time.Second
 )
 
 // Selective repair is an internal, explicitly enrolled PostgreSQL contract.

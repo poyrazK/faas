@@ -242,7 +242,8 @@ func (s *Service) Plan(
 		}
 		accountApps = visible
 	}
-	if err := validateWorkloadAdmissionWithManaged(scan.Workloads, scan.Managed, accountApps, project.ID); err != nil {
+	scan.Workloads = PreserveAppSlugs(scan.Workloads, accountApps, project.ID)
+	if err := validateWorkloadAdmissionWithManaged(scan.Workloads, scan.Managed, accountApps, project.ID, scan.DependencyReferences); err != nil {
 		return Result{}, err
 	}
 
@@ -285,7 +286,7 @@ func (s *Service) Plan(
 	for _, a := range actions {
 		switch a.Op {
 		case "create":
-			draft := workloadToDraftApp(project, a.Workload, a.StartCommand, acct.Plan, workloadNameSet(scan.Workloads))
+			draft := workloadToDraftApp(project, a.Workload, a.StartCommand, acct.Plan, availableServiceNames(scan, project, existing))
 			out.Added = append(out.Added, draft)
 		case "update":
 			out.Changed = append(out.Changed, a.App)

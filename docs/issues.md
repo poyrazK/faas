@@ -565,7 +565,7 @@ Image, connected-repository, embedded-template, project/function-set, developer-
 preview and create-only paths reject these flags; safe/canary rollouts are also
 excluded because this flow stages zero production traffic. Existing explicit
 publication remains available for those builds. See
-[ADR-1736](adr/1736-deploy-issue-source-map-publication.md).
+[ADR-1742](adr/1742-deploy-issue-source-map-publication.md).
 
 ### Grouping explanations
 
@@ -832,7 +832,7 @@ Frequency-only and fixed-24-hour impact policies remain independent. This versio
 supports bounded AND conditions; lifecycle triggers, OR/nested expressions, anomaly
 detection and traffic-relative rates remain future work. Apply the migration and
 upgrade all apid consumers before enabling the new policy/native event. See
-[ADR-1739](adr/1739-shared-window-issue-compound-alerts.md).
+[ADR-1745](adr/1745-shared-window-issue-compound-alerts.md).
 
 ### Application error alerting compared with Sentry
 
@@ -1129,7 +1129,7 @@ formatting is harmless, while changing fixtures requires an explicit new review.
 The tool accepts the existing corpus array format and never infers incident truth
 or exports incidents. Review sanitation and labels together, preserving grouping
 differences that matter. See the [corpus guide](../pkg/issues/evaluation/testdata/README.md)
-and [ADR-1738](adr/1738-issue-grouping-previews-and-baselines.md).
+and [ADR-1744](adr/1744-issue-grouping-previews-and-baselines.md).
 
 ### Reported breadcrumbs and operational tags
 

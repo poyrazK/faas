@@ -6,12 +6,32 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/reposcan"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 const (
 	serviceEnvPrefix = api.ServiceBindingEnvPrefix
 	serviceEnvSuffix = api.ServiceBindingEnvSuffix
 )
+
+// Reference-only services gain discovery bindings only when they already have
+// one unambiguous production member in this creator's project. External source
+// references retain their supplied connections during partial migrations.
+func availableServiceNames(scan reposcan.Result, project state.Project, existing []state.App) map[string]struct{} {
+	available := workloadNameSet(scan.Workloads)
+	for _, reference := range scan.DependencyReferences {
+		matches := 0
+		for _, app := range existing {
+			if project.ID != "" && app.AccountID == project.AccountID && app.ProjectID == project.ID && app.Status != state.AppDeleted && app.PreviewOfSlug == "" && strings.EqualFold(app.WorkloadName, reference.Name) {
+				matches++
+			}
+		}
+		if matches == 1 {
+			available[strings.ToLower(reference.Name)] = struct{}{}
+		}
+	}
+	return available
+}
 
 func serviceEnvForWorkloadWithAvailable(base map[string]string, w reposcan.Workload, available map[string]struct{}) map[string]string {
 	return serviceEnvForWorkloadWithTransport(base, w, available, api.ServiceBindingTransport(w.ServiceBindingTransport))

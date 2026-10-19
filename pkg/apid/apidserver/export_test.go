@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
+	"github.com/onebox-faas/faas/pkg/apid/datapipelines"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
@@ -116,6 +117,13 @@ type RuntimeConfigManager = runtimeConfigManager
 type RuntimeConfigRestartNotifier = runtimeConfigRestartNotifier
 type ScanPlanResponse = scanPlanResponse
 type Server = server
+
+func (s *server) DataPipelines() **datapipelines.Handler { return &s.dataPipelines }
+
+func (s *server) ConfigurePipelineAPIApp(ctx context.Context, a state.Account, app state.App) error {
+	return s.configurePipelineAPIApp(ctx, a, app)
+}
+
 type SourceRefManagedPostgresProvider = sourceRefManagedPostgresProvider
 type SourceRefTestEnv = sourceRefTestEnv
 type SpyNotifier = spyNotifier
@@ -1360,6 +1368,18 @@ func (r *statusMetrics) MarkRollupSuccess(p0 time.Time) { r.markRollupSuccess(p0
 func (r *statusMetrics) ObserveEvaluation(p0 string)    { r.observeEvaluation(p0) }
 func (r *statusMetrics) ObserveMutation(p0 string, p1 string, p2 string) {
 	r.observeMutation(p0, p1, p2)
+}
+
+func (r *server) DrainMigrationVerificationsForTest(ctx context.Context) error {
+	worker, ok := r.migrationVerificationWorker()
+	if !ok {
+		return nil
+	}
+	return worker.Drain(ctx)
+}
+
+func (r *server) RestoreMigrationServiceForTest(ctx context.Context, account, app string, run api.MigrationVerification) (string, error) {
+	return r.restoreMigrationService(ctx, account, app, run)
 }
 
 // Members of testEnv

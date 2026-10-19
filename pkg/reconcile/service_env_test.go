@@ -9,6 +9,34 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+func TestPartialMigrationPreservesOnlyOwnedProductionServiceReferences(t *testing.T) {
+	scan := reposcan.Result{Workloads: []reposcan.Workload{{Name: "web", DependsOn: []string{"api", "external"}}}, DependencyReferences: []reposcan.Workload{{Name: "api"}, {Name: "external"}}}
+	project := state.Project{ID: "project", AccountID: "creator"}
+	app := state.App{ID: "api-app", AccountID: "creator", ProjectID: "project", Slug: "shop-api", WorkloadName: "api"}
+	for _, tc := range []struct {
+		name   string
+		target state.App
+		want   bool
+	}{
+		{"production", app, true},
+		{"foreign account", func() state.App { a := app; a.AccountID = "other"; return a }(), false},
+		{"foreign project", func() state.App { a := app; a.ProjectID = "other"; return a }(), false},
+		{"preview", func() state.App { a := app; a.PreviewOfSlug = "shop-api"; return a }(), false},
+		{"deleted", func() state.App { a := app; a.Status = state.AppDeleted; return a }(), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			available := availableServiceNames(scan, project, []state.App{tc.target})
+			_, ok := available["api"]
+			if ok != tc.want {
+				t.Fatalf("reference availability=%v", ok)
+			}
+			if _, ok := available["external"]; ok {
+				t.Fatal("external source reference gained an internal route")
+			}
+		})
+	}
+}
+
 func TestServiceEnvForWorkload(t *testing.T) {
 	got := serviceEnvForWorkloadWithAvailable(
 		map[string]string{

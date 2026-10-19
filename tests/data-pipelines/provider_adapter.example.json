@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "source_connection_id": "00000000-0000-0000-0000-000000000001",
+  "database_id": "00000000-0000-0000-0000-000000000002",
+  "admission_database_id": "00000000-0000-0000-0000-000000000003",
+  "backend_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+  "commands": {
+    "audit_capacity": [
+      "/opt/gregale-staging/pipeline-qualification-controls",
+      "audit_capacity"
+    ],
+    "audit_cleanup": [
+      "/opt/gregale-staging/pipeline-qualification-controls",
+      "audit_cleanup"
+    ],
+    "capacity_fill": [
+      "/opt/gregale-staging/pipeline-qualification-controls",
+      "capacity_fill"
+    ],
+    "capacity_release": [
+      "/opt/gregale-staging/pipeline-qualification-controls",
+      "capacity_release"
+    ],
+    "credential_restore": [
+      "/opt/gregale-staging/pipeline-qualification-controls",
+      "credential_restore"
+    ],
+    "credential_rotate": [
+      "/opt/gregale-staging/pipeline-qualification-controls",
+      "credential_rotate"
+    ],
+    "destination_disconnect": [
+      "/opt/gregale-staging/pipeline-qualification-controls",
+      "destination_disconnect"
+    ],
+    "destination_reconnect": [
+      "/opt/gregale-staging/pipeline-qualification-controls",
+      "destination_reconnect"
+    ],
+    "preflight": [
+      "/opt/gregale-staging/pipeline-qualification-controls",
+      "preflight"
+    ],
+    "retention_fill": [
+      "/opt/gregale-staging/pipeline-qualification-controls",
+      "retention_fill"
+    ],
+    "retention_release": [
+      "/opt/gregale-staging/pipeline-qualification-controls",
+      "retention_release"
+    ],
+    "source_disconnect": [
+      "/opt/gregale-staging/pipeline-qualification-controls",
+      "source_disconnect"
+    ],
+    "source_reconnect": [
+      "/opt/gregale-staging/pipeline-qualification-controls",
+      "source_reconnect"
+    ],
+    "worker_start": [
+      "/opt/gregale-staging/pipeline-qualification-controls",
+      "worker_start"
+    ],
+    "worker_stop": [
+      "/opt/gregale-staging/pipeline-qualification-controls",
+      "worker_stop"
+    ],
+    "data_api_refresh": [
+      "/opt/gregale-staging/pipeline-qualification-controls",
+      "data_api_refresh"
+    ]
+  },
+  "data_api_url": "https://your-canary-data-api.example"
+}

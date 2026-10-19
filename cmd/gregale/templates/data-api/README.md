@@ -131,7 +131,7 @@ exact legacy policy, followed by fresh SQL sessions. Rebuild alone does not
 upgrade a database role or existing pools. Update generated RPC permission
 tooling to accept both exact policies; its readiness remains an ACL check.
 Trusted functions/session settings can override defaults. See `docs/data-api.md`
-and ADR-1664 for rollout and qualification limits.
+and ADR-1733 for rollout and qualification limits.
 
 ### SQL transaction retry deadline
 
@@ -171,7 +171,7 @@ settings there from replacing the hook; PostgreSQL login defaults still apply.
 
 Stable gateway/database clocks are required. The hook cannot interrupt pool
 acquisition or trusted SQL that overrides timeouts/catches errors, and does not
-roll back external effects or prove HTTP abort stopped SQL. See ADR-1665 and
+roll back external effects or prove HTTP abort stopped SQL. See ADR-1734 and
 `docs/data-api.md` for rollout and recovery guidance.
 
 ### Total request deadline

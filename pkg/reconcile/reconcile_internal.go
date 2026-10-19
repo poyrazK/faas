@@ -72,7 +72,8 @@ func (s *Service) reconcile(
 		}
 		accountApps = visible
 	}
-	if err := validateWorkloadAdmissionWithManaged(scan.Workloads, scan.Managed, accountApps, project.ID); err != nil {
+	scan.Workloads = PreserveAppSlugs(scan.Workloads, accountApps, project.ID)
+	if err := validateWorkloadAdmissionWithManaged(scan.Workloads, scan.Managed, accountApps, project.ID, scan.DependencyReferences); err != nil {
 		return out, err
 	}
 

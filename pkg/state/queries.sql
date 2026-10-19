@@ -1654,14 +1654,113 @@ RETURNING id::text AS id, app_id::text AS app_id, deployment_id::text AS deploym
     coalesce(host(host_ip),'')::text AS host_ip, ram_mb, started_at, last_request_at, parked_at,
     node_id::text AS node_id, wake_id::text AS wake_id, framework_ready_at, tail_count, mode, request_count;
 
--- name: SaveRuntimeInstanceConfigProof :exec
-INSERT INTO runtime_instance_config_proofs(instance_id,wake_id,node_id,deployment_id,environment_id,scope,secret_fingerprint,config_fingerprint)
-SELECT id,wake_id,node_id,deployment_id,sqlc.narg(environment_id)::uuid,sqlc.arg(scope)::text,
-    sqlc.arg(secret_fingerprint)::text,sqlc.arg(config_fingerprint)::text
-FROM instances WHERE id=sqlc.arg(instance_id)::uuid
-ON CONFLICT(instance_id) DO UPDATE SET wake_id=excluded.wake_id,node_id=excluded.node_id,
-    deployment_id=excluded.deployment_id,environment_id=excluded.environment_id,scope=excluded.scope,
-    secret_fingerprint=excluded.secret_fingerprint,config_fingerprint=excluded.config_fingerprint;
+-- name: LockAppRuntimeGeneration :one
+-- ADR-1741: an admission insert decided from schedd's owner cache commits
+-- only while the app's generation is the one the decision read.
+SELECT generation FROM app_runtime_generations WHERE app_id=sqlc.arg(app_id)::uuid FOR SHARE;
+
+-- name: AppRuntimeGeneration :one
+-- ADR-1741: the app's runtime generation, which triggers bump in the
+-- writer's transaction for every change a wake depends on.
+SELECT generation FROM app_runtime_generations WHERE app_id=sqlc.arg(app_id)::uuid;
+
+-- name: FrozenThawBasis :one
+-- ADR-1740, ADR-1741: read first when a VM freezes, before the rest of its
+-- ticket, so any change after it moves the generation the guarded thaw
+-- compares. selected is true when the thaw a ticket would allow is the one
+-- the ordinary wake path would choose: the app's active production release
+-- pins the deployment, or no release pins the app and the deployment is its
+-- only live production-lane deployment with traffic.
+SELECT COALESCE((SELECT g.generation FROM app_runtime_generations g WHERE g.app_id=a.id),0)::bigint AS generation,
+    (a.status='active' AND a.managed_postgres_admission_cutover_id IS NULL
+        AND d.status='live' AND d.traffic_percent>0 AND d.scope IN ('production','default','')
+        AND d.parked_reason IS DISTINCT FROM 'security_scan_regressed'
+        AND (EXISTS (SELECT 1 FROM project_release_sets rs JOIN project_release_members rm ON rm.release_id=rs.id AND rm.app_id=a.id
+                WHERE rs.project_id=a.project_id AND rs.account_id=a.account_id AND rs.environment_slug='production' AND rs.active
+                    AND rm.deployment_id=d.id AND d.scope='production')
+            OR (NOT EXISTS (SELECT 1 FROM project_release_sets rs JOIN project_release_members rm ON rm.release_id=rs.id AND rm.app_id=a.id
+                    WHERE rs.project_id=a.project_id AND rs.account_id=a.account_id AND rs.environment_slug='production' AND rs.active
+                        AND rm.deployment_id IS NOT NULL)
+                AND NOT EXISTS (SELECT 1 FROM deployments o WHERE o.app_id=a.id AND o.id<>d.id AND o.status='live'
+                    AND o.traffic_percent>0 AND o.scope IN ('production','default','')))))::boolean AS selected
+FROM apps a JOIN deployments d ON d.app_id=a.id
+WHERE a.id=sqlc.arg(app_id)::uuid AND d.id=sqlc.arg(deployment_id)::uuid;
+
+-- name: ThawFrozenInstance :one
+-- ADR-1740, ADR-1741: a ticketed thaw's one control-plane round trip. The
+-- FROZEN -> RUNNING compare-and-set holds when the app's runtime generation
+-- is the one the ticket read: every change the ordinary wake path would have
+-- read moves it, in the writer's transaction. The generation row is the only
+-- lock taken, FOR SHARE, so a writer bumping it waits for this statement or
+-- this statement waits for the writer and then sees the new generation. The
+-- config proof must still be the ticket's, and an enrollment exception,
+-- which expires with time and moves no generation, must not have expired.
+-- The transition event and instance_changed notification commit with it.
+-- No row means a guard refused and nothing changed.
+WITH generation_lock AS (
+    SELECT g.app_id FROM app_runtime_generations g
+    WHERE g.app_id=sqlc.arg(app_id)::uuid AND g.generation=sqlc.arg(generation)::bigint
+    FOR SHARE
+), standards AS (
+    SELECT a.id FROM apps a WHERE a.id=sqlc.arg(app_id)::uuid AND (a.org_id IS NULL OR EXISTS (
+        SELECT 1 FROM app_application_standards s WHERE s.org_id=a.org_id AND s.app_id=a.id
+            AND (s.exception_expires_at IS NULL OR now()<s.exception_expires_at)))
+), thawed AS (
+    UPDATE instances SET started_at=clock_timestamp(), state='running'
+    WHERE id=sqlc.arg(instance_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+        AND deployment_id=sqlc.arg(deployment_id)::uuid AND node_id=sqlc.arg(node_id)::uuid
+        AND wake_id=sqlc.arg(wake_id)::uuid AND state='frozen'
+        AND EXISTS (SELECT 1 FROM generation_lock) AND EXISTS (SELECT 1 FROM standards)
+        AND EXISTS (SELECT 1 FROM runtime_instance_config_proofs proof WHERE proof.instance_id=instances.id
+            AND proof.wake_id=instances.wake_id AND proof.node_id=instances.node_id
+            AND proof.deployment_id=instances.deployment_id AND proof.config_fingerprint=sqlc.arg(config_fingerprint)::text)
+    RETURNING id::text AS id, app_id::text AS app_id, deployment_id::text AS deployment_id,
+        state, coalesce(netns,'')::text AS netns, coalesce(guest_uid,0)::integer AS guest_uid,
+        coalesce(host(host_ip),'')::text AS host_ip, ram_mb, started_at, last_request_at, parked_at,
+        node_id::text AS node_id, wake_id::text AS wake_id, framework_ready_at, tail_count, mode, request_count
+), transition_event AS (
+    INSERT INTO events(actor,kind,subject,data)
+    SELECT 'schedd',sqlc.narg(event_kind)::text,thawed.id::uuid,sqlc.narg(event_data)::jsonb FROM thawed
+    WHERE sqlc.narg(event_kind)::text IS NOT NULL
+    RETURNING id
+), notification AS (
+    SELECT pg_notify(sqlc.narg(notify_channel)::text,sqlc.narg(notify_payload)::text) FROM thawed
+    WHERE sqlc.narg(notify_channel)::text IS NOT NULL
+)
+SELECT thawed.*, (SELECT count(*) FROM transition_event)::integer AS events_recorded,
+    (SELECT count(*) FROM notification)::integer AS notifications_sent
+FROM thawed;
+
+-- name: SaveRuntimeInstanceConfigProof :one
+-- Saves the config proof a publication commits with. A wake's bookkeeping
+-- rides in the same statement, so it costs no round trip: the transition
+-- event and the instance_changed notification (pg_notify delivers at
+-- commit) commit with the publication or not at all. The deployment's
+-- snapshot-miss backoff is only reported, never cleared here: the
+-- publication holds a share lock on the deployment row, and an update
+-- would deadlock concurrent publications of the same deployment.
+WITH proof AS (
+    INSERT INTO runtime_instance_config_proofs(instance_id,wake_id,node_id,deployment_id,environment_id,scope,secret_fingerprint,config_fingerprint)
+    SELECT id,wake_id,node_id,deployment_id,sqlc.narg(environment_id)::uuid,sqlc.arg(scope)::text,
+        sqlc.arg(secret_fingerprint)::text,sqlc.arg(config_fingerprint)::text
+    FROM instances WHERE id=sqlc.arg(instance_id)::uuid
+    ON CONFLICT(instance_id) DO UPDATE SET wake_id=excluded.wake_id,node_id=excluded.node_id,
+        deployment_id=excluded.deployment_id,environment_id=excluded.environment_id,scope=excluded.scope,
+        secret_fingerprint=excluded.secret_fingerprint,config_fingerprint=excluded.config_fingerprint
+    RETURNING deployment_id
+), transition_event AS (
+    INSERT INTO events(actor,kind,subject,data)
+    SELECT 'schedd',sqlc.narg(event_kind)::text,sqlc.arg(instance_id)::uuid,sqlc.narg(event_data)::jsonb
+    WHERE sqlc.narg(event_kind)::text IS NOT NULL
+    RETURNING id
+), notification AS (
+    SELECT pg_notify(sqlc.narg(notify_channel)::text,sqlc.narg(notify_payload)::text)
+    WHERE sqlc.narg(notify_channel)::text IS NOT NULL
+)
+SELECT EXISTS(SELECT 1 FROM deployments d JOIN proof ON proof.deployment_id=d.id
+        WHERE d.snapshot_miss_count<>0 OR d.snapshot_miss_last_at IS NOT NULL OR d.snapshot_miss_backoff_until IS NOT NULL)::boolean AS snapshot_backoff_recorded,
+    (SELECT count(*) FROM transition_event)::integer AS events_recorded,
+    (SELECT count(*) FROM notification)::integer AS notifications_sent;
 
 -- name: ReadRuntimeInstanceConfigProof :one
 SELECT proof.deployment_id::text AS deployment_id,COALESCE(proof.environment_id::text,'')::text AS environment_id,
@@ -4566,11 +4665,14 @@ WHERE id = $1;
 -- recreate sweep has restored the destination's snapshot set, OR by
 -- the wake flow on a successful cold boot. Resets the counter and
 -- clears the backoff_until so future wakes don't short-circuit.
+-- A deployment with nothing recorded is left alone: no row version and no
+-- update triggers for the common case.
 UPDATE deployments
 SET snapshot_miss_count         = 0,
     snapshot_miss_last_at       = NULL,
     snapshot_miss_backoff_until = NULL
-WHERE id = $1;
+WHERE id = $1
+  AND (snapshot_miss_count <> 0 OR snapshot_miss_last_at IS NOT NULL OR snapshot_miss_backoff_until IS NOT NULL);
 
 -- name: DeploymentSnapshotBackoffActive :one
 -- The wake-side gate. Returns the row while a backoff timestamp is
@@ -11208,7 +11310,7 @@ RETURNING id::text AS id, account_id::text AS account_id, database_id::text AS d
  coalesce(rotation_wake_id::text, '')::text AS rotation_wake_id, rotation_cleanup_ready,
  state, coalesce(last_error_code, '')::text AS last_error_code,
  coalesce(lease_token, '')::text AS lease_token, lease_until,
- attempt_count, retry_at, created_at, updated_at, deleted_at;
+ attempt_count, retry_at, created_at, updated_at, deleted_at, connection_limit;
 
 -- name: ClaimManagedPostgresBindingRetirement :one
 UPDATE managed_postgres_bindings AS binding SET state = 'retiring',
@@ -11231,7 +11333,7 @@ RETURNING id::text AS id, account_id::text AS account_id, database_id::text AS d
  coalesce(rotation_wake_id::text, '')::text AS rotation_wake_id, rotation_cleanup_ready,
  state, coalesce(last_error_code, '')::text AS last_error_code,
  coalesce(lease_token, '')::text AS lease_token, lease_until,
- attempt_count, retry_at, created_at, updated_at, deleted_at;
+ attempt_count, retry_at, created_at, updated_at, deleted_at, connection_limit;
 
 -- name: ListDueManagedPostgresBindings :many
 SELECT id::text AS id, account_id::text AS account_id, database_id::text AS database_id,
@@ -17868,7 +17970,11 @@ AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp
 SELECT * FROM object_storage_s3_credentials WHERE bucket_id=$1 ORDER BY id FOR UPDATE;
 
 -- name: ReadCloneCheckpointObjectPublicationSecrets :many
-SELECT * FROM app_secrets WHERE managed_object_storage_credential_id=$1 ORDER BY key,app_id,scope FOR UPDATE;
+-- Publication inserts its secrets without org_id and app_core_resource_org
+-- stamps the app's organization, so only that exact value is its own.
+SELECT s.*, (s.org_id IS NOT DISTINCT FROM a.org_id)::boolean AS org_matches_app
+FROM app_secrets s LEFT JOIN apps a ON a.id=s.app_id
+WHERE s.managed_object_storage_credential_id=$1 ORDER BY s.key,s.app_id,s.scope FOR UPDATE OF s;
 
 -- name: ReadCloneCheckpointObjectPublicationGrants :many
 SELECT * FROM object_storage_access_grants WHERE bucket_id=$1 ORDER BY api_key_id FOR UPDATE;
@@ -18526,6 +18632,8 @@ LOCK TABLE app_mcp_readiness_policies,mcp_readiness_incidents,mcp_readiness_main
 -- name: ReadCloneDeploymentBorrowers :one
 SELECT (jsonb_build_object(
     'binding_verification_runs_deployment_id_fkey', (SELECT count(*) FROM binding_verification_runs WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'deployment_build_dependency_gates_deployment_id_fkey', (SELECT count(*) FROM deployment_build_dependency_gates WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'deployment_public_build_urls_deployment_id_fkey', (SELECT count(*) FROM deployment_public_build_urls WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'data_api_runtime_connection_observations_deployment_id_fkey', (SELECT count(*) FROM data_api_runtime_connection_observations WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_mcp_task_holds_deployment_id_fkey', (SELECT count(*) FROM deployment_mcp_task_holds WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_mcp_task_migration_overrides_deployment_id_fkey', (SELECT count(*) FROM deployment_mcp_task_migration_overrides WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
@@ -18575,6 +18683,8 @@ SELECT (jsonb_build_object(
     'deployment_revision_pins_deployment_id_fkey', (SELECT count(*) FROM deployment_revision_pins WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_rollback_operations_current_deployment_id_fkey', (SELECT count(*) FROM deployment_rollback_operations WHERE current_deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_rollback_operations_target_deployment_id_fkey', (SELECT count(*) FROM deployment_rollback_operations WHERE target_deployment_id = sqlc.arg(deployment_id)::uuid),
+    'deployment_rollbacks_from_deployment_id_fkey', (SELECT count(*) FROM deployment_rollbacks WHERE from_deployment_id = sqlc.arg(deployment_id)::uuid),
+    'deployment_rollbacks_target_deployment_id_fkey', (SELECT count(*) FROM deployment_rollbacks WHERE target_deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_route_policy_snapshots_deployment_id_fkey', (SELECT count(*) FROM deployment_route_policy_snapshots WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_runtime_environment_owners_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_environment_owners WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_sidecar_layers_deployment_id_fkey', (SELECT count(*) FROM deployment_sidecar_layers WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
@@ -19061,20 +19171,21 @@ SELECT now()::timestamptz AS observed_at,ac.plan,
 FROM current_run selected JOIN apps a ON a.id=selected.app_id JOIN app_resource_accounts ac ON ac.app_id = a.id;
 
 -- name: ClaimAppHealth :one
--- Lock order matches ApplyProjectPlan (account, then its apps). The insert's
--- account_id foreign key needs a key-share lock on the account; taking it
--- here with SKIP LOCKED skips an app whose account is mid-apply instead of
--- holding the app row while waiting for the account (deadlock 40P01).
+-- Lock order matches ApplyProjectPlan (resource namespace, then its apps).
+-- The insert's account_id foreign key needs a key-share lock on the
+-- namespace; taking it here with SKIP LOCKED skips an app whose namespace is
+-- mid-apply instead of holding the app row while waiting for it (40P01).
 WITH candidate AS (
  SELECT a.id, a.account_id FROM apps a
  JOIN app_resource_accounts acct ON acct.app_id = a.id
+ JOIN resource_namespaces rn ON rn.id = a.account_id
  LEFT JOIN app_health_collection_state h ON h.app_id = a.id
  WHERE a.status <> 'deleted' AND a.deleted_at IS NULL
  AND COALESCE(a.manifest->>'execution_mode', '') IN ('', 'request', 'service')
  AND (h.next_check_at IS NULL OR h.next_check_at <= sqlc.arg(checked_now)::timestamptz)
  AND (h.lease_until IS NULL OR h.lease_until <= sqlc.arg(checked_now)::timestamptz)
  ORDER BY COALESCE(h.next_check_at, '-infinity'::timestamptz), a.id
- LIMIT 1 FOR UPDATE OF a SKIP LOCKED
+ LIMIT 1 FOR UPDATE OF a SKIP LOCKED FOR KEY SHARE OF rn SKIP LOCKED
 )
 INSERT INTO app_health_collection_state(app_id, account_id, next_check_at, lease_token, lease_started_at, lease_until)
 SELECT id, account_id, sqlc.arg(checked_now)::timestamptz, sqlc.arg(token)::text, sqlc.arg(checked_now)::timestamptz, sqlc.arg(expires_at)::timestamptz FROM candidate
@@ -19083,10 +19194,10 @@ WHERE app_health_collection_state.lease_until IS NULL OR app_health_collection_s
 RETURNING app_id::text, account_id::text, lease_token, lease_started_at, lease_until;
 
 -- name: LockAppHealthAccount :exec
--- FinishAppHealth takes the account first, before history inserts reach the
--- app and account rows through their foreign keys, in the same order as
--- ApplyProjectPlan.
-SELECT 1 FROM accounts WHERE id = sqlc.arg(account_id)::text::uuid FOR KEY SHARE;
+-- FinishAppHealth takes the resource namespace first, before history inserts
+-- reach the app and namespace rows through their foreign keys, in the same
+-- order as ApplyProjectPlan.
+SELECT 1 FROM resource_namespaces WHERE id = sqlc.arg(account_id)::text::uuid FOR KEY SHARE;
 
 -- name: LockAppHealthCollection :one
 SELECT h.assessment, h.assessment_key, h.checked_at, h.notification_state FROM app_health_collection_state h

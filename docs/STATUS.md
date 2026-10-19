@@ -261,7 +261,7 @@ gatewayd-public, gatewayd-internal, apid and realtimed hand off on
 `systemctl reload`: the new release starts on the same sockets and serves new
 connections, and the old generation finishes requests and streams longer than
 the 25 s restart grace, for up to 30 minutes
-([ADR-1580](adr/1580-zero-downtime-daemon-restarts.md), "Two generations").
+([ADR-1736](adr/1736-zero-downtime-daemon-restarts.md), "Two generations").
 deployctl reloads them when only the binary changed and both releases can
 hand off, and restarts otherwise. gatewayd-internal's egress ledger and usage
 outbox and realtimed's callback outbox use per-generation slots. realtimed
@@ -300,7 +300,7 @@ public-to-internal H2C hop resends requests that crossed a graceful GOAWAY,
 wake RPCs wait out a schedd restart, outboundd and bridged drain before
 exiting, and HTTP daemons answer requests on connections accepted just before
 shutdown instead of closing them
-([ADR-1580](adr/1580-zero-downtime-daemon-restarts.md)). Portable
+([ADR-1736](adr/1736-zero-downtime-daemon-restarts.md)). Portable
 restart-under-load tests show no failed requests. On fsn-4 (systemd 255),
 gatewayd-internal's synth server behind a socket unit and a TCP schedd
 listener behind a socket unit each restarted five times under load with 0 of
@@ -1516,6 +1516,64 @@ This was the initial authorization slice. The offboarding entry above adds
 stream revocation, transaction fencing and filtered core inventories. Shared
 access beyond the reviewed route list and organization billing/quotas remain
 separate work.
+
+## Managed Postgres data pipelines — 2026-10-16
+
+Onboarding follow-up (2026-10-17): durable private-worker connection checks now
+share replication's compatibility inspector and expose bounded table/column
+discovery with remediation. New reservations require fresh evidence for the
+current credential and selected tables; the CLI checks before provisioning and
+the dashboard provides account/CSRF-bound setup and health. The capacity follow-up
+adds measured, operator-qualified shared allocations, atomic durable reservations,
+and enforced credential ceilings covering initial copy, wake and rotation peaks.
+Unknown or expired evidence blocks new consumers. The
+[staging canary](../tests/data-pipelines/staging_canary.py) can record live-provider
+and signed Data API evidence; it has not run against a live provider here.
+
+Add-table onboarding follow-up (2026-10-17): dashboard selection, fresh discovery
+and explicit schema/reader approval extend an existing pipeline. New owned tables
+remain gated through native copy, scoped resumable verification and durable API
+refresh while existing read policies stay open. Existing publication, subscription
+and generation are retained. Qualified peak capacity is reused and actual native
+copy headroom is rechecked. Local 100,000-row acceptance exercises restart,
+concurrent mutations, lost publication/refresh acknowledgements, API visibility and reader
+restrictions. Removal, replacement, production rollout and provider qualification
+remain outside this staging-only, unreleased slice.
+
+New-column backfill follow-up (2026-10-17): approved additions can include
+defaults, stored missing values and required columns. Bounded transactions copy
+actual source values only into new columns and save verification progress
+atomically. Required constraints precede API contract refresh; source expressions
+are never installed on the mirror. Local acceptance covers 100,000 historical
+rows, stop/retry, lost leases/progress, restart, concurrent mutations and reader
+restrictions. Existing-column drift, unsupported DDL and unfinished-backfill
+schema conflicts still require explicit recovery. Staging-only and unreleased.
+
+Resumable verification follow-up (2026-10-17): manual checks and approved schema
+additions now scan bounded primary-key ranges with durable progress and
+destination-side change invalidation. Final fenced coverage checks prevent
+independent chunk scans from becoming false equality proof. Local 100,000-row
+acceptance covers cancellation/retry, lost progress, restart, concurrent writes,
+API refresh and previously checked-range corruption. Composite-key, split,
+truncate and tracking-integrity tests are local. No release or production/provider
+qualification is implied.
+
+Schema evolution follow-up (2026-10-17): dashboard previews and revision-bound
+approval support nullable column additions without a full table recopy. Reads
+remain gated through bounded data verification and durable API runtime refresh.
+Native local tests cover changed approvals, ambiguous DDL commits, source drift
+during refresh, renewed API contracts and historical-default recovery.
+Unsupported changes and inconclusive large-table verification still need explicit
+recovery. This remains staging-only and unreleased.
+
+[ADR-1591](adr/1591-managed-postgres-data-pipelines.md) adds an internal,
+staging-only source-to-mirror connector on top of the Data API release work.
+The [pipeline guide](data-pipelines.md) documents the single-command CLI,
+sealed source custody, native initial copy/change capture, explicit JWT reader
+allowlist, pause/resync/cleanup behavior, and bounded verification. The strict
+`make test-data-pipeline` runner uses disposable TLS PostgreSQL and real signed
+HTTP reads. Live-provider, resource-budget and deployed operational qualification
+remain open; production admission is disabled.
 
 ## Containers: image runs, process identity and Compose build context — 2026-10-15
 
@@ -3497,3 +3555,114 @@ parity. Vmmd and the metal tests compile; the new metal tests skip without
 staged VM images. Native lifecycle qualification remains pending: this workspace
 has no `/dev/kvm`, and leak inspection fails because `/dev/loop0`–`/dev/loop7`
 are unavailable. Migration `20261017120000001` has not been deployed.
+
+Data pipeline freshness followup (local, staging only): status and dashboard now
+expose a generation-scoped applied WAL checkpoint lower bound plus read-time
+health and recovery guidance. Idle-source uncertainty is explicit; receiver
+activity and WAL bytes do not claim time freshness. Native provider qualification
+and customer-pilot enablement remain outstanding; no release is authorized.
+
+Data pipeline table recovery followup (local, staging only): an unfinished newly
+added table with a confirmed verification mismatch now has a separate exact preview
+and approved recopy. Durable native withdrawal, relation retirement, transactional
+clear, republish and copy stages preserve healthy table reads/storage and shared
+replication identities across restarts and lost acknowledgements. A fresh proof,
+API refresh and final fenced check precede read reopening. Source drift blocks
+recopy; shared WAL/replication loss still requires full recovery. Local native
+acceptance covers two 100k-row tables, healthy CDC during a stalled recopy, one
+committed clear, source drift, fault recovery and signed read gating. Dashboard
+CSRF/confirmation/revision checks and receipt fencing are tested. Provider
+qualification and production enablement remain outstanding; no release.
+
+Data pipeline initial-copy recovery followup (local, staging only): new-table
+onboarding now records native copy phases/counters and a durable five-minute
+progress clock. Explicit preview/approval can recover a stalled or untracked new
+table before verification exists. Native worker/relation retirement precedes
+transactional clearing; healthy reads/storage and the shared subscription remain
+in place. A request is withdrawn when copying resumes or finishes before durable
+recovery starts. Native acceptance covers an actively blocked COPY, temporary
+slot cleanup, lost acknowledgements, missing tracking through supported DDL,
+restarts, healthy 100k-row table CDC, and one clear per approved attempt. Provider
+qualification and production enablement remain outstanding; no release.
+
+Data pipeline provider qualification runner (local): fresh-copy, signed-read and
+recovery scenarios now have an operator-only staging harness with scoped fault
+adapter receipts, unconditional restore attempts, independent behavior checks and
+versioned evidence reports. Local harness tests do not qualify the provider.
+Live Neon execution is blocked on staging credentials, fixture identities and
+configured deployment fault controls. No pilot/production approval or release.
+
+
+Data pipeline dashboard setup (local, staging only): customers can save selected
+tables/readers, request automatic mirror provisioning, leave/reopen progress, retry
+blocked stages with stable IDs, and stop setup while retaining resources. Source
+rotation/removal and confirmed pipeline disconnect are available in the dashboard.
+Setup leases/revisions, shared discovery serialization, pipeline quota reservations
+and account/source/mirror lifecycle guards cover recovery. Optional Data API fields now continue the saved workflow through an owned Auth
+selection, a read-only binding, normal template build submission and deployment
+readiness. Lost replies reuse persisted identities; a terminal build retry keeps
+the working mirror/app/binding and records a new deployment attempt. Auth JWT
+settings are immutable public deployment overrides; database credentials remain
+managed encrypted secrets. Ready jobs expose an endpoint and query example. Live
+provider qualification and production enablement remain outstanding. No release.
+
+
+Data pipeline approved-table cancellation (local, staging only): exact dashboard
+preview/confirmation can abandon an unfinished new table without resetting the
+pipeline. Durable native retirement preserves healthy CDC and other tracked
+copies, archives committed rows privately, refreshes the API through the existing
+runtime outbox, and atomically reduces saved selection. Retained-table capacity is
+32 per mirror database; rows are never automatically deleted. Fresh re-adds use
+new tables and proofs. Local fault acceptance covers blocked COPY, temporary slot
+cleanup, lost replies, restart recovery, signed healthy reads, API exclusion,
+last-table cancellation and repeated 100k-row cancel/re-add. Live provider
+qualification and production enablement remain outstanding. No release.
+
+Data pipeline live-table removal (local, staging only): exact dashboard preview
+and confirmation can remove one already-live table while keeping remaining
+tables syncing and readable. The selected gate and durable retirement intent
+commit together; native cleanup, private retention and a distinct API refresh
+precede saved selection reduction. No recopy or generation reset is required.
+The last table uses ordinary pipeline disconnect. Local acceptance covers two
+100k-row tables, ongoing source updates, lost acknowledgements, worker restarts,
+signed access checks, unchanged healthy storage/shared identities and retained
+rows. Provider qualification and production enablement remain outstanding; no
+release.
+
+Data pipeline live-table repair (local, staging only): a confirmed row mismatch
+in an unchanged live table now gates only that table and preserves shared sync.
+A durable private quarantine recovers failed/lost intent acknowledgements before
+ordinary reads can reopen. Exact preview and separate recopy confirmation use the
+existing native retirement/copy stages, scoped proof, API refresh and final
+fence. Selection and generation stay unchanged; the partial proof does not imply
+whole-pipeline verification. Local acceptance covers two 100k-row tables,
+concurrent writes, a rolled-back quarantine, blocked COPY, lost acknowledgements,
+restarts, one clear and signed healthy reads/CDC. Provider qualification and
+production enablement remain outstanding; no release.
+
+
+### Pipeline reader access management (local/staging only)
+
+- Existing pipelines can preview and explicitly confirm exact JWT reader grants
+  and revocations in the dashboard, with approved/applied status and existing
+  session/CSRF checks. Grants still expose every row in every selected table.
+- A private authoritative receipt and fenced policy transaction survive lost
+  acknowledgements and worker restart. Later gate openings use the committed
+  readers. Initial-copy, schema and repair false gates stay closed; retained
+  private tables remain excluded. Source connectivity and new copy capacity are
+  unnecessary for the access transaction.
+- Local acceptance changes Alice to Bob during a live repair COPY with ongoing
+  mixed-table updates, loses the catalogue acknowledgement, restarts, then checks
+  that the repaired table opens for Bob only. Healthy storage and native resources
+  are preserved. Acceptance uses disposable local fixtures; production rollout remains gated.
+
+Pipeline health notifications (local/staging only): opt-in encrypted HTTPS
+webhooks and dashboard delivery history now use an independent catalog monitor,
+durable debounced incidents/recoveries, signed attempts, bounded retries, and
+receiver deduplication IDs. Stopped replication workers are detectable without
+source access; endpoint/key failures do not block monitoring. Pause does not
+claim recovery, and idle source checkpoints alone do not claim stale data. The
+new private worker unit is installed without enabling it. Local acceptance covers
+native PostgreSQL authentication rejection, receiver outage/restart, stopped
+worker observations, lost HTTP acknowledgment, and metadata minimization. Provider
+qualification and production rollout remain gated.
