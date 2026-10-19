@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -42,6 +43,19 @@ func (f *productStatementFake) GetProductBillingDocument(_ context.Context, scop
 		return api.ProductBillingDocument{}, state.ErrNotFound
 	}
 	return doc, nil
+}
+
+func (f *productStatementFake) ListProductBillingDocuments(_ context.Context, scope state.ProductBillingScope, _ string) (api.ProductBillingDocuments, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var page api.ProductBillingDocuments
+	for _, doc := range f.docs {
+		if doc.TenantID == scope.TenantID && doc.Period == scope.Period {
+			page.Documents = append(page.Documents, doc)
+		}
+	}
+	sort.Slice(page.Documents, func(i, j int) bool { return page.Documents[i].ID < page.Documents[j].ID })
+	return page, nil
 }
 
 func (f *productStatementFake) GetProductBillingHandoff(ctx context.Context, scope state.ProductBillingScope, id string) (api.ProductInvoiceHandoff, error) {
@@ -204,6 +218,56 @@ func TestProductControlStatementExport(t *testing.T) {
 	call("POST", invoice(credit), exportReq, http.StatusUnprocessableEntity)
 	call("POST", "/v1/apps/"+app.Slug+"/product/billing/documents/"+manual.ID+"/handoff?period="+period,
 		api.ProductHandoffRequest{TenantID: alice.ID, ExternalInvoiceID: "internal-invoice-7"}, http.StatusOK)
+	if w := call("POST", "/v1/apps/"+app.Slug+"/product/billing/documents/"+paid.ID+"/handoff?period="+period,
+		api.ProductHandoffRequest{TenantID: alice.ID, ExternalInvoiceID: "internal-invoice-8"}, http.StatusConflict); !strings.Contains(w.Body.String(), "product_billing_exported") ||
+		fake.handoffs[paid.ID].ExternalInvoiceID != "txn_1" {
+		t.Fatalf("manual handoff of an exported statement: %s", w.Body)
+	}
+	invoices := func(body []byte) map[string]map[string]any {
+		t.Helper()
+		var page struct {
+			Documents []struct {
+				ID      string         `json:"id"`
+				Invoice map[string]any `json:"invoice"`
+			} `json:"documents"`
+		}
+		if err := json.Unmarshal(body, &page); err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]map[string]any{}
+		for _, doc := range page.Documents {
+			out[doc.ID] = doc.Invoice
+		}
+		return out
+	}
+	owned := invoices(call("GET", "/v1/apps/"+app.Slug+"/product/billing/documents?period="+period+"&tenant_id="+alice.ID, nil, http.StatusOK).Body.Bytes())
+	if got := owned[paid.ID]; got["provider"] != "paddle" || got["invoice_id"] != "txn_1" || got["export_status"] != state.StatementInvoiceExportCompleted ||
+		got["payment_status"] != "draft" || got["amount_minor"] != float64(50) || len(owned) != 3 || owned[manual.ID] != nil || owned[credit.ID] != nil {
+		t.Fatalf("owner documents = %v", owned)
+	}
+	var access api.CreatePlatformTenantAccessTokenResponse
+	if err := json.Unmarshal(call("POST", "/v1/account/platform-tenants/"+alice.ID+"/access-tokens",
+		api.CreatePlatformTenantAccessTokenRequest{Name: "billing", Scopes: []string{api.ScopePlatformTenantOperationsRead}}, http.StatusCreated).Body.Bytes(), &access); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("GET", "/v1/platform-tenant-self/product/billing?app="+app.Slug+"&period="+period+"&tenant_id="+alice.ID, nil)
+	r.Header.Set("Authorization", "Bearer "+access.Token)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	var customer struct {
+		Documents json.RawMessage `json:"documents"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &customer); w.Code != http.StatusOK || err != nil {
+		t.Fatalf("customer billing: %d %s %v", w.Code, w.Body, err)
+	}
+	seen := invoices(customer.Documents)
+	if got := seen[paid.ID]; got["payment_status"] != "draft" || got["amount_minor"] != float64(50) || got["currency"] != "EUR" ||
+		got["provider"] != nil || got["invoice_id"] != nil || got["dashboard_url"] != nil || got["export_status"] != nil || seen[manual.ID] != nil {
+		t.Fatalf("customer documents = %v", seen)
+	}
+	if strings.Contains(w.Body.String(), "txn_1") || strings.Contains(w.Body.String(), "ctm_01alice") {
+		t.Fatalf("customer billing leaks provider identifiers: %s", w.Body)
+	}
 	call("POST", invoice(manual), exportReq, http.StatusConflict)
 	call("POST", invoice(paid), api.ProductInvoiceExportRequest{TenantID: bob.ID, Provider: "paddle"}, http.StatusNotFound)
 	call("POST", invoice(paid), api.ProductInvoiceExportRequest{TenantID: alice.ID, Provider: "chargebee"}, http.StatusUnprocessableEntity)

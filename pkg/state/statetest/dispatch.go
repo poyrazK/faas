@@ -49,6 +49,7 @@ var memDispatched = map[string]bool{
 	"AppByID":                                                 true,
 	"AppBySlug":                                               true,
 	"GetProductBillingDocument":                               true,
+	"ListProductBillingDocuments":                             true,
 	"GetProductBillingHandoff":                                true,
 	"HandoffProductBilling":                                   true,
 	"StatementHandoffBlocked":                                 true,
@@ -3612,6 +3613,15 @@ func (s *Mem) GetProductBillingDocument(p0 context.Context, p1 state.ProductBill
 		return o.GetProductBillingDocument(p0, p1, p2)
 	}
 	return s.MemStore.GetProductBillingDocument(p0, p1, p2)
+}
+
+func (s *Mem) ListProductBillingDocuments(p0 context.Context, p1 state.ProductBillingScope, p2 string) (api.ProductBillingDocuments, error) {
+	if o, ok := s.over.(interface {
+		ListProductBillingDocuments(context.Context, state.ProductBillingScope, string) (api.ProductBillingDocuments, error)
+	}); ok {
+		return o.ListProductBillingDocuments(p0, p1, p2)
+	}
+	return s.MemStore.ListProductBillingDocuments(p0, p1, p2)
 }
 
 func (s *Mem) GetProductBillingHandoff(p0 context.Context, p1 state.ProductBillingScope, p2 string) (api.ProductInvoiceHandoff, error) {

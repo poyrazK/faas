@@ -106,7 +106,7 @@ func (f *invoiceBillingFixture) HandoffProductBilling(_ context.Context, _ state
 // and a started export refuses a manual handoff.
 func TestProductOwnerConsoleShowsStatementInvoices(t *testing.T) {
 	account := uuid.NewString()
-	paid, overdue, pending, manual := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	paid, overdue, pending, manual, open := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	due := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
 	remaining := int64(1250)
 	exports := map[string]*api.StatementInvoiceExportResponse{
@@ -118,7 +118,7 @@ func TestProductOwnerConsoleShowsStatementInvoices(t *testing.T) {
 		pending: {Provider: "lago", Status: state.StatementInvoiceExportCreating, Currency: "EUR", AmountMinor: 50},
 	}
 	var docs []api.ProductBillingDocument
-	for _, id := range []string{paid, overdue, pending, manual} {
+	for _, id := range []string{paid, overdue, pending, manual, open} {
 		docs = append(docs, api.ProductBillingDocument{ID: id, Kind: "statement", Currency: "EUR", AmountMillicents: 50000, CreatedAt: due})
 	}
 	billing := &invoiceBillingFixture{docs: docs, handoffs: map[string]string{paid: "txn_1", overdue: "in_2", manual: "internal-7"}}
@@ -128,7 +128,7 @@ func TestProductOwnerConsoleShowsStatementInvoices(t *testing.T) {
 		}
 		return exports[id], nil
 	}}
-	c := &ownerContext{account: state.Account{ID: account}, billing: billing, data: dashboard.ProductControlData{AppSlug: "exports", BaseURL: "/dashboard/apps/exports/product-control",
+	c := &ownerContext{account: state.Account{ID: account}, billing: billing, data: dashboard.ProductControlData{Main: true, AppSlug: "exports", BaseURL: "/dashboard/apps/exports/product-control",
 		TenantID: uuid.NewString(), Period: "2026-10", Billing: &api.ProductBillingReview{Period: "2026-10", Currency: "EUR", Closed: true}}}
 	if err := s.ownerDocuments(httptest.NewRequest("GET", "/", nil), c, state.ProductBillingScope{AccountID: account}, url.Values{}); err != nil {
 		t.Fatal(err)
@@ -150,8 +150,8 @@ func TestProductOwnerConsoleShowsStatementInvoices(t *testing.T) {
 			t.Fatalf("console misses %q", want)
 		}
 	}
-	if forms := strings.Count(page, `name="action" value="handoff"`); forms != 0 {
-		t.Fatalf("console offers %d manual handoff forms for exported or handed-off statements", forms)
+	if forms := strings.Count(page, `name="action" value="handoff"`); forms != 1 || !strings.Contains(page, `name="document" value="`+open+`"`) {
+		t.Fatalf("console offers %d manual handoff forms, want one for the unexported statement only", forms)
 	}
 
 	scope := state.ProductBillingScope{AccountID: account}
@@ -164,9 +164,7 @@ func TestProductOwnerConsoleShowsStatementInvoices(t *testing.T) {
 	if _, err := s.handoffManually(t.Context(), billing, account, scope, uuid.NewString(), "internal-9"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("manual handoff of an unknown document: %v", err)
 	}
-	fresh := uuid.NewString()
-	billing.docs = append(billing.docs, api.ProductBillingDocument{ID: fresh, Kind: "statement", Currency: "EUR"})
-	if got, err := s.handoffManually(t.Context(), billing, account, scope, fresh, "internal-10"); err != nil || got.ExternalInvoiceID != "internal-10" {
+	if got, err := s.handoffManually(t.Context(), billing, account, scope, open, "internal-10"); err != nil || got.ExternalInvoiceID != "internal-10" {
 		t.Fatalf("manual handoff of an unexported statement: %+v %v", got, err)
 	}
 }

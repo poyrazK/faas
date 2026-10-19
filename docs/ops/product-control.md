@@ -1347,7 +1347,8 @@ with `{"tenant_id","provider","customer"}` and the matching `GET` with `tenant_i
   needed. Failed, cancelled, waived and unresolved runs are never invoiced.
 - The provider invoice ID becomes the statement's handoff. A statement is
   either handed off by hand or exported, never both: a manual handoff blocks
-  export, and an export cannot be replaced.
+  export, and once an export starts a manual handoff returns 409
+  `product_billing_exported`, through the API and the console.
 - A retry with the same provider resumes the same invoice; another provider
   conflicts. The export row exists before any provider call, so a lost
   response never creates a second invoice.
@@ -1361,6 +1362,32 @@ with `{"tenant_id","provider","customer"}` and the matching `GET` with `tenant_i
 Gregale still does not collect money, calculate tax or act as merchant of record;
 the owner's provider does. Paddle exports stay drafts to finish in Paddle;
 Stripe and Lago can collect when the connection's collection mode asks them to.
+
+#### Payment status on statements
+
+Each statement in `GET /v1/apps/{slug}/product/billing/documents` (and so
+`statements list --json`) carries an `invoice` object once its export starts:
+`provider`, `invoice_id`, `dashboard_url`, `export_status`, `payment_status`,
+`overdue`, `currency`, `amount_minor`, `amount_remaining_minor`, `due_at`,
+`paid_at` and `hosted_invoice_url`. Amounts are in the currency's minor unit
+(cents). `overdue` has the ADR-1504 meaning: open, past `due_at`, with an amount
+remaining. Credit notes and statements handed off by hand have no `invoice`.
+
+The owner console shows each exported statement's invoice in place of the
+handoff form, for example
+`Invoiced in Stripe as in_… · overdue · due 2026-11-01 · EUR 12.50 remaining`,
+with links to the provider dashboard and the customer's hosted invoice. An
+export that has not finished says so; rerun `statements export` with the same
+provider to resume the same invoice.
+
+Customers see a reduced `invoice` on completed exports only, through
+`statements list --self`, `GET /v1/platform-tenant-self/product/billing` and the
+portal's **Statements and credits** section: payment status, overdue, amounts,
+dates and the hosted invoice link. They never see the provider, invoice ID,
+provider customer ID, dashboard link or an unfinished export. The hosted link is
+kept only when the provider returned a plain `https` URL without credentials;
+the portal labels it **View and pay invoice** while the invoice is open. Gregale
+never renders a payment form.
 
 The customer portal's **Statements and credits** section reads a selected month
 and explicitly pages through finalized documents. It shows provisional charges
@@ -1386,12 +1413,12 @@ MFA and verified-email policy. Tenant identity always comes from the credential.
 | --- | --- |
 | `GET /v1/apps/{slug}/product/billing/review` | Live or frozen review; tenant_id and period selectors |
 | `GET /v1/apps/{slug}/product/billing/receipts` | Retained commercial evidence with cursor |
-| `GET /v1/apps/{slug}/product/billing/documents` | Finalized statements and credit notes with cursor |
+| `GET /v1/apps/{slug}/product/billing/documents` | Finalized statements and credit notes with cursor, each exported statement with its invoice and payment status |
 | `POST /v1/apps/{slug}/product/billing/statements/finalize` | Confirm a reviewed, resolved, closed month |
 | `POST /v1/apps/{slug}/product/billing/receipts/{operation}/waive` | Permanently waive an unresolved charge |
 | `POST /v1/apps/{slug}/product/billing/credits` | Idempotent credit note for a finalized receipt |
 | `GET/POST /v1/apps/{slug}/product/billing/documents/{document}/handoff` | Recover or record the immutable invoice reference |
-| `GET /v1/platform-tenant-self/product/billing` | Authenticated tenant's selected month and documents |
+| `GET /v1/platform-tenant-self/product/billing` | Authenticated tenant's selected month and documents, with completed invoices' payment status and hosted link |
 | `GET /v1/product-control/customer/{slug}/billing` | Cookie-authenticated workspace billing |
 | `GET /v1/apps/{slug}/product` | Current catalog; optional `revision` |
 | `PUT /v1/apps/{slug}/product` | Publish catalog spec |
