@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// ADR-20261016151947: only backends that declare a hub run live queries, and Neon
-// backends cannot declare one.
+// ADR-20261016151947: only backends that declare a hub run live queries, native and
+// Neon alike; the hub URL must be a plain ws:// or wss:// URL.
 func TestRegistryLiveHubURL(t *testing.T) {
 	provider := &fakeProvider{capabilities: testCapabilities()}
 	registry := testRegistry(t, provider, func(c *Config) {
@@ -22,9 +22,22 @@ func TestRegistryLiveHubURL(t *testing.T) {
 	if got := testRegistry(t, provider, nil); mustDefault(t, got).LiveHub("x") != "" {
 		t.Fatal("a backend without live_hub_url has a hub")
 	}
+	neon, err := NewRegistry(Config{
+		DefaultRegion: "us-east-1",
+		Defaults:      map[string]string{"us-east-1": "primary-a"},
+		Backends: []BackendConfig{{ID: "primary-a", Driver: "neon", Region: "us-east-1", Namespace: "ns",
+			LiveHubURL: "wss://live.internal/{database_id}/live"}},
+	}, func(string) string { return "" }, map[string]Factory{
+		"neon": func(BackendConfig, func(string) string) (Provider, error) { return provider, nil },
+	})
+	if err != nil {
+		t.Fatalf("a Neon backend with a hub: %v", err)
+	}
+	if got := mustDefault(t, neon).LiveHub("3f1c"); got != "wss://live.internal/3f1c/live" {
+		t.Fatalf("a Neon backend's LiveHub = %q", got)
+	}
 
 	for name, mutate := range map[string]func(*BackendConfig){
-		"neon":        func(b *BackendConfig) { b.Driver, b.LiveHubURL = "neon", "wss://live.internal/live" },
 		"http":        func(b *BackendConfig) { b.LiveHubURL = "https://live.internal/live" },
 		"no host":     func(b *BackendConfig) { b.LiveHubURL = "wss:///live" },
 		"credentials": func(b *BackendConfig) { b.LiveHubURL = "wss://u:p@live.internal/live" },

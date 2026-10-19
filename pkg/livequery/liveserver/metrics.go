@@ -27,6 +27,9 @@ type Metrics struct {
 	maintenanceSec prometheus.Counter
 	keys           prometheus.Gauge
 	keyRefreshes   *prometheus.CounterVec
+	released       prometheus.Gauge
+	releases       prometheus.Counter
+	resumes        *prometheus.CounterVec
 }
 
 // NewMetrics registers the metrics with reg.
@@ -58,9 +61,16 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		keys: prometheus.NewGauge(prometheus.GaugeOpts{Name: "livequery_keys", Help: "Live secrets the hub opens seals with."}),
 		keyRefreshes: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "livequery_key_refreshes_total",
 			Help: "Reads of the database's live keys from the control plane, by result."}, []string{"result"}),
+		released: prometheus.NewGauge(prometheus.GaugeOpts{Name: "livequery_released",
+			Help: "1 while the hub has released the database so it can scale to zero."}),
+		releases: prometheus.NewCounter(prometheus.CounterOpts{Name: "livequery_releases_total",
+			Help: "Times the hub released an idle database."}),
+		resumes: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "livequery_resumes_total",
+			Help: "Times the hub reconnected to a released database, by reason (database_active, subscription, woken, failed)."}, []string{"reason"}),
 	}
 	reg.MustRegister(m.subscriptions, m.queries, m.round, m.commitToDelta, m.recompute, m.resnapshots, m.memory,
-		m.slotLag, m.checkpoint, m.slowConsumers, m.windowRefills, m.appliedTxns, m.maintenanceSec, m.keys, m.keyRefreshes)
+		m.slotLag, m.checkpoint, m.slowConsumers, m.windowRefills, m.appliedTxns, m.maintenanceSec, m.keys, m.keyRefreshes,
+		m.released, m.releases, m.resumes)
 	return m
 }
 
@@ -94,6 +104,24 @@ func (m *Metrics) observeCommitToDelta(d time.Duration) {
 func (m *Metrics) observeCheckpoint(d time.Duration) {
 	if m != nil {
 		m.checkpoint.Observe(d.Seconds())
+	}
+}
+
+func (m *Metrics) setReleased(released bool) {
+	if m == nil {
+		return
+	}
+	if released {
+		m.released.Set(1)
+		m.releases.Inc()
+	} else {
+		m.released.Set(0)
+	}
+}
+
+func (m *Metrics) resume(reason string) {
+	if m != nil {
+		m.resumes.WithLabelValues(reason).Inc()
 	}
 }
 
