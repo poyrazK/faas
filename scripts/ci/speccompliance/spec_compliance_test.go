@@ -89,6 +89,7 @@ const (
 	rolloutDecisionFile              = "rollout_decision.go"     // ADR-1447 explained rollout decisions
 	releaseRollbackFile              = "release_rollback.go"     // ADR-1448 releases that change the database
 	configRevisionsFile              = "config_revisions.go"     // ADR-1451 guarded, reversible config changes
+	releaseFreezesFile               = "release_freezes.go"      // ADR-20261019071733 deploy freezes
 	changeTimelineFile               = "change_timeline.go"      // ADR-751 app change timeline DTOs
 	customMetricSeriesFile           = "custom_metric_series.go" // ADR-745 custom metric history DTOs
 )
@@ -1647,6 +1648,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", rolloutDecisionFile),
 		filepath.Join(root, "pkg", "api", releaseRollbackFile),
 		filepath.Join(root, "pkg", "api", configRevisionsFile),
+		filepath.Join(root, "pkg", "api", releaseFreezesFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),

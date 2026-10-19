@@ -2464,6 +2464,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	var queueCanaryBindings stringListFlag
 	fs.Var(&queueCanaryBindings, "queue-canary-binding", "declare safe handler-completion support for a manifest push HTTP binding (repeatable; this deployment only)")
 	mcpTaskMigrationOverride := fs.Bool("mcp-task-migration-override", false, "allow this deployment to replace incompatible MCP task workers once")
+	overrideFreeze := fs.String("override-freeze", "", "release to production during a deploy freeze; the reason is audited (ADR-20261019071733)")
 	rollbackOn5xx := fs.Bool("rollback-on-5xx", false, "automatically roll back after repeated first-wake 5xx responses")
 	disableStartupCPUBoost := fs.Bool("disable-startup-cpu-boost", false, "disable the temporary CPU boost during VM startup")
 	// Issue #791 PR-C / ADR-090: skip the `gregale.yaml` triggers fan-out.
@@ -3088,7 +3089,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 			TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
 			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr,
-			MCPTaskMigrationOverride: *mcpTaskMigrationOverride, Healthcheck: healthcheck,
+			MCPTaskMigrationOverride: *mcpTaskMigrationOverride, Healthcheck: healthcheck, OverrideFreeze: *overrideFreeze,
 		}
 		refKey, keyErr := deployIdempotencyKey(*idempotencyKey, refIntent)
 		if keyErr != nil {
@@ -3123,6 +3124,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			MCPTaskMigrationOverride: *mcpTaskMigrationOverride,
 			RollbackOn5xx:            rollbackOn5xxPtr,
 			DisableStartupCPUBoost:   disableStartupCPUBoostPtr, Healthcheck: healthcheck,
+			OverrideFreeze: *overrideFreeze,
 		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second, *noTriggers, *safeDeploy, *noTraffic,
 			sourceRefAppPolicy{PlatformTenantRequired: platformTenantRequiredPtr, RequireAuthn: requireAuthnPtr, PublicAuth: publicAuthPtr, AppProtocol: appProtocolPtr})
 		return code
@@ -3848,7 +3850,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
 		CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr,
 		MCPTaskMigrationOverride: *mcpTaskMigrationOverride, Healthcheck: healthcheck, NoTriggers: *noTriggers,
-		ProjectSlug: *projectSlug, DeployOnly: *deployOnly, DeployExclude: *deployExclude,
+		ProjectSlug: *projectSlug, DeployOnly: *deployOnly, DeployExclude: *deployExclude, OverrideFreeze: *overrideFreeze,
 	}
 	deployKey, keyErr := deployIdempotencyKey(*idempotencyKey, deployIntent)
 	if keyErr != nil {
@@ -4006,7 +4008,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Could not reopen tarball", err)
 		}
 		defer func() { _ = openTarball2.Close() }()
-		applyCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "project-apply"))
+		applyCtx := api.ContextWithOverrideFreeze(api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "project-apply")), *overrideFreeze)
 		apply, err := client.ApplyProjectPlanWithBindingEnvironmentApproval(applyCtx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
 			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment, approvalToken, platformTenantRequiredPtr)
 		if err != nil {
@@ -4224,9 +4226,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			MCPTaskMigrationOverride: *mcpTaskMigrationOverride,
 			RollbackOn5xx:            rollbackOn5xxPtr,
 			DisableStartupCPUBoost:   disableStartupCPUBoostPtr, Healthcheck: healthcheck,
-			NoTriggers:  *noTriggers,
-			Companions:  sidecarDefs,
-			OverrideEnv: execution.overrideEnv,
+			NoTriggers:     *noTriggers,
+			Companions:     sidecarDefs,
+			OverrideEnv:    execution.overrideEnv,
+			OverrideFreeze: *overrideFreeze,
 		}
 		var (
 			dep           api.DeploymentResponse
@@ -4253,7 +4256,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				Environment: ann.Environment, RollbackOn5xx: ann.RollbackOn5xx, DisableStartupCPUBoost: ann.DisableStartupCPUBoost, Healthcheck: ann.Healthcheck,
 				Reason: ann.Reason, Tag: ann.Tag,
 				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs, Companions: sidecarDefs,
-				NoTriggers: ann.NoTriggers,
+				NoTriggers: ann.NoTriggers, OverrideFreeze: ann.OverrideFreeze,
 			}
 			var progress resumableUploadProgress
 			if !jsonOutput {
@@ -4386,6 +4389,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		RollbackOn5xx:            rollbackOn5xxPtr,
 		DisableStartupCPUBoost:   disableStartupCPUBoostPtr,
 		MCPTaskMigrationOverride: *mcpTaskMigrationOverride,
+		OverrideFreeze:           *overrideFreeze,
 		Overrides:                deployHealthcheckOverrides(healthcheck),
 		Workflows:                workflowDefs,
 		Companions:               sidecarDefs,

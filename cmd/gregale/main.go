@@ -407,6 +407,8 @@ func run(args []string) (status int) {
 		return cmdStatus(args[1:])
 	case "env":
 		return cmdEnv(args[1:])
+	case "freeze":
+		return cmdFreeze(args[1:])
 	case "plan":
 		return cmdPlan(args[1:])
 	case "dashboard":

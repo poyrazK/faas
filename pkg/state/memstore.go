@@ -329,6 +329,8 @@ type MemStore struct {
 	configRevisions    map[configScopeKey][]ConfigRevision
 	configGuards       map[string]ConfigGuard
 	configGuardSecrets map[string]map[string]ConfigGuardSecret
+	// releaseFreezes mirrors release_freezes (ADR-20261019071733).
+	releaseFreezes map[string]ReleaseFreeze
 	// Snapshot restore reservations are separate from mu so the coordinator
 	// can serialize only its short lease/count critical section.
 	snapshotRestorePressureMu sync.Mutex

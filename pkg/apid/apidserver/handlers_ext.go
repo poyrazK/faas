@@ -2611,6 +2611,9 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 		activity.DeploymentID = &targetID
 	}
 	s.recordAppActivity(ctx, r, acct, app, activity)
+	if trigger != state.RollbackTriggerManual {
+		s.freezeAfterAutomaticRollback(ctx, acct.ID, app, current.ID, automaticRollbackCause(trigger, current))
+	}
 	return target, s.plainRollbacks().Record(ctx, acct, app, target, current.ID, trigger), nil
 }
 

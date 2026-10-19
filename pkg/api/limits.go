@@ -729,6 +729,16 @@ const ConfigGuardBaseline = time.Hour
 const ConfigGuardCheckIntervalSeconds = 15
 const ConfigGuardBatchSize = 50
 
+// Deploy freezes (ADR-20261019071733). An account holds at most
+// ReleaseFreezesMax unlifted freezes that have not ended; reasons are at most
+// ReleaseFreezeReasonMax characters. A weekly window lasts at most a week, and
+// an after-rollback policy freezes for at most ReleaseFreezeAfterRollbackMax.
+// Plan-independent: a freeze only ever withholds releases.
+const ReleaseFreezesMax = 50
+const ReleaseFreezeReasonMax = 200
+const ReleaseFreezeWeeklyMaxMinutes = 7 * 24 * 60
+const ReleaseFreezeAfterRollbackMax = 24 * time.Hour
+
 // Verified rollback outcomes (ADR-1446). apid resolves each plain rollback
 // every RollbackOutcomeCheckInterval: complete once the target serves,
 // failed when it leaves activation without serving or when

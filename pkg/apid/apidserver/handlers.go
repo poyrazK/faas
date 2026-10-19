@@ -719,6 +719,10 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 			return
 		}
 	}
+	if p := s.releaseFreezeProblem(r, acct, app, req.Scope, req.OverrideFreeze); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, &req)
 	if p := validateDeploymentTrafficOptions(&req, acct.Plan); p != nil {
 		api.WriteProblem(w, p)

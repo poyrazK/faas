@@ -13368,6 +13368,30 @@
     "kind": "platform_configuration"
   },
   {
+    "table": "release_freezes",
+    "columns": [
+      "account_id",
+      "after_rollback_minutes",
+      "app_id",
+      "created_at",
+      "created_by",
+      "ends_at",
+      "id",
+      "kind",
+      "lifted_at",
+      "lifted_by",
+      "reason",
+      "source",
+      "source_deployment_id",
+      "starts_at",
+      "time_zone",
+      "weekly_days",
+      "weekly_duration_minutes",
+      "weekly_start_minute"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "request_audit_events",
     "columns": [
       "account_id",

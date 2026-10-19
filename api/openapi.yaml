@@ -27536,6 +27536,90 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/freezes:
+    get:
+      tags: [deployments]
+      operationId: listReleaseFreezes
+      summary: List deploy freezes (ADR-20261019071733).
+      description: "Unlifted freezes that have not ended: active and upcoming windows, weekly windows and after-rollback policies. `app` narrows the list to the freezes covering one app."
+      parameters:
+        - name: app
+          in: query
+          required: false
+          description: Only freezes covering this app's slug.
+          schema: { type: string }
+      responses:
+        '200':
+          description: The account's freezes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListReleaseFreezesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [deployments]
+      operationId: createReleaseFreeze
+      summary: Freeze production releases (ADR-20261019071733).
+      description: "Creates a window, weekly or after-rollback freeze for one app or, without `app`, for every app of the account. While a freeze is active, new production deployments are refused with `release_frozen` unless the request carries `override_freeze`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateReleaseFreezeRequest' }
+            example: {"app": "my-api", "kind": "window", "ends_at": "2026-12-27T09:00:00Z", "reason": "holiday freeze"}
+      responses:
+        '201':
+          description: The freeze.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseFreeze' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/freezes/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The freeze's ID.
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [deployments]
+      operationId: liftReleaseFreeze
+      summary: Lift a deploy freeze (ADR-20261019071733).
+      description: "Stops the freeze from withholding releases. The freeze is kept, with who lifted it and when, for the audit trail. 404 `release_freeze_not_found` when no unlifted freeze has this ID."
+      responses:
+        '200':
+          description: The lifted freeze.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseFreeze' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/freeze-status:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: getReleaseFreezeStatus
+      summary: Whether production releases of an app are frozen now (ADR-20261019071733).
+      description: "Lists the freezes that would refuse a production release of the app now, and the freeze that starts next within a week."
+      responses:
+        '200':
+          description: The app's freeze status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseFreezeStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/config/rollback:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -83150,6 +83234,11 @@ components:
         no_triggers:
           type: boolean
           description: "Skip reconciling trigger declarations from the uploaded gregale manifest at commit time."
+        override_freeze:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: "Commit this upload to production while a deploy freeze is active; the reason is audited with the freezes it overrode (ADR-20261019071733)."
 
     UploadStartResponse:
       description: "Body of POST /v1/uploads response. The session row persists for 24h; the reaper (cmd/apid/upload_session_reaper.go) flips `status='open'` rows whose `expires_at` has passed to 'expired' on a 5-min ticker. `chunk_size` is server-decided (8 MiB default; 16 MiB for Scale)."
@@ -83710,6 +83799,11 @@ components:
         mcp_task_migration_override:
           type: boolean
           description: "One-use operator override to allow this deployment to cut over while queued MCP tasks still need handler versions it does not provide."
+        override_freeze:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: "Release this source tarball to production while a deploy freeze is active; the reason is audited (ADR-20261019071733)."
         disable_startup_cpu_boost:
           type: [boolean, "null"]
           description: "Opt this source-tarball deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."
@@ -92164,6 +92258,11 @@ components:
         mcp_task_migration_override:
           type: boolean
           description: "One-use operator override to allow this deployment to cut over while outstanding MCP tasks still need handler versions it does not provide."
+        override_freeze:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: "Release this deployment to production while a deploy freeze is active; the reason is audited with the freezes it overrode (ADR-20261019071733)."
         disable_startup_cpu_boost:
           type: [boolean, "null"]
           description: "Opt this deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."
@@ -94311,6 +94410,10 @@ components:
         platform_tenant_required:
           type: boolean
           description: "Override the customer identity policy for selected workloads in this scan/apply pair (Hobby and above). Omitted uses Compose declarations and preserves existing app policy. Apply must repeat the same override as scan."
+        override_freeze:
+          type: string
+          maxLength: 200
+          description: "Apply only: release frozen apps to production anyway; the reason is audited (ADR-20261019071733)."
 
     ProjectSummaryResponse:
       description: Project list item with its persisted organization owner.
@@ -95147,6 +95250,7 @@ components:
           pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
         promotion_token: { type: string, minLength: 1, description: Exact promotion token returned by the preview endpoint. }
         approval_token: { type: string, minLength: 1, description: Short-lived approval for a protected target environment. }
+        override_freeze: { type: string, minLength: 1, maxLength: 200, description: "Promote into production while a deploy freeze covers one of the apps; the reason is audited (ADR-20261019071733)." }
 
     ProjectEnvironmentPromotionWorkloadResponse:
       description: Result for one workload in an environment promotion.
@@ -95512,6 +95616,11 @@ components:
         mcp_task_migration_override:
           type: boolean
           description: "Source-ref deployment grant consumed once to permit cutover despite outstanding tasks requiring omitted handler versions."
+        override_freeze:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: "Release this source ref to production while a deploy freeze is active; the reason is audited (ADR-20261019071733)."
         disable_startup_cpu_boost:
           type: [boolean, "null"]
           description: "Opt this source-ref deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."
@@ -99482,6 +99591,65 @@ components:
       properties:
         revisions: { type: array, items: { $ref: '#/components/schemas/ConfigRevision' } }
         guard: { $ref: '#/components/schemas/ConfigGuard' }
+    ReleaseFreezeWeekly:
+      description: "A weekly freeze window: it opens on each listed day at `start` in `time_zone` and lasts `duration_minutes`, so it may run past midnight or into the next week."
+      type: object
+      required: [days, start, duration_minutes, time_zone]
+      properties:
+        days:
+          type: array
+          minItems: 1
+          items: { type: string, enum: [sun, mon, tue, wed, thu, fri, sat] }
+          description: Weekdays the window opens on.
+        start: { type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$', description: "Local opening time, HH:MM." }
+        duration_minutes: { type: integer, minimum: 1, maximum: 10080, description: How long each window lasts. }
+        time_zone: { type: string, maxLength: 64, description: "IANA time zone, such as Europe/Istanbul or UTC." }
+    ReleaseFreeze:
+      description: "A deploy freeze on production releases of one app or, without `app`, of every app of the account (ADR-20261019071733)."
+      type: object
+      required: [id, kind, reason, source, created_by, created_at, active]
+      properties:
+        id: { type: string, format: uuid }
+        app: { type: string, description: "The covered app's slug; omitted for an account-wide freeze." }
+        kind: { type: string, enum: [window, weekly, after_rollback] }
+        starts_at: { type: string, format: date-time, description: "Window start." }
+        ends_at: { type: string, format: date-time, description: "Window end; omitted for a window that lasts until lifted." }
+        weekly: { $ref: '#/components/schemas/ReleaseFreezeWeekly' }
+        after_rollback_minutes: { type: integer, minimum: 1, maximum: 1440, description: "How long an after-rollback policy freezes an app Gregale rolled back automatically." }
+        reason: { type: string, maxLength: 200 }
+        source: { type: string, enum: [manual, automatic_rollback], description: "automatic_rollback for the window an after-rollback policy created." }
+        source_deployment_id: { type: string, format: uuid, description: "The rolled-back deployment behind an automatic freeze." }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        active: { type: boolean, description: Whether the freeze withholds production releases now. }
+        next_starts_at: { type: string, format: date-time, description: "When an inactive window or weekly freeze next starts, within a week." }
+    CreateReleaseFreezeRequest:
+      description: "Creates a freeze. A window takes `starts_at` (default now) and optional `ends_at`; a weekly freeze takes `weekly`; an after-rollback policy takes `after_rollback_minutes`."
+      type: object
+      required: [kind, reason]
+      properties:
+        app: { type: string, description: "App slug; omit to freeze every app of the account." }
+        kind: { type: string, enum: [window, weekly, after_rollback] }
+        starts_at: { type: string, format: date-time, description: "Window start; default now." }
+        ends_at: { type: string, format: date-time, description: "Window end; omit to freeze until lifted." }
+        weekly: { $ref: '#/components/schemas/ReleaseFreezeWeekly' }
+        after_rollback_minutes: { type: integer, minimum: 1, maximum: 1440, description: "Freeze length after each automatic rollback." }
+        reason: { type: string, minLength: 1, maxLength: 200 }
+    ListReleaseFreezesResponse:
+      description: "Unlifted freezes that have not ended, oldest first."
+      type: object
+      required: [freezes]
+      properties:
+        freezes: { type: array, items: { $ref: '#/components/schemas/ReleaseFreeze' } }
+    ReleaseFreezeStatus:
+      description: "Whether a production release of the app would be refused now."
+      type: object
+      required: [app, frozen, active]
+      properties:
+        app: { type: string }
+        frozen: { type: boolean }
+        active: { type: array, items: { $ref: '#/components/schemas/ReleaseFreeze' }, description: "The freezes refusing a production release now." }
+        next: { $ref: '#/components/schemas/ReleaseFreeze' }
     ConfigRollbackRequest:
       description: "The config revision whose variables a rollback restores (ADR-1451)."
       type: object
@@ -104103,6 +104271,10 @@ components:
           type: array
           items: { $ref: '#/components/schemas/ReleaseRestorePoint' }
           description: "rollback_crosses_release: how to restore each managed PostgreSQL database to before those releases (ADR-1448)."
+        freezes:
+          type: array
+          items: { $ref: '#/components/schemas/ReleaseFreeze' }
+          description: "release_frozen: the freezes refusing the release (ADR-20261019071733)."
         type: { type: string, format: uri-reference, example: "https://gregale.dev/docs/errors/validation_failed"}
         title: { type: string , example: "Validation failed"}
         status: { type: integer , example: 422}

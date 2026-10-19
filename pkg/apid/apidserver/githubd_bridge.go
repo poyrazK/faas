@@ -36,6 +36,7 @@ import (
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/apid/freeze"
 	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -435,6 +436,14 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		Tag:        req.Tag,
 	}
 	if kind == state.DeploymentKindGitHub {
+		// ADR-20261019071733: a push cannot carry an override, so a freeze
+		// refuses it; githubd reports the reason on the commit.
+		active, freezeErr := freeze.ActiveFor(ctx, g.store, acct.ID, app.ID, req.DeploymentScope, time.Now().UTC())
+		if freezeErr != nil {
+			g.log.Warn("githubd bridge: could not read deploy freezes; releasing", "app_id", app.ID, "err", freezeErr)
+		} else if len(active) > 0 {
+			return nil, status.Error(codes.FailedPrecondition, freeze.Summary(app.Slug, active))
+		}
 		release.ApplyDefaultToEnqueue(ctx, g.store, g.log, app, acct.Plan, req.DeploymentScope, &params)
 	}
 	res, err := apidsource.Enqueue(ctx, g.store, g.notif, params)

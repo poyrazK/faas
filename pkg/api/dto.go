@@ -2465,6 +2465,10 @@ type CreateDeploymentRequest struct {
 	// the final worker for a queued MCP task handler version. The grant is
 	// one-use and consumed atomically with the stable cutover.
 	MCPTaskMigrationOverride bool `json:"mcp_task_migration_override,omitempty"`
+	// OverrideFreeze releases to production while a freeze is active
+	// (ADR-20261019071733). It is the reason, 1-200 characters; apid audits
+	// it with the freezes it overrode.
+	OverrideFreeze string `json:"override_freeze,omitempty"`
 	// Overrides is the Fargate-shaped deploy-time override object
 	// (issue #460 / ADR-053). Lets a customer redeploy the same
 	// digest-pinned image with a different entrypoint/cmd/env/port
@@ -7165,6 +7169,8 @@ type SourceRefDeployRequest struct {
 	RollbackOn5xx            *bool                  `json:"rollback_on_5xx,omitempty"`
 	DisableStartupCPUBoost   *bool                  `json:"disable_startup_cpu_boost,omitempty"`
 	Healthcheck              *DeploymentHealthcheck `json:"healthcheck,omitempty"`
+	// OverrideFreeze is CreateDeploymentRequest.OverrideFreeze.
+	OverrideFreeze string `json:"override_freeze,omitempty"`
 }
 
 // SourceTarballDeployRequest is the CLI-uploaded tarball sidecar for
@@ -7196,6 +7202,8 @@ type SourceTarballDeployRequest struct {
 	RollbackOn5xx          *bool                  `json:"rollback_on_5xx,omitempty"`
 	DisableStartupCPUBoost *bool                  `json:"disable_startup_cpu_boost,omitempty"`
 	Healthcheck            *DeploymentHealthcheck `json:"healthcheck,omitempty"`
+	// OverrideFreeze is CreateDeploymentRequest.OverrideFreeze.
+	OverrideFreeze string `json:"override_freeze,omitempty"`
 }
 
 // PlanWorkload mirrors reposcan.Workload (Phase 3 wire shape).

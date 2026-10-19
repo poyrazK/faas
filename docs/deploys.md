@@ -129,6 +129,57 @@ checked it. The point must be inside the database's restore window.
 deployment's release run as `release`: its status, start and finish times,
 and the databases it can migrate.
 
+## Deploy freezes
+
+A freeze stops new production releases of one app, or of every app in the
+account, while it is active
+([ADR-20261019071733](adr/20261019071733-deploy-freezes-and-release-windows.md)):
+
+```bash
+# Freeze one app for two hours, starting now.
+gregale freeze create --app my-api --for 2h --reason "incident 4711"
+# No releases from Friday 16:00 to Monday 08:00 (64 hours), Istanbul time, for every app.
+gregale freeze create --all-apps --weekly fri --at 16:00 --for 64h --tz Europe/Istanbul --reason "no weekend releases"
+# After Gregale rolls a release back on its own, freeze the app for an hour.
+gregale freeze create --app my-api --after-rollback 1h --reason "settle after automatic rollbacks"
+
+gregale freeze status --app my-api
+gregale freeze list
+gregale freeze lift <id>
+```
+
+While a freeze is active, every way of releasing to production is refused
+with `release_frozen`, which names the freeze, its reason and its creator:
+- `gregale deploy` and the deployment API;
+- GitHub push deploys;
+- `gregale deploy --project`;
+- promotions into `production`.
+
+A freeze covers the `default` deployment scope and the `production`
+environment.
+
+It never blocks:
+- rollbacks;
+- rollouts that were already in progress;
+- previews and other environments;
+- env and secret changes.
+
+To release anyway, give a reason:
+
+```bash
+gregale deploy --override-freeze "hotfix for incident 4711"
+gregale projects environments promote shop --from staging --to production --override-freeze "hotfix"
+```
+
+The override is recorded in the audit log (`release.freeze_overridden`) with
+the freezes it overrode. A GitHub push can't carry an override, so a frozen
+push fails, and the commit shows why.
+
+An `--after-rollback` freeze is a policy. Each time the rollout circuit
+breaker, the post-release watch, the first-wake 5xx guard or an alert rule
+rolls an app back, Gregale freezes that app for the given time. The freeze
+names the release that was rolled back, and you can lift it like any other.
+
 ## Revisions
 
 Every deploy creates an immutable revision, numbered per app and shown as

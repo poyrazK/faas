@@ -11316,6 +11316,27 @@ type ReleaseBundle struct {
 	AppliedAt    pgtype.Timestamptz
 }
 
+type ReleaseFreeze struct {
+	ID                    pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	Kind                  string
+	StartsAt              pgtype.Timestamptz
+	EndsAt                pgtype.Timestamptz
+	WeeklyDays            pgtype.Int2
+	WeeklyStartMinute     pgtype.Int2
+	WeeklyDurationMinutes pgtype.Int4
+	TimeZone              pgtype.Text
+	AfterRollbackMinutes  pgtype.Int4
+	Reason                string
+	Source                string
+	SourceDeploymentID    pgtype.UUID
+	CreatedBy             string
+	CreatedAt             pgtype.Timestamptz
+	LiftedAt              pgtype.Timestamptz
+	LiftedBy              pgtype.Text
+}
+
 type RequestAuditEvent struct {
 	EventID          pgtype.UUID
 	AccountID        pgtype.UUID
