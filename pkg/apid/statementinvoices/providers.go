@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/lagoinvoice"
 	"github.com/onebox-faas/faas/pkg/billing/paddleinvoice"
 	"github.com/onebox-faas/faas/pkg/billing/stripeinvoice"
@@ -181,7 +182,11 @@ func (p stripeProvider) push(ctx context.Context, conn connection, export *state
 	if err != nil {
 		return stripeCallProblem(err)
 	}
-	for i, item := range statementInvoiceItems(src.invoice) {
+	unit, err := billing.StripeMinorUnit(export.Currency)
+	if err != nil {
+		return statementInvoiceProblem(err)
+	}
+	for i, item := range statementInvoiceItems(src.invoice.In(unit)) {
 		line := strconv.Itoa(i)
 		if existing[line] {
 			continue
@@ -239,8 +244,16 @@ func (p stripeProvider) payment(ctx context.Context, conn connection, invoiceID 
 	if invoice.Deleted {
 		return state.StatementInvoicePayment{Status: state.InvoicePaymentDeleted}, true, nil
 	}
-	return knownPayment(state.StatementInvoicePayment{Status: invoice.Status, AmountPaidMinor: max(invoice.AmountPaid, 0),
-		AmountRemainingMinor: max(invoice.AmountRemaining, 0), DueAt: invoice.DueDate, PaidAt: invoice.PaidAt}, invoice.HostedURL)
+	// Stripe writes some currencies differently from ISO 4217; Gregale keeps
+	// ISO minor units (ADR-20261019100330).
+	currency := strings.ToUpper(invoice.Currency)
+	unit, unitErr := billing.StripeMinorUnit(currency)
+	iso, _ := api.CurrencyMinorExponent(currency)
+	if unitErr != nil {
+		unit = billing.MinorUnit{Exponent: iso, Step: 1}
+	}
+	return knownPayment(state.StatementInvoicePayment{Status: invoice.Status, AmountPaidMinor: unit.ToISOMinor(max(invoice.AmountPaid, 0), iso),
+		AmountRemainingMinor: unit.ToISOMinor(max(invoice.AmountRemaining, 0), iso), DueAt: invoice.DueDate, PaidAt: invoice.PaidAt}, invoice.HostedURL)
 }
 
 // --- Paddle (ADR-1507) ---
@@ -278,7 +291,7 @@ func paddleCallProblem(err error) *api.Problem {
 	switch {
 	case errors.Is(err, paddleinvoice.ErrKeyRejected):
 		return providerProblem(http.StatusUnprocessableEntity, "Paddle rejected the key",
-			"use an API key with read and write access to transactions")
+			"use an API key with read and write access to transactions and read access to customers")
 	case errors.As(err, &paddleErr) && paddleErr.Status >= 400 && paddleErr.Status < 500:
 		return providerProblem(http.StatusUnprocessableEntity, "Paddle rejected the request", paddleErr.Detail)
 	default:
@@ -286,13 +299,14 @@ func paddleCallProblem(err error) *api.Problem {
 	}
 }
 
-// push creates a draft, manually collected transaction once. Paddle has no
-// idempotency keys, so a resumed export first adopts the transaction whose
-// custom_data names it.
+// push creates a draft, manually collected transaction once, then bills it
+// when the export sends (ADR-20261019100333). Paddle has no idempotency
+// keys, so a resumed export first adopts the transaction whose custom_data
+// names it.
 func (p paddleProvider) push(ctx context.Context, conn connection, export *state.StatementInvoiceExport, src statementInvoiceSource,
 	resumed bool, record func(string) error) *api.Problem {
 	if export.ProviderInvoiceID != "" {
-		return nil
+		return p.collect(ctx, conn, export)
 	}
 	items, problem := nonNegativeItems(src)
 	if problem != nil {
@@ -310,6 +324,9 @@ func (p paddleProvider) push(ctx context.Context, conn connection, export *state
 		params := paddleinvoice.TransactionParams{CustomerID: export.Customer, Currency: export.Currency,
 			CustomData: map[string]string{"gregale_export_id": export.ID, "gregale_statement_id": src.statementID,
 				"gregale_statement_revision": strconv.Itoa(src.revision), "gregale_source": src.kind}}
+		if export.Collection == state.CollectionSend {
+			params.PaymentTermsDays = export.DaysUntilDue
+		}
 		for _, item := range items {
 			params.Items = append(params.Items, paddleinvoice.Item{Description: item.description, AmountMinor: item.amount})
 		}
@@ -321,6 +338,34 @@ func (p paddleProvider) push(ctx context.Context, conn connection, export *state
 	}
 	if err := record(id); err != nil {
 		return api.ErrInternal("could not record the Paddle transaction")
+	}
+	return p.collect(ctx, conn, export)
+}
+
+// collect bills the transaction of an export set to send
+// (ADR-20261019100333): Paddle numbers the invoice and emails it. Only a
+// draft or ready transaction is billed, so the step is safe to repeat.
+func (p paddleProvider) collect(ctx context.Context, conn connection, export *state.StatementInvoiceExport) *api.Problem {
+	if export.Collection != state.CollectionSend {
+		return nil
+	}
+	txn, err := p.client.GetTransaction(ctx, conn.key, export.ProviderInvoiceID)
+	if err != nil {
+		return paddleCallProblem(err)
+	}
+	if txn.Deleted || txn.Status != "draft" && txn.Status != "ready" {
+		return nil
+	}
+	address, err := p.client.CustomerAddress(ctx, conn.key, export.Customer)
+	if errors.Is(err, paddleinvoice.ErrNoAddress) {
+		return providerProblem(http.StatusUnprocessableEntity, "Paddle customer has no address",
+			"add an address to the customer in Paddle, then export again; the transaction is kept as a draft")
+	}
+	if err != nil {
+		return paddleCallProblem(err)
+	}
+	if err := p.client.BillTransaction(ctx, conn.key, export.ProviderInvoiceID, address); err != nil {
+		return paddleCallProblem(err)
 	}
 	return nil
 }

@@ -581,7 +581,8 @@ const (
 	ConsumerBillingStatementsMax = 24
 )
 
-// Consumer prepaid credits and spend caps (ADR-1306).
+// Consumer prepaid credits and spend caps (ADR-1306). Platform tenants'
+// credits and caps use the same limits (ADR-20261019100331).
 const (
 	// One grant and one monthly cap are at most 10,000,000.00 in their
 	// currency.

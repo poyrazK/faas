@@ -15,7 +15,7 @@ export type PutBillingConnectionRequest = {
    */
   api_url?: string;
   /**
-   * What the provider does with exported invoices (ADR-1311): none leaves drafts (Lago issues them without charging); send has Stripe email the invoice; charge has Stripe charge the customer's default payment method, or Lago charge through its payment provider. Paddle supports none only.
+   * What the provider does with exported invoices (ADR-1311): none leaves drafts (Lago issues them without charging); send has Stripe email the invoice; charge has Stripe charge the customer's default payment method, or Lago charge through its payment provider. Paddle supports none and send: send bills the transaction so Paddle emails the invoice to the customer's most recent address; Paddle cannot charge a saved card for an invoice.
    */
   collection?: 'none' | 'send' | 'charge';
   /**

@@ -22,6 +22,10 @@ type fakePaddle struct {
 	mu      sync.Mutex
 	created []map[string]any
 	status  map[string]string // transaction ID -> GET response
+	// addresses are customers' active addresses; billed records the
+	// address each transaction was billed with (ADR-20261019100333).
+	addresses map[string]string
+	billed    map[string]string
 }
 
 func (f *fakePaddle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -46,16 +50,59 @@ func (f *fakePaddle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		_, _ = fmt.Fprintf(w, `{"data":[%s]}`, strings.Join(data, ","))
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/transactions/"):
-		body, ok := f.status[strings.TrimPrefix(r.URL.Path, "/transactions/")]
+		id := strings.TrimPrefix(r.URL.Path, "/transactions/")
+		body, ok := f.status[id]
+		if !ok {
+			body, ok = f.transaction(id)
+		}
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = fmt.Fprint(w, `{"error":{"code":"not_found","detail":"no such entity"}}`)
 			return
 		}
 		_, _ = fmt.Fprint(w, body)
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/customers/") && strings.HasSuffix(r.URL.Path, "/addresses"):
+		customer := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/customers/"), "/addresses")
+		if address, ok := f.addresses[customer]; ok && r.URL.Query().Get("status") == "active" {
+			_, _ = fmt.Fprintf(w, `{"data":[{"id":%q}]}`, address)
+			return
+		}
+		_, _ = fmt.Fprint(w, `{"data":[]}`)
+	case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/transactions/"):
+		id := strings.TrimPrefix(r.URL.Path, "/transactions/")
+		var body struct {
+			AddressID string `json:"address_id"`
+			Status    string `json:"status"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Status != "billed" || body.AddressID == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if f.billed == nil {
+			f.billed = map[string]string{}
+		}
+		f.billed[id] = body.AddressID
+		_, _ = fmt.Fprintf(w, `{"data":{"id":%q,"status":"billed"}}`, id)
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
+}
+
+// transaction answers GET for a created transaction: a draft until it is
+// billed.
+func (f *fakePaddle) transaction(id string) (string, bool) {
+	for i := range f.created {
+		if fmt.Sprintf("txn_%d", i+1) != id {
+			continue
+		}
+		status := "draft"
+		if _, billed := f.billed[id]; billed {
+			status = "billed"
+		}
+		return fmt.Sprintf(`{"data":{"id":%q,"status":%q,"currency_code":"EUR","details":{"totals":{"grand_total":"0","balance":"0"}}}}`, id, status), true
+	}
+	return "", false
 }
 
 // fakeLago keeps one-off invoices like Lago would. failCreate stores the
@@ -275,5 +322,53 @@ func TestStatementInvoiceExportsToPaddleAndLago(t *testing.T) {
 	if got := listInvoices(t, f, "paid"); len(got.Invoices) != 1 || got.Invoices[0].Provider != "lago" ||
 		got.Invoices[0].HostedInvoiceURL != "https://lago.example.com/inv-2" || got.Invoices[0].DashboardURL != "" {
 		t.Fatalf("paid = %+v", got)
+	}
+}
+
+// adr: 20261019100333 — a Paddle connection set to send bills each exported
+// transaction with the customer's address so Paddle emails it; a customer
+// without an address leaves the draft, and exporting again bills it once.
+func TestStatementInvoicePaddleSend(t *testing.T) {
+	f := newBillingRunFixture(t)
+	paddle := &fakePaddle{status: map[string]string{}, addresses: map[string]string{}}
+	paddleSrv := httptest.NewServer(paddle)
+	defer paddleSrv.Close()
+	(*f.e.S()).StatementInvoices().Paddle = &paddleinvoice.Client{BaseURL: paddleSrv.URL, HTTP: paddleSrv.Client()}
+
+	if res := f.e.Do(t, http.MethodPut, "/v1/account/billing-connections/paddle", api.PutBillingConnectionRequest{
+		SecretKey: "pdl_sdbx_apikey_01abcdWXYZ", Collection: "send", DaysUntilDue: 14}, nil); res.Code != http.StatusOK ||
+		!strings.Contains(res.Body.String(), `"collection":"send"`) {
+		t.Fatalf("connect paddle send: %d %s", res.Code, res.Body)
+	}
+	apidserver.MustSeedApp(t, f.e, "paddled")
+	if res := f.e.Do(t, http.MethodPost, "/v1/apps/paddled/rate-cards", api.CreateAPIConsumerRateCardRequest{
+		Currency: "EUR", PriceMillicentsPerUnit: 1250, EffectiveFrom: &f.month}, nil); res.Code != http.StatusCreated {
+		t.Fatalf("rate card: %d %s", res.Code, res.Body)
+	}
+	sent := f.consumer(t, "paddled", "ctm_01sent", 300, "")
+	path := finalizedMonthStatement(t, f, "paddled", sent.ID)
+
+	res := f.e.Do(t, http.MethodPost, path, api.CreateStatementInvoiceRequest{Provider: "paddle"}, nil)
+	if res.Code != http.StatusUnprocessableEntity || !strings.Contains(res.Body.String(), "no address") {
+		t.Fatalf("export without an address: %d %s, want 422", res.Code, res.Body)
+	}
+	if len(paddle.created) != 1 || len(paddle.billed) != 0 {
+		t.Fatalf("transactions = %d, billed = %v", len(paddle.created), paddle.billed)
+	}
+	terms := paddle.created[0]["billing_details"].(map[string]any)["payment_terms"].(map[string]any)
+	if terms["frequency"] != float64(14) || paddle.created[0]["collection_mode"] != "manual" {
+		t.Fatalf("transaction = %v", paddle.created[0])
+	}
+
+	paddle.addresses["ctm_01sent"] = "add_01sent"
+	export := exportStatement(t, f, path, api.CreateStatementInvoiceRequest{Provider: "paddle"}, http.StatusOK)
+	if export.Collection != "send" || export.InvoiceID != "txn_1" || export.Status != "completed" ||
+		paddle.billed["txn_1"] != "add_01sent" || len(paddle.created) != 1 {
+		t.Fatalf("sent export = %+v, billed = %v, transactions = %d", export, paddle.billed, len(paddle.created))
+	}
+	paddle.billed["txn_1"] = "billed once"
+	if replay := exportStatement(t, f, path, api.CreateStatementInvoiceRequest{Provider: "paddle"}, http.StatusOK); replay.InvoiceID != "txn_1" ||
+		paddle.billed["txn_1"] != "billed once" {
+		t.Fatalf("replay = %+v, billed = %v", replay, paddle.billed)
 	}
 }
