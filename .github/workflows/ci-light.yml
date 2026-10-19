@@ -88,6 +88,14 @@ jobs:
           python scripts/sync_binding_runner.py --check
           python scripts/ci/check-service-binding-sdk-contract.py
           python scripts/ci/test_service_binding_sdk_contract.py
+      - name: Native binding discovery and evidence contracts (no KVM)
+        run: |
+          go test -race ./scripts/ci/nativetestinventory
+          go run ./scripts/ci/nativetestinventory --check
+          bash scripts/ci/native-e2e-phases_test.sh
+          python scripts/ci/binding-native-lane_test.py
+          python scripts/ci/binding-native-host_test.py
+          bash -n scripts/ci/run-binding-native.sh scripts/ci/package-binding-native-source.sh
       - name: Go SDK contracts
         working-directory: sdk/go
         run: |
@@ -366,6 +374,12 @@ jobs:
           python3 scripts/ci/select_package_tests_test.py
           python3 scripts/ci/select_importers_test.py
           python3 scripts/ci/cancel_conflicted_pr_runs_test.py
+      - name: deploy Action scripts (vendored CLI, push-head guard, environment preflight)
+        run: |
+          make deploy-action-cli-check
+          make verify-action-ref-contents-check
+          make deploy-action-head-check
+          make environment-preflight-action-check
       - name: release-safety tool tests (migration lint, SLO gate)
         run: |
           python3 scripts/ci/check_migration_expand_contract_test.py
@@ -462,6 +476,11 @@ jobs:
       # running: expand/contract, lock_timeout, no blocking index builds.
       - name: migration expand/contract lint
         run: python3 scripts/ci/check_migration_expand_contract.py --base "$LIGHT_DIFF_BASE"
+      # Test types must not embed a state store and test interfaces must not
+      # embed state.Store (CLAUDE.md, ADR-982): each regrows a test compile by
+      # tens of MB. Only this change's additions fail.
+      - name: test store embedding check
+        run: go run ./scripts/ci/teststorecheck -base "$LIGHT_DIFF_BASE"
       - name: migrations check (static)
         run: make migrations-check
       - name: select migration changes
@@ -632,7 +651,7 @@ jobs:
           GOMEMLIMIT: 2GiB
           GOMAXPROCS: 2
         run: |
-          if ! grep -qE '^(cmd/gregale/templates/(queue-worker/|starter_handlers_test.go)|pkg/apid/apidserver/managed_postgres|pkg/managedpostgres/(guestqualification/|.*qualification|provisioning_gate)|cmd/managed-postgres-qualify/|cmd/e2e/(managed_postgres_native|object_storage_native|queue_binding_native)|pkg/e2etest/(postgresfixture/|postgresstarter/|postgres_guest_manifest|storagefixture/|storagestarter/|storage_guest_manifest|queuestarter/|queue_(catalog|guest_manifest)|buildtags)|scripts/(test-(managed-postgres|object-storage|queue-bindings)-native|ci/((managed-postgres|object-storage|queue-bindings)-native|native_guest_evidence))|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
+          if ! grep -qE '^(cmd/gregale/templates/(queue-worker/|starter_handlers_test.go)|pkg/apid/apidserver/managed_postgres|pkg/managedpostgres/(guestqualification/|.*qualification|provisioning_gate)|cmd/managed-postgres-qualify/|cmd/e2e/(managed_postgres_native|object_storage_native|queue_binding_native|managed_service_binding_native)|pkg/e2etest/(postgresfixture/|postgresstarter/|postgres_guest_manifest|storagefixture/|storagestarter/|storage_guest_manifest|queuestarter/|queue_(catalog|guest_manifest)|servicestarter/|service_guest_|testdata/helloserver/|fakeregistry|harness|buildtags)|scripts/(test-(managed-postgres|object-storage|queue-bindings|managed-service)-native|ci/((managed-postgres|object-storage|queue-bindings|managed-service)-native|native_guest_evidence))|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
             exit 0
           fi
           python3 scripts/ci/managed-postgres-native-verdict_test.py
@@ -640,8 +659,11 @@ jobs:
           python3 scripts/ci/queue-bindings-native-verdict_test.py
           python3 scripts/ci/queue-bindings-native-runner_test.py
           sh -n scripts/test-queue-bindings-native.sh
-          go test -race -p 1 ./pkg/managedpostgres/guestqualification ./pkg/e2etest/postgresstarter ./pkg/e2etest/queuestarter
-          go test -race -p 1 ./pkg/e2etest -run '^Test(PostgresGuest|StorageGuest|QueueGuest)'
+          python3 scripts/ci/managed-service-native-verdict_test.py
+          python3 scripts/ci/managed-service-native-runner_test.py
+          sh -n scripts/test-managed-service-native.sh
+          go test -race -p 1 ./pkg/managedpostgres/guestqualification ./pkg/e2etest/postgresstarter ./pkg/e2etest/queuestarter ./pkg/e2etest/servicestarter ./pkg/e2etest/testdata/helloserver
+          go test -race -p 1 ./pkg/e2etest -run '^Test(PostgresGuest|StorageGuest|QueueGuest|ServiceGuest)'
       - uses: actions/setup-python@v7
         if: matrix.shard == 1
         with:

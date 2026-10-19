@@ -1,3 +1,23 @@
+-- name: ListAccountDeletedApps :many
+SELECT id::text AS id, slug, deleted_at, delete_grace_until,
+       coalesce(deleted_at, created_at)::timestamptz AS sort_at,
+       (purge_claimed_at IS NOT NULL)::boolean AS purge_started
+FROM apps
+WHERE account_id = sqlc.arg(account_id)::text::uuid AND status = 'deleted'
+  AND (sqlc.arg(before_id)::text = '' OR
+       (coalesce(deleted_at, created_at), id::text) <
+       (sqlc.arg(before_at)::timestamptz, sqlc.arg(before_id)::text))
+ORDER BY coalesce(deleted_at, created_at) DESC, id::text DESC
+LIMIT sqlc.arg(page_limit)::int;
+
+-- name: AccountDeletedAppByID :one
+SELECT id::text AS id, slug, deleted_at, delete_grace_until,
+       coalesce(deleted_at, created_at)::timestamptz AS sort_at,
+       (purge_claimed_at IS NOT NULL)::boolean AS purge_started
+FROM apps
+WHERE account_id = sqlc.arg(account_id)::text::uuid
+  AND id = sqlc.arg(app_id)::text::uuid AND status = 'deleted';
+
 -- name: GetInstanceApplicationStandardAdmission :one
 SELECT input_snapshot, captured_at, coalesce(node_id::text,'')::text AS node_id, native_input_hash FROM instance_application_standard_admissions
 WHERE instance_id = sqlc.arg(instance_id)::uuid;
@@ -1654,14 +1674,113 @@ RETURNING id::text AS id, app_id::text AS app_id, deployment_id::text AS deploym
     coalesce(host(host_ip),'')::text AS host_ip, ram_mb, started_at, last_request_at, parked_at,
     node_id::text AS node_id, wake_id::text AS wake_id, framework_ready_at, tail_count, mode, request_count;
 
--- name: SaveRuntimeInstanceConfigProof :exec
-INSERT INTO runtime_instance_config_proofs(instance_id,wake_id,node_id,deployment_id,environment_id,scope,secret_fingerprint,config_fingerprint)
-SELECT id,wake_id,node_id,deployment_id,sqlc.narg(environment_id)::uuid,sqlc.arg(scope)::text,
-    sqlc.arg(secret_fingerprint)::text,sqlc.arg(config_fingerprint)::text
-FROM instances WHERE id=sqlc.arg(instance_id)::uuid
-ON CONFLICT(instance_id) DO UPDATE SET wake_id=excluded.wake_id,node_id=excluded.node_id,
-    deployment_id=excluded.deployment_id,environment_id=excluded.environment_id,scope=excluded.scope,
-    secret_fingerprint=excluded.secret_fingerprint,config_fingerprint=excluded.config_fingerprint;
+-- name: LockAppRuntimeGeneration :one
+-- ADR-1741: an admission insert decided from schedd's owner cache commits
+-- only while the app's generation is the one the decision read.
+SELECT generation FROM app_runtime_generations WHERE app_id=sqlc.arg(app_id)::uuid FOR SHARE;
+
+-- name: AppRuntimeGeneration :one
+-- ADR-1741: the app's runtime generation, which triggers bump in the
+-- writer's transaction for every change a wake depends on.
+SELECT generation FROM app_runtime_generations WHERE app_id=sqlc.arg(app_id)::uuid;
+
+-- name: FrozenThawBasis :one
+-- ADR-1740, ADR-1741: read first when a VM freezes, before the rest of its
+-- ticket, so any change after it moves the generation the guarded thaw
+-- compares. selected is true when the thaw a ticket would allow is the one
+-- the ordinary wake path would choose: the app's active production release
+-- pins the deployment, or no release pins the app and the deployment is its
+-- only live production-lane deployment with traffic.
+SELECT COALESCE((SELECT g.generation FROM app_runtime_generations g WHERE g.app_id=a.id),0)::bigint AS generation,
+    (a.status='active' AND a.managed_postgres_admission_cutover_id IS NULL
+        AND d.status='live' AND d.traffic_percent>0 AND d.scope IN ('production','default','')
+        AND d.parked_reason IS DISTINCT FROM 'security_scan_regressed'
+        AND (EXISTS (SELECT 1 FROM project_release_sets rs JOIN project_release_members rm ON rm.release_id=rs.id AND rm.app_id=a.id
+                WHERE rs.project_id=a.project_id AND rs.account_id=a.account_id AND rs.environment_slug='production' AND rs.active
+                    AND rm.deployment_id=d.id AND d.scope='production')
+            OR (NOT EXISTS (SELECT 1 FROM project_release_sets rs JOIN project_release_members rm ON rm.release_id=rs.id AND rm.app_id=a.id
+                    WHERE rs.project_id=a.project_id AND rs.account_id=a.account_id AND rs.environment_slug='production' AND rs.active
+                        AND rm.deployment_id IS NOT NULL)
+                AND NOT EXISTS (SELECT 1 FROM deployments o WHERE o.app_id=a.id AND o.id<>d.id AND o.status='live'
+                    AND o.traffic_percent>0 AND o.scope IN ('production','default','')))))::boolean AS selected
+FROM apps a JOIN deployments d ON d.app_id=a.id
+WHERE a.id=sqlc.arg(app_id)::uuid AND d.id=sqlc.arg(deployment_id)::uuid;
+
+-- name: ThawFrozenInstance :one
+-- ADR-1740, ADR-1741: a ticketed thaw's one control-plane round trip. The
+-- FROZEN -> RUNNING compare-and-set holds when the app's runtime generation
+-- is the one the ticket read: every change the ordinary wake path would have
+-- read moves it, in the writer's transaction. The generation row is the only
+-- lock taken, FOR SHARE, so a writer bumping it waits for this statement or
+-- this statement waits for the writer and then sees the new generation. The
+-- config proof must still be the ticket's, and an enrollment exception,
+-- which expires with time and moves no generation, must not have expired.
+-- The transition event and instance_changed notification commit with it.
+-- No row means a guard refused and nothing changed.
+WITH generation_lock AS (
+    SELECT g.app_id FROM app_runtime_generations g
+    WHERE g.app_id=sqlc.arg(app_id)::uuid AND g.generation=sqlc.arg(generation)::bigint
+    FOR SHARE
+), standards AS (
+    SELECT a.id FROM apps a WHERE a.id=sqlc.arg(app_id)::uuid AND (a.org_id IS NULL OR EXISTS (
+        SELECT 1 FROM app_application_standards s WHERE s.org_id=a.org_id AND s.app_id=a.id
+            AND (s.exception_expires_at IS NULL OR now()<s.exception_expires_at)))
+), thawed AS (
+    UPDATE instances SET started_at=clock_timestamp(), state='running'
+    WHERE id=sqlc.arg(instance_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+        AND deployment_id=sqlc.arg(deployment_id)::uuid AND node_id=sqlc.arg(node_id)::uuid
+        AND wake_id=sqlc.arg(wake_id)::uuid AND state='frozen'
+        AND EXISTS (SELECT 1 FROM generation_lock) AND EXISTS (SELECT 1 FROM standards)
+        AND EXISTS (SELECT 1 FROM runtime_instance_config_proofs proof WHERE proof.instance_id=instances.id
+            AND proof.wake_id=instances.wake_id AND proof.node_id=instances.node_id
+            AND proof.deployment_id=instances.deployment_id AND proof.config_fingerprint=sqlc.arg(config_fingerprint)::text)
+    RETURNING id::text AS id, app_id::text AS app_id, deployment_id::text AS deployment_id,
+        state, coalesce(netns,'')::text AS netns, coalesce(guest_uid,0)::integer AS guest_uid,
+        coalesce(host(host_ip),'')::text AS host_ip, ram_mb, started_at, last_request_at, parked_at,
+        node_id::text AS node_id, wake_id::text AS wake_id, framework_ready_at, tail_count, mode, request_count
+), transition_event AS (
+    INSERT INTO events(actor,kind,subject,data)
+    SELECT 'schedd',sqlc.narg(event_kind)::text,thawed.id::uuid,sqlc.narg(event_data)::jsonb FROM thawed
+    WHERE sqlc.narg(event_kind)::text IS NOT NULL
+    RETURNING id
+), notification AS (
+    SELECT pg_notify(sqlc.narg(notify_channel)::text,sqlc.narg(notify_payload)::text) FROM thawed
+    WHERE sqlc.narg(notify_channel)::text IS NOT NULL
+)
+SELECT thawed.*, (SELECT count(*) FROM transition_event)::integer AS events_recorded,
+    (SELECT count(*) FROM notification)::integer AS notifications_sent
+FROM thawed;
+
+-- name: SaveRuntimeInstanceConfigProof :one
+-- Saves the config proof a publication commits with. A wake's bookkeeping
+-- rides in the same statement, so it costs no round trip: the transition
+-- event and the instance_changed notification (pg_notify delivers at
+-- commit) commit with the publication or not at all. The deployment's
+-- snapshot-miss backoff is only reported, never cleared here: the
+-- publication holds a share lock on the deployment row, and an update
+-- would deadlock concurrent publications of the same deployment.
+WITH proof AS (
+    INSERT INTO runtime_instance_config_proofs(instance_id,wake_id,node_id,deployment_id,environment_id,scope,secret_fingerprint,config_fingerprint)
+    SELECT id,wake_id,node_id,deployment_id,sqlc.narg(environment_id)::uuid,sqlc.arg(scope)::text,
+        sqlc.arg(secret_fingerprint)::text,sqlc.arg(config_fingerprint)::text
+    FROM instances WHERE id=sqlc.arg(instance_id)::uuid
+    ON CONFLICT(instance_id) DO UPDATE SET wake_id=excluded.wake_id,node_id=excluded.node_id,
+        deployment_id=excluded.deployment_id,environment_id=excluded.environment_id,scope=excluded.scope,
+        secret_fingerprint=excluded.secret_fingerprint,config_fingerprint=excluded.config_fingerprint
+    RETURNING deployment_id
+), transition_event AS (
+    INSERT INTO events(actor,kind,subject,data)
+    SELECT 'schedd',sqlc.narg(event_kind)::text,sqlc.arg(instance_id)::uuid,sqlc.narg(event_data)::jsonb
+    WHERE sqlc.narg(event_kind)::text IS NOT NULL
+    RETURNING id
+), notification AS (
+    SELECT pg_notify(sqlc.narg(notify_channel)::text,sqlc.narg(notify_payload)::text)
+    WHERE sqlc.narg(notify_channel)::text IS NOT NULL
+)
+SELECT EXISTS(SELECT 1 FROM deployments d JOIN proof ON proof.deployment_id=d.id
+        WHERE d.snapshot_miss_count<>0 OR d.snapshot_miss_last_at IS NOT NULL OR d.snapshot_miss_backoff_until IS NOT NULL)::boolean AS snapshot_backoff_recorded,
+    (SELECT count(*) FROM transition_event)::integer AS events_recorded,
+    (SELECT count(*) FROM notification)::integer AS notifications_sent;
 
 -- name: ReadRuntimeInstanceConfigProof :one
 SELECT proof.deployment_id::text AS deployment_id,COALESCE(proof.environment_id::text,'')::text AS environment_id,
@@ -2597,7 +2716,7 @@ values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13)
 returning id, account_id, app_id, kind, slug, enabled, config,
           batch_size_max, batch_window_ms, max_attempts,
           cron_id, source, payload_max_bytes, broker_poison_strategy,
-          created_at, updated_at;
+          delivery, created_at, updated_at;
 
 -- name: UpdateTrigger :one
 -- Review finding MED-1 (PR #993): the inline SQL at
@@ -2623,6 +2742,12 @@ returning id, account_id, app_id, kind, slug, enabled, config,
           filter_criteria,
           created_at, updated_at;
 
+-- name: SetTriggerDelivery :execrows
+-- ADR-1321: switch a public trigger between per-record and batch delivery.
+-- The CHECK constraint refuses batch for cron and queue triggers.
+update triggers set delivery = $2, updated_at = now()
+where id = $1 and queue_binding_id is null;
+
 -- name: DeleteTrigger :exec
 delete from triggers where id = $1 and app_id = $2 and queue_binding_id is null;
 
@@ -2636,7 +2761,7 @@ delete from triggers where id = $1 and app_id = $2 and queue_binding_id is null;
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria,
+       filter_criteria, delivery,
        created_at, updated_at
 from triggers where id = $1;
 
@@ -2647,7 +2772,7 @@ from triggers where id = $1;
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria,
+       filter_criteria, delivery,
        created_at, updated_at
 from triggers where app_id = $1 order by created_at desc;
 
@@ -2663,7 +2788,7 @@ from triggers where app_id = $1 order by created_at desc;
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria,
+       filter_criteria, delivery,
        created_at, updated_at
 from triggers where enabled = true AND NOT environment_workload_admission_retired(app_id,queue_binding_scope);
 
@@ -2751,6 +2876,42 @@ UPDATE trigger_records
        last_dispatched_at = now(), next_fire_at = $4, claim_expires_at = NULL
  WHERE id = $1 AND state = 'claimed' AND claim_generation = $2
    AND claim_expires_at > now();
+
+-- name: DeleteExpiredTriggerRecords :execrows
+-- One bounded retention batch: rows past an explicit result_retention_until,
+-- and unpinned terminal rows older than the default ages. Dead letters keep
+-- the longer age; work-policy records keep explicit retention only.
+WITH candidates AS (
+    (SELECT id FROM trigger_records
+      WHERE result_retention_until IS NOT NULL AND result_retention_until <= sqlc.arg(now)::timestamptz
+        AND state IN ('succeeded', 'dead_letter', 'superseded', 'cancelled', 'expired')
+      LIMIT sqlc.arg(batch)::integer)
+    UNION ALL
+    (SELECT id FROM trigger_records
+      WHERE result_retention_until IS NULL AND work_policy_name IS NULL
+        AND state IN ('succeeded', 'superseded', 'cancelled', 'expired')
+        AND coalesce(last_dispatched_at, received_at) < sqlc.arg(terminal_before)::timestamptz
+      LIMIT sqlc.arg(batch)::integer)
+    UNION ALL
+    (SELECT id FROM trigger_records
+      WHERE result_retention_until IS NULL AND work_policy_name IS NULL AND state = 'dead_letter'
+        AND coalesce(last_dispatched_at, received_at) < sqlc.arg(dead_letter_before)::timestamptz
+      LIMIT sqlc.arg(batch)::integer)
+), doomed AS (
+    SELECT r.id FROM trigger_records r WHERE r.id IN (SELECT id FROM candidates)
+     LIMIT sqlc.arg(batch)::integer FOR UPDATE SKIP LOCKED
+)
+DELETE FROM trigger_records USING doomed WHERE trigger_records.id = doomed.id;
+
+-- name: SupersedeTriggerRecordItems :execrows
+-- Ends one realtime delivery's records whatever stage they reached; the
+-- consumer group redelivers under a new item identifier (ADR-1322).
+UPDATE trigger_records
+   SET state = 'superseded', last_error = sqlc.arg(last_error),
+       last_dispatched_at = now(), claim_expires_at = NULL
+ WHERE trigger_id = sqlc.arg(trigger_id)
+   AND item_identifier = ANY(sqlc.arg(item_identifiers)::text[])
+   AND state IN ('pending', 'claimed', 'retry');
 
 -- name: MarkClaimedTriggerRecordDeadLetter :execrows
 UPDATE trigger_records
@@ -4566,11 +4727,14 @@ WHERE id = $1;
 -- recreate sweep has restored the destination's snapshot set, OR by
 -- the wake flow on a successful cold boot. Resets the counter and
 -- clears the backoff_until so future wakes don't short-circuit.
+-- A deployment with nothing recorded is left alone: no row version and no
+-- update triggers for the common case.
 UPDATE deployments
 SET snapshot_miss_count         = 0,
     snapshot_miss_last_at       = NULL,
     snapshot_miss_backoff_until = NULL
-WHERE id = $1;
+WHERE id = $1
+  AND (snapshot_miss_count <> 0 OR snapshot_miss_last_at IS NOT NULL OR snapshot_miss_backoff_until IS NOT NULL);
 
 -- name: DeploymentSnapshotBackoffActive :one
 -- The wake-side gate. Returns the row while a backoff timestamp is
@@ -7485,7 +7649,7 @@ FROM invocation_environment_queue_admissions p WHERE p.invocation_id=i.id AND i.
 
 -- name: ReadRuntimeAppEnvForDeployment :one
 WITH owner AS (
-    SELECT d.id, a.id AS app_id, a.account_id,
+    SELECT d.id, a.id AS app_id, a.account_id, a.project_id,
         COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
         COALESCE(bound.id::text,legacy.id::text,'')::text AS environment_id
     FROM deployments d
@@ -7511,7 +7675,13 @@ WITH owner AS (
 )
 SELECT owner.scope, owner.environment_id,
     COALESCE((SELECT jsonb_agg(jsonb_build_object('key',v.key,'value',v.value,'created_at',v.created_at,'updated_at',v.updated_at) ORDER BY v.key)
-        FROM app_envs v WHERE v.account_id=owner.account_id AND v.app_id=owner.app_id AND v.scope=owner.scope),'[]'::jsonb)::jsonb AS values
+        FROM app_envs v WHERE v.account_id=owner.account_id AND v.app_id=owner.app_id AND v.scope=owner.scope),'[]'::jsonb)::jsonb AS values,
+    -- ADR-1136: the project environment configuration the deployment inherits.
+    COALESCE((SELECT jsonb_build_object('values',c.config_json,'created_at',c.created_at)
+        FROM project_environment_config_versions c
+        WHERE owner.project_id IS NOT NULL AND c.account_id=owner.account_id AND c.project_id=owner.project_id
+            AND c.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END
+        ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config
 FROM owner;
 
 -- name: LockRuntimeSecretEnvironment :one
@@ -7613,7 +7783,7 @@ WHERE o.app_id=sqlc.arg(app_id)::uuid AND o.scope=sqlc.arg(scope)::text AND o.ke
 
 -- name: ReadRuntimeAppValuesForDeployment :one
 WITH owner AS (
-    SELECT d.id, a.id AS app_id, a.account_id,
+    SELECT d.id, a.id AS app_id, a.account_id, a.project_id,
         COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
         COALESCE(bound.id::text,legacy.id::text,'')::text AS environment_id,
         d.environment_workload_runtime,d.override_env_secrets,d.sidecars,COALESCE(d.secret_reload_signal,'')::text AS reload_signal,
@@ -7657,7 +7827,13 @@ SELECT owner.scope,owner.environment_id,owner.environment_workload_runtime,owner
         'managed_object_storage_credential_id',s.managed_object_storage_credential_id) ORDER BY s.key)
         FROM app_secrets s WHERE s.account_id=owner.account_id AND s.app_id=owner.app_id AND s.scope=owner.scope),'[]'::jsonb)::jsonb AS secrets,
     COALESCE((SELECT jsonb_object_agg(signal.sidecar_name,signal.signal) FROM deployment_sidecar_secret_reload_signals signal
-        WHERE signal.deployment_id=owner.id),'{}'::jsonb)::jsonb AS reload_signals
+        WHERE signal.deployment_id=owner.id),'{}'::jsonb)::jsonb AS reload_signals,
+    -- ADR-1136: the project environment configuration the deployment inherits.
+    COALESCE((SELECT jsonb_build_object('values',c.config_json,'created_at',c.created_at)
+        FROM project_environment_config_versions c
+        WHERE owner.project_id IS NOT NULL AND c.account_id=owner.account_id AND c.project_id=owner.project_id
+            AND c.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END
+        ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config
 FROM owner;
 
 -- name: LockRuntimeConfigWorkloadSpec :many
@@ -9653,24 +9829,40 @@ ORDER BY totals.request_count DESC, totals.decision_type, totals.decision_value
 LIMIT 101;
 
 -- name: EnqueueInvocationRow :one
-WITH replay_parent AS (
-  SELECT i.id, i.replay_root_invocation_id, coalesce(i.replay_root_created_at, i.created_at) AS root_created_at
-  FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
-  WHERE i.id=sqlc.narg(replayed_from_invocation_id)::uuid
-    AND i.account_id=sqlc.arg(account_id)::uuid AND i.app_id=sqlc.arg(app_id)::uuid
-    AND i.deployment_scope=coalesce(nullif(sqlc.arg(deployment_scope)::text, ''),
-      CASE WHEN a.project_id IS NOT NULL AND coalesce(a.preview_of_slug, '')='' THEN 'production' ELSE 'default' END)
-    AND i.platform_tenant_id IS NOT DISTINCT FROM sqlc.narg(platform_tenant_id)::uuid
-    AND i.state IN ('failed', 'dead_letter') AND sqlc.arg(source)::text='replay'
-    AND (i.work_policy_name IS NULL OR (
-      i.work_policy_name=nullif(sqlc.arg(work_policy_name)::text, '')
-      AND i.work_key_digest=sqlc.narg(work_key_digest)::bytea
-      AND i.work_policy_revision IS NOT DISTINCT FROM sqlc.narg(work_policy_revision)::bigint
-      AND i.work_fairness_digest IS NOT DISTINCT FROM sqlc.narg(work_fairness_digest)::bytea
-      AND i.work_fairness_limit IS NOT DISTINCT FROM sqlc.narg(work_fairness_limit)::int
-      AND i.work_expires_at IS NOT DISTINCT FROM sqlc.narg(work_expires_at)::timestamptz
-    ))
-  FOR SHARE OF i, a
+-- Managed-work capture takes this action-run lock in its trigger; acquire it before replay-parent row locks.
+WITH scenario_action_run_locks AS MATERIALIZED (
+  SELECT pg_advisory_xact_lock(hashtextextended(
+    'scenario-action-run:' || p.account_id::text || ':' || p.run_id, 0)) AS acquired
+  FROM scenario_test_action_policies p
+  WHERE p.app_id=sqlc.arg(app_id)::uuid AND p.managed_work_plan IS NOT NULL
+  ORDER BY p.account_id, p.run_id
+),
+scenario_action_lock_gate AS MATERIALIZED (
+  SELECT count(acquired)>=0 AS ready FROM scenario_action_run_locks
+),
+replay_parent AS (
+  SELECT parent.id, parent.replay_root_invocation_id, parent.root_created_at
+  FROM scenario_action_lock_gate gate
+  CROSS JOIN LATERAL (
+    SELECT i.id, i.replay_root_invocation_id, coalesce(i.replay_root_created_at, i.created_at) AS root_created_at
+    FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+    WHERE i.id=sqlc.narg(replayed_from_invocation_id)::uuid
+      AND i.account_id=sqlc.arg(account_id)::uuid AND i.app_id=sqlc.arg(app_id)::uuid
+      AND i.deployment_scope=coalesce(nullif(sqlc.arg(deployment_scope)::text, ''),
+        CASE WHEN a.project_id IS NOT NULL AND coalesce(a.preview_of_slug, '')='' THEN 'production' ELSE 'default' END)
+      AND i.platform_tenant_id IS NOT DISTINCT FROM sqlc.narg(platform_tenant_id)::uuid
+      AND i.state IN ('failed', 'dead_letter') AND sqlc.arg(source)::text='replay'
+      AND (i.work_policy_name IS NULL OR (
+        i.work_policy_name=nullif(sqlc.arg(work_policy_name)::text, '')
+        AND i.work_key_digest=sqlc.narg(work_key_digest)::bytea
+        AND i.work_policy_revision IS NOT DISTINCT FROM sqlc.narg(work_policy_revision)::bigint
+        AND i.work_fairness_digest IS NOT DISTINCT FROM sqlc.narg(work_fairness_digest)::bytea
+        AND i.work_fairness_limit IS NOT DISTINCT FROM sqlc.narg(work_fairness_limit)::int
+        AND i.work_expires_at IS NOT DISTINCT FROM sqlc.narg(work_expires_at)::timestamptz
+      ))
+    FOR SHARE OF i, a
+  ) parent
+  WHERE gate.ready
 )
 INSERT INTO invocations (
   id, app_id, account_id, source, queue_name, state, method, path,
@@ -9694,8 +9886,10 @@ INSERT INTO invocations (
   sqlc.narg(platform_tenant_id), nullif(sqlc.arg(deployment_scope)::text, ''), sqlc.narg(queue_binding_id),
   sqlc.narg(occurrence_id)::uuid, sqlc.narg(start_deadline_at)::timestamptz, sqlc.narg(failure_rules)::jsonb,
   sqlc.narg(environment_id)::uuid, replay_parent.id, coalesce(replay_parent.replay_root_invocation_id, replay_parent.id), replay_parent.root_created_at
-FROM (SELECT 1) seed LEFT JOIN replay_parent ON true
-WHERE sqlc.narg(replayed_from_invocation_id)::uuid IS NULL OR replay_parent.id IS NOT NULL
+FROM scenario_action_lock_gate gate
+LEFT JOIN replay_parent ON true
+WHERE gate.ready
+  AND (sqlc.narg(replayed_from_invocation_id)::uuid IS NULL OR replay_parent.id IS NOT NULL)
 RETURNING *;
 
 -- Queue binding/consumer publication (ADR-393). Parent locks also serialize
@@ -11190,7 +11384,7 @@ RETURNING id::text AS id, account_id::text AS account_id, database_id::text AS d
  coalesce(rotation_wake_id::text, '')::text AS rotation_wake_id, rotation_cleanup_ready,
  state, coalesce(last_error_code, '')::text AS last_error_code,
  coalesce(lease_token, '')::text AS lease_token, lease_until,
- attempt_count, retry_at, created_at, updated_at, deleted_at;
+ attempt_count, retry_at, created_at, updated_at, deleted_at, connection_limit;
 
 -- name: ClaimManagedPostgresBindingRetirement :one
 UPDATE managed_postgres_bindings AS binding SET state = 'retiring',
@@ -11213,7 +11407,7 @@ RETURNING id::text AS id, account_id::text AS account_id, database_id::text AS d
  coalesce(rotation_wake_id::text, '')::text AS rotation_wake_id, rotation_cleanup_ready,
  state, coalesce(last_error_code, '')::text AS last_error_code,
  coalesce(lease_token, '')::text AS lease_token, lease_until,
- attempt_count, retry_at, created_at, updated_at, deleted_at;
+ attempt_count, retry_at, created_at, updated_at, deleted_at, connection_limit;
 
 -- name: ListDueManagedPostgresBindings :many
 SELECT id::text AS id, account_id::text AS account_id, database_id::text AS database_id,
@@ -11354,6 +11548,7 @@ WITH candidate AS (
  SELECT task.id FROM app_tasks task JOIN apps app ON app.id=task.app_id
  WHERE task.status='queued' AND task.cancel_requested_at IS NULL
  AND app.managed_postgres_admission_cutover_id IS NULL
+ AND NOT financial_app_command_held(task.app_id,task.deployment_id,sqlc.arg(claimed_at)::timestamptz)
  AND task.created_at<=sqlc.arg(claimed_at)::timestamptz
  AND (task.retry_at IS NULL OR task.retry_at<=sqlc.arg(claimed_at))
  AND (task.start_deadline_at IS NULL OR task.start_deadline_at>=sqlc.arg(claimed_at)
@@ -11377,6 +11572,7 @@ UPDATE app_tasks SET status='running',started_at=sqlc.arg(started_at)::timestamp
 retry_at=NULL,stdout_tail='',stderr_tail='',output_truncated=false,exit_code=NULL,failure_code=NULL,failure_message=NULL,updated_at=sqlc.arg(started_at)
 WHERE id=sqlc.arg(id)::text::uuid AND status='restoring' AND lease_token=sqlc.arg(token)::text::uuid
 AND cancel_requested_at IS NULL AND lease_expires_at>sqlc.arg(started_at)
+AND NOT financial_app_command_held(app_id,deployment_id,sqlc.arg(started_at)::timestamptz)
 AND (start_deadline_at IS NULL OR start_deadline_at>=sqlc.arg(started_at) OR EXISTS (
  SELECT 1 FROM schedule_occurrences occurrence WHERE occurrence.id=app_tasks.occurrence_id AND occurrence.started_at IS NOT NULL))
 RETURNING *;
@@ -11514,49 +11710,6 @@ lease_until=CASE WHEN evidence.complete THEN NULL ELSE lease_until END,
 attempt_count=CASE WHEN evidence.complete THEN 0 ELSE attempt_count END,
 last_error_code=NULL,updated_at=sqlc.arg(now),retry_at=sqlc.arg(now)
 FROM evidence WHERE id=sqlc.arg(id)::text::uuid;
-
--- name: ProbeManagedPostgresCredential :one
-SELECT session_user::text AS login, current_user::text AS effective_user,
- current_database()::text AS database_name, current_setting('server_version_num')::integer AS version_num,
- current_setting('transaction_read_only')::boolean AS read_only,
- current_setting('row_security')='on' AS row_security,
- has_schema_privilege(current_user,'public','USAGE') AS schema_usage,
- has_schema_privilege(current_user,'public','CREATE') AS schema_create,
- (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls OR r.rolinherit
- OR e.rolsuper OR e.rolcreatedb OR e.rolcreaterole OR e.rolreplication OR e.rolbypassrls OR e.rolinherit) AS unsafe_role,
- ((sqlc.arg(access)::text<>'migration' AND has_database_privilege(current_user,current_database(),'CREATE'))
- OR has_database_privilege(current_user,current_database(),'TEMPORARY')
- OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member=r.oid
- AND (sqlc.arg(access)::text<>'migration' OR roleid<>e.oid))
- OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member=e.oid AND e.oid<>r.oid)) AS elevated_runtime,
- NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
- WHERE n.nspname='public' AND ((c.relkind IN ('r','p','v','m','f') AND NOT
- (has_table_privilege(current_user,c.oid,'SELECT') AND
- ((sqlc.arg(access)::text='read_only' AND NOT (has_table_privilege(current_user,c.oid,'INSERT')
- OR has_table_privilege(current_user,c.oid,'UPDATE') OR has_table_privilege(current_user,c.oid,'DELETE')))
- OR (sqlc.arg(access)::text<>'read_only' AND has_table_privilege(current_user,c.oid,'INSERT')
- AND has_table_privilege(current_user,c.oid,'UPDATE') AND has_table_privilege(current_user,c.oid,'DELETE')))
- AND (sqlc.arg(access)::text='migration' OR
- (c.relowner<>e.oid AND NOT has_table_privilege(current_user,c.oid,'TRUNCATE')))))
- OR (c.relkind='S' AND NOT (has_sequence_privilege(current_user,c.oid,'SELECT') AND
- ((sqlc.arg(access)::text='read_only' AND NOT (has_sequence_privilege(current_user,c.oid,'USAGE')
- OR has_sequence_privilege(current_user,c.oid,'UPDATE'))) OR (sqlc.arg(access)::text<>'read_only'
- AND has_sequence_privilege(current_user,c.oid,'USAGE')))))))
- AND (sqlc.arg(access)::text<>'read_only' OR NOT (
- EXISTS (SELECT 1 FROM pg_catalog.pg_namespace n WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema'
- AND has_schema_privilege(current_user,n.oid,'CREATE'))
- OR EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
- WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND
- ((c.relkind IN ('r','p','v','m','f') AND (has_table_privilege(current_user,c.oid,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
- OR has_any_column_privilege(current_user,c.oid,'INSERT,UPDATE,REFERENCES')))
- OR (c.relkind='S' AND has_sequence_privilege(current_user,c.oid,'USAGE,UPDATE'))))
- OR EXISTS (SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
- WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND p.prosecdef AND has_function_privilege(current_user,p.oid,'EXECUTE'))
- OR EXISTS (SELECT 1 FROM pg_catalog.pg_default_acl d, LATERAL aclexplode(d.defaclacl) a
- WHERE a.grantee IN (0,e.oid) AND
- ((d.defaclobjtype='r' AND a.privilege_type IN ('INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'))
- OR (d.defaclobjtype='S' AND a.privilege_type IN ('USAGE','UPDATE')))))) AS data_access
-FROM pg_catalog.pg_roles r JOIN pg_catalog.pg_roles e ON e.rolname=current_user WHERE r.rolname=session_user;
 
 -- name: LockUDPListenerAppOwner :one
 SELECT account_id::text AS account_id FROM apps
@@ -13166,11 +13319,11 @@ WHERE id=sqlc.arg(id)::uuid AND phase<>'failed'
 RETURNING *;
 
 -- name: CreateEnvironmentWorkloadQualification :execrows
-INSERT INTO environment_workload_qualification_requests(graph_id,deployment_id,app_id,resource,artifact,frozen_inputs,execution_mode)
+INSERT INTO environment_workload_qualification_requests(graph_id,deployment_id,app_id,resource,artifact,frozen_inputs,execution_mode,binding_context)
 SELECT sqlc.arg(graph_id)::uuid,d.id,d.app_id,sqlc.arg(resource)::text,environment_workload_artifact(d),d.environment_workload_runtime,
  CASE WHEN d.environment_workload_runtime->'runtime' ? 'execution_mode'
  THEN coalesce(nullif(d.environment_workload_runtime->'runtime'->>'execution_mode',''),'request')
- ELSE coalesce(nullif(d.environment_workload_runtime->'baseline'->>'execution_mode',''),'request') END
+ ELSE coalesce(nullif(d.environment_workload_runtime->'baseline'->>'execution_mode',''),'request') END, sqlc.narg(binding_context)::jsonb
 FROM deployments d WHERE d.id=sqlc.arg(deployment_id)::uuid
 ON CONFLICT(graph_id,resource) DO NOTHING;
 
@@ -14818,9 +14971,28 @@ SELECT a.account_id, a.id, d.id, 'manual', sqlc.arg(command)::text[], false,
 FROM apps a JOIN deployments d ON d.app_id = a.id
 WHERE a.id = sqlc.arg(app_id) AND a.account_id = sqlc.arg(account_id)
  AND a.status <> 'deleted' AND d.id = sqlc.arg(deployment_id)
- AND d.rootfs_key IS NOT NULL AND d.rootfs_key <> '' AND d.image_digest <> ''
+ AND d.rootfs_key IS NOT NULL AND d.rootfs_key <> ''
+ AND (d.image_digest <> '' OR (
+  sqlc.arg(binding_verification)::jsonb ? 'managed_service' AND d.kind='github'
+  AND d.environment_workload_runtime->'source_archive' IS NOT NULL
+  AND NOT d.environment_workload_held AND d.rootfs_bytes>0
+ ))
  AND d.status IN ('imaging', 'snapshotting', 'live', 'superseded')
  AND (NOT sqlc.arg(require_live_deployment)::boolean OR d.status = 'live')
+ AND (NOT (sqlc.arg(binding_verification)::jsonb ? 'managed_service') OR EXISTS (
+  SELECT 1 FROM project_release_sets release
+  JOIN project_release_members caller_member ON caller_member.release_id=release.id AND caller_member.app_id=a.id AND caller_member.deployment_id=d.id
+  JOIN project_release_members target_member ON target_member.release_id=release.id
+  JOIN active_environment_git_sources source ON source.id::text=d.environment_workload_runtime->>'source_id'
+  WHERE release.id::text=sqlc.arg(binding_verification)::jsonb->'managed_service'->>'release_id'
+   AND release.active AND release.account_id=a.account_id AND release.project_id=a.project_id
+   AND release.environment_slug=COALESCE(NULLIF(d.scope,''),'default')
+   AND source.account_id=a.account_id AND source.project_id=a.project_id AND source.mode='enforce' AND NOT source.suspended
+   AND NOT d.environment_workload_held
+   AND target_member.app_id::text=sqlc.arg(binding_verification)::jsonb->'managed_service'->>'target_app_id'
+   AND target_member.deployment_id::text=sqlc.arg(binding_verification)::jsonb->>'target_deployment_id'
+  FOR SHARE OF release, source
+ ))
 FOR SHARE OF d
 RETURNING id;
 -- name: ListBindingVerificationTasks :many
@@ -14833,6 +15005,7 @@ FROM app_tasks
 WHERE account_id = sqlc.arg(account_id) AND app_id = sqlc.arg(app_id)
  AND binding_verification IS NOT NULL
  AND binding_verification->>'type' = ANY(sqlc.arg(kinds)::text[])
+ AND (binding_verification->>'type' <> 'service' OR (binding_verification->'managed_service' IS NOT NULL) = sqlc.arg(managed_service)::boolean)
  AND (binding_verification->>'type' <> 'service' OR coalesce(binding_verification->>'target_deployment_id','') = coalesce(sqlc.arg(service_targets)::jsonb->>(binding_verification->>'binding'),''))
  AND (NOT sqlc.arg(exact_deployment)::boolean OR deployment_id = sqlc.narg(selected_deployment_id)::uuid)
 ORDER BY binding_verification->>'type', binding_verification->>'binding', deployment_scope,
@@ -17873,7 +18046,11 @@ AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp
 SELECT * FROM object_storage_s3_credentials WHERE bucket_id=$1 ORDER BY id FOR UPDATE;
 
 -- name: ReadCloneCheckpointObjectPublicationSecrets :many
-SELECT * FROM app_secrets WHERE managed_object_storage_credential_id=$1 ORDER BY key,app_id,scope FOR UPDATE;
+-- Publication inserts its secrets without org_id and app_core_resource_org
+-- stamps the app's organization, so only that exact value is its own.
+SELECT s.*, (s.org_id IS NOT DISTINCT FROM a.org_id)::boolean AS org_matches_app
+FROM app_secrets s LEFT JOIN apps a ON a.id=s.app_id
+WHERE s.managed_object_storage_credential_id=$1 ORDER BY s.key,s.app_id,s.scope FOR UPDATE OF s;
 
 -- name: ReadCloneCheckpointObjectPublicationGrants :many
 SELECT * FROM object_storage_access_grants WHERE bucket_id=$1 ORDER BY api_key_id FOR UPDATE;
@@ -18531,6 +18708,8 @@ LOCK TABLE app_mcp_readiness_policies,mcp_readiness_incidents,mcp_readiness_main
 -- name: ReadCloneDeploymentBorrowers :one
 SELECT (jsonb_build_object(
     'binding_verification_runs_deployment_id_fkey', (SELECT count(*) FROM binding_verification_runs WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'deployment_build_dependency_gates_deployment_id_fkey', (SELECT count(*) FROM deployment_build_dependency_gates WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'deployment_public_build_urls_deployment_id_fkey', (SELECT count(*) FROM deployment_public_build_urls WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'data_api_runtime_connection_observations_deployment_id_fkey', (SELECT count(*) FROM data_api_runtime_connection_observations WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_mcp_task_holds_deployment_id_fkey', (SELECT count(*) FROM deployment_mcp_task_holds WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_mcp_task_migration_overrides_deployment_id_fkey', (SELECT count(*) FROM deployment_mcp_task_migration_overrides WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
@@ -18580,6 +18759,8 @@ SELECT (jsonb_build_object(
     'deployment_revision_pins_deployment_id_fkey', (SELECT count(*) FROM deployment_revision_pins WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_rollback_operations_current_deployment_id_fkey', (SELECT count(*) FROM deployment_rollback_operations WHERE current_deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_rollback_operations_target_deployment_id_fkey', (SELECT count(*) FROM deployment_rollback_operations WHERE target_deployment_id = sqlc.arg(deployment_id)::uuid),
+    'deployment_rollbacks_from_deployment_id_fkey', (SELECT count(*) FROM deployment_rollbacks WHERE from_deployment_id = sqlc.arg(deployment_id)::uuid),
+    'deployment_rollbacks_target_deployment_id_fkey', (SELECT count(*) FROM deployment_rollbacks WHERE target_deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_route_policy_snapshots_deployment_id_fkey', (SELECT count(*) FROM deployment_route_policy_snapshots WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_runtime_environment_owners_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_environment_owners WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_sidecar_layers_deployment_id_fkey', (SELECT count(*) FROM deployment_sidecar_layers WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
@@ -19066,20 +19247,21 @@ SELECT now()::timestamptz AS observed_at,ac.plan,
 FROM current_run selected JOIN apps a ON a.id=selected.app_id JOIN app_resource_accounts ac ON ac.app_id = a.id;
 
 -- name: ClaimAppHealth :one
--- Lock order matches ApplyProjectPlan (account, then its apps). The insert's
--- account_id foreign key needs a key-share lock on the account; taking it
--- here with SKIP LOCKED skips an app whose account is mid-apply instead of
--- holding the app row while waiting for the account (deadlock 40P01).
+-- Lock order matches ApplyProjectPlan (resource namespace, then its apps).
+-- The insert's account_id foreign key needs a key-share lock on the
+-- namespace; taking it here with SKIP LOCKED skips an app whose namespace is
+-- mid-apply instead of holding the app row while waiting for it (40P01).
 WITH candidate AS (
  SELECT a.id, a.account_id FROM apps a
  JOIN app_resource_accounts acct ON acct.app_id = a.id
+ JOIN resource_namespaces rn ON rn.id = a.account_id
  LEFT JOIN app_health_collection_state h ON h.app_id = a.id
  WHERE a.status <> 'deleted' AND a.deleted_at IS NULL
  AND COALESCE(a.manifest->>'execution_mode', '') IN ('', 'request', 'service')
  AND (h.next_check_at IS NULL OR h.next_check_at <= sqlc.arg(checked_now)::timestamptz)
  AND (h.lease_until IS NULL OR h.lease_until <= sqlc.arg(checked_now)::timestamptz)
  ORDER BY COALESCE(h.next_check_at, '-infinity'::timestamptz), a.id
- LIMIT 1 FOR UPDATE OF a SKIP LOCKED
+ LIMIT 1 FOR UPDATE OF a SKIP LOCKED FOR KEY SHARE OF rn SKIP LOCKED
 )
 INSERT INTO app_health_collection_state(app_id, account_id, next_check_at, lease_token, lease_started_at, lease_until)
 SELECT id, account_id, sqlc.arg(checked_now)::timestamptz, sqlc.arg(token)::text, sqlc.arg(checked_now)::timestamptz, sqlc.arg(expires_at)::timestamptz FROM candidate
@@ -19088,10 +19270,10 @@ WHERE app_health_collection_state.lease_until IS NULL OR app_health_collection_s
 RETURNING app_id::text, account_id::text, lease_token, lease_started_at, lease_until;
 
 -- name: LockAppHealthAccount :exec
--- FinishAppHealth takes the account first, before history inserts reach the
--- app and account rows through their foreign keys, in the same order as
--- ApplyProjectPlan.
-SELECT 1 FROM accounts WHERE id = sqlc.arg(account_id)::text::uuid FOR KEY SHARE;
+-- FinishAppHealth takes the resource namespace first, before history inserts
+-- reach the app and namespace rows through their foreign keys, in the same
+-- order as ApplyProjectPlan.
+SELECT 1 FROM resource_namespaces WHERE id = sqlc.arg(account_id)::text::uuid FOR KEY SHARE;
 
 -- name: LockAppHealthCollection :one
 SELECT h.assessment, h.assessment_key, h.checked_at, h.notification_state FROM app_health_collection_state h
@@ -22009,6 +22191,33 @@ WHERE j.account_id = sqlc.arg(account_id)::uuid
   AND r.id = sqlc.arg(run_id)::uuid
   AND t.task_index = sqlc.arg(task_index)::int;
 
+-- name: EnvironmentBindingCandidate :one
+SELECT to_jsonb(d)::jsonb AS deployment, a.account_id, environment_binding_catalog_supported(d.app_id,d.scope)::boolean AS catalog_supported
+FROM deployments d JOIN apps a ON a.id=d.app_id WHERE d.id=sqlc.arg(deployment_id)::uuid;
+
+-- name: EnvironmentBindingReleaseRequired :one
+SELECT EXISTS(SELECT 1 FROM apps a JOIN app_binding_release_policies p ON p.app_id=a.id
+ WHERE a.project_id=sqlc.arg(project_id)::uuid AND p.scope=sqlc.arg(scope)::text AND p.mode='enforce');
+
+-- name: RecordEnvironmentQualificationServiceExchange :exec
+INSERT INTO environment_qualification_service_receipts(request_id,attempt,binding,route)
+VALUES(sqlc.arg(request_id)::uuid,sqlc.arg(attempt)::bigint,sqlc.arg(binding)::text,sqlc.arg(route)::jsonb)
+ON CONFLICT(request_id,attempt,binding) DO NOTHING;
+
+-- name: EnvironmentQualificationServiceExchanges :many
+SELECT request_id,attempt,binding,route,recorded_at FROM environment_qualification_service_receipts
+WHERE request_id IN (SELECT id FROM environment_workload_qualification_requests WHERE graph_id=sqlc.arg(graph_id)::uuid);
+
+-- name: AuthorizeEnvironmentBindingRelease :one
+SELECT authorize_environment_binding_release(sqlc.arg(graph_id)::uuid,sqlc.arg(release_id)::uuid,sqlc.arg(prior_release)::text,sqlc.arg(members)::jsonb)::boolean;
+
+-- name: InsertEnvironmentBindingRelease :one
+INSERT INTO project_release_sets(id,account_id,project_id,environment_slug,active,ttl_seconds)
+VALUES(sqlc.arg(id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(project_id)::uuid,sqlc.arg(environment)::text,true,sqlc.arg(ttl)::integer)
+RETURNING created_at;
+
+-- name: AuthorizeEnvironmentBindingTraffic :one
+SELECT authorize_environment_binding_traffic(sqlc.arg(graph_id)::uuid,sqlc.arg(release_id)::uuid)::boolean;
 -- name: ReleaseRunsCrossedBy :many
 -- ADR-1448: release tasks of other deployments in a rollback target's scope
 -- that started after the target last served (serving_ended_at), or after it

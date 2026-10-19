@@ -114,6 +114,9 @@ func (s *PgStore) publishProjectReleaseSet(ctx context.Context, accountID, proje
 
 type projectReleaseSetBeforePublish func(context.Context, pgx.Tx) error
 
+// Only checked managed activation or retirement can supply this transaction-bound ID.
+type qualifiedEnvironmentReleaseKey struct{}
+
 func publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, accountID, projectID, environment string, expectedActiveID *string,
 	expectedFallback []ProjectReleaseMember, ttlSeconds int, members []ProjectReleaseMember, allowGitOpsReplacement bool,
 	beforePublish projectReleaseSetBeforePublish, skipFallbackApps ...map[string]struct{}) (ProjectReleaseSet, error) {
@@ -253,7 +256,13 @@ func publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, accountID, proje
 		return ProjectReleaseSet{}, err
 	}
 	release := ProjectReleaseSet{AccountID: accountID, ProjectID: projectID, EnvironmentSlug: environment, Active: true, TTLSeconds: ttlSeconds, Members: append([]ProjectReleaseMember(nil), members...)}
-	if checkedID, checked := ctx.Value(checkedReleaseGraphKey{}).(string); checked {
+	if qualifiedID, qualified := ctx.Value(qualifiedEnvironmentReleaseKey{}).(string); qualified {
+		stamp, err := sqlc.New().InsertEnvironmentBindingRelease(ctx, tx, sqlc.InsertEnvironmentBindingReleaseParams{ID: mustPgUUID(qualifiedID), AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), Environment: environment, Ttl: int32(ttlSeconds)})
+		if err != nil {
+			return ProjectReleaseSet{}, mapErr(err)
+		}
+		release.ID, release.CreatedAt = qualifiedID, stamp.Time
+	} else if checkedID, checked := ctx.Value(checkedReleaseGraphKey{}).(string); checked {
 		var source, previous pgtype.UUID
 		if rollback, recovering := ctx.Value(checkedReleaseRollbackKey{}).(checkedReleaseRollback); recovering {
 			source, previous = mustPgUUID(rollback.source), mustPgUUID(rollback.previous)

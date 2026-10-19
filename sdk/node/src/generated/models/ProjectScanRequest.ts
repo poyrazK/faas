@@ -7,6 +7,14 @@
  */
 export type ProjectScanRequest = {
   /**
+   * Preserve repository service identities and suggest project-prefixed app names. Requires no_triggers and no repository push binding; apply repeats the reviewed setting.
+   */
+  migration?: boolean;
+  /**
+   * Exact repository service names mapped to Gregale app names. Existing project members retain their names. Names are checked for format, reservation and availability; they are never allocated by scan. Multipart clients send this field as JSON.
+   */
+  app_slugs?: Record<string, string>;
+  /**
    * tar.gz of the repo root.
    */
   source: Blob;

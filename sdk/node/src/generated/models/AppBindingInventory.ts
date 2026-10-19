@@ -10,6 +10,10 @@ import type { BindingRuntimeFreshness } from './BindingRuntimeFreshness.js';
  */
 export type AppBindingInventory = {
   /**
+   * Source used for the service namespace. Managed empty or unreadable namespaces never fall back to app settings.
+   */
+  service_binding_source?: 'app' | 'environment_release' | 'unavailable';
+  /**
    * Applied exact service target selectors; absent for ordinary evidence selection.
    */
   service_targets?: Record<string, string>;

@@ -8,7 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 )
 
-// The durable sockets are opt-in (ADR-1580): the roles add Wants=/After= in a
+// The durable sockets are opt-in (ADR-1736): the roles add Wants=/After= in a
 // drop-in only where the socket is configured, with the address the daemon
 // serves. A static Requires= would bind the unit's default address on every
 // host, and the daemon refuses a socket it does not serve.

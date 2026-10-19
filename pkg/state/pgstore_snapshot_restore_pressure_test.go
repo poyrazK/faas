@@ -11,6 +11,9 @@ import (
 
 func TestPgStoreSnapshotRestorePressureLeaseReleaseAndExpiry(t *testing.T) {
 	store, pool, ctx := pgStoreWithPool(t)
+	if !state.AdmissionFunctionsUsable(ctx, store) {
+		t.Fatal("migrated database lacks snapshot_restore_pressure_acquire")
+	}
 	nodeID := resolveDefaultLocal(t, ctx, store)
 
 	first, err := store.AcquireSnapshotRestorePressure(ctx)
@@ -41,18 +44,26 @@ func TestPgStoreSnapshotRestorePressureLeaseReleaseAndExpiry(t *testing.T) {
 	}
 	second.Close()
 
+	// The release deletes the lease in the background (ADR-1741); the lease
+	// is gone within moments, and its TTL bounds a delete that never lands.
 	release()
-	third, err := store.AcquireSnapshotRestorePressure(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	counts, err = third.ActiveSnapshotRestoreCounts(ctx)
-	third.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(counts) != 0 {
-		t.Fatalf("counts after release = %#v, want empty", counts)
+	for deadline := time.Now().Add(2 * time.Second); ; {
+		third, err := store.AcquireSnapshotRestorePressure(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		counts, err = third.ActiveSnapshotRestoreCounts(ctx)
+		third.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(counts) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("counts after release = %#v, want empty", counts)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 
 	expiring, err := store.AcquireSnapshotRestorePressure(ctx)

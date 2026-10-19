@@ -3,8 +3,6 @@ package state
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -33,25 +31,12 @@ type BindingVerificationRunStore interface {
 	SetBindingVerificationRunStatus(context.Context, string, string, string, string) error
 }
 
-func verificationArtifact(rootfs, image string, override json.RawMessage) string {
-	var env any
-	if len(override) > 0 {
-		_ = json.Unmarshal(override, &env)
-	}
-	body, _ := json.Marshal(map[string]any{"rootfs": rootfs, "image": image, "override": env})
-	sum := sha256.Sum256(body)
-	return hex.EncodeToString(sum[:])
-}
 func verificationArtifactJSON(raw []byte) (string, error) {
-	var artifact struct {
-		Rootfs   string          `json:"rootfs"`
-		Image    string          `json:"image"`
-		Override json.RawMessage `json:"override"`
-	}
-	if err := json.Unmarshal(raw, &artifact); err != nil {
+	dep, err := bindingVerificationDeploymentJSON(raw)
+	if err != nil {
 		return "", err
 	}
-	return verificationArtifact(artifact.Rootfs, artifact.Image, artifact.Override), nil
+	return bindingVerificationArtifact(dep)
 }
 func validateVerificationRunCreate(account, app string, in VerificationRunCreate) error {
 	r := in.Report

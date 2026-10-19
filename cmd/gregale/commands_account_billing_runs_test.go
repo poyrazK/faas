@@ -13,6 +13,7 @@ import (
 // adr: 1503 — start waits for the run, then lists every customer's outcome;
 // --no-X flags send explicit false and the schedule verbs round-trip.
 func TestCmdAccountBillingRun(t *testing.T) {
+	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1") // adr: 20261018090210 — exercises released monetization
 	var created api.CreateBillingRunRequest
 	var sched api.PutBillingRunScheduleRequest
 	polls := 0

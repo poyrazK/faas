@@ -85,13 +85,8 @@ func validateReleaseStage(snapshot releaseStageSnapshot, manifest api.CheckedPro
 		if policy.Mode != "enforce" || policy.Revision != manifest.ExpectedPolicyRevisions[app.Slug] {
 			return nil, ErrBindingReleasePolicyRevision
 		}
-		expectedTargets := map[string]string{}
-		for _, binding := range app.Manifest.ServiceBindings {
-			if selected := manifest.Deployments[binding.Service]; selected != "" {
-				expectedTargets[binding.Service] = selected
-			}
-		}
-		if manifest.ServiceTargets[app.Slug] == nil || !maps.Equal(expectedTargets, manifest.ServiceTargets[app.Slug]) {
+		expectedTargets := ProjectServiceDeploymentTargets(app, snapshot.Apps, manifest.Deployments)
+		if expectedTargets == nil || manifest.ServiceTargets[app.Slug] == nil || !maps.Equal(expectedTargets, manifest.ServiceTargets[app.Slug]) {
 			return nil, ErrConflict
 		}
 		members[app.ID] = dep.ID

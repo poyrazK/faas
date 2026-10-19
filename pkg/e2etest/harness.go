@@ -162,6 +162,7 @@ type Harness struct {
 	// private process list.
 	scheddEnv        []string
 	scheddConfigPath string
+	vmmdLaunchEnv    []string
 	// apidEnv/listen/socket retain the launch recipe for restart durability
 	// tests that exercise persistent control-plane state across apid lifetimes.
 	apidEnv              []string
@@ -297,7 +298,7 @@ failure_report_dir = %q
 `,
 			sockPath, "root", kernelPath, filepath.Join(tmp, "vmmd-resources"), filepath.Join(tmp, "vmmd-failures"),
 		)
-		if os.Getenv("GREGALE_GITOPS_NATIVE_ACCEPTANCE") == "1" {
+		if os.Getenv("GREGALE_GITOPS_NATIVE_ACCEPTANCE") == "1" || os.Getenv("FAAS_FINANCIAL_SYSTEM_ACCEPTANCE") == "1" {
 			images, publications := filepath.Join(tmp, "native-images"), filepath.Join(tmp, "native-publications")
 			for _, path := range []string{images, publications} {
 				if err := os.Mkdir(path, 0o700); err != nil {
@@ -306,10 +307,14 @@ failure_report_dir = %q
 			}
 			cfg += fmt.Sprintf("native_process_recovery = true\nprepared_networks = 0\nnative_image_staging_root = %q\nnative_snapshot_publication_root = %q\n", images, publications)
 		}
+		if ca := os.Getenv("FAAS_E2E_SERVICE_HTTPS_CA"); ca != "" {
+			cfg += fmt.Sprintf("service_proxy_ca_path = %q\n", ca)
+		}
 		if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 			t.Fatalf("e2etest: write vmmd.toml: %v", err)
 		}
 		env := append(vmmdEnv(dbURL, cfgPath, h.ScheddSock), extraEnv...)
+		h.vmmdLaunchEnv = append([]string(nil), env...)
 		h.procs = append(h.procs, startProc(t, bin, "vmmd", env))
 		waitUnix(t, sockPath, 10*time.Second)
 	}
@@ -1023,6 +1028,10 @@ func gatewaydConfig(addr, controlAddr, apidLoopback string, guestDNS bool) strin
 		// setDefaultLocalScheddTarget keeps the seeded node's endpoint current.
 		config += fmt.Sprintf("service_proxy_listen=%q\nnode_name=%q\n",
 			net.JoinHostPort(bridge, strconv.Itoa(netns.ServiceProxyPort)), "default-local")
+		if ca := os.Getenv("FAAS_E2E_SERVICE_HTTPS_CA"); ca != "" {
+			config += fmt.Sprintf("service_proxy_https_listen=%q\nservice_proxy_tls_ca_path=%q\nservice_proxy_tls_cert_path=%q\nservice_proxy_tls_key_path=%q\n",
+				net.JoinHostPort(bridge, "443"), ca, os.Getenv("FAAS_E2E_SERVICE_HTTPS_CERT"), os.Getenv("FAAS_E2E_SERVICE_HTTPS_KEY"))
+		}
 		// ADR-576: private TCP service addresses ride the same bridge. The
 		// test also passes FAAS_SERVICE_TCP_ENABLED=1 to vmmd so the netns
 		// admission and host NAT exist.
@@ -1074,10 +1083,10 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 		"FAAS_GATEWAY_SYNTH_SOCKET="+synthSock,
 		"FAAS_SCHEDD_SOCKET="+h.ScheddSock,
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+filepath.Join(h.SockDir, "request_telemetry.sock"),
-		"FAAS_CONSUMER_USAGE_OUTBOX_ROOT="+filepath.Join(h.TmpDir, "consumer-usage"),
 		"FAAS_GATEWAY_WAKE_AHEAD_STATE_DIR="+filepath.Join(h.TmpDir, "wake-ahead"),
 		"FAAS_APPS_DOMAIN="+testDomain,
 	)
+	env = append(env, gatewaydDurableEnv(h.TmpDir)...)
 	env = append(env, extraEnv...)
 	// Multi-gateway tests need a named gateway without making the legacy
 	// single-box schedd claim the synthetic default-local node. Keep this
@@ -1167,11 +1176,11 @@ func (h *Harness) startAdditionalGatewayWithControl(nodeName string, extraEnv ..
 		"FAAS_GATEWAY_SYNTH_SOCKET="+filepath.Join(dir, "gatewayd-internal.sock"),
 		"FAAS_SCHEDD_SOCKET="+h.ScheddSock,
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+filepath.Join(h.SockDir, "request_telemetry.sock"),
-		"FAAS_CONSUMER_USAGE_OUTBOX_ROOT="+filepath.Join(dir, "consumer-usage"),
 		"FAAS_GATEWAY_WAKE_AHEAD_STATE_DIR="+filepath.Join(dir, "wake-ahead"),
 		"FAAS_APPS_DOMAIN="+testDomain,
 		"FAAS_NODE_NAME="+nodeName,
 	)
+	env = append(env, gatewaydDurableEnv(dir)...)
 	env = append(env, extraEnv...)
 	h.procs = append(h.procs, startProc(t, h.BinDir, "gatewayd-internal", env))
 	waitReadyz(t, controlAddr, 30*time.Second)
@@ -2276,13 +2285,7 @@ func (h *Harness) VmmdLogs() string {
 //     clone. This is what lets the e2e shards skip replaying every
 //     migration inside apid on each test.
 func daemonDSN(base string, pool *pgxpool.Pool) string {
-	if schema := pgtest.SchemaOf(pool); schema != "" {
-		return injectSearchPath(base, schema)
-	}
-	if db := pool.Config().ConnConfig.Database; db != "" {
-		return injectDatabase(base, db)
-	}
-	return base
+	return isolatedDatabaseURL(base, pool)
 }
 
 // injectDatabase rewrites the database name in a DSN. URL-form DSNs

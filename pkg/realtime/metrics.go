@@ -62,6 +62,16 @@ type StatsCollector struct {
 	expiredOutboundDrops *prometheus.Desc
 	manager              *Manager
 
+	usageReports        *prometheus.Desc
+	usageReportFailures *prometheus.Desc
+	usageDroppedHours   *prometheus.Desc
+	usageHeldHours      *prometheus.Desc
+
+	connectionLimitRefusals *prometheus.Desc
+	connectionSyncFailures  *prometheus.Desc
+	connectionSyncs         *prometheus.Desc
+	connectionSyncedAt      *prometheus.Desc
+
 	currentConnections              *prometheus.Desc
 	currentResumeSubscriptions      *prometheus.Desc
 	resumeHistoryReads              *prometheus.Desc
@@ -81,6 +91,9 @@ type StatsCollector struct {
 	outboundQueueBytesLimit         *prometheus.Desc
 	outboundQueueCountDrops         *prometheus.Desc
 	outboundQueueByteDrops          *prometheus.Desc
+	outboundNodeBytesLimit          *prometheus.Desc
+	outboundNodeBudgetDrops         *prometheus.Desc
+	outboundShedDisconnects         *prometheus.Desc
 	callbackErrors                  *prometheus.Desc
 	callbackOutboxFull              *prometheus.Desc
 	callbackOutboxAdmissionErrors   *prometheus.Desc
@@ -200,6 +213,9 @@ func NewStatsCollector(manager *Manager) prometheus.Collector {
 		outboundQueueBytesLimit:         prometheus.NewDesc(subsystem+"_outbound_queue_bytes_limit", "Configured maximum outbound payload bytes per realtime connection.", nil, nil),
 		outboundQueueCountDrops:         prometheus.NewDesc(subsystem+"_outbound_queue_count_limit_drops_total", "Realtime messages rejected because a connection's outbound message-count limit was reached.", nil, nil),
 		outboundQueueByteDrops:          prometheus.NewDesc(subsystem+"_outbound_queue_byte_limit_drops_total", "Realtime messages rejected because a connection's outbound byte limit was reached.", nil, nil),
+		outboundNodeBytesLimit:          prometheus.NewDesc(subsystem+"_outbound_node_bytes_limit", "Configured maximum outbound payload bytes queued across every realtime connection on the node.", nil, nil),
+		outboundNodeBudgetDrops:         prometheus.NewDesc(subsystem+"_outbound_node_budget_drops_total", "Realtime messages rejected because the node's outbound byte budget was reached.", nil, nil),
+		outboundShedDisconnects:         prometheus.NewDesc(subsystem+"_outbound_shed_disconnects_total", "Realtime connections closed to keep the node's outbound byte budget, largest backlog first.", nil, nil),
 		callbackErrors:                  prometheus.NewDesc(subsystem+"_callback_errors_total", "Realtime lifecycle callback failures since process start.", nil, nil),
 		callbackOutboxFull:              prometheus.NewDesc(subsystem+"_callback_outbox_full_total", "Callback events rejected because the durable outbox remained full until their admission deadline.", nil, nil),
 		callbackOutboxAdmissionErrors:   prometheus.NewDesc(subsystem+"_callback_outbox_admission_errors_total", "Callback events rejected because durable outbox admission failed for a reason other than capacity exhaustion.", nil, nil),
@@ -219,6 +235,14 @@ func NewStatsCollector(manager *Manager) prometheus.Collector {
 		callbackDeadLetterLastEviction:  prometheus.NewDesc(subsystem+"_callback_dead_letter_last_eviction_timestamp_seconds", "Unix timestamp of the most recent callback dead-letter eviction, or zero if none.", nil, nil),
 		callbackDeadLetterDiscards:      prometheus.NewDesc(subsystem+"_callback_dead_letter_discards_total", "Callback dead letters discarded by an operator since process start.", nil, nil),
 		authOutcomes:                    prometheus.NewDesc(subsystem+"_auth_outcomes_total", "Realtime client authentication outcomes since process start.", []string{"mode", "outcome"}, nil),
+		usageReports:                    prometheus.NewDesc(subsystem+"_usage_reports_total", "Hourly usage reports delivered to the control plane (ADR-1323).", nil, nil),
+		usageReportFailures:             prometheus.NewDesc(subsystem+"_usage_report_failures_total", "Usage report passes that failed and will be retried.", nil, nil),
+		usageDroppedHours:               prometheus.NewDesc(subsystem+"_usage_dropped_hours_total", "Completed usage hours discarded undelivered after the report age limit.", nil, nil),
+		usageHeldHours:                  prometheus.NewDesc(subsystem+"_usage_held_hours", "Usage hours held in memory: the current hour plus completed hours not yet delivered.", nil, nil),
+		connectionLimitRefusals:         prometheus.NewDesc(subsystem+"_connection_limit_refusals_total", "Connections refused by a plan fair-use limit (ADR-1323): scope=account is the plan allowance across the fleet, account_node the per-node share.", []string{"scope"}, nil),
+		connectionSyncFailures:          prometheus.NewDesc(subsystem+"_connection_sync_failures_total", "Failed exchanges of per-account connection counts with apid.", nil, nil),
+		connectionSyncs:                 prometheus.NewDesc(subsystem+"_connection_syncs_total", "Successful exchanges of per-account connection counts with apid.", nil, nil),
+		connectionSyncedAt:              prometheus.NewDesc(subsystem+"_connection_sync_last_success_timestamp_seconds", "Last successful connection-count exchange with apid; zero before the first. Older than 30 s means accounts are capped on local counts only.", nil, nil),
 	}
 }
 
@@ -242,6 +266,15 @@ func (c *StatsCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(c.expiredCheckpoints, prometheus.CounterValue, float64(stats.ExpiredInboxCheckpoints), "inbox_websocket")
 	ch <- prometheus.MustNewConstMetric(c.expiredCheckpoints, prometheus.CounterValue, float64(stats.ExpiredSSECheckpoints), "sse")
 	ch <- prometheus.MustNewConstMetric(c.expiredOutboundDrops, prometheus.CounterValue, float64(stats.ExpiredOutboundDrops))
+	ch <- prometheus.MustNewConstMetric(c.usageReports, prometheus.CounterValue, float64(stats.UsageReports))
+	ch <- prometheus.MustNewConstMetric(c.usageReportFailures, prometheus.CounterValue, float64(stats.UsageReportFailures))
+	ch <- prometheus.MustNewConstMetric(c.usageDroppedHours, prometheus.CounterValue, float64(stats.UsageDroppedHours))
+	ch <- prometheus.MustNewConstMetric(c.usageHeldHours, prometheus.GaugeValue, float64(stats.UsageHeldHours))
+	ch <- prometheus.MustNewConstMetric(c.connectionLimitRefusals, prometheus.CounterValue, float64(stats.AccountLimitRefusals), "account")
+	ch <- prometheus.MustNewConstMetric(c.connectionLimitRefusals, prometheus.CounterValue, float64(stats.AccountNodeLimitRefusals), "account_node")
+	ch <- prometheus.MustNewConstMetric(c.connectionSyncFailures, prometheus.CounterValue, float64(stats.ConnectionSyncFailures))
+	ch <- prometheus.MustNewConstMetric(c.connectionSyncs, prometheus.CounterValue, float64(stats.ConnectionSyncs))
+	ch <- prometheus.MustNewConstMetric(c.connectionSyncedAt, prometheus.GaugeValue, float64(stats.ConnectionSyncedAtUnix))
 	ch <- prometheus.MustNewConstMetric(c.currentConnections, prometheus.GaugeValue, float64(stats.CurrentConnections))
 	ch <- prometheus.MustNewConstMetric(c.currentResumeSubscriptions, prometheus.GaugeValue, float64(stats.CurrentResumeSubscriptions))
 	for result := resumeHistoryReadResult(0); result < resumeHistoryReadResultCount; result++ {
@@ -270,6 +303,9 @@ func (c *StatsCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(c.outboundQueueBytesLimit, prometheus.GaugeValue, float64(stats.OutboundQueueBytesLimit))
 	ch <- prometheus.MustNewConstMetric(c.outboundQueueCountDrops, prometheus.CounterValue, float64(stats.OutboundQueueCountDrops))
 	ch <- prometheus.MustNewConstMetric(c.outboundQueueByteDrops, prometheus.CounterValue, float64(stats.OutboundQueueByteDrops))
+	ch <- prometheus.MustNewConstMetric(c.outboundNodeBytesLimit, prometheus.GaugeValue, float64(stats.OutboundNodeBytesLimit))
+	ch <- prometheus.MustNewConstMetric(c.outboundNodeBudgetDrops, prometheus.CounterValue, float64(stats.OutboundNodeBudgetDrops))
+	ch <- prometheus.MustNewConstMetric(c.outboundShedDisconnects, prometheus.CounterValue, float64(stats.OutboundShedDisconnects))
 	ch <- prometheus.MustNewConstMetric(c.callbackErrors, prometheus.CounterValue, float64(stats.CallbackErrors))
 	ch <- prometheus.MustNewConstMetric(c.callbackOutboxFull, prometheus.CounterValue, float64(stats.CallbackOutboxFull))
 	ch <- prometheus.MustNewConstMetric(c.callbackOutboxAdmissionErrors, prometheus.CounterValue, float64(stats.CallbackOutboxAdmissionErrors))
@@ -319,6 +355,9 @@ func (c *StatsCollector) descs() []*prometheus.Desc {
 		c.outboundQueueBytesLimit,
 		c.outboundQueueCountDrops,
 		c.outboundQueueByteDrops,
+		c.outboundNodeBytesLimit,
+		c.outboundNodeBudgetDrops,
+		c.outboundShedDisconnects,
 		c.callbackErrors,
 		c.callbackOutboxFull,
 		c.callbackOutboxAdmissionErrors,
@@ -338,5 +377,13 @@ func (c *StatsCollector) descs() []*prometheus.Desc {
 		c.callbackDeadLetterLastEviction,
 		c.callbackDeadLetterDiscards,
 		c.authOutcomes,
+		c.usageReports,
+		c.usageReportFailures,
+		c.usageDroppedHours,
+		c.usageHeldHours,
+		c.connectionLimitRefusals,
+		c.connectionSyncFailures,
+		c.connectionSyncs,
+		c.connectionSyncedAt,
 	}
 }

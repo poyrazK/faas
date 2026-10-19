@@ -38,6 +38,11 @@ type PlatformTenantRateCardInput struct {
 	Unit string
 	// TierMode is how Tiers price a month; empty means graduated (ADR-1309).
 	TierMode string
+	// Monthly base fee and minimum spend per tenant (ADR-1322), prorated in
+	// the tenant's first month when ProrateMonthlyFees is set (ADR-1325).
+	BaseFeeMillicentsPerMonth int64
+	MinimumMillicentsPerMonth int64
+	ProrateMonthlyFees        bool
 }
 
 func normalizePlatformTenantRateCardInput(in PlatformTenantRateCardInput) (PlatformTenantRateCardInput, error) {
@@ -48,7 +53,10 @@ func normalizePlatformTenantRateCardInput(in PlatformTenantRateCardInput) (Platf
 		in.Unit = PlatformTenantRateCardUnitRequest
 	}
 	if !ValidAPIConsumerRateCardUnit(in.Unit) || (in.Unit != PlatformTenantRateCardUnitRequest && len(in.RouteWeights) > 0) {
-		return in, fmt.Errorf("%s: %w: unit must be request, compute_second or response_megabyte, and route weights apply to request cards only", op, ErrInvalidArgument)
+		return in, fmt.Errorf("%s: %w: unit must be request, compute_second, response_megabyte or app:<meter>, and route weights apply to request cards only", op, ErrInvalidArgument)
+	}
+	if in.BaseFeeMillicentsPerMonth < 0 || in.MinimumMillicentsPerMonth < 0 {
+		return in, fmt.Errorf("%s: %w: base_fee_millicents_per_month and minimum_millicents_per_month must be non-negative", op, ErrInvalidArgument)
 	}
 	mode, err := normalizeRateCardTierMode(in.TierMode, in.Tiers)
 	if err != nil {

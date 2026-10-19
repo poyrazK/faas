@@ -54,9 +54,12 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task deployment: %w", err)
 	}
 	if dep.AppID != app.ID || dep.RootfsKey == "" || dep.RootfsKey != request.ArtifactKey ||
-		dep.ImageDigest == "" || dep.ImageDigest != request.ImageDigest ||
+		dep.ImageDigest != request.ImageDigest ||
 		normalizedDeploymentScope(dep.Scope) != normalizedDeploymentScope(request.DeploymentScope) {
 		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
+	}
+	if err := e.checkFinancialBudgetAdmission(ctx, app, dep.ID); err != nil {
+		return ResolvedAppTaskRuntime{}, err
 	}
 	if securityQuarantineErr(dep) != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("%w: deployment is security quarantined", state.ErrAppTaskDeploymentUnavailable)
@@ -92,6 +95,17 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	task, err := e.store.AppTaskByID(ctx, request.AccountID, request.AppID, request.ID)
 	if err != nil || task.DeploymentID != dep.ID || task.Kind != request.Kind {
 		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
+	}
+	// Only a current managed probe can restore a reviewed source build without
+	// an OCI digest. Ordinary tasks retain their image-only admission contract.
+	if dep.ImageDigest == "" && (task.BindingVerification == nil || task.BindingVerification.ManagedService == nil) {
+		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
+	}
+	if task.BindingVerification != nil && task.BindingVerification.ManagedService != nil {
+		store, ok := e.store.(state.ManagedServiceProbeStore)
+		if !ok || state.ManagedServiceProbeCurrent(ctx, store, task) != nil {
+			return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
+		}
 	}
 	runID, err := e.rehearsalNetworkRun(ctx, app.ID)
 	if err != nil {
@@ -168,12 +182,42 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 			return publisher.RecordScenarioCommandNetwork(ctx, identity, placement.NodeID, *task.LeaseToken, out.HostIP)
 		}
 	}
+	var commands state.FinancialPreviewCommandStore
+	if app.PreviewOfSlug != "" {
+		var ok bool
+		commands, ok = e.store.(state.FinancialPreviewCommandStore)
+		deadline, bounded := ctx.Deadline()
+		if !ok || !bounded || task.LeaseToken == nil || request.LeaseToken != *task.LeaseToken {
+			e.ledger.Release(request.ID)
+			return ResolvedAppTaskRuntime{}, state.ErrAppTaskLeaseLost
+		}
+		if err := commands.RegisterFinancialPreviewCommand(ctx, state.FinancialPreviewCommandRuntime{TaskID: request.ID, LeaseToken: request.LeaseToken,
+			AccountID: app.AccountID, AppID: app.ID, DeploymentID: dep.ID, NodeID: placement.NodeID, EnvironmentID: runtimeValues.Snapshot.EnvironmentID,
+			RAMMB: app.RAMMB, CPUMillicores: effectiveAppCPUMillicores(app), RecordedAt: e.financialBudgetNow(), PrepareUntil: deadline.UTC()}); err != nil {
+			e.ledger.Release(request.ID)
+			return ResolvedAppTaskRuntime{}, err
+		}
+	}
 	return ResolvedAppTaskRuntime{
 		publish: publish,
 		NodeID:  placement.NodeID,
-		Spec:    AppTaskRestoreSpec{Instance: request.ID, DeploymentID: dep.ID, App: spec},
+		Spec: AppTaskRestoreSpec{Instance: request.ID, DeploymentID: dep.ID, App: spec,
+			RequireServiceCallerIdentity: task.BindingVerification != nil && task.BindingVerification.ManagedService != nil},
 		release: func() {
+			if commands != nil {
+				cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultAppTaskFinalizeTimeout)
+				defer cancel()
+				if err := commands.RetireFinancialPreviewCommand(cleanup, request.ID, request.LeaseToken, e.financialBudgetNow()); err != nil {
+					e.log.Warn("preview command teardown receipt failed", "task", request.ID, "err", err)
+				}
+			}
 			e.ledger.Release(request.ID)
+		},
+		ready: func(readyCtx context.Context) error {
+			if commands != nil {
+				return commands.ActivateFinancialPreviewCommand(readyCtx, request.ID, request.LeaseToken)
+			}
+			return nil
 		},
 	}, nil
 }

@@ -7,14 +7,16 @@ import (
 	"flag"
 	"fmt"
 	"text/tabwriter"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/financial"
 )
 
 func cmdBillingBudgets(args []string) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		if _, err := fmt.Fprintln(osStdout, "usage: gregale billing budgets <list|get|create|update|delete|history> [flags] [ID]\nBudget drafts do not enforce spending limits. Preview consequences with billing budget-preview."); err != nil {
+		if _, err := fmt.Fprintln(osStdout, "usage: gregale billing budgets <list|get|create|update|delete|history> [flags] [ID]\nEnable monitored notify policies or compute-only stop_previews policies. Strict supports app/job gross compute or account net compute optionally combined with egress, using suspend_workloads with zero drain and no alert thresholds. Other stopping actions remain drafts. Preview consequences with billing budget-preview."); err != nil {
 			return printErr("Could not print budget help", err)
 		}
 		return 0
@@ -122,6 +124,16 @@ func printBillingBudgetResult(out any) error {
 		if _, err := fmt.Fprintf(osStdout, "%s\nID: %s\nRevision: %d\nStatus: %s\nLimit: %s (%s)\n", value.Spec.Name, value.ID, value.Revision, value.Status, financialMoney(value.Spec.LimitMillicents), value.Spec.Basis); err != nil {
 			return err
 		}
+		if value.NotificationReady {
+			effect := "Spending notifications are active; workloads continue running."
+			if financial.PreviewStopping(value.Spec) {
+				effect = "Preview stopping is active; production can continue. Metering, drain and teardown delays can exceed the limit."
+			}
+			if _, err := fmt.Fprintln(osStdout, effect); err != nil {
+				return err
+			}
+			return printBillingBudgetRuntime(value.Runtime)
+		}
 		if !value.EnforcementReady {
 			_, err := fmt.Fprintln(osStdout, "Enforcement is unavailable; this policy does not protect spending.")
 			return err
@@ -152,6 +164,82 @@ func printBillingBudgetResult(out any) error {
 		}
 		if value.NextRevision != 0 {
 			_, err := fmt.Fprintf(osStdout, "Continue with --after-revision %d\n", value.NextRevision)
+			return err
+		}
+	}
+	return nil
+}
+
+func printBillingBudgetRuntime(runtime *financial.BudgetRuntime) error {
+	if runtime != nil && runtime.Compute != nil {
+		b := runtime.Compute
+		if b.JobID != "" {
+			if _, err := fmt.Fprintf(osStdout, "Job compute budget: %s\n", b.JobID); err != nil {
+				return err
+			}
+		}
+		label := "compute"
+		if b.Egress != nil {
+			label = "compute and egress"
+		}
+		if _, err := fmt.Fprintf(osStdout, "Committed %s (conservative): %s\nReserved %s: %s\nRemaining %s: %s\nUnconfirmed VM attempts: %d; budget held: %t\n", label, financialMoney(b.CommittedMillicents), label, financialMoney(b.ReservedMillicents), label, financialMoney(b.RemainingMillicents), b.UnconfirmedLeases, b.Held); err != nil {
+			return err
+		}
+		if b.ScopeKind == "account" {
+			if _, err := fmt.Fprintf(osStdout, "Shared account allowance (MB-seconds): granted %d; committed %d; reserved %d; remaining %d\n", b.AllowanceGranted, b.AllowanceCommitted, b.AllowanceReserved, b.AllowanceRemaining); err != nil {
+				return err
+			}
+		}
+		if e := b.Egress; e != nil {
+			if _, err := fmt.Fprintf(osStdout, "Egress funding: committed %s; reserved %s\nInterface byte credits: committed %d; reserved %d\nShared included egress bytes: granted %d; committed %d; reserved %d; remaining %d\nUnused or uncertain credits commit conservatively after shutdown; invoice usage remains measured bytes.\n", financialMoney(e.CommittedMillicents), financialMoney(e.ReservedMillicents), e.CommittedBytes, e.ReservedBytes, e.AllowanceGranted, e.AllowanceCommitted, e.AllowanceReserved, e.AllowanceRemaining); err != nil {
+				return err
+			}
+		}
+		if !b.Initialized {
+			if _, err := fmt.Fprintln(osStdout, "Awaiting accounting initialization for the current UTC month."); err != nil {
+				return err
+			}
+		}
+		if runtime.Evaluation == nil {
+			return nil
+		}
+	}
+	if runtime != nil {
+		for _, stop := range runtime.Stops {
+			if _, err := fmt.Fprintf(osStdout, "Preview stop %s: requested %s; drain deadline %s; resume %s\n", stop.ID, stop.RequestedAt.Format(time.RFC3339), stop.DrainDeadline.Format(time.RFC3339), stop.ResumeRule); err != nil {
+				return err
+			}
+			if len(stop.Targets) == 0 {
+				if _, err := fmt.Fprintln(osStdout, "Awaiting scheduler acknowledgement; stopping is not yet confirmed."); err != nil {
+					return err
+				}
+			}
+			for _, target := range stop.Targets {
+				if _, err := fmt.Fprintf(osStdout, "  %s %s: %s; resident=%d; observed=%s; %s\n", target.AppID, target.EnvironmentID, target.State, target.ResidentCount, target.ObservedAt.Format(time.RFC3339), target.LastError); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if runtime == nil || runtime.Evaluation == nil {
+		_, err := fmt.Fprintln(osStdout, "Awaiting first evaluation.")
+		return err
+	}
+	e := runtime.Evaluation
+	amount := "unavailable"
+	if e.KnownMillicents != nil {
+		amount = financialMoney(*e.KnownMillicents)
+	}
+	if _, err := fmt.Fprintf(osStdout, "Known spending: %s\nLast evaluation: %s\nCoverage complete: %t; fresh: %t\n", amount, e.EvaluatedAt.Format(time.RFC3339), e.CoverageComplete, e.Fresh); err != nil {
+		return err
+	}
+	for _, reason := range e.Reasons {
+		if _, err := fmt.Fprintf(osStdout, "Coverage: %s\n", reason); err != nil {
+			return err
+		}
+	}
+	for _, a := range runtime.Alerts {
+		if _, err := fmt.Fprintf(osStdout, "Alert %s: %s at %s (%d attempts)\n", a.ID, a.State, financialMoney(a.ThresholdMillicents), a.Attempts); err != nil {
 			return err
 		}
 	}

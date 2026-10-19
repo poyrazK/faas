@@ -46,11 +46,9 @@ BuildByID
 BuildProvenanceByBuildID
 BumpFirst5xxCount
 BumpInstanceTailCount
-CancelDeploymentTx
 CancelInstanceMigration
 CancelInvocation
 CancelUploadSession
-CheckOrgAccess
 CheckWebhookReplay
 ClaimNextPendingRun
 ClearDeployment
@@ -292,7 +290,6 @@ ListAppWebhooksForApp
 ListApps
 ListAppsByNodeID
 ListAppsWithRecentTelemetry
-ListAuditLog
 ListBuildsAwaitingImage
 ListBuildsForAccount
 ListBuildsForAccountPaged
@@ -366,7 +363,6 @@ ListOrphanedJobInstances
 ListOwnedCronsByNodeID
 ListPendingTenantHostnames
 ListProjectsForAccount
-ListProjectsForOrg
 ListRecentEventsForAccount
 ListRequestTelemetryByAccountTrace
 ListRequestTelemetryByApp
@@ -399,7 +395,6 @@ MarkAccountEmailVerified
 MarkAllSnapshotsStaleByAppProtocol
 MarkAllSnapshotsStaleByFCVersion
 MarkAppRegistryCredentialUsed
-MarkBuildCancelled
 MarkComputeNodeInactive
 MarkDeploymentStageFailed
 MarkDomainVerified
@@ -435,7 +430,6 @@ OperatorAuditTraceCoverage
 OperatorIntentOutcomeMissingCounts
 OperatorOverviewActivity
 OperatorTenantCounts
-OrgAccessSnapshot
 OrgByID
 OrgByPersonalAccount
 OrgBySlug
@@ -444,7 +438,6 @@ PaddleOverageDedupeSchema
 PerAccountRateLimitAggregate
 Ping
 ProjectByID
-ProjectByOrgSlug
 ProjectByRepo
 ProjectBySlug
 ProjectEnvironmentApprovalByID
@@ -460,7 +453,6 @@ PutManagedPostgresSecret
 QueueDeadLetter
 QueuePeek
 QueueState
-QueuedBuildsCount
 ReadActiveInstanceForWakeID
 ReadMFASecret
 ReapExpiredUploadSessions
@@ -495,7 +487,6 @@ RequestTelemetryBaselineP95ByRoute
 RequestTelemetryByDeployment
 RequestTelemetryCoverage
 RequestTelemetryErrorsByRoute
-RequeueBuild
 ResetAppWebhookDeliveryFromDead
 ResolveStaleRegressionObservations
 ResolveStatusIncident
@@ -535,7 +526,6 @@ SumOpenUploadSessionBytesByAccount
 SweepExpiredWebhookDeliveries
 SweepExpiredWorkflowEvents
 SweepExpiredWorkflowRuns
-SweepStuckRunningBuilds
 TenantSurfaceByHostname
 TouchConsumerKeyLastUsed
 TouchInstancesWithRequestDelta
@@ -553,7 +543,6 @@ UpdateAlertRule
 UpdateAppLogDrain
 UpdateAppWebhook
 UpdateBuildProvenanceSBOM
-UpdateBuildStatus
 UpdateCorsPreset
 UpdateCron
 UpdateCronWithOptions

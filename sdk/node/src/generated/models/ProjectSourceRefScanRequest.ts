@@ -7,6 +7,10 @@
  */
 export type ProjectSourceRefScanRequest = {
   /**
+   * App allocations for this connected repository review. Keys are exact service names. Existing project apps keep their names; new names are checked for format, reservation and availability without being allocated.
+   */
+  app_slugs?: Record<string, string>;
+  /**
    * GitHub owner/name to fetch through the connected installation.
    */
   repo: string;
@@ -31,5 +35,9 @@ export type ProjectSourceRefScanRequest = {
    */
   environment?: string;
   no_triggers?: boolean;
+  /**
+   * Prepare a manual migration: preserve repository service names, suggest project-prefixed app names, leave the project unbound from GitHub push deployments and suppress schedules and async routes. Credentials remain inside githubd.
+   */
+  migration?: boolean;
 };
 

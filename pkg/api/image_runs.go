@@ -1,8 +1,10 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 // Image runs (ADR-1161): `docker run`-shaped one-task Job runs against a
@@ -58,6 +60,41 @@ type CreateImageRunRequest struct {
 	// Interactive.
 	Interactive bool `json:"interactive,omitempty"`
 	TTY         bool `json:"tty,omitempty"`
+	// User and Workdir override the image's USER and WORKDIR, as
+	// `docker run -u/-w` do (ADR-1790). User is `name|uid[:group|gid]`;
+	// Workdir is an absolute path, created when missing.
+	User    string `json:"user,omitempty"`
+	Workdir string `json:"workdir,omitempty"`
+	// RegistryAuth authenticates the pull of a private image (ADR-1790). It
+	// is stored sealed on the runner job for the image's registry, as
+	// PUT /v1/jobs/{name}/registry-credentials would, and never returned.
+	RegistryAuth *ImageRunRegistryAuth `json:"registry_auth,omitempty"`
+}
+
+// ImageRunRegistryAuth is a registry username and password or token for one
+// image run's registry.
+type ImageRunRegistryAuth struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+const (
+	// ImageRunUserMaxBytes bounds an image run's user override.
+	ImageRunUserMaxBytes = 256
+	// ImageRunWorkdirMaxBytes bounds an image run's working directory.
+	ImageRunWorkdirMaxBytes = 4096
+)
+
+// ValidateImageRunWorkdir accepts an absolute path, as `docker run -w`
+// requires. Empty keeps the image WORKDIR.
+func ValidateImageRunWorkdir(dir string) error {
+	if dir == "" {
+		return nil
+	}
+	if len(dir) > ImageRunWorkdirMaxBytes || !strings.HasPrefix(dir, "/") || strings.ContainsAny(dir, "\x00\r\n") {
+		return errors.New("workdir must be an absolute path of at most 4096 bytes")
+	}
+	return nil
 }
 
 const (

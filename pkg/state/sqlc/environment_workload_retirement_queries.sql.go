@@ -85,11 +85,35 @@ func (q *Queries) ActivateEnvironmentWorkloadRecovery(ctx context.Context, db DB
 	return result.RowsAffected(), nil
 }
 
+const authorizeEnvironmentBindingRetirement = `-- name: AuthorizeEnvironmentBindingRetirement :one
+SELECT authorize_environment_binding_retirement($1::uuid,$2::uuid,
+ $3::text,$4::text)::boolean
+`
+
+type AuthorizeEnvironmentBindingRetirementParams struct {
+	SourceID     pgtype.UUID
+	NextRelease  pgtype.UUID
+	PriorRelease string
+	PlanHash     string
+}
+
+func (q *Queries) AuthorizeEnvironmentBindingRetirement(ctx context.Context, db DBTX, arg AuthorizeEnvironmentBindingRetirementParams) (bool, error) {
+	row := db.QueryRow(ctx, authorizeEnvironmentBindingRetirement,
+		arg.SourceID,
+		arg.NextRelease,
+		arg.PriorRelease,
+		arg.PlanHash,
+	)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const beginEnvironmentWorkloadRecovery = `-- name: BeginEnvironmentWorkloadRecovery :one
 UPDATE environment_workload_retirements SET phase='recovering',recovery_revision_id=$1::uuid,
  recovery_generation=$2::bigint
 WHERE id=$3::uuid AND source_id=$4::uuid AND phase IN ('retired','recovering')
-RETURNING id, source_id, account_id, project_id, environment_id, app_id, resource, revision_id, generation, plan_hash, phase, deployment_ids, queue_binding_ids, job_id, route_deployment_id, route_generation, expected_gateways, acknowledged_gateways, requested_at, retired_at, recovery_revision_id, recovery_generation, recovered_at
+RETURNING id, source_id, account_id, project_id, environment_id, app_id, resource, revision_id, generation, plan_hash, phase, deployment_ids, queue_binding_ids, job_id, route_deployment_id, route_generation, expected_gateways, acknowledged_gateways, requested_at, retired_at, recovery_revision_id, recovery_generation, recovered_at, binding_policy_context
 `
 
 type BeginEnvironmentWorkloadRecoveryParams struct {
@@ -131,6 +155,7 @@ func (q *Queries) BeginEnvironmentWorkloadRecovery(ctx context.Context, db DBTX,
 		&i.RecoveryRevisionID,
 		&i.RecoveryGeneration,
 		&i.RecoveredAt,
+		&i.BindingPolicyContext,
 	)
 	return i, err
 }
@@ -156,7 +181,7 @@ func (q *Queries) CancelPlannedEnvironmentWorkloadRetirement(ctx context.Context
 const completeEnvironmentWorkloadRetirement = `-- name: CompleteEnvironmentWorkloadRetirement :one
 UPDATE environment_workload_retirements SET phase='retired',retired_at=clock_timestamp()
 WHERE id=$1::uuid AND source_id=$2::uuid AND phase='retiring'
-RETURNING id, source_id, account_id, project_id, environment_id, app_id, resource, revision_id, generation, plan_hash, phase, deployment_ids, queue_binding_ids, job_id, route_deployment_id, route_generation, expected_gateways, acknowledged_gateways, requested_at, retired_at, recovery_revision_id, recovery_generation, recovered_at
+RETURNING id, source_id, account_id, project_id, environment_id, app_id, resource, revision_id, generation, plan_hash, phase, deployment_ids, queue_binding_ids, job_id, route_deployment_id, route_generation, expected_gateways, acknowledged_gateways, requested_at, retired_at, recovery_revision_id, recovery_generation, recovered_at, binding_policy_context
 `
 
 type CompleteEnvironmentWorkloadRetirementParams struct {
@@ -191,6 +216,7 @@ func (q *Queries) CompleteEnvironmentWorkloadRetirement(ctx context.Context, db 
 		&i.RecoveryRevisionID,
 		&i.RecoveryGeneration,
 		&i.RecoveredAt,
+		&i.BindingPolicyContext,
 	)
 	return i, err
 }
@@ -353,7 +379,7 @@ VALUES ($1::uuid,$2::uuid,$3::uuid,
  $4::uuid,$5::text,$6::uuid,
  $7::uuid,$8::bigint,$9::text,
  $10::uuid[],$11::uuid[],$12::uuid,$13::uuid)
-RETURNING id, source_id, account_id, project_id, environment_id, app_id, resource, revision_id, generation, plan_hash, phase, deployment_ids, queue_binding_ids, job_id, route_deployment_id, route_generation, expected_gateways, acknowledged_gateways, requested_at, retired_at, recovery_revision_id, recovery_generation, recovered_at
+RETURNING id, source_id, account_id, project_id, environment_id, app_id, resource, revision_id, generation, plan_hash, phase, deployment_ids, queue_binding_ids, job_id, route_deployment_id, route_generation, expected_gateways, acknowledged_gateways, requested_at, retired_at, recovery_revision_id, recovery_generation, recovered_at, binding_policy_context
 `
 
 type InsertEnvironmentWorkloadRetirementParams struct {
@@ -413,12 +439,13 @@ func (q *Queries) InsertEnvironmentWorkloadRetirement(ctx context.Context, db DB
 		&i.RecoveryRevisionID,
 		&i.RecoveryGeneration,
 		&i.RecoveredAt,
+		&i.BindingPolicyContext,
 	)
 	return i, err
 }
 
 const listEnvironmentWorkloadRetirements = `-- name: ListEnvironmentWorkloadRetirements :many
-SELECT DISTINCT ON (resource) id, source_id, account_id, project_id, environment_id, app_id, resource, revision_id, generation, plan_hash, phase, deployment_ids, queue_binding_ids, job_id, route_deployment_id, route_generation, expected_gateways, acknowledged_gateways, requested_at, retired_at, recovery_revision_id, recovery_generation, recovered_at FROM environment_workload_retirements
+SELECT DISTINCT ON (resource) id, source_id, account_id, project_id, environment_id, app_id, resource, revision_id, generation, plan_hash, phase, deployment_ids, queue_binding_ids, job_id, route_deployment_id, route_generation, expected_gateways, acknowledged_gateways, requested_at, retired_at, recovery_revision_id, recovery_generation, recovered_at, binding_policy_context FROM environment_workload_retirements
 WHERE source_id=$1::uuid AND account_id=$2::uuid
 ORDER BY resource,generation DESC
 `
@@ -461,6 +488,7 @@ func (q *Queries) ListEnvironmentWorkloadRetirements(ctx context.Context, db DBT
 			&i.RecoveryRevisionID,
 			&i.RecoveryGeneration,
 			&i.RecoveredAt,
+			&i.BindingPolicyContext,
 		); err != nil {
 			return nil, err
 		}
@@ -473,7 +501,7 @@ func (q *Queries) ListEnvironmentWorkloadRetirements(ctx context.Context, db DBT
 }
 
 const lockEnvironmentWorkloadRetirement = `-- name: LockEnvironmentWorkloadRetirement :one
-SELECT id, source_id, account_id, project_id, environment_id, app_id, resource, revision_id, generation, plan_hash, phase, deployment_ids, queue_binding_ids, job_id, route_deployment_id, route_generation, expected_gateways, acknowledged_gateways, requested_at, retired_at, recovery_revision_id, recovery_generation, recovered_at FROM environment_workload_retirements
+SELECT id, source_id, account_id, project_id, environment_id, app_id, resource, revision_id, generation, plan_hash, phase, deployment_ids, queue_binding_ids, job_id, route_deployment_id, route_generation, expected_gateways, acknowledged_gateways, requested_at, retired_at, recovery_revision_id, recovery_generation, recovered_at, binding_policy_context FROM environment_workload_retirements
 WHERE source_id=$1::uuid AND id=$2::uuid FOR UPDATE
 `
 
@@ -509,6 +537,7 @@ func (q *Queries) LockEnvironmentWorkloadRetirement(ctx context.Context, db DBTX
 		&i.RecoveryRevisionID,
 		&i.RecoveryGeneration,
 		&i.RecoveredAt,
+		&i.BindingPolicyContext,
 	)
 	return i, err
 }
@@ -549,7 +578,7 @@ const prepareEnvironmentWorkloadRetirementGateways = `-- name: PrepareEnvironmen
 UPDATE environment_workload_retirements SET route_generation=$1::bigint,
  expected_gateways=$2::text[],acknowledged_gateways='{}'
 WHERE id=$3::uuid AND source_id=$4::uuid AND phase IN ('retiring','retired','recovering')
-RETURNING id, source_id, account_id, project_id, environment_id, app_id, resource, revision_id, generation, plan_hash, phase, deployment_ids, queue_binding_ids, job_id, route_deployment_id, route_generation, expected_gateways, acknowledged_gateways, requested_at, retired_at, recovery_revision_id, recovery_generation, recovered_at
+RETURNING id, source_id, account_id, project_id, environment_id, app_id, resource, revision_id, generation, plan_hash, phase, deployment_ids, queue_binding_ids, job_id, route_deployment_id, route_generation, expected_gateways, acknowledged_gateways, requested_at, retired_at, recovery_revision_id, recovery_generation, recovered_at, binding_policy_context
 `
 
 type PrepareEnvironmentWorkloadRetirementGatewaysParams struct {
@@ -591,6 +620,7 @@ func (q *Queries) PrepareEnvironmentWorkloadRetirementGateways(ctx context.Conte
 		&i.RecoveryRevisionID,
 		&i.RecoveryGeneration,
 		&i.RecoveredAt,
+		&i.BindingPolicyContext,
 	)
 	return i, err
 }
@@ -609,7 +639,7 @@ func (q *Queries) SetEnvironmentWorkloadRetirementCutoverContext(ctx context.Con
 const startEnvironmentWorkloadRetirement = `-- name: StartEnvironmentWorkloadRetirement :one
 UPDATE environment_workload_retirements SET phase='retiring'
 WHERE id=$1::uuid AND source_id=$2::uuid AND phase='planned'
-RETURNING id, source_id, account_id, project_id, environment_id, app_id, resource, revision_id, generation, plan_hash, phase, deployment_ids, queue_binding_ids, job_id, route_deployment_id, route_generation, expected_gateways, acknowledged_gateways, requested_at, retired_at, recovery_revision_id, recovery_generation, recovered_at
+RETURNING id, source_id, account_id, project_id, environment_id, app_id, resource, revision_id, generation, plan_hash, phase, deployment_ids, queue_binding_ids, job_id, route_deployment_id, route_generation, expected_gateways, acknowledged_gateways, requested_at, retired_at, recovery_revision_id, recovery_generation, recovered_at, binding_policy_context
 `
 
 type StartEnvironmentWorkloadRetirementParams struct {
@@ -644,6 +674,7 @@ func (q *Queries) StartEnvironmentWorkloadRetirement(ctx context.Context, db DBT
 		&i.RecoveryRevisionID,
 		&i.RecoveryGeneration,
 		&i.RecoveredAt,
+		&i.BindingPolicyContext,
 	)
 	return i, err
 }

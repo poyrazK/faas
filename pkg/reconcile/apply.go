@@ -70,7 +70,7 @@ func (s *Service) applyActions(
 	scan reposcan.Result,
 	cronSpecs []CronSpec,
 ) (Result, error) {
-	availableServices := workloadNameSet(scan.Workloads)
+	availableServices := availableServiceNames(scan, project, existing)
 	var out Result
 
 	// Partition by op so we can run them in the documented order
@@ -360,14 +360,9 @@ func (s *Service) applyRemove(
 }
 
 // workloadToDraftApp replaces the legacy cmd/apid
-// `wlToApp` helper (retired in PR-GH.2). The Slug is w.Name
-// verbatim — apps.slug is unconstrained in the schema
-// (migrations/00074_…:141-145 documents the historical
-// allowance of uppercase, dots, longer
-// strings), so the apid path and the reconcile path must agree
-// byte-for-byte to keep customer URLs stable. Any future
-// normalisation must land in BOTH paths at the same time, with
-// a slug migration. The store stamps id, created_at, status, and
+// `wlToApp` helper (retired in PR-GH.2). AppSlug is the reviewed
+// allocation; Name remains the durable repository service identity.
+// Without an allocation override, the established name is retained. The store stamps id, created_at, status, and
 // backfills project_id on insert.
 //
 // plan is the owning account's plan — used to stamp the per-plan
@@ -387,7 +382,7 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 		AccountID:     project.AccountID,
 		OrgID:         project.OrgID,
 		ProjectID:     project.ID,
-		Slug:          w.Name,
+		Slug:          AppSlug(w),
 		RootDir:       w.RootDir,
 		WorkloadName:  w.Name,
 		WorkloadClass: class,
@@ -452,6 +447,7 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 	manifest.ProjectImageCommand = nil
 	manifest.ProjectImagePort = 0
 	manifest.ProjectImageHealthcheck = nil
+	manifest.ProjectImageProcess = nil
 	if manifest.ExecutionMode == "" {
 		manifest.ExecutionMode = scanExecutionMode(w)
 	}
@@ -459,6 +455,7 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 		return
 	}
 	manifest.ProjectImageHealthcheck = w.ImageHealthcheck.Clone()
+	manifest.ProjectImageProcess = w.ImageProcess.Clone()
 	manifest.ProjectImageCommand = append([]string(nil), w.Command...)
 	if w.CommandShell && len(w.Command) > 0 {
 		manifest.ProjectImageCommand = []string{"/bin/sh", "-c", w.Command[0]}

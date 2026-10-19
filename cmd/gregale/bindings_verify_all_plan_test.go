@@ -160,7 +160,7 @@ func allPreviewArgs(consent, strict, asJSON bool) []string {
 }
 
 func TestAllBindingPreviewReadOnlyAndReadiness(t *testing.T) {
-	for _, scenario := range []string{"complete", "missing consent", "partial default", "queue unsupported", "storage unknown", "duplicate queue", "duplicate storage", "incomplete inventory", "inventory error", "inventory warning", "unknown type", "missing outbound identity", "outbound read failure", "no eligible", "human"} {
+	for _, scenario := range []string{"complete", "missing consent", "partial default", "queue unsupported", "queue release unavailable", "storage unknown", "duplicate queue", "duplicate storage", "incomplete inventory", "inventory error", "inventory warning", "unknown type", "missing outbound identity", "outbound read failure", "no eligible", "human"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newAllProbePreviewFixture(t)
 			f.mu.Lock()
@@ -180,6 +180,11 @@ func TestAllBindingPreviewReadOnlyAndReadiness(t *testing.T) {
 				f.inventory.Bindings[5].QueueCanarySupported = false
 				ready, complete, coverage = false, false, "partial"
 				reason = "queue_handler_unsupported"
+			case "queue release unavailable":
+				f.inventory.Bindings[5].QueueCanarySupported = false
+				f.inventory.Bindings[5].QueueCanaryReason = "queue_canary_context_unavailable"
+				ready, complete, coverage = false, false, "partial"
+				reason = "queue_canary_context_unavailable"
 			case "storage unknown":
 				f.inventory.Bindings[4].Access = "future"
 				ready, complete, coverage = false, false, "partial"

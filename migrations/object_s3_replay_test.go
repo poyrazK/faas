@@ -23,6 +23,7 @@ func TestObjectS3MigrationReplayPreservesSessions(t *testing.T) {
 	// sessions with issued URL deadlines. Replay must preserve their authority.
 	if _, err := pool.Exec(ctx, `
  INSERT INTO accounts(id,email) VALUES('00000000-0000-0000-0000-000000000001','replay@example.com');
+ INSERT INTO orgs(id,slug,name,personal_org,personal_owner_account_id,plan,status) SELECT gen_random_uuid(),'u-000000000000','Personal',true,id,plan,status FROM accounts WHERE id='00000000-0000-0000-0000-000000000001';
  INSERT INTO apps(id,account_id,slug,ram_mb) VALUES('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000001','replay',128);
  INSERT INTO object_buckets(id,account_id,app_id,name,scope,region,backend_id,backend_fingerprint,physical_name,state)
  VALUES('00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000002','replay','app','local','test',repeat('a',64),'replay-physical','ready');
@@ -43,6 +44,19 @@ func TestObjectS3MigrationReplayPreservesSessions(t *testing.T) {
 	const sessionsQuery = `SELECT jsonb_agg(to_jsonb(u) ORDER BY id)::text FROM object_storage_multipart_uploads u`
 	beforeSessions := snapshot(sessionsQuery)
 	beforeSchema := snapshot(objectS3ReplaySchemaQuery)
+	// #4882's ownership migrations later redefined these. Issued migrations
+	// are append-only, so replaying the S3 set restores its own versions; put
+	// the current ones back before comparing everything else exactly.
+	laterFunctions := []string{
+		"fence_object_lifecycle_deletion()",
+		"fence_object_lifecycle_multipart()",
+		"object_url_issuer_live(uuid,uuid,uuid,text,timestamp with time zone)",
+		"protect_object_s3_copy_source_epoch()",
+	}
+	currentFunctions := make([]string, 0, len(laterFunctions))
+	for _, fn := range laterFunctions {
+		currentFunctions = append(currentFunctions, snapshot(`SELECT pg_get_functiondef(to_regprocedure('`+fn+`'))`))
+	}
 	names, err := fs.Glob(migrations.FS, "202610040906*.sql")
 	if err != nil || len(names) == 0 {
 		t.Fatal("missing S3 migration set", err)
@@ -63,6 +77,11 @@ func TestObjectS3MigrationReplayPreservesSessions(t *testing.T) {
 	}
 	if got := snapshot(sessionsQuery); got != beforeSessions {
 		t.Fatal("replay changed multipart state or cleanup authority", got)
+	}
+	for _, definition := range currentFunctions {
+		if _, err := pool.Exec(ctx, definition); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if got := snapshot(objectS3ReplaySchemaQuery); got != beforeSchema {
 		t.Fatal("replay changed S3 constraints, indexes, triggers or functions")

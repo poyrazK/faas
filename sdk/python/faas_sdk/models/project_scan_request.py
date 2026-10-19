@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from io import BytesIO
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from .. import types
 from ..types import UNSET, File, Unset
+
+if TYPE_CHECKING:
+    from ..models.project_scan_request_app_slugs import ProjectScanRequestAppSlugs
+
 
 T = TypeVar("T", bound="ProjectScanRequest")
 
@@ -19,6 +24,13 @@ class ProjectScanRequest:
 
     source: File
     """tar.gz of the repo root."""
+    migration: bool | Unset = False
+    """Preserve repository service identities and suggest project-prefixed app names. Requires no_triggers and no
+    repository push binding; apply repeats the reviewed setting."""
+    app_slugs: ProjectScanRequestAppSlugs | Unset = UNSET
+    """Exact repository service names mapped to Gregale app names. Existing project members retain their names.
+    Names are checked for format, reservation and availability; they are never allocated by scan. Multipart clients
+    send this field as JSON."""
     project_slug: str | Unset = UNSET
     """kebab slug; default = repo dir basename"""
     repo_full_name: str | Unset = UNSET
@@ -43,6 +55,12 @@ class ProjectScanRequest:
 
     def to_dict(self) -> dict[str, Any]:
         source = self.source.to_tuple()
+
+        migration = self.migration
+
+        app_slugs: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.app_slugs, Unset):
+            app_slugs = self.app_slugs.to_dict()
 
         project_slug = self.project_slug
 
@@ -69,6 +87,10 @@ class ProjectScanRequest:
                 "source": source,
             }
         )
+        if migration is not UNSET:
+            field_dict["migration"] = migration
+        if app_slugs is not UNSET:
+            field_dict["app_slugs"] = app_slugs
         if project_slug is not UNSET:
             field_dict["project_slug"] = project_slug
         if repo_full_name is not UNSET:
@@ -94,6 +116,12 @@ class ProjectScanRequest:
         files: types.RequestFiles = []
 
         files.append(("source", self.source.to_tuple()))
+
+        if not isinstance(self.migration, Unset):
+            files.append(("migration", (None, str(self.migration).encode(), "text/plain")))
+
+        if not isinstance(self.app_slugs, Unset):
+            files.append(("app_slugs", (None, json.dumps(self.app_slugs.to_dict()).encode(), "application/json")))
 
         if not isinstance(self.project_slug, Unset):
             files.append(("project_slug", (None, str(self.project_slug).encode(), "text/plain")))
@@ -131,8 +159,19 @@ class ProjectScanRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.project_scan_request_app_slugs import ProjectScanRequestAppSlugs
+
         d = dict(src_dict)
         source = File(payload=BytesIO(d.pop("source")))
+
+        migration = d.pop("migration", UNSET)
+
+        _app_slugs = d.pop("app_slugs", UNSET)
+        app_slugs: ProjectScanRequestAppSlugs | Unset
+        if isinstance(_app_slugs, Unset):
+            app_slugs = UNSET
+        else:
+            app_slugs = ProjectScanRequestAppSlugs.from_dict(_app_slugs)
 
         project_slug = d.pop("project_slug", UNSET)
 
@@ -154,6 +193,8 @@ class ProjectScanRequest:
 
         project_scan_request = cls(
             source=source,
+            migration=migration,
+            app_slugs=app_slugs,
             project_slug=project_slug,
             repo_full_name=repo_full_name,
             production_branch=production_branch,

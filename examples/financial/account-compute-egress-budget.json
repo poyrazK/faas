@@ -1,0 +1,14 @@
+{
+  "name": "Monthly compute and network egress",
+  "scope": { "kind": "account" },
+  "currency": "USD",
+  "meters": ["compute", "egress"],
+  "basis": "net_usage",
+  "limit_millicents": 1000000,
+  "notify_millicents": [],
+  "mode": "strict",
+  "action": "suspend_workloads",
+  "drain_seconds": 0,
+  "resume_rule": "manual",
+  "enabled": true
+}

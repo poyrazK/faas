@@ -393,6 +393,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		ImagePort:            app.Manifest.ProjectImagePort,
 		ImageCommand:         app.Manifest.ProjectImageCommand,
 		ImageHealthcheck:     app.Manifest.ProjectImageHealthcheck,
+		ImageProcess:         app.Manifest.ProjectImageProcess,
 		FullRootfsAllowAuto:  api.FullRootfsAllowAutoDefault[acct.Plan],
 		SourcePath:           req.SourcePath,
 		SourceBytes:          req.SourceBytes,

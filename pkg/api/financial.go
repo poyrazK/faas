@@ -105,16 +105,18 @@ type FinancialBudgetPreviewRequest struct {
 }
 
 type FinancialBudgetResponse struct {
-	ID               string               `json:"id"`
-	AccountID        string               `json:"account_id"`
-	Revision         int64                `json:"revision"`
-	Spec             financial.BudgetSpec `json:"spec"`
-	CreatedAt        time.Time            `json:"created_at"`
-	UpdatedAt        time.Time            `json:"updated_at"`
-	DeletedAt        *time.Time           `json:"deleted_at,omitempty"`
-	Status           string               `json:"status"`
-	EnforcementReady bool                 `json:"enforcement_ready"`
-	Reasons          []string             `json:"reasons"`
+	ID                string                   `json:"id"`
+	AccountID         string                   `json:"account_id"`
+	Revision          int64                    `json:"revision"`
+	Spec              financial.BudgetSpec     `json:"spec"`
+	CreatedAt         time.Time                `json:"created_at"`
+	UpdatedAt         time.Time                `json:"updated_at"`
+	DeletedAt         *time.Time               `json:"deleted_at,omitempty"`
+	Status            string                   `json:"status"`
+	EnforcementReady  bool                     `json:"enforcement_ready"`
+	NotificationReady bool                     `json:"notification_ready"`
+	Reasons           []string                 `json:"reasons"`
+	Runtime           *financial.BudgetRuntime `json:"runtime,omitempty"`
 }
 
 type FinancialBudgetListResponse struct {

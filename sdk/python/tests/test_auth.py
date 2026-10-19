@@ -12,7 +12,6 @@ import pytest
 ec = pytest.importorskip("cryptography.hazmat.primitives.asymmetric.ec")
 from cryptography.hazmat.primitives import hashes  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature  # noqa: E402
-
 from faas_sdk.auth import (  # noqa: E402
     AuthClient,
     AuthError,

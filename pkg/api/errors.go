@@ -3565,7 +3565,29 @@ const (
 	// cannot reach the managed realtime service. It is deliberately distinct
 	// from invalid endpoint configuration: retrying is appropriate here.
 	CodeRealtimeUnavailable = "realtime_unavailable"
+	// CodeRealtimeConnectionLimit is the 429 a realtime client sees when its
+	// account is at its plan's concurrent-connection allowance, or holds the
+	// most one account may on a single realtime node (ADR-1323 fair use).
+	CodeRealtimeConnectionLimit = "realtime_connection_limit"
 )
+
+// Realtime connection limit scopes (ADR-1323).
+const (
+	RealtimeConnectionLimitAccount     = "account"
+	RealtimeConnectionLimitAccountNode = "account_node"
+)
+
+// ErrRealtimeConnectionLimit reports a refused realtime connection with the
+// limit that applied and the connections observed against it.
+func ErrRealtimeConnectionLimit(scope string, limit, observed int64) *Problem {
+	detail := fmt.Sprintf("Your plan allows %d concurrent realtime connections per account across all endpoints; %d are open. Close idle connections or upgrade the plan.", limit, observed)
+	if scope == RealtimeConnectionLimitAccountNode {
+		detail = fmt.Sprintf("One account may hold at most %d connections on a single realtime node; %d are open on this node. Retry with backoff.", limit, observed)
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeRealtimeConnectionLimit, "Realtime connection limit reached", detail).
+		WithLimit(limit, observed).
+		WithDocs(docsBase + "/realtime#fair-use-limits")
+}
 
 // CodePlanLogDrainsNotAllowed is the 402 returned when the plan does not
 // include customer-configurable runtime log destinations.

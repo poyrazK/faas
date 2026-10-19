@@ -12,10 +12,6 @@ from ..models.platform_tenant_rate_card_response_tier_mode import (
     PlatformTenantRateCardResponseTierMode,
     check_platform_tenant_rate_card_response_tier_mode,
 )
-from ..models.platform_tenant_rate_card_response_unit import (
-    PlatformTenantRateCardResponseUnit,
-    check_platform_tenant_rate_card_response_unit,
-)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -33,13 +29,19 @@ class PlatformTenantRateCardResponse:
     id: UUID
     tenant_id: UUID
     currency: str
-    unit: PlatformTenantRateCardResponseUnit
-    """What the tenant card prices (ADR-1310)."""
+    unit: str
+    """What the tenant card prices (ADR-1310, ADR-1319)."""
     price_millicents_per_unit: int
     included_units_per_month: int
     """Free units per tenant per UTC calendar month (ADR-975)."""
     effective_from: datetime.datetime
     created_at: datetime.datetime
+    base_fee_millicents_per_month: int | Unset = UNSET
+    """The card's fixed monthly charge per tenant (ADR-1322)."""
+    minimum_millicents_per_month: int | Unset = UNSET
+    """The card's minimum monthly usage charge per tenant (ADR-1322)."""
+    prorate_monthly_fees: bool | Unset = UNSET
+    """Whether the first month's fees are prorated (ADR-1325)."""
     tiers: list[APIConsumerRateCardTier] | Unset = UNSET
     """Ladder counted per tenant per UTC calendar month (ADR-975); absent for flat cards."""
     tier_mode: PlatformTenantRateCardResponseTierMode | Unset = UNSET
@@ -55,7 +57,7 @@ class PlatformTenantRateCardResponse:
 
         currency = self.currency
 
-        unit: str = self.unit
+        unit = self.unit
 
         price_millicents_per_unit = self.price_millicents_per_unit
 
@@ -64,6 +66,12 @@ class PlatformTenantRateCardResponse:
         effective_from = self.effective_from.isoformat()
 
         created_at = self.created_at.isoformat()
+
+        base_fee_millicents_per_month = self.base_fee_millicents_per_month
+
+        minimum_millicents_per_month = self.minimum_millicents_per_month
+
+        prorate_monthly_fees = self.prorate_monthly_fees
 
         tiers: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.tiers, Unset):
@@ -94,6 +102,12 @@ class PlatformTenantRateCardResponse:
                 "created_at": created_at,
             }
         )
+        if base_fee_millicents_per_month is not UNSET:
+            field_dict["base_fee_millicents_per_month"] = base_fee_millicents_per_month
+        if minimum_millicents_per_month is not UNSET:
+            field_dict["minimum_millicents_per_month"] = minimum_millicents_per_month
+        if prorate_monthly_fees is not UNSET:
+            field_dict["prorate_monthly_fees"] = prorate_monthly_fees
         if tiers is not UNSET:
             field_dict["tiers"] = tiers
         if tier_mode is not UNSET:
@@ -115,7 +129,7 @@ class PlatformTenantRateCardResponse:
 
         currency = d.pop("currency")
 
-        unit = check_platform_tenant_rate_card_response_unit(d.pop("unit"))
+        unit = d.pop("unit")
 
         price_millicents_per_unit = d.pop("price_millicents_per_unit")
 
@@ -124,6 +138,12 @@ class PlatformTenantRateCardResponse:
         effective_from = datetime.datetime.fromisoformat(d.pop("effective_from"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        base_fee_millicents_per_month = d.pop("base_fee_millicents_per_month", UNSET)
+
+        minimum_millicents_per_month = d.pop("minimum_millicents_per_month", UNSET)
+
+        prorate_monthly_fees = d.pop("prorate_monthly_fees", UNSET)
 
         _tiers = d.pop("tiers", UNSET)
         tiers: list[APIConsumerRateCardTier] | Unset = UNSET
@@ -157,6 +177,9 @@ class PlatformTenantRateCardResponse:
             included_units_per_month=included_units_per_month,
             effective_from=effective_from,
             created_at=created_at,
+            base_fee_millicents_per_month=base_fee_millicents_per_month,
+            minimum_millicents_per_month=minimum_millicents_per_month,
+            prorate_monthly_fees=prorate_monthly_fees,
             tiers=tiers,
             tier_mode=tier_mode,
             route_weights=route_weights,

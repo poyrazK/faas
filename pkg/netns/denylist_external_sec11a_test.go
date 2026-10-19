@@ -192,9 +192,7 @@ func splitNftCommandsV4V6(t *testing.T, cfg netns.Config) (v4Argv, v6Argv string
 //     pin (a regression in one should not silently hide behind
 //     the other)
 //
-// The implementation is identical to the PR-D version. Result
-// is masked to guarantee it's inside the prefix even for
-// boundary cases like 127.0.0.0/8.
+// The implementation is identical to the PR-D version.
 func sec11aSampleAddrInPrefix(p netip.Prefix) netip.Addr {
 	addr := p.Addr()
 	bits := p.Bits()
@@ -204,21 +202,9 @@ func sec11aSampleAddrInPrefix(p netip.Prefix) netip.Addr {
 		}
 		return netip.MustParseAddr("::1")
 	}
-	next := addr.As16()
-	if bits < 128 {
-		hostBytes := (128 - bits) / 8
-		hostBits := (128 - bits) % 8
-		if hostBits > 0 {
-			next[hostBytes] |= 1 << (8 - hostBits - 1)
-		} else if hostBytes+1 <= 15 {
-			next[hostBytes] |= 0x80
-		}
-	}
-	a, ok := netip.AddrFromSlice(next[:])
-	if !ok {
-		return addr
-	}
-	a = a.Unmap()
-	masked := netip.PrefixFrom(a, bits).Masked()
-	return masked.Addr()
+	// The prefix's own network address. The earlier version set a "host"
+	// bit by indexing from the front of the 16-byte form, which for any
+	// prefix longer than /64 set a network bit and sampled outside the
+	// prefix (64:ff9b::/96 gave 64:ff9b:8000::).
+	return p.Masked().Addr()
 }

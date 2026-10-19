@@ -414,6 +414,8 @@ func (c CredentialMaterial) Validate() error {
 
 type CredentialRequest struct {
 	ProviderResourceID string
+	// Nonzero only when a durable capacity reservation bounds this login.
+	ConnectionLimit int64
 	// BindingID identifies owner-approved policies across credential generations.
 	// Standalone provider qualification requests may omit it.
 	BindingID string
@@ -923,6 +925,7 @@ const (
 )
 
 type Binding struct {
+	ConnectionLimit      int64
 	ID                   string
 	AccountID            string
 	DatabaseAccountID    string

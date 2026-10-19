@@ -8,8 +8,8 @@ import (
 	"net/url"
 )
 
-// DataAPIConnectionBudgets contains per-database planning snapshots. It does
-// not reserve connections or change scheduler admission.
+// DataAPIConnectionBudgets contains per-database planning or enforced
+// allocation snapshots. Reading this endpoint never reserves connections.
 type DataAPIConnectionBudgets struct {
 	Version   int                               `json:"version"`
 	App       string                            `json:"app"`

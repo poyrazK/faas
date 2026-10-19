@@ -117,6 +117,10 @@ func (m *MemStore) BeginEnvironmentGitOpsWorkloadRetirements(ctx context.Context
 		return nil, ErrConflict
 	}
 	journal := maps.Clone(memory.retirements)
+	policies := maps.Clone(memory.retirementPolicies)
+	if policies == nil {
+		policies = map[string]environmentBindingRetirementPolicy{}
+	}
 	if journal == nil {
 		journal = map[string]EnvironmentWorkloadRetirement{}
 	}
@@ -157,11 +161,13 @@ func (m *MemStore) BeginEnvironmentGitOpsWorkloadRetirements(ctx context.Context
 			r := EnvironmentWorkloadRetirement{ID: newID(), SourceID: memory.source.ID, AccountID: memory.source.AccountID, ProjectID: memory.source.ProjectID, EnvironmentID: memory.source.EnvironmentID, AppID: memory.resources[resource], Resource: resource, RevisionID: lease.Revision.ID, Generation: memory.source.Generation, PlanHash: plan.Hash, Phase: "planned", DeploymentIDs: inventory.DeploymentIDs, QueueBindingIDs: inventory.QueueBindingIDs, JobID: inventory.JobID, RequestedAt: time.Now().UTC()}
 			r.RouteDeploymentID = inventory.RouteDeploymentID
 			journal[resource] = r
+			policies[r.ID] = retirementBindingPolicy(m.bindingReleasePolicyLocked(r.AppID, memory.source.EnvironmentSlug))
 			steps = append(steps, EnvironmentGitOpsStep{Resource: resource, Path: "presence", Action: "retire", Status: "planned"})
 		}
 	}
 	if len(steps) > 0 {
 		memory.retirements = journal
+		memory.retirementPolicies = policies
 		touchGitOpsMemoryIntent(memory)
 	}
 	return steps, nil
@@ -448,13 +454,24 @@ func (m *MemStore) ActivateEnvironmentGitOpsEmptyRetirement(ctx context.Context,
 	if err != nil {
 		return false, err
 	}
+	grant, err := m.environmentBindingRetirementGrantLocked(memory, lease, reviewed.Hash, members)
+	if err != nil {
+		return false, err
+	}
 	rollback := m.stageWorkloadRetirementCutoverLocked(memory)
 	defer func() { rollback() }()
 	if err := m.activateWorkloadRetirementsLocked(memory, lease); err != nil {
 		return false, err
 	}
-	if _, err := m.publishProjectReleaseSetLocked(memory.source.AccountID, memory.source.ProjectID, memory.source.EnvironmentSlug, ttl, members, true); err != nil {
+	release, err := m.publishProjectReleaseSetLocked(memory.source.AccountID, memory.source.ProjectID, memory.source.EnvironmentSlug, ttl, members, true, grant)
+	if err != nil {
 		return false, err
+	}
+	if grant != nil {
+		if memory.bindingRetirements == nil {
+			memory.bindingRetirements = map[string]environmentBindingRetirementPublication{}
+		}
+		memory.bindingRetirements[release.ID] = *grant.retirement
 	}
 	rollback = func() {}
 	return true, nil

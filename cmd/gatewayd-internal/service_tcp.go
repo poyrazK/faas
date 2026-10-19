@@ -168,7 +168,7 @@ func validateServiceTCPListen(addr, serviceProxyAddr string) error {
 // startServiceTCPProxy serves private TCP service addresses until ctx ends.
 // startServiceTCPProxy returns drain, which a hand-off's old generation
 // calls to stop accepting and wait, within its ctx, for open sessions
-// (ADR-1580). Cancelling the run ctx still closes them at once.
+// (ADR-1736). Cancelling the run ctx still closes them at once.
 func startServiceTCPProxy(ctx context.Context, deps runDeps, addr string, services *gateway.ServiceProxy, store state.Store, errc chan<- error, log *slog.Logger) (drain func(context.Context) error, err error) {
 	if deps.nodeCache == nil || deps.metrics == nil {
 		return nil, errors.New("gatewayd: service_tcp_listen needs the vmmd node cache and metrics")

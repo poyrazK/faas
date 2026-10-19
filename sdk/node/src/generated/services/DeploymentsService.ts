@@ -23,6 +23,7 @@ import type { DeploymentResponseCheckCapabilities } from '../models/DeploymentRe
 import type { DeploymentResponseCheckRequest } from '../models/DeploymentResponseCheckRequest.js';
 import type { DeploymentResponseCheckResult } from '../models/DeploymentResponseCheckResult.js';
 import type { DeploymentRuntimeResponse } from '../models/DeploymentRuntimeResponse.js';
+import type { DeploymentStageState } from '../models/DeploymentStageState.js';
 import type { DeploymentSummaryResponse } from '../models/DeploymentSummaryResponse.js';
 import type { LatestDeploymentsByAppResponse } from '../models/LatestDeploymentsByAppResponse.js';
 import type { ListDeploymentAuditResponse } from '../models/ListDeploymentAuditResponse.js';
@@ -2081,7 +2082,8 @@ export class DeploymentsService {
    * `snapshot_prepare` / `readiness`) is enforced at the
    * database layer by `deployments_stage_state_current_check`,
    * so a malformed row would never reach the wire. The
-   * `current` field is the stage the deploy is in right now;
+   * `current` field is the stage the deploy is in right now
+   * (empty once the deployment is live, failed or cancelled);
    * `history` lists the closed rows in transition order
    * (oldest → newest), each carrying server-measured
    * `duration_ms` so the CLI / dashboard don't have to trust
@@ -2092,7 +2094,7 @@ export class DeploymentsService {
    * - the deployment belongs to a different account (IDOR-safe;
    * no account-existence leak).
    *
-   * @returns any The raw `deployments.stage_state` jsonb. Shape: {current, current_started_at, history: [{name, started_at, ended_at, duration_ms, status, reason}]}.
+   * @returns DeploymentStageState The deployment's stored `stage_state` document, served verbatim.
    * @throws ApiError
    */
   public static getDeploymentStages({
@@ -2102,18 +2104,7 @@ export class DeploymentsService {
      * 32-hex-char opaque ID (NOT canonical UUID).
      */
     id: string,
-  }): CancelablePromise<{
-    current?: 'source_download' | 'dependency_restore' | 'image_build' | 'security_scan' | 'snapshot_prepare' | 'readiness';
-    current_started_at?: string | null;
-    history?: Array<{
-      name?: 'source_download' | 'dependency_restore' | 'image_build' | 'security_scan' | 'snapshot_prepare' | 'readiness';
-      started_at?: string | null;
-      ended_at?: string | null;
-      duration_ms?: number;
-      status?: 'completed' | 'failed';
-      reason?: string;
-    }>;
-  }> {
+  }): CancelablePromise<DeploymentStageState> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/deployments/{id}/stages',

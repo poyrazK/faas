@@ -87,7 +87,7 @@ func TestCPUProfileDashboardIntervalScopesQueryAndPreservesOverview(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now().Truncate(time.Second)
+	now := time.Now().UTC().Truncate(time.Second)
 	cpuQueries := 0
 	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cpuQueries++

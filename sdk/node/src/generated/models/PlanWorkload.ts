@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ComposeHealthcheck } from './ComposeHealthcheck.js';
+import type { ComposeProcess } from './ComposeProcess.js';
 import type { PlanDetectedBy } from './PlanDetectedBy.js';
 import type { PreviewServiceCallsPolicy } from './PreviewServiceCallsPolicy.js';
 import type { ServiceBindingPolicy } from './ServiceBindingPolicy.js';
@@ -13,6 +14,14 @@ import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js
  * One discovered unit of work. Mirrors reposcan.Workload.
  */
 export type PlanWorkload = {
+  /**
+   * Reviewed public HTTPS base URL derived from this app allocation and installation domain. Absent when wildcard app URLs are disabled.
+   */
+  public_url?: string;
+  /**
+   * Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original identity. Present for migration scans and existing allocations.
+   */
+  app_slug?: string;
   name: string;
   /**
    * Requested customer identity policy from Compose x-gregale-platform-tenant-required or the request override. Omitted preserves existing app policy; new apps default to false.
@@ -31,6 +40,10 @@ export type PlanWorkload = {
    * Compose healthcheck override for prebuilt image workloads, captured per deployment.
    */
   image_healthcheck?: ComposeHealthcheck;
+  /**
+   * Compose entrypoint, user, working_dir and stop overrides for prebuilt image workloads, captured per deployment.
+   */
+  image_process?: ComposeProcess;
   command: Array<string>;
   /**
    * Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects GREGALE_SERVICE_<NAME>_URL plus GREGALE_SERVICE_<NAME>_HTTPS_URL for workload dependencies.
@@ -74,6 +87,10 @@ export type PlanWorkload = {
    * KEYS only — never values; spec §11 forbids logging secrets
    */
   env_keys?: Array<string>;
+  /**
+   * Explicit names from .gregale/required-secrets.json. Detected env_keys alone do not establish requirements.
+   */
+  required_env_keys?: Array<string>;
   /**
    * detector provenance, e.g. compose.yaml: api
    */

@@ -831,6 +831,9 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 	if len(inputs) > 0 && len(inputs) != tasks {
 		return JobRun{}, nil, fmt.Errorf("state: input count %d must equal tasks %d", len(inputs), tasks)
 	}
+	if err := validateJobRunProcess(opts); err != nil {
+		return JobRun{}, nil, err
+	}
 	if err := validateJobRunAttach(opts, tasks, retryMaxOverride); err != nil {
 		return JobRun{}, nil, err
 	}
@@ -906,6 +909,8 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 		RetryMax:                    &retryMax,
 		TaskTimeoutS:                &timeout,
 		Command:                     command,
+		ProcessUser:                 opts.ProcessUser,
+		ProcessWorkdir:              opts.ProcessWorkdir,
 		ImageRefSnapshot:            job.ImageRef,
 		ImageResolvedDigestSnapshot: job.ImageResolvedDigest,
 		ImageStorageKeySnapshot:     job.ImageStorageKey,
@@ -995,7 +1000,8 @@ func (m *MemStore) JobRunReplayFailed(_ context.Context, sourceRunID, accountID 
 		Tasks: len(failed), Parallelism: source.Parallelism,
 		ExecutionClass: "standard", FailurePolicy: source.FailurePolicy,
 		RetryMax: source.RetryMax, TaskTimeoutS: source.TaskTimeoutS,
-		Command:          append([]string(nil), source.Command...),
+		Command:     append([]string(nil), source.Command...),
+		ProcessUser: source.ProcessUser, ProcessWorkdir: source.ProcessWorkdir,
 		ImageRefSnapshot: job.ImageRef, ImageResolvedDigestSnapshot: job.ImageResolvedDigest,
 		ImageStorageKeySnapshot: job.ImageStorageKey, RAMMBSnapshot: source.RAMMBSnapshot,
 		EffectiveEnvSnapshot: append(json.RawMessage(nil), source.EffectiveEnvSnapshot...),
@@ -1635,6 +1641,19 @@ func (m *MemStore) JobTaskMarkClaimed(_ context.Context, runID string, taskIndex
 	if !m.exclusiveJobRunCurrentLocked(m.jobRuns[runID]) {
 		return ErrOperationStaleAttempt
 	}
+	run := m.jobRuns[runID]
+	if ins, ok := m.instances[instanceID]; ok {
+		if err := m.recordFinancialJobClaimLocked(financialComputeJobAttempt{AccountID: run.AccountID, JobID: run.JobID, RunID: runID, TaskIndex: taskIndex, InstanceID: instanceID, NodeID: ins.NodeID, RAMMB: ins.RAMMB, LeaseToken: leaseToken}); err != nil {
+			return err
+		}
+	} else {
+		// Preserve projection-only claims used by legacy memory test adapters.
+		// Strict claims and all native funding require a real instance binding.
+		policies, _ := newMemComputeTxn(m, run.AccountID).policies("job:" + run.JobID)
+		if len(strictComputePolicies(policies, "job:"+run.JobID)) > 0 {
+			return ErrNotFound
+		}
+	}
 	t.Status = "claimed"
 	t.InstanceID = &instanceID
 	t.LeaseToken = &leaseToken
@@ -1721,6 +1740,9 @@ func (m *MemStore) CreateAndClaimJobInstance(ctx context.Context, instanceID, jo
 		ins.WakeID = wakeID
 	} else {
 		ins.WakeID = newID()
+	}
+	if err := m.recordFinancialJobClaimLocked(financialComputeJobAttempt{AccountID: run.AccountID, JobID: jobID, RunID: runID, TaskIndex: taskIndex, InstanceID: instanceID, NodeID: computeNodeID, RAMMB: ramMB, LeaseToken: leaseToken}); err != nil {
+		return Instance{}, err
 	}
 	task.Status = "claimed"
 	task.InstanceID = &instanceID

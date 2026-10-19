@@ -1,7 +1,88 @@
 import { randomBytes } from 'node:crypto'
 
 // Mirrors pkg/api/limits.go; TestDataAPIRuntimeBounds checks this contract.
-export const limits = Object.freeze({ pool: 2, connectionReportMs: 5000, connectionReportIntervalMs: 15000, connectionReportBytes: 4096, rows: 1000, bodyBytes: 1048576, responseBytes: 16777216, outputBytes: 1048576, queryMs: 15000, lockMs: 5000, relations: 1000, columns: 10000, types: 20000, queuedRequests: 8, admissionWaitMs: 1000, overloadRetrySeconds: 1, healthProbeMs: 2000, healthBytes: 8192, rateLimitDefaultPerSecond: 10, rateLimitDefaultBurst: 20, rateLimitMaxPerSecond: 1000, rateLimitMaxBurst: 1000, rateLimitMaxSubjects: 4096, rateLimitSweepMs: 1000, userConcurrencyMaxSubjects: 4096, userConcurrencyCooldownMs: 15000 })
+export const limits = Object.freeze({ pool: 2, connectionReportMs: 5000, connectionReportIntervalMs: 15000, connectionReportBytes: 4096, rows: 1000, bodyBytes: 1048576, responseBytes: 16777216, outputBytes: 1048576, queryMs: 15000, lockMs: 5000, relations: 1000, columns: 10000, types: 20000, queuedRequests: 8, admissionWaitMs: 1000, overloadRetrySeconds: 1, healthProbeMs: 2000, healthBytes: 8192, rateLimitDefaultPerSecond: 10, rateLimitDefaultBurst: 20, rateLimitMaxPerSecond: 1000, rateLimitMaxBurst: 1000, rateLimitMaxSubjects: 4096, rateLimitSweepMs: 1000, userConcurrencyMaxSubjects: 4096, userConcurrencyCooldownMs: 15000, publicReadMaxRelations: 64, serverKeySubjectMaxBytes: 255, publicReadMaxAgeSeconds: 3600, cacheTagMaxBytes: 128, cacheTagsMax: 32, serverKeyPermissionsBytes: 4096, serverKeyPermissionsEntries: 64, publicRpcMaxFunctions: 64, usageReportMs: 5000, usageReportIntervalMs: 15000, usageReportMaxHours: 48, usageMonthlyCapMax: 1000000000000, usageRestoreJumpMs: 5000 })
+
+export const relationPart = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/
+const schemaPart = /^[a-z][a-z0-9_]{0,62}$/
+
+// Owner allowlist of schema-qualified relations readable without a token.
+export function publicReadConfig(value, schemas) {
+  if (value === undefined) return null
+  const invalid = () => { throw new Error('Invalid DATA_API_PUBLIC_READ') }
+  if (typeof value !== 'string' || !value) return invalid()
+  const names = value.split(',')
+  if (names.length > limits.publicReadMaxRelations || new Set(names).size !== names.length) return invalid()
+  const relations = names.map(name => {
+    const [schema, relation, ...extra] = name.split('.')
+    if (extra.length || !schemaPart.test(schema ?? '') || !relationPart.test(relation ?? '') || !schemas.includes(schema)) return invalid()
+    return Object.freeze({ schema, relation })
+  })
+  return Object.freeze(relations)
+}
+
+// Edge freshness for canonical anonymous reads and RPC calls; the gateway cache
+// rule stores them.
+export function publicReadMaxAge(value, anonymous) {
+  if (value === undefined) return null
+  if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value) || Number(value) > limits.publicReadMaxAgeSeconds) throw new Error('Invalid DATA_API_PUBLIC_READ_MAX_AGE')
+  if (!anonymous) throw new Error('DATA_API_PUBLIC_READ_MAX_AGE requires DATA_API_PUBLIC_READ or DATA_API_PUBLIC_RPC')
+  return Number(value)
+}
+
+const functionPart = /^[a-z][a-z0-9_]{0,62}$/
+
+// Owner allowlist of approved functions callable without a token, by GET only.
+// The runtime rechecks approval and volatility at startup.
+export function publicRpcConfig(value, schemas) {
+  if (value === undefined) return null
+  const invalid = () => { throw new Error('Invalid DATA_API_PUBLIC_RPC') }
+  if (typeof value !== 'string' || !value) return invalid()
+  const names = value.split(',')
+  if (names.length > limits.publicRpcMaxFunctions || new Set(names).size !== names.length) return invalid()
+  return Object.freeze(names.map(name => {
+    const [schema, fn, ...extra] = name.split('.')
+    if (extra.length || !schemaPart.test(schema ?? '') || !functionPart.test(fn ?? '') || !schemas.includes(schema)) return invalid()
+    return Object.freeze({ schema, name: fn })
+  }))
+}
+const permissionFields = ['version', 'access', 'relations', 'rpcs', 'subjects']
+
+// Optional per-slot restrictions. Absent permissions keep full server access.
+// Entries outside the exposed schemas never match, so they only ever deny.
+export function serverKeyPermissions(value, name) {
+  if (value === undefined) return null
+  const invalid = () => { throw new Error(`Invalid ${name}`) }
+  if (typeof value !== 'string' || Buffer.byteLength(value) > limits.serverKeyPermissionsBytes) return invalid()
+  let permissions
+  try { permissions = JSON.parse(value) } catch { return invalid() }
+  if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions) || Object.keys(permissions).some(key => !permissionFields.includes(key)) || permissions.version !== 1 ||
+    (permissions.access !== undefined && !['read', 'write'].includes(permissions.access)) || (permissions.subjects !== undefined && typeof permissions.subjects !== 'boolean')) return invalid()
+  const entries = (list, pattern) => {
+    if (list === undefined) return null
+    if (!Array.isArray(list) || !list.length || list.length > limits.serverKeyPermissionsEntries || new Set(list).size !== list.length) return invalid()
+    return Object.freeze(list.map(entry => {
+      const [schema, object, ...extra] = typeof entry === 'string' ? entry.split('.') : []
+      if (extra.length || !schemaPart.test(schema ?? '') || !pattern.test(object ?? '')) return invalid()
+      return Object.freeze({ schema, name: object })
+    }))
+  }
+  return Object.freeze({ access: permissions.access ?? 'write', relations: entries(permissions.relations, relationPart), rpcs: entries(permissions.rpcs, functionPart), subjects: permissions.subjects ?? true })
+}
+
+// Only SHA-256 hashes of server keys reach the runtime, in two rotation slots.
+export function serverKeyConfig(env) {
+  const slots = []
+  for (const [slot, name] of [['a', 'DATA_API_SERVER_KEY_A_SHA256'], ['b', 'DATA_API_SERVER_KEY_B_SHA256']]) {
+    const value = env[name]
+    if (value === undefined) continue
+    if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) throw new Error(`Invalid ${name}`)
+    const permissionsName = `DATA_API_SERVER_KEY_${slot.toUpperCase()}_PERMISSIONS`
+    slots.push(Object.freeze({ slot, hash: Buffer.from(value, 'hex'), permissions: serverKeyPermissions(env[permissionsName], permissionsName) }))
+  }
+  if (slots.length === 2 && slots[0].hash.equals(slots[1].hash)) throw new Error('Server key slots must differ')
+  return slots.length ? Object.freeze(slots) : null
+}
 
 export function userConcurrencyPolicy(value, capacity = limits.pool) {
   if (value === undefined || value === null) return null
@@ -96,6 +177,46 @@ export function connectionObservationConfig(env) {
   return Object.freeze({ ...value, endpoint: new URL('/v1/runtime/data-api/connection-observations', api).href, identity: identity.href })
 }
 
+// Owner usage reporting and monthly caps (ADR 20261019102108).
+const capFields = ['requests', 'anonymous_requests']
+
+// Optional owner caps per UTC calendar month. Absent: no caps.
+export function monthlyCaps(value) {
+  if (value === undefined) return null
+  const invalid = () => { throw new Error('Invalid DATA_API_MONTHLY_CAPS') }
+  if (typeof value !== 'string' || value.length > 256) return invalid()
+  let caps
+  try { caps = JSON.parse(value) } catch { return invalid() }
+  if (!caps || typeof caps !== 'object' || Array.isArray(caps) || caps.version !== 1 || Object.keys(caps).some(key => key !== 'version' && !capFields.includes(key))) return invalid()
+  const cap = name => {
+    if (caps[name] === undefined) return null
+    if (!Number.isSafeInteger(caps[name]) || caps[name] < 1 || caps[name] > limits.usageMonthlyCapMax) return invalid()
+    return caps[name]
+  }
+  const parsed = { requests: cap('requests'), anonymous_requests: cap('anonymous_requests') }
+  if (parsed.requests === null && parsed.anonymous_requests === null) return invalid()
+  return Object.freeze(parsed)
+}
+
+// Reporting is on when the app names the platform API; caps need it, since
+// only the platform sees every instance's traffic.
+export function usageConfig(env) {
+  if (env.DATA_API_USAGE_URL === undefined) {
+    if (env.DATA_API_MONTHLY_CAPS !== undefined) throw new Error('DATA_API_MONTHLY_CAPS requires DATA_API_USAGE_URL')
+    return null
+  }
+  const invalid = () => { throw new Error('Invalid Data API usage reporting configuration') }
+  let api, identity
+  try {
+    api = new URL(env.DATA_API_USAGE_URL)
+    identity = new URL(env.FAAS_WORKLOAD_IDENTITY_ENDPOINT)
+  } catch { return invalid() }
+  if (api.protocol !== 'https:' || api.username || api.password || api.pathname !== '/' || api.search || api.hash ||
+    identity.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(identity.hostname) || identity.username || identity.password || identity.pathname !== '/oidc/token' || identity.search || identity.hash) return invalid()
+  identity.searchParams.set('audience', 'gregale:data-api:usage')
+  return Object.freeze({ endpoint: new URL('/v1/runtime/data-api/usage', api).href, identity: identity.href, caps: monthlyCaps(env.DATA_API_MONTHLY_CAPS) })
+}
+
 export function runtimeConfig(env) {
   const connection = databaseURL(env.DATABASE_URL)
   const role = decodeURIComponent(new URL(connection).username)
@@ -105,12 +226,19 @@ export function runtimeConfig(env) {
   if (env.DATA_API_SQL_DEADLINE !== undefined && env.DATA_API_SQL_DEADLINE !== '1') throw new Error('Invalid SQL deadline setting')
   if (env.DATA_API_QUERY_SHAPES !== undefined && env.DATA_API_QUERY_SHAPES !== '1') throw new Error('Invalid query-shape logging setting')
   const queryShapes = env.DATA_API_QUERY_SHAPES === '1'
+  if (env.DATA_API_READ_ONLY !== undefined && !['true', 'false'].includes(env.DATA_API_READ_ONLY)) throw new Error('Invalid read-only setting')
+  const readOnly = env.DATA_API_READ_ONLY === 'true'
   const coordinatedRefresh = env.DATA_API_COORDINATED_REFRESH === '1'
   const sqlDeadline = env.DATA_API_SQL_DEADLINE === '1'
+  if (env.DATA_API_AGGREGATES !== undefined && env.DATA_API_AGGREGATES !== '1') throw new Error('Invalid aggregates setting')
+  const aggregates = env.DATA_API_AGGREGATES === '1'
+  // HTTP aborts cannot stop an expensive aggregate; the SQL deadline can.
+  if (aggregates && !sqlDeadline) throw new Error('Aggregates require DATA_API_SQL_DEADLINE=1')
   if (schemas.includes('gregale_data_api')) throw new Error('Refresh control schema cannot be exposed')
   const secret = randomBytes(32)
-  return { connection, role, schemas, auth, secret, coordinatedRefresh, sqlDeadline, queryShapes, connectionObservation: connectionObservationConfig(env), rateLimit: rateLimitConfig(env), userConcurrency: userConcurrencyConfig(env, coordinatedRefresh ? limits.pool - 1 : limits.pool), acceptedContracts: acceptedContracts(env.DATA_API_ACCEPTED_CONTRACTS), origins: (env.DATA_API_ALLOWED_ORIGINS ?? '').split(',').filter(Boolean),
+  return { connection, role, schemas, auth, secret, coordinatedRefresh, sqlDeadline, queryShapes, readOnly, aggregates, publicRead: publicReadConfig(env.DATA_API_PUBLIC_READ, schemas), serverKeys: serverKeyConfig(env),
+    publicRpc: publicRpcConfig(env.DATA_API_PUBLIC_RPC, schemas), usage: usageConfig(env), publicReadMaxAge: publicReadMaxAge(env.DATA_API_PUBLIC_READ_MAX_AGE, env.DATA_API_PUBLIC_READ !== undefined || env.DATA_API_PUBLIC_RPC !== undefined), connectionObservation: connectionObservationConfig(env), rateLimit: rateLimitConfig(env), userConcurrency: userConcurrencyConfig(env, coordinatedRefresh ? limits.pool - 1 : limits.pool), acceptedContracts: acceptedContracts(env.DATA_API_ACCEPTED_CONTRACTS), origins: (env.DATA_API_ALLOWED_ORIGINS ?? '').split(',').filter(Boolean),
     postgrestEnv: { PGRST_DB_URI: connection, PGRST_DB_SCHEMAS: schemas.join(','), PGRST_JWT_SECRET: secret.toString('base64url'),
       PGRST_SERVER_HOST: '127.0.0.1', PGRST_SERVER_PORT: '3000', PGRST_ADMIN_SERVER_PORT: '3001', PGRST_SERVER_TIMING_ENABLED: 'true',
-      PGRST_DB_POOL: String(coordinatedRefresh ? limits.pool - 1 : limits.pool), PGRST_DB_MAX_ROWS: String(limits.rows), ...(sqlDeadline ? { PGRST_DB_PRE_REQUEST: 'gregale_data_api.check_deadline_request', PGRST_DB_CONFIG: 'false' } : coordinatedRefresh ? { PGRST_DB_PRE_REQUEST: 'gregale_data_api.check_request' } : {}), PGRST_DB_CHANNEL_ENABLED: 'false', PGRST_DB_PREPARED_STATEMENTS: 'false' } }
+      PGRST_DB_POOL: String(coordinatedRefresh ? limits.pool - 1 : limits.pool), PGRST_DB_MAX_ROWS: String(limits.rows), ...(sqlDeadline ? { PGRST_DB_PRE_REQUEST: 'gregale_data_api.check_deadline_request', PGRST_DB_CONFIG: 'false' } : coordinatedRefresh ? { PGRST_DB_PRE_REQUEST: 'gregale_data_api.check_request' } : {}), PGRST_DB_CHANNEL_ENABLED: 'false', PGRST_DB_PREPARED_STATEMENTS: 'false', ...(aggregates ? { PGRST_DB_AGGREGATES_ENABLED: 'true' } : {}) } }
 }

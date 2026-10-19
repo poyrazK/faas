@@ -3,6 +3,7 @@ package livequeries
 import (
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -10,6 +11,19 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// Gate decides who sees live queries. Rollout, read from
+// FAAS_LIVE_QUERIES_ACCOUNTS, is the boot-time gate; apid substitutes the
+// live_queries platform flag (ADR-1700) once an operator has written it.
+type Gate interface {
+	// Allows reports whether an account sees live queries.
+	Allows(accountID string) bool
+	// Off reports whether no account sees live queries.
+	Off() bool
+	// Hidden reports whether a request must answer as an unregistered route
+	// before its handler runs.
+	Hidden(req *http.Request) bool
+}
 
 // Rollout is who may see live queries (FAAS_LIVE_QUERIES_ACCOUNTS): nobody
 // by default, the listed accounts while the preview is tested on
@@ -56,6 +70,20 @@ func (r Rollout) Allows(accountID string) bool {
 // Off reports whether no account sees live queries.
 func (r Rollout) Off() bool { return !r.all && len(r.accounts) == 0 }
 
+// Accounts reports the rollout's shape: every account, or the listed ones in
+// sorted order.
+func (r Rollout) Accounts() (all bool, accounts []string) {
+	if r.all {
+		return true, nil
+	}
+	accounts = make([]string, 0, len(r.accounts))
+	for id := range r.accounts {
+		accounts = append(accounts, id)
+	}
+	slices.Sort(accounts)
+	return false, accounts
+}
+
 // Hidden reports whether a request to a live-query path must answer as an
 // unregistered route before its handler runs: always while the rollout is
 // not everyone, so a method mismatch's 405 and Allow header do not reveal
@@ -74,9 +102,9 @@ func IsLivePath(path string) bool {
 
 // Route answers as an unregistered route, before authentication, while no
 // account sees live queries.
-func Route(rollout func() Rollout, next http.HandlerFunc) http.HandlerFunc {
+func Route(gate func() Gate, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if rollout().Off() {
+		if gate().Off() {
 			httpkit.NoSuchRoute(w)
 			return
 		}
@@ -86,9 +114,9 @@ func Route(rollout func() Rollout, next http.HandlerFunc) http.HandlerFunc {
 
 // Account answers as an unregistered route, right after authentication, to
 // an account outside the rollout.
-func Account(rollout func() Rollout, next httpkit.AccountHandler) httpkit.AccountHandler {
+func Account(gate func() Gate, next httpkit.AccountHandler) httpkit.AccountHandler {
 	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
-		if !rollout().Allows(acct.ID) {
+		if !gate().Allows(acct.ID) {
 			httpkit.NoSuchRoute(w)
 			return
 		}

@@ -32,6 +32,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
+	"github.com/onebox-faas/faas/pkg/wire"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
@@ -265,6 +266,8 @@ type ServiceProxyRequestAttemptObserver func(runID, callerAppID, generation stri
 // small handler factory so selection and retry behavior can be exercised
 // without a live gRPC server.
 type ServiceProxyConfig struct {
+	// AdmitRuntime checks current budget holds after selecting the runtime.
+	AdmitRuntime              func(context.Context, string, string) error
 	AdmitManagedAsync         ServiceProxyAsyncAdmitter
 	Provider                  ServiceEndpointProvider
 	Resolve                   ServiceProxyResolver
@@ -280,6 +283,10 @@ type ServiceProxyConfig struct {
 	// traffic (ADR-197). nil rejects internal upgrade requests with 501
 	// rather than letting the ordinary forwarder strip the handshake.
 	RawForward func(Target) http.Handler
+	// APIMonetization is the API monetization release gate
+	// (ADR-20261018090210): while it reports true Gregale-Usage is consumed
+	// like on public requests. Nil leaves the header untouched.
+	APIMonetization func() bool
 	// Wake is the optional wake-on-demand seam (ADR-196). nil keeps the
 	// legacy fail-fast behaviour for a parked target.
 	Wake ServiceProxyWaker
@@ -341,6 +348,8 @@ type ServiceProxyConfig struct {
 // endpoints that recently failed transport, and retries one alternate target
 // for safe idempotent requests.
 type ServiceProxy struct {
+	admitRuntime              func(context.Context, string, string) error
+	apiMonetization           func() bool
 	admitManagedAsync         ServiceProxyAsyncAdmitter
 	mintAssertion             ServiceCallerMinter
 	localNodeID               string
@@ -448,6 +457,8 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		retryBudget = NewRetryBudget(0, now)
 	}
 	return &ServiceProxy{
+		admitRuntime:              cfg.AdmitRuntime,
+		apiMonetization:           cfg.APIMonetization,
 		mintAssertion:             cfg.MintCallerAssertion,
 		localNodeID:               strings.TrimSpace(cfg.LocalNodeID),
 		provider:                  cfg.Provider,
@@ -498,7 +509,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// A service call uses the same bounded guest-evidence sink as public
 	// requests so target flag decisions can be attached to this dependency span.
-	r = withGuestExecutionEvidence(r)
+	r = withGuestExecutionEvidence(r, p.apiMonetization != nil && p.apiMonetization())
 	// The guest-facing service-proxy listener is a standalone http.Server, not
 	// wrapped by otelhttp. Extract W3C context here so a caller that forwards
 	// its inbound traceparent joins the original request instead of always
@@ -781,51 +792,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if probe {
-		if p.provider == nil {
-			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service endpoint registry is unavailable")
-			return
-		}
-		overrideID, present, valid := serviceDeploymentOverrideFromRequest(r)
-		if present {
-			if !valid {
-				serviceProxyProblem(dispatchWriter, http.StatusBadRequest, "invalid service probe target deployment")
-				return
-			}
-			if p.validateDeployment == nil {
-				serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service deployment validation is unavailable")
-				return
-			}
-			live, err := p.validateDeployment(dependencyCtx, target.AppID, overrideID)
-			if err != nil || !live {
-				serviceProxyProblem(dispatchWriter, http.StatusUnprocessableEntity, "service probe target deployment is unavailable")
-				return
-			}
-		}
-		endpoints, err := p.endpoints(dependencyCtx, target.AppID)
-		if err != nil {
-			p.metrics.IncServiceCall(ServiceCallRegistryUnavailable)
-			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service endpoint registry is unavailable")
-			return
-		}
-		if present {
-			selected := make([]ServiceEndpoint, 0, len(endpoints))
-			for _, endpoint := range endpoints {
-				if endpoint.DeploymentID == overrideID {
-					selected = append(selected, endpoint)
-				}
-			}
-			endpoints = selected
-		}
-		if len(endpoints) == 0 {
-			p.metrics.IncServiceCall(ServiceCallNoReplica)
-			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service has no healthy replicas; probe did not wake the target")
-			return
-		}
-		if present {
-			dispatchWriter.Header().Set(api.TargetDeploymentHeader, overrideID)
-		}
-		dispatchWriter.Header().Set(api.ServiceBindingProbeStageHeader, "complete")
-		dispatchWriter.WriteHeader(http.StatusNoContent)
+		p.serveServiceBindingProbe(dispatchWriter, r, target, environmentBinding)
 		return
 	}
 	if p.admitManagedAsync != nil && p.admitManagedAsync(dispatchWriter, r, callerInfo, target, targetPath) {
@@ -916,6 +883,17 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !overridePresent && versionKey != "" {
 		if resolver, ok := p.provider.(versionAffinityResolver); ok {
 			versionDeploymentID, _ = resolver.AffinityDeployment(target.AppID, versionKey)
+		}
+	}
+	if p.admitRuntime != nil {
+		if err := p.admitRuntime(dependencyCtx, target.AppID, versionDeploymentID); err != nil {
+			var problem *api.Problem
+			if errors.As(err, &problem) {
+				api.WriteProblem(dispatchWriter, problem)
+			} else {
+				serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "budget admission is unavailable")
+			}
+			return
 		}
 	}
 	var responseFault *scenarioHTTPResponseFault
@@ -1551,6 +1529,7 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 	if p.attachCallerAssertion(request, target, caller, callerEnv) {
 		request = withTrustedServiceCallerAssertion(request)
 	}
+	request = request.WithContext(wire.WithPrivateForward(request.Context())) //nolint:contextcheck // request inherits r.Context and may carry the authorized assertion context.
 	return request
 }
 
