@@ -38,17 +38,28 @@ func TestRecoveryMigrationReplayPreservesCurrentWork(t *testing.T) {
 
 	// Replaying an older incoming migration must preserve the newer physical
 	// source guards and capacity projection, as well as active operator claims.
-	fingerprint := func() string {
+	fingerprint := func(except string) string {
 		t.Helper()
 		var value string
 		err := pool.QueryRow(t.Context(), `SELECT md5(coalesce(string_agg(pg_get_functiondef(oid), E'\n' ORDER BY oid),''))
-FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND prokind='f'`).Scan(&value)
+FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND prokind='f' AND proname<>$1`, except).Scan(&value)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return value
 	}
-	wantFunctions := fingerprint()
+	wantFunctions := fingerprint("")
+	// 20261018003100003_org_resource_lifecycle later rewrote the capacity
+	// projection to read app_resource_accounts. Issued migrations are
+	// append-only, so replaying 004 itself restores its own projection: check
+	// everything else, then put the current projection back so the older 003
+	// replay below is still checked against it.
+	const laterProjection = "service_capacity_snapshot"
+	wantOtherFunctions := fingerprint(laterProjection)
+	var currentProjection string
+	if err := pool.QueryRow(t.Context(), `SELECT pg_get_functiondef(to_regprocedure('service_capacity_snapshot()'))`).Scan(&currentProjection); err != nil {
+		t.Fatal(err)
+	}
 	_, thisFile, _, _ := runtime.Caller(0)
 	directory := filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
 	files := []string{
@@ -72,7 +83,15 @@ FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND prokind='f'`)
 		if _, err := pool.Exec(t.Context(), up); err != nil {
 			t.Fatalf("replay %s: %v", name, err)
 		}
-		if got := fingerprint(); got != wantFunctions {
+		if name == files[8] {
+			if got := fingerprint(laterProjection); got != wantOtherFunctions {
+				t.Fatalf("replay %s changed existing function definitions", name)
+			}
+			if _, err := pool.Exec(t.Context(), currentProjection); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := fingerprint(""); got != wantFunctions {
 			t.Fatalf("replay %s changed existing function definitions", name)
 		}
 		for _, want := range intents {

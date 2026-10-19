@@ -868,7 +868,11 @@ jobs:
   unit-tests-state:
     name: unit tests (state shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # A shard takes ~20 min, of which 3-4 min is the race+coverage compile of
+    # pkg/state. A slow shared runner has taken 26 min for that compile alone
+    # (run 39174391154), so leave room for one without hiding a hung test:
+    # the go test -timeout below still bounds the tests themselves.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -2355,7 +2359,9 @@ jobs:
   sdk-python:
     name: sdk-python (gen-check + smoke + unit)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The storage starter acceptance suite alone runs several minutes; the job
+    # took 9.4 of 10 minutes on run 39169411988 and was cancelled on the next.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7

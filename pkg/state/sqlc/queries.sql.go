@@ -3669,13 +3669,14 @@ const claimAppHealth = `-- name: ClaimAppHealth :one
 WITH candidate AS (
  SELECT a.id, a.account_id FROM apps a
  JOIN app_resource_accounts acct ON acct.app_id = a.id
+ JOIN resource_namespaces rn ON rn.id = a.account_id
  LEFT JOIN app_health_collection_state h ON h.app_id = a.id
  WHERE a.status <> 'deleted' AND a.deleted_at IS NULL
  AND COALESCE(a.manifest->>'execution_mode', '') IN ('', 'request', 'service')
  AND (h.next_check_at IS NULL OR h.next_check_at <= $1::timestamptz)
  AND (h.lease_until IS NULL OR h.lease_until <= $1::timestamptz)
  ORDER BY COALESCE(h.next_check_at, '-infinity'::timestamptz), a.id
- LIMIT 1 FOR UPDATE OF a SKIP LOCKED
+ LIMIT 1 FOR UPDATE OF a SKIP LOCKED FOR KEY SHARE OF rn SKIP LOCKED
 )
 INSERT INTO app_health_collection_state(app_id, account_id, next_check_at, lease_token, lease_started_at, lease_until)
 SELECT id, account_id, $1::timestamptz, $2::text, $1::timestamptz, $3::timestamptz FROM candidate
@@ -3698,10 +3699,10 @@ type ClaimAppHealthRow struct {
 	LeaseUntil     pgtype.Timestamptz
 }
 
-// Lock order matches ApplyProjectPlan (account, then its apps). The insert's
-// account_id foreign key needs a key-share lock on the account; taking it
-// here with SKIP LOCKED skips an app whose account is mid-apply instead of
-// holding the app row while waiting for the account (deadlock 40P01).
+// Lock order matches ApplyProjectPlan (resource namespace, then its apps).
+// The insert's account_id foreign key needs a key-share lock on the
+// namespace; taking it here with SKIP LOCKED skips an app whose namespace is
+// mid-apply instead of holding the app row while waiting for it (40P01).
 func (q *Queries) ClaimAppHealth(ctx context.Context, db DBTX, arg ClaimAppHealthParams) (ClaimAppHealthRow, error) {
 	row := db.QueryRow(ctx, claimAppHealth, arg.CheckedNow, arg.Token, arg.ExpiresAt)
 	var i ClaimAppHealthRow
@@ -48090,12 +48091,12 @@ func (q *Queries) LockAppEnvironmentSecretReferenceScope(ctx context.Context, db
 }
 
 const lockAppHealthAccount = `-- name: LockAppHealthAccount :exec
-SELECT 1 FROM accounts WHERE id = $1::text::uuid FOR KEY SHARE
+SELECT 1 FROM resource_namespaces WHERE id = $1::text::uuid FOR KEY SHARE
 `
 
-// FinishAppHealth takes the account first, before history inserts reach the
-// app and account rows through their foreign keys, in the same order as
-// ApplyProjectPlan.
+// FinishAppHealth takes the resource namespace first, before history inserts
+// reach the app and namespace rows through their foreign keys, in the same
+// order as ApplyProjectPlan.
 func (q *Queries) LockAppHealthAccount(ctx context.Context, db DBTX, accountID string) error {
 	_, err := db.Exec(ctx, lockAppHealthAccount, accountID)
 	return err
@@ -68268,18 +68269,57 @@ func (q *Queries) ReadCloneCheckpointObjectPublicationGrants(ctx context.Context
 }
 
 const readCloneCheckpointObjectPublicationSecrets = `-- name: ReadCloneCheckpointObjectPublicationSecrets :many
-SELECT account_id, app_id, key, ciphertext, created_at, updated_at, org_id, kid, scope, value_hash, managed_postgres_binding_id, managed_credential_ref, managed_credential_generation, managed_object_storage_credential_id, delivery_version, delivered_version, delivery_status, last_delivery_attempt_at, last_delivered_at, last_delivery_error_code, last_delivered_wake_id, last_delivered_instance_id, last_runtime_reload_version, last_runtime_reload_revision, last_runtime_reload_projection, last_runtime_reload_signal, last_runtime_reload_at, last_runtime_reload_error_code, last_runtime_reload_instance_id, secret_version, secret_class FROM app_secrets WHERE managed_object_storage_credential_id=$1 ORDER BY key,app_id,scope FOR UPDATE
+SELECT s.account_id, s.app_id, s.key, s.ciphertext, s.created_at, s.updated_at, s.org_id, s.kid, s.scope, s.value_hash, s.managed_postgres_binding_id, s.managed_credential_ref, s.managed_credential_generation, s.managed_object_storage_credential_id, s.delivery_version, s.delivered_version, s.delivery_status, s.last_delivery_attempt_at, s.last_delivered_at, s.last_delivery_error_code, s.last_delivered_wake_id, s.last_delivered_instance_id, s.last_runtime_reload_version, s.last_runtime_reload_revision, s.last_runtime_reload_projection, s.last_runtime_reload_signal, s.last_runtime_reload_at, s.last_runtime_reload_error_code, s.last_runtime_reload_instance_id, s.secret_version, s.secret_class, (s.org_id IS NOT DISTINCT FROM a.org_id)::boolean AS org_matches_app
+FROM app_secrets s LEFT JOIN apps a ON a.id=s.app_id
+WHERE s.managed_object_storage_credential_id=$1 ORDER BY s.key,s.app_id,s.scope FOR UPDATE OF s
 `
 
-func (q *Queries) ReadCloneCheckpointObjectPublicationSecrets(ctx context.Context, db DBTX, managedObjectStorageCredentialID pgtype.UUID) ([]AppSecret, error) {
+type ReadCloneCheckpointObjectPublicationSecretsRow struct {
+	AccountID                        pgtype.UUID
+	AppID                            pgtype.UUID
+	Key                              string
+	Ciphertext                       []byte
+	CreatedAt                        pgtype.Timestamptz
+	UpdatedAt                        pgtype.Timestamptz
+	OrgID                            pgtype.UUID
+	Kid                              pgtype.Text
+	Scope                            string
+	ValueHash                        pgtype.Text
+	ManagedPostgresBindingID         pgtype.UUID
+	ManagedCredentialRef             pgtype.Text
+	ManagedCredentialGeneration      pgtype.Int8
+	ManagedObjectStorageCredentialID pgtype.UUID
+	DeliveryVersion                  int64
+	DeliveredVersion                 pgtype.Int8
+	DeliveryStatus                   string
+	LastDeliveryAttemptAt            pgtype.Timestamptz
+	LastDeliveredAt                  pgtype.Timestamptz
+	LastDeliveryErrorCode            pgtype.Text
+	LastDeliveredWakeID              pgtype.Text
+	LastDeliveredInstanceID          pgtype.Text
+	LastRuntimeReloadVersion         pgtype.Int8
+	LastRuntimeReloadRevision        pgtype.Text
+	LastRuntimeReloadProjection      pgtype.Text
+	LastRuntimeReloadSignal          pgtype.Text
+	LastRuntimeReloadAt              pgtype.Timestamptz
+	LastRuntimeReloadErrorCode       pgtype.Text
+	LastRuntimeReloadInstanceID      pgtype.Text
+	SecretVersion                    pgtype.Int8
+	SecretClass                      string
+	OrgMatchesApp                    bool
+}
+
+// Publication inserts its secrets without org_id and app_core_resource_org
+// stamps the app's organization, so only that exact value is its own.
+func (q *Queries) ReadCloneCheckpointObjectPublicationSecrets(ctx context.Context, db DBTX, managedObjectStorageCredentialID pgtype.UUID) ([]ReadCloneCheckpointObjectPublicationSecretsRow, error) {
 	rows, err := db.Query(ctx, readCloneCheckpointObjectPublicationSecrets, managedObjectStorageCredentialID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []AppSecret{}
+	items := []ReadCloneCheckpointObjectPublicationSecretsRow{}
 	for rows.Next() {
-		var i AppSecret
+		var i ReadCloneCheckpointObjectPublicationSecretsRow
 		if err := rows.Scan(
 			&i.AccountID,
 			&i.AppID,
@@ -68312,6 +68352,7 @@ func (q *Queries) ReadCloneCheckpointObjectPublicationSecrets(ctx context.Contex
 			&i.LastRuntimeReloadInstanceID,
 			&i.SecretVersion,
 			&i.SecretClass,
+			&i.OrgMatchesApp,
 		); err != nil {
 			return nil, err
 		}
@@ -68915,6 +68956,8 @@ SELECT (jsonb_build_object(
     'deployment_revision_pins_deployment_id_fkey', (SELECT count(*) FROM deployment_revision_pins WHERE deployment_id = $1::uuid),
     'deployment_rollback_operations_current_deployment_id_fkey', (SELECT count(*) FROM deployment_rollback_operations WHERE current_deployment_id = $1::uuid),
     'deployment_rollback_operations_target_deployment_id_fkey', (SELECT count(*) FROM deployment_rollback_operations WHERE target_deployment_id = $1::uuid),
+    'deployment_rollbacks_from_deployment_id_fkey', (SELECT count(*) FROM deployment_rollbacks WHERE from_deployment_id = $1::uuid),
+    'deployment_rollbacks_target_deployment_id_fkey', (SELECT count(*) FROM deployment_rollbacks WHERE target_deployment_id = $1::uuid),
     'deployment_route_policy_snapshots_deployment_id_fkey', (SELECT count(*) FROM deployment_route_policy_snapshots WHERE deployment_id = $1::uuid),
     'deployment_runtime_environment_owners_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_environment_owners WHERE deployment_id = $1::uuid),
     'deployment_sidecar_layers_deployment_id_fkey', (SELECT count(*) FROM deployment_sidecar_layers WHERE deployment_id = $1::uuid),

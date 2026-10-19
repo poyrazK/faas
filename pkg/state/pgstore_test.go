@@ -1923,7 +1923,8 @@ func TestPg_ComputeNodes_UsedMB_SumsLiveInstancesOnly(t *testing.T) {
 		t.Errorf("ComputeNodeUsedMB=%d, want %d (5 live × (256+%d))", got, want, api.PerVMOverheadMB)
 	}
 
-	// An unknown valid node UUID returns zero; the nil UUID is invalid input.
+	// Unknown node → 0 (COALESCE wraps the aggregate in the SELECT). The nil
+	// UUID is never a node id and is rejected, so use a well-formed stranger.
 	unknownNodeID := uuid.NewString()
 	gotU, err := s.ComputeNodeUsedMB(ctx, unknownNodeID)
 	if err != nil {

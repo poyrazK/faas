@@ -140,6 +140,12 @@ func TestScopeMatrix(t *testing.T) {
 				t.Errorf("preflight scope rejected %s %s: %s", request.method, request.path, rec.Body)
 			}
 		}
+		// App and project access resolve the addressed resource before scopes
+		// (#4882), so the narrow scope is observed on resources the caller owns.
+		mustSeedApp(t, e, "shop")
+		if _, err := e.store.CreateProject(t.Context(), state.Project{AccountID: e.acct.ID, Slug: "shop"}); err != nil {
+			t.Fatal(err)
+		}
 		for _, request := range []struct {
 			method string
 			path   string
@@ -294,6 +300,7 @@ func TestScopeMatrix(t *testing.T) {
 		// that surface for secrets:write (and admin). A deploy-only
 		// CI key cannot rotate secrets by deletion.
 		e := setupWithScopes(t, []string{api.ScopeDeployWrite})
+		mustSeedApp(t, e, "some-app") // app access resolves the app before scopes (#4882)
 		rec := e.do(t, http.MethodDelete, "/v1/apps/some-app/secrets/API_TOKEN", nil, nil)
 		assertProblem(t, rec, http.StatusForbidden, api.CodeForbidden)
 	})
