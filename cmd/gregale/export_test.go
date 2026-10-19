@@ -1131,6 +1131,7 @@ var DataAPIAcceptedContractPolicy = dataAPIAcceptedContractPolicy
 var DataAPIConsumerImpacts = dataAPIConsumerImpacts
 var DataAPIContractFixture = dataAPIContractFixture
 var DataAPIDiagnosticAllowed = dataAPIDiagnosticAllowed
+var DataAPIDiagnosticFixture = dataAPIDiagnosticFixture
 var DataAPIDiffFixture = dataAPIDiffFixture
 var DataAPIGuideActions = dataAPIGuideActions
 var DataAPIGuideShape = dataAPIGuideShape
