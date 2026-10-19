@@ -423,7 +423,7 @@ func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, o
 		MCPTaskMigrationOverride: req.MCPTaskMigrationOverride,
 	}
 	if app.Manifest.ProjectImage != "" {
-		profile, err := frameworkprofile.CaptureImageRuntime(app.Manifest.ProjectImageCommand, app.Manifest.ProjectImageHealthcheck)
+		profile, err := frameworkprofile.CaptureImageRuntime(app.Manifest.ProjectImageCommand, app.Manifest.ProjectImageHealthcheck, app.Manifest.ProjectImageProcess)
 		if err != nil {
 			return state.Deployment{}, api.ErrCapacity("could not capture project image runtime")
 		}

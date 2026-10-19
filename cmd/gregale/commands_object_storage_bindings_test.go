@@ -1,8 +1,9 @@
-package main
+package main_test
 
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -26,14 +27,14 @@ func TestCmdBindingsObjectStorageListJSONIsSafeAndResolvesBucketName(t *testing.
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	var out bytes.Buffer
-	previousOut, previousJSON := osStdout, jsonOutput
-	osStdout, jsonOutput = &out, false
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 
-	if code := run([]string{"--json", "bindings", "object-storage", "list", "api", "assets"}); code != 0 {
+	if code := main.Run([]string{"--json", "bindings", "object-storage", "list", "api", "assets"}); code != 0 {
 		t.Fatalf("exit = %d, output = %s", code, out.String())
 	}
-	var got objectStorageBindingCLIList
+	var got main.ObjectStorageBindingCLIList
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("decode output: %v\n%s", err, out.String())
 	}
@@ -69,11 +70,11 @@ func TestCmdBindingsObjectStorageRotateReportsPendingWithoutSecrets(t *testing.T
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	var out bytes.Buffer
-	previousOut, previousJSON := osStdout, jsonOutput
-	osStdout, jsonOutput = &out, false
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 
-	if code := cmdBindingsObjectStorageRotate([]string{"api", "assets", "binding-1"}); code != 0 {
+	if code := main.CmdBindingsObjectStorageRotate([]string{"api", "assets", "binding-1"}); code != 0 {
 		t.Fatalf("exit = %d, output = %s", code, out.String())
 	}
 	if !strings.Contains(out.String(), "rotation_pending:  true") || !strings.Contains(out.String(), "binding-1") {
@@ -113,12 +114,12 @@ func TestCmdBindingsObjectStorageRotateWaitReturnsCompletedBindingWithoutSecrets
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	var out bytes.Buffer
-	previousOut, previousJSON := osStdout, jsonOutput
-	osStdout, jsonOutput = &out, false
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 
 	args := []string{"api", "assets", "binding-1", "--wait", "--wait-timeout=1s", "--poll-interval=1ms"}
-	if code := cmdBindingsObjectStorageRotate(args); code != 0 {
+	if code := main.CmdBindingsObjectStorageRotate(args); code != 0 {
 		t.Fatalf("exit = %d, output = %s", code, out.String())
 	}
 	if reads != 2 || !strings.Contains(out.String(), "rotation_pending:  false") {
@@ -149,14 +150,14 @@ func TestCmdBindingsObjectStorageRevokeJSON(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	var out bytes.Buffer
-	previousOut, previousJSON := osStdout, jsonOutput
-	osStdout, jsonOutput = &out, false
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 
-	if code := run([]string{"--json", "bindings", "object-storage", "revoke", "api", "bucket-1", "binding-1"}); code != 0 {
+	if code := main.Run([]string{"--json", "bindings", "object-storage", "revoke", "api", "bucket-1", "binding-1"}); code != 0 {
 		t.Fatalf("exit = %d, output = %s", code, out.String())
 	}
-	var got objectStorageBindingCLIRevokeResult
+	var got main.ObjectStorageBindingCLIRevokeResult
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("decode output: %v\n%s", err, out.String())
 	}

@@ -43,6 +43,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/operation"
 	"github.com/onebox-faas/faas/pkg/apid/operatorobs"
 	"github.com/onebox-faas/faas/pkg/apid/outboundai"
+	"github.com/onebox-faas/faas/pkg/apid/platformflagadmin"
 	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
 	"github.com/onebox-faas/faas/pkg/apid/product"
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
@@ -68,7 +69,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/oidc"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
-	"github.com/onebox-faas/faas/pkg/outbound"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/preflight"
 	"github.com/onebox-faas/faas/pkg/profiling"
 	"github.com/onebox-faas/faas/pkg/promql"
@@ -78,6 +79,7 @@ import (
 	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
+	usagestore "github.com/onebox-faas/faas/pkg/state/dataapiusage"
 	artifactstorage "github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
@@ -147,10 +149,7 @@ type server struct {
 	// postReleaseTelemetry overrides the store's request telemetry for the
 	// post-release watch (ADR-1445); nil reads it from the store.
 	postReleaseTelemetry  rollbackOn5xxTelemetry
-	featureFlagsEnabled   bool
-	aiGatewayEnabled      bool
-	aiGatewayRollout      outbound.AIGatewayRollout // ADR-998
-	outboundAI            outboundai.Service        // ADR-977; Host wired in newServer
+	outboundAI            outboundai.Service // ADR-977; Host wired in newServer
 	flagsWorkloadVerifier *workloadidentity.Verifier
 	statementInvoices     statementinvoices.Service // ADR-1502; Host wired in newServer
 	billingRuns           billingruns.Service       // ADR-1503; Host wired in newServer
@@ -158,6 +157,10 @@ type server struct {
 	consumerCredits       consumercredits.Service   // ADR-1306; Host wired in newServer
 	consumerControls      consumercontrols.Service  // ADR-1314, ADR-1315; Host wired in newServer
 	tenantPlans           tenantplans.Service       // ADR-1307; Host wired in newServer
+	// platformFlagBootstrap holds the boot-time fallbacks for platform flags
+	// (ADR-1700): customer Flags and the AI gateway gate and rollout.
+	platformFlagBootstrap map[string]platformflags.Definition
+	platformFlagAdmin     platformflagadmin.Service // ADR-1700; Host wired in newServer
 	// workloadVerifier is the cluster workload trust (ADR-1141); nil when unset.
 	workloadVerifier *workloadidentity.Verifier
 	// totp limits TOTP guesses per account (totp_guard.go).
@@ -165,6 +168,8 @@ type server struct {
 	objectStorage   *objectstorage.Registry
 	managedPostgres *managedpostgres.Service
 	liveQueries     *livequeries.Service // ADR-20261016151947 live queries per managed database
+	// dataAPIUsage stores ADR-20261019102108 Data API usage; nil without Postgres.
+	dataAPIUsage *usagestore.Store
 	// liveRollout is who sees live queries (FAAS_LIVE_QUERIES_ACCOUNTS);
 	// nobody until configured.
 	liveRollout                   livequeries.Rollout
@@ -980,6 +985,9 @@ func (s *server) WithRuntimeConfigManager(manager *runtimeConfigManager) *server
 		// used by a later hot update. This keeps the environment fallback
 		// and the durable operator override on one source of truth.
 		_ = s.runtimeConfig.apply(runtimeConfigHSTS, s.runtimeConfig.Value(runtimeConfigHSTS))
+		for key, def := range s.platformFlagBootstrap {
+			s.runtimeConfig.seedPlatformFlag(key, def)
+		}
 	}
 	return s
 }
@@ -1411,6 +1419,7 @@ func newServerWithDeps(
 	s.consumerControls.Host = consumerControlsHost{s}
 	s.tenantPlans.Host = tenantPlansHost{s}
 	s.serviceMap.Host = serviceMapHost{s}
+	s.platformFlagAdmin.Host = platformFlagAdminHost{s}
 	// ADR-120: wire the package-level appsDomainFunc seam (declared at
 	// cmd/apid/dns_probes.go:125) to the server's apps base domain so
 	// checkPointsToGregale has the configured Gregale apex in
@@ -1621,6 +1630,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/connection-budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.managedPostgresConnectionBudget))))
 	// Private workload reporting surface; customer API keys cannot publish evidence.
 	mux.HandleFunc("POST /v1/runtime/data-api/connection-observations", s.reportDataAPIRuntimeConnections)
+	mux.HandleFunc("POST /v1/runtime/data-api/usage", s.reportDataAPIUsage)
+	mux.HandleFunc("GET /v1/apps/{slug}/data-api/usage", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.appDataAPIUsage)))
 	mux.HandleFunc("GET /v1/apps/{slug}/data-api/connection-budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.appDataAPIConnectionBudget))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.createManagedPostgresBinding))))))
 	mux.HandleFunc("GET /v1/postgres/bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresBinding))))
@@ -2269,6 +2280,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/policy/status", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getRuntimePolicyStatus)))
 	mux.HandleFunc("DELETE /v1/apps/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteApp))))
 	mux.HandleFunc("POST /v1/apps/{slug}/restore", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.restoreApp))))
+	mux.HandleFunc("GET /v1/deleted-apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDeletedApps))))
+	mux.HandleFunc("GET /v1/deleted-apps/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDeletedApp))))
+	mux.HandleFunc("POST /v1/deleted-apps/{id}/restore", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.restoreDeletedApp))))
 	// First-class preview state keeps URL, expiry, production diff, and
 	// observability/configuration links behind the normal read surface.
 	mux.HandleFunc("GET /v1/preview/{slug}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getPreviewStatus)))
@@ -2463,6 +2477,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/route-policy/receipts/{receipt_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRoutePolicyReceipt))))
 	mux.HandleFunc("GET /v1/apps/{slug}/routes/advice", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteAdvice))))
 	mux.HandleFunc("GET /v1/apps/{slug}/routes/awake", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteAwake))))
+	mux.HandleFunc("GET /v1/apps/{slug}/routes/insights", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteInsights))))
 	mux.HandleFunc("GET /v1/apps/{slug}/service-wake-ahead", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getServiceWakeAhead))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/service-wake-ahead", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putServiceWakeAhead))))
 	mux.HandleFunc("GET /v1/apps/{slug}/route-priorities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRoutePriorities))))
@@ -4066,6 +4081,17 @@ func (s *server) handler() http.Handler {
 		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.adminRuntimeConfigOperationGet)))
 	mux.HandleFunc("GET /v1/admin/config/{key}/revisions",
 		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.adminRuntimeConfigRevisions)))
+	// ADR-1700 — platform flags. Reads join the catalog, the durable rows,
+	// apid's compiled snapshot and per-daemon apply receipts; writes go
+	// through PATCH /v1/admin/config/platform_flag.<key>.
+	mux.HandleFunc("GET /v1/admin/flags",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.platformFlagAdmin.List))))
+	mux.HandleFunc("GET /v1/admin/flags/{key}",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.platformFlagAdmin.Get))))
+	mux.HandleFunc("GET /v1/admin/flags/{key}/decision",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.platformFlagAdmin.Decision))))
+	mux.HandleFunc("GET /v1/admin/accounts/{id}/flags",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.platformFlagAdmin.AccountFlags))))
 
 	// IAM-4 (ADR-035) — auth audit log surface. Read-only; the
 	// events table is append-only (spec §5). Scope gating: session
@@ -4961,7 +4987,7 @@ func (s *server) handler() http.Handler {
 		func(*http.Request) bool { return true },
 		s.observeWrap(s.hosting.HideDisabled(s.hideDisabledMonetization(operation.OperationCustomerCORS(s.productControl.SurfaceGate(ciapi.HideDisabledRoutes(
 			func() ci.Config { return s.ciConfig }, apiContractHandler(mux, func(r *http.Request) bool {
-				return s.durable.Hidden(r) || s.liveRollout.Hidden(r)
+				return s.durable.Hidden(r) || s.liveGate().Hidden(r)
 			}),
 		)))))),
 	)))

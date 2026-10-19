@@ -481,8 +481,8 @@ is a later step.
   - a bake-off against Neon Realtime on the same application.
 - **Later, each with its own ADR:**
   - standby execution;
-  - Neon-backed databases (a replication consumer keeps a Neon compute awake,
-    so it must connect only while Neon reports the compute active);
+  - Neon-backed databases are no longer deferred: see *Scale to zero,
+    built*;
   - bring-your-own Postgres.
 
 ### Phase 0 result (2026-10-16)
@@ -794,9 +794,8 @@ Phase 0 did not cover:
     Overlap 0 and disable revoke at once.
   - **Eligibility.** A backend runs live queries only when its configuration
     names a hub (`live_hub_url`, with `{database_id}` substituted).
-    Configuration refuses one on Neon backends, so on main today no
-    production database can enable them. The native provider (ADR-1027) will
-    set it.
+    Neon backends may name one (2026-10-18, see *Scale to zero, built*);
+    the native provider (ADR-1027) will set it too.
   - **livequeryd's keys.** livequeryd reads its database's sealed keys from
     the control plane, over a read-only connection (`-keys-dsn-file`). It
     opens them with its age identity (`-keys-identity`) and replaces the
@@ -985,6 +984,94 @@ Phase 0 did not cover:
   - One gap remains: while some account is listed, an unauthenticated
     request to a live path gets the 401 that any authenticated route gives,
     not the unregistered 404.
+- **Scale to zero, built** (2026-10-18).
+  - **Release.** A hub with no transaction to apply for
+    `Config.ReleaseAfter` (livequeryd `-release-after`) does three things:
+    - writes its checkpoint;
+    - closes the capture;
+    - resets the pool (`Engine.Release`).
+
+    No connection to the database stays open. The slot-lag poll pauses
+    too.
+  - **Serving while released.**
+    - Subscribers keep their results, since nothing can change them while
+      nothing commits.
+    - A subscriber to a held result with identical arguments joins from
+      memory (`Engine.Join`) and receives it at once.
+    - Unsubscribes, renewals and expiry need no database.
+  - **Resume.** `Engine.Resume` attaches a new capture on the slot.
+    - Transactions the last round applied stream again and are skipped.
+    - A slot lost meanwhile (`Capture.Created`) resets every member, so each
+      result is read again and sent whole.
+    - Triggers:
+      - `Config.Awake`, polled every `AwakeEvery`, reports the database
+        running;
+      - `Hub.Wake` is called (the hook for schedd on native databases);
+      - a subscription needs the database: a new query, new arguments, or
+        any RLS-mode read.
+  - **Neon.** `-awake neon` reads the endpoint's `current_state` from the
+    Neon API:
+    - `active`, `init`, `starting` and `resuming` count as running;
+    - `idle` and `stopping` do not;
+    - anything else, or an error, changes nothing, because reconnecting
+      would itself wake the compute.
+
+    The registry now accepts `live_hub_url` on Neon backends.
+  - **Native.** `-release-after` refuses to start without `-awake`, so a
+    native hub does not release until schedd's park and wake reach it
+    through `Hub.Wake`.
+  - **Tests.**
+    - The engine releases (empty pool, inactive slot), joins from memory,
+      and resumes exactly after commits made meanwhile; a lost slot is
+      read again whole.
+    - The hub releases after the quiet period and serves a held result
+      without reconnecting. It resumes through the probe, a new
+      subscription and `Wake`, catching up each time (`-race`).
+    - The differential oracle adds release and resume cycles under
+      concurrent writers (`LIVEQUERY_ORACLE_RELEASE_PERCENT`, default 8):
+      8 seeds with 12 cycles, some on a lost slot, and 0 divergences.
+    - Neon probe states and flag validation.
+  - **Deployment** (2026-10-19). The `livequeryd_service` Ansible role runs
+    one hub per control plane:
+    - The unit is an `OptionalRegistry` entry, generated like s3-gatewayd's.
+    - The role's drop-in holds the database's flags and loads its secrets
+      as systemd credentials.
+    - The role wires apid's recipient. Accounts are released by the
+      `live_queries` platform flag (ADR-1700), not by the role.
+    - nftables opens the hub port to compute nodes.
+    - cd-controlplane restarts the hub only where it is configured.
+    - livequeryd gained `-database-url-file`, `/readyz`, systemd readiness
+      and watchdog pings, and serves `/<database_id>/live`.
+
+    A backend's `live_hub_url` still names one hub, so each backend can
+    serve one live database until livequeryd hosts several.
+  - **Unverified on Neon:** logical replication on the project, event
+    triggers for the schema-change log, and slot persistence across a
+    suspend.
+
+- **Data API parity** (2026-10-18, with ADR-20261018170742).
+  - **Claims.** The Data API gateway now owns `gregale_access` and the other
+    `gregale_*` claims, overwriting whatever an identity provider's token
+    carries. RLS-mode sessions do the same: the hub removes the gateway-owned
+    claims from the verified claims and sets `gregale_access` to `user`, so a
+    policy on `gregale_access` returns the same rows live and over REST. The
+    canonical claim text still sorts keys and drops volatile claims, so plan
+    groups are unchanged for tokens that never carried `gregale_*` claims.
+  - **Typed reads.** `liveRead` takes its row type from a generated-contract
+    query (`LiveReadRow`). It returns `parseDataAPIRow`, which decodes
+    PostgreSQL text the way PostgREST encodes JSON: integer, `numeric` and
+    float types become numbers (non-finite values stay strings),
+    `timestamp`/`timestamptz` become ISO 8601 strings, arrays are parsed
+    element by element, and JSON is parsed. Embedded resources already arrive
+    as JSON. Composite top-level columns stay text, because the frame carries
+    no field names; their generated object type does not hold live. Sealed
+    queries keep `parseLiveRow`.
+  - **Not yet:** anonymous live reads of public relations and server-key
+    subscriptions. Both need a realtime endpoint that admits them without an
+    `oidc_jwt` connection, and the Data API's public-read allowlist and key
+    hashes, which live only in the app's sealed secrets today, delivered to
+    realtimed.
+  - The SDK's live module stays unexported and unpacked until launch.
 
 ## Consequences
 

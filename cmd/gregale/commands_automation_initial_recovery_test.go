@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -44,7 +45,7 @@ func TestAutomationInitialRecoveryPlanReadOnly(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			captureAutomationStdout(t)
+			main.CaptureAutomationStdout(t)
 			path := filepath.Join(t.TempDir(), "initial.json")
 			args := []string{"failure-recovery-plan", "--app", "consumer", "--failure", recoveryInvocationID, "--key", "initial-1", "--plan-out", path}
 			if scenario == "policy_eligible" || scenario == "policy_excluded" {
@@ -63,7 +64,7 @@ func TestAutomationInitialRecoveryPlanReadOnly(t *testing.T) {
 				}
 				args = append(args, "--policy", policyPath)
 			}
-			code := cmdAutomations(args)
+			code := main.CmdAutomations(args)
 			if (code == 0) != (scenario == "eligible" || scenario == "policy_eligible") {
 				t.Fatalf("exit %d", code)
 			}
@@ -73,11 +74,11 @@ func TestAutomationInitialRecoveryPlanReadOnly(t *testing.T) {
 				}
 				return
 			}
-			p, err := readAutomationRecoveryPlan(path)
+			p, err := main.ReadAutomationRecoveryPlan(path)
 			if err != nil {
 				t.Fatal(err)
 			}
-			req := automationRunJobRequest(p, 2, "reviewed")
+			req := main.AutomationRunJobRequest(p, 2, "reviewed")
 			if req.ParentJobID != "" || req.WorkflowRuns.Runs[0].FailureEvidenceID != recoveryInvocationID || req.WorkflowRuns.Runs[0].ExpectedResumeCount != 0 {
 				t.Fatalf("request lost evidence %+v", req)
 			}
@@ -85,7 +86,7 @@ func TestAutomationInitialRecoveryPlanReadOnly(t *testing.T) {
 				t.Fatal(err)
 			}
 			journal := filepath.Join(t.TempDir(), "journal.jsonl")
-			if code = cmdAutomations([]string{"recovery-plan", "--plan", path, "--journal", journal}); code == 0 {
+			if code = main.CmdAutomations([]string{"recovery-plan", "--plan", path, "--journal", journal}); code == 0 {
 				t.Fatal("bypassed evidence-backed job admission")
 			}
 			if _, err = os.Stat(journal); !os.IsNotExist(err) {
@@ -103,8 +104,8 @@ func TestAutomationInitialFailureInbox(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	captureAutomationStdout(t)
-	if code := cmdAutomations([]string{"failures", "--app", "consumer", "--name", "paid", "--limit", "1"}); code != 0 {
+	main.CaptureAutomationStdout(t)
+	if code := main.CmdAutomations([]string{"failures", "--app", "consumer", "--name", "paid", "--limit", "1"}); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
 }

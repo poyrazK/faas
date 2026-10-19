@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -34,7 +35,7 @@ func TestFormatDevRuntimeLog(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := formatDevRuntimeLog(test.data); got != test.want {
+			if got := main.FormatDevRuntimeLog(test.data); got != test.want {
 				t.Fatalf("formatDevRuntimeLog(%q) = %q, want %q", test.data, got, test.want)
 			}
 		})
@@ -60,12 +61,12 @@ func TestStreamDevRuntimeLogsRendersAppStream(t *testing.T) {
 	}))
 	defer server.Close()
 
-	oldOut := osStdout
+	oldOut := (*main.OsStdout)
 	var output strings.Builder
-	osStdout = &output
-	defer func() { osStdout = oldOut }()
+	(*main.OsStdout) = &output
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if err := streamDevRuntimeLogs(context.Background(), api.NewClient(server.URL, "token"), "demo"); err != nil {
+	if err := main.StreamDevRuntimeLogs(context.Background(), api.NewClient(server.URL, "token"), "demo"); err != nil {
 		t.Fatalf("streamDevRuntimeLogs: %v", err)
 	}
 	got := output.String()

@@ -57,11 +57,28 @@ export type LiveReadOptions<Row> = LiveRowOptions<Row> & {
 export type LiveQueryOptions<Row> = LiveSealedOptions<Row> | LiveReadOptions<Row>
 
 /**
+ * The row a postgrest-js query resolves to: a typed query from the generated
+ * contract gives a typed live row, anything else a plain record.
+ */
+export type LiveReadRow<Query> = Query extends PromiseLike<infer Response>
+  ? LiveDataRow<Response extends { data: infer Data } ? Data : never>
+  : Record<string, unknown>
+
+// Distributes over the response union: the failure branch's null data adds nothing.
+type LiveDataRow<Data> = [Data] extends [never] ? Record<string, unknown>
+  : Data extends null ? never : Data extends ReadonlyArray<infer Row> ? Row : Data
+
+/**
  * The Data API read a postgrest-js query (from createDataClient) would send,
- * for a live query in RLS mode:
+ * for a live query in RLS mode, with a parser that decodes rows as the Data
+ * API returns them, so the query's generated row type holds:
  *   connection.query({ database, token, ...liveRead(data.from('messages').select('id, body').eq('channel_id', 1)) })
  */
-export function liveRead(query: unknown): { read: string; schema?: string } {
+export function liveRead<Query>(query: Query): {
+  read: string
+  schema?: string
+  parse: (values: ReadonlyArray<string | null>, columns: ReadonlyArray<LiveColumn>) => LiveReadRow<Query>
+} {
   const q = query as { url?: unknown; method?: unknown; headers?: unknown; schema?: unknown }
   if (!(q?.url instanceof URL)) throw new TypeError('liveRead takes a query built with createDataClient')
   if (q.method !== undefined && q.method !== 'GET') throw new TypeError('a live query reads: build it with select()')
@@ -71,7 +88,8 @@ export function liveRead(query: unknown): { read: string; schema?: string } {
   const headers = q.headers instanceof Headers ? q.headers : new Headers((q.headers ?? {}) as Record<string, string>)
   // postgrest-js keeps .schema() on the builder and sets the header when it runs.
   const schema = typeof q.schema === 'string' ? q.schema : headers.get('Accept-Profile')
-  return { read: relation + q.url.search, ...(schema ? { schema } : {}) }
+  const parse = parseDataAPIRow as (values: ReadonlyArray<string | null>, columns: ReadonlyArray<LiveColumn>) => LiveReadRow<Query>
+  return { read: relation + q.url.search, ...(schema ? { schema } : {}), parse }
 }
 
 function isRead<Row>(options: LiveQueryOptions<Row>): options is LiveReadOptions<Row> {
@@ -118,6 +136,72 @@ export function parseLiveValue(value: string | null, type: string): unknown {
     case 'json': case 'jsonb': return JSON.parse(value)
     default: return value // int8 and numeric keep their precision as text
   }
+}
+
+/** Decodes a live row as the Data API (PostgREST) returns it in JSON. */
+export function parseDataAPIRow(values: ReadonlyArray<string | null>, columns: ReadonlyArray<LiveColumn>): Record<string, unknown> {
+  const row: Record<string, unknown> = {}
+  columns.forEach((c, i) => { row[c.name] = parseDataAPIValue(values[i] ?? null, c.type) })
+  return row
+}
+
+const offsetHours = /([+-]\d{2})$/
+
+/**
+ * Decodes one PostgreSQL text value as PostgREST encodes it in JSON: numbers
+ * for integer, numeric and float types (non-finite values stay strings, as
+ * JSON has none), ISO 8601 timestamps, arrays element by element, and JSON.
+ * Embedded resources already arrive as JSON. Composite columns stay text.
+ */
+export function parseDataAPIValue(value: string | null, type: string): unknown {
+  if (value === null) return null
+  if (type.startsWith('_')) return parsePostgresArray(value, type.slice(1))
+  switch (type) {
+    case 'bool': return value === 't' || value === 'true'
+    case 'int2': case 'int4': case 'int8': case 'oid': case 'numeric': case 'float4': case 'float8': {
+      const n = Number(value)
+      return Number.isFinite(n) ? n : value
+    }
+    case 'json': case 'jsonb': return JSON.parse(value)
+    case 'timestamptz': return /^\d/.test(value) ? value.replace(' ', 'T').replace(offsetHours, '$1:00') : value
+    case 'timestamp': return /^\d/.test(value) ? value.replace(' ', 'T') : value
+    default: return value
+  }
+}
+
+/** Parses a PostgreSQL array literal ({a,"b c",NULL} or nested), decoding each element. */
+function parsePostgresArray(text: string, elementType: string): unknown {
+  let i = text.startsWith('[') ? text.indexOf('=') + 1 : 0 // optional dimension decoration
+  const parseLevel = (): unknown[] => {
+    if (text[i] !== '{') throw new SyntaxError('malformed PostgreSQL array')
+    i++
+    const items: unknown[] = []
+    if (text[i] === '}') { i++; return items }
+    for (;;) {
+      if (text[i] === '{') items.push(parseLevel())
+      else if (text[i] === '"') {
+        let element = ''
+        for (i++; text[i] !== '"'; i++) {
+          if (i >= text.length) throw new SyntaxError('malformed PostgreSQL array')
+          if (text[i] === '\\') i++
+          element += text[i]
+        }
+        i++
+        items.push(parseDataAPIValue(element, elementType))
+      } else {
+        const start = i
+        while (i < text.length && text[i] !== ',' && text[i] !== '}') i++
+        const element = text.slice(start, i).trim()
+        items.push(element.toUpperCase() === 'NULL' ? null : parseDataAPIValue(element, elementType))
+      }
+      if (text[i] === ',') { i++; continue }
+      if (text[i] === '}') { i++; return items }
+      throw new SyntaxError('malformed PostgreSQL array')
+    }
+  }
+  const result = parseLevel()
+  if (i !== text.length) throw new SyntaxError('malformed PostgreSQL array')
+  return result
 }
 
 let nextID = 0

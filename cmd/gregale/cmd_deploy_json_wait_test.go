@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,12 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestCmdDeploy_JSONDefaultWaitPropagatesTerminalFailure(t *testing.T) {
-	resetJSONOutput()
-	defer resetJSONOutput()
+	main.ResetJSONOutput()
+	defer main.ResetJSONOutput()
 
 	var deploymentReads atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -34,14 +35,14 @@ func TestCmdDeploy_JSONDefaultWaitPropagatesTerminalFailure(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	jsonOutput = true
+	(*main.JsonOutput) = true
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app"}); code != 1 {
+	if code := main.CmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app"}); code != 1 {
 		t.Fatalf("cmdDeploy --json exit = %d, want terminal failure exit 1", code)
 	}
 	if deploymentReads.Load() == 0 {
@@ -57,8 +58,8 @@ func TestCmdDeploy_JSONDefaultWaitPropagatesTerminalFailure(t *testing.T) {
 }
 
 func TestCmdDeploy_JSONDefaultWaitHonorsTimeout(t *testing.T) {
-	resetJSONOutput()
-	defer resetJSONOutput()
+	main.ResetJSONOutput()
+	defer main.ResetJSONOutput()
 
 	var deploymentReads atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -77,17 +78,17 @@ func TestCmdDeploy_JSONDefaultWaitHonorsTimeout(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	jsonOutput = true
+	(*main.JsonOutput) = true
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
-	stderr, restoreErr := captureStderr(t)
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
+	stderr, restoreErr := main.CaptureStderr(t)
 	defer restoreErr()
 
 	started := time.Now()
-	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app", "--timeout", "1"}); code != 3 {
+	if code := main.CmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app", "--timeout", "1"}); code != 3 {
 		t.Fatalf("cmdDeploy --json --timeout 1 exit = %d, want timeout exit 3", code)
 	}
 	elapsed := time.Since(started)
@@ -97,11 +98,11 @@ func TestCmdDeploy_JSONDefaultWaitHonorsTimeout(t *testing.T) {
 	if deploymentReads.Load() == 0 {
 		t.Fatal("default JSON deploy did not poll the deployment before timing out")
 	}
-	problem := assertOneProblem(t, stderr.String())
+	problem := main.AssertOneProblem(t, stderr.String())
 	if problem.Code != "transport_error" || !strings.Contains(problem.Detail, "timed out") || !strings.Contains(problem.Hint, "resume waiting") {
 		t.Fatalf("stderr missing timeout recovery: %+v", problem)
 	}
-	var receipt DeployReceipt
+	var receipt main.DeployReceipt
 	if err := json.Unmarshal(stdout.Bytes(), &receipt); err != nil {
 		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
 	}

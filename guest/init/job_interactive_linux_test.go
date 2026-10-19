@@ -27,7 +27,7 @@ func startJobSessionTest(t *testing.T, taskTimeoutSec int, signals chan os.Signa
 	}
 	receipts := make(chan JobExitPayload, 1)
 	go func() {
-		receipts <- serveInteractiveJobSession(guest, m, []string{"PATH=/usr/bin:/bin"}, signals, slog.Default())
+		receipts <- serveInteractiveJobSession(guest, m, guestJobProcess(m, []string{"PATH=/usr/bin:/bin"}), signals, slog.Default())
 	}()
 	t.Cleanup(func() { _ = host.Close() })
 	return host, receipts

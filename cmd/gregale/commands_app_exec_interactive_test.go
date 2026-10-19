@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -12,16 +12,17 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestExpandShortExecFlags(t *testing.T) {
-	got := expandShortExecFlags([]string{"-it", "--timeout-seconds", "60", "-t", "--", "-it", "-i"})
+	got := main.ExpandShortExecFlags([]string{"-it", "--timeout-seconds", "60", "-t", "--", "-it", "-i"})
 	want := []string{"--interactive", "--tty", "--timeout-seconds", "60", "--tty", "--", "-it", "-i"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("expandShortExecFlags = %q, want %q", got, want)
 	}
-	if got := expandShortExecFlags([]string{"-i", "-ti"}); !reflect.DeepEqual(got, []string{"--interactive", "--interactive", "--tty"}) {
+	if got := main.ExpandShortExecFlags([]string{"-i", "-ti"}); !reflect.DeepEqual(got, []string{"--interactive", "--interactive", "--tty"}) {
 		t.Fatalf("expandShortExecFlags(-i -ti) = %q", got)
 	}
 }
@@ -66,14 +67,14 @@ func TestPumpAppTaskAttachRelaysSession(t *testing.T) {
 	}
 	defer conn.Close()
 
-	oldIn, oldOut, oldErr := osStdin, osStdout, osStderr
-	defer func() { osStdin, osStdout, osStderr = oldIn, oldOut, oldErr }()
+	oldIn, oldOut, oldErr := (*main.OsStdin), (*main.OsStdout), (*main.OsStderr)
+	defer func() { (*main.OsStdin), (*main.OsStdout), (*main.OsStderr) = oldIn, oldOut, oldErr }()
 	var stdout, stderr bytes.Buffer
-	osStdin, osStdout, osStderr = strings.NewReader("ls\n"), &stdout, &stderr
+	(*main.OsStdin), (*main.OsStdout), (*main.OsStderr) = strings.NewReader("ls\n"), &stdout, &stderr
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	terminal, err := pumpAppTaskAttach(ctx, conn, false, nil)
+	terminal, err := main.PumpAppTaskAttach(ctx, conn, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +113,7 @@ func TestDialAppTaskAttachRetriesWhileStarting(t *testing.T) {
 	task := api.AppTaskResponse{ID: "t1", Attach: &api.AppTaskAttachInfo{Token: "tok", Path: api.AppTaskAttachPath("api", "t1")}}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, err := dialAppTaskAttach(ctx, client, "api", task, false, nil)
+	conn, err := main.DialAppTaskAttach(ctx, client, "api", task, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +131,7 @@ func TestDialAppTaskAttachSurfacesProblemDetail(t *testing.T) {
 	}))
 	defer server.Close()
 	task := api.AppTaskResponse{ID: "t1", Attach: &api.AppTaskAttachInfo{Token: "tok", Path: api.AppTaskAttachPath("api", "t1")}}
-	_, err := dialAppTaskAttach(context.Background(), api.NewClient(server.URL, "key"), "api", task, false, nil)
+	_, err := main.DialAppTaskAttach(context.Background(), api.NewClient(server.URL, "key"), "api", task, false, nil)
 	if err == nil || !strings.Contains(err.Error(), "does not match") || !strings.Contains(err.Error(), "403") {
 		t.Fatalf("err = %v", err)
 	}

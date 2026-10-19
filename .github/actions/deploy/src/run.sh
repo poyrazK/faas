@@ -23,8 +23,12 @@ set -euo pipefail
 # Resolve the action path so the script works whether invoked from
 # ${{ github.action_path }} or directly (tests).
 ACTION_PATH="${ACTION_PATH:-$(cd "$(dirname "$0")/.." && pwd)}"
+# Resolved by cmd_validate: releases vendor bin/gregale.gz (src/cli.sh).
 BIN="$ACTION_PATH/bin/gregale"
 VERSION_FILE="$ACTION_PATH/src/version.txt"
+# Next to this script, so tests that source run.sh find it too.
+# shellcheck source=cli.sh
+source "$(dirname "${BASH_SOURCE[0]}")/cli.sh"
 
 # Helper: surface a GitHub Actions error and exit.
 # Usage: die "message"
@@ -173,8 +177,12 @@ cmd_validate() {
 	if [ -n "${INPUT_ENVIRONMENT:-}" ] && { [[ ! "${INPUT_ENVIRONMENT}" =~ ^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$ ]] || [ "${INPUT_ENVIRONMENT}" = "default" ]; }; then
 		die "environment must be a registered project environment slug"
 	fi
-    if [ ! -x "$BIN" ]; then
-        die "vendored binary not found at $BIN (action must be released as a tagged version)"
+    local cli_status=0
+    BIN="$(gregale_cli "$ACTION_PATH")" || cli_status=$?
+    if [ "$cli_status" -eq 2 ]; then
+        die "vendored binary under $ACTION_PATH/bin does not match SHA256SUMS"
+    elif [ "$cli_status" -ne 0 ]; then
+        die "vendored binary not found under $ACTION_PATH/bin (action must be released as a tagged version)"
     fi
     if [ ! -f "$VERSION_FILE" ]; then
         die "version file not found at $VERSION_FILE (action must be released as a tagged version)"

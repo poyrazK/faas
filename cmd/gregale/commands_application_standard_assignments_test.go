@@ -1,8 +1,9 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"net/http"
 	"net/http/httptest"
@@ -35,16 +36,16 @@ func TestOrgStandardAssignmentInventoryCLI(t *testing.T) {
 				}
 				row := api.ApplicationStandardAssignment{ID: id, Active: false, Revision: 3, AdmissionVersion: 2}
 				if action == "list" {
-					writeJSONTestStatus(w, http.StatusOK, api.ApplicationStandardAssignmentList{Assignments: []api.ApplicationStandardAssignment{row}, NextPageAfter: id})
+					main.WriteJSONTestStatus(w, http.StatusOK, api.ApplicationStandardAssignmentList{Assignments: []api.ApplicationStandardAssignment{row}, NextPageAfter: id})
 				} else {
-					writeJSONTestStatus(w, http.StatusOK, row)
+					main.WriteJSONTestStatus(w, http.StatusOK, row)
 				}
 			}))
 			defer ts.Close()
 			t.Setenv("FAAS_API", ts.URL)
-			output, restore := captureStdout(t)
+			output, restore := main.CaptureStdout(t)
 			defer restore()
-			if code := cmdOrgs(args); code != 0 || called != 1 || !json.Valid([]byte(output.String())) || !strings.Contains(output.String(), `"active": false`) || !strings.Contains(output.String(), `"revision": 3`) {
+			if code := main.CmdOrgs(args); code != 0 || called != 1 || !json.Valid([]byte(output.String())) || !strings.Contains(output.String(), `"active": false`) || !strings.Contains(output.String(), `"revision": 3`) {
 				t.Fatalf("inventory CLI exit=%d calls=%d output=%s", code, called, output.String())
 			}
 		})
@@ -58,7 +59,7 @@ func TestOrgStandardAssignmentInventoryCLIRefusalsBeforeNetwork(t *testing.T) {
 	defer ts.Close()
 	t.Setenv("FAAS_API", ts.URL)
 	for _, args := range [][]string{nil, {"unknown"}, {"list"}, {"show", "--org", "acme"}, {"show", "--org", "acme", "--id", "bad"}, {"show", "--org", "acme", "--id", uuid.Nil.String()}, {"list", "--org", "acme", "--after", "bad"}, {"list", "--org", "acme", "--after", uuid.Nil.String()}, {"list", "--org", "acme", "--limit", "0"}, {"list", "--org", "acme", "--limit", "101"}, {"list", "--org", "acme", "extra"}} {
-		if code := cmdOrgs(append([]string{"standards", "assignments"}, args...)); code == 0 || called != 0 {
+		if code := main.CmdOrgs(append([]string{"standards", "assignments"}, args...)); code == 0 || called != 0 {
 			t.Fatalf("invalid inventory arguments reached network: %v exit=%d calls=%d", args, code, called)
 		}
 	}

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"gopkg.in/yaml.v3"
@@ -23,9 +24,9 @@ func TestAutomationSuggestionTemplates(t *testing.T) {
 		{Name: "expire", Run: "expire"},
 		{Name: "loop", ForEach: &api.WorkflowForEachSpec{Items: "input.items", Action: api.WorkflowForEachActionSpec{Run: "send", When: &api.WorkflowGuardSpec{Ref: "input.item.active", Op: "eq", Value: json.RawMessage(`true`)}, Retry: &api.WorkflowRetrySpec{MaxAttempts: 2}}}},
 	}}
-	hints := automationScenarioCoverage{}.hints(definition)
+	hints := main.AutomationScenarioCoverage{}.XHints(definition)
 	path := filepath.Join(t.TempDir(), "suggestions.yaml")
-	summary, err := writeAutomationSuggestions(path, "automation.yaml", definition, hints)
+	summary, err := main.WriteAutomationSuggestions(path, "automation.yaml", definition, hints)
 	if err != nil || summary.Count != len(hints) || summary.Remaining != 0 {
 		t.Fatalf("summary=%+v err=%v", summary, err)
 	}
@@ -36,7 +37,7 @@ func TestAutomationSuggestionTemplates(t *testing.T) {
 	if !strings.Contains(string(raw), "REVIEW REQUIRED") || !strings.Contains(string(raw), `"http_status": 503`) || !strings.Contains(string(raw), "TODO_REPLACE") {
 		t.Fatalf("missing review guidance: %s", raw)
 	}
-	var suite automationScenarioSuite
+	var suite main.AutomationScenarioSuite
 	decoder := yaml.NewDecoder(strings.NewReader(string(raw)))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&suite); err != nil {
@@ -61,13 +62,13 @@ func TestAutomationSuggestionTemplates(t *testing.T) {
 			t.Fatal("missing root expectation")
 		}
 		for name, expect := range scenario.Expect {
-			if _, err := prepareAutomationExpectation(expect, name); err != nil {
+			if _, err := main.PrepareAutomationExpectation(expect, name); err != nil {
 				t.Fatal(err)
 			}
 		}
 		for loop, indexes := range scenario.ExpectItems {
 			for _, expect := range indexes {
-				if _, err := prepareAutomationExpectation(expect, loop); err != nil {
+				if _, err := main.PrepareAutomationExpectation(expect, loop); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -85,30 +86,30 @@ func TestAutomationSuggestionsReviewThenRun(t *testing.T) {
 	if err := os.WriteFile(definitionPath, []byte("name: sample\nsteps:\n  - name: guard\n    run: send\n    when: {ref: input.enabled, op: eq, value: true}\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	definition, ok := readAutomationDefinition(definitionPath)
+	definition, ok := main.ReadAutomationDefinition(definitionPath)
 	if !ok {
 		t.Fatal("definition")
 	}
 	suggestion := filepath.Join(dir, "suggestions.yaml")
-	if _, err := writeAutomationSuggestions(suggestion, definitionPath, definition, []automationCoverageHint{{Step: "guard", Code: "guard_skip_missing"}}); err != nil {
+	if _, err := main.WriteAutomationSuggestions(suggestion, definitionPath, definition, []main.AutomationCoverageHint{{Step: "guard", Code: "guard_skip_missing"}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadAutomationScenarios(suggestion); err == nil {
+	if _, err := main.LoadAutomationScenarios(suggestion); err == nil {
 		t.Fatal("unreviewed TODO files were runnable")
 	}
 	// Complete the one required input file using synthetic input, then run the generated suite.
 	if err := os.WriteFile(filepath.Join(dir, "TODO-suggestion-01-input.json"), []byte(`{"enabled":false}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := loadAutomationScenarios(suggestion)
+	loaded, err := main.LoadAutomationScenarios(suggestion)
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := state.SimulateAutomation(context.Background(), loaded[0].request, api.PlanHobby)
+	response, err := state.SimulateAutomation(context.Background(), (*loaded[0].Request()), api.PlanHobby)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result := evaluateAutomationScenario(loaded[0], response); !result.Passed {
+	if result := main.EvaluateAutomationScenario(loaded[0], response); !result.Passed {
 		t.Fatal(result)
 	}
 }
@@ -117,18 +118,18 @@ func TestAutomationSuggestionsNoOverwriteAndLimit(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "suggestions.yaml")
 	definition := api.WorkflowSpec{Steps: []api.WorkflowStepSpec{{Name: "guard", Run: "send"}}}
-	hints := []automationCoverageHint{{Step: "guard", Code: "guard_match_missing"}}
+	hints := []main.AutomationCoverageHint{{Step: "guard", Code: "guard_match_missing"}}
 	if err := os.WriteFile(path, []byte("original-private-value"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := writeAutomationSuggestions(path, "definition.yaml", definition, hints); !os.IsExist(err) {
+	if _, err := main.WriteAutomationSuggestions(path, "definition.yaml", definition, hints); !os.IsExist(err) {
 		t.Fatalf("overwrite error=%v", err)
 	}
 	link := filepath.Join(dir, "link.yaml")
 	if err := os.Symlink(path, link); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := writeAutomationSuggestions(link, "definition.yaml", definition, hints); !os.IsExist(err) {
+	if _, err := main.WriteAutomationSuggestions(link, "definition.yaml", definition, hints); !os.IsExist(err) {
 		t.Fatalf("symlink error=%v", err)
 	}
 	raw, _ := os.ReadFile(path)
@@ -136,18 +137,18 @@ func TestAutomationSuggestionsNoOverwriteAndLimit(t *testing.T) {
 		t.Fatal("overwrote destination")
 	}
 	empty := filepath.Join(dir, "empty.yaml")
-	if summary, err := writeAutomationSuggestions(empty, "definition.yaml", definition, nil); err != nil || summary.Count != 0 {
+	if summary, err := main.WriteAutomationSuggestions(empty, "definition.yaml", definition, nil); err != nil || summary.Count != 0 {
 		t.Fatalf("summary=%+v err=%v", summary, err)
 	}
 	if _, err := os.Lstat(empty); !os.IsNotExist(err) {
 		t.Fatal("created empty suggestion file")
 	}
-	many := make([]automationCoverageHint, 34)
+	many := make([]main.AutomationCoverageHint, 34)
 	for i := range many {
 		many[i] = hints[0]
 	}
 	capped := filepath.Join(dir, "capped.yaml")
-	if summary, err := writeAutomationSuggestions(capped, "definition.yaml", definition, many); err != nil || summary.Count != 32 || summary.Remaining != 2 {
+	if summary, err := main.WriteAutomationSuggestions(capped, "definition.yaml", definition, many); err != nil || summary.Count != 32 || summary.Remaining != 2 {
 		t.Fatalf("summary=%+v err=%v", summary, err)
 	}
 }
@@ -155,9 +156,9 @@ func TestAutomationSuggestionsNoOverwriteAndLimit(t *testing.T) {
 func TestCmdAutomationSuggestions(t *testing.T) {
 	for _, mode := range []string{"human", "json", "existing", "out_without_suggest", "no_hints", "failed_check"} {
 		t.Run(mode, func(t *testing.T) {
-			resetJSONOut(t)
-			jsonOutput = mode == "json" || mode == "failed_check"
-			output := captureAutomationStdout(t)
+			main.ResetJSONOut(t)
+			(*main.JsonOutput) = mode == "json" || mode == "failed_check"
+			output := main.CaptureAutomationStdout(t)
 			dir := t.TempDir()
 			definition := filepath.Join(dir, "definition.yaml")
 			spec := "name: sample\nsteps:\n  - name: guard\n    run: send\n"
@@ -175,7 +176,7 @@ func TestCmdAutomationSuggestions(t *testing.T) {
 			if mode == "failed_check" {
 				body = `{"definition_valid":true,"complete":true,"issues":[],"trace":[{"step_name":"guard","state":"mocked","when_matched":true}]}`
 			}
-			fake := authedFakeAPI(t, body, 200)
+			fake := main.AuthedFakeAPI(t, body, 200)
 			target := filepath.Join(dir, "scenario-suggestions.yaml")
 			args := []string{"--app", "billing", "--scenarios", suite, "--suggest"}
 			if mode == "existing" {
@@ -186,10 +187,10 @@ func TestCmdAutomationSuggestions(t *testing.T) {
 			if mode == "out_without_suggest" {
 				args = []string{"--app", "billing", "--scenarios", suite, "--suggest-out", target}
 			}
-			code := cmdAutomationsCheck(args)
+			code := main.CmdAutomationsCheck(args)
 			if mode == "existing" || mode == "out_without_suggest" {
-				if code == 0 || fake.sawMethod != "" {
-					t.Fatalf("exit=%d request=%s", code, fake.sawMethod)
+				if code == 0 || (*fake.SawMethod()) != "" {
+					t.Fatalf("exit=%d request=%s", code, (*fake.SawMethod()))
 				}
 				return
 			}
@@ -209,8 +210,8 @@ func TestCmdAutomationSuggestions(t *testing.T) {
 			if strings.Contains(string(raw), "private-value") || strings.Contains(output.String(), "private-value") {
 				t.Fatal("copied private sample value")
 			}
-			if jsonOutput {
-				var report automationCheckReport
+			if *main.JsonOutput {
+				var report main.AutomationCheckReport
 				if err := json.Unmarshal(output.Bytes(), &report); err != nil || report.Suggestions == nil || report.Suggestions.Path != target || report.Suggestions.Count == 0 {
 					t.Fatalf("report=%+v err=%v", report, err)
 				}

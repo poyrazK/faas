@@ -1,8 +1,9 @@
 // JSON parity inventories emitting command families and their tests.
 // Both CLI packages keep the same extraction rules and regression fixtures.
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -94,7 +95,7 @@ func topLevelDispatcher(leaf string) string {
 	name := strings.ToLower(strings.ReplaceAll(strings.TrimPrefix(leaf, "cmd"), "-", ""))
 	bestName, bestLength := "", 0
 	for _, singular := range []bool{false, true} {
-		for _, command := range cliCommands {
+		for _, command := range *main.CliCommands {
 			prefix := strings.ReplaceAll(command.Name, "-", "")
 			if singular {
 				prefix = strings.TrimSuffix(prefix, "s")
@@ -296,7 +297,7 @@ func markJSONCommandVector(tested map[string]bool, args []ast.Expr) {
 		if value == "--json" || value == "-j" || value == "--json=true" {
 			continue
 		}
-		if _, known := lookupCliCommand(value); known {
+		if _, known := main.LookupCliCommand(value); known {
 			tested[topLevelDispatcher("cmd"+value)] = true
 		}
 		return
@@ -304,7 +305,7 @@ func markJSONCommandVector(tested map[string]bool, args []ast.Expr) {
 }
 
 func TestJSONAuditDispatcherMapping(t *testing.T) {
-	for _, command := range cliCommands {
+	for _, command := range *main.CliCommands {
 		want := "cmd"
 		for _, part := range strings.Split(command.Name, "-") {
 			want += strings.ToUpper(part[:1]) + part[1:]

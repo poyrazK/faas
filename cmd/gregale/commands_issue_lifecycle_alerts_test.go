@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -36,16 +37,16 @@ func TestIssueLifecycleAlertsCLI(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	previous := osStdout
+	previous := (*main.OsStdout)
 	var out bytes.Buffer
-	osStdout = &out
-	t.Cleanup(func() { osStdout = previous })
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = previous })
 	for _, args := range [][]string{
 		{"get", "--app", "payments"},
 		{"save", "--app", "payments", "--expected-revision", "2", "--environments", "production", "--cooldown-seconds", "1800"},
 		{"preview", "--app", "payments", "--issue", "28ad5060-28e6-4ba5-ac6a-9990691c11c3", "--environments", "production"},
 	} {
-		if cmdIssues(append([]string{"lifecycle-alerts"}, args...)) != 0 {
+		if main.CmdIssues(append([]string{"lifecycle-alerts"}, args...)) != 0 {
 			t.Fatal(args)
 		}
 	}
@@ -59,7 +60,7 @@ func TestIssueLifecycleAlertsCLI(t *testing.T) {
 		{"save", "--app", "payments", "--expected-revision", "2", "--environments", "prod*"},
 		{"save", "--app", "payments", "--expected-revision", "2", "--cooldown-seconds", "604801"},
 	} {
-		if cmdIssues(append([]string{"lifecycle-alerts"}, args...)) == 0 {
+		if main.CmdIssues(append([]string{"lifecycle-alerts"}, args...)) == 0 {
 			t.Fatal("invalid input accepted", args)
 		}
 	}

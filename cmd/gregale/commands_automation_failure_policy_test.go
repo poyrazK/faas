@@ -1,5 +1,5 @@
 // adr: 905
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -8,15 +8,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestAutomationFailurePolicyCLIConfigurationAndResume(t *testing.T) {
 	for _, mode := range []string{"status", "configure", "resume", "stale_resume"} {
 		t.Run(mode, func(t *testing.T) {
-			resetJSONOut(t)
-			jsonOutput = true
-			output := captureAutomationStdout(t)
+			main.ResetJSONOut(t)
+			(*main.JsonOutput) = true
+			output := main.CaptureAutomationStdout(t)
 			var methods []string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				methods = append(methods, r.Method)
@@ -52,13 +53,13 @@ func TestAutomationFailurePolicyCLIConfigurationAndResume(t *testing.T) {
 			code := 0
 			switch mode {
 			case "status":
-				code = cmdAutomationsFailurePolicy(args)
+				code = main.CmdAutomationsFailurePolicy(args)
 			case "configure":
-				code = cmdAutomationsFailurePolicy(append(args, "--enabled", "--expected-version", "2", "--failure-threshold", "4", "--min-completed-runs", "10", "--window-seconds", "600"))
+				code = main.CmdAutomationsFailurePolicy(append(args, "--enabled", "--expected-version", "2", "--failure-threshold", "4", "--min-completed-runs", "10", "--window-seconds", "600"))
 			case "resume":
-				code = cmdAutomationsFailureResume(append(args, "--expected-generation", "7"))
+				code = main.CmdAutomationsFailureResume(append(args, "--expected-generation", "7"))
 			case "stale_resume":
-				code = cmdAutomationsFailureResume(append(args, "--expected-generation", "6"))
+				code = main.CmdAutomationsFailureResume(append(args, "--expected-generation", "6"))
 			}
 			if mode == "stale_resume" {
 				if code == 0 || len(methods) != 1 {
@@ -81,7 +82,7 @@ func TestAutomationFailurePolicyCLIConfigurationAndResume(t *testing.T) {
 }
 func TestAutomationFailurePolicyCLIRequiresExplicitConfigurationIntent(t *testing.T) {
 	for _, args := range [][]string{{"--app", "billing", "--name", "invoice", "--expected-version", "1"}, {"--app", "billing", "--name", "invoice", "--enabled"}, {"--app", "billing", "--name", "invoice", "--enabled", "--expected-version", "1", "--window-seconds", "59"}} {
-		if code := cmdAutomationsFailurePolicy(args); code == 0 {
+		if code := main.CmdAutomationsFailurePolicy(args); code == 0 {
 			t.Fatalf("invalid request accepted: %v", args)
 		}
 	}

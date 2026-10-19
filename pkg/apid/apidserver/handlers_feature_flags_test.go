@@ -13,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/flags"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
@@ -54,7 +55,7 @@ func TestFeatureFlagsDisabledNamesTheOperatorGate(t *testing.T) {
 
 func TestFeatureFlagsCustomerReleaseLifecycle(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
-	(*(*e.S()).FeatureFlagsEnabled()) = true
+	(*e.S()).EnablePlatformFlagForAll(platformflags.CustomerFlags)
 	ctx := context.Background()
 	project, err := (*e.Store()).CreateProject(ctx, state.Project{AccountID: (*e.Acct()).ID, Slug: "flags", ProductionBranch: "main", ScanSource: state.ProjectScanSourceCompose})
 	if err != nil {
@@ -161,7 +162,7 @@ func TestFeatureFlagsCustomerReleaseLifecycle(t *testing.T) {
 }
 func TestFeatureFlagsRuntimeWorkloadScope(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
-	(*(*e.S()).FeatureFlagsEnabled()) = true
+	(*e.S()).EnablePlatformFlagForAll(platformflags.CustomerFlags)
 	ctx := context.Background()
 	project, err := (*e.Store()).CreateProject(ctx, state.Project{AccountID: (*e.Acct()).ID, Slug: "flags-runtime", ProductionBranch: "main", ScanSource: state.ProjectScanSourceCompose})
 	if err != nil {

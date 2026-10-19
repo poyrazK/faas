@@ -21,7 +21,7 @@ import (
 )
 
 var (
-	listen       = flag.String("listen", "", "serve live frames to realtimed at <addr>/live; use -tls-cert and -client-ca on any shared network")
+	listen       = flag.String("listen", "", "serve live frames to realtimed at <addr>/live and <addr>/<database-id>/live; use -tls-cert and -client-ca on any shared network")
 	tlsCert      = flag.String("tls-cert", "", "certificate for -listen")
 	tlsKey       = flag.String("tls-key", "", "private key for -tls-cert")
 	clientCA     = flag.String("client-ca", "", "with -tls-cert: accept only clients (realtimed) whose certificate this CA signed")
@@ -62,10 +62,9 @@ func watchKeys(ctx context.Context, hub *liveserver.Hub, log *slog.Logger) (func
 // serveRealtimed serves live frames to realtimed. It accepts no browser
 // origins: browsers reach live queries through realtimed.
 func serveRealtimed(hub *liveserver.Hub, log *slog.Logger) (*http.Server, error) {
-	mux := http.NewServeMux()
 	// RLS-mode claims are believed only from a peer whose client
 	// certificate -client-ca verified: realtimed.
-	mux.Handle("/live", liveserver.WebSocketTrusting(hub, func(r *http.Request) bool { return r.Header.Get("Origin") == "" }, liveserver.VerifiedPeer))
+	mux := realtimedMux(*databaseID, liveserver.WebSocketTrusting(hub, func(r *http.Request) bool { return r.Header.Get("Origin") == "" }, liveserver.VerifiedPeer))
 	if *tlsCert == "" {
 		if *clientCA != "" || *tlsKey != "" {
 			return nil, errors.New("livequeryd: -tls-key and -client-ca need -tls-cert")
@@ -90,4 +89,20 @@ func serveRealtimed(hub *liveserver.Hub, log *slog.Logger) (*http.Server, error)
 		conf.ClientCAs, conf.ClientAuth = pool, tls.RequireAndVerifyClientCert
 	}
 	return serveTLS(*listen, mux, conf, log)
+}
+
+// realtimedMux serves live at /live and at /<database>/live, so a backend's
+// live_hub_url may name the database ({database_id}) in its path. Another
+// database's path is not found.
+func realtimedMux(database string, live http.Handler) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.Handle("/live", live)
+	mux.HandleFunc("/{database}/live", func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("database") != database {
+			http.NotFound(w, r)
+			return
+		}
+		live.ServeHTTP(w, r)
+	})
+	return mux
 }

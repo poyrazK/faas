@@ -57,7 +57,7 @@ if TYPE_CHECKING:
     from ..models.deployment_release import DeploymentRelease
     from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
     from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
-    from ..models.deployment_response_stage_state import DeploymentResponseStageState
+    from ..models.deployment_stage_state import DeploymentStageState
     from ..models.deployment_worker_drain_status import DeploymentWorkerDrainStatus
     from ..models.dev_patch_preview import DevPatchPreview
     from ..models.durable_entity_validator_deployment_info import DurableEntityValidatorDeploymentInfo
@@ -99,14 +99,9 @@ class DeploymentResponse:
     """Compatibility hold and durable recovery progress for a deployment awaiting promotion."""
     durable_entity_validator: DurableEntityValidatorDeploymentInfo | Unset = UNSET
     """Observational validator readiness on deployment detail; not a reservation or code-purity attestation."""
-    stage_state: DeploymentResponseStageState | Unset = UNSET
-    """Actual stage progress, including retry_requested_stage and retry_restart_reason when prerequisites must be
-    rebuilt. Optional hosting_verification records started_at, deadline_at, attempts, last_error_code,
-    retry_not_before and completed_at during unavailable candidate verification recovery (ADR-481, ADR-482).
-    last_error_code distinguishes publication, gateway, transport and candidate-evidence failures; a transport
-    failure does not attribute blame to the app or platform. retry_not_before is an eligibility floor, not a
-    promised delivery time; completed_at means the attempt finished, while the hosting receipt records its verdict.
-   """
+    stage_state: DeploymentStageState | Unset = UNSET
+    """Customer-visible deployment stage progress (ADR-117). `current` is the open stage, or an empty string once
+    the deployment is live, failed or cancelled and that stage has moved into `history`."""
     dev_patch: DevPatchPreview | Unset = UNSET
     """Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync could have
     been applied as a live source patch to the deployment that was live at upload time (ADR-740 phase 1). It is a
@@ -797,7 +792,7 @@ class DeploymentResponse:
         from ..models.deployment_release import DeploymentRelease
         from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
         from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
-        from ..models.deployment_response_stage_state import DeploymentResponseStageState
+        from ..models.deployment_stage_state import DeploymentStageState
         from ..models.deployment_worker_drain_status import DeploymentWorkerDrainStatus
         from ..models.dev_patch_preview import DevPatchPreview
         from ..models.durable_entity_validator_deployment_info import DurableEntityValidatorDeploymentInfo
@@ -852,11 +847,11 @@ class DeploymentResponse:
             durable_entity_validator = DurableEntityValidatorDeploymentInfo.from_dict(_durable_entity_validator)
 
         _stage_state = d.pop("stage_state", UNSET)
-        stage_state: DeploymentResponseStageState | Unset
+        stage_state: DeploymentStageState | Unset
         if isinstance(_stage_state, Unset):
             stage_state = UNSET
         else:
-            stage_state = DeploymentResponseStageState.from_dict(_stage_state)
+            stage_state = DeploymentStageState.from_dict(_stage_state)
 
         _dev_patch = d.pop("dev_patch", UNSET)
         dev_patch: DevPatchPreview | Unset

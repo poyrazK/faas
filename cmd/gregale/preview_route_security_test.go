@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 )
 
@@ -51,26 +52,26 @@ func TestPreviewSecurityCommandGates(t *testing.T) {
 		{"malformed", "--fail-on-security-regression", "incomplete", "unknown", "", protected, []any{nil}, 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			reads := servePreviewRequestReport(t, previewSecurityDocument(t, test.before, ""), previewSecurityDocument(t, test.after, test.header), true)
 			var output bytes.Buffer
-			old := osStdout
-			osStdout = &output
-			t.Cleanup(func() { osStdout = old })
-			jsonOutput = true
+			old := (*main.OsStdout)
+			(*main.OsStdout) = &output
+			t.Cleanup(func() { (*main.OsStdout) = old })
+			(*main.JsonOutput) = true
 			args := []string{"report", "pr-42-api", "--test-report", previewRequestReceipts(t)}
 			if test.gate != "" {
 				args = append(args, test.gate)
 			}
-			if exit := cmdPreview(args); exit != test.exit {
+			if exit := main.CmdPreview(args); exit != test.exit {
 				t.Fatalf("exit %d want %d: %s", exit, test.exit, output.String())
 			}
-			var report previewRouteReport
+			var report main.PreviewRouteReport
 			if err := json.Unmarshal(output.Bytes(), &report); err != nil {
 				t.Fatal(err)
 			}
-			row := findPreviewReportRoute(t, report, "POST /checkout")
+			row := main.FindPreviewReportRoute(t, report, "POST /checkout")
 			if report.Version != 7 || report.Security.Status != "available" || report.Outcome != test.outcome || row.SecurityCompatibility == nil || row.SecurityCompatibility.Status != test.status || row.RequestCompatibility.Status != "no_supported_breaks" || row.RequestContractChanged || reads.Load() != 9 {
 				t.Fatalf("report %+v; row %+v; reads %d", report, row, reads.Load())
 			}
@@ -90,7 +91,7 @@ func TestPreviewSecurityCommandGates(t *testing.T) {
 			}
 			for _, markdown := range []bool{false, true} {
 				var rendered bytes.Buffer
-				renderPreviewRouteReport(&rendered, report, markdown)
+				main.RenderPreviewRouteReport(&rendered, report, markdown)
 				if strings.Contains(rendered.String(), "private") || !strings.Contains(rendered.String(), "Declared authentication changes") {
 					t.Fatalf("render: %s", rendered.String())
 				}
@@ -103,18 +104,18 @@ func TestPreviewSecurityCommandGates(t *testing.T) {
 }
 
 func TestPreviewSecurityUnavailableAndOutcomePrecedence(t *testing.T) {
-	resetJSONOut(t)
-	setPreviewTestAuth(t)
+	main.ResetJSONOut(t)
+	main.SetPreviewTestAuth(t)
 	servePreviewRequestReport(t, previewSecurityDocument(t, nil, ""), previewSecurityDocument(t, nil, ""), false)
 	var output bytes.Buffer
-	old := osStdout
-	osStdout = &output
-	t.Cleanup(func() { osStdout = old })
-	jsonOutput = true
-	if exit := cmdPreview([]string{"report", "pr-42-api", "--fail-on-security-regression"}); exit != 0 {
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &output
+	t.Cleanup(func() { (*main.OsStdout) = old })
+	(*main.JsonOutput) = true
+	if exit := main.CmdPreview([]string{"report", "pr-42-api", "--fail-on-security-regression"}); exit != 0 {
 		t.Fatalf("unknown failed regression gate: %s", output.String())
 	}
-	var report previewRouteReport
+	var report main.PreviewRouteReport
 	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
 		t.Fatal(err)
 	}
@@ -132,21 +133,21 @@ func TestPreviewSecurityUnavailableAndOutcomePrecedence(t *testing.T) {
 		t.Fatal(report.ReviewPriorities)
 	}
 	for _, outcome := range []string{"breaking_changes", "request_breaking_changes", "test_failures", "policy_violations"} {
-		report := previewRouteReport{Outcome: outcome, Security: previewReportEvidence{Status: "available"}, Routes: []previewReportRoute{{SecurityCompatibility: &openapidiff.SecurityRoute{Status: "regression", Regression: true, Complete: true}}}}
-		finishPreviewSecurityComparison(&report)
-		if report.Outcome != outcome || !previewReportHasSecurityRegressions(report) {
+		report := main.PreviewRouteReport{Outcome: outcome, Security: main.PreviewReportEvidence{Status: "available"}, Routes: []main.PreviewReportRoute{{SecurityCompatibility: &openapidiff.SecurityRoute{Status: "regression", Regression: true, Complete: true}}}}
+		main.FinishPreviewSecurityComparison(&report)
+		if report.Outcome != outcome || !main.PreviewReportHasSecurityRegressions(report) {
 			t.Fatalf("security hid existing finding: %+v", report)
 		}
 	}
 }
 
 func TestPreviewSecurityReviewOrderingAndKnownUnknown(t *testing.T) {
-	report := previewRouteReport{Outcome: "no_findings", Security: previewReportEvidence{Status: "available"}, Routes: []previewReportRoute{
-		{Method: "GET", Path: "/a-quiet", RouteSource: "captured_deployment_contract", SecurityCompatibility: &openapidiff.SecurityRoute{Status: "regression", Regression: true, Complete: false}, TestProfiles: []previewReportTest{{Passed: 1}}, BaselineTraffic: &previewReportTraffic{Requests: 10}},
-		{Method: "GET", Path: "/z-busy", RouteSource: "captured_deployment_contract", SecurityCompatibility: &openapidiff.SecurityRoute{Status: "client_breaking", ClientBreaking: true, Complete: true}, TestProfiles: []previewReportTest{{Passed: 1}}, BaselineTraffic: &previewReportTraffic{Requests: 100}},
+	report := main.PreviewRouteReport{Outcome: "no_findings", Security: main.PreviewReportEvidence{Status: "available"}, Routes: []main.PreviewReportRoute{
+		{Method: "GET", Path: "/a-quiet", RouteSource: "captured_deployment_contract", SecurityCompatibility: &openapidiff.SecurityRoute{Status: "regression", Regression: true, Complete: false}, TestProfiles: []main.PreviewReportTest{{Passed: 1}}, BaselineTraffic: &main.PreviewReportTraffic{Requests: 10}},
+		{Method: "GET", Path: "/z-busy", RouteSource: "captured_deployment_contract", SecurityCompatibility: &openapidiff.SecurityRoute{Status: "client_breaking", ClientBreaking: true, Complete: true}, TestProfiles: []main.PreviewReportTest{{Passed: 1}}, BaselineTraffic: &main.PreviewReportTraffic{Requests: 100}},
 	}}
-	finishPreviewSecurityComparison(&report)
-	prioritizePreviewRouteReview(&report)
+	main.FinishPreviewSecurityComparison(&report)
+	main.PrioritizePreviewRouteReview(&report)
 	if report.Outcome != "security_regressions" || len(report.ReviewPriorities) != 2 || report.ReviewPriorities[0].Path != "/z-busy" || report.ReviewPriorities[0].BaselineTraffic == nil || report.ReviewPriorities[0].BaselineTraffic.Requests != 100 || report.ReviewPriorities[1].Priority != "blocker" || !containsPreviewRequestReason(report.ReviewPriorities[1].Reasons, "security_comparison_unknown") {
 		t.Fatal(report)
 	}

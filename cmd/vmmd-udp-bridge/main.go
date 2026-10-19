@@ -11,6 +11,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/udpwire"
 )
 
@@ -29,7 +30,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "readiness descriptor must be a writable pipe")
 		os.Exit(4)
 	}
-	conn, err := net.DialUDP("udp4", nil, &net.UDPAddr{IP: ip.To4(), Port: int(port)})
+	conn, err := netns.DialBridgeContext(context.Background(), &net.Dialer{}, "udp4", net.JoinHostPort(ip.String(), strconv.FormatUint(port, 10)))
 	if err != nil {
 		_ = writeReady("ERR " + err.Error() + "\n")
 		fmt.Fprintln(os.Stderr, err)
@@ -40,7 +41,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(4)
 	}
-	if err := udpwire.Bridge(context.Background(), conn, os.Stdin, os.Stdout); err != nil {
+	if err := udpwire.Bridge(context.Background(), conn.(*net.UDPConn), os.Stdin, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(4)
 	}

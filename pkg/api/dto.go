@@ -1960,6 +1960,10 @@ type AppResponse struct {
 	ID                        string `json:"id"`
 	Slug                      string `json:"slug"`
 	Type                      string `json:"type"`
+	// ProjectID is the parent project (ADR-050) as the canonical UUID text
+	// Postgres renders for apps.project_id. Omitted for standalone apps.
+	// Read-only: no app create/update request accepts it.
+	ProjectID string `json:"project_id,omitempty"`
 	// Visibility is public unless the app is explicitly configured for
 	// authenticated service-to-service ingress only.
 	Visibility string `json:"visibility"`
@@ -5739,6 +5743,18 @@ type AccountTraceLookupResponse struct {
 type AccountTraceMatch struct {
 	App     string                    `json:"app"`
 	Request DebugTelemetryRequestItem `json:"request"`
+	// Wake is the wake this request started or joined, when its wake history
+	// is still retained.
+	Wake *AccountTraceWake `json:"wake,omitempty"`
+}
+
+// AccountTraceWake is how a matched request's app was woken: the wake method
+// (for example restore or cold_boot) and how long the instance took from boot
+// start to ready. ReadyInMS is omitted until the wake completed.
+type AccountTraceWake struct {
+	WakeID    string `json:"wake_id"`
+	Method    string `json:"method,omitempty"`
+	ReadyInMS int32  `json:"ready_in_ms,omitempty"`
 }
 
 // AccountTraceInvocation is a safe durable invocation lifecycle projection.
@@ -7273,6 +7289,7 @@ type PlanWorkload struct {
 	Dockerfile          string              `json:"dockerfile,omitempty"`
 	Image               string              `json:"image,omitempty"`
 	ImageHealthcheck    *ComposeHealthcheck `json:"image_healthcheck,omitempty"`
+	ImageProcess        *ComposeProcess     `json:"image_process,omitempty"`
 	Command             []string            `json:"command"`
 	DependsOn           []string            `json:"depends_on,omitempty"`
 	DependsOnConditions map[string]string   `json:"depends_on_conditions,omitempty"`

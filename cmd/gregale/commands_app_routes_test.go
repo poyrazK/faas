@@ -20,7 +20,7 @@
 // afterwards). Renderer drift is otherwise covered by the
 // existing output_test.go family.
 
-package main
+package main_test
 
 import (
 	"bytes"
@@ -29,37 +29,38 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // --- happy path: live source with cap_hit=false ---
 
 func TestCmdAppsRoutes_HappyPath(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	body := `{"slug":"demo","app_id":"app-uuid-1","routes":["GET /users","POST /orders"],"source":"live","cap_hit":false}`
-	f := authedFakeAPI(t, body, http.StatusOK)
-	if code := cmdAppsRoutes("demo", nil); code != 0 {
+	f := main.AuthedFakeAPI(t, body, http.StatusOK)
+	if code := main.CmdAppsRoutes("demo", nil); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if f.sawMethod != "GET" {
-		t.Errorf("method = %q, want GET", f.sawMethod)
+	if (*f.SawMethod()) != "GET" {
+		t.Errorf("method = %q, want GET", (*f.SawMethod()))
 	}
-	if f.sawPath != "/v1/apps/demo/routes" {
-		t.Errorf("path = %q, want /v1/apps/demo/routes", f.sawPath)
+	if (*f.SawPath()) != "/v1/apps/demo/routes" {
+		t.Errorf("path = %q, want /v1/apps/demo/routes", (*f.SawPath()))
 	}
 }
 
 // --- happy path: live source with cap_hit=true (the load-bearing flag) ---
 
 func TestCmdAppsRoutes_CapHitTrueRendersOverflowHint(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	body := `{"slug":"demo","app_id":"app-uuid-1","routes":["GET /users","__route_other__"],"source":"live","cap_hit":true}`
-	authedFakeAPI(t, body, http.StatusOK)
+	main.AuthedFakeAPI(t, body, http.StatusOK)
 	var buf bytes.Buffer
-	prev := osStdout
-	osStdout = &buf
-	t.Cleanup(func() { osStdout = prev })
-	if code := cmdAppsRoutes("demo", nil); code != 0 {
+	prev := (*main.OsStdout)
+	(*main.OsStdout) = &buf
+	t.Cleanup(func() { (*main.OsStdout) = prev })
+	if code := main.CmdAppsRoutes("demo", nil); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	out := buf.String()
@@ -77,31 +78,31 @@ func TestCmdAppsRoutes_CapHitTrueRendersOverflowHint(t *testing.T) {
 // --- empty list (live source, no admitted routes) ---
 
 func TestCmdAppsRoutes_EmptyList(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	body := `{"slug":"demo","app_id":"app-uuid-1","routes":[],"source":"live","cap_hit":false}`
-	f := authedFakeAPI(t, body, http.StatusOK)
-	if code := cmdAppsRoutes("demo", nil); code != 0 {
+	f := main.AuthedFakeAPI(t, body, http.StatusOK)
+	if code := main.CmdAppsRoutes("demo", nil); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if f.sawPath != "/v1/apps/demo/routes" {
-		t.Errorf("path = %q, want /v1/apps/demo/routes", f.sawPath)
+	if (*f.SawPath()) != "/v1/apps/demo/routes" {
+		t.Errorf("path = %q, want /v1/apps/demo/routes", (*f.SawPath()))
 	}
 }
 
 // --- --json output round-trips the wire shape ---
 
 func TestCmdAppsRoutes_JSONShape(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	body := `{"slug":"demo","app_id":"app-uuid-1","routes":["GET /users"],"source":"live","cap_hit":true}`
-	authedFakeAPI(t, body, http.StatusOK)
+	main.AuthedFakeAPI(t, body, http.StatusOK)
 	var buf bytes.Buffer
-	prevOut := osStdout
-	osStdout = &buf
-	t.Cleanup(func() { osStdout = prevOut })
-	prevJSON := jsonOutput
-	jsonOutput = true
-	t.Cleanup(func() { jsonOutput = prevJSON })
-	if code := cmdAppsRoutes("demo", nil); code != 0 {
+	prevOut := (*main.OsStdout)
+	(*main.OsStdout) = &buf
+	t.Cleanup(func() { (*main.OsStdout) = prevOut })
+	prevJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.JsonOutput) = prevJSON })
+	if code := main.CmdAppsRoutes("demo", nil); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	out := strings.TrimSpace(buf.String())
@@ -123,14 +124,14 @@ func TestCmdAppsRoutes_JSONShape(t *testing.T) {
 // --- source: unavailable (gatewayd-internal dial failed) ---
 
 func TestCmdAppsRoutes_SourceUnavailable(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	body := `{"slug":"demo","routes":[],"source":"unavailable"}`
-	authedFakeAPI(t, body, http.StatusOK)
+	main.AuthedFakeAPI(t, body, http.StatusOK)
 	var buf bytes.Buffer
-	prev := osStdout
-	osStdout = &buf
-	t.Cleanup(func() { osStdout = prev })
-	if code := cmdAppsRoutes("demo", nil); code != 0 {
+	prev := (*main.OsStdout)
+	(*main.OsStdout) = &buf
+	t.Cleanup(func() { (*main.OsStdout) = prev })
+	if code := main.CmdAppsRoutes("demo", nil); code != 0 {
 		t.Fatalf("exit = %d, want 0 (unavailable is a renderable state, not an error)", code)
 	}
 	out := buf.String()
@@ -149,9 +150,9 @@ func TestCmdAppsRoutes_NoSlugExitsOne(t *testing.T) {
 	// auth-error path which uses exit code 2. The two are
 	// intentionally separate so a CI script can distinguish
 	// "fix your command" from "log in first".
-	resetJSONOut(t)
-	authedFakeAPI(t, "", http.StatusOK)
-	if code := cmdAppsRoutes("", nil); code != 1 {
+	main.ResetJSONOut(t)
+	main.AuthedFakeAPI(t, "", http.StatusOK)
+	if code := main.CmdAppsRoutes("", nil); code != 1 {
 		t.Fatalf("exit = %d, want 1 (missing slug — usage error, not auth)", code)
 	}
 }
@@ -159,7 +160,7 @@ func TestCmdAppsRoutes_NoSlugExitsOne(t *testing.T) {
 // --- auth-gate: no FAAS_TOKEN exits with auth-error code (2 per CLI §3.2) ---
 
 func TestCmdAppsRoutes_RequiresLogin(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	// Use newFakeAPI (not authedFakeAPI) so FAAS_TOKEN is
 	// empty — authedClient() should bail before the round-trip.
 	t.Setenv("HOME", t.TempDir())
@@ -174,7 +175,7 @@ func TestCmdAppsRoutes_RequiresLogin(t *testing.T) {
 	// contract; the tests in commands_tier_b_test.go and
 	// commands_mfa_test.go pin it. cmdAppsRoutes inherits the
 	// shared printErr → auth-error exit code 2.
-	if code := cmdAppsRoutes("demo", nil); code != 2 {
+	if code := main.CmdAppsRoutes("demo", nil); code != 2 {
 		t.Fatalf("exit = %d, want 2 (auth error per CLI §3.2)", code)
 	}
 }
@@ -182,14 +183,14 @@ func TestCmdAppsRoutes_RequiresLogin(t *testing.T) {
 // --- unknown app: the SDK returns an error which printErr surfaces as exit 1 ---
 
 func TestCmdAppsRoutes_UnknownApp(t *testing.T) {
-	resetJSONOut(t)
-	f := newFakeAPI(t, `{"code":"not_found","title":"App not found"}`, http.StatusNotFound)
+	main.ResetJSONOut(t)
+	f := main.NewFakeAPI(t, `{"code":"not_found","title":"App not found"}`, http.StatusNotFound)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "test-token")
 	// newFakeAPI already wires FAAS_API; re-set to be explicit.
-	t.Setenv("FAAS_API", f.srv.URL)
-	if code := cmdAppsRoutes("ghost-app", nil); code == 0 {
+	t.Setenv("FAAS_API", (*f.Srv()).URL)
+	if code := main.CmdAppsRoutes("ghost-app", nil); code == 0 {
 		t.Fatalf("exit = 0, want non-zero (unknown app)")
 	}
 }

@@ -213,6 +213,7 @@ var routeExclude = map[string]bool{
 	// ADR-1730: the generated runtime reports with a short-lived, dedicated
 	// workload assertion. Owner API keys cannot publish these observations.
 	"POST /v1/runtime/data-api/connection-observations": true,
+	"POST /v1/runtime/data-api/usage":                   true,
 
 	"GET /v1/account/dpa":                                                    true, // public markdown (no Bearer; SDK consumers don't render HTML)
 	"GET /v1/apps/{slug}/tasks/{id}/attach":                                  true, // ADR-1037 WebSocket attach; the CLI drives it directly
@@ -334,6 +335,10 @@ var routeExclude = map[string]bool{
 	"PATCH /v1/admin/config/{key}":                       true, // operator-only runtime configuration write
 	"GET /v1/admin/config-operations/{id}":               true, // operator-only runtime configuration operation polling
 	"GET /v1/admin/config/{key}/revisions":               true, // operator-only runtime configuration history
+	"GET /v1/admin/flags":                                true, // ADR-1700 operator-only platform flag catalog
+	"GET /v1/admin/flags/{key}":                          true, // ADR-1700 operator-only platform flag detail
+	"GET /v1/admin/flags/{key}/decision":                 true, // ADR-1700 operator-only platform flag inspector
+	"GET /v1/admin/accounts/{id}/flags":                  true, // ADR-1700 operator-only per-account platform flags
 	"GET /v1/admin/managed-postgres/usage/{account_id}":  true, // operator-only COGS/capacity view; public SDK is customer-scoped
 
 	// Dashboard auth (issue #165 PR #2, ADR-032). The SDK uses the
@@ -1011,6 +1016,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/route-removal/check":                                          "CheckRouteRemoval",
 	"GET /v1/apps/{slug}/routes/advice":                                                "GetRouteAdvice",
 	"GET /v1/apps/{slug}/routes/awake":                                                 "GetRouteAwake",
+	"GET /v1/apps/{slug}/routes/insights":                                              "GetRouteInsights",
 	"GET /v1/apps/{slug}/service-wake-ahead":                                           "GetServiceWakeAhead",
 	"PUT /v1/apps/{slug}/service-wake-ahead":                                           "SetServiceWakeAhead",
 	"GET /v1/apps/{slug}/route-priorities":                                             "GetRoutePriorities",
@@ -1101,6 +1107,9 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/crons/{id}":                                                                               "DeleteCron",
 	"DELETE /v1/apps/{slug}":                                                                              "DeleteApp",
 	"POST /v1/apps/{slug}/restore":                                                                        "RestoreApp",
+	"GET /v1/deleted-apps":                                                                                "ListDeletedApps",
+	"GET /v1/deleted-apps/{id}":                                                                           "GetDeletedApp",
+	"POST /v1/deleted-apps/{id}/restore":                                                                  "RestoreDeletedApp",
 	"DELETE /v1/apps/{slug}/secrets/{key}":                                                                "UnsetSecret",
 	"GET /v1/apps/{slug}/secret-revocations/{revocation_id}":                                              "GetSecretRevocation",
 	"GET /v1/apps/{slug}/config/revisions":                                                                "ListConfigRevisions",
@@ -1299,6 +1308,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/postgres/cutovers/{id}/preflight":                                        "GetManagedPostgresCutoverPreflight",
 	"GET /v1/postgres/databases/{id}/connection-budget":                               "GetManagedPostgresConnectionBudget",
 	"GET /v1/apps/{slug}/data-api/connection-budget":                                  "GetAppDataAPIConnectionBudgets",
+	"GET /v1/apps/{slug}/data-api/usage":                                              "GetAppDataAPIUsage",
 	"POST /v1/postgres/cutovers/{id}/verify":                                          "VerifyManagedPostgresCutover",
 	"POST /v1/postgres/cutovers/{id}/cancel":                                          "CancelManagedPostgresCutover",
 	"GET /v1/apps/{slug}/logs":                                                        "StreamAppLogs",

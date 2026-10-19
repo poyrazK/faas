@@ -1,8 +1,9 @@
-package main
+package main_test
 
 import (
 	"context"
 	"errors"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,11 +12,11 @@ import (
 
 func TestUploadStateLockRemovesTerminalOrphan(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	path, err := uploadStatePath("demo", "0123abcd", "options")
+	path, err := main.UploadStatePath("demo", "0123abcd", "options")
 	if err != nil {
 		t.Fatal(err)
 	}
-	lock, err := lockResumableUploadState(context.Background(), path)
+	lock, err := main.LockResumableUploadState(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +39,7 @@ func TestCleanupUploadCacheRemovesOrphansAndStaleState(t *testing.T) {
 	now := time.Now().UTC()
 	fresh := writeUploadStateFixture(t, "fresh", now)
 	stale := writeUploadStateFixture(t, "stale", now.Add(-8*24*time.Hour))
-	dir, err := uploadStateDir()
+	dir, err := main.UploadStateDir()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +47,7 @@ func TestCleanupUploadCacheRemovesOrphansAndStaleState(t *testing.T) {
 	if err := os.WriteFile(orphan, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	result, _, err := cleanupUploadCacheExclusive(context.Background(), uploadCachePolicy{MaxAge: 7 * 24 * time.Hour, MaxEntries: 256}, true)
+	result, _, err := main.CleanupUploadCacheExclusive(context.Background(), main.UploadCachePolicy{MaxAge: 7 * 24 * time.Hour, MaxEntries: 256}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +66,7 @@ func TestCleanupUploadCacheRemovesOrphansAndStaleState(t *testing.T) {
 
 func TestUploadCacheDryRunAndConcurrencyGuard(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	dir, err := uploadStateDir()
+	dir, err := main.UploadStateDir()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +77,7 @@ func TestUploadCacheDryRunAndConcurrencyGuard(t *testing.T) {
 	if err := os.WriteFile(orphan, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if code := cmdUploadCacheCleanup([]string{"--dry-run"}); code != 0 {
+	if code := main.CmdUploadCacheCleanup([]string{"--dry-run"}); code != 0 {
 		t.Fatalf("dry-run = %d", code)
 	}
 	if _, err := os.Stat(orphan); err != nil {
@@ -84,13 +85,13 @@ func TestUploadCacheDryRunAndConcurrencyGuard(t *testing.T) {
 	}
 
 	activePath := filepath.Join(dir, "active.json")
-	active, err := lockResumableUploadState(context.Background(), activePath)
+	active, err := main.LockResumableUploadState(context.Background(), activePath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	if _, _, err := cleanupUploadCacheExclusive(ctx, uploadCachePolicy{MaxAge: uploadCacheMaxAge, MaxEntries: uploadCacheMaxEntries}, true); err == nil {
+	if _, _, err := main.CleanupUploadCacheExclusive(ctx, main.UploadCachePolicy{MaxAge: main.UploadCacheMaxAge, MaxEntries: main.UploadCacheMaxEntries}, true); err == nil {
 		t.Fatal("cleanup acquired exclusive guard during an active upload")
 	}
 	if _, err := os.Stat(activePath + ".lock"); err != nil {
@@ -102,13 +103,13 @@ func TestUploadCacheDryRunAndConcurrencyGuard(t *testing.T) {
 
 func writeUploadStateFixture(t *testing.T, key string, created time.Time) string {
 	t.Helper()
-	dir, err := uploadStateDir()
+	dir, err := main.UploadStateDir()
 	if err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, key+".json")
-	if err := saveResumableUploadState(path, resumableUploadState{
-		Version: resumableUploadStateVersion, UploadID: "upload-" + key, AppSlug: "demo",
+	if err := main.SaveResumableUploadState(path, main.ResumableUploadState{
+		Version: main.ResumableUploadStateVersion, UploadID: "upload-" + key, AppSlug: "demo",
 		ArchivePath: "/tmp/source.tar.gz", ArchiveSize: 10, TotalSize: 10,
 		CreatedAt: created.Format(time.RFC3339Nano),
 	}); err != nil {

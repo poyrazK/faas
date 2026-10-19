@@ -2148,6 +2148,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 				}
 				return nil
 			}, log)
+		watcher.Daemon = "gatewayd-internal" // ADR-1700 apply receipts
 		if err := watcher.Reconcile(runtimeCtx); err != nil {
 			log.Warn("gatewayd: initial runtime config reconcile failed", "err", err)
 		}
@@ -2705,6 +2706,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	retryBudget.WithObserver(deps.metrics)
 	defer func() { _ = retryBudget.Close() }()
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget)
+	if deps.pgStore != nil {
+		handler.WithFinancialBudgetAdmission(newFinancialBudgetAdmission(deps.pgStore))
+	}
 	if err := configureOperationRoutes(handler, deps); err != nil {
 		return fmt.Errorf("gatewayd-internal: %w", err)
 	}
@@ -3955,8 +3959,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Enabled:   pgStore.ServiceWakeAheadEnabled,
 			Residency: pgStore.ServiceWakeAheadFleetResidency,
 			Wake:      newServiceProxyWaker(pgStore, handler.EnsureWakeAheadCapacity),
+			// ADR-1137: declared dependencies stand in until there is evidence.
+			Declared: newWakeAheadDeclared(pgStore, newServiceProxyResolver(pgStore), newServiceProxyAuthorizer(pgStore)),
 		})
 		serviceProxyConfig := gateway.ServiceProxyConfig{
+			AdmitRuntime:              financialBudgetServiceAdmission(pgStore),
 			APIMonetization:           deps.apiMonetization,
 			AdmitManagedAsync:         gateway.NewRehearsalAsyncAdmitter(pgStore),
 			Provider:                  serviceEndpointProvider,

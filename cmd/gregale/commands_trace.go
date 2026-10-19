@@ -296,6 +296,9 @@ func renderTraceResult(traceID string, result api.AccountTraceLookupResponse) in
 				request := match.Request
 				_, _ = fmt.Fprintf(osStdout, "  %s · %s · HTTP %d · %d ms · telemetry row %s\n",
 					match.App, requestLine(request.Method, request.Route), request.Status, request.LatencyMS, request.ID)
+				if breakdown := traceMatchBreakdown(match); breakdown != "" {
+					_, _ = fmt.Fprintf(osStdout, "      %s\n", breakdown)
+				}
 			}
 		}
 		if len(result.Invocations) > 0 {
@@ -467,6 +470,40 @@ func renderTraceWaterfall(w io.Writer, result api.AccountTraceLookupResponse) {
 		}
 		_, _ = fmt.Fprintf(w, "  %8.2fms → %-8s | %s\n", startMS, formatTraceDuration(duration), entry.label)
 	}
+}
+
+// traceMatchBreakdown splits one matched request's latency into the wake it
+// waited for and the time its runtime reported for the app, when known.
+// Latency and app time are retained as bucket upper bounds, so the remainder
+// is approximate.
+func traceMatchBreakdown(match api.AccountTraceMatch) string {
+	request := match.Request
+	var parts []string
+	wakeMS := 0
+	switch {
+	case match.Wake != nil && match.Wake.ReadyInMS > 0:
+		wakeMS = int(match.Wake.ReadyInMS)
+		how := "woke"
+		if match.Wake.Method != "" {
+			how = "woke by " + match.Wake.Method
+		}
+		parts = append(parts, fmt.Sprintf("%s in %d ms (wake %s)", how, wakeMS, match.Wake.WakeID))
+	case request.ColdBoot:
+		wake := "found the app parked"
+		if request.WakeID != "" {
+			wake += " (wake " + request.WakeID + ")"
+		}
+		parts = append(parts, wake)
+	}
+	appMS := 0
+	if request.Guest != nil && request.Guest.DurationMS > 0 {
+		appMS = request.Guest.DurationMS
+		parts = append(parts, fmt.Sprintf("app ≈%d ms", appMS))
+	}
+	if wakeMS > 0 && appMS > 0 && request.LatencyMS > wakeMS+appMS {
+		parts = append(parts, fmt.Sprintf("other ≈%d ms", request.LatencyMS-wakeMS-appMS))
+	}
+	return strings.Join(parts, " · ")
 }
 
 func traceInvocationLabel(inv api.AccountTraceInvocation) string {

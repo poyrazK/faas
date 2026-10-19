@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	repairapi "github.com/onebox-faas/faas/pkg/apid/datarepair"
 	"github.com/onebox-faas/faas/pkg/datarepair"
@@ -75,10 +76,10 @@ func TestDataRepairResolveCLIRequiresSourceProof(t *testing.T) {
 				args = append(args, "--url", server.URL)
 			}
 			var output bytes.Buffer
-			old := osStdout
-			osStdout = &output
-			status := cmdDataRepair(args)
-			osStdout = old
+			old := (*main.OsStdout)
+			(*main.OsStdout) = &output
+			status := main.CmdDataRepair(args)
+			(*main.OsStdout) = old
 			server.Close()
 			wantGets := 0
 			if hosted {
@@ -97,7 +98,7 @@ func TestDataRepairResolveCLIRequiresExplicitClosureAndIdentity(t *testing.T) {
 		{"--digest", strings.Repeat("a", 64), "--yes"},
 		{"--repair-operation", uuid.NewString(), "--yes"},
 	} {
-		if cmdDataRepair(append([]string{"resolve", uuid.NewString()}, flags...)) == 0 {
+		if main.CmdDataRepair(append([]string{"resolve", uuid.NewString()}, flags...)) == 0 {
 			t.Fatal("unconfirmed or unidentifiable closure accepted")
 		}
 	}

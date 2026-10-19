@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -26,7 +27,7 @@ func TestCmdDeploysRetry_JSONReceipt(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
 				case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/"+retryTestID+"/stages":
-					writeJSONTest(w, json.RawMessage(`{"current":"","history":[{"name":"snapshot_prepare","status":"failed"}]}`))
+					main.WriteJSONTest(w, json.RawMessage(`{"current":"","history":[{"name":"snapshot_prepare","status":"failed"}]}`))
 				case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments/"+retryTestID+"/retry":
 					retryCalls++
 					if err := json.NewDecoder(r.Body).Decode(&requested); err != nil {
@@ -34,7 +35,7 @@ func TestCmdDeploysRetry_JSONReceipt(t *testing.T) {
 						w.WriteHeader(http.StatusBadRequest)
 						return
 					}
-					writeJSONTest(w, want)
+					main.WriteJSONTest(w, want)
 				default:
 					http.NotFound(w, r)
 				}
@@ -42,17 +43,17 @@ func TestCmdDeploysRetry_JSONReceipt(t *testing.T) {
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_x")
-			resetJSONOut(t)
-			jsonOutput = true
+			main.ResetJSONOut(t)
+			(*main.JsonOutput) = true
 			var stdout bytes.Buffer
-			oldOut := osStdout
-			osStdout = &stdout
-			defer func() { osStdout = oldOut }()
+			oldOut := (*main.OsStdout)
+			(*main.OsStdout) = &stdout
+			defer func() { (*main.OsStdout) = oldOut }()
 			args := []string{retryTestID}
 			if explicit {
 				args = append(args, "--from=snapshot_prepare")
 			}
-			if code := cmdDeploysRetry(args); code != 0 {
+			if code := main.CmdDeploysRetry(args); code != 0 {
 				t.Fatalf("retry exit=%d", code)
 			}
 			var got api.DeploymentResponse

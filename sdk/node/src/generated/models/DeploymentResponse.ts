@@ -9,6 +9,7 @@ import type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
 import type { DeploymentPromotionHold } from './DeploymentPromotionHold.js';
 import type { DeploymentReadinessProbe } from './DeploymentReadinessProbe.js';
 import type { DeploymentRelease } from './DeploymentRelease.js';
+import type { DeploymentStageState } from './DeploymentStageState.js';
 import type { DeploymentWorkerDrainStatus } from './DeploymentWorkerDrainStatus.js';
 import type { DevPatchPreview } from './DevPatchPreview.js';
 import type { DurableEntityValidatorDeploymentInfo } from './DurableEntityValidatorDeploymentInfo.js';
@@ -35,9 +36,9 @@ export type DeploymentResponse = {
   promotion_hold?: DeploymentPromotionHold;
   durable_entity_validator?: DurableEntityValidatorDeploymentInfo;
   /**
-   * Actual stage progress, including retry_requested_stage and retry_restart_reason when prerequisites must be rebuilt. Optional hosting_verification records started_at, deadline_at, attempts, last_error_code, retry_not_before and completed_at during unavailable candidate verification recovery (ADR-481, ADR-482). last_error_code distinguishes publication, gateway, transport and candidate-evidence failures; a transport failure does not attribute blame to the app or platform. retry_not_before is an eligibility floor, not a promised delivery time; completed_at means the attempt finished, while the hosting receipt records its verdict.
+   * Actual stage progress; the same document GET /v1/deployments/{id}/stages serves. retry_requested_stage and retry_restart_reason appear when prerequisites must be rebuilt; hosting_verification appears during unavailable candidate verification recovery (ADR-481, ADR-482).
    */
-  stage_state?: Record<string, any>;
+  stage_state?: DeploymentStageState;
   dev_patch?: DevPatchPreview;
   id: string;
   app_id: string;

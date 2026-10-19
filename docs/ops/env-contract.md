@@ -24,11 +24,11 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 |---|---|---|---|---|---|---|
 | `FAAS_ACCOUNT_SPEND_AGGREGATOR_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_ADMIN_EMAILS` | apid | `secrets-env` |  |  | `` | delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`) |
-| `FAAS_AI_GATEWAY_ACCOUNTS` | apid, outboundd | `default` |  |  | `` | optional override for ai_gateway_accounts TOML; comma-separated account UUIDs the AI gateway preview is limited to (ADR-998), * or unset admits every entitled account |
-| `FAAS_AI_GATEWAY_ENABLED` | apid, outboundd | `default` |  |  | `int` | optional override for ai_gateway_enabled TOML; 1 opens the AI gateway (ADR-991), any other value keeps it closed, unset preserves the TOML setting (default off) |
+| `FAAS_AI_GATEWAY_ACCOUNTS` | apid, outboundd, shared | `default` |  |  | `` | boot fallback for the ai_gateway platform flag (ADR-1700): optional override for ai_gateway_accounts TOML; comma-separated account UUIDs the AI gateway preview is limited to (ADR-998), * or unset admits every entitled account; ignored once an operator writes platform_flag.ai_gateway |
+| `FAAS_AI_GATEWAY_ENABLED` | apid, outboundd, shared | `default` |  |  | `int` | boot fallback for the ai_gateway platform flag (ADR-1700): optional override for ai_gateway_enabled TOML; 1 opens the AI gateway (ADR-991), any other value keeps it closed, unset preserves the TOML setting (default off); ignored once an operator writes platform_flag.ai_gateway |
 | `FAAS_ALERTMANAGER_URL` | apid | `default` |  |  | `` |  |
 | `FAAS_ALERT_EVAL_INTERVAL` | meterd | `default` |  |  | `` |  |
-| `FAAS_ANOMALY_ALERTS_ENABLED` | apid | `default` |  | 0 | `` | ADR-744 operator gate for above_baseline/below_baseline alert comparisons; explicit 1 enables the internal preview |
+| `FAAS_ANOMALY_ALERTS_ENABLED` | apid, shared | `default` |  | 0 | `` | ADR-744 operator gate for above_baseline/below_baseline alert comparisons; explicit 1 enables the internal preview; boot fallback for the anomaly_alerts platform flag (ADR-1700), ignored once an operator writes platform_flag.anomaly_alerts |
 | `FAAS_APID_ADVISORY_SOCK` | apid, vmmd, shared | `unit` |  |  | `` |  |
 | `FAAS_APID_APP_ERRORS_SOCKET` | apid, gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_APID_APP_ERRORS_TARGET` | apid, gatewayd-internal | `dropin` |  |  | `` |  |
@@ -39,7 +39,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APID_GITHUBD_BRIDGE_SOCK` | apid, githubd | `default` |  |  | `` |  |
 | `FAAS_APID_INTERNAL_BASE_URL` | meterd | `default` |  | http://127.0.0.1:9101 | `` | Safe Deploy meterd-to-apid operator listener; must remain a loopback HTTP origin |
 | `FAAS_APID_LISTEN` | apid | `default` |  |  | `` |  |
-| `FAAS_APID_LIVE_KEY_RECIPIENT_FILE` | apid | `default` |  |  | `` | operator-only live-query preview (ADR-20261016151947): livequeryd's age recipient file; apid seals each database's live secret to it and cannot read one back; unset leaves live queries unavailable |
+| `FAAS_APID_LIVE_KEY_RECIPIENT_FILE` | apid | `dropin` |  |  | `` | operator-only live-query preview (ADR-20261016151947): livequeryd's age recipient file, delivered by livequeryd_service's 99-faas-live-queries.conf; apid seals each database's live secret to it and cannot read one back; unset leaves live queries unavailable |
 | `FAAS_APID_LOOPBACK` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_APID_METRICS_ADDR` | apid | `default` |  |  | `` |  |
 | `FAAS_APID_OTEL_SPANS_WRITER_SOCKET` | apid, gatewayd-internal, gatewayd-public, outboundd, vmmd | `default` |  |  | `` |  |
@@ -55,8 +55,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_API_HOSTING_SMOKE_REQUIRED` | imaged | `dropin` |  |  | `` | public-beta compute-only drop-in enables fail-closed post-readiness API hosting smoke verification |
 | `FAAS_API_HOSTING_SMOKE_URL` | imaged | `dropin` |  |  | `url` | public origin for post-readiness API hosting smoke verification; compute-only production drop-in derives it from the apps domain |
 | `FAAS_API_MONETIZATION_ENABLED` | apid, gatewayd-internal, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for api_monetization_enabled (ADR-20261018090210); persisted runtime configuration is authoritative; in a shell it shows the CLI's monetization commands; keep off for customer releases |
-| `FAAS_APPLICATION_AUTH_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs application Auth (ADR-1190) is available to while FAAS_APPLICATION_AUTH_ENABLED is off; unset admits none |
-| `FAAS_APPLICATION_AUTH_ENABLED` | apid, shared | `default` |  |  | `` | dark-launch switch for application Auth (ADR-1190) for every account; off by default |
+| `FAAS_APPLICATION_AUTH_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs application Auth (ADR-1190) is available to while FAAS_APPLICATION_AUTH_ENABLED is off; unset admits none; boot fallback for the application_auth platform flag (ADR-1700), ignored once an operator writes platform_flag.application_auth |
+| `FAAS_APPLICATION_AUTH_ENABLED` | apid, shared | `default` |  |  | `` | dark-launch switch for application Auth (ADR-1190) for every account; off by default; boot fallback for the application_auth platform flag (ADR-1700), ignored once an operator writes platform_flag.application_auth |
 | `FAAS_APPLICATION_STANDARD_MUTATIONS_ENABLED` | apid | `default` |  | 0 | `` | ADR-435 release gate; keep disabled until consumer convergence, controlled rollout/recovery and dedicated Linux amd64 root/KVM acceptance pass |
 | `FAAS_APPS_DOMAIN` | apid, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, shared | `envfile` |  |  | `` |  |
 | `FAAS_APPS_ROOT` | imaged, shared | `default` |  |  | `` |  |
@@ -92,9 +92,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_BUILDER_WARM_IDLE_MS` | builderd | `default` |  |  | `` | optional builderd warm-slot idle window override in milliseconds; code default is 5 minutes |
 | `FAAS_BUILD_PUBLISHER_KEY` | builderd | `default` |  |  | `` | explicit optional owner-only PKCS#8 P256 publisher key path; must be paired with FAAS_BUILD_PUBLISHER_NAME; no default platform key or trust enrollment (ADR-435) |
 | `FAAS_BUILD_PUBLISHER_NAME` | builderd | `default` |  |  | `` | explicit optional source-build publisher name paired with FAAS_BUILD_PUBLISHER_KEY; unset leaves publication disabled and required signature policies fail closed; public standards activation remains disabled (ADR-435) |
-| `FAAS_CANARY_PROGRESSION_TOKEN` | apid, meterd | `secrets-env` |  |  | `` | distinct random 32+ byte internal service token delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); activates only with FAAS_SAFEDEPLOY_TOKEN |
+| `FAAS_CANARY_PROGRESSION_TOKEN` | apid, meterd | `secrets-env` |  |  | `` | distinct random 32+ byte internal service token delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); activates only with FAAS_SAFEDEPLOY_TOKEN; the control_plane_service role generates the pair when missing (faas_safe_releases_enabled, ADR-1189) |
 | `FAAS_CERT_EXPIRY_REFRESHER_INTERVAL` | meterd | `default` |  |  | `` |  |
-| `FAAS_CHANGE_TIMELINE_ENABLED` | apid | `default` |  | 0 | `` | ADR-751 operator gate for GET /v1/apps/{slug}/changes; explicit 1 enables the internal preview |
+| `FAAS_CHANGE_TIMELINE_ENABLED` | apid, shared | `default` |  | 0 | `` | ADR-751 operator gate for GET /v1/apps/{slug}/changes; explicit 1 enables the internal preview; boot fallback for the change_timeline platform flag (ADR-1700), ignored once an operator writes platform_flag.change_timeline |
 | `FAAS_CI_AUTOMATION_ENABLED` | apid, githubd, shared | `unit` |  | 0 | `` | ADR-1656 exact opt-in for new verified branch-push automation capture and profile admission; generated units keep 0; blocked receipts never promote |
 | `FAAS_CI_DISPATCH_ENABLED` | apid, schedd, shared | `unit` |  | 0 | `` | ADR-1651 internal CI Jobs launch gate; requires internal/GitHub gates and allowlist; execution admission also requires worker/storage/HTTPS; generated units keep 0 |
 | `FAAS_CI_EXECUTION_CHECKS_ENABLED` | apid, githubd, shared | `unit` |  | 0 | `` | ADR-1657 exact opt-in for fresh Jobs execution Check capture and publication; also requires GitHub Checks, internal/GitHub gates and allowlist; generated units keep 0; old executions never backfill |
@@ -242,7 +242,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_EXECUTION_DISPATCH` | schedd | `default` |  |  | `` | exact opt-in for disposable execution dispatch; remains disabled until the authenticated payload decoder is wired |
 | `FAAS_EXECUTION_PYTHON_DATA_V1_BASE_REF` | imaged, shared | `default` |  |  | `` | optional digest-pinned linux/amd64 OCI manifest for the shared python-data-v1 execution base; unset stages no profile image; enable only after ADR-383 native acceptance |
 | `FAAS_EXTENSION_SOCKET` | guest | `guest` |  | /run/guest/extension.sock | `` | optional per-guest extension lifecycle endpoint; vmmd may deliver an override in the guest boot environment |
-| `FAAS_FLAGS_ENABLED` | apid | `default` |  |  | `int` | optional override for flags_enabled TOML; 1 enables operator qualification, unset preserves the disabled default |
+| `FAAS_FINANCIAL_SYSTEM_ACCEPTANCE` | shared | `dev-only` |  |  | `` | opt-in dedicated financial full-system test harness; never set by ordinary production units |
+| `FAAS_FLAGS_ENABLED` | apid, shared | `default` |  |  | `int` | boot fallback for the customer_flags platform flag (ADR-1700): optional override for flags_enabled TOML; 1 releases customer Flags to every account, unset preserves the disabled default; ignored once an operator writes platform_flag.customer_flags |
 | `FAAS_FLAGS_WORKLOAD_ISSUER` | apid | `default` |  |  | `url` | optional override for the trusted Flags workload issuer; TOML is the primary deployment setting |
 | `FAAS_FLAGS_WORKLOAD_JWKS_PATH` | apid | `default` |  |  | `path-exists` | optional local public JWKS override for Flags workload verification; an empty path leaves runtime access unavailable |
 | `FAAS_FLEET_AGE_IDENTITY_PATH` | apid, outboundd | `unit` |  |  | `` |  |
@@ -451,7 +452,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_LINEAR_OAUTH_CLIENT_ID` | apid, shared | `secrets-env` |  |  | `` | optional Issues Linear OAuth client; delivered by /etc/faas/sealed.env on apid (ADR-1478) |
 | `FAAS_LINEAR_OAUTH_CLIENT_SECRET` | apid, shared | `secrets-env` |  |  | `` | optional Issues Linear OAuth client secret; delivered by /etc/faas/sealed.env on apid (ADR-1478) |
 | `FAAS_LINEAR_OAUTH_REDIRECT_URI` | apid, shared | `secrets-env` |  |  | `` | optional Issues Linear OAuth callback URI; delivered by /etc/faas/sealed.env on apid (ADR-1478) |
-| `FAAS_LIVE_QUERIES_ACCOUNTS` | apid | `default` |  |  | `` | ADR-20261016151947 live-query rollout: comma-separated account UUIDs that see live queries, or * for every account; unset hides the live API routes and realtime protocol from every account |
+| `FAAS_LIVE_QUERIES_ACCOUNTS` | apid, shared | `default` |  |  | `` | ADR-20261016151947 live-query rollout: comma-separated account UUIDs that see live queries, or * for every account; unset hides the live API routes and realtime protocol from every account; boot fallback for the live_queries platform flag (ADR-1700), ignored once an operator writes platform_flag.live_queries |
 | `FAAS_LOG_ARCHIVE_AUTH_MODE` | shared | `default` |  |  | `` | optional environment override; production metadata auth is normally loaded from the archive credential envelope |
 | `FAAS_LOG_ARCHIVE_BUCKET` | shared | `default` |  |  | `` |  |
 | `FAAS_LOG_ARCHIVE_CREDS_PATH` | shared | `unit` |  |  | `` |  |
@@ -561,7 +562,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PRESSURE_THRESHOLD_PER_MIN` | schedd | `default` |  |  | `` |  |
 | `FAAS_PREVIEW_JANITOR_INTERVAL_SECONDS` | apid | `default` |  |  | `` |  |
 | `FAAS_PREVIEW_JANITOR_STARTUP_DELAY_SECONDS` | apid | `default` |  |  | `` |  |
-| `FAAS_PREWARM_ENABLED` | schedd | `default` |  |  | `` | exact opt-in (`1`) for scheduled prewarm; disabled by default; ADR-160 |
+| `FAAS_PREWARM_ENABLED` | schedd | `unit` |  |  | `` | the schedd unit enables the scheduled prewarm drain (ADR-160, ADR-1189); exact `1` enables it |
 | `FAAS_PRIVATE_INGRESS_CIDRS` | vmmd | `dropin` |  |  | `` | vmmd egress drop-in; private control-plane source CIDRs from the generated host inventory |
 | `FAAS_PRIVATE_INGRESS_TCP_PORTS` | vmmd | `dropin` |  |  | `` | vmmd egress drop-in; exact compute service ports reachable from the control plane |
 | `FAAS_PRIVATE_NETWORKS` | schedd | `default` |  |  | `` | JSON array of operator-managed private networks consumed by the provider-neutral reconciler |
@@ -583,6 +584,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PUBLIC_CONTROL_ADDR` | gatewayd-public, shared | `unit` |  |  | `` |  |
 | `FAAS_PUBLIC_EDGE_CONTROL_PLANE_TARGET` | gatewayd-public | `dropin` |  |  | `` | ADR-1343; a compute-node edge forwards public object reads, uploads and the OTLP endpoint to this control-plane gatewayd-public URL (http://<private>:<port>); unset answers them 503 |
 | `FAAS_PUBLIC_EDGE_MODE` | gatewayd-public | `unit` |  |  | `` | ADR-1343; "compute" runs gatewayd-public as a compute-node app edge (app hosts only, node-local gateway first); unset is the control-plane edge |
+| `FAAS_PUBLIC_FORWARD_TARGET` | shared | `internal` |  |  | `` | native vmmd captures the public interface generation for its HTTP/Upgrade/TCP/UDP bridge subprocesses; never operator- or customer-supplied |
 | `FAAS_PUBLIC_IFACE` | vmmd, shared | `dropin` |  |  | `` | vmmd egress drop-in; provider-specific outward NIC detected or overridden by Ansible; "shared" covers pkg/e2etest forwarding the host's NIC to a harness-booted vmmd (the row is not Required, so this adds no boot-time enforcement) |
 | `FAAS_PUBLIC_LISTEN_ADDR` | gatewayd-public | `unit` |  |  | `` | matches faas-gatewayd-public.socket ListenStream; explicit loopback satisfies ADR-126's multi-host check |
 | `FAAS_PUBLIC_PRIVATE_LISTEN_ADDR` | gatewayd-public | `dropin` |  |  | `` | ADR-1343; a second listener for the public handler on the control plane's private address, for compute-node edges; unset means none |
@@ -605,9 +607,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REALTIME_HISTORY_TLS_CA_PATH` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_HISTORY_TLS_CERT_PATH` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_HISTORY_TLS_KEY_PATH` | realtimed | `default` |  |  | `` |  |
-| `FAAS_REALTIME_LIVE_TLS_CA_FILE` | realtimed | `default` |  |  | `` | live-query preview (ADR-20261016151947): CA that verifies livequeryd hubs dialed over wss://; unset uses the system roots |
-| `FAAS_REALTIME_LIVE_TLS_CERT_FILE` | realtimed | `default` |  |  | `` | live-query preview (ADR-20261016151947): realtimed's client certificate for livequeryd hubs that require one (-client-ca); set with FAAS_REALTIME_LIVE_TLS_KEY_FILE |
-| `FAAS_REALTIME_LIVE_TLS_KEY_FILE` | realtimed | `default` |  |  | `` | live-query preview (ADR-20261016151947): private key for FAAS_REALTIME_LIVE_TLS_CERT_FILE |
+| `FAAS_REALTIME_LIVE_TLS_CA_FILE` | realtimed | `dropin` |  |  | `` | live-query preview (ADR-20261016151947): CA that verifies livequeryd hubs dialed over wss://; unset uses the system roots |
+| `FAAS_REALTIME_LIVE_TLS_CERT_FILE` | realtimed | `dropin` |  |  | `` | live-query preview (ADR-20261016151947): realtimed's client certificate for livequeryd hubs that require one (-client-ca); set with FAAS_REALTIME_LIVE_TLS_KEY_FILE |
+| `FAAS_REALTIME_LIVE_TLS_KEY_FILE` | realtimed | `dropin` |  |  | `` | live-query preview (ADR-20261016151947): private key for FAAS_REALTIME_LIVE_TLS_CERT_FILE |
 | `FAAS_REALTIME_MAX_AGE` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_MAX_CONNECTIONS` | realtimed | `default` |  | 10000 | `` | node connection cap; 6000 with FAAS_REALTIME_FAIR_USE_ENABLED=1, sized to realtimed's 512 MB MemoryMax at ~52 KB per idle connection (ADR-1323); raise only with MemoryMax |
 | `FAAS_REALTIME_MAX_MESSAGE_BYTES` | realtimed | `default` |  |  | `` |  |
@@ -672,7 +674,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_S3_GATEWAY_ROLE` | s3-gatewayd | `dropin` |  | single-box | `` | production control-plane service must set control-plane explicitly |
 | `FAAS_S3_GATEWAY_SPOOL_DIR` | s3-gatewayd | `unit` |  |  | `` | production unit stages bounded single-PUT bodies under /var/spool/faas/s3-gatewayd |
 | `FAAS_SAFEDEPLOY_STUCK_AFTER` | apid, meterd | `default` |  |  | `` |  |
-| `FAAS_SAFEDEPLOY_TOKEN` | apid, meterd | `secrets-env` |  |  | `` | distinct random 32+ byte internal service token delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); activates only with FAAS_CANARY_PROGRESSION_TOKEN |
+| `FAAS_SAFEDEPLOY_TOKEN` | apid, meterd | `secrets-env` |  |  | `` | distinct random 32+ byte internal service token delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); activates only with FAAS_CANARY_PROGRESSION_TOKEN; the control_plane_service role generates the pair when missing (faas_safe_releases_enabled, ADR-1189) |
 | `FAAS_SAFE_RELEASE_DEFAULT_ENABLED` | apid | `default` |  | true | `` | ADR-1446 kill switch for the default health-gated rollout of production releases; explicit false restores immediate cutover for deploys that name no rollout policy |
 | `FAAS_SAMPLE_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_SBOM_ROOT` | apid | `default` |  |  | `` |  |
@@ -764,7 +766,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_TRACE_OBSERVER_TOKEN` | shared | `default` |  |  | `` |  |
 | `FAAS_TRACE_RING_CAP` | shared | `default` |  |  | `` |  |
 | `FAAS_TRACING_ENABLED` | guest, shared | `guest` |  |  | `` | stamped by guest-init when the local OTLP bridge is the trace exporter; gates the runtime bootstraps (ADR-958) |
-| `FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED` | apid | `default` |  | 0 | `` | admit `delivery: batch` on triggers (ADR-1321); off, apid refuses it with 422 |
+| `FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED` | apid, shared | `default` |  | 0 | `` | admit `delivery: batch` on triggers (ADR-1321); off, apid refuses it with 422; boot fallback for the trigger_batch_delivery platform flag (ADR-1700), ignored once an operator writes platform_flag.trigger_batch_delivery |
 | `FAAS_TRIGGER_LEDGER_RETENTION_ENABLED` | schedd | `default` |  | 0 | `` | exact opt-in (`1`) for the trigger_records reaper: terminal rows past their explicit retention or the default ages (7 days, 30 for dead letters) |
 | `FAAS_TRUSTED_INGRESS_CIDRS` | gatewayd-public | `unit` |  |  | `` | upstream TLS edge CIDRs allowed to provide canonical forwarding context |
 | `FAAS_TWO_NODE_ADDR_` | shared | `dev-only` |  |  | `` | native two-node acceptance fixture; must never be set on a production daemon |

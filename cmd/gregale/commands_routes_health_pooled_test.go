@@ -1,10 +1,11 @@
-package main
+package main_test
 
 import (
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routehealth"
 )
@@ -38,17 +39,17 @@ func TestValidateRouteHealthReportAcceptsPooledEvidence(t *testing.T) {
 	if r.Routes[0].EvidenceWindow != "pooled" || r.Status != "healthy" {
 		t.Fatalf("fixture is not pooled: %+v", r.Routes[0])
 	}
-	if err := validateRouteHealthReport(r, r.DeploymentID); err != nil {
+	if err := main.ValidateRouteHealthReport(r, r.DeploymentID); err != nil {
 		t.Fatalf("pooled report rejected: %v", err)
 	}
 	shifted := pooledRouteHealthReport(t)
 	shifted.Routes[0].PooledWindows[0].Start = shifted.Routes[0].PooledWindows[0].Start.Add(-time.Minute)
-	if validateRouteHealthReport(shifted, shifted.DeploymentID) == nil {
+	if main.ValidateRouteHealthReport(shifted, shifted.DeploymentID) == nil {
 		t.Fatal("shifted pooled windows accepted")
 	}
 	unlabeled := pooledRouteHealthReport(t)
 	unlabeled.Routes[0].EvidenceWindow = ""
-	if validateRouteHealthReport(unlabeled, unlabeled.DeploymentID) == nil {
+	if main.ValidateRouteHealthReport(unlabeled, unlabeled.DeploymentID) == nil {
 		t.Fatal("pooled verdict without its label accepted")
 	}
 }

@@ -53,7 +53,7 @@ terminal-state filter PgStore already had. Due rows are deleted in one
 statement per batch, falling back to per-row deletes on error, so the existing
 backlog drains faster than one statement per row.
 
-Migration `20261019104819437` adds two partial indexes with
+Migration `20261019172834218` adds two partial indexes with
 `CREATE INDEX CONCURRENTLY`: unstamped finished rows by `created_at` (rows
 leave it once stamped) and due finished rows by `result_retention_until`
 (`invocations_acct_retention_idx` leads with `account_id` and cannot serve the

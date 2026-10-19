@@ -915,13 +915,14 @@ type warmEnsurer interface {
 // Handler is gatewayd-internal's HTTP entrypoint: route → rate-limit → (wake-block if
 // parked) → proxy (spec §4.1, §2). It is the only public listener on the box.
 type Handler struct {
-	devBridgeAuthorize func(*http.Request) *api.Problem
-	devBridgeForward   func(http.ResponseWriter, *http.Request, App) bool
-	backend            Backend
-	declaredRoutes     DeclaredRouteMatcher
-	limiter            *Limiter
-	preAuthLimiter     *preAuthSourceLimiter
-	preAuthCentral     CentralBackend
+	financialBudgetAdmission func(context.Context, App) error
+	devBridgeAuthorize       func(*http.Request) *api.Problem
+	devBridgeForward         func(http.ResponseWriter, *http.Request, App) bool
+	backend                  Backend
+	declaredRoutes           DeclaredRouteMatcher
+	limiter                  *Limiter
+	preAuthLimiter           *preAuthSourceLimiter
+	preAuthCentral           CentralBackend
 	// routeLimiter is the per-rule token-bucket throttle (ADR-091
 	// D20.5 amendment, issue #881). Same underlying *Limiter type as
 	// limiter + accountLimiter but constructed with NewLimiterWithLRU
@@ -1241,7 +1242,8 @@ type Handler struct {
 	// commit 14.
 	responseCache *ResponseCache
 	// contentObserver compares anonymous GET responses on routes without a
-	// cache rule (ADR-1188); only the outcome reaches request telemetry.
+	// cache rule (ADR-1188) and the bodies a cache rule stores (ADR-1199);
+	// only the outcome reaches request telemetry.
 	contentObserver *contentObserver
 	// cacheRefresh coalesces detached stale-while-waking refreshes by
 	// response-cache key. The customer request returns the stale body while
@@ -1479,6 +1481,8 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 	// race with parallel ServeHTTP readers — the load test under -race
 	// caught that pattern; see the field doc).
 	h.proxyFor = defaultProxy
+	// Route priorities also order the cold-wake queue (ADR-20261018181846).
+	h.gate.classifier = h
 	return h
 }
 
@@ -5890,6 +5894,17 @@ haveApp:
 		h.observe(r, rec.status, app.ID, "", false, Target{})
 		return
 	}
+	if h.financialBudgetAdmission != nil {
+		if err := h.financialBudgetAdmission(r.Context(), app); err != nil {
+			var problem *api.Problem
+			if !errors.As(err, &problem) {
+				problem = api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity, "Budget admission unavailable", "Retry shortly.")
+			}
+			api.WriteProblem(w, problem)
+			h.observe(r, rec.status, app.ID, "", false, Target{})
+			return
+		}
+	}
 	if api.MustLimitsFor(app.Plan).DebugTelemetryEnabled {
 		// ADR-634: the request-ID journal is a debugging index; a write it
 		// could not make (or queue) never stops the request.
@@ -6563,6 +6578,11 @@ haveApp:
 		cw.excludeManagedVersionCookie(managedVersionSetCookie)
 		cw.excludeManagedCookie(managedReleaseContextSetCookie)
 		w = cw
+		if h.contentObserver != nil && contentObservable(r) {
+			// Compare the body this miss stores with the previous one for the
+			// URL, so the rule's max-age can be checked (ADR-1199).
+			r = r.WithContext(withContentTee(r.Context(), newRefillObserver(cw, h.contentObserver, app.ID, r, rule)))
+		}
 		defer func() {
 			// Proxy aborts unwind through this defer after a partial body has
 			// been written. Preserve the abort without caching those bytes.
@@ -6930,6 +6950,8 @@ haveApp:
 			attribute.String("app_plan", string(app.Plan)),
 			attribute.Int("desired_instances", maxInstances),
 		)
+		// The wake queue orders and admits waiters by route priority.
+		wakeCtx = withRoutePriorityRequest(wakeCtx, r)
 		//nolint:contextcheck // request ctx at handler boundary.
 		cold, wakeID, wakeMethod, err = h.ensureCapacity(wakeCtx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, sched.TriggerGateway, concurrencyConfigForApp(app))
 		wakeSpan.SetAttributes(
@@ -8868,7 +8890,8 @@ func (h *Handler) ensureServiceCapacity(ctx context.Context, app App, trigger st
 	}
 	h.noteColdWake(ctx, app.ID)
 	maxInstances := effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
-	_, _, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, trigger, concurrencyConfigForApp(app))
+	_, wakeID, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, trigger, concurrencyConfigForApp(app))
+	recordServiceWakeID(ctx, wakeID)
 	return err
 }
 
@@ -8891,7 +8914,8 @@ func (h *Handler) EnsureServiceDeploymentCapacity(ctx context.Context, app App, 
 	// Match the public cold-bucket fan-out allowance: rollout capacity is
 	// governed by the plan ceiling here, while schedd remains authoritative
 	// for the temporary rollout-instance exception.
-	_, _, _, err := h.backend.Admit(ctx, app.ID, deploymentID, app.Scope, sched.TriggerServiceMesh, limits.MaxConcurrency)
+	wakeID, _, _, err := h.backend.Admit(ctx, app.ID, deploymentID, app.Scope, sched.TriggerServiceMesh, limits.MaxConcurrency)
+	recordServiceWakeID(ctx, wakeID)
 	return err
 }
 

@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RouteAwakeRoute } from './RouteAwakeRoute.js';
+import type { RouteAwakeSource } from './RouteAwakeSource.js';
 /**
  * How long the app was awake in the window and which routes kept it awake (ADR-1187). Seconds are instance-seconds of billed running time.
  */
@@ -31,9 +32,17 @@ export type RouteAwakeResponse = {
    */
   wakes: number;
   /**
-   * Awake time no recorded request explains: synthetic probes, scheduled prewarm, minimum instances, queue, cron and waitUntil work, or telemetry the plan's rate cap dropped.
+   * Awake time no recorded request, probe or prewarm explains: minimum instances, queue, cron and waitUntil work, probes older than a day, or telemetry the plan's rate cap dropped.
    */
   unattributed_seconds: number;
+  /**
+   * Awake time credited to causes other than customer requests, for minutes no request explains (ADR-1199).
+   */
+  sources: Array<RouteAwakeSource>;
+  /**
+   * The app's current minimum instance count; above zero the app never parks, so unattributed time is expected.
+   */
+  min_instances: number;
   /**
    * Awake time attributed to routes outside the busiest routes_limit.
    */
