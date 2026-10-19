@@ -23,6 +23,9 @@ func TestCmdTraceRendersAccountTraceEvidence(t *testing.T) {
 				Matches: []api.AccountTraceMatch{
 					{App: "alpha", Request: api.DebugTelemetryRequestItem{ID: "row-alpha", Route: "/checkout", Method: "GET", Status: 200, LatencyMS: 100}},
 					{App: "beta", Request: api.DebugTelemetryRequestItem{ID: "row-beta", Route: "/checkout", Method: "GET", Status: 200, LatencyMS: 40}},
+					{App: "billing", Request: api.DebugTelemetryRequestItem{ID: "row-billing", Route: "other", Method: "POST", Status: 200, LatencyMS: 900,
+						ColdBoot: true, WakeID: "wake-9", Guest: &api.DebugGuestExecutionEvidence{Runtime: "node22", DurationMS: 270}},
+						Wake: &api.AccountTraceWake{WakeID: "wake-9", Method: "restore", ReadyInMS: 610}},
 				},
 				Invocations: []api.AccountTraceInvocation{
 					{App: "alpha", ID: "inv-queue", Source: "queue", QueueName: "orders", State: "completed", Attempts: 1,
@@ -55,9 +58,10 @@ func TestCmdTraceRendersAccountTraceEvidence(t *testing.T) {
 	}
 	got := stdout.String()
 	for _, want := range []string{
-		"TRACE " + traceID + " · 2 app match(es) · 1 invocation(s) · 1 HTTP log(s) · 2 span(s)",
+		"TRACE " + traceID + " · 3 app match(es) · 1 invocation(s) · 1 HTTP log(s) · 2 span(s)",
 		"alpha · GET /checkout · HTTP 200 · 100 ms",
 		"beta · GET /checkout · HTTP 200 · 40 ms",
+		"billing · POST other · HTTP 200 · 900 ms · telemetry row row-billing\n      woke by restore in 610 ms (wake wake-9) · app ≈270 ms · other ≈20 ms",
 		"INVOCATIONS",
 		"HTTP ACCESS LOGS",
 		"2026-09-22T10:00:00.010Z · alpha · GET /checkout · status=200 · latency=100ms · event log-alpha",
@@ -72,6 +76,42 @@ func TestCmdTraceRendersAccountTraceEvidence(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("trace output missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestTraceMatchBreakdown(t *testing.T) {
+	guest := func(ms int) *api.DebugGuestExecutionEvidence { return &api.DebugGuestExecutionEvidence{DurationMS: ms} }
+	tests := []struct {
+		name  string
+		match api.AccountTraceMatch
+		want  string
+	}{
+		{"warm request without runtime evidence", api.AccountTraceMatch{Request: api.DebugTelemetryRequestItem{LatencyMS: 40}}, ""},
+		{"warm request with runtime evidence", api.AccountTraceMatch{Request: api.DebugTelemetryRequestItem{LatencyMS: 40, Guest: guest(30)}}, "app ≈30 ms"},
+		{"restored request", api.AccountTraceMatch{
+			Request: api.DebugTelemetryRequestItem{LatencyMS: 900, ColdBoot: true, WakeID: "w1", Guest: guest(270)},
+			Wake:    &api.AccountTraceWake{WakeID: "w1", Method: "restore", ReadyInMS: 610},
+		}, "woke by restore in 610 ms (wake w1) · app ≈270 ms · other ≈20 ms"},
+		{"wake without a method", api.AccountTraceMatch{
+			Request: api.DebugTelemetryRequestItem{LatencyMS: 700, ColdBoot: true, WakeID: "w2"},
+			Wake:    &api.AccountTraceWake{WakeID: "w2", ReadyInMS: 650},
+		}, "woke in 650 ms (wake w2)"},
+		{"wake history no longer retained", api.AccountTraceMatch{Request: api.DebugTelemetryRequestItem{LatencyMS: 700, ColdBoot: true, WakeID: "w3"}}, "found the app parked (wake w3)"},
+		{"unfinished wake", api.AccountTraceMatch{
+			Request: api.DebugTelemetryRequestItem{LatencyMS: 700, ColdBoot: true, WakeID: "w4"},
+			Wake:    &api.AccountTraceWake{WakeID: "w4", Method: "cold_boot"},
+		}, "found the app parked (wake w4)"},
+		{"bucketed parts exceed the latency", api.AccountTraceMatch{
+			Request: api.DebugTelemetryRequestItem{LatencyMS: 600, ColdBoot: true, WakeID: "w5", Guest: guest(20)},
+			Wake:    &api.AccountTraceWake{WakeID: "w5", Method: "restore", ReadyInMS: 590},
+		}, "woke by restore in 590 ms (wake w5) · app ≈20 ms"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := traceMatchBreakdown(tt.match); got != tt.want {
+				t.Fatalf("breakdown = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

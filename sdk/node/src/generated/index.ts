@@ -29,6 +29,7 @@ export type { AccountTraceInvocation } from './models/AccountTraceInvocation.js'
 export type { AccountTraceLookupError } from './models/AccountTraceLookupError.js';
 export type { AccountTraceLookupResponse } from './models/AccountTraceLookupResponse.js';
 export type { AccountTraceMatch } from './models/AccountTraceMatch.js';
+export type { AccountTraceWake } from './models/AccountTraceWake.js';
 export type { AccountUsageResponse } from './models/AccountUsageResponse.js';
 export type { ActivityActorResponse } from './models/ActivityActorResponse.js';
 export type { ActivityResourceResponse } from './models/ActivityResourceResponse.js';

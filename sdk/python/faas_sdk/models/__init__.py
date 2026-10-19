@@ -39,6 +39,7 @@ from .account_trace_invocation import AccountTraceInvocation
 from .account_trace_lookup_error import AccountTraceLookupError
 from .account_trace_lookup_response import AccountTraceLookupResponse
 from .account_trace_match import AccountTraceMatch
+from .account_trace_wake import AccountTraceWake
 from .account_usage_response import AccountUsageResponse
 from .activity_actor_response import ActivityActorResponse
 from .activity_actor_response_type import ActivityActorResponseType
@@ -5822,6 +5823,7 @@ __all__ = (
     "AccountTraceLookupError",
     "AccountTraceLookupResponse",
     "AccountTraceMatch",
+    "AccountTraceWake",
     "AccountUsageResponse",
     "ActivityActorResponse",
     "ActivityActorResponseType",

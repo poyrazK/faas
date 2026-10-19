@@ -106617,6 +106617,16 @@ components:
       properties:
         app: { type: string }
         request: { $ref: '#/components/schemas/DebugTelemetryRequestItem' }
+        wake: { $ref: '#/components/schemas/AccountTraceWake' }
+
+    AccountTraceWake:
+      type: object
+      description: "How a matched request's app was woken, when its wake history is still retained. Omitted for warm requests."
+      required: [wake_id]
+      properties:
+        wake_id: { type: string }
+        method: { type: string, description: "How the instance started, for example restore or cold_boot." }
+        ready_in_ms: { type: integer, format: int32, minimum: 0, description: "Milliseconds from boot start to ready; omitted until the wake completed." }
 
     AccountTraceInvocation:
       type: object

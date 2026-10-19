@@ -56,6 +56,7 @@ export type { AccountTraceInvocation } from './AccountTraceInvocation.js';
 export type { AccountTraceLookupError } from './AccountTraceLookupError.js';
 export type { AccountTraceLookupResponse } from './AccountTraceLookupResponse.js';
 export type { AccountTraceMatch } from './AccountTraceMatch.js';
+export type { AccountTraceWake } from './AccountTraceWake.js';
 export type { AccountUsageResponse } from './AccountUsageResponse.js';
 export type { ActivityActorResponse } from './ActivityActorResponse.js';
 export type { ActivityResourceResponse } from './ActivityResourceResponse.js';
