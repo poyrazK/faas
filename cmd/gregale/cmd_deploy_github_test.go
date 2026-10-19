@@ -254,7 +254,9 @@ func TestReleaseWorkflowEmbedsCurrentGithubActionPin(t *testing.T) {
 		`sha=$(bash scripts/ci/resolve-github-action-pin.sh)`,
 		"ACTION_SHA: ${{ needs.resolve-action-pin.outputs.sha }}",
 		"-X main.githubActionDefaultSHA=${action_sha}",
-		`ref=${ACTION_SHA}`,
+		// The pinned commit's Action contents are verified through the
+		// Contents API (scripts/ci/verify-action-ref-contents.sh).
+		`scripts/ci/verify-action-ref-contents.sh "$ACTION_SHA" "$MAJOR"`,
 	} {
 		if !strings.Contains(string(workflow), want) {
 			t.Errorf("release workflow does not embed the current deploy Action pin; missing %q", want)

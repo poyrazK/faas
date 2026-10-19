@@ -577,6 +577,11 @@ func runOracle(t *testing.T, seed uint64, nqueries, nwriters, ntxns int) Stats {
 	// the slot, as parking a database and recovering from a crash do.
 	rr := rand.New(rand.NewPCG(seed, 3))
 	restartPercent := envInt("LIVEQUERY_ORACLE_RESTART_PERCENT", 8)
+	// Release the database now and then, as an idle hub does so it can scale
+	// to zero, while the writers keep committing; resume, sometimes on a
+	// lost slot.
+	rel := rand.New(rand.NewPCG(seed, 5))
+	releasePercent := envInt("LIVEQUERY_ORACLE_RELEASE_PERCENT", 8)
 	for running := true; running; {
 		select {
 		case <-done:
@@ -588,6 +593,9 @@ func runOracle(t *testing.T, seed uint64, nqueries, nwriters, ntxns int) Stats {
 		h.round()
 		if rr.IntN(100) < restartPercent {
 			h.restart(rr.IntN(4) == 0)
+		} else if rel.IntN(100) < releasePercent {
+			h.releaseAndResume(rel.IntN(4) == 0, func() { time.Sleep(time.Duration(rel.IntN(30)) * time.Millisecond) })
+			h.releases++
 		}
 	}
 	// Drain: transactions committed after the last round's snapshot.
@@ -597,6 +605,6 @@ func runOracle(t *testing.T, seed uint64, nqueries, nwriters, ntxns int) Stats {
 	if len(h.engine.pending) != 0 {
 		t.Fatalf("%d transactions still pending after the workload", len(h.engine.pending))
 	}
-	t.Logf("seed %d stats: %+v, %d restarts", seed, h.engine.Stats, h.restarts)
+	t.Logf("seed %d stats: %+v, %d restarts, %d releases", seed, h.engine.Stats, h.restarts, h.releases)
 	return h.engine.Stats
 }

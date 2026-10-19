@@ -1188,7 +1188,7 @@ func fullRootfsSidecarRootAt(root, name string) (string, error) {
 	return path, nil
 }
 
-const defaultSidecarPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+const defaultSidecarPath = defaultImagePath
 
 // resolveWorkloadCommandPath resolves a bare OCI command name inside an image
 // root. exec.Command's normal LookPath runs before Cmd.Env is applied (and,

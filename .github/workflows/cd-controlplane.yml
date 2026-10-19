@@ -489,6 +489,9 @@ jobs:
           install -m 0644 \
             deploy/ansible/roles/s3_gateway_service/files/faas-s3-gatewayd.service \
             "${BUNDLE_ROOT}/optional-systemd/faas-s3-gatewayd.service"
+          install -m 0644 \
+            deploy/ansible/roles/livequeryd_service/files/faas-livequeryd.service \
+            "${BUNDLE_ROOT}/optional-systemd/faas-livequeryd.service"
           # Files required before deployctl can activate outboundd. Keep the
           # role/billing overrides inside the signed bundle so the standalone
           # control-plane path applies the same public-beta posture as Ansible.
@@ -1187,6 +1190,48 @@ jobs:
             sleep 2
           done
           journalctl -u faas-s3-gatewayd.service -n 100 --no-pager >&2
+          exit 1
+          REMOTE
+
+      - name: Restart configured optional live-query hub
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            root@${{ env.CP_HOST }} "bash -s -- '${RELEASE_ID}'" <<'REMOTE'
+          set -euo pipefail
+          release_id="$1"
+          hub_dropin=/etc/systemd/system/faas-livequeryd.service.d/50-faas-livequeryd.conf
+          source_unit="/opt/faas/releases/${release_id}/optional-systemd/faas-livequeryd.service"
+          installed_unit=/etc/systemd/system/faas-livequeryd.service
+
+          # The livequeryd_service role writes the hub drop-in only for an
+          # enabled database (ADR-20261016151947). Without it a release leaves
+          # live queries off.
+          if [[ ! -s "$hub_dropin" ]]; then
+            echo "faas-livequeryd is not configured; live queries remain unchanged"
+            exit 0
+          fi
+          test -f "$source_unit"
+          if [[ -L "$installed_unit" || ( -e "$installed_unit" && ! -f "$installed_unit" ) ]]; then
+            echo "faas-livequeryd unit path is not a regular file" >&2
+            exit 1
+          fi
+          staged_unit="${installed_unit}.new-${release_id}"
+          trap 'rm -f -- "$staged_unit"' EXIT
+          install -o root -g root -m 0644 "$source_unit" "$staged_unit"
+          mv -Tf "$staged_unit" "$installed_unit"
+          trap - EXIT
+
+          systemctl daemon-reload
+          systemctl enable faas-livequeryd.service
+          systemctl restart faas-livequeryd.service
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --max-time 2 http://127.0.0.1:9471/readyz >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          journalctl -u faas-livequeryd.service -n 100 --no-pager >&2
           exit 1
           REMOTE
 

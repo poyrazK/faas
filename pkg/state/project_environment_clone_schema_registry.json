@@ -7907,6 +7907,8 @@
       "occurrence_id",
       "operation_id",
       "parallelism",
+      "process_user",
+      "process_workdir",
       "ram_mb_snapshot",
       "retry_max",
       "source_run_id",

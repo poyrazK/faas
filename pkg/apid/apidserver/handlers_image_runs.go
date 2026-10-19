@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/imagerun"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -24,6 +25,10 @@ func (s *server) createImageRun(w http.ResponseWriter, r *http.Request, acct sta
 			return s.notif.Notify(ctx, channel, payload)
 		},
 		Log: s.log,
+		SetRegistryCredential: func(ctx context.Context, acct state.Account, job state.Job, cred api.PutJobRegistryCredentialRequest) *api.Problem {
+			_, prob := s.storeJobRegistryCredential(ctx, acct, job, cred)
+			return prob
+		},
 	}
 	h.Create(w, r, acct)
 }
