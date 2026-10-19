@@ -399,6 +399,10 @@ shell-quoting-check-test: ## Exercise the shell-quoting gate against fixture tre
 deploy-action-head-check: ## Verify stale branch and invalid release-tag pushes cannot submit Action deployments
 	@bash scripts/ci/test_deploy_action_head.sh
 
+.PHONY: deploy-action-cli-check
+deploy-action-cli-check: ## Verify the deploy Action unpacks and checks the gzip-compressed vendored CLI
+	@bash scripts/ci/test_deploy_action_cli.sh
+
 .PHONY: environment-preflight-action-check
 environment-preflight-action-check: ## Verify the OIDC capability and promotion gate contract in the environment preflight Action
 	@bash scripts/ci/test_environment_preflight_action.sh
