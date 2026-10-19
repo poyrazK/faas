@@ -7853,6 +7853,8 @@ BEGIN
     'billable_units', NEW.billable_units,
     'unpriced_units', NEW.unpriced_units,
     'amount_millicents', NEW.amount_millicents,
+    'credit_applied_millicents', NEW.credit_applied_millicents,
+    'amount_due_millicents', NEW.amount_millicents - NEW.credit_applied_millicents,
     'priced', NEW.unpriced_units = 0 AND NEW.currency <> '',
     'lines', NEW.lines,
     'fees', NEW.fees,
@@ -25388,7 +25390,7 @@ CREATE TABLE public.account_billing_connections (
     automatic_tax boolean DEFAULT false NOT NULL,
     CONSTRAINT account_billing_connections_api_url_chk CHECK (((api_url IS NULL) OR ((char_length(api_url) <= 512) AND (api_url ~~ 'https://%'::text)))),
     CONSTRAINT account_billing_connections_automatic_tax_chk CHECK (((NOT automatic_tax) OR (provider = 'stripe'::text))),
-    CONSTRAINT account_billing_connections_collection_chk CHECK ((((provider = 'stripe'::text) AND (collection = ANY (ARRAY['none'::text, 'send'::text, 'charge'::text]))) OR ((provider = 'paddle'::text) AND (collection = 'none'::text)) OR ((provider = 'lago'::text) AND (collection = ANY (ARRAY['none'::text, 'charge'::text]))))),
+    CONSTRAINT account_billing_connections_collection_chk CHECK ((((provider = 'stripe'::text) AND (collection = ANY (ARRAY['none'::text, 'send'::text, 'charge'::text]))) OR ((provider = 'paddle'::text) AND (collection = ANY (ARRAY['none'::text, 'send'::text]))) OR ((provider = 'lago'::text) AND (collection = ANY (ARRAY['none'::text, 'charge'::text]))))),
     CONSTRAINT account_billing_connections_days_until_due_chk CHECK (((days_until_due >= 1) AND (days_until_due <= 365))),
     CONSTRAINT account_billing_connections_last4_chk CHECK ((char_length(key_last4) = 4)),
     CONSTRAINT account_billing_connections_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'lago'::text])))
@@ -43214,6 +43216,50 @@ CREATE TABLE public.platform_tenant_credential_policies (
 
 
 --
+-- Name: platform_tenant_credit_applications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_tenant_credit_applications (
+    grant_id uuid NOT NULL,
+    statement_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    amount_millicents bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT platform_tenant_credit_applications_amount_chk CHECK ((amount_millicents > 0))
+);
+
+
+--
+-- Name: platform_tenant_credit_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_tenant_credit_grants (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    platform_tenant_id uuid NOT NULL,
+    currency text NOT NULL,
+    amount_millicents bigint NOT NULL,
+    remaining_millicents bigint NOT NULL,
+    note text DEFAULT ''::text NOT NULL,
+    expires_at timestamp with time zone,
+    voided_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT platform_tenant_credit_grants_amount_chk CHECK (((amount_millicents > 0) AND (remaining_millicents >= 0) AND (remaining_millicents <= amount_millicents))),
+    CONSTRAINT platform_tenant_credit_grants_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
+    CONSTRAINT platform_tenant_credit_grants_expiry_chk CHECK (((expires_at IS NULL) OR (expires_at > created_at))),
+    CONSTRAINT platform_tenant_credit_grants_note_chk CHECK ((char_length(note) <= 200)),
+    CONSTRAINT platform_tenant_credit_grants_voided_chk CHECK (((voided_at IS NULL) OR (remaining_millicents = 0)))
+);
+
+
+--
+-- Name: TABLE platform_tenant_credit_grants; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.platform_tenant_credit_grants IS 'Prepaid credit granted to a platform tenant; finalized tenant statements draw it down oldest-expiring first (ADR-20261019100331).';
+
+
+--
 -- Name: platform_tenant_hostname_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -43474,6 +43520,36 @@ COMMENT ON TABLE public.platform_tenant_source_route_usage_minutes IS 'Billable 
 
 
 --
+-- Name: platform_tenant_spend_caps; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_tenant_spend_caps (
+    platform_tenant_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    currency text NOT NULL,
+    monthly_cap_millicents bigint NOT NULL,
+    capped boolean DEFAULT false NOT NULL,
+    month_start timestamp with time zone,
+    amount_due_millicents bigint,
+    checked_at timestamp with time zone,
+    next_check_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT platform_tenant_spend_caps_cap_chk CHECK ((monthly_cap_millicents >= 0)),
+    CONSTRAINT platform_tenant_spend_caps_capped_chk CHECK (((NOT capped) OR ((month_start IS NOT NULL) AND (checked_at IS NOT NULL)))),
+    CONSTRAINT platform_tenant_spend_caps_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
+    CONSTRAINT platform_tenant_spend_caps_due_chk CHECK (((amount_due_millicents IS NULL) OR (amount_due_millicents >= 0)))
+);
+
+
+--
+-- Name: TABLE platform_tenant_spend_caps; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.platform_tenant_spend_caps IS 'Monthly spend cap per platform tenant; apid checks the month to date and tenant admission denies capped tenants (ADR-20261019100331).';
+
+
+--
 -- Name: platform_tenant_statement_consumers; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -43547,11 +43623,13 @@ CREATE TABLE public.platform_tenant_statements (
     finalized_at timestamp with time zone,
     coverage jsonb NOT NULL,
     fees jsonb DEFAULT '[]'::jsonb NOT NULL,
+    credit_applied_millicents bigint DEFAULT 0 NOT NULL,
     CONSTRAINT platform_tenant_statements_amount_millicents_check CHECK ((amount_millicents >= 0)),
     CONSTRAINT platform_tenant_statements_billable_units_check CHECK ((billable_units >= 0)),
     CONSTRAINT platform_tenant_statements_check CHECK (((period_start = date_trunc('minute'::text, period_start)) AND (period_end = date_trunc('minute'::text, period_end)) AND (period_end > period_start))),
     CONSTRAINT platform_tenant_statements_check1 CHECK ((((status = ANY (ARRAY['draft'::text, 'superseded'::text])) AND (finalized_at IS NULL)) OR ((status = 'finalized'::text) AND (finalized_at IS NOT NULL)))),
     CONSTRAINT platform_tenant_statements_coverage_array CHECK ((jsonb_typeof(coverage) = 'array'::text)),
+    CONSTRAINT platform_tenant_statements_credit_chk CHECK (((credit_applied_millicents >= 0) AND (credit_applied_millicents <= GREATEST(amount_millicents, (0)::bigint)))),
     CONSTRAINT platform_tenant_statements_currency_check CHECK (((currency = ''::text) OR (currency ~ '^[A-Z]{3}$'::text))),
     CONSTRAINT platform_tenant_statements_fees_chk CHECK (((jsonb_typeof(fees) = 'array'::text) AND (jsonb_array_length(fees) <= 64))),
     CONSTRAINT platform_tenant_statements_lines_check CHECK ((jsonb_typeof(lines) = 'array'::text)),
@@ -58084,6 +58162,22 @@ ALTER TABLE ONLY public.platform_tenant_credential_policies
 
 
 --
+-- Name: platform_tenant_credit_applications platform_tenant_credit_applications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_credit_applications
+    ADD CONSTRAINT platform_tenant_credit_applications_pkey PRIMARY KEY (grant_id, statement_id);
+
+
+--
+-- Name: platform_tenant_credit_grants platform_tenant_credit_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_credit_grants
+    ADD CONSTRAINT platform_tenant_credit_grants_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: platform_tenant_hostname_policies platform_tenant_hostname_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -58177,6 +58271,14 @@ ALTER TABLE ONLY public.platform_tenant_request_budgets
 
 ALTER TABLE ONLY public.platform_tenant_source_route_usage_minutes
     ADD CONSTRAINT platform_tenant_source_route_usage_minutes_pkey PRIMARY KEY (account_id, platform_tenant_id, app_id, source_kind, source_id, window_start, route);
+
+
+--
+-- Name: platform_tenant_spend_caps platform_tenant_spend_caps_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_spend_caps
+    ADD CONSTRAINT platform_tenant_spend_caps_pkey PRIMARY KEY (platform_tenant_id);
 
 
 --
@@ -68315,6 +68417,20 @@ CREATE INDEX platform_tenant_access_tokens_tenant_idx ON public.platform_tenant_
 
 
 --
+-- Name: platform_tenant_credit_applications_statement_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_tenant_credit_applications_statement_idx ON public.platform_tenant_credit_applications USING btree (statement_id);
+
+
+--
+-- Name: platform_tenant_credit_grants_tenant_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_tenant_credit_grants_tenant_idx ON public.platform_tenant_credit_grants USING btree (platform_tenant_id, currency, created_at);
+
+
+--
 -- Name: platform_tenant_meter_usage_minutes_read_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -68354,6 +68470,13 @@ CREATE INDEX platform_tenant_reconciliation_receipts_history_idx ON public.platf
 --
 
 CREATE INDEX platform_tenant_source_route_usage_minutes_read_idx ON public.platform_tenant_source_route_usage_minutes USING btree (account_id, platform_tenant_id, window_start);
+
+
+--
+-- Name: platform_tenant_spend_caps_next_check_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_tenant_spend_caps_next_check_idx ON public.platform_tenant_spend_caps USING btree (next_check_at);
 
 
 --
@@ -86287,6 +86410,46 @@ ALTER TABLE ONLY public.platform_tenant_credential_policies
 
 
 --
+-- Name: platform_tenant_credit_applications platform_tenant_credit_applications_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_credit_applications
+    ADD CONSTRAINT platform_tenant_credit_applications_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_credit_applications platform_tenant_credit_applications_grant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_credit_applications
+    ADD CONSTRAINT platform_tenant_credit_applications_grant_id_fkey FOREIGN KEY (grant_id) REFERENCES public.platform_tenant_credit_grants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_credit_applications platform_tenant_credit_applications_statement_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_credit_applications
+    ADD CONSTRAINT platform_tenant_credit_applications_statement_id_fkey FOREIGN KEY (statement_id) REFERENCES public.platform_tenant_statements(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_credit_grants platform_tenant_credit_grants_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_credit_grants
+    ADD CONSTRAINT platform_tenant_credit_grants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_credit_grants platform_tenant_credit_grants_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_credit_grants
+    ADD CONSTRAINT platform_tenant_credit_grants_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
 -- Name: platform_tenant_hostname_policies platform_tenant_hostname_policies_account_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -86404,6 +86567,22 @@ ALTER TABLE ONLY public.platform_tenant_request_budgets
 
 ALTER TABLE ONLY public.platform_tenant_source_route_usage_minutes
     ADD CONSTRAINT platform_tenant_source_route_usage_minutes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_spend_caps platform_tenant_spend_caps_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_spend_caps
+    ADD CONSTRAINT platform_tenant_spend_caps_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_spend_caps platform_tenant_spend_caps_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_spend_caps
+    ADD CONSTRAINT platform_tenant_spend_caps_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
 
 
 --

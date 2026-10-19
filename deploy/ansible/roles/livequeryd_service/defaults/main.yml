@@ -39,8 +39,13 @@ faas_livequeryd_listen: "0.0.0.0:9480"
 faas_livequeryd_tls_cert: /etc/faas/tls/livequeryd/server.crt
 faas_livequeryd_tls_key: /etc/faas/tls/livequeryd/server.key
 faas_livequeryd_client_ca: /etc/faas/tls/ca/ca.crt
-# Optional controller-local sources for the files above; when empty the role
-# requires them to exist on the host already.
+# Accept only this client identity: the fleet PKI's realtimed live client
+# leaf (faas_realtime_live_tls_managed on realtimed's hosts). Empty accepts
+# any client certificate the CA signed.
+faas_livequeryd_client_name: realtimed.faas
+# By default the hub's server leaf is the fleet PKI's livequeryd.faas feature
+# leaf, issued and renewed from the CA on this host (tasks/pki.yml). Setting
+# both controller-local sources below installs those files instead.
 faas_livequeryd_tls_cert_src: ""
 faas_livequeryd_tls_key_src: ""
 

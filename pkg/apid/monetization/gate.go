@@ -40,6 +40,8 @@ var routes = []string{
 	"/v1/account/platform-tenants/{}/usage-statements",
 	"/v1/account/platform-tenants/{}/plan-assignments",
 	"/v1/account/platform-tenants/{}/trial",
+	"/v1/account/platform-tenants/{}/credits",
+	"/v1/account/platform-tenants/{}/spend-cap",
 	"/v1/consumer-billing",
 	"/v1/platform-tenant-self/usage-statements",
 }

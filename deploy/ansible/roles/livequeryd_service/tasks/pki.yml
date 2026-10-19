@@ -1,0 +1,12 @@
+---
+# The hub's server leaf (livequeryd.faas) is a fleet-PKI feature leaf
+# (pkg/pki feature leaves), issued from the CA on this host. A run keeps a leaf
+# that stays valid for 30 days or more, so this is also its renewal
+# (pki_renew.yml).
+- name: livequeryd_service — issue the hub's fleet-PKI server leaf
+  ansible.builtin.command:
+    argv: [/usr/local/bin/gregalectl, pki, issue-feature, --feature, live-queries, --box-role, control-plane,
+           --ca-dir, /etc/faas/tls, --root-dir, /etc/faas/tls]
+  register: faas_livequeryd_leaf
+  changed_when: (faas_livequeryd_leaf.stdout | from_json).issued | length > 0
+  notify: restart faas-livequeryd

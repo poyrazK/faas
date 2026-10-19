@@ -9949,6 +9949,28 @@ type PlatformTenantCredentialPolicy struct {
 	UpdatedAt          pgtype.Timestamptz
 }
 
+type PlatformTenantCreditApplication struct {
+	GrantID          pgtype.UUID
+	StatementID      pgtype.UUID
+	AccountID        pgtype.UUID
+	AmountMillicents int64
+	CreatedAt        pgtype.Timestamptz
+}
+
+// Prepaid credit granted to a platform tenant; finalized tenant statements draw it down oldest-expiring first (ADR-20261019100331).
+type PlatformTenantCreditGrant struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	PlatformTenantID    pgtype.UUID
+	Currency            string
+	AmountMillicents    int64
+	RemainingMillicents int64
+	Note                string
+	ExpiresAt           pgtype.Timestamptz
+	VoidedAt            pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+}
+
 type PlatformTenantHostnamePolicy struct {
 	TenantID        pgtype.UUID
 	AccountID       pgtype.UUID
@@ -10074,6 +10096,21 @@ type PlatformTenantSourceRouteUsageMinute struct {
 	UpdatedAt        pgtype.Timestamptz
 }
 
+// Monthly spend cap per platform tenant; apid checks the month to date and tenant admission denies capped tenants (ADR-20261019100331).
+type PlatformTenantSpendCap struct {
+	PlatformTenantID     pgtype.UUID
+	AccountID            pgtype.UUID
+	Currency             string
+	MonthlyCapMillicents int64
+	Capped               bool
+	MonthStart           pgtype.Timestamptz
+	AmountDueMillicents  pgtype.Int8
+	CheckedAt            pgtype.Timestamptz
+	NextCheckAt          pgtype.Timestamptz
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+}
+
 type PlatformTenantStatement struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
@@ -10092,8 +10129,9 @@ type PlatformTenantStatement struct {
 	CreatedAt   pgtype.Timestamptz
 	FinalizedAt pgtype.Timestamptz
 	// Private immutable minute-level billable-unit evidence used to calculate additive statement revisions.
-	Coverage []byte
-	Fees     []byte
+	Coverage                []byte
+	Fees                    []byte
+	CreditAppliedMillicents int64
 }
 
 type PlatformTenantStatementConsumer struct {
