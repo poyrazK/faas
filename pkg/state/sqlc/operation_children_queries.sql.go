@@ -114,3 +114,63 @@ func (q *Queries) ListOperationChildren(ctx context.Context, db DBTX, arg ListOp
 	}
 	return items, nil
 }
+
+const listSettledChildParents = `-- name: ListSettledChildParents :many
+SELECT o.id, o.account_id,
+    count(co.id)::bigint AS total,
+    count(*) FILTER (WHERE co.state = 'succeeded')::bigint AS succeeded,
+    count(*) FILTER (WHERE co.state = 'failed')::bigint AS failed,
+    count(*) FILTER (WHERE co.state = 'cancelled')::bigint AS cancelled
+FROM customer_operations o
+LEFT JOIN customer_operation_children c ON c.parent_operation_id = o.id
+LEFT JOIN customer_operations co ON co.id = c.child_operation_id
+WHERE o.state = 'waiting' AND (o.record -> 'waiting' ->> 'kind') = 'event'
+  AND (o.record -> 'waiting' ->> 'event') = $1::text
+  AND NOT EXISTS (SELECT 1 FROM workflow_events e WHERE e.run_id = o.workflow_run_id AND e.event_name = $1::text)
+GROUP BY o.id, o.account_id
+HAVING count(co.id) = count(*) FILTER (WHERE co.state IN ('succeeded', 'failed', 'cancelled'))
+LIMIT $2
+`
+
+type ListSettledChildParentsParams struct {
+	Event    string
+	RowLimit int32
+}
+
+type ListSettledChildParentsRow struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	Total     int64
+	Succeeded int64
+	Failed    int64
+	Cancelled int64
+}
+
+// A parent waiting on the children-settled event whose children have all
+// settled; a parent that started none qualifies at once.
+func (q *Queries) ListSettledChildParents(ctx context.Context, db DBTX, arg ListSettledChildParentsParams) ([]ListSettledChildParentsRow, error) {
+	rows, err := db.Query(ctx, listSettledChildParents, arg.Event, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSettledChildParentsRow{}
+	for rows.Next() {
+		var i ListSettledChildParentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Total,
+			&i.Succeeded,
+			&i.Failed,
+			&i.Cancelled,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

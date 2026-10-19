@@ -70,6 +70,13 @@ func (m *MemStore) StartChildOperation(_ context.Context, in OperationChildStart
 // lockedChildParent checks the presented proof against the parent's current
 // execution.
 func (m *MemStore) lockedChildParent(in OperationChildStart) (Operation, error) {
+	if in.WorkflowAuthority != nil {
+		parent, _, _, err := m.workflowOperationAuthorityLocked(in.ParentID, *in.WorkflowAuthority, false)
+		if err == nil && parent.AccountID != in.accountID() {
+			err = ErrNotFound
+		}
+		return parent, err
+	}
 	if in.JobAuthority != nil {
 		parent, _, err := m.jobOperationAuthorityLocked(in.ParentID, *in.JobAuthority)
 		if err == nil && parent.AccountID != in.accountID() {
@@ -112,4 +119,50 @@ func (m *MemStore) OperationChildren(ctx context.Context, accountID, tenantID, p
 		}
 	}
 	return out, nil
+}
+
+func (m *MemStore) OperationChildSettlements(_ context.Context, limit int) ([]OperationChildSettlement, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	data := m.operationMemoryLocked()
+	out := []OperationChildSettlement{}
+	for _, op := range data.operations {
+		if op.State != api.OperationWaiting || op.Waiting == nil || op.Waiting.Kind != api.OperationWaitEvent || op.Waiting.Event != api.OperationChildrenSettledEvent {
+			continue
+		}
+		if m.workflowEventNamedLocked(op.WorkflowRunID, api.OperationChildrenSettledEvent) {
+			continue // signalled; the scheduler has yet to resume it
+		}
+		settled, counts := true, api.OperationChildrenSettled{}
+		for _, row := range data.children[op.ID] {
+			child := data.operations[row.child]
+			counts.Total++
+			switch child.State {
+			case api.OperationSucceeded:
+				counts.Succeeded++
+			case api.OperationFailed:
+				counts.Failed++
+			case api.OperationCancelled:
+				counts.Cancelled++
+			default:
+				settled = false
+			}
+		}
+		if settled {
+			out = append(out, OperationChildSettlement{AccountID: op.AccountID, ParentID: op.ID, Children: counts})
+		}
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (m *MemStore) workflowEventNamedLocked(runID, name string) bool {
+	for _, event := range m.workflowEvents[runID] {
+		if event.EventName == name {
+			return true
+		}
+	}
+	return false
 }

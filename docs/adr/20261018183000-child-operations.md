@@ -28,9 +28,10 @@ parent and the parent's key for it.
 uses `POST /v1/runtime/operations/{id}/children` with the same workload
 assertion and attempt capability as its progress reports; a job parent uses
 `POST /v1/runtime/job-operations/{id}/children` with its job run proof (run,
-instance, capability, generation). Customer and account credentials cannot
-start a child, and a stale attempt is refused. Workflow parents do not start
-children yet: a workflow step that waits on children is a later step.
+instance, capability, generation); a workflow parent's step uses
+`POST /v1/runtime/workflow-operations/{id}/children` with its workflow step
+proof (run, step, capability, generation, attempt). Customer and account
+credentials cannot start a child, and a stale attempt is refused.
 
 **What it may start.** An Operation the parent's deployment defines, named in
 the request (`operation`), for the parent's customer, with an input that
@@ -53,13 +54,26 @@ key conflicts.
 - A parent that settles leaves running children running; they settle on their
   own deadlines and budgets.
 - The parent reads its children's state with
-  `GET /v1/runtime/operations/{id}/children` (or the job-operations route) and
-  decides when it is done (fan-in by polling; a workflow wait on children is a
-  later step).
+  `GET /v1/runtime/operations/{id}/children` (or the job- or
+  workflow-operations route) and decides when it is done.
+
+**Workflow fan-in.** A workflow step may wait for the platform event
+`operation.children.settled` (`wait_for_event`). apid signals it, once, when
+every child of the waiting Operation has settled, with the counts
+(`total`, `succeeded`, `failed`, `cancelled`) as the payload; a wait with no
+children resumes at once. The signal is an ordinary Operation signal from the
+`account` source, so it appears as `signal_received` and survives restarts:
+apid wakes on `customer_operation_changed` and also rescans every few seconds,
+skipping a run that already holds the event. For accounts with child
+Operations the event name is reserved: customer and account signals and
+webhook bindings naming it are refused (422 `operation_signal_reserved`). Workflow events are matched by name for the
+whole run, so a workflow fans in on children once; a second wait on the event
+resumes with the first signal.
 
 **Locks.** A child start takes the workflow admission lock when the child is a
-workflow, then the account, then the parent's execution (its invocation, or its
-job run and task, the lock its cancellation takes), then admits the child
+workflow, then the account, then the parent's execution (its invocation, its
+job run and task, or its workflow run then Operation: the lock its
+cancellation takes), then admits the child
 in the same transaction: the account-then-execution order every other
 Operation write already uses.
 

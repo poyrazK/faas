@@ -39,6 +39,10 @@ func (s *Service) signalOne(w http.ResponseWriter, r *http.Request, acct state.A
 	if !DecodeOperationBody(w, r, &req, api.OperationSignalBodyMaxBytes) {
 		return
 	}
+	if reservedSignalEvent(acct.ID, req.Event) {
+		writeReservedSignalEvent(w)
+		return
+	}
 	receipt, err := store.SignalOperation(r.Context(), state.OperationSignalInput{AccountID: acct.ID, OperationID: op.ID, SignalID: req.SignalID, Event: req.Event, Payload: req.Payload, Source: source})
 	if err != nil {
 		WriteOperationError(w, err)
@@ -107,6 +111,10 @@ type subjectSignal struct {
 }
 
 func (s *Service) signalSubject(w http.ResponseWriter, r *http.Request, acct state.Account, in subjectSignal) {
+	if reservedSignalEvent(acct.ID, in.event) {
+		writeReservedSignalEvent(w)
+		return
+	}
 	store, ok := s.Host.Store().(state.OperationSignalStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrCapacity("operation signal store unavailable"))
@@ -146,4 +154,16 @@ func (s *Service) emitSignalAudit(r *http.Request, acct state.Account, receipt a
 		return
 	}
 	s.Host.EmitAudit(r.Context(), "app.operation_signal_delivered", &acct.ID, map[string]any{"operation_id": receipt.OperationID, "signal_id": receipt.SignalID, "event": receipt.Event, "source": source})
+}
+
+// reservedSignalEvent reports whether only the platform may send the event:
+// the children-settled event, for accounts with child Operations
+// (ADR-20261018183000).
+func reservedSignalEvent(accountID, event string) bool {
+	return event == api.OperationChildrenSettledEvent && api.OperationChildrenEnabled(accountID)
+}
+
+func writeReservedSignalEvent(w http.ResponseWriter) {
+	api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "operation_signal_reserved", "Reserved event",
+		"the platform sends operation.children.settled when a parent's children have settled"))
 }

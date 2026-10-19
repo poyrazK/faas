@@ -21,13 +21,14 @@ type OperationChild struct {
 
 // OperationChildStart starts one child of the Operation whose current
 // execution presents the proof: Authority for an HTTP parent, JobAuthority
-// for a job parent.
+// for a job parent, WorkflowAuthority for a workflow step.
 type OperationChildStart struct {
-	ParentID     string
-	AccountID    string
-	Authority    OperationExecutionAuthority
-	JobAuthority *JobOperationAuthority
-	Request      api.OperationChildRequest
+	ParentID          string
+	AccountID         string
+	Authority         OperationExecutionAuthority
+	JobAuthority      *JobOperationAuthority
+	WorkflowAuthority *OperationWorkflowAuthority
+	Request           api.OperationChildRequest
 }
 
 func (in OperationChildStart) accountID() string {
@@ -45,6 +46,16 @@ type OperationChildStore interface {
 	// OperationChildren lists a parent's children in start order. tenantID
 	// scopes the parent to one customer; empty is the account's view.
 	OperationChildren(ctx context.Context, accountID, tenantID, parentID string) ([]OperationChild, error)
+	// OperationChildSettlements lists parents waiting on the children-settled
+	// event whose children have all settled (or that started none).
+	OperationChildSettlements(ctx context.Context, limit int) ([]OperationChildSettlement, error)
+}
+
+// OperationChildSettlement is a waiting parent whose children have settled.
+type OperationChildSettlement struct {
+	AccountID string
+	ParentID  string
+	Children  api.OperationChildrenSettled
 }
 
 func validateOperationChildRequest(req api.OperationChildRequest) error {
@@ -71,8 +82,6 @@ func checkOperationChildParent(parent Operation, isChild bool) error {
 		return ErrOperationChildDepth
 	case parent.State.Terminal() || parent.CancellationRequested:
 		return ErrOperationNotActive
-	case parent.WorkflowRunID != "":
-		return fmt.Errorf("%w: workflow Operations do not start children", ErrInvalidArgument)
 	}
 	return nil
 }

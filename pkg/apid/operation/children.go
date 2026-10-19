@@ -3,8 +3,10 @@ package operation
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
@@ -85,6 +87,47 @@ func (s *Service) StartRuntimeJobChildOperation(w http.ResponseWriter, r *http.R
 		return
 	}
 	s.startChild(w, r, operations, parent, state.OperationChildStart{ParentID: parent.ID, AccountID: parent.AccountID, JobAuthority: &authority})
+}
+
+// StartRuntimeWorkflowChildOperation lets a running workflow step start a
+// child with its workflow step proof.
+func (s *Service) StartRuntimeWorkflowChildOperation(w http.ResponseWriter, r *http.Request) {
+	authority, ok := s.workflowOperationRuntimeAuthority(w, r)
+	if !ok {
+		return
+	}
+	operations, ok := s.OperationStore(w)
+	if !ok {
+		return
+	}
+	parent, err := operations.OperationByID(r.Context(), authority.AccountID, "", r.PathValue("id"))
+	if err != nil {
+		writeChildError(w, err)
+		return
+	}
+	s.startChild(w, r, operations, parent, state.OperationChildStart{ParentID: parent.ID, AccountID: authority.AccountID, WorkflowAuthority: &authority})
+}
+
+// ListRuntimeWorkflowOperationChildren lets a workflow step read its
+// Operation's children.
+func (s *Service) ListRuntimeWorkflowOperationChildren(w http.ResponseWriter, r *http.Request) {
+	authority, ok := s.workflowOperationRuntimeAuthority(w, r)
+	if !ok {
+		return
+	}
+	control, ok := s.Host.Store().(state.OperationWorkflowControlStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("workflow operation control unavailable"))
+		return
+	}
+	if _, err := control.WorkflowOperationExecutionControl(r.Context(), r.PathValue("id"), authority); err != nil {
+		WriteOperationError(w, err)
+		return
+	}
+	children, ok := s.childStore(w, authority.AccountID)
+	if ok {
+		s.writeChildren(w, r, children, authority.AccountID, "", r.PathValue("id"))
+	}
 }
 
 func (s *Service) startChild(w http.ResponseWriter, r *http.Request, operations state.OperationStore, parent state.Operation, start state.OperationChildStart) {
@@ -200,6 +243,79 @@ func (s *Service) cancelOperationChildren(ctx context.Context, store state.Opera
 		}
 		if _, err := store.CancelOperation(ctx, accountID, tenantID, child.Operation.ID, child.Operation.Generation); err != nil {
 			s.Host.Logger().Warn("child operation cancel failed", "parent_operation_id", parentID, "operation_id", child.Operation.ID, "err", err)
+		}
+	}
+}
+
+// The settlement signaller runs on every apid replica; signal IDs make a
+// repeated delivery a no-op.
+const (
+	childSettlementInterval  = 5 * time.Second
+	childSettlementWakeDelay = 250 * time.Millisecond
+	childSettlementBatch     = 100
+	childSettlementSignalID  = "children-settled"
+)
+
+// RunChildSettlementSignals signals operation.children.settled to parents
+// waiting on it once their children have settled, until ctx ends. It wakes
+// on customer_operation_changed, which every Operation save notifies, and
+// also polls in case a notification is dropped.
+func (s *Service) RunChildSettlementSignals(ctx context.Context) {
+	children, ok := s.Host.Store().(state.OperationChildStore)
+	if !ok {
+		return
+	}
+	signals, ok := s.Host.Store().(state.OperationSignalStore)
+	if !ok {
+		return
+	}
+	wakes, unsubscribe, err := s.Host.Subscribe(ctx, []string{"customer_operation_changed"})
+	if err != nil {
+		wakes = nil
+	} else {
+		defer unsubscribe()
+	}
+	ticker := time.NewTicker(childSettlementInterval)
+	defer ticker.Stop()
+	var soon <-chan time.Time
+	for {
+		s.signalSettledChildren(ctx, children, signals)
+		for ready := false; !ready; {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				ready = true
+			case _, ok := <-wakes:
+				if !ok {
+					wakes = nil
+				} else if soon == nil {
+					soon = time.After(childSettlementWakeDelay)
+				}
+			case <-soon:
+				soon, ready = nil, true
+			}
+		}
+	}
+}
+
+func (s *Service) signalSettledChildren(ctx context.Context, children state.OperationChildStore, signals state.OperationSignalStore) {
+	settled, err := children.OperationChildSettlements(ctx, childSettlementBatch)
+	if err != nil {
+		if ctx.Err() == nil {
+			s.Host.Logger().Warn("child settlement scan failed", "err", err)
+		}
+		return
+	}
+	for _, parent := range settled {
+		if !api.OperationChildrenEnabled(parent.AccountID) {
+			continue
+		}
+		payload, _ := json.Marshal(parent.Children)
+		_, err := signals.SignalOperation(ctx, state.OperationSignalInput{AccountID: parent.AccountID, OperationID: parent.ParentID, SignalID: childSettlementSignalID,
+			Event: api.OperationChildrenSettledEvent, Payload: payload, Source: api.OperationSignalSourceAccount})
+		if err != nil && !errors.Is(err, state.ErrOperationNotActive) && !errors.Is(err, state.ErrOperationSignalUnexpected) && ctx.Err() == nil {
+			s.Host.Logger().Warn("children-settled signal failed", "parent_operation_id", parent.ParentID, "err", err)
 		}
 	}
 }

@@ -28,7 +28,7 @@ func (s *PgStore) StartChildOperation(ctx context.Context, in OperationChildStar
 	if err != nil {
 		return OperationChild{}, false, err
 	}
-	if in.JobAuthority == nil {
+	if in.JobAuthority == nil && in.WorkflowAuthority == nil {
 		if _, err := operationUUID(in.Authority.InvocationID); err != nil {
 			return OperationChild{}, false, err
 		}
@@ -108,6 +108,10 @@ func (s *PgStore) StartChildOperation(ctx context.Context, in OperationChildStar
 // lockChildParentTx locks the parent's current execution, the lock its
 // cancellation takes, and checks the presented proof against it.
 func lockChildParentTx(ctx context.Context, tx pgx.Tx, in OperationChildStart, parentID string) (Operation, error) {
+	if in.WorkflowAuthority != nil {
+		parent, _, _, err := workflowOperationAuthorityTx(ctx, tx, parentID, *in.WorkflowAuthority, false)
+		return parent, err
+	}
 	if in.JobAuthority != nil {
 		parent, _, err := jobOperationAuthorityTx(ctx, tx, parentID, *in.JobAuthority)
 		return parent, err
@@ -143,6 +147,19 @@ func (s *PgStore) OperationChildren(ctx context.Context, accountID, tenantID, pa
 			return nil, err
 		}
 		out = append(out, OperationChild{Key: row.ChildKey, Operation: op})
+	}
+	return out, nil
+}
+
+func (s *PgStore) OperationChildSettlements(ctx context.Context, limit int) ([]OperationChildSettlement, error) {
+	rows, err := sqlc.New().ListSettledChildParents(ctx, s.pool, sqlc.ListSettledChildParentsParams{Event: api.OperationChildrenSettledEvent, RowLimit: int32(limit)})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]OperationChildSettlement, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, OperationChildSettlement{AccountID: pgUUIDString(row.AccountID), ParentID: pgUUIDString(row.ID),
+			Children: api.OperationChildrenSettled{Total: row.Total, Succeeded: row.Succeeded, Failed: row.Failed, Cancelled: row.Cancelled}})
 	}
 	return out, nil
 }
