@@ -9,7 +9,6 @@ import threading
 import traceback
 
 import pytest
-
 from faas_sdk.async_postgres_pool_runtime import AsyncPostgresPoolBinding
 from faas_sdk.async_secret_reload_runtime import (
     AsyncSecretConsumer,

@@ -63,6 +63,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/netns"
+
 	"golang.org/x/net/http2"
 )
 
@@ -318,7 +320,7 @@ func newGuestH2CTransport(guestIP string, guestPort uint16) *http2.Transport {
 			dctx, dcancel := context.WithTimeout(ctx, h2cDialTimeout)
 			defer dcancel()
 			var d net.Dialer
-			return d.DialContext(dctx, "tcp", net.JoinHostPort(guestIP, strconv.FormatUint(uint64(guestPort), 10)))
+			return netns.DialBridgeContext(dctx, &d, "tcp", net.JoinHostPort(guestIP, strconv.FormatUint(uint64(guestPort), 10)))
 		},
 		// http2.Transport is safe for concurrent RoundTrip calls.
 		// The pool owns its lifetime and closes idle connections on

@@ -10,7 +10,7 @@ export type FinancialForecastResponse = {
   period_start: string;
   period_end: string;
   as_of: string;
-  currency: 'EUR';
+  currency: 'USD';
   meters: Array<FinancialMeterCosts>;
   bill_estimate_available: boolean;
   missing_bill_components: Array<string>;
