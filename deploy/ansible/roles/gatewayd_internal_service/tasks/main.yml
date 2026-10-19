@@ -27,7 +27,7 @@
     mode: "0644"
   register: realtimed_unit
 
-# Durable listeners (ADR-1580), off unless faas_compute_durable_listeners.
+# Durable listeners (ADR-1736), off unless faas_compute_durable_listeners.
 # The socket units are inert until a service drop-in Wants= them. Nothing
 # here starts a socket: a daemon that bound the address itself unlinks the
 # unix path when it exits, so the handler stops the service and its socket

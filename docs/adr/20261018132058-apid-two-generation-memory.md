@@ -2,12 +2,12 @@
 
 Date: 2026-10-18
 Status: Accepted (owner asked for apid deploys with zero downtime regardless of apid's memory use)
-Related: ADR-1580 (zero-downtime daemon restarts, two generations), spec §13 (RAM budget ledger), ADR-068 (apid socket activation)
+Related: ADR-1736 (zero-downtime daemon restarts, two generations), spec §13 (RAM budget ledger), ADR-068 (apid socket activation)
 
 ## Context
 
 A reload runs two apid generations in one cgroup for up to 30 minutes
-(ADR-1580). The successor starts only while the cgroup uses at most 45 % of
+(ADR-1736). The successor starts only while the cgroup uses at most 45 % of
 its `MemoryMax`. apid's `MemoryMax` was 256 M, so a reload fell back to a
 restart above 115 MB.
 

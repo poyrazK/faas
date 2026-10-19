@@ -567,7 +567,7 @@ class RepositoryContractTest(unittest.TestCase):
     def test_edge_lane_is_the_gateways(self):
         # The edge lane rolls host by host without draining: only the
         # gateways hand traffic over that way. vmmd and compute schedd are
-        # the vmmd session's (restart survival, ADR-1580 and node drain).
+        # the vmmd session's (restart survival, ADR-1736 and node drain).
         edge = sorted(n for n, e in self.config["binaries"].items() if e["lane"] == "edge")
         self.assertEqual(edge, ["gatewayd-internal", "gatewayd-public"])
 

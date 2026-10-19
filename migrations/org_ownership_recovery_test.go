@@ -10,13 +10,12 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/migrations"
-	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 // Ownership rollback must preserve the newer migration-capacity admission
 // accounting, and replay must restore the same company policy and constraints.
 func TestOrganizationOwnershipDownUpPreservesCapacityAccounting(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
+	pool := openMigrated(t)
 	ctx := t.Context()
 	var schema, before string
 	if err := pool.QueryRow(ctx, `SELECT current_schema(), pg_get_functiondef('service_capacity_snapshot()'::regprocedure)`).Scan(&schema, &before); err != nil {

@@ -37,19 +37,21 @@ type WarmVM interface {
 // VMRequest is the input to a builder VM spawn. The orchestrator at
 // builderd.go::ProcessOne populates this from a queued Build row.
 type VMRequest struct {
-	BuildID         string
-	TenantID        string
-	DeploymentID    string
-	SourcePath      string // tarball or dockerfile source on disk
-	SourceSHA256    string // digest already verified by the orchestrator
-	SourceRoot      string // repository-relative build root inside the archive; empty = archive root
-	DockerfilePath  string // relative to SourceRoot; empty selects Dockerfile
-	Framework       Framework
-	Runtime         string // app runtime id (node22, python312, go124-alpine, ...)
-	RuntimeBaseRef  string // resolved OCI ref used by Railpack for this build
-	IssueSourceMaps *api.IssueSourceMapBuildConfig
-	Function        bool // handler build; allows markerless Node/Python sources
-	SharedRuntime   bool // container app built on a shared runner base (H10-140)
+	BuildDependencyDigest string `json:"build_dependency_digest,omitempty"`
+	PublicBuildURLs       map[string]string
+	BuildID               string
+	TenantID              string
+	DeploymentID          string
+	SourcePath            string // tarball or dockerfile source on disk
+	SourceSHA256          string // digest already verified by the orchestrator
+	SourceRoot            string // repository-relative build root inside the archive; empty = archive root
+	DockerfilePath        string // relative to SourceRoot; empty selects Dockerfile
+	Framework             Framework
+	Runtime               string // app runtime id (node22, python312, go124-alpine, ...)
+	RuntimeBaseRef        string // resolved OCI ref used by Railpack for this build
+	IssueSourceMaps       *api.IssueSourceMapBuildConfig
+	Function              bool // handler build; allows markerless Node/Python sources
+	SharedRuntime         bool // container app built on a shared runner base (H10-140)
 	// DevWatchCommand builds a watch-mode developer image (ADR-1170).
 	DevWatchCommand string
 	// DevWatchHost is the developer app's public hostname for that image.
@@ -111,8 +113,10 @@ type BuildHandle struct {
 // or a marked-failed build row on failure. Named BuildOutcome to avoid
 // clashing with the orchestrator's BuildResult (whole-ProcessOne return).
 type BuildOutcome struct {
-	BuildID    string // echoes handle.BuildID
-	InstanceID string // echoes handle.Instance
+	BuildDependencyDigest string `json:"build_dependency_digest,omitempty"`
+	PublicBuildURLsSHA256 string
+	BuildID               string // echoes handle.BuildID
+	InstanceID            string // echoes handle.Instance
 	// ExportDir is the node-local handoff directory. imaged leases image.tar
 	// while publishing; BuildExportSweepLoop removes it after the durable
 	// deployment reference is released or the bounded recovery window expires.

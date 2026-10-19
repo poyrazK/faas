@@ -20,7 +20,7 @@ func TestMigrationInvocationQueueBindingIdentity(t *testing.T) {
 	pool := pgtest.Open(t)
 	migrateUpTo(t, ctx, pool, 20261001080000003)
 	store := state.NewPgStore(pool)
-	account, err := store.CreateAccount(ctx, "invocation-binding-migration@example.test", api.PlanPro)
+	account, err := legacyAccount(ctx, pool, "invocation-binding-migration@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}

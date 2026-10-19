@@ -19,11 +19,11 @@ func TestMigrationQueueBindingEnvironmentScopePreservesLegacyAndCapturedWork(t *
 	pool := pgtest.Open(t)
 	migrateUpTo(t, ctx, pool, 20261001094704872)
 	store := state.NewPgStore(pool)
-	account, err := store.CreateAccount(ctx, "queue-scope-migration@example.test", api.PlanPro)
+	account, err := legacyAccount(ctx, pool, "queue-scope-migration@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "queue-scope-migration"})
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, OrgID: legacyPersonalOrg(t, ctx, pool, account.ID), Slug: "queue-scope-migration"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,11 +107,11 @@ func TestMigrationQueueBindingEnvironmentScopeRecreatedSlugCannotReleaseCaptured
 		t.Fatal(err)
 	}
 	store := state.NewPgStore(pool)
-	account, err := store.CreateAccount(ctx, "queue-scope-recreation@example.test", api.PlanPro)
+	account, err := legacyAccount(ctx, pool, "queue-scope-recreation@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "queue-scope-recreation"})
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, OrgID: legacyPersonalOrg(t, ctx, pool, account.ID), Slug: "queue-scope-recreation"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -99,6 +99,12 @@ DELETE FROM app_trusted_signers target WHERE target.account_id=$1 AND target.app
 DELETE FROM app_registry_credentials target WHERE target.account_id=$1 AND target.app_id IN
  (SELECT a.id FROM apps a LEFT JOIN orgs o ON o.id=a.org_id WHERE a.account_id=$1 AND (a.org_id IS NULL OR o.personal_org));
 
+-- name: PurgePersonalOperations :exec
+-- Customer operations pin their invocations (ON DELETE RESTRICT), so they go
+-- before PurgePersonalInvocations; their executions and events cascade.
+DELETE FROM customer_operations target WHERE target.account_id=$1 AND target.app_id IN
+ (SELECT a.id FROM apps a LEFT JOIN orgs o ON o.id=a.org_id WHERE a.account_id=$1 AND (a.org_id IS NULL OR o.personal_org));
+
 -- name: PurgePersonalInvocations :exec
 DELETE FROM invocations target WHERE target.account_id=$1 AND target.app_id IN
  (SELECT a.id FROM apps a LEFT JOIN orgs o ON o.id=a.org_id WHERE a.account_id=$1 AND (a.org_id IS NULL OR o.personal_org));

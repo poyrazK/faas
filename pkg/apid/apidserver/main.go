@@ -596,13 +596,21 @@ func apidConfigPath(lookup func(string) *flag.Flag) string {
 
 // Main runs the apid daemon; cmd/apid calls it.
 func Main() {
+	pipelineAlerts := flag.Bool("data-pipeline-alert-worker", false, "monitor pipeline health and deliver opt-in webhooks without replication or API listeners")
+	pipelineWorker := flag.Bool("data-pipeline-worker", false, "reconcile managed Postgres mirrors without API listeners")
 	cloneWorker := flag.Bool("clone-worker", false, "run the bounded project-environment clone worker without API listeners")
 	runtimeUpgradeWorker := flag.Bool("runtime-upgrade-worker", false, "run the private runtime upgrade worker without API listeners; requires native qualification for each operation")
 	// The API mode hands off on reload; the worker modes' units do not
-	// reload (ADR-1580).
+	// reload (ADR-1736).
 	wire.HandoffDaemon("apid", func(ctx context.Context, log *slog.Logger) error {
-		if *cloneWorker && *runtimeUpgradeWorker {
+		if (*cloneWorker && *runtimeUpgradeWorker) || (*pipelineWorker && (*cloneWorker || *runtimeUpgradeWorker)) || (*pipelineAlerts && (*cloneWorker || *runtimeUpgradeWorker || *pipelineWorker)) {
 			return errors.New("apid: worker modes are mutually exclusive")
+		}
+		if *pipelineAlerts {
+			return runDataPipelineAlertWorker(ctx, log)
+		}
+		if *pipelineWorker {
+			return runDataPipelineWorker(ctx, log)
 		}
 		if *runtimeUpgradeWorker {
 			return runRuntimeUpgradeWorker(ctx, log)
@@ -1191,7 +1199,7 @@ func dpaPathFromEnv(getenv func(string) string) string {
 
 func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// stopping is the unit's SIGTERM. ctx also ends once a two-generation
-	// hand-off's successor serves (ADR-1580): this generation's background
+	// hand-off's successor serves (ADR-1736): this generation's background
 	// work stops with it while its requests finish.
 	stopping := ctx
 	ctx, endGeneration := context.WithCancel(ctx)
@@ -1594,6 +1602,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	srv.WithManagedPostgres(managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector)
 	if err := srv.configureLiveQueries(deps.pool, deps.getenv); err != nil {
 		return fmt.Errorf("apid live queries configuration: %w", err)
+	}
+	if err := srv.configureDataPipelines(*cfg, deps.pool); err != nil {
+		return err
 	}
 	srv.WithResendWebhookSecret(resendSecret)
 	// Issue #246 acceptance item 8: wire the meterd-owned bounce
@@ -2160,6 +2171,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go srv.runWorkflowReadinessSubscriptionWorker(ctx)
 	go srv.runWorkflowReadinessReminderWorker(ctx)
 	go srv.runApplicationStandardWorker(ctx)
+	go srv.runMigrationVerificationWorker(ctx)
+	go srv.runMigrationCutoverWorker(ctx)
 	if deps.bgBefore != nil {
 		deps.bgBefore(ctx, log, srv)
 	}
@@ -2588,7 +2601,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()
 	// The drain lets a connection faas-apid.socket handed over just before
 	// shutdown deliver its request; net/http drops one it reads after
-	// Shutdown began (ADR-1580).
+	// Shutdown began (ADR-1736).
 	httpDrain := wire.NewHTTPDrain(httpSrv)
 	// Requests run under streamsCtx so a hand-off's old generation can end
 	// its SSE streams and long polls before its drain bound cuts them.

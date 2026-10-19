@@ -27,7 +27,9 @@ func TestMigrations_OrgActivityEnvDomainBackfill(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE apps SET org_id = $2 WHERE id = $1`, appID, orgID); err != nil {
 		t.Fatalf("set app organization: %v", err)
 	}
-	missingOrgAppID := seedApp(t, ctx, pool, ownerID)
+	// Since #4882 a new app binds its owner's personal org, so an app without an
+	// organization exists only for an account that has none.
+	missingOrgAppID := seedApp(t, ctx, pool, seedAccount(t, ctx, pool))
 
 	_, err := pool.Exec(ctx, `
 		INSERT INTO events (at, actor, kind, subject, data) VALUES

@@ -64,10 +64,13 @@ var memDispatched = map[string]bool{
 	"AppRuntimeConfigChangedAtInScope":                        true,
 	"ClaimPreviewTeardown":                                    true,
 	"CloneProjectEnvironment":                                 true,
+	"ComputeNodeByID":                                         true,
 	"ComputeNodeUsedMB":                                       true,
 	"ComputeNodeUsedMBByNode":                                 true,
 	"CountWakeBootStarted24h":                                 true,
 	"CreateAppTask":                                           true,
+	"DeploymentClearSnapshotBackoff":                          true,
+	"EnvironmentWorkloadAdmissionRetired":                     true,
 	"CreateCheckedRollback":                                   true,
 	"CreateInstance":                                          true,
 	"CreateProjectEnvironmentPromotion":                       true,
@@ -292,6 +295,24 @@ func (s *Mem) AdmitScheduledWorkflow(p0 context.Context, p1 string, p2 string, p
 	return s.MemStore.AdmitScheduledWorkflow(p0, p1, p2, p3, p4)
 }
 
+func (s *Mem) ComputeNodeByID(p0 context.Context, p1 string) (state.ComputeNode, error) {
+	if o, ok := s.over.(interface {
+		ComputeNodeByID(context.Context, string) (state.ComputeNode, error)
+	}); ok {
+		return o.ComputeNodeByID(p0, p1)
+	}
+	return s.MemStore.ComputeNodeByID(p0, p1)
+}
+
+func (s *Mem) DeploymentClearSnapshotBackoff(p0 context.Context, p1 string) error {
+	if o, ok := s.over.(interface {
+		DeploymentClearSnapshotBackoff(context.Context, string) error
+	}); ok {
+		return o.DeploymentClearSnapshotBackoff(p0, p1)
+	}
+	return s.MemStore.DeploymentClearSnapshotBackoff(p0, p1)
+}
+
 func (s *Mem) AppByID(p0 context.Context, p1 string) (state.App, error) {
 	if o, ok := s.over.(interface {
 		AppByID(context.Context, string) (state.App, error)
@@ -452,6 +473,15 @@ func (s *Mem) EdgeRuleHitStatsForApp(p0 context.Context, p1 string, p2 time.Time
 		return o.EdgeRuleHitStatsForApp(p0, p1, p2)
 	}
 	return s.MemStore.EdgeRuleHitStatsForApp(p0, p1, p2)
+}
+
+func (s *Mem) EnvironmentWorkloadAdmissionRetired(p0 context.Context, p1 string, p2 string) (bool, error) {
+	if o, ok := s.over.(interface {
+		EnvironmentWorkloadAdmissionRetired(context.Context, string, string) (bool, error)
+	}); ok {
+		return o.EnvironmentWorkloadAdmissionRetired(p0, p1, p2)
+	}
+	return s.MemStore.EnvironmentWorkloadAdmissionRetired(p0, p1, p2)
 }
 
 func (s *Mem) EnqueueInvocation(p0 context.Context, p1 state.Invocation) (state.Invocation, error) {

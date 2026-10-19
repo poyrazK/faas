@@ -36,7 +36,7 @@ bootstrap and verification flow.
 listening socket while the service restarts, so callers' connections wait in
 the backlog for the replacement instead of being refused. `faas-schedd.socket`,
 `faas-gatewayd-internal.socket` and `faas-realtimed.socket` do the same but are
-opt-in (`docs/adr/1580-zero-downtime-daemon-restarts.md`): the roles add a
+opt-in (`docs/adr/1736-zero-downtime-daemon-restarts.md`): the roles add a
 service drop-in with `Wants=`/`After=` on the socket, and the listen address,
 only when `faas_schedd_listen_addr` or `faas_compute_durable_listeners` turns
 them on. Do not start these sockets by hand while a daemon that binds the

@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
@@ -22,6 +23,13 @@ type roleResponse struct {
 		Name string `json:"name"`
 	} `json:"role"`
 	Operations []operation `json:"operations"`
+}
+
+func (p *Provider) IssueBoundedCredentials(ctx context.Context, request managedpostgres.CredentialRequest) (managedpostgres.CredentialMaterial, error) {
+	if request.ConnectionLimit < 1 || request.ConnectionLimit > api.DataPipelineAuthBindingConnections {
+		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrInvalid
+	}
+	return p.IssueCredentials(ctx, request)
 }
 
 type connectionURIResponse struct {
@@ -125,6 +133,9 @@ func (p *Provider) ownerCredentials(ctx context.Context, projectID, branchID str
 }
 
 func validateCredentialRequest(request managedpostgres.CredentialRequest) error {
+	if request.ConnectionLimit < 0 || request.ConnectionLimit > api.DataPipelineAuthBindingConnections {
+		return managedpostgres.ErrInvalid
+	}
 	if request.BindingID != "" {
 		id, err := uuid.Parse(request.BindingID)
 		if err != nil || id == uuid.Nil || id.String() != request.BindingID {

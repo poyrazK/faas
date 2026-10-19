@@ -404,6 +404,7 @@ from .application_standard_version import ApplicationStandardVersion
 from .application_standard_violation import ApplicationStandardViolation
 from .applied_build import AppliedBuild
 from .apply_app_open_api_policy_request import ApplyAppOpenAPIPolicyRequest
+from .apply_cached_project_plan_request import ApplyCachedProjectPlanRequest
 from .apply_durable_entity_quota_policy_body import ApplyDurableEntityQuotaPolicyBody
 from .apply_durable_entity_quota_policy_body_limits import ApplyDurableEntityQuotaPolicyBodyLimits
 from .apply_durable_entity_quota_policy_response_200 import ApplyDurableEntityQuotaPolicyResponse200
@@ -761,6 +762,8 @@ from .consumer_key_list_response import ConsumerKeyListResponse
 from .consumer_key_response import ConsumerKeyResponse
 from .consumer_key_response_scopes_item import ConsumerKeyResponseScopesItem
 from .control_application_standard_operation_request import ControlApplicationStandardOperationRequest
+from .control_data_pipeline_request import ControlDataPipelineRequest
+from .control_data_pipeline_request_action import ControlDataPipelineRequestAction
 from .control_event_execution_lineage_case_backfill_request import ControlEventExecutionLineageCaseBackfillRequest
 from .control_event_execution_lineage_retry_job_request import ControlEventExecutionLineageRetryJobRequest
 from .control_realtime_replay_job_action import ControlRealtimeReplayJobAction
@@ -821,6 +824,8 @@ from .create_consumer_key_request_scopes_item import CreateConsumerKeyRequestSco
 from .create_cors_preset_request import CreateCorsPresetRequest
 from .create_cron_request import CreateCronRequest
 from .create_custom_domain_request import CreateCustomDomainRequest
+from .create_data_connection_request import CreateDataConnectionRequest
+from .create_data_pipeline_request import CreateDataPipelineRequest
 from .create_deploy_token_request import CreateDeployTokenRequest
 from .create_deployment_files_body import CreateDeploymentFilesBody
 from .create_deployment_files_body_kind import CreateDeploymentFilesBodyKind
@@ -885,6 +890,8 @@ from .create_managed_realtime_endpoint_request_auth_required_claims import (
     CreateManagedRealtimeEndpointRequestAuthRequiredClaims,
 )
 from .create_mcp_readiness_maintenance_request import CreateMCPReadinessMaintenanceRequest
+from .create_migration_cutover_request import CreateMigrationCutoverRequest
+from .create_migration_verification_request import CreateMigrationVerificationRequest
 from .create_mirror_rule_request import CreateMirrorRuleRequest
 from .create_native_issue_ticket_request import CreateNativeIssueTicketRequest
 from .create_native_linear_issue_ticket_request import CreateNativeLinearIssueTicketRequest
@@ -946,6 +953,8 @@ from .create_project_environment_qualification_request_workload_config_hashes im
     CreateProjectEnvironmentQualificationRequestWorkloadConfigHashes,
 )
 from .create_project_environment_request import CreateProjectEnvironmentRequest
+from .create_project_migration_request import CreateProjectMigrationRequest
+from .create_project_migration_request_build_dependencies import CreateProjectMigrationRequestBuildDependencies
 from .create_queue_binding_canary_request import CreateQueueBindingCanaryRequest
 from .create_queue_binding_request import CreateQueueBindingRequest
 from .create_queue_binding_request_mode import CreateQueueBindingRequestMode
@@ -1010,12 +1019,33 @@ from .data_api_runtime_connection_report import DataAPIRuntimeConnectionReport
 from .data_api_runtime_connection_report_runtime_model import DataAPIRuntimeConnectionReportRuntimeModel
 from .data_api_runtime_connection_report_state import DataAPIRuntimeConnectionReportState
 from .data_api_runtime_connection_report_version import DataAPIRuntimeConnectionReportVersion
+from .data_connection import DataConnection
+from .data_connection_check import DataConnectionCheck
+from .data_connection_check_state import DataConnectionCheckState
+from .data_connection_issue import DataConnectionIssue
+from .data_connection_issue_state import DataConnectionIssueState
+from .data_connection_list import DataConnectionList
+from .data_endpoint_capacity import DataEndpointCapacity
+from .data_endpoint_capacity_limiting_resource import DataEndpointCapacityLimitingResource
+from .data_endpoint_capacity_state import DataEndpointCapacityState
+from .data_pipeline import DataPipeline
+from .data_pipeline_capacity import DataPipelineCapacity
+from .data_pipeline_capacity_state import DataPipelineCapacityState
+from .data_pipeline_desired_state import DataPipelineDesiredState
+from .data_pipeline_health import DataPipelineHealth
+from .data_pipeline_health_action import DataPipelineHealthAction
+from .data_pipeline_health_state import DataPipelineHealthState
+from .data_pipeline_list import DataPipelineList
+from .data_pipeline_state import DataPipelineState
+from .data_pipeline_verification import DataPipelineVerification
 from .data_repair_health import DataRepairHealth
 from .data_repair_health_item import DataRepairHealthItem
 from .data_repair_health_item_node_status import DataRepairHealthItemNodeStatus
 from .data_repair_health_item_phase import DataRepairHealthItemPhase
 from .data_repair_phase_health import DataRepairPhaseHealth
 from .data_repair_phase_health_phase import DataRepairPhaseHealthPhase
+from .data_source_column import DataSourceColumn
+from .data_source_table import DataSourceTable
 from .data_upstream_history_bucket import DataUpstreamHistoryBucket
 from .data_upstream_history_response import DataUpstreamHistoryResponse
 from .data_upstream_history_response_kind import DataUpstreamHistoryResponseKind
@@ -2704,6 +2734,25 @@ from .mfa_recover_request import MFARecoverRequest
 from .mfa_recover_response import MFARecoverResponse
 from .mfa_verify_request import MFAVerifyRequest
 from .mfa_verify_response import MFAVerifyResponse
+from .migration_cutover import MigrationCutover
+from .migration_cutover_action_request import MigrationCutoverActionRequest
+from .migration_cutover_action_request_action import MigrationCutoverActionRequestAction
+from .migration_cutover_list import MigrationCutoverList
+from .migration_cutover_status import MigrationCutoverStatus
+from .migration_cutover_traffic import MigrationCutoverTraffic
+from .migration_cutover_traffic_coverage import MigrationCutoverTrafficCoverage
+from .migration_cutover_traffic_status import MigrationCutoverTrafficStatus
+from .migration_dependency_checks import MigrationDependencyChecks
+from .migration_dns_record import MigrationDNSRecord
+from .migration_dns_record_type import MigrationDNSRecordType
+from .migration_service_connection_check import MigrationServiceConnectionCheck
+from .migration_verification import MigrationVerification
+from .migration_verification_check import MigrationVerificationCheck
+from .migration_verification_check_status import MigrationVerificationCheckStatus
+from .migration_verification_list import MigrationVerificationList
+from .migration_verification_phase import MigrationVerificationPhase
+from .migration_verification_recovery_status import MigrationVerificationRecoveryStatus
+from .migration_verification_status import MigrationVerificationStatus
 from .mint_durable_entity_session_grant_body import MintDurableEntitySessionGrantBody
 from .mint_durable_entity_session_grant_response_201 import MintDurableEntitySessionGrantResponse201
 from .mirror_clean_condition import MirrorCleanCondition
@@ -4110,6 +4159,7 @@ from .programmatic_signup_magic_link_response_200 import ProgrammaticSignupMagic
 from .programmatic_signup_magic_link_response_200_status import ProgrammaticSignupMagicLinkResponse200Status
 from .progressive_rollout import ProgressiveRollout
 from .project_apply_request import ProjectApplyRequest
+from .project_apply_request_app_slugs import ProjectApplyRequestAppSlugs
 from .project_binding_verification_review import ProjectBindingVerificationReview
 from .project_binding_verification_review_members import ProjectBindingVerificationReviewMembers
 from .project_binding_verification_review_review_digests import ProjectBindingVerificationReviewReviewDigests
@@ -4241,6 +4291,19 @@ from .project_environment_variable_change_response import ProjectEnvironmentVari
 from .project_environment_variable_change_response_kind import ProjectEnvironmentVariableChangeResponseKind
 from .project_environment_variable_response import ProjectEnvironmentVariableResponse
 from .project_environment_workload_diff_response import ProjectEnvironmentWorkloadDiffResponse
+from .project_initial_secrets import ProjectInitialSecrets
+from .project_initial_secrets_additional_property import ProjectInitialSecretsAdditionalProperty
+from .project_migration import ProjectMigration
+from .project_migration_build_wait import ProjectMigrationBuildWait
+from .project_migration_build_wait_status import ProjectMigrationBuildWaitStatus
+from .project_migration_list import ProjectMigrationList
+from .project_migration_service import ProjectMigrationService
+from .project_migration_service_public_build_urls import ProjectMigrationServicePublicBuildUrls
+from .project_migration_service_public_service_connections import ProjectMigrationServicePublicServiceConnections
+from .project_migration_service_service_connections import ProjectMigrationServiceServiceConnections
+from .project_migration_status import ProjectMigrationStatus
+from .project_public_build_ur_ls import ProjectPublicBuildURLs
+from .project_public_build_ur_ls_additional_property import ProjectPublicBuildURLsAdditionalProperty
 from .project_release_deactivation_receipt import ProjectReleaseDeactivationReceipt
 from .project_release_set_list_response import ProjectReleaseSetListResponse
 from .project_release_set_member_response import ProjectReleaseSetMemberResponse
@@ -4250,7 +4313,11 @@ from .project_release_stage_member import ProjectReleaseStageMember
 from .project_release_stage_status import ProjectReleaseStageStatus
 from .project_response import ProjectResponse
 from .project_scan_request import ProjectScanRequest
+from .project_scan_request_app_slugs import ProjectScanRequestAppSlugs
+from .project_service_connections import ProjectServiceConnections
+from .project_service_connections_additional_property import ProjectServiceConnectionsAdditionalProperty
 from .project_source_ref_scan_request import ProjectSourceRefScanRequest
+from .project_source_ref_scan_request_app_slugs import ProjectSourceRefScanRequestAppSlugs
 from .project_summary_response import ProjectSummaryResponse
 from .project_workload_response import ProjectWorkloadResponse
 from .promote_automation_live_baseline_request import PromoteAutomationLiveBaselineRequest
@@ -4535,6 +4602,7 @@ from .request_analytics_timeseries_series import RequestAnalyticsTimeseriesSerie
 from .request_analytics_timeseries_series_method import RequestAnalyticsTimeseriesSeriesMethod
 from .request_audit_list_response import RequestAuditListResponse
 from .request_audit_record import RequestAuditRecord
+from .request_data_connection_check import RequestDataConnectionCheck
 from .request_event_execution_lineage_case_backfill_request import RequestEventExecutionLineageCaseBackfillRequest
 from .resize_managed_postgres_database_request import ResizeManagedPostgresDatabaseRequest
 from .resize_managed_postgres_database_request_service_class import ResizeManagedPostgresDatabaseRequestServiceClass
@@ -4544,6 +4612,7 @@ from .restore_automation_revision_request import RestoreAutomationRevisionReques
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
 from .restore_mcp_readiness_policy_request import RestoreMCPReadinessPolicyRequest
 from .resume_automation_failure_pause_request import ResumeAutomationFailurePauseRequest
+from .resume_project_migration_request import ResumeProjectMigrationRequest
 from .resume_workflow_run_request import ResumeWorkflowRunRequest
 from .retire_automation_live_baseline_request import RetireAutomationLiveBaselineRequest
 from .retry_deployment_request import RetryDeploymentRequest
@@ -4593,6 +4662,7 @@ from .rotate_app_webhook_secret_response import RotateAppWebhookSecretResponse
 from .rotate_app_webhook_secret_response_webhook_secret_sealed_masked import (
     RotateAppWebhookSecretResponseWebhookSecretSealedMasked,
 )
+from .rotate_data_connection_request import RotateDataConnectionRequest
 from .rotate_deploy_token_request import RotateDeployTokenRequest
 from .rotate_deploy_token_response import RotateDeployTokenResponse
 from .rotate_key_response import RotateKeyResponse
@@ -5928,6 +5998,7 @@ __all__ = (
     "AppLogDrainResponseAuthHeaderMasked",
     "AppLogDrainResponseKind",
     "ApplyAppOpenAPIPolicyRequest",
+    "ApplyCachedProjectPlanRequest",
     "ApplyDurableEntityQuotaPolicyBody",
     "ApplyDurableEntityQuotaPolicyBodyLimits",
     "ApplyDurableEntityQuotaPolicyResponse200",
@@ -6407,6 +6478,8 @@ __all__ = (
     "ConsumerKeyResponse",
     "ConsumerKeyResponseScopesItem",
     "ControlApplicationStandardOperationRequest",
+    "ControlDataPipelineRequest",
+    "ControlDataPipelineRequestAction",
     "ControlEventExecutionLineageCaseBackfillRequest",
     "ControlEventExecutionLineageRetryJobRequest",
     "ControlRealtimeReplayJobAction",
@@ -6467,6 +6540,8 @@ __all__ = (
     "CreateCorsPresetRequest",
     "CreateCronRequest",
     "CreateCustomDomainRequest",
+    "CreateDataConnectionRequest",
+    "CreateDataPipelineRequest",
     "CreateDeploymentFilesBody",
     "CreateDeploymentFilesBodyKind",
     "CreateDeploymentFilesBodyRuntime",
@@ -6526,6 +6601,8 @@ __all__ = (
     "CreateManagedRealtimeEndpointRequestAuthMode",
     "CreateManagedRealtimeEndpointRequestAuthRequiredClaims",
     "CreateMCPReadinessMaintenanceRequest",
+    "CreateMigrationCutoverRequest",
+    "CreateMigrationVerificationRequest",
     "CreateMirrorRuleRequest",
     "CreateNativeIssueTicketRequest",
     "CreateNativeLinearIssueTicketRequest",
@@ -6579,6 +6656,8 @@ __all__ = (
     "CreateProjectEnvironmentQualificationRequestSecretRevisionHashes",
     "CreateProjectEnvironmentQualificationRequestWorkloadConfigHashes",
     "CreateProjectEnvironmentRequest",
+    "CreateProjectMigrationRequest",
+    "CreateProjectMigrationRequestBuildDependencies",
     "CreateQueueBindingCanaryRequest",
     "CreateQueueBindingRequest",
     "CreateQueueBindingRequestMode",
@@ -6638,12 +6717,33 @@ __all__ = (
     "DataAPIRuntimeConnectionReportRuntimeModel",
     "DataAPIRuntimeConnectionReportState",
     "DataAPIRuntimeConnectionReportVersion",
+    "DataConnection",
+    "DataConnectionCheck",
+    "DataConnectionCheckState",
+    "DataConnectionIssue",
+    "DataConnectionIssueState",
+    "DataConnectionList",
+    "DataEndpointCapacity",
+    "DataEndpointCapacityLimitingResource",
+    "DataEndpointCapacityState",
+    "DataPipeline",
+    "DataPipelineCapacity",
+    "DataPipelineCapacityState",
+    "DataPipelineDesiredState",
+    "DataPipelineHealth",
+    "DataPipelineHealthAction",
+    "DataPipelineHealthState",
+    "DataPipelineList",
+    "DataPipelineState",
+    "DataPipelineVerification",
     "DataRepairHealth",
     "DataRepairHealthItem",
     "DataRepairHealthItemNodeStatus",
     "DataRepairHealthItemPhase",
     "DataRepairPhaseHealth",
     "DataRepairPhaseHealthPhase",
+    "DataSourceColumn",
+    "DataSourceTable",
     "DataUpstreamHistoryBucket",
     "DataUpstreamHistoryResponse",
     "DataUpstreamHistoryResponseKind",
@@ -8226,6 +8326,25 @@ __all__ = (
     "MFARecoverResponse",
     "MFAVerifyRequest",
     "MFAVerifyResponse",
+    "MigrationCutover",
+    "MigrationCutoverActionRequest",
+    "MigrationCutoverActionRequestAction",
+    "MigrationCutoverList",
+    "MigrationCutoverStatus",
+    "MigrationCutoverTraffic",
+    "MigrationCutoverTrafficCoverage",
+    "MigrationCutoverTrafficStatus",
+    "MigrationDependencyChecks",
+    "MigrationDNSRecord",
+    "MigrationDNSRecordType",
+    "MigrationServiceConnectionCheck",
+    "MigrationVerification",
+    "MigrationVerificationCheck",
+    "MigrationVerificationCheckStatus",
+    "MigrationVerificationList",
+    "MigrationVerificationPhase",
+    "MigrationVerificationRecoveryStatus",
+    "MigrationVerificationStatus",
     "MintDurableEntitySessionGrantBody",
     "MintDurableEntitySessionGrantResponse201",
     "MirrorCleanCondition",
@@ -9498,6 +9617,7 @@ __all__ = (
     "ProgrammaticSignupMagicLinkResponse200Status",
     "ProgressiveRollout",
     "ProjectApplyRequest",
+    "ProjectApplyRequestAppSlugs",
     "ProjectBindingVerificationReview",
     "ProjectBindingVerificationReviewMembers",
     "ProjectBindingVerificationReviewReviewDigests",
@@ -9605,6 +9725,19 @@ __all__ = (
     "ProjectEnvironmentVariableChangeResponseKind",
     "ProjectEnvironmentVariableResponse",
     "ProjectEnvironmentWorkloadDiffResponse",
+    "ProjectInitialSecrets",
+    "ProjectInitialSecretsAdditionalProperty",
+    "ProjectMigration",
+    "ProjectMigrationBuildWait",
+    "ProjectMigrationBuildWaitStatus",
+    "ProjectMigrationList",
+    "ProjectMigrationService",
+    "ProjectMigrationServicePublicBuildUrls",
+    "ProjectMigrationServicePublicServiceConnections",
+    "ProjectMigrationServiceServiceConnections",
+    "ProjectMigrationStatus",
+    "ProjectPublicBuildURLs",
+    "ProjectPublicBuildURLsAdditionalProperty",
     "ProjectReleaseDeactivationReceipt",
     "ProjectReleaseSetListResponse",
     "ProjectReleaseSetMemberResponse",
@@ -9614,7 +9747,11 @@ __all__ = (
     "ProjectReleaseStageStatus",
     "ProjectResponse",
     "ProjectScanRequest",
+    "ProjectScanRequestAppSlugs",
+    "ProjectServiceConnections",
+    "ProjectServiceConnectionsAdditionalProperty",
     "ProjectSourceRefScanRequest",
+    "ProjectSourceRefScanRequestAppSlugs",
     "ProjectSummaryResponse",
     "ProjectWorkloadResponse",
     "PromoteAutomationLiveBaselineRequest",
@@ -9893,6 +10030,7 @@ __all__ = (
     "RequestAnalyticsTimeseriesSeriesMethod",
     "RequestAuditListResponse",
     "RequestAuditRecord",
+    "RequestDataConnectionCheck",
     "RequestEventExecutionLineageCaseBackfillRequest",
     "ResizeManagedPostgresDatabaseRequest",
     "ResizeManagedPostgresDatabaseRequestServiceClass",
@@ -9902,6 +10040,7 @@ __all__ = (
     "RestoreManagedPostgresDatabaseRequest",
     "RestoreMCPReadinessPolicyRequest",
     "ResumeAutomationFailurePauseRequest",
+    "ResumeProjectMigrationRequest",
     "ResumeWorkflowRunRequest",
     "RetireAutomationLiveBaselineRequest",
     "RetryDeploymentRequest",
@@ -9945,6 +10084,7 @@ __all__ = (
     "RotateAppWebhookSecretRequest",
     "RotateAppWebhookSecretResponse",
     "RotateAppWebhookSecretResponseWebhookSecretSealedMasked",
+    "RotateDataConnectionRequest",
     "RotateDeployTokenRequest",
     "RotateDeployTokenResponse",
     "RotateKeyResponse",

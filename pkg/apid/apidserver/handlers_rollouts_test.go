@@ -154,9 +154,11 @@ func TestRecoverRollout_PlanGate(t *testing.T) {
 }
 
 // TestRecoverRollout_InvalidAction: closed-set guard returns
-// 422 invalid_recover_action BEFORE the store is touched.
+// 422 invalid_recover_action BEFORE the rollout is touched. App access
+// resolves the addressed app first (#4882), so the app exists.
 func TestRecoverRollout_InvalidAction(t *testing.T) {
 	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "foo")
 	rec := e.do(t, "POST", "/v1/apps/foo/rollouts/recover",
 		api.RecoverRolloutRequest{Action: "explode"}, nil)
 	if rec.Code != http.StatusUnprocessableEntity {

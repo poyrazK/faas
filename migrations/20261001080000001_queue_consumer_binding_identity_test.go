@@ -19,7 +19,7 @@ func TestMigrationQueueConsumerBindingIdentityAdoptionAndGuards(t *testing.T) {
 	pool := pgtest.Open(t)
 	migrateUpTo(t, ctx, pool, 20261001070000001)
 	store := state.NewPgStore(pool)
-	account, err := store.CreateAccount(ctx, "queue-identity-migration@example.test", api.PlanPro)
+	account, err := legacyAccount(ctx, pool, "queue-identity-migration@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestMigrationQueueConsumerBindingIdentityAdoptionAndGuards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreign, err := store.CreateAccount(ctx, "foreign-queue-identity@example.test", api.PlanPro)
+	foreign, err := legacyAccount(ctx, pool, "foreign-queue-identity@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}

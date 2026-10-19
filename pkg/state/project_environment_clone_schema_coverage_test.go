@@ -23,19 +23,51 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
-		// Rehearsal fixtures, leases and sealed run evidence remain with their source.
+		// adr:1660,1662,1665,1666 — saved authority stays with its source;
+		// public compile inputs require an isolated configuration strategy.
+		"deployment_build_dependency_gates": CloneSchemaOperational,
+		"deployment_public_build_urls":      CloneSchemaConfiguration,
+		"migration_cutovers":                CloneSchemaOperational,
+		"data_repair_rehearsals":            CloneSchemaOperational,
+		"migration_verifications":           CloneSchemaOperational,
+		"project_migrations":                CloneSchemaOperational,
+
+		// MCP policies and notification credentials need an isolated strategy.
+		// Evidence, overrides, leases and incident delivery authority stay at source.
+		"app_mcp_readiness_policies":               CloneSchemaConfiguration,
+		"app_mcp_readiness_policy_history":         CloneSchemaConfiguration,
+		"deployment_mcp_readiness_evidence":        CloneSchemaOperational,
+		"deployment_mcp_readiness_monitors":        CloneSchemaOperational,
+		"deployment_mcp_readiness_overrides":       CloneSchemaConfiguration,
+		"mcp_readiness_attention_actions":          CloneSchemaData,
+		"mcp_readiness_fallback_policies":          CloneSchemaConfiguration,
+		"mcp_readiness_incident_attention":         CloneSchemaOperational,
+		"mcp_readiness_incident_cursors":           CloneSchemaOperational,
+		"mcp_readiness_incident_events":            CloneSchemaData,
+		"mcp_readiness_incidents":                  CloneSchemaOperational,
+		"mcp_readiness_maintenance_windows":        CloneSchemaConfiguration,
+		"mcp_readiness_notification_actions":       CloneSchemaOperational,
+		"mcp_readiness_pagerduty_ack_events":       CloneSchemaOperational,
+		"mcp_readiness_pagerduty_acknowledgements": CloneSchemaConfiguration,
+		"mcp_readiness_pagerduty_policies":         CloneSchemaConfiguration,
+		"mcp_readiness_reminder_defaults":          CloneSchemaConfiguration,
+
+		// Rehearsal authority, admission policies and evidence belong to the
+		// original run; cloning must never enroll or resume its execution.
 		"scenario_cold_preparations":          CloneSchemaOperational,
 		"scenario_command_networks":           CloneSchemaOperational,
 		"scenario_managed_work":               CloneSchemaOperational,
 		"scenario_object_fixtures":            CloneSchemaOperational,
-		"scenario_postgres_faults":            CloneSchemaOperational,
 		"scenario_postgres_fixtures":          CloneSchemaOperational,
+		"scenario_postgres_faults":            CloneSchemaOperational,
+		"resource_namespaces":                 CloneSchemaIdentity,
 		"scenario_recorder_requests":          CloneSchemaOperational,
 		"scenario_recorder_sessions":          CloneSchemaOperational,
 		"scenario_simulation_attempts":        CloneSchemaOperational,
 		"scenario_suspend_resumes":            CloneSchemaOperational,
 		"scenario_test_action_policies":       CloneSchemaOperational,
 		"scenario_worker_faults":              CloneSchemaOperational,
+		"exclusive_work_effects":              CloneSchemaOperational,
 		"product_control_heads":               CloneSchemaConfiguration,
 		"product_control_revisions":           CloneSchemaConfiguration,
 		"product_control_customers":           CloneSchemaConfiguration,
@@ -305,6 +337,29 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"project_binding_verification_runs": CloneSchemaOperational,
 		"project_release_stages":            CloneSchemaOperational,
 		"queue_binding_canaries":            CloneSchemaOperational,
+		// Pipeline, readiness, lease, and rehearsal state remains explicitly source-owned.
+		"data_connection_checks":           CloneSchemaOperational,
+		"data_pipeline_alert_deliveries":   CloneSchemaOperational,
+		"data_pipeline_alerts":             CloneSchemaConfiguration,
+		"data_pipeline_connections":        CloneSchemaIdentity,
+		"data_pipeline_schema_refreshes":   CloneSchemaOperational,
+		"data_pipeline_setups":             CloneSchemaOperational,
+		"data_pipelines":                   CloneSchemaConfiguration,
+		"managed_postgres_live_keys":       CloneSchemaOperational,
+		"outbound_ai_access_tokens":        CloneSchemaIdentity,
+		"outbound_ai_batches":              CloneSchemaOperational,
+		"outbound_ai_evaluation_items":     CloneSchemaOperational,
+		"outbound_ai_evaluations":          CloneSchemaOperational,
+		"outbound_ai_log_exports":          CloneSchemaOperational,
+		"outbound_ai_route_canaries":       CloneSchemaOperational,
+		"outbound_ai_route_target_minutes": CloneSchemaOperational,
+		"outbound_ai_tag_limits":           CloneSchemaConfiguration,
+		"outbound_ai_tag_usage_daily":      CloneSchemaOperational,
+		"node_leases":                      CloneSchemaOperational,
+		"postgres_capacity_reservations":   CloneSchemaOperational,
+		"postgres_capacity_resources":      CloneSchemaOperational,
+		"postgres_capacity_sources":        CloneSchemaOperational,
+		"postgres_capacity_targets":        CloneSchemaOperational,
 	}
 	for _, policy := range policies {
 		if kind, ok := wanted[policy.TableName]; ok {
@@ -367,6 +422,34 @@ func TestHostingCloneInventoryRetainsCopyStrategyBlockers(t *testing.T) {
 	}
 	if len(wanted) != 0 {
 		t.Fatal("hosting copy strategies became implicitly available", wanted)
+	}
+}
+
+func TestMCPReadinessCloneInventoryRetainsCopyStrategyBlockers(t *testing.T) {
+	policies, err := ProjectEnvironmentCloneSchemaPolicies()
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := cloneSchemaCoverage(policies)
+	if err != nil || !report.Known {
+		t.Fatal("registered schema must be known", report, err)
+	}
+	wanted := map[string]bool{
+		"app_mcp_readiness_policies":               true,
+		"app_mcp_readiness_policy_history":         true,
+		"mcp_readiness_fallback_policies":          true,
+		"mcp_readiness_maintenance_windows":        true,
+		"mcp_readiness_pagerduty_acknowledgements": true,
+		"mcp_readiness_pagerduty_policies":         true,
+		"mcp_readiness_reminder_defaults":          true,
+	}
+	for _, blocker := range report.Blockers {
+		if blocker.Code == "isolated_strategy_unavailable" {
+			delete(wanted, blocker.Table)
+		}
+	}
+	if len(wanted) != 0 {
+		t.Fatal("MCP readiness configuration became implicitly cloneable", wanted)
 	}
 }
 

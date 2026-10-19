@@ -66,6 +66,9 @@ func seedExclusionFixture(ctx context.Context, t *testing.T, pool poolIface) (ac
 	`, accountID); err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
+	if _, err := pool.Exec(ctx, personalOrgSQL, accountID); err != nil { // projects require it since #4882
+		t.Fatalf("seed personal org: %v", err)
+	}
 	if _, err := pool.Exec(ctx, `
 		insert into projects (id, account_id, slug, created_at)
 		values ($2, $1, 'exclusion-proj', now())
@@ -280,6 +283,9 @@ func TestMigrations_00509_DeploymentScopeExclusions(t *testing.T) {
 		`, freshAccount); err != nil {
 			t.Fatalf("seed fresh account: %v", err)
 		}
+		if _, err := pool.Exec(ctx, personalOrgSQL, freshAccount); err != nil { // projects require it since #4882
+			t.Fatalf("seed fresh personal org: %v", err)
+		}
 		if _, err := pool.Exec(ctx, `
 			insert into projects (id, account_id, slug, created_at)
 			values ($2, $1, 'exclusion-cascade-proj', now())
@@ -294,7 +300,7 @@ func TestMigrations_00509_DeploymentScopeExclusions(t *testing.T) {
 		`, freshAccount, freshProject, appID); err != nil {
 			t.Fatalf("seed cascade row: %v", err)
 		}
-		if _, err := pool.Exec(ctx, `delete from accounts WHERE id = $1`, freshAccount); err != nil {
+		if _, err := pool.Exec(ctx, deleteAccountSQL, freshAccount); err != nil {
 			t.Fatalf("hard-delete account: %v", err)
 		}
 		var count int

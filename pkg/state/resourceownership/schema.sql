@@ -14,6 +14,7 @@ CREATE TABLE usage_minutes (instance_id uuid NOT NULL,minute timestamptz NOT NUL
 CREATE TABLE app_secrets(account_id uuid NOT NULL,app_id uuid NOT NULL);
 CREATE TABLE app_trusted_signers(account_id uuid NOT NULL,app_id uuid NOT NULL);
 CREATE TABLE app_registry_credentials(account_id uuid NOT NULL,app_id uuid NOT NULL);
+CREATE TABLE customer_operations(account_id uuid NOT NULL,app_id uuid NOT NULL);
 CREATE TABLE invocations(account_id uuid NOT NULL,app_id uuid NOT NULL);
 CREATE TABLE usage_daily(account_id uuid NOT NULL,app_id uuid NOT NULL,org_id uuid);
 CREATE TABLE builder_usage(account_id uuid NOT NULL,app_id uuid NOT NULL,org_id uuid);

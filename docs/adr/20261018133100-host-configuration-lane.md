@@ -3,7 +3,7 @@
 - **Status:** proposed
 - **Date:** 2026-10-18
 - **Related:** ADR-580 (control-plane convergence in CD), ADR-1650 (per-unit
-  releases), ADR-1580 (zero-downtime restarts and the two-generation
+  releases), ADR-1736 (zero-downtime restarts and the two-generation
   hand-off), ADR 20261018084150 (expand-only migrations in per-unit
   releases), ADR 202610171900 (release compatibility gates), ADR-143
   (deploy configuration contract)
@@ -231,7 +231,7 @@ changed since they started. Those inputs are:
 
 It restarts them one at a time, in restart order, each to readiness, and
 holds the deploy lock. Daemons with socket units restart through them
-(ADR-1580), so callers queue instead of being refused:
+(ADR-1736), so callers queue instead of being refused:
 
 - apid;
 - gatewayd-public;

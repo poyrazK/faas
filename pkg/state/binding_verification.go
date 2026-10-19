@@ -70,7 +70,8 @@ var bindingRevisionPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 func validateBindingVerificationPin(params CreateAppTaskParams) error {
 	pin := params.BindingVerification
 	if pin == nil {
-		if params.RequireLiveDeployment && (params.Kind != AppTaskKindManual || params.ExclusiveOperationID != "" || params.FailureRules != nil || params.OccurrenceID != "" || params.StartDeadlineAt != nil || !api.IsServiceBindingSmokeCommand(params.Command, params.CommandShell)) {
+		_, migration := api.ParseMigrationDependenciesCommand(params.Command, params.CommandShell)
+		if params.RequireLiveDeployment && (params.Kind != AppTaskKindManual || params.ExclusiveOperationID != "" || params.FailureRules != nil || params.OccurrenceID != "" || params.StartDeadlineAt != nil || (!api.IsServiceBindingSmokeCommand(params.Command, params.CommandShell) && !migration)) {
 			return fmt.Errorf("%w: explicit deployment selection requires a verification pin or a reserved service smoke command", ErrAppTaskInvalid)
 		}
 		return nil

@@ -49,7 +49,6 @@ BumpInstanceTailCount
 CancelInstanceMigration
 CancelInvocation
 CancelUploadSession
-CheckOrgAccess
 CheckWebhookReplay
 ClaimNextPendingRun
 ClearDeployment
@@ -364,7 +363,6 @@ ListOrphanedJobInstances
 ListOwnedCronsByNodeID
 ListPendingTenantHostnames
 ListProjectsForAccount
-ListProjectsForOrg
 ListRecentEventsForAccount
 ListRequestTelemetryByAccountTrace
 ListRequestTelemetryByApp
@@ -432,7 +430,6 @@ OperatorAuditTraceCoverage
 OperatorIntentOutcomeMissingCounts
 OperatorOverviewActivity
 OperatorTenantCounts
-OrgAccessSnapshot
 OrgByID
 OrgByPersonalAccount
 OrgBySlug
@@ -441,7 +438,6 @@ PaddleOverageDedupeSchema
 PerAccountRateLimitAggregate
 Ping
 ProjectByID
-ProjectByOrgSlug
 ProjectByRepo
 ProjectBySlug
 ProjectEnvironmentApprovalByID

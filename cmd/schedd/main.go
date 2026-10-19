@@ -638,6 +638,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return artifactErr
 	}
 	engine.WithValidatorArtifactCheck(validatorArtifacts.Check)
+	// The notifier and the store share this pool, so a wake's
+	// instance_changed can commit with its RUNNING publication.
+	engine.WithNotifyInPublication()
 	// ADR-1344 §5 rule 4: a schedd that waited for Postgres at boot holds
 	// its liveness verdicts for a full staleness window; every heartbeat is
 	// old because nobody could write.
@@ -1656,6 +1659,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		log.Info("frozen tier enabled (ADR-1151)", "apps", cfg.FrozenTierApps,
 			"frozen_ttl_seconds", api.FrozenTTLSeconds, "frozen_max_per_node", api.FrozenMaxPerNode)
+	}
+	if cfg.FrozenFastPath {
+		engine.EnableFrozenFastPath()
+		log.Info("frozen fast path enabled (ADR-1740)")
+	}
+	if cfg.OwnerCache {
+		if err := startOwnerCache(ctx, pool, engine, log); err != nil {
+			return err
+		}
+		log.Info("owner cache enabled (ADR-1741)")
 	}
 	// The local Reader above deliberately contains only instances physically
 	// resident on this node: scheddgrpc.ListInstanceStats and meterd rely on
