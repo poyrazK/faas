@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- ADR-20261018183000: a running Operation starts child Operations for its
 -- customer. One row per child names its parent and the parent's key for it;
 -- the key makes a retried parent replay the child instead of starting another.
