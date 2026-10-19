@@ -4707,6 +4707,8 @@ from .route_assignment import RouteAssignment
 from .route_awake_response import RouteAwakeResponse
 from .route_awake_route import RouteAwakeRoute
 from .route_awake_route_pattern import RouteAwakeRoutePattern
+from .route_awake_source import RouteAwakeSource
+from .route_awake_source_source import RouteAwakeSourceSource
 from .route_awake_suggestion import RouteAwakeSuggestion
 from .route_awake_suggestion_kind import RouteAwakeSuggestionKind
 from .route_awake_what_if import RouteAwakeWhatIf
@@ -4809,6 +4811,11 @@ from .route_health_window_evidence import RouteHealthWindowEvidence
 from .route_health_window_evidence_error_status import RouteHealthWindowEvidenceErrorStatus
 from .route_health_window_evidence_latency_status import RouteHealthWindowEvidenceLatencyStatus
 from .route_health_window_evidence_status import RouteHealthWindowEvidenceStatus
+from .route_insight import RouteInsight
+from .route_insight_evidence import RouteInsightEvidence
+from .route_insight_kind import RouteInsightKind
+from .route_insight_state import RouteInsightState
+from .route_insights_response import RouteInsightsResponse
 from .route_lifecycle_approval import RouteLifecycleApproval
 from .route_lifecycle_approval_checker_version import RouteLifecycleApprovalCheckerVersion
 from .route_lifecycle_approval_compatibility import RouteLifecycleApprovalCompatibility
@@ -10155,6 +10162,8 @@ __all__ = (
     "RouteAwakeResponse",
     "RouteAwakeRoute",
     "RouteAwakeRoutePattern",
+    "RouteAwakeSource",
+    "RouteAwakeSourceSource",
     "RouteAwakeSuggestion",
     "RouteAwakeSuggestionKind",
     "RouteAwakeWhatIf",
@@ -10257,6 +10266,11 @@ __all__ = (
     "RouteHealthWindowEvidenceErrorStatus",
     "RouteHealthWindowEvidenceLatencyStatus",
     "RouteHealthWindowEvidenceStatus",
+    "RouteInsight",
+    "RouteInsightEvidence",
+    "RouteInsightKind",
+    "RouteInsightsResponse",
+    "RouteInsightState",
     "RouteLifecycleApproval",
     "RouteLifecycleApprovalCheckerVersion",
     "RouteLifecycleApprovalCompatibility",

@@ -2944,6 +2944,8 @@ type Querier interface {
 	ListRollbackOn5xxCandidates(ctx context.Context, db DBTX, arg ListRollbackOn5xxCandidatesParams) ([]ListRollbackOn5xxCandidatesRow, error)
 	ListRouteCheckHistory(ctx context.Context, db DBTX, arg ListRouteCheckHistoryParams) ([][]byte, error)
 	ListRouteHealthHistory(ctx context.Context, db DBTX, arg ListRouteHealthHistoryParams) ([][]byte, error)
+	// An app's active insights, then the ones resolved since resolved_since.
+	ListRouteInsights(ctx context.Context, db DBTX, arg ListRouteInsightsParams) ([]ListRouteInsightsRow, error)
 	ListRouteMonitorIncidents(ctx context.Context, db DBTX, arg ListRouteMonitorIncidentsParams) ([][]byte, error)
 	// ADR-847: apps whose route health gate opts a selector into probes and that
 	// have exactly one in-flight canary candidate in the default scope.
@@ -4866,6 +4868,9 @@ type Querier interface {
 	// observation. Returning rows lets apid publish one account-scoped event per
 	// lifecycle transition without a second read.
 	ResolveStaleRegressionObservations(ctx context.Context, db DBTX, dollar_1 pgtype.Interval) ([]DebugRegressionObservation, error)
+	// Resolve an app's active insights that no evaluation has observed since
+	// stale_before.
+	ResolveStaleRouteInsights(ctx context.Context, db DBTX, arg ResolveStaleRouteInsightsParams) (int64, error)
 	RestoreProfileGateStableTraffic(ctx context.Context, db DBTX, arg RestoreProfileGateStableTrafficParams) (int64, error)
 	// A wave transaction cannot outlive the evidence that authorized it.
 	RestrictApplicationStandardWorkerEvidence(ctx context.Context, db DBTX, arg RestrictApplicationStandardWorkerEvidenceParams) (int64, error)
@@ -4933,7 +4938,9 @@ type Querier interface {
 	// that is not first in its window is a wake the cache would have avoided.
 	// The content_* counts are learned cacheability (ADR-1188): how observed
 	// anonymous GET bodies compared with the previous response for their URL,
-	// bucketed by api.RouteContentWindows (60 s, 300 s, 3600 s).
+	// bucketed by api.RouteContentWindows (60 s, 300 s, 3600 s). content_stale
+	// counts refills under a cache rule whose body changed within the rule's
+	// max-age (ADR-1199).
 	RouteAdviceRouteStats(ctx context.Context, db DBTX, arg RouteAdviceRouteStatsParams) ([]RouteAdviceRouteStatsRow, error)
 	// Requests one consumer sent above a per-minute allowance on one route.
 	RouteAdviceThrottleExcess(ctx context.Context, db DBTX, arg RouteAdviceThrottleExcessParams) (int64, error)
@@ -4949,6 +4956,11 @@ type Querier interface {
 	// whatever it returns. Requests the gateway answered itself (cache hits, edge
 	// answers, auth rejections) carry no deployment, instance or wake.
 	RouteAwakeRouteMinutes(ctx context.Context, db DBTX, arg RouteAwakeRouteMinutesParams) ([]RouteAwakeRouteMinutesRow, error)
+	// Wakes and keep-alives that are not customer requests (ADR-1199), per minute
+	// and source: synthetic route probes the app answered without a 5xx or an
+	// auth rejection (ADR-847; probe observations are pruned after a day), and
+	// scheduled prewarms that admitted instances.
+	RouteAwakeSourceMinutes(ctx context.Context, db DBTX, arg RouteAwakeSourceMinutesParams) ([]RouteAwakeSourceMinutesRow, error)
 	// Advisory identity cohorts use the same exact routes, deployment pair and
 	// closed windows as aggregate health. Rank before bounding output and sorting
 	// weighted latency. Request-time attribution never follows today's tenant link.
@@ -4970,6 +4982,12 @@ type Querier interface {
 	// RequestTelemetryBaselineP95ByRoute. Old selectors skip the percentile sort.
 	RouteHealthObservation(ctx context.Context, db DBTX, arg RouteHealthObservationParams) ([]byte, error)
 	RouteHealthStableIDs(ctx context.Context, db DBTX, arg RouteHealthStableIDsParams) ([]string, error)
+	// Route insights (ADR-1198): findings apid's evaluator derives from the
+	// awake report and learned cacheability. A trigger on route_insights enqueues
+	// the customer webhooks for each detected/resolved transition.
+	// Apps that ran in the window, with their account; an app that stayed parked
+	// has nothing to report.
+	RouteInsightCandidateApps(ctx context.Context, db DBTX, arg RouteInsightCandidateAppsParams) ([]RouteInsightCandidateAppsRow, error)
 	// Evaluate the full request-time identity population in bounded route windows.
 	// Only five cohorts and one hundred recovery identities per route are returned;
 	// full verdict and distinct counts are computed before either output cap.
@@ -5462,6 +5480,9 @@ type Querier interface {
 	// first_detected_at (and therefore a new webhook transition). In ON CONFLICT
 	// DO UPDATE, debug_regression_observations.* is the row before this update.
 	UpsertRegressionObservation(ctx context.Context, db DBTX, arg UpsertRegressionObservationParams) error
+	// Record an observed insight. A new or resolved insight (re)opens with this
+	// observation as its first detection; an active one only refreshes.
+	UpsertRouteInsight(ctx context.Context, db DBTX, arg UpsertRouteInsightParams) error
 	UpsertSLOHour(ctx context.Context, db DBTX, arg UpsertSLOHourParams) error
 	UpsertTenantWorkflowScheduleCursor(ctx context.Context, db DBTX, arg UpsertTenantWorkflowScheduleCursorParams) (PlatformTenantWorkflowScheduleCursor, error)
 	UpsertWorkflowScheduleCursor(ctx context.Context, db DBTX, arg UpsertWorkflowScheduleCursorParams) (WorkflowScheduleCursor, error)

@@ -92,7 +92,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_BUILDER_WARM_IDLE_MS` | builderd | `default` |  |  | `` | optional builderd warm-slot idle window override in milliseconds; code default is 5 minutes |
 | `FAAS_BUILD_PUBLISHER_KEY` | builderd | `default` |  |  | `` | explicit optional owner-only PKCS#8 P256 publisher key path; must be paired with FAAS_BUILD_PUBLISHER_NAME; no default platform key or trust enrollment (ADR-435) |
 | `FAAS_BUILD_PUBLISHER_NAME` | builderd | `default` |  |  | `` | explicit optional source-build publisher name paired with FAAS_BUILD_PUBLISHER_KEY; unset leaves publication disabled and required signature policies fail closed; public standards activation remains disabled (ADR-435) |
-| `FAAS_CANARY_PROGRESSION_TOKEN` | apid, meterd | `secrets-env` |  |  | `` | distinct random 32+ byte internal service token delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); activates only with FAAS_SAFEDEPLOY_TOKEN |
+| `FAAS_CANARY_PROGRESSION_TOKEN` | apid, meterd | `secrets-env` |  |  | `` | distinct random 32+ byte internal service token delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); activates only with FAAS_SAFEDEPLOY_TOKEN; the control_plane_service role generates the pair when missing (faas_safe_releases_enabled, ADR-1189) |
 | `FAAS_CERT_EXPIRY_REFRESHER_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_CHANGE_TIMELINE_ENABLED` | apid, shared | `default` |  | 0 | `` | ADR-751 operator gate for GET /v1/apps/{slug}/changes; explicit 1 enables the internal preview; boot fallback for the change_timeline platform flag (ADR-1700), ignored once an operator writes platform_flag.change_timeline |
 | `FAAS_CI_AUTOMATION_ENABLED` | apid, githubd, shared | `unit` |  | 0 | `` | ADR-1656 exact opt-in for new verified branch-push automation capture and profile admission; generated units keep 0; blocked receipts never promote |
@@ -561,7 +561,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PRESSURE_THRESHOLD_PER_MIN` | schedd | `default` |  |  | `` |  |
 | `FAAS_PREVIEW_JANITOR_INTERVAL_SECONDS` | apid | `default` |  |  | `` |  |
 | `FAAS_PREVIEW_JANITOR_STARTUP_DELAY_SECONDS` | apid | `default` |  |  | `` |  |
-| `FAAS_PREWARM_ENABLED` | schedd | `default` |  |  | `` | exact opt-in (`1`) for scheduled prewarm; disabled by default; ADR-160 |
+| `FAAS_PREWARM_ENABLED` | schedd | `unit` |  |  | `` | the schedd unit enables the scheduled prewarm drain (ADR-160, ADR-1189); exact `1` enables it |
 | `FAAS_PRIVATE_INGRESS_CIDRS` | vmmd | `dropin` |  |  | `` | vmmd egress drop-in; private control-plane source CIDRs from the generated host inventory |
 | `FAAS_PRIVATE_INGRESS_TCP_PORTS` | vmmd | `dropin` |  |  | `` | vmmd egress drop-in; exact compute service ports reachable from the control plane |
 | `FAAS_PRIVATE_NETWORKS` | schedd | `default` |  |  | `` | JSON array of operator-managed private networks consumed by the provider-neutral reconciler |
@@ -672,7 +672,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_S3_GATEWAY_ROLE` | s3-gatewayd | `dropin` |  | single-box | `` | production control-plane service must set control-plane explicitly |
 | `FAAS_S3_GATEWAY_SPOOL_DIR` | s3-gatewayd | `unit` |  |  | `` | production unit stages bounded single-PUT bodies under /var/spool/faas/s3-gatewayd |
 | `FAAS_SAFEDEPLOY_STUCK_AFTER` | apid, meterd | `default` |  |  | `` |  |
-| `FAAS_SAFEDEPLOY_TOKEN` | apid, meterd | `secrets-env` |  |  | `` | distinct random 32+ byte internal service token delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); activates only with FAAS_CANARY_PROGRESSION_TOKEN |
+| `FAAS_SAFEDEPLOY_TOKEN` | apid, meterd | `secrets-env` |  |  | `` | distinct random 32+ byte internal service token delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); activates only with FAAS_CANARY_PROGRESSION_TOKEN; the control_plane_service role generates the pair when missing (faas_safe_releases_enabled, ADR-1189) |
 | `FAAS_SAFE_RELEASE_DEFAULT_ENABLED` | apid | `default` |  | true | `` | ADR-1446 kill switch for the default health-gated rollout of production releases; explicit false restores immediate cutover for deploys that name no rollout policy |
 | `FAAS_SAMPLE_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_SBOM_ROOT` | apid | `default` |  |  | `` |  |

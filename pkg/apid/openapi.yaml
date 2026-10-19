@@ -24883,6 +24883,42 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/routes/insights:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getRouteInsights
+      summary: List the app's proactive route insights.
+      description: |
+        Findings the route insights evaluator records every six hours for
+        apps that ran in the last day (ADR-1198): `kept_awake` when a client
+        calling a route at a steady interval keeps a mostly-awake app from
+        parking, `cacheable` when the gateways measured a route safe to
+        cache for a given lifetime, and, for routes that already have a cache
+        rule (ADR-1199), `cache_stale` when refills found the body changed
+        before the rule's max-age ran out and `cache_too_short` when the body
+        stayed the same far longer. Active insights come first, then those
+        resolved in the last seven days. An insight resolves after a day
+        without being observed. Subscribe app webhooks to
+        `routes.insight.detected` and `routes.insight.resolved` to be told of
+        each transition; the webhook payload is the same insight object.
+        Uses the normal read scopes, completed MFA and the
+        DebugTelemetryEnabled plan gate.
+      x-since: 2026-10
+      responses:
+        '200':
+          description: The app's route insights.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteInsightsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/service-wake-ahead:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -72875,7 +72911,7 @@ components:
     RouteAwakeResponse:
       type: object
       description: "How long the app was awake in the window and which routes kept it awake (ADR-1187). Seconds are instance-seconds of billed running time."
-      required: [slug, from, until, idle_timeout_seconds, window_seconds, awake_seconds, awake_share, mb_seconds, gb_hours, wakes, unattributed_seconds, other_routes_seconds, routes_limit, routes]
+      required: [slug, from, until, idle_timeout_seconds, window_seconds, awake_seconds, awake_share, mb_seconds, gb_hours, wakes, unattributed_seconds, sources, min_instances, other_routes_seconds, routes_limit, routes]
       properties:
         slug: {"type": "string"}
         from: {"type": "string", "format": "date-time"}
@@ -72888,12 +72924,27 @@ components:
         mb_seconds: {"type": "integer", "format": "int64", "description": "Billed MB-seconds in the window."}
         gb_hours: {"type": "number"}
         wakes: {"type": "integer", "format": "int64", "description": "Cold boots in the window."}
-        unattributed_seconds: {"type": "integer", "format": "int64", "description": "Awake time no recorded request explains: synthetic probes, scheduled prewarm, minimum instances, queue, cron and waitUntil work, or telemetry the plan's rate cap dropped."}
+        unattributed_seconds: {"type": "integer", "format": "int64", "description": "Awake time no recorded request, probe or prewarm explains: minimum instances, queue, cron and waitUntil work, probes older than a day, or telemetry the plan's rate cap dropped."}
+        sources:
+          type: array
+          description: "Awake time credited to causes other than customer requests, for minutes no request explains (ADR-1199)."
+          items: { $ref: '#/components/schemas/RouteAwakeSource' }
+        min_instances: {"type": "integer", "description": "The app's current minimum instance count; above zero the app never parks, so unattributed time is expected."}
         other_routes_seconds: {"type": "integer", "format": "int64", "description": "Awake time attributed to routes outside the busiest routes_limit."}
         routes_limit: {"type": "integer"}
         routes:
           type: array
           items: { $ref: '#/components/schemas/RouteAwakeRoute' }
+    RouteAwakeSource:
+      type: object
+      description: "Awake time one non-request cause explains (ADR-1199)."
+      required: [source, events, awake_seconds, awake_share, gb_hours]
+      properties:
+        source: {"type": "string", "enum": ["route_probe", "prewarm"], "description": "route_probe: synthetic canary probes the app answered (ADR-847; kept for a day). prewarm: instances a scheduled prewarm admitted."}
+        events: {"type": "integer", "format": "int64", "description": "Probe requests answered without a 5xx or an auth rejection, or prewarmed instances."}
+        awake_seconds: {"type": "integer", "format": "int64"}
+        awake_share: {"type": "number", "minimum": 0, "maximum": 1}
+        gb_hours: {"type": "number"}
     RouteAwakeRoute:
       type: object
       description: "One route's share of the app's awake time and what removing its requests would change."
@@ -72925,6 +72976,33 @@ components:
       properties:
         kind: {"type": "string", "enum": ["edge_cache", "call_less_often"]}
         message: {"type": "string"}
+    RouteInsightsResponse:
+      type: object
+      description: "An app's active route insights, then those resolved in the last seven days (ADR-1198)."
+      required: [slug, insights]
+      properties:
+        slug: {"type": "string"}
+        insights:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/RouteInsight' }
+    RouteInsight:
+      type: object
+      description: "One finding for a route; also the payload of the routes.insight.detected and routes.insight.resolved webhooks."
+      required: [kind, method, route, state, message, evidence, first_detected_at, last_detected_at]
+      properties:
+        kind: {"type": "string", "enum": ["kept_awake", "cacheable", "cache_stale", "cache_too_short"]}
+        method: {"type": "string"}
+        route: {"type": "string", "description": "Route template, for example /catalog."}
+        state: {"type": "string", "enum": ["active", "resolved"]}
+        message: {"type": "string", "description": "What was observed and what to change."}
+        evidence:
+          type: object
+          additionalProperties: true
+          description: "Measured figures behind the insight: awake share, interval and savings for kept_awake; safe max-age and repeat counts for cacheable; the rule's max-age, refills, stale refills and measured safe max-age for cache_stale and cache_too_short."
+        first_detected_at: {"type": "string", "format": "date-time"}
+        last_detected_at: {"type": "string", "format": "date-time"}
+        resolved_at: {"type": "string", "format": "date-time"}
     RouteAdviceResponse:
       type: object
       description: "Route advisor suggestions derived from retained request telemetry (ADR-976). Nothing is applied."
@@ -110737,6 +110815,8 @@ components:
               - routes.monitor.violated
               - routes.monitor.escalated
               - routes.monitor.recovered
+              - routes.insight.detected
+              - routes.insight.resolved
               - workflow.finished
               - automation.paused
               - realtime.inbox.acknowledged
@@ -111790,6 +111870,8 @@ components:
               - routes.monitor.violated
               - routes.monitor.escalated
               - routes.monitor.recovered
+              - routes.insight.detected
+              - routes.insight.resolved
               - workflow.finished
               - automation.paused
               - realtime.inbox.acknowledged
@@ -111969,6 +112051,8 @@ components:
               - routes.monitor.violated
               - routes.monitor.escalated
               - routes.monitor.recovered
+              - routes.insight.detected
+              - routes.insight.resolved
               - workflow.finished
               - automation.paused
               - realtime.inbox.acknowledged

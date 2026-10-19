@@ -50,6 +50,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operatorobs"
 	"github.com/onebox-faas/faas/pkg/apid/receivers"
+	"github.com/onebox-faas/faas/pkg/apid/routeinsights"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/auth"
 	"github.com/onebox-faas/faas/pkg/authcode"
@@ -946,6 +947,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// audit auditor makes with pkg/audit.Auditor.SetOps).
 		eventRetentionCleanup.SetOps(srv.ops)
 		go func() { _ = eventRetentionCleanup.Run(ctx) }()
+		// ADR-1198: proactive route insights. Every RouteInsightInterval the
+		// evaluator records which routes keep running apps awake and which are
+		// measured safe to cache; a trigger notifies subscribed app webhooks.
+		if insightStore, ok := srv.store.(routeinsights.Store); ok {
+			insights := &routeinsights.Evaluator{Store: insightStore, Log: log}
+			go func() { _ = insights.Run(ctx) }()
+		}
 		// Issue #562 / PR-A: log archive shipper. Walks the local
 		// spool dir every cfg.FlushInterval (5 min default) and
 		// gzip-PUTs .partial files to s3://{bucket}/faas-logs/{instance}/

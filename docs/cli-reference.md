@@ -10585,6 +10585,19 @@ gregale routes awake my-api
 gregale routes awake my-api --since 24h --json
 ```
 
+### routes insights
+
+List findings about routes that keep the app awake or are safe to cache, evaluated every six hours
+
+`gregale routes insights <slug>`
+
+Examples:
+
+```sh
+gregale routes insights my-api
+gregale routes insights my-api --json
+```
+
 ### routes priority
 
 Show or set which routes are served first, and turned away last, when every instance is busy

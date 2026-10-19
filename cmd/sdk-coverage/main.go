@@ -1015,6 +1015,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/route-removal/check":                                          "CheckRouteRemoval",
 	"GET /v1/apps/{slug}/routes/advice":                                                "GetRouteAdvice",
 	"GET /v1/apps/{slug}/routes/awake":                                                 "GetRouteAwake",
+	"GET /v1/apps/{slug}/routes/insights":                                              "GetRouteInsights",
 	"GET /v1/apps/{slug}/service-wake-ahead":                                           "GetServiceWakeAhead",
 	"PUT /v1/apps/{slug}/service-wake-ahead":                                           "SetServiceWakeAhead",
 	"GET /v1/apps/{slug}/route-priorities":                                             "GetRoutePriorities",
