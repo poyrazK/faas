@@ -114,6 +114,13 @@ func authSettingsChange(form url.Values) (authsettings.Change, error) {
 		list := strings.FieldsFunc(form.Get("redirect_urls"), func(r rune) bool { return r == '\n' || r == '\r' || r == ',' || r == ' ' })
 		change.RedirectURLs = &list
 	}
+	if form.Has("web3") {
+		chains := []string{}
+		if value := form.Get("web3"); value != "off" {
+			chains = strings.Split(value, ",")
+		}
+		change.Web3 = &chains
+	}
 	if form.Has("password_min_length") {
 		n, err := strconv.Atoi(form.Get("password_min_length"))
 		if err != nil {

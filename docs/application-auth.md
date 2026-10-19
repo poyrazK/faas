@@ -216,6 +216,30 @@ gregale auth config shop-auth --passkey-rp-id example.com
 Only HTTPS origins on that domain may use them: the Auth app, your site URL and
 your redirect URLs that are on it.
 
+### Wallet sign-in (Web3)
+
+Let people sign in with an Ethereum or Solana wallet:
+
+```sh
+gregale auth config shop-auth --web3 ethereum,solana   # or ethereum, solana, off
+```
+
+```ts
+await auth.signInWithWeb3({ chain: 'ethereum' }) // window.ethereum; or { chain: 'solana' } with window.solana
+```
+
+The wallet asks its owner to sign a message naming your page (Sign-In With
+Ethereum, EIP-4361, and its Solana equivalent); GoTrue checks the signature,
+that the message names your site URL or an allowed redirect URL over HTTPS
+(or localhost), and that it is at most ten minutes old. The first sign-in
+creates the user, whose sign-in method is `web3`; a wallet has no email
+address, so the [sign-up rules](#who-may-sign-up) that need one refuse it.
+Pass `wallet` to use another injected wallet, `uri` when the page is not
+your site URL, and `statement` to change the line the wallet shows. The
+hosted sign-in page offers the wallets the visitor's browser has. GoTrue
+does not remember the messages it accepted, so a signed message is a
+ten-minute credential for whoever holds it: serve the page over HTTPS.
+
 ### Phone sign-in
 
 Users can sign in with a code texted to their phone, sent through your own SMS

@@ -229,7 +229,10 @@ export function runtimeConfig(env) {
     GOTRUE_SITE_URL: site,
     // The hosted pages are always a valid redirect target (password reset).
     // GoTrue checks the consent page's requests against this list by origin.
-    GOTRUE_URI_ALLOW_LIST: [...redirects, `${external}/ui/**`, ...(env.AUTH_OAUTH_SERVER === '1' ? [external] : [])].join(','),
+    // A wallet signs a message naming the page's host; GoTrue accepts the
+    // hosted pages' host only when it is an allowed redirect URL itself.
+    GOTRUE_URI_ALLOW_LIST: [...redirects, `${external}/ui/**`, ...(env.AUTH_OAUTH_SERVER === '1' ? [external] : []),
+      ...(passthrough.GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED === 'true' || passthrough.GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED === 'true' ? [`${external}/`] : [])].join(','),
     GOTRUE_DB_DRIVER: 'postgres',
     DATABASE_URL: databaseURL(env.DATABASE_URL),
     DB_NAMESPACE: 'auth',
@@ -269,6 +272,8 @@ export function runtimeConfig(env) {
   const config = { external, api, gotrueEnv, redirects, keys: { signing: keys.signing, verifying: keys.verifying }, authz: authzConfig(env.AUTH_AUTHZ), origins: browserOrigins(site, redirects), email, app: branding.name, branding, captcha, lifecycleEvents: env.AUTH_LIFECYCLE_EVENTS === '1', auditRetentionDays: retention === '' ? null : Number(retention), smsCountries: smsCountries(env),
     // Self-service organization SSO needs SSO itself.
     orgSSO: env.AUTH_ORG_SSO === '1' && gotrueEnv.GOTRUE_SAML_ENABLED === 'true',
+    // Wallet sign-in (Sign-In With Ethereum / Solana), verified by GoTrue.
+    web3: { ethereum: gotrueEnv.GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED === 'true', solana: gotrueEnv.GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED === 'true' },
     oauth: env.AUTH_OAUTH_SERVER === '1', selfDeletion: env.AUTH_SELF_DELETION === '1', orgClaims: env.AUTH_ORG_CLAIMS === '1', anonymousRetentionDays: anonymousRetention === '' ? null : Number(anonymousRetention), productControlTeamEnabled: env.AUTH_PRODUCT_CONTROL_TEAM_ENABLED === '1', productControlEmailEnabled: env.AUTH_PRODUCT_CONTROL_EMAIL_ENABLED === '1' }
   return { ...config, settings: publicSettings(config) }
 }
@@ -277,7 +282,7 @@ export function runtimeConfig(env) {
 // anyway (published key IDs, enabled providers, rules a sign-up form shows)
 // or harmless. The CLI and dashboard read settings here because app secrets
 // are write-only.
-export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, branding, captcha, lifecycleEvents, auditRetentionDays, smsCountries: countries, orgSSO, anonymousRetentionDays, selfDeletion, orgClaims }) {
+export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, branding, captcha, lifecycleEvents, auditRetentionDays, smsCountries: countries, orgSSO, anonymousRetentionDays, selfDeletion, orgClaims, web3 }) {
   const passkeys = g.GOTRUE_PASSKEY_ENABLED === 'true'
   const flag = (value, fallback) => value === undefined ? fallback : value === 'true'
   const required = (g.GOTRUE_PASSWORD_REQUIRED_CHARACTERS ?? '').split(':').filter(Boolean)
@@ -303,6 +308,8 @@ export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, bran
     self_deletion: selfDeletion === true,
     // Access tokens carry the session's active organization (org_* claims).
     organization_claims: orgClaims === true,
+    // Chains people may sign in with a wallet from.
+    web3: { ethereum: web3?.ethereum === true, solana: web3?.solana === true },
     passkeys: { enabled: passkeys, rp_id: g.GOTRUE_WEBAUTHN_RP_ID, origins: g.GOTRUE_WEBAUTHN_RP_ORIGINS.split(',').filter(Boolean) },
     branding: { name: branding.name, color: branding.color, logo_url: branding.logoURL },
     captcha: captcha ? { provider: captcha.provider, site_key: captcha.siteKey } : null,

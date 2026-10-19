@@ -204,6 +204,20 @@ func TestSelfDeletion(t *testing.T) {
 	}
 }
 
+func TestWeb3(t *testing.T) {
+	set, _, err := Change{Web3: &[]string{"Ethereum"}}.Secrets()
+	if err != nil || !reflect.DeepEqual(set, map[string]string{"GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED": "true", "GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED": "false"}) {
+		t.Fatalf("ethereum: %v %v", set, err)
+	}
+	set, _, err = Change{Web3: &[]string{}}.Secrets()
+	if err != nil || set["GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED"] != "false" || set["GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED"] != "false" {
+		t.Fatalf("off: %v %v", set, err)
+	}
+	if _, _, err := (Change{Web3: &[]string{"bitcoin"}}).Secrets(); err == nil {
+		t.Fatal("an unknown chain was accepted")
+	}
+}
+
 func TestOrgClaims(t *testing.T) {
 	for value, want := range map[bool]string{true: "1", false: "0"} {
 		set, unset, err := Change{OrgClaims: ptr(value)}.Secrets()

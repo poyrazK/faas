@@ -54,6 +54,7 @@
 <label>Users link and unlink sign-in methods<select name="identity_linking"><option value="off">Off</option><option value="on">On</option></select></label>
 <label>Users delete their own accounts (after a recent sign-in)<select name="self_deletion"><option value="off">Off</option><option value="on">On</option></select></label>
 <label>Access tokens carry the active organization, role and permissions<select name="org_claims"><option value="off">Off</option><option value="on">On</option></select></label>
+<label>Wallet sign-in<select name="web3"><option value="off">Off</option><option value="ethereum">Ethereum wallets</option><option value="solana">Solana wallets</option><option value="ethereum,solana">Ethereum and Solana wallets</option></select></label>
 <button type="submit">Save and restart</button>
 </form>
 <h3>Sign-in providers</h3>
@@ -567,6 +568,7 @@
       oauth_server: settings.oauth?.enabled ? 'on' : 'off', oauth_registration: settings.oauth?.dynamic_registration ? 'on' : 'off',
       anonymous: settings.anonymous?.enabled ? 'on' : 'off', anonymous_retention_days: settings.anonymous?.retention_days ? String(settings.anonymous.retention_days) : '',
       identity_linking: settings.identity_linking ? 'on' : 'off', self_deletion: settings.self_deletion ? 'on' : 'off', org_claims: settings.organization_claims ? 'on' : 'off',
+      web3: [settings.web3?.ethereum && 'ethereum', settings.web3?.solana && 'solana'].filter(Boolean).join(',') || 'off',
     }
     for (const box of classes) box.checked = settings.password.required.includes(box.value)
     values.password_require = requireValue()

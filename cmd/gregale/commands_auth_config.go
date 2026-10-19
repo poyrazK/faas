@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--mfa-phone on|off] [--recovery-codes on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sms-countries CODES|all] [--sso on|off] [--anonymous on|off] [--anonymous-retention DAYS|forever] [--identity-linking on|off] [--self-deletion on|off] [--org-claims on|off] [--oauth-server on|off] [--oauth-registration on|off] [--org-sso on|off]"
+	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--mfa-phone on|off] [--recovery-codes on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sms-countries CODES|all] [--sso on|off] [--anonymous on|off] [--anonymous-retention DAYS|forever] [--identity-linking on|off] [--self-deletion on|off] [--org-claims on|off] [--web3 ethereum,solana|off] [--oauth-server on|off] [--oauth-registration on|off] [--org-sso on|off]"
 	authProvidersUsage = "usage: gregale auth providers list NAME | gregale auth providers enable NAME PROVIDER --client-id ID [--client-secret-stdin] [--url URL] | gregale auth providers disable NAME PROVIDER"
 )
 
@@ -66,6 +66,7 @@ func cmdAuthConfig(args []string) int {
 	identityLinking := fs.String("identity-linking", "", "on or off: let signed-in users link and unlink sign-in methods")
 	selfDeletion := fs.String("self-deletion", "", "on or off: let signed-in users delete their own accounts after a recent sign-in")
 	orgClaims := fs.String("org-claims", "", "on or off: put each session's active organization, role and permissions in its access tokens")
+	web3 := fs.String("web3", "", "wallets people may sign in with: ethereum, solana, both (ethereum,solana) or off")
 	sms := authSMSFlags{
 		provider:  fs.String("sms", "", "phone sign-in by text message through your own SMS account: twilio, twilio_verify, messagebird, textlocal, vonage, or off"),
 		account:   fs.String("sms-account", "", "Twilio account SID or Vonage API key"),
@@ -106,6 +107,13 @@ func cmdAuthConfig(args []string) int {
 			return printErr("Invalid Auth settings", err)
 		}
 		*target.field = &on
+	}
+	if given["web3"] {
+		chains := []string{}
+		if *web3 != "off" {
+			chains = strings.Split(*web3, ",")
+		}
+		change.Web3 = &chains
 	}
 	if given["anonymous-retention"] {
 		days, err := parseRetentionDays("anonymous-retention", *anonymousRetention)
@@ -503,7 +511,7 @@ func showAuthConfig(ctx context.Context, app api.AppResponse) int {
 	for _, row := range [][2]string{
 		{"site URL", settings.SiteURL}, {"redirect URLs", redirects}, {"sign-up", signup},
 		{"sign-in methods", strings.Join(providers, ", ")}, {"passwords", passwords},
-		{"MFA", authMFASummary(settings)}, {"passkeys", passkeys}, {"phone (SMS)", phone}, {"organization SSO", sso}, {"OAuth server", oauth}, {"anonymous users", anonymousUsers}, {"identity linking", onOff(settings.IdentityLinking)}, {"self-deletion", onOff(settings.SelfDeletion)}, {"org claims", onOff(settings.OrganizationClaims)}, {"CAPTCHA", captchaState}, {"hosted pages", branding},
+		{"MFA", authMFASummary(settings)}, {"passkeys", passkeys}, {"phone (SMS)", phone}, {"organization SSO", sso}, {"OAuth server", oauth}, {"anonymous users", anonymousUsers}, {"identity linking", onOff(settings.IdentityLinking)}, {"self-deletion", onOff(settings.SelfDeletion)}, {"org claims", onOff(settings.OrganizationClaims)}, {"wallet sign-in", authWeb3Summary(settings)}, {"CAPTCHA", captchaState}, {"hosted pages", branding},
 		{"email delivery", email}, {"lifecycle events", events}, {"activity kept", retention}, {"signing key", keys},
 	} {
 		_, _ = fmt.Fprintf(osStdout, "  %-16s %s\n", row[0]+":", row[1])
@@ -600,4 +608,19 @@ func listAuthProviders(ctx context.Context, app api.AppResponse) int {
 		_, _ = fmt.Fprintln(osStdout, provider)
 	}
 	return 0
+}
+
+// authWeb3Summary names the wallets people may sign in with.
+func authWeb3Summary(settings authPublicSettings) string {
+	var chains []string
+	if settings.Web3.Ethereum {
+		chains = append(chains, "Ethereum")
+	}
+	if settings.Web3.Solana {
+		chains = append(chains, "Solana")
+	}
+	if len(chains) == 0 {
+		return "off"
+	}
+	return strings.Join(chains, ", ")
 }

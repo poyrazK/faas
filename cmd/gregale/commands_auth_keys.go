@@ -415,7 +415,11 @@ type authPublicSettings struct {
 	IdentityLinking    bool `json:"identity_linking"`
 	SelfDeletion       bool `json:"self_deletion"`
 	OrganizationClaims bool `json:"organization_claims"`
-	Keys               struct {
+	Web3               struct {
+		Ethereum bool `json:"ethereum"`
+		Solana   bool `json:"solana"`
+	} `json:"web3"`
+	Keys struct {
 		Signing   string   `json:"signing"`
 		Verifying []string `json:"verifying"`
 	} `json:"keys"`
