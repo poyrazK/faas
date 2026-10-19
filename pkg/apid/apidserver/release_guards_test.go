@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/canary"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -16,6 +18,18 @@ import (
 // or lifted, and an after-rollback policy freezes an app Gregale rolled back.
 // adr: 20261019071734 — release gates round-trip and roll back a release
 // that fails one after its rollout completed.
+
+// doJSON sends a request and decodes a 2xx response into out.
+func doJSON(t *testing.T, e apidserver.TestEnv, method, path string, body, out any) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := e.Do(t, method, path, body, nil)
+	if out != nil && rec.Code < 300 {
+		if err := json.Unmarshal(rec.Body.Bytes(), out); err != nil {
+			t.Fatalf("decode %s %s response %s: %v", method, path, rec.Body, err)
+		}
+	}
+	return rec
+}
 
 func decodeProblem(t *testing.T, body []byte) api.Problem {
 	t.Helper()
@@ -30,14 +44,14 @@ func TestReleaseFreezeRefusesProductionReleasesUntilOverriddenOrLifted(t *testin
 	f := newPostReleaseFixture(t, "frz-app", true, time.Hour)
 	e := f.e
 	var freeze api.ReleaseFreeze
-	if rec := e.Do(t, http.MethodPost, "/v1/freezes", api.CreateReleaseFreezeRequest{App: "frz-app", Kind: "window", Reason: "holiday"}, &freeze); rec.Code != http.StatusCreated {
+	if rec := doJSON(t, e, http.MethodPost, "/v1/freezes", api.CreateReleaseFreezeRequest{App: "frz-app", Kind: "window", Reason: "holiday"}, &freeze); rec.Code != http.StatusCreated {
 		t.Fatalf("create freeze = %d %s", rec.Code, rec.Body)
 	}
 	if !freeze.Active || freeze.App != "frz-app" || freeze.Source != "manual" {
 		t.Fatalf("freeze = %+v", freeze)
 	}
 
-	rec := e.Do(t, http.MethodPost, "/v1/apps/frz-app/deployments", api.CreateDeploymentRequest{Image: imageRef('a')}, nil)
+	rec := doJSON(t, e, http.MethodPost, "/v1/apps/frz-app/deployments", api.CreateDeploymentRequest{Image: imageRef('a')}, nil)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("frozen deploy = %d %s, want 409", rec.Code, rec.Body)
 	}
@@ -46,22 +60,22 @@ func TestReleaseFreezeRefusesProductionReleasesUntilOverriddenOrLifted(t *testin
 	}
 
 	var status api.ReleaseFreezeStatus
-	if rec := e.Do(t, http.MethodGet, "/v1/apps/frz-app/freeze-status", nil, &status); rec.Code != http.StatusOK || !status.Frozen || len(status.Active) != 1 {
+	if rec := doJSON(t, e, http.MethodGet, "/v1/apps/frz-app/freeze-status", nil, &status); rec.Code != http.StatusOK || !status.Frozen || len(status.Active) != 1 {
 		t.Fatalf("status = %d %+v", rec.Code, status)
 	}
 
-	rec = e.Do(t, http.MethodPost, "/v1/apps/frz-app/deployments", api.CreateDeploymentRequest{Image: imageRef('b'), OverrideFreeze: "hotfix for incident 4711"}, nil)
+	rec = doJSON(t, e, http.MethodPost, "/v1/apps/frz-app/deployments", api.CreateDeploymentRequest{Image: imageRef('b'), OverrideFreeze: "hotfix for incident 4711"}, nil)
 	if rec.Code == http.StatusConflict {
 		t.Fatalf("overridden deploy was refused: %s", rec.Body)
 	}
 
-	if rec := e.Do(t, http.MethodDelete, "/v1/freezes/"+freeze.ID, nil, nil); rec.Code != http.StatusOK {
+	if rec := doJSON(t, e, http.MethodDelete, "/v1/freezes/"+freeze.ID, nil, nil); rec.Code != http.StatusOK {
 		t.Fatalf("lift = %d %s", rec.Code, rec.Body)
 	}
-	if rec := e.Do(t, http.MethodDelete, "/v1/freezes/"+freeze.ID, nil, nil); rec.Code != http.StatusNotFound {
+	if rec := doJSON(t, e, http.MethodDelete, "/v1/freezes/"+freeze.ID, nil, nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("second lift = %d, want 404", rec.Code)
 	}
-	if rec := e.Do(t, http.MethodGet, "/v1/apps/frz-app/freeze-status", nil, &status); rec.Code != http.StatusOK || status.Frozen {
+	if rec := doJSON(t, e, http.MethodGet, "/v1/apps/frz-app/freeze-status", nil, &status); rec.Code != http.StatusOK || status.Frozen {
 		t.Fatalf("status after lift = %d %+v", rec.Code, status)
 	}
 }
@@ -70,16 +84,16 @@ func TestReleaseFreezeValidationAndAccountWideList(t *testing.T) {
 	f := newPostReleaseFixture(t, "frz-list", true, time.Hour)
 	e := f.e
 	bad := api.CreateReleaseFreezeRequest{Kind: "weekly", Reason: "x", Weekly: &api.ReleaseFreezeWeekly{Days: []string{"friday"}, Start: "16:00", DurationMinutes: 60, TimeZone: "UTC"}}
-	if rec := e.Do(t, http.MethodPost, "/v1/freezes", bad, nil); rec.Code != http.StatusBadRequest {
+	if rec := doJSON(t, e, http.MethodPost, "/v1/freezes", bad, nil); rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad weekly = %d %s, want 400", rec.Code, rec.Body)
 	}
 	weekly := api.CreateReleaseFreezeRequest{Kind: "weekly", Reason: "no weekend releases",
 		Weekly: &api.ReleaseFreezeWeekly{Days: []string{"sat", "sun"}, Start: "00:00", DurationMinutes: 1440, TimeZone: "Europe/Istanbul"}}
-	if rec := e.Do(t, http.MethodPost, "/v1/freezes", weekly, nil); rec.Code != http.StatusCreated {
+	if rec := doJSON(t, e, http.MethodPost, "/v1/freezes", weekly, nil); rec.Code != http.StatusCreated {
 		t.Fatalf("weekly = %d %s", rec.Code, rec.Body)
 	}
 	var list api.ListReleaseFreezesResponse
-	if rec := e.Do(t, http.MethodGet, "/v1/freezes?app=frz-list", nil, &list); rec.Code != http.StatusOK || len(list.Freezes) != 1 {
+	if rec := doJSON(t, e, http.MethodGet, "/v1/freezes?app=frz-list", nil, &list); rec.Code != http.StatusOK || len(list.Freezes) != 1 {
 		t.Fatalf("list = %d %+v", rec.Code, list)
 	}
 	if got := list.Freezes[0]; got.App != "" || got.Weekly == nil || len(got.Weekly.Days) != 2 {
@@ -91,11 +105,11 @@ func TestAfterRollbackPolicyFreezesAnAppTheWatchRolledBack(t *testing.T) {
 	f := newPostReleaseFixture(t, "frz-auto", true, time.Minute)
 	e := f.e
 	policy := api.CreateReleaseFreezeRequest{App: "frz-auto", Kind: "after_rollback", AfterRollbackMinutes: 60, Reason: "settle after automatic rollbacks"}
-	if rec := e.Do(t, http.MethodPost, "/v1/freezes", policy, nil); rec.Code != http.StatusCreated {
+	if rec := doJSON(t, e, http.MethodPost, "/v1/freezes", policy, nil); rec.Code != http.StatusCreated {
 		t.Fatalf("policy = %d %s", rec.Code, rec.Body)
 	}
 	var status api.ReleaseFreezeStatus
-	if rec := e.Do(t, http.MethodGet, "/v1/apps/frz-auto/freeze-status", nil, &status); rec.Code != http.StatusOK || status.Frozen {
+	if rec := doJSON(t, e, http.MethodGet, "/v1/apps/frz-auto/freeze-status", nil, &status); rec.Code != http.StatusOK || status.Frozen {
 		t.Fatalf("a policy alone froze the app: %d %+v", rec.Code, status)
 	}
 	f.telemetry.windows[f.release.ID] = canary.HealthWindow{Requests: 300, ServerErrors: 1, P95LatencyMS: 700}
@@ -103,7 +117,7 @@ func TestAfterRollbackPolicyFreezesAnAppTheWatchRolledBack(t *testing.T) {
 	if got := f.read(t, f.release.ID); got.LastAutoRollbackReason != string(state.AutoRollbackReasonPostReleaseRegression) {
 		t.Fatalf("release was not rolled back: %q", got.LastAutoRollbackReason)
 	}
-	if rec := e.Do(t, http.MethodGet, "/v1/apps/frz-auto/freeze-status", nil, &status); rec.Code != http.StatusOK || !status.Frozen {
+	if rec := doJSON(t, e, http.MethodGet, "/v1/apps/frz-auto/freeze-status", nil, &status); rec.Code != http.StatusOK || !status.Frozen {
 		t.Fatalf("status after the rollback = %d %+v", rec.Code, status)
 	}
 	auto := status.Active[0]
@@ -133,27 +147,27 @@ func (g gateEvidence) ReleaseGateCustomMetricWindow(context.Context, string, str
 func TestReleaseGatesRoundTripAndValidate(t *testing.T) {
 	f := newPostReleaseFixture(t, "gate-crud", true, time.Hour)
 	e := f.e
-	if rec := e.Do(t, http.MethodPost, "/v1/apps/gate-crud/release-gates", api.CreateReleaseGateRequest{Name: "checkout", Kind: "slo", SLO: "missing"}, nil); rec.Code != http.StatusBadRequest {
+	if rec := doJSON(t, e, http.MethodPost, "/v1/apps/gate-crud/release-gates", api.CreateReleaseGateRequest{Name: "checkout", Kind: "slo", SLO: "missing"}, nil); rec.Code != http.StatusBadRequest {
 		t.Fatalf("gate on a missing SLO = %d %s, want 400", rec.Code, rec.Body)
 	}
 	var gate api.ReleaseGate
-	if rec := e.Do(t, http.MethodPost, "/v1/apps/gate-crud/release-gates", api.CreateReleaseGateRequest{Name: "no-new-errors", Kind: "new_errors"}, &gate); rec.Code != http.StatusCreated {
+	if rec := doJSON(t, e, http.MethodPost, "/v1/apps/gate-crud/release-gates", api.CreateReleaseGateRequest{Name: "no-new-errors", Kind: "new_errors"}, &gate); rec.Code != http.StatusCreated {
 		t.Fatalf("create = %d %s", rec.Code, rec.Body)
 	}
 	if gate.MaxNewGroups == nil || *gate.MaxNewGroups != 0 || gate.MinEvents != 3 || gate.MinSamples != 20 {
 		t.Fatalf("defaults = %+v", gate)
 	}
-	if rec := e.Do(t, http.MethodPost, "/v1/apps/gate-crud/release-gates", api.CreateReleaseGateRequest{Name: "no-new-errors", Kind: "new_errors"}, nil); rec.Code != http.StatusConflict {
+	if rec := doJSON(t, e, http.MethodPost, "/v1/apps/gate-crud/release-gates", api.CreateReleaseGateRequest{Name: "no-new-errors", Kind: "new_errors"}, nil); rec.Code != http.StatusConflict {
 		t.Fatalf("duplicate = %d, want 409", rec.Code)
 	}
 	var list api.ListReleaseGatesResponse
-	if rec := e.Do(t, http.MethodGet, "/v1/apps/gate-crud/release-gates", nil, &list); rec.Code != http.StatusOK || len(list.Gates) != 1 {
+	if rec := doJSON(t, e, http.MethodGet, "/v1/apps/gate-crud/release-gates", nil, &list); rec.Code != http.StatusOK || len(list.Gates) != 1 {
 		t.Fatalf("list = %d %+v", rec.Code, list)
 	}
-	if rec := e.Do(t, http.MethodDelete, "/v1/apps/gate-crud/release-gates/no-new-errors", nil, nil); rec.Code != http.StatusOK {
+	if rec := doJSON(t, e, http.MethodDelete, "/v1/apps/gate-crud/release-gates/no-new-errors", nil, nil); rec.Code != http.StatusOK {
 		t.Fatalf("delete = %d %s", rec.Code, rec.Body)
 	}
-	if rec := e.Do(t, http.MethodDelete, "/v1/apps/gate-crud/release-gates/no-new-errors", nil, nil); rec.Code != http.StatusNotFound {
+	if rec := doJSON(t, e, http.MethodDelete, "/v1/apps/gate-crud/release-gates/no-new-errors", nil, nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("second delete = %d, want 404", rec.Code)
 	}
 }
@@ -161,7 +175,7 @@ func TestReleaseGatesRoundTripAndValidate(t *testing.T) {
 func TestPostReleaseWatchRollsBackAReleaseThatFailsAGate(t *testing.T) {
 	f := newPostReleaseFixture(t, "gate-watch", true, time.Minute)
 	e := f.e
-	if rec := e.Do(t, http.MethodPost, "/v1/apps/gate-watch/release-gates", api.CreateReleaseGateRequest{Name: "no-new-errors", Kind: "new_errors"}, nil); rec.Code != http.StatusCreated {
+	if rec := doJSON(t, e, http.MethodPost, "/v1/apps/gate-watch/release-gates", api.CreateReleaseGateRequest{Name: "no-new-errors", Kind: "new_errors"}, nil); rec.Code != http.StatusCreated {
 		t.Fatalf("create gate = %d %s", rec.Code, rec.Body)
 	}
 	evidence := gateEvidence{groups: map[string][]state.ReleaseGateErrorGroup{}}
