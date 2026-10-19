@@ -2,6 +2,7 @@ package financialtest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -15,8 +16,25 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// computeTestStore lists the store methods these suites call rather than
+// embedding state.Store (scripts/ci/teststorecheck).
 type computeTestStore interface {
-	state.Store
+	accountCreator
+	AppendUsage(ctx context.Context, accountID, appID, instanceID string, minute time.Time, mbSeconds, requests, cpuUsec, txBytes, netTxBytes, netRxBytes int64, coldBootCount int32, tailSeconds int64) error
+	CreateAndClaimJobInstance(ctx context.Context, instanceID, jobID, runID string, taskIndex int, instanceState string, ramMB int, computeNodeID, wakeID, leaseToken string, leaseExpiresAt time.Time, leaseOwnerNodeID string) (state.Instance, error)
+	CreateApp(ctx context.Context, app state.App) (state.App, error)
+	CreateComputeNode(ctx context.Context, node state.ComputeNode) (state.ComputeNode, error)
+	CreateDeployment(ctx context.Context, d state.Deployment) (state.Deployment, error)
+	DeleteApp(ctx context.Context, id string) error
+	JobCreate(ctx context.Context, accountID, name, kind, imageRef string, command []string, ramMB, taskTimeoutSec, maxParallelism, retryMax int, envOverrides json.RawMessage) (state.Job, error)
+	JobRunCancel(ctx context.Context, runID string) (state.JobRun, error)
+	JobRunCreate(ctx context.Context, jobID, accountID, triggerKind string, parallelism, retryMaxOverride, taskTimeoutOverride *int, envOverrides json.RawMessage, tasks int, options ...state.JobRunOptions) (state.JobRun, []state.JobTask, error)
+	JobSoftDelete(ctx context.Context, id string) (deleted bool, hasLiveInstances bool, err error)
+	JobTaskFailBoot(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken string, retryMax int, nextAttemptAt time.Time, errorMessage string) (retryScheduled bool, err error)
+	JobTaskGet(ctx context.Context, runID string, taskIndex int) (state.JobTask, error)
+	ListComputeNodes(ctx context.Context, includeInactive bool) ([]state.ComputeNode, error)
+	SetDeploymentRootfs(ctx context.Context, id, path, key string, bytes int64) error
+	UpdateDeploymentStatus(ctx context.Context, id string, status state.DeploymentStatus, errMsg string) error
 	state.FinancialStore
 	state.FinancialBudgetStore
 	state.FinancialComputeStore
@@ -114,6 +132,16 @@ func TestFinancialComputePolicyEditAtUTCReset(t *testing.T) {
 	}
 }
 
+// fullStore hands the real store to production APIs that take state.Store.
+func fullStore(t *testing.T, store computeTestStore) state.Store {
+	t.Helper()
+	full, ok := store.(state.Store)
+	if !ok {
+		t.Fatalf("%T is not a state.Store", store)
+	}
+	return full
+}
+
 func computeReservationSuite(t *testing.T, store computeTestStore) {
 	t.Helper()
 	ctx := t.Context()
@@ -204,7 +232,7 @@ func computeReservationSuite(t *testing.T, store computeTestStore) {
 	if err != nil || b.CommittedMillicents+b.ReservedMillicents > spec.LimitMillicents || b.ReservedMillicents != l.Reserved || !b.Held {
 		t.Fatalf("atomic balance: %+v %v", b, err)
 	}
-	if err := state.CheckFinancialBudgetAdmission(ctx, store, app, "", time.Now()); !errors.Is(err, state.ErrFinancialBudgetHeld) {
+	if err := state.CheckFinancialBudgetAdmission(ctx, fullStore(t, store), app, "", time.Now()); !errors.Is(err, state.ErrFinancialBudgetHeld) {
 		t.Fatalf("warm traffic escaped: %v", err)
 	}
 	// Expiry alone neither releases money nor bills unfunded stale residency.

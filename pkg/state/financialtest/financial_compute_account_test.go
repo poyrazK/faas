@@ -155,7 +155,7 @@ func TestFinancialComputeAccountReservations(t *testing.T) {
 				if after := f.balance(t); after.AllowanceReserved != b.AllowanceReserved || after.ReservedMillicents != b.ReservedMillicents {
 					t.Fatalf("denial consumed funding: %+v", after)
 				}
-				if err := state.CheckFinancialBudgetAdmission(t.Context(), store, app, "", time.Now()); err == nil {
+				if err := state.CheckFinancialBudgetAdmission(t.Context(), fullStore(t, store), app, "", time.Now()); err == nil {
 					t.Fatal("account hold did not reject traffic")
 				}
 				accountComputeHeldCommand(t, store, f.account.ID, app.ID)

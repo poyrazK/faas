@@ -44,7 +44,7 @@ func TestFinancialComputeJobFundedBilling(t *testing.T) {
 				return
 			} // only PostgreSQL owns the residency ledger
 			observed := l.StartedAt.Add(2 * time.Minute)
-			sampler := meter.NewSampler(store, nil, func() time.Time { return observed })
+			sampler := meter.NewSampler(fullStore(t, store), nil, func() time.Time { return observed })
 			for range 2 {
 				if _, err := sampler.SampleJobsAndRoll(t.Context()); err != nil {
 					t.Fatal(err)
