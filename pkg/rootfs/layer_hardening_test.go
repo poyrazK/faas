@@ -167,3 +167,42 @@ func TestApplyLayerGzToleratesBytesAfterTheGzipStream(t *testing.T) {
 		t.Fatalf("ApplyLayerGz: %v", err)
 	}
 }
+
+// The byte budget counts only file content, so empty files, directories and
+// links are free. A small compressed layer of empty entries must still stop
+// at the entry cap instead of creating millions of inodes on the node's image
+// staging filesystem.
+func TestLayerExtractionEntryCapIsSharedAcrossLayers(t *testing.T) {
+	staging := t.TempDir()
+	budget := newExtractionBudget(1 << 20)
+	budget.maxEntries = 3
+	if err := applyLayerGzForApp(staging, gzLayer(t, []entry{{name: "a"}, {name: "b"}}), budget); err != nil {
+		t.Fatalf("first layer: %v", err)
+	}
+	err := applyLayerGzForApp(staging, gzLayer(t, []entry{{name: "c"}, {name: "d"}}), budget)
+	var entriesErr *ErrLayerExtractionTooManyEntries
+	if !errors.As(err, &entriesErr) || entriesErr.LimitEntries != 3 {
+		t.Fatalf("second layer error = %v, want an entry cap error", err)
+	}
+	if _, err := os.Stat(filepath.Join(staging, "d")); !os.IsNotExist(err) {
+		t.Fatalf("over-cap entry was written: %v", err)
+	}
+}
+
+func TestLayerExtractionEntryCapDefaultsToTheScanBound(t *testing.T) {
+	if got, want := newExtractionBudget(1).maxEntries, api.ApplicationStandardRuntimeScanMaxEntries*api.LayerExtractionBudgetMultiple; got != want || got != api.LayerExtractionMaxEntries {
+		t.Fatalf("maxEntries = %d, want %d (api.LayerExtractionMaxEntries %d)", got, want, api.LayerExtractionMaxEntries)
+	}
+}
+
+func TestLayerApplyErrorReportsEntryCapAsAppLayerProblem(t *testing.T) {
+	limits, ok := api.LimitsFor(api.PlanFree)
+	if !ok {
+		t.Fatal("no Free limits")
+	}
+	err := layerApplyError(limits, 1, &ErrLayerExtractionTooManyEntries{LimitEntries: 2_000_000})
+	var problem *api.Problem
+	if !errors.As(err, &problem) || problem.Code != api.CodeAppLayerTooBig || !strings.Contains(problem.Detail, "2000000") {
+		t.Fatalf("error = %v, want the app-layer-too-big Problem naming the entry limit", err)
+	}
+}

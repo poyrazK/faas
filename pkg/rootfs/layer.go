@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/wire" // wire ops metrics for imaged-only counters
 )
 
@@ -118,17 +119,41 @@ type layerApplyOptions struct {
 	budget *extractionBudget
 }
 
-// extractionBudget bounds the regular-file bytes a build writes while
-// applying image layers, so a small compressed layer cannot fill the build
-// disk before the final size check runs.
+// extractionBudget bounds the regular-file bytes and the tar entries a build
+// writes while applying image layers, so a small compressed layer cannot fill
+// the build disk, or its inode table, before the final size check runs.
 type extractionBudget struct {
-	limit int64
-	used  int64
+	limit      int64
+	used       int64
+	maxEntries int
+	entries    int
 }
 
 // newExtractionBudget fails closed: a non-positive limit admits no bytes.
 func newExtractionBudget(limit int64) *extractionBudget {
-	return &extractionBudget{limit: limit}
+	return &extractionBudget{limit: limit, maxEntries: api.LayerExtractionMaxEntries}
+}
+
+// chargeEntry counts one tar entry, whatever its type, against the cap.
+func (b *extractionBudget) chargeEntry() error {
+	if b == nil {
+		return nil
+	}
+	if b.entries >= b.maxEntries {
+		return &ErrLayerExtractionTooManyEntries{LimitEntries: b.maxEntries}
+	}
+	b.entries++
+	return nil
+}
+
+// ErrLayerExtractionTooManyEntries reports that applying image layers would
+// create more tar entries than one build may apply.
+type ErrLayerExtractionTooManyEntries struct {
+	LimitEntries int
+}
+
+func (e *ErrLayerExtractionTooManyEntries) Error() string {
+	return fmt.Sprintf("rootfs: image layers exceed the extraction entry limit of %d", e.LimitEntries)
 }
 
 func (b *extractionBudget) charge(n int64) error {
@@ -163,6 +188,9 @@ func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
 		}
 		if err != nil {
 			return fmt.Errorf("rootfs: read tar: %w", err)
+		}
+		if err := opts.budget.chargeEntry(); err != nil {
+			return err
 		}
 		// Opaque whiteouts contain the literal ".." marker as part of
 		// their fixed format, not as a path component. Normalize that

@@ -813,6 +813,10 @@ func layerApplyError(limits api.Limits, i int, err error) error {
 	if errors.As(err, &budgetErr) {
 		return api.ErrAppLayerTooLarge(limits, budgetErr.UsedBytes+budgetErr.EntryBytes)
 	}
+	var entriesErr *ErrLayerExtractionTooManyEntries
+	if errors.As(err, &entriesErr) {
+		return api.ErrAppLayerTooManyEntries(limits, entriesErr.LimitEntries)
+	}
 	return fmt.Errorf("rootfs: apply layer %d: %w", i, err)
 }
 

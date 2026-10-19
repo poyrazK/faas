@@ -3917,6 +3917,15 @@ func (l Limits) EphemeralDiskMaxBytes() int64 {
 // replaces or deletes.
 const LayerExtractionBudgetMultiple = 2
 
+// LayerExtractionMaxEntries bounds the tar entries one image build may apply
+// across all of its layers. The byte budget counts only file content, so a
+// small compressed layer of empty files, directories or links could otherwise
+// create millions of inodes on the node's image staging filesystem. A
+// finished filesystem with more than ApplicationStandardRuntimeScanMaxEntries
+// entries cannot be scanned and admitted anyway; the multiple leaves the same
+// room for replaced and deleted entries as the byte budget.
+const LayerExtractionMaxEntries = ApplicationStandardRuntimeScanMaxEntries * LayerExtractionBudgetMultiple
+
 // LayerExtractionBudgetBytes is the extraction budget for one image build.
 // Zero means the limits value is unset; callers fail closed.
 func (l Limits) LayerExtractionBudgetBytes() int64 {

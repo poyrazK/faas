@@ -2567,6 +2567,17 @@ func ErrAppLayerTooLarge(l Limits, observedBytes int64) *Problem {
 		WithDocs(docsBase + "/build/limits#app-layer")
 }
 
+// ErrAppLayerTooManyEntries is returned when an image's layers apply more tar
+// entries than one build may extract (LayerExtractionMaxEntries). It shares
+// ErrAppLayerTooLarge's stable code: the image is too large to assemble.
+func ErrAppLayerTooManyEntries(l Limits, limit int) *Problem {
+	return NewProblem(http.StatusForbidden, CodeAppLayerTooBig,
+		"App too large",
+		fmt.Sprintf("image layers contain more than %d files, directories and links in total; %s plan builds stop at that limit.", limit, l.Plan)).
+		WithLimit(int64(limit), int64(limit)+1).
+		WithDocs(docsBase + "/build/limits#app-layer")
+}
+
 // ErrPlanLimitConcurrency is returned when waking another instance would exceed
 // the app's concurrency (spec §4.3 admission, invariant §6.2-1).
 func ErrPlanLimitConcurrency(l Limits, observed int) *Problem {
