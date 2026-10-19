@@ -38,10 +38,10 @@ briefly over its limit.
 child start) counts the customer's in-flight Operations of that name. When the
 count has reached the limit, or the customer already has queued Operations of
 that name, the new Operation is admitted in `accepted` with its execution held:
-its HTTP invocation or workflow run is created with a due time that never
-arrives. Nothing else changes: it counts toward the pending-Operations limit,
-its deadline runs while it waits, and cancelling it works as for any pending
-Operation. Admission and release both hold the account's Operation lock, so
+an HTTP invocation or workflow run is created with a due time that never
+arrives, and a job task waits while its queue row exists. Nothing else changes:
+it counts toward the pending-Operations limit, its deadline runs while it
+waits, and cancelling it works as for any pending Operation. Admission and release both hold the account's Operation lock, so
 concurrent submissions cannot overshoot the limit.
 
 **Release.** Every apid replica runs a releaser every two seconds. For each
@@ -54,9 +54,10 @@ While anything is queued, the releaser also wakes on `customer_operation_changed
 which every Operation save notifies, and runs within 250 ms; the two-second
 pass remains the fallback for a dropped notification.
 
-**Scope of v1.** HTTP and workflow Operations queue. A job Operation's run has
-no hold, so policies do not apply to job definitions; jobs keep their own run
-concurrency.
+**Every execution kind queues.** An HTTP invocation or workflow run is held by
+its due time; a job run's task is held because the customer-Operation job claim
+skips Operations that still have a queue row. Release clears the due time or
+removes the row.
 
 **Surfaces.** The account manages policies with
 `PUT`/`GET`/`DELETE /v1/apps/{slug}/operation-concurrency` (MFA; deploy write

@@ -267,6 +267,9 @@ func (s *PgStore) releaseOperationQueue(ctx context.Context, g sqlc.ListOperatio
 			err = q.ReleaseQueuedInvocation(ctx, tx, sqlc.ReleaseQueuedInvocationParams{ID: row.CurrentInvocationID, Now: at})
 		case "workflow":
 			err = q.ReleaseQueuedWorkflowRun(ctx, tx, sqlc.ReleaseQueuedWorkflowRunParams{ID: row.WorkflowRunID, Now: at})
+		case "job":
+			// The job claim skips Operations with a queue row; deleting it
+			// below is the release.
 		default:
 			err = fmt.Errorf("state: queued %s operation cannot be released", row.ExecutionKind)
 		}

@@ -1518,7 +1518,10 @@ func (m *MemStore) JobTaskClaimBatch(_ context.Context, limit int) ([]JobTask, e
 		for _, t := range tasks {
 			run, runOK := m.jobRuns[t.RunID]
 			job, jobOK := m.jobs[run.JobID]
-			_, operationOwned := m.operationForJobLocked(run.ID)
+			owner, operationOwned := m.operationForJobLocked(run.ID)
+			if operationOwned && m.operationQueuedLocked(owner.ID) {
+				continue // ADR-20261018210500: held until apid's releaser frees it.
+			}
 			if m.retirementJobBlockedLocked(run.JobID) || !runOK || !jobOK || (!operationOwned && (job.ImageMaterializationStatus != "ready" || job.ImageStorageKey == "")) || !m.exclusiveJobRunCurrentLocked(run) {
 				continue
 			}

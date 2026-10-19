@@ -3,7 +3,9 @@ package state_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -201,6 +203,73 @@ func TestOperationConcurrencyCleansCancelledAndClosedQueues(t *testing.T) {
 		}
 		if n, err := f.store.ReleaseQueuedOperations(ctx, time.Now()); err != nil || n != 1 || !f.due(t, closed) {
 			t.Fatalf("closed rollout release = %d %v", n, err)
+		}
+	})
+}
+
+// Job Operations queue too: the customer-Operation job claim skips an
+// Operation while its queue row exists, and the release removes the row.
+func TestOperationConcurrencyQueuesJobOperations(t *testing.T) {
+	runConcurrencyStores(t, func(t *testing.T, f concurrencyFixture) {
+		ctx := t.Context()
+		jobs, ok := f.store.(interface {
+			JobCreate(ctx context.Context, accountID, name, kind, imageRef string, command []string, ramMB, taskTimeoutSec, maxParallelism, retryMax int, envOverrides json.RawMessage) (state.Job, error)
+			JobSetImageMaterialization(ctx context.Context, id, sourceRef, status, resolvedDigest, storageKey, failure string) (state.Job, error)
+			JobTaskClaimBatch(ctx context.Context, limit int) ([]state.JobTask, error)
+			OperationDefinitionByID(context.Context, string, string) (state.OperationDefinition, error)
+		})
+		if !ok {
+			t.Fatal("store lacks job methods")
+		}
+		job, err := jobs.JobCreate(ctx, f.account, "export-job-"+uuid.NewString()[:8], "batch", "registry.example/export:v1", []string{"node", "export.mjs"}, 128, 60, 1, 3, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := jobs.JobSetImageMaterialization(ctx, job.ID, job.ImageRef, "ready", "sha256:"+strings.Repeat("a", 64), "jobs/"+job.ID+".ext4", ""); err != nil {
+			t.Fatal(err)
+		}
+		base, err := jobs.OperationDefinitionByID(ctx, f.account, f.customer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		def, err := f.store.PutOperationDefinition(ctx, state.OperationDefinition{AccountID: f.account, OperationDefinitionResponse: api.OperationDefinitionResponse{
+			AppID: base.AppID, DeploymentID: base.DeploymentID, Scope: base.Scope, Spec: api.OperationDefinitionSpec{Name: "export-job", Job: job.Name, Method: "POST", Path: "/exports/job",
+				Owner: api.OperationOwnerPlatformTenant, ProgressStages: []string{"generating"}, InputSchema: []byte(`{"type":"object"}`), OutputSchema: []byte(`{"type":"object"}`)}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := f.store.PutOperationConcurrencyPolicy(ctx, state.OperationConcurrencyPolicyInput{AccountID: f.account, AppID: base.AppID,
+			Request: api.OperationConcurrencyPolicyRequest{Operation: "export-job", MaxRunning: 1}, Now: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+		admit := func(key string) state.Operation {
+			op, _, err := f.store.AdmitOperation(ctx, state.OperationAdmission{AccountID: f.account, DefinitionID: def.ID, PlatformTenantID: f.tenant, IdempotencyKey: key, Input: []byte(`{}`)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return op
+		}
+		claimable := func(op state.Operation) bool {
+			tasks, err := jobs.JobTaskClaimBatch(ctx, 100)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, task := range tasks {
+				if task.RunID == op.JobRunID {
+					return true
+				}
+			}
+			return false
+		}
+		first, second := admit("job-1"), admit("job-2")
+		if first.JobRunID == "" || !claimable(first) || claimable(second) {
+			t.Fatalf("first claimable %v, second claimable %v", claimable(first), claimable(second))
+		}
+		if _, err := f.store.CancelOperation(ctx, f.account, "", first.ID, first.Generation); err != nil {
+			t.Fatal(err)
+		}
+		if n, err := f.store.ReleaseQueuedOperations(ctx, time.Now()); err != nil || n != 1 || !claimable(second) {
+			t.Fatalf("release = %d %v, second claimable %v", n, err, claimable(second))
 		}
 	})
 }
