@@ -363,6 +363,9 @@ func (e *Engine) Current(id string) (d Delta, ok bool) {
 // Pending reports whether a round has work: decoded transactions waiting
 // for a snapshot, or events the slot has delivered.
 func (e *Engine) Pending() bool {
+	if e.capture == nil {
+		return false // released: nothing streams until Resume
+	}
 	return len(e.pending) > 0 || len(e.capture.Events()) > 0
 }
 
@@ -421,6 +424,9 @@ type changeSet struct {
 
 // Round runs one snapshot-aligned maintenance round and returns the deltas.
 func (e *Engine) Round(ctx context.Context) ([]Delta, error) {
+	if e.capture == nil {
+		return nil, ErrReleased
+	}
 	if err := e.refreshDeps(ctx); err != nil {
 		return nil, err
 	}

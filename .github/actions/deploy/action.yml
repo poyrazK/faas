@@ -3,8 +3,9 @@ description: "Deploy a Gregale app from a GitHub Actions workflow using a pinned
 author: "Gregale"
 
 # Composite Action, monorepo shape (ADR-093). The vendored binary
-# lives at bin/gregale and is replaced by the release.yml workflow
-# on every v*.*.* tag. The action runs against the existing
+# lives at bin/gregale.gz (gzip: GitHub refuses files over 100 MB) and
+# is replaced by the release.yml workflow on every v*.*.* tag;
+# src/cli.sh unpacks and verifies it. The action runs against the existing
 # POST /v1/apps/{slug}/deployments/source-ref endpoint — no new
 # server surface.
 #
