@@ -16,6 +16,10 @@ closes five product gaps, all opt-in:
   read-only. An anonymous `POST` returns `405 public_rpc_requires_get`.
   Embeddings must be publicly readable, and the shared anonymous rate limit
   and edge cache apply.
+- **Anonymous SDK clients.** `createDataClient({ url, anonymous: true })` sends
+  no `Authorization` header when there is no token, so `@gregale/data` serves
+  public reads and `rpc(name, args, { get: true })` public RPCs with generated
+  types. Without the option, a missing token still throws.
 - **Edge-cached public reads.** `configure --public-read-cache 30s` lets the
   gateway cache serve canonical anonymous reads. Responses are tagged per
   relation so `gregale cache purge --tag data-api:api.products` invalidates

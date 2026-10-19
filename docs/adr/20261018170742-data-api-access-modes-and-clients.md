@@ -214,6 +214,17 @@ lists approved functions callable without a token. Configure it with
 - **Catalog and logs.** `/openapi.json` keeps the `get` operation only for
   public functions. Diagnostics count `public_rpc_requires_get` separately.
 
+### Anonymous SDK clients
+
+`@gregale/data` gains an explicit `anonymous: true` option. With it,
+`accessToken` is optional and may resolve to `null`; such requests carry no
+`Authorization` header. A present token is still sent, and an empty,
+whitespace-containing or non-string token still throws before the network.
+Without the option, the client keeps refusing to send a request with no token:
+a signed-out state is anonymous only when the application chose that, so an
+expired session does not quietly downgrade to public data. The option is a
+type-level union, so TypeScript rejects a nullable token source without it.
+
 ## Consequences
 
 - Public reads and server keys widen who can reach SQL. Both are owner opt-ins

@@ -1028,6 +1028,16 @@ never client addresses.
 Add `"public_read": ["api.products"]` to `data-api.dev.json` to try anonymous
 reads in `gregale data-api dev`; the same RLS check runs locally.
 
+From TypeScript, create the client with `anonymous: true`. It sends no
+`Authorization` header when there is no token, and `accessToken` may return
+`null` for signed-out visitors. Without that option a missing token throws, so
+a lost session never silently becomes anonymous access:
+
+```ts
+const visitor = createDataClient<Database>({ url: dataURL, anonymous: true }).schema('api')
+const { data } = await visitor.from('products').select('id,name,categories(name)')
+```
+
 ### Public RPCs
 
 Search, featured items and other computed public data often belong in a
@@ -1048,7 +1058,7 @@ curl 'https://shop-data.example.com/rest/v1/rpc/search_products?q=lamp&limit=20'
 ```
 
 ```ts
-const response = await fetch(`${dataURL}/rest/v1/rpc/search_products?q=${encodeURIComponent(q)}`)
+const { data } = await visitor.rpc('search_products', { q }, { get: true })
 ```
 
 An anonymous `POST` to a public function returns
