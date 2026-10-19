@@ -93,10 +93,16 @@ func TestMemStore_PR134AsyncContract(t *testing.T) {
 		t.Errorf("ListExpired: %v", err)
 	}
 
-	// Stamp retention on the dispatched row, then reaper should pick it up.
+	// A past horizon on a live (dispatching) row must not reap it (#4998).
 	past := time.Now().Add(-time.Second)
 	inv0, _ := m.InvocationByID(ctx, ids[0])
 	inv0.ResultRetentionUntil = &past
+	m.invocations[inv0.ID] = inv0
+	if live, err := m.ListExpiredInvocationsForReaper(ctx, time.Now(), 10); err != nil || len(live) != 0 {
+		t.Errorf("ListExpired with a dispatching row past its horizon = %v, %v; want none", live, err)
+	}
+	// Once the row is terminal, the reaper picks it up.
+	inv0.State = InvocationCompleted
 	m.invocations[inv0.ID] = inv0
 	expired, err := m.ListExpiredInvocationsForReaper(ctx, time.Now(), 10)
 	if err != nil {
